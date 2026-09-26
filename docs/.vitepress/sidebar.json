@@ -870,6 +870,20 @@
           {
             "text": "CustomFloat spec",
             "link": "/specs/base/custom-float"
+          },
+          {
+            "text": "Pretty-print",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Specification",
+                "link": "/specs/base/pretty-print/SPEC"
+              },
+              {
+                "text": "Delivery Plan",
+                "link": "/specs/base/pretty-print/PLAN"
+              }
+            ]
           }
         ]
       },
