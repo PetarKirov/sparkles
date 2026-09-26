@@ -13,7 +13,7 @@ and `color` is the cell's resolved colour in `[0, 1]`, which is what a
 sampler returns and what the CPU adapter converts a byte colour to.
 
 The module is `@compute(CompileFor.hostAndDevice)`: plain D in an ordinary
-build (the attribute is inert without `-d-version=SparklesShaderDevice`),
+build (the attribute is inert outside a dcompute build — `LDC_DCompute`),
 device code when the shader pipeline compiles it. That is also why it
 carries no tests — a device module may not hold a string literal, and a
 test's name is one. Its tests live beside the adapters in

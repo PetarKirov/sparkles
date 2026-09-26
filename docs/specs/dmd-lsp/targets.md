@@ -9,7 +9,7 @@ DMD compiles it for the host. That is wrong for one class of code the
 repository ships: single-source shaders ([`EFX20`](../ui/effects.md)). A
 `@compute(CompileFor.deviceOnly)` module such as `libs/ui/shaders/effects.d`
 is only ever compiled by the dcompute LDC, for a GPU, with
-`-d-version=SparklesShaderDevice` and LDC's own druntime — and analyzed as
+`-mdcompute-targets=vulkan-130` (so `LDC_DCompute`) and LDC's own druntime — and analyzed as
 DMD host code, every one of its `texture0.sample(uv)` calls was an error. A
 `@compute(CompileFor.hostAndDevice)` module is compiled both ways, and an
 error can exist on either side alone.

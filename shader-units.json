@@ -1,6 +1,5 @@
 {
   "target": "vulkan-130",
-  "deviceVersions": ["SparklesShaderDevice"],
   "dflags": ["-preview=in", "-preview=dip1000"],
   "units": [
     {
