@@ -729,6 +729,50 @@ struct LimitsSettings
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PRJ3 — the dub build live types analyze under.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+Which build of a file's dub project live D types describe — every setting
+that, on a `dub build` command line or in its environment, changes what the
+compiler is handed. An empty field is dub's own default. Passed to
+`twoslash-extract` as its `--dub-*` options (`live_types.dubBuildFlags`), and
+read afresh for each oracle a view starts, so an edit applies to the next file
+opened.
+*/
+@ConfigSection
+struct DubBuildSettings
+{
+    @Doc("dub configuration (--config); empty: the package's default.")
+    @Label("configuration")
+    string config;
+
+    @Doc("dub build type (--build), e.g. unittest; empty: dub's default.")
+    @Label("build type")
+    string buildType;
+
+    @Doc("Compiler dub describes for (--compiler): its platform settings and flag spellings.")
+    string compiler;
+
+    @Doc("Architecture (--arch), e.g. x86 or an LDC target triple.")
+    string arch;
+
+    @Doc("Dependency configurations, each as <package>/<configuration> (--override-config).")
+    @Label("override configs")
+    string[] overrideConfigs;
+
+    @Doc("Extra version identifiers (--d-version).")
+    string[] versions;
+
+    @Doc("Extra debug identifiers (--debug).")
+    @Label("debug identifiers")
+    string[] debugIds;
+
+    @Doc("The $DFLAGS dub runs under, which replaces the build type's own flags.")
+    string dflags;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Reserved sections.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -759,6 +803,7 @@ struct HueConfig
     ScrollSettings scroll;
     LimitsSettings limits;
     ForgeSettings forges;
+    DubBuildSettings dub;
 
     /**
     `CFG6`: the user keybinding overlay — context → chord → command-or-null,

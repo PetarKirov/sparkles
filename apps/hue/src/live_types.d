@@ -33,6 +33,8 @@ import sparkles.twoslash : parseTwoslash, TwoslashReturn;
 import sparkles.twoslash.protocol : SignatureLayout;
 import sparkles.wired.json : fromJSON;
 
+import settings : DubBuildSettings;
+
 /// One resolved hover: the oracle's answer to a `{"tip": index}` request.
 struct TipAnswer
 {
@@ -169,6 +171,51 @@ batch gallery path: `--dub` for the enclosing project, `--quiet` so a
 private enum extractorFlags = ["--dub", "--quiet", "--unittest"];
 
 /**
+The `--dub-*` options that select `build` — which build of each file's dub
+project the extractor describes (`PRJ3`). Inline `=` forms, since a value (a
+`$DFLAGS` string) may start with `-`.
+*/
+string[] dubBuildFlags(const DubBuildSettings build) @safe pure nothrow
+{
+    string[] flags;
+    if (build.config.length)
+        flags ~= "--dub-config=" ~ build.config;
+    if (build.buildType.length)
+        flags ~= "--dub-build=" ~ build.buildType;
+    if (build.compiler.length)
+        flags ~= "--dub-compiler=" ~ build.compiler;
+    if (build.arch.length)
+        flags ~= "--dub-arch=" ~ build.arch;
+    foreach (o; build.overrideConfigs)
+        flags ~= "--dub-override-config=" ~ o;
+    foreach (v; build.versions)
+        flags ~= "--dub-d-version=" ~ v;
+    foreach (d; build.debugIds)
+        flags ~= "--dub-debug=" ~ d;
+    if (build.dflags.length)
+        flags ~= "--dub-dflags=" ~ build.dflags;
+    return flags;
+}
+
+@("live_types.dubBuildFlags")
+@safe pure nothrow unittest
+{
+    assert(dubBuildFlags(DubBuildSettings.init).length == 0);
+    DubBuildSettings b;
+    b.config = "gpu-effects";
+    b.buildType = "unittest";
+    b.compiler = "ldc2";
+    b.arch = "x86";
+    b.overrideConfigs = ["sparkles:ui/gpu-effects"];
+    b.versions = ["A", "B"];
+    b.debugIds = ["Trace"];
+    b.dflags = "-g -O0";
+    assert(dubBuildFlags(b) == ["--dub-config=gpu-effects", "--dub-build=unittest",
+        "--dub-compiler=ldc2", "--dub-arch=x86", "--dub-override-config=sparkles:ui/gpu-effects",
+        "--dub-d-version=A", "--dub-d-version=B", "--dub-debug=Trace", "--dub-dflags=-g -O0"]);
+}
+
+/**
 How long one batch extraction may take before it is killed.
 
 DMD-as-a-library analyses one file per process and `--dub` shells out to
@@ -189,13 +236,13 @@ does not pass `--lazy`. Failures are a reason string, never an exception
 (`PRJ15` / `GAL9`).
 */
 Expected!(TwoslashReturn, string) extractTwoslash(string filePath,
-    Duration timeout = extractTimeout) @system
+    Duration timeout = extractTimeout, const DubBuildSettings build = DubBuildSettings.init) @system
 {
     const bin = liveTypesBinary();
     if (!bin.length)
         return err!TwoslashReturn("twoslash-extract not found on PATH " ~
             "(build it, or set $SPARKLES_TWOSLASH_EXTRACT)");
-    return extractTwoslashWith([bin, filePath, "--stdout"] ~ extractorFlags,
+    return extractTwoslashWith([bin, filePath, "--stdout"] ~ extractorFlags ~ dubBuildFlags(build),
         timeout);
 }
 
@@ -371,7 +418,7 @@ struct LiveTypesSession
     for those.
     */
     static LiveTypesSession* start(string filePath, out string reason,
-        bool silenceChildStderr = false) @system
+        bool silenceChildStderr = false, const DubBuildSettings build = DubBuildSettings.init) @system
     {
         const bin = liveTypesBinary();
         if (!bin.length)
@@ -387,7 +434,7 @@ struct LiveTypesSession
         // analyzes those bodies when unittests are on, so without it roughly a
         // quarter of this repo's hover spans underlined a token the oracle
         // could not answer.
-        auto s = startWith([bin, filePath, "--serve"] ~ extractorFlags,
+        auto s = startWith([bin, filePath, "--serve"] ~ extractorFlags ~ dubBuildFlags(build),
             reason, silenceChildStderr);
         if (s !is null)
             s._samplePath = filePath;

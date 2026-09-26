@@ -510,7 +510,8 @@ private TwoslashReturn[string] extractTwoslashSources(ref SourceSet set,
                 pool.finish(true);
             foreach (k; pool.parallel(iota(dAt.length), 1))
             {
-                auto r = extractTwoslash(set.entries[dAt[k]].path);
+                auto r = extractTwoslash(set.entries[dAt[k]].path,
+                    build: effectiveConfig().dub);
                 results[k] = r.hasError
                     ? Extracted(TwoslashReturn.init, r.error)
                     : Extracted(r.value, null);
