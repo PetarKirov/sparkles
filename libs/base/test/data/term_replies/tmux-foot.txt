@@ -1,0 +1,6 @@
+terminal: tmux 3.6a in foot 1.25.0
+TERM: tmux-256color
+COLORTERM: truecolor
+TMUX: set
+ZELLIJ:
+replies: ESC[?2004;2$yESC[?2031;2$yESC[?1004;2$yESC[6;13;6tESC[?1;2;4c

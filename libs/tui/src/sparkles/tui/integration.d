@@ -511,3 +511,60 @@ unittest
     term.close();
     assert(drain(pty.master, rb).canFind("\x1b[?2004l"));
 }
+
+@("integration.pty.probeRecordedTerminals")
+@system
+unittest
+{
+    import std.array : replace;
+    import std.file : dirEntries, readText, SpanMode;
+    import std.path : baseName, buildNormalizedPath, dirName;
+    import std.string : lineSplitter, startsWith;
+    import sparkles.base.term_replies : parseReplies, TerminalReplies;
+    import sparkles.test_runner.skip : skipTest;
+
+    // `O5`: a scripted pty peer answers the probe with real terminals'
+    // recorded replies (`sparkles:base`'s capture corpus), and the probe —
+    // the whole of it: the write, the poll loop, the parse — must come back
+    // with what those bytes say.
+    const corpus = __FILE_FULL_PATH__.dirName
+        .buildNormalizedPath("../../../../base/test/data/term_replies");
+    size_t terminals;
+    foreach (entry; dirEntries(corpus, "*.txt", SpanMode.shallow))
+    {
+        string bytes;
+        bool multiplexer;
+        foreach (line; readText(entry.name).lineSplitter)
+        {
+            if (line.startsWith("replies: "))
+                bytes = line["replies: ".length .. $].replace("ESC", "\x1b").replace("BEL", "\x07");
+            if (line.startsWith("TMUX: set") || line.startsWith("ZELLIJ: set"))
+                multiplexer = true;
+        }
+        TerminalReplies want;
+        ubyte[] rest;
+        parseReplies(cast(const(ubyte)[]) bytes, want, rest);
+
+        auto r = openPty();
+        if (r.hasError)
+            skipTest("no pty available");
+        auto pty = Pty(r.value);
+        auto term = Terminal.open(TerminalOptions(altScreen: false, hideCursor: false,
+            mouse: false), pty.slave, pty.slave);
+        assert(term.active);
+        char[] rb;
+        drain(pty.master, rb);
+        feed(pty.master, bytes);
+        auto got = term.probe(2000, multiplexer);
+        term.close();
+
+        // The environment fields are this process's, not the recording's.
+        got.term = want.term;
+        got.colorterm = want.colorterm;
+        got.multiplexer = want.multiplexer;
+        assert(got == want, entry.name.baseName);
+        assert(got.fenced && term.takeTypedAhead().length == 0, entry.name.baseName);
+        ++terminals;
+    }
+    assert(terminals == 11, "the whole corpus");
+}

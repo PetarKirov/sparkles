@@ -1,0 +1,6 @@
+terminal: zellij 0.45.1 on a bare pty
+TERM: xterm-256color
+COLORTERM: truecolor
+TMUX:
+ZELLIJ: set
+replies: ESC_Gi=31;OKESC\ESC[?1uESC[?2026;2$yESC[?2031;2$yESCP0+rESC\ESCP0+rESC\ESC[?62;4;52c
