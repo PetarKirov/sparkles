@@ -22,6 +22,9 @@ dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git"
 // nothing — and its public API takes no `in` parameters, which matters here:
 // this package is built without `-preview=in` and would mangle them apart.
 dependency "sparkles:shader" path="../.."
+// Device configurations are found by reading the recipe (`TGT6`), and dub.sdl
+// is SDLang.
+dependency "sparkles:wired" path="../.."
 
 // (An `lflags "--undefined=_D3dmd8astenums7Edition6__initZ"` workaround for
 // linux-dmd used to live here: astenums.o sat in frontend.a while dmd:lexer

@@ -4,27 +4,22 @@ device side is analyzed under (spec `TGT5`–`TGT8`).
 
 A module whose declaration carries `@compute(...)` is compiled for a GPU by
 the dcompute LDC — `@compute(CompileFor.deviceOnly)` only there,
-`@compute(CompileFor.hostAndDevice)` there $(I and) on the host. The device
-build is not a dub build: it is one LDC invocation per shader unit, with its
-own import roots and version identifiers. Those facts live in a checked-in
-manifest, `shader-units.json`, which the build (`apps/shader-compile`) reads
-too — so the analysis stands in for the compile that actually happens, not
-for a guess at it.
+`@compute(CompileFor.hostAndDevice)` there $(I and) on the host. What that
+device build is, the package states in its own recipe: a $(B device
+configuration), a dub configuration whose dflags name a dcompute target.
 
-```json
-{
-    "target": "vulkan-130",
-    "dflags": ["-preview=in", "-preview=dip1000"],
-    "units": [{
-        "name": "effects",
-        "sources": ["libs/ui/shaders/effects.d"],
-        "importPaths": ["libs/shader/src", "libs/ui/src"],
-        "outDir": "libs/ui/src/sparkles/ui/shaders"
-    }]
+```sdl
+configuration "shaders" {
+    targetType "library"
+    sourcePaths "src" "shaders"
+    dflags "-mdcompute-targets=vulkan-130"
 }
 ```
 
-Paths are relative to the manifest's directory.
+`shader-compile` compiles the `@compute` modules of exactly that
+configuration, so describing it here makes the analysis stand in for the
+compile that actually happens, not for a guess at it. It is recognized by its
+flag, never by its name.
 */
 module sparkles.dmd_lsp.device;
 
@@ -34,94 +29,123 @@ import sparkles.dmd_lsp.options : AnalyzerConfig, TargetProfile;
 // package's device unit with it; it lives in the dependency-free vocabulary.
 public import sparkles.shader.compute_mode : ComputeMode, computeModeOf;
 
-/// A shader unit: sources compiled together into one SPIR-V module.
-struct ShaderUnit
+/// The flag that makes a configuration a device build.
+enum dcomputeTargetFlag = "-mdcompute-targets=";
+
+/// The target a `@compute` module is analyzed for when no device
+/// configuration names one: the only one the repository's pipeline compiles.
+enum defaultDcomputeTarget = "vulkan-130";
+
+/**
+The names of the device configurations `recipePath` declares — those whose
+`dflags` carry `-mdcompute-targets=` — in declaration order. Both recipe
+formats are read; an unreadable recipe declares none.
+
+The recipe is read, not described: finding the configuration is what decides
+which `dub describe` to run, and asking dub for every configuration to learn
+which one it is would cost a describe each.
+*/
+string[] deviceConfigurations(string recipePath) @safe
 {
-    string name;          /// how the build's command line names it
-    string[] sources;     /// the D modules, manifest-relative
-    string[] importPaths; /// `-I` roots, manifest-relative
-    string outDir;        /// where the build writes its output
-}
-
-/// The parsed `shader-units.json` (see the module documentation).
-struct ShaderManifest
-{
-    string dir;              /// absolute directory the manifest's paths are relative to
-    string target;           /// the `-mdcompute-targets=` value
-    string[] deviceVersions; /// `-d-version=` identifiers every device build sets
-    string[] dflags;         /// further flags every device build passes
-    ShaderUnit[] units;      ///
-
-    /// The index of the unit that compiles `file` (an absolute or
-    /// manifest-relative path), or -1.
-    ptrdiff_t unitIndexOf(string file) const @safe
-    {
-        import std.path : absolutePath, buildNormalizedPath;
-
-        const wanted = file.absolutePath(dir).buildNormalizedPath;
-        foreach (i, ref unit; units)
-            foreach (source; unit.sources)
-                if (source.absolutePath(dir).buildNormalizedPath == wanted)
-                    return i;
-        return -1;
-    }
-}
-
-/// The file name the manifest is looked up by.
-enum shaderManifestName = "shader-units.json";
-
-/// The nearest `shader-units.json` at or above `startPath`'s directory, or
-/// null.
-string findShaderManifest(string startPath) @safe
-{
-    import std.file : exists, isDir;
-    import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
-
-    auto dir = startPath.absolutePath.buildNormalizedPath;
-    if (!(dir.exists && dir.isDir))
-        dir = dir.dirName;
-    for (;;)
-    {
-        const candidate = dir.buildPath(shaderManifestName);
-        if (candidate.exists)
-            return candidate;
-        const parent = dir.dirName;
-        if (parent == dir)
-            return null;
-        dir = parent;
-    }
-}
-
-/// Parses the manifest at `path`. Throws on a malformed document: a manifest
-/// that silently decodes to nothing would analyze every shader as host code.
-ShaderManifest loadShaderManifest(string path) @safe
-{
+    import std.algorithm.searching : endsWith;
     import std.file : readText;
-    import std.json : JSONValue, parseJSON;
-    import std.path : absolutePath, buildNormalizedPath, dirName;
 
-    static string[] strings(JSONValue v, string key) @safe
+    string text;
+    try
+        text = readText(recipePath);
+    catch (Exception)
+        return null;
+    return recipePath.endsWith(".json")
+        ? deviceConfigurationsJson(text)
+        : deviceConfigurationsSdl(text);
+}
+
+private string[] deviceConfigurationsSdl(string text) @safe
+{
+    import std.algorithm.searching : startsWith;
+    import sparkles.wired.sdl : parseSdlDocument, SdlQualifiedName, SdlScalarKind;
+
+    string[] names;
+    auto parsed = parseSdlDocument(text);
+    if (parsed.hasError)
+        return null;
+    foreach (config; parsed.document.root.byChild(SdlQualifiedName(null, "configuration")))
     {
-        string[] items;
-        if (auto member = key in v)
-            foreach (e; (() @trusted => member.array)())
-                items ~= e.str;
-        return items;
+        if (!config.valueCount || config.byValue.front.kind != SdlScalarKind.string_)
+            continue;
+        bool device;
+        foreach (dflags; config.byChild(SdlQualifiedName(null, "dflags")))
+            foreach (value; dflags.byValue)
+                if (value.kind == SdlScalarKind.string_
+                    && value.stringValue.startsWith(dcomputeTargetFlag))
+                    device = true;
+        if (device)
+            names ~= config.byValue.front.stringValue.idup;
     }
+    return names;
+}
 
-    auto doc = parseJSON(path.readText);
-    auto manifest = ShaderManifest(
-        dir: path.absolutePath.buildNormalizedPath.dirName,
-        target: doc["target"].str,
-        deviceVersions: strings(doc, "deviceVersions"),
-        dflags: strings(doc, "dflags"));
-    foreach (u; (() @trusted => doc["units"].array)())
-        manifest.units ~= ShaderUnit(
-            name: u["name"].str,
-            sources: strings(u, "sources"),
-            importPaths: strings(u, "importPaths"),
-            outDir: u["outDir"].str);
-    return manifest;
+private string[] deviceConfigurationsJson(string text) @safe
+{
+    import std.algorithm.searching : startsWith;
+    import std.json : JSONType, parseJSON;
+
+    string[] names;
+    try
+    {
+        auto doc = parseJSON(text);
+        if (auto configs = "configurations" in doc)
+            foreach (config; (() @trusted => configs.array)())
+            {
+                const name = "name" in config;
+                const dflags = "dflags" in config;
+                if (name is null || dflags is null)
+                    continue;
+                foreach (flag; (() @trusted => dflags.array)())
+                    if (flag.type == JSONType.string && flag.str.startsWith(dcomputeTargetFlag))
+                    {
+                        names ~= name.str;
+                        break;
+                    }
+            }
+    }
+    catch (Exception)
+    {
+    }
+    return names;
+}
+
+@("dmd_lsp.device.deviceConfigurations.bothRecipeFormats")
+@system unittest
+{
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import std.path : buildPath;
+
+    auto tmp = TmpFS.create("sparkles-dmd-lsp-device-configs");
+    tmp.writeFileAt("sdl/dub.sdl", `name "p"
+// A comment, and a continued line.
+dflags "-preview=in" \
+    "-preview=dip1000"
+configuration "library" {
+    targetType "library"
+}
+configuration "gpu" {
+    targetType "library"
+    dflags "-O" "-mdcompute-targets=vulkan-130" platform="ldc"
+}
+configuration "also" {
+    dflags "-mdcompute-targets=ocl-300"
+}
+`);
+    tmp.writeFileAt("json/dub.json", `{"name": "p", "configurations": [
+        {"name": "library"},
+        {"name": "kernels", "dflags": ["-mdcompute-targets=cuda-800"]}]}`);
+    tmp.writeFileAt("bad/dub.sdl", `configuration "x" {`);
+
+    assert(deviceConfigurations(tmp.dir.buildPath("sdl", "dub.sdl")) == ["gpu", "also"]);
+    assert(deviceConfigurations(tmp.dir.buildPath("json", "dub.json")) == ["kernels"]);
+    assert(deviceConfigurations(tmp.dir.buildPath("bad", "dub.sdl")) is null);
+    assert(deviceConfigurations(tmp.dir.buildPath("absent", "dub.sdl")) is null);
 }
 
 /**
@@ -130,86 +154,97 @@ the runtime import paths — append `runtimeImportPaths(profile)` as for any
 other configuration.
 
 $(LIST
-    * A file one of the manifest's units compiles gets exactly that
-        compile's settings: the unit's import roots, the device versions, the
-        manifest's flags and its dcompute target. `host` is ignored — the
-        device build is not the dub build.
-    * Any other `@compute` module (or one with no manifest above it) gets
-        `host` — its dub project's paths — retargeted: device versions added,
-        `-unittest` dropped (a device build never compiles tests), and the
-        device profile.
+    * When the recipe governing `file` declares a device configuration, the
+        answer is what `dub describe` reports for it (memoized with every
+        other project context, `PRJ8`) — the settings `shader-compile`
+        compiles the module with. `host` is ignored.
+    * Otherwise (no recipe, no device configuration, or a describe that
+        fails) `host` — its dub project's paths — is retargeted: `-unittest`
+        dropped (a device build never compiles tests), the default dcompute
+        target added, and the device profile.
 )
 */
 AnalyzerConfig deviceConfigFor(string file, const AnalyzerConfig host) @safe
 {
-    import std.algorithm.iteration : filter, map;
+    import std.algorithm.iteration : filter;
     import std.array : array;
-    import std.path : absolutePath, buildNormalizedPath;
+    import sparkles.dmd_lsp.project : DubQuery, dubProjectFor, dubRecipeFor;
 
-    ShaderManifest manifest;
-    if (const path = findShaderManifest(file))
-        manifest = loadShaderManifest(path);
-
-    string[] targetFlag = manifest.target.length
-        ? ["-mdcompute-targets=" ~ manifest.target] : null;
-
-    if (const i = manifest.unitIndexOf(file) + 1)
-    {
-        const unit = manifest.units[i - 1];
-        return AnalyzerConfig(
-            importPaths: unit.importPaths
-                .map!(p => p.absolutePath(manifest.dir).buildNormalizedPath).array,
-            versionIds: manifest.deviceVersions.dup,
-            dflags: manifest.dflags ~ targetFlag,
-            profile: TargetProfile.ldcDevice);
-    }
+    if (const recipe = dubRecipeFor(file))
+        foreach (config; deviceConfigurations(recipe))
+        {
+            const proj = dubProjectFor(file, DubQuery(config: config));
+            if (!proj.usable)
+                continue;
+            return AnalyzerConfig(
+                importPaths: proj.analyzer.importPaths.dup,
+                stringImportPaths: proj.analyzer.stringImportPaths.dup,
+                versionIds: proj.analyzer.versionIds.dup,
+                debugIds: proj.analyzer.debugIds.dup,
+                dflags: proj.analyzer.dflags.dup,
+                profile: TargetProfile.ldcDevice);
+        }
 
     return AnalyzerConfig(
         importPaths: host.importPaths.dup,
         stringImportPaths: host.stringImportPaths.dup,
-        versionIds: host.versionIds ~ manifest.deviceVersions,
+        versionIds: host.versionIds.dup,
         debugIds: host.debugIds.dup,
-        dflags: host.dflags.filter!(f => f != "-unittest").array ~ targetFlag,
+        dflags: host.dflags.filter!(f => f != "-unittest").array.dup
+            ~ (dcomputeTargetFlag ~ defaultDcomputeTarget),
         profile: TargetProfile.ldcDevice);
 }
 
-@("dmd_lsp.device.deviceConfigFor")
+@("dmd_lsp.device.deviceConfigFor.retargetsTheHostWithoutADeviceConfiguration")
 @system unittest
 {
     import sparkles.test_utils.tmpfs : TmpFS;
     import std.path : buildPath;
 
-    auto tmp = TmpFS.create("sparkles-dmd-lsp");
-    tmp.writeFileAt(shaderManifestName, `{
-        "target": "vulkan-130",
-        "deviceVersions": ["Device"],
-        "dflags": ["-preview=in"],
-        "units": [{
-            "name": "fx",
-            "sources": ["lib/src/fx.d", "shaders/entry.d"],
-            "importPaths": ["lib/src"],
-            "outDir": "out"
-        }]
-    }`);
-    tmp.writeFileAt("shaders/entry.d", "@compute module entry;");
-    tmp.writeFileAt("lib/src/other.d", "@compute module other;");
+    auto tmp = TmpFS.create("sparkles-dmd-lsp-device-retarget");
+    tmp.writeFileAt("dub.sdl", "name \"p\"\n");
+    tmp.writeFileAt("src/other.d", "@compute(CompileFor.hostAndDevice) module other;");
 
-    const entry = tmp.dir.buildPath("shaders", "entry.d");
-    assert(findShaderManifest(entry) == tmp.dir.buildPath(shaderManifestName));
-
-    // In a unit: the unit's compile, whatever the host says.
     const host = AnalyzerConfig(importPaths: ["/dub/src"], versionIds: ["Host"],
         dflags: ["-unittest", "-preview=dip1000"]);
-    const unitConfig = deviceConfigFor(entry, host);
-    assert(unitConfig.importPaths == [tmp.dir.buildPath("lib", "src")]);
-    assert(unitConfig.versionIds == ["Device"]);
-    assert(unitConfig.dflags == ["-preview=in", "-mdcompute-targets=vulkan-130"]);
-    assert(unitConfig.effectiveProfile == TargetProfile.ldcDevice);
-
-    // Not in a unit: the host project, retargeted.
-    const other = deviceConfigFor(tmp.dir.buildPath("lib", "src", "other.d"), host);
+    const other = deviceConfigFor(tmp.dir.buildPath("src", "other.d"), host);
     assert(other.importPaths == ["/dub/src"]);
-    assert(other.versionIds == ["Host", "Device"]);
+    assert(other.versionIds == ["Host"]);
     assert(other.dflags == ["-preview=dip1000", "-mdcompute-targets=vulkan-130"]);
-    assert(other.profile == TargetProfile.ldcDevice);
+    assert(other.effectiveProfile == TargetProfile.ldcDevice);
+}
+
+@("dmd_lsp.device.deviceConfigFor.describesTheDeviceConfiguration")
+@system unittest
+{
+    import std.algorithm.searching : any, canFind, endsWith;
+    import std.file : exists;
+    import std.path : buildNormalizedPath, dirName;
+    import sparkles.dmd_lsp.project : clearDubProjectCache, dubTestSync;
+
+    // The repository's own device-only module, under `sparkles:ui`'s
+    // `shaders` configuration: its entry-point directory joins the sources,
+    // and the target flag is what selects the device profile.
+    const root = __FILE_FULL_PATH__.dirName.buildNormalizedPath("..", "..", "..", "..", "..");
+    const effects = root.buildNormalizedPath("libs", "ui", "shaders", "effects.d");
+    assert(effects.exists, effects);
+    AnalyzerConfig cfg;
+    synchronized (dubTestSync)
+    {
+        clearDubProjectCache();
+        scope (exit) clearDubProjectCache();
+        cfg = deviceConfigFor(effects, AnalyzerConfig(versionIds: ["HostOnly"]));
+    }
+    assert(cfg.dflags.canFind("-mdcompute-targets=vulkan-130"), cfg.dflags.toText);
+    assert(!cfg.versionIds.canFind("HostOnly"));
+    assert(cfg.importPaths.any!(p => p.buildNormalizedPath.endsWith("libs/shader/src")),
+        cfg.importPaths.toText);
+    assert(cfg.effectiveProfile == TargetProfile.ldcDevice);
+}
+
+version (unittest) private string toText(const string[] values) @safe
+{
+    import std.conv : to;
+
+    return values.to!string;
 }
