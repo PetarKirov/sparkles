@@ -39,6 +39,9 @@ configuration "gui" {
     // Native shaping's pkg-config flags resolve at the executable boundary.
     targetType "sourceLibrary"
     dependency "sparkles:ui-raylib" path="../.."
+    // The GPU backend needs the built-in effects' GPU halves; selected here,
+    // beside it, so the `tui` configuration never asks for a shader compiler.
+    subConfiguration "sparkles:ui" "gpu-effects"
     versions "UiAppGui"
 }
 
@@ -46,6 +49,7 @@ configuration "full" {
     targetType "sourceLibrary"
     dependency "sparkles:ui-tui" path="../.."
     dependency "sparkles:ui-raylib" path="../.."
+    subConfiguration "sparkles:ui" "gpu-effects"
     versions "UiAppTui" "UiAppGui"
 }
 
@@ -54,6 +58,7 @@ configuration "unittest" {
     // the recording target can be checked against both live ones.
     dependency "sparkles:ui-tui" path="../.."
     dependency "sparkles:ui-raylib" path="../.."
+    subConfiguration "sparkles:ui" "gpu-effects"
     versions "UiAppTui" "UiAppGui"
 
     dependency "sparkles:test-runner" path="../.."
