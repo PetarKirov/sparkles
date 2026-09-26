@@ -126,12 +126,16 @@ struct TerminalSession
             const px = s.term.cellPixels();
             caps.cellPixelSize = px.width != 0 && px.height != 0;
             // An input mode the terminal answered for is negotiated here, and
-            // only then declared (D35): focus reports. Bracketed paste waits
-            // on a paste event in the input vocabulary (OQ8).
+            // only then declared (D35): focus reports and bracketed paste.
             if (s.replies.focus.available)
             {
                 s.term.enableFocusReporting();
                 caps.focusReporting = s.term.focusReporting;
+            }
+            if (s.replies.paste.available)
+            {
+                s.term.enableBracketedPaste();
+                caps.bracketedPaste = s.term.bracketedPaste;
             }
             s.typedAhead = s.term.takeTypedAhead();
         }
@@ -303,4 +307,8 @@ unittest
     t.focusReporting = true;
     c = sessionCapabilities(t);
     assert(c.input.focusEvents && !c.input.pasteEvents);
+    // Bracketed paste negotiated: pastes declared too.
+    t.bracketedPaste = true;
+    c = sessionCapabilities(t);
+    assert(c.input.focusEvents && c.input.pasteEvents);
 }

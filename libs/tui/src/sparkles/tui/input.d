@@ -304,7 +304,7 @@ version (Posix)
         {
             import core.sys.posix.poll : poll, pollfd, POLLIN;
 
-            if (_replayAt < _replay.length)
+            if (_replayAt < _replay.length || _queuedAt < _queued.length)
                 return true;
             pollfd pfd;
             pfd.fd = _fd;
@@ -317,6 +317,8 @@ version (Posix)
         /// error yields `EndOfInput`.
         Event next() @trusted nothrow
         {
+            if (_queuedAt < _queued.length)
+                return _queued[_queuedAt++]; // a paste's later chunks
             char b;
             const n = fromReplay(b) ? 1 : read(_fd, &b, 1);
             if (n < 0)
@@ -344,8 +346,8 @@ version (Posix)
         {
             import core.sys.posix.poll : poll, pollfd, POLLIN;
 
-            if (_replayAt < _replay.length)
-                return next(); // replayed input is ready now
+            if (_replayAt < _replay.length || _queuedAt < _queued.length)
+                return next(); // replayed or queued input is ready now
             pollfd pfd;
             pfd.fd = _fd;
             pfd.events = POLLIN;
@@ -401,6 +403,8 @@ version (Posix)
                         break;
                 }
             }
+            if (buf[0 .. n] == "[200~")
+                return readPaste();
             return decodeEscape(buf[0 .. n]);
         }
 
@@ -434,6 +438,30 @@ version (Posix)
 
         private ubyte[] _replay;
         private size_t _replayAt;
+        private Event[] _queued;  // events decoded ahead: a paste's chunks
+        private size_t _queuedAt;
+
+        // A bracketed paste, `CSI 200~` already read: every byte is text
+        // until `CSI 201~` (or the end of input), delivered as paste chunks.
+        private Event readPaste() @trusted nothrow
+        {
+            enum end = "\x1b[201~";
+            char[] text;
+            char c;
+            while (readRaw(c))
+            {
+                text ~= c;
+                if (text.length >= end.length && text[$ - end.length .. $] == end)
+                {
+                    text.length -= end.length;
+                    break;
+                }
+            }
+            _queued.length = 0;
+            _queuedAt = 0;
+            pasteChunks(text, (Event e) { _queued ~= e; });
+            return _queued[_queuedAt++];
+        }
 
         // The next replayed byte, if any.
         private bool fromReplay(ref char b) @safe nothrow @nogc

@@ -21,7 +21,8 @@ module sparkles.ui_app.event_source;
 version (UiAppTui)  :  // needs sparkles:tui's decoders (the tui/full configs)
 version (Posix)  :
 
-import sparkles.input : Event, EndOfInput, Key, ResizeEvent, charEvent, keyEvent;
+import sparkles.input : Event, EndOfInput, Key, ResizeEvent, charEvent, keyEvent, match,
+    pasteChunks;
 import sparkles.tui.input : classifyByte, decodeEscape;
 
 /**
@@ -41,7 +42,8 @@ struct EscapeAssembler
     /// `true` while a partial escape sequence or UTF-8 code point is
     /// buffered — the caller's cue to bound the next read with the
     /// escape-disambiguation deadline.
-    bool pending() const @safe pure nothrow @nogc => _state != State.idle;
+    bool pending() const @safe pure nothrow @nogc
+        => _state != State.idle && _state != State.paste; // a paste is not ambiguous
 
     /// Resolves buffered state at a deadline: a bare `ESC` becomes the
     /// escape key; a partial sequence decodes best-effort; a truncated
@@ -57,6 +59,8 @@ struct EscapeAssembler
                 break;
             case State.utf8:
                 break;
+            case State.paste:
+                return; // a paste waits for its end marker, however long it takes
             case State.controlString:
                 // An introducer and nothing after it within the window was
                 // Alt+key after all; a string cut off by the deadline is a
@@ -81,6 +85,9 @@ private:
         /// PM or SOS — a terminal's reply, never a keystroke) until its
         /// terminator, `ESC \` or, for OSC, BEL
         controlString,
+        /// inside a bracketed paste (`CSI 200~`): every byte is text until
+        /// `CSI 201~`
+        paste,
     }
 
     void step(Sink)(char c, scope Sink sink)
@@ -130,9 +137,28 @@ private:
                 // letters too) — same predicate as the blocking reader.
                 if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '~')
                 {
+                    if (_buf[0 .. _len] == "[200~")
+                    {
+                        // Bracketed paste begins: text, not keys, until the end.
+                        _state = State.paste;
+                        _len = 0;
+                        _paste.length = 0;
+                        return;
+                    }
                     sink(decodeEscape(_buf[0 .. _len]));
                     _state = State.idle;
                     _len = 0;
+                }
+                return;
+
+            case State.paste:
+                _paste ~= c;
+                enum end = "\x1b[201~";
+                if (_paste.length >= end.length && _paste[$ - end.length .. $] == end)
+                {
+                    pasteChunks(_paste[0 .. $ - end.length], sink);
+                    _state = State.idle;
+                    _paste.length = 0;
                 }
                 return;
 
@@ -173,6 +199,7 @@ private:
     char[32] _buf;
     size_t _len;
     State _state;
+    char[] _paste;   // a bracketed paste so far, end marker not yet seen
     bool _inString;  // a control string has at least one byte past its introducer
     bool _stringEsc; // an ESC inside a control string: ST if `\\` follows
     uint _need;
@@ -412,4 +439,35 @@ unittest
     // blocking reader decodes them.
     const got = feedChunks("\x1b[O", "\x1b[I");
     assert(got == [Event(FocusEvent(false)), Event(FocusEvent(true))]);
+}
+
+@("ui_app.assembler.bracketedPasteIsTextNotKeys")
+@safe
+unittest
+{
+    import sparkles.input : PasteEvent;
+
+    // A paste with a newline and an escape-looking byte in it, split across
+    // chunks: one paste, its text verbatim, the newline not an Enter.
+    const got = feedChunks("\x1b[200~line one\nline", " two\x1b[201", "~q");
+    assert(got.length == 2);
+    assert(got[0].match!((in PasteEvent p) => p.last && p.text[] == "line one\nline two",
+        _ => false));
+    assert(got[1] == charEvent('q'));
+}
+
+@("ui_app.assembler.aPasteIsNotPending")
+@safe
+unittest
+{
+    // A paste waits for its end however long the terminal takes: the pump
+    // must not bound the read with the escape deadline and cut it off.
+    EscapeAssembler a;
+    Event[] got;
+    a.feed(cast(const(ubyte)[]) "\x1b[200~partial", (Event e) { got ~= e; });
+    assert(!a.pending && got.length == 0);
+    a.flush((Event e) { got ~= e; });
+    assert(got.length == 0, "a flush does not end a paste");
+    a.feed(cast(const(ubyte)[]) " rest\x1b[201~", (Event e) { got ~= e; });
+    assert(got.length == 1);
 }
