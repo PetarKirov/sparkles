@@ -245,6 +245,10 @@ TargetCapabilities sessionCapabilities(in TermCaps t) @safe pure nothrow @nogc
 {
     auto c = terminalCapabilities(t);
     c.input = TerminalSession.capabilities;
+    // What was negotiated, and nothing more: the decoder can read focus
+    // reports, but only a terminal asked for them sends any.
+    c.input.focusEvents = t.focusReporting;
+    c.input.pasteEvents = t.bracketedPaste;
     c.hyperlinks = c.hyperlinks || t.colors;
     c.extendedUnderline = c.extendedUnderline || t.colors;
     return c;
@@ -271,4 +275,24 @@ unittest
     const d = sessionCapabilities(dumb);
     assert(!d.unicode && !d.hyperlinks && !d.extendedUnderline);
     assert(d.colorDepth == ColorDepth.none);
+}
+
+@("ui_tui.session.declaresOnlyWhatWasNegotiated")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.term_color : ColorDepth;
+
+    // The decoder can read focus reports and a paste, but a terminal sends
+    // neither unless asked: nothing negotiated, nothing declared.
+    TermCaps t;
+    t.tty = true;
+    t.colorDepth = ColorDepth.ansi256;
+    t.unicode = true;
+    auto c = sessionCapabilities(t);
+    assert(!c.input.focusEvents && !c.input.pasteEvents);
+    // Focus reports negotiated: declared.
+    t.focusReporting = true;
+    c = sessionCapabilities(t);
+    assert(c.input.focusEvents && !c.input.pasteEvents);
 }

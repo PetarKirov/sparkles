@@ -258,7 +258,15 @@ version (Posix)
         target or a touch target depending on the device, every terminal this
         decoder drives has the same shape.
         */
-        enum InputCapabilities capabilities = cellPointer;
+        enum InputCapabilities capabilities = () {
+            // The decoder reads focus reports and would read a bracketed
+            // paste, but neither arrives unless the terminal was asked for
+            // it: a session declares them only once it has negotiated them.
+            InputCapabilities c = cellPointer;
+            c.focusEvents = false;
+            c.pasteEvents = false;
+            return c;
+        }();
 
         private sigaction_t _oldWinch;
         private bool _installed;
