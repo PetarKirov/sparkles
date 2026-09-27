@@ -562,6 +562,11 @@ int runGui(GuiArgs guiArgs) @system
         // the toggle chips), so the container reserves nothing for it.
         pn.dock.layout.nodes[pn.dock.layout.nodeOf(inspPane)]
             .headerExtent = 0;
+        // The live filter's input line is the tree pane's toolbar while it
+        // is open — under the header, where it reads against the pane's
+        // chrome rather than against the horizontal bar — so the tree rows
+        // and both bars start below it instead of being painted over.
+        pn.dock.layout.nodes[tn].toolbarExtent = pn.tree.searching ? 1 : 0;
         foreach (pane; [treePane, docPane, inspPane])
         {
             auto n = pn.dock.layout.nodeOf(pane);
@@ -1909,7 +1914,17 @@ int runGui(GuiArgs guiArgs) @system
             pn.tree.rebuild(); // a finished async git refresh paints this frame
         if (pn.treeVisible)
         {
-            pn.tree.resize(visibleRows - treeTopRows - 1); // − the header row
+            // `/` and Esc land between the frame's arrange and this paint;
+            // re-arrange when the filter's toolbar row is stale.
+            if (pn.dock.toolbarOf(treePane).empty == pn.tree.searching)
+            {
+                arrangePanes();
+                commitDockOffsets();
+            }
+            // The container's content rect: below the header and the filter
+            // line, above the horizontal bar's gutter. Sizing it from the
+            // window instead put the last tree row under the bar.
+            pn.tree.resize(paneContent(treePane).height);
             pn.tree.width = treeCols; // the shared overflow check uses it
             pn.tree.scrollBy(0); // bounds only — never yank the view to the cursor
             chrome.fillPixels(0, 0, treeCols * cellW, screenH, mix(vm.pageBg, vm.pageFg, 0.03));
@@ -1948,25 +1963,29 @@ int runGui(GuiArgs guiArgs) @system
             auto tOps = buildDisplayList(wt, layout(wt),
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
             const thx = pn.tree.hOverflows() ? cast(int) pn.tree.hsb.offset : 0;
-            const tdy = treeTopRows + 1;
+            // The body starts where the container says — under the header,
+            // and under the filter line while it is open.
+            const tdy = paneContent(treePane).y;
             frameList.emit(ui, pushClipOp(Rect(thx, 0, treeBodyCols - thx,
                 pn.tree.bodyRows)), -thx, tdy);
             frameList.emit(ui, tOps, -thx, tdy);
             frameList.emit(ui, popClipOp());
             frameList.endGroup(); // the explorer pane
 
-            // The live-filter input line, pinned to the pane's bottom row
-            // (the GUI pane has no status bar; the TUI shows it there).
-            if (pn.tree.searching)
+            // The live-filter input line, in the toolbar row the dock reserved
+            // for it (the GUI pane has no status bar; the TUI shows it there).
+            const filterRow = pn.dock.toolbarOf(treePane);
+            if (pn.tree.searching && !filterRow.empty)
             {
-                const barY = screenH - cellH;
-                chrome.fillPixels(0, barY, treeBodyCols * cellW, cellH,
-                    vm.gutterFg);
+                const barY = filterRow.y * cellH;
+                chrome.fillPixels(filterRow.x * cellW, barY,
+                    filterRow.width * cellW, cellH, vm.gutterFg);
                 buf.clear();
                 buf ~= "/";
                 buf ~= pn.tree.filterQuery;
                 buf ~= "▏\0";
-                drawText(fonts, buf[][0 .. $ - 1], 4, cast(float) barY,
+                drawText(fonts, buf[][0 .. $ - 1], filterRow.x * cellW + 4.0f,
+                    cast(float) barY,
                     TextStyle(0), vm.pageBg);
             }
         }
@@ -4221,6 +4240,16 @@ int runGui(GuiArgs guiArgs) @system
             openSettingsPane();
             foreach (ch; capture.settings)
                 cast(void) settingsPane.handleKey(KeyEvent(Key.char_, ch));
+        }
+
+        // Debug/CI: the explorer's live filter, open with the seed typed —
+        // its input line and the tree's bars share the pane's bottom edge.
+        if (capture.treeFilterSet && pn.treeVisible)
+        {
+            pn.treeFocused = true;
+            pn.tree.filterStart();
+            foreach (dchar ch; capture.treeFilter)
+                pn.tree.filterInput(ch);
         }
     }
 
