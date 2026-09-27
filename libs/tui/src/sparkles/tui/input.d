@@ -36,6 +36,10 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
         return charEvent(s[0], Mods(alt: true)); // ESC + key = Alt+key
     if (s.length >= 2 && s[0] == '[' && s[1] == '<')
         return decodeMouse(s[2 .. $]);
+    // A colour-scheme report (mode 2031, or the answer to `CSI ? 996 n`):
+    // `CSI ? 997 ; 1 n` is dark, `; 2 n` light.
+    if (s == "[?997;1n" || s == "[?997;2n")
+        return Event(ColorSchemeEvent(dark: s[6] == '1'));
 
     // Parse `p1 [; p2 …] final`. Keep the Kitty shifted-key subfield in
     // the first parameter: `[47:63;2u` means `?`, not `/`. Other subfields
@@ -636,4 +640,15 @@ unittest
     // With parameters it is something else, and SS3 stays a function key.
     assert(decodeEscape("[1;5O") != Event(FocusEvent(false)));
     assert(decodeEscape("OP") == keyEvent(Key.f1));
+}
+
+@("tui.input.colorSchemeReports")
+@safe pure nothrow @nogc
+unittest
+{
+    // Mode 2031's reports, and the answer to `CSI ? 996 n`.
+    assert(decodeEscape("[?997;1n") == Event(ColorSchemeEvent(dark: true)));
+    assert(decodeEscape("[?997;2n") == Event(ColorSchemeEvent(dark: false)));
+    // Anything else in that shape is not a scheme.
+    assert(decodeEscape("[?997;3n") != Event(ColorSchemeEvent(dark: false)));
 }
