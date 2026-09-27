@@ -582,6 +582,9 @@ jobs:
   docs:
     name: Build documentation site
     runs-on: ubuntu-latest
+    env:
+      # Corepack asks before downloading the packageManager pin. CI must not.
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
     # The build itself runs ~11m; under runner contention the nix teardown
     # stretched past a 15m cap and cancelled after every real step had
     # succeeded. 30m matches the test job's headroom.
@@ -607,10 +610,28 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
+
+      # setup-node's `cache: yarn` calls `yarn --version` while the action
+      # runs, before Corepack has put Yarn on PATH. Enable Corepack first,
+      # then cache the folder Yarn itself reports.
+      - name: Enable Corepack
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: corepack enable
+
+      - name: Get Yarn cache directory
+        id: yarn-cache
+        run: echo "dir=$(yarn config get cacheFolder)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Yarn
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.yarn-cache.outputs.dir }}
+          key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+          restore-keys: yarn-${{ runner.os }}-
 
       - name: Install dependencies
-        run: npm ci
+        run: yarn install --immutable
 
       # The site build sits just under node's default ~4 GB heap and tips over
       # it intermittently (the failure is an "Ineffective mark-compacts near
@@ -619,7 +640,7 @@ jobs:
       - name: Build VitePress site
         env:
           NODE_OPTIONS: --max-old-space-size=8192
-        run: npm run docs:build
+        run: yarn docs:build
 
   # The single required check. Branch protection and the merge queue gate on
   # job *names*, so without a fan-in every new job has to be added to that
