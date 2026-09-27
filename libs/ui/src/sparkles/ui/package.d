@@ -18,6 +18,7 @@ public import sparkles.ui.geometry;
 public import sparkles.ui.style;
 public import sparkles.ui.theme;
 public import sparkles.ui.themes;
+public import sparkles.ui.theme_schemes;
 public import sparkles.ui.tokens;
 public import sparkles.ui.degradation;
 public import sparkles.ui.glyphs;
