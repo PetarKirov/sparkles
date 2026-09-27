@@ -184,6 +184,7 @@ string describe(in Event e) @safe
             w.precise ? " precise" : ""),
         (FocusEvent f) => format("focus  %s", f.focused ? "gained" : "lost"),
         (PasteEvent p) => format("paste  %(%s%)%s", [p.text[]], p.last ? " (last)" : ""),
+        (ColorSchemeEvent c) => format("scheme %s", c.dark ? "dark" : "light"),
         (ResizeEvent r) => "resize (re-query the window)",
         // Not produced by this backend yet: `GestureEvent` needs the touch arm
         // (`SDL_EVENT_FINGER_*` fed to `sparkles:input`'s recogniser), and
