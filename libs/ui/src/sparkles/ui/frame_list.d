@@ -230,16 +230,54 @@ bool firstOfSlot(in DrawOp[] ops, Slot slot, out Rect rect,
 /**
 The topmost text run under `at` — "what is the pointer over", answered with
 what was drawn there rather than with the pointer's row re-divided by hand.
+
+"Drawn there" is what is $(I visible) there, so the ops are read in paint
+order: a run counts only inside the clip it was painted under, and `rect` is
+cut to that clip; a filled background painted later under `at` — a modal's
+surface — hides every run beneath it, whether or not it carries text of its
+own at that cell.
 */
 bool textAt(in DrawOp[] ops, in Point at, out Rect rect) @safe pure nothrow @nogc
 {
-    foreach_reverse (ref const op; ops)
-        if (op.kind == OpKind.textRun && op.rect.contains(at))
+    import sparkles.ui.layout : unclipped;
+
+    enum maxDepth = 32;
+    Rect[maxDepth] stack;
+    size_t depth;
+    Rect clip = unclipped();
+    bool hit;
+    foreach (ref const op; ops)
+    {
+        switch (op.kind)
         {
-            rect = op.rect;
-            return true;
+            case OpKind.pushClip:
+                // Deeper than the stack: keep narrowing, stop restoring.
+                if (depth < maxDepth)
+                    stack[depth] = clip;
+                ++depth;
+                clip = clip.intersection(op.rect);
+                break;
+            case OpKind.popClip:
+                if (depth > 0 && --depth < maxDepth)
+                    clip = stack[depth];
+                break;
+            case OpKind.fillRect:
+                if (op.visual.hasBg && op.rect.intersection(clip).contains(at))
+                    hit = false;
+                break;
+            case OpKind.textRun:
+                const visible = op.rect.intersection(clip);
+                if (visible.contains(at))
+                {
+                    rect = visible;
+                    hit = true;
+                }
+                break;
+            default:
+                break;
         }
-    return false;
+    }
+    return hit;
 }
 
 /**
@@ -332,6 +370,39 @@ bool scrollbarThumbOf(in DrawOp[] ops, Slot slot, int unitsPerCell,
     Rect focus;
     assert(focusedExtent(list, focus) && focus == Rect(20, 5, 30, 8));
     assert(list.groups.length == 3 && list.groups[1].extent == Rect(40, 0, 40, 20));
+}
+
+@("ui.frameList.textAtSeesOnlyWhatIsVisible")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.canvas : fillRectOp, popClipOp, pushClipOp, textRunOp;
+    import sparkles.ui.style : Visual;
+
+    // hue with its settings modal open over the explorer: a tree row whose
+    // run is wider than the pane's clip, then the modal's surface, then one
+    // of the modal's own rows. The CRT's hover glow used to land on the
+    // tree beneath the modal — on the run's unclipped tail, and anywhere the
+    // modal's surface had no text of its own.
+    const surface = Visual(hasBg: true);
+    DrawOp[] ops = [
+        pushClipOp(Rect(0, 0, 10, 20)),
+        textRunOp(Rect(2, 5, 14, 1), "nix-eval/dub.sdl"),
+        popClipOp(),
+        fillRectOp(Rect(8, 2, 30, 12), Slot.surface, surface),
+        textRunOp(Rect(12, 5, 7, 1), "pointer"),
+    ];
+
+    Rect r;
+    // Inside the pane and outside the modal: the row, cut to its clip.
+    assert(textAt(ops, Point(4, 5), r) && r == Rect(2, 5, 8, 1));
+    // Under the modal: the row is hidden, whether the modal has text there…
+    assert(textAt(ops, Point(13, 5), r) && r == Rect(12, 5, 7, 1));
+    // …or only its surface.
+    assert(!textAt(ops, Point(9, 5), r), "the modal hides the row");
+    assert(!textAt(ops, Point(25, 9), r), "empty modal surface");
+    // Past the clip with no modal: the run's tail was never painted.
+    ops = ops[0 .. 3];
+    assert(!textAt(ops, Point(12, 5), r), "clipped away");
 }
 
 @("ui.frameList.harvestsBySlotAndByPosition")

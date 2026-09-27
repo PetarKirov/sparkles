@@ -1237,6 +1237,19 @@ int runGui(GuiArgs guiArgs) @system
         return cast(int)(px / cell);
     }
 
+    // A modal's shade over the whole window, as an operation in the frame
+    // list rather than a pixel fill beside it: what the list says is
+    // visible — the CRT's hover — must agree with the eye, and nothing
+    // under the shade is what the pointer is over.
+    void emitModalDimmer(ref RaylibCanvas c)
+    {
+        const cw = fonts.cellW();
+        const ch = fonts.cellH();
+        frameList.emit(c, fillRectOp(Rect(0, 0, (window.width + cw - 1) / cw,
+            (window.height + ch - 1) / ch), Slot.inherit,
+            Visual(bg: RgbColor(0, 0, 0), bgAlpha: 128, hasBg: true)));
+    }
+
     // The picker preview's cell blit: the document pane paints a `Grid`
     // (exactly what the terminal shows), and this draws those cells through
     // the font set — background runs coalesced, glyphs with their real
@@ -2176,7 +2189,7 @@ int runGui(GuiArgs guiArgs) @system
             const pkPanel = pkFrames[pkTree.root].rect;
             const pkOriginX = pickerOriginCol(cellsW, pkPanel.width);
             window.resetClip();
-            chrome.fillPixels(0, 0, screenW, screenH, RgbColor(0, 0, 0), 128);
+            emitModalDimmer(ui);
             ltnOps.reset(); // sequential reuse of the guide's sink (`NFR2`)
             buildDisplayListInto(pkTree, pkFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
@@ -2240,7 +2253,7 @@ int runGui(GuiArgs guiArgs) @system
             const sX = (cellsW - sPanel.width) / 2;
             const sY = (cellsH - sPanel.height) / 2;
             window.resetClip();
-            chrome.fillPixels(0, 0, screenW, screenH, RgbColor(0, 0, 0), 128);
+            emitModalDimmer(ui);
             ltnOps.reset();
             // vm.palette for the same reason as the inspector's: the bar
             // must be the same chrome as every other bar in the window.
