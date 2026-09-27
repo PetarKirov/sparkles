@@ -35,8 +35,8 @@ GUI → mobile. First consumers: `ui-gallery` and the docs site; `hue` and
 
 _Updated at each interruption; one section, not a diary._
 
-- **Checked revision:** `feat/design-system-o5-corpus`, on top of PR #527 (focus
-  and paste, merged).
+- **Checked revision:** `feat/tui-color-scheme`, on top of PR #530 (the `O5`
+  corpus, merged).
 - **Done (M0–M2):** tokens, state overlays, target declarations, the
   degradation report, `ui-gallery --profile`/`--degradations`.
 - **Done (M3):** `sparkles.ui.glyphs` — tiers, the one-cell
@@ -73,13 +73,16 @@ _Updated at each interruption; one section, not a diary._
   Ghostty, foot, XTerm, Alacritty; tmux and zellij under three hosts each),
   captured headless, through the parser and through the probe on a pty peer;
   the emulator presets re-recorded from it where it reaches.
+  Colour-scheme reports negotiated (`INP22`), and `ui-gallery`'s theme following
+  the terminal to its sibling (D37) — checked live in kitty.
 - **Unverified / open:** the sub-cell hairline rule (`GLY2a`); per-role glyph
   preferences beyond marks (`GLY1`); `ACC4` for every focusable inside pages;
   the `CAP2` table audit; the icon table (`GLY4`). From M1: per-state
   attributes/metrics; `actionBar` and the scrollbar onto overlays.
 - **Blockers:** none. M4 needs the brand design exercise (owner, D23).
-- **Next executable actions:** (1) a consumer that degrades visibly per
-  probed row (M7's gate); (2) iTerm2, WezTerm and Apple Terminal into the
+- **Next executable actions:** (1) a consumer that degrades visibly for
+  the remaining probed rows — synchronized output and grapheme clustering
+  (M7's gate); (2) iTerm2, WezTerm and Apple Terminal into the
   `O5` corpus (macOS, and WezTerm headless), and Windows Terminal and the
   Linux console with a person at the machine; (3) M4, once the owner's design
   session has happened.

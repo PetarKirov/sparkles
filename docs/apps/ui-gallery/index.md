@@ -120,6 +120,12 @@ gallery asks the
 terminal at startup (a query fenced by DA1, answered in milliseconds), and
 elsewhere the swatch is drawn in block characters.
 
+In a terminal that reports its colour scheme — kitty, Ghostty, foot, tmux,
+zellij — the gallery follows it: a dark theme becomes its light sibling when
+the terminal goes light (`github-dark` ↔ `github-light`), and back. A theme
+with no sibling in the set, like the default `tokyo-night`, stays, and the
+toast says so.
+
 ## Rendering a frame without opening anything
 
 ```bash
