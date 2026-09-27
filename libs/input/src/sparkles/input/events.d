@@ -911,6 +911,18 @@ void pasteChunks(Sink)(scope const(char)[] text, scope Sink sink)
     while (at < text.length);
 }
 
+/**
+The surface's colour scheme changed (`INP22`): the terminal — or the OS
+behind a window — switched between light and dark, and an application that
+follows it can switch its theme. A terminal reports it only with mode 2031
+negotiated, and answers a `CSI ? 996 n` query with the current scheme, so the
+first one arrives at startup.
+*/
+struct ColorSchemeEvent
+{
+    bool dark; /// `true` for dark, `false` for light
+}
+
 /// The surface was resized. A zero size means "re-query" (a terminal resize
 /// signal carries no dimensions; the reader re-asks the terminal).
 struct ResizeEvent
@@ -967,7 +979,7 @@ struct EndOfInput
 /// `event.match!((in KeyEvent k) => …, …)`. `Event.init` is `NoEvent`.
 alias Event = SumType!(
     NoEvent, KeyEvent, PointerEvent, WheelEvent, FocusEvent, ResizeEvent,
-    GestureEvent, EndOfInput, PasteEvent);
+    GestureEvent, EndOfInput, PasteEvent, ColorSchemeEvent);
 
 /// A named-key event.
 Event keyEvent(Key k, Mods m = Mods(), KeyAction a = KeyAction.press) pure nothrow @nogc
