@@ -110,6 +110,10 @@
         "link": "/guidelines/AGENTS"
       },
       {
+        "text": "Package Catalog",
+        "link": "/guidelines/packages"
+      },
+      {
         "text": "Functional & Declarative Programming",
         "link": "/guidelines/functional-declarative-programming-guidelines"
       },
