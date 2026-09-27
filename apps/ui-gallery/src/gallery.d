@@ -17,7 +17,8 @@ import core.time : Duration, msecs;
 import std.conv : text;
 
 import sparkles.base.term_control : PointerShape;
-import sparkles.input : Event, isDismiss, Key, KeyAction, KeyEvent, match, PasteEvent,
+import sparkles.input : ColorSchemeEvent, Event, isDismiss, Key, KeyAction, KeyEvent, match,
+    PasteEvent,
     PointerAction, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.terminal_view.cell_paint : paintCells;
 import sparkles.ui.components.dock : DockAxis, DockContainer, PaneId, RouteKind;
@@ -464,6 +465,7 @@ struct Gallery
             (in WheelEvent w) { onWheel(h, w); },
             (in ResizeEvent r) { s.surface = r.size; },
             (in PasteEvent p) { onPaste(p); },
+            (in ColorSchemeEvent c) { onColorScheme(c); },
             (in _) {},
         );
     }
@@ -1093,6 +1095,36 @@ struct Gallery
     {
         const n = cast(long) themeNames.length;
         selectTheme(cast(size_t)((cast(long) s.themeIndex + delta % n + n) % n));
+    }
+
+    /**
+    The surface switched between light and dark (`INP22`) — a terminal
+    reporting it, when it answered for mode 2031 and the probe negotiated it.
+    The theme follows to its sibling on the other side
+    (`sparkles.ui.theme_schemes`); a theme with no sibling in the set stays,
+    and the toast says so rather than leaving a light terminal dark in
+    silence. A terminal that cannot report stays on the chosen theme.
+    */
+    private void onColorScheme(in ColorSchemeEvent c) @safe
+    {
+        import sparkles.base.term_color : Color;
+        import sparkles.ui.style : ColorScheme, schemeForBackground;
+        import sparkles.ui.theme_schemes : themeForScheme;
+
+        const bg = s.theme.defaultBg;
+        const isDark = bg.kind != Color.Kind.rgb
+            || schemeForBackground(bg.rgb) == ColorScheme.dark;
+        bool unmatched;
+        const want = themeForScheme(s.themeName, isDark, c.dark, unmatched);
+        if (unmatched)
+        {
+            s.toastText = s.themeName ~ " has no " ~ (c.dark ? "dark" : "light") ~ " sibling";
+            s.toast = typeof(s.toast).triggered(toastConfigFor(s.hasFrameClock));
+            return;
+        }
+        foreach (i, n; themeNames)
+            if (n == want && i != s.themeIndex)
+                return selectTheme(i);
     }
 
     private void selectTheme(size_t to) @safe
@@ -2741,4 +2773,31 @@ version (unittest)
     rec = drive(g, [charEvent('{'), charEvent('{')]);
     assert(g.s.profile == ProfileChoice.native);
     assert(rec.target == meet(rec.declaredTarget, kitty), "native is the preset alone");
+}
+
+@("ui_gallery.gallery.themeFollowsTheColorScheme")
+@safe unittest
+{
+    import sparkles.input : ColorSchemeEvent;
+
+    // `INP22`: a dark theme on a surface that goes light becomes its light
+    // sibling, and back.
+    Gallery g;
+    foreach (i, n; themeNames)
+        if (n == "github-dark")
+            g.s.themeIndex = i;
+    drive(g, [Event(ColorSchemeEvent(dark: false))]);
+    assert(g.s.themeName == "github-light");
+    drive(g, [Event(ColorSchemeEvent(dark: true))]);
+    assert(g.s.themeName == "github-dark");
+
+    // Already matching: nothing changes, and nothing is announced.
+    drive(g, [Event(ColorSchemeEvent(dark: true))]);
+    assert(g.s.themeName == "github-dark");
+
+    // The default has no light sibling: it stays, and the toast says why.
+    Gallery d;
+    drive(d, [Event(ColorSchemeEvent(dark: false))]);
+    assert(d.s.themeName == "tokyo-night");
+    assert(d.s.toastText == "tokyo-night has no light sibling");
 }
