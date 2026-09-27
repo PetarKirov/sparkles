@@ -95,6 +95,12 @@ struct DockNode
     /// `leaf` only: rows reserved at the pane's top for its header
     /// (`DCK10`). `0` = no header, which is how a pane opts out.
     int headerExtent;
+    /// `leaf` only: rows reserved directly under the header for a line the
+    /// pane owns — a live filter's input, a mode line. Reserved like the
+    /// header, from the pane's own area and before the scrollbar gutters, so
+    /// the content and both bars start below it rather than under it.
+    /// `0` = none.
+    int toolbarExtent;
     /// `leaf` only: stable gutters reserved for container-owned pane bars
     /// (`DCK14`). Zero opts an axis out.
     int scrollGutterV;
@@ -253,6 +259,7 @@ struct DockLayout
                     tabExtent: n.tabExtent, extent: n.extent,
                     minExtent: n.minExtent, maxExtent: n.maxExtent,
                     visible: n.visible, headerExtent: n.headerExtent,
+                    toolbarExtent: n.toolbarExtent,
                     scrollGutterV: n.scrollGutterV,
                     scrollGutterH: n.scrollGutterH,
                     scrollMinExtentV: n.scrollMinExtentV,
@@ -608,6 +615,7 @@ struct DockFrames
     DividerFrame[] dividers;
     TabFrame[] tabs;
     HeaderFrame[] headers;
+    PaneFrame[] toolbars; /// the strips `toolbarExtent` reserved
     ScrollFrame[] bars;
 }
 
@@ -623,6 +631,7 @@ void dockFrames(in DockLayout l, in Rect area, ref DockFrames f,
     f.dividers.length = 0;
     f.tabs.length = 0;
     f.headers.length = 0;
+    f.toolbars.length = 0;
     f.bars.length = 0;
     if (l.nodes.length && l.root < l.nodes.length)
         walk(l, l.root, area, f, focused);
@@ -654,6 +663,15 @@ private void walk(in DockLayout l, uint idx, in Rect area,
                 n.pane == focused);
             content = Rect(area.x, area.y + n.headerExtent, area.width,
                 area.height - n.headerExtent);
+        }
+        // The toolbar, next under the header. A pane too short to keep a
+        // content row under it keeps its content instead.
+        if (n.toolbarExtent > 0 && content.height > n.toolbarExtent)
+        {
+            f.toolbars ~= PaneFrame(n.pane,
+                Rect(content.x, content.y, content.width, n.toolbarExtent));
+            content = Rect(content.x, content.y + n.toolbarExtent,
+                content.width, content.height - n.toolbarExtent);
         }
         const base = scrollLayout(ScrollArea(
             rect: content,
@@ -989,6 +1007,17 @@ struct DockContainer
     /// ditto — the reserved header strips (`DCK10`).
     ref inout(HeaderFrame[]) headers() inout return @safe pure nothrow @nogc
         => frames.headers;
+    /// ditto — the reserved toolbar strips (`toolbarExtent`).
+    ref inout(PaneFrame[]) toolbars() inout return @safe pure nothrow @nogc
+        => frames.toolbars;
+    /// The toolbar strip reserved for `pane`, or an empty rect.
+    Rect toolbarOf(PaneId pane) const @safe pure nothrow @nogc
+    {
+        foreach (ref f; frames.toolbars)
+            if (f.pane == pane)
+                return f.rect;
+        return Rect.init;
+    }
     /// ditto — container-owned pane scrollbar frames (`DCK14`).
     ref inout(ScrollFrame[]) bars() inout return @safe pure nothrow @nogc
         => frames.bars;
@@ -2386,6 +2415,44 @@ version (unittest)
     // rendering a bar with nothing under it.
     c.arrange(Rect(0, 0, 100, 1));
     assert(c.headers.length == 0 && c.paneFrames.length == 2);
+}
+
+@("ui.dock.toolbarIsReservedUnderTheHeaderAboveTheContentAndTheBars")
+@safe unittest
+{
+    // hue's explorer with its live filter open: a header row, the filter's
+    // row under it, and container-owned bars. The filter row must belong to
+    // neither the content nor a scrollbar track — painting it over them is
+    // the overlap this reservation exists to rule out.
+    enum PaneId side = 1;
+    DockContainer c;
+    const s = c.layout.addLeaf(side);
+    c.layout.nodes[s].headerExtent = 1;
+    c.layout.nodes[s].toolbarExtent = 1;
+    c.layout.nodes[s].scrollGutterV = 1;
+    c.layout.nodes[s].scrollGutterH = 1;
+    c.layout.root = s;
+    c.arrange(Rect(0, 0, 20, 10));
+    c.contentExtent(side, 40, 100); // both axes overflow: both bars live
+    c.arrange(Rect(0, 0, 20, 10));
+
+    assert(c.headers[0].rect == Rect(0, 0, 20, 1));
+    assert(c.toolbarOf(side) == Rect(0, 1, 20, 1), "directly under the header");
+    const f = c.scrollFrameOf(side);
+    assert(f.area == Rect(0, 2, 20, 8), "the bars' area starts below it");
+    assert(c.paneFrames[0].rect.y == 2, "and so does the content");
+    assert(f.vTrack.y >= 2 && f.hTrack.y >= 2);
+
+    // Opting out gives the row back.
+    c.layout.nodes[s].toolbarExtent = 0;
+    c.arrange(Rect(0, 0, 20, 10));
+    assert(c.toolbarOf(side).empty && c.toolbars.length == 0);
+    assert(c.scrollFrameOf(side).area == Rect(0, 1, 20, 9));
+
+    // A pane with no row to spare under the toolbar keeps its content.
+    c.layout.nodes[s].toolbarExtent = 1;
+    c.arrange(Rect(0, 0, 20, 2));
+    assert(c.toolbars.length == 0);
 }
 
 @("ui.dock.scrollGuttersAreStructuralAndTheCornerIsVertical")
