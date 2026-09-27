@@ -61,6 +61,7 @@ struct Terminal
         ImageProtocol _protocol; // what the probe found, and draw speaks
         bool _focusReporting;    // mode 1004 negotiated, to reset on close
         bool _bracketedPaste;    // mode 2004 negotiated, to reset on close
+        bool _schemeReports;     // mode 2031 negotiated, to reset on close
         CellPixels _answeredCell; // the terminal's own answer to `CSI 16 t`
         ubyte[] _typedAhead; // input that arrived during a probe, for replay
         SharedBuffer!char _buf;
@@ -138,6 +139,8 @@ struct Terminal
             writeEscapeSeq!(DecMode.focusReporting, false)(s);
         if (_bracketedPaste)
             writeEscapeSeq!(DecMode.bracketedPaste, false)(s);
+        if (_schemeReports)
+            writeEscapeSeq!(DecMode.colorScheme, false)(s);
         _images.clear(s); // the terminal need not keep our pixels
         if (_opts.altScreen)
             writeEscapeSeq!(CtlSeq.exitAltScreen)(s);
@@ -335,6 +338,30 @@ struct Terminal
         writeAll(_outFd, s[]);
         _bracketedPaste = true;
     }
+
+    /**
+    Turns on colour-scheme reports (mode 2031) and asks for the current
+    scheme (`CSI ? 996 n`): the terminal answers now, and again whenever it
+    switches between light and dark, with `CSI ? 997 ; 1|2 n`, which the input
+    decoders read as `ColorSchemeEvent`s. $(LREF close) turns them off.
+
+    Negotiation, as $(LREF enableFocusReporting) is: for a terminal that
+    answered for the mode.
+    */
+    void enableColorSchemeReports() @trusted
+    {
+        if (!_active || _schemeReports)
+            return;
+        SharedBuffer!char s;
+        writeEscapeSeq!(DecMode.colorScheme, true)(s);
+        s.put("\x1b[?996n");
+        writeAll(_outFd, s[]);
+        _schemeReports = true;
+    }
+
+    /// Whether colour-scheme reports were turned on
+    /// ($(LREF enableColorSchemeReports)).
+    bool colorSchemeReports() const @safe pure @nogc => _schemeReports;
 
     /// Whether bracketed paste was turned on ($(LREF enableBracketedPaste)).
     bool bracketedPaste() const @safe pure @nogc => _bracketedPaste;

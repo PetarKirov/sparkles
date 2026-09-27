@@ -471,3 +471,14 @@ unittest
     a.feed(cast(const(ubyte)[]) " rest\x1b[201~", (Event e) { got ~= e; });
     assert(got.length == 1);
 }
+
+@("ui_app.assembler.colorSchemeReports")
+@safe
+unittest
+{
+    import sparkles.input : ColorSchemeEvent;
+
+    // Mode 2031's reports through the ring pump's assembler.
+    const got = feedChunks("\x1b[?997;", "2n\x1b[?997;1n");
+    assert(got == [Event(ColorSchemeEvent(dark: false)), Event(ColorSchemeEvent(dark: true))]);
+}

@@ -568,3 +568,36 @@ unittest
     }
     assert(terminals == 11, "the whole corpus");
 }
+
+@("integration.pty.colorSchemeReportsAreNegotiatedAndDecoded")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.input : ColorSchemeEvent;
+    import sparkles.test_runner.skip : skipTest;
+
+    auto r = openPty();
+    if (r.hasError)
+        skipTest("no pty available");
+    auto pty = Pty(r.value);
+    auto term = Terminal.open(TerminalOptions(altScreen: false, hideCursor: false, mouse: false),
+        pty.slave, pty.slave);
+    assert(term.active);
+    char[] rb;
+    drain(pty.master, rb);
+
+    // Negotiated: DECSET 2031, and the current scheme asked for.
+    term.enableColorSchemeReports();
+    const sent = drain(pty.master, rb).idup;
+    assert(sent.canFind("\x1b[?2031h") && sent.canFind("\x1b[?996n"), sent);
+
+    // The answer, then a switch, decode as scheme changes.
+    auto events = PosixEvents.start(pty.slave);
+    feed(pty.master, "\x1b[?997;1n\x1b[?997;2n");
+    assert(events.next() == Event(ColorSchemeEvent(dark: true)));
+    assert(events.next() == Event(ColorSchemeEvent(dark: false)));
+
+    term.close();
+    assert(drain(pty.master, rb).canFind("\x1b[?2031l"));
+}

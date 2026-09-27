@@ -137,6 +137,11 @@ struct TerminalSession
                 s.term.enableBracketedPaste();
                 caps.bracketedPaste = s.term.bracketedPaste;
             }
+            // Scheme reports are pushed only once asked for: the declared
+            // row (`colorSchemeNotify`, from the answer) holds because this
+            // turns them on, and the current scheme arrives as an event.
+            if (caps.colorSchemeNotify)
+                s.term.enableColorSchemeReports();
             s.typedAhead = s.term.takeTypedAhead();
         }
         s.target = sessionCapabilities(caps);
