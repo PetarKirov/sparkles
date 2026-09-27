@@ -66,4 +66,4 @@ The split-mode section in
 for this spec, and reconciliation of any SPEC drift discovered during
 implementation.
 
-Gate: `npm run docs:build` clean; SPEC matches the shipped behavior.
+Gate: `yarn docs:build` clean; SPEC matches the shipped behavior.

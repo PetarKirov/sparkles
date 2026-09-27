@@ -50,10 +50,24 @@ __dummy.html
 # Code coverage
 *.lst
 
-# Node.js / VitePress
+# Node.js / VitePress / Yarn Berry
 node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+# Plug'n'Play maps, plus install state for the root site and for nested
+# projects (libs/twoslash/examples). A checked-in Yarn binary under
+# .yarn/releases stays committable.
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+**/.yarn/install-state.gz
+**/.yarn/cache/
+**/.yarn/unplugged/
+**/.yarn/build-state.yml
 
 # drawTable playground wasm: reproducible build artifact (nix build .#table-wasm),
 # rebuilt by docs:dev / docs:build via docs/scripts/build-wasm.sh

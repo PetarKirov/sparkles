@@ -44,9 +44,10 @@ log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 
 ci_group "Deploying $dist to Cloudflare Pages ($project, branch $branch)"
-npx --yes wrangler pages deploy "$dist" \
-  --project-name "$project" \
-  --branch "$branch" 2>&1 | tee "$log"
+# The locked devDependency, not a freshly fetched wrangler. `yarn exec`
+# takes one shell command, so the flags have to live inside that string.
+yarn exec "wrangler pages deploy ${dist@Q} --project-name ${project@Q} --branch ${branch@Q}" \
+  2>&1 | tee "$log"
 ci_endgroup
 
 # wrangler prints the deployment URL as the last *.pages.dev it emits; the

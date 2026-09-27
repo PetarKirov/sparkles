@@ -566,7 +566,7 @@ primitives; Indexes; Acceleration; Systems and semantics; Synthesis. Then:
 
 ```bash
 npx prettier --write 'docs/research/full-text-search/**/*.md' docs/.vitepress/config.mts
-npm run docs:build
+yarn docs:build
 dub run :ci -- --verify --files 'docs/research/full-text-search/**/*.md'
 dub run :ci -- --example-files 'docs/research/full-text-search/**/examples/*.d'
 nix run .#ci -- --check-blob-paths
@@ -611,7 +611,7 @@ in isolation; either order the sidebar commit last or combine, as
 - [ ] Runnable examples compile and run in CI, skip cleanly where the host lacks a
       capability, and measure only the fixed in-repo corpus.
 - [ ] `index.md` and `comparison.md` carry `**Last reviewed:**` dates.
-- [ ] `npm run docs:build`, `ci --verify`, `ci --example-files`, and
+- [ ] `yarn docs:build`, `ci --verify`, `ci --example-files`, and
       `--check-blob-paths` all pass.
 - [ ] Recommendations reflect the evidence rather than preceding it, and name the
       measurement that would falsify each choice.

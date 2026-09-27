@@ -416,7 +416,7 @@ Run applicable checks from the repository root:
 
 ```bash
 dub run :ci -- --check-docs-sidebar
-npm run docs:build
+yarn docs:build
 ```
 
 Also run the repository Markdown formatter/checker, focused example verification

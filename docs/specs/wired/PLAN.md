@@ -77,7 +77,7 @@ object-key path segments, and nested-struct isolation.
 The `docs/libs/wired/` guide; the VitePress sidebar entry for this spec; and
 `nix run .#ci -- --verify` over [SPEC.md](./SPEC.md) and the guide.
 
-Gate: every spec example runs and matches; `npm run docs:build` is clean.
+Gate: every spec example runs and matches; `yarn docs:build` is clean.
 
 ## M6–M15 — the native JSON engine (SPEC §11)
 
