@@ -12,7 +12,7 @@ module sparkles.ui.display_list;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.layout : childClipOf, Frame, unclipped;
+import sparkles.ui.layout : childClipOf, clipsX, clipsY, Frame, unclipped;
 import sparkles.ui.style : Palette, resolveVisual, Slot, Visual;
 import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
@@ -252,7 +252,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             // a canvas that replaces loses the ancestor on exactly those. The
             // contract a canvas implements is the one stated on `pushClip`:
             // nested clips intersect.
-            const clips = node.clipX || node.clipY;
+            const clips = clipsX(node) || clipsY(node);
             const childClip = childClipOf(node, rect, clip);
             if (clips)
                 ops.pushClip(childClip);
@@ -390,8 +390,13 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     assert(ops[0].visual.border.any && ops[0].visual.border.style == BorderStyle.solid);
     assert(ops[0].visual.borderRadius == 4 && ops[0].visual.shadow.any);
 
+    // A bordered box keeps its content inside it (`LAY15`): the children sit
+    // in a clip of the padded box, one cell in from the border.
+    assert(ops[1].kind == OpKind.pushClip && ops[1].rect == ops[0].rect.deflate(Insets.all(1)));
+    assert(ops[$ - 1].kind == OpKind.popClip);
+
     // The text op carries the resolved font role/scale + the packed italic bit.
-    const t = ops[$ - 1];
+    const t = ops[$ - 2];
     assert(t.kind == OpKind.textRun && t.text == "The title.");
     assert(t.visual.fontRole == FontRole.docs && t.visual.fontScale == 80);
     assert((t.visual.styleBits & TextAttr.italic.bits) != 0);
