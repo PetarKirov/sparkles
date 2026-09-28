@@ -10,6 +10,7 @@ sourcePaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
+dependency "sparkles:android" path="../.."
 dependency "sparkles:ui" path="../.."
 dependency "sparkles:input" path="../.."
 // Pulls raylib-d and the system raylib transitively.

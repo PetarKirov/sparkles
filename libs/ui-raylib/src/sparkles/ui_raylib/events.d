@@ -202,8 +202,8 @@ struct RaylibEvents
             return;
         }
 
-        for (int cp = GetCharPressed(); cp != 0; cp = GetCharPressed())
-            sink(charEvent(cast(dchar) cp, mods));
+        for (dchar cp = typedChar(); cp != 0; cp = typedChar())
+            sink(charEvent(cp, mods));
         for (int k = GetKeyPressed(); k != 0; k = GetKeyPressed())
         {
             const e = basicGradeKey(k, mods);
@@ -250,17 +250,17 @@ struct RaylibEvents
         size_t textLen;
         dchar[16] cps = void;
         size_t cpCount;
-        for (int cp = GetCharPressed(); cp != 0; cp = GetCharPressed())
+        for (dchar cp = typedChar(); cp != 0; cp = typedChar())
         {
             char[4] u8;
-            const n = encode!(Yes.useReplacementDchar)(u8, cast(dchar) cp);
+            const n = encode!(Yes.useReplacementDchar)(u8, cp);
             if (textLen + n <= textBuf.length)
             {
                 textBuf[textLen .. textLen + n] = u8[0 .. n];
                 textLen += n;
             }
             if (cpCount < cps.length)
-                cps[cpCount++] = cast(dchar) cp;
+                cps[cpCount++] = cp;
         }
         // Pair only when the whole burst fits the event's inline text; a
         // larger one falls back to char events rather than truncating input.
@@ -358,6 +358,24 @@ struct RaylibEvents
             return PointerButton.right;
         return PointerButton.none;
     }
+}
+
+/**
+The next code point typed this frame, or `0` — raylib's `GetCharPressed`,
+except on Android, where raylib never fills that queue and the text comes
+from the input hook `Window.open` installs
+($(REF popTypedChar, sparkles,android,text_input)).
+*/
+dchar typedChar() @system
+{
+    version (Android)
+    {
+        import sparkles.android.text_input : popTypedChar;
+
+        return popTypedChar();
+    }
+    else
+        return cast(dchar) GetCharPressed();
 }
 
 /// Maps raylib's named keys onto the shared `Key` vocabulary (printable input
