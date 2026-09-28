@@ -1,7 +1,7 @@
 # The hue Android build: `packages.libhue-android` (the whole app closure as
-# one shared library per ABI, raw-ldc2 like nix/packages/build-d-wasm-module.nix
-# — dub cannot drive cross builds) and `packages.hue-apk` (libhue.so + the
-# asset bundle, assembled by buildAndroidApk).
+# one shared library per ABI, via buildDAndroidLib — dub cannot drive cross
+# builds) and `packages.hue-apk` (libhue.so + the asset bundle, assembled by
+# buildAndroidApk).
 #
 # The asset bundle mirrors the layout android_paths.d derives under the app's
 # data dir: `fonts/*.ttf` with `<file>.ttf.charset` sidecars (fc-query runs
@@ -91,69 +91,27 @@
       # path below.
       srcDirs = sources.srcClosure "apps/hue" ++ [ "libs/android/c" ];
 
-      libhue = pkgs.stdenv.mkDerivation {
+      libhue = config.legacyPackages.buildDAndroidLib {
         pname = "libhue-android";
-        version = "0.1.0";
-        src = sources.sourceFor srcDirs;
-
-        nativeBuildInputs = [
-          inputs.dlang-nix.packages.${system}.ldc-android
-          pkgs.unzip
+        libName = "hue";
+        mainFile = "apps/hue/src/app.d";
+        inherit srcDirs versions dubDeps;
+        stringImportDirs = [
+          "apps/hue/src"
+          "libs/twoslash/src/sparkles/twoslash/views"
+          "libs/ui/src/sparkles/ui/shaders"
         ];
-
-        buildPhase = ''
-          runHook preBuild
-
-          ${lib.concatMapStrings (d: ''
-            mkdir -p dub-imports/${d.name}
-            (cd dub-imports/${d.name} && unzip -q ${d.src})
-          '') dubDeps}
-
-          ${lib.concatMapStrings (t: ''
-            ldc2 -mtriple=${t.triple} -relocation-model=pic -O2 \
-              -preview=in -preview=dip1000 \
-              ${toString (map (v: "-d-version=${v}") versions)} \
-              -J=apps/hue/src -J=libs/twoslash/src/sparkles/twoslash/views -J=libs/ui/src/sparkles/ui/shaders \
-              ${toString (map (dir: "-I=${dir}") srcDirs)} \
-              ${toString (map (d: ''-I="$(echo dub-imports/${d.name}/*/source)"'') dubDeps)} \
-              -P-U__SIZEOF_INT128__ \
-              -P-I${config.packages.tree-sitter-android}/include \
-              -P-I${config.packages.libghostty-vt-android}/include \
-              -P-I${ndk.sysrootInclude} \
-              -i \
-              apps/hue/src/app.d \
-              libs/android/c/jni_c.c \
-              ${config.packages.raylib-android}/lib/${t.abi}/libraylib.a \
-              ${config.packages.tree-sitter-android}/lib/${t.abi}/libtree-sitter.a \
-              ${config.packages.libghostty-vt-android}/lib/${t.abi}/libghostty-vt.a \
-              ${config.packages.libkqueue-android}/lib/${t.abi}/libkqueue.a \
-              -shared -link-defaultlib-shared=false \
-              -L-Wl,-u,ANativeActivity_onCreate \
-              -L-Wl,--wrap=fopen \
-              -L-llog -L-landroid -L-lEGL -L-lGLESv2 -L-lOpenSLES -L-lm -L-ldl \
-              -L${ndk.pageAlignFlags} \
-              -of=libhue-${t.abi}.so
-          '') (lib.attrValues ndk.targets)}
-
-          runHook postBuild
-        '';
-
-        installPhase = ''
-          runHook preInstall
-          ${lib.concatMapStrings (t: ''
-            install -Dm644 libhue-${t.abi}.so $out/lib/${t.abi}/libhue.so
-          '') (lib.attrValues ndk.targets)}
-          runHook postInstall
-        '';
-
-        # Unstripped for ndk-stack; the APK carries the same bytes so a device
-        # tombstone symbolizes against this output directly.
-        dontStrip = true;
-
-        meta = {
-          description = "hue (full GUI closure) as an Android shared library, per ABI";
-          platforms = [ "x86_64-linux" ];
-        };
+        cIncludes = [
+          "${config.packages.tree-sitter-android}/include"
+          "${config.packages.libghostty-vt-android}/include"
+        ];
+        staticLibs = abi: [
+          "${config.packages.raylib-android}/lib/${abi}/libraylib.a"
+          "${config.packages.tree-sitter-android}/lib/${abi}/libtree-sitter.a"
+          "${config.packages.libghostty-vt-android}/lib/${abi}/libghostty-vt.a"
+          "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a"
+        ];
+        description = "hue (full GUI closure) as an Android shared library, per ABI";
       };
 
       # The font set is defined once, in nix/packages/fonts.nix, and shared

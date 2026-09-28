@@ -13,6 +13,7 @@
   imports = [
     ./build-aab.nix
     ./build-apk.nix
+    ./build-d-android-lib.nix
     ./hello.nix
     ./hue.nix
     ./icon.nix
