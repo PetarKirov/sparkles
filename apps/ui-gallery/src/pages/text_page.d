@@ -81,15 +81,25 @@ uint view(ref Builder b, in GalleryState s)
         measured(b, "→ ✓ ◆"),
         measured(b, "日本語"),
         measured(b, "👍🏽"),
+        measured(b, "❤️ e\u0301"),
+        measured(b, "👩‍💻 🇺🇸"),
     ]);
     body_ ~= spacer(b);
     body_ ~= para(b,
         "cellsOf counts one column per codepoint, which is what the GPU "
         ~ "painter advances by. The terminal's cell grid measures a wide glyph "
-        ~ "as two. The last two rows above therefore lay out differently in a "
+        ~ "as two. The last four rows above therefore lay out differently in a "
         ~ "window and in a terminal — a known gap (LAY5/MIG5), shown here "
         ~ "rather than hidden, since this is the page where a reader would "
         ~ "otherwise conclude the toolkit is simply wrong.", w);
+    body_ ~= spacer(b);
+    body_ ~= para(b,
+        "The grid keeps a grapheme cluster in one cell. A terminal that lays "
+        ~ "clusters out code point by code point (XTerm, zellij — the probe "
+        ~ "measures it) would draw the thumb, the heart and the technologist "
+        ~ "wider or narrower than that cell, so there each shows as its "
+        ~ "leading code point instead: grapheme-folded in the report. The flag "
+        ~ "and the accented e keep their cell either way.", w);
 
     return column(b, body_);
 }
