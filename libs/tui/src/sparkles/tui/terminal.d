@@ -62,6 +62,7 @@ struct Terminal
         bool _focusReporting;    // mode 1004 negotiated, to reset on close
         bool _bracketedPaste;    // mode 2004 negotiated, to reset on close
         bool _schemeReports;     // mode 2031 negotiated, to reset on close
+        bool _graphemeClusters;  // mode 2027 negotiated, to reset on close
         CellPixels _answeredCell; // the terminal's own answer to `CSI 16 t`
         ubyte[] _typedAhead; // input that arrived during a probe, for replay
         SharedBuffer!char _buf;
@@ -141,6 +142,8 @@ struct Terminal
             writeEscapeSeq!(DecMode.bracketedPaste, false)(s);
         if (_schemeReports)
             writeEscapeSeq!(DecMode.colorScheme, false)(s);
+        if (_graphemeClusters)
+            writeEscapeSeq!(DecMode.unicodeCore, false)(s);
         _images.clear(s); // the terminal need not keep our pixels
         if (_opts.altScreen)
             writeEscapeSeq!(CtlSeq.exitAltScreen)(s);
@@ -358,6 +361,30 @@ struct Terminal
         writeAll(_outFd, s[]);
         _schemeReports = true;
     }
+
+    /**
+    Turns on grapheme clustering (mode 2027): the terminal lays a cluster —
+    a ZWJ sequence, an emoji with its variation selector — out as one
+    character of the cluster's width, as the grid measures it. $(LREF close)
+    turns it off.
+
+    For a terminal that answered the mode as `reset` (can be set): one that
+    has it set already, or clusters without it (kitty, measured by the
+    probe's test cluster), needs nothing.
+    */
+    void enableGraphemeClusters() @trusted
+    {
+        if (!_active || _graphemeClusters)
+            return;
+        SharedBuffer!char s;
+        writeEscapeSeq!(DecMode.unicodeCore, true)(s);
+        writeAll(_outFd, s[]);
+        _graphemeClusters = true;
+    }
+
+    /// Whether grapheme clustering was turned on
+    /// ($(LREF enableGraphemeClusters)).
+    bool graphemeClusters() const @safe pure @nogc => _graphemeClusters;
 
     /// Whether colour-scheme reports were turned on
     /// ($(LREF enableColorSchemeReports)).

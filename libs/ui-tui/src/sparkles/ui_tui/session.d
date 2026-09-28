@@ -32,7 +32,7 @@ module sparkles.ui_tui.session;
 
 import sparkles.tui : Grid, ImagePlacement, PosixEvents, Terminal, TerminalOptions;
 import sparkles.base.term_caps : detectTermCaps, ImageProtocol, TermCaps, TermSize;
-import sparkles.base.term_replies : applyReplies, available, TerminalReplies;
+import sparkles.base.term_replies : applyReplies, available, ModeReply, TerminalReplies;
 import sparkles.ui.geometry : Size;
 import sparkles.base.term_color : ColorDepth;
 import sparkles.ui.tokens : TargetCapabilities, terminalCapabilities;
@@ -142,6 +142,11 @@ struct TerminalSession
             // turns them on, and the current scheme arrives as an event.
             if (caps.colorSchemeNotify)
                 s.term.enableColorSchemeReports();
+            // Clustering the terminal can be asked for is asked for, so the
+            // declared row holds; one already on, or measured on without the
+            // mode (kitty), needs nothing.
+            if (s.replies.graphemes == ModeReply.reset && s.replies.clusterWidth != 2)
+                s.term.enableGraphemeClusters();
             s.typedAhead = s.term.takeTypedAhead();
         }
         s.target = sessionCapabilities(caps);
