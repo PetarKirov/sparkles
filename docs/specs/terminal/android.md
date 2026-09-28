@@ -1,6 +1,6 @@
 # `apps/terminal` on Android — the nix-on-droid terminal
 
-_**Status:** accepted, in delivery (slices A–D shipped) · **Date:** 2026-09-28 ·
+_**Status:** accepted; slices A–F delivered · **Date:** 2026-09-28 ·
 **Owners:** `apps/terminal` (the app and its session modes),
 [`sparkles:android`](../../guidelines/packages.md) (NDK/JNI plumbing),
 `nix/packages/android/terminal.nix` (the APK builder) · **Consumer:**
@@ -124,8 +124,28 @@ Normative for `apps/terminal` on Android unless the owner says otherwise.
 | B     | `terminal.nix` builder + plain-mode APK (NOD1–4, NOD8, NOD12, NOD14), soft keyboard, focus/stop handling (NOD9)     | shipped |
 | C     | Bootstrap mode (NOD5–7): installer, download, extraction                                                            | shipped |
 | D     | Extra keys and `~/.termux` appearance (NOD10, NOD11)                                                                | shipped |
-| E     | nix-on-droid side: app-id option, bootstrap for the new app, flake output building the APK, docs                    | next    |
-| F     | IPC (NOD13) and the emulator test port                                                                              |         |
+| E     | nix-on-droid side: app-id option, bootstrap for the new app, flake output building the APK, docs                    | shipped |
+| F     | IPC (NOD13) and the emulator test port                                                                              | shipped |
+
+## Verification
+
+What was checked, where, and against what — beyond the host unit tests of
+every pure module (`session`, `bootstrap_zip`, `installer` through a real pty,
+`extra_keys`, `termux_config`, `am_command`, `screen_oracle`, and the
+`terminal-view` spawn/adoption/colour tests).
+
+| Claim                                                                                             | How                                                                         | Where                   |
+| ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------- |
+| NOD1, NOD3: no DEX; targetSdk 28, minSdk 29                                                       | the derivation refuses a `.dex`; `aapt2 dump badging`                       | build                   |
+| NOD4, NOD8, NOD12: plain shell, soft keyboard typing, output above the IME                        | `adb shell input`, keyboard taps, screenshots, the oracle                   | x86_64 emulator, API 36 |
+| NOD5–NOD7: install from a `file://` and an `http://` bootstrap, then `-login`; relaunch → `login` | a fake bootstrap, then nix-on-droid's real one built for `dev.sparkles.nix` | emulator                |
+| The whole of nix-on-droid: flakes first boot to `bash-5.2$`, config carries `build.androidAppId`  | nix-on-droid's `bootstrap_flakes.py`, ported, under droidctl                | emulator                |
+| NOD9: output produced in the background is drained                                                | a command finishing while the app sat behind the launcher                   | emulator                |
+| NOD10, NOD11: extra keys, Ctrl latch (Ctrl+c interrupts), Up recalls history, a colour scheme     | taps on the row, the oracle, screenshots                                    | emulator                |
+| NOD13: wake lock, open URL, reload settings, refusals                                             | a termux-am-socket client run in the app's own shell; `dumpsys power`       | emulator                |
+
+Not yet run: the other ported emulator tests in CI (they need `app/flake.lock`
+pinned to a published sparkles revision), and any physical device.
 
 ## Open issues
 
@@ -134,6 +154,17 @@ Normative for `apps/terminal` on Android unless the owner says otherwise.
   it with long builds. Without a foreground service there is no mitigation inside
   the app; the user-side one is the developer option
   "Disable child process restrictions" (API 34+).
-- **Rotation and IME resize** go through raylib's in-place-resize patch; whether
-  `adjustResize` resizes the native window or only the content rect is to be
-  measured in slice B.
+- **IME resize** was measured in slice B: `adjustResize` reports a smaller
+  content rect and leaves the native window full-size; the pane follows the
+  content rect. Rotation goes through raylib's in-place-resize patch and has
+  not been exercised on this app.
+- **Where the bootstrap lives.** The APK's default bootstrap URL
+  (`…/bootstrap-sparkles`) must be published by nix-on-droid's deploy
+  (`BOOTSTRAP_FOR=sparkles`); until then the offline APK, or a URL typed at the
+  prompt, is the way in.
+- **`termux-open` on a local file** needs a content provider — refused, with a
+  message, by `D2`.
+- **libkqueue's own tests on Linux** fail two kqueue-backend unit tests
+  (`changeList…queuedItsDelete`, `waitid…aRejectedProcAdd…`) at `main` too; the
+  backend's tests normally run only on macOS CI. Unrelated to this work, found
+  while adding the zero-timeout test.
