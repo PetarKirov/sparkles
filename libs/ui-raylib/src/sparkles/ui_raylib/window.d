@@ -275,7 +275,15 @@ struct Window
     void clear(RgbColor c) @system => ClearBackground(Color(c.r, c.g, c.b, 255));
 
     /// The pointer shape the application wants right now.
-    void pointerShape(PointerShape s) @system => SetMouseCursor(toRaylibCursor(s));
+    void pointerShape(PointerShape s) @system
+    {
+        // A touch screen has no pointer to shape, and raylib's Android
+        // backend logs "SetMouseCursor() not implemented" on every call —
+        // once per frame of a terminal that sets its shape each frame.
+        version (Android) {}
+        else
+            SetMouseCursor(toRaylibCursor(s));
+    }
 
     /**
     Whether the window system draws its own pointer over this window (`PTR1`).
