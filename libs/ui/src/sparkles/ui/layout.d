@@ -32,6 +32,7 @@ module sparkles.ui.layout;
 import sparkles.ui.canvas : RuleEdge;
 import sparkles.ui.geometry : cellsOf, Constraints, Insets, Point, Rect, Size, SizeSpec;
 import sparkles.ui.image : cellPixelsOf, imageCells;
+import sparkles.ui.style : BorderStyle;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans;
 
@@ -574,23 +575,46 @@ private int absInt(int v) nothrow @nogc pure => v < 0 ? -v : v;
 Rect unclipped() pure nothrow @nogc
     => Rect(int.min / 2, int.min / 2, int.max, int.max);
 
+/**
+Whether `node`'s children paint (and hit-test) inside its padded content box
+on the x / y axis: where it sets `clipX`/`clipY` (`LAY7`), and where it draws
+a border side across that axis (`LAY15`).
+
+A border is the edge of the box the eye reads, so what is inside must stay
+inside. Layout lets a row's spans overflow the frame it was given (a content
+line, scrolled by an enclosing clip) — without this, a tree row in a bordered
+panel ran straight through the panel's right edge. The clip is the padded box,
+not the box inside the border: a pane with no padding on its bordered side
+keeps whatever it deliberately puts in that column (the gallery sidebar's bar).
+*/
+bool clipsX(in Widget node) pure nothrow @nogc
+    => node.clipX || (node.decoration.borderStyle != BorderStyle.none
+        && (node.decoration.borderWidth.left || node.decoration.borderWidth.right));
+
+/// ditto
+bool clipsY(in Widget node) pure nothrow @nogc
+    => node.clipY || (node.decoration.borderStyle != BorderStyle.none
+        && (node.decoration.borderWidth.top || node.decoration.borderWidth.bottom));
+
 /// The effective clip a node's children paint (and hit-test) under: the
 /// ancestor `clip`, narrowed on each axis this node clips to its padded
-/// content box (`LAY7`). Shared by the display list's scissor emission and
-/// the hit-target extraction, so painting and hit testing can never disagree
-/// about visibility.
+/// content box ($(LREF clipsX), `LAY7`/`LAY15`). Shared by the display list's
+/// scissor emission and the hit-target extraction, so painting and hit
+/// testing can never disagree about visibility.
 Rect childClipOf(in Widget node, in Rect rect, in Rect clip) pure nothrow @nogc
 {
-    if (!node.clipX && !node.clipY)
+    const cx = clipsX(node);
+    const cy = clipsY(node);
+    if (!cx && !cy)
         return clip;
     const box_ = rect.deflate(node.padding);
     Rect mine = clip;
-    if (node.clipX)
+    if (cx)
     {
         mine.origin.x = box_.x;
         mine.size.width = box_.width;
     }
-    if (node.clipY)
+    if (cy)
     {
         mine.origin.y = box_.y;
         mine.size.height = box_.height;
