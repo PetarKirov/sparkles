@@ -4,11 +4,13 @@ touch and window behavior a phone needs (docs/specs/terminal/android.md).
 
 $(LIST
     * The pane follows the $(B content rect) — the window minus the system
-        bars and the soft keyboard — so the prompt stays above the keyboard.
+        bars and the soft keyboard — so the prompt stays above the keyboard,
+        and the extra-keys row (`NOD10`) sits between the two.
     * Touch is routed as gestures, never as raylib's emulated mouse: a tap
-        raises the soft keyboard (`NOD8`), a drag scrolls (or becomes wheel
-        reports when the application tracks the mouse), a pinch resizes the
-        font.
+        raises the soft keyboard (`NOD8`) or presses an extra key, a drag
+        scrolls (or becomes wheel reports when the application tracks the
+        mouse), a pinch resizes the font. Positions arrive in pixels
+        (`PointerUnit.pixels`): the key row is not on the cell grid.
     * The screen oracle (`NOD14`) writes the terminal's text for on-device
         tests when they ask for it.
 )
@@ -17,8 +19,9 @@ module droid_terminal;
 
 version (Android):
 
-import sparkles.input : Event, GestureEvent, Gesture, KeyEvent, match,
-    PointerAction, PointerEvent, WheelEvent;
+import extra_keys : ExtraKey, ExtraKeyKind, Latch;
+import sparkles.input : Event, GestureEvent, Gesture, Key, KeyAction, KeyEvent,
+    match, PointerAction, PointerEvent, WheelEvent;
 import sparkles.terminal_view.component : TerminalView, TerminalViewOptions;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
@@ -37,7 +40,12 @@ struct DroidTerminal
     /// ditto
     bool hasNext;
 
+    /// The extra-keys layout, rows top to bottom (`extra_keys.extraKeysFrom`).
+    ExtraKey[][] keys;
+    private Latch latch;
+    private bool keyboardShown;
     private float pinchBase = 0; // the font size a pinch started from
+    private Geometry lastGeometry;
 
     @disable this(this);
 
@@ -56,50 +64,181 @@ struct DroidTerminal
             hasNext = false;
         }
 
-        const pane = paneCells(h);
-        tv.frame(h, pane.cols, pane.rows);
+        const g = geometry(h);
+        // The key row moves with the keyboard even when the pane's cell grid
+        // does not change (a sub-cell difference): repaint it anyway.
+        if (g != lastGeometry)
+        {
+            lastGeometry = g;
+            tv.invalidate();
+        }
+        tv.frame(h, g.paneCols, g.paneRows);
         oracle.frame(tv);
         return WidgetTree.init;
     }
 
-    /// Keys go to the terminal as they are; touch becomes gestures here.
+    /// Keys go to the terminal, through any latched modifier; touch becomes
+    /// gestures here.
     void handle(H)(ref H h, in Event e)
     {
         e.match!(
-            (in PointerEvent p) { onPointer(p); },
-            (in WheelEvent w) { onWheel(w); },
+            (in KeyEvent k) { sendKey(h, k); },
+            (in PointerEvent p) { onPointer(h, p); },
+            (in WheelEvent w) { onWheel(h, w); },
             (in GestureEvent g) { onGesture(h, g); },
             (in _) { tv.handle(h, e); },
         );
     }
 
-    /// The per-cell paint, into the pane under the status bar.
+    /// The per-cell paint into the pane, then the key row under it.
     void paint(H)(ref H h, in WidgetTree, in Frame[])
     {
-        const pane = paneCells(h);
-        tv.paintPanePx(h, 0, contentTopPx(), pane.cols * tv.s.cellWidth,
-            pane.rows * tv.s.cellHeight);
+        const g = geometry(h);
+        tv.paintPanePx(h, 0, g.top, g.paneCols * tv.s.cellWidth,
+            g.paneRows * tv.s.cellHeight);
+        paintKeys(g);
+    }
+
+    // ── keys ────────────────────────────────────────────────────────────────
+
+    private void sendKey(H)(ref H h, in KeyEvent k)
+    {
+        const before = latch.any;
+        auto chord = latch.apply(k);
+        if (before != latch.any)
+            tv.invalidate(); // the released latch's highlight goes
+        tv.handle(h, Event(chord));
+    }
+
+    private void pressExtraKey(H)(ref H h, in ExtraKey key)
+    {
+        final switch (key.kind)
+        {
+            case ExtraKeyKind.modifier:
+                latch.toggle(key.key);
+                tv.invalidate();
+                return;
+            case ExtraKeyKind.keyboard:
+                toggleKeyboard();
+                return;
+            case ExtraKeyKind.key:
+                KeyEvent ke;
+                ke.key = key.key;
+                strike(h, ke);
+                return;
+            case ExtraKeyKind.text:
+                import std.utf : decodeFront;
+
+                KeyEvent ke;
+                ke.key = Key.char_;
+                ke.text = key.text;
+                string t = key.text;
+                if (t.length)
+                {
+                    const c = decodeFront(t);
+                    if (t.length == 0)
+                        ke.unshifted = c; // one character: a key of its own
+                }
+                strike(h, ke);
+                return;
+        }
+    }
+
+    /// A press and its release, as a physical key delivers them (the
+    /// terminal-grade keyboard reports releases; kitty mode encodes them).
+    private void strike(H)(ref H h, KeyEvent ke)
+    {
+        ke.action = KeyAction.press;
+        sendKey(h, ke);
+        ke.action = KeyAction.release;
+        ke.text = null;
+        tv.handle(h, Event(ke));
+    }
+
+    private void toggleKeyboard()
+    {
+        import sparkles.android.soft_input : hideSoftKeyboard, showSoftKeyboard;
+
+        if (keyboardShown)
+            hideSoftKeyboard();
+        else
+            showSoftKeyboard();
+        keyboardShown = !keyboardShown;
+    }
+
+    private void paintKeys(in Geometry g)
+    {
+        import raylib : Color, DrawRectangle;
+        import sparkles.base.term_color : RgbColor;
+        import sparkles.raylib_text.draw : drawText;
+        import sparkles.raylib_text.style : TextStyle;
+        import std.utf : count;
+
+        if (keys.length == 0 || tv.s.fonts is null)
+            return;
+        DrawRectangle(0, g.keysTop, g.width, g.keysHeight, Color(0x24, 0x27, 0x3a, 255));
+        foreach (r, row; keys)
+        {
+            if (row.length == 0)
+                continue;
+            const y = g.keysTop + cast(int) r * g.keyHeight;
+            foreach (i, key; row)
+            {
+                const x0 = cast(int)(i * g.width / row.length);
+                const x1 = cast(int)((i + 1) * g.width / row.length);
+                const lit = key.kind == ExtraKeyKind.modifier && latch.isOn(key.key);
+                if (lit)
+                    DrawRectangle(x0 + 2, y + 2, x1 - x0 - 4, g.keyHeight - 4,
+                        Color(0x8a, 0xad, 0xf4, 255));
+                const cols = cast(int) count(key.label);
+                const tx = x0 + (x1 - x0 - cols * tv.s.cellWidth) / 2;
+                const ty = y + (g.keyHeight - tv.s.cellHeight) / 2;
+                drawText(*tv.s.fonts, key.label, tx, ty, TextStyle.init,
+                    lit ? RgbColor(0x1e, 0x20, 0x30) : RgbColor(0xca, 0xd3, 0xf5));
+            }
+        }
     }
 
     // ── touch ───────────────────────────────────────────────────────────────
 
-    private void onPointer(in PointerEvent p)
+    private void onPointer(H)(ref H h, in PointerEvent p)
     {
         import sparkles.android.soft_input : showSoftKeyboard;
 
+        if (p.action == PointerAction.press)
+        {
+            pinchBase = 0; // a new contact re-bases the next pinch
+            return;
+        }
+        if (p.action != PointerAction.release)
+            return;
+
         // On a touch target a press/release pair IS a tap: the recogniser
         // turns a moving contact into wheel steps instead (`touchGestures`).
-        if (p.action == PointerAction.press)
-            pinchBase = 0; // a new contact re-bases the next pinch
-        else if (p.action == PointerAction.release)
-            showSoftKeyboard();
+        const g = geometry(h);
+        if (g.keyHeight > 0 && p.pos.y >= g.keysTop && p.pos.y < g.keysTop + g.keysHeight)
+        {
+            const r = (p.pos.y - g.keysTop) / g.keyHeight;
+            if (r < keys.length && keys[r].length)
+            {
+                const i = p.pos.x * cast(int) keys[r].length / (g.width > 0 ? g.width : 1);
+                if (i >= 0 && i < keys[r].length)
+                    pressExtraKey(h, keys[r][i]);
+            }
+            return;
+        }
+        showSoftKeyboard();
+        keyboardShown = true;
     }
 
-    private void onWheel(in WheelEvent w)
+    private void onWheel(H)(ref H h, in WheelEvent w)
     {
+        const g = geometry(h);
+        const cw = tv.s.cellWidth > 0 ? tv.s.cellWidth : 1;
+        const ch = tv.s.cellHeight > 0 ? tv.s.cellHeight : 1;
         // An application tracking the mouse gets wheel reports (a pager, an
         // editor); otherwise the drag walks the scrollback.
-        if (!tv.sendWheel(w.dy, w.pos.x, w.pos.y))
+        if (!tv.sendWheel(w.dy, w.pos.x / cw, (w.pos.y - g.top) / ch))
             tv.scrollViewport(w.dy);
     }
 
@@ -116,35 +255,40 @@ struct DroidTerminal
 
     // ── geometry ────────────────────────────────────────────────────────────
 
-    private static struct PaneCells
+    /// The frame's layout, in pixels: the content rect, the pane at its top
+    /// (whole cells), the key row filling the rest down to the keyboard.
+    private static struct Geometry
     {
-        int cols, rows;
+        int top, width, paneCols, paneRows;
+        int keysTop, keysHeight, keyHeight;
     }
 
-    /// The pane in cells: the content rect's size over the cell size; the
-    /// whole window until the framework has reported a content rect.
-    private PaneCells paneCells(H)(ref H h)
+    private Geometry geometry(H)(ref H h)
     {
         import raylib : GetScreenHeight, GetScreenWidth;
         import sparkles.android.activity : contentRect;
 
-        const cw = tv.s.cellWidth > 0 ? tv.s.cellWidth : 1;
-        const ch = tv.s.cellHeight > 0 ? tv.s.cellHeight : 1;
+        Geometry g;
         const r = contentRect();
-        const w = r.right > r.left ? r.right - r.left : GetScreenWidth();
-        const hgt = r.bottom > r.top ? r.bottom - r.top : GetScreenHeight();
-        // Before `open` the cell size is unknown: the host's grid is the
-        // right answer then, and `frame` opens the terminal at it.
-        if (tv.s.cellWidth <= 0)
-            return PaneCells(h.size.width, h.size.height);
-        return PaneCells(w / cw > 0 ? w / cw : 1, hgt / ch > 0 ? hgt / ch : 1);
-    }
+        const valid = r.bottom > r.top && r.right > r.left;
+        g.top = valid ? r.top : 0;
+        g.width = valid ? r.right - r.left : GetScreenWidth();
+        const bottom = valid ? r.bottom : GetScreenHeight();
 
-    private static int contentTopPx() @system
-    {
-        import sparkles.android.activity : contentRect;
-
-        const r = contentRect();
-        return r.bottom > r.top ? r.top : 0;
+        // Before `open` the cell size is unknown: the host's grid is the right
+        // answer then, and `frame` opens the terminal at it.
+        if (tv.s.cellWidth <= 0 || tv.s.cellHeight <= 0)
+        {
+            g.paneCols = h.size.width;
+            g.paneRows = h.size.height;
+            return g;
+        }
+        g.keyHeight = keys.length ? tv.s.cellHeight * 2 : 0;
+        g.keysHeight = cast(int) keys.length * g.keyHeight;
+        const paneHeight = bottom - g.top - g.keysHeight;
+        g.paneCols = g.width / tv.s.cellWidth > 0 ? g.width / tv.s.cellWidth : 1;
+        g.paneRows = paneHeight / tv.s.cellHeight > 0 ? paneHeight / tv.s.cellHeight : 1;
+        g.keysTop = bottom - g.keysHeight;
+        return g;
     }
 }

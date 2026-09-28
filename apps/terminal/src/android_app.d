@@ -12,7 +12,9 @@ import droid_terminal : DroidTerminal;
 import sparkles.terminal_view.component : TerminalViewOptions;
 import session;
 import sparkles.base.logger : info, LogLevel, warning;
-import sparkles.ui_app.host : RunConfig;
+import extra_keys : extraKeysFrom;
+import sparkles.ui_app.host : PointerUnit, RunConfig;
+import termux_config : parseTermuxColors;
 import sparkles.ui_app.run_app : runApp;
 
 /// The logcat tag (`adb logcat -s terminal`).
@@ -65,16 +67,38 @@ int androidMain()
         )),
         keyRelease: true, // the terminal-grade keyboard
         touchGestures: true, // taps, drags and pinches — not an emulated mouse
+        pointerUnit: PointerUnit.pixels, // the key row is not on the cell grid
     };
 
     DroidTerminal app;
     app.oracle.dir = paths.debugDir;
+    app.keys = extraKeysFrom(readTermuxFile(paths, "termux.properties"));
     configureSession(app, config, paths);
+    // A user colour scheme (`terminal.colors`, NOD11) for every session.
+    const colors = parseTermuxColors(readTermuxFile(paths, "colors.properties"));
+    app.tv.opts.colors = colors;
+    app.next.colors = colors;
     runApp(app, cfg);
     app.tv.close();
     // Static druntime cannot rt_init twice, and Android reuses the process
     // across activity recreations: end the process with the activity.
     exit(0);
+}
+
+/// `~/.termux/<name>`'s text, or `""` when it is absent or unreadable.
+private string readTermuxFile(const SessionPaths paths, string name)
+{
+    import std.file : exists, readText;
+    import std.path : buildPath;
+
+    const path = buildPath(paths.termuxDir, name);
+    try
+        return path.exists ? readText(path) : "";
+    catch (Exception e)
+    {
+        warning(i"terminal: unreadable $(path): $(e.msg)");
+        return "";
+    }
 }
 
 /// Point the terminal at the session `config` asks for (`NOD4`, `NOD5`,
@@ -174,10 +198,22 @@ private int startInstaller(const SessionPaths paths, string defaultUrl)
         return -1;
     }
 
+    import session : bootstrapArch;
+    import sparkles.android.assets : copyAssetToFile, hasAsset;
+
+    // A bootstrap the APK bundles (mkTerminalApk's `bootstraps`) is the
+    // offline default; the prompt still accepts a URL.
+    const bundledAsset = "bootstrap/bootstrap-" ~ bootstrapArch() ~ ".zip";
+    const haveBundled = hasAsset(bundledAsset);
+
     auto t = new Thread({
         const installed = runInstaller(slave, paths, defaultUrl,
             (string url, string dest, scope void delegate(long, long) nothrow progress)
-                => download(url, dest, progress));
+                => download(url, dest, progress),
+            haveBundled
+                ? (string dest, scope void delegate(long, long) nothrow progress)
+                    => copyAssetToFile(bundledAsset, dest, progress)
+                : null);
         info(i"terminal: installer finished, installed=$(installed)");
         close(slave);
     });
