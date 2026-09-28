@@ -22,7 +22,7 @@ import std.utf : decode;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.ansi : escapeLength;
-import sparkles.base.text.width : graphemeClusterWidth;
+import sparkles.base.text.width : graphemeClusterWidth, unclusteredWidth;
 
 @safe pure nothrow @nogc:
 
@@ -38,6 +38,12 @@ struct ClusterMeasure
     int width;           /// Display columns (0 for escapes and zero-width clusters).
     bool isEscape;       /// True for an escape sequence, false for a text cluster.
     dchar first;         /// First code point of a text cluster (for break classing).
+    /// The cells a terminal that does not cluster advances for it: `width`
+    /// where it keeps its cell (see $(REF unclusteredWidth,
+    /// sparkles,base,text,width)).
+    int unclustered;
+    /// Code points in the cluster (capped at the scanner's window).
+    ubyte codepoints;
 }
 
 private struct ClusterScan
@@ -45,6 +51,8 @@ private struct ClusterScan
     size_t bytes;
     int width;
     dchar first;
+    int unclustered;
+    ubyte codepoints;
 }
 
 /// Scan the first grapheme cluster of `run` (which begins at a cluster boundary
@@ -68,13 +76,15 @@ in (run.length > 0)
             const stride = graphemeStride(win[], 0);
             if (stride < win.length) // boundary found before the lookahead end
                 return ClusterScan(ends[stride - 1],
-                    graphemeClusterWidth(win[0 .. stride]), win[0]);
+                    graphemeClusterWidth(win[0 .. stride]), win[0],
+                    unclusteredWidth(win[0 .. stride]), cast(ubyte) stride);
         }
     }
     // Reached the run end (or the cap): the window is a single cluster.
     const stride = graphemeStride(win[], 0);
     const k = stride < win.length ? stride : win.length;
-    return ClusterScan(ends[k - 1], graphemeClusterWidth(win[0 .. k]), win[0]);
+    return ClusterScan(ends[k - 1], graphemeClusterWidth(win[0 .. k]), win[0],
+        unclusteredWidth(win[0 .. k]), cast(ubyte) k);
 }
 
 /// Lazy range over the escape sequences and grapheme clusters of `s`.
@@ -124,7 +134,8 @@ struct GraphemeClusterRange
             _runLen = j;
         }
         const scan = scanCluster(_rest[0 .. _runLen]);
-        _front = ClusterMeasure(_rest[0 .. scan.bytes], scan.width, false, scan.first);
+        _front = ClusterMeasure(_rest[0 .. scan.bytes], scan.width, false, scan.first,
+            scan.unclustered, scan.codepoints);
         _rest = _rest[scan.bytes .. $];
         _runLen -= scan.bytes;
     }
@@ -170,11 +181,22 @@ unittest
 unittest
 {
     auto r = "a\x1b[31m\u4E16".byGraphemeCluster;
-    assert(r.front == ClusterMeasure("a", 1, false, 'a'));
+    assert(r.front == ClusterMeasure("a", 1, false, 'a', 1, 1));
     r.popFront;
     assert(r.front.isEscape && r.front.slice == "\x1b[31m" && r.front.width == 0);
     r.popFront;
     assert(!r.front.isEscape && r.front.width == 2 && r.front.first == '\u4E16');
     r.popFront;
     assert(r.empty);
+}
+
+@("grapheme.byGraphemeCluster.unclustered")
+unittest
+{
+    // A ZWJ family is one cluster of 2 cells, and 6 where the terminal lays
+    // it out code point by code point; a combining mark changes neither.
+    auto r = "\U0001F468\u200D\U0001F469\u200D\U0001F467e\u0301".byGraphemeCluster;
+    assert(r.front.width == 2 && r.front.unclustered == 6 && r.front.codepoints == 5);
+    r.popFront;
+    assert(r.front.width == 1 && r.front.unclustered == 1 && r.front.codepoints == 2);
 }

@@ -167,6 +167,36 @@ int graphemeClusterWidth(in dchar[] cluster) @safe pure nothrow @nogc
     assert(graphemeClusterWidth("\U0001F469\u200D\U0001F467"d) == 2);
 }
 
+/**
+Cells a terminal that does $(B not) cluster advances for `cluster`: each code
+point by its own width, as a per-code-point `wcwidth` has it — a regional
+indicator narrow, a joiner or variation selector nothing. Where this differs
+from $(LREF graphemeClusterWidth), such a terminal draws the cluster wider or
+narrower than the cell the grid gave it, and every later cell on the row
+moves: XTerm lays a ZWJ family out in 6 cells, not 2, and a heart with VS16
+in 1 (measured by cursor report, as the capability probe does).
+*/
+int unclusteredWidth(in dchar[] cluster) @safe pure nothrow @nogc
+{
+    int w;
+    foreach (cp; cluster)
+        w += isRegionalIndicator(cp) ? 1 : codepointWidth(cp);
+    return w;
+}
+
+@("width.unclusteredWidth.measured")
+@safe pure nothrow @nogc unittest
+{
+    // XTerm's cursor reports: where a cluster keeps its cell, and where not.
+    assert(unclusteredWidth("\U0001F468\u200D\U0001F469\u200D\U0001F467"d) == 6);
+    assert(unclusteredWidth("\u2764\uFE0F"d) == 1);
+    assert(unclusteredWidth("\U0001F1FA\U0001F1F8"d) == 2);
+    assert(unclusteredWidth("A\u0301"d) == 1);
+    // Those that keep it need no clustering.
+    assert(unclusteredWidth("\U0001F1FA\U0001F1F8"d) == graphemeClusterWidth("\U0001F1FA\U0001F1F8"d));
+    assert(unclusteredWidth("A\u0301"d) == graphemeClusterWidth("A\u0301"d));
+}
+
 /// Horizontal alignment of text within a fixed-width field. `inherit` means "defer
 /// to a caller-supplied default" (e.g. a table column's default alignment) and is
 /// treated as `left` if it reaches `alignField` unresolved. `decimal` aligns a
