@@ -147,14 +147,23 @@ package IoResult!(const(char)[][]) effectiveEnvironment(
 /// is `/bin:/usr/bin` wherever that confstr is unavailable to us).
 private string defaultPath() @trusted nothrow
 {
-    import core.sys.posix.unistd : _CS_PATH, confstr;
+    // Bionic has no confstr; its execvp falls back to _PATH_DEFPATH, whose
+    // stable part is /system/bin.
+    version (CRuntime_Bionic)
+    {
+        return "/system/bin";
+    }
+    else
+    {
+        import core.sys.posix.unistd : _CS_PATH, confstr;
 
-    char[1024] buf;
-    const n = confstr(_CS_PATH, buf.ptr, buf.length);
-    if (n == 0 || n > buf.length)
-        return "/bin:/usr/bin";
-    // confstr includes the terminating NUL in its count.
-    return buf[0 .. n - 1].idup;
+        char[1024] buf;
+        const n = confstr(_CS_PATH, buf.ptr, buf.length);
+        if (n == 0 || n > buf.length)
+            return "/bin:/usr/bin";
+        // confstr includes the terminating NUL in its count.
+        return buf[0 .. n - 1].idup;
+    }
 }
 
 /// The PATH the child will see (SPEC §13.1: "PATH lookup uses the resulting
@@ -555,8 +564,9 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
         return ioErr!ChildProcess(24 /* EMFILE */, OpKind.none,
             IoErrorStage.submit, "pipe failed");
 
-    if (cfg.cwd !is null)
-        posix_spawn_file_actions_addchdir_np(&actions, zstring(cfg.cwd));
+    if (cfg.cwd !is null && !addChdir(&actions, zstring(cfg.cwd)))
+        return ioErr!ChildProcess(38 /* ENOSYS */, OpKind.none,
+            IoErrorStage.submit, "this libc cannot chdir in posix_spawn");
 
     posix_spawnattr_t attr;
     posix_spawnattr_init(&attr);
@@ -741,7 +751,10 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
         posix_spawn_file_actions_init, posix_spawn_file_actions_t,
         posix_spawnattr_destroy, posix_spawnattr_init,
         posix_spawnattr_setflags, posix_spawnattr_t;
-    import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
+    version (CRuntime_Bionic)
+        import sparkles.event_horizon.bionic : grantpt, posix_openpt, ptsname, unlockpt;
+    else
+        import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
     import core.sys.posix.unistd : close;
 
     if (argv.length == 0)
@@ -810,8 +823,9 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
     posix_spawn_file_actions_addopen(&actions, 0, slavePath, O_RDWR, 0);
     posix_spawn_file_actions_adddup2(&actions, 0, 1);
     posix_spawn_file_actions_adddup2(&actions, 0, 2);
-    if (cfg.cwd !is null)
-        posix_spawn_file_actions_addchdir_np(&actions, zstring(cfg.cwd));
+    if (cfg.cwd !is null && !addChdir(&actions, zstring(cfg.cwd)))
+        return ioErr!ChildProcess(38 /* ENOSYS */, OpKind.none,
+            IoErrorStage.submit, "this libc cannot chdir in posix_spawn");
 
     auto cargv = cstrings(argv);
     // Bound to a named local rather than used as a bare `.ptr` (see
@@ -1193,9 +1207,32 @@ Env liveEnv(Sched* sched) @safe pure nothrow @nogc
 
 private:
 
-// glibc ≥ 2.29 / musl ≥ 1.1.24; absent from druntime's posix.spawn.
-extern (C) int posix_spawn_file_actions_addchdir_np(
-    void* actions, const(char)* path) nothrow @nogc;
+// glibc ≥ 2.29 / musl ≥ 1.1.24 / Bionic API 34; absent from druntime's
+// posix.spawn. Weak on Bionic: a strong reference to an API-34 symbol makes
+// the whole library fail to load on an older device.
+version (CRuntime_Bionic)
+{
+    version (LDC)
+        pragma(LDC_extern_weak) extern (C) int posix_spawn_file_actions_addchdir_np(
+            void* actions, const(char)* path) nothrow @nogc;
+    else
+        static assert(0, "Bionic builds are LDC-only");
+}
+else
+    extern (C) int posix_spawn_file_actions_addchdir_np(
+        void* actions, const(char)* path) nothrow @nogc;
+
+/// Queue a `chdir` on `actions`; `false` when this libc cannot (Bionic
+/// before API 34), so the caller reports it instead of spawning in the
+/// wrong directory.
+bool addChdir(void* actions, const(char)* path) @trusted nothrow @nogc
+{
+    version (CRuntime_Bionic)
+        if (&posix_spawn_file_actions_addchdir_np is null)
+            return false;
+    posix_spawn_file_actions_addchdir_np(actions, path);
+    return true;
+}
 
 version (linux)
     enum ulong TIOCSWINSZ = 0x5414;
@@ -1228,7 +1265,12 @@ struct winsize
     ushort ws_row, ws_col, ws_xpixel, ws_ypixel;
 }
 
-extern (C) int ioctl(int fd, ulong request, ...) nothrow @nogc;
+// Bionic declares the request as `int` (druntime mirrors it), and two
+// extern(C) `ioctl`s with different IR types in one binary do not link.
+version (CRuntime_Bionic)
+    public import core.sys.posix.sys.ioctl : ioctl;
+else
+    extern (C) int ioctl(int fd, ulong request, ...) nothrow @nogc;
 
 /// NUL-terminated C-string array on the GC heap (spawn may allocate).
 char*[] cstrings(scope const(char[])[] items) @trusted
