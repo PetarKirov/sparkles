@@ -84,7 +84,7 @@ $ nix build .#hue-apk            # both ABIs + assets, signed, reproducible
 $ nix build .#hue-apk-repo       # …with the whole repo embedded (separate package id)
 $ nix build .#hue-apk-unsigned   # the release artifact; signed outside nix (fdroid.md)
 $ nix develop .#android          # adb/aapt2 on PATH + helpers
-$ hue-emulator &                 # x86_64 API-35 AVD (created on first use)
+$ hue-emulator &                 # x86_64 AVD of the SDK platform (created on first use)
 $ hue-adb-install result/hue.apk
 $ hue-logcat                     # tags: hue, raylib + crash channels
 ```

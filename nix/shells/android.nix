@@ -74,20 +74,24 @@
       hueEmulator = pkgs.writeShellApplication {
         name = "hue-emulator";
         text = ''
-          # Boots the x86_64 API-35 AVD (created on first run). AVD state
-          # lives under ~/.android-sparkles, off the default ~/.android.
+          # Boots the x86_64 AVD for the SDK's platform (created on first
+          # run). AVD state lives under ~/.android-sparkles, off the default
+          # ~/.android. The AVD is named for its API level, so a platform
+          # bump creates a fresh one instead of reusing an image the SDK no
+          # longer ships.
           export ANDROID_SDK_ROOT=${androidSdk.devSdkRoot}
           : "''${ANDROID_USER_HOME:=$HOME/.android-sparkles}"
           export ANDROID_USER_HOME
           export ANDROID_AVD_HOME="$ANDROID_USER_HOME/avd"
           export ANDROID_EMULATOR_HOME="$ANDROID_USER_HOME"
           mkdir -p "$ANDROID_AVD_HOME"
-          if [ ! -d "$ANDROID_AVD_HOME/hue.avd" ]; then
+          avd=sparkles-${androidSdk.platformVersion}
+          if [ ! -d "$ANDROID_AVD_HOME/$avd.avd" ]; then
             avdmanager=("$ANDROID_SDK_ROOT"/cmdline-tools/*/bin/avdmanager)
-            echo no | "''${avdmanager[0]}" create avd -n hue \
-              -k "system-images;android-35;google_apis;x86_64"
+            echo no | "''${avdmanager[0]}" create avd -n "$avd" \
+              -k "system-images;android-${androidSdk.platformVersion};google_apis;x86_64"
           fi
-          exec "$ANDROID_SDK_ROOT"/emulator/emulator -avd hue "$@"
+          exec "$ANDROID_SDK_ROOT"/emulator/emulator -avd "$avd" "$@"
         '';
       };
 
