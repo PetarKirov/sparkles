@@ -411,17 +411,33 @@ struct KqueueBackend
     /// A relative timer via `EVFILT_TIMER` (unique ident from the op index).
     bool trySubmit(in OpTimeout o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
-        auto op = acquire();
-        if (op is null)
-            return false;
-        const ident = cast(int)(_timerBase + (op - _ops.ptr));
-        *op = KqOp(token.raw, ident, null, 0, OpKindLocal.timer, EVFILT_TIMER, uint.max);
         // Round UP to the millisecond: a timer must never fire EARLY, and
         // truncation makes every fractional-ms deadline do exactly that
         // (found by absolute-deadline pacing: sleepUntil remainders are
         // fractional, and early wakes let a Ticker lap its own grid).
         const ms = o.rel.tv_sec * 1000 + (o.rel.tv_nsec + 999_999) / 1_000_000;
-        return armTimer(op, ms < 0 ? 0 : ms);
+
+        // A zero-length timer is already due: complete it now, like a NOP.
+        // It must not reach the kernel — libkqueue lowers EVFILT_TIMER onto
+        // timerfd, where a zero `it_value` DISARMS the timer instead of
+        // firing it, so the op never completed. A Ticker asks for exactly
+        // this whenever a frame overruns its period (`sleepUntil(now)`), and
+        // the first frame of an Android app always did: the loop parked
+        // forever on its second tick.
+        if (ms <= 0)
+        {
+            if (_synthCount >= _synth.length)
+                return false;
+            _synth[_synthCount++] = RawCompletion(token.raw, 0, 0);
+            return true;
+        }
+
+        auto op = acquire();
+        if (op is null)
+            return false;
+        const ident = cast(int)(_timerBase + (op - _ops.ptr));
+        *op = KqOp(token.raw, ident, null, 0, OpKindLocal.timer, EVFILT_TIMER, uint.max);
+        return armTimer(op, ms);
     }
 
     /**
@@ -1114,6 +1130,30 @@ unittest
     assert(b._changeCount == n, "each one-shot completion queued its delete");
     foreach (i; 0 .. n)
         assert(b._changes[i].flags == EV_DELETE);
+}
+
+/// A zero-length timeout is already due and completes without a kernel round
+/// trip. Through libkqueue it used to become an `EVFILT_TIMER` with `data=0`,
+/// which timerfd reads as "disarm": the op never completed, and a Ticker whose
+/// frame overran its period parked forever (every Android app's second frame).
+@("kqueue.timer.aZeroTimeoutCompletesAtOnce")
+@system
+unittest
+{
+    KqueueBackend b;
+    if (!openOrSkip(b))
+        return;
+    scope (exit)
+        b.close();
+
+    OpSlot slot;
+    assert(b.trySubmit(OpTimeout(KernelTimespec(0, 0)),
+        OpToken.pack(7, 1, OpClass.user), slot));
+    assert(b._changeCount == 0, "nothing for the kernel to arm");
+
+    uint got;
+    got += pumpOnce(b, (ref const RawCompletion c) { assert(c.res == 0); });
+    assert(got == 1, "the zero timer completed on the first pump");
 }
 
 /// The contract repair that falls out of the same change: `trySubmit`'s
