@@ -3,4 +3,4 @@ TERM: foot
 COLORTERM: truecolor
 TMUX:
 ZELLIJ: set
-replies: ESC_Gi=31;ENOTSUPPORTED:kitty graphics not supported by host terminalESC\ESC[?1uESC[?2026;2$yESC[?2031;2$yESCP0+rESC\ESCP0+rESC\ESC[6;13;6tESC[?62;4;52c
+replies: ESC_Gi=31;ENOTSUPPORTED:kitty graphics not supported by host terminalESC\ESC[?1uESC[?2026;2$yESC[?2031;2$yESCP0+rESC\ESCP0+rESC\ESC[6;13;6tESC[1;7RESC[?62;4;52c

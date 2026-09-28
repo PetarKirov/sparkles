@@ -20,15 +20,16 @@ $(LIST
 )
 
 Only what the battery asks is claimed from it: color depth, synchronized
-output (2026), grapheme clustering (2027), color-scheme reports (2031),
-bracketed paste (2004), focus reports (1004), the cell's pixel size
-(`CSI 16 t`), the kitty keyboard and graphics protocols and the DA1 sixel
-attribute — the last three only for rows recorded with them. The facts no
+output (2026), grapheme clustering (2027, or a test cluster's measured
+width), color-scheme reports (2031), bracketed paste (2004), focus reports
+(1004), the cell's pixel size (`CSI 16 t`), the kitty keyboard and graphics
+protocols and the DA1 sixel attribute — the last three only for rows
+recorded with them. The facts no
 query reaches — links, clipboard, notifications, styled underlines, and
 every font fact past the half blocks — are left off (D32): a preset may show
 less than its emulator can, never more.
 
-Presets are a partial order, not a ladder: kitty and Ghostty are each missing
+Presets are a partial order, not a ladder: tmux and Alacritty are each missing
 something the other has. `CAP9`'s monotone chain is the three profiles';
 narrowing a host to a preset is `meet`, which needs no order.
 */
@@ -77,7 +78,7 @@ enum Emulator : ubyte
         da1: "64;1;2;6;9;15;16;17;18;21;22;28;29", paste: ModeReply.reset,
         sync: ModeReply.notRecognized, graphemes: ModeReply.notRecognized,
         scheme: ModeReply.notRecognized, focus: ModeReply.reset, rgb: TcapReply.valid,
-        tc: TcapReply.invalid, cellWidth: 6, cellHeight: 13))
+        tc: TcapReply.invalid, cellWidth: 6, cellHeight: 13, clusterWidth: 6))
     xterm,
 
     @replies("Apple Terminal (macOS 26.3)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
@@ -95,7 +96,7 @@ enum Emulator : ubyte
     @replies("Alacritty 0.16.1 (Linux, xvfb, software GL)", TerminalReplies(
         term: "alacritty", colorterm: "truecolor", da1: "6", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset, graphemes: ModeReply.notRecognized,
-        scheme: ModeReply.notRecognized, focus: ModeReply.reset))
+        scheme: ModeReply.notRecognized, focus: ModeReply.reset, clusterWidth: 6))
     alacritty,
 
     // foot.txt
@@ -103,7 +104,7 @@ enum Emulator : ubyte
         colorterm: "truecolor", da1: "62;4;22;28;52", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset, graphemes: ModeReply.set,
         scheme: ModeReply.reset, focus: ModeReply.reset, rgb: TcapReply.valid,
-        tc: TcapReply.valid, cellWidth: 6, cellHeight: 13))
+        tc: TcapReply.valid, cellWidth: 6, cellHeight: 13, clusterWidth: 2))
     foot,
 
     @replies("WezTerm 2025-10-14 (Linux)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
@@ -118,7 +119,7 @@ enum Emulator : ubyte
         colorterm: "truecolor", da1: "62;52;", kittyKeyboard: true, paste: ModeReply.reset,
         sync: ModeReply.reset, graphemes: ModeReply.notRecognized, scheme: ModeReply.reset,
         focus: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.valid,
-        kittyGraphics: true, cellWidth: 9, cellHeight: 18))
+        kittyGraphics: true, cellWidth: 9, cellHeight: 18, clusterWidth: 2))
     kitty,
 
     // ghostty.txt
@@ -126,7 +127,8 @@ enum Emulator : ubyte
         colorterm: "truecolor", da1: "62;22;52", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset, graphemes: ModeReply.set,
         scheme: ModeReply.reset, focus: ModeReply.reset, rgb: TcapReply.valid,
-        tc: TcapReply.valid, kittyGraphics: true, cellWidth: 10, cellHeight: 21))
+        tc: TcapReply.valid, kittyGraphics: true, cellWidth: 10, cellHeight: 21,
+        clusterWidth: 2))
     ghostty,
 
     // tmux-bare.txt, tmux-foot.txt, tmux-ghostty.txt: tmux answers for
@@ -135,15 +137,15 @@ enum Emulator : ubyte
     @replies("tmux 3.6a on a bare pty", TerminalReplies(term: "tmux-256color",
         colorterm: "truecolor", da1: "1;2;4", paste: ModeReply.reset,
         scheme: ModeReply.reset, focus: ModeReply.reset, multiplexer: true,
-        cellWidth: 16, cellHeight: 32))
+        cellWidth: 16, cellHeight: 32, clusterWidth: 2))
     @replies("tmux 3.6a in foot 1.25.0", TerminalReplies(term: "tmux-256color",
         colorterm: "truecolor", da1: "1;2;4", paste: ModeReply.reset,
         scheme: ModeReply.reset, focus: ModeReply.reset, multiplexer: true,
-        cellWidth: 6, cellHeight: 13))
+        cellWidth: 6, cellHeight: 13, clusterWidth: 2))
     @replies("tmux 3.6a in Ghostty 1.3.1", TerminalReplies(term: "tmux-256color",
         colorterm: "truecolor", da1: "1;2;4", paste: ModeReply.reset,
         scheme: ModeReply.reset, focus: ModeReply.reset, multiplexer: true,
-        cellWidth: 10, cellHeight: 21))
+        cellWidth: 10, cellHeight: 21, clusterWidth: 2))
     tmux,
 
     // zellij-bare.txt, zellij-foot.txt, zellij-ghostty.txt: zellij's graphics
@@ -152,15 +154,16 @@ enum Emulator : ubyte
     @replies("zellij 0.45.1 on a bare pty", TerminalReplies(term: "xterm-256color",
         colorterm: "truecolor", da1: "62;4;52", kittyKeyboard: true, sync: ModeReply.reset,
         scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
-        kittyGraphics: true, multiplexer: true))
+        kittyGraphics: true, multiplexer: true, clusterWidth: 6))
     @replies("zellij 0.45.1 in foot 1.25.0", TerminalReplies(term: "foot",
         colorterm: "truecolor", da1: "62;4;52", kittyKeyboard: true, sync: ModeReply.reset,
         scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
-        multiplexer: true, cellWidth: 6, cellHeight: 13))
+        multiplexer: true, cellWidth: 6, cellHeight: 13, clusterWidth: 6))
     @replies("zellij 0.45.1 in Ghostty 1.3.1", TerminalReplies(term: "xterm-ghostty",
         colorterm: "truecolor", da1: "62;52", kittyKeyboard: true, sync: ModeReply.reset,
         scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
-        kittyGraphics: true, multiplexer: true, cellWidth: 10, cellHeight: 21))
+        kittyGraphics: true, multiplexer: true, cellWidth: 10, cellHeight: 21,
+        clusterWidth: 6))
     zellij,
 }
 
@@ -266,9 +269,9 @@ unittest
         Row(Emulator.alacritty,     C.trueColor, true,  false, false, I.none,  true,  true),
         Row(Emulator.foot,          C.trueColor, true,  true,  true,  I.sixel, true,  true),
         Row(Emulator.wezterm,       C.trueColor, true,  true,  false, I.kitty, true,  false),
-        Row(Emulator.kitty,         C.trueColor, true,  false, true,  I.kitty, true,  true),
+        Row(Emulator.kitty,         C.trueColor, true,  true,  true,   I.kitty, true,  true),
         Row(Emulator.ghostty,       C.trueColor, true,  true,  true,  I.kitty, true,  true),
-        Row(Emulator.tmux,          C.trueColor, false, false, true,  I.none,  true,  false),
+        Row(Emulator.tmux,          C.trueColor, false, true,  true,   I.none,  true,  false),
         Row(Emulator.zellij,        C.trueColor, true,  false, true,  I.none,  false, true),
     ];
     assert(rows.length == emulatorReplies.length, "a row per preset");
@@ -312,13 +315,15 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    // kitty has the scheme reports Ghostty has too, but WezTerm's graphemes
-    // are not kitty's and kitty's key releases are not WezTerm's: neither
-    // contains the other, so no ladder places them.
+    // tmux lays a cluster out as one character and reports the scheme,
+    // which Alacritty does not; Alacritty synchronizes its output and
+    // reports key releases, which tmux does not: neither contains the
+    // other, so no ladder places them.
     const kitty = capabilitiesOf(Emulator.kitty);
-    const wezterm = capabilitiesOf(Emulator.wezterm);
+    const tmux = capabilitiesOf(Emulator.tmux);
+    const alacritty = capabilitiesOf(Emulator.alacritty);
     const ghostty = capabilitiesOf(Emulator.ghostty);
-    assert(!subsetOf(kitty, wezterm) && !subsetOf(wezterm, kitty));
+    assert(!subsetOf(tmux, alacritty) && !subsetOf(alacritty, tmux));
     assert(subsetOf(kitty, ghostty), "Ghostty answers everything kitty does");
     // A preset narrowed by a profile is still below both — `meet` is how the
     // live switch composes them.
