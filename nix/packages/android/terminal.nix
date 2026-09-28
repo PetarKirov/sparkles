@@ -174,7 +174,7 @@
             source = iconSvg;
           };
         in
-        config.legacyPackages.buildAndroidApk (
+        (config.legacyPackages.buildAndroidApk (
           {
             inherit
               pname
@@ -191,7 +191,19 @@
           }
           // lib.optionalAttrs (versionName != null) { inherit versionName; }
           // lib.optionalAttrs (versionCode != null) { inherit versionCode; }
-        );
+        )).overrideAttrs
+          (old: {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.unzip ];
+            # NOD1: the app ships no code for the VM — not by review, by
+            # construction. A dependency that smuggled in a classes.dex (or a
+            # manifest that grew hasCode="true") fails the build here.
+            postInstall = (old.postInstall or "") + ''
+              if unzip -l $out/*.apk | grep -q '\.dex$'; then
+                echo "NOD1: the terminal APK must not contain DEX" >&2
+                exit 1
+              fi
+            '';
+          });
 
       packages.terminal-apk = config.legacyPackages.mkTerminalApk { };
     };
