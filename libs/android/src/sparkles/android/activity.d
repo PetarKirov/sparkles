@@ -29,13 +29,29 @@ struct ANativeActivity
     const(char)* obbPath;
 }
 
-/// The leading fields of native_app_glue's `android_app`.
+/// `<android/rect.h>`'s `ARect`, in window pixels.
+struct ARect
+{
+    int left, top, right, bottom;
+}
+
+/// The leading fields of native_app_glue's `android_app` (NDK r28 layout,
+/// unchanged since the glue's introduction); the tail is never touched.
 struct AndroidApp
 {
     void* userData;
     void* onAppCmd; /// `void function(android_app*, int)`
     void* onInputEvent; /// `int function(android_app*, AInputEvent*)`
     ANativeActivity* activity;
+    void* config;
+    void* savedState;
+    size_t savedStateSize;
+    void* looper;
+    void* inputQueue;
+    void* window; /// `ANativeWindow*`; null while the activity has no surface
+    ARect contentRect; /// the window area not covered by system UI or the IME
+    int activityState;
+    int destroyRequested;
 }
 
 /// Defined by raylib's rcore_android.c; set before it calls our `main()`.
@@ -80,3 +96,17 @@ string externalDataPath() @safe nothrow @nogc => externalDataPathValue;
 
 /// The device's API level (`Build.VERSION.SDK_INT`).
 int sdkVersion() @safe nothrow @nogc => sdkVersionValue;
+
+/**
+Whether the activity currently has a native window to draw into. `false`
+between `APP_CMD_TERM_WINDOW` and the next `APP_CMD_INIT_WINDOW` — the app is
+stopped (in the background, the screen off) and any EGL swap would fail.
+*/
+bool hasNativeWindow() @trusted nothrow @nogc => GetAndroidApp().window !is null;
+
+/**
+The part of the window the app's content may use, in pixels: the window minus
+what the system decorations and the soft keyboard cover, as the framework last
+reported it (`APP_CMD_CONTENT_RECT_CHANGED`). Empty before the first report.
+*/
+ARect contentRect() @trusted nothrow @nogc => GetAndroidApp().contentRect;
