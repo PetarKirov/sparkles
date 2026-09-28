@@ -164,7 +164,7 @@ private int startInstaller(const SessionPaths paths, string defaultUrl)
     import core.thread : Thread;
     import sparkles.event_horizon.bionic : grantpt, posix_openpt, ptsname, unlockpt;
 
-    import installer : runInstaller;
+    import installer : runInstaller, withLocalFiles;
     import sparkles.android.http : download;
 
     const master = posix_openpt(O_RDWR | O_NOCTTY);
@@ -192,8 +192,8 @@ private int startInstaller(const SessionPaths paths, string defaultUrl)
 
     auto t = new Thread({
         const installed = runInstaller(slave, paths, defaultUrl,
-            (string url, string dest, scope void delegate(long, long) nothrow progress)
-                => download(url, dest, progress),
+            withLocalFiles((string url, string dest, scope void delegate(long, long) nothrow progress)
+                => download(url, dest, progress)),
             haveBundled
                 ? (string dest, scope void delegate(long, long) nothrow progress)
                     => copyAssetToFile(bundledAsset, dest, progress)
