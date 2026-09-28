@@ -16,7 +16,11 @@
     the terminal lays its pane out in what remains (droid_terminal.d).
 
     extractNativeLibs="true": ndk-stack symbolization stays simple, and the
-    library is a plain file on disk. -->
+    library is a plain file on disk.
+
+    usesCleartextTraffic="true": the bootstrap URL is the user's to choose, and
+    a local or LAN mirror is often plain http; the default for targetSdk 28
+    would refuse it. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="dev.sparkles.terminal">
 
@@ -32,6 +36,7 @@
         android:icon="@mipmap/ic_launcher"
         android:hasCode="false"
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:extractNativeLibs="true">
         <activity
             android:name="android.app.NativeActivity"

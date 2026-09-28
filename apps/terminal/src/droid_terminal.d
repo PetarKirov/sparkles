@@ -19,7 +19,7 @@ version (Android):
 
 import sparkles.input : Event, GestureEvent, Gesture, KeyEvent, match,
     PointerAction, PointerEvent, WheelEvent;
-import sparkles.terminal_view.component : TerminalView;
+import sparkles.terminal_view.component : TerminalView, TerminalViewOptions;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
@@ -31,6 +31,12 @@ struct DroidTerminal
     TerminalView tv;
     ScreenOracle oracle;
 
+    /// The session that replaces the current one when it ends — the login
+    /// that follows the installer (`NOD7`). Unset, an ended session holds.
+    TerminalViewOptions next;
+    /// ditto
+    bool hasNext;
+
     private float pinchBase = 0; // the font size a pinch started from
 
     @disable this(this);
@@ -39,6 +45,17 @@ struct DroidTerminal
     /// the pty, and decide whether to draw. See `TerminalView.frame`.
     WidgetTree view(H)(ref H h)
     {
+        // The installer's pty ended: the login session takes the pane over.
+        // A fresh component, not a re-`open` of the old one — no scrollback,
+        // overlay or exit bookkeeping of the installer's may leak into it.
+        if (hasNext && tv.s.childExited)
+        {
+            tv.close();
+            tv = TerminalView.init;
+            tv.opts = next;
+            hasNext = false;
+        }
+
         const pane = paneCells(h);
         tv.frame(h, pane.cols, pane.rows);
         oracle.frame(tv);

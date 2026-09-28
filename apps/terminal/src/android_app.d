@@ -9,6 +9,7 @@ version (Android):
 
 import cli : guiOptionsFrom, TerminalCli;
 import droid_terminal : DroidTerminal;
+import sparkles.terminal_view.component : TerminalViewOptions;
 import session;
 import sparkles.base.logger : info, LogLevel, warning;
 import sparkles.ui_app.host : RunConfig;
@@ -76,19 +77,49 @@ int androidMain()
     exit(0);
 }
 
-/// Point the terminal at the session `config` asks for (`NOD4`, `NOD7`).
+/// Point the terminal at the session `config` asks for (`NOD4`, `NOD5`,
+/// `NOD7`): a plain shell, the login of an installed bootstrap, or — when the
+/// bootstrap is not installed yet — the installer, followed by that login.
 private void configureSession(ref DroidTerminal app, const SessionConfig config,
     const SessionPaths paths)
 {
+    import std.file : exists;
+
+    if (config.mode == SessionMode.shell)
+    {
+        app.tv.opts = sessionOptions(paths, false);
+        return;
+    }
+    if (paths.login.exists)
+    {
+        app.tv.opts = sessionOptions(paths, true);
+        return;
+    }
+
+    const master = startInstaller(paths, config.bootstrapUrl);
+    if (master < 0)
+    {
+        warning(i"terminal: cannot start the installer — starting a plain shell");
+        app.tv.opts = sessionOptions(paths, false);
+        return;
+    }
+    app.tv.opts = sessionOptions(paths, false);
+    app.tv.opts.adoptMaster = master;
+    app.next = sessionOptions(paths, true);
+    app.hasNext = true;
+}
+
+/// The options for a plain shell (`bootstrapped = false`) or the bootstrap's
+/// `login` — program, argv, cwd and the whole environment.
+private TerminalViewOptions sessionOptions(const SessionPaths paths, bool bootstrapped)
+{
     import std.array : array;
     import std.algorithm.iteration : map;
-    import std.file : exists, mkdirRecurse;
+    import std.file : mkdirRecurse;
     import std.process : environment;
     import std.string : toStringz;
 
-    const bootstrapped = config.mode == SessionMode.bootstrap && paths.login.exists;
-    if (config.mode == SessionMode.bootstrap && !bootstrapped)
-        warning(i"terminal: no bootstrap installed yet — starting a plain shell");
+    import sparkles.terminal_view.input : ExitBehavior;
 
     string[] parentEnv;
     foreach (key, value; environment.toAA)
@@ -100,13 +131,57 @@ private void configureSession(ref DroidTerminal app, const SessionConfig config,
 
     const(char)*[] envz = env.map!(e => cast(const(char)*) e.toStringz).array;
     envz ~= null;
-    const(char)*[] argv = bootstrapped
-        ? ["-login".ptr, null]
-        : ["-sh".ptr, null];
+    const(char)*[] argv = bootstrapped ? ["-login".ptr, null] : ["-sh".ptr, null];
 
-    app.tv.opts.program = bootstrapped ? paths.login.toStringz : "/system/bin/sh";
-    app.tv.opts.argv = argv;
-    app.tv.opts.cwd = paths.home.toStringz;
-    app.tv.opts.env = envz;
-    app.tv.opts.pollMouse = false; // touch arrives as gestures (DroidTerminal)
+    TerminalViewOptions o;
+    o.program = bootstrapped ? paths.login.toStringz : "/system/bin/sh";
+    o.argv = argv;
+    o.cwd = paths.home.toStringz;
+    o.env = envz;
+    o.pollMouse = false; // touch arrives as gestures (DroidTerminal)
+    // A failed login stays on screen: its message is the only diagnostic.
+    o.exitBehavior = ExitBehavior.holdOnFailure;
+    return o;
+}
+
+/**
+Open a pty and run the installer on its slave, on a thread of its own; returns
+the master for the pane to adopt, or `-1`. The thread closes the slave when the
+installer finishes, which is what ends the pane's installer session.
+*/
+private int startInstaller(const SessionPaths paths, string defaultUrl)
+{
+    import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
+    import core.sys.posix.unistd : close;
+    import core.thread : Thread;
+    import sparkles.event_horizon.bionic : grantpt, posix_openpt, ptsname, unlockpt;
+
+    import installer : runInstaller;
+    import sparkles.android.http : download;
+
+    const master = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master < 0)
+        return -1;
+    if (grantpt(master) != 0 || unlockpt(master) != 0)
+    {
+        close(master);
+        return -1;
+    }
+    const slave = open(ptsname(master), O_RDWR | O_NOCTTY);
+    if (slave < 0)
+    {
+        close(master);
+        return -1;
+    }
+
+    auto t = new Thread({
+        const installed = runInstaller(slave, paths, defaultUrl,
+            (string url, string dest, scope void delegate(long, long) nothrow progress)
+                => download(url, dest, progress));
+        info(i"terminal: installer finished, installed=$(installed)");
+        close(slave);
+    });
+    t.isDaemon = true;
+    t.start();
+    return master;
 }

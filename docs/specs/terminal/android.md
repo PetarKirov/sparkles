@@ -1,6 +1,6 @@
 # `apps/terminal` on Android — the nix-on-droid terminal
 
-_**Status:** accepted, in delivery (slices A–B shipped) · **Date:** 2026-09-28 ·
+_**Status:** accepted, in delivery (slices A–C shipped) · **Date:** 2026-09-28 ·
 **Owners:** `apps/terminal` (the app and its session modes),
 [`sparkles:android`](../../guidelines/packages.md) (NDK/JNI plumbing),
 `nix/packages/android/terminal.nix` (the APK builder) · **Consumer:**
@@ -122,8 +122,8 @@ Normative for `apps/terminal` on Android unless the owner says otherwise.
 | ----- | ------------------------------------------------------------------------------------------------------------------- | ------- |
 | A     | Bionic build fixes, zero-timer fix, `sparkles:android` (logcat, assets, JNI worker, clipboard, text), spawn options | shipped |
 | B     | `terminal.nix` builder + plain-mode APK (NOD1–4, NOD8, NOD12, NOD14), soft keyboard, focus/stop handling (NOD9)     | shipped |
-| C     | Bootstrap mode (NOD5–7): installer, download, extraction                                                            | next    |
-| D     | Extra keys and `~/.termux` appearance (NOD10, NOD11)                                                                |         |
+| C     | Bootstrap mode (NOD5–7): installer, download, extraction                                                            | shipped |
+| D     | Extra keys and `~/.termux` appearance (NOD10, NOD11)                                                                | next    |
 | E     | nix-on-droid side: app-id option, bootstrap for the new app, flake output building the APK, docs                    |         |
 | F     | IPC (NOD13) and the emulator test port                                                                              |         |
 
