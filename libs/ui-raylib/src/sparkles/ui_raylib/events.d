@@ -94,13 +94,19 @@ struct RaylibEvents
         }
 
         // -- pointer -----------------------------------------------------
+        // A touch target (no hover) takes its contacts from the recogniser
+        // below only: raylib also reports the first finger as a mouse, and
+        // those synthesized buttons would deliver every drag's end as a
+        // click. The wheel still reads here — nothing on a touch target
+        // produces one, so it costs nothing.
+        const touchOnly = !capabilities.hover;
         const mp = GetMousePosition();
         const inside = mp.x >= 0 && mp.y >= 0
             && mp.x < GetScreenWidth() && mp.y < GetScreenHeight();
         const pos = metrics.toCell(mp.x, mp.y);
         const mods = currentMods();
 
-        if (!inside && wasInside)
+        if (!inside && wasInside && !touchOnly)
             sink(Event(PointerEvent(action: PointerAction.leave, pos: pos)));
         wasInside = inside;
 
@@ -119,6 +125,8 @@ struct RaylibEvents
         {
             const rb = cast(MouseButton) pair[0];
             const btn = cast(PointerButton) pair[1];
+            if (touchOnly)
+                continue;
             if (IsMouseButtonPressed(rb))
                 sink(Event(PointerEvent(action: PointerAction.press,
                     button: btn, pos: pos, mods: mods)));
@@ -128,7 +136,7 @@ struct RaylibEvents
             anyDown |= IsMouseButtonDown(rb);
         }
 
-        if (inside && (mp.x != lastX || mp.y != lastY))
+        if (inside && !touchOnly && (mp.x != lastX || mp.y != lastY))
         {
             sink(Event(PointerEvent(
                 action: anyDown ? PointerAction.drag : PointerAction.move,

@@ -25,9 +25,11 @@ module sparkles.ui_app.gui_loop;
 
 version (UiAppGui):
 
+import core.time : msecs;
+
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.buffer : SharedBuffer;
-import sparkles.input : Event, InputCapabilities, Mods, mousePointer;
+import sparkles.input : Event, InputCapabilities, Mods, mousePointer, touchPointer;
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
@@ -227,6 +229,9 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     host.session = &session;
     host.declareTarget(raylibCapabilities);
     host.capabilities = mousePointer;
+    version (Android)
+        if (cfg.touchGestures)
+            host.capabilities = touchPointer;
     // The terminal-grade keyboard, where the application asked for it: the
     // capability declaration IS the switch — RaylibEvents reads it back.
     host.capabilities.keyRelease = cfg.keyRelease;
@@ -281,7 +286,11 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         // `HST6`: no swap, no clear — the last frame stays up. The window
         // system still gets its input pump (endFrame does it implicitly on
         // the drawing path).
-        if (host.frameSkipped)
+        //
+        // A window with no surface (an Android activity while stopped) takes
+        // the same path: the application's non-drawing work — a terminal's
+        // pty drain — ran in `present`, and there is nothing to swap to.
+        if (host.frameSkipped || !session.window.surfaceReady)
         {
             session.window.pumpEvents();
             return;
@@ -335,9 +344,16 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
                 host._spawnDaemon = (void delegate() b) { scP.spawnDaemon(b); };
                 scope (exit) host._spawnDaemon = null;
 
-                auto ticker = Ticker.start(sched, (1_000_000 / fps).usecs);
+                const period = (1_000_000 / fps).usecs;
+                auto ticker = Ticker.start(sched, period);
                 while (!session.window.shouldClose && !host.quitRequested)
                 {
+                    // Surfaceless (an Android app in the background): keep
+                    // pumping — input, lifecycle, the application's own work —
+                    // at a pace that costs no battery to speak of, and take
+                    // the full rate back the tick after the surface returns.
+                    ticker.reschedule(session.window.surfaceReady
+                        ? period : hiddenFramePeriod);
                     // Park in the ring until the frame is due: async work
                     // runs here, costing no frames and dropping no input
                     // (HST9).
@@ -354,6 +370,12 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         oneFrame();
     return true;
 }
+
+/// The frame period of a loop whose window has no surface ($(REF
+/// surfaceReady, sparkles,ui_raylib,window)): slow enough to cost nothing,
+/// fast enough that output a background terminal produced is drained well
+/// before its pty buffer fills.
+enum hiddenFramePeriod = 250.msecs;
 
 // A template arm is analysed only where it is instantiated, and this package
 // has no application — so without this the whole GPU loop could be broken and

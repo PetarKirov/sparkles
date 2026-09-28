@@ -105,6 +105,15 @@ struct RunConfig
     */
     bool keyRelease;
     /**
+    GPU target: declare the window a touch surface (`touchPointer`) where the
+    platform is one (Android): contacts then arrive only as the gesture
+    recogniser resolves them — a tap as press/release, a drag as wheel steps,
+    long-press and pinch as gestures — and never as raylib's emulated mouse,
+    which reports every drag's end as a click. Off by default, which keeps an
+    application written against the emulated mouse (hue) unchanged.
+    */
+    bool touchGestures;
+    /**
     TUI: ask the terminal what it can do before the first frame (`CAP3`) — the
     query battery, fenced by DA1, bounded by a short timeout — so the target
     declares what the terminal answered: 24-bit colour, synchronized output,
