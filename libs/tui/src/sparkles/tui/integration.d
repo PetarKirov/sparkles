@@ -466,6 +466,34 @@ unittest
     assert(drain(pty.master, rb).canFind("\x1b[?1004l"));
 }
 
+@("integration.pty.graphemeClustersAreNegotiated")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.test_runner.skip : skipTest;
+
+    auto r = openPty();
+    if (r.hasError)
+        skipTest("no pty available");
+    auto pty = Pty(r.value);
+    auto term = Terminal.open(TerminalOptions(altScreen: false, hideCursor: false, mouse: false),
+        pty.slave, pty.slave);
+    assert(term.active);
+    char[] rb;
+    drain(pty.master, rb);
+
+    // Mode 2027 on when asked, once, and off again on close.
+    assert(!term.graphemeClusters);
+    term.enableGraphemeClusters();
+    term.enableGraphemeClusters();
+    assert(term.graphemeClusters);
+    const on = drain(pty.master, rb).idup;
+    assert(on == "\x1b[?2027h", on);
+    term.close();
+    assert(drain(pty.master, rb).canFind("\x1b[?2027l"));
+}
+
 @("integration.pty.bracketedPasteIsOnePaste")
 @system
 unittest
