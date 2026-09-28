@@ -67,6 +67,10 @@ struct TerminalReplies
     /// and describe the host terminal only where it relays them (`CAP7`).
     bool multiplexer;
     ushort cellWidth, cellHeight; /// `CSI 16 t`'s answer, `0` when unanswered
+    /// The cells $(LREF probeCluster) took, by the cursor report after it —
+    /// `2` where the terminal lays a cluster out as one wide character, the
+    /// sum of its code points' widths where it does not; `0` when unanswered.
+    ubyte clusterWidth;
     bool fenced;           /// DA1 arrived: every earlier reply is in
 }
 
@@ -91,8 +95,13 @@ Applies `r` to `t`, a snapshot the environment already filled:
 $(LIST
     * colour depth is raised to 24-bit when `XTGETTCAP` answers `RGB` or `Tc`
         — never where the environment turned colour off;
-    * `syncOutput`, `graphemeClusters` and `colorSchemeNotify` are what their
-        mode answers (on, or can be set);
+    * `syncOutput` and `colorSchemeNotify` are what their mode answers (on,
+        or can be set);
+    * `graphemeClusters` is what mode 2027 answers, or what the terminal was
+        seen to do: $(LREF probeCluster) took the two cells of one wide
+        character. The mode alone does not say — kitty clusters without
+        recognizing it — and the measurement is the layout's own, a
+        multiplexer's where one sits in between;
     * `images` is kitty when the graphics query answers, else sixel when DA1
         lists attribute `4` — but not under a multiplexer (`CAP7`), where the
         attribute is a static advertisement, not a confirmed passthrough;
@@ -104,7 +113,7 @@ void applyReplies(ref TermCaps t, in TerminalReplies r) @safe pure nothrow @nogc
     if (t.colorDepth != ColorDepth.none && (r.rgb == TcapReply.valid || r.tc == TcapReply.valid))
         t.colorDepth = ColorDepth.trueColor;
     t.syncOutput = r.sync.available;
-    t.graphemeClusters = r.graphemes.available;
+    t.graphemeClusters = r.graphemes.available || r.clusterWidth == 2;
     t.colorSchemeNotify = r.scheme.available;
     t.images = r.kittyGraphics ? ImageProtocol.kitty
         : !r.multiplexer && listsAttribute(r.da1, "4") ? ImageProtocol.sixel
@@ -112,18 +121,29 @@ void applyReplies(ref TermCaps t, in TerminalReplies r) @safe pure nothrow @nogc
     t.cellPixelSize = r.cellWidth != 0 && r.cellHeight != 0;
 }
 
+/// The battery's test cluster: a ZWJ family (man, woman, girl), one wide
+/// character where the terminal clusters and three where it does not.
+enum string probeCluster = "\U0001F468\u200D\U0001F469\u200D\U0001F467";
+
 /**
 The battery (`CAP3`), in one write: the kitty graphics query (a 1×1 image,
 id 31, queried and never stored), the kitty keyboard flags, `DECRQM` for
 modes 2004, 2026, 2027, 2031 and 1004, `XTGETTCAP` for `RGB` and `Tc`, the
-cell's pixel size (`CSI 16 t`) — then primary DA, the fence. Terminals answer
-in order, so DA1's reply proves every earlier one is in or never coming.
+cell's pixel size (`CSI 16 t`), the width of $(LREF probeCluster) — printed
+at the line's start, the cursor reported (`CSI 6 n`) and the line erased —
+then primary DA, the fence. Terminals answer in order, so DA1's reply proves
+every earlier one is in or never coming.
+
+The cursor report is the one reply a key can spell: a modified F3 on a
+legacy keyboard is `CSI 1 ; m R` too. Only the first report counts, and the
+kitty keyboard protocol (which `sparkles:tui` pushes) sends F3 as `CSI 13 ~`.
 */
 enum string queryBattery = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\"
     ~ "\x1b[?u"
     ~ "\x1b[?2004$p\x1b[?2026$p\x1b[?2027$p\x1b[?2031$p\x1b[?1004$p"
     ~ "\x1bP+q524742\x1b\\\x1bP+q5463\x1b\\"
     ~ "\x1b[16t"
+    ~ "\r" ~ probeCluster ~ "\x1b[6n\r\x1b[K"
     ~ "\x1b[c";
 
 /**
@@ -182,7 +202,8 @@ void parseReplies(in ubyte[] bytes, ref TerminalReplies r, ref ubyte[] rest)
             i += end + 2;
             continue;
         }
-        // CSI: DA1, `DECRPM`, the kitty keyboard flags, the cell size.
+        // CSI: DA1, `DECRPM`, the kitty keyboard flags, the cell size, the
+    // cursor report.
         if (startsWith(at, "\x1b["))
         {
             size_t j = 2;
@@ -233,6 +254,20 @@ void parseReplies(in ubyte[] bytes, ref TerminalReplies r, ref ubyte[] rest)
                 }
                 i += j + 1;
                 continue;
+            }
+            if (!priv && !dollar && fin == 'R' && r.clusterWidth == 0)
+            {
+                // The cursor report after the test cluster: the cluster
+                // began in column 1, so it took one cell fewer than the
+                // column the cursor is in.
+                const semi = find(params, ";");
+                if (semi != size_t.max && semi > 0)
+                {
+                    const col = number(params[semi + 1 .. $]);
+                    r.clusterWidth = cast(ubyte)(col <= 1 ? 0 : col - 1 > ubyte.max ? ubyte.max : col - 1);
+                    i += j + 1;
+                    continue;
+                }
             }
             if (!priv && !dollar && fin == 't' && startsWith(params, "6;"))
             {
@@ -342,7 +377,7 @@ unittest
         ~ "\x1b[?2004;2$y\x1b[?2026;2$yj\x1b[?2027;1$y\x1b[?2031;2$y\x1b[?1004;2$y"
         ~ "\x1bP1+r524742=38\x1b\\\x1bP1+r5463\x1b\\"
         ~ "\x1b]11;rgb:2424/2424/2424\x07"
-        ~ "\x1b[6;13;6t\x1b[?62;4;22;28;52c");
+        ~ "\x1b[6;13;6t\x1b[3;3R\x1b[?62;4;22;28;52c");
     TerminalReplies r;
     ubyte[] rest;
     parseReplies(bytes, r, rest);
@@ -351,9 +386,32 @@ unittest
     assert(r.graphemes == ModeReply.set && r.scheme == ModeReply.reset);
     assert(r.focus == ModeReply.reset);
     assert(r.rgb == TcapReply.valid && r.tc == TcapReply.valid);
-    assert(r.cellWidth == 6 && r.cellHeight == 13);
+    assert(r.cellWidth == 6 && r.cellHeight == 13 && r.clusterWidth == 2);
     assert(r.da1 == "62;4;22;28;52");
     assert(rest == cast(const(ubyte)[]) "j\x1b]11;rgb:2424/2424/2424\x07");
+}
+
+@("term_replies.clusterWidth")
+@safe pure nothrow
+unittest
+{
+    TermCaps t;
+    // XTerm, measured: no mode 2027, and the family is three wide
+    // characters.
+    TerminalReplies r;
+    ubyte[] rest;
+    parseReplies(cast(const(ubyte)[]) "\x1b[?2027;0$y\x1b[7;7R", r, rest);
+    assert(r.clusterWidth == 6 && rest.length == 0);
+    applyReplies(t, r);
+    assert(!t.graphemeClusters);
+    // kitty, measured: no mode 2027 either, but one wide character.
+    r = TerminalReplies.init;
+    parseReplies(cast(const(ubyte)[]) "\x1b[?2027;0$y\x1b[7;3R", r, rest);
+    applyReplies(t, r);
+    assert(r.clusterWidth == 2 && t.graphemeClusters);
+    // Only the first report is the battery's: a later one is input.
+    parseReplies(cast(const(ubyte)[]) "\x1b[1;5R", r, rest);
+    assert(r.clusterWidth == 2 && rest == cast(const(ubyte)[]) "\x1b[1;5R");
 }
 
 @("term_replies.parseReplies.namelessRefusalsGoInOrder")
@@ -436,36 +494,40 @@ unittest
         M paste, sync, graphemes, scheme, focus;
         X rgb, tc;
         ushort cellWidth, cellHeight;
+        ubyte clusterWidth;
         P images;
     }
     static immutable Row[] rows = [
         Row("kitty.txt",     true,  true,  M.reset, M.reset, M.notRecognized, M.reset, M.reset,
-            X.invalid, X.valid, 9, 18, P.kitty),
+            X.invalid, X.valid, 9, 18, 2, P.kitty),
         Row("ghostty.txt",   true,  true,  M.reset, M.reset, M.set, M.reset, M.reset,
-            X.valid, X.valid, 10, 21, P.kitty),
+            X.valid, X.valid, 10, 21, 2, P.kitty),
         Row("foot.txt",      false, true,  M.reset, M.reset, M.set, M.reset, M.reset,
-            X.valid, X.valid, 6, 13, P.sixel),
+            X.valid, X.valid, 6, 13, 2, P.sixel),
         Row("xterm.txt",     false, false, M.reset, M.notRecognized, M.notRecognized,
-            M.notRecognized, M.reset, X.valid, X.invalid, 6, 13, P.none),
+            M.notRecognized, M.reset, X.valid, X.invalid, 6, 13, 6, P.none),
         Row("alacritty.txt", false, true,  M.reset, M.reset, M.notRecognized, M.notRecognized,
-            M.reset, X.none, X.none, 0, 0, P.none),
+            M.reset, X.none, X.none, 0, 0, 6, P.none),
         // tmux answers for itself, under any host: no graphics or keyboard
         // reply relayed, DA1's sixel not believed under a multiplexer
-        // (`CAP7`), and a cell size of its own on a bare pty.
+        // (`CAP7`), a cell size of its own on a bare pty, and a cluster
+        // laid out as one character though it answers nothing for 2027.
         Row("tmux-foot.txt", false, false, M.reset, M.none, M.none, M.reset, M.reset,
-            X.none, X.none, 6, 13, P.none),
+            X.none, X.none, 6, 13, 2, P.none),
         Row("tmux-ghostty.txt", false, false, M.reset, M.none, M.none, M.reset, M.reset,
-            X.none, X.none, 10, 21, P.none),
+            X.none, X.none, 10, 21, 2, P.none),
         Row("tmux-bare.txt", false, false, M.reset, M.none, M.none, M.reset, M.reset,
-            X.none, X.none, 16, 32, P.none),
+            X.none, X.none, 16, 32, 2, P.none),
         // zellij's graphics answer follows its host; it answers neither
-        // paste nor focus, and refuses `XTGETTCAP` without naming what.
+        // paste nor focus, and refuses `XTGETTCAP` without naming what. It
+        // lays a cluster out as its code points, even over hosts that
+        // cluster: the layout the cells follow is the multiplexer's.
         Row("zellij-bare.txt", true, true, M.none, M.reset, M.none, M.reset, M.none,
-            X.invalid, X.invalid, 0, 0, P.kitty),
+            X.invalid, X.invalid, 0, 0, 6, P.kitty),
         Row("zellij-foot.txt", false, true, M.none, M.reset, M.none, M.reset, M.none,
-            X.invalid, X.invalid, 6, 13, P.none),
+            X.invalid, X.invalid, 6, 13, 6, P.none),
         Row("zellij-ghostty.txt", true, true, M.none, M.reset, M.none, M.reset, M.none,
-            X.invalid, X.invalid, 10, 21, P.kitty),
+            X.invalid, X.invalid, 10, 21, 6, P.kitty),
     ];
     foreach (row; rows)
     {
@@ -477,6 +539,7 @@ unittest
             && r.scheme == row.scheme && r.focus == row.focus, row.file);
         assert(r.rgb == row.rgb && r.tc == row.tc, row.file);
         assert(r.cellWidth == row.cellWidth && r.cellHeight == row.cellHeight, row.file);
+        assert(r.clusterWidth == row.clusterWidth, row.file);
 
         // And what the answers declare, over the environment's snapshot.
         TermCaps caps;
@@ -485,6 +548,7 @@ unittest
         assert(caps.images == row.images, row.file);
         assert(caps.syncOutput == row.sync.available, row.file);
         assert(caps.cellPixelSize == (row.cellWidth != 0), row.file);
+        assert(caps.graphemeClusters == (row.clusterWidth == 2 || row.graphemes.available), row.file);
         // Every one of these can show 24-bit colour: from `$COLORTERM`, or —
         // XTerm, whose `$TERM` says 16 — from its `RGB` answer.
         assert(caps.colorDepth == ColorDepth.trueColor, row.file);
