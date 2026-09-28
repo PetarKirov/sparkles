@@ -113,6 +113,69 @@ bool extractAssetBundle(string dataDir, scope const string[] ownedDirs,
     return allOk;
 }
 
+/// Whether the APK carries the asset `name`.
+bool hasAsset(scope const(char)[] name) @trusted
+{
+    auto mgr = nativeActivity().assetManager;
+    auto asset = AAssetManager_open(mgr, name.toStringz, aassetModeStreaming);
+    if (asset is null)
+        return false;
+    AAsset_close(asset);
+    return true;
+}
+
+/**
+Stream the asset `name` into the file `dest` (created or truncated), reporting
+`progress(copied, total)`; `null` on success, else the reason. For assets too
+large to hold in memory at once — a bundled bootstrap is tens of megabytes. A
+failed copy removes `dest`.
+*/
+string copyAssetToFile(scope const(char)[] name, string dest,
+    scope void delegate(long copied, long total) nothrow progress = null) @trusted
+{
+    import std.file : remove;
+    import std.stdio : File;
+
+    auto mgr = nativeActivity().assetManager;
+    auto asset = AAssetManager_open(mgr, name.toStringz, aassetModeStreaming);
+    if (asset is null)
+        return "the APK has no asset " ~ name.idup;
+    scope (exit) AAsset_close(asset);
+
+    const total = AAsset_getLength64(asset);
+    try
+    {
+        auto file = File(dest, "wb");
+        ubyte[64 * 1024] buf = void;
+        long copied;
+        for (;;)
+        {
+            const n = AAsset_read(asset, buf.ptr, buf.length);
+            if (n < 0)
+            {
+                file.close();
+                remove(dest);
+                return "reading the asset failed";
+            }
+            if (n == 0)
+                break;
+            file.rawWrite(buf[0 .. n]);
+            copied += n;
+            if (progress !is null)
+                progress(copied, total);
+        }
+        file.close();
+    }
+    catch (Exception e)
+    {
+        try
+            remove(dest);
+        catch (Exception) {}
+        return e.msg;
+    }
+    return null;
+}
+
 /// Read one asset fully; `null` when absent, unreadable or empty.
 ubyte[] readAssetBytes(scope const(char)[] name) @trusted
 {
