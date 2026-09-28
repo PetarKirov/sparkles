@@ -678,13 +678,20 @@ struct RaylibCanvas
         const md = cellW < cellH ? cellW : cellH;
         const unit = md / 14 < 1 ? 1.0f : cast(float)(md / 14);
         const inset = b.style == BorderStyle.solid ? cellW / 2.0f : 0;
+        // A solid box with a side the terminal draws as `│` is drawn as the
+        // terminal draws it, horizontals too: `─` centred in its row, meeting
+        // the `│`s at `┌┐└┘` (`┏┓┗┛` heavy) rather than overshooting them.
+        // Without a vertical side there is no corner, and a bottom-only rule
+        // keeps the edge the terminal's underline uses.
+        const insetY = b.style == BorderStyle.solid
+            && (b.width.left || b.width.right) ? cellH / 2.0f : 0;
         // The four rectangles come from `borderEdges`, which is pure and
         // tested. Computing them here is how the vertical pair ended up
         // passing the horizontal argument order — `len` and `thick` swap
         // meaning between the two axes, and a box whose left border drew as
         // a stripe across the box was invisible to every test in the
         // repository.
-        foreach (e; borderEdges(x, y, w, h, b.width, unit, inset))
+        foreach (e; borderEdges(x, y, w, h, b.width, unit, inset, insetY))
             strokeEdge(e, b.style, c);
     }
 
@@ -860,18 +867,61 @@ put their `│` and a glyph-composed corner's stem meets it; zero makes a
 vertical stroke straddle the rect edge (the dotted/dashed accents).
 */
 BorderEdge[4] borderEdges(float x, float y, float w, float h, in Insets width,
-    float unit = 1, float inset = 0) @safe pure nothrow @nogc
+    float unit = 1, float inset = 0, float insetY = 0) @safe pure nothrow @nogc
 {
+    const t = width.top * unit;
+    const b = width.bottom * unit;
     const l = width.left * unit;
     const r = width.right * unit;
+    // Centre lines of the four strokes. With `insetY` the horizontals sit
+    // in the middle of their rows, and every stroke runs between the centre
+    // lines of the two it meets — so each corner is a `┌`, not a `┼` with
+    // half a cell of overshoot on one arm.
+    const cxL = x + inset;
+    const cxR = x + w - inset;
+    const cyT = y + insetY;
+    const cyB = y + h - insetY;
+    // A horizontal spans to a present vertical's outer face, else the rect.
+    const hx0 = insetY > 0 && width.left ? cxL - l / 2 : x;
+    const hx1 = insetY > 0 && width.right ? cxR + r / 2 : x + w;
+    // A vertical spans to a present horizontal's outer face, else the rect.
+    const vy0 = insetY > 0 && width.top ? cyT - t / 2 : y;
+    const vy1 = insetY > 0 && width.bottom ? cyB + b / 2 : y + h;
     return [
-        BorderEdge(x, y, w, width.top * unit),                            // top
-        BorderEdge(x, y + h - width.bottom * unit, w,
-            width.bottom * unit),                                         // bottom
-        BorderEdge(width.left ? x + inset - l / 2 : x, y, l, h),          // left
-        BorderEdge(width.right ? x + w - inset - r / 2 : x + w - r, y,
-            r, h),                                                        // right
+        BorderEdge(hx0, insetY > 0 ? cyT - t / 2 : y, hx1 - hx0, t),      // top
+        BorderEdge(hx0, insetY > 0 ? cyB - b / 2 : y + h - b, hx1 - hx0,
+            b),                                                           // bottom
+        BorderEdge(width.left ? cxL - l / 2 : x, vy0, l, vy1 - vy0),      // left
+        BorderEdge(width.right ? cxR - r / 2 : x + w - r, vy0,
+            r, vy1 - vy0),                                                // right
     ];
+}
+
+@("ui_raylib.raylib_canvas.borderEdgesMeetAtBoxDrawingCorners")
+@safe pure nothrow @nogc
+unittest
+{
+    // A solid box in a window must read as `┌─┐ │ └─┘`, as it does in a
+    // terminal: each stroke centred in its cell row or column, and each
+    // corner a meeting of two arms, with neither running past the other.
+    enum x = 0.0f, y = 0.0f, w = 130.0f, h = 60.0f; // 13 x 3 cells of 10 x 20
+    foreach (unit; [1.0f, 2.0f]) // light, then heavy
+    {
+        const e = borderEdges(x, y, w, h, Insets.all(1), unit, inset: 5,
+            insetY: 10);
+        // Centred: in the middle of the top/bottom rows, left/right columns.
+        assert(e[0].y + e[0].h / 2 == 10 && e[1].y + e[1].h / 2 == 50);
+        assert(e[2].x + e[2].w / 2 == 5 && e[3].x + e[3].w / 2 == 125);
+        // Meeting: the horizontals end at the verticals' outer faces, and
+        // the verticals at the horizontals' — no arm crosses a corner.
+        assert(e[0].x == e[2].x && e[0].x + e[0].w == e[3].x + e[3].w);
+        assert(e[2].y == e[0].y && e[2].y + e[2].h == e[1].y + e[1].h);
+        assert(e[3].y == e[2].y && e[3].h == e[2].h);
+    }
+
+    // No vertical side (a bottom-only underline) keeps its edge placement.
+    const u = borderEdges(x, y, w, h, Insets(0, 0, 1, 0), 1, inset: 5);
+    assert(u[1] == BorderEdge(0, 59, 130, 1));
 }
 
 @("ui_raylib.raylib_canvas.borderEdgesStayNearTheBoxTheyBorder")
