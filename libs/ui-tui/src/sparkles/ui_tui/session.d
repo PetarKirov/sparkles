@@ -54,9 +54,10 @@ struct TerminalRequest
     /// reports too — what a hover affordance needs, at one event per move.
     bool motion;
     /// Ask the terminal what it can do (`CAP3`) before the first frame: the
-    /// query battery, fenced by DA1. Off by default: see
+    /// query battery, fenced by DA1. On by default; off for a peer known not
+    /// to answer, which costs the timeout — see
     /// $(REF Terminal.probe, sparkles,tui,terminal).
-    bool probe;
+    bool probe = true;
 }
 
 /**
