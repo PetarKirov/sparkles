@@ -81,6 +81,13 @@ struct SessionPaths
     string termuxDir() const @safe pure nothrow => buildPath(home, ".termux");
     /// The on-device test oracle's directory (`NOD14`).
     string debugDir() const @safe pure nothrow => buildPath(files, ".debug");
+    /// The app's package name: the data dir is `…/<package>/files`.
+    string packageName() const @safe pure nothrow
+    {
+        import std.path : baseName, dirName;
+
+        return files.dirName.baseName;
+    }
 }
 
 ///
@@ -92,6 +99,7 @@ struct SessionPaths
     assert(p.prefix == "/data/user/0/dev.sparkles.nix/files/usr");
     assert(p.login == "/data/user/0/dev.sparkles.nix/files/usr/bin/login");
     assert(p.termuxDir == "/data/user/0/dev.sparkles.nix/files/home/.termux");
+    assert(p.packageName == "dev.sparkles.nix");
 }
 
 /**
@@ -125,7 +133,13 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
         "COLORTERM=truecolor",
     ];
     if (prefixed)
+    {
         own ~= "PREFIX=" ~ p.prefix;
+        // Which app this is — as a Termux-based app says it. nix-on-droid
+        // defaults `build.androidAppId` to it, so a configuration that does
+        // not name the app still builds its paths for this one.
+        own ~= "TERMUX_APP__PACKAGE_NAME=" ~ p.packageName;
+    }
 
     static immutable dropped = ["LD_LIBRARY_PATH", "LD_PRELOAD"];
     string[] result;
@@ -153,7 +167,7 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
 {
     import std.algorithm.searching : canFind;
 
-    const p = SessionPaths("/f");
+    const p = SessionPaths("/data/org.example/files");
     const parent = [
         "ANDROID_ROOT=/system", "HOME=/", "LD_PRELOAD=libsigchain.so",
         "PATH=/sbin:/system/bin", "BOOTCLASSPATH=/apex/x.jar", "odd",
@@ -163,16 +177,17 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
     assert(boot.canFind("ANDROID_ROOT=/system"), "system variables pass through");
     assert(boot.canFind("BOOTCLASSPATH=/apex/x.jar"));
     assert(!boot.canFind("LD_PRELOAD=libsigchain.so"), "loader overrides never leak");
-    assert(!boot.canFind("HOME=/") && boot.canFind("HOME=/f/home"),
+    assert(!boot.canFind("HOME=/") && boot.canFind("HOME=/data/org.example/files/home"),
         "the session's own values replace the parent's");
-    assert(boot.canFind("PREFIX=/f/usr"));
-    assert(boot.canFind("PATH=/f/usr/bin"), "the prefix alone, as Termux sets it");
-    assert(boot.canFind("TMPDIR=/f/usr/tmp"));
+    assert(boot.canFind("PREFIX=/data/org.example/files/usr"));
+    assert(boot.canFind("PATH=/data/org.example/files/usr/bin"), "the prefix alone, as Termux sets it");
+    assert(boot.canFind("TMPDIR=/data/org.example/files/usr/tmp"));
+    assert(boot.canFind("TERMUX_APP__PACKAGE_NAME=org.example"));
     assert(!boot.canFind("odd"), "an entry without `=` is not an entry");
 
     const shell = sessionEnvironment(parent, p, false);
     assert(shell.canFind("PATH=/system/bin"));
-    assert(shell.canFind("TMPDIR=/f/tmp"));
+    assert(shell.canFind("TMPDIR=/data/org.example/files/tmp"));
     assert(!shell.canFind!(e => e.length >= 7 && e[0 .. 7] == "PREFIX="));
 }
 
