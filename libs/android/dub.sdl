@@ -1,0 +1,35 @@
+name "android"
+description "NativeActivity glue: the activity handle, logcat, the APK asset bundle, JNI bridges"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:base" path="../.."
+
+// Everything platform-bound is `version (Android)`, so on a desktop host the
+// package is its pure helpers (bundle.d) and a set of empty modules — which is
+// what lets any library depend on it unconditionally. The ImportC shim for
+// <jni.h> lives in c/, outside every source path: dub compiles any .c file it
+// finds in one, and a desktop host has no NDK header. The nix cross build
+// passes it to ldc2 by path (nix/packages/android/build-d-android-lib.nix).
+configuration "library" {
+    targetType "sourceLibrary"
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses. Neither `debug` (which compiles those blocks in) nor
+// `release` (which deletes assert *expressions*, side effects included).
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}

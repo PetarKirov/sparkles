@@ -75,6 +75,7 @@
         "Have_sparkles_ui_raylib"
         "Have_sparkles_ui_tui"
         "Have_sparkles_ui_app"
+        "Have_sparkles_android"
         "Have_sparkles_event_horizon"
         "Have_sparkles_input"
         "Have_raylib_d"
@@ -83,12 +84,12 @@
         "Have_during"
       ];
 
-      # The app closure + apps/hue/android, which `sourceFor` turns into this
-      # derivation's src. The JNI bridge's ImportC shim (jni_c.c) lives there
-      # rather than under apps/hue/src precisely so dub never scans it — a
+      # The app closure + libs/android/c, which `sourceFor` turns into this
+      # derivation's src. The JNI ImportC shim (jni_c.c) lives there rather
+      # than under libs/android/src precisely so dub never scans it — a
       # desktop host has no NDK <jni.h> — and it is passed to ldc2 by explicit
       # path below.
-      srcDirs = sources.srcClosure "apps/hue" ++ [ "apps/hue/android" ];
+      srcDirs = sources.srcClosure "apps/hue" ++ [ "libs/android/c" ];
 
       libhue = pkgs.stdenv.mkDerivation {
         pname = "libhue-android";
@@ -121,7 +122,7 @@
               -P-I${ndk.sysrootInclude} \
               -i \
               apps/hue/src/app.d \
-              apps/hue/android/jni_c.c \
+              libs/android/c/jni_c.c \
               ${config.packages.raylib-android}/lib/${t.abi}/libraylib.a \
               ${config.packages.tree-sitter-android}/lib/${t.abi}/libtree-sitter.a \
               ${config.packages.libghostty-vt-android}/lib/${t.abi}/libghostty-vt.a \

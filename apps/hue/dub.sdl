@@ -14,6 +14,7 @@ stringImportPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
+dependency "sparkles:android" path="../.."
 dependency "sparkles:syntax" path="../.."
 dependency "sparkles:source-view" path="../.."
 dependency "sparkles:diff" path="../.."

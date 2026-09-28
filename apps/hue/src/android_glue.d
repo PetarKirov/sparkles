@@ -1,209 +1,43 @@
 /**
-The platform glue of the Android build: the one module that talks to the NDK
-surface. Everything else receives plain paths and values (the pure derivations
-live in `android_paths.d`, host-tested).
-
-What lives here:
-$(LIST
-    * hand-declared `extern(C)` mirrors of the stable head of
-        `android_app`/`ANativeActivity` — ImportC cannot parse
-        `android_native_app_glue.h` (its kernel-header closure trips on
-        `__int128`/`__alignof__`), and only these leading fields are touched;
-    * `GetAndroidApp()` — defined by raylib's rcore_android.c (not bound by
-        raylib-d), valid from `android_main` on, i.e. before `main()` runs;
-    * the logcat logger (stdout/stderr go nowhere in a NativeActivity);
-    * the first-run asset extraction via `AAssetManager` — `hasCode="false"`
-        means there is no Java to do it. `AAssetDir` cannot enumerate
-        subdirectories, so the nix build writes `assets/asset-manifest.txt`
-        (one relative path per line): the manifest IS the directory listing.
-)
+hue's half of the Android glue: the app-specific layout and policies over the
+NDK/JNI plumbing in `sparkles:android` (activity handle, logcat, asset bundle,
+clipboard). The pure path derivations live in `android_paths.d`, host-tested.
 */
 module android_glue;
 
 version (Android):
 
-import std.logger : Logger;
-import std.string : fromStringz, splitLines, strip, toStringz;
-
-import sparkles.base.logger : CoreLogEntry, CoreLogger, LogLevel, sharedCoreLog,
-    warning;
-import sparkles.base.buffer : SharedBuffer;
-import sparkles.base.text.writers : writeInteger;
-
 import android_paths;
-
-// ── NDK mirrors ──────────────────────────────────────────────────────────────
-
-// The leading fields of <android/native_activity.h>'s ANativeActivity; the
-// tail is never touched here.
-private struct ANativeActivity
-{
-    void* callbacks;
-    void* vm;
-    void* env;
-    void* clazz;
-    const(char)* internalDataPath;
-    const(char)* externalDataPath;
-    int sdkVersion;
-    void* instance;
-    void* assetManager; // AAssetManager*
-    const(char)* obbPath;
-}
-
-// The leading fields of native_app_glue's android_app.
-private struct AndroidApp
-{
-    void* userData;
-    void* onAppCmd;
-    void* onInputEvent;
-    ANativeActivity* activity;
-}
-
-// Defined by raylib's rcore_android.c; set before it calls our main().
-private extern (C) AndroidApp* GetAndroidApp() @nogc nothrow;
-
-// <android/log.h>
-private extern (C) int __android_log_write(
-    int prio, const(char)* tag, const(char)* text) @nogc nothrow;
-
-// <android/asset_manager.h> — just the calls the extractor needs.
-private extern (C) void* AAssetManager_open(
-    void* mgr, const(char)* filename, int mode) @nogc nothrow;
-private extern (C) int AAsset_read(void* asset, void* buf, size_t count) @nogc nothrow;
-private extern (C) long AAsset_getLength64(void* asset) @nogc nothrow;
-private extern (C) void AAsset_close(void* asset) @nogc nothrow;
-
-private enum aassetModeStreaming = 2;
-
-private enum int logPrioInfo = 4;
-private enum int logPrioWarn = 5;
-private enum int logPrioError = 6;
+import sparkles.base.logger : LogLevel, warning;
 
 /// The logcat tag every hue log line carries (matches the `hue-logcat` filter).
 enum logTag = "hue";
 
-// ── data dir ─────────────────────────────────────────────────────────────────
-
-/**
-The app's private data directory (`ANativeActivity.internalDataPath`) — the
-root of the extracted asset bundle and all writable state.
-
-Resolved once, into `immutable`, by the module constructor below, so there is
-no mutable global and no lazy check: the value genuinely is a constant for the
-process, and now says so in the type. (Named for the `ANativeActivity` field
-it mirrors, so a local `dataDir` never shadows it.)
-*/
-private immutable string internalDataPath;
-
-/**
-Resolve the data dir at module-construction time.
-
-The ordering this depends on is exact, so it is worth writing down. raylib's
-`android_main` sets `platform.app` and only then calls `main()`
-(rcore_android.c: `platform.app = app;` immediately precedes the `main(…)`
-call), and LDC's generated C `main` enters `_d_run_main`, which runs `rt_init`
-— and therefore every module constructor — before the D `main` body. So
-`GetAndroidApp()` is already valid here, one step earlier than the "valid from
-`android_main` on" the module header states.
-
-A null `internalDataPath` is not a crash: `fromStringz(null)` is empty and
-`.idup` yields `""`, which every derived path already treats as unusable.
-*/
-shared static this() @trusted
+/// The app's private data directory — the root of the extracted asset bundle
+/// and all writable state.
+string androidDataDir() @safe nothrow @nogc
 {
-    internalDataPath = GetAndroidApp().activity.internalDataPath.fromStringz.idup;
+    import sparkles.android.activity : internalDataPath;
+
+    return internalDataPath;
 }
-
-/// See $(LREF internalDataPath). Reading module-level `immutable` needs no
-/// trust, so unlike the `__gshared` cache this replaced, the accessor is fully
-/// `@safe` — and `nothrow @nogc` besides.
-string androidDataDir() @safe nothrow @nogc => internalDataPath;
-
-// ── logcat sink ──────────────────────────────────────────────────────────────
 
 /// Replace the process loggers with the logcat sink, tag "hue". Call after
-/// `runCli`'s `initLogger` (this overrides that sink): in a NativeActivity,
-/// stderr — where the default DeltaTimeLogger writes — goes nowhere.
+/// `runCli`'s `initLogger` (this overrides that sink).
 void installLogcatSink(LogLevel level) @safe
 {
-    import std.logger : globalLogLevel, sharedLog;
-    import sparkles.base.logger : coreGlobalLogLevel;
+    import sparkles.android.log : install = installLogcatSink;
 
-    globalLogLevel = level;
-    coreGlobalLogLevel = level; // the IES wrappers filter on the core level
-    auto logger = new shared LogcatLogger(level);
-    sharedLog = logger;
-    sharedCoreLog = logger;
+    install(level, logTag);
 }
 
-private final class LogcatLogger : CoreLogger
-{
-    this(this Q)(LogLevel level) @safe
-    {
-        super(level);
-    }
-
-    override protected void writeLogMsg(ref Logger.LogEntry payload) @safe
-    {
-        const entry = CoreLogEntry(level: payload.logLevel, file: payload.file,
-            line: payload.line);
-        writeCoreLog(entry, payload.msg);
-    }
-
-    override protected void writeCoreLog(
-        const ref CoreLogEntry entry,
-        scope const(char)[] message,
-    ) @safe nothrow @nogc
-    {
-        const prio = entry.level >= LogLevel.error ? logPrioError
-            : entry.level >= LogLevel.warning ? logPrioWarn : logPrioInfo;
-
-        // logcat wants one NUL-terminated line; file:line preserves the
-        // DeltaTimeLogger's most useful context.
-        SharedBuffer!(char, 512) buf;
-        buf ~= entry.file;
-        buf ~= ':';
-        writeInteger(buf, entry.line);
-        buf ~= ": ";
-        buf ~= message;
-        buf ~= '\0';
-        (() @trusted => __android_log_write(prio, logTag.ptr, buf[].ptr))();
-    }
-}
-
-// ── clipboard ────────────────────────────────────────────────────────────────
-
-/**
-Copy `text` to the system clipboard through the activity's `ClipboardManager`
-(the JNI dance itself lives in `android_clipboard.d`, over an ImportC'd
-`<jni.h>`). Returns `false` when any JNI step failed.
-
-Takes a slice, not a `const(char)*`: a raw pointer made this an unchecked
-NUL-termination precondition laundered into `@safe` (any `@safe` caller may
-legally pass `someSlice.ptr`), and the bridge wants a length anyway.
-*/
+/// Copy `text` to the system clipboard (`false` when the JNI bridge failed).
 bool setClipboardText(scope const(char)[] text) @safe nothrow
 {
-    import std.utf : toUTF16;
+    import sparkles.android.clipboard : set = setClipboardText;
 
-    import android_clipboard : jniSetClipboardText = setClipboardText;
-
-    try
-    {
-        // Java strings are UTF-16; transcoding here is what lets the bridge
-        // use NewString and sidestep modified-UTF-8 entirely (astral scalars
-        // — emoji in a copied selection — are the case that breaks).
-        const wstring utf16 = () @trusted { return text.toUTF16; }();
-        return (() @trusted {
-            auto activity = GetAndroidApp().activity;
-            return jniSetClipboardText(activity.vm, activity.clazz, utf16);
-        })();
-    }
-    catch (Exception)
-        return false; // invalid UTF in the selection → report the failure
+    return set(text, logTag);
 }
-
-// ── debug environment ────────────────────────────────────────────────────────
 
 /// Load `<dataDir>/hue-debug.env` into the process environment, re-enabling
 /// the `HUE_GUI_*` golden/debug hooks on-device (an activity has no shell to
@@ -213,148 +47,31 @@ void loadDebugEnv() @safe
     import std.file : exists, readText;
     import std.process : environment;
 
+    import sparkles.android.bundle : parseEnvFile;
+
     const path = debugEnvPath(androidDataDir());
     if (!path.exists)
         return;
     try
-        foreach (pair; parseDebugEnv(readText(path)))
+        foreach (pair; parseEnvFile(readText(path)))
             environment[pair.key] = pair.value;
     catch (Exception e)
         warning(i"hue: unreadable hue-debug.env: $(e.msg)");
 }
 
-// ── asset extraction ─────────────────────────────────────────────────────────
-
 /**
 Extract the APK asset bundle (fonts + charset sidecars, grammar queries,
-sample docs) into the data dir — on first run, or again whenever the APK's
-`bundle-hash` asset differs from the `assets-ready` marker of the last
-completed extraction. The marker is written $(I last), so a torn extraction
-re-runs. Returns `true` when the assets are present (current or just
-extracted); `false` (after a warning) leaves hue on its built-in degradations
-— plain-text rendering, default document only.
+sample docs) into the data dir when the bundle changed. Returns `true` when
+the assets are present; `false` (after a warning) leaves hue on its built-in
+degradations — plain-text rendering, default document only.
 */
 bool extractAssetsIfNeeded() @safe
 {
-    import std.file : exists, mkdirRecurse, readText, rmdirRecurse, write;
-    import std.path : buildPath, dirName;
+    import sparkles.android.assets : extractAssetBundle;
 
     const dataDir = androidDataDir();
-    const hash = readAssetText("bundle-hash");
-    if (hash is null)
-    {
-        warning(i"hue: no asset bundle in this APK (bundle-hash missing)");
-        return false;
-    }
-
-    const marker = assetsReadyPath(dataDir);
-    try
-        if (marker.exists && assetsUpToDate(readText(marker), hash))
-            return true;
-    catch (Exception) { /* unreadable marker → re-extract */ }
-
-    // Reaching here means the bundle changed (or never landed), so the
-    // previous extraction's tree is stale. Remove it first: extraction only
-    // ever overwrote, never pruned, so switching between the sample build and
-    // the repo-embedded one left ~1.5k orphaned files behind and the explorer
-    // kept listing a repository the installed APK no longer carries.
-    //
     // Only the directories the bundle owns — never the whole data dir, which
-    // also holds hue-debug.env and the marker.
-    foreach (owned; [fontsDir(dataDir), grammarQueriesRoot(dataDir), docsDir(dataDir)])
-    {
-        try
-            if (owned.exists)
-                rmdirRecurse(owned);
-        catch (Exception e)
-            warning(i"hue: could not clear stale assets in $(owned): $(e.msg)");
-    }
-
-    const manifest = readAssetText("asset-manifest.txt");
-    if (manifest is null)
-    {
-        warning(i"hue: asset bundle has no asset-manifest.txt");
-        return false;
-    }
-
-    // Every listed asset must land before the marker is written. Skipping one
-    // and marking the bundle ready anyway made the degradation PERMANENT: the
-    // next launch sees a current marker, skips extraction, and the missing
-    // font face or query file never returns until the APK's hash changes.
-    bool allOk = true;
-    try
-    {
-        foreach (line; manifest.splitLines)
-        {
-            const rel = line.strip;
-            if (rel.length == 0)
-                continue;
-            if (!isSafeAssetRel(rel))
-            {
-                warning(i"hue: refusing unsafe manifest entry: $(rel)");
-                allOk = false;
-                continue;
-            }
-            auto bytes = readAssetBytes(rel);
-            if (bytes is null)
-            {
-                warning(i"hue: asset listed but unreadable: $(rel)");
-                allOk = false;
-                continue;
-            }
-            const dest = buildPath(dataDir, rel);
-            mkdirRecurse(dest.dirName);
-            write(dest, bytes);
-        }
-        if (allOk)
-            write(marker, hash);
-        else
-            warning(i"hue: incomplete asset extraction — will retry next launch");
-    }
-    catch (Exception e)
-    {
-        warning(i"hue: asset extraction failed: $(e.msg)");
-        return false;
-    }
-    return allOk;
-}
-
-// Read one asset fully; null when absent/unreadable.
-private ubyte[] readAssetBytes(scope const(char)[] name) @trusted
-{
-    auto mgr = GetAndroidApp().activity.assetManager;
-    auto asset = AAssetManager_open(mgr, name.toStringz, aassetModeStreaming);
-    if (asset is null)
-        return null;
-    scope (exit) AAsset_close(asset);
-
-    const len = AAsset_getLength64(asset);
-    if (len < 0)
-        return null;
-    // A zero-length asset would allocate a null-pointer empty slice, which the
-    // callers' `is null` test reads as "unreadable" — so it is rejected here
-    // explicitly rather than being silently conflated. No asset in the bundle
-    // is empty (the manifest is generated from real files), so this is a
-    // guard, not a live case.
-    if (len == 0)
-        return null;
-    auto buf = new ubyte[cast(size_t) len];
-    size_t got;
-    while (got < buf.length)
-    {
-        const n = AAsset_read(asset, buf.ptr + got, buf.length - got);
-        if (n <= 0)
-            return null; // truncated read → treat as unreadable
-        got += n;
-    }
-    return buf;
-}
-
-private string readAssetText(scope const(char)[] name) @safe
-{
-    auto bytes = readAssetBytes(name);
-    // `bytes` is freshly allocated by readAssetBytes and never escapes it, so
-    // this is the one place that knows the buffer is unaliased — the cast is
-    // the only unsafe operation in the function.
-    return bytes is null ? null : (() @trusted => cast(string) bytes)();
+    // also holds hue-debug.env, config.json and the marker.
+    static immutable owned = ["fonts", "grammars", "docs"];
+    return extractAssetBundle(dataDir, owned, assetsReadyPath(dataDir));
 }
