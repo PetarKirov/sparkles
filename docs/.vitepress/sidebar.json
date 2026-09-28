@@ -870,6 +870,28 @@
           {
             "text": "CustomFloat spec",
             "link": "/specs/base/custom-float"
+          },
+          {
+            "text": "Capability VFS",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SPEC",
+                "link": "/specs/base/vfs/SPEC"
+              },
+              {
+                "text": "PLAN",
+                "link": "/specs/base/vfs/PLAN"
+              },
+              {
+                "text": "Testing",
+                "link": "/specs/base/vfs/testing"
+              },
+              {
+                "text": "Decisions",
+                "link": "/specs/base/vfs/decisions"
+              }
+            ]
           }
         ]
       },
