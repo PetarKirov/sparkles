@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The terminal APK manifest (docs/specs/terminal/android.md): a pure
+    NativeActivity — no Java, no DEX (hasCode="false", NOD1). The framework's
+    android.app.NativeActivity loads lib/<abi>/libterminal.so; raylib's
+    PLATFORM_ANDROID backend inside it calls the terminal's main().
+
+    A template: nix/packages/android/terminal.nix substitutes @label@ and
+    renames the package (aapt2 rename-manifest-package) to the app id it was
+    asked for, so the plain terminal and the nix-on-droid app are one source.
+
+    targetSdk is 28 (NOD3, stamped by the builder): from API 29 an app
+    targeting it may not execve files in its own data dir, and nix-on-droid's
+    login runs proot-static from there.
+
+    windowSoftInputMode="adjustResize": the IME shrinks the content rect, and
+    the terminal lays its pane out in what remains (droid_terminal.d).
+
+    extractNativeLibs="true": ndk-stack symbolization stays simple, and the
+    library is a plain file on disk. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.sparkles.terminal">
+
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+
+    <!-- The bootstrap download (NOD5), and whatever the session runs. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- termux-wake-lock (NOD13): keep the CPU up for a long job. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:label="@label@"
+        android:icon="@mipmap/ic_launcher"
+        android:hasCode="false"
+        android:allowBackup="false"
+        android:extractNativeLibs="true">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|density|uiMode"
+            android:windowSoftInputMode="adjustResize|stateAlwaysHidden"
+            android:screenOrientation="fullUser">
+            <meta-data android:name="android.app.lib_name" android:value="terminal" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -125,6 +125,9 @@ in
           # Overrides the manifest's package id, so two variants of the same
           # app can be installed side by side.
           renamePackage ? null,
+          # Defaults to the compile SDK. An app that must exec files from its
+          # own data dir pins 28 (docs/specs/terminal/android.md, NOD3).
+          targetSdk ? sdk.platformVersion,
           description ? "Android package",
         }:
         # Four guards. The first two keep `sign = false` an honest third state
@@ -228,7 +231,7 @@ in
               --manifest ${manifest} \
               -I ${sdk.androidJar} \
               --min-sdk-version ${config.legacyPackages.androidNdk.minSdk} \
-              --target-sdk-version ${sdk.platformVersion} \
+              --target-sdk-version ${toString targetSdk} \
               --version-code ${toString versionCode} \
               --version-name ${lib.escapeShellArg versionName} \
               --replace-version \

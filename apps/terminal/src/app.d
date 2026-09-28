@@ -21,6 +21,18 @@ import sparkles.ui_app.run_app : runApp;
 
 int main(string[] args)
 {
+    version (Android)
+    {
+        import android_app : androidMain;
+
+        return androidMain();
+    }
+    else
+        return desktopMain(args);
+}
+
+private int desktopMain(string[] args)
+{
     import std.array : join;
     import std.stdio : stderr;
     import std.string : toStringz;

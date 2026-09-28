@@ -1342,6 +1342,16 @@
         ]
       },
       {
+        "text": "Terminal",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Android (nix-on-droid app)",
+            "link": "/specs/terminal/android"
+          }
+        ]
+      },
+      {
         "text": "TUI",
         "collapsed": true,
         "items": [
