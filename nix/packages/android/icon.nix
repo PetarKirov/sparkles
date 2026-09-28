@@ -1,5 +1,6 @@
-# `packages.hue-icon` — the launcher icon resource tree, rasterized from ONE
-# committed SVG (apps/hue/android/icon/ic_launcher.svg).
+# `legacyPackages.mkAndroidIcon` — a launcher icon resource tree, rasterized
+# from ONE committed SVG (`packages.hue-icon`: apps/hue/android/icon/
+# ic_launcher.svg; `packages.terminal-icon`: apps/terminal/android/icon/).
 #
 # Why generate instead of checking in five PNGs: one source of truth, and the
 # repo keeps its no-binaries property — `.svg` is already in hue.nix's
@@ -19,11 +20,11 @@
 {
   perSystem =
     { pkgs, system, ... }:
-    lib.optionalAttrs (system == "x86_64-linux") {
-      packages.hue-icon =
+    lib.optionalAttrs (system == "x86_64-linux") rec {
+      # Any app's icon from its SVG — hue's and the terminal's are two calls.
+      legacyPackages.mkAndroidIcon =
+        { name, source }:
         let
-          source = ../../../apps/hue/android/icon/ic_launcher.svg;
-
           # Android's density buckets, as multiples of the 48 dp baseline
           # (mdpi = 1×). `fdroid update` maps the directory suffix back to a
           # density and resizes to `density * 48 / 160`, so shipping the whole
@@ -45,11 +46,11 @@
               ${source} ${out}
           '';
         in
-        pkgs.runCommand "hue-icon"
+        pkgs.runCommand name
           {
             nativeBuildInputs = [ pkgs.resvg ];
             meta = {
-              description = "hue launcher icon: mipmap resource tree + F-Droid listing icon";
+              description = "${name}: launcher mipmap resource tree + F-Droid listing icon";
               platforms = [ "x86_64-linux" ];
             };
           }
@@ -67,5 +68,15 @@
             # zip carry into the APK do not change on every rebuild.
             find $out -exec touch -h -d "@$SOURCE_DATE_EPOCH" {} +
           '';
+
+      packages.hue-icon = legacyPackages.mkAndroidIcon {
+        name = "hue-icon";
+        source = ../../../apps/hue/android/icon/ic_launcher.svg;
+      };
+
+      packages.terminal-icon = legacyPackages.mkAndroidIcon {
+        name = "terminal-icon";
+        source = ../../../apps/terminal/android/icon/ic_launcher.svg;
+      };
     };
 }

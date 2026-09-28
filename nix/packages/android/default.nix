@@ -22,6 +22,7 @@
     ./ndk.nix
     ./raylib.nix
     ./sdk.nix
+    ./terminal.nix
     ./tree-sitter.nix
     ./ts-grammars.nix
   ];
@@ -67,6 +68,9 @@
         hue-apk-unsigned = config.packages.hue-apk-unsigned;
         hue-aab-unsigned = config.packages.hue-aab-unsigned;
         hello-apk = config.packages.hello-apk;
+        # The terminal's plain-shell APK; the nix-on-droid variant is the same
+        # closure with a different session.conf, built in that flake.
+        terminal-apk = config.packages.terminal-apk;
       };
 
       # The names this module owns, so nix/packages/all.nix can subtract them
@@ -92,7 +96,10 @@
         "libhello-android"
         "libhue-android"
         "libkqueue-android"
+        "libterminal-android"
         "raylib-android"
+        "terminal-apk"
+        "terminal-icon"
         "tree-sitter-android"
         "ts-grammars-android"
       ];

@@ -11,6 +11,7 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "raylib-d" version="~>6.0.1"
 dependency "expected" version="~>0.4.0"
 
+dependency "sparkles:android" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:base" path="../.."
 dependency "sparkles:ghostty" path="../.."
