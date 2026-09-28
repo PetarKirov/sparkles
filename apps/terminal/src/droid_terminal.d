@@ -42,6 +42,10 @@ struct DroidTerminal
 
     /// The extra-keys layout, rows top to bottom (`extra_keys.extraKeysFrom`).
     ExtraKey[][] keys;
+    /// `~/.termux`, where the layout and the colour scheme live (`NOD10`,
+    /// `NOD11`); `loadSettings` reads it, at start and on
+    /// `termux-reload-settings`.
+    string termuxDir;
     private Latch latch;
     private bool keyboardShown;
     private float pinchBase = 0; // the font size a pinch started from
@@ -63,6 +67,11 @@ struct DroidTerminal
             tv.opts = next;
             hasNext = false;
         }
+
+        import am_server : takeReloadRequest;
+
+        if (takeReloadRequest())
+            loadSettings();
 
         const g = geometry(h);
         // The key row moves with the keyboard even when the pane's cell grid
@@ -97,6 +106,41 @@ struct DroidTerminal
         tv.paintPanePx(h, 0, g.top, g.paneCols * tv.s.cellWidth,
             g.paneRows * tv.s.cellHeight);
         paintKeys(g);
+    }
+
+    /**
+    (Re)read `~/.termux`: the extra-keys layout, and the colour scheme for the
+    running session and the one that follows it. A missing file means the
+    defaults — deleting `colors.properties` and reloading restores them.
+    */
+    void loadSettings()
+    {
+        import extra_keys : extraKeysFrom;
+        import termux_config : parseTermuxColors;
+
+        keys = extraKeysFrom(readSetting("termux.properties"));
+        const colors = parseTermuxColors(readSetting("colors.properties"));
+        tv.recolor(colors);
+        next.colors = colors;
+        tv.invalidate();
+    }
+
+    private string readSetting(string name)
+    {
+        import std.file : exists, readText;
+        import std.path : buildPath;
+        import sparkles.base.logger : warning;
+
+        if (termuxDir.length == 0)
+            return "";
+        const path = buildPath(termuxDir, name);
+        try
+            return path.exists ? readText(path) : "";
+        catch (Exception e)
+        {
+            warning(i"terminal: unreadable $(path): $(e.msg)");
+            return "";
+        }
     }
 
     // ── keys ────────────────────────────────────────────────────────────────
