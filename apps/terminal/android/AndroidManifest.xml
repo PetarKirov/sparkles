@@ -30,6 +30,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- termux-wake-lock (NOD13): keep the CPU up for a long job. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- termux-setup-storage (NOD13): ~/storage links into shared storage.
+        Requested at run time, only when the tool asks. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
     <application
         android:label="@label@"
