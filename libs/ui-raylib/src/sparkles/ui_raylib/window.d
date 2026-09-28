@@ -142,6 +142,15 @@ struct Window
             SetTargetFPS(r.targetFps);
         if (!r.platformExitKey)
             SetExitKey(KeyboardKey.KEY_NULL);
+        // raylib's Android backend reports key codes but never typed text;
+        // the hook in front of its input callback supplies what
+        // `GetCharPressed` would ($(REF typedChar, sparkles,ui_raylib,events)).
+        version (Android)
+        {
+            import sparkles.android.text_input : installTextInputHook;
+
+            installTextInputHook();
+        }
         return w;
     }
 
@@ -266,9 +275,19 @@ struct Window
     bool pointerVisible() const @system => pointerVisible_;
 
     /// Puts `text` on the system clipboard. Unbounded — a copied selection may
-    /// be a whole document.
+    /// be a whole document. On Android raylib's `SetClipboardText` is a no-op,
+    /// so the text goes through the JNI `ClipboardManager` bridge instead.
     void clipboard(in char[] text) @trusted
-        => SetClipboardText(text.toTempStringz!1024.ptr);
+    {
+        version (Android)
+        {
+            import sparkles.android.clipboard : setClipboardText;
+
+            cast(void) setClipboardText(text);
+        }
+        else
+            SetClipboardText(text.toTempStringz!1024.ptr);
+    }
 
     /**
     Requests that the surface be written to `path`.
