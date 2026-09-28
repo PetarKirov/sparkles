@@ -207,6 +207,11 @@ struct TerminalViewOptions
     /// The child's whole environment, NUL-terminated `KEY=VALUE` entries and
     /// a null terminator; null inherits the parent's (sanitized) environment.
     const(char)*[] env = null;
+    /// Poll raylib's mouse each frame (selection, hover, wheel, mouse
+    /// reporting). A touch embedder turns it off and routes its own gestures
+    /// — `scrollViewport`, `routePointer` — since raylib reports a finger as
+    /// a mouse and a drag would otherwise select instead of scroll.
+    bool pollMouse = true;
 }
 
 /**
@@ -663,7 +668,7 @@ struct TerminalView
 
         // The mouse, still polled (see the module header): identical routing,
         // selection, scrollbar and hover behavior to the pre-component loop.
-        if (!s.childExited)
+        if (!s.childExited && opts.pollMouse)
             handle_mouse(s.pty_fd, s.mouse_encoder, s.mouse_event, s.terminal,
                 s.cellWidth, s.cellHeight, paneCols * s.cellWidth,
                 paneRows * s.cellHeight, s.selState, s.sbState,
@@ -732,12 +737,17 @@ struct TerminalView
     */
     void paintPane(H)(ref H h, in Rect rect)
     {
+        paintPanePx(h, rect.x * s.cellWidth, rect.y * s.cellHeight,
+            rect.width * s.cellWidth, rect.height * s.cellHeight);
+    }
+
+    /// $(LREF paintPane) at a pixel rect — for a pane whose origin is not a
+    /// whole number of cells from the window's (Android's content rect sits
+    /// under a status bar of arbitrary height).
+    void paintPanePx(H)(ref H h, int px, int py, int pw, int ph)
+    {
         import raylib.rlgl : rlPopMatrix, rlPushMatrix, rlTranslatef;
 
-        const px = rect.x * s.cellWidth;
-        const py = rect.y * s.cellHeight;
-        const pw = rect.width * s.cellWidth;
-        const ph = rect.height * s.cellHeight;
         if (pw <= 0 || ph <= 0)
             return;
 
