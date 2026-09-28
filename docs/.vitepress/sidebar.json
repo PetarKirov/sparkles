@@ -219,6 +219,10 @@
             "link": "/apps/terminal/getting-started"
           },
           {
+            "text": "On Android",
+            "link": "/apps/terminal/android"
+          },
+          {
             "text": "Reference",
             "collapsed": true,
             "items": [

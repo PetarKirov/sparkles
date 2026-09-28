@@ -79,10 +79,12 @@ and Ctrl +/- font zoom. See [key and mouse bindings](./reference/bindings.md).
 - [CLI reference](./reference/cli.md) — every flag, with defaults.
 - [Key and mouse bindings](./reference/bindings.md) — shortcuts, selection,
   scrollback, links.
+- [On Android](./android.md) — the APK, and nix-on-droid's app.
 
 ## Limitations
 
-Linux/POSIX only (it spawns the shell with `forkpty`). One window, one
+Linux/POSIX only (it spawns the shell with `forkpty`) — and
+[Android](./android.md), as a native app. One window, one
 terminal: no tabs, splits, or configuration file — configuration is the
 command line. Font discovery shells out to fontconfig (`fc-match`,
 `fc-query`), which the Nix dev shell provides.
