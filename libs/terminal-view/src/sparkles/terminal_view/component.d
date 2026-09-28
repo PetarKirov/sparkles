@@ -14,8 +14,9 @@ loop called it. Its scrollbar now runs the toolkit `ScrollView` machine over
 the laid-out pane extents (`TVW9`); converting the remaining mouse path to
 events is a later, separately-measured step (`TVW6`'s discipline, applied to
 input).
-Clipboard $(B reads) also stay raylib's (`GetClipboardText`): the host has no
-clipboard-read errand yet.
+Clipboard $(B reads) bypass the host (it has no clipboard-read errand yet):
+raylib's `GetClipboardText` on the desktop, the JNI `ClipboardManager` bridge
+on Android, where raylib's is a no-op.
 
 $(B Ordering parity:) the polling loop drained the pty before encoding input,
 so the encoders always saw the current frame's mode changes. Events arrive
@@ -29,7 +30,7 @@ import core.sys.posix.fcntl : F_GETFD, F_GETFL, F_SETFD, F_SETFL, fcntl,
     FD_CLOEXEC, O_NONBLOCK;
 import core.sys.posix.sys.ioctl : ioctl, TIOCSWINSZ, winsize;
 import core.sys.posix.sys.types : pid_t;
-import core.sys.posix.unistd : execv, getuid, read, _exit;
+import core.sys.posix.unistd : chdir, execv, execve, getuid, read, _exit;
 
 import raylib;
 
@@ -47,6 +48,25 @@ import sparkles.terminal_view.input : ExitBehavior, handle_mouse,
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
+
+/// The system clipboard's text (see the module comment: reads bypass the
+/// host); empty when it holds none.
+private const(char)[] readClipboard() @system
+{
+    version (Android)
+    {
+        import sparkles.android.clipboard : getClipboardText;
+
+        return getClipboardText();
+    }
+    else
+    {
+        import core.stdc.string : strlen;
+
+        const(char)* clip = GetClipboardText();
+        return clip is null ? null : clip[0 .. strlen(clip)];
+    }
+}
 
 extern (C) private int forkpty(int* amaster, char* name, const void* termp,
     const winsize* winp);
@@ -173,6 +193,20 @@ struct TerminalViewOptions
     /// The emulator's own overlay scrollbar. An embedding application draws
     /// its bar beside the pane and turns this one off (`TVW7`).
     bool internalScrollbar = true;
+
+    /// An explicit program to run instead of the user's shell: the executable
+    /// (an absolute path — no `PATH` search) and its whole argv, `argv[0]`
+    /// included (so a login shell spells its `-login` there), null-terminated.
+    /// `shellCommand` is ignored when set. Owned by the caller; must outlive
+    /// `open`.
+    const(char)* program = null;
+    /// ditto
+    const(char)*[] argv = null;
+    /// The child's working directory; null inherits the parent's.
+    const(char)* cwd = null;
+    /// The child's whole environment, NUL-terminated `KEY=VALUE` entries and
+    /// a null terminator; null inherits the parent's (sanitized) environment.
+    const(char)*[] env = null;
 }
 
 /**
@@ -315,7 +349,16 @@ struct TerminalView
         }
         if (s.child == 0)
         {
-            execv(shellZ, cast(char**) argv.ptr);
+            // Only async-signal-safe calls between fork and exec.
+            if (opts.cwd !is null)
+                cast(void) chdir(opts.cwd);
+            const(char)* prog = opts.program !is null ? opts.program : shellZ;
+            auto args = opts.program !is null ? cast(char**) opts.argv.ptr
+                : cast(char**) argv.ptr;
+            if (opts.env !is null)
+                execve(prog, args, cast(char**) opts.env.ptr);
+            else
+                execv(prog, args);
             _exit(127);
         }
 
@@ -1180,13 +1223,7 @@ struct TerminalView
                 return;
             if (k.unshifted == 'v')
             {
-                const(char)* clip = GetClipboardText();
-                if (clip !is null)
-                {
-                    import core.stdc.string : strlen;
-
-                    sendPaste(clip[0 .. strlen(clip)]);
-                }
+                sendPaste(readClipboard());
                 return;
             }
         }
@@ -1259,6 +1296,35 @@ struct TerminalView
                 && written > 0)
                 pty_write(s.pty_fd, fbuf.ptr, written);
         }
+    }
+
+    /**
+    The terminal's text as plain lines — scrollback and screen, soft wraps
+    joined, trailing blanks trimmed; `null` when unopened or on failure. What
+    a test (or an on-device oracle) reads instead of pixels.
+    */
+    string screenText() @system
+    {
+        if (!opened)
+            return null;
+
+        GhosttyFormatterTerminalOptions fmtOpts;
+        fmtOpts.size = GhosttyFormatterTerminalOptions.sizeof;
+        fmtOpts.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
+        fmtOpts.unwrap = true;
+        fmtOpts.trim = true;
+
+        GhosttyFormatter fmt;
+        if (ghostty_formatter_terminal_new(null, &fmt, s.terminal, fmtOpts) != GHOSTTY_SUCCESS)
+            return null;
+        scope (exit) ghostty_formatter_free(fmt);
+
+        ubyte* outPtr;
+        size_t outLen;
+        if (ghostty_formatter_format_alloc(fmt, null, &outPtr, &outLen) != GHOSTTY_SUCCESS)
+            return null;
+        scope (exit) ghostty_free(null, outPtr, outLen);
+        return (cast(const(char)[]) outPtr[0 .. outLen]).idup;
     }
 
     private bool copySelection(H)(ref H h)
@@ -1408,4 +1474,42 @@ char[] encodedPaste(in char[] text, bool bracketed) @trusted
         == "\x1b[200~ls\nrm -rf x [201~\x1b[201~");
     // Without it, newlines become carriage returns, as a keyboard sends.
     assert(encodedPaste("a\nb", false) == "a\rb");
+}
+
+@("terminal_view.component.explicitProgramRunsWithItsOwnCwdAndEnv")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.algorithm.searching : canFind;
+
+    // What a launcher that is not a login shell needs (Android's
+    // nix-on-droid `login`): an absolute program, argv[0] of its choosing,
+    // a working directory and a whole environment — none of them inherited.
+    static immutable(char)*[4] argv = [
+        "-probe", "-c", `printf '%s|%s|%s' "$0" "$(pwd)" "$PROBE_VAR"`, null,
+    ];
+    static immutable(char)*[3] env = ["PROBE_VAR=from-env", "PATH=/usr/bin:/bin", null];
+
+    TerminalView tv;
+    tv.opts = TerminalViewOptions(
+        program: "/bin/sh",
+        argv: cast(const(char)*[]) argv[],
+        cwd: "/",
+        env: cast(const(char)*[]) env[],
+        exitBehavior: ExitBehavior.hold,
+    );
+    assert(tv.openCore(80, 4, 0, 0), "the pty and the child spawned");
+    scope (exit) tv.close();
+
+    foreach (_; 0 .. 200)
+    {
+        tv.pump();
+        if (tv.s.childExited)
+            break;
+        Thread.sleep(10.msecs);
+    }
+    tv.pump(); // anything written just before the exit
+    const text = tv.screenText();
+    assert(text.canFind("-probe|/|from-env"), text);
 }
