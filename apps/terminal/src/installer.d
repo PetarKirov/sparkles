@@ -19,6 +19,10 @@ import session : bootstrapArch, bootstrapZipUrl, SessionPaths;
 alias Fetch = string delegate(string url, string dest,
     scope void delegate(long got, long total) nothrow progress);
 
+/// Copy a bootstrap the APK bundles to `dest`; `null` or the failure.
+alias CopyBundled = string delegate(string dest,
+    scope void delegate(long got, long total) nothrow progress);
+
 /// The prompt the Termux installer's dialog carried; kept, so a test (or a
 /// user) that knew the old app finds the same words.
 enum promptTitle = "Bootstrap zipball location";
@@ -28,8 +32,13 @@ Run the installer on `tty` until the prefix is installed (returns `true`) or
 the tty closes under it (`false`: the app is going away). Every failure —
 a bad URL, a failed download, a broken archive — is printed and the prompt
 comes back; nothing is left half-installed (`NOD6`).
+
+With `bundled` (the APK carries a bootstrap for this ABI), an empty answer
+installs that one — offline, and exactly the bootstrap the APK was built
+with; a typed URL still downloads.
 */
-bool runInstaller(int tty, const SessionPaths paths, string defaultUrl, scope Fetch fetch)
+bool runInstaller(int tty, const SessionPaths paths, string defaultUrl, scope Fetch fetch,
+    scope CopyBundled bundled = null)
 {
     import std.file : exists, mkdirRecurse, remove, rename, rmdirRecurse;
     import std.path : buildPath;
@@ -40,30 +49,43 @@ bool runInstaller(int tty, const SessionPaths paths, string defaultUrl, scope Fe
     say(tty, "\x1b[1mnix-on-droid\x1b[0m — first start: installing the bootstrap.\n\n");
     for (;;)
     {
-        say(tty, promptTitle ~ " [" ~ defaultUrl ~ "]:\n> ");
+        const defaultLabel = bundled !is null ? "the bundled bootstrap" : defaultUrl;
+        say(tty, promptTitle ~ " [" ~ defaultLabel ~ "]:\n> ");
         string line;
         if (!readLine(tty, line))
             return false;
         const answer = line.strip;
+        const useBundled = answer.length == 0 && bundled !is null;
         const base = answer.length ? answer : defaultUrl;
-        if (base.length == 0)
+        if (!useBundled && base.length == 0)
         {
             say(tty, "A URL is required.\n\n");
             continue;
         }
 
         const arch = bootstrapArch();
-        const url = bootstrapZipUrl(base, arch);
         const zipPath = buildPath(paths.files, "bootstrap-" ~ arch ~ ".zip");
-        say(tty, "Downloading " ~ url ~ "\n");
         auto meter = ProgressMeter(tty);
-        const fetchErr = fetch(url, zipPath, (long got, long total) nothrow {
-            meter.bytes(got, total);
-        });
+        string fetchErr;
+        if (useBundled)
+        {
+            say(tty, "Unpacking the bundled bootstrap\n");
+            fetchErr = bundled(zipPath, (long got, long total) nothrow {
+                meter.bytes(got, total);
+            });
+        }
+        else
+        {
+            const url = bootstrapZipUrl(base, arch);
+            say(tty, "Downloading " ~ url ~ "\n");
+            fetchErr = fetch(url, zipPath, (long got, long total) nothrow {
+                meter.bytes(got, total);
+            });
+        }
         say(tty, "\n");
         if (fetchErr !is null)
         {
-            say(tty, "\x1b[31mDownload failed:\x1b[0m " ~ fetchErr ~ "\n\n");
+            say(tty, "\x1b[31mCould not get the bootstrap:\x1b[0m " ~ fetchErr ~ "\n\n");
             continue;
         }
 
@@ -183,92 +205,155 @@ private struct ProgressMeter
     }
 }
 
-@("installer.runInstaller.installsThroughARealPty")
-@system unittest
+version (unittest)
 {
-    import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
-    import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
-    import core.sys.posix.unistd : close, read, write;
-    import core.thread : Thread;
-    import core.time : msecs;
-    import std.algorithm.searching : canFind;
-    import std.conv : text;
-    import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir;
-    import std.path : buildPath;
-    import std.process : thisProcessID;
-    import std.zip : ArchiveMember, ZipArchive;
+    /// A bootstrap-shaped zip (login, lists, one symlink) at `dest`.
+    private void writeFakeBootstrap(string dest) @system
+    {
+        import std.file : write;
+        import std.zip : ArchiveMember, ZipArchive;
 
-    const files = buildPath(tempDir, text("installer-test-", thisProcessID));
-    mkdirRecurse(files);
-    scope (exit) rmdirRecurse(files);
-    const paths = SessionPaths(files);
-
-    // The pty the pane would adopt: the test plays the terminal on the master.
-    const master = posix_openpt(O_RDWR | O_NOCTTY);
-    assert(master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0);
-    const slave = open(ptsname(master), O_RDWR | O_NOCTTY);
-    assert(slave >= 0);
-    scope (exit) close(master);
-
-    string[] fetched;
-    int calls;
-    Fetch fetch = (string url, string dest, scope void delegate(long, long) nothrow progress) {
-        fetched ~= url;
-        if (++calls == 1)
-            return "HTTP 404"; // the first answer is wrong: the prompt returns
         auto zip = new ZipArchive;
         foreach (e; [["bin/login", "#!/system/bin/sh\n"], ["EXECUTABLES.txt", "bin/login\n"],
-                ["SYMLINKS.txt", "/nix/store/x-bash/bin/sh←bin/sh\n"]])
+                ["SYMLINKS.txt", "/nix/store/x-bash/bin/sh\u2190bin/sh\n"]])
         {
             auto m = new ArchiveMember;
             m.name = e[0];
             m.expandedData(cast(ubyte[]) e[1].dup);
             zip.addMember(m);
         }
-        import std.file : write;
-
         write(dest, zip.build());
+    }
+
+    /// Run the installer on a real pty, typing `answers` on the master (one
+    /// per prompt, 50 ms apart) as the pane's key encoder would; returns
+    /// whether it installed, and everything it printed.
+    private bool onPty(const SessionPaths paths, string defaultUrl, string[] answers,
+        Fetch fetch, CopyBundled bundled, out string transcript) @system
+    {
+        import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
+        import core.sys.posix.poll : poll, pollfd, POLLIN;
+        import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
+        import core.sys.posix.unistd : close, read, write;
+        import core.thread : Thread;
+        import core.time : MonoTime, msecs;
+
+        const master = posix_openpt(O_RDWR | O_NOCTTY);
+        assert(master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0);
+        const slave = open(ptsname(master), O_RDWR | O_NOCTTY);
+        assert(slave >= 0);
+        // The slave stays open until the transcript is read: macOS discards
+        // what the master has not read once the last slave descriptor closes.
+        scope (exit) close(master);
+        scope (exit) close(slave);
+
+        bool installed;
+        auto t = new Thread({
+            installed = runInstaller(slave, paths, defaultUrl, fetch, bundled);
+        });
+        t.start();
+
+        // Read while the installer runs, so a small pty buffer never blocks it.
+        char[4096] buf = void;
+        bool drain(int timeoutMs)
+        {
+            pollfd p = pollfd(master, POLLIN, 0);
+            if (poll(&p, 1, timeoutMs) <= 0 || !(p.revents & POLLIN))
+                return false;
+            const n = read(master, buf.ptr, buf.length);
+            if (n <= 0)
+                return false;
+            transcript ~= buf[0 .. n];
+            return true;
+        }
+
+        foreach (a; answers)
+        {
+            write(master, a.ptr, a.length);
+            const until = MonoTime.currTime + 50.msecs;
+            while (MonoTime.currTime < until)
+                drain(10);
+        }
+        while (t.isRunning)
+            drain(10);
+        t.join();
+        while (drain(0)) {}
+        return installed;
+    }
+
+    private SessionPaths scratchPaths(string tag) @system
+    {
+        import std.conv : text;
+        import std.file : mkdirRecurse, tempDir;
+        import std.path : buildPath;
+        import std.process : thisProcessID;
+
+        const files = buildPath(tempDir, text("installer-", tag, "-", thisProcessID));
+        mkdirRecurse(files);
+        return SessionPaths(files);
+    }
+}
+
+@("installer.runInstaller.retriesAFailedDownloadThenTakesTheDefault")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : exists, readText, rmdirRecurse;
+
+    const paths = scratchPaths("download");
+    scope (exit) rmdirRecurse(paths.files);
+
+    string[] fetched;
+    Fetch fetch = (string url, string dest, scope void delegate(long, long) nothrow progress) {
+        fetched ~= url;
+        if (fetched.length == 1)
+            return "HTTP 404"; // the first answer is wrong: the prompt returns
+        writeFakeBootstrap(dest);
         progress(10, 10);
         return null;
     };
 
-    bool installed;
-    auto t = new Thread({
-        installed = runInstaller(slave, paths, "https://default/boot", fetch);
-        close(slave);
-    });
-    t.start();
-
-    // Answer the first prompt with a typo'd URL, the second with Enter (the
-    // default) — typed on the master, as the pane's key encoder would.
-    enum typo = "https://typo/boot\r";
-    write(master, typo.ptr, typo.length);
-    Thread.sleep(50.msecs);
-    write(master, "\r".ptr, 1);
-    t.join();
-
     string transcript;
-    char[4096] buf = void;
-    for (;;)
-    {
-        import core.sys.posix.poll : poll, pollfd, POLLIN;
-
-        pollfd p = pollfd(master, POLLIN, 0);
-        if (poll(&p, 1, 0) <= 0)
-            break;
-        const n = read(master, buf.ptr, buf.length);
-        if (n <= 0)
-            break;
-        transcript ~= buf[0 .. n];
-    }
+    // A typo'd URL, then Enter (the default) — typed on the master, as the
+    // pane's key encoder would.
+    const installed = onPty(paths, "https://default/boot",
+        ["https://typo/boot\r", "\r"], fetch, null, transcript);
 
     assert(installed);
-    assert(fetched.length == 2);
-    assert(fetched[0] == "https://typo/boot/bootstrap-" ~ bootstrapArch() ~ ".zip");
-    assert(fetched[1] == "https://default/boot/bootstrap-" ~ bootstrapArch() ~ ".zip");
+    assert(fetched == [
+        "https://typo/boot/bootstrap-" ~ bootstrapArch() ~ ".zip",
+        "https://default/boot/bootstrap-" ~ bootstrapArch() ~ ".zip",
+    ]);
     assert(transcript.canFind(promptTitle), transcript);
-    assert(transcript.canFind("Download failed:") && transcript.canFind("HTTP 404"), transcript);
+    assert(transcript.canFind("Could not get the bootstrap:") && transcript.canFind("HTTP 404"), transcript);
     assert(readText(paths.login) == "#!/system/bin/sh\n");
     assert(!paths.staging.exists, "staging was renamed into place");
     assert(paths.tmp.exists);
+}
+
+@("installer.runInstaller.enterTakesTheBundledBootstrap")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : exists, rmdirRecurse;
+
+    const paths = scratchPaths("bundled");
+    scope (exit) rmdirRecurse(paths.files);
+
+    bool downloaded, copied;
+    Fetch fetch = (string url, string dest, scope void delegate(long, long) nothrow progress) {
+        downloaded = true;
+        return "no network in this test";
+    };
+    CopyBundled bundled = (string dest, scope void delegate(long, long) nothrow progress) {
+        copied = true;
+        writeFakeBootstrap(dest);
+        return null;
+    };
+
+    string transcript;
+    assert(onPty(paths, "https://default/boot", ["\r"], fetch, bundled, transcript));
+    assert(copied && !downloaded, "an empty answer is the bundled bootstrap");
+    assert(transcript.canFind("[the bundled bootstrap]"), transcript);
+    assert(paths.login.exists);
 }

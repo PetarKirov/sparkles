@@ -104,9 +104,15 @@
       # so nothing else lands beside the user's home) — plus session.conf and
       # NOTICE, read in place from the APK.
       mkAssets =
-        session:
+        session: bootstraps:
         pkgs.runCommand "terminal-android-assets" { } ''
           mkdir -p $out/fonts
+          ${lib.concatStrings (
+            lib.mapAttrsToList (arch: zip: ''
+              mkdir -p $out/bootstrap
+              cp ${zip} $out/bootstrap/bootstrap-${arch}.zip
+            '') bootstraps
+          )}
           ${lib.concatMapStrings (f: ''
             cp ${fonts.fontBundle}/fonts/${f} ${fonts.fontBundle}/fonts/${f}.charset $out/fonts/
           '') bundledFonts}
@@ -149,6 +155,11 @@
           session ? {
             mode = "shell";
           },
+          # Bootstrap zips to bundle, by Nix CPU name (`aarch64`, `x86_64`):
+          # the installer then offers them offline as its default. Each is
+          # tens of megabytes, so a published APK usually bundles none and a
+          # self-built one only its device's.
+          bootstraps ? { },
           versionName ? null,
           versionCode ? null,
           debug ? true,
@@ -174,7 +185,7 @@
             renamePackage = appId;
             resDir = "${icon}/res";
             libs = apkLibs;
-            assetsDir = mkAssets session;
+            assetsDir = mkAssets session bootstraps;
             targetSdk = 28;
             description = "${label} — sparkles terminal (Android NativeActivity APK)";
           }
