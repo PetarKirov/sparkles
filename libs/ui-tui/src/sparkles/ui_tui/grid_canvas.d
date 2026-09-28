@@ -20,9 +20,10 @@
 // terminal-free — `dub test :ui-tui` exercises it against a real `Grid`.
 module sparkles.ui_tui.grid_canvas;
 
-import sparkles.tui.cell : CellStyle, Grid;
+import sparkles.tui.cell : Cell, CellStyle, Grid;
 import sparkles.tui.images : ImagePlacement;
 
+import sparkles.base.text.grapheme : byGraphemeCluster, ClusterMeasure;
 import sparkles.base.text.width : codepointWidth;
 
 import sparkles.ui.canvas : DrawOp, fillRectOp, isCanvas, LineStyle, OpKind,
@@ -32,7 +33,7 @@ import sparkles.ui.geometry : Point, Rect, Size;
 // The glyph decisions are the cell grid's, not this adapter's: two cell
 // canvases each choosing their own box-drawing runs is how they came to
 // disagree, with `--render` showing dashes the live terminal did not.
-import sparkles.ui.glyphs : projectGlyph;
+import sparkles.ui.glyphs : projectGlyph, replacementGlyph;
 import sparkles.ui.interp.cells : accentGlyph, blend;
 import sparkles.ui.effect : EffectId, EffectRegistry, Tier0Fn, Tier0Input;
 import sparkles.ui.image : defaultCellPixels, fitRect, ImageData, ImageFit, ImageRegistry;
@@ -98,7 +99,8 @@ ImagePlacement kittyPlacement(uint id, const ImageData img, in Rect rect, ImageF
 What a cell grid holds before any terminal narrows it (`CAP1`): every color
 (the terminal's `Screen` folds to its real depth on the way out), every glyph
 tier — a grid cell stores any code point, so blocks, braille and Nerd Font
-icons all pass unprojected — link ids and styled underlines. The chrome a
+icons all pass unprojected — whole grapheme clusters, link ids and styled
+underlines. The chrome a
 pixel target honours — radius, shadow, alpha, a second face, sub-cell
 scrolling — a grid always projects.
 
@@ -119,6 +121,7 @@ enum TargetCapabilities gridCapabilities = () {
     c.nerdFont = true;
     c.hyperlinks = true;
     c.extendedUnderline = true;
+    c.graphemeClusters = true;
     c.input = cellPointer;
     return c;
 }();
@@ -754,8 +757,19 @@ struct GridCanvas
             setc(x0 + 1 + v.arrowOffset, y0, '┴');
     }
 
-    /// Writes `text` at `at` in `v.fg`, advancing by each glyph's display width
-    /// and preserving the cell background already painted underneath.
+    /**
+    Writes `text` at `at` in `v.fg`, advancing by each grapheme cluster's
+    display width and preserving the cell background already painted
+    underneath.
+
+    A cluster of several code points — a ZWJ sequence, an emoji with its
+    variation selector, a letter with a combining mark — is one cell of the
+    cluster's width. Where the target lays clusters out code point by code
+    point (no `graphemeClusters`) and this one would come out another width,
+    it is folded (`grapheme-folded`): its leading code point stands in,
+    padded to the cell, so the row does not move. A cluster longer than a
+    cell holds folds the same way on every target.
+    */
     void textRun(in Point at, scope const(char)[] text, in Visual v) scope
     {
         import std.utf : byDchar;
@@ -766,15 +780,54 @@ struct GridCanvas
         if (rowOutside(at.y))
             return;
         int x = at.x;
-        foreach (dchar cp; text.byDchar)
+        foreach (c; text.byGraphemeCluster)
         {
-            const w = cellCols(cp);
-            if (w == 0)
-                continue; // combining mark — no advance (cluster merge out of scope)
+            if (c.isEscape || c.codepoints <= 1)
+            {
+                foreach (dchar cp; c.slice.byDchar)
+                {
+                    const w = cellCols(cp);
+                    if (w == 0)
+                        continue; // a lone combining mark, or a control — no advance
+                    if (inBounds(x, at.y))
+                        putGlyph(x, at.y, cp, cast(ubyte) w, v);
+                    x += w;
+                }
+                continue;
+            }
+            if (c.width == 0)
+                continue;
             if (inBounds(x, at.y))
-                putGlyph(x, at.y, cp, cast(ubyte) w, v);
-            x += w;
+                putCluster(x, at.y, c, v);
+            x += c.width;
         }
+    }
+
+    // One cluster of several code points: whole where the target lays it out
+    // in its cell's width, else its leading code point standing in.
+    private void putCluster(int x, int y, in ClusterMeasure c, in Visual v) scope
+    {
+        const w = cast(ubyte) c.width;
+        const whole = (capabilities.graphemeClusters || c.unclustered == c.width)
+            && c.slice.length <= Cell.init.bytes.length
+            && projectGlyph(c.first, capabilities) == c.first;
+        if (whole)
+        {
+            auto cell_ = &cell(x, y);
+            const st = inked(cell_.style, v);
+            const link = capabilities.hyperlinks ? v.linkId : 0;
+            cell_.setBytes(c.slice, w, st, link);
+            if (w == 2 && inBounds(x + 1, y))
+                cell(x + 1, y).setCodepoint(' ', 0, st, link);
+            return;
+        }
+        const lead = cellCols(c.first);
+        if (lead == 0 || lead > w)
+            putGlyph(x, y, replacementGlyph, 1, v); // nothing narrow enough to stand in
+        else
+            putGlyph(x, y, c.first, cast(ubyte) lead, v);
+        if (lead != w && w == 2 && inBounds(x + 1, y))
+            putGlyph(x + 1, y, ' ', 1, v);
     }
 
     /// Writes a single glyph `g` at `at` in `v.fg`.
@@ -788,21 +841,7 @@ struct GridCanvas
     private void putGlyph(int x, int y, dchar cp, ubyte w, in Visual v) scope
     {
         auto c = &cell(x, y);
-        auto st = c.style; // keep bg / underline already composited here
-        st.fg = Color.fromRgb(v.fg);
-        // The resolved text chrome: bold / italic / strikethrough travel as
-        // packed `TextAttr` bits — dropping them here silently un-bolds
-        // every widget-pipeline text run in the TUI.
-        st.attrs = TextAttr(cast(ubyte) v.styleBits);
-        // A text-decoration underline rides the run's own visual (the tab
-        // strip's bottom border); one another op composited stays.
-        if (v.underline != UnderlineStyle.none)
-        {
-            st.underline = underlineOf(v.underline);
-            st.underlineColor = st.fg;
-        }
-        if (v.hasBg)
-            st.bg = Color.fromRgb(blend(cellBg(st), v.bg, v.bgAlpha));
+        const st = inked(c.style, v);
         const link = capabilities.hyperlinks ? v.linkId : 0;
         // `GLY1`: nothing above the target's tier reaches the grid. Every
         // rung is one cell, so a wide glyph that folds fills both of its
@@ -819,6 +858,27 @@ struct GridCanvas
         // A wide glyph claims the next column as a zero-width continuation.
         if (w == 2 && inBounds(x + 1, y))
             cell(x + 1, y).setCodepoint(' ', 0, st, link);
+    }
+
+    // The style a glyph written in `v` takes over the cell's own.
+    private CellStyle inked(in CellStyle under, in Visual v) const scope
+    {
+        CellStyle st = under; // keep bg / underline already composited here
+        st.fg = Color.fromRgb(v.fg);
+        // The resolved text chrome: bold / italic / strikethrough travel as
+        // packed `TextAttr` bits — dropping them here silently un-bolds
+        // every widget-pipeline text run in the TUI.
+        st.attrs = TextAttr(cast(ubyte) v.styleBits);
+        // A text-decoration underline rides the run's own visual (the tab
+        // strip's bottom border); one another op composited stays.
+        if (v.underline != UnderlineStyle.none)
+        {
+            st.underline = underlineOf(v.underline);
+            st.underlineColor = st.fg;
+        }
+        if (v.hasBg)
+            st.bg = Color.fromRgb(blend(cellBg(st), v.bg, v.bgAlpha));
+        return st;
     }
 
     /// Underlines the cells `from` → `to` in `v.fg`: `wavy` → an SGR-58 curly
@@ -1449,6 +1509,54 @@ static assert(isCanvas!GridCanvas);
     assert(n[5, 1].grapheme == "│", "an eighth-block bar thins to the light stroke");
     assert(n[5, 0].grapheme == "日", "Unicode text is untouched");
     assert(degradationsOf(ops[], noBlocks)[Substitution.blocksFolded] == 1);
+}
+
+@("tui_canvas.capabilities.graphemeClusters")
+@safe unittest
+{
+    import sparkles.ui.canvas : textRunOp;
+    import sparkles.ui.degradation : degradationsOf, Substitution;
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+
+    // A heart with VS16, a ZWJ sequence, a flag, an accented letter — then a
+    // letter that must land where the grid put it on every target.
+    const DrawOp[1] ops = [
+        textRunOp(Rect(0, 0, 12, 1), "\u2764\uFE0F\U0001F469\u200D\U0001F4BB\U0001F1FA\U0001F1F8e\u0301z"),
+    ];
+
+    // A clustering target gets each cluster whole, in one cell of its width.
+    Grid g;
+    g.resize(12, 1);
+    paintGrid(g, RgbColor(0, 0, 0), ops[]);
+    assert(g[0, 0].grapheme == "\u2764\uFE0F" && g[0, 0].width == 2 && g[1, 0].width == 0);
+    assert(g[2, 0].grapheme == "\U0001F469\u200D\U0001F4BB" && g[2, 0].width == 2);
+    assert(g[4, 0].grapheme == "\U0001F1FA\U0001F1F8" && g[4, 0].width == 2);
+    assert(g[6, 0].grapheme == "e\u0301" && g[6, 0].width == 1);
+    assert(g[7, 0].grapheme == "z");
+
+    // One that lays them out code point by code point (XTerm, measured) gets
+    // the two that would move folded to their leading code point, padded to
+    // the cell; the flag and the accent keep theirs. `z` has not moved.
+    auto xterm = capabilitiesOf(Profile.enhanced);
+    Grid f;
+    f.resize(12, 1);
+    paintGrid(f, RgbColor(0, 0, 0), ops[], caps: xterm);
+    assert(f[0, 0].grapheme == "\u2764" && f[0, 0].width == 1 && f[1, 0].grapheme == " ");
+    assert(f[2, 0].grapheme == "\U0001F469" && f[2, 0].width == 2 && f[3, 0].width == 0);
+    assert(f[4, 0].grapheme == "\U0001F1FA\U0001F1F8");
+    assert(f[6, 0].grapheme == "e\u0301");
+    assert(f[7, 0].grapheme == "z");
+    assert(degradationsOf(ops[], xterm)[Substitution.graphemeFolded] == 1);
+
+    // A cluster longer than a cell holds (a family of three, 18 bytes) folds
+    // on every target rather than being cut mid-code-point.
+    const DrawOp[1] family = [
+        textRunOp(Rect(0, 0, 4, 1), "\U0001F468\u200D\U0001F469\u200D\U0001F467z"),
+    ];
+    Grid l;
+    l.resize(4, 1);
+    paintGrid(l, RgbColor(0, 0, 0), family[]);
+    assert(l[0, 0].grapheme == "\U0001F468" && l[2, 0].grapheme == "z");
 }
 
 @("ui_tui.grid_canvas.tier0EffectLandsInTheTerminal")
