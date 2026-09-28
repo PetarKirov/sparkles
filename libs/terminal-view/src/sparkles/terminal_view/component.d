@@ -49,6 +49,59 @@ import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
+/**
+Default colours to install over the emulator's: any of the foreground,
+background and cursor, and any subset of the 16 ANSI palette entries
+(`paletteMask` bit `i` set ⇒ `palette[i]` applies). `ColorOverrides.init`
+changes nothing.
+*/
+struct ColorOverrides
+{
+    RgbColor foreground, background, cursor;
+    bool hasForeground, hasBackground, hasCursor;
+    RgbColor[16] palette;
+    ushort paletteMask;
+
+    /// Whether anything is overridden.
+    bool any() const @safe pure nothrow @nogc
+        => hasForeground || hasBackground || hasCursor || paletteMask != 0;
+}
+
+private void applyColorOverrides(GhosttyTerminal terminal, in ColorOverrides c) @system nothrow @nogc
+{
+    if (!c.any)
+        return;
+    static GhosttyColorRgb rgb(RgbColor x) => GhosttyColorRgb(x.r, x.g, x.b);
+
+    if (c.hasForeground)
+    {
+        auto v = rgb(c.foreground);
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &v);
+    }
+    if (c.hasBackground)
+    {
+        auto v = rgb(c.background);
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &v);
+    }
+    if (c.hasCursor)
+    {
+        auto v = rgb(c.cursor);
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, &v);
+    }
+    if (c.paletteMask != 0)
+    {
+        // The whole 256-entry table is the option's unit: start from the
+        // default one and replace the entries the scheme names.
+        GhosttyColorRgb[256] palette;
+        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT,
+            cast(void*) &palette);
+        foreach (i; 0 .. 16)
+            if (c.paletteMask & (1 << i))
+                palette[i] = rgb(c.palette[i]);
+        ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, &palette);
+    }
+}
+
 /// The system clipboard's text (see the module comment: reads bypass the
 /// host); empty when it holds none.
 private const(char)[] readClipboard() @system
@@ -207,6 +260,10 @@ struct TerminalViewOptions
     /// The child's whole environment, NUL-terminated `KEY=VALUE` entries and
     /// a null terminator; null inherits the parent's (sanitized) environment.
     const(char)*[] env = null;
+    /// Default colours replacing the emulator's own — a user colour scheme
+    /// (Android's `~/.termux/colors.properties`). Programs may still change
+    /// them at run time (OSC 4/10/11/12); these are what a reset returns to.
+    ColorOverrides colors;
     /// Adopt this pty master instead of spawning anything: the embedder owns
     /// whatever holds the slave (an in-process installer), and the session
     /// ends when the slave's last holder closes it (EOF/EIO on the master).
@@ -429,6 +486,7 @@ struct TerminalView
                 ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &colors.background);
             }
         }
+        applyColorOverrides(s.terminal, opts.colors);
         ghostty_kitty_graphics_placement_iterator_new(null, &s.placement_iter);
         ghostty_key_event_new(null, &s.key_event);
         ghostty_key_encoder_new(null, &s.key_encoder);
@@ -906,6 +964,13 @@ struct TerminalView
             return true;
         }
         return false;
+    }
+
+    /// The embedder's own chrome changed (a latched modifier, a moved key
+    /// row): the next `decideRedraw` repaints even if the terminal did not.
+    void invalidate() @safe pure nothrow @nogc
+    {
+        pendingForce = true;
     }
 
     /// Scrolls the viewport by `deltaLines` — negative into history. New
@@ -1612,4 +1677,35 @@ char[] encodedPaste(in char[] text, bool bracketed) @trusted
     }
     assert(tv.s.childExited, "the last slave holder closing ends the session");
     assert(tv.s.childReaped, "and there is no child to reap");
+}
+
+@("terminal_view.component.colorOverridesBecomeTheDefaults")
+@system unittest
+{
+    // A user scheme (Termux's colors.properties on Android) replaces the
+    // defaults a reset returns to: foreground and one ANSI entry here, the
+    // rest untouched.
+    ColorOverrides c;
+    c.foreground = RgbColor(1, 2, 3);
+    c.hasForeground = true;
+    c.palette[1] = RgbColor(9, 8, 7);
+    c.paletteMask = 1 << 1;
+
+    TerminalView tv;
+    tv.opts = TerminalViewOptions(program: "/bin/sh",
+        argv: [cast(const(char)*) "sh", "-c", "exit 0", null], colors: c);
+    assert(tv.openCore(20, 2, 0, 0));
+    scope (exit) tv.close();
+
+    GhosttyColorRgb[256] palette, defaults;
+    ghostty_terminal_get(tv.s.terminal, GHOSTTY_TERMINAL_DATA_COLOR_PALETTE_DEFAULT,
+        cast(void*) &palette);
+    assert(palette[1] == GhosttyColorRgb(9, 8, 7));
+    assert(palette[2] != GhosttyColorRgb(9, 8, 7), "only the named entry changes");
+
+    GhosttyRenderStateColors colors;
+    colors.size = GhosttyRenderStateColors.sizeof;
+    ghostty_render_state_update(tv.s.render_state, tv.s.terminal);
+    assert(ghostty_render_state_colors_get(tv.s.render_state, &colors) == GHOSTTY_SUCCESS);
+    assert(colors.foreground == GhosttyColorRgb(1, 2, 3));
 }
