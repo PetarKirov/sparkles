@@ -14,12 +14,12 @@ library overview see [`sparkles:base`](../../../libs/base/index.md)._
 
 This spec governs three modules of `sparkles.base.text`:
 
-| Module             | Role                                                                                                |
-| ------------------ | --------------------------------------------------------------------------------------------------- |
-| `width.d`          | width of a single code point (`codepointWidth`) and of a grapheme cluster (`graphemeClusterWidth`)  |
-| `grapheme.d`       | segmentation of styled UTF-8 into escapes + clusters (`byGraphemeCluster`) and total `visibleWidth` |
-| `wrap.d`           | greedy line wrapping in cells (`writeWrappedText` / `wrapText`) — a sparkles extension              |
-| `unicode_tables.d` | generated East-Asian-Width and emoji-VS-base tables (`isEastAsianWide`, `isEmojiVsBase`)            |
+| Module             | Role                                                                                                                   |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `width.d`          | width of a single code point (`codepointWidth`) and of a grapheme cluster (`graphemeClusterWidth`, `unclusteredWidth`) |
+| `grapheme.d`       | segmentation of styled UTF-8 into escapes + clusters (`byGraphemeCluster`) and total `visibleWidth`                    |
+| `wrap.d`           | greedy line wrapping in cells (`writeWrappedText` / `wrapText`) — a sparkles extension                                 |
+| `unicode_tables.d` | generated East-Asian-Width and emoji-VS-base tables (`isEastAsianWide`, `isEmojiVsBase`)                               |
 
 The width model follows kitty. Quoted passages in this document are taken from
 kitty's documentation and source, **© Kovid Goyal, licensed GPL-3.0**:
@@ -384,6 +384,15 @@ adjust it. `graphemeClusterWidth(in dchar[])` implements exactly that. So a flag
 (leading regional indicator → 2), a ZWJ family (leading wide emoji → 2), and an
 emoji + skin-tone modifier (leading wide emoji → 2) each resolve to one 2-cell
 cluster, while a base + spacing mark (`Mc`) stays one 1-cell cluster.
+
+That width assumes the terminal **clusters** — lays the cluster out as one
+character. One that does not advances each scalar by its own width, a regional
+indicator narrow, and `unclusteredWidth(in dchar[])` gives that advance:
+measured by cursor report, XTerm puts a ZWJ family in 6 cells and a heart with
+VS16 in 1, while a flag (two narrow halves) and a letter with a combining accent
+keep their cell. `byGraphemeCluster` reports both widths per cluster, so a
+painter can tell which clusters a non-clustering terminal would move and fold
+them (the design system's `grapheme-folded` substitution).
 
 Note the parenthetical "leading **wide** emoji": a skin-tone modifier never adds
 width itself, so a sequence whose base is EAW-_neutral_ (✌ `U+270C`) stays width 1
