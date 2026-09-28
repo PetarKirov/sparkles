@@ -309,6 +309,10 @@ struct TerminalView
     private bool forceRedrawEnv;
     private bool drainedThisFrame;
     private bool pendingForce;
+    /// The default foreground and background `open` installed, before any
+    /// overrides: what `recolor` returns to where a new scheme is silent.
+    private GhosttyColorRgb baseForeground, baseBackground;
+    private bool haveBaseColors;
     private int frameCount;
     /// `TVW8`: a pump daemon owns the pty drain for this run — the sync
     /// `drainPty` becomes a no-op (two readers on one fd would interleave
@@ -484,6 +488,9 @@ struct TerminalView
             {
                 ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &colors.foreground);
                 ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &colors.background);
+                baseForeground = colors.foreground;
+                baseBackground = colors.background;
+                haveBaseColors = true;
             }
         }
         applyColorOverrides(s.terminal, opts.colors);
@@ -964,6 +971,27 @@ struct TerminalView
             return true;
         }
         return false;
+    }
+
+    /// Install `c` as the default colours of the running terminal (a user
+    /// scheme reloaded), and repaint. The scheme replaces the previous one:
+    /// what `c` does not name returns to the defaults the terminal opened
+    /// with (the cursor and palette to the built-in ones), so an empty `c`
+    /// restores them all. `opts.colors` follows, so a later `open` of this
+    /// instance starts from the same scheme.
+    void recolor(in ColorOverrides c) @system nothrow @nogc
+    {
+        opts.colors = c;
+        if (!opened)
+            return;
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND,
+            haveBaseColors ? &baseForeground : null);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND,
+            haveBaseColors ? &baseBackground : null);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_CURSOR, null);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, null);
+        applyColorOverrides(s.terminal, c);
+        pendingForce = true;
     }
 
     /// The embedder's own chrome changed (a latched modifier, a moved key
@@ -1708,4 +1736,41 @@ char[] encodedPaste(in char[] text, bool bracketed) @trusted
     ghostty_render_state_update(tv.s.render_state, tv.s.terminal);
     assert(ghostty_render_state_colors_get(tv.s.render_state, &colors) == GHOSTTY_SUCCESS);
     assert(colors.foreground == GhosttyColorRgb(1, 2, 3));
+}
+
+@("terminal_view.component.recolorReplacesTheScheme")
+@system unittest
+{
+    // `termux-reload-settings` after deleting colors.properties: an empty
+    // scheme must restore the colours the terminal opened with, not keep the
+    // last one's.
+    TerminalView tv;
+    tv.opts = TerminalViewOptions(program: "/bin/sh",
+        argv: [cast(const(char)*) "sh", "-c", "exit 0", null]);
+    assert(tv.openCore(20, 2, 0, 0));
+    scope (exit) tv.close();
+
+    GhosttyRenderStateColors colors;
+    colors.size = GhosttyRenderStateColors.sizeof;
+    GhosttyRenderStateColors current()
+    {
+        ghostty_render_state_update(tv.s.render_state, tv.s.terminal);
+        assert(ghostty_render_state_colors_get(tv.s.render_state, &colors) == GHOSTTY_SUCCESS);
+        return colors;
+    }
+    const opened = current();
+
+    ColorOverrides red;
+    red.background = RgbColor(170, 0, 0);
+    red.hasBackground = true;
+    red.palette[1] = RgbColor(9, 8, 7);
+    red.paletteMask = 1 << 1;
+    tv.recolor(red);
+    assert(current().background == GhosttyColorRgb(170, 0, 0));
+    assert(current().palette[1] == GhosttyColorRgb(9, 8, 7));
+
+    tv.recolor(ColorOverrides.init);
+    assert(current().background == opened.background, "the background is restored");
+    assert(current().foreground == opened.foreground);
+    assert(current().palette[1] == opened.palette[1], "and the palette");
 }
