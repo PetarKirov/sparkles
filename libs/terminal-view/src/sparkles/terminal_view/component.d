@@ -556,7 +556,7 @@ struct TerminalView
     private void hangUpAndReap() @system
     {
         import core.sys.posix.signal : kill, SIGHUP, SIGKILL;
-        import core.sys.posix.unistd : getpgid, usleep;
+        import core.sys.posix.unistd : getpgid, getpgrp, usleep;
 
         // No child of ours (an adopted pty): `getpgid(0)` is OUR group, and
         // the hangup below would signal the application itself.
@@ -564,10 +564,16 @@ struct TerminalView
             return;
         if (!s.childExited)
         {
-            auto pgid = getpgid(s.child);
-            if (pgid <= 0)
-                pgid = s.child;
-            kill(cast(pid_t)(-pgid), SIGHUP); // the whole foreground group
+            // The whole foreground group — unless the child has not reached
+            // `setsid` yet: a close right after the fork races it, and until
+            // then `getpgid(child)` is OUR group, whose hangup would take the
+            // application (and whatever launched it) down. The child alone
+            // is the right target then.
+            const pgid = getpgid(s.child);
+            if (pgid <= 0 || pgid == getpgrp())
+                kill(s.child, SIGHUP);
+            else
+                kill(cast(pid_t)(-pgid), SIGHUP);
         }
 
         // ~50 ms for the shell to notice the hangup (or the EOF its side got
