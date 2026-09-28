@@ -82,7 +82,7 @@ struct DroidTerminal
             tv.invalidate();
         }
         tv.frame(h, g.paneCols, g.paneRows);
-        oracle.frame(tv);
+        oracle.frame(tv, keyLabels());
         return WidgetTree.init;
     }
 
@@ -144,6 +144,16 @@ struct DroidTerminal
     }
 
     // ── keys ────────────────────────────────────────────────────────────────
+
+    /// The row's labels, space-separated, one row per line (the oracle's
+    /// `keys.txt`).
+    private string keyLabels() const
+    {
+        import std.algorithm.iteration : map;
+        import std.array : join;
+
+        return keys.map!(row => row.map!(k => k.label).join(" ")).join("\n");
+    }
 
     private void sendKey(H)(ref H h, in KeyEvent k)
     {

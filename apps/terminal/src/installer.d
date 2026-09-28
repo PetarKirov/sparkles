@@ -121,6 +121,52 @@ bool runInstaller(int tty, const SessionPaths paths, string defaultUrl, scope Fe
     }
 }
 
+/**
+The `Fetch` for `file://` URLs — a bootstrap already on the device (the
+emulator tests push theirs to /data/local/tmp, as they did for Termux, whose
+Java downloader read `file:` URLs natively). Anything else goes to `remote`.
+*/
+Fetch withLocalFiles(Fetch remote)
+{
+    return (string url, string dest, scope void delegate(long, long) nothrow progress) {
+        import std.algorithm.searching : startsWith;
+
+        if (!url.startsWith("file://"))
+            return remote(url, dest, progress);
+        return copyLocal(url["file://".length .. $], dest, progress);
+    };
+}
+
+private string copyLocal(string path, string dest,
+    scope void delegate(long, long) nothrow progress)
+{
+    import std.file : getSize, remove;
+    import std.stdio : File;
+
+    try
+    {
+        const total = cast(long) getSize(path);
+        auto src = File(path, "rb");
+        auto dst = File(dest, "wb");
+        ubyte[64 * 1024] buf = void;
+        long got;
+        foreach (chunk; src.byChunk(buf[]))
+        {
+            dst.rawWrite(chunk);
+            got += chunk.length;
+            progress(got, total);
+        }
+        return null;
+    }
+    catch (Exception e)
+    {
+        try
+            remove(dest);
+        catch (Exception) {}
+        return e.msg;
+    }
+}
+
 /// Write all of `text` to `fd`; errors are ignored (a closed tty ends the
 /// installer at its next read).
 private void say(int fd, scope const(char)[] text) nothrow @nogc
@@ -329,6 +375,34 @@ version (unittest)
     assert(readText(paths.login) == "#!/system/bin/sh\n");
     assert(!paths.staging.exists, "staging was renamed into place");
     assert(paths.tmp.exists);
+}
+
+@("installer.withLocalFiles.copiesFileUrlsAndPassesTheRestOn")
+@system unittest
+{
+    import std.file : exists, readText, remove, tempDir, write;
+    import std.path : buildPath;
+
+    const src = buildPath(tempDir, "installer-local-src.zip");
+    const dest = buildPath(tempDir, "installer-local-dest.zip");
+    write(src, "zip bytes");
+    scope (exit)
+        foreach (f; [src, dest])
+            if (f.exists)
+                remove(f);
+
+    string remoteAsked;
+    auto fetch = withLocalFiles((string url, string d, scope void delegate(long, long) nothrow p) {
+        remoteAsked = url;
+        return "remote";
+    });
+    long last;
+    assert(fetch("file://" ~ src, dest, (long got, long total) nothrow { last = got; }) is null);
+    assert(readText(dest) == "zip bytes" && last == 9);
+    assert(fetch("https://h/b.zip", dest, (long, long) nothrow {}) == "remote");
+    assert(remoteAsked == "https://h/b.zip");
+    assert(fetch("file:///no/such/file", dest, (long, long) nothrow {}) !is null);
+    assert(!dest.exists, "a failed copy leaves nothing behind");
 }
 
 @("installer.runInstaller.enterTakesTheBundledBootstrap")
