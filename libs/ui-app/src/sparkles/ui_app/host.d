@@ -109,10 +109,13 @@ struct RunConfig
     query battery, fenced by DA1, bounded by a short timeout — so the target
     declares what the terminal answered: 24-bit colour, synchronized output,
     grapheme clustering, scheme reports, and images as pictures rather than
-    cell rasters. Off by default: it puts query bytes on the wire at startup,
-    and a terminal that answers nothing costs the timeout.
+    cell rasters. On by default: without it the target is what the
+    environment alone says, which cannot see any of those, and a cluster
+    whose width it cannot vouch for is folded. Off, for a harness that owns
+    the byte stream: the probe puts its queries on the wire at startup, and a
+    peer that answers nothing costs the timeout (a second).
     */
-    bool probeTerminal;
+    bool probeTerminal = true;
     int targetFps = 60;         /// GPU pacing
     int idleTimeoutMs = -1;     /// TUI: wake `present` without input (< 0 = never)
     PointerUnit pointerUnit;    /// what pointer positions are measured in (`HST18`)
