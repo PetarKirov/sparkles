@@ -207,6 +207,11 @@ struct TerminalViewOptions
     /// The child's whole environment, NUL-terminated `KEY=VALUE` entries and
     /// a null terminator; null inherits the parent's (sanitized) environment.
     const(char)*[] env = null;
+    /// Adopt this pty master instead of spawning anything: the embedder owns
+    /// whatever holds the slave (an in-process installer), and the session
+    /// ends when the slave's last holder closes it (EOF/EIO on the master).
+    /// The component takes ownership of the fd and closes it. `-1` spawns.
+    int adoptMaster = -1;
     /// Poll raylib's mouse each frame (selection, hover, wheel, mouse
     /// reporting). A touch embedder turns it off and routes its own gestures
     /// — `scrollViewport`, `routePointer` — since raylib reports a finger as
@@ -315,56 +320,26 @@ struct TerminalView
 
         // Resolve the shell and build argv BEFORE forkpty, so the child does
         // only async-signal-safe work (execv + _exit).
-        const(char)* shellZ = getenv("SHELL".ptr);
-        if (shellZ is null || *shellZ == '\0')
+        if (opts.adoptMaster >= 0)
         {
-            import core.sys.posix.pwd : getpwuid, passwd;
-
-            passwd* pw = getpwuid(getuid());
-            if (pw !is null && pw.pw_shell !is null && *pw.pw_shell != '\0')
-                shellZ = pw.pw_shell;
-            else
-                shellZ = "/bin/sh".ptr;
+            // An embedder's own pty (Android's installer thread holds the
+            // slave): no child to fork, and none to reap.
+            s.pty_fd = opts.adoptMaster;
+            s.child = 0;
+            s.childReaped = true;
+            winsize ws = {
+                ws_row: s.rows,
+                ws_col: s.cols,
+                ws_xpixel: s.fonts is null ? 0 : cast(ushort)(s.cols * s.cellWidth),
+                ws_ypixel: s.fonts is null ? 0 : cast(ushort)(s.rows * s.cellHeight),
+            };
+            cast(void) ioctl(s.pty_fd, TIOCSWINSZ, &ws);
         }
-        const(char)* shellName = strrchr(shellZ, '/');
-        shellName = shellName ? shellName + 1 : shellZ;
-
-        // Sanitize in the parent; the child inherits (no setenv between fork
-        // and exec).
-        sanitizeChildEnv();
-
-        const(char)*[4] argv;
-        if (opts.shellCommand !is null)
-            argv = [shellName, "-c".ptr, opts.shellCommand, null];
-        else
-            argv = [shellName, null, null, null];
-
-        winsize ws = {
-            ws_row: s.rows,
-            ws_col: s.cols,
-            ws_xpixel: s.fonts is null ? 0 : cast(ushort)(s.cols * s.cellWidth),
-            ws_ypixel: s.fonts is null ? 0 : cast(ushort)(s.rows * s.cellHeight),
-        };
-        s.child = forkpty(&s.pty_fd, null, null, &ws);
-        if (s.child < 0)
+        else if (!spawnChild())
         {
             ghostty_terminal_free(s.terminal);
             s.terminal = null;
             return false;
-        }
-        if (s.child == 0)
-        {
-            // Only async-signal-safe calls between fork and exec.
-            if (opts.cwd !is null)
-                cast(void) chdir(opts.cwd);
-            const(char)* prog = opts.program !is null ? opts.program : shellZ;
-            auto args = opts.program !is null ? cast(char**) opts.argv.ptr
-                : cast(char**) argv.ptr;
-            if (opts.env !is null)
-                execve(prog, args, cast(char**) opts.env.ptr);
-            else
-                execv(prog, args);
-            _exit(127);
         }
 
         // Close-on-exec, before anything else can fork: `forkpty` returns a
@@ -464,6 +439,64 @@ struct TerminalView
         return true;
     }
 
+    /// Resolves the program and forks it on a fresh pty (`s.pty_fd`,
+    /// `s.child`); `false` when `forkpty` failed. The child does only
+    /// async-signal-safe work between fork and exec.
+    private bool spawnChild() @system
+    {
+        import core.stdc.stdlib : getenv;
+        import core.stdc.string : strrchr;
+
+        const(char)* shellZ = getenv("SHELL".ptr);
+        if (shellZ is null || *shellZ == '\0')
+        {
+            import core.sys.posix.pwd : getpwuid, passwd;
+
+            passwd* pw = getpwuid(getuid());
+            if (pw !is null && pw.pw_shell !is null && *pw.pw_shell != '\0')
+                shellZ = pw.pw_shell;
+            else
+                shellZ = "/bin/sh".ptr;
+        }
+        const(char)* shellName = strrchr(shellZ, '/');
+        shellName = shellName ? shellName + 1 : shellZ;
+
+        // Sanitize in the parent; the child inherits (no setenv between fork
+        // and exec).
+        sanitizeChildEnv();
+
+        const(char)*[4] argv;
+        if (opts.shellCommand !is null)
+            argv = [shellName, "-c".ptr, opts.shellCommand, null];
+        else
+            argv = [shellName, null, null, null];
+
+        winsize ws = {
+            ws_row: s.rows,
+            ws_col: s.cols,
+            ws_xpixel: s.fonts is null ? 0 : cast(ushort)(s.cols * s.cellWidth),
+            ws_ypixel: s.fonts is null ? 0 : cast(ushort)(s.rows * s.cellHeight),
+        };
+        s.child = forkpty(&s.pty_fd, null, null, &ws);
+        if (s.child < 0)
+            return false;
+        if (s.child == 0)
+        {
+            // Only async-signal-safe calls between fork and exec.
+            if (opts.cwd !is null)
+                cast(void) chdir(opts.cwd);
+            const(char)* prog = opts.program !is null ? opts.program : shellZ;
+            auto args = opts.program !is null ? cast(char**) opts.argv.ptr
+                : cast(char**) argv.ptr;
+            if (opts.env !is null)
+                execve(prog, args, cast(char**) opts.env.ptr);
+            else
+                execv(prog, args);
+            _exit(127);
+        }
+        return true;
+    }
+
     /**
     Reaps the child (hanging up its group first if still alive) and frees every
     handle. The fonts and the window belong to the host.
@@ -525,6 +558,10 @@ struct TerminalView
         import core.sys.posix.signal : kill, SIGHUP, SIGKILL;
         import core.sys.posix.unistd : getpgid, usleep;
 
+        // No child of ours (an adopted pty): `getpgid(0)` is OUR group, and
+        // the hangup below would signal the application itself.
+        if (s.child <= 0)
+            return;
         if (!s.childExited)
         {
             auto pgid = getpgid(s.child);
@@ -1522,4 +1559,51 @@ char[] encodedPaste(in char[] text, bool bracketed) @trusted
     tv.pump(); // anything written just before the exit
     const text = tv.screenText();
     assert(text.canFind("-probe|/|from-env"), text);
+}
+
+@("terminal_view.component.anAdoptedPtyEndsWhenItsSlaveCloses")
+@system unittest
+{
+    import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
+    import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
+    import core.sys.posix.unistd : close, write;
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.algorithm.searching : canFind;
+
+    // What an in-process program (Android's installer) looks like to the
+    // component: a pty whose slave some thread of ours holds — no child.
+    const master = posix_openpt(O_RDWR | O_NOCTTY);
+    assert(master >= 0);
+    assert(grantpt(master) == 0 && unlockpt(master) == 0);
+    const slave = open(ptsname(master), O_RDWR | O_NOCTTY);
+    assert(slave >= 0);
+
+    TerminalView tv;
+    tv.opts = TerminalViewOptions(adoptMaster: master, exitBehavior: ExitBehavior.hold);
+    assert(tv.openCore(40, 4, 0, 0));
+    scope (exit) tv.close();
+
+    enum hello = "from the installer\r\n";
+    assert(write(slave, hello.ptr, hello.length) == hello.length);
+    foreach (_; 0 .. 100)
+    {
+        tv.pump();
+        if (tv.screenText().canFind("from the installer"))
+            break;
+        Thread.sleep(5.msecs);
+    }
+    assert(tv.screenText().canFind("from the installer"));
+    assert(!tv.s.childExited);
+
+    close(slave);
+    foreach (_; 0 .. 100)
+    {
+        tv.pump();
+        if (tv.s.childExited)
+            break;
+        Thread.sleep(5.msecs);
+    }
+    assert(tv.s.childExited, "the last slave holder closing ends the session");
+    assert(tv.s.childReaped, "and there is no child to reap");
 }
