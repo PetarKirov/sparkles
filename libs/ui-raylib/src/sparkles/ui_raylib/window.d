@@ -123,7 +123,16 @@ struct Window
         //
         // Not macOS-only: this is equally the Wayland and fractional-scaling
         // answer. Where there is no scaling it is a no-op.
-        SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI);
+        //
+        // Android also always runs: without FLAG_WINDOW_ALWAYS_RUN raylib parks
+        // the whole thread in `ALooper_pollOnce(-1)` while the activity is
+        // unfocused — a dialog or the notification shade froze every frame,
+        // the pty drain and the timers with it. The loop decides what a
+        // surfaceless frame does instead ($(LREF surfaceReady)).
+        version (Android)
+            SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI | ConfigFlags.FLAG_WINDOW_ALWAYS_RUN);
+        else
+            SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI);
         // Unbounded on purpose: a `hue --diff` of two paths builds a title in
         // the hundreds of bytes, so any cap here would silently lose one.
         InitWindow(r.width, r.height, r.title.toTempStringz.ptr);
@@ -222,6 +231,24 @@ struct Window
         auto img = LoadImageFromScreen();
         scope (exit) UnloadImage(img);
         ExportImage(img, path);
+    }
+
+    /**
+    Whether a frame may draw: always on the desktop; on Android only while the
+    activity has a native window (it has none while stopped, and an EGL swap
+    then fails). A loop that finds it `false` still pumps input and runs the
+    application's non-drawing work.
+    */
+    bool surfaceReady() const @system
+    {
+        version (Android)
+        {
+            import sparkles.android.activity : hasNativeWindow;
+
+            return hasNativeWindow();
+        }
+        else
+            return true;
     }
 
     /// Polls the platform's input without drawing — what a frame that
