@@ -68,6 +68,9 @@ enum Substitution : ubyte
     @needs("proportionalText") monospaceDocs, /// a docs run painted in the monospace face
     @needs("images") imageRastered,          /// an image drawn in cells: a block or braille raster (`GLY9`)
     @needs("images") imageAsAlt,             /// an image shown as its alt text (`IMG4`)
+    /// a grapheme cluster the target would lay out wider or narrower than
+    /// its cell, shown as its leading code point
+    @needs("graphemeClusters") graphemeFolded,
 }
 
 /// The kebab-case names (`ascii-border`, …), from the enum's own `@WireCase`.
@@ -196,6 +199,23 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
         }
     }
 
+    // A cluster a target that does not cluster would move the row with: a
+    // ZWJ sequence, an emoji promoted by VS16 — not a flag or a combining
+    // mark, which keep their cell either way.
+    void clusters(in char[] text)
+    {
+        import sparkles.base.text.grapheme : byGraphemeCluster;
+
+        if (caps.graphemeClusters)
+            return;
+        foreach (c; text.byGraphemeCluster)
+            if (!c.isEscape && c.codepoints > 1 && c.unclustered != c.width)
+            {
+                r.note(Substitution.graphemeFolded);
+                return;
+            }
+    }
+
     // A block-element stroke (an eighth-block accent, a solid thumb) on a
     // Unicode target with no block tier.
     const noBlocks = caps.unicode && caps.blocks == BlockTier.none;
@@ -240,7 +260,7 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
                 if (ch.shadow.any && !caps.shadow)
                     r.note(Substitution.shadowDropped);
             },
-            (in TextRun t) { ink(t.ink); glyphs(t.text); },
+            (in TextRun t) { ink(t.ink); glyphs(t.text); clusters(t.text); },
             (in Glyph g) { ink(g.ink); dchar[1] one = [g.glyph]; glyphs(one[]); },
             (in Line l) {
                 ink(l.ink);
@@ -531,4 +551,24 @@ unittest
     window.images = ImageProtocol.pixels;
     assert(degradationsOf(ops[], meet(window, capabilitiesOf(Profile.full)))[Substitution.imageRastered] == 0);
     assert(degradationsOf(ops[], meet(window, capabilitiesOf(Profile.enhanced)))[Substitution.imageRastered] == 1);
+}
+
+@("ui.degradation.graphemesFoldWhereTheyWouldMove")
+@safe pure nothrow @nogc
+unittest
+{
+    // A heart with VS16 and a woman-technologist ZWJ sequence move the row of
+    // a terminal that does not cluster; a flag and an accented letter do not.
+    TextRun moves, keeps;
+    moves.text = "a❤️ \U0001F469‍\U0001F4BB";
+    keeps.text = "\U0001F1FA\U0001F1F8 é";
+    const DrawOp[2] ops = [DrawOp(moves), DrawOp(keeps)];
+
+    auto xterm = capabilitiesOf(Profile.enhanced);
+    assert(!xterm.graphemeClusters);
+    assert(degradationsOf(ops[], xterm)[Substitution.graphemeFolded] == 1,
+        "once per run, and only the run that moves");
+    xterm.graphemeClusters = true;
+    assert(degradationsOf(ops[], xterm)[Substitution.graphemeFolded] == 0);
+    assert(substitutionNames[Substitution.graphemeFolded] == "grapheme-folded");
 }
