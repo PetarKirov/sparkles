@@ -8,7 +8,11 @@
 # `src = pkgs.libkqueue.src` pins the same version the host shell links.
 # Needs CMake (generated headers); cross-built with the NDK toolchain. The
 # D side has its own extern(C) bindings, so only the archive is consumed.
-{ lib, ... }:
+{ inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
@@ -106,11 +110,11 @@
           description = "libkqueue (kqueue-over-epoll shim) cross-built for Android, per ABI";
           homepage = "https://github.com/mheily/libkqueue";
           license = lib.licenses.bsd2;
-          platforms = [ "x86_64-linux" ];
+          platforms = (androidHost system).platforms;
         };
       };
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       packages.libkqueue-android = libkqueue-android;
     };
 }

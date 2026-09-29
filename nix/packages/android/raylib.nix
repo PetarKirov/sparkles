@@ -29,7 +29,11 @@
 # assert turns both into a loud eval failure with somewhere to start, instead
 # of a confusing patch reject or — worse — an API-compatible bump that only
 # shows up as a layout bug on-device.
-{ lib, ... }:
+{ inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
@@ -113,11 +117,11 @@
             description = "raylib static library cross-built for Android (PLATFORM_ANDROID, GLES2), per ABI";
             homepage = "https://www.raylib.com";
             license = lib.licenses.zlib;
-            platforms = [ "x86_64-linux" ];
+            platforms = (androidHost system).platforms;
           };
         };
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       packages.raylib-android = raylib-android;
     };
 }

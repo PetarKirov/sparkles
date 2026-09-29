@@ -301,7 +301,7 @@
       ]
       # The dcompute-enabled LDC itself, as `ldc2-vulkan` — the name
       # `shader-compile` looks for, and one that cannot shadow the shell's own
-      # `ldc2`. Linux only, where dlang.nix defines it.
+      # `ldc2`. Wherever dlang.nix defines it (Linux and macOS).
       ++ lib.optional (config.packages ? ldc2-vulkan) config.packages.ldc2-vulkan
       ++ [
         # Vulkan's validation layers, including synchronization validation —
@@ -407,7 +407,7 @@
         ${lib.optionalString (config.packages ? ldc-import-paths) ''
           # The dcompute LDC's druntime/phobos sources, for sparkles:dmd-lsp's
           # LDC profiles — shader (device) code imports `ldc.dcompute` (TGT3).
-          # Linux only; tests skip when unset.
+          # Where dlang.nix defines `ldc-vulkan`; tests skip when unset.
           export SPARKLES_LDC_IMPORT_PATH=${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos
         ''}
 

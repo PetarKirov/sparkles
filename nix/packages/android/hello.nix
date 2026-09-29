@@ -10,6 +10,10 @@
 # — compiled in via `-i=raylib`, the same way the wasm builder handles
 # registry deps.
 { inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
@@ -20,7 +24,7 @@
     }:
     let
       ndk = config.legacyPackages.androidNdk;
-      ldcAndroid = inputs.dlang-nix.packages.${system}.ldc-android;
+      inherit (androidHost system) ldcAndroid;
 
       raylibDZip = inputs.dub-raylib-d;
 
@@ -80,11 +84,11 @@
 
         meta = {
           description = "M1 Android smoke-test shared library (D + raylib), per ABI";
-          platforms = [ "x86_64-linux" ];
+          platforms = (androidHost system).platforms;
         };
       };
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       packages.libhello-android = libhello;
       packages.hello-apk = config.legacyPackages.buildAndroidApk {
         pname = "hello";

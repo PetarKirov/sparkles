@@ -449,8 +449,10 @@ jobs:
   # — the repo-embedded hue APK, whose dependency chain covers the entire
   # cross closure (dual-ABI druntimes via dlang.nix's ldc-android, the
   # raylib/tree-sitter/libghostty-vt cross builds, every grammar parser, the
-  # Maple font build, and the aapt2/zipalign/apksigner assembly). Linux-only:
-  # the NDK/SDK ship prebuilt for x86_64-linux alone. The unfree Android SDK
+  # Maple font build, and the aapt2/zipalign/apksigner assembly). Built on
+  # Linux only, to keep the cross closure off the macOS runners; the same
+  # outputs exist on aarch64-darwin (nix/packages/android/host.nix), where the
+  # macOS leg's `nix flake check` evaluates every one of them. The unfree Android SDK
   # licence is accepted inside the scoped nixpkgs import
   # (nix/packages/android/sdk.nix) — no env flags needed here.
   nix-build-android:

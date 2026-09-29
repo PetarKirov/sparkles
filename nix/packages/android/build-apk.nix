@@ -29,6 +29,8 @@
 # the `release` path exists to enforce.
 { inputs, lib, ... }:
 let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
   # The ONE place APK version metadata is decided.
   #
   # docs/guidelines/release.md makes the git tag the only place a version
@@ -64,7 +66,7 @@ in
       inTreeDebugKeystore = ../../../apps/hue/android/debug-only.keystore;
       inTreeDebugKeystoreName = baseNameOf (toString inTreeDebugKeystore);
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       legacyPackages.buildAndroidApk =
         {
           pname,
@@ -311,7 +313,7 @@ in
 
           meta = {
             inherit description;
-            platforms = [ "x86_64-linux" ];
+            platforms = (androidHost system).platforms;
           };
         };
     };

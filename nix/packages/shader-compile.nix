@@ -18,8 +18,8 @@
 #     nix run .#shader-compile -- --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders
 #
 # regenerates (or, with `--verify`, checks) the effect GLSL with no devshell
-# and no local compiler build. Linux only: that is where dlang.nix defines
-# `ldc-vulkan`.
+# and no local compiler build. It builds wherever dlang.nix defines
+# `ldc-vulkan` (Linux and macOS), and takes that package's platforms.
 { lib, ... }:
 {
   perSystem =
@@ -66,7 +66,7 @@
           meta = {
             description = "Compile a dub package's single-source D shaders to the GLSL sparkles:ui-raylib loads";
             mainProgram = finalAttrs.pname;
-            platforms = lib.platforms.linux;
+            inherit (inputs'.dlang-nix.packages.ldc-vulkan.meta) platforms;
           };
         });
       };

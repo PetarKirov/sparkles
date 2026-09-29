@@ -15,7 +15,11 @@
 # Queries are NOT here: the APK reuses the desktop bundle's normalized
 # `queries/` dirs (nix/packages/ts-grammars.nix) as extracted assets — see
 # hue.nix.
-{ lib, ... }:
+{ inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
@@ -185,7 +189,7 @@
 
           meta = {
             description = "tree-sitter ${lang} grammar cross-built for Android, per ABI";
-            platforms = [ "x86_64-linux" ];
+            platforms = (androidHost system).platforms;
           };
         };
 
@@ -197,7 +201,7 @@
           {
             meta = {
               description = "tree-sitter grammar parsers cross-built for Android, per ABI";
-              platforms = [ "x86_64-linux" ];
+              platforms = (androidHost system).platforms;
             };
           }
           ''
@@ -211,7 +215,7 @@
             ) languages}
           '';
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       packages.ts-grammars-android = ts-grammars-android;
 
       # The soname set as *data*, so consumers never have to look inside the

@@ -1,7 +1,7 @@
 # Android SDK tooling for the nix-native APK pipeline, in two compositions:
 # a minimal *build* SDK (aapt2 + zipalign + apksigner from build-tools, plus
 # android.jar) that the APK assembly references, and a *dev* SDK that adds
-# adb, the emulator and an x86_64 system image for on-emulator testing.
+# adb, the emulator and a system image for on-emulator testing.
 # Keeping them apart is what stops the multi-GB emulator closure becoming a
 # build input of every APK — see the note at the compositions below.
 #
@@ -13,6 +13,8 @@
 # `lib` comes from the flake-level module args (see nix/shells/android.nix).
 { inputs, lib, ... }:
 let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
   # `platformVersion` is the compile SDK (android.jar) *and* the
   # `--target-sdk-version` aapt2 stamps into every APK, so it is the app's
   # declared target — the API level whose behaviour changes the app opts into.
@@ -70,15 +72,22 @@ in
         includeEmulator = true;
         includeSystemImages = true;
         systemImageTypes = [ "google_apis" ];
-        abiVersions = [ "x86_64" ];
+        abiVersions = [ emulatorAbi ];
       };
+
+      # The emulator runs a system image of the HOST's own architecture —
+      # hardware virtualization (KVM, Hypervisor.framework) cannot run a
+      # foreign ISA at usable speed, and the x86_64 images do not boot on
+      # Apple Silicon at all. The APKs are unaffected: they carry both ABIs
+      # whatever host built them (ndk.nix `targets`).
+      emulatorAbi = if lib.hasPrefix "aarch64-" system then "arm64-v8a" else "x86_64";
 
       buildSdkRoot = "${buildSdk.androidsdk}/libexec/android-sdk";
       devSdkRoot = "${devSdk.androidsdk}/libexec/android-sdk";
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       legacyPackages.androidSdk = {
-        inherit platformVersion devSdkRoot;
+        inherit platformVersion devSdkRoot emulatorAbi;
         # ── APK assembly (build-apk.nix): the minimal closure ──
         # aapt2, zipalign, apksigner.
         buildTools = "${buildSdkRoot}/build-tools/${buildToolsVersion}";

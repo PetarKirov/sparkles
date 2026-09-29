@@ -25,7 +25,11 @@
 #   * bundletool ships its own aapt2 and extracts it to /tmp, where a
 #     dynamically linked binary cannot run on NixOS (exit 127, reported as an
 #     opaque "Stream closed"). `--aapt2` must point at the nixpkgs one.
-{ lib, ... }:
+{ inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
@@ -37,7 +41,7 @@
     let
       sdk = config.legacyPackages.androidSdk;
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       legacyPackages.buildAndroidAab =
         {
           pname,
@@ -160,7 +164,7 @@
 
           meta = {
             inherit description;
-            platforms = [ "x86_64-linux" ];
+            platforms = (androidHost system).platforms;
           };
         };
     };

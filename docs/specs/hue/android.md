@@ -76,15 +76,27 @@ raylib's Android input into every existing binding.
 
 ## Build & run
 
-Every Android output is **x86_64-linux only** — the NDK and SDK ship prebuilt
-for that host alone — so these attributes do not exist on darwin.
+Every Android output exists on the build hosts the NDK ships a toolchain for —
+**x86_64-linux and aarch64-darwin** — and nowhere else: `aarch64-linux` has no
+NDK, so these attributes do not exist there
+(`nix/packages/android/host.nix`). Both hosts build both ABIs. The emulator is
+the exception that follows the host: `hue-emulator` boots a system image of
+the host's own architecture (x86_64 on Linux, arm64 on Apple Silicon).
+
+The two hosts' APKs are equivalent but not bit-identical. D bakes `__FILE__`
+into template instances, and those paths name the host's own `ldc` store path
+(43 strings in the stripped terminal library) and, on an unsandboxed Mac, the
+random build directory of druntime (10 more); D has no `-ffile-prefix-map` to
+normalise them. Reproducibility (AND1) therefore holds per host, and the
+artifact that is rebuilt and compared — the F-Droid release (fdroid.md) — is
+built on x86_64-linux.
 
 ```console
 $ nix build .#hue-apk            # both ABIs + assets, signed, reproducible
 $ nix build .#hue-apk-repo       # …with the whole repo embedded (separate package id)
 $ nix build .#hue-apk-unsigned   # the release artifact; signed outside nix (fdroid.md)
 $ nix develop .#android          # adb/aapt2 on PATH + helpers
-$ hue-emulator &                 # x86_64 AVD of the SDK platform (created on first use)
+$ hue-emulator &                 # host-ABI AVD of the SDK platform (created on first use)
 $ hue-adb-install result/hue.apk
 $ hue-logcat                     # tags: hue, raylib + crash channels
 ```
