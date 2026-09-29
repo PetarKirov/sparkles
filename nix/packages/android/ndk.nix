@@ -8,6 +8,14 @@
 # same invariant `nix/shells/android.nix` documents. The unfree Android licence
 # stays dlang.nix's concern on this path.
 #
+# Every derivation that produces target code sets `dontStrip = true`. stdenv's
+# fixup strips with the HOST binutils and then re-runs the host `ranlib` over
+# every `.a` (its errors silenced). On macOS that is cctools, which rewrites an
+# ELF archive with a Mach-O style `__.SYMDEF SORTED` symbol table that lld
+# rejects as "truncated or malformed"; on Linux, GNU strip quietly strips the
+# x86_64 archives and not the aarch64 ones. The shipped `.so` files are
+# stripped deliberately, with this NDK's `strip`, by buildAndroidApk.
+#
 # `lib` comes from the flake-level module args (see nix/shells/android.nix for
 # why gating on `pkgs.lib` would recurse).
 { lib, ... }:

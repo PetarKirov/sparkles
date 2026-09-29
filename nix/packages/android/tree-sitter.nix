@@ -25,6 +25,9 @@
 
         dontConfigure = true;
 
+        # Target code: the host's strip/ranlib must not touch it (ndk.nix).
+        dontStrip = true;
+
         buildPhase = ''
           runHook preBuild
 

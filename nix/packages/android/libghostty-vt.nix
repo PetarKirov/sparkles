@@ -48,6 +48,9 @@
               ANDROID_NDK_HOME = ndk.ndkRoot;
             };
             doCheck = false;
+
+            # Target code: the host's strip/ranlib must not touch it (ndk.nix).
+            dontStrip = true;
           });
 
       libghostty-vt-android =

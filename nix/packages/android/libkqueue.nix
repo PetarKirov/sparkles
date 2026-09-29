@@ -28,6 +28,9 @@
         nativeBuildInputs = [ pkgs.cmake ];
         dontUseCmakeConfigure = true; # per-ABI configure below
 
+        # Target code: the host's strip/ranlib must not touch it (ndk.nix).
+        dontStrip = true;
+
         # Two Android-isms:
         # - The NDK toolchain file sets CMAKE_SYSTEM_NAME=Android, which
         #   libkqueue's OS dispatch does not recognize ("unsupported host
