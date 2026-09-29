@@ -35,13 +35,16 @@
       # download route that `importCargoLock` uses at dlang.nix's nixpkgs, so
       # an uncached build of `wasm-component-ld` — and with it every wasm
       # module here — failed in CI. Fold back into `feat/ldc-wasm` upstream.
-      # `feat/ldc-vulkan` is that plus `ldc-vulkan` (Linux only): LDC with
-      # dcompute's Vulkan target and the `@fragment` shader stage
+      # `feat/ldc-vulkan` is that plus `ldc-vulkan`: LDC with dcompute's
+      # Vulkan target and the `@fragment` shader stage
       # (PetarKirov/ldc `sparkles/vulkan-shaders`, over ldc-developers/ldc#5132)
       # against LLVM main with llvm/llvm-project#216919, which
       # `nix/packages/shader-compile.nix` wraps. Fold back once both upstream
       # PRs and the fork's shader-stage commits land.
-      url = "github:PetarKirov/dlang.nix/feat/ldc-vulkan";
+      # `feat/ldc-android-darwin` is that plus `ldc-vulkan` and `ldc-android`
+      # on macOS hosts (nix/packages/android/host.nix) and unstripped Android
+      # runtimes.
+      url = "github:PetarKirov/dlang.nix/feat/ldc-android-darwin";
       inputs = {
         flake-compat.follows = "flake-compat";
         flake-parts.follows = "flake-parts";

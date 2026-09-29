@@ -8,6 +8,13 @@
 # same invariant `nix/shells/android.nix` documents. The unfree Android licence
 # stays dlang.nix's concern on this path.
 #
+# Nothing here names the build host. The NDK files its LLVM toolchain under a
+# per-host directory (`toolchains/llvm/prebuilt/linux-x86_64`, `…/darwin-x86_64`),
+# and `ldc-android` already resolved it for the host it was built for
+# (`ndkToolchain`), so every path below follows the host without restating
+# the table. What varies per *target* is `targets`, and it is the same on every
+# host: an APK built on a Mac and one built on Linux carry the same ABIs.
+#
 # Every derivation that produces target code sets `dontStrip = true`. stdenv's
 # fixup strips with the HOST binutils and then re-runs the host `ranlib` over
 # every `.a` (its errors silenced). On macOS that is cctools, which rewrites an
@@ -18,14 +25,18 @@
 #
 # `lib` comes from the flake-level module args (see nix/shells/android.nix for
 # why gating on `pkgs.lib` would recurse).
-{ lib, ... }:
+{ inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
-    { system, inputs', ... }:
+    { system, ... }:
     let
-      ldcAndroid = inputs'.dlang-nix.packages.ldc-android;
+      inherit (androidHost system) ldcAndroid;
       ndkRoot = ldcAndroid.ndkRoot;
-      clangBin = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/bin";
+      clangBin = "${ldcAndroid.ndkToolchain}/bin";
 
       # Android 10. The single source of truth for the API level: the NDK
       # clang wrappers below, every native dependency's platform flag, the
@@ -66,7 +77,7 @@
           cxx = "${clangBin}/${clangPrefix}${minSdk}-clang++";
         };
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       legacyPackages.androidNdk = {
         inherit ndkRoot minSdk;
         ar = "${clangBin}/llvm-ar";
@@ -80,7 +91,7 @@
         # cross build must point it at the NDK's headers explicitly — this is
         # what lets `jni_c.c` resolve <jni.h> and the JNI bridge live in D
         # instead of a hand-written C file. ABI-independent.
-        sysrootInclude = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include";
+        sysrootInclude = "${ldcAndroid.ndkToolchain}/sysroot/usr/include";
         # Mandatory for every shipped .so with targetSdk 35: Android 15+
         # devices with 16 KB pages reject 4 KB-aligned native libraries.
         pageAlignFlags = "-Wl,-z,max-page-size=16384";

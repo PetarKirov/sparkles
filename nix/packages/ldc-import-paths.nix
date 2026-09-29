@@ -11,7 +11,7 @@
 # (and the twoslash-extract wrapper) expose the pair as the colon-separated
 # $SPARKLES_LDC_IMPORT_PATH; tests skip when it is unset.
 #
-# Linux only, like `ldc-vulkan` itself: dlang.nix defines it nowhere else.
+# Available wherever dlang.nix defines `ldc-vulkan` (Linux and macOS).
 { lib, ... }:
 {
   perSystem =

@@ -10,6 +10,10 @@
 # Shared by hue (hue.nix) and the terminal (terminal.nix); anything either of
 # them needs that the other does not is a parameter here, never a fork.
 { inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
@@ -22,7 +26,7 @@
       ndk = config.legacyPackages.androidNdk;
       sources = config.legacyPackages.sparklesSources;
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       legacyPackages.buildDAndroidLib =
         {
           pname,
@@ -56,7 +60,7 @@
           src = sources.sourceFor srcDirs;
 
           nativeBuildInputs = [
-            inputs.dlang-nix.packages.${system}.ldc-android
+            (androidHost system).ldcAndroid
             pkgs.unzip
           ];
 
@@ -110,7 +114,7 @@
 
           meta = {
             inherit description;
-            platforms = [ "x86_64-linux" ];
+            platforms = (androidHost system).platforms;
           };
         };
     };

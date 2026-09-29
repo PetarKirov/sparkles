@@ -9,7 +9,11 @@
 # Built with `-Dsimd=false`: the SIMD members (simdutf, highway) are C++ and
 # multiply the cross-compile surface for a throughput win an off-screen fence
 # decoder never notices. Revisit if a profile ever says otherwise.
-{ lib, ... }:
+{ inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
@@ -58,7 +62,7 @@
           {
             meta = {
               description = "Ghostty VT static library cross-built for Android, per ABI";
-              platforms = [ "x86_64-linux" ];
+              platforms = (androidHost system).platforms;
             };
           }
           ''
@@ -70,7 +74,7 @@
             '') (lib.attrValues ndk.targets)}
           '';
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       packages.libghostty-vt-android = libghostty-vt-android;
     };
 }

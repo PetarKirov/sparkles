@@ -11,6 +11,10 @@
 # IS the directory listing android_glue.d extracts from), and `bundle-hash`
 # keys the idempotent first-run extraction.
 { inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
@@ -346,7 +350,7 @@
         );
       }) ndk.targets;
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       packages.libhue-android = libhue;
       packages.hue-android-assets = hueAssets;
       packages.hue-apk = config.legacyPackages.buildAndroidApk {

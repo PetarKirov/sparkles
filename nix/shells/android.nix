@@ -24,13 +24,16 @@
 # gating the *existence* of `devShells.android` on `pkgs.lib` would make the
 # module's option structure depend on `pkgs`, which depends back on this module
 # (infinite recursion).
-{ lib, ... }:
+{ inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ../packages/android/host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
       system,
       pkgs,
-      inputs',
       config,
       ...
     }:
@@ -39,10 +42,10 @@
       # + x86_64 *and* builds for the host), so it replaces the plain host
       # `ldc` here — both provide `bin/ldc2`, and we want the cross-capable
       # one to win.
-      ldcAndroid = inputs'.dlang-nix.packages.ldc-android;
+      inherit (androidHost system) ldcAndroid;
 
       ndkRoot = ldcAndroid.ndkRoot;
-      ndkClangBin = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/bin";
+      ndkClangBin = "${ldcAndroid.ndkToolchain}/bin";
 
       androidSdk = config.legacyPackages.androidSdk;
 
@@ -74,8 +77,8 @@
       hueEmulator = pkgs.writeShellApplication {
         name = "hue-emulator";
         text = ''
-          # Boots the x86_64 AVD for the SDK's platform (created on first
-          # run). AVD state lives under ~/.android-sparkles, off the default
+          # Boots the AVD for the SDK's platform, in the host's own ABI
+          # (created on first run). AVD state lives under ~/.android-sparkles, off the default
           # ~/.android. The AVD is named for its API level, so a platform
           # bump creates a fresh one instead of reusing an image the SDK no
           # longer ships.
@@ -89,7 +92,7 @@
           if [ ! -d "$ANDROID_AVD_HOME/$avd.avd" ]; then
             avdmanager=("$ANDROID_SDK_ROOT"/cmdline-tools/*/bin/avdmanager)
             echo no | "''${avdmanager[0]}" create avd -n "$avd" \
-              -k "system-images;android-${androidSdk.platformVersion};google_apis;x86_64"
+              -k "system-images;android-${androidSdk.platformVersion};google_apis;${androidSdk.emulatorAbi}"
           fi
           # avdmanager creates devices with hw.keyboard=no, and the emulator
           # then drops the host keyboard. Enforced on every boot, so a device
@@ -129,8 +132,7 @@
         '';
       };
     in
-    # The NDK ships prebuilt for an x86_64-linux host only.
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       devShells.android = androidShell;
     };
 }

@@ -6,7 +6,11 @@
 #
 # `src = pkgs.tree-sitter.src` pins the same runtime version the desktop links
 # via pkg-config.
-{ lib, ... }:
+{ inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
@@ -54,11 +58,11 @@
           description = "tree-sitter C runtime cross-built for Android, per ABI";
           homepage = "https://tree-sitter.github.io";
           license = lib.licenses.mit;
-          platforms = [ "x86_64-linux" ];
+          platforms = (androidHost system).platforms;
         };
       };
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       packages.tree-sitter-android = tree-sitter-android;
     };
 }

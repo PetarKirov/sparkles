@@ -16,11 +16,15 @@
 #                      (metadata/<appid>/en-US/images/icon.png). Independent of
 #                      the APK: the client shows this one, while the launcher
 #                      shows the mipmaps. Both are needed; see FDR3.
-{ lib, ... }:
+{ inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     { pkgs, system, ... }:
-    lib.optionalAttrs (system == "x86_64-linux") rec {
+    lib.optionalAttrs (androidHost system).supported rec {
       # Any app's icon from its SVG — hue's and the terminal's are two calls.
       legacyPackages.mkAndroidIcon =
         { name, source }:
@@ -51,7 +55,7 @@
             nativeBuildInputs = [ pkgs.resvg ];
             meta = {
               description = "${name}: launcher mipmap resource tree + F-Droid listing icon";
-              platforms = [ "x86_64-linux" ];
+              platforms = (androidHost system).platforms;
             };
           }
           ''

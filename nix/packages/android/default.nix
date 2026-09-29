@@ -5,10 +5,15 @@
 # (aapt2 + zipalign + apksigner; no Gradle, no Java — a pure NativeActivity
 # APK with `hasCode="false"`).
 #
-# Everything in here is opt-in, x86_64-linux-only (the NDK/SDK ship prebuilt
-# for that host alone), and pulls *unfree* Android SDK components through a
-# scoped nixpkgs import — nothing in the default package set references it.
-{ lib, ... }:
+# Everything in here is opt-in, exists only on the build hosts the NDK ships a
+# toolchain for (./host.nix: x86_64-linux and macOS), and pulls *unfree*
+# Android SDK components through a scoped nixpkgs import — nothing in the
+# default package set references it.
+{ inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   imports = [
     ./build-aab.nix
@@ -34,7 +39,7 @@
       system,
       ...
     }:
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       # The Android CI aggregate (the `nix-build-android` job). Kept out of
       # `all-desktop` (see nix/packages/all.nix).
       #

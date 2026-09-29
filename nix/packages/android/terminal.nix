@@ -9,6 +9,10 @@
 # with its own app id, label, icon and bootstrap URL — nothing in sparkles
 # knows those values.
 { inputs, lib, ... }:
+let
+  # Whether this system can build Android at all (./host.nix).
+  androidHost = import ./host.nix { inherit inputs; };
+in
 {
   perSystem =
     {
@@ -138,7 +142,7 @@
         value."libterminal.so" = "${libterminal}/lib/${t.abi}/libterminal.so";
       }) ndk.targets;
     in
-    lib.optionalAttrs (system == "x86_64-linux") {
+    lib.optionalAttrs (androidHost system).supported {
       packages.libterminal-android = libterminal;
 
       /**

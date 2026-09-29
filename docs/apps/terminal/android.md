@@ -9,7 +9,10 @@ design and its requirements are in the
 
 ## Build and install
 
-The Android SDK and NDK run on an x86_64 Linux host only.
+It builds on x86_64 Linux and on Apple Silicon macOS — the hosts the Android
+NDK ships a toolchain for — and either host produces both device ABIs. A
+published build comes from Linux: the two hosts' APKs behave the same but are
+not byte-identical, and reproducible builds compare bytes.
 
 ```bash
 nix build .#terminal-apk            # a plain terminal: /system/bin/sh
@@ -29,7 +32,7 @@ Any other flavour is a call to `mkTerminalApk` — app id, label, icon, and the
 session (`mode = "shell"`, or `mode = "bootstrap"` with a `bootstrapUrl`):
 
 ```nix
-sparkles.legacyPackages.x86_64-linux.mkTerminalApk {
+sparkles.legacyPackages.${system}.mkTerminalApk {
   appId = "org.example.term";
   label = "Term";
   session = { mode = "shell"; };
