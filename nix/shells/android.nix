@@ -91,6 +91,15 @@
             echo no | "''${avdmanager[0]}" create avd -n "$avd" \
               -k "system-images;android-${androidSdk.platformVersion};google_apis;x86_64"
           fi
+          # avdmanager creates devices with hw.keyboard=no, and the emulator
+          # then drops the host keyboard. Enforced on every boot, so a device
+          # created before this line gets it too.
+          config="$ANDROID_AVD_HOME/$avd.avd/config.ini"
+          if grep -q '^hw.keyboard *=' "$config"; then
+            sed -i 's/^hw.keyboard *=.*/hw.keyboard=yes/' "$config"
+          else
+            echo 'hw.keyboard=yes' >> "$config"
+          fi
           exec "$ANDROID_SDK_ROOT"/emulator/emulator -avd "$avd" "$@"
         '';
       };
