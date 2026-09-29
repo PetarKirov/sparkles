@@ -224,6 +224,7 @@ mixin template HostState(size_t opCapacity = frameOpCapacity,
     private bool _quit;
     private bool _frameRequested;
     private bool _skipFrame;
+    private bool _mustDraw;
     private HostOps _ops;
 
     /// End the loop after this frame.
@@ -249,8 +250,17 @@ mixin template HostState(size_t opCapacity = frameOpCapacity,
     Decline to draw this frame: present nothing and leave the last frame up.
 
     The terminal skips its cell diff; the GPU target skips the buffer swap.
+
+    Refused on a frame with no last frame to leave up — the first one onto a
+    surface the platform has just (re)attached, such as an Android activity
+    returning from the background. Its buffer holds nothing the application
+    drew, so the frame draws whatever the application decided.
     */
-    void skipFrame() @safe pure nothrow @nogc { _skipFrame = true; }
+    void skipFrame() @safe pure nothrow @nogc
+    {
+        if (!_mustDraw)
+            _skipFrame = true;
+    }
 
     /// ditto
     bool frameSkipped() const @safe pure nothrow @nogc => _skipFrame;
@@ -336,11 +346,13 @@ mixin template HostState(size_t opCapacity = frameOpCapacity,
     /// application appends; it never sizes or clears one.
     ref HostOps ops() return @safe pure nothrow @nogc => _ops;
 
-    /// Clears the per-frame flags and buffer. Called by the loop, not the app.
-    private void beginFrameState() @safe pure nothrow @nogc
+    /// Clears the per-frame flags and buffer. Called by the loop, not the app;
+    /// `mustDraw` marks a frame onto a fresh surface ($(LREF skipFrame)).
+    private void beginFrameState(bool mustDraw = false) @safe pure nothrow @nogc
     {
         _frameRequested = false;
         _skipFrame = false;
+        _mustDraw = mustDraw;
         _wakeIn = Duration.max;
         // Drops last frame's operations and the bytes they pointed at, keeping
         // both capacities — a host never re-sizes its buffer.
@@ -492,6 +504,27 @@ unittest
     h.newFrame();
     assert(!h.frameRequested && !h.frameSkipped);
     assert(h.quitRequested, "quit outlives the frame it was asked in");
+}
+
+@("ui_app.host.skipFrameIsRefusedOntoAFreshSurface")
+@safe pure nothrow @nogc
+unittest
+{
+    static struct Fake
+    {
+        mixin HostState!recordedOpCapacity;
+        void newFrame(bool mustDraw = false) { beginFrameState(mustDraw); }
+    }
+
+    Fake h;
+    h.newFrame(mustDraw: true);
+    h.skipFrame();
+    assert(!h.frameSkipped, "a fresh surface has no last frame to leave up");
+
+    // Only that frame: the next one may skip again.
+    h.newFrame();
+    h.skipFrame();
+    assert(h.frameSkipped);
 }
 
 @("ui_app.host.wakeInKeepsTheSoonestAskPerFrame")
