@@ -250,6 +250,10 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     RaylibEvents events;
     events.capabilities = host.capabilities;
 
+    // Whether the last frame had a surface to draw on; `false` at start, so
+    // the first frame always draws.
+    bool hadSurface;
+
     // One frame: sample input, present, swap unless declined (`HST6`).
     void oneFrame()
     {
@@ -280,7 +284,12 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         if (host.quitRequested)
             return;
 
-        host.beginFrameState();
+        // A surface that was not there last frame (Android re-attaching the
+        // activity's window) holds nothing the application drew: its first
+        // frame draws even if the application would skip it (`skipFrame`).
+        const surface = session.window.surfaceReady;
+        host.beginFrameState(mustDraw: surface && !hadSurface);
+        hadSurface = surface;
         present(host);
 
         // `HST6`: no swap, no clear — the last frame stays up. The window
@@ -290,7 +299,7 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         // A window with no surface (an Android activity while stopped) takes
         // the same path: the application's non-drawing work — a terminal's
         // pty drain — ran in `present`, and there is nothing to swap to.
-        if (host.frameSkipped || !session.window.surfaceReady)
+        if (host.frameSkipped || !surface)
         {
             session.window.pumpEvents();
             return;
