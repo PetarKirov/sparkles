@@ -6,10 +6,12 @@ force each one and a recommended answer. Accepted answers move into
 [SPEC.md](./SPEC.md) as requirements; this page keeps the reasoning. Index entry:
 `WSI-O9` in [open-issues.md](./open-issues.md)._
 
-**Status:** decided and specified. Every question except `EQ12` was accepted between
-September 13 and 17, 2026 and is now [SPEC.md](./SPEC.md) §4.5 (`ED1`–`ED10`); this
-page keeps the reasoning, the measurements and the rejected alternatives. `EQ12` is
-deliberately deferred to `F04`. The contract is not yet implemented. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
+**Status:** mostly decided and specified. Every question except `EQ12` was accepted
+between September 13 and 17, 2026 and is now [SPEC.md](./SPEC.md) §4.5
+(`ED1`–`ED10`); this page keeps the reasoning, the measurements and the rejected
+alternatives. `EQ12` is deferred to `F04`. `EQ14` was reopened on September 29, 2026
+before implementation, so `ED8` is provisional. `ED5` and half of `ED2` are
+implemented; the rest is not. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
 the four backends' pumps). **Consumers in scope:** ordinary GUI applications,
 drawing applications that need every sample, and games that need per-frame sums and
 raw deltas at device rate. A decision that serves only one of the three is not
@@ -341,6 +343,41 @@ two costs written down as obligations: text is confined to the WSI thread and
 crossing a thread requires a deep copy, and text is bounded at 64 KiB, above which a
 backend truncates at a UTF-8 boundary and sets the event's `truncated` flag. See
 `ED8`.
+
+**Reopened 2026-09-29, before implementation, on two facts the measurements missed.**
+Neither reverses the decision; both change its price, so `ED8` is provisional until
+this is settled.
+
+The first is measured: a `SharedBuffer` member makes `SumType` assignment `@system`,
+where an `InlineBuffer` member keeps it `@safe`.
+
+```
+SumType assign @safe with InlineBuffer text: true
+SumType assign @safe with SharedBuffer text: false
+```
+
+`assignEvent` is already `@trusted` for a related reason, and its stated
+justification — every alternative "owns only value storage (no borrowed slices)" —
+stops being true of a payload holding a reference-counted block. The trust is still
+defensible under `ED8`'s own thread-confinement rule, but it must be re-argued rather
+than inherited, and the queue's `@safe` assignment story weakens.
+
+The second is a precedent this page never considered. `sparkles:input`'s `PasteEvent`
+already carries arbitrarily long text through a `@safe` sum type with no heap
+payload: a bounded `InlineBuffer` chunk plus a `last` flag, with `pasteChunks`
+splitting between code points. Applied here it would keep `InlineBuffer`, keep
+assignment `@safe`, keep the slot small (the chunk size sets it), and retire the
+64 KiB bound outright, since length stops being a property of one event. Its cost is
+that a consumer reassembles a long pre-edit, and that one logical commit can occupy
+several queue slots, which interacts with `ED5`.
+
+_Options:_ `SharedBuffer` as accepted, with the `@trusted` argument rewritten;
+chunking on `PasteEvent`'s shape; `SharedBuffer` for the small payloads and chunking
+for composition alone.
+_Recommendation:_ chunking, on the evidence above. It is the shape the repository
+already ships elsewhere, and the only one of the three that keeps the sum type
+`@safe`.
+_Answer:_ open.
 
 ## 5. Dependencies between answers
 
