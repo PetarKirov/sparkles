@@ -71,6 +71,9 @@ struct RaylibEvents
     // would otherwise truncate to zero) — M14.
     private float wheelAccumX = 0, wheelAccumY = 0;
     private PointF lastTouch;
+    // When the recogniser was last ticked (`GetTime`, seconds); 0 before the
+    // first poll.
+    private double lastTick = 0;
 
     /**
     Synthesizes this frame's events into `sink`. Pointer positions are mapped
@@ -188,7 +191,15 @@ struct RaylibEvents
                 gestures.pointer(0, false, lastTouch);
             }
 
-            gestures.tick(GetFrameTime() * 1000);
+            // The time since the last POLL, not `GetFrameTime`: raylib updates
+            // that only on frames that draw, so a loop that skips idle frames
+            // (`skipFrame`) feeds it the whole idle gap, again on every skipped
+            // frame — and a 100 ms tap then outlasts the long-press threshold
+            // on its first tick and is never a tap.
+            const now = GetTime();
+            const dtMs = lastTick > 0 ? cast(float)((now - lastTick) * 1000) : 0;
+            lastTick = now;
+            gestures.tick(dtMs);
 
             // The recogniser works in device space (thresholds are physical);
             // the adapter owns the conversion to cells (GST4). Gesture and tap
