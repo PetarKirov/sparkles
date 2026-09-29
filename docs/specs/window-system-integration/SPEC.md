@@ -222,12 +222,16 @@ increasing. Contiguity is explicitly not promised: merging and `ED5` both leave 
 converted once by the backend into the loop's monotonic clock. An event the platform
 supplies no time for carries the time it was observed.
 
-**ED8: Text storage and its lifetime.** Event text is held in a copy-on-write buffer
+**ED8 (provisional): Text storage and its lifetime.** Event text is held in a copy-on-write buffer
 that stores up to 16 bytes inline and allocates beyond that, so `WindowEvent` stays a
 Regular value that may be copied, compared and replayed. Its reference count is not
 atomic: an event's text is confined to the WSI thread, and handing an event to another
 thread requires a deep copy. Text is bounded at 64 KiB; a backend receiving more must
 truncate at a UTF-8 boundary and set the event's `truncated` flag rather than grow.
+This requirement is provisional: a reference-counted payload makes `SumType`
+assignment `@system`, and `sparkles:input`'s `PasteEvent` carries unbounded text
+through a `@safe` sum type by chunking instead. See
+[event-delivery.md](./event-delivery.md) `EQ14`.
 
 **ED9: What is configurable.** Queue capacity and ring depth are compile-time
 parameters because they size inline storage. Motion coalescing and relative summing
