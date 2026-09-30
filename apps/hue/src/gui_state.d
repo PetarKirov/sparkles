@@ -376,6 +376,13 @@ struct GuiCapture
     string treeFilter;
     /// ditto
     bool treeFilterSet;
+    /// `HUE_GUI_SEARCH_OPEN`: leave the search prompt open over the preselected
+    /// query (`HUE_GUI_SEARCH`), so the input line is in the photograph.
+    bool searchOpen;
+    /// `HUE_GUI_TOAST`: raise a notification toast with this message before
+    /// the first frame — like the prompt, it is otherwise gone before a
+    /// scripted capture can see it.
+    string toast;
     /// `HUE_GUI_CRT`: force CRT shader effect on.
     bool crt;
     /// `HUE_GUI_CRT_TILT`: force CRT mouse tilt curvature on.
@@ -435,6 +442,8 @@ struct GuiCapture
         const tf = get("HUE_GUI_TREE_FILTER", null);
         c.treeFilterSet = tf !is null;
         c.treeFilter = tf;
+        c.searchOpen = get("HUE_GUI_SEARCH_OPEN", "").length != 0;
+        c.toast = get("HUE_GUI_TOAST", "");
         try
             c.forceHover = get("HUE_GUI_HOVER", null).length
                 ? get("HUE_GUI_HOVER", null).to!int : -1;
@@ -493,6 +502,8 @@ unittest
         "HUE_GUI_POINTER_MODE": "system",
         "HUE_GUI_POINTER": "123.5,456",
         "HUE_GUI_TREE_FILTER": "dub",
+        "HUE_GUI_SEARCH_OPEN": "1",
+        "HUE_GUI_TOAST": "Copied",
     ];
     c = GuiCapture.fromEnv(&get);
     assert(c.screenshotPath == "shot.png" && c.screenshotFrame == 40);
@@ -505,6 +516,7 @@ unittest
     assert(c.forceHover == 3);
     assert(c.pointerSet && c.pointer == PointF(123.5, 456));
     assert(c.treeFilterSet && c.treeFilter == "dub");
+    assert(c.searchOpen && c.toast == "Copied");
 
     // The faithful quirk: garbage HUE_GUI_TOP also skips the font override,
     // exactly as the inline try/catch did.

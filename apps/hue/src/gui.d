@@ -4256,7 +4256,7 @@ int runGui(GuiArgs guiArgs) @system
         }
 
         // Debug/CI: the explorer's live filter, open with the seed typed —
-        // its input line and the tree's bars share the pane's bottom edge.
+        // its input line has a toolbar row of its own under the header.
         if (capture.treeFilterSet && pn.treeVisible)
         {
             pn.treeFocused = true;
@@ -4264,6 +4264,13 @@ int runGui(GuiArgs guiArgs) @system
             foreach (dchar ch; capture.treeFilter)
                 pn.tree.filterInput(ch);
         }
+
+        // Debug/CI: the prompts and notices that otherwise only exist
+        // between keystrokes — the search line, and a toast.
+        if (capture.searchOpen)
+            inp.mode = Mode.search;
+        if (capture.toast.length)
+            showToast(capture.toast, success: true);
     }
 
     // The loop is the host's (`HST1`). Its ticker arm IS the code hue used to
