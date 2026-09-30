@@ -456,6 +456,42 @@ any source.
 Unresolved[] unresolvedCitations(in Citation[] cites, in string[string] sources,
     in string[] paths = null) @safe pure
 {
+    // Every whole word in the tree, read once. A name made of word bytes
+    // occurs as a whole word exactly when it is one of these, so looking it
+    // up replaces a scan of every source per citation: that scan made the
+    // check take 24 s, too slow for the hook that keeps the specs honest.
+    bool[string] words;
+    foreach (_, body_; sources)
+    {
+        size_t i;
+        while (i < body_.length)
+        {
+            if (!isWordByte(body_[i]))
+            {
+                ++i;
+                continue;
+            }
+            const start = i;
+            while (i < body_.length && isWordByte(body_[i]))
+                ++i;
+            words[body_[start .. i]] = true;
+        }
+    }
+    static bool allWordBytes(scope const(char)[] s) @safe pure nothrow
+    {
+        foreach (c; s)
+            if (!isWordByte(c))
+                return false;
+        return s.length != 0;
+    }
+    static bool isPackageName(scope const(char)[] s) @safe pure nothrow
+    {
+        foreach (c; s)
+            if (!isWordByte(c) && c != '-')
+                return false;
+        return s.length != 0;
+    }
+
     Unresolved[] bad;
     foreach (c; cites)
     {
@@ -470,6 +506,22 @@ Unresolved[] unresolvedCitations(in Citation[] cites, in string[string] sources,
                 foreach (path, _; sources)
                     if (path.endsWith(name)) { ok = true; break; }
         }
+        else if (name.startsWith("sparkles:")
+            && isPackageName(name["sparkles:".length .. $]))
+        {
+            // A dub sub-package (`sparkles:shader`) is a directory with a
+            // recipe, not a word in a D source.
+            const pkg = name["sparkles:".length .. $];
+            foreach (path; paths)
+                if (path == "libs/" ~ pkg ~ "/dub.sdl"
+                    || path == "apps/" ~ pkg ~ "/dub.sdl")
+                {
+                    ok = true;
+                    break;
+                }
+        }
+        else if (allWordBytes(name))
+            ok = (name in words) !is null;
         else
         {
             foreach (_, body_; sources)
@@ -500,4 +552,137 @@ unittest
     assert(bad[0].cite.token == "CrtEffect.renderBloomPass");
     assert(bad[0].name == "renderBloomPass");
     assert(bad[1].cite.token == "missing.d");
+}
+
+@("spec_evidence.unresolvedCitations.aSubPackageIsADirectoryWithARecipe")
+@safe pure
+unittest
+{
+    // `sparkles:shader` names no D symbol; it is `libs/shader/dub.sdl`.
+    string[string] sources = ["apps/a/src/app.d": "void main() {}\n"];
+    const paths = ["libs/shader/dub.sdl", "apps/a/dub.sdl", "apps/a/src/app.d"];
+    const cites = [
+        Citation("sparkles:shader", "A1", "s.md", 1),
+        Citation("sparkles:a", "A2", "s.md", 2),
+        Citation("sparkles:vcs", "A3", "s.md", 3), // planned, never built
+    ];
+    const bad = unresolvedCitations(cites, sources, paths);
+    assert(bad.length == 1 && bad[0].cite.token == "sparkles:vcs");
+}
+
+/++
+The backlog the check was switched on with: the citations that already
+resolved nowhere, one `file id token` line each, committed at
+$(LREF backlogPath).
+
+The check gates on $(I change), in both directions. A citation that does not
+resolve and is not listed fails, so no new one gets in. A listed citation that
+now resolves, or whose row is gone, fails too, until its line is deleted, so
+the list only ever shrinks and never keeps an entry that would hide the same
+token going stale again later.
++/
+enum backlogPath = "docs/specs/evidence-backlog.txt";
+
+/// The backlog line for `c`: the file, the row's id and the token, which
+/// stays stable when lines above the row move (a line number does not).
+string backlogKey(in Citation c) @safe pure
+{
+    // An id is a table cell; a space in one would split the line wrongly.
+    char[] id = c.id.dup;
+    foreach (ref ch; id)
+        if (ch == ' ')
+            ch = '_';
+    return c.file ~ " " ~ (id.length ? id.idup : "-") ~ " " ~ c.token;
+}
+
+/// What the backlog makes of this run's unresolved citations.
+struct Ratchet
+{
+    Unresolved[] fresh; /// unresolved and not listed: each one fails the check
+    string[] stale;     /// listed but no longer unresolved: delete the line
+    size_t known;       /// unresolved and listed: reported, not failed
+}
+
+/// Compares `bad` against the backlog's `text` (see $(LREF backlogPath)).
+Ratchet ratchet(in Unresolved[] bad, scope const(char)[] text) @safe pure
+{
+    import std.string : lineSplitter;
+
+    bool[string] listed;
+    string[] order;
+    foreach (line; text.lineSplitter)
+    {
+        const l = line.strip;
+        if (l.length == 0 || l[0] == '#')
+            continue;
+        if (l !in listed)
+            order ~= l.idup;
+        listed[l.idup] = true;
+    }
+
+    Ratchet r;
+    bool[string] seen;
+    foreach (u; bad)
+    {
+        const key = backlogKey(u.cite);
+        seen[key] = true;
+        if (key in listed)
+            ++r.known;
+        else
+            r.fresh ~= u;
+    }
+    foreach (key; order)
+        if (key !in seen)
+            r.stale ~= key;
+    return r;
+}
+
+/// The backlog listing exactly `bad`, sorted, under its explanatory header.
+string renderBacklog(in Unresolved[] bad) @safe pure
+{
+    import std.algorithm : sort, uniq;
+
+    string[] keys;
+    foreach (u; bad)
+        keys ~= backlogKey(u.cite);
+    string text = "# Spec evidence that resolves nowhere, as of when"
+        ~ " `ci --check-spec-evidence`\n"
+        ~ "# became a gate. Each line is `file id token`. The list may only"
+        ~ " shrink: fix a\n"
+        ~ "# row (cite what satisfies it, or mark it `partial`) and delete its"
+        ~ " line. A new\n"
+        ~ "# unresolved citation fails the check; so does a line here that"
+        ~ " resolves now.\n"
+        ~ "# After a batch of fixes, `ci --check-spec-evidence"
+        ~ " --update-spec-evidence-backlog`\n"
+        ~ "# rewrites it; a line that rewrite ADDS is a new stale citation, to fix"
+        ~ " instead.\n";
+    foreach (k; keys.sort.uniq)
+        text ~= k ~ "\n";
+    return text;
+}
+
+@("spec_evidence.ratchet.onlyShrinks")
+@safe pure
+unittest
+{
+    const bad = [
+        Unresolved(Citation("gone", "A1", "s.md", 3), "gone"),
+        Unresolved(Citation("new", "A 2", "s.md", 9), "new"),
+    ];
+    const backlog = "# header\n"
+        ~ "s.md A1 gone\n"
+        ~ "s.md A3 fixed\n"
+        ~ "\n";
+    const r = ratchet(bad, backlog);
+    assert(r.known == 1, "a listed citation is known, not a failure");
+    assert(r.fresh.length == 1 && r.fresh[0].cite.token == "new",
+        "an unlisted one fails");
+    assert(r.stale == ["s.md A3 fixed"], "a listed one that resolves fails");
+
+    // What the file would say for this run: exactly the two, and no more.
+    const text = renderBacklog(bad);
+    const again = ratchet(bad, text);
+    assert(again.known == 2 && again.fresh.length == 0 && again.stale.length == 0);
+    assert(backlogKey(bad[1].cite) == "s.md A_2 new", "an id's space is kept apart");
 }

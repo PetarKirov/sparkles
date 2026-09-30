@@ -295,6 +295,12 @@ configuration, not a universal proof. A failed regression invalidates the affect
 verification claim. Historical evidence remains historical after relevant changes
 until revalidated. Commit hashes establish provenance, not correctness by themselves.
 
+A symbol, file or sub-package named in a requirement table's `Traces to` or
+`Evidence` column must exist in the tree: `ci --check-spec-evidence` resolves every
+one, as a pre-commit hook and in CI. Rename code and the rows citing it fail until
+they follow. See [the hook](./AGENTS.md#pre-commit-hooks-prek) for the backlog it
+started with.
+
 Skipped, unavailable, and not-run checks are not passes. Optional environment checks
 may skip with an explicit reason, but a release gate requiring that configuration
 remains unmet until evidence exists. Use the repository's

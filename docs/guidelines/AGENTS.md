@@ -531,6 +531,7 @@ nix run .#ci -- --test-extracted         # --better-c/--wasm for every sub-packa
 nix run .#ci -- --verify --files README.md   # verify markdown examples (see Examples below)
 nix run .#ci -- --check-vcs-urls         # audit all tracked markdown for unpinned GitHub URLs
 nix run .#ci -- --check-docs-sidebar     # sidebar ↔ pages consistency (VitePress)
+nix run .#ci -- --check-spec-evidence    # spec evidence cites things that exist
 ```
 
 One further check exists that CI **cannot** run, because it reads the upstream
@@ -1247,6 +1248,16 @@ Hooks run on commit and will modify or block your changes:
   `SKIP=check-docs-sidebar git commit …`; run
   `nix run .#ci -- --check-docs-sidebar` (or `dub run :ci -- --check-docs-sidebar`)
   to audit manually.
+- **check-spec-evidence** resolves every symbol, file and sub-package a spec's
+  evidence column (`Traces to` / `Evidence`) cites against the tree, so a
+  requirement marked `full` cannot keep pointing at code that was renamed or
+  never built. It is whole-tree and runs whenever a spec, a D source or a
+  `dub.sdl` is staged, because a citation goes stale when the code it names
+  changes. The citations that were already stale when it became a gate are
+  listed in `docs/specs/evidence-backlog.txt`, and that list may only shrink: a
+  new unresolved citation fails, and so does a listed one that resolves now
+  (delete its line). Fix a backlog row by citing what satisfies it, or by
+  marking the requirement `partial`.
 
 ## Pitfalls Checklist
 
