@@ -1262,8 +1262,11 @@ Hooks run on commit and will modify or block your changes:
   changes. The citations that were already stale when it became a gate are
   listed in `docs/specs/evidence-backlog.txt`, and that list may only shrink: a
   new unresolved citation fails, and so does a listed one that resolves now
-  (delete its line). Fix a backlog row by citing what satisfies it, or by
-  marking the requirement `partial`.
+  (delete its line). Only rows that claim delivery are checked: a row whose
+  status is `not started`, `researched`, `deferred`, `planned`, `proposed` or
+  `open` names code it will be, not code that exists. So fix a backlog row by
+  citing what satisfies it, or, if it was never delivered, by giving it that
+  status.
 
 ## Pitfalls Checklist
 

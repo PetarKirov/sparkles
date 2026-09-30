@@ -43,6 +43,49 @@ struct Citation
 private enum evidenceHeaders = ["traces to", "evidence"];
 
 /++
+Whether a row's status cell says it is not delivered. Such a row names the
+code it 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998I will) be (`proposed line_range.d parseRange`), so its evidence
+column is a design, not a claim that the code exists, and is not resolved.
+A row that claims delivery (`full`, `partial`, `shipped`, anything not listed
+here) is.
++/
+bool isUndelivered(scope const(char)[] status) @safe pure nothrow
+{
+    import std.ascii : toLower;
+
+    static immutable string[] notYet = [
+        "not started", "not-started", "researched", "deferred", "planned",
+        "proposed", "open",
+    ];
+    const s = status.strip;
+    foreach (w; notYet)
+    {
+        if (s.length < w.length)
+            continue;
+        bool same = true;
+        foreach (i, c; w)
+            if (toLower(s[i]) != c) { same = false; break; }
+        if (same)
+            return true;
+    }
+    return false;
+}
+
+@("spec_evidence.isUndelivered.readsTheStatusCell")
+@safe pure nothrow
+unittest
+{
+    assert(isUndelivered("not started"));
+    assert(isUndelivered(" researched/not-started "));
+    assert(isUndelivered("Deferred"));
+    assert(isUndelivered("planned/branch-only"));
+    assert(!isUndelivered("full (`74d8f6a3`)"));
+    assert(!isUndelivered("partial"));
+    assert(!isUndelivered("shipped"));
+    assert(!isUndelivered(""), "no status is no exemption");
+}
+
+/++
 Whether a backticked token is worth resolving at all.
 
 Everything this returns `false` for is something a spec legitimately writes in
@@ -332,6 +375,7 @@ Citation[] citationsIn(string file, scope const(char)[] text) @safe pure
 
     Citation[] found;
     ptrdiff_t evidenceCol = -1;
+    ptrdiff_t statusCol = -1;
     size_t columns;
     bool inFence;
 
@@ -350,6 +394,7 @@ Citation[] citationsIn(string file, scope const(char)[] text) @safe pure
         if (!line.startsWith("|"))
         {
             evidenceCol = -1; // a table ends at the first non-row
+            statusCol = -1;
             continue;
         }
 
@@ -385,11 +430,16 @@ Citation[] citationsIn(string file, scope const(char)[] text) @safe pure
                         evidenceCol = i;
                         columns = cells.length;
                     }
+                if (h == "status")
+                    statusCol = i;
             }
             continue;
         }
 
         if (cells.length != columns || evidenceCol >= cells.length)
+            continue;
+        if (statusCol >= 0 && statusCol < cells.length
+            && isUndelivered(cells[statusCol]))
             continue;
 
         const id = cells[0].strip.idup;
@@ -411,6 +461,7 @@ unittest
         ~ "| ---- | ----------- | ------ | --------- |\n"
         ~ "| AAA1 | does a thing | full  | `realSymbol` |\n"
         ~ "| AAA2 | does another | none  | — |\n"
+        ~ "| AAA3 | is planned | not started | proposed `notYetWritten` |\n"
         ~ "\n"
         ~ "| Other | Table |\n"
         ~ "| ----- | ----- |\n"
@@ -645,18 +696,14 @@ string renderBacklog(in Unresolved[] bad) @safe pure
     string[] keys;
     foreach (u; bad)
         keys ~= backlogKey(u.cite);
-    string text = "# Spec evidence that resolves nowhere, as of when"
-        ~ " `ci --check-spec-evidence`\n"
-        ~ "# became a gate. Each line is `file id token`. The list may only"
-        ~ " shrink: fix a\n"
-        ~ "# row (cite what satisfies it, or mark it `partial`) and delete its"
-        ~ " line. A new\n"
-        ~ "# unresolved citation fails the check; so does a line here that"
-        ~ " resolves now.\n"
-        ~ "# After a batch of fixes, `ci --check-spec-evidence"
-        ~ " --update-spec-evidence-backlog`\n"
-        ~ "# rewrites it; a line that rewrite ADDS is a new stale citation, to fix"
-        ~ " instead.\n";
+    string text =
+        "# Spec evidence that resolves nowhere, as of when `ci --check-spec-evidence`\n"
+        ~ "# became a gate. Each line is `file id token`, and the list may only shrink:\n"
+        ~ "# fix a row (cite what satisfies it, or give an undelivered one its true\n"
+        ~ "# status) and delete its line. A new unresolved citation fails the check,\n"
+        ~ "# and so does a line here that resolves now. After a batch of fixes,\n"
+        ~ "# `ci --check-spec-evidence --update-spec-evidence-backlog` rewrites it; a\n"
+        ~ "# line that rewrite ADDS is a new stale citation, to fix instead.\n";
     foreach (k; keys.sort.uniq)
         text ~= k ~ "\n";
     return text;
