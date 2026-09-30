@@ -97,6 +97,8 @@ export default withMermaid(
       // spec) — a repo file, not a site page.
       /\/libs\/wired\/THIRD_PARTY_NOTICES$/,
       /\/research\/application-packaging\/grounding\//,
+      // Exact source snapshots of unpublished Android terminal/backend revisions.
+      /\/research\/android-dev-env\/grounding\//,
       // The twoslash showcase is a static gallery generated into docs/public/ at
       // build time (docs/scripts/build-twoslash-showcase.sh), not a markdown page.
       /\/apps\/hue\/twoslash\//,
