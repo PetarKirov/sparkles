@@ -15,6 +15,12 @@
     windowSoftInputMode="adjustResize": the IME shrinks the content rect, and
     the terminal lays its pane out in what remains (droid_terminal.d).
 
+    theme NoActionBar.Fullscreen: the default theme has an action bar. The
+    native surface draws over it, so it is never seen, but the content view
+    still sits below it and the content rect starts at its bottom — a
+    154 px strip above the first row on a 440 dpi phone. raylib runs the
+    window fullscreen anyway, so only the action bar changes.
+
     extractNativeLibs="true": ndk-stack symbolization stays simple, and the
     library is a plain file on disk.
 
@@ -37,6 +43,7 @@
 
     <application
         android:label="@label@"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
         android:icon="@mipmap/ic_launcher"
         android:hasCode="false"
         android:allowBackup="false"
