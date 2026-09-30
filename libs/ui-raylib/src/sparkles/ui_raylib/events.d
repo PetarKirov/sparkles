@@ -285,13 +285,29 @@ struct RaylibEvents
         // larger one falls back to char events rather than truncating input.
         bool pending = textLen > 0 && textLen <= maxKeyText;
 
+        // This poll's key-downs, as raylib queued them. The key state alone
+        // misses a key pressed AND released between two frames — a soft
+        // keyboard sends DEL down and up within a millisecond — and, on
+        // Android, a held key's repeats; the queue has both.
+        int[16] queued;
+        size_t queuedCount;
+        for (int q = GetKeyPressed(); q != 0; q = GetKeyPressed())
+            if (queuedCount < queued.length)
+                queued[queuedCount++] = q;
+
         foreach (rk; fullKeySet)
         {
             const k = cast(KeyboardKey) rk;
+            bool inQueue;
+            foreach (q; queued[0 .. queuedCount])
+                inQueue |= q == rk;
+            const down = IsKeyDown(k);
             const pressed = IsKeyPressed(k);
-            const repeated = IsKeyPressedRepeat(k);
-            const released = IsKeyReleased(k);
-            if (!pressed && !repeated && !released)
+            // Down and up within the frame: a press and a release, both now.
+            const tapped = inQueue && !pressed && !down && !IsKeyReleased(k);
+            const repeated = !pressed && (IsKeyPressedRepeat(k) || (inQueue && down));
+            const released = IsKeyReleased(k) && !tapped;
+            if (!pressed && !repeated && !released && !tapped)
                 continue;
 
             const named = namedKey(rk);
@@ -300,8 +316,16 @@ struct RaylibEvents
                 ch: 0,
                 mods: mods,
                 action: released ? KeyAction.release
-                    : pressed ? KeyAction.press : KeyAction.repeat,
+                    : pressed || tapped ? KeyAction.press : KeyAction.repeat,
                 unshifted: unshiftedCodepoint(rk));
+            scope (exit)
+                if (tapped)
+                {
+                    e.action = KeyAction.release;
+                    e.ch = 0;
+                    e.text = null;
+                    sink(Event(e));
+                }
 
             // The typed text attaches to at most one stroke per frame, and
             // never to a release — the terminal loop's exact rule.
