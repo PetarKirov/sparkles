@@ -1,0 +1,49 @@
+[identity]
+25091RP04G
+piano
+SM8750P
+arm64-v8a
+16
+36
+Xiaomi/piano_eea/piano:16/BP2A.250605.031.A3/OS3.0.303.0.WPYEUXM:user/release-keys
+user
+6.6.77-android15-8-g4a507830d890-ab13636293-4k
+
+[security]
+uid=2000(shell) gid=2000(shell) groups=2000(shell),1004(input),1007(log),1011(adb),1015(sdcard_rw),1028(sdcard_r),1078(ext_data_rw),1079(ext_obb_rw),3001(net_bt_admin),3002(net_bt),3003(inet),3006(net_bw_stats),3009(readproc),3011(uhid),3012(readtracefs) context=u:r:shell:s0
+Enforcing
+green
+1
+u:r:shell:s0
+CapEff:	0000000000000000
+NoNewPrivs:	0
+Seccomp:	0
+
+[virtualization]
+feature:android.software.virtualization_framework
+absent:/dev/kvm
+crw-rw-rw- 1 root root 10, 124 1970-01-01 02:00 /dev/gunyah
+absent:/dev/gzvm
+-rwxr-xr-x 1 root shell 1209232 1970-01-01 02:00 /apex/com.android.virt/bin/vm
+absent:/proc/sys/kernel/seccomp_bypass_paths
+absent:/proc/sys/user/max_user_namespaces
+
+[resources]
+MemTotal:        7544184 kB
+MemAvailable:    1736308 kB
+  status: 2
+  level: 31
+  temperature: 329
+  Capacity level: 3
+Filesystem       Size Used Avail Use% Mounted on
+/dev/block/dm-56 223G  97G  126G  44% /data/user/0
+
+[applications]
+package:com.termux
+package:com.termux.nix
+package:com.android.virtualization.terminal
+package:com.termux.styling
+package:dev.sparkles.hue.repo
+u0_a375       6234 23289      28344      0 0                   0 S proot-static
+u0_a375       6295 23289      28344    256 0                   0 S proot-static
+u0_a375      23289  2034   17988356  90396 0                   0 S com.termux.nix

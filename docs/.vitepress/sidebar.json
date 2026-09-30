@@ -4732,6 +4732,75 @@
         ]
       },
       {
+        "text": "Nix development on Android",
+        "link": "/research/android-dev-env/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Foundations",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Concepts",
+                "link": "/research/android-dev-env/concepts/"
+              },
+              {
+                "text": "Sparkles baseline",
+                "link": "/research/android-dev-env/sparkles-baseline"
+              }
+            ]
+          },
+          {
+            "text": "Execution backends",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "nix-on-droid / PRoot",
+                "link": "/research/android-dev-env/nix-on-droid"
+              },
+              {
+                "text": "AVF / Pixel / MediaTek",
+                "link": "/research/android-dev-env/avf"
+              },
+              {
+                "text": "Qualcomm Gunyah",
+                "link": "/research/android-dev-env/gunyah"
+              },
+              {
+                "text": "Native stores / NNS",
+                "link": "/research/android-dev-env/native-store"
+              },
+              {
+                "text": "Alternatives",
+                "link": "/research/android-dev-env/alternatives"
+              }
+            ]
+          },
+          {
+            "text": "Evidence and synthesis",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Device validation",
+                "link": "/research/android-dev-env/device-validation/"
+              },
+              {
+                "text": "Source ledger",
+                "link": "/research/android-dev-env/sources"
+              },
+              {
+                "text": "Comparison",
+                "link": "/research/android-dev-env/comparison"
+              },
+              {
+                "text": "Recommendations",
+                "link": "/research/android-dev-env/recommendations"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "Linux on macOS",
         "link": "/research/linux-on-macos/",
         "collapsed": true,
