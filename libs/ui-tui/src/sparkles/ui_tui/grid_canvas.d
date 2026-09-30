@@ -455,6 +455,12 @@ struct GridCanvas
         => capabilities.extendedUnderline || u == UnderlineStyle.none
             ? u : UnderlineStyle.single;
 
+    /// An underline's own colour as this target can draw it: none — the
+    /// text's — where SGR 58 is not declared, so the terminal is never sent
+    /// a sequence it may misread.
+    private Color underlineColorOf(Color c) const scope pure nothrow @nogc
+        => capabilities.extendedUnderline ? c : Color.init;
+
     /**
     Opens an effect bracket (`EFX1`). Resolution happens here, once per
     bracket, rather than per cell.
@@ -711,7 +717,7 @@ struct GridCanvas
             {
                 auto c = &cell(x, y);
                 c.style.underline = underlineOf(us);
-                c.style.underlineColor = Color.fromRgb(v.border.color);
+                c.style.underlineColor = underlineColorOf(Color.fromRgb(v.border.color));
             }
     }
 
@@ -874,7 +880,7 @@ struct GridCanvas
         if (v.underline != UnderlineStyle.none)
         {
             st.underline = underlineOf(v.underline);
-            st.underlineColor = st.fg;
+            st.underlineColor = underlineColorOf(st.fg);
         }
         if (v.hasBg)
             st.bg = Color.fromRgb(blend(cellBg(st), v.bg, v.bgAlpha));
@@ -895,7 +901,7 @@ struct GridCanvas
                     auto c = &cell(x, y);
                     c.style.underline = underlineOf(style == LineStyle.wavy
                         ? UnderlineStyle.curly : UnderlineStyle.single);
-                    c.style.underlineColor = Color.fromRgb(v.fg);
+                    c.style.underlineColor = underlineColorOf(Color.fromRgb(v.fg));
                 }
             return;
         }
@@ -1029,6 +1035,39 @@ static assert(isCanvas!GridCanvas);
         assert(g[cast(ushort) x, 0].style.underlineColor == Color.fromRgb(0xd4, 0x56, 0x56));
     }
     assert(g[3, 0].style.underline == UnderlineStyle.none);
+}
+
+@("tui_canvas.capabilities.plainUnderline")
+@safe unittest
+{
+    import sparkles.ui.canvas : lineOp;
+    import sparkles.ui.degradation : degradationsOf, Substitution;
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+
+    // The error squiggle: curly and red where the target vouches for styled
+    // underlines; straight, in the text's own colour, where it does not —
+    // XTerm drops `4:3` outright, and SGR 58 is never sent to a terminal
+    // that did not answer `Setulc`.
+    Visual red;
+    red.fg = RgbColor(0xd4, 0x56, 0x56);
+    const DrawOp[1] ops = [lineOp(Point(0, 0), Point(3, 0), LineStyle.wavy, visual: red)];
+
+    Grid styled;
+    styled.resize(4, 1);
+    paintGrid(styled, RgbColor(0, 0, 0), ops[]);
+    assert(styled[0, 0].style.underline == UnderlineStyle.curly);
+    assert(styled[0, 0].style.underlineColor == Color.fromRgb(0xd4, 0x56, 0x56));
+
+    const plain = capabilitiesOf(Profile.enhanced);
+    Grid g;
+    g.resize(4, 1);
+    paintGrid(g, RgbColor(0, 0, 0), ops[], caps: plain);
+    foreach (ushort x; 0 .. 3)
+    {
+        assert(g[x, 0].style.underline == UnderlineStyle.single);
+        assert(g[x, 0].style.underlineColor == Color.init);
+    }
+    assert(degradationsOf(ops[], plain)[Substitution.plainUnderline] == 1);
 }
 
 @("tui_canvas.boxBorderAndDottedUnderline")
