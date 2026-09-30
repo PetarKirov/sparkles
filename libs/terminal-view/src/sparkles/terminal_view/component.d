@@ -142,14 +142,77 @@ struct RedrawInputs
     bool overlayWasActive;  /// last frame's overlay — its trailing edge repaints
     bool gridChanged;       /// a resize landed this frame
     bool exitEdge;          /// `childExited` flipped since last frame
+    bool cursorMoved;       /// the cursor moved, showed, hid or changed style
     bool warmup;            /// first frames / a pending atlas flush
     bool forced;            /// bench force-redraw or the debug screenshot hook
+}
+
+/// Where the cursor is and how it looks, as the render state reports it —
+/// what a frame compares to decide whether the cursor alone needs a repaint.
+struct CursorSnapshot
+{
+    ushort x, y;
+    bool visible;
+    bool inViewport;
+    int style;
+
+    /// Read from `state` (after `ghostty_render_state_update`).
+    static CursorSnapshot of(GhosttyRenderState state) @system nothrow @nogc
+    {
+        CursorSnapshot c;
+        ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE, cast(void*) &c.visible);
+        ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE, cast(void*) &c.inViewport);
+        if (c.inViewport)
+        {
+            ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X, cast(void*) &c.x);
+            ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y, cast(void*) &c.y);
+        }
+        ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE, cast(void*) &c.style);
+        return c;
+    }
+}
+
+@("terminal_view.component.CursorSnapshot.aCursorOnlyMoveIsSeen")
+@system
+unittest
+{
+    // A shell's Ctrl+A over an unchanged line is a carriage return: the
+    // cursor moves, no cell changes. That must read as a reason to repaint.
+    GhosttyTerminal term;
+    GhosttyTerminalOptions topts = { cols: 10, rows: 3 };
+    ghostty_terminal_new(null, &term, topts);
+    scope (exit) ghostty_terminal_free(term);
+    GhosttyRenderState state;
+    ghostty_render_state_new(null, &state);
+    scope (exit) ghostty_render_state_free(state);
+
+    void write(string bytes)
+    {
+        ghostty_terminal_vt_write(term, cast(const(ubyte)*) bytes.ptr, cast(uint) bytes.length);
+        ghostty_render_state_update(state, term);
+    }
+
+    write("$ abc");
+    const before = CursorSnapshot.of(state);
+    assert(before.inViewport && before.x == 5 && before.y == 0);
+    GhosttyRenderStateDirty clean = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
+    ghostty_render_state_set(state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean);
+
+    write("\r");
+    const after = CursorSnapshot.of(state);
+    assert(after.x == 0 && after.y == 0);
+    assert(after != before, "the move is visible to the redraw decision");
+
+    // Why the snapshot exists: libghostty-vt reports no dirt for this.
+    GhosttyRenderStateDirty dirty;
+    ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
+    assert(dirty == GHOSTTY_RENDER_STATE_DIRTY_FALSE);
 }
 
 /// The frame's repaint answer: any reason at all says paint.
 bool redrawDecision(in RedrawInputs i) @safe pure nothrow @nogc
     => i.forced || i.contentDirty || i.overlayActive || i.overlayWasActive
-    || i.gridChanged || i.exitEdge || i.warmup;
+    || i.gridChanged || i.exitEdge || i.cursorMoved || i.warmup;
 
 @("terminal_view.component.redrawDecision.anyReasonPaints")
 @safe pure nothrow @nogc
@@ -164,6 +227,7 @@ unittest
     assert(redrawDecision(RedrawInputs(overlayWasActive: true)));
     assert(redrawDecision(RedrawInputs(gridChanged: true)));
     assert(redrawDecision(RedrawInputs(exitEdge: true)));
+    assert(redrawDecision(RedrawInputs(cursorMoved: true)));
     assert(redrawDecision(RedrawInputs(warmup: true)));
     assert(redrawDecision(RedrawInputs(forced: true)));
 }
@@ -297,6 +361,10 @@ struct TerminalView
     private char[] pasteBuf; // a paste's chunks so far, until the last one
     private bool prevOverlayActive;
     private bool prevChildExited;
+    // The cursor as last painted (`cursorMoved`): libghostty-vt's dirty flag
+    // tracks cells, and a shell moving only the cursor (Ctrl+A, the arrow
+    // keys over an unchanged line) dirties none of them.
+    private CursorSnapshot prevCursor;
     // Frames painted unconditionally at startup, before dirty-tracking is
     // allowed to skip any. AppKit needs a longer runway than X11/Wayland: it
     // does not present the first swaps until the NSWindow has finished being
@@ -909,12 +977,15 @@ struct TerminalView
             || s.sbState.view.vAnim.percent !=
                 (s.sbState.view.v.expanded(mousePointer) ? 100 : 0);
 
+        const cursor = CursorSnapshot.of(s.render_state);
+
         const redraw = redrawDecision(RedrawInputs(
             contentDirty: dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE,
             overlayActive: overlayActive,
             overlayWasActive: prevOverlayActive,
             gridChanged: pendingForce,
             exitEdge: s.childExited != prevChildExited,
+            cursorMoved: cursor != prevCursor,
             warmup: forceFirstFrames > 0,
             forced: forceRedrawEnv || s.debugScreenshotAndExit,
         ));
@@ -922,6 +993,7 @@ struct TerminalView
         pendingForce = false;
         prevOverlayActive = overlayActive;
         prevChildExited = s.childExited;
+        prevCursor = cursor;
         if (forceFirstFrames > 0)
             forceFirstFrames--;
         return redraw;
