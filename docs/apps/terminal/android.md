@@ -84,8 +84,8 @@ to `~/storage/shared` first.
   background session after a while. `termux-wake-lock` keeps the CPU up; on
   Android 14+, a long background job may also need the developer option
   _Disable child process restrictions_.
-- The keyboard types through key events: there is no composing input
-  (suggestions, swipe typing). Text an IME has no key for arrives on Android 12
-  and newer.
+- The on-screen keyboard's suggestions and swipe typing are off: a terminal
+  wants each keystroke. Everything else it types arrives, symbols like `©` and
+  `√` included.
 - `targetSdk` is 28 — what lets nix-on-droid run programs from the app's
   storage — so the app is for F-Droid and direct installs, not the Play Store.
