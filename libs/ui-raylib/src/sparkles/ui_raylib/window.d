@@ -154,11 +154,15 @@ struct Window
         // raylib's Android backend reports key codes but never typed text;
         // the hook in front of its input callback supplies what
         // `GetCharPressed` would ($(REF typedChar, sparkles,ui_raylib,events)).
+        // The soft keyboard gets a real editor to type into, where the
+        // manifest opted in (sparkles.android.ime).
         version (Android)
         {
+            import sparkles.android.ime : installImeField;
             import sparkles.android.text_input : installTextInputHook;
 
             installTextInputHook();
+            installImeField();
         }
         return w;
     }

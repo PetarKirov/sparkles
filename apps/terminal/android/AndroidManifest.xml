@@ -50,6 +50,10 @@
             android:windowSoftInputMode="adjustResize|stateAlwaysHidden"
             android:screenOrientation="fullUser">
             <meta-data android:name="android.app.lib_name" android:value="terminal" />
+            <!-- The entry point (sparkles.android.main_thread): it wires the
+                main thread's looper, which the soft keyboard's text field
+                needs, then starts the app as ANativeActivity_onCreate. -->
+            <meta-data android:name="android.app.func_name" android:value="sparkles_onCreate" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

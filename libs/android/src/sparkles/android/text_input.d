@@ -3,34 +3,44 @@ Typed text for a NativeActivity.
 
 raylib's `PLATFORM_ANDROID` backend records key $(I codes) only: it never
 fills the character queue `GetCharPressed` drains, and it ignores the meta
-state, so Shift+a and a soft keyboard's `é` both vanish. This module chains an
-`onInputEvent` hook in front of raylib's and turns key events into text the
-way the framework's own `KeyEvent.getUnicodeChar` would:
+state, so Shift+a vanishes. This module chains an `onInputEvent` hook in front
+of raylib's and turns key events into text the way the framework's own
+`KeyEvent.getUnicodeChar` would: a key-down is translated through its device's
+`KeyCharacterMap` with the event's meta state (JNI; one call per keystroke) —
+Shift, Caps Lock and AltGr layouts all resolve there.
 
-$(LIST
-    * a key-down is translated through its device's `KeyCharacterMap` with
-        the event's meta state (JNI; one call per keystroke) — Shift, Caps
-        Lock and AltGr layouts all resolve there;
-    * an `ACTION_MULTIPLE` event with `KEYCODE_UNKNOWN` is how an IME without
-        an `InputConnection` commits text it has no key for (the framework's
-        fallback connection sends it that way): its characters are read back
-        through `AKeyEvent_toJava` (API 31+) and `KeyEvent.getCharacters`.
-)
+The soft keyboard's text does not come through here: it is edited into the
+hidden field of $(MREF sparkles,android,ime), which diffs it into this queue
+with $(LREF pushTyped) — text as code points, and the two edits that are keys
+rather than text as $(LREF imeBackspace) and $(LREF imeEnter).
+
+$(B Every key event is reported handled) (system keys aside — volume, power,
+media): the framework forwards an unhandled key to the focused view, and with
+the IME field focused that would type every hardware key twice.
 
 Ctrl and Alt chords produce no text — the terminal encodes those from the key
 event itself, exactly as a desktop window reports them (GLFW's character
 callback does not fire for them either).
 
 The hook runs on the glue thread, called from raylib's `PollInputEvents`
-(the JNI lookups hop to the worker, see $(MREF sparkles,android,jni)), and
-$(LREF popTypedChar) drains the queue from the frame that follows it.
+(the JNI lookups hop to the worker, see $(MREF sparkles,android,jni)), the
+IME field's diff on the main thread, and $(LREF popTypedChar) drains the queue
+from the frame that follows them.
 */
 module sparkles.android.text_input;
 
 version (Android):
 
+import core.sys.posix.pthread;
+
 import sparkles.android.activity : AndroidApp, GetAndroidApp;
 import sparkles.android.jni;
+
+/// A backspace from the soft keyboard, in the typed-text queue: a key, where
+/// every other entry is text (above Unicode's range, so never a character).
+enum dchar imeBackspace = cast(dchar) 0x11_0001;
+/// ditto — Enter (a committed newline).
+enum dchar imeEnter = cast(dchar) 0x11_0002;
 
 // <android/input.h> — the calls and constants the hook needs.
 private extern (C) nothrow @nogc
@@ -42,16 +52,8 @@ private extern (C) nothrow @nogc
     int AKeyEvent_getMetaState(const(void)* event);
 }
 
-// API 31. Weak, so the library still loads on API 29/30, where IME text
-// without a key simply cannot be read.
-version (LDC)
-    pragma(LDC_extern_weak) private extern (C) jobject AKeyEvent_toJava(
-        JNIEnv* env, const(void)* keyEvent) nothrow @nogc;
-
 private enum int inputEventTypeKey = 1;
 private enum int keyActionDown = 0;
-private enum int keyActionMultiple = 2;
-private enum int keycodeUnknown = 0;
 private enum int metaAltOn = 0x02;
 private enum int metaCtrlOn = 0x1000;
 private enum int metaMetaOn = 0x10000;
@@ -61,12 +63,13 @@ private enum int combiningAccent = 0x8000_0000;
 private alias InputCallback = extern (C) int function(AndroidApp*, void*) nothrow;
 
 private __gshared InputCallback chained;
+private __gshared pthread_mutex_t queueLock = PTHREAD_MUTEX_INITIALIZER;
 private __gshared dchar[256] queue;
 private __gshared size_t head, count;
 
 /// JNI handles resolved on first use; global refs, held for the process.
-private __gshared jclass kcmClass, keyEventClass;
-private __gshared jmethodID kcmLoad, kcmGet, keyEventGetCharacters;
+private __gshared jclass kcmClass;
+private __gshared jmethodID kcmLoad, kcmGet;
 private __gshared int cachedDevice = int.min;
 private __gshared jobject cachedMap;
 
@@ -84,9 +87,12 @@ void installTextInputHook() @trusted nothrow @nogc
     app.onInputEvent = cast(void*) &onInputEvent;
 }
 
-/// The next typed code point, or `0` when none is queued.
+/// The next typed code point — or $(LREF imeBackspace) / $(LREF imeEnter) —
+/// or `0` when none is queued.
 dchar popTypedChar() @trusted nothrow @nogc
 {
+    pthread_mutex_lock(&queueLock);
+    scope (exit) pthread_mutex_unlock(&queueLock);
     if (count == 0)
         return 0;
     const c = queue[head];
@@ -95,19 +101,45 @@ dchar popTypedChar() @trusted nothrow @nogc
     return c;
 }
 
-private void push(dchar c) @trusted nothrow @nogc
+/// Queue a typed code point (or an IME key); any thread. A full queue drops:
+/// a frame never types 256 characters.
+void pushTyped(dchar c) @trusted nothrow @nogc
 {
-    if (c == 0 || count == queue.length)
-        return; // a full queue drops: a frame never types 256 characters
+    if (c == 0)
+        return;
+    pthread_mutex_lock(&queueLock);
+    scope (exit) pthread_mutex_unlock(&queueLock);
+    if (count == queue.length)
+        return;
     queue[(head + count) % queue.length] = c;
     ++count;
 }
 
 private extern (C) int onInputEvent(AndroidApp* app, void* event) nothrow
 {
-    if (AInputEvent_getType(event) == inputEventTypeKey)
+    const isKey = AInputEvent_getType(event) == inputEventTypeKey;
+    if (isKey)
         collectText(event);
-    return chained !is null ? chained(app, event) : 0;
+    const handled = chained !is null ? chained(app, event) : 0;
+    return handled || (isKey && !isSystemKey(AKeyEvent_getKeyCode(event)));
+}
+
+/// Keys the system acts on (volume, power, media, …): left unhandled so it
+/// still does.
+private bool isSystemKey(int keyCode) @safe pure nothrow @nogc
+{
+    switch (keyCode)
+    {
+        case 3: // HOME
+        case 24, 25, 164: // VOLUME_UP, VOLUME_DOWN, VOLUME_MUTE
+        case 26, 223, 224: // POWER, SLEEP, WAKEUP
+        case 27, 80: // CAMERA, FOCUS
+        case 79, 85, 86, 87, 88, 89, 90, 91, 126, 127: // HEADSETHOOK, MEDIA_*, MUTE
+        case 187, 219, 220, 221: // APP_SWITCH, ASSIST, BRIGHTNESS_DOWN/UP
+            return true;
+        default:
+            return false;
+    }
 }
 
 private void collectText(void* event) @trusted nothrow
@@ -116,11 +148,6 @@ private void collectText(void* event) @trusted nothrow
     const keyCode = AKeyEvent_getKeyCode(event);
     const meta = AKeyEvent_getMetaState(event);
 
-    if (action == keyActionMultiple && keyCode == keycodeUnknown)
-    {
-        pushCharacters(event);
-        return;
-    }
     if (action != keyActionDown)
         return;
     if (meta & (metaCtrlOn | metaAltOn | metaMetaOn))
@@ -128,7 +155,7 @@ private void collectText(void* event) @trusted nothrow
 
     const c = unicodeChar(AInputEvent_getDeviceId(event), keyCode, meta);
     if (c > 0 && !(c & combiningAccent))
-        push(cast(dchar) c);
+        pushTyped(cast(dchar) c);
 }
 
 /// `KeyCharacterMap.load(deviceId).get(keyCode, metaState)`; 0 on any failure.
@@ -173,42 +200,4 @@ private int unicodeCharOnWorker(ref JniFrame f, int deviceId, int keyCode, int m
     args[1].i = meta;
     const c = (*env).CallIntMethodA(env, cachedMap, kcmGet, args.ptr);
     return f.failed ? 0 : c;
-}
-
-/// An IME commit without a key: `KeyEvent.getCharacters()` (API 31+).
-private void pushCharacters(void* event) @system nothrow
-{
-    version (LDC)
-        if (&AKeyEvent_toJava is null)
-            return;
-
-    // The event stays valid for the round trip: the input callback that owns
-    // it is blocked on this call.
-    withJni((ref JniFrame f) => charactersOnWorker(f, event));
-}
-
-private void charactersOnWorker(ref JniFrame f, void* event) @system nothrow
-{
-    import std.utf : byDchar;
-
-    auto env = f.env;
-
-    auto jev = AKeyEvent_toJava(env, event);
-    if (jev is null || f.failed)
-        return;
-    if (keyEventClass is null)
-    {
-        auto local = (*env).GetObjectClass(env, jev);
-        keyEventClass = cast(jclass) (*env).NewGlobalRef(env, local);
-        keyEventGetCharacters = (*env).GetMethodID(env, keyEventClass,
-            "getCharacters", "()Ljava/lang/String;");
-    }
-    if (keyEventGetCharacters is null)
-        return;
-    auto chars = cast(jstring) (*env).CallObjectMethodA(env, jev,
-        keyEventGetCharacters, null);
-    if (f.failed || chars is null)
-        return;
-    foreach (dchar c; f.toDString(chars).byDchar)
-        push(c);
 }

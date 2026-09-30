@@ -211,6 +211,14 @@ struct RaylibEvents
         }
 
         // -- keyboard ------------------------------------------------------
+        // The soft keyboard's field is diffed on the main thread; what it
+        // finds reaches the typed-text queue for a later frame.
+        version (Android)
+        {
+            import sparkles.android.ime : pollImeField;
+
+            pollImeField();
+        }
         // Two grades, declared by the capability (`INP16`): a window that
         // reports key releases carries the full physical keyboard with edges
         // (what a terminal's key encoder needs); the default grade stays
@@ -222,7 +230,10 @@ struct RaylibEvents
         }
 
         for (dchar cp = typedChar(); cp != 0; cp = typedChar())
-            sink(charEvent(cp, mods));
+        {
+            Key k;
+            sink(imeKeyOf(cp, k) ? keyEvent(k, mods) : charEvent(cp, mods));
+        }
         for (int k = GetKeyPressed(); k != 0; k = GetKeyPressed())
         {
             const e = basicGradeKey(k, mods);
@@ -263,27 +274,56 @@ struct RaylibEvents
         import std.typecons : Yes;
         import std.utf : encode;
 
-        // This frame's typed text, in arrival order — both as UTF-8 (to pair
-        // onto a keystroke) and as code points (the unclaimed fallback).
+        // This frame's typed text, in arrival order — as code points (the
+        // unclaimed fallback), and as UTF-8 to pair onto a keystroke. As many
+        // as a soft keyboard's paste commits at once; more waits a frame.
+        dchar[256] cps = void;
+        size_t cpCount;
+        bool imeKeys;
+        while (cpCount < cps.length)
+        {
+            const cp = typedChar();
+            if (cp == 0)
+                break;
+            cps[cpCount++] = cp;
+            Key unused;
+            imeKeys |= imeKeyOf(cp, unused);
+        }
         char[64] textBuf = void;
         size_t textLen;
-        dchar[16] cps = void;
-        size_t cpCount;
-        for (dchar cp = typedChar(); cp != 0; cp = typedChar())
+        bool overflow;
+        foreach (cp; imeKeys ? null : cps[0 .. cpCount])
         {
             char[4] u8;
             const n = encode!(Yes.useReplacementDchar)(u8, cp);
-            if (textLen + n <= textBuf.length)
+            if (textLen + n > textBuf.length)
             {
-                textBuf[textLen .. textLen + n] = u8[0 .. n];
-                textLen += n;
+                overflow = true;
+                break;
             }
-            if (cpCount < cps.length)
-                cps[cpCount++] = cp;
+            textBuf[textLen .. textLen + n] = u8[0 .. n];
+            textLen += n;
+        }
+        // A soft keyboard's backspace or Enter came with the text: deliver
+        // it all in arrival order, keys as keys, and pair nothing.
+        if (imeKeys)
+        {
+            foreach (cp; cps[0 .. cpCount])
+            {
+                Key k;
+                if (imeKeyOf(cp, k))
+                {
+                    sink(keyEvent(k, mods, KeyAction.press));
+                    sink(keyEvent(k, mods, KeyAction.release));
+                }
+                else
+                    sink(charEvent(cp, mods));
+            }
+            cpCount = 0;
         }
         // Pair only when the whole burst fits the event's inline text; a
         // larger one falls back to char events rather than truncating input.
-        bool pending = textLen > 0 && textLen <= maxKeyText;
+        bool pending = !overflow && textLen > 0 && textLen <= maxKeyText;
 
         // This poll's key-downs, as raylib queued them. The key state alone
         // misses a key pressed AND released between two frames — a soft
@@ -419,6 +459,26 @@ dchar typedChar() @system
     }
     else
         return cast(dchar) GetCharPressed();
+}
+
+/**
+A soft keyboard's backspace or Enter, which arrive in the typed-text queue
+with its text on Android (100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998REF imeBackspace, sparkles,android,text_input));
+`false` for text.
+*/
+bool imeKeyOf(dchar cp, out Key key) @safe pure nothrow @nogc
+{
+    version (Android)
+    {
+        import sparkles.android.text_input : imeBackspace, imeEnter;
+
+        if (cp == imeBackspace || cp == imeEnter)
+        {
+            key = cp == imeBackspace ? Key.backspace : Key.enter;
+            return true;
+        }
+    }
+    return false;
 }
 
 /// Maps raylib's named keys onto the shared `Key` vocabulary (printable input

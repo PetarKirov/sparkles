@@ -10,9 +10,11 @@ request over JNI for the view the manager actually serves — the window's decor
 view — and falls back to `toggleSoftInput`, which picks the served view itself
 (deprecated, but a no-op only for apps targeting API 31+; this one targets 28).
 
-With no `InputConnection` on the view (the app ships no Java), the IME types
-through key events and, for text it has no key for, `ACTION_MULTIPLE` events;
-both become text in $(MREF sparkles,android,text_input).
+When the app has installed the hidden text field of
+$(MREF sparkles,android,ime), both calls go to it instead: the keyboard is then
+served through the field's real `InputConnection`, and its text arrives
+through the field. The decor-view route remains for an app that has not
+(the manifest names no entry point, $(MREF sparkles,android,main_thread)).
 
 Whether the keyboard is $(I shown) is not reported back to native code; the
 layout follows it through the content rect instead
@@ -31,12 +33,20 @@ private enum int showForced = 2;
 /// Bring up the soft keyboard; `false` when every route failed.
 bool showSoftKeyboard() @trusted nothrow
 {
+    import sparkles.android.ime : showImeKeyboard;
+
+    if (showImeKeyboard(true))
+        return true;
     return withJni((ref JniFrame f) => showOnWorker(f));
 }
 
 /// Dismiss the soft keyboard.
 void hideSoftKeyboard() @trusted nothrow
 {
+    import sparkles.android.ime : showImeKeyboard;
+
+    if (showImeKeyboard(false))
+        return;
     withJni((ref JniFrame f) { hideOnWorker(f); });
 }
 
