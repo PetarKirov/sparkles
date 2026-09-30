@@ -370,8 +370,8 @@ in (p != ProfileChoice.native || e != EmulatorChoice.none)
     // The profile only takes away from the preset.
     const kitty = narrowingOf(ProfileChoice.native, EmulatorChoice.kitty);
     const kittyEnhanced = narrowingOf(ProfileChoice.enhanced, EmulatorChoice.kitty);
-    assert(kitty.colorDepth == ColorDepth.trueColor);
-    assert(kittyEnhanced.colorDepth == ColorDepth.ansi256 && !kittyEnhanced.hyperlinks);
+    assert(kitty.colorDepth == ColorDepth.trueColor && kitty.clipboard);
+    assert(kittyEnhanced.colorDepth == ColorDepth.ansi256 && !kittyEnhanced.clipboard);
 }
 
 /// The whole application, as one value.
