@@ -1194,6 +1194,12 @@ the usual code formatting.
   pass build + test + lint _on its own_ so history stays bisectable. Use
   `git commit --fixup=<sha>` for tweaks that belong to an earlier commit instead
   of a fresh "address review" commit.
+  CI builds only a pull request's tip, so check the rest before pushing a
+  series: `nix run .#ci -- --build-each-commit` builds every commit since the
+  merge-base with `origin/main` in a scratch worktree (`--base <ref>` to start
+  elsewhere, `--packages <name>…` to choose). By default it builds `hue`,
+  `ui-gallery` and `diagram`, whose default GUI configurations `dub test`
+  never compiles.
 - **Review the branch at the end of a session** and propose tidying it with an
   interactive rebase (`git rebase -i <base>`) before it merges. Aim for:
   - **Squash fixups** into their targets — `git rebase -i --autosquash <base>`.

@@ -26,6 +26,9 @@ dependency "sparkles:syntax" path="../.."
 // and `--audit-fences` read it from there. Pure D, but note it is a
 // sourceLibrary whose closure includes sparkles:twoslash and sparkles:ui.
 dependency "sparkles:docs" path="../.."
+// `--build-each-commit` drives git on a scratch worktree it names: `runGit`
+// keeps an inherited `GIT_DIR` (a rebase `exec` step) from redirecting it.
+dependency "sparkles:build-primitives" path="../.."
 
 // Optimised, assertions live, `debug {}` blocks out — the build every nix
 // artifact uses. Neither `debug` (which compiles those blocks in) nor
