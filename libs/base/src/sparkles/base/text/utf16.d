@@ -14,8 +14,18 @@ module sparkles.base.text.utf16;
 import expected : Expected, err, ok;
 
 import sparkles.base.text.errors : NoGcHook;
-import sparkles.base.text.utf : encodeUtf8;
 import sparkles.base.text.utf8 : utf8SequenceLength;
+
+version (LDC)
+    version (X86_64)
+        version = textSimdX86;
+
+version (textSimdX86)
+{
+    import sparkles.base.text.utf16_simd : asciiUtf8Prefix, asciiUtf16Prefix,
+        widenAsciiUtf8, narrowAsciiUtf16, countUtf8Units, measureUtf16Prefix;
+    import sparkles.base.text.utf8_simd : validatedUtf8Prefix;
+}
 
 @safe pure nothrow @nogc:
 
@@ -101,7 +111,24 @@ private UtfConversionResult!size_t utf8ToUtf16Impl(
     size_t di;
     while (si < source.length)
     {
-        const len = source[si] < 0x80 ? 1 : utf8SequenceLength(source, si);
+        if (source[si] < 0x80)
+        {
+            version (textSimdX86)
+            {
+                if (!__ctfe && source.length - si >= 16)
+                {
+                    const count = widenAsciiUtf8(source[si .. $],
+                        destination[di .. payloadUnits]);
+                    si += count;
+                    di += count;
+                    continue;
+                }
+            }
+            destination[di++] = cast(wchar) source[si++];
+            continue;
+        }
+        // The preflight already validated every sequence.
+        const len = source[si] < 0xE0 ? 2 : source[si] < 0xF0 ? 3 : 4;
         const scalar = decodeScalar(source, si, len);
         if (scalar < 0x1_0000)
         {
@@ -137,17 +164,49 @@ private UtfConversionResult!size_t utf16ToUtf8Impl(
     size_t di;
     while (si < source.length)
     {
-        dchar scalar = source[si++];
+        dchar scalar = source[si];
+        if (scalar < 0x80)
+        {
+            version (textSimdX86)
+            {
+                if (!__ctfe && source.length - si >= 16)
+                {
+                    const count = narrowAsciiUtf16(source[si .. $],
+                        destination[di .. payloadBytes]);
+                    si += count;
+                    di += count;
+                    continue;
+                }
+            }
+            destination[di++] = cast(char) scalar;
+            ++si;
+            continue;
+        }
+        ++si;
         if (scalar >= 0xD800 && scalar <= 0xDBFF)
         {
             const low = source[si++];
             scalar = cast(dchar)(0x1_0000
                 + ((scalar - 0xD800) << 10) + (low - 0xDC00));
         }
-        char[4] encoded;
-        const len = encodeUtf8(scalar, encoded);
-        foreach (i; 0 .. len)
-            destination[di++] = encoded[i];
+        if (scalar < 0x800)
+        {
+            destination[di++] = cast(char)(0xC0 | (scalar >> 6));
+            destination[di++] = cast(char)(0x80 | (scalar & 0x3F));
+        }
+        else if (scalar < 0x1_0000)
+        {
+            destination[di++] = cast(char)(0xE0 | (scalar >> 12));
+            destination[di++] = cast(char)(0x80 | ((scalar >> 6) & 0x3F));
+            destination[di++] = cast(char)(0x80 | (scalar & 0x3F));
+        }
+        else
+        {
+            destination[di++] = cast(char)(0xF0 | (scalar >> 18));
+            destination[di++] = cast(char)(0x80 | ((scalar >> 12) & 0x3F));
+            destination[di++] = cast(char)(0x80 | ((scalar >> 6) & 0x3F));
+            destination[di++] = cast(char)(0x80 | (scalar & 0x3F));
+        }
     }
     if (terminate)
         destination[di] = 0;
@@ -159,21 +218,37 @@ private UtfConversionResult!size_t measureUtf8(
 {
     size_t units;
     size_t i;
+    version (textSimdX86)
+    {
+        if (!__ctfe && source.length >= 64)
+        {
+            if (source[0] < 0x80)
+                i = units = asciiUtf8Prefix(source, rejectNul);
+            if (source.length - i >= 64)
+            {
+                const valid = validatedUtf8Prefix(source[i .. $]);
+                const counted = countUtf8Units(source[i .. i + valid], rejectNul);
+                i += counted.consumed;
+                units += counted.required;
+            }
+        }
+    }
     while (i < source.length)
     {
         const lead = source[i];
-        if (lead == 0 && rejectNul)
-            return utfErr!size_t(UtfConversionError(
-                UtfConversionErrorCode.embeddedNul, i, 0));
-
-        size_t len = 1;
-        if (lead >= 0x80)
+        if (lead < 0x80)
         {
-            len = utf8SequenceLength(source, i);
-            if (len == 0)
+            if (lead == 0 && rejectNul)
                 return utfErr!size_t(UtfConversionError(
-                    UtfConversionErrorCode.invalidUtf8, i, 0));
+                    UtfConversionErrorCode.embeddedNul, i, 0));
+            ++i;
+            ++units;
+            continue;
         }
+        const len = utf8SequenceLength(source, i);
+        if (len == 0)
+            return utfErr!size_t(UtfConversionError(
+                UtfConversionErrorCode.invalidUtf8, i, 0));
         units += len == 4 ? 2 : 1;
         i += len;
     }
@@ -185,12 +260,29 @@ private UtfConversionResult!size_t measureUtf16(
 {
     size_t bytes;
     size_t i;
+    version (textSimdX86)
+    {
+        if (!__ctfe && source.length >= 16)
+        {
+            if (source[0] < 0x80)
+                i = bytes = asciiUtf16Prefix(source, rejectNul);
+            const measured = measureUtf16Prefix(source[i .. $], rejectNul);
+            i += measured.consumed;
+            bytes += measured.required;
+        }
+    }
     while (i < source.length)
     {
         const unit = source[i];
-        if (unit == 0 && rejectNul)
-            return utfErr!size_t(UtfConversionError(
-                UtfConversionErrorCode.embeddedNul, i, 0));
+        if (unit < 0x80)
+        {
+            if (unit == 0 && rejectNul)
+                return utfErr!size_t(UtfConversionError(
+                    UtfConversionErrorCode.embeddedNul, i, 0));
+            ++i;
+            ++bytes;
+            continue;
+        }
 
         if (unit >= 0xD800 && unit <= 0xDBFF)
         {
@@ -206,7 +298,7 @@ private UtfConversionResult!size_t measureUtf16(
             return utfErr!size_t(UtfConversionError(
                 UtfConversionErrorCode.invalidUtf16, i, 0));
 
-        bytes += unit < 0x80 ? 1 : unit < 0x800 ? 2 : 3;
+        bytes += unit < 0x800 ? 2 : 3;
         ++i;
     }
     return utfOk(bytes);
@@ -327,4 +419,167 @@ unittest
     assert(utf16ToUtf8(source[], exact[]).value == 4);
     auto terminated = utf16ToUtf8z(source[], exact[]);
     assert(terminated.hasError && terminated.error.required == 5);
+}
+
+@("text.utf16.mixedAsciiBlocksRespectExactSlices")
+unittest
+{
+    enum source = "0123456789abcdefé€😀abcdefghijklmnop\0qrstuvwxyz012345";
+    enum expected = "0123456789abcdefé€😀abcdefghijklmnop\0qrstuvwxyz012345"w;
+    // Unaligned sources/destinations, non-ASCII transitions and a preserved
+    // NUL exercise both bulk paths and the bounded scalar tails.
+    foreach (alignment; 0 .. 16)
+    {
+        char[128] input;
+        input[alignment .. alignment + source.length] = source[];
+        wchar[128] wide = 0xA5A5;
+        const encoded = utf8ToUtf16(input[alignment .. alignment + source.length],
+            wide[alignment .. alignment + expected.length]);
+        assert(encoded.hasValue && encoded.value == expected.length);
+        assert(wide[alignment .. alignment + expected.length] == expected);
+        foreach (unit; wide[0 .. alignment])
+            assert(unit == 0xA5A5);
+        foreach (unit; wide[alignment + expected.length .. $])
+            assert(unit == 0xA5A5);
+
+        char[128] bytes = cast(char) 0x5A;
+        const decoded = utf16ToUtf8(wide[alignment .. alignment + expected.length],
+            bytes[alignment .. alignment + source.length]);
+        assert(decoded.hasValue && decoded.value == source.length);
+        assert(bytes[alignment .. alignment + source.length] == source);
+        foreach (unit; bytes[0 .. alignment])
+            assert(unit == 0x5A);
+        foreach (unit; bytes[alignment + source.length .. $])
+            assert(unit == 0x5A);
+    }
+
+    wchar[128] wide = 0xA5A5;
+    const wideBefore = wide;
+    foreach (capacity; 0 .. expected.length)
+    {
+        const result = utf8ToUtf16(source, wide[3 .. 3 + capacity]);
+        assert(result.hasError
+            && result.error.code == UtfConversionErrorCode.insufficientSpace);
+        assert(result.error.offset == source.length
+            && result.error.required == expected.length);
+        assert(wide == wideBefore);
+    }
+    char[128] bytes = cast(char) 0x5A;
+    const bytesBefore = bytes;
+    foreach (capacity; 0 .. source.length)
+    {
+        const result = utf16ToUtf8(expected, bytes[3 .. 3 + capacity]);
+        assert(result.hasError
+            && result.error.code == UtfConversionErrorCode.insufficientSpace);
+        assert(result.error.offset == expected.length
+            && result.error.required == source.length);
+        assert(bytes == bytesBefore);
+    }
+}
+
+@("text.utf16.vectorBoundaryFailuresRemainTransactional")
+unittest
+{
+    foreach (position; [0, 7, 8, 15, 16, 17, 31, 32, 33, 47, 63])
+    {
+        char[80] source8 = 'a';
+        wchar[80] source16 = 'a';
+        source8[position] = 0;
+        source16[position] = 0;
+
+        wchar[81] wide = 0xA5A5;
+        const wideBefore = wide;
+        char[81] bytes = cast(char) 0x5A;
+        const bytesBefore = bytes;
+        // Embedded NUL wins over insufficient space even after ASCII blocks.
+        const rejected8 = utf8ToUtf16z(source8[], wide[0 .. 1]);
+        assert(rejected8.hasError
+            && rejected8.error.code == UtfConversionErrorCode.embeddedNul);
+        assert(rejected8.error.offset == position
+            && rejected8.error.required == 0 && wide == wideBefore);
+        const rejected16 = utf16ToUtf8z(source16[], bytes[0 .. 1]);
+        assert(rejected16.hasError
+            && rejected16.error.code == UtfConversionErrorCode.embeddedNul);
+        assert(rejected16.error.offset == position
+            && rejected16.error.required == 0 && bytes == bytesBefore);
+
+        assert(utf8ToUtf16(source8[], wide[0 .. 80]).value == 80);
+        assert(wide[0 .. 80] == source16[] && wide[80] == 0xA5A5);
+        assert(utf16ToUtf8(source16[], bytes[0 .. 80]).value == 80);
+        assert(bytes[0 .. 80] == source8[] && bytes[80] == 0x5A);
+
+        wide[] = wideBefore[];
+        bytes[] = bytesBefore[];
+        source8[position] = '\xE2';
+        source8[position + 1] = '(';
+        source16[position] = cast(wchar) 0xD800;
+        const malformed8 = utf8ToUtf16(source8[], wide[]);
+        assert(malformed8.hasError
+            && malformed8.error.code == UtfConversionErrorCode.invalidUtf8);
+        assert(malformed8.error.offset == position
+            && malformed8.error.required == 0 && wide == wideBefore);
+        const malformed16 = utf16ToUtf8(source16[], bytes[]);
+        assert(malformed16.hasError
+            && malformed16.error.code == UtfConversionErrorCode.invalidUtf16);
+        assert(malformed16.error.offset == position
+            && malformed16.error.required == 0 && bytes == bytesBefore);
+
+        source8[position] = 'a';
+        source8[position + 1] = 'a';
+        source16[position] = 'a';
+        const terminated8 = utf8ToUtf16z(source8[], wide[]);
+        assert(terminated8.hasValue && terminated8.value == 80);
+        assert(wide[0 .. 80] == source16[] && wide[80] == 0);
+        const terminated16 = utf16ToUtf8z(source16[], bytes[]);
+        assert(terminated16.hasValue && terminated16.value == 80);
+        assert(bytes[0 .. 80] == source8[] && bytes[80] == 0);
+    }
+}
+
+@("text.utf16.nonAsciiSizingAndSurrogateBoundaries")
+unittest
+{
+    enum part8 = "\u007F\u0080\u07FF\u0800\uD7FF\uE000\uFFFF😀\0";
+    enum part16 = "\u007F\u0080\u07FF\u0800\uD7FF\uE000\uFFFF😀\0"w;
+    enum source8 = part8 ~ part8 ~ part8 ~ part8 ~ part8 ~ part8 ~ part8 ~ part8;
+    enum source16 = part16 ~ part16 ~ part16 ~ part16 ~ part16 ~ part16 ~ part16 ~ part16;
+    foreach (alignment; 0 .. 32)
+    {
+        char[256] input;
+        input[alignment .. alignment + source8.length] = source8[];
+        wchar[160] wide = 0xA5A5;
+        const encoded = utf8ToUtf16(input[alignment .. alignment + source8.length],
+            wide[alignment .. alignment + source16.length]);
+        assert(encoded.hasValue && encoded.value == source16.length);
+        assert(wide[alignment .. alignment + source16.length] == source16);
+        assert(wide[alignment + source16.length] == 0xA5A5);
+        char[256] bytes = cast(char) 0x5A;
+        const decoded = utf16ToUtf8(wide[alignment .. alignment + source16.length],
+            bytes[alignment .. alignment + source8.length]);
+        assert(decoded.hasValue && decoded.value == source8.length);
+        assert(bytes[alignment .. alignment + source8.length] == source8);
+        assert(bytes[alignment + source8.length] == 0x5A);
+    }
+    foreach (position; 0 .. 64)
+    {
+        wchar[80] source = '\u4E16';
+        source[position] = 0xD83D;
+        source[position + 1] = 0xDE00;
+        char[241] bytes = cast(char) 0x5A;
+        const valid = utf16ToUtf8(source[], bytes[0 .. 238]);
+        assert(valid.hasValue && valid.value == 238);
+        assert(bytes[position * 3 .. position * 3 + 4] == "😀");
+        assert(bytes[238] == 0x5A);
+
+        bytes[] = cast(char) 0x5A;
+        const before = bytes;
+        source[position + 1] = '\u4E16';
+        const badHead = utf16ToUtf8(source[], bytes[]);
+        assert(badHead.hasError && badHead.error.code == UtfConversionErrorCode.invalidUtf16);
+        assert(badHead.error.offset == position && bytes == before);
+        source[position] = 0xDC00;
+        const badTail = utf16ToUtf8(source[], bytes[]);
+        assert(badTail.hasError && badTail.error.code == UtfConversionErrorCode.invalidUtf16);
+        assert(badTail.error.offset == position && bytes == before);
+    }
 }

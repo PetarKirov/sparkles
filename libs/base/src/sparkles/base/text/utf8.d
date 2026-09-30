@@ -17,23 +17,29 @@ module sparkles.base.text.utf8;
 import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr,
     parseOk;
 
+version (LDC)
+    version (X86_64)
+        version = textSimdX86;
+version (textSimdX86)
+    import sparkles.base.text.utf8_simd : validatedUtf8Prefix;
+
 /**
 Returns the index of the first byte of the first ill-formed UTF-8 sequence
 in `s`, or `s.length` when the whole slice is well-formed.
 
-Scalar implementation: a word-at-a-time ASCII skip and a pairwise 3-byte
-lane (two adjacent lead+continuation+continuation shapes validated with a
-single masked compare on one u64 load — the dominant pattern in CJK
-text), then per-sequence validation — the common lead classes check both
-continuations with one 16-bit masked compare; only the window-constrained
-leads (`E0 ED F0 F4`) branch to exact range checks. (A DFA was measured
-slower here: its serial load-to-load dependency loses to well-predicted
-branches.)
+At runtime LDC x86-64 builds validate bounded SIMD blocks (AVX2 when
+available, SSE2 otherwise), then resolve a rejected block or short tail
+with the scalar path below. No input padding is required. CTFE and other
+compiler/architecture combinations use the scalar word-at-a-time ASCII
+skip and pairwise 3-byte lane throughout.
 */
 size_t indexOfInvalidUtf8(scope const(char)[] s) @safe pure nothrow @nogc
 {
     const n = s.length;
     size_t i = 0;
+    version (textSimdX86)
+        if (!__ctfe && n >= 64)
+            i = validatedUtf8Prefix(s);
 
     while (i < n)
     {

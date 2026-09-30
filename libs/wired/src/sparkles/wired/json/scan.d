@@ -1,10 +1,16 @@
 /**
-Scan seams of the native JSON reader — the free functions a SIMD
-iteration replaces without touching the grammar loop (SPEC §11; the six
-vectorizable seams are catalogued in the parsing research). Scalar-only
-bodies here; signatures are the contract.
+Scan seams of the native JSON reader. String bodies use the base library's
+bounded SSE2/AVX2 UTF-8 scan under LDC on x86-64, stopping at quotes, escapes,
+controls or malformed sequences. Scalar/SWAR refinement preserves grammar
+and exact sequence-lead error offsets; other seams remain scalar.
 */
 module sparkles.wired.json.scan;
+
+version (LDC)
+    version (X86_64)
+        version = textSimdX86;
+version (textSimdX86)
+    import sparkles.base.text.utf8_simd : validatedUtf8Prefix;
 
 /// One unaligned 64-bit load — the memcpy idiom guarantees a single mov
 /// with no alignment assumption.
@@ -307,7 +313,7 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
                 {
                     if ((p[j] & 0x80) == 0)
                         return StringScan(j, false);
-                    if (!skipUtf8Run(p, j))
+                    if (!skipUtf8Run(p, paddedPool.length, j))
                         return StringScan(j, true);
                     continue; // back to the ASCII lane
                 }
@@ -324,7 +330,7 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
                 {
                     if ((p[j] & 0x80) == 0)
                         return StringScan(j, false);
-                    if (!skipUtf8Run(p, j))
+                    if (!skipUtf8Run(p, paddedPool.length, j))
                         return StringScan(j, true);
                     continue;
                 }
@@ -343,7 +349,7 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
                     {
                         if ((p[j] & 0x80) == 0)
                             return StringScan(j, false);
-                        if (!skipUtf8Run(p, j))
+                        if (!skipUtf8Run(p, paddedPool.length, j))
                             return StringScan(j, true);
                         continue;
                     }
@@ -360,7 +366,7 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
                     {
                         if ((p[j] & 0x80) == 0)
                             return StringScan(j, false);
-                        if (!skipUtf8Run(p, j))
+                        if (!skipUtf8Run(p, paddedPool.length, j))
                             return StringScan(j, true);
                         continue;
                     }
@@ -371,6 +377,37 @@ in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
             j += unrollWords * 8;
         }
     })();
+}
+
+@("scan.stringBody.simdStopsAndErrorOffsets")
+@safe pure nothrow @nogc
+unittest
+{
+    char[256] input;
+    foreach (at; 3 .. 192)
+    {
+        foreach (stop; ['"', '\\', '\0', '\n', '\x1F'])
+        {
+            input[] = '\0';
+            input[0 .. 200] = 'a';
+            input[0 .. 3] = "漢";
+            input[at] = stop;
+            const result = scanStringBody(input[], 0);
+            assert(result.stop == at);
+            assert(!result.invalidUtf8);
+        }
+        foreach (bad; ["\x80", "\xC0\x80", "\xED\xA0\x80", "\xF4\x90\x80\x80"])
+        {
+            input[] = '\0';
+            input[0 .. 200] = 'a';
+            input[0 .. 3] = "漢";
+            input[at .. at + bad.length] = bad[];
+            input[200] = '"';
+            const result = scanStringBody(input[], 0);
+            assert(result.stop == at);
+            assert(result.invalidUtf8);
+        }
+    }
 }
 
 /// Stop-byte mask for one scalar string-scan word.
@@ -404,10 +441,14 @@ private ulong stringStops(bool validate)(ulong x) @safe pure nothrow @nogc
 /// plain function here stayed an out-of-line call in the reader — 5.7 % of
 /// twitter's instructions — with `pragma(inline, true)` unable to cross the
 /// package boundary.
-private bool skipUtf8Run()(const(char)* p, ref size_t j) @system pure nothrow @nogc
+private bool skipUtf8Run()(const(char)* p, size_t length, ref size_t j)
+    @system pure nothrow @nogc
 {
     pragma(inline, true);
     const start = j;
+    version (textSimdX86)
+        if (!__ctfe && length - j >= 64)
+            j += validatedUtf8Prefix!true(p[j .. length]);
     uint w = cast(uint) loadWord(p + j);
     // Most-common length first, each in its own loop: text tends to stay
     // in one script, so the same branch is taken repeatedly.

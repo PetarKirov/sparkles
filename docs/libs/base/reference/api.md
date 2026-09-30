@@ -77,9 +77,34 @@ Importing the package pulls in every module below.
 | `sparkles.base.text.ansi`        | ANSI escape-sequence scanning.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `sparkles.base.text.utf`         | `@nogc` UTF-8 decoding.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `sparkles.base.text.utf8`        | UTF-8 well-formedness: `indexOfInvalidUtf8`, `validateUtf8`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `sparkles.base.text.utf16`       | Bounded `utf8ToUtf16` / `utf16ToUtf8` and NUL-terminated `z` variants; validate and size before writing, leaving the destination unchanged on failure.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `sparkles.base.text.grapheme`    | Grapheme-cluster segmentation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `sparkles.base.text.width`       | Terminal cell width, field alignment, and truncation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `sparkles.base.text.wrap`        | Style-aware prose wrapping by terminal cell width.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+
+### UTF and terminal-text acceleration
+
+Under LDC on x86-64, UTF-8 validation uses bounded SIMD blocks: SSE2 baseline
+classification or an AVX2 nibble-lookup validator. AVX2 dispatch checks both
+CPU capability and OS vector-state support. Rejected blocks and incomplete
+tails fall back to scalar decoding, preserving the first invalid **sequence
+lead** offset. Inputs require neither padding nor alignment.
+
+UTF-8/UTF-16 conversion vectorizes validation/sizing and ASCII widening or
+narrowing. The complete preflight still precedes any destination write:
+malformed input, embedded NUL in a `z` conversion, and insufficient capacity
+leave the destination unchanged. Counts exclude the optional terminator.
+
+`visibleWidth` batches printable ASCII, retaining the last ASCII starter
+before a high byte for combining marks, variation selectors and keycaps.
+Unicode segmentation uses a fixed 32-codepoint stack window and the existing
+Phobos rules; ANSI interpretation, malformed replacement and width policy
+are unchanged. Other compilers/architectures and CTFE retain scalar paths.
+Normalization and case-folding in `analysis` are separate operations, not
+covered by these SIMD changes.
+
+See [measured comparisons and limits](../../../research/simd-unicode/performance.md)
+and the [runnable benchmark matrix](../../../../libs/base/bench/utf/README.md).
 
 ## `sparkles.base.term_style`
 

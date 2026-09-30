@@ -1754,6 +1754,25 @@
     "collapsed": true,
     "items": [
       {
+        "text": "SIMD UTF & Unicode",
+        "link": "/research/simd-unicode/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "UTF Algorithms",
+            "link": "/research/simd-unicode/utf-algorithms"
+          },
+          {
+            "text": "Measured Performance",
+            "link": "/research/simd-unicode/performance"
+          },
+          {
+            "text": "Unicode Algorithms",
+            "link": "/research/simd-unicode/unicode-algorithms"
+          }
+        ]
+      },
+      {
         "text": "Platform UI Guidelines",
         "link": "/research/platform-ui-guidelines/",
         "collapsed": true,

@@ -1,0 +1,46 @@
+name "base-utf-bench"
+description "Caller-buffer Unicode benchmark matrix on sparkles:test-runner"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "build"
+dflags "-preview=in" "-preview=dip1000"
+dependency "sparkles:base" path="../../../.."
+dependency "sparkles:test-runner" path="../../../.."
+dependency "sparkles:test-runner-impl" path="../../../.."
+subConfiguration "sparkles:test-runner-impl" "benchmark"
+
+// Default is usable without foreign tooling. The real competitive matrix is
+// unittest-simdutf; its separately compiled shim is deliberately not a base dep.
+configuration "unittest" {
+    dflags "-checkaction=context" "-allinst"
+    dflags "--link-defaultlib-shared" "-linkonce-templates" platform="ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+configuration "unittest-simdutf" {
+    versions "UtfBenchSimdutf"
+    libs "utf-bench-simdutf" "stdc++"
+    lflags "-L$UTF_BENCH_SHIM_DIR"
+    dflags "-checkaction=context" "-allinst"
+    dflags "--link-defaultlib-shared" "-linkonce-templates" platform="ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+configuration "unittest-foreign" {
+    versions "UtfBenchSimdutf" "UtfBenchRust"
+    libs "utf-bench-simdutf" "stdc++" "utf_bench_rust" "dl" "pthread" "m"
+    lflags "-L$UTF_BENCH_SHIM_DIR" "-L$UTF_BENCH_RUST_DIR"
+    dflags "-checkaction=context" "-allinst"
+    dflags "--link-defaultlib-shared" "-linkonce-templates" platform="ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+}
+
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}

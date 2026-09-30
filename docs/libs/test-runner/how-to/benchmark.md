@@ -20,10 +20,12 @@ several iterations per sample reads `samples×iterations`. `median/iter` folds
 the ±deviation (median-absolute-deviation) into the same cell. The `min`, `max`,
 and metric columns align on the decimal point, so mixed units — `391.00ns` next
 to `1.5µs` — still compare at a glance. An
-assert-enabled build — dub's stock `unittest` build type — prints a warning:
-real numbers need an optimized unittest buildType, e.g.
-`buildOptions "unittests" "releaseMode" "optimize" "inline"` invoked as
-`dub test -b <name>`.)
+assert-enabled build prints a conservative warning. Optimization, not assertion
+removal, is required: use a custom build type with
+`buildOptions "unittests" "optimize" "inline" "debugInfo"` and record its flags.
+Keep assertions live; `releaseMode` deletes their expressions, including calls
+with side effects. An optimized assertion-enabled run can still print this
+warning.)
 
 On an interactive terminal the table **ticks live** while its group measures:
 rows appear as each case completes, beneath a dim spinner row for the one in
@@ -73,6 +75,15 @@ recovers non-unittest codegen exactly (retired-instructions parity to
 ±0.06 % in the wired bench). The combination is toolchain-version-sensitive
 (`-linkonce-templates` ICEs were reported on other versions) — verify on
 yours.
+
+For optimized LDC consumers affected by duplicate strong symbols from nested
+reporting functions under `-O3 -allinst`, the implementation library supplies
+an opt-in `benchmark` configuration using `-singleobj`. Select it with
+`subConfiguration "sparkles:test-runner-impl" "benchmark"` (with a direct
+in-tree dependency on the implementation package), or pass
+`--override-config=sparkles:test-runner-impl/benchmark`. The normal library
+configuration is unchanged. The
+[UTF matrix](../../../../libs/base/bench/utf/README.md) exercises this route.
 
 ## Excluding setup: `benchIter`
 

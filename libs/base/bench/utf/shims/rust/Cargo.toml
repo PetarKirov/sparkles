@@ -1,0 +1,18 @@
+[package]
+name = "utf-bench-rust"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+simdutf8 = { path = "/home/petar/code/repos/rust/simdutf8" }
+xutf = { path = "/home/petar/code/repos/rust/xutf" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
