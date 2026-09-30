@@ -101,7 +101,10 @@ Only one relevant VM mode was boot-tested, and the custom app's full PRoot boots
 
 ## CI scope
 
-All four [examples][examples] are registered in `apps/ci`'s standalone defaults. CI parses an actual ELF, exercises real disposable namespace calls where permitted, runs the libc probe on Linux, and checks that device inventory skips without an explicit serial. CI does not silently contact hardware or prove AVF/NNS support. Device results remain dated evidence that must be rerun when firmware changes.
+The [examples][examples] are registered in `apps/ci`'s standalone defaults. CI parses an actual ELF, exercises real disposable namespace calls where permitted, runs the libc probe on Linux, and checks that device collectors skip without an explicit serial. CI does not silently contact hardware or prove AVF/NNS support. Device results remain dated evidence that must be rerun when firmware changes.
+
+For a packaged collector and an agent prompt covering rooted Pixel/NNS contributions,
+see [Contributor device probes][contributing].
 
 ## Sources
 
@@ -110,6 +113,7 @@ All four [examples][examples] are registered in `apps/ci`'s standalone defaults.
 
 <!-- References -->
 
+[contributing]: ./contributing.md
 [inventory-example]: ./examples/inventory.d
 [app-example]: ./examples/app-probe.d
 [namespace-example]: ../concepts/examples/namespace-probe.d
