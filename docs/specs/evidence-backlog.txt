@@ -24,7 +24,6 @@ docs/specs/hue/viewer.md FNT5 mapStyle
 docs/specs/hue/viewer.md MDP2 emitFlow
 docs/specs/hue/viewer.md MDP2 inlineRuns
 docs/specs/hue/viewer.md MDP3 inlineRuns
-docs/specs/hue/viewer.md MDP8 inlineRuns
 docs/specs/hue/viewer.md MDP9 inlineRuns
 docs/specs/hue/viewer.md NUM4 codeGutterStr
 docs/specs/hue/viewer.md SEL5 overSb
