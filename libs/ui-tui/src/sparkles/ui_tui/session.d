@@ -246,27 +246,17 @@ struct TerminalSession
 }
 
 /**
-A live session's declaration (`CAP1`): the environment's answers from `t`, with
-two standing adjustments that are debts, not policy.
+A live session's declaration (`CAP1`): what `t` holds — the environment's
+answers and, when the session probed, the terminal's (`CAP3`) — with the
+input it negotiated: a terminal serves hover and one whole-cell pointer
+($(LREF TerminalSession.capabilities)), and focus and paste events only once
+asked for them.
 
-$(LIST
-    * $(B Input) is $(LREF TerminalSession.capabilities) — the same answer the
-        host already reports, so the two cannot disagree — until the session
-        records the modes it negotiates and `fromTerminal` derives the axes
-        (design-system M7, `CAP3`).
-    * $(B `hyperlinks`) stays on when color is: the terminal backend has
-        always emitted OSC 8 without asking, and a declaration that turned it
-        off before a probe row exists would regress every capable terminal to
-        fix the incapable ones. It goes when its M7 row lands.
-)
-
-`extendedUnderline` no longer rides along: it is the probe's answer
-(`XTGETTCAP` `Smulx` and `Setulc`), so a terminal that did not vouch for
-styled underlines — or a session that did not ask — gets straight ones in
-the text's colour.
-
-Everything the environment does answer — `colorDepth`, `unicode` — is taken as
-is: a non-UTF-8 locale now gets ASCII chrome (`CAP8`).
+Nothing rides along any more. Links, like styled underlines, are what the
+probe found — for links, the terminal naming itself in `XTVERSION` (D42) — so
+one that did not, or a session that did not ask, gets link runs as plain
+styled text (`link-as-text`) and no OSC 8. A non-UTF-8 locale gets ASCII
+chrome (`CAP8`).
 */
 TargetCapabilities sessionCapabilities(in TermCaps t) @safe pure nothrow @nogc
 {
@@ -276,7 +266,6 @@ TargetCapabilities sessionCapabilities(in TermCaps t) @safe pure nothrow @nogc
     // reports, but only a terminal asked for them sends any.
     c.input.focusEvents = t.focusReporting;
     c.input.pasteEvents = t.bracketedPaste;
-    c.hyperlinks = c.hyperlinks || t.colors;
     return c;
 }
 
@@ -292,11 +281,13 @@ unittest
     color.unicode = true;
     const c = sessionCapabilities(color);
     assert(c.colorDepth == ColorDepth.ansi256 && c.unicode);
-    assert(c.hyperlinks, "the unprobed row keeps today's output");
+    assert(!c.hyperlinks, "links only where the probe found them");
     assert(!c.extendedUnderline, "styled underlines only where the probe found them");
     assert(c.input == TerminalSession.capabilities);
     color.extendedUnderline = true; // `XTGETTCAP` answered `Smulx` and `Setulc`
     assert(sessionCapabilities(color).extendedUnderline);
+    color.hyperlinks = true; // `XTVERSION` named a terminal known to draw links
+    assert(sessionCapabilities(color).hyperlinks);
 
     // No color, no locale: nothing is assumed, and the chrome goes ASCII.
     TermCaps dumb;
