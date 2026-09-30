@@ -109,6 +109,11 @@ indent_style = unset
 [docs/research/application-packaging/grounding/*]
 indent_size = unset
 
+# Android source snapshots and console transcripts preserve their own indentation.
+[docs/research/android-dev-env/grounding/**]
+indent_style = unset
+indent_size = unset
+
 # Twoslash fixture JSON files contain upstream twoslash JSON outputs with custom indentation
 [libs/twoslash/examples/fixtures/**]
 indent_size = unset
