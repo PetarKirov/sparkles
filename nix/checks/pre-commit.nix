@@ -381,6 +381,23 @@ in
                 pass_filenames = false;
                 require_serial = true;
               };
+
+              # Every symbol a spec's evidence column cites must exist in the
+              # tree (apps/ci --check-spec-evidence), against the committed
+              # backlog of ones that did not when the gate went on. Whole-tree,
+              # and triggered by D sources as well as specs: a citation goes
+              # stale when the code it names is renamed, not when the spec is
+              # edited. Runs in CI through the lint job's `prek run --all-files`.
+              check-spec-evidence = {
+                enable = true;
+                name = "check-spec-evidence";
+                files = "(^docs/specs/|\\.d$|dub\\.sdl$)";
+                entry = lib.getExe config.packages.ci;
+                args = [ "--check-spec-evidence" ];
+                language = "system";
+                pass_filenames = false;
+                require_serial = true;
+              };
             };
 
           # Prek built-in hooks:

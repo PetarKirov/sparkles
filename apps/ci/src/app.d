@@ -152,7 +152,8 @@ import blob_paths :
     parseBlobRefs, resolveClone;
 import sparkles.docs.sidebar : loadDocsConfig, loadSidebar, sidebarDataPath;
 import docs_sidebar : checkDocsSidebar;
-import spec_evidence : Citation, citationsIn, unresolvedCitations;
+import spec_evidence : backlogPath, Citation, citationsIn, ratchet, renderBacklog,
+    unresolvedCitations;
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
@@ -281,8 +282,15 @@ struct CliParams
     bool checkDocsSidebar;
 
     @(Option(`check-spec-evidence`,
-        description: "Verify every symbol a spec's evidence column cites resolves in the tree."))
+        description: "Verify every symbol a spec's evidence column cites resolves in the tree. "
+        ~ "Citations listed in docs/specs/evidence-backlog.txt are reported, not failed; "
+        ~ "a new unresolved citation fails, and so does a listed one that now resolves."))
     bool checkSpecEvidence;
+
+    @(Option(`update-spec-evidence-backlog`,
+        description: "With --check-spec-evidence: rewrite docs/specs/evidence-backlog.txt "
+        ~ "to list exactly the citations that resolve nowhere now."))
+    bool updateSpecEvidenceBacklog;
 
     @(Option(`check-blob-paths`,
         description: "Verify that every SHA-pinned GitHub blob citation names a path that "
@@ -566,7 +574,7 @@ int ciMain(string[] args)
         return runCheckDocsSidebar();
 
     if (mode == ProgramMode.checkSpecEvidence)
-        return runCheckSpecEvidence();
+        return runCheckSpecEvidence(cli.updateSpecEvidenceBacklog);
 
     // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
     // so it must not fall through to the shared "no input files" usage error.
@@ -2050,9 +2058,9 @@ Whole-tree, like `--check-docs-sidebar`: a requirement's traceability claim is
 not a property of the diff that touched it, and the rows that rot are precisely
 the ones nobody is editing.
 +/
-private int runCheckSpecEvidence()
+private int runCheckSpecEvidence(bool updateBacklog)
 {
-    import std.file : readText;
+    import std.file : exists, readText, write;
     import std.path : buildPath, extension;
     import std.string : splitLines;
 
@@ -2107,16 +2115,34 @@ private int runCheckSpecEvidence()
     }
 
     const bad = unresolvedCitations(cites, sources, paths);
-    foreach (u; bad)
-        error(i"$(u.cite.file):$(u.cite.line): $(u.cite.id) cites `$(u.cite.token)` — no `$(u.name)` anywhere in the tree");
+    const backlogFile = buildPath(repoRoot, backlogPath);
 
-    if (bad.length)
+    if (updateBacklog)
     {
-        error(i"✗ $(bad.length) unresolved citation(s) of $(cites.length) in $(files) spec files — an evidence column that names nothing turns the delivery gate into decoration.");
+        write(backlogFile, renderBacklog(bad));
+        info(i"✓ Wrote $(backlogPath): $(bad.length) unresolved citation(s) of $(cites.length) in $(files) spec files.");
+        return 0;
+    }
+
+    const r = ratchet(bad, backlogFile.exists ? readText(backlogFile) : "");
+    foreach (u; r.fresh)
+        error(i"$(u.cite.file):$(u.cite.line): $(u.cite.id) cites `$(u.cite.token)` — no `$(u.name)` anywhere in the tree");
+    foreach (key; r.stale)
+        error(i"$(backlogPath): `$(key)` resolves now (or its row is gone) — delete the line");
+
+    if (r.fresh.length || r.stale.length)
+    {
+        if (r.fresh.length)
+            error(i"✗ $(r.fresh.length) new unresolved citation(s) of $(cites.length) in $(files) spec files — an evidence column that names nothing turns the delivery gate into decoration.");
+        if (r.stale.length)
+            error(i"✗ $(r.stale.length) line(s) in $(backlogPath) no longer apply — the backlog only shrinks.");
         return 1;
     }
 
-    info(i"✓ Spec evidence resolves: all $(cites.length) cited symbols across $(files) spec files name something in the tree.");
+    if (r.known)
+        info(i"✓ Spec evidence: no new unresolved citations of $(cites.length) across $(files) spec files; $(r.known) known ones remain in $(backlogPath).");
+    else
+        info(i"✓ Spec evidence resolves: all $(cites.length) cited symbols across $(files) spec files name something in the tree.");
     return 0;
 }
 
