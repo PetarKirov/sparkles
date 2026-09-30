@@ -69,12 +69,12 @@ How each GUI requirement area applies to the TUI. **full** = ports directly ·
 
 ## Terminal input (`TIN`)
 
-| ID   | Requirement                                                                                                                                                                                                                  | Status               | Traces to                                            |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------- |
-| TIN1 | The input layer must decode an **expanded key vocabulary** — arrows, PageUp/Down, Home/End, Tab, Enter, Ctrl-C, and printable characters (for search / goto) — beyond the shipped minimal `Key{up,down,enter,cancel,other}`. | full (`dd70e1b4`)    | `core-cli` `key_input.d` (must grow / be superseded) |
-| TIN2 | **SGR mouse tracking** (mode 1006 + 1000/1002) must be enabled on entry and disabled on exit; press / release / drag / wheel events with button + modifiers must decode to `(row, col)` cell coordinates.                    | full (`b8809549`)    | proposed mouse decoder (`core-cli`)                  |
-| TIN3 | Wheel events must scroll (`NAV`); left press/drag/release must drive selection (`TSL`); clicks must hit-test the scrollbar (`TSB`), the code-block copy region (`COD`), and notifier popup items ([`NTF6`](./notifier.md)).  | partial (`b8809549`) | `previewer.d` input dispatch (proposed)              |
-| TIN4 | Mouse tracking must be **restored** (disabled) on exit, signal, and crash, so the terminal is never left in mouse mode.                                                                                                      | full (`b8809549`)    | `scope(exit)` / signal handler (proposed)            |
+| ID   | Requirement                                                                                                                                                                                                                  | Status               | Traces to                                                                  |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | -------------------------------------------------------------------------- |
+| TIN1 | The input layer must decode an **expanded key vocabulary** — arrows, PageUp/Down, Home/End, Tab, Enter, Ctrl-C, and printable characters (for search / goto) — beyond the shipped minimal `Key{up,down,enter,cancel,other}`. | full (`dd70e1b4`)    | `core-cli` `key_input.d` (must grow / be superseded)                       |
+| TIN2 | **SGR mouse tracking** (mode 1006 + 1000/1002) must be enabled on entry and disabled on exit; press / release / drag / wheel events with button + modifiers must decode to `(row, col)` cell coordinates.                    | full (`b8809549`)    | proposed mouse decoder (`core-cli`)                                        |
+| TIN3 | Wheel events must scroll (`NAV`); left press/drag/release must drive selection (`TSL`); clicks must hit-test the scrollbar (`TSB`), the code-block copy region (`COD`), and notifier popup items ([`NTF6`](./notifier.md)).  | partial (`b8809549`) | `handleWheel`/`handlePointer` (`tui.d`); the notifier items wait on `NTF6` |
+| TIN4 | Mouse tracking must be **restored** (disabled) on exit, signal, and crash, so the terminal is never left in mouse mode.                                                                                                      | full (`b8809549`)    | `scope(exit)` / signal handler (proposed)                                  |
 
 ## Keyboard policy (`TKB`)
 
@@ -95,10 +95,10 @@ How each GUI requirement area applies to the TUI. **full** = ports directly ·
 
 Extends the shipped previewer's frame discipline.
 
-| ID   | Requirement                                                                                                                                                          | Status                          | Traces to                                           |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | --------------------------------------------------- |
-| TSF1 | The TUI must render into the **alt-screen** (hide cursor), one **synchronized-output** frame per repaint, assembled into a single buffer and flushed with one write. | partial (`844680a3`/`0657c94a`) | `PRV7`/`PRV8`; `NFR2` (previewer already does this) |
-| TSF4 | The per-frame paint core should stay **`@nogc nothrow`** ([`NFR1`](./feature-requirements.md)); load-time layout may allocate, as the GUI's does.                    | partial                         | `previewer.d` `@nogc` core (`NFR1`)                 |
+| ID   | Requirement                                                                                                                                                          | Status                          | Traces to                                                                                                                                               |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| TSF1 | The TUI must render into the **alt-screen** (hide cursor), one **synchronized-output** frame per repaint, assembled into a single buffer and flushed with one write. | partial (`844680a3`/`0657c94a`) | `PRV7`/`PRV8`; `NFR2` (previewer already does this)                                                                                                     |
+| TSF4 | The per-frame paint core should stay **`@nogc nothrow`** ([`NFR1`](./feature-requirements.md)); load-time layout may allocate, as the GUI's does.                    | not started                     | none: the `@nogc` core was the retired previewer (`NFR1`); the TUI paints through `GridCanvas` into `Screen`, and nothing checks that path's attributes |
 
 > [!NOTE]
 > `TSF3` pulls `gui_preview.d` (and, for ` ```ansi ` fences, potentially
