@@ -214,6 +214,22 @@ struct CliParams
     @(Option(`build`, description: "Run dub build for each sub-package defined in the root dub.sdl."))
     bool build;
 
+    @(Option(`build-each-commit`,
+        description: "Build sub-packages at every commit from --base to HEAD, in one "
+        ~ "scratch worktree, so each commit of a stack is known to build: CI builds "
+        ~ "only a pull request's tip. Defaults to the apps whose default "
+        ~ "configuration dub test never compiles (hue, ui-gallery, diagram)."))
+    bool buildEachCommit;
+
+    @(Option(`base`,
+        description: "With --build-each-commit: the commit the range starts after. "
+        ~ "Default: the merge-base of HEAD and origin/main."))
+    string base;
+
+    @(Option(`packages`,
+        description: "With --build-each-commit: the sub-packages to build, by name."))
+    string[] packages;
+
     @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
     bool test;
 
@@ -425,6 +441,7 @@ enum ProgramMode
     updateExamples,
     runExampleFiles,
     runDubBuild,
+    buildEachCommit,
     runDubTests,
     runExtractedTests,
     runSanitizeTests,
@@ -583,6 +600,9 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.runDubBuild)
         return runDubBuildMode(cli.failFast);
+
+    if (mode == ProgramMode.buildEachCommit)
+        return runBuildEachCommitMode(cli.base, cli.packages, cli.failFast);
 
     if (mode == ProgramMode.runDubTests)
         return runDubTestsMode(cli.failFast, coverage);
@@ -814,6 +834,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
     if (cli.test)
         return ProgramMode.runDubTests;
 
+    if (cli.buildEachCommit)
+        return ProgramMode.buildEachCommit;
+
     if (cli.build)
         return ProgramMode.runDubBuild;
 
@@ -857,6 +880,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.updateExamples:     return "--update";
         case ProgramMode.runExampleFiles:    return "--example-files";
         case ProgramMode.runDubBuild:        return "--build";
+        case ProgramMode.buildEachCommit:    return "--build-each-commit";
         case ProgramMode.runDubTests:        return "--test";
         case ProgramMode.runExtractedTests:  return "--test-extracted";
         case ProgramMode.runSanitizeTests:   return "--test-sanitize";
@@ -1426,6 +1450,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 break;
             case ProgramMode.runExampleFiles:
             case ProgramMode.runDubBuild:
+            case ProgramMode.buildEachCommit:
             case ProgramMode.runDubTests:
             case ProgramMode.runExtractedTests:
             case ProgramMode.runSanitizeTests:
@@ -3095,6 +3120,138 @@ private int runDubBuildMode(bool failFast)
 
     displayTestRunSummary(monitor.finish(processed, subPackages.length, failedPackages));
     return failures > 0 ? 1 : 0;
+}
+
+/++
+`--build-each-commit`: `dub build` the chosen packages at every commit from
+`base` (exclusive) to `HEAD`, in one detached scratch worktree walked oldest
+first. See $(MREF each_commit) for why.
++/
+private int runBuildEachCommitMode(string base, string[] requested, bool failFast)
+{
+    import std.conv : to;
+    import std.file : rmdirRecurse, tempDir;
+    import std.process : thisProcessID;
+    import sparkles.build_primitives.git_env : runGit;
+    import each_commit : CommitFailure, defaultEachCommitPackages, failureReport,
+        parseCommitRange, selectPackages;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    {
+        error(i"Could not detect repository root");
+        return 1;
+    }
+
+    string[] unknown;
+    const pkgs = selectPackages(requested.length ? requested
+        : defaultEachCommitPackages.dup, parseSubPackages(repoRoot), unknown);
+    if (unknown.length)
+    {
+        error(i"--packages: no sub-package named $(unknown.join(", "))");
+        return 1;
+    }
+
+    if (base.length == 0)
+    {
+        const mb = runGit(["-C", repoRoot, "merge-base", "HEAD", "origin/main"]);
+        if (mb.status != 0)
+        {
+            error(i"--base not given and HEAD has no merge-base with origin/main: $(mb.output.strip)");
+            return 1;
+        }
+        base = mb.output.strip;
+    }
+    const log = runGit(["-C", repoRoot, "log", "--reverse", "--format=%h %s",
+        base ~ "..HEAD"]);
+    if (log.status != 0)
+    {
+        error(i"Could not list $(base)..HEAD: $(log.output.strip)");
+        return 1;
+    }
+    const commits = parseCommitRange(log.output);
+    if (commits.length == 0)
+    {
+        info(i"no commits in $(base)..HEAD: nothing to build");
+        return 0;
+    }
+
+    // One worktree for the whole walk, so each build is incremental on the
+    // last; detached, so no branch is created or moved.
+    const wt = buildPath(tempDir, "ci-each-commit-" ~ thisProcessID.to!string);
+    const add = runGit(["-C", repoRoot, "worktree", "add", "--detach", "--quiet",
+        wt, commits[0].sha]);
+    if (add.status != 0)
+    {
+        error(i"Could not create the scratch worktree: $(add.output.strip)");
+        return 1;
+    }
+    scope (exit)
+    {
+        runGit(["-C", repoRoot, "worktree", "remove", "--force", wt]);
+        if (wt.exists)
+            rmdirRecurse(wt);
+    }
+
+    i"Building $(pkgs.length) package(s) at $(commits.length) commit(s) after $(base[0 .. base.length < 9 ? $ : 9])".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
+        .writeln("\n");
+    flushStdout();
+
+    auto monitor = RunMonitor.start();
+    void onSample(in ResourceUsage) @safe
+    {
+        monitor.sample();
+    }
+
+    CommitFailure[] failures;
+    string[] failedLabels;
+    size_t processed;
+    const total = commits.length * pkgs.length;
+    walk: foreach (cIdx, commit; commits)
+    {
+        const co = runGit(["-C", wt, "checkout", "--quiet", "--detach", commit.sha]);
+        if (co.status != 0)
+        {
+            error(i"Could not check out $(commit.sha): $(co.output.strip)");
+            return 1;
+        }
+        foreach (pi, pkg; pkgs)
+        {
+            const pkgName = pkg.baseName;
+            const progress = i"[$(cIdx * pkgs.length + pi + 1)/$(total)]".text;
+            const header = styledText(i"{dim $(progress)} {yellow $(commit.sha)} {cyan $(pkgName)} {dim › $(commit.subject)}");
+
+            mkdirRecurse(buildPath(wt, pkg, "build"));
+            auto lines = executeMonitoredLines(
+                dubBuildCommand(wt, pkg, pkgName), 250.msecs, &onSample,
+                ChildStdin.empty, Duration.zero, withLdcThreadEnv(null));
+            streamResultBox(header, lines,
+                () => resultVerdict(lines.result.status == 0),
+                (LogDelta d) => resultFooterRight(lines.result.usage, d));
+            monitor.sample();
+            ++processed;
+            writeln();
+
+            if (lines.result.status != 0)
+            {
+                failures ~= CommitFailure(commit, pkgName);
+                failedLabels ~= commit.sha ~ " :" ~ pkgName;
+                if (failFast)
+                    break walk;
+            }
+        }
+    }
+
+    displayTestRunSummary(monitor.finish(processed, total, failedLabels));
+    const report = failureReport(failures, commits.length, pkgs.length);
+    if (failures.length)
+    {
+        error(i"$(report)");
+        return 1;
+    }
+    info(i"✓ $(report)");
+    return 0;
 }
 
 private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
