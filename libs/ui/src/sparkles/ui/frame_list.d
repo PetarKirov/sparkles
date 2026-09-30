@@ -15,8 +15,7 @@ $(LREF FrameList) removes the second derivation. Paint sites $(I emit) their
 operations into it with the origin they were placed at; it translates each
 into absolute cells, records it, and paints it through the one canvas
 immediately — so the paint order against anything the application still draws
-outside the vocabulary (a sub-cell hairline, a pixel-positioned toast) is
-exactly what it was. What the frame emitted is then there to be read, and the
+outside the vocabulary (a sub-cell hairline) is exactly what it was. What the frame emitted is then there to be read, and the
 harvest functions below read it by $(REF Slot, sparkles,ui,style).
 
 $(B Text is borrowed.) A recorded text run points into whatever arena interned
