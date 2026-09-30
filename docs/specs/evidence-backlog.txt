@@ -5,24 +5,3 @@
 # and so does a line here that resolves now. After a batch of fixes,
 # `ci --check-spec-evidence --update-spec-evidence-backlog` rewrites it; a
 # line that rewrite ADDS is a new stale citation, to fix instead.
-docs/specs/dmd-lsp/feature-requirements.md COR1 semanalysis.analyzeModule
-docs/specs/dmd-lsp/feature-requirements.md COR3 dmderrors.d
-docs/specs/dmd-lsp/feature-requirements.md NTN2 removeCodeRanges
-docs/specs/dmd-lsp/feature-requirements.md NTN2 resolveNodePositions
-docs/specs/dmd-lsp/project.md PRJ13 dub.json
-docs/specs/hue/dsv-preview.md DSN4 viewDsv
-docs/specs/hue/gallery.md GNV1 runGuiTwoslash
-docs/specs/hue/gallery.md GNV4 runGuiTwoslash
-docs/specs/hue/gui.md FNT10 mapStyle
-docs/specs/hue/tui.md TIN3 previewer.d
-docs/specs/hue/tui.md TSF4 previewer.d
-docs/specs/hue/twoslash.md LIV5 dub.json
-docs/specs/ui-app/terminal-view.md TVW2 terminal_view.d
-docs/specs/ui-app/terminal-view.md TVW5 terminal_view.d
-docs/specs/ui-app/terminal-view.md TVW6 terminal_view.d
-docs/specs/ui/containers.md DCK3 capDivider
-docs/specs/ui/containers.md SCV1 ViewerModel.fenceSv
-docs/specs/ui/containers.md SCV11 ScrollLayout.axisPointer
-docs/specs/ui/input.md INP17 frame_input.d
-docs/specs/ui/property-tree.md PRT19 MERGE_ENDS
-docs/specs/window-system-integration/comparison.md 2026-08-23 OutputEntered
