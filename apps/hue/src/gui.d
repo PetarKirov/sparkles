@@ -1209,6 +1209,9 @@ int runGui(GuiArgs guiArgs) @system
     // The guide panel's operations and the arena their text lives in: reused
     // every frame, so a panel that is up costs no allocation to repaint.
     CmdBufferT!(FrameArena!(), 256) ltnOps;
+    // The same, for the window chrome built op by op (the header and input
+    // bars, the toast, the picker preview's cells).
+    CmdBufferT!(FrameArena!(), 256) chromeOps;
 
     // `EFX23`: the frame's widget drawing as ONE op stream in absolute cells.
     // Every paint site whose origin is a whole cell emits into it, which
@@ -1237,6 +1240,27 @@ int runGui(GuiArgs guiArgs) @system
         return cast(int)(px / cell);
     }
 
+    // A paint site anchored to a window PIXEL rather than a cell — a panel
+    // hung off the bottom edge of a window whose height is not a whole
+    // number of cells, a toast inset from the corner. Its operations still
+    // go into the frame list, so what the list says is under the pointer
+    // (the CRT's hover) agrees with what is on screen: they are recorded at
+    // the cell that holds the anchor, and painted through a canvas whose
+    // origin carries the remaining sub-cell pixels. The list's geometry is
+    // therefore off by less than a cell, and the pixels are exact.
+    void emitAtPixel(in DrawOp[] ops, int px, int py)
+    {
+        const cw = fonts.cellW();
+        const ch = fonts.cellH();
+        static int floorDiv(int a, int b) pure nothrow @nogc
+            => a >= 0 ? a / b : -((b - 1 - a) / b);
+        const col = floorDiv(px, cw);
+        const row = floorDiv(py, ch);
+        auto c = RaylibCanvas(fontsP, &buf, cw, ch,
+            cast(float)(px - col * cw), cast(float)(py - row * ch));
+        frameList.emit(c, ops, col, row);
+    }
+
     // A modal's shade over the whole window, as an operation in the frame
     // list rather than a pixel fill beside it: what the list says is
     // visible — the CRT's hover — must agree with the eye, and nothing
@@ -1250,22 +1274,23 @@ int runGui(GuiArgs guiArgs) @system
             Visual(bg: RgbColor(0, 0, 0), bgAlpha: 128, hasBg: true)));
     }
 
-    // The picker preview's cell blit: the document pane paints a `Grid`
-    // (exactly what the terminal shows), and this draws those cells through
-    // the font set — background runs coalesced, glyphs with their real
-    // bold/italic faces — so the pane needs no second GUI painter.
-    void blitPaneGrid(ref Grid src, float x0, float y0)
+    // The picker preview's cells: the document pane paints a `Grid` (exactly
+    // what the terminal shows), and this turns those cells into operations
+    // in the frame list — background runs coalesced, each glyph with its real
+    // bold/italic face — so the pane needs no second GUI painter, and the
+    // preview's text is text the CRT's hover can find.
+    void emitPaneGrid(ref RaylibCanvas c, ref Grid src, int col, int row)
     {
         import sparkles.base.term_style : TextAttr, UnderlineStyle;
+        import sparkles.base.buffer : UniqueBuffer;
+        import std.utf : stride;
 
         alias TColor = typeof(Cell.init.style.fg());
         static RgbColor cellColor(in TColor value, RgbColor fallback)
             @safe pure nothrow @nogc
             => value.kind == TColor.Kind.rgb ? value.rgb : fallback;
 
-        auto cnv = RaylibCanvas(fontsP, &buf, fonts.cellW(), fonts.cellH());
-        const cw = fonts.cellW();
-        const chh = fonts.cellH();
+        chromeOps.reset();
         foreach (y; 0 .. src.rows)
         {
             // Coalesce equal-background runs into one fill each.
@@ -1275,9 +1300,8 @@ int runGui(GuiArgs guiArgs) @system
             void flush(int endX)
             {
                 if (haveRun)
-                    cnv.fillPixels(cast(int)(x0 + runStart * cw),
-                        cast(int)(y0 + y * chh), (endX - runStart) * cw, chh,
-                        runBg);
+                    chromeOps.fillRect(Rect(runStart, y, endX - runStart, 1),
+                        Slot.inherit, Visual(bg: runBg, hasBg: true));
                 haveRun = false;
             }
 
@@ -1295,28 +1319,70 @@ int runGui(GuiArgs guiArgs) @system
             }
             flush(src.cols);
 
+            // Glyphs, coalesced into runs: a word is one operation, so the
+            // text under the pointer is a word rather than a letter, and the
+            // spaces between words belong to the run they sit inside. Only a
+            // one-cell, one-codepoint glyph joins a run — the canvas draws a
+            // run one codepoint per column — and anything else (a wide glyph,
+            // a combining sequence) keeps an operation of its own.
+            UniqueBuffer!(char, 256) run;
+            int runX = -1;     // the run's first cell, or -1 when none is open
+            int inkEnd;        // one past its last non-space cell
+            size_t inkLength;  // its text up to that cell
+            Visual runV;
+            void flushRun()
+            {
+                if (runX >= 0)
+                    chromeOps.textRun(Rect(runX, y, inkEnd - runX, 1),
+                        run[][0 .. inkLength], Slot.inherit, runV);
+                runX = -1;
+                run.clear();
+            }
+
             foreach (x; 0 .. src.cols)
             {
                 const cell = src[cast(ushort) x, cast(ushort) y];
                 if (cell.width == 0) // a wide glyph's continuation cell
                     continue;
                 const g = cell.grapheme;
-                if (g == " ")
-                    continue;
-                TextStyle ts;
                 const attrs = cell.style.attrs;
-                if (attrs.bits & TextAttr.bold.bits)
-                    ts.bits |= TextStyle.bold;
-                if (attrs.bits & TextAttr.italic.bits)
-                    ts.bits |= TextStyle.italic;
-                if (attrs.bits & TextAttr.strikethrough.bits)
-                    ts.bits |= TextStyle.strikethrough;
-                if (cell.style.underline != UnderlineStyle.none)
-                    ts.bits |= TextStyle.underline;
-                drawText(fonts, cstrOf(buf, g), x0 + x * cw, y0 + y * chh,
-                    ts, cellColor(cell.style.fg, vm.pageFg));
+                const v = Visual(fg: cellColor(cell.style.fg, vm.pageFg),
+                    styleBits: cast(ushort)(attrs.bits
+                        & (TextAttr.bold.bits | TextAttr.italic.bits
+                            | TextAttr.strikethrough.bits)),
+                    underline: cell.style.underline);
+                if (g.length == 0 || g == " ")
+                {
+                    // A space draws nothing unless it is underlined or
+                    // struck through, and then only in its own style.
+                    const plain = !(runV.styleBits & TextAttr.strikethrough.bits)
+                        && runV.underline == UnderlineStyle.none;
+                    if (runX >= 0 && (plain || v == runV))
+                        run ~= ' ';
+                    else
+                        flushRun();
+                    continue;
+                }
+                if (cell.width != 1 || g.length != stride(g))
+                {
+                    flushRun();
+                    chromeOps.textRun(Rect(x, y, cell.width, 1), g,
+                        Slot.inherit, v);
+                    continue;
+                }
+                if (runX < 0 || v != runV)
+                {
+                    flushRun();
+                    runX = x;
+                    runV = v;
+                }
+                run ~= g;
+                inkEnd = x + 1;
+                inkLength = run.length;
             }
+            flushRun();
         }
+        frameList.emit(c, chromeOps[], col, row);
     }
 
     // Pointer capture (STM11, closing IXR6's GUI half). Every draggable
@@ -1990,16 +2056,16 @@ int runGui(GuiArgs guiArgs) @system
             const filterRow = pn.dock.toolbarOf(treePane);
             if (pn.tree.searching && !filterRow.empty)
             {
-                const barY = filterRow.y * cellH;
-                chrome.fillPixels(filterRow.x * cellW, barY,
-                    filterRow.width * cellW, cellH, vm.gutterFg);
+                frameList.emit(ui, fillRectOp(filterRow, Slot.inherit,
+                    Visual(bg: vm.gutterFg, hasBg: true)));
                 buf.clear();
                 buf ~= "/";
                 buf ~= pn.tree.filterQuery;
-                buf ~= "▏\0";
-                drawText(fonts, buf[][0 .. $ - 1], filterRow.x * cellW + 4.0f,
-                    cast(float) barY,
-                    TextStyle(0), vm.pageBg);
+                buf ~= "▏";
+                chromeOps.reset();
+                chromeOps.textRun(Point(0, 0), buf[], Visual(fg: vm.pageBg));
+                emitAtPixel(chromeOps[], filterRow.x * cellW + 4,
+                    filterRow.y * cellH);
             }
         }
 
@@ -2066,14 +2132,23 @@ int runGui(GuiArgs guiArgs) @system
         // vm.top row so scrolled content passes under it.
         if (set !is null && !set.empty && loadDoc !is null)
         {
-            chrome.fillPixels(0, 0, screenW, cellH, mix(vm.pageBg, vm.pageFg, 0.12));
-            chrome.rule(Rect(0, 0, screenCols, 1), RuleEdge.bottom,
-                Visual(fg: vm.gutterFg));
+            // In the frame list, so the bar hides what scrolls under it
+            // from the CRT's hover as it does from the eye.
             const left = vm.summary.length ? vm.title ~ "  " ~ vm.summary : vm.title;
-            drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0, TextStyle(0), vm.pageFg);
+            chromeOps.reset();
+            chromeOps.fillRect(Rect(0, 0, (screenW + cellW - 1) / cellW, 1),
+                Slot.inherit, Visual(bg: mix(vm.pageBg, vm.pageFg, 0.12),
+                    hasBg: true));
+            chromeOps.rule(Rect(0, 0, screenCols, 1), RuleEdge.bottom,
+                Slot.inherit, Visual(fg: vm.gutterFg));
+            chromeOps.textRun(Point(1, 0), left, Visual(fg: vm.pageFg));
+            frameList.emit(ui, chromeOps[], 0, 0);
+            // The position hangs off the window's right PIXEL edge.
             const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next   i index");
-            const px = cast(float)(screenW - cast(int)((pos.length + 1) * cellW));
-            drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), vm.gutterFg);
+            chromeOps.reset();
+            chromeOps.textRun(Point(0, 0), pos, Visual(fg: vm.gutterFg));
+            emitAtPixel(chromeOps[],
+                screenW - cast(int)((pos.length + 1) * cellW), 0);
         }
 
         // Bottom toolbar (Android): the SAME tree and frames the tap handler
@@ -2083,18 +2158,14 @@ int runGui(GuiArgs guiArgs) @system
         // untappable.
         version (Android)
         {
-            chrome.rule(Rect(0, toolbarY / cellH - 1, screenCols, 1),
-                RuleEdge.bottom, Visual(fg: vm.gutterFg));
+            frameList.emit(ui, ruleOp(Rect(0, toolbarY / cellH - 1, screenCols, 1),
+                RuleEdge.bottom, Slot.inherit, Visual(fg: vm.gutterFg)));
             auto barOps = buildDisplayList(barTree, barFrames,
                 themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
-            // Not emitted into `frameList`: the bar hangs off the window's
-            // PIXEL bottom edge (`toolbarY = screenH - cellH`), which is not
-            // a whole cell unless the window happens to be. Like the lantern
-            // and the toast, it keeps a canvas at its own pixel origin; none
-            // of the three is anything the CRT harvests.
-            auto barCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
-                0, cast(float) toolbarY);
-            paint(barCanvas, barOps);
+            // The bar hangs off the window's PIXEL bottom edge
+            // (`toolbarY = screenH - cellH`), which is not a whole cell
+            // unless the window happens to be.
+            emitAtPixel(barOps, 0, toolbarY);
         }
 
         // Input line at the bottom: '/query' while searching, ':n' while going
@@ -2102,13 +2173,18 @@ int runGui(GuiArgs guiArgs) @system
         if (inputMode)
         {
             const barY = screenH - cellH;
-            chrome.fillPixels(0, barY, screenW, cellH, vm.gutterFg);
             auto lineText = inp.mode == Mode.search
                 ? text("/", inp.query[], "   ", vm.matches.length, " matches")
                 : inp.mode == Mode.dsvFilter
                 ? text("⌕ ", inp.query[], "▏")
                 : text(":", inp.query[]);
-            drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), vm.pageBg);
+            chromeOps.reset();
+            chromeOps.fillRect(Rect(0, 0, (screenW + cellW - 1) / cellW, 1),
+                Slot.inherit, Visual(bg: vm.gutterFg, hasBg: true));
+            emitAtPixel(chromeOps[], 0, barY);
+            chromeOps.reset();
+            chromeOps.textRun(Point(0, 0), lineText, Visual(fg: vm.pageBg));
+            emitAtPixel(chromeOps[], 4, barY);
         }
         // In-app notification toast (flashes near top right).
         if (flash.toast.visible)
@@ -2122,12 +2198,21 @@ int runGui(GuiArgs guiArgs) @system
             const boxY = cast(int)(cellH + 8);
             if (boxX > 0)
             {
-                chrome.fillPixels(boxX, boxY, boxW, boxH, mix(vm.pageBg, vm.pageFg, 0.15));
-                const textX = cast(float)(boxX + 12);
-                const textY = cast(float)(boxY + 6);
+                // `boxW` is whole cells and `boxH` is not: the box is one
+                // cell tall, filled twice, the second time `boxH - cellH`
+                // pixels lower.
+                const box = Visual(bg: mix(vm.pageBg, vm.pageFg, 0.15),
+                    hasBg: true);
+                chromeOps.reset();
+                chromeOps.fillRect(Rect(0, 0, boxW / cellW, 1), Slot.inherit,
+                    box);
+                emitAtPixel(chromeOps[], boxX, boxY);
+                emitAtPixel(chromeOps[], boxX, boxY + boxH - cellH);
+                chromeOps.reset();
                 if (flash.toastSuccess)
-                    drawText(fonts, cstrOf(buf, "✓ "), textX, textY, TextStyle(0), vm.pageFg);
-                drawText(fonts, cstrOf(buf, msg), textX + iconCols * cellW, textY, TextStyle(0), vm.pageFg);
+                    chromeOps.textRun(Point(0, 0), "✓ ", Visual(fg: vm.pageFg));
+                chromeOps.textRun(Point(iconCols, 0), msg, Visual(fg: vm.pageFg));
+                emitAtPixel(chromeOps[], boxX + 12, boxY + 6);
             }
         }
 
@@ -2154,9 +2239,8 @@ int runGui(GuiArgs guiArgs) @system
 
                 const panelY = screenH - panel.height * cellH
                     - (inputMode ? cellH : 0);
-                // Not emitted into `frameList`: the panel hangs off the
-                // window's PIXEL bottom edge, which is not a whole cell.
-                // A reused sink, so a panel that is up every frame costs no
+                // The panel hangs off the window's PIXEL bottom edge, which
+                // is not a whole cell. A reused sink, so a panel that is up every frame costs no
                 // allocation to repaint (`NFR2`).
                 // A scissor from the viewer pane is still live at this
                 // point; the panel is chrome over everything, not content
@@ -2166,9 +2250,7 @@ int runGui(GuiArgs guiArgs) @system
                 buildDisplayListInto(ltnTree, ltnFrames,
                     themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg,
                     ltnOps);
-                auto ltnCanvas = RaylibCanvas(fontsP, &buf, cellW, cellH,
-                    0, cast(float) panelY);
-                paint(ltnCanvas, ltnOps[]);
+                emitAtPixel(ltnOps[], 0, panelY);
             }
         }
 
@@ -2201,9 +2283,8 @@ int runGui(GuiArgs guiArgs) @system
             if (filePickerDoc !is null && hole.width > 0 && hole.height > 0)
             {
                 auto paneGrid = &filePickerDoc.paint(hole.width, hole.height);
-                blitPaneGrid(*paneGrid,
-                    cast(float)((pkOriginX + hole.x) * cellW),
-                    cast(float)((pickerOriginRow + hole.y) * cellH));
+                emitPaneGrid(ui, *paneGrid, pkOriginX + hole.x,
+                    pickerOriginRow + hole.y);
 
                 // The preview's bar is the pane's OWN machine (`vm.scroll`),
                 // drawn through the same animated px painter as the document
