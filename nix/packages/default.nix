@@ -26,6 +26,15 @@
       ciCompiler = if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
     in
     {
+      # Sources retained by ci's runtime closure and published with all-desktop.
+      # Keep example-only dependencies out of normal application builds.
+      packages.dub-sources = pkgs.importDubLock {
+        pname = "sparkles";
+        version = "sources";
+        lock.dependencies =
+          (lib.importJSON ../dub-lock.json).dependencies // (lib.importJSON ../ci-dub-lock.json).dependencies;
+      };
+
       packages.ci = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "ci";
         version = "0.1.0";
@@ -105,6 +114,7 @@
           ''
             wrapProgram $out/bin/${finalAttrs.pname} \
               --prefix PATH : ${path} \
+              --set-default SPARKLES_DUB_SOURCES ${config.packages.dub-sources} \
               ${setEnv} \
               ${exampleLibArgs} \
               --run 'ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true'

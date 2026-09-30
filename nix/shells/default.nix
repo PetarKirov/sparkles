@@ -363,6 +363,14 @@
       # ── Shell hooks, split on the same seam ────────────────────────────
 
       ciShellHook = ''
+        # Seed writable sources, preserving any existing user versions. The
+        # packaged helper retains the bundle through its runtime closure.
+        export SPARKLES_DUB_SOURCES=${config.packages.dub-sources}
+        ${lib.getExe config.packages.ci} --seed-dub-cache >/dev/null 2>&1 || {
+          echo 'Failed to seed DUB sources; run ci --seed-dub-cache for details.' >&2
+          return 1
+        }
+
         # Keep D's std.process child setup inside the signed-int range.
         # Phobos casts RLIMIT_NOFILE from rlim_t to int before closing
         # inherited descriptors; an unlimited soft limit overflows, and a

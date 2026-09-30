@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "eve": {
+      "version": "c72f75135de636987e91bcd8ec5a22d32d34a197",
+      "repository": "https://codeberg.org/ddn/eve.git",
+      "sha256": "sha256-mXGcKf5bf0furz5fzp0rE4aWX1za/DnzdS/4O4IujZc="
+    }
+  }
+}
