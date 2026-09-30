@@ -11,15 +11,17 @@ probe would declare.
 
 The mapping sets what may be $(B emitted) — colour depth, synchronized output,
 grapheme clustering, scheme reports, images, the cell's pixel size, styled
-underlines. The input modes the battery also asks about (bracketed paste,
-focus, the kitty keyboard) are recorded but not applied: `TermCaps`' mode
-fields say what was $(I negotiated), and only whoever enables a mode can say
-that.
+underlines, and — by the name the terminal answers `XTVERSION` with — links,
+clipboard writes, notifications and the pointer shape. The input modes the
+battery also asks about (bracketed paste, focus, the kitty keyboard) are
+recorded but not applied: `TermCaps`' mode fields say what was
+$(I negotiated), and only whoever enables a mode can say that.
 +/
 module sparkles.base.term_replies;
 
 import sparkles.base.term_caps : ImageProtocol, TermCaps;
 import sparkles.base.term_color : ColorDepth;
+import sparkles.base.term_identity : applyKnownTerminal;
 
 /// One `DECRPM` reply to a `DECRQM` mode query, or its absence — the
 /// default, as a record that does not name a mode got no reply for it.
@@ -74,6 +76,10 @@ struct TerminalReplies
     /// `2` where the terminal lays a cluster out as one wide character, the
     /// sum of its code points' widths where it does not; `0` when unanswered.
     ubyte clusterWidth;
+    /// `XTVERSION`'s answer — the terminal's name and version as it spells
+    /// them (`kitty(0.48.2)`, `ghostty 1.3.1`), empty when unanswered. A
+    /// multiplexer answers with its own.
+    string xtversion;
     bool fenced;           /// DA1 arrived: every earlier reply is in
 }
 
@@ -114,7 +120,12 @@ $(LIST
         own. Nothing weaker vouches for them: XTerm drops `4:3` without
         drawing even a straight underline, and a terminal that answers
         nothing (Alacritty) or a multiplexer that refuses (tmux, zellij)
-        cannot be told apart from it.
+        cannot be told apart from it;
+    * the rows no query answers — links, clipboard writes, notifications,
+        the pointer shape — are what the terminal naming itself in
+        `XTVERSION` is known to do
+        ($(REF knownTerminals, sparkles,base,term_identity), D42), and
+        nothing for one that does not.
 )
 */
 void applyReplies(ref TermCaps t, in TerminalReplies r) @safe pure nothrow @nogc
@@ -129,6 +140,7 @@ void applyReplies(ref TermCaps t, in TerminalReplies r) @safe pure nothrow @nogc
         : ImageProtocol.none;
     t.cellPixelSize = r.cellWidth != 0 && r.cellHeight != 0;
     t.extendedUnderline = r.smulx == TcapReply.valid && r.setulc == TcapReply.valid;
+    applyKnownTerminal(t, r.xtversion);
 }
 
 /// The battery's test cluster: a ZWJ family (man, woman, girl), one wide
@@ -139,11 +151,11 @@ enum string probeCluster = "\U0001F468\u200D\U0001F469\u200D\U0001F467";
 The battery (`CAP3`), in one write: the kitty graphics query (a 1×1 image,
 id 31, queried and never stored), the kitty keyboard flags, `DECRQM` for
 modes 2004, 2026, 2027, 2031 and 1004, `XTGETTCAP` for `RGB`, `Tc`, `Smulx`
-and `Setulc`, the cell's pixel size (`CSI 16 t`), the width of
-$(LREF probeCluster) — printed at the line's start, the cursor reported
-(`CSI 6 n`) and the line erased — then primary DA, the fence. Terminals
-answer in order, so DA1's reply proves every earlier one is in or never
-coming.
+and `Setulc`, the terminal's name and version (`XTVERSION`, `CSI > q`), the
+cell's pixel size (`CSI 16 t`), the width of $(LREF probeCluster) — printed
+at the line's start, the cursor reported (`CSI 6 n`) and the line erased —
+then primary DA, the fence. Terminals answer in order, so DA1's reply proves
+every earlier one is in or never coming.
 
 The cursor report is the one reply a key can spell: a modified F3 on a
 legacy keyboard is `CSI 1 ; m R` too. Only the first report counts, and the
@@ -154,6 +166,7 @@ enum string queryBattery = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\"
     ~ "\x1b[?2004$p\x1b[?2026$p\x1b[?2027$p\x1b[?2031$p\x1b[?1004$p"
     ~ "\x1bP+q524742\x1b\\\x1bP+q5463\x1b\\"
     ~ "\x1bP+q536d756c78\x1b\\\x1bP+q536574756c63\x1b\\"
+    ~ "\x1b[>q"
     ~ "\x1b[16t"
     ~ "\r" ~ probeCluster ~ "\x1b[6n\r\x1b[K"
     ~ "\x1b[c";
@@ -182,6 +195,16 @@ void parseReplies(in ubyte[] bytes, ref TerminalReplies r, ref ubyte[] rest)
             const body_ = at[3 .. end];
             if (find(body_, "i=31") != size_t.max && find(body_, ";OK") != size_t.max)
                 r.kittyGraphics = true;
+            i += end + 2;
+            continue;
+        }
+        // DCS: `XTVERSION`'s answer, `>|` then the name and version.
+        if (startsWith(at, "\x1bP>|"))
+        {
+            const end = find(at, "\x1b\\");
+            if (end == size_t.max)
+                break;
+            r.xtversion = (cast(const(char)[]) at[4 .. end]).idup;
             i += end + 2;
             continue;
         }
@@ -569,38 +592,39 @@ unittest
         ubyte clusterWidth;
         bool styledUnderline;
         P images;
+        string xtversion;
     }
     static immutable Row[] rows = [
         Row("kitty.txt",     true,  true,  M.reset, M.reset, M.notRecognized, M.reset, M.reset,
-            X.invalid, X.valid, 9, 18, 2, true, P.kitty),
+            X.invalid, X.valid, 9, 18, 2, true, P.kitty, "kitty(0.48.2)"),
         Row("ghostty.txt",   true,  true,  M.reset, M.reset, M.set, M.reset, M.reset,
-            X.valid, X.valid, 10, 21, 2, true, P.kitty),
+            X.valid, X.valid, 10, 21, 2, true, P.kitty, "ghostty 1.3.1"),
         Row("foot.txt",      false, true,  M.reset, M.reset, M.set, M.reset, M.reset,
-            X.valid, X.valid, 6, 13, 2, true, P.sixel),
+            X.valid, X.valid, 6, 13, 2, true, P.sixel, "foot(1.25.0)"),
         Row("xterm.txt",     false, false, M.reset, M.notRecognized, M.notRecognized,
-            M.notRecognized, M.reset, X.valid, X.invalid, 6, 13, 6, false, P.none),
+            M.notRecognized, M.reset, X.valid, X.invalid, 6, 13, 6, false, P.none, "XTerm(403)"),
         Row("alacritty.txt", false, true,  M.reset, M.reset, M.notRecognized, M.notRecognized,
-            M.reset, X.none, X.none, 0, 0, 6, false, P.none),
+            M.reset, X.none, X.none, 0, 0, 6, false, P.none, ""),
         // tmux answers for itself, under any host: no graphics or keyboard
         // reply relayed, DA1's sixel not believed under a multiplexer
         // (`CAP7`), a cell size of its own on a bare pty, and a cluster
         // laid out as one character though it answers nothing for 2027.
         Row("tmux-foot.txt", false, false, M.reset, M.none, M.none, M.reset, M.reset,
-            X.none, X.none, 6, 13, 2, false, P.none),
+            X.none, X.none, 6, 13, 2, false, P.none, "tmux 3.6a"),
         Row("tmux-ghostty.txt", false, false, M.reset, M.none, M.none, M.reset, M.reset,
-            X.none, X.none, 10, 21, 2, false, P.none),
+            X.none, X.none, 10, 21, 2, false, P.none, "tmux 3.6a"),
         Row("tmux-bare.txt", false, false, M.reset, M.none, M.none, M.reset, M.reset,
-            X.none, X.none, 16, 32, 2, false, P.none),
+            X.none, X.none, 16, 32, 2, false, P.none, "tmux 3.6a"),
         // zellij's graphics answer follows its host; it answers neither
         // paste nor focus, and refuses `XTGETTCAP` without naming what. It
         // lays a cluster out as its code points, even over hosts that
         // cluster: the layout the cells follow is the multiplexer's.
         Row("zellij-bare.txt", true, true, M.none, M.reset, M.none, M.reset, M.none,
-            X.invalid, X.invalid, 0, 0, 6, false, P.kitty),
+            X.invalid, X.invalid, 0, 0, 6, false, P.kitty, "Zellij(4501)"),
         Row("zellij-foot.txt", false, true, M.none, M.reset, M.none, M.reset, M.none,
-            X.invalid, X.invalid, 6, 13, 6, false, P.none),
+            X.invalid, X.invalid, 6, 13, 6, false, P.none, "Zellij(4501)"),
         Row("zellij-ghostty.txt", true, true, M.none, M.reset, M.none, M.reset, M.none,
-            X.invalid, X.invalid, 10, 21, 6, false, P.kitty),
+            X.invalid, X.invalid, 10, 21, 6, false, P.kitty, "Zellij(4501)"),
     ];
     foreach (row; rows)
     {
@@ -613,6 +637,7 @@ unittest
         assert(r.rgb == row.rgb && r.tc == row.tc, row.file);
         assert(r.cellWidth == row.cellWidth && r.cellHeight == row.cellHeight, row.file);
         assert(r.clusterWidth == row.clusterWidth, row.file);
+        assert(r.xtversion == row.xtversion, row.file);
 
         // And what the answers declare, over the environment's snapshot.
         TermCaps caps;
@@ -625,6 +650,11 @@ unittest
         // Styled underlines where `XTGETTCAP` vouches for them: kitty, Ghostty
         // and foot; XTerm and zellij refuse, Alacritty and tmux do not answer.
         assert(caps.extendedUnderline == row.styledUnderline, row.file);
+        // Links by name (D42): the three terminals that call themselves
+        // kitty, Ghostty and foot; not XTerm, the multiplexers, or Alacritty,
+        // which gives no name.
+        assert(caps.hyperlinks == (row.file == "kitty.txt" || row.file == "ghostty.txt"
+            || row.file == "foot.txt"), row.file);
         // Every one of these can show 24-bit colour: from `$COLORTERM`, or —
         // XTerm, whose `$TERM` says 16 — from its `RGB` answer.
         assert(caps.colorDepth == ColorDepth.trueColor, row.file);

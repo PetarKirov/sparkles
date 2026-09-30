@@ -24,10 +24,11 @@ output (2026), grapheme clustering (2027, or a test cluster's measured
 width), color-scheme reports (2031), bracketed paste (2004), focus reports
 (1004), the cell's pixel size (`CSI 16 t`), styled underlines (`XTGETTCAP`
 `Smulx` and `Setulc`), the kitty keyboard and graphics protocols and the DA1
-sixel attribute — the last three only for rows recorded with them. The facts
-no query reaches — links, clipboard, notifications, and every font fact past
-the half blocks — are left off (D32): a preset may show less than its
-emulator can, never more.
+sixel attribute — the last three only for rows recorded with them — and, by
+the name a row answered `XTVERSION` with, links, clipboard writes,
+notifications and the pointer shape (D42). Every font fact past the half
+blocks is left off (D32): a preset may show less than its emulator can,
+never more.
 
 Presets are a partial order, not a ladder: tmux and Alacritty are each missing
 something the other has. `CAP9`'s monotone chain is the three profiles';
@@ -79,7 +80,7 @@ enum Emulator : ubyte
         sync: ModeReply.notRecognized, graphemes: ModeReply.notRecognized,
         scheme: ModeReply.notRecognized, focus: ModeReply.reset, rgb: TcapReply.valid,
         tc: TcapReply.invalid, smulx: TcapReply.invalid, setulc: TcapReply.invalid,
-        cellWidth: 6, cellHeight: 13, clusterWidth: 6))
+        cellWidth: 6, cellHeight: 13, clusterWidth: 6, xtversion: "XTerm(403)"))
     xterm,
 
     @replies("Apple Terminal (macOS 26.3)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
@@ -106,7 +107,8 @@ enum Emulator : ubyte
         paste: ModeReply.reset, sync: ModeReply.reset, graphemes: ModeReply.set,
         scheme: ModeReply.reset, focus: ModeReply.reset, rgb: TcapReply.valid,
         tc: TcapReply.valid, smulx: TcapReply.valid, setulc: TcapReply.valid,
-        cellWidth: 6, cellHeight: 13, clusterWidth: 2))
+        cellWidth: 6, cellHeight: 13, clusterWidth: 2,
+        xtversion: "foot(1.25.0)"))
     foot,
 
     @replies("WezTerm 2025-10-14 (Linux)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
@@ -122,7 +124,8 @@ enum Emulator : ubyte
         sync: ModeReply.reset, graphemes: ModeReply.notRecognized, scheme: ModeReply.reset,
         focus: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.valid,
         smulx: TcapReply.valid, setulc: TcapReply.valid, kittyGraphics: true,
-        cellWidth: 9, cellHeight: 18, clusterWidth: 2))
+        cellWidth: 9, cellHeight: 18, clusterWidth: 2,
+        xtversion: "kitty(0.48.2)"))
     kitty,
 
     // ghostty.txt
@@ -132,7 +135,7 @@ enum Emulator : ubyte
         scheme: ModeReply.reset, focus: ModeReply.reset, rgb: TcapReply.valid,
         tc: TcapReply.valid, smulx: TcapReply.valid, setulc: TcapReply.valid,
         kittyGraphics: true, cellWidth: 10, cellHeight: 21,
-        clusterWidth: 2))
+        clusterWidth: 2, xtversion: "ghostty 1.3.1"))
     ghostty,
 
     // tmux-bare.txt, tmux-foot.txt, tmux-ghostty.txt: tmux answers for
@@ -141,15 +144,18 @@ enum Emulator : ubyte
     @replies("tmux 3.6a on a bare pty", TerminalReplies(term: "tmux-256color",
         colorterm: "truecolor", da1: "1;2;4", paste: ModeReply.reset,
         scheme: ModeReply.reset, focus: ModeReply.reset, multiplexer: true,
-        cellWidth: 16, cellHeight: 32, clusterWidth: 2))
+        cellWidth: 16, cellHeight: 32, clusterWidth: 2,
+        xtversion: "tmux 3.6a"))
     @replies("tmux 3.6a in foot 1.25.0", TerminalReplies(term: "tmux-256color",
         colorterm: "truecolor", da1: "1;2;4", paste: ModeReply.reset,
         scheme: ModeReply.reset, focus: ModeReply.reset, multiplexer: true,
-        cellWidth: 6, cellHeight: 13, clusterWidth: 2))
+        cellWidth: 6, cellHeight: 13, clusterWidth: 2,
+        xtversion: "tmux 3.6a"))
     @replies("tmux 3.6a in Ghostty 1.3.1", TerminalReplies(term: "tmux-256color",
         colorterm: "truecolor", da1: "1;2;4", paste: ModeReply.reset,
         scheme: ModeReply.reset, focus: ModeReply.reset, multiplexer: true,
-        cellWidth: 10, cellHeight: 21, clusterWidth: 2))
+        cellWidth: 10, cellHeight: 21, clusterWidth: 2,
+        xtversion: "tmux 3.6a"))
     tmux,
 
     // zellij-bare.txt, zellij-foot.txt, zellij-ghostty.txt: zellij's graphics
@@ -159,18 +165,21 @@ enum Emulator : ubyte
         colorterm: "truecolor", da1: "62;4;52", kittyKeyboard: true, sync: ModeReply.reset,
         scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
         smulx: TcapReply.invalid, setulc: TcapReply.invalid,
-        kittyGraphics: true, multiplexer: true, clusterWidth: 6))
+        kittyGraphics: true, multiplexer: true, clusterWidth: 6,
+        xtversion: "Zellij(4501)"))
     @replies("zellij 0.45.1 in foot 1.25.0", TerminalReplies(term: "foot",
         colorterm: "truecolor", da1: "62;4;52", kittyKeyboard: true, sync: ModeReply.reset,
         scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
         smulx: TcapReply.invalid, setulc: TcapReply.invalid,
-        multiplexer: true, cellWidth: 6, cellHeight: 13, clusterWidth: 6))
+        multiplexer: true, cellWidth: 6, cellHeight: 13, clusterWidth: 6,
+        xtversion: "Zellij(4501)"))
     @replies("zellij 0.45.1 in Ghostty 1.3.1", TerminalReplies(term: "xterm-ghostty",
         colorterm: "truecolor", da1: "62;52", kittyKeyboard: true, sync: ModeReply.reset,
         scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
         smulx: TcapReply.invalid, setulc: TcapReply.invalid,
         kittyGraphics: true, multiplexer: true, cellWidth: 10, cellHeight: 21,
-        clusterWidth: 6))
+        clusterWidth: 6,
+        xtversion: "Zellij(4501)"))
     zellij,
 }
 
@@ -310,8 +319,7 @@ unittest
         TargetCapabilities sansImages = c;
         sansImages.images = ImageProtocol.none;
         assert(subsetOf(sansImages, full));
-        assert(!c.hyperlinks && !c.clipboard && !c.notifications && !c.pointerShape
-            && !c.textSizing && !c.progress);
+        assert(!c.textSizing && !c.progress);
         assert(!c.braille && !c.nerdFont && c.blocks == BlockTier.half && c.unicode);
         assert(!c.input.precisePointer);
         assert(!c.subCellScroll && !c.radius && !c.shadow && !c.alpha);
@@ -518,4 +526,21 @@ unittest
     static foreach (e; EnumMembers!Emulator)
         assert(capabilitiesOf(e).extendedUnderline
             == (e == Emulator.kitty || e == Emulator.ghostty || e == Emulator.foot));
+}
+
+@("ui.emulators.byNameWhereTheTerminalNamedItself")
+@safe pure nothrow @nogc
+unittest
+{
+    // D42: the rows no query answers, from the name each row's `XTVERSION`
+    // answer gave. kitty, Ghostty and foot earn all four; XTerm only the
+    // pointer shape, its OSC 52 being off by default. The multiplexers,
+    // Alacritty (no answer) and the case-study rows (never asked) earn none.
+    static foreach (e; EnumMembers!Emulator)
+    {{
+        const c = capabilitiesOf(e);
+        const full = e == Emulator.kitty || e == Emulator.ghostty || e == Emulator.foot;
+        assert(c.hyperlinks == full && c.clipboard == full && c.notifications == full);
+        assert(c.pointerShape == (full || e == Emulator.xterm));
+    }}
 }
