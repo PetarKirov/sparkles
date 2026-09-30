@@ -124,13 +124,23 @@ struct Window
         // Not macOS-only: this is equally the Wayland and fractional-scaling
         // answer. Where there is no scaling it is a no-op.
         //
-        // Android also always runs: without FLAG_WINDOW_ALWAYS_RUN raylib parks
-        // the whole thread in `ALooper_pollOnce(-1)` while the activity is
-        // unfocused — a dialog or the notification shade froze every frame,
+        // Not Android, though: there the coordinate space already IS device
+        // pixels, and the flag's only effect is harm. `BeginScissorMode`
+        // multiplies every clip rectangle by `GetWindowScaleDPI` — the screen
+        // density there (2.75 on a 440 dpi phone) — so a clipped pane was
+        // clipped to a box 2.75 times too large and shifted: its top rows
+        // vanished under the page background. The emulator's density is 1,
+        // which is why only a phone showed it. `GetWindowScaleDPI` itself
+        // reports the density with or without the flag, so font sizing
+        // (`displayMetrics`) does not depend on it.
+        //
+        // Android always runs instead: without FLAG_WINDOW_ALWAYS_RUN raylib
+        // parks the whole thread in `ALooper_pollOnce(-1)` while the activity
+        // is unfocused — a dialog or the notification shade froze every frame,
         // the pty drain and the timers with it. The loop decides what a
         // surfaceless frame does instead ($(LREF surfaceReady)).
         version (Android)
-            SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI | ConfigFlags.FLAG_WINDOW_ALWAYS_RUN);
+            SetConfigFlags(ConfigFlags.FLAG_WINDOW_ALWAYS_RUN);
         else
             SetConfigFlags(ConfigFlags.FLAG_WINDOW_HIGHDPI);
         // Unbounded on purpose: a `hue --diff` of two paths builds a title in
