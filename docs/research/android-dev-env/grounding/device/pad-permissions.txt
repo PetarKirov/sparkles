@@ -1,0 +1,11 @@
+  Permission [android.permission.USE_CUSTOM_VIRTUAL_MACHINE] (f96ea8f):
+    sourcePackage=com.android.virtualmachine.res
+    uid=10285 gids=[] type=0 prot=signature|development
+    perm=PermissionInfo{61baf96 android.permission.USE_CUSTOM_VIRTUAL_MACHINE}
+    flags=0x0
+--
+  Permission [android.permission.MANAGE_VIRTUAL_MACHINE] (c429f4a):
+    sourcePackage=com.android.virtualmachine.res
+    uid=10285 gids=[3013] type=0 prot=signature|development|preinstalled
+    perm=PermissionInfo{a4f3110 android.permission.MANAGE_VIRTUAL_MACHINE}
+    flags=0x0

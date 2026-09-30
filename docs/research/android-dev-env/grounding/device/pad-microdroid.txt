@@ -1,0 +1,295 @@
+found path /apex/com.android.virt/app/EmptyPayloadApp@BP2A.250605.031.A3/EmptyPayloadApp.apk
+creating work dir /data/local/tmp/microdroid/2pWR9qwwv2VVvA5U6
+apk.idsig path: /data/local/tmp/sparkles-research-microdroid/apk.idsig
+instance.img path: /data/local/tmp/sparkles-research-microdroid/instance.img
+instance_id file path: /data/local/tmp/sparkles-research-microdroid/instance_id
+Created debuggable VM from "/apex/com.android.virt/app/EmptyPayloadApp@BP2A.250605.031.A3/EmptyPayloadApp.apk"!PayloadConfig(VirtualMachinePayloadConfig { payloadBinaryName: "MicrodroidEmptyPayloadJniLib.so", extraApks: [] }) with CID 2049, state is STARTING.
+[2026-09-30T12:00:29.590585991+00:00 INFO  crosvm::crosvm::sys::linux::device_helpers] Trying to attach block device: /proc/self/fd/52
+[2026-09-30T12:00:29.592695835+00:00 INFO  crosvm::crosvm::sys::linux::device_helpers] Trying to attach block device: /proc/self/fd/57
+[2026-09-30T12:00:29.592780627+00:00 INFO  crosvm::crosvm::sys::linux::device_helpers] Trying to attach block device: /proc/self/fd/65
+[INFO] pvmfw config version: 1.0
+[INFO] pVM firmware
+[ERROR] avb_slot_verify.c ...
+[ERROR] : ...
+[ERROR] 446 ...
+[ERROR] : ERROR:  ...
+[ERROR] initrd_normal ...
+[ERROR] : Hash of data does not match digest in descriptor.
+[INFO] Successfully verified a debuggable payload.
+[INFO] Please disregard any previous libavb ERROR about initrd_normal.
+[INFO] Fallback to instance.img based rollback checks
+[INFO] found a block device of size 54684KB
+[INFO] found a block device of size 10280KB
+[INFO] No debug policy found.
+[INFO] Starting payload...
+[INFO] Expecting a bug making MMIO_GUARD_UNMAP return NOT_SUPPORTED on success
+[    0.151224][    T1] brd: module loaded
+[    0.154306][    T1] loop: module loaded
+[    0.154483][    T1] virtio_blk virtio3: 1/0/0 default/read/poll queues
+[    0.154874][    T1] virtio_blk virtio3: [vda] 109368 512-byte logical blocks (56.0 MB/53.4 MiB)
+[    0.156143][    T1]  vda: vda1 vda2
+[    0.156547][    T1] virtio_blk virtio4: 1/0/0 default/read/poll queues
+[    0.157024][    T1] virtio_blk virtio4: [vdb] 20560 512-byte logical blocks (10.5 MB/10.0 MiB)
+[    0.158637][    T1]  vdb: vdb1
+[    0.158866][    T1] virtio_blk virtio5: 1/0/0 default/read/poll queues
+[    0.159519][    T1] virtio_blk virtio5: [vdc] 17200 512-byte logical blocks (8.81 MB/8.40 MiB)
+[    0.161489][    T1]  vdc: vdc1 vdc2 vdc3 vdc4
+[    0.161820][    T1] zram: Added device: zram0
+[    0.162878][    T1] rtc-pl030 2000.rtc: registered as rtc0
+[    0.163040][    T1] rtc-pl030 2000.rtc: setting system clock to 2026-09-30T12:00:29 UTC (1790769629)
+[    0.163335][    T1] device-mapper: uevent: version 1.0.3
+[    0.163500][    T1] device-mapper: ioctl: 4.48.0-ioctl (2023-03-01) initialised: dm-devel@redhat.com
+[    0.164153][    T1] SMCCC: SOC_ID: ARCH_SOC_ID not implemented, skipping ....
+[    0.164396][    T6] watchdog: Delayed init of the lockup detector failed: -19
+[    0.164637][    T6] watchdog: Hard watchdog permanently disabled
+[    0.164962][    T1] NET: Registered PF_INET6 protocol family
+[    0.165746][    T1] Segment Routing with IPv6
+[    0.165962][    T1] In-situ OAM (IOAM) with IPv6
+[    0.166191][    T1] sit: IPv6, IPv4 and MPLS over IPv4 tunneling driver
+[    0.166825][    T1] NET: Registered PF_VSOCK protocol family
+[    0.177413][    T1] page_owner is disabled
+[    0.177650][    T1] clk: Disabling unused clocks
+[    0.177885][    T1] Freeing unused kernel memory: 704K
+[    0.178088][    T1] Run /init as init process
+[    0.178875][    T1] init: init first stage started!
+[    0.179017][    T1] init: Unable to open /lib/modules, skipping module loading.
+[    0.179361][    T1] init: Switching root to '/first_stage_ramdisk'
+[    0.179623][    T1] init: [libfstab] Using Android DT directory /proc/device-tree/firmware/android/
+[    0.179910][    T1] init: [libfstab] ReadDefaultFstab(): target default fstab path=/fstab.microdroid
+[    0.183772][    T1] init: [libfs_mgr] Created logical partition system_a on device /dev/block/dm-0
+[    0.184062][    T1] init: DSU not detected, proceeding with normal boot
+[    0.185223][    T1] init: [libfs_avb] Returning avb_handle with status: Success
+[    0.185408][    T1] init: [libfs_avb] Built verity table: '1 /dev/block/dm-0 /dev/block/dm-0 4096 4096 13012 13012 sha256 8282ddb4d02c131cfc9c02e027b883a5a8cd619e5e17f608563cfb8df07f413b 0732c48e496f16d32f584f409bfc08308e472e71687a2486ddb1b30d8cc334f5 2 restart_on_corruption ignore_zero_blocks'
+[    0.186254][    T1] device-mapper: verity: sha256 using shash "sha256-ce" (multibuffer)
+[    0.186724][    T1] init: [libfs_mgr] FSIO: /system read superblock start
+[    0.188254][    T1] init: [libfs_mgr] superblock s_max_mnt_count:65535,/dev/block/dm-1
+[    0.188480][    T1] init: [libfs_mgr] FSIO: /system read superblock end
+[    0.188659][    T1] init: [libfs_mgr] __mount (target=/system) begin
+[    0.189808][    T1] EXT4-fs (dm-1): mounted filesystem 1d4898a6-06a2-573e-bd8a-61ac05c92a7d ro with ordered data mode. Quota mode: disabled.
+[    0.190281][    T1] init: [libfs_mgr] __mount(source=/dev/block/dm-1,target=/system,type=ext4)=0,during time: 1 ms: Success
+[    0.190646][    T1] init: Switching root to '/system'
+[    0.191856][    T1] init: Skipped setting INIT_AVB_VERSION (not in recovery mode)
+[    0.192167][    T1] init: init first stage completed!
+[    0.295076][    T1] init: [libfstab] Using Android DT directory /proc/device-tree/firmware/android/
+[    0.295403][    T1] init: EarlySetupOverlays check: debug_build: 0, force_debuggable: 0, unlocked: 0, enable_overlay: 0: No such file or directory
+[    0.295838][    T1] init: EarlySetupOverlays is disabled non-debuggable build: No such file or directory
+[    0.296252][    T1] init: Opening SELinux policy from /system/etc/selinux/microdroid_precompiled_sepolicy
+[    0.298909][    T1] init: Loading SELinux policy
+[    0.309708][    T1] SELinux:  policy capability network_peer_controls=1
+[    0.309991][    T1] SELinux:  policy capability open_perms=1
+[    0.310183][    T1] SELinux:  policy capability extended_socket_class=1
+[    0.310383][    T1] SELinux:  policy capability always_check_network=0
+[    0.310526][    T1] SELinux:  policy capability cgroup_seclabel=0
+[    0.310716][    T1] SELinux:  policy capability nnp_nosuid_transition=1
+[    0.310939][    T1] SELinux:  policy capability genfs_seclabel_symlinks=0
+[    0.311127][    T1] SELinux:  policy capability ioctl_skip_cloexec=0
+[    0.312648][   T20] audit: type=1403 audit(1790769629.643:2): auid=4294967295 ses=4294967295 lsm=selinux res=1
+[    0.313087][   T20] audit: type=1404 audit(1790769629.643:3): enforcing=1 old_enforcing=0 auid=4294967295 ses=4294967295 enabled=1 old-enabled=1 lsm=selinux res=1
+[    0.321024][    T1] init: init second stage started!
+[    0.325120][    T1] selinux: SELinux: Loaded file context from:
+[    0.325368][    T1] selinux: 		/system/etc/selinux/plat_file_contexts
+[    0.327805][    T1] init: [libfstab] Using Android DT directory /proc/device-tree/firmware/android/
+[    0.328966][    T1] init_hook_E: Could not find /cust/cust_variant and /data/miui/cust_variant
+[    0.329298][    T1] init: Setting property 'ro.build.fingerprint' to 'unknown/unknown/unknown:unknown/.809fc4c4/unknown:unknown/unknown'
+[    0.329674][    T1] init: Setting property 'ro.build.product' to 'unknown'
+[    0.329892][    T1] init: Setting property 'ro.build.description' to 'unknown-unknown 16 .809fc4c4 unknown unknown'
+[    0.330216][    T1] init: Setting property 'ro.build.display.id' to 'unknown-unknown 16 .809fc4c4 unknown unknown'
+[    0.330636][    T1] init: Running restorecon...
+[    0.331386][    T1] init: Created socket '/dev/socket/property_service_for_system', mode 660, user 0, group 1000
+[    0.331913][    T1] init: Created socket '/dev/socket/property_service', mode 666, user 0, group 0
+[    0.332731][    T1] init: [libfs_mgr] vendor overlay: vndk version not defined
+[    0.333148][    T1] init: SetupMountNamespaces done
+[    0.333306][    T1] init: Not using subcontext for microdroid
+[    0.334287][    T1] init: Parsing file /system/etc/init/hw/init.rc...
+[    0.334816][    T1] init: Added '/init.environ.rc' to import list
+[    0.335172][    T1] init: Parsing file /init.environ.rc...
+[    0.335359][    T1] init: Unable to read config file '/init.environ.rc': open() failed: No such file or directory
+[    0.335663][    T1] init: Parsing directory /system/etc/init...
+[    0.335870][    T1] init: Parsing file /system/etc/init/atrace.rc...
+[    0.337419][    T1] init: Parsing file /system/etc/init/authfs_service.rc...
+[    0.337818][    T1] init: Parsing file /system/etc/init/microdroid_manager.rc...
+[    0.338318][    T1] init: Parsing file /system/etc/init/perfetto.rc...
+[    0.338806][    T1] init: Parsing file /system/etc/init/prng_seeder.rc...
+[    0.339169][    T1] init: Parsing file /system_ext/etc/init...
+[    0.339430][    T1] init: Unable to read config file '/system_ext/etc/init': open() failed: No such file or directory
+[    0.339769][    T1] init: Parsing file /vendor/etc/init...
+[    0.339929][    T1] init: Unable to read config file '/vendor/etc/init': open() failed: No such file or directory
+[    0.340289][    T1] init: Parsing file /odm/etc/init...
+[    0.340461][    T1] init: Unable to read config file '/odm/etc/init': open() failed: No such file or directory
+[    0.340806][    T1] init: Parsing file /product/etc/init...
+[    0.340970][    T1] init: Unable to read config file '/product/etc/init': open() failed: No such file or directory
+[    0.341288][    T1] init: Parsing file /mnt/vendor/mi_ext/etc/init...
+[    0.341466][    T1] init: Unable to read config file '/mnt/vendor/mi_ext/etc/init': open() failed: No such file or directory
+[    0.341946][    T1] init: processing action (SetupCgroups) from (<Builtin Action>:0)
+[    0.342251][    T1] init: Cgroups support in kernel is not enabled
+[    0.342477][    T1] init: waitid failed: No child processes
+[    0.343329][    T1] init: processing action (SetKptrRestrict) from (<Builtin Action>:0)
+[    0.343744][    T1] init: processing action (TestPerfEventSelinux) from (<Builtin Action>:0)
+[    0.344280][    T1] init: processing action (early-init) from (/system/etc/init/hw/init.rc:14)
+[    0.344583][    T1] init: starting service 'ueventd'...
+[    0.345599][    T1] init: failed write pid 44 to memcg
+[    0.350274][    T1] init: ... started service 'ueventd' has pid 44
+[    0.350915][    T1] init: starting service 'init_debug_policy'...
+[    0.353610][    T1] init: failed write pid 45 to memcg
+[    0.358328][    T1] init: ... started service 'init_debug_policy' has pid 45
+[    0.358605][    T1] init: SVC_EXEC service 'init_debug_policy' pid 45 (uid 0 gid 0+0 context default) started; waiting...
+[    0.364206][   T45] init_debug_poli (45) used greatest stack depth: 12032 bytes left
+[    0.364505][    T1] init: Service 'init_debug_policy' (pid 45) exited with status 0 waiting took 0.010000 seconds
+[    0.364897][    T1] init: Sending signal 9 to service 'init_debug_policy' (pid 45) process group...
+[    0.365282][   T44] ueventd: ueventd started!
+[    0.365514][   T44] selinux: SELinux: Loaded file context from:
+[    0.365719][   T44] selinux: 		/system/etc/selinux/plat_file_contexts
+[    0.365914][   T44] ueventd: Parsing file /system/etc/ueventd.rc...
+[    0.366357][   T44] ueventd: Parsing file /vendor/etc/ueventd.rc...
+[    0.366554][   T44] ueventd: Unable to read config file '/vendor/etc/ueventd.rc': open() failed: No such file or directory
+[    0.388070][   T43] init: Wait for property 'ro.cold_boot_done=true' took 22ms
+[    0.388341][    T1] init: processing action (early-init) from (/system/etc/init/prng_seeder.rc:5)
+[    0.388710][    T1] init: processing action (ConnectEarlyStageSnapuserd) from (<Builtin Action>:0)
+[    0.389016][    T1] init: processing action (wait_for_coldboot_done) from (<Builtin Action>:0)
+[    0.389312][    T1] init: start_waiting_for_property("ro.cold_boot_done", "true"): already set
+[    0.389639][    T1] init: processing action (CheckTradeInModeStatus) from (<Builtin Action>:0)
+[    0.389984][    T1] init: processing action (SetMmapRndBits) from (<Builtin Action>:0)
+[    0.390327][   T44] ueventd: Coldboot took 0.023 seconds
+[    0.390652][    T1] init: processing action (KeychordInit) from (<Builtin Action>:0)
+[    0.390897][    T1] init: processing action (init) from (/system/etc/init/hw/init.rc:48)
+[    0.391397][    T1] init: starting service 'microdroid_manager'...
+[    0.391674][    T1] init: Created socket '/dev/socket/vm_payload_service', mode 666, user 1000, group 1000
+[    0.393270][    T1] init: failed write pid 48 to memcg
+[    0.393909][    T1] init: ... started service 'microdroid_manager' has pid 48
+09-30 12:00:29.768    48    48 I microdroid_manager: microdroid_manager: started.
+09-30 12:00:29.769    48    48 I microdroid_manager: microdroid_manager: ramdump supported: true
+09-30 12:00:29.770    48    48 I microdroid_manager: microdroid_manager: Assumes that debug policy is disabled because failed to read debug policy (Os { code: 2, kind: NotFound, message: "No such file or directory" })
+09-30 12:00:29.868    48    48 I microdroid_manager: microdroid_manager: ramdump is loaded: debuggable=true, ramdump=false
+[    0.531834][   T48] zram0: detected capacity change from 0 to 421344
+[    0.532426][   T48] Adding 210668k swap on /dev/block/zram0.  Priority:-2 extents:1 across:210668k SS
+[    0.532679][   T49] kexec_load (49) used greatest stack depth: 11664 bytes left
+09-30 12:00:29.869    48    48 I microdroid_manager: microdroid_manager: swap enabled.
+09-30 12:00:29.871    48    48 I microdroid_manager: microdroid_manager::payload: loading payload metadata...
+09-30 12:00:29.872    48    48 I microdroid_manager: dice_driver: Creating DiceDriver backed by "/dev/open-dice0" driver
+09-30 12:00:29.872    48    48 I microdroid_manager: dice_driver: Using DICE values from driver
+[    0.545198][   T50] loop0: detected capacity change from 0 to 8
+[    0.545514][   T50] device-mapper: verity: sha256 using shash "sha256-ce" (multibuffer)
+09-30 12:00:29.889    48    48 I microdroid_manager: microdroid_manager::verify: payload verification successful. took 16.810208ms
+09-30 12:00:29.889    48    48 I microdroid_manager: microdroid_manager: Saving verified data.
+09-30 12:00:29.890    48    48 I microdroid_manager: microdroid_manager: DICE derivation for payload
+[    0.553626][    T1] init: starting service 'apexd-vm'...
+[    0.554579][    T1] init: failed write pid 53 to memcg
+[    0.555658][    T1] init: ... started service 'apexd-vm' has pid 53
+[    0.555898][    T1] init: Control message: Processed ctl.start for 'apexd-vm' from pid: 48 (/system/bin/microdroid_manager)
+09-30 12:00:29.918    53    53 I apexd   : Scanning /system/apex for pre-installed ApexFiles
+09-30 12:00:29.918    53    53 I apexd   : Found pre-installed APEX /system/apex/com.android.runtime.apex
+09-30 12:00:29.920    53    53 I apexd   : Scanning /dev/block/by-name/payload-metadata for host apexes
+09-30 12:00:29.920    53    53 I apexd   : Overriding metadata to /apex/vm-payload-metadata
+09-30 12:00:29.921    53    53 I apexd   : Found host apex com.android.adbd at /dev/block/vdc2
+09-30 12:00:29.921    53    53 I apexd   : Selecting APEX for activation
+09-30 12:00:29.921    53    53 E cutils-trace: Error opening trace file: No such file or directory (2)
+[    0.585227][   T55] loop1: detected capacity change from 0 to 16288
+09-30 12:00:29.922    53    55 W apexd   : Failed to convert 0:16to block device name: readlink('/sys/dev/block/0:16') failed: No such file or directory
+[    0.585713][   T56] loop2: detected capacity change from 0 to 16152
+[    0.587675][   T55] device-mapper: verity: sha256 using shash "sha256-ce" (multibuffer)
+[    0.589095][   T56] EXT4-fs (loop2): mounted filesystem 7d1522e1-9dfa-5edb-a43e-98e3a4d20250 ro without journal. Quota mode: disabled.
+09-30 12:00:29.926    53    56 I apexd   : Successfully mounted package /system/apex/com.android.runtime.apex on /apex/com.android.runtime@1 duration=4
+[    0.612489][   T55] EXT4-fs (dm-3): mounted filesystem 7d1522e1-9dfa-5edb-a43e-98e3a4d20250 ro without journal. Quota mode: disabled.
+09-30 12:00:29.949    53    55 I apexd   : Successfully mounted package /dev/block/vdc2 on /apex/com.android.adbd@370547060 duration=27
+09-30 12:00:29.950    53    53 I apexd   : Activated 2 packages.
+09-30 12:00:29.951    53    53 I apexd   : Marking APEXd as activated
+09-30 12:00:29.951    53    53 I apexd   : Marking APEXd as ready
+[    0.615066][   T43] init: Wait for property 'apexd.status=ready' took 220ms
+[    0.616995][    T1] init: Parsing file /apex/com.android.adbd/etc/init.rc...
+[    0.643331][    T1] linkerconfig: libc: Access denied finding property "heapprofd.enable"
+[    0.643886][    T1] linkerconfig: libc: Access denied finding property "persist.vendor.track.malloc.enable"
+09-30 12:00:29.981    61    61 W linkerconfig: Failed to get realpath from /product: No such file or directory
+[    0.644816][   T61] linkerconfig: Failed to get realpath from /product: No such file or directory
+09-30 12:00:29.982    61    61 W linkerconfig: Failed to get realpath from /system_ext: No such file or directory
+[    0.645193][   T61] linkerconfig: Failed to get realpath from /system_ext: No such file or directory
+09-30 12:00:29.982    61    61 W linkerconfig: Failed to open file /system/etc/llndk.libraries.txt: No such file or directory
+[    0.645642][   T61] linkerconfig: Failed to open file /system/etc/llndk.libraries.txt: No such file or directory
+09-30 12:00:29.982    61    61 W linkerconfig: Failed to open file /system/etc/llndk.libraries.txt: No such file or directory
+[    0.646139][    T1] linkerconfig: libc: Access denied finding property "persist.vendor.fd.monitor.enable"
+[    0.646429][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.646678][    T1] linkerconfig: libc: Access denied finding property "persist.sys.timezone"
+[    0.646968][   T61] linkerconfig: Failed to open file /system/etc/llndk.libraries.txt: No such file or directory
+09-30 12:00:29.984    61    61 W linkerconfig: Failed to open file /system/etc/sanitizer.libraries.txt: No such file or directory
+[    0.647384][   T61] linkerconfig: Failed to open file /system/etc/sanitizer.libraries.txt: No such file or directory
+09-30 12:00:29.984    61    61 W linkerconfig: Failed to open file /system/etc/sanitizer.libraries.txt: No such file or directory
+[    0.647843][   T61] linkerconfig: Failed to open file /system/etc/sanitizer.libraries.txt: No such file or directory
+[    0.650119][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.650400][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.650684][    T1] linkerconfig: libc: Access denied finding property "SANITIZER_RUNTIME_LIBRARIES"
+[    0.651023][    T1] linkerconfig: libc: Access denied finding property "SANITIZER_RUNTIME_LIBRARIES"
+[    0.651302][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.651550][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.651777][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.652024][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.652257][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.652505][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.652772][    T1] linkerconfig: libc: Access denied finding property "SANITIZER_RUNTIME_LIBRARIES"
+[    0.653064][    T1] linkerconfig: libc: Access denied finding property "SANITIZER_RUNTIME_LIBRARIES"
+[    0.653790][   T61] linkerconfig (61) used greatest stack depth: 11648 bytes left
+[    0.654041][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.654303][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.654503][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.654732][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.654942][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.655165][    T1] linkerconfig: libc: Access denied finding property "ro.treble.enabled"
+[    0.655406][    T1] linkerconfig: libc: Access denied finding property "SANITIZER_RUNTIME_LIBRARIES"
+[    0.655659][    T1] linkerconfig: libc: Access denied finding property "SANITIZER_RUNTIME_LIBRARIES"
+[    0.655961][    T1] linkerconfig: libc: Access denied finding property "SANITIZER_RUNTIME_LIBRARIES"
+[    0.656320][    T1] init: linkerconfig generated /linkerconfig with mounted APEX modules info
+[    0.656625][    T1] init: Service 'apexd-vm' (pid 53) exited with status 0 oneshot service took 0.101000 seconds in background
+[    0.656985][    T1] init: Sending signal 9 to service 'apexd-vm' (pid 53) process group...
+09-30 12:00:29.994    48    48 I microdroid_manager: microdroid_manager::vm_payload_service: The RPC server 'vm_payload_service' is running.
+[    0.657621][    T1] init: processing action (ro.boot.microdroid.debuggable=1 && init) from (/system/etc/init/hw/init.rc:74)
+[    0.658054][    T1] init: processing action (init) from (/system/etc/init/perfetto.rc:162)
+[    0.658376][    T1] init: processing action (late-init) from (/system/etc/init/hw/init.rc:82)
+[    0.658633][    T1] init: start_waiting_for_property("microdroid_manager.config_done", "1"): already set
+[    0.658914][    T1] init: processing action (late-init) from (/system/etc/init/atrace.rc:3)
+[    0.661633][    T1] init: Command 'copy /system/etc/ftrace_synthetic_events.conf /sys/kernel/debug/tracing/synthetic_events' action=late-init (/system/etc/init/atrace.rc:318) took 0ms and failed: Could not write to output file '/sys/kernel/debug/tracing/synthetic_events': open() failed: No such file or directory
+[    0.662478][    T1] init: processing action (ro.boot.fastboot.boottrace= && late-init) from (/system/etc/init/atrace.rc:336)
+[    0.662922][    T1] init: processing action (queue_property_triggers) from (<Builtin Action>:0)
+[    0.663227][    T1] init: processing action (post-fs) from (/system/etc/init/hw/init.rc:110)
+[    0.663645][    T1] init: Top-level directory needs encryption action, eg mkdir /data/misc <mode> <uid> <gid> encryption=Require
+[    0.664042][    T1] init: processing action (ro.debuggable=1 && late-fs) from (/system/etc/init/hw/init.rc:133)
+[    0.664370][    T1] init: processing action (post-fs-data) from (/system/etc/init/hw/init.rc:139)
+[    0.664615][    T1] init: deprecated action `mark_post_data` called.
+[    0.664809][    T1] init: Top-level directory needs encryption action, eg mkdir /data/vendor <mode> <uid> <gid> encryption=Require
+[    0.665158][    T1] init: Top-level directory needs encryption action, eg mkdir /data/vendor_ce <mode> <uid> <gid> encryption=Require
+[    0.665522][    T1] init: Top-level directory needs encryption action, eg mkdir /data/vendor_de <mode> <uid> <gid> encryption=Require
+[    0.665918][    T1] init: Top-level directory needs encryption action, eg mkdir /data/local <mode> <uid> <gid> encryption=Require
+[    0.666384][    T1] init: processing action (post-fs-data) from (/system/etc/init/perfetto.rc:103)
+[    0.666647][    T1] init: Command 'rm /data/misc/perfetto-traces/.guardraildata' action=post-fs-data (/system/etc/init/perfetto.rc:104) took 0ms and failed: unlink() failed: No such file or directory
+[    0.667109][    T1] init: processing action (boot) from (/system/etc/init/hw/init.rc:155)
+09-30 12:00:30.004    48    48 I microdroid_manager: microdroid_manager: boot completed, time to run payload
+09-30 12:00:30.004    48    48 I microdroid_manager: microdroid_manager: executing main task Task { type_: MicrodroidLauncher, command: "MicrodroidEmptyPayloadJniLib.so" }...
+09-30 12:00:30.004    48    48 I microdroid_manager: microdroid_manager: notifying payload started
+[    0.667707][    T1] init: processing action (enable_property_trigger) from (<Builtin Action>:0)
+[    0.668025][    T1] init: processing action (microdroid_manager.init_done=1) from (/system/etc/init/hw/init.rc:70)
+[    0.668335][    T1] init: Sending signal 9 to service 'ueventd' (pid 44) process group...
+[    0.669004][    T1] init: Service 'ueventd' (pid 44) received signal 9 from uid 0 pid 44
+[    0.669286][ payload started
+   T1] init: Sending signal 9 to service 'ueventd' (pid 44) process group...
+09-30 12:00:30.007    48    48 I microdroid_manager: microdroid_manager: payload pid = 64
+[    0.670920][    T1] init: processing action (init_debug_policy.adbd.enabled=1) from (/system/etc/init/hw/init.rc:78)
+[    0.671958][   T64] libc: Access denied finding property "heapprofd.enable"
+[    0.672190][   T64] libc: Access denied finding property "persist.track.malloc.enable"
+[    0.672430][   T64] libc: Access denied finding property "ro.sanitize"
+[    0.672639][   T64] libc: Access denied finding property "persist.resleak.enable.nativeheap"
+[    0.672905][   T64] libc: Access denied finding property "persist.fd.monitor.enable"
+[    0.673570][    T1] init: starting service 'adbd'...
+[    0.673752][    T1] init: Created socket '/dev/socket/adbd', mode 660, user 1000, group 1000
+[    0.676089][   T64] Hello Microdroid
+[    0.676091][   T64]
+[    0.676873][    T1] init: faipayload is ready
+led write pid 66 to memcg
+[    0.677105][   T64] libc: Access denied finding property "persist.sys.timezone"
+09-30 12:00:30.014    64    64 I vm_payload: vm_payload: Notified host payload ready successfully
+[    0.677504][    T1] init: failed write adbd's pid 66 to system_cpuctl
+[    0.678165][    T1] init: ... started service 'adbd' has pid 66
+09-30 12:00:30.061    66    66 I adbd    : persist.adb.watchdog set to ''
+09-30 12:00:30.061    66    66 I adbd    : persist.sys.test_harness set to ''
+09-30 12:00:30.062    66    66 I adbd    : adb watchdog timeout set to 600 seconds
+09-30 12:00:30.062    66    66 I adbd    : adbd_auth detected v=1 (max_handled=3)
+09-30 12:00:30.062    66    66 I adbd    : wifi_init: Starting property observer thread
+09-30 12:00:30.062    66    66 I adbd    : adbd listening on vsock:5555
+09-30 12:00:30.062    66    66 I adbd    : adbd started
+09-30 12:00:30.062    66    69 I adbd    : Waiting for persist.adb.tls_server.enable=1

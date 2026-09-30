@@ -1133,6 +1133,8 @@ private string[] standaloneExampleGlobs()
         "docs/research/autological-artifacts/cosmopolitan-ape/examples/*.d",
         "docs/research/autological-artifacts/self-selfdb/examples/*.d",
         "docs/research/linux-on-macos/examples/*.d",
+        "docs/research/android-dev-env/concepts/examples/*.d",
+        "docs/research/android-dev-env/device-validation/examples/*.d",
         "docs/research/safe-path-traversal/examples/*.d",
     ];
 }

@@ -1,0 +1,12 @@
+Only protected VMs are supported.
+Hypervisor version not set.
+/dev/kvm does not exist.
+/dev/vfio/vfio does not exist.
+VFIO-platform is not supported.
+Assignable devices: []
+Available OS list: ["microdroid"]
+Debug policy: Ok(DebugPolicy { log: false, ramdump: false, adb: false })
+Running VMs: []
+crw-rw-rw- 1 root root u:object_r:vendor_gunyah_dev:s0  10, 124 1970-01-01 02:00 /dev/gunyah
+
+true
