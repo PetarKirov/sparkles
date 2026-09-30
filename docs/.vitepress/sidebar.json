@@ -4785,6 +4785,10 @@
                 "link": "/research/android-dev-env/device-validation/"
               },
               {
+                "text": "Contributor probes and agent prompt",
+                "link": "/research/android-dev-env/device-validation/contributing"
+              },
+              {
                 "text": "Source ledger",
                 "link": "/research/android-dev-env/sources"
               },
