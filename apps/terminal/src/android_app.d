@@ -136,6 +136,8 @@ private TerminalViewOptions sessionOptions(const SessionPaths paths, bool bootst
     try
         mkdirRecurse(bootstrapped ? paths.tmp : paths.files ~ "/tmp");
     catch (Exception) {}
+    if (!bootstrapped)
+        installShellTools(paths);
 
     const(char)*[] envz = env.map!(e => cast(const(char)*) e.toStringz).array;
     envz ~= null;
@@ -150,6 +152,31 @@ private TerminalViewOptions sessionOptions(const SessionPaths paths, bool bootst
     // A failed login stays on screen: its message is the only diagnostic.
     o.exitBehavior = ExitBehavior.holdOnFailure;
     return o;
+}
+
+/// Write the plain shell's own commands (`shellTools`) into
+/// `SessionPaths.shellBin`, executable; a tool already up to date is left
+/// alone. A failure costs the command, never the session.
+private void installShellTools(const SessionPaths paths)
+{
+    import std.conv : octal;
+    import std.file : exists, mkdirRecurse, readText, setAttributes, write;
+    import std.path : buildPath;
+    import sparkles.base.logger : warning;
+
+    foreach (tool; shellTools)
+    {
+        const path = buildPath(paths.shellBin, tool.name);
+        try
+        {
+            mkdirRecurse(paths.shellBin);
+            if (!path.exists || readText(path) != tool.script)
+                write(path, tool.script);
+            setAttributes(path, octal!755);
+        }
+        catch (Exception e)
+            warning(i"terminal: cannot install $(path): $(e.msg)");
+    }
 }
 
 /**

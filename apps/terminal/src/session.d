@@ -79,6 +79,9 @@ struct SessionPaths
     string login() const @safe pure nothrow => buildPath(files, "usr", "bin", "login");
     /// `~/.termux` — the appearance and extra-keys files (`NOD10`, `NOD11`).
     string termuxDir() const @safe pure nothrow => buildPath(home, ".termux");
+    /// The plain shell's own commands, ahead of `/system/bin` on its `PATH`
+    /// ($(LREF shellTools)).
+    string shellBin() const @safe pure nothrow => buildPath(files, "bin");
     /// The on-device test oracle's directory (`NOD14`).
     string debugDir() const @safe pure nothrow => buildPath(files, ".debug");
     /// The app's package name: the data dir is `…/<package>/files`.
@@ -127,7 +130,7 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
         // tools by absolute path, and under proot the host root stays
         // visible, so `/system/bin` here would shadow the environment's own
         // commands with Android's (`am`, `ls`, ...) wherever Nix has none.
-        "PATH=" ~ (prefixed ? buildPath(p.prefix, "bin") : "/system/bin"),
+        "PATH=" ~ (prefixed ? buildPath(p.prefix, "bin") : p.shellBin ~ ":/system/bin"),
         "LANG=en_US.UTF-8",
         "TERM=xterm-256color",
         "COLORTERM=truecolor",
@@ -186,9 +189,45 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
     assert(!boot.canFind("odd"), "an entry without `=` is not an entry");
 
     const shell = sessionEnvironment(parent, p, false);
-    assert(shell.canFind("PATH=/system/bin"));
+    assert(shell.canFind("PATH=/data/org.example/files/bin:/system/bin"),
+        "the app's own commands first (shellTools)");
     assert(shell.canFind("TMPDIR=/data/org.example/files/tmp"));
     assert(!shell.canFind!(e => e.length >= 7 && e[0 .. 7] == "PREFIX="));
+}
+
+/// A command the plain shell gets from the app rather than from Android.
+struct ShellTool
+{
+    string name; /// the file name in $(LREF SessionPaths.shellBin)
+    string script; /// its contents, a `/system/bin/sh` script
+}
+
+/**
+The plain shell's own commands, written to `SessionPaths.shellBin` when the
+session starts.
+
+`clear`: Android's is toybox's, which sends only `ESC[2J ESC[H` — erase the
+screen, home the cursor — and so leaves the scrollback, as any terminal keeps
+it on `2J`. The `clear` of every Linux system (ncurses, for
+`TERM=xterm-256color`) also sends `ESC[3J`, which erases the scrollback, and
+so does this one. The bootstrap session needs none of this: its `clear` is
+ncurses'.
+*/
+immutable ShellTool[] shellTools = [
+    ShellTool("clear",
+        "#!/system/bin/sh\n"
+        ~ "# Written by the terminal app: Android's clear keeps the scrollback.\n"
+        ~ "printf '\\033[H\\033[2J\\033[3J'\n"),
+];
+
+///
+@("session.shellTools")
+@safe pure unittest
+{
+    import std.algorithm.searching : canFind;
+
+    assert(shellTools[0].name == "clear");
+    assert(shellTools[0].script.canFind(`\033[3J`), "clear erases the scrollback too");
 }
 
 /// The bootstrap zip's name for the running ABI (`NOD5`) — nix-on-droid's
