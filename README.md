@@ -941,6 +941,27 @@ nix develop -c dub build :core-cli
 nix run .#ci -- --test
 ```
 
+The shell seeds DUB's writable package cache from Nix-vendored sources, keeping
+existing versions untouched. If you only built the applications, import the
+same sources once before using plain `dub` offline:
+
+```bash
+nix build .#ci .#hue .#ui-gallery  # while online
+nix run --offline .#ci -- --seed-dub-cache
+dub build :core-cli --skip-registry=all
+```
+
+`ci` retains the source bundle in its runtime closure, so Nix garbage collection
+keeps it while the build result remains rooted. `DUB_HOME` selects the destination
+(default `~/.dub`). CI also seeds each isolated example cache from this bundle.
+The bundle covers `nix/dub-lock.json` and additional pinned examples in
+`nix/ci-dub-lock.json`; new or unlocked dependencies can still require downloads.
+Packages and source bundles are distributed through `sparkles.cachix.org` as Nix
+store objects. DUB does not use Cachix as a registry or Git server.
+For offline Markdown/standalone example verification, set `SPARKLES_CI_OFFLINE=1`
+to skip DUB's registry metadata queries too. Examples that need network access or
+dependencies outside the bundle still need those resources.
+
 ## Documentation
 
 Documentation (work in progress) is available at **[sparkles.petar-kirov.dev](https://sparkles.petar-kirov.dev/)**.

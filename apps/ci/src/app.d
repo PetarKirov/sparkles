@@ -190,6 +190,9 @@ private BoxProps resultBox(string footer)
 
 struct CliParams
 {
+    @(Option(`seed-dub-cache`, description: "Copy Nix-vendored dependency sources into DUB_HOME (default ~/.dub), preserving existing versions, then exit."))
+    bool seedDubCache;
+
     @(Option(`V|verify`, description: "Compare example output against expected output blocks in the markdown."))
     bool verify;
 
@@ -457,6 +460,7 @@ enum ProgramMode
     reportLinkRot,
     auditFences,
     linuxHostProbe,
+    seedDubCache,
 }
 
 struct Example
@@ -565,6 +569,13 @@ int ciMain(string[] args)
     }
 
     const mode = resolveProgramMode(cli);
+    if (mode == ProgramMode.runExampleFiles || mode == ProgramMode.runDubBuild
+            || mode == ProgramMode.runDubTests || mode == ProgramMode.runSanitizeTests
+            || mode == ProgramMode.runExtractedTests || mode == ProgramMode.buildEachCommit)
+    {
+        import dub_cache : seedBundledDubHome, userDubHome;
+        seedBundledDubHome(userDubHome());
+    }
     // `--coverage` is on by default, so it cannot be rejected alongside
     // `--test-sanitize` without making every plain invocation fail; the
     // sanitizer mode overrides it and says so. ASan and `-cov` both
@@ -595,6 +606,19 @@ int ciMain(string[] args)
 
     // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
     // so it must not fall through to the shared "no input files" usage error.
+    if (mode == ProgramMode.seedDubCache)
+    {
+        import dub_cache : seedBundledDubHome, userDubHome;
+        if (!environment.get("SPARKLES_DUB_SOURCES", "").length)
+        {
+            error(i"No source bundle configured; use nix run .#ci -- --seed-dub-cache");
+            return 1;
+        }
+        const imported = seedBundledDubHome(userDubHome());
+        info(i"Imported $(imported) dependency version(s) into $(userDubHome())");
+        return 0;
+    }
+
     if (mode == ProgramMode.auditFences)
         return runAuditFencesMode(cli);
 
@@ -673,6 +697,14 @@ private string validateCliMode(
     in string[] positionalArgs,
 )
 {
+    if (cli.seedDubCache && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
+            || cli.testExtracted || cli.testSanitize || cli.buildEachCommit || cli.auditFences
+            || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope
+            || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkSpecEvidence || cli.checkBlobPaths
+            || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.linuxHostProbe
+            || cli.hostSystem.length || cli.files.length || cli.exclude.length))
+        return "--seed-dub-cache cannot be combined with other modes or file selection";
+
     if (cli.verify && cli.update)
         return "--verify and --update are mutually exclusive";
 
@@ -807,6 +839,9 @@ private string validateCliMode(
 
 private ProgramMode resolveProgramMode(in CliParams cli)
 {
+    if (cli.seedDubCache)
+        return ProgramMode.seedDubCache;
+
     if (cli.linuxHostProbe)
         return ProgramMode.linuxHostProbe;
 
@@ -896,6 +931,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.reportLinkRot:      return "--report-link-rot";
         case ProgramMode.auditFences:        return "--audit-fences";
         case ProgramMode.linuxHostProbe:     return "--linux-host-probe";
+        case ProgramMode.seedDubCache:       return "--seed-dub-cache";
     }
 }
 
@@ -1472,6 +1508,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.reportLinkRot:
             case ProgramMode.auditFences:
             case ProgramMode.linuxHostProbe:
+            case ProgramMode.seedDubCache:
                 rc = 1;   // handled earlier in main(); should never reach here
                 break;
         }
@@ -2429,6 +2466,8 @@ ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqu
         const isolatedEnv = ["/usr/bin/env", "DUB_HOME=" ~ importedDir, "TMPDIR=" ~ importedDir];
         if (!example.sourcePath.endsWith(".mjs"))
         {
+            import dub_cache : seedBundledDubHome;
+            seedBundledDubHome(importedDir);
             // Populate this isolated, content-addressed cache first. Compiler
             // diagnostics are not program output; a failed build still reports
             // its complete diagnostics. The subsequent run reuses the artifact.
@@ -2467,13 +2506,15 @@ ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqu
     // mutable branch version, never cached) — parallel builds then clobber the
     // shared `libsparkles_*.a`. `--temp-build` only isolates the leaf
     // single-file build, not this path dependency; a per-example home isolates
-    // it. Registry deps still resolve normally (dub locks its own fetches).
+    // it. Seed Nix-vendored sources into this writable, private home first.
     //
     // `--temp-build`'s own store follows `TMPDIR`, not `DUB_HOME` — without a
     // per-example `TMPDIR` all concurrent builds share `/tmp/.dub/build`, and
     // two of them building the same dependency artifact (anything newly in the
     // base closure, e.g. `libsparkles_reflection.a`) race on its final rename.
     auto dubHome = buildPath(exampleDir, "dub-home");
+    import dub_cache : seedBundledDubHome;
+    seedBundledDubHome(dubHome);
     auto exampleTmp = buildPath(exampleDir, "tmp");
     mkdirRecurse(exampleTmp);
     auto cmd = ["/usr/bin/env",
@@ -4857,7 +4898,7 @@ private string[string] withLdcThreadEnv(const string[string] env)
     return out_;
 }
 
-@safe pure
+@safe
 private string[] dubSingleFileCommand(
     string action,
     string filePath,
@@ -4883,6 +4924,12 @@ in (action == "run" || action == "build", "action must be dub run or dub build")
     // would otherwise replace it (see `testBuildType`).
     auto command = ["dub", action, "--quiet", "--color=always", "--temp-build",
         "--build=debug"];
+
+    // Without selections, DUB still checks registry metadata even when every
+    // source is cached. Offline example runs must suppress those requests and
+    // their warnings, which otherwise pollute golden output comparisons.
+    if (environment.get("SPARKLES_CI_OFFLINE", "") == "1")
+        command ~= "--skip-registry=all";
 
     if (repoRoot !is null)
         command ~= ["--root", repoRoot];

@@ -305,6 +305,22 @@ DEV_SHELL=full   # opt into the greeting for direnv
 `devPackages` adds the rest on top. Put a tool in `ciPackages` only if a CI job
 actually runs it — everything there is built on every CI run.
 
+The shells seed DUB's writable source cache from `packages.dub-sources` on entry,
+preserving existing versions. After building `.#ci` without entering a shell,
+run `nix run --offline .#ci -- --seed-dub-cache` before using plain `dub` offline.
+The destination is `$DUB_HOME` or `~/.dub` (custom `settings.json` `dubHome` users
+must set `DUB_HOME` explicitly). Only sources are imported, not compiled caches,
+settings or local overrides. `ci` retains the Nix source bundle in its runtime
+closure and seeds each isolated Markdown example home too.
+For offline Markdown/standalone examples, `SPARKLES_CI_OFFLINE=1` adds
+`--skip-registry=all` to their DUB commands, suppressing metadata queries and
+warnings even when an example has no selections file.
+
+`nix/dub-lock.json` covers application dependencies; `nix/ci-dub-lock.json` adds
+example-only packages, including the pinned Eve Git revision. New dependencies
+must join the relevant lock to work offline. `sparkles.cachix.org` substitutes
+these Nix store objects; it does not implement DUB's registry/Git protocols.
+
 ### Flake-input store paths
 
 The nix dev shell exports every flake input as a `/nix/store` path (minus
