@@ -22,12 +22,12 @@ $(LIST
 Only what the battery asks is claimed from it: color depth, synchronized
 output (2026), grapheme clustering (2027, or a test cluster's measured
 width), color-scheme reports (2031), bracketed paste (2004), focus reports
-(1004), the cell's pixel size (`CSI 16 t`), the kitty keyboard and graphics
-protocols and the DA1 sixel attribute — the last three only for rows
-recorded with them. The facts no
-query reaches — links, clipboard, notifications, styled underlines, and
-every font fact past the half blocks — are left off (D32): a preset may show
-less than its emulator can, never more.
+(1004), the cell's pixel size (`CSI 16 t`), styled underlines (`XTGETTCAP`
+`Smulx` and `Setulc`), the kitty keyboard and graphics protocols and the DA1
+sixel attribute — the last three only for rows recorded with them. The facts
+no query reaches — links, clipboard, notifications, and every font fact past
+the half blocks — are left off (D32): a preset may show less than its
+emulator can, never more.
 
 Presets are a partial order, not a ladder: tmux and Alacritty are each missing
 something the other has. `CAP9`'s monotone chain is the three profiles';
@@ -78,7 +78,8 @@ enum Emulator : ubyte
         da1: "64;1;2;6;9;15;16;17;18;21;22;28;29", paste: ModeReply.reset,
         sync: ModeReply.notRecognized, graphemes: ModeReply.notRecognized,
         scheme: ModeReply.notRecognized, focus: ModeReply.reset, rgb: TcapReply.valid,
-        tc: TcapReply.invalid, cellWidth: 6, cellHeight: 13, clusterWidth: 6))
+        tc: TcapReply.invalid, smulx: TcapReply.invalid, setulc: TcapReply.invalid,
+        cellWidth: 6, cellHeight: 13, clusterWidth: 6))
     xterm,
 
     @replies("Apple Terminal (macOS 26.3)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
@@ -104,7 +105,8 @@ enum Emulator : ubyte
         colorterm: "truecolor", da1: "62;4;22;28;52", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset, graphemes: ModeReply.set,
         scheme: ModeReply.reset, focus: ModeReply.reset, rgb: TcapReply.valid,
-        tc: TcapReply.valid, cellWidth: 6, cellHeight: 13, clusterWidth: 2))
+        tc: TcapReply.valid, smulx: TcapReply.valid, setulc: TcapReply.valid,
+        cellWidth: 6, cellHeight: 13, clusterWidth: 2))
     foot,
 
     @replies("WezTerm 2025-10-14 (Linux)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
@@ -115,11 +117,12 @@ enum Emulator : ubyte
     wezterm,
 
     // kitty.txt
-    @replies("kitty 0.44.0 (Linux, xvfb)", TerminalReplies(term: "xterm-kitty",
+    @replies("kitty 0.48.2 (Linux, xvfb)", TerminalReplies(term: "xterm-kitty",
         colorterm: "truecolor", da1: "62;52;", kittyKeyboard: true, paste: ModeReply.reset,
         sync: ModeReply.reset, graphemes: ModeReply.notRecognized, scheme: ModeReply.reset,
         focus: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.valid,
-        kittyGraphics: true, cellWidth: 9, cellHeight: 18, clusterWidth: 2))
+        smulx: TcapReply.valid, setulc: TcapReply.valid, kittyGraphics: true,
+        cellWidth: 9, cellHeight: 18, clusterWidth: 2))
     kitty,
 
     // ghostty.txt
@@ -127,7 +130,8 @@ enum Emulator : ubyte
         colorterm: "truecolor", da1: "62;22;52", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset, graphemes: ModeReply.set,
         scheme: ModeReply.reset, focus: ModeReply.reset, rgb: TcapReply.valid,
-        tc: TcapReply.valid, kittyGraphics: true, cellWidth: 10, cellHeight: 21,
+        tc: TcapReply.valid, smulx: TcapReply.valid, setulc: TcapReply.valid,
+        kittyGraphics: true, cellWidth: 10, cellHeight: 21,
         clusterWidth: 2))
     ghostty,
 
@@ -154,14 +158,17 @@ enum Emulator : ubyte
     @replies("zellij 0.45.1 on a bare pty", TerminalReplies(term: "xterm-256color",
         colorterm: "truecolor", da1: "62;4;52", kittyKeyboard: true, sync: ModeReply.reset,
         scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
+        smulx: TcapReply.invalid, setulc: TcapReply.invalid,
         kittyGraphics: true, multiplexer: true, clusterWidth: 6))
     @replies("zellij 0.45.1 in foot 1.25.0", TerminalReplies(term: "foot",
         colorterm: "truecolor", da1: "62;4;52", kittyKeyboard: true, sync: ModeReply.reset,
         scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
+        smulx: TcapReply.invalid, setulc: TcapReply.invalid,
         multiplexer: true, cellWidth: 6, cellHeight: 13, clusterWidth: 6))
     @replies("zellij 0.45.1 in Ghostty 1.3.1", TerminalReplies(term: "xterm-ghostty",
         colorterm: "truecolor", da1: "62;52", kittyKeyboard: true, sync: ModeReply.reset,
         scheme: ModeReply.reset, rgb: TcapReply.invalid, tc: TcapReply.invalid,
+        smulx: TcapReply.invalid, setulc: TcapReply.invalid,
         kittyGraphics: true, multiplexer: true, cellWidth: 10, cellHeight: 21,
         clusterWidth: 6))
     zellij,
@@ -304,7 +311,7 @@ unittest
         sansImages.images = ImageProtocol.none;
         assert(subsetOf(sansImages, full));
         assert(!c.hyperlinks && !c.clipboard && !c.notifications && !c.pointerShape
-            && !c.textSizing && !c.progress && !c.extendedUnderline);
+            && !c.textSizing && !c.progress);
         assert(!c.braille && !c.nerdFont && c.blocks == BlockTier.half && c.unicode);
         assert(!c.input.precisePointer);
         assert(!c.subCellScroll && !c.radius && !c.shadow && !c.alpha);
@@ -369,7 +376,7 @@ unittest
 {
     assert(emulatorNames[Emulator.appleTerminal] == "apple-terminal");
     assert(emulatorNames[Emulator.iterm2] == "iterm2");
-    assert(emulatorReplies[Emulator.kitty][0].measured == "kitty 0.44.0 (Linux, xvfb)");
+    assert(emulatorReplies[Emulator.kitty][0].measured == "kitty 0.48.2 (Linux, xvfb)");
 }
 
 @("ui.emulators.multiplexerImagesNeedAConfirmedRoundTrip")
@@ -498,4 +505,17 @@ unittest
     // The case-study rows never asked: no claim.
     assert(!capabilitiesOf(Emulator.iterm2).cellPixelSize
         && !capabilitiesOf(Emulator.iterm2).input.focusEvents);
+}
+
+@("ui.emulators.styledUnderlinesWhereTheTerminalVouches")
+@safe pure nothrow @nogc
+unittest
+{
+    // `XTGETTCAP` answers `Smulx` and `Setulc` in kitty, Ghostty and foot;
+    // XTerm and zellij refuse them, and Alacritty and tmux answer nothing,
+    // so no other preset claims a curly underline in its own colour. The
+    // case-study rows never asked.
+    static foreach (e; EnumMembers!Emulator)
+        assert(capabilitiesOf(e).extendedUnderline
+            == (e == Emulator.kitty || e == Emulator.ghostty || e == Emulator.foot));
 }
