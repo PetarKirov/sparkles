@@ -677,13 +677,15 @@ struct RaylibCanvas
         // Dotted/dashed accents straddle the rect edge instead.
         const md = cellW < cellH ? cellW : cellH;
         const unit = md / 14 < 1 ? 1.0f : cast(float)(md / 14);
-        const inset = b.style == BorderStyle.solid ? cellW / 2.0f : 0;
+        const boxed = b.style == BorderStyle.solid
+            || b.style == BorderStyle.double_;
+        const inset = boxed ? cellW / 2.0f : 0;
         // A solid box with a side the terminal draws as `│` is drawn as the
         // terminal draws it, horizontals too: `─` centred in its row, meeting
         // the `│`s at `┌┐└┘` (`┏┓┗┛` heavy) rather than overshooting them.
         // Without a vertical side there is no corner, and a bottom-only rule
         // keeps the edge the terminal's underline uses.
-        const insetY = b.style == BorderStyle.solid
+        const insetY = boxed
             && (b.width.left || b.width.right) ? cellH / 2.0f : 0;
         // The four rectangles come from `borderEdges`, which is pure and
         // tested. Computing them here is how the vertical pair ended up
@@ -691,6 +693,14 @@ struct RaylibCanvas
         // meaning between the two axes, and a box whose left border drew as
         // a stripe across the box was invisible to every test in the
         // repository.
+        if (b.style == BorderStyle.double_)
+        {
+            // `═║╔╗╚╝`: two nested boxes, each stroked like a solid one.
+            foreach (e; doubleBorderEdges(x, y, w, h, b.width, unit, inset,
+                    insetY))
+                strokeEdge(e, BorderStyle.solid, c);
+            return;
+        }
         foreach (e; borderEdges(x, y, w, h, b.width, unit, inset, insetY))
             strokeEdge(e, b.style, c);
     }
@@ -895,6 +905,95 @@ BorderEdge[4] borderEdges(float x, float y, float w, float h, in Insets width,
         BorderEdge(width.right ? cxR - r / 2 : x + w - r, vy0,
             r, vy1 - vy0),                                                // right
     ];
+}
+
+/**
+The eight edges of a double border (`═║╔╗╚╝`), in device pixels: an outer and
+an inner box, each laid out by `borderEdges`, so every corner is two nested
+`┌`s — the outer stroke meeting the outer, the inner the inner.
+
+Each stroke is as thick as a single border's, and the two sit `3t` apart
+centre to centre (a gap of `2t`, where `t` is the thickest side), so they
+stay distinct at every cell size and keep whole-pixel edges wherever a
+single stroke has them.
+
+In corner mode (`insetY > 0`, a vertical side present) the pair straddles
+the single border's centre lines. Without a vertical side there is no
+centre to straddle: the rules keep their edges and the second stroke steps
+inward, as a double underline does.
+*/
+BorderEdge[8] doubleBorderEdges(float x, float y, float w, float h,
+    in Insets width, float unit = 1, float inset = 0, float insetY = 0)
+    @safe pure nothrow @nogc
+{
+    const m = width.top > width.bottom ? width.top : width.bottom;
+    const n = width.left > width.right ? width.left : width.right;
+    const t = (m > n ? m : n) * unit;
+    BorderEdge[8] e;
+    if (insetY > 0)
+    {
+        const s = 1.5f * t;
+        e[0 .. 4] = borderEdges(x - s, y - s, w + 2 * s, h + 2 * s, width,
+            unit, inset, insetY);
+        e[4 .. 8] = borderEdges(x + s, y + s, w - 2 * s, h - 2 * s, width,
+            unit, inset, insetY);
+    }
+    else
+    {
+        const g = 2 * t;
+        e[0 .. 4] = borderEdges(x, y, w, h, width, unit, inset);
+        e[4 .. 8] = borderEdges(x, y + g, w, h - 2 * g, width, unit, inset);
+    }
+    return e;
+}
+
+@("ui_raylib.raylib_canvas.doubleBorderEdgesNestTwoBoxes")
+@safe pure nothrow @nogc
+unittest
+{
+    // A double box in a window reads `╔═╗ ║ ╚═╝`, as it does in a terminal:
+    // two strokes per side straddling the single border's centre line, and
+    // each corner an outer `┌` around an inner one.
+    enum x = 0.0f, y = 0.0f, w = 130.0f, h = 60.0f; // 13 x 3 cells of 10 x 20
+    const e = doubleBorderEdges(x, y, w, h, Insets.all(1), unit: 1, inset: 5,
+        insetY: 10);
+    const outer = e[0 .. 4], inner = e[4 .. 8];
+
+    // Top: the outer stroke above the row's centre, the inner below it, the
+    // two a stroke-width gap apart (here 2px) and equally far from it.
+    assert(outer[0] == BorderEdge(3, 8, 124, 1));
+    assert(inner[0] == BorderEdge(6, 11, 118, 1));
+    assert(inner[0].y - (outer[0].y + outer[0].h) == 2, "a visible gap");
+    assert(10 - (outer[0].y + 0.5f) == (inner[0].y + 0.5f) - 10, "centred");
+    // Left, the same across the column's centre.
+    assert(outer[2] == BorderEdge(3, 8, 1, 44));
+    assert(inner[2] == BorderEdge(6, 11, 1, 38));
+
+    // Each box closes on itself: the arms meet at their outer faces.
+    foreach (box; [outer, inner])
+    {
+        assert(box[0].x == box[2].x);
+        assert(box[0].x + box[0].w == box[3].x + box[3].w);
+        assert(box[2].y == box[0].y);
+        assert(box[2].y + box[2].h == box[1].y + box[1].h);
+    }
+    // And the inner box lies wholly inside the outer one.
+    assert(inner[0].x > outer[0].x && inner[1].y < outer[1].y);
+    assert(inner[3].x < outer[3].x);
+}
+
+@("ui_raylib.raylib_canvas.doubleBorderEdgesWithoutASideStackInward")
+@safe pure nothrow @nogc
+unittest
+{
+    // A bottom-only double rule has no vertical to centre on: it keeps the
+    // edge a single rule uses, and its second stroke sits above it.
+    const e = doubleBorderEdges(0, 0, 40, 20, Insets(0, 0, 1, 0), unit: 1,
+        inset: 5);
+    assert(e[1] == BorderEdge(0, 19, 40, 1), "the rule keeps its edge");
+    assert(e[5] == BorderEdge(0, 17, 40, 1), "and doubles inward");
+    foreach (i; [0, 2, 3, 4, 6, 7])
+        assert(e[i].empty, "absent sides stay absent in both boxes");
 }
 
 @("ui_raylib.raylib_canvas.borderEdgesMeetAtBoxDrawingCorners")
