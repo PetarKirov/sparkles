@@ -1,32 +1,20 @@
 # Spec evidence that resolves nowhere, as of when `ci --check-spec-evidence`
-# became a gate. Each line is `file id token`. The list may only shrink: fix a
-# row (cite what satisfies it, or mark it `partial`) and delete its line. A new
-# unresolved citation fails the check; so does a line here that resolves now.
-# After a batch of fixes, `ci --check-spec-evidence --update-spec-evidence-backlog`
-# rewrites it; a line that rewrite ADDS is a new stale citation, to fix instead.
-docs/specs/design-system/SPEC.md `FMT1` sparkles.ui.theme_file
+# became a gate. Each line is `file id token`, and the list may only shrink:
+# fix a row (cite what satisfies it, or give an undelivered one its true
+# status) and delete its line. A new unresolved citation fails the check,
+# and so does a line here that resolves now. After a batch of fixes,
+# `ci --check-spec-evidence --update-spec-evidence-backlog` rewrites it; a
+# line that rewrite ADDS is a new stale citation, to fix instead.
 docs/specs/dmd-lsp/feature-requirements.md COR1 semanalysis.analyzeModule
 docs/specs/dmd-lsp/feature-requirements.md COR3 dmderrors.d
 docs/specs/dmd-lsp/feature-requirements.md NTN2 removeCodeRanges
 docs/specs/dmd-lsp/feature-requirements.md NTN2 resolveNodePositions
 docs/specs/dmd-lsp/project.md PRJ13 dub.json
-docs/specs/docs/apidoc.md APD4 doc_coverage
-docs/specs/hue/chrome.md CHG1 git_changes.d
-docs/specs/hue/chrome.md CHG2 chrome.changesColumn
-docs/specs/hue/chrome.md CHG4 LineSelection
-docs/specs/hue/chrome.md CHW2 chrome.GutterColumn
-docs/specs/hue/chrome.md CHW6 chrome.snip
-docs/specs/hue/chrome.md STY1 StyleComponents
-docs/specs/hue/diff-view.md DVT2 sparkles:vcs
 docs/specs/hue/dsv-preview.md DSN4 viewDsv
 docs/specs/hue/feature-requirements.md ANS1 emitAnsiWholeFile
 docs/specs/hue/feature-requirements.md BGM2 emitAnsiWholeFile
 docs/specs/hue/feature-requirements.md DEF2 app.runMarkdownMode
-docs/specs/hue/feature-requirements.md DEF27 args.d
 docs/specs/hue/feature-requirements.md DEF3 J1
-docs/specs/hue/feature-requirements.md LNG2 resolveLanguage
-docs/specs/hue/feature-requirements.md LNG5 firstLineLanguage
-docs/specs/hue/feature-requirements.md LNG6 CliParams.ignoredSuffix
 docs/specs/hue/feature-requirements.md MOD5 emitAnsiWholeFile
 docs/specs/hue/feature-requirements.md MOD5 sessFactory
 docs/specs/hue/feature-requirements.md NFR1 TermOut
@@ -37,48 +25,17 @@ docs/specs/hue/feature-requirements.md PRV5 Previewer.buildFrame
 docs/specs/hue/feature-requirements.md PRV6 buildFrame
 docs/specs/hue/feature-requirements.md PRV6 firstLines
 docs/specs/hue/feature-requirements.md PRV6 maxCode
-docs/specs/hue/feature-requirements.md RNG1 line_range.d
-docs/specs/hue/feature-requirements.md RNG1 parseRange
-docs/specs/hue/feature-requirements.md RNG3 line_range.d
-docs/specs/hue/feature-requirements.md THM4 themeDark
-docs/specs/hue/feature-requirements.md THM4 themeLight
-docs/specs/hue/feature-requirements.md TXT5 isBinary
 docs/specs/hue/feature-requirements.md TXT8 expandTabs
-docs/specs/hue/feature-requirements.md WCH3 ts_tree_edit
-docs/specs/hue/feature-requirements.md WID3 CliParams.terminalWidth
 docs/specs/hue/gallery.md GNV1 runGuiTwoslash
 docs/specs/hue/gallery.md GNV4 runGuiTwoslash
 docs/specs/hue/gui.md FNT10 mapStyle
-docs/specs/hue/media.md MDB2 DrawTexture
-docs/specs/hue/media.md MDB2 LoadTexture
-docs/specs/hue/navigation.md LNK5 previewer.d
-docs/specs/hue/navigation.md REF6 identifierTypes
-docs/specs/hue/notifier.md NTF6 previewer.d
-docs/specs/hue/notifier.md NTF9 emitAnsiWholeFile
-docs/specs/hue/notifier.md NTF9 previewer.d
-docs/specs/hue/overlays.md CSZ1 code_size.d
-docs/specs/hue/overlays.md OVL3 OverlayProducer
-docs/specs/hue/overlays.md SMP1 source_map.d
-docs/specs/hue/overlays.md SMP2 OverlayModel
-docs/specs/hue/overlays.md TRC1 tracing.d
-docs/specs/hue/pager.md PAG4 pager.d
-docs/specs/hue/pager.md PAG4 spawnPager
-docs/specs/hue/pager.md PIN3 overstrike.d
-docs/specs/hue/pager.md PIN4 looksPreformatted
-docs/specs/hue/tab-view.md TAB3 previewer.d
 docs/specs/hue/tui.md TIN3 previewer.d
 docs/specs/hue/tui.md TSF4 previewer.d
 docs/specs/hue/twoslash.md LIV5 dub.json
-docs/specs/hue/twoslash.md TWM3 gui.runGuiTwoslash
-docs/specs/hue/twoslash.md TWM4 app.runMarkdownMode
-docs/specs/hue/twoslash.md TWO1 gui.runGuiTwoslash
-docs/specs/hue/twoslash.md TWO2 runGuiTwoslash
-docs/specs/hue/twoslash.md TWO3 runGuiTwoslash
 docs/specs/hue/viewer.md COD6 fenceSv
 docs/specs/hue/viewer.md FND3 KEY_N
 docs/specs/hue/viewer.md FNT5 mapAttrs
 docs/specs/hue/viewer.md FNT5 mapStyle
-docs/specs/hue/viewer.md MDP18 matchCalloutType
 docs/specs/hue/viewer.md MDP2 emitFlow
 docs/specs/hue/viewer.md MDP2 inlineRuns
 docs/specs/hue/viewer.md MDP3 inlineRuns
@@ -96,9 +53,6 @@ docs/specs/ui-app/terminal-view.md TVW6 terminal_view.d
 docs/specs/ui/containers.md DCK3 capDivider
 docs/specs/ui/containers.md SCV1 ViewerModel.fenceSv
 docs/specs/ui/containers.md SCV11 ScrollLayout.axisPointer
-docs/specs/ui/editor.md EDT2 EditCommand
 docs/specs/ui/input.md INP17 frame_input.d
-docs/specs/ui/popup.md LYR1 active_popups
-docs/specs/ui/popup.md PLC12 autoUpdate
 docs/specs/ui/property-tree.md PRT19 MERGE_ENDS
 docs/specs/window-system-integration/comparison.md 2026-08-23 OutputEntered
