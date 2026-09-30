@@ -63,7 +63,9 @@ enum Substitution : ubyte
     @needs("shadow") shadowDropped,          /// a drop shadow was not drawn
     @needs("alpha") alphaFlattened,          /// translucency pre-composited or drawn opaque
     @needs("hyperlinks") linkAsText,         /// a link run painted as plain styled text
-    @needs("extendedUnderline") plainUnderline, /// a curly, dotted or dashed underline became a straight one
+    /// a curly, dotted or dashed underline became a straight one, or an
+    /// underline lost its own colour to the text's
+    @needs("extendedUnderline") plainUnderline,
     @needs("textSizing") textSizeIgnored,    /// a scaled run painted at 1em
     @needs("proportionalText") monospaceDocs, /// a docs run painted in the monospace face
     @needs("images") imageRastered,          /// an image drawn in cells: a block or braille raster (`GLY9`)
@@ -244,9 +246,9 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
                 if (ch.border.any && noBlocks && bw.right > 0 && bw.top == 0
                         && bw.bottom == 0 && bw.left == 0)
                     r.note(Substitution.blocksFolded);
-                if (underline && !caps.extendedUnderline
-                        && (ch.border.style == BorderStyle.dotted
-                            || ch.border.style == BorderStyle.dashed))
+                // Its colour is the border's own, and its style may be dotted
+                // or dashed: either needs the styled underline.
+                if (underline && !caps.extendedUnderline)
                     r.note(Substitution.plainUnderline);
                 if (ch.borderRadius > 0 && !caps.radius)
                 {
@@ -264,7 +266,9 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
             (in Glyph g) { ink(g.ink); dchar[1] one = [g.glyph]; glyphs(one[]); },
             (in Line l) {
                 ink(l.ink);
-                if (!caps.extendedUnderline && l.style == LineStyle.wavy)
+                // A horizontal line is an underline in the line's own colour,
+                // wavy or straight.
+                if (!caps.extendedUnderline && !(l.from.x == l.to.x && l.from.y != l.to.y))
                     r.note(Substitution.plainUnderline);
                 // A vertical line is drawn as an eighth-block bar on a cell
                 // target.
