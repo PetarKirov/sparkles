@@ -168,7 +168,7 @@ struct Widget
     bool clipX;
     /// ditto
     bool clipY;
-    /// This node's content scrolls sideways under a clip its 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998I host)
+    /// This node's content scrolls sideways under a clip its $(I host)
     /// applies (`LAY16`): its rich rows keep their full width in the display
     /// list, past the node's frame, so whoever shows it can size a horizontal
     /// bar from them and scroll them into view — hue's document. Without it,
