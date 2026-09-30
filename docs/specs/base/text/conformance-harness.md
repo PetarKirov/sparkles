@@ -120,13 +120,23 @@ The harness pins **two** versions because the library itself does:
   [`gen_unicode_tables.d`](../../../../libs/base/tools/gen_unicode_tables.d).
 - **Segmentation** (`--segmentation-unicode-version`, default `15.0.0`) — must
   match the toolchain's Phobos `std.uni` grapheme tables, which lag the width
-  pin. Found empirically: Layer 0 reports **zero** divergences at 15.0.0 and a
-  cluster of Indic-conjunct/emoji-ZWJ divergences at 15.1+, and the live
-  segmenters (6, 7) at current Unicode confirm it.
+  pin. The original LDC 1.41 measurement found zero Layer 0 divergences at
+  15.0.0 and a cluster of Indic-conjunct/emoji-ZWJ divergences at 15.1+;
+  the live segmenters (6, 7) at current Unicode confirm the version gap.
 
 `--unicode-version` sets both. **After a compiler upgrade**, re-run `--layers 0`
 across a few versions to find the new matching segmentation version and bump
 `phobosGraphemeUnicodeVersion` in `config.d`.
+
+On LDC 1.42.0, the October 1, 2026 offline run passed all 1,112,064 scalar
+width cases and all 3,655 RGI emoji cases, but Layer 0 passed 601 of 602
+Unicode 15 cases. `U+2701 U+200D U+2701` split as `[2, 1]` code points
+instead of the expected `[3]`. A direct Phobos probe and the original
+`SharedBuffer`-based cluster window both returned the same first stride of
+two: the SIMD/window optimization did not introduce this divergence.
+It remains a failing conformance observation, not a new allowlist entry or
+a reason to change the normative expected boundary. See the
+[performance report](../../../research/simd-unicode/performance.md).
 
 ## The ratchet: `known-divergences.md`
 

@@ -39,6 +39,14 @@ configuration "library" {
     targetType "library"
 }
 
+// Optimized benchmark consumers compile the implementation as one object.
+// LDC otherwise emits inlined nested reporting functions into multiple
+// objects with strong linkage under -O3 -allinst.
+configuration "benchmark" {
+    targetType "library"
+    dflags "-singleobj" platform="ldc"
+}
+
 configuration "unittest" {
     // Self-host: source-include the shim (registration + discovery) so the
     // implementation's own tests run through the sparkles runner.

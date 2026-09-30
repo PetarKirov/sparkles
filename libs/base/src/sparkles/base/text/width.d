@@ -73,6 +73,8 @@ private CodepointSet makeZeroWidthSet() @safe pure
 /// cluster -- see `graphemeClusterWidth`.
 int codepointWidth(dchar cp) @safe pure nothrow @nogc
 {
+    if (cp >= 0x20 && cp <= 0x7E)
+        return 1;
     if (cp == 0)
         return 0;
     if (isControl(cp))               // C0/C1 controls (incl. tab, newline)
