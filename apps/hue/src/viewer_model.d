@@ -519,6 +519,10 @@ struct ViewerModel
     {
         channels = reservedChannels();
         const chrome = gutterWidth(channels);
+        // The document scrolls sideways under the pane's clip, and its bar is
+        // sized from how far its lines run past the pane (`contentCols`), so
+        // they must keep their width in the display list (`LAY16`).
+        b.nodes[docRoot].scrollsX = true;
         auto pass1 = b.finish(docRoot);
         const rows1 = documentRows(pass1,
             layout(pass1, Constraints(maxW: widthCols - chrome)));
@@ -1064,6 +1068,8 @@ struct ViewerModel
                 cache !is null
                     ? highlightedFenceRenderer(cache, &current, pageFg) : null,
                 diffSession, diffTypes, widthCols);
+            // Scrolled sideways by this model, like every document (`LAY16`).
+            tree.nodes[tree.root].scrollsX = true;
             frames = layout(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
             derive(withTargets: false);
@@ -2403,6 +2409,36 @@ struct ViewerModel
                     sawHunkBandRaw = true;
     assert(!sawHunkBandRaw, "raw view shows the patch text, not the diff view");
     assert(vm.rows.length);
+}
+
+@("viewer_model.aDiffWiderThanThePaneScrollsSideways")
+@system unittest
+{
+    import std.array : replicate;
+    import sparkles.diff : diffText;
+
+    // The diff view is a document the model scrolls sideways, so a changed
+    // line longer than the pane must reach the display list whole: the bar
+    // is sized from how far it runs past (`LAY16`). Cut to the pane, the
+    // line would lose its tail and the view its horizontal bar.
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 40;
+    vm.applyTheme(0);
+
+    const wide = "x".replicate(120);
+    auto dd = diffText("a\n" ~ wide ~ "\n", "a\n" ~ wide ~ "y\n", "t.txt",
+        "t.txt");
+    const patch = "diff --git a/t.txt b/t.txt\n";
+    vm.setDocument("t.txt", "", patch,
+        [HighlightEvent.sourceSpan(0, patch.length)], PreviewModel.init,
+        TwoslashReturn.init, "diff", dd);
+
+    assert(vm.showPreview, "precondition: the diff view");
+    assert(vm.hOverflows, "the long line overflows the pane");
+    assert(vm.contentCols > 120, "and reaches the model whole");
 }
 
 @("viewer_model.diffSessionNavigatesAndFolds")

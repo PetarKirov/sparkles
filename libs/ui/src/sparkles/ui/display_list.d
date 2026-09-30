@@ -61,11 +61,18 @@ if (__traits(compiles, (ref Sink s) {
     s.popClip();
 }))
 {
-    emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), ops);
+    emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), false, ops);
 }
 
+/+
+`overflowX`: whether a rich row here may run past its frame — it may when
+something on the way down contains it on x: an ancestor that clips on that
+axis (a viewport, or a bordered box — `LAY15`), or one whose host does
+(`scrollsX`). Otherwise it is cut like a plain run (`LAY16`).
++/
 private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pal,
-    in RgbColor pageFg, in RgbColor pageBg, in Rect clip, ref Sink ops)
+    in RgbColor pageFg, in RgbColor pageBg, in Rect clip, bool overflowX,
+    ref Sink ops)
 {
     const node = tree.nodes[idx];
     const rect = frames[idx].rect;
@@ -149,25 +156,35 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             // the node's as fallback, and a `paintBackground` span (an inline
             // pill) fills its cells first.
             //
-            // Unlike a plain run, spans are NOT cut to the frame: a rich row is
-            // a content line, and a line wider than its pane is scrolled into
-            // view by the enclosing clip and offset (hue's raw view sizes its
-            // horizontal bar from exactly this overflow).
-            import sparkles.ui.geometry : cellsOf;
+            // A rich row is a content line, and one wider than its pane is
+            // meant to be scrolled into view — so inside something that
+            // contains it on x (a viewport, a bordered box, a host-scrolled
+            // document: hue's raw view sizes its horizontal bar from exactly
+            // this overflow) its spans keep their full width. Anywhere else
+            // nothing would stop them painting over the row's neighbours, and
+            // they are cut to the frame like a plain run (`LAY16`).
+            import sparkles.ui.geometry : cellsOf, takeCells;
             import sparkles.ui.style : TextStyle;
             import sparkles.ui.widget : TextSpan;
 
             const inner = rect.deflate(node.padding);
+            const cut = !overflowX && !node.scrollsX;
+            const right = inner.x + inner.width;
 
             void emitSpanRow(scope const TextSpan[] spans, int y, int xOff = 0)
             {
                 int x = inner.x + xOff;
                 foreach (ref span; spans)
                 {
+                    if (cut && x >= right)
+                        break;
+                    const(char)[] text = span.text;
+                    if (cut && x + cast(long) cellsOf(text) > right)
+                        text = takeCells(text, right - x);
                     const slot = span.slot == Slot.inherit ? node.slot : span.slot;
                     const style = span.textStyle == TextStyle.init
                         ? node.textStyle : span.textStyle;
-                    const w = cast(int) cellsOf(span.text);
+                    const w = cast(int) cellsOf(text);
                     auto vis = resolveVisual(pal, slot, node.decoration, style,
                         pageFg, pageBg, node.states);
                     if (span.hasFg) // the syntax channel: a resolved color
@@ -182,7 +199,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                     const r = Rect(x, y, w, 1);
                     if (vis.hasBg)
                         ops.fillRect(r, slot, vis);
-                    ops.textRun(r, span.text, slot, vis);
+                    ops.textRun(r, text, slot, vis);
                     x += w;
                 }
             }
@@ -257,7 +274,8 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             if (clips)
                 ops.pushClip(childClip);
             foreach (child; node.children)
-                emit(tree, child, frames, pal, pageFg, pageBg, childClip, ops);
+                emit(tree, child, frames, pal, pageFg, pageBg, childClip,
+                    overflowX || node.scrollsX || clipsX(node), ops);
             if (clips)
                 ops.popClip();
             break;
@@ -505,6 +523,60 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     assert(ops[1].kind == OpKind.textRun
         && ops[1].text == "interactive!"[0 .. v.width]);
     assert(ops[$ - 1].text == "unbrea", "the long word is cut at its line");
+}
+
+@("ui.display_list.aRichRowStaysInItsFrameUnlessSomethingContainsIt")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder, TextSpan;
+    import sparkles.ui.geometry : cellsOf, SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+
+    // Twelve cells of spans in an eight-cell column, beside a neighbour.
+    static DrawOp[] build(bool clipX, bool scrollsX, out Rect frame)
+    {
+        auto b = Builder();
+        const line = b.add(Widget(kind: WidgetKind.rich, spans: [
+            TextSpan(text: "hello "), TextSpan(text: "world!")]));
+        const col = b.add(Widget(kind: WidgetKind.column, children: [line],
+            width: SizeSpec.fixed(8), clipX: clipX, scrollsX: scrollsX));
+        const next = b.add(Widget(kind: WidgetKind.text, text: "|"));
+        auto tree = b.finish(b.add(Widget(kind: WidgetKind.row,
+            children: [col, next])));
+        auto frames = layout(tree);
+        frame = frames[line].rect;
+        return buildDisplayList(tree, frames, defaultTwoslashPalette(),
+            RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+    }
+
+    static int rightmost(in DrawOp[] ops, string skip)
+    {
+        int r;
+        foreach (ref op; ops)
+            if (op.kind == OpKind.textRun && op.text != skip)
+            {
+                const e = op.rect.x + cast(int) cellsOf(op.text);
+                r = e > r ? e : r;
+            }
+        return r;
+    }
+
+    // Nothing contains it: the spans are cut where the frame ends, as a plain
+    // run is (`LAY14`), so the neighbour's cell stays the neighbour's.
+    Rect f;
+    auto ops = build(false, false, f);
+    assert(f.width == 8, "the column bounds the row");
+    assert(rightmost(ops, "|") == f.x + 8, "cut at the frame");
+    assert(ops[0].text == "hello " && ops[1].text == "wo");
+
+    // A viewport, and a host-scrolled document, keep the whole line: that
+    // overflow is what their scrollbars are sized from.
+    foreach (clipX, scrollsX; [false: true, true: false])
+    {
+        ops = build(clipX, scrollsX, f);
+        assert(rightmost(ops, "|") == f.x + 12, "the full width survives");
+    }
 }
 
 @("ui.display_list.richTextEmitsOneRunPerSpan")
