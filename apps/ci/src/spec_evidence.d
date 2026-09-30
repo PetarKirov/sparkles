@@ -55,7 +55,7 @@ bool isUndelivered(scope const(char)[] status) @safe pure nothrow
 
     static immutable string[] notYet = [
         "not started", "not-started", "researched", "deferred", "planned",
-        "proposed", "open", "retired", "superseded",
+        "proposed", "open", "retired", "superseded", "regressed",
     ];
     const s = status.strip;
     foreach (w; notYet)
@@ -80,6 +80,7 @@ unittest
     assert(isUndelivered("Deferred"));
     assert(isUndelivered("planned/branch-only"));
     assert(isUndelivered("retired (`D6`; was full `74d8f6a3`)"));
+    assert(isUndelivered("regressed"));
     assert(!isUndelivered("full (`74d8f6a3`)"));
     assert(!isUndelivered("partial"));
     assert(!isUndelivered("shipped"));
