@@ -95,11 +95,11 @@ private string escape(string s) pure
     import std.json : parseJSON;
 
     const m = ReleaseManifest(
-        applicationId: "dev.sparkles.hue",
+        applicationId: "dev.petar_kirov.sparkles.hue",
         tag: "v0.4.0",
         versionName: "0.4.0",
         versionCode: 1024,
-        fileName: "dev.sparkles.hue_1024.apk",
+        fileName: "dev.petar_kirov.sparkles.hue_1024.apk",
         size: 64_439_784,
         sha256: "a".replicated(64),
         signerFingerprint: "b".replicated(64),
@@ -107,7 +107,7 @@ private string escape(string s) pure
     );
 
     const parsed = parseJSON(toJson(m));
-    assert(parsed["applicationId"].str == "dev.sparkles.hue");
+    assert(parsed["applicationId"].str == "dev.petar_kirov.sparkles.hue");
     assert(parsed["tag"].str == "v0.4.0");
     assert(parsed["versionCode"].integer == 1024);
     assert(parsed["size"].integer == 64_439_784);

@@ -538,7 +538,7 @@ struct ConfigCmd
 // ── Root Command ────────────────────────────────────────────────────────────
 
 @(Command("hue",
-    shortDescription: "Interactive syntax-highlighting file viewer, twoslash overlay renderer, and diff inspector",
+    shortDescription: "sparkles:hue — interactive syntax-highlighting file viewer, twoslash overlay renderer, and diff inspector",
 ))
 struct HueCli
 {

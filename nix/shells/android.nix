@@ -61,7 +61,7 @@ in
         text = ''
           # usage: hue-adb-install [app.apk] [package/activity]
           apk="''${1:-result/hue.apk}"
-          component="''${2:-dev.sparkles.hue/android.app.NativeActivity}"
+          component="''${2:-dev.petar_kirov.sparkles.hue/android.app.NativeActivity}"
           adb install -r "$apk"
           adb shell am start -n "$component"
         '';

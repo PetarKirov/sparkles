@@ -102,7 +102,7 @@ $ hue-logcat                     # tags: hue, raylib + crash channels
 ```
 
 On-device goldens: write `HUE_GUI_*` lines to a file, push via
-`adb push … /data/local/tmp/ && adb shell run-as dev.sparkles.hue cp …
+`adb push … /data/local/tmp/ && adb shell run-as dev.petar_kirov.sparkles.hue cp …
 files/hue-debug.env` (direct `run-as sh -c 'cat > …'` writes are
 SELinux-denied), relaunch, pull the PNG the same way.
 
