@@ -101,8 +101,8 @@ if (isCanvas!Canvas)
                 underline: underlineOf(rc.style));
             if (hasBg)
                 c.fillRect(Rect(p.x, p.y, 1, 1), v);
-            if (rc.hasGrapheme)
-                c.glyph(p, cast(dchar) rc.codepoints[0], v);
+            if (rc.hasGrapheme && !rc.style.invisible)
+                c.glyph(p, cast(dchar) rc.codepoint, v);
 
             gx++;
         }

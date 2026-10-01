@@ -34,7 +34,7 @@
           {
             nativeBuildInputs = [ pkgs.fontconfig ];
             meta = {
-              description = "The font set sparkles bundles (Maple Mono NF CN, FiraCode Nerd Font Mono, DejaVu Sans Mono, Uiua386) with .charset sidecars";
+              description = "Bundled monospace, Noto Sans Unicode fallback and Noto Color Emoji fonts with .charset sidecars";
               platforms = lib.platforms.all;
             };
           }
@@ -68,9 +68,42 @@
             # Uiua's glyph planes, reached through hue's --font-codepoint-map.
             cp ${pkgs.uiua386}/share/fonts/truetype/Uiua386.ttf $out/fonts/
 
-            for font in $out/fonts/*.ttf; do
-              fc-query --format=%{charset} "$font" > "$font.charset"
+            # Full script coverage, without duplicating every weight/style.
+            # nixpkgs normalizes variable-font names to NotoSans<Script>.ttf;
+            # scripts without variable fonts use the regular static face.
+            find ${pkgs.noto-fonts}/share/fonts/noto -type f \
+              \( -name 'NotoSans*.ttf' -o -name 'NotoSans*.otf' \) \
+              \( -name '*-Regular.*' -o ! -name '*-*' \) \
+              -exec cp '{}' $out/fonts/ \;
+            cp ${pkgs.noto-fonts-color-emoji}/share/fonts/noto/NotoColorEmoji.ttf $out/fonts/
+
+            # The binary font outputs omit upstream licenses. Retain the
+            # original notices from their pinned sources, with source-relative
+            # paths so per-family copyright notices cannot overwrite each other.
+            for source in ${pkgs.noto-fonts.src} ${pkgs.noto-fonts-color-emoji.src}; do
+              case "$source" in
+                ${pkgs.noto-fonts.src}) family=noto-sans ;;
+                *) family=noto-color-emoji ;;
+              esac
+              mkdir -p "$out/licenses/$family"
+              (cd "$source" && find . -type f \
+                \( -iname '*license*' -o -iname '*licence*' -o -iname 'OFL*' -o -iname 'NOTICE*' \) \
+                -exec cp --parents '{}' "$out/licenses/$family/" \;)
             done
+
+            cat > $out/NOTICE <<'EOF'
+            Maple Mono NF CN and FiraCode Nerd Font Mono: OFL-1.1.
+            DejaVu Sans Mono: Bitstream Vera + Arev.
+            Uiua386: MIT.
+            Noto Sans Unicode fallback fonts: OFL-1.1, https://notofonts.github.io.
+            Noto Color Emoji: OFL-1.1, https://github.com/googlefonts/noto-emoji.
+            Original Noto license and copyright notices accompany this bundle in licenses/.
+            EOF
+
+            find $out/fonts -type f \( -name '*.ttf' -o -name '*.otf' \) -print0 \
+              | while IFS= read -r -d "" font; do
+                fc-query --format=%{charset} "$font" > "$font.charset"
+              done
           '';
     in
     {

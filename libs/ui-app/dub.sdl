@@ -36,11 +36,14 @@ configuration "tui" {
 }
 
 configuration "gui" {
+    // Native shaping's pkg-config flags resolve at the executable boundary.
+    targetType "sourceLibrary"
     dependency "sparkles:ui-raylib" path="../.."
     versions "UiAppGui"
 }
 
 configuration "full" {
+    targetType "sourceLibrary"
     dependency "sparkles:ui-tui" path="../.."
     dependency "sparkles:ui-raylib" path="../.."
     versions "UiAppTui" "UiAppGui"

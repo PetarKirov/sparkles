@@ -190,6 +190,11 @@
 
         # `libs "raylib"` in libs/raylib-text and apps/terminal.
         pkgs.raylib
+        # raylib-text's ImportC shaping bridge and native runtime.
+        pkgs.freetype
+        pkgs.freetype.dev
+        pkgs.harfbuzz
+        pkgs.harfbuzz.dev
 
         # `libs "vulkan"` in libs/vulkan. The `.dev` output carries
         # `vulkan.pc`, whose `includedir` points at vulkan-headers — so one

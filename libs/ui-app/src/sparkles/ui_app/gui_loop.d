@@ -35,7 +35,7 @@ import sparkles.ui.geometry : Size;
 import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_setup : GuiRequest, GuiSession, openGuiSession;
 import sparkles.ui_app.host : FrameOps, HostState, isHost, noDraw, noSetup,
-    PointerUnit, RunConfig, withRealSize;
+    noShutdown, PointerUnit, RunConfig, withRealSize;
 import sparkles.base.term_color : RgbColor;
 import raylib : GetTime;
 import sparkles.ui.effect : EffectRegistry;
@@ -216,7 +216,7 @@ Returns `false` when the window opened but no font resolved — the caller repor
 which family it asked for, since a window painting without a font is a blank one.
 */
 bool runGui(alias present, alias handle, alias draw = noDraw,
-    alias setup = noSetup)(in RunConfig cfg, in GuiRequest req)
+    alias setup = noSetup, alias shutdown = noShutdown)(in RunConfig cfg, in GuiRequest req)
 {
     import sparkles.base.term_color : RgbColor;
     import sparkles.ui.interp.immediate : paint;
@@ -242,6 +242,7 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
     // against a dead context.
     scope (exit) host.imageTextures.release();
     scope (exit) host.effectGpu.release();
+    scope (exit) shutdown(host);
 
     // `HST19`: the window exists and the font has settled on a cell size, so
     // an application that lays out before its first frame can now do it.

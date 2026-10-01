@@ -279,6 +279,11 @@
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [
           pkgs.tree-sitter
+          pkgs.raylib
+          pkgs.freetype
+          pkgs.freetype.dev
+          pkgs.harfbuzz
+          pkgs.harfbuzz.dev
 
           # `libs "vulkan"` in libs/vulkan. `vulkan.pc` lives in the loader's
           # `.dev` output and points `includedir` at vulkan-headers, so one

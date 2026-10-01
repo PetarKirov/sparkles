@@ -15,7 +15,7 @@ module sparkles.ui_app.run;
 
 import sparkles.ui_app.backend : Backend, BackendPolicy, isInteractive,
     pickBackend, platformForcedBackend;
-import sparkles.ui_app.host : noDraw, noSetup, RunConfig;
+import sparkles.ui_app.host : noDraw, noSetup, noShutdown, RunConfig;
 
 /// Why a run did not happen. `ok` is the only value that means a loop ran.
 enum RunOutcome : ubyte
@@ -121,13 +121,15 @@ Params:
         after the arm opens and before the first frame, for an application
         that lays out before the loop rather than from inside it. Defaults to
         a no-op.
+    shutdown = called once after the loop and its daemons stop, before the
+        host's surface closes, as `(ref host)`. Defaults to a no-op.
     cfg = the run configuration, including the window/font request
     policy = the backend decision's inputs. Its `guiCompiledIn` is overwritten
         with the truth, so a caller cannot accidentally claim an arm this build
         does not carry.
 */
 RunOutcome run(alias present, alias handle, alias draw = noDraw,
-    alias setup = noSetup)(in RunConfig cfg, BackendPolicy policy)
+    alias setup = noSetup, alias shutdown = noShutdown)(in RunConfig cfg, BackendPolicy policy)
 {
     const arms = compiledArms();
     policy.guiCompiledIn = arms.gui;
@@ -161,7 +163,7 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                 req.extraFontSources = cfg.extraFontSources.dup;
                 req.traceSink = cfg.traceSink;
 
-                return runGui!(present, handle, draw, setup)(cfg, req)
+                return runGui!(present, handle, draw, setup, shutdown)(cfg, req)
                     ? RunOutcome.ok : RunOutcome.openFailed;
             }
             else
@@ -181,7 +183,7 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                     {
                         import sparkles.ui_app.tui_loop : runTui;
 
-                        return runTui!(present, handle, draw, setup)(cfg)
+                        return runTui!(present, handle, draw, setup, shutdown)(cfg)
                             ? RunOutcome.ok : RunOutcome.openFailed;
                     }
                 }

@@ -137,6 +137,12 @@ struct Gallery
     /// they cannot live inside the state value. Keyed by tab id.
     TerminalStore store;
 
+    /// Reap children and release pane textures before the host closes its window.
+    void shutdown(H)(ref H h) @trusted
+    {
+        store.closeAll();
+    }
+
     /// Set by `main` for a real run. The recorded tests and `--render` leave
     /// it off, so a scripted `n` raises the request flag without forking a
     /// shell into the test harness.
@@ -905,6 +911,7 @@ struct Gallery
                 ++polledPanes;
             () @trusted {
                 tv.pump();
+                tv.wakeForSynchronizedOutput(h);
                 if (tv.takeTitleChanged())
                     s.terms.tabs[i].setLabel(tv.title);
             }();
@@ -955,16 +962,6 @@ struct Gallery
                     s.terms.sbOffset = sb.offset;
                     s.termView.v = s.termView.v.scrolledTo(cast(int) sb.offset);
                 }();
-
-        // Last frame's deferred kitty textures resolve pre-bracket, exactly
-        // where the whole-surface frame flushes them — GPU arm only.
-        static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
-            if (s.terms.any)
-            {
-                import sparkles.terminal_view.core : flush_deferred_textures;
-
-                (() @trusted => flush_deferred_textures())();
-            }
 
         // The wake this frame actually needs (`HST16`), asked rather than
         // fixed at startup: only a pane the ring is not driving wants one, so

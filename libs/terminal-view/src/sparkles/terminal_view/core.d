@@ -11,14 +11,15 @@ import core.sys.posix.sys.types : pid_t;
 
 import raylib;
 
-import sparkles.base.buffer : UniqueBuffer;
+import sparkles.base.buffer : HeapBuffer, UniqueBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ghostty.c;
-import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid,
-    drawBox;
+import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid;
 import sparkles.terminal_view.input : ExitBehavior, SelectionState,
     OverlayScrollbar, HoverState;
+import sparkles.terminal_view.kitty_images : KittyImageRenderer;
 import sparkles.terminal_view.osc_query : OscScanner;
+import sparkles.terminal_view.synchronized_output : SynchronizedOutput;
 
 // Context threaded to every terminal effect callback via the userdata pointer
 // so they can reach the pty and the current geometry without globals.
@@ -170,110 +171,6 @@ bool decode_png(void* userdata, GhosttyAllocator* allocator, const(ubyte)* data,
     return true;
 }
 
-// Deferred texture cleanup: textures uploaded mid-frame can't be freed until
-// after EndDrawing() flushes the draw commands to the GPU.
-private enum MAX_DEFERRED_TEXTURES = 256;
-private __gshared Texture2D[MAX_DEFERRED_TEXTURES] deferred_textures;
-private __gshared int deferred_texture_count = 0;
-
-@system nothrow @nogc
-private void defer_unload_texture(Texture2D tex)
-{
-    if (deferred_texture_count < MAX_DEFERRED_TEXTURES)
-        deferred_textures[deferred_texture_count++] = tex;
-    else
-        UnloadTexture(tex); // overflow fallback — may glitch but won't leak.
-}
-
-@system nothrow @nogc
-void flush_deferred_textures()
-{
-    foreach (i; 0 .. deferred_texture_count)
-        UnloadTexture(deferred_textures[i]);
-    deferred_texture_count = 0;
-}
-
-// Draw all Kitty graphics placements for one z-layer. Deliberately simple and
-// inefficient: every visible image is re-uploaded to the GPU each frame and
-// freed right after (a real implementation would cache textures by image id).
-// Mirrors ghostling's render_kitty_images; this port uses no grid padding.
-@system nothrow @nogc
-private void render_kitty_images(GhosttyTerminal terminal, GhosttyKittyGraphics graphics,
-    GhosttyKittyGraphicsPlacementIterator placement_iter,
-    int cellWidth, int cellHeight, GhosttyKittyPlacementLayer layer)
-{
-    // Filter the iterator to this layer, then repopulate it for the scan.
-    ghostty_kitty_graphics_placement_iterator_set(placement_iter,
-        GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER, &layer);
-    if (ghostty_kitty_graphics_get(graphics, GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR, &placement_iter) != GHOSTTY_SUCCESS)
-        return;
-
-    while (ghostty_kitty_graphics_placement_next(placement_iter)) {
-        uint image_id = 0;
-        ghostty_kitty_graphics_placement_get(placement_iter, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID, &image_id);
-
-        GhosttyKittyGraphicsImage image_handle = ghostty_kitty_graphics_image(graphics, image_id);
-        if (image_handle is null) continue;
-
-        // Viewport-relative position. NO_VALUE when off-screen or a virtual
-        // placeholder placement, so both cases are skipped in one check.
-        int vp_col = 0, vp_row = 0;
-        if (ghostty_kitty_graphics_placement_viewport_pos(placement_iter, image_handle, terminal, &vp_col, &vp_row) != GHOSTTY_SUCCESS)
-            continue;
-
-        uint img_w = 0, img_h = 0;
-        ghostty_kitty_graphics_image_get(image_handle, GHOSTTY_KITTY_IMAGE_DATA_WIDTH, &img_w);
-        ghostty_kitty_graphics_image_get(image_handle, GHOSTTY_KITTY_IMAGE_DATA_HEIGHT, &img_h);
-        if (img_w == 0 || img_h == 0) continue;
-
-        GhosttyKittyImageFormat fmt = GHOSTTY_KITTY_IMAGE_FORMAT_RGBA;
-        ghostty_kitty_graphics_image_get(image_handle, GHOSTTY_KITTY_IMAGE_DATA_FORMAT, &fmt);
-        if (fmt != GHOSTTY_KITTY_IMAGE_FORMAT_RGBA) continue;
-
-        const(ubyte)* data_ptr = null;
-        size_t data_len = 0;
-        ghostty_kitty_graphics_image_get(image_handle, GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR, &data_ptr);
-        ghostty_kitty_graphics_image_get(image_handle, GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN, &data_len);
-        if (data_ptr is null || data_len < cast(size_t) img_w * img_h * 4) continue;
-
-        uint grid_cols = 0, grid_rows = 0;
-        if (ghostty_kitty_graphics_placement_grid_size(placement_iter, image_handle, terminal, &grid_cols, &grid_rows) != GHOSTTY_SUCCESS)
-            continue;
-        if (grid_cols == 0 || grid_rows == 0) continue;
-
-        uint dest_w = grid_cols * cast(uint) cellWidth;
-        uint dest_h = grid_rows * cast(uint) cellHeight;
-
-        // Resolved source rectangle (handles "0 = full image" and clamping).
-        uint src_x = 0, src_y = 0, src_w = 0, src_h = 0;
-        if (ghostty_kitty_graphics_placement_source_rect(placement_iter, image_handle, &src_x, &src_y, &src_w, &src_h) != GHOSTTY_SUCCESS)
-            continue;
-
-        uint x_offset = 0, y_offset = 0;
-        ghostty_kitty_graphics_placement_get(placement_iter, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET, &x_offset);
-        ghostty_kitty_graphics_placement_get(placement_iter, GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET, &y_offset);
-
-        Image img = {
-            data: cast(void*) data_ptr,
-            width: cast(int) img_w,
-            height: cast(int) img_h,
-            mipmaps: 1,
-            format: PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
-        };
-        Texture2D tex = LoadTextureFromImage(img);
-        SetTextureFilter(tex, TextureFilter.TEXTURE_FILTER_BILINEAR);
-
-        int dest_x = cast(int) vp_col * cellWidth + cast(int) x_offset;
-        int dest_y = cast(int) vp_row * cellHeight + cast(int) y_offset;
-
-        Rectangle src_rect = Rectangle(cast(float) src_x, cast(float) src_y, cast(float) src_w, cast(float) src_h);
-        Rectangle dst_rect = Rectangle(cast(float) dest_x, cast(float) dest_y, cast(float) dest_w, cast(float) dest_h);
-        DrawTexturePro(tex, src_rect, dst_rect, Vector2(0, 0), 0.0f, Color(255, 255, 255, 255));
-
-        defer_unload_texture(tex);
-    }
-}
-
 // The raylib boundary. `ResolvedCell` carries backend-neutral `RgbColor`;
 // raylib's draw calls want its own `Color`. Every colour the VT resolves is
 // opaque, so alpha is supplied here rather than carried per cell.
@@ -286,7 +183,9 @@ struct ResolvedCell
 {
     bool hasGrapheme;     // cell has a grapheme cluster to draw
     uint graphemeLen;
-    uint[16] codepoints;
+    uint codepoint;
+    uint width = 1;
+    bool hasHyperlink;
     GhosttyStyle style;
     // Backend-neutral on purpose: `resolveCell` is shared with `cell_paint.d`,
     // which paints through any `isCanvas` target and must not see raylib's
@@ -295,16 +194,13 @@ struct ResolvedCell
     // resolves is opaque.
     RgbColor fgCol;
     RgbColor bgCol;
+    RgbColor underlineCol;
     bool hasBg;           // a background rect should be painted for this cell
     bool isHoveredLink;   // cell is under a hovered OSC 8 link (drawn underlined)
 }
 
-// Resolve one cell's colors, style, and grapheme into a `ResolvedCell`. Both the
-// background pass and the glyph pass call this for the same cell so the
-// selection / hovered-link / reverse-video swaps are computed identically in
-// each — keeping the two passes from drifting out of sync. It re-queries the
-// cell rather than caching across passes; the queries are cheap relative to the
-// per-cell draw calls, and redraws only happen on dirty frames.
+// Resolve colors/style once per painted cell. The background pass retains
+// these values for the glyph pass; the cell-canvas path consumes them directly.
 @system nothrow @nogc
 package(sparkles.terminal_view) ResolvedCell resolveCell(
     GhosttyRenderStateRowCells cells,
@@ -318,25 +214,17 @@ package(sparkles.terminal_view) ResolvedCell resolveCell(
 {
     ResolvedCell r;
 
-    uint graphemeLen;
-    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &graphemeLen);
-
-    if (graphemeLen == 0)
+    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &r.graphemeLen);
+    r.hasGrapheme = r.graphemeLen != 0;
+    GhosttyCell raw;
+    if (ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, &raw) == GHOSTTY_SUCCESS)
     {
-        // Empty cell with no text may still carry a background color (e.g. an
-        // erase with a color set). BG_COLOR returns INVALID_VALUE otherwise.
-        GhosttyColorRgb bgRgb;
-        if (ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bgRgb) == GHOSTTY_SUCCESS)
-        {
-            r.bgCol = RgbColor(bgRgb.r, bgRgb.g, bgRgb.b);
-            r.hasBg = true;
-        }
-        return r;
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_CODEPOINT, &r.codepoint);
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_HAS_HYPERLINK, &r.hasHyperlink);
+        GhosttyCellWide wide;
+        ghostty_cell_get(raw, GHOSTTY_CELL_DATA_WIDE, &wide);
+        r.width = wide == GHOSTTY_CELL_WIDE_WIDE ? 2 : 1;
     }
-
-    r.hasGrapheme = true;
-    r.graphemeLen = graphemeLen;
-    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, r.codepoints.ptr);
 
     // Seed fg/bg from the terminal defaults; the per-cell queries overwrite them
     // only when the cell has an explicit color and return INVALID_VALUE otherwise.
@@ -399,12 +287,139 @@ package(sparkles.terminal_view) ResolvedCell resolveCell(
         fgCol = tmp;
         hasBg = true;
     }
+    // Faint affects the displayed ink, after inverse/selection color swaps.
+    if (r.style.faint)
+        fgCol = RgbColor(cast(ubyte)(fgCol.r / 2), cast(ubyte)(fgCol.g / 2),
+            cast(ubyte)(fgCol.b / 2));
 
     r.fgCol = fgCol;
     r.bgCol = bgCol;
     r.hasBg = hasBg;
     r.isHoveredLink = isHoveredLink;
+    r.underlineCol = fgCol;
+    if (r.style.underline_color.tag == GHOSTTY_STYLE_COLOR_RGB)
+    {
+        const c = r.style.underline_color.value.rgb;
+        r.underlineCol = RgbColor(c.r, c.g, c.b);
+    }
+    else if (r.style.underline_color.tag == GHOSTTY_STYLE_COLOR_PALETTE)
+    {
+        const c = colors.palette[r.style.underline_color.value.palette];
+        r.underlineCol = RgbColor(c.r, c.g, c.b);
+    }
     return r;
+}
+
+private const(uint)[] cellGrapheme(GhosttyRenderStateRowCells cells,
+    ref UniqueBuffer!(uint, 16) storage) @system nothrow @nogc
+{
+    uint length;
+    ghostty_render_state_row_cells_get(cells,
+        GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &length);
+    storage.length = length;
+    if (length)
+        ghostty_render_state_row_cells_get(cells,
+            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, storage[].ptr);
+    return storage[];
+}
+
+/// Variable-length clusters retain every codepoint without overwriting style
+/// data; color resolution still honors inverse, faint and underline colors.
+@("terminal_view.resolveCell.longClusterAndStyle")
+@system nothrow @nogc
+unittest
+{
+    CoreState s;
+    GhosttyTerminalOptions options = { cols: 8, rows: 2 };
+    assert(ghostty_terminal_new(null, &s.terminal, options) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_terminal_free(s.terminal);
+    assert(ghostty_render_state_new(null, &s.render_state) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_render_state_free(s.render_state);
+    assert(ghostty_render_state_row_iterator_new(null, &s.row_iter) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_render_state_row_iterator_free(s.row_iter);
+    assert(ghostty_render_state_row_cells_new(null, &s.cells) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_render_state_row_cells_free(s.cells);
+    static immutable style = "\x1b[38;2;120;80;40;48;2;20;40;60;58;2;10;20;30;4:3;2;7mA";
+    ghostty_terminal_vt_write(s.terminal, cast(const(ubyte)*) style.ptr, style.length);
+    foreach (_; 0 .. 24)
+        ghostty_terminal_vt_write(s.terminal, cast(const(ubyte)*) "\u0301".ptr, 2);
+    ghostty_render_state_update(s.render_state, s.terminal);
+    ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &s.row_iter);
+    assert(ghostty_render_state_row_iterator_next(s.row_iter));
+    ghostty_render_state_row_get(s.row_iter, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &s.cells);
+    assert(ghostty_render_state_row_cells_next(s.cells));
+    GhosttyRenderStateColors colors;
+    colors.size = GhosttyRenderStateColors.sizeof;
+    ghostty_render_state_colors_get(s.render_state, &colors);
+    const cell = resolveCell(s.cells, colors, 0, 0, false,
+        GhosttyPointCoordinate.init, GhosttyPointCoordinate.init, s.selState, s.hoverState);
+    assert(cell.codepoint == 'A' && cell.graphemeLen == 25);
+    const cluster = cellGrapheme(s.cells, s.grapheme);
+    assert(cluster.length == 25 && cluster[0] == 'A');
+    foreach (cp; cluster[1 .. $])
+        assert(cp == 0x301);
+    assert(cell.fgCol == RgbColor(10, 20, 30));
+    assert(cell.bgCol == RgbColor(120, 80, 40));
+    assert(cell.underlineCol == RgbColor(10, 20, 30));
+    assert(cell.style.underline == GHOSTTY_SGR_UNDERLINE_CURLY);
+}
+
+// Decorations use cell geometry, not the font's glyph bounds; a wide cell
+// carries one continuous line and the phase continues across adjacent cells.
+private void drawCellDecorations(ref LoadedFont white, in ResolvedCell cell,
+    int x, int y, int width, int height) @system nothrow @nogc
+{
+    import std.algorithm.comparison : max, min;
+
+    const thickness = max(1, height / 16);
+    const underlineY = y + height - thickness - 1;
+    const ink = rl(cell.fgCol);
+    const underlineInk = rl(cell.underlineCol);
+    switch (cell.style.underline)
+    {
+        case GHOSTTY_SGR_UNDERLINE_SINGLE:
+            drawSolid(white, x, underlineY, width, thickness, underlineInk);
+            break;
+        case GHOSTTY_SGR_UNDERLINE_DOUBLE:
+            drawSolid(white, x, underlineY, width, thickness, underlineInk);
+            drawSolid(white, x, max(y, underlineY - 2 * thickness),
+                width, thickness, underlineInk);
+            break;
+        case GHOSTTY_SGR_UNDERLINE_CURLY:
+            // A six-step wave keeps its trough inside the cell even at small
+            // font sizes. Absolute x keeps neighbouring cell phases aligned.
+            static immutable int[6] wave = [0, 0, 1, 2, 2, 1];
+            foreach (dx; 0 .. width)
+                drawSolid(white, x + dx,
+                    max(y, underlineY - wave[((x + dx) / thickness) % wave.length] * thickness),
+                    1, thickness, underlineInk);
+            break;
+        case GHOSTTY_SGR_UNDERLINE_DOTTED:
+        case GHOSTTY_SGR_UNDERLINE_DASHED:
+            const dash = cell.style.underline == GHOSTTY_SGR_UNDERLINE_DOTTED
+                ? thickness : 3 * thickness;
+            const period = dash + thickness;
+            for (int dx = 0; dx < width;)
+            {
+                const phase = (x + dx) % period;
+                const length = min(width - dx, phase < dash ? dash - phase : period - phase);
+                if (phase < dash)
+                    drawSolid(white, x + dx, underlineY, length, thickness, underlineInk);
+                dx += length;
+            }
+            break;
+        default:
+            break;
+    }
+    if (cell.style.strikethrough)
+        drawSolid(white, x, y + height / 2, width, thickness, ink);
+    if (cell.style.overline)
+        drawSolid(white, x, y, width, thickness, ink);
+    if (cell.hasHyperlink || cell.isHoveredLink)
+    {
+        const weight = cell.isHoveredLink ? 2 * thickness : thickness;
+        drawSolid(white, x, y + height - weight, width, weight, ink);
+    }
 }
 
 // All per-run state the @nogc core loop touches. Holds non-copyable UniqueBuffers
@@ -417,10 +432,16 @@ struct CoreState
     GhosttyRenderStateRowIterator row_iter;
     GhosttyRenderStateRowCells cells;
     GhosttyKittyGraphicsPlacementIterator placement_iter;
+    KittyImageRenderer images;
+    ulong imageMutationEpoch;
     GhosttyKeyEvent key_event;
     GhosttyKeyEncoder key_encoder;
     GhosttyMouseEvent mouse_event;
     GhosttyMouseEncoder mouse_encoder;
+    // Reused for variable-length graphemes; the C getter has no capacity
+    // parameter, so callers must size this from GRAPHEMES_LEN before writing.
+    UniqueBuffer!(uint, 16) grapheme;
+    HeapBuffer!ResolvedCell resolvedCells;
 
     int pty_fd = -1;
     pid_t child = -1;
@@ -448,9 +469,10 @@ struct CoreState
     OverlayScrollbar sbState;
     HoverState hoverState;
 
-    // Streaming OSC scanner answering OSC 10/11/12 color queries (see
+    // Streaming OSC scanner answering palette/default color queries (see
     // feedPtyChunk); persists across pty read chunks.
     OscScanner oscScan;
+    SynchronizedOutput synchronizedOutput;
 
     // The emulator's own overlay scrollbar (mouse-driven). The standalone
     // app wants it; an embedding application draws its own bar beside the
@@ -487,27 +509,33 @@ void logBuildInfo()
     TraceLog(TraceLogLevel.LOG_INFO, "ghostty-vt: optimize: %s", opt_str);
 }
 
-// Write an xterm-style color report for `code` (10/11/12) to the pty:
-// `ESC ] code ; rgb:rrrr/gggg/bbbb` plus the query's own terminator, 16 bits
-// per channel (value × 257) — Ghostty's default report format. The cursor
-// color falls back to the foreground when unset, as in Ghostty.
+// Write an xterm-style dynamic color report, or an OSC 4 palette report when
+// the caller supplies the current palette. Match the query's terminator and
+// expand 8-bit channels to 16 bits. An unset cursor uses the foreground.
 @system nothrow @nogc
-void replyColorQuery(ref CoreState s, int code)
+void replyColorQuery(ref CoreState s, int code, scope const(GhosttyColorRgb)[] palette = null)
 {
     import core.stdc.stdio : snprintf;
     import sparkles.terminal_view.input : pty_write;
 
     GhosttyColorRgb rgb;
-    const data = code == 11 ? GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND
-        : code == 12 ? GHOSTTY_TERMINAL_DATA_COLOR_CURSOR
-        : GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND;
-    if (ghostty_terminal_get(s.terminal, data, &rgb) != GHOSTTY_SUCCESS
-        && (code != 12
-            || ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND, &rgb) != GHOSTTY_SUCCESS))
-        return;
+    if (palette.length)
+        rgb = palette[code];
+    else
+    {
+        const data = code == 11 ? GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND
+            : code == 12 ? GHOSTTY_TERMINAL_DATA_COLOR_CURSOR
+            : GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND;
+        if (ghostty_terminal_get(s.terminal, data, &rgb) != GHOSTTY_SUCCESS
+            && (code != 12
+                || ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND, &rgb) != GHOSTTY_SUCCESS))
+            return;
+    }
 
     char[48] buf;
-    const len = snprintf(buf.ptr, buf.length, "\x1b]%d;rgb:%04x/%04x/%04x%s",
+    const len = snprintf(buf.ptr, buf.length,
+        palette.length ? "\x1b]4;%d;rgb:%04x/%04x/%04x%s".ptr
+            : "\x1b]%d;rgb:%04x/%04x/%04x%s".ptr,
         code, rgb.r * 257, rgb.g * 257, rgb.b * 257,
         s.oscScan.endedWithBel ? "\x07".ptr : "\x1b\\".ptr);
     if (len > 0)
@@ -527,25 +555,63 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
     import sparkles.terminal_view.osc_query : oscScanByte, oscColorQueryCodes;
 
     size_t segStart = 0;
-    foreach (i, b; chunk)
+    for (size_t i = 0; i < chunk.length; ++i)
     {
-        if (oscScanByte(s.oscScan, b))
+        // Image payloads and ordinary text contain long inert ASCII runs.
+        // Scan those once, not through all three control-state machines.
+        if (s.oscScan.state == OscScanner.State.ground
+            && s.synchronizedOutput.skipsPrintable && s.images.skipsPrintable)
+        {
+            while (i < chunk.length && chunk[i] >= ' ' && chunk[i] <= '~')
+                ++i;
+            if (i == chunk.length)
+                break;
+        }
+        const b = chunk[i];
+        s.images.observeByte(b);
+        const oscBoundary = oscScanByte(s.oscScan, b);
+        const syncBoundary = s.synchronizedOutput.scanByte(b);
+        if (oscBoundary || syncBoundary)
         {
             ghostty_terminal_vt_write(s.terminal,
                 cast(const(ubyte)*) chunk.ptr + segStart, cast(uint)(i + 1 - segStart));
             segStart = i + 1;
-            if (!s.oscScan.overflowed)
+            if (syncBoundary && s.synchronizedOutput.observe(s.terminal, s.render_state))
+            {
+                s.images.capture(s.terminal, s.placement_iter, s.cellWidth, s.cellHeight);
+                // Image-only work preceding this hold is a completed prefix,
+                // even though Ghostty's grid snapshot has no image dirty bit.
+                if (s.images.repaintPending)
+                {
+                    GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
+                    ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &dirty);
+                }
+            }
+            if (oscBoundary && !s.oscScan.overflowed)
             {
                 UniqueBuffer!(int, 4) codes;
-                oscColorQueryCodes(s.oscScan.payload[], codes);
-                foreach (code; codes[])
-                    replyColorQuery(s, code);
+                const command = oscColorQueryCodes(s.oscScan.payload[], codes);
+                if (command == 4 && codes.length)
+                {
+                    // Read once per OSC batch, directly from effective VT
+                    // state: OSC overrides and resets are already applied.
+                    GhosttyColorRgb[256] palette;
+                    if (ghostty_terminal_get(s.terminal,
+                            GHOSTTY_TERMINAL_DATA_COLOR_PALETTE, &palette) == GHOSTTY_SUCCESS)
+                        foreach (code; codes[])
+                            replyColorQuery(s, code, palette[]);
+                }
+                else
+                    foreach (code; codes[])
+                        replyColorQuery(s, code);
             }
         }
     }
     if (segStart < chunk.length)
         ghostty_terminal_vt_write(s.terminal,
             cast(const(ubyte)*) chunk.ptr + segStart, cast(uint)(chunk.length - segStart));
+    if (chunk.length)
+        ++s.imageMutationEpoch;
 }
 
 // The frame's draw calls, bracket-free — callable from a raylib
@@ -570,12 +636,14 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
         drawSolid(s.fonts.whiteFace, 0, 0, viewW, viewH,
             Color(colors.background.r, colors.background.g, colors.background.b, 255));
 
-        // Kitty graphics storage (borrowed; valid until the next mutating
-        // terminal call). Images draw in three z-layers around the text.
-        GhosttyKittyGraphics kitty_gfx = null;
-        bool has_kitty = ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &kitty_gfx) == GHOSTTY_SUCCESS && kitty_gfx !is null;
-        if (has_kitty)
-            render_kitty_images(s.terminal, kitty_gfx, s.placement_iter, s.cellWidth, s.cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
+        // Images remain frozen alongside the text during synchronized output.
+        if (s.synchronizedOutput.held)
+            s.images.drawCapturedLayer(GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
+        else
+        {
+            s.images.prepare(s.terminal, s.imageMutationEpoch, s.cellWidth, s.cellHeight);
+            s.images.drawLayer(s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
+        }
 
         GhosttyPointCoordinate sel_start_pt, sel_end_pt;
         bool has_selection = false;
@@ -601,10 +669,11 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
         // icons) can exceed the cell box. With a single interleaved pass the
         // next row's background would overwrite the previous row's glyph
         // overflow, clipping it ("cut in half"); separating the passes means
-        // every background lands before any glyph is drawn. Both passes resolve
-        // each cell via `resolveCell` so selection/hover/inverse stay identical.
+        // every background lands before any glyph is drawn. Resolve each cell
+        // only once, sharing the retained result between the two passes.
 
         // --- Pass 1: backgrounds. ---
+        s.resolvedCells.clear(releaseStorage: false);
         ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &s.row_iter);
         int bgY = 0;
         while (ghostty_render_state_row_iterator_next(s.row_iter))
@@ -616,6 +685,7 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
             {
                 const rc = resolveCell(s.cells, colors, bgX / s.cellWidth, bgY / s.cellHeight,
                     has_selection, sel_start_pt, sel_end_pt, s.selState, s.hoverState);
+                s.resolvedCells ~= rc;
                 if (rc.hasBg)
                     drawSolid(s.fonts.whiteFace, bgX, bgY, s.cellWidth, s.cellHeight, rl(rc.bgCol));
                 bgX += s.cellWidth;
@@ -624,10 +694,17 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
             bgY += s.cellHeight;
         }
 
+        // This layer covers cell backgrounds, never the glyphs above it.
+        if (s.synchronizedOutput.held)
+            s.images.drawCapturedLayer(GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
+        else
+            s.images.drawLayer(s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
+
         // --- Pass 2: glyphs and per-cell decorations. Re-fetching the row
         //     iterator rewinds it to the first row. ---
         ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &s.row_iter);
         int y = 0;
+        size_t resolvedIndex;
         while (ghostty_render_state_row_iterator_next(s.row_iter))
         {
             ghostty_render_state_row_get(s.row_iter, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &s.cells);
@@ -635,62 +712,36 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
             int x = 0;
             while (ghostty_render_state_row_cells_next(s.cells))
             {
-                const rc = resolveCell(s.cells, colors, x / s.cellWidth, y / s.cellHeight,
-                    has_selection, sel_start_pt, sel_end_pt, s.selState, s.hoverState);
+                const ref rc = s.resolvedCells[resolvedIndex++];
 
-                if (rc.hasGrapheme)
+                if (rc.hasGrapheme && !rc.style.invisible)
                 {
-                    // Draw the whole grapheme cluster (base codepoint plus any
-                    // combining marks, ZWJ joiners, variation selectors, …) as one
-                    // unit. Drawing only codepoints[0] would drop accents and emoji
-                    // modifiers.
-                    const cp_count = rc.graphemeLen < 16 ? rc.graphemeLen : 16;
+                    import sparkles.terminal_view.cell_graphics : drawCellGraphics;
 
-                    // A single box-drawing codepoint is rendered procedurally so its
-                    // arms fill the cell and connect across neighbouring cells (font
-                    // glyphs leave gaps); everything else goes through the face-
-                    // routing + fake-bold/italic glyph path.
-                    if (cp_count != 1 || !drawBox(s.fonts.whiteFace, rc.codepoints[0],
-                            cast(float) x, cast(float) y, s.cellWidth, s.cellHeight, rl(rc.fgCol)))
+                    const ink = rl(rc.fgCol);
+                    if (rc.graphemeLen != 1
+                        || !drawCellGraphics(s.fonts.whiteFace, rc.codepoint,
+                            cast(float) x, cast(float) y, s.cellWidth, s.cellHeight, ink))
                     {
-                        // Route the cell's base codepoint to its face — codepoint-map
-                        // override → real bold/italic face → regular/Nerd fallback →
-                        // on-demand request — all in the shared library (identical
-                        // routing to the pre-extraction inline version).
-                        bool fakeBold, fakeItalic;
-                        LoadedFont* activeFont = s.fonts.resolveFace(
-                            rc.codepoints[0], rc.style.bold, rc.style.italic, fakeBold, fakeItalic);
-
-                        // Fake italic only when no real italic face is in use: shift
-                        // the glyph right by a fraction of the font size (a crude
-                        // slant; raylib can't shear a glyph).
-                        const italic_offset = fakeItalic ? (s.fontSize / 6) : 0;
-                        drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
-                            cast(float)(x + italic_offset), cast(float)y, s.fontSize, rl(rc.fgCol));
-
-                        // Fake bold only when no real bold face is in use: redraw 1px
-                        // to the right to thicken strokes.
-                        if (fakeBold)
-                            drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
-                                cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, rl(rc.fgCol));
+                        uint[1] single = [rc.codepoint];
+                        const(uint)[] cluster = single[];
+                        if (rc.graphemeLen > 1)
+                            cluster = cellGrapheme(s.cells, s.grapheme);
+                        if (!s.fonts.drawCluster(cluster, rc.style.bold, rc.style.italic,
+                                cast(float) x, cast(float) y,
+                                cast(int) rc.width * s.cellWidth, s.cellHeight, ink))
+                        {
+                            bool fakeBold, fakeItalic;
+                            LoadedFont* face = s.fonts.resolveFace(
+                                rc.codepoint, rc.style.bold, rc.style.italic, fakeBold, fakeItalic);
+                            drawGrapheme(*face, cluster, cast(float) x, cast(float) y, s.fontSize, ink);
+                            if (fakeBold)
+                                drawGrapheme(*face, cluster, cast(float)(x + 1), cast(float) y,
+                                    s.fontSize, ink);
+                        }
                     }
-
-                    // Underline (any SGR underline style) and strikethrough.
-                    if (rc.style.underline != 0)
-                        drawSolid(s.fonts.whiteFace, x, y + s.cellHeight - 2, s.cellWidth, 1, rl(rc.fgCol));
-                    if (rc.style.strikethrough)
-                        drawSolid(s.fonts.whiteFace, x, y + s.cellHeight / 2, s.cellWidth, 1, rl(rc.fgCol));
-
-                    GhosttyCell raw_cell;
-                    bool has_hyperlink = false;
-                    if (ghostty_render_state_row_cells_get(s.cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, cast(void*)&raw_cell) == GHOSTTY_SUCCESS)
-                        ghostty_cell_get(raw_cell, GHOSTTY_CELL_DATA_HAS_HYPERLINK, cast(void*)&has_hyperlink);
-
-                    if (has_hyperlink || rc.isHoveredLink)
-                    {
-                        int thickness = rc.isHoveredLink ? 2 : 1;
-                        drawSolid(s.fonts.whiteFace, x, y + s.cellHeight - thickness, s.cellWidth, thickness, rl(rc.fgCol));
-                    }
+                    drawCellDecorations(s.fonts.whiteFace, rc, x, y,
+                        cast(int) rc.width * s.cellWidth, s.cellHeight);
                 }
 
                 x += s.cellWidth;
@@ -702,11 +753,6 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
 
             y += s.cellHeight;
         }
-
-        // Images below text (drawn after cell backgrounds/text, but before the
-        // cursor and above-text images).
-        if (has_kitty)
-            render_kitty_images(s.terminal, kitty_gfx, s.placement_iter, s.cellWidth, s.cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
 
         // Render scrollbar
         GhosttyTerminalScrollbar sb;
@@ -760,8 +806,10 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
         }
 
         // Images above text (z >= 0): drawn last, over everything else.
-        if (has_kitty)
-            render_kitty_images(s.terminal, kitty_gfx, s.placement_iter, s.cellWidth, s.cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
+        if (s.synchronizedOutput.held)
+            s.images.drawCapturedLayer(GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
+        else
+            s.images.drawLayer(s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
 
         // Banner shown once the child has exited, so the user knows the shell
         // is gone (they can still scroll / inspect the final output).
@@ -792,6 +840,8 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
         // Reset global dirty state so the next update reports changes accurately.
         GhosttyRenderStateDirty clean_state = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
         ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean_state);
+        if (!s.synchronizedOutput.held)
+            s.images.repaintPending = false;
 }
 
 @("terminal_view.core.titleCapture.oscTitleLandsInTheContext")

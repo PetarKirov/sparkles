@@ -14,11 +14,10 @@ import sparkles.raylib_text.box : drawBox;
 import sparkles.base.term_color : RgbColor;
 
 /**
-Draw a grapheme cluster (base codepoint plus any combining marks) at `(x, y)`,
-glyph by glyph, via the face's O(log n) glyph-index map. A drop-in replacement
-for raylib's `DrawTextEx` (spacing 0) that reproduces its placement/advance math
-but avoids both `GetGlyphIndex`'s linear scan and `DrawTextEx`'s per-call UTF-8
-re-decode. The caller owns layout and backgrounds.
+Draw already-resolved atlas glyphs at `(x, y)` with O(log n) glyph lookup.
+This is the single-glyph fast path, not a shaper: terminal callers first use
+`FontSet.drawCluster` for complete clusters, emoji and uncached fallback glyphs.
+The caller owns layout and backgrounds.
 */
 void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
     float x, float y, int fontSize, Color tint) @system nothrow @nogc
@@ -137,13 +136,18 @@ void drawText(ref FontSet fonts, scope const(char)[] str, float x, float y,
             ++col;
             continue;
         }
-        bool fakeBold, fakeItalic;
-        auto face = fonts.resolveFace(cp, bold, italic, fakeBold, fakeItalic);
         // A missing italic face renders the upright regular — never a
         // synthetic slant or shift, which breaks the grid (tokens italic in
         // one theme but not another appeared to move between themes). Use
         // --font-italic / --font-bold-italic to supply real faces.
         const uint[1] one = [cast(uint) cp];
+        if (fonts.drawCluster(one[], bold, italic, gxCol, y, cellW, cellH, fg))
+        {
+            ++col;
+            continue;
+        }
+        bool fakeBold, fakeItalic;
+        auto face = fonts.resolveFace(cp, bold, italic, fakeBold, fakeItalic);
         drawGrapheme(*face, one[], gxCol, y, size, fg);
         if (fakeBold)
             drawGrapheme(*face, one[], gxCol + 1, y, size, fg);

@@ -30,17 +30,23 @@ dub run :terminal -- -- htop            # run a command instead of a shell
 
 ### Correct
 
-All escape-sequence parsing, terminal modes, and state live in libghostty-vt,
-so full-screen applications behave the way they do in Ghostty:
+VT parsing and terminal state live in libghostty-vt; the renderer supplies
+pixel graphics, text shaping, and synchronized presentation:
 
 - **VT220-class emulation** with `TERM=xterm-256color`, true color, and
   accurate responses to the capability queries (device attributes, size
   reports, XTVERSION) that programs like vim, tmux, and htop probe at startup.
-- **Kitty Graphics Protocol** — PNG images render inline, with the file,
-  temp-file, and shared-memory transmission mediums enabled and correct
-  z-layering around text.
-- **Grapheme clusters** — combining marks, ZWJ sequences, and variation
-  selectors draw as single units instead of dropped accents.
+- **Kitty Graphics Protocol** — native-sized RGB/RGBA and PNG images, cropping,
+  placement offsets, and all three text/background layers. Cached textures
+  survive redraws; changed pixel rows update without re-uploading whole images.
+- **Grapheme clusters** — HarfBuzz shaping and FreeType rasterization preserve
+  combining marks, ZWJ sequences, variation selectors, and color emoji.
+- **Cell graphics** — font-independent box drawing, blocks, braille, sextants,
+  octants, and legacy mosaics align to cell edges without font gaps.
+- **Synchronized output** — mode 2026 holds a completed frame while input and
+  capability replies continue; a one-second deadline releases abandoned holds.
+- **Palette queries** — OSC 4 replies reflect the current palette, including
+  multiple queries and palette changes in the same control string.
 - **OSC 8 hyperlinks** and plain `http(s)://` URLs: hover underlines them,
   click opens them in your browser.
 
@@ -48,9 +54,11 @@ so full-screen applications behave the way they do in Ghostty:
 
 The steady-state frame loop is `nothrow @nogc` — a long-running session has no
 GC pauses. When nothing on screen changes, the renderer skips the redraw
-entirely, dropping idle CPU to near zero. Backgrounds, glyphs, cursor, and
-decorations all batch through a single font-atlas texture, so a full-screen
-redraw is a handful of draw calls.
+entirely, dropping idle CPU to near zero. Ordinary glyphs and cell geometry
+batch through the font atlas; shaped clusters use padded RGBA atlas pages,
+and Kitty images retain their own textures. Unchanged images avoid repeated
+decoding and uploads. Printable image payloads pass through one scanner fast
+path instead of three independent byte-by-byte state machines.
 
 ### Practical text rendering
 

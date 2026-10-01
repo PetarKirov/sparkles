@@ -2,10 +2,11 @@
 /// `apps/terminal` and `hue --gui`. Extracted from the terminal's PR-#63 font
 /// pipeline: a primary face plus real bold / italic / bold-italic variants, a
 /// regular Unicode fallback, a Nerd-Font fallback, and up to 8 per-codepoint-map
-/// faces; a base atlas grown lazily as new codepoints appear; and per-face
-/// O(log n) glyph maps. All loading needs an active raylib GL context (call after
-/// `InitWindow`). Holds move-only `SharedBuffer`s, so it is non-copyable — declare
-/// one instance and pass it by `ref`.
+/// faces; a base atlas grown lazily as new codepoints appear; per-face O(log n)
+/// glyph maps; and a FreeType/HarfBuzz cache for complete clusters and fallback
+/// glyphs outside those atlases. All loading needs an active raylib GL context
+/// (call after `InitWindow`). Holds move-only buffers, so it is non-copyable —
+/// declare one instance and pass it by `ref`.
 ///
 /// Face $(I resolution) (name → file path) has two strategies, selected by
 /// `FontSet.FontSources`. The desktop default asks the operating system's font
@@ -15,8 +16,9 @@
 /// `useSystemFontDb: false` (Android: no fontconfig, no subprocesses) scans
 /// plain font directories instead — `resolveFontInDirs` for names,
 /// `fontVariantPaths` for styled siblings, `<font>.charset` sidecar files for
-/// coverage. Face $(I loading) is the same on all three: real file paths into
-/// `LoadFontEx`.
+/// coverage. Primary and styled atlas loading uses `LoadFontEx`; shaped
+/// fallback faces are opened lazily with FreeType, including font collections
+/// and embedded color emoji strikes.
 module sparkles.raylib_text.font_set;
 
 import raylib;
@@ -41,6 +43,7 @@ import sparkles.raylib_text.font_fontconfig : fcRun;
 version (OSX)
     import sparkles.raylib_text.font_coretext;
 import sparkles.raylib_text.metrics_dpi : DisplayMetrics;
+import sparkles.raylib_text.shaping : ClusterCache, emojiPresentation;
 
 /// The face chosen for a cell's bold/italic attributes, plus whether the missing
 /// axis must still be faked (a synthetic slant / a double-strike thickening)
@@ -105,6 +108,7 @@ struct FontSet
 
     private CodepointMap[MAX_CODEPOINT_MAPS] codepointMaps;
     private int codepointMapCount;
+    private ClusterCache clusters;
 
     // ── accessors ────────────────────────────────────────────────────────────
 
@@ -267,6 +271,14 @@ struct FontSet
             fs.loadFallbacksFromDirs(fontPath, sources.dirs);
 
         fs.measure();
+        const(char)*[4 + MAX_CODEPOINT_MAPS] shapePaths;
+        shapePaths[0] = fs.primary.pathZ;
+        shapePaths[1] = fs.fontBold.pathZ;
+        shapePaths[2] = fs.fontItalic.pathZ;
+        shapePaths[3] = fs.fontBoldItalic.pathZ;
+        foreach (i; 0 .. fs.codepointMapCount)
+            shapePaths[4 + i] = fs.codepointMaps[i].font.pathZ;
+        fs.clusters.initialize(shapePaths[], sources, fs.atlasPx);
         return true;
     }
 
@@ -276,6 +288,7 @@ struct FontSet
     void reload(int newSizePx) @system nothrow @nogc
     {
         fontSize_ = newSizePx < 1 ? 1 : newSizePx;
+        clusters.reload(atlasPx);
         loadFontInto(primary, atlasPx, requestedCps[]);
         if (fontBold.pathZ !is null) loadFontInto(fontBold, atlasPx, requestedCps[]);
         if (fontItalic.pathZ !is null) loadFontInto(fontItalic, atlasPx, requestedCps[]);
@@ -290,6 +303,7 @@ struct FontSet
     /// Unload every loaded face.
     void unload() @system nothrow @nogc
     {
+        clusters.unload();
         if (primary.present) { UnloadFont(primary.font); primary.present = false; }
         if (fontBold.present) { UnloadFont(fontBold.font); fontBold.present = false; }
         if (fontItalic.present) { UnloadFont(fontItalic.font); fontItalic.present = false; }
@@ -305,6 +319,40 @@ struct FontSet
     }
 
     // ── render path ──────────────────────────────────────────────────────────
+
+    /**
+    Draw one terminal-assigned cluster, including on-demand fallback and color
+    emoji. Returns false for the existing single-glyph atlas fast path, or when
+    no installed face can render the cluster. A queued miss returns true without
+    drawing; `flushPending` realizes it after EndDrawing and requests a repaint.
+    The caller supplies the occupied cell span, not a sum of scalar widths.
+    */
+    bool drawCluster(scope const(uint)[] cps, bool bold, bool italic,
+        float x, float y, int cellWidthPixels, int cellHeightPixels, Color tint)
+        @system nothrow @nogc
+    {
+        if (!cps.length) return true;
+        if (cps.length == 1 && cps[0] < 128) return false;
+        auto mapped = lookupCodepointMap(cast(int) cps[0]);
+        auto styled = pickStyledFace(bold, italic);
+        auto preferred = mapped !is null ? mapped : styled.font;
+        const emoji = mapped is null && emojiPresentation(cps);
+        if (cps.length == 1 && !emoji)
+        {
+            const cp = cast(int) cps[0];
+            if (fontHasGlyph(*preferred, cp)
+                || (regularFallback.present && fontHasGlyph(regularFallback, cp))
+                || (nerdFallback.present && fontHasGlyph(nerdFallback, cp)))
+                return false;
+        }
+        const scale = cast(float) fontSize_ / atlasPx;
+        const handled = clusters.draw(cps, preferred.pathZ, x, y,
+            cellWidthPixels, cellHeightPixels, scale, tint);
+        if (handled && (mapped !is null ? bold : styled.fakeBold) && !emoji)
+            clusters.draw(cps, preferred.pathZ, x + 1, y,
+                cellWidthPixels, cellHeightPixels, scale, tint);
+        return handled;
+    }
 
     /// Queue `cp` for inclusion in the primary atlas on the next `flushPending`,
     /// de-duping within the frame (many cells share the same icon).
@@ -322,8 +370,9 @@ struct FontSet
     /// mid-frame — reloading the atlas texture there would drop the frame.
     bool flushPending() @system nothrow @nogc
     {
+        const shaped = clusters.flush();
         if (pending.length == 0)
-            return false;
+            return shaped;
         foreach (cp; pending[])
             requestedCps ~= cp;
         pending.clear();

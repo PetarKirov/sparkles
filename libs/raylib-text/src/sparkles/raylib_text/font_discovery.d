@@ -219,12 +219,9 @@ package bool isUndecoratedFace(scope const(char)[] path) @safe
 // would share it, and one run's cleanup would delete the other's fixture
 // mid-assert.
 //
-// A template rather than a plain function, with the test-utils import inside
-// its body: a module-scope `version (unittest)` import is evaluated by every
-// `-unittest` consumer that merely *imports* this module, and consumers do not
-// carry a test-utils edge. A template body is analyzed only when instantiated,
-// and only this module's own tests instantiate it.
-version (unittest)
+// Source-library consumers do not carry test-utils. Enable filesystem fixtures
+// only in this package's own unittest configuration.
+version (RaylibTextTests)
 {
     private auto uniqueTestDir()(string stem) @safe
     {
@@ -238,6 +235,7 @@ version (unittest)
     }
 }
 
+version (RaylibTextTests)
 @("resolveFontInDirs.preferenceListAndRanking")
 @system unittest
 {
@@ -266,6 +264,7 @@ version (unittest)
         == buildPath(dir, "DejaVuSansMono.ttf"));
 }
 
+version (RaylibTextTests)
 @("resolveFontInDirs.dirPrecedenceBeatsPathOrder")
 @system unittest
 {
@@ -289,6 +288,7 @@ version (unittest)
         == buildPath(aSecond, "SomeMono-Regular.ttf"));
 }
 
+version (RaylibTextTests)
 @("resolveFontInDirs.prefixBeatsInteriorMatch")
 @system unittest
 {
@@ -349,6 +349,7 @@ package void fontVariantPaths(string primaryPath,
     boldItalic = pick("-BoldItalic", "-BoldOblique");
 }
 
+version (RaylibTextTests)
 @("fontVariantPaths.namingConvention")
 @system unittest
 {

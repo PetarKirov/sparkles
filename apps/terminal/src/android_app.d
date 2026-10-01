@@ -79,7 +79,6 @@ int androidMain()
 
     cast(void) startAmServer(paths.amSocket, paths.home);
     runApp(app, cfg);
-    app.tv.close();
     // Static druntime cannot rt_init twice, and Android reuses the process
     // across activity recreations: end the process with the activity.
     exit(0);

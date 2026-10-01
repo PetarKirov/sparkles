@@ -108,9 +108,15 @@ in
         cIncludes = [
           "${config.packages.tree-sitter-android}/include"
           "${config.packages.libghostty-vt-android}/include"
+          "${config.packages.freetype-android}/include/freetype2"
+          "${config.packages.harfbuzz-android}/include/harfbuzz"
         ];
         staticLibs = abi: [
           "${config.packages.raylib-android}/lib/${abi}/libraylib.a"
+          "${config.packages.harfbuzz-android}/lib/${abi}/libharfbuzz.a"
+          "${config.packages.freetype-android}/lib/${abi}/libfreetype.a"
+          "${config.packages.freetype-android}/lib/${abi}/libpng16.a"
+          "${config.packages.freetype-android}/lib/${abi}/libz.a"
           "${config.packages.tree-sitter-android}/lib/${abi}/libtree-sitter.a"
           "${config.packages.libghostty-vt-android}/lib/${abi}/libghostty-vt.a"
           "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a"
@@ -168,6 +174,36 @@ in
           home = "https://www.uiua.org";
         }
         {
+          what = "Noto Sans (Unicode fallback fonts)";
+          pkg = pkgs.noto-fonts;
+          home = "https://notofonts.github.io";
+        }
+        {
+          what = "Noto Color Emoji (bundled font)";
+          pkg = pkgs.noto-fonts-color-emoji;
+          home = "https://github.com/googlefonts/noto-emoji";
+        }
+        {
+          what = "FreeType (statically linked)";
+          pkg = pkgs.freetype;
+          home = "https://freetype.org";
+        }
+        {
+          what = "HarfBuzz (statically linked)";
+          pkg = pkgs.harfbuzz;
+          home = "https://harfbuzz.github.io";
+        }
+        {
+          what = "libpng (statically linked)";
+          pkg = pkgs.libpng;
+          home = "https://www.libpng.org";
+        }
+        {
+          what = "zlib (statically linked)";
+          pkg = pkgs.zlib;
+          home = "https://zlib.net";
+        }
+        {
           what = "raylib (statically linked)";
           pkg = pkgs.raylib;
           home = "https://www.raylib.com";
@@ -192,6 +228,7 @@ in
         libghostty-vt (statically linked)
           licence: MIT
           home:    https://ghostty.org
+        This software is based in part on the work of the FreeType Team.
 
         hue itself and the sparkles libraries are part of this repository; see
         its LICENSE.
@@ -218,6 +255,9 @@ in
             # `.charset` sidecar (fc-query ran at ITS build time), so this is a
             # copy, not a second recipe to keep in sync.
             cp -rL ${fonts.fontBundle}/fonts $out/fonts
+            cp -rL ${fonts.fontBundle}/licenses $out/licenses
+            cp -r ${config.packages.freetype-android}/share/licenses/* $out/licenses/
+            cp -r ${config.packages.harfbuzz-android}/share/licenses/* $out/licenses/
 
             # Grammar queries — the desktop bundle's normalized queries/ dirs
             # verbatim (parsers ship separately as native libs; the registry's

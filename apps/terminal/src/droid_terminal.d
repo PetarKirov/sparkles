@@ -53,6 +53,12 @@ struct DroidTerminal
 
     @disable this(this);
 
+    /// The pane's GPU resources belong to this live host session.
+    void shutdown(H)(ref H h) @system
+    {
+        tv.shutdown(h);
+    }
+
     /// The frame's pre-render half: size the pane to the content rect, drain
     /// the pty, and decide whether to draw. See `TerminalView.frame`.
     WidgetTree view(H)(ref H h)

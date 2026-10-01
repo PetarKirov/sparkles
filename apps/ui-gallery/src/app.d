@@ -191,7 +191,6 @@ int main(string[] args)
     // A real run may fork shells; the recorded tests and --render, which
     // construct their own Gallery, leave this off and the request flags inert.
     app.spawnEnabled = true;
-    scope (exit) closeTerminals(app);
 
     final switch (runApp(app, cfg))
     {
@@ -209,13 +208,6 @@ int main(string[] args)
     }
 }
 
-/// End of run: every spawned shell reaped, every terminal handle freed. The
-/// store's close sends SIGHUP to a still-live child's process group first —
-/// leaving orphaned shells behind a catalog would be a poor demonstration.
-private void closeTerminals(ref Gallery app) @trusted
-{
-    app.store.closeAll();
-}
 
 /// Where `name` sits in the catalog's own theme order. Falls back to the
 /// default rather than failing: an alias spelling (`tokyonight`) resolves as a

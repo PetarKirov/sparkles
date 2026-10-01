@@ -2,7 +2,7 @@ name "ui-raylib"
 description "sparkles:ui GPU backend: paints the toolkit's display list via raylib over the shared FontSet, and synthesizes sparkles:input events from raylib's polled state"
 license "BSL-1.0"
 
-targetType "library"
+targetType "sourceLibrary"
 targetPath "../../build"
 
 importPaths "src"
@@ -17,7 +17,7 @@ dependency "sparkles:input" path="../.."
 dependency "sparkles:raylib-text" path="../.."
 
 configuration "library" {
-    targetType "library"
+    targetType "sourceLibrary"
 }
 
 configuration "unittest" {

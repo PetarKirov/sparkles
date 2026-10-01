@@ -117,6 +117,7 @@
                 file.hasExt "d"
                 || file.hasExt "c"
                 || file.hasExt "i"
+                || file.hasExt "h"
                 || file.hasExt "css"
                 || file.hasExt "svg"
                 || file.hasExt "frag"
@@ -156,6 +157,15 @@
           let
             # Explicit `sourceDirs` override, else the computed closure.
             srcDirs = args.sourceDirs or (sparklesSrcClosure "apps/${finalAttrs.pname}");
+            # ImportC's headers and the linked shaping libraries travel with
+            # every raylib-text consumer, including transitive UI consumers.
+            shapingInputs = lib.optionals (builtins.elem "libs/raylib-text/src" srcDirs) [
+              pkgs.freetype
+              pkgs.freetype.dev
+              pkgs.harfbuzz
+              pkgs.harfbuzz.dev
+            ];
+            buildInputs = (args.buildInputs or [ ]) ++ shapingInputs;
 
             # Default leak set. `buildDubPackage` already scrubs the compiler
             # itself in its `preFixup`, so this only adds the Phobos-baked paths
@@ -190,9 +200,7 @@
               pkgs.curl.out
               pkgs.tzdata
             ];
-            disallowed = lib.subtractLists (args.buildInputs or [ ]) (
-              args.disallowedReferences or defaultDisallowed
-            );
+            disallowed = lib.subtractLists buildInputs (args.disallowedReferences or defaultDisallowed);
             scrubFlags = lib.concatMapStringsSep " " (r: "-t ${r}") disallowed;
           in
           {
@@ -225,7 +233,11 @@
             src = args.src or (sourceFor srcDirs);
             sourceRoot = args.sourceRoot or "${finalAttrs.src.name}/apps/${finalAttrs.pname}";
 
-            nativeBuildInputs = (args.nativeBuildInputs or [ ]) ++ [ pkgs.makeWrapper ];
+            nativeBuildInputs =
+              (args.nativeBuildInputs or [ ])
+              ++ [ pkgs.makeWrapper ]
+              ++ lib.optional (shapingInputs != [ ]) pkgs.pkg-config;
+            inherit buildInputs;
 
             # dub writes into the unpacked (read-only) source tree.
             preBuild = args.preBuild or ''chmod -R u+w "$NIX_BUILD_TOP"'';

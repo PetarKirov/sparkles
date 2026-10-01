@@ -27,8 +27,8 @@ The rest of this page covers building from a checkout.
 ## Prerequisites
 
 sparkles:terminal runs on Linux. Building it needs the D toolchain, raylib,
-libghostty-vt, and fontconfig — all provided by the repository's Nix dev
-shell:
+libghostty-vt, fontconfig, FreeType, and HarfBuzz — all provided by the
+repository's Nix dev shell:
 
 ```bash
 nix develop   # or let direnv activate it
@@ -63,6 +63,19 @@ Names are resolved with `fc-match`. Bold and italic faces of the same family
 are picked up automatically; if a face is missing, the style is approximated
 (double-strike for bold, a slant offset for italic). Glyphs the chosen font
 lacks fall back to a Nerd Font and a common monospace font, when installed.
+
+Shaped clusters also search installed fonts, including color emoji fonts.
+For a self-contained font set (including Noto script and emoji fallbacks),
+build the bundle and select its directory:
+
+```bash
+nix build .#sparkles-fonts --out-link result-fonts
+dub run :terminal -- --font DejaVuSansMono --font-dir ./result-fonts/fonts
+```
+
+With `--font-dir`, names resolve against files in that directory rather than
+fontconfig aliases such as `monospace`. Cell graphics do not require fallback
+fonts: blocks, braille, box drawing, and mosaics are drawn procedurally.
 
 ## Running a command instead of a shell
 

@@ -27,6 +27,7 @@ in
     ./ndk.nix
     ./raylib.nix
     ./sdk.nix
+    ./shaping.nix
     ./terminal.nix
     ./terminal-nix.nix
     ./tree-sitter.nix
@@ -91,6 +92,8 @@ in
       # contain it either.
       legacyPackages.androidPackageNames = [
         "all-android"
+        "freetype-android"
+        "harfbuzz-android"
         "hello-apk"
         "hue-aab-unsigned"
         "hue-android-assets"

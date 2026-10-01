@@ -196,12 +196,19 @@ Params:
         and run whatever the application does once the surface exists, before
         the first frame. Optional — pass `null` for an application whose first
         frame is its first contact with the surface.
+    shutdown = called after the final frame, including when a callback throws.
 */
-RecordingHost runRecorded(Present, Handle)(
+RecordingHost runRecorded(Present, Handle, Shutdown = typeof(null))(
     in RunConfig cfg, scope Present present, scope Handle handle,
-    in Event[] script, scope void delegate(ref RecordingHost) @safe setup = null)
+    in Event[] script, scope void delegate(ref RecordingHost) @safe setup = null,
+    scope Shutdown shutdown = null)
 {
     RecordingHost h;
+    scope (exit)
+    {
+        static if (!is(Shutdown == typeof(null)))
+            shutdown(h);
+    }
     if (setup !is null)
         setup(h);
 
