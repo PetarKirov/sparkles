@@ -1,7 +1,8 @@
 /**
 The in-app `am` server (docs/specs/terminal/android.md, `NOD13`): listens on
 the socket nix-on-droid's `termux-am` connects to —
-`<files>/apps/<package>/termux-am/am.sock` — and answers the requests its
+`SessionPaths.amSocket`, Termux's layout unless `session.conf` says
+otherwise — and answers the requests its
 Android-integration tools make, natively (JNI into the framework), since this
 app has no Java to run a real `am` in. Decoding is `am_command.d`'s.
 
@@ -24,21 +25,12 @@ private shared bool reloadRequested;
 /// Whether a settings reload was requested since the last call.
 bool takeReloadRequest() @trusted nothrow @nogc => atomicExchange(&reloadRequested, false);
 
-/// The socket path for the app whose data dir is `files` (`…/<package>/files`).
-string amSocketPath(string files) @safe pure
-{
-    import std.path : baseName, buildPath, dirName;
-
-    const pkg = files.dirName.baseName;
-    return buildPath(files, "apps", pkg, "termux-am", "am.sock");
-}
-
 /**
-Start the server on a thread of its own; `false` (after a warning) when the
-socket cannot be bound. `home` is where `termux-setup-storage` puts
-`~/storage`.
+Start the server on a thread of its own, listening on `path`
+(`SessionPaths.amSocket`); `false` (after a warning) when the socket cannot be
+bound. `home` is where `termux-setup-storage` puts `~/storage`.
 */
-bool startAmServer(string files, string home)
+bool startAmServer(string path, string home)
 {
     import core.sys.posix.sys.socket : AF_UNIX, bind, listen, sockaddr, socket,
         SOCK_STREAM;
@@ -49,7 +41,6 @@ bool startAmServer(string files, string home)
     import std.path : dirName;
     import std.string : toStringz;
 
-    const path = amSocketPath(files);
     try
         mkdirRecurse(path.dirName);
     catch (Exception e)

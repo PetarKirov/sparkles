@@ -35,15 +35,15 @@ int androidMain()
 
     installLogcatSink(LogLevel.info, logTag);
 
-    const paths = SessionPaths(internalDataPath);
+    const conf = readAssetText("session.conf");
+    const config = conf is null ? SessionConfig.init : parseSessionConfig(conf);
+    info(i"terminal: session mode $(config.mode)");
+
+    const paths = SessionPaths(internalDataPath, config.amSocket);
     const fontsDir = buildPath(paths.files, "fonts");
     static immutable owned = ["fonts"];
     if (!extractAssetBundle(paths.files, owned, buildPath(paths.files, "assets-ready")))
         warning(i"terminal: no font bundle — falling back to $(systemFont)");
-
-    const conf = readAssetText("session.conf");
-    const config = conf is null ? SessionConfig.init : parseSessionConfig(conf);
-    info(i"terminal: session mode $(config.mode)");
 
     try
         mkdirRecurse(paths.home);
@@ -77,7 +77,7 @@ int androidMain()
     // termux-am's server (NOD13): nix-on-droid's android-integration tools.
     import am_server : startAmServer;
 
-    cast(void) startAmServer(paths.files, paths.home);
+    cast(void) startAmServer(paths.amSocket, paths.home);
     runApp(app, cfg);
     app.tv.close();
     // Static druntime cannot rt_init twice, and Android reuses the process

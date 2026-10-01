@@ -133,8 +133,11 @@ build.androidAppId = "dev.petar_kirov.sparkles.terminal.nix";
 A configuration created by the app's first start already has it.
 
 nix-on-droid's `android-integration` tools work through the app's built-in
-`am` server: `termux-open-url` and `termux-open <url>`, `termux-wake-lock`/
-`termux-wake-unlock`, `termux-reload-settings`, `termux-setup-storage`.
+`am` server: `am`, `termux-open-url`, `xdg-open` and `termux-open <url>`,
+`termux-wake-lock`/`termux-wake-unlock`, `termux-reload-settings`,
+`termux-setup-storage`. All of them are on from first boot: the bootstrap
+writes `android-integration.<tool>.enable = true;` into the first
+configuration, where you can turn any of them off.
 `termux-open` on a local _file_ does not: handing a private file to another
 app needs a content provider, which an app without Java cannot have — copy it
 to `~/storage/shared` first.

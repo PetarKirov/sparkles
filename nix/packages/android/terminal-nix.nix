@@ -21,6 +21,10 @@ let
   androidHost = import ./host.nix { inherit inputs; };
 
   appId = "dev.petar_kirov.sparkles.terminal.nix";
+  # Where the app's `am` server listens. Not Termux's layout
+  # (`files/apps/<id>/termux-am/am.sock`): with this id that is 115 bytes,
+  # over the 107 a Unix socket path can have.
+  amSocket = "/data/data/${appId}/files/apps/termux-am/am.sock";
 in
 {
   perSystem =
@@ -36,6 +40,23 @@ in
           androidAppId = appId;
           nixOnDroidChannelURL = "https://github.com/PetarKirov/nix-on-droid/archive/feat/android-app-id.tar.gz";
           nixOnDroidFlakeURL = "github:PetarKirov/nix-on-droid/feat/android-app-id";
+          # Every `android-integration` tool the app serves (its `am` server,
+          # apps/terminal/src/am_server.d), on from first boot, and where that
+          # server listens. Not `unsupported`: Termux's untested leftovers.
+          initialSettings =
+            lib.genAttrs (map (tool: "android-integration.${tool}.enable") [
+              "am"
+              "termux-open"
+              "termux-open-url"
+              "xdg-open"
+              "termux-setup-storage"
+              "termux-reload-settings"
+              "termux-wake-lock"
+              "termux-wake-unlock"
+            ]) (_: true)
+            // {
+              "android-integration.am.socketPath" = amSocket;
+            };
         };
       bootstrapZip = arch: "${(bootstrapPackages arch).bootstrapZip}/bootstrap-${arch}.zip";
 
@@ -48,6 +69,7 @@ in
         session = {
           mode = "bootstrap";
           bootstrapUrl = "https://nix-on-droid.unboiled.info/bootstrap-sparkles";
+          inherit amSocket;
         };
       };
     in
