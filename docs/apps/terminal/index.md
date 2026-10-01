@@ -1,7 +1,7 @@
-# Sparkles Terminal
+# sparkles:terminal
 
-A minimal, fast terminal emulator for Linux, written in D. It pairs
-[libghostty-vt](https://ghostty.org/docs/about) — the terminal core that
+`sparkles:terminal` (the `terminal` command) is a minimal, fast terminal
+emulator for Linux, written in D. It pairs [libghostty-vt](https://ghostty.org/docs/about) — the terminal core that
 powers [Ghostty](https://ghostty.org) — with a [raylib](https://www.raylib.com)
 renderer, in roughly two thousand lines of code.
 
@@ -13,7 +13,7 @@ nix profile add github:PetarKirov/sparkles#terminal
 
 :::
 
-![Sparkles Terminal running Neovim with D code, true-color syntax highlighting, and italic styled text](./screenshot.png)
+![sparkles:terminal running Neovim with D code, true-color syntax highlighting, and italic styled text](./screenshot.png)
 
 It exists for two reasons: as a usable, no-frills terminal, and as the
 real-world integration test for the `sparkles:ghostty` bindings (D bindings

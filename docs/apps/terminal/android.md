@@ -1,4 +1,4 @@
-# Sparkles Terminal on Android
+# sparkles:terminal on Android
 
 The same terminal as a native Android app: a NativeActivity APK with no Java
 in it, built entirely by Nix, running the `sparkles:terminal-view` core and
@@ -20,8 +20,9 @@ adb install result/terminal.apk
 ```
 
 nix-on-droid's app is the same code with nix-on-droid's settings — its own
-package id (`dev.sparkles.nix`), label, icon and bootstrap URL — and is built
-by the `app/` flake in a nix-on-droid checkout:
+package id (`dev.petar_kirov.sparkles.terminal.nix`), icon and bootstrap URL,
+under the same `sparkles:terminal` label — and is built by the `app/` flake in
+a nix-on-droid checkout:
 
 ```bash
 nix build ./app#apk           # downloads the bootstrap on first start
@@ -66,7 +67,7 @@ default, or the bootstrap bundled in an offline APK), downloads and unpacks it,
 and starts nix-on-droid's `login`. Your configuration must name the app:
 
 ```nix
-build.androidAppId = "dev.sparkles.nix";
+build.androidAppId = "dev.petar_kirov.sparkles.terminal.nix";
 ```
 
 A configuration created by the app's first start already has it.

@@ -1,4 +1,4 @@
-/// Repeatable CPU benchmark harness for the sparkles terminal emulator.
+/// Repeatable CPU benchmark harness for the sparkles:terminal emulator.
 ///
 /// The terminal redraws the whole grid every frame, so the metric that matters
 /// is CPU consumed at a fixed rendering load. This harness launches one or more
@@ -180,7 +180,7 @@ void main(string[] args)
     if (help.helpWanted || cfg.binaries.length == 0)
     {
         defaultGetoptPrinter(
-            "Benchmark the sparkles terminal's render CPU.\n\n" ~
+            "Benchmark sparkles:terminal's render CPU.\n\n" ~
             "Usage: terminal-benchmark [options] <terminal-binary> [<terminal-binary>...]\n\n" ~
             "Measures each binary's own CPU over a fixed window while it renders a\n" ~
             "deterministic workload. Pass two binaries (e.g. before/after a change) to\n" ~
@@ -206,7 +206,7 @@ void main(string[] args)
     std.file.write(buildPath(streamDir, "fill.vt"), fillStream(cfg.cols, cfg.rows));
     std.file.write(buildPath(streamDir, "dense.vt"), denseStream(cfg.cols, cfg.rows, 20));
 
-    writefln("# sparkles terminal benchmark");
+    writefln("# sparkles:terminal benchmark");
     writefln("# grid %dx%d, %d rep(s), %.0fs warmup, %.0fs window",
         cfg.cols, cfg.rows, cfg.reps, cfg.warmupSecs, cfg.windowSecs);
     writefln("# streams: %s", streamDir);

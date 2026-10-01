@@ -152,8 +152,8 @@ in
       */
       legacyPackages.mkTerminalApk =
         {
-          appId ? "dev.sparkles.terminal",
-          label ? "Terminal",
+          appId ? "dev.petar_kirov.sparkles.terminal",
+          label ? "sparkles:terminal",
           pname ? "terminal",
           iconSvg ? ../../../apps/terminal/android/icon/ic_launcher.svg,
           session ? {
@@ -191,7 +191,7 @@ in
             libs = apkLibs;
             assetsDir = mkAssets session bootstraps;
             targetSdk = 28;
-            description = "${label} — sparkles terminal (Android NativeActivity APK)";
+            description = "${label} — sparkles:terminal (Android NativeActivity APK)";
           }
           // lib.optionalAttrs (versionName != null) { inherit versionName; }
           // lib.optionalAttrs (versionCode != null) { inherit versionCode; }

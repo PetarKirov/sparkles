@@ -64,9 +64,9 @@ Established by running the spike APK, not by reading code:
 
 ## Decisions
 
-**D1 — A new package, `dev.sparkles.nix`.** Termux's data dir is
-`/data/data/com.termux.nix`, and the fork's signing key is not ours, so the new
-app cannot replace an installed one either way. nix-on-droid gains an app-id
+**D1 — A new package, `dev.petar_kirov.sparkles.terminal.nix`.** Termux's data
+dir is `/data/data/com.termux.nix`, and the fork's signing key is not ours, so
+the new app cannot replace an installed one either way. nix-on-droid gains an app-id
 option from which `installationDir`, `user.home` and the IPC paths derive; its
 default stays `com.termux.nix`, so an unchanged configuration keeps working with
 the old app. The bootstrap built _for_ the new app bakes its id into the
@@ -136,15 +136,15 @@ every pure module (`session`, `bootstrap_zip`, `installer` through a real pty,
 `extra_keys`, `termux_config`, `am_command`, `screen_oracle`, and the
 `terminal-view` spawn/adoption/colour tests).
 
-| Claim                                                                                             | How                                                                         | Where                   |
-| ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----------------------- |
-| NOD1, NOD3: no DEX; targetSdk 28, minSdk 29                                                       | the derivation refuses a `.dex`; `aapt2 dump badging`                       | build                   |
-| NOD4, NOD8, NOD12: plain shell, soft keyboard typing, output above the IME                        | `adb shell input`, keyboard taps, screenshots, the oracle                   | x86_64 emulator, API 36 |
-| NOD5–NOD7: install from a `file://` and an `http://` bootstrap, then `-login`; relaunch → `login` | a fake bootstrap, then nix-on-droid's real one built for `dev.sparkles.nix` | emulator                |
-| The whole of nix-on-droid: flakes first boot to `bash-5.2$`, config carries `build.androidAppId`  | nix-on-droid's `bootstrap_flakes.py`, ported, under droidctl                | emulator                |
-| NOD9: output produced in the background is drained                                                | a command finishing while the app sat behind the launcher                   | emulator                |
-| NOD10, NOD11: extra keys, Ctrl latch (Ctrl+c interrupts), Up recalls history, a colour scheme     | taps on the row, the oracle, screenshots                                    | emulator                |
-| NOD13: wake lock, open URL, reload settings, refusals                                             | a termux-am-socket client run in the app's own shell; `dumpsys power`       | emulator                |
+| Claim                                                                                             | How                                                                                              | Where                   |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ----------------------- |
+| NOD1, NOD3: no DEX; targetSdk 28, minSdk 29                                                       | the derivation refuses a `.dex`; `aapt2 dump badging`                                            | build                   |
+| NOD4, NOD8, NOD12: plain shell, soft keyboard typing, output above the IME                        | `adb shell input`, keyboard taps, screenshots, the oracle                                        | x86_64 emulator, API 36 |
+| NOD5–NOD7: install from a `file://` and an `http://` bootstrap, then `-login`; relaunch → `login` | a fake bootstrap, then nix-on-droid's real one built for `dev.petar_kirov.sparkles.terminal.nix` | emulator                |
+| The whole of nix-on-droid: flakes first boot to `bash-5.2$`, config carries `build.androidAppId`  | nix-on-droid's `bootstrap_flakes.py`, ported, under droidctl                                     | emulator                |
+| NOD9: output produced in the background is drained                                                | a command finishing while the app sat behind the launcher                                        | emulator                |
+| NOD10, NOD11: extra keys, Ctrl latch (Ctrl+c interrupts), Up recalls history, a colour scheme     | taps on the row, the oracle, screenshots                                                         | emulator                |
+| NOD13: wake lock, open URL, reload settings, refusals                                             | a termux-am-socket client run in the app's own shell; `dumpsys power`                            | emulator                |
 
 Not yet run: the other ported emulator tests in CI (they need `app/flake.lock`
 pinned to a published sparkles revision), and any physical device.

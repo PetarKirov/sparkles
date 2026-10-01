@@ -58,7 +58,7 @@ int androidMain()
         : systemFont;
 
     RunConfig cfg = {
-        title: "Sparkles Terminal",
+        title: "sparkles:terminal",
         gui: guiOptionsFrom(TerminalCli(
             font: font,
             fontDirs: [fontsDir, "/system/fonts"],

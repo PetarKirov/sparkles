@@ -218,7 +218,7 @@
         version = "0.1.0";
 
         meta = {
-          description = "CPU/throughput benchmark harness for the sparkles terminal emulator";
+          description = "CPU/throughput benchmark harness for the sparkles:terminal emulator";
           mainProgram = finalAttrs.pname;
         };
       });

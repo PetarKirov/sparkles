@@ -26,7 +26,7 @@ The rest of this page covers building from a checkout.
 
 ## Prerequisites
 
-Sparkles Terminal runs on Linux. Building it needs the D toolchain, raylib,
+sparkles:terminal runs on Linux. Building it needs the D toolchain, raylib,
 libghostty-vt, and fontconfig — all provided by the repository's Nix dev
 shell:
 

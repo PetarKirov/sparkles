@@ -323,12 +323,12 @@ bool isUrl(const(char)[] s) @safe pure nothrow @nogc
     assert(link.kind == AmRequestKind.openUrl && link.target == "https://nixos.org");
 
     assert(req(`start --user 0 -a android.intent.action.VIEW -d https://nixos.org`).kind == AmRequestKind.openUrl);
-    assert(req(`startservice --user 0 -a com.termux.service_wake_lock dev.sparkles.nix/com.termux.app.TermuxService`).kind == AmRequestKind.wakeLock);
-    assert(req(`startservice --user 0 -a com.termux.service_wake_unlock dev.sparkles.nix/com.termux.app.TermuxService`).kind == AmRequestKind.wakeUnlock);
-    assert(req(`broadcast --user 0 -a dev.sparkles.nix.app.reload_style dev.sparkles.nix`).kind == AmRequestKind.reloadSettings);
-    assert(req(`broadcast --user 0 --es com.termux.app.reload_style storage -a dev.sparkles.nix.app.reload_style dev.sparkles.nix`).kind == AmRequestKind.setupStorage);
-    // Verbatim from the script nix-on-droid builds for dev.sparkles.nix.
-    assert(req(`broadcast --user 0 --es dev.sparkles.nix.app.reload_style storage -a dev.sparkles.nix.app.reload_style dev.sparkles.nix`).kind == AmRequestKind.setupStorage);
+    assert(req(`startservice --user 0 -a com.termux.service_wake_lock dev.petar_kirov.sparkles.terminal.nix/com.termux.app.TermuxService`).kind == AmRequestKind.wakeLock);
+    assert(req(`startservice --user 0 -a com.termux.service_wake_unlock dev.petar_kirov.sparkles.terminal.nix/com.termux.app.TermuxService`).kind == AmRequestKind.wakeUnlock);
+    assert(req(`broadcast --user 0 -a dev.petar_kirov.sparkles.terminal.nix.app.reload_style dev.petar_kirov.sparkles.terminal.nix`).kind == AmRequestKind.reloadSettings);
+    assert(req(`broadcast --user 0 --es com.termux.app.reload_style storage -a dev.petar_kirov.sparkles.terminal.nix.app.reload_style dev.petar_kirov.sparkles.terminal.nix`).kind == AmRequestKind.setupStorage);
+    // Verbatim from the script nix-on-droid builds for dev.petar_kirov.sparkles.terminal.nix.
+    assert(req(`broadcast --user 0 --es dev.petar_kirov.sparkles.terminal.nix.app.reload_style storage -a dev.petar_kirov.sparkles.terminal.nix.app.reload_style dev.petar_kirov.sparkles.terminal.nix`).kind == AmRequestKind.setupStorage);
     assert(req(`force-stop com.example`).kind == AmRequestKind.unsupported);
     assert(req(`start -a android.intent.action.VIEW -d file:///x`).kind == AmRequestKind.unsupported);
 }
