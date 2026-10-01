@@ -18,7 +18,7 @@
     soname from the app's linker namespace; extracted real files also keep
     ndk-stack symbolization simple. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="dev.sparkles.hue">
+    package="dev.petar_kirov.sparkles.hue">
 
     <!-- No <uses-sdk> on purpose: aapt2's min/target-sdk-version flags only
         apply as DEFAULTS when the manifest omits it, so declaring it here would
@@ -42,7 +42,7 @@
         resources: resources are data the framework resolves by numeric id, and
         no R.java or DEX is involved. -->
     <application
-        android:label="hue"
+        android:label="sparkles:hue"
         android:icon="@mipmap/ic_launcher"
         android:hasCode="false"
         android:allowBackup="false"

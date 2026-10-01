@@ -452,7 +452,7 @@ int runGui(GuiArgs guiArgs) @system
     // (`HST18`): its chrome is positioned to the pixel, and cell-quantised
     // positions would move every hit test in the module.
     RunConfig cfg = {
-        title: "hue — " ~ title,
+        title: "sparkles:hue — " ~ title,
         gui: gui,
         targetFps: 60,
         pointerUnit: PointerUnit.pixels,
@@ -742,7 +742,7 @@ int runGui(GuiArgs guiArgs) @system
         vm.widthCols = widthCols();
         vm.applyTheme(i);
         window.title(text(
-            i"hue — $(title) — $(names[i]) ($(i + 1)/$(names.length))"));
+            i"sparkles:hue — $(title) — $(names[i]) ($(i + 1)/$(names.length))"));
         // The explorer pane follows the theme too — page colors and the
         // palette its slots resolve against, not just the syntax colors.
         pn.tree.theme = vm.current;
@@ -889,7 +889,7 @@ int runGui(GuiArgs guiArgs) @system
         cm.tableFmt = resolveTableCopy(tableCopyFlag, doc.dsvInfo.present);
         inp.query.clear();
         inp.mode = Mode.normal;
-        window.title(text(i"hue — $(name)"));
+        window.title(text(i"sparkles:hue — $(name)"));
         pn.tree.reveal(path); // the explorer follows the open document (XPL3/4)
         startLive(path, vm.tw.code.length != 0);
         return true;

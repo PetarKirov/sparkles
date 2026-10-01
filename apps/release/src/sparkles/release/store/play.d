@@ -403,10 +403,10 @@ version (unittest)
 
     // Easy to miss, and a 404 when missed: media uploads are served from
     // /upload/, not the same prefix as the rest of the API.
-    assert(editsUrl("dev.sparkles.hue")
-        == "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/dev.sparkles.hue/edits");
-    assert(bundleUploadUrl("dev.sparkles.hue", "abc").canFind("/upload/androidpublisher/v3/"));
-    assert(bundleUploadUrl("dev.sparkles.hue", "abc").canFind("uploadType=media"));
+    assert(editsUrl("dev.petar_kirov.sparkles.hue")
+        == "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/dev.petar_kirov.sparkles.hue/edits");
+    assert(bundleUploadUrl("dev.petar_kirov.sparkles.hue", "abc").canFind("/upload/androidpublisher/v3/"));
+    assert(bundleUploadUrl("dev.petar_kirov.sparkles.hue", "abc").canFind("uploadType=media"));
 }
 
 @("store.play.trackBodyNamesTheVersionCode")

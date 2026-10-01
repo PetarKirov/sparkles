@@ -39,7 +39,7 @@ submission is a delta rather than a rewrite.
 
 | Field              | Value                                                                        |
 | ------------------ | ---------------------------------------------------------------------------- |
-| Application id     | `dev.sparkles.hue`                                                           |
+| Application id     | `dev.petar_kirov.sparkles.hue`                                               |
 | Launcher label     | `hue`                                                                        |
 | ABIs               | `arm64-v8a` + `x86_64`, one APK (not split)                                  |
 | minSdk / targetSdk | 26 / 35                                                                      |
@@ -49,7 +49,7 @@ submission is a delta rather than a rewrite.
 | Immutable origin   | the GitHub Release asset for the tag                                         |
 | Channel            | a self-hosted F-Droid repository (object storage; URL pending — see `FDR10`) |
 
-`hue-apk-repo` (`dev.sparkles.hue.repo`, the variant embedding the whole
+`hue-apk-repo` (`dev.petar_kirov.sparkles.hue.repo`, the variant embedding the whole
 repository as its browse surface) is a **dogfooding** artifact and is
 deliberately not published: it differs only in its asset bundle, costs ~29 MB
 more, and every published format carries an identity, upgrade and support
@@ -170,25 +170,25 @@ the signature.
 
 Losing the two keys has very different costs, which is why they are separate:
 
-| Key   | Signs                                    | If lost                                                                                                                           |
-| ----- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| APK   | `dev.sparkles.hue_<versionCode>.apk`     | **Catastrophic** — Android refuses an update signed by a different certificate; every installed user must uninstall and reinstall |
-| Index | `entry.jar`, `index-v1.jar`, `index.jar` | Recoverable — users re-add the repository with the new fingerprint                                                                |
+| Key   | Signs                                            | If lost                                                                                                                           |
+| ----- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| APK   | `dev.petar_kirov.sparkles.hue_<versionCode>.apk` | **Catastrophic** — Android refuses an update signed by a different certificate; every installed user must uninstall and reinstall |
+| Index | `entry.jar`, `index-v1.jar`, `index.jar`         | Recoverable — users re-add the repository with the new fingerprint                                                                |
 
 ## Requirements
 
-| ID    | Requirement                                                                                                                                                                                                                            | Status                                          | Where                                           |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------- |
-| FDR1  | `buildAndroidApk` has exactly three states — signed-debug, signed-release (external key), unsigned — and the combinations that would leak a debug-signed or accidentally-unsigned artifact are **eval errors**, not conventions        | full                                            | `build-apk.nix` `sign` + four assertions        |
-| FDR2  | No signing key or passphrase reaches `/nix/store` or a process's argv (`apksigner --ks-pass env:`, never `pass:`; `/proc` is world-readable)                                                                                           | full                                            | `build-apk.nix`, `apps/fdroid/…/keystore.d`     |
-| FDR3  | The APK carries a launcher icon at every density, rasterized deterministically from **one** committed SVG; the F-Droid listing icon (512×512) comes from the same source                                                               | full (placeholder art)                          | `icon.nix`, `AndroidManifest.xml`               |
-| FDR4  | The declared minSdk equals the real floor. Set by the Skia/Graphite/Vulkan backend (26), above libkqueue's independent ≥23 (`sigwaitinfo`); the previously declared 21 installed on devices that could not load `libhue.so`            | full                                            | `ndk.nix`, `libkqueue.nix`                      |
-| FDR5  | `versionName`/`versionCode` derive from the tag through `sparkles:versions` (`Tiny.orderKey`), with the signed-int32 and no-prerelease guards enforced before a build starts                                                           | full                                            | `mkHueApk`, `apps/fdroid/…/plan.d`              |
-| FDR6  | The published APK's signing certificate is **pinned** in metadata (`AllowedAPKSigningKeys`), so a swapped CI secret cannot publish under this application id                                                                           | plumbed; pin empty until the release key exists | `apps/hue/fdroid/metadata/dev.sparkles.hue.yml` |
-| FDR7  | Publication is idempotent and never replaces published bytes: re-running may fill a missing asset, but a differing digest for an existing `versionCode` fails closed                                                                   | full                                            | `apps/fdroid/…/plan.d`, `deploy.d`              |
-| FDR8  | A release manifest — filename, size, SHA-256, tag, commit, signing status — is generated from the actual bytes **after** signing, and the signed APK is attached to the GitHub Release as the immutable origin before the channel copy | full                                            | `apps/fdroid/…/plan.d`, `fdroid.yml`            |
-| FDR9  | The workflow has a non-publishing path: `workflow_dispatch` defaults to a dry run that builds, signs, and indexes into an artifact without deploying, and forks never see the secrets                                                  | full (untriggered)                              | `.github/workflows/fdroid.yml`                  |
-| FDR10 | The install path is documented and trust-anchored: repository URL, SHA-256 fingerprint, and QR, published in the README and the docs site                                                                                              | blocked on the repository URL                   | `README.md`, docs                               |
+| ID    | Requirement                                                                                                                                                                                                                            | Status                                          | Where                                                       |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------- |
+| FDR1  | `buildAndroidApk` has exactly three states — signed-debug, signed-release (external key), unsigned — and the combinations that would leak a debug-signed or accidentally-unsigned artifact are **eval errors**, not conventions        | full                                            | `build-apk.nix` `sign` + four assertions                    |
+| FDR2  | No signing key or passphrase reaches `/nix/store` or a process's argv (`apksigner --ks-pass env:`, never `pass:`; `/proc` is world-readable)                                                                                           | full                                            | `build-apk.nix`, `apps/fdroid/…/keystore.d`                 |
+| FDR3  | The APK carries a launcher icon at every density, rasterized deterministically from **one** committed SVG; the F-Droid listing icon (512×512) comes from the same source                                                               | full (placeholder art)                          | `icon.nix`, `AndroidManifest.xml`                           |
+| FDR4  | The declared minSdk equals the real floor. Set by the Skia/Graphite/Vulkan backend (26), above libkqueue's independent ≥23 (`sigwaitinfo`); the previously declared 21 installed on devices that could not load `libhue.so`            | full                                            | `ndk.nix`, `libkqueue.nix`                                  |
+| FDR5  | `versionName`/`versionCode` derive from the tag through `sparkles:versions` (`Tiny.orderKey`), with the signed-int32 and no-prerelease guards enforced before a build starts                                                           | full                                            | `mkHueApk`, `apps/fdroid/…/plan.d`                          |
+| FDR6  | The published APK's signing certificate is **pinned** in metadata (`AllowedAPKSigningKeys`), so a swapped CI secret cannot publish under this application id                                                                           | plumbed; pin empty until the release key exists | `apps/hue/fdroid/metadata/dev.petar_kirov.sparkles.hue.yml` |
+| FDR7  | Publication is idempotent and never replaces published bytes: re-running may fill a missing asset, but a differing digest for an existing `versionCode` fails closed                                                                   | full                                            | `apps/fdroid/…/plan.d`, `deploy.d`                          |
+| FDR8  | A release manifest — filename, size, SHA-256, tag, commit, signing status — is generated from the actual bytes **after** signing, and the signed APK is attached to the GitHub Release as the immutable origin before the channel copy | full                                            | `apps/fdroid/…/plan.d`, `fdroid.yml`                        |
+| FDR9  | The workflow has a non-publishing path: `workflow_dispatch` defaults to a dry run that builds, signs, and indexes into an artifact without deploying, and forks never see the secrets                                                  | full (untriggered)                              | `.github/workflows/fdroid.yml`                              |
+| FDR10 | The install path is documented and trust-anchored: repository URL, SHA-256 fingerprint, and QR, published in the README and the docs site                                                                                              | blocked on the repository URL                   | `README.md`, docs                                           |
 
 Deliberately **not** requirements here: SBOM and provenance attestation
 (Milestone 2 of the packaging roadmap, and out of scope for one channel), per-ABI
@@ -234,7 +234,7 @@ including its modified and untracked file lists). The layout below is what
 ├── metadata/…                  copied, with CurrentVersion* rewritten
 ├── icon.png                    the 512×512 repo icon — see the trap below
 ├── keystore.p12                decoded from the CI secret, mode 600
-├── repo/dev.sparkles.hue_<versionCode>.apk
+├── repo/dev.petar_kirov.sparkles.hue_<versionCode>.apk
 └── archive/
 ```
 
@@ -261,7 +261,7 @@ they are, the pipeline runs and stops at `--stage index`.
    ```
 
    Then pin the APK certificate in
-   `apps/hue/fdroid/metadata/dev.sparkles.hue.yml` (`FDR6`) — quoted:
+   `apps/hue/fdroid/metadata/dev.petar_kirov.sparkles.hue.yml` (`FDR6`) — quoted:
 
    ```console
    $ apksigner verify --print-certs <a signed apk> | grep 'SHA-256 digest'

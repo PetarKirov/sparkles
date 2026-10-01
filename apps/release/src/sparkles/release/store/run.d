@@ -22,7 +22,7 @@ import std.stdio : writeln, writefln;
 @safe:
 
 /// The application this repository publishes.
-enum applicationId = "dev.sparkles.hue";
+enum applicationId = "dev.petar_kirov.sparkles.hue";
 
 /// Inputs a run needs beyond the environment.
 struct RunOptions

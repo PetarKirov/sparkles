@@ -5,14 +5,14 @@
     before any hue code is involved. Same shape as ../AndroidManifest.xml,
     distinct package id so it can live beside the real app. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="dev.sparkles.hue.hello">
+    package="dev.petar_kirov.sparkles.hue.hello">
 
     <!-- versionCode/versionName and <uses-sdk> are injected by aapt2 from nix
         (see ../AndroidManifest.xml for why they are not declared here). -->
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
     <application
-        android:label="hue hello"
+        android:label="sparkles:hue hello"
         android:hasCode="false"
         android:allowBackup="false"
         android:extractNativeLibs="true">

@@ -2177,7 +2177,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
         // `motion: true` is any-event tracking (1003): bare pointer motion
         // reports too, so the divider can show a hover resize cursor.
         RunConfig cfg = {
-            title: "hue",
+            title: "sparkles:hue",
             motion: true,
             backend: Backend.tui,
             autoBackend: false,

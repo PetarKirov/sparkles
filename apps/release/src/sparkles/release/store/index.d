@@ -143,7 +143,7 @@ version (unittest)
     private enum sampleIndex = `{
         "repo": {"name": {"en-US": "sparkles"}},
         "packages": {
-            "dev.sparkles.hue": {
+            "dev.petar_kirov.sparkles.hue": {
                 "metadata": {"license": "BSL-1.0"},
                 "versions": {
                     "abc123": {"manifest": {"versionCode": 1024, "versionName": "0.4.0"}},
@@ -159,7 +159,7 @@ version (unittest)
 {
     import std.algorithm : canFind;
 
-    const app = appFromIndex(parseJSON(sampleIndex), "dev.sparkles.hue");
+    const app = appFromIndex(parseJSON(sampleIndex), "dev.petar_kirov.sparkles.hue");
     assert(app.present);
     assert(app.versionCodes.length == 2);
     assert(app.versionCodes.canFind(1024u));
@@ -173,22 +173,22 @@ version (unittest)
     // A first publish, and the shape fdroidserver leaves behind when an
     // AllowedAPKSigningKeys mismatch drops every APK — the case the exit code
     // does not report.
-    const none = appFromIndex(parseJSON(`{"repo": {}, "packages": {}}`), "dev.sparkles.hue");
+    const none = appFromIndex(parseJSON(`{"repo": {}, "packages": {}}`), "dev.petar_kirov.sparkles.hue");
     assert(!none.present);
     assert(none.highestVersionCode == 0);
 
-    const other = appFromIndex(parseJSON(sampleIndex), "dev.sparkles.other");
+    const other = appFromIndex(parseJSON(sampleIndex), "dev.petar_kirov.sparkles.other");
     assert(!other.present);
 
     // Malformed input degrades to "absent" rather than throwing.
-    assert(!appFromIndex(parseJSON(`{}`), "dev.sparkles.hue").present);
-    assert(!appFromIndex(parseJSON(`[]`), "dev.sparkles.hue").present);
+    assert(!appFromIndex(parseJSON(`{}`), "dev.petar_kirov.sparkles.hue").present);
+    assert(!appFromIndex(parseJSON(`[]`), "dev.petar_kirov.sparkles.hue").present);
 }
 
 @("store.index.refusesRepublishAndDowngrade")
 @safe unittest
 {
-    const app = appFromIndex(parseJSON(sampleIndex), "dev.sparkles.hue");
+    const app = appFromIndex(parseJSON(sampleIndex), "dev.petar_kirov.sparkles.hue");
 
     assert(checkPublishable(app, 1280) == PublishRefusal.none);
     assert(checkPublishable(app, 1025) == PublishRefusal.alreadyPublished);

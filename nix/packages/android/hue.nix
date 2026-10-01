@@ -364,15 +364,15 @@ in
       # Same app, the whole sparkles repository embedded as the browse surface
       # (dogfooding: hue reading its own codebase on-device).
       #
-      # Distinct package id and pname: sharing `dev.sparkles.hue` meant
-      # installing one silently REPLACED the other, and both derivations
+      # Distinct package id and pname: sharing `dev.petar_kirov.sparkles.hue`
+      # meant installing one silently REPLACED the other, and both derivations
       # emitted `$out/hue.apk` from a store path named `hue-…`, so nothing
       # on disk distinguished them and `hue-adb-install`'s default picked
       # whichever landed on ./result.
       packages.hue-apk-repo = config.legacyPackages.buildAndroidApk {
         pname = "hue-repo";
         manifest = ../../../apps/hue/android/AndroidManifest.xml;
-        renamePackage = "dev.sparkles.hue.repo";
+        renamePackage = "dev.petar_kirov.sparkles.hue.repo";
         resDir = "${config.packages.hue-icon}/res";
         libs = apkLibs;
         assetsDir = hueAssetsRepo;

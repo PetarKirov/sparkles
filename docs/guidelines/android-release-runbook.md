@@ -45,7 +45,7 @@ One-time. Until all four are done, the pipeline stops at `--stage index`.
       comparable — see [key custody](#key-custody).
 
 - [ ] **Pin the APK certificate.** Sign anything once, read the fingerprint, and
-      put it in `apps/hue/fdroid/metadata/dev.sparkles.hue.yml` under
+      put it in `apps/hue/fdroid/metadata/dev.petar_kirov.sparkles.hue.yml` under
       `AllowedAPKSigningKeys` — **quoted**, or an all-digit digest is parsed as
       a YAML integer and rejected.
 
@@ -128,7 +128,7 @@ first) and confirm the app appears with its icon, description, screenshots and
 ```bash
 curl -s "$SPARKLES_FDROID_REPO_URL/index-v2.json" \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); \
-      p=d["packages"]["dev.sparkles.hue"]; \
+      p=d["packages"]["dev.petar_kirov.sparkles.hue"]; \
       print(sorted(v["manifest"]["versionCode"] for v in p["versions"].values()))'
 ```
 
@@ -202,7 +202,7 @@ actually signed. The error prints the signer's fingerprint; compare it with the
 metadata:
 
 ```bash
-grep -A2 AllowedAPKSigningKeys apps/hue/fdroid/metadata/dev.sparkles.hue.yml
+grep -A2 AllowedAPKSigningKeys apps/hue/fdroid/metadata/dev.petar_kirov.sparkles.hue.yml
 ```
 
 If the metadata is wrong, fix and re-run — nothing was deployed. If the

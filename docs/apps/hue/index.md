@@ -1,8 +1,8 @@
-# hue
+# sparkles:hue
 
-`hue` is an interactive syntax-highlighting file viewer, live theme previewer,
-grammar-aware diff engine, and pull request inspector powered by
-[`sparkles:syntax`](../../libs/syntax/) and tree-sitter.
+`sparkles:hue` (the `hue` command) is an interactive syntax-highlighting file
+viewer, live theme previewer, grammar-aware diff engine, and pull request
+inspector powered by [`sparkles:syntax`](../../libs/syntax/) and tree-sitter.
 
 It renders source code and documents across four distinct backends:
 non-interactive **ANSI** color streams, an interactive terminal **TUI**,

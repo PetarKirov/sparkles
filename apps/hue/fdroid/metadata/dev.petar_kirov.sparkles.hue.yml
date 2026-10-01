@@ -4,7 +4,7 @@
 # fdroidserver compiles itself. This repository indexes a prebuilt APK — Nix
 # builds it, `fdroid-publish` signs it, and `fdroid update` only reads it.
 #
-# Localized text lives in metadata/dev.sparkles.hue/en-US/ (fastlane layout) and
+# Localized text lives in metadata/dev.petar_kirov.sparkles.hue/en-US/ (fastlane layout) and
 # OVERRIDES anything set here, so Summary/Description are omitted rather than
 # duplicated where they would silently lose.
 
@@ -20,7 +20,7 @@ SourceCode: https://github.com/PetarKirov/sparkles
 IssueTracker: https://github.com/PetarKirov/sparkles/issues
 Changelog: https://github.com/PetarKirov/sparkles/releases
 
-Name: hue
+Name: sparkles:hue
 
 # The certificate pin (FDR6). `fdroid update` drops any APK whose signer is not
 # listed — before indexing it — so a swapped or compromised CI secret cannot
