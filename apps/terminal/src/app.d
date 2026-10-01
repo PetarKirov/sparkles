@@ -69,7 +69,7 @@ private int desktopMain(string[] args)
     if (helpInfo.helpWanted)
     {
         defaultGetoptPrinter(
-            "A minimal terminal emulator using libghostty-vt.\n\n" ~
+            "sparkles:terminal — a minimal terminal emulator using libghostty-vt.\n\n" ~
             "Usage: terminal [options] [-- command [args...]]\n\n" ~
             "With no command, the login shell runs interactively. With a command,\n" ~
             "the shell runs it via `-c` and then exits (e.g. `terminal -- vim file`).",
@@ -86,7 +86,7 @@ private int desktopMain(string[] args)
     logBuildInfo();
 
     RunConfig cfg = {
-        title: "Sparkles Terminal",
+        title: "sparkles:terminal",
         gui: guiOptionsFrom(TerminalCli(
             font: fontOpt,
             fontSizePt: fontSizePt,

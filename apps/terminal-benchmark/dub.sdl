@@ -1,5 +1,5 @@
 name "terminal-benchmark"
-description "CPU/throughput benchmark harness for the sparkles terminal emulator"
+description "CPU/throughput benchmark harness for the sparkles:terminal emulator"
 authors "Petar Kirov"
 license "BSL-1.0"
 

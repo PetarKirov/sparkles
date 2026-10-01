@@ -28,7 +28,7 @@
     a local or LAN mirror is often plain http; the default for targetSdk 28
     would refuse it. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="dev.sparkles.terminal">
+    package="dev.petar_kirov.sparkles.terminal">
 
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 

@@ -97,12 +97,12 @@ struct SessionPaths
 @("session.SessionPaths")
 @safe pure unittest
 {
-    const p = SessionPaths("/data/user/0/dev.sparkles.nix/files");
-    assert(p.home == "/data/user/0/dev.sparkles.nix/files/home");
-    assert(p.prefix == "/data/user/0/dev.sparkles.nix/files/usr");
-    assert(p.login == "/data/user/0/dev.sparkles.nix/files/usr/bin/login");
-    assert(p.termuxDir == "/data/user/0/dev.sparkles.nix/files/home/.termux");
-    assert(p.packageName == "dev.sparkles.nix");
+    const p = SessionPaths("/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files");
+    assert(p.home == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/home");
+    assert(p.prefix == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/usr");
+    assert(p.login == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/usr/bin/login");
+    assert(p.termuxDir == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/home/.termux");
+    assert(p.packageName == "dev.petar_kirov.sparkles.terminal.nix");
 }
 
 /**
