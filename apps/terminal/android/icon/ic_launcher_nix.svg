@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- The Nix flavour's launcher icon: a lambda and a block cursor on a dark
+       rounded tile. Rasterized to every density by mkAndroidIcon. -->
+  <rect x="8" y="8" width="176" height="176" rx="36" fill="#1e2030"/>
+  <path d="M58 52 L82 52 L130 140 L108 140 L90 106 L70 140 L48 140 L79 88 Z"
+        fill="#7eb7e6"/>
+  <rect x="126" y="126" width="28" height="14" rx="3" fill="#a6da95"/>
+</svg>

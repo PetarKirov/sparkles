@@ -28,6 +28,7 @@ in
     ./raylib.nix
     ./sdk.nix
     ./terminal.nix
+    ./terminal-nix.nix
     ./tree-sitter.nix
     ./ts-grammars.nix
   ];
