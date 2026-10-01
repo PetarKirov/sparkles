@@ -4,12 +4,13 @@
 
 ## Evidence levels
 
-| Level                 | Meaning                                             | Examples in this catalog                                            |
-| --------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
-| Observed locally      | Command/probe ran on connected physical hardware    | Pad AVF info, protected Microdroid boot, real app-domain probes     |
-| Upstream demonstrated | Source author records execution on a stated setup   | Rooted Lenovo Gunyah guide; NNS Android harness                     |
-| Source inspected      | Mechanism verified in pinned implementation         | AVF permission checks, NNS launcher, custom bootstrap               |
-| Proposed / inferred   | Integration could follow but has not passed locally | No-DEX AVF owner, custom NixOS on Pad, Pixel/MediaTek compatibility |
+| Level                 | Meaning                                                | Examples in this catalog                                            |
+| --------------------- | ------------------------------------------------------ | ------------------------------------------------------------------- |
+| Observed locally      | Command/probe ran on connected physical hardware       | Pad AVF info, protected Microdroid boot, real app-domain probes     |
+| Contributor observed  | Physical-device collector output supplied and reviewed | Pixel 7 Pro AVF capabilities and live NNS app/session/daemon views  |
+| Upstream demonstrated | Source author records execution on a stated setup      | Rooted Lenovo Gunyah guide; NNS Android harness                     |
+| Source inspected      | Mechanism verified in pinned implementation            | AVF permission checks, NNS launcher, custom bootstrap               |
+| Proposed / inferred   | Integration could follow but has not passed locally    | No-DEX AVF owner, custom NixOS on Pad, Pixel/MediaTek compatibility |
 
 A feature bit, device node, guest boot, app permission and complete development workflow are different achievements. The tests below do not claim a working local NixOS backend or quantify performance.
 
@@ -31,11 +32,11 @@ Stored device transcripts normalize carriage returns, NUL separators and trailin
 | App namespace route                | Rejected                                       | Rejected                                                              |
 | Independent shell-owned guest boot | Not available through observed stack           | Protected Microdroid payload ready                                    |
 
-The Pixel 10 Pro is deferred at the user's request. No Pixel or MediaTek hardware was tested. These are exact firmware observations, not enduring support guarantees for the model names.
+The Pixel 10 Pro is deferred at the user's request. A contributor supplied [Pixel 7 Pro evidence][pixel7] from a provisioned Android 16 device: both AVF guest modes are reported, and a live NNS Zsh session has canonical store paths, the app UID and separate user/mount namespaces. The Pixel was not connected to this research workstation; no Pixel guest was launched by the collector. No MediaTek hardware was tested. These are exact deployment observations, not enduring support guarantees for the model names.
 
 A separate `getconf PAGESIZE` query on the Pad returned 4096 bytes. Future device inventories should record page size and apply [the native compatibility checks][page-size] before attributing a launch failure to the execution backend.
 
-The original phone was disconnected when the Pad was connected. Its results were recorded from live tool output; the Pad has [raw inventory][inventory-log], [capability output][avf-log], [guest boot log][boot-log] and [app probe output][app-log]. The phone's disposable `files/android-research` probe directory and `/data/local/tmp/sparkles-android-app-probe` could not be cleaned after disconnect; remove those research-created files on reconnection. No system policy or existing application data was changed.
+The original phone was disconnected when the Pad was connected. Its initial results were recorded from live tool output; the Pad has [raw inventory][inventory-log], [capability output][avf-log], [guest boot log][boot-log] and [app probe output][app-log]. The phone was subsequently reconnected: its captured [app probe output][phone-app-log] was retrieved and its disposable `files/android-research` probe directory and `/data/local/tmp/sparkles-android-app-probe` removed. No system policy or existing application data was changed.
 
 ## Reproduce the inventory
 
@@ -99,6 +100,8 @@ The phone snapshot had roughly 7 GiB total RAM, about 1.4 GiB available, 15% bat
 
 Only one relevant VM mode was boot-tested, and the custom app's full PRoot bootstrap was not completed as part of this research. A same-device backend benchmark would therefore give misleading coverage. Follow [the proposed workload protocol][recommendations] after two backends meet functional gates.
 
+The [Pixel report][pixel7] is an existing-process observation, not a workload benchmark. Its active NNS shell supplies new functional evidence, but signed substitution/build, DNS/TTY behavior, app-store-write rejection, independent terminal ownership and AVF custom-image boot remain acceptance gates. The report's seven nonzero process statuses reflect missing canonical paths outside NNS views, not seven failed NNS sessions.
+
 ## CI scope
 
 The [examples][examples] are registered in `apps/ci`'s standalone defaults. CI parses an actual ELF, exercises real disposable namespace calls where permitted, runs the libc probe on Linux, and checks that device collectors skip without an explicit serial. CI does not silently contact hardware or prove AVF/NNS support. Device results remain dated evidence that must be rerun when firmware changes.
@@ -110,10 +113,13 @@ see [Contributor device probes][contributing].
 
 - [Inventory][inventory-log], [AVF info][avf-log], [guest boot][boot-log], [app domain][app-log], [cleanup][cleanup-log].
 - [Namespace concepts][concepts] and [recommendations][recommendations].
+- [Contributor Pixel 7 Pro observations and provenance][pixel7].
 
 <!-- References -->
 
 [contributing]: ./contributing.md
+[pixel7]: ./pixel7.md
+[phone-app-log]: ../grounding/device/phone-app-probe.txt
 [inventory-example]: ./examples/inventory.d
 [app-example]: ./examples/app-probe.d
 [namespace-example]: ../concepts/examples/namespace-probe.d

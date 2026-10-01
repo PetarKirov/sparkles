@@ -16,6 +16,8 @@ This survey answers six questions:
 > [!IMPORTANT]
 > This is an evidence catalog, not a claim that every listed backend runs on every named SoC. [Device validation][devices] distinguishes locally observed behavior, upstream demonstrations, source inspection and proposed experiments. The application keeps its existing no-DEX constraint; calling installed framework classes through JNI remains in scope.
 
+The latest [Pixel 7 Pro contributor report][pixel7] adds a live NNS canonical-store session under the terminal app UID and AVF declarations for both protected/non-protected VMs. The report uses a provisioned kernel/policy stack and root ADB; custom guest boot, Nix workloads and Sparkles ownership remain untested. The locally connected Pad/phone results and contributor observations are labeled separately.
+
 ## Master catalog
 
 | Subject                 | Category                                   | Environment                               | Deployment requirement                                                    | Link                         |
@@ -56,6 +58,7 @@ This survey answers six questions:
 | Android 16 source release (2025)                            | Custom Linux image machinery used by Android Terminal                                | [Released source][image-api]; API availability must be checked per firmware                          |
 | June 2025 demonstration; repository reviewed September 2026 | Snapdragon 8 Elite Gunyah Linux boot                                                 | [Vendor-device guide][gunyah-guide]; one rooted Lenovo configuration                                 |
 | September 2026 source snapshots                             | Custom Sparkles app and NNS namespace integration                                    | [Baseline][baseline], [source ledger][sources]; source evidence is separate from hardware validation |
+| September 30, 2026 contributor report                       | Pixel 7 Pro live NNS session and both AVF guest-mode declarations                    | [Physical-device report][pixel7]; provisioned stack, no guest or workload launched by collector      |
 
 ## Suggested reading paths
 
@@ -82,6 +85,7 @@ This survey answers six questions:
 [alternatives]: ./alternatives.md
 [comparison]: ./comparison.md
 [sources]: ./sources.md
+[pixel7]: ./device-validation/pixel7.md
 [exec-policy]: https://developer.android.com/about/versions/10/behavior-changes-10#execute-permission
 [framework]: https://android.googlesource.com/platform/packages/modules/Virtualization/+/175a51b30123fa6b02b541f1969665708f7ec2c3/libs/framework-virtualization/README.md
 [image-api]: https://android.googlesource.com/platform/packages/modules/Virtualization/+/46351de83cd509bc9a9fee8fc99b07fcc0cdd0bd/libs/framework-virtualization/src/android/system/virtualmachine/VirtualMachineCustomImageConfig.java

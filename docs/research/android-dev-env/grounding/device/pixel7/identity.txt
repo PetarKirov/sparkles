@@ -1,0 +1,16 @@
+command: for k in ro.product.model ro.product.device ro.soc.model ro.product.cpu.abilist ro.build.version.release ro.build.version.sdk ro.build.fingerprint ro.build.type ro.boot.verifiedbootstate ro.boot.flash.locked; do echo $k=$(getprop $k); done; uname -a; getconf PAGE_SIZE
+exit: 0
+output_limit_reached: false
+
+ro.product.model=Pixel 7 Pro
+ro.product.device=cheetah
+ro.soc.model=GS201
+ro.product.cpu.abilist=arm64-v8a
+ro.build.version.release=16
+ro.build.version.sdk=36
+ro.build.fingerprint=google/cheetah/cheetah:16/BP4A.251205.006/14401865:user/release-keys
+ro.build.type=user
+ro.boot.verifiedbootstate=green
+ro.boot.flash.locked=1
+Linux localhost 6.1.134 #1 SMP PREEMPT Fri Jan 9 16:33:46 UTC 2026 aarch64 Toybox
+4096

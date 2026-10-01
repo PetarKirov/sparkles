@@ -1,0 +1,13 @@
+PUBLICATION NOTE: non-epoch file timestamp omitted for privacy; 1970-01-01 timestamps retained. Command and exit status retained.
+
+command: pm list features | grep -E 'virtualization|hypervisor'; for p in /dev/kvm /dev/gunyah /dev/gzvm /apex/com.android.virt/bin/vm /apex/com.android.virt/etc/fs/microdroid_kernel /apex/com.android.virt/etc/microdroid_initrd_debuggable.img; do ls -ldZ $p; done
+exit: 0
+output_limit_reached: false
+
+feature:android.software.virtualization_framework
+crw-rw-rw- 1 root root u:object_r:kvm_device:s0  10, 232 [file timestamp omitted] /dev/kvm
+ls: /dev/gunyah: No such file or directory
+ls: /dev/gzvm: No such file or directory
+-rwxr-xr-x 1 root shell u:object_r:system_file:s0  1286344 1970-01-01 02:00 /apex/com.android.virt/bin/vm
+-rw-r--r-- 1 system system u:object_r:system_file:s0  11509760 1970-01-01 02:00 /apex/com.android.virt/etc/fs/microdroid_kernel
+-rw-r--r-- 1 system system u:object_r:system_file:s0  1247872 1970-01-01 02:00 /apex/com.android.virt/etc/microdroid_initrd_debuggable.img

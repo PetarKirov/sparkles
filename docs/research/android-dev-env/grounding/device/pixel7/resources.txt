@@ -1,0 +1,7 @@
+EXCERPT: only total RAM retained. Available RAM, filesystem usage and battery snapshot omitted for privacy. Original command and exit status retained.
+
+command: grep -E 'MemTotal:|MemAvailable:' /proc/meminfo; df -h /data; dumpsys battery | grep -E 'level:|temperature:|status:'
+exit: 0
+output_limit_reached: false
+
+MemTotal:       11798596 kB

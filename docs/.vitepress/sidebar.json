@@ -4789,6 +4789,10 @@
                 "link": "/research/android-dev-env/device-validation/contributing"
               },
               {
+                "text": "Pixel 7 Pro contributor evidence",
+                "link": "/research/android-dev-env/device-validation/pixel7"
+              },
+              {
                 "text": "Source ledger",
                 "link": "/research/android-dev-env/sources"
               },

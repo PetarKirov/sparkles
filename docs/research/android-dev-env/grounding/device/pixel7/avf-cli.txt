@@ -1,0 +1,20 @@
+command: /apex/com.android.virt/bin/vm --help
+exit: 0
+output_limit_reached: false
+
+Usage: vm <COMMAND>
+
+Commands:
+  check-feature-enabled  Check if the feature is enabled on device
+  run-app                Run a virtual machine with a config in APK
+  run-microdroid         Run a virtual machine with Microdroid inside
+  run                    Run a virtual machine
+  list                   List running virtual machines
+  info                   Print information about virtual machine support
+  create-partition       Create a new empty partition to be used as a writable partition for a VM
+  create-idsig           Creates or update the idsig file by digesting the input APK file
+  console                Connect to the serial console of a VM
+  help                   Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help

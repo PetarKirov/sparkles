@@ -36,7 +36,7 @@ The program parses ELF headers and reports the actual interpreter; it does not i
 
 ### Host page size
 
-[Android supports 16 KiB page-size configurations starting with Android 15][pages]. Check the actual value with `getconf PAGESIZE`, native ELF load-segment alignment and APK library alignment. Native libraries need compatible builds; a no-DEX APK is still a native application. Shared-kernel PRoot/NNS execution also uses the host page size, while a VM's guest kernel has its own memory-layout requirements. Do not assume a future Pixel test uses the same page size as the Pad, which reported 4096 bytes.
+[Android supports 16 KiB page-size configurations starting with Android 15][pages]. Check the actual value with `getconf PAGESIZE`, native ELF load-segment alignment and APK library alignment. Native libraries need compatible builds; a no-DEX APK is still a native application. Shared-kernel PRoot/NNS execution also uses the host page size, while a VM's guest kernel has its own memory-layout requirements. The Pad and [reported Pixel 7 Pro][pixel7] both returned 4096 bytes; that does not establish the page size of every Pixel model/build or its future guests.
 
 ## Namespaces, seccomp and SELinux
 
@@ -66,6 +66,7 @@ Persistence has three lifetimes: package/store files, session processes and the 
 
 <!-- References -->
 
+[pixel7]: ../device-validation/pixel7.md
 [baseline]: ../sparkles-baseline.md
 [avf]: ../avf.md
 [gunyah]: ../gunyah.md

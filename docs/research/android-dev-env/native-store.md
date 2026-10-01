@@ -38,6 +38,8 @@ Non-root entry uses `CLONE_NEWUSER` plus `CLONE_NEWNS`, preserving numeric UID/G
 
 “SELinux enforcing” remains compatible with these deliberate policy changes; it does not mean the original stock policy is unchanged. Both [locally probed stock Xiaomi devices][devices] reject the app namespace route. On the Pad, a newer 6.6 kernel and AVF support do not change that finding.
 
+[Contributor Pixel 7 Pro evidence][pixel7] now captures the provisioned route on physical hardware: `com.termux.nix` is `untrusted_app_27` with `Seccomp=2`, its launcher parent is `nns_app` with `Seccomp=0`, and its Nix-store Zsh keeps UID/GID `10578` with zero effective/permitted capabilities in separate user/mount namespaces. The bypass sysctl allowlists `/data/nix/bin/nix-enter`. This is a simultaneous process snapshot, not a repeated launch or an independently traced kernel transition. Installed kernel/policy/source provenance is still needed.
+
 A root-owned helper using mount namespaces/chroot is another native design, potentially without NNS's userns path, but still needs policy and a carefully scoped privilege interface. Do not expose arbitrary root command execution to a terminal client merely to simplify entry.
 
 ### Nix compatibility and services
@@ -46,9 +48,13 @@ A canonical Linux store can reuse normal binary-cache outputs. [NNS's nix-on-dro
 
 Portable runit services can supervise selected daemons. They do not create systemd, a guest kernel, Linux containers or all NixOS module semantics. Kernel features needed by builds, debuggers and network tools must be tested individually. A remote builder can reduce local compilation work but does not resolve local loader/runtime incompatibility.
 
+The [Pixel deployment][pixel7] has a live Nix process using an artifact named `nix-2.34.8`, root-owned daemon/socket, runit supervision, `sandbox = false` and an empty build-user group. Its canonical Zsh path demonstrates an existing store executable, not a captured Nix evaluation/build/cache cycle. `CONFIG_PID_NS` is disabled on this kernel; the observed user/mount namespace route does not establish every isolation primitive.
+
 ### Terminal and no-DEX integration
 
 The app can launch `nix-enter` through a native PTY, preserving its rendering/input architecture. Provisioning and privilege live outside the ordinary UI process. Session handoff must preserve environment, working directory, cancellation and process ownership. This fits no-DEX more naturally than porting managed framework code, but only after the device stack is deliberately provisioned.
+
+The [reported Pixel frontend][pixel7] is nix-on-droid's `com.termux.nix`, not Sparkles. The report supports a provisioned native-backend experiment; no Sparkles session, no-DEX handoff, resize/signal contract or independence from that frontend has been demonstrated.
 
 ### Files, networking and DNS
 
@@ -59,6 +65,8 @@ Store write ownership belongs to the daemon/provisioning layer. The app's same-U
 ### Performance and isolation
 
 Native pathname resolution avoids PRoot's tracing overhead. It shares the Android kernel, scheduler, resource controls and security policy, so it cannot reproduce a guest's isolation. The root namespace should remain unchanged after entry. [NNS's Android harness][test] checks a real non-debuggable zygote app, policy transition, same-UID entry, parent namespace stability, non-writable shared store and signed cache substitution. Those are upstream test claims read from source; this research did not rebuild and run its custom-kernel VM harness.
+
+The [physical Pixel snapshot][pixel7] adds observed namespace separation and same-UID canonical-store execution. The launcher parent retains the app's original namespace view. Store-write rejection, signed substitution, DNS/TTY and cleanup/restart reliability remain untested; a writable mount and a root-owned store directory are not substitutes for those checks. No performance numbers follow from the report.
 
 ### Lifecycle and maintenance
 
@@ -88,6 +96,7 @@ The root module, kernel patches, SELinux rules, launcher and DNS bridge form a v
 ## Sources
 
 - [Launcher source][launcher], [kernel contract][kernel], [DNS bridge][dns].
+- [Pixel 7 Pro physical session observations][pixel7], including deployment identity gaps.
 - [Module integration][module], [Android harness][test], [Nix store model][store].
 - [Device observations][devices] and [source ledger][sources].
 
@@ -100,6 +109,7 @@ The root module, kernel patches, SELinux rules, launcher and DNS bridge form a v
 [module]: https://github.com/reo101/NNS/blob/28d2229a664cbe29e55a051d648a789b6511f735/nix/nix-on-droid.nix
 [config]: https://github.com/reo101/NNS/blob/28d2229a664cbe29e55a051d648a789b6511f735/module/etc/nix/nix.conf
 [test]: https://github.com/reo101/NNS/blob/28d2229a664cbe29e55a051d648a789b6511f735/tests/android/README.md
+[pixel7]: ./device-validation/pixel7.md
 [store]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/src/libstore/local-store.md
 [run]: https://github.com/NixOS/nix/blob/1ed54a0fd62da96d4f5e9c806555861e46f65341/src/nix/run.cc
 [devices]: ./device-validation/index.md

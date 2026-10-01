@@ -1,0 +1,24 @@
+command: ls -lZ /apex/com.android.virt/etc/; sha256sum /apex/com.android.virt/etc/fs/microdroid_kernel /apex/com.android.virt/etc/microdroid_initrd_debuggable.img /apex/com.android.virt/etc/microdroid_initrd_normal.img
+exit: 0
+output_limit_reached: false
+
+total 4196
+-rw-r--r-- 1 system system u:object_r:system_file:s0     1391 1970-01-01 02:00 aconfig_flags.pb
+drwxr-xr-x 2 root   shell  u:object_r:system_file:s0     4096 1970-01-01 02:00 classpaths
+-rw-r--r-- 1 system system u:object_r:system_file:s0       41 1970-01-01 02:00 flag.info
+-rw-r--r-- 1 system system u:object_r:system_file:s0      291 1970-01-01 02:00 flag.map
+-rw-r--r-- 1 system system u:object_r:system_file:s0       41 1970-01-01 02:00 flag.val
+drwxr-xr-x 2 root   shell  u:object_r:system_file:s0     4096 1970-01-01 02:00 fs
+-rw-r--r-- 1 system system u:object_r:system_file:s0      479 1970-01-01 02:00 microdroid.json
+-rw-r--r-- 1 system system u:object_r:system_file:s0  1247872 1970-01-01 02:00 microdroid_initrd_debuggable.img
+-rw-r--r-- 1 system system u:object_r:system_file:s0  1247704 1970-01-01 02:00 microdroid_initrd_normal.img
+-rw-r--r-- 1 system system u:object_r:system_file:s0      132 1970-01-01 02:00 package.map
+-rw-r--r-- 1 system system u:object_r:system_file:s0  1101824 1970-01-01 02:00 service_vm.bin
+-rw-r--r-- 1 system system u:object_r:system_file:s0   704792 1970-01-01 02:00 u-boot.bin
+-rw-r--r-- 1 system system u:object_r:system_file:s0      796 1970-01-01 02:00 vfio_handler.rc
+drwxr-xr-x 2 root   shell  u:object_r:system_file:s0     4096 1970-01-01 02:00 vintf
+-rw-r--r-- 1 system system u:object_r:system_file:s0      956 1970-01-01 02:00 virtualizationservice.rc
+-rw-r--r-- 1 system system u:object_r:system_file:s0      773 1970-01-01 02:00 vmnic.rc
+d6a0c32a37cc8acf227c1adde27a5b391af68ff93a0464b60aa46bc648437985  /apex/com.android.virt/etc/fs/microdroid_kernel
+22c88a99cfabdf5dd2a0729654d876a9891290e0142159a647877bc2b239359f  /apex/com.android.virt/etc/microdroid_initrd_debuggable.img
+d1ce57ccf1359d968fca40659ee57c6846167f47518cad72237a235751feae52  /apex/com.android.virt/etc/microdroid_initrd_normal.img

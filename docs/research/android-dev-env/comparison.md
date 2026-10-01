@@ -4,22 +4,24 @@
 
 ## At a glance
 
-| Dimension              | [nix-on-droid][proot]                                                              | [AVF][avf]                                 | [Gunyah custom VMM][gunyah]                         | [NNS/native][native]                             |
-| ---------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------- | ------------------------------------------------ |
-| Stock app reach        | Broad sideload route, subject to executable policy                                 | Device/API/permission dependent            | Documented custom routes rooted; stock AVF separate | NNS app path needs provisioned kernel/policy     |
-| Full NixOS             | No                                                                                 | Yes, if custom guest boots                 | Possible; adaptation unverified locally             | No, shared Android kernel/userspace integration  |
-| Standard Linux cache   | Canonical translated store                                                         | Canonical guest store                      | Canonical guest store                               | Canonical mounted store                          |
-| Guest kernel ownership | No                                                                                 | Yes                                        | Yes                                                 | No                                               |
-| No-DEX fit             | Native login + PTY already implemented                                             | JNI hypothesis or explicit helper          | Native helper plausible; authority required         | Native launcher + PTY                            |
-| Long-lived owner       | App supervisor needed                                                              | Framework/owner lifecycle needed           | Root helper/VMM lifecycle needed                    | Provisioning daemon + app session                |
-| Cost center            | Syscall tracing, compatibility patches                                             | Guest RAM/boot, API integration            | Vendor forks, firmware/verification and I/O         | Kernel/SELinux upgrades, DNS/TTY bridge          |
-| Local evidence         | Separate nix-on-droid PRoot observed; custom bootstrap not independently completed | Pad protected Microdroid boot, shell-owned | Pad exposes Gunyah; no custom NixOS boot            | App namespace attempts rejected on stock devices |
+| Dimension                | [nix-on-droid][proot]                                                              | [AVF][avf]                                                                             | [Gunyah custom VMM][gunyah]                         | [NNS/native][native]                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Stock app reach          | Broad sideload route, subject to executable policy                                 | Device/API/permission dependent                                                        | Documented custom routes rooted; stock AVF separate | NNS app path needs provisioned kernel/policy                                              |
+| Full NixOS               | No                                                                                 | Yes, if custom guest boots                                                             | Possible; adaptation unverified locally             | No, shared Android kernel/userspace integration                                           |
+| Standard Linux cache     | Canonical translated store                                                         | Canonical guest store                                                                  | Canonical guest store                               | Canonical mounted store                                                                   |
+| Guest kernel ownership   | No                                                                                 | Yes                                                                                    | Yes                                                 | No                                                                                        |
+| No-DEX fit               | Native login + PTY already implemented                                             | JNI hypothesis or explicit helper                                                      | Native helper plausible; authority required         | Native launcher + PTY                                                                     |
+| Long-lived owner         | App supervisor needed                                                              | Framework/owner lifecycle needed                                                       | Root helper/VMM lifecycle needed                    | Provisioning daemon + app session                                                         |
+| Cost center              | Syscall tracing, compatibility patches                                             | Guest RAM/boot, API integration                                                        | Vendor forks, firmware/verification and I/O         | Kernel/SELinux upgrades, DNS/TTY bridge                                                   |
+| Physical-device evidence | Separate nix-on-droid PRoot observed; custom bootstrap not independently completed | Pad protected Microdroid boot, shell-owned; Pixel contributor reports both guest modes | Pad exposes Gunyah; no custom NixOS boot            | Stock Xiaomi app namespace attempts rejected; contributor Pixel has live same-UID NNS Zsh |
 
 ## Per-dimension comparison
 
 ### Deployment and permissions
 
 PRoot has the fewest kernel prerequisites, but target-SDK executable policy is a serious product constraint. AVF's feature bit does not imply an app permission grant or usable nonprotected guest. The Pad demonstrates a stock **protected-only** route; it changes the Qualcomm feasibility assessment without proving unprotected NixOS. NNS makes its required custom stack explicit. Rooted Gunyah work should remain an advanced-device track until exact configurations are verified.
+
+[The contributor Pixel 7 Pro][pixel7] separates two useful tracks: AVF declares both protected/non-protected support, while NNS has an already running app-UID canonical-store session under deliberately provisioned policy. The former is a capability declaration, the latter a captured userspace process. Neither establishes Sparkles ownership, a complete Nix workload, or an unmodified stock deployment. The kernel's `CONFIG_GUNYAH=y` does not change its reported active pKVM backend.
 
 ### Nix compatibility and services
 
@@ -54,17 +56,17 @@ The inspected implementations converge on a canonical Linux filesystem view, a b
 
 ## Sparkles delta table
 
-| Modern capability               | [Current baseline][baseline]                 | Required delta                                                     |
-| ------------------------------- | -------------------------------------------- | ------------------------------------------------------------------ |
-| Custom local terminal           | NativeActivity + native PTY works            | Preserve UI/backend separation                                     |
-| Custom PRoot package identity   | Configurable module + installer/login source | Demonstrate full bootstrap/cache/build cycle in custom app         |
-| Honest capability discovery     | Research inventory/probes                    | Product report with deployment/permission/mode gates               |
-| Independent AVF lifecycle       | Not implemented                              | JNI or explicit helper create/start/stop/delete/reconnect spike    |
-| Full NixOS guest                | Guest prior art inspected                    | App-owned disks/config and guest PTY broker                        |
-| Qualcomm protected/custom route | Stock Microdroid boot proven on Pad          | Prove accepted custom Linux boot inputs before promising NixOS     |
-| Native namespace entry          | Rejected on stock devices                    | Separate provisioned stack and launcher contract                   |
-| Durable sessions                | Activity/session machinery                   | Defined owner death, UI recreation, reboot and unlock behavior     |
-| Quantified workload comparison  | None                                         | Same-device, same-output workload protocol after two backends work |
+| Modern capability               | [Current baseline][baseline]                                           | Required delta                                                                       |
+| ------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Custom local terminal           | NativeActivity + native PTY works                                      | Preserve UI/backend separation                                                       |
+| Custom PRoot package identity   | Configurable module + installer/login source                           | Demonstrate full bootstrap/cache/build cycle in custom app                           |
+| Honest capability discovery     | Research inventory/probes                                              | Product report with deployment/permission/mode gates                                 |
+| Independent AVF lifecycle       | Not implemented                                                        | JNI or explicit helper create/start/stop/delete/reconnect spike                      |
+| Full NixOS guest                | Guest prior art inspected                                              | App-owned disks/config and guest PTY broker                                          |
+| Qualcomm protected/custom route | Stock Microdroid boot proven on Pad                                    | Prove accepted custom Linux boot inputs before promising NixOS                       |
+| Native namespace entry          | Rejected on stock Xiaomi; contributor Pixel has an NNS app-UID session | Sparkles-owned launcher contract, deployment provenance and workload/isolation tests |
+| Durable sessions                | Activity/session machinery                                             | Defined owner death, UI recreation, reboot and unlock behavior                       |
+| Quantified workload comparison  | None                                                                   | Same-device, same-output workload protocol after two backends work                   |
 
 ## Sources
 
@@ -80,3 +82,4 @@ The inspected implementations converge on a canonical Linux filesystem view, a b
 [baseline]: ./sparkles-baseline.md
 [devices]: ./device-validation/index.md
 [sources]: ./sources.md
+[pixel7]: ./device-validation/pixel7.md
