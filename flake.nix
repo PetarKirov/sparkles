@@ -52,6 +52,12 @@
       };
     };
 
+    # nix-on-droid, for the terminal's Nix flavour (`terminal-nix-*`,
+    # nix/packages/android/terminal-nix.nix): `lib.bootstrapPackages` builds
+    # the bootstrap that app installs. The branch is the upstreamable one with
+    # `build.androidAppId`, until a release branch has it.
+    nix-on-droid.url = "github:PetarKirov/nix-on-droid/feat/android-app-id";
+
     ghostty = {
       url = "github:ghostty-org/ghostty";
       inputs.nixpkgs.follows = "nixpkgs";
