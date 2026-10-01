@@ -22,6 +22,9 @@ struct SessionConfig
     /// The bootstrap base URL offered as the installer's default; the zip is
     /// `<url>/bootstrap-<arch>.zip`.
     string bootstrapUrl;
+    /// Where the `am` server listens; empty for Termux's layout
+    /// ($(LREF SessionPaths.amSocket)).
+    string amSocket;
 }
 
 /**
@@ -45,6 +48,9 @@ SessionConfig parseSessionConfig(const(char)[] text) @safe pure
             case "bootstrapUrl":
                 c.bootstrapUrl = pair.value;
                 break;
+            case "amSocket":
+                c.amSocket = pair.value;
+                break;
             default:
                 break;
         }
@@ -58,9 +64,11 @@ SessionConfig parseSessionConfig(const(char)[] text) @safe pure
 {
     const c = parseSessionConfig(
         "# written by mkTerminalApk\nmode=bootstrap\n" ~
-        "bootstrapUrl=https://example.org/bootstrap\nfuture=1\n");
+        "bootstrapUrl=https://example.org/bootstrap\nfuture=1\n" ~
+        "amSocket=/data/data/org.example/files/apps/termux-am/am.sock\n");
     assert(c.mode == SessionMode.bootstrap);
     assert(c.bootstrapUrl == "https://example.org/bootstrap");
+    assert(c.amSocket == "/data/data/org.example/files/apps/termux-am/am.sock");
 
     assert(parseSessionConfig("").mode == SessionMode.shell);
     assert(parseSessionConfig("mode=unheard-of").mode == SessionMode.shell);
@@ -71,6 +79,8 @@ SessionConfig parseSessionConfig(const(char)[] text) @safe pure
 struct SessionPaths
 {
     string files;
+    /// `session.conf`'s `amSocket`, if any.
+    string amSocketOverride;
 
     string home() const @safe pure nothrow => buildPath(files, "home");
     string prefix() const @safe pure nothrow => buildPath(files, "usr");
@@ -91,6 +101,13 @@ struct SessionPaths
 
         return files.dirName.baseName;
     }
+    /// Where the `am` server listens and nix-on-droid's `termux-am`
+    /// connects: the session's `amSocket`, else Termux's layout. That names
+    /// the package twice, and a socket path has at most 107 bytes, so a long
+    /// package id needs the former.
+    string amSocket() const @safe pure nothrow =>
+        amSocketOverride.length ? amSocketOverride
+            : buildPath(files, "apps", packageName, "termux-am", "am.sock");
 }
 
 ///
@@ -103,6 +120,10 @@ struct SessionPaths
     assert(p.login == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/usr/bin/login");
     assert(p.termuxDir == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/home/.termux");
     assert(p.packageName == "dev.petar_kirov.sparkles.terminal.nix");
+    assert(p.amSocket == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/apps/"
+        ~ "dev.petar_kirov.sparkles.terminal.nix/termux-am/am.sock", "Termux's layout");
+    const short_ = SessionPaths(p.files, "/data/data/x/files/apps/termux-am/am.sock");
+    assert(short_.amSocket == "/data/data/x/files/apps/termux-am/am.sock");
 }
 
 /**
@@ -142,6 +163,9 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
         // defaults `build.androidAppId` to it, so a configuration that does
         // not name the app still builds its paths for this one.
         own ~= "TERMUX_APP__PACKAGE_NAME=" ~ p.packageName;
+        // And where its `am` server listens: nix-on-droid defaults
+        // `android-integration.am.socketPath` to it.
+        own ~= "NIX_ON_DROID_AM_SOCKET=" ~ p.amSocket;
     }
 
     static immutable dropped = ["LD_LIBRARY_PATH", "LD_PRELOAD"];
@@ -186,6 +210,7 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
     assert(boot.canFind("PATH=/data/org.example/files/usr/bin"), "the prefix alone, as Termux sets it");
     assert(boot.canFind("TMPDIR=/data/org.example/files/usr/tmp"));
     assert(boot.canFind("TERMUX_APP__PACKAGE_NAME=org.example"));
+    assert(boot.canFind("NIX_ON_DROID_AM_SOCKET=" ~ p.amSocket));
     assert(!boot.canFind("odd"), "an entry without `=` is not an entry");
 
     const shell = sessionEnvironment(parent, p, false);
