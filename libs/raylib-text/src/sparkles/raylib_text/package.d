@@ -4,14 +4,19 @@ font-set management with a glyph atlas and fallback selection, and an
 attribute-aware draw primitive. Extracted from `apps/terminal` and `hue --gui`
 (issue #121 M5) once two callers validated the boundary — the terminal lays a
 fixed cell grid from a `ghostty` render state; hue flows styled runs from a
-`sparkles:syntax` event stream. Both draw through the same `drawText`.
+`sparkles:syntax` event stream. Terminal clusters use `FontSet.drawCluster`;
+fixed-column styled runs use `drawText`.
 
 The library owns layout-independent rendering only: it never sees a cell
 coordinate, a `StyledSpan`, or a `GhosttyStyle`. Callers translate their own
 attribute vocabulary into the minimal $(LREF TextStyle) and own their layout,
-backgrounds, viewport, and event loop. It depends only on `raylib-d` (plus the
-native `raylib`), so a syntax consumer and a VT consumer share it without
-dragging either's dependencies into the other.
+backgrounds, viewport, and event loop. Native dependencies are raylib,
+FreeType, and HarfBuzz; no syntax or VT dependency leaks into the renderer.
+Cached cluster textures preserve combining placement, variation selectors,
+regional flags and ZWJ emoji, including embedded color strikes. Drawing only
+queues cache misses; call `FontSet.flushPending` after `EndDrawing` and repaint
+when it returns true. Reloading or unloading the FontSet releases its shaped
+textures and native faces together with the raylib atlases.
 
 The pure logic (fallback selection, atlas ranges, cell-metric math,
 `TextStyle` → draw-op mapping, grapheme encoding, column widths) is unit-tested

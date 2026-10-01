@@ -7,6 +7,7 @@ license "BSL-1.0"
 targetPath "build"
 
 importPaths "src"
+sourceFiles "src/sparkles/raylib_text/shaping_c.c"
 
 dflags "-preview=in" "-preview=dip1000"
 
@@ -15,17 +16,21 @@ dflags "-preview=in" "-preview=dip1000"
 // this package owns it; both propagate transitively to consuming executables
 // (each still needs the native raylib present at link/run time).
 dependency "raylib-d" version="~>6.0.1"
-libs "raylib"
+// Cluster shaping and rasterization are native dependencies. Nix supplies
+// their development headers to ImportC and their libraries to the linker.
+libs "raylib" "freetype2" "harfbuzz"
 
 // UniqueBuffer backs the per-face sorted glyph maps and the
 // on-demand request set — the same @nogc buffers apps/terminal uses.
 dependency "sparkles:base" path="../.."
 
 configuration "library" {
-    targetType "library"
+    // ImportC needs pkg-config's include flags in the consuming executable.
+    targetType "sourceLibrary"
 }
 
 configuration "unittest" {
+    versions "RaylibTextTests"
     // Only raylib-FREE code carries unittests — the GL-backed FontSet/drawText
     // are validated by the apps' screenshot goldens — so `dub test :raylib-text`
     // runs headless (linking libraylib.so needs no display; only

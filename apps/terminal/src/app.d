@@ -108,7 +108,6 @@ private int desktopMain(string[] args)
     );
 
     const outcome = runApp(tv, cfg);
-    tv.close();
 
     final switch (outcome)
     {

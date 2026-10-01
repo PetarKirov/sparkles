@@ -76,9 +76,17 @@ in
           }
         ];
         stringImportDirs = [ "libs/ui/src/sparkles/ui/shaders" ];
-        cIncludes = [ "${config.packages.libghostty-vt-android}/include" ];
+        cIncludes = [
+          "${config.packages.libghostty-vt-android}/include"
+          "${config.packages.freetype-android}/include/freetype2"
+          "${config.packages.harfbuzz-android}/include/harfbuzz"
+        ];
         staticLibs = abi: [
           "${config.packages.raylib-android}/lib/${abi}/libraylib.a"
+          "${config.packages.harfbuzz-android}/lib/${abi}/libharfbuzz.a"
+          "${config.packages.freetype-android}/lib/${abi}/libfreetype.a"
+          "${config.packages.freetype-android}/lib/${abi}/libpng16.a"
+          "${config.packages.freetype-android}/lib/${abi}/libz.a"
           "${config.packages.libghostty-vt-android}/lib/${abi}/libghostty-vt.a"
           "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a"
         ];
@@ -120,6 +128,11 @@ in
           ${lib.concatMapStrings (f: ''
             cp ${fonts.fontBundle}/fonts/${f} ${fonts.fontBundle}/fonts/${f}.charset $out/fonts/
           '') bundledFonts}
+          # All script fallbacks and emoji are shared with the desktop bundle.
+          cp ${fonts.fontBundle}/fonts/Noto* $out/fonts/
+          cp -r ${fonts.fontBundle}/licenses $out/licenses
+          cp -r ${config.packages.freetype-android}/share/licenses/* $out/licenses/
+          cp -r ${config.packages.harfbuzz-android}/share/licenses/* $out/licenses/
           cp ${sessionConf session} $out/session.conf
 
           cat > $out/NOTICE <<'EOF'
@@ -127,9 +140,16 @@ in
 
           FiraCode Nerd Font Mono (bundled font)     OFL-1.1   https://github.com/ryanoasis/nerd-fonts
           DejaVu Sans Mono (bundled font)            Bitstream-Vera + Arev   https://dejavu-fonts.github.io
+          Noto Sans (Unicode fallback fonts)         OFL-1.1   https://notofonts.github.io
+          Noto Color Emoji (bundled font)            OFL-1.1   https://github.com/googlefonts/noto-emoji
+          FreeType (statically linked)               FTL       https://freetype.org
+          HarfBuzz (statically linked)               MIT       https://harfbuzz.github.io
+          libpng (statically linked)                 libpng-2.0 https://www.libpng.org
+          zlib (statically linked)                   Zlib      https://zlib.net
           raylib (statically linked)                 Zlib      https://www.raylib.com
           libghostty-vt (statically linked)          MIT       https://ghostty.org
           libkqueue (statically linked)              BSD-2-Clause   https://github.com/mheily/libkqueue
+          This software is based in part on the work of the FreeType Team.
           EOF
 
           (cd $out && find fonts -type f | sort > asset-manifest.txt)

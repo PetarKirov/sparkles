@@ -424,6 +424,9 @@ phase gets.
 */
 void noSetup(Host)(ref Host) {}
 
+/// Default end-of-run phase, before the host's surface and resources close.
+void noShutdown(Host)(ref Host) {}
+
 /**
 Normalizes a resize event to carry the surface size the host actually has
 (`HST7`).

@@ -48,7 +48,7 @@ import sparkles.ui.theme : Theme;
 import sparkles.ui.widget : WidgetTree;
 import sparkles.ui_app.backend : BackendPolicy;
 import sparkles.ui_app.gui_options : GuiOptions, resolveTheme;
-import sparkles.ui_app.host : RunConfig;
+import sparkles.ui_app.host : noDraw, noSetup, RunConfig;
 import sparkles.ui_app.record : RecordingHost, runRecorded;
 import sparkles.ui_app.run : run, RunOutcome;
 
@@ -232,6 +232,13 @@ BackendPolicy probedPolicy(in GuiOptions o) @safe
     );
 }
 
+/// Optional resource teardown while the host's drawing resources still exist.
+private void shutdownApp(A, H)(ref A app, ref H host)
+{
+    static if (__traits(hasMember, A, "shutdown"))
+        app.shutdown(host);
+}
+
 /**
 Runs a component: picks a backend under `policy`, opens it, and drives
 `app.view`/`app.handle` until the application quits.
@@ -239,6 +246,10 @@ Runs a component: picks a backend under `policy`, opens it, and drives
 The two-argument form probes `policy` from the live environment
 ($(LREF probedPolicy)) — the whole `main` of a widget-level application is
 parsing `cfg.gui` and calling this.
+
+An optional `app.shutdown(ref host)` releases application-owned resources once
+the loop and its daemons have stopped, before the host closes its surface.
+It also runs when setup or a frame throws, but not when the backend fails to open.
 */
 RunOutcome runApp(A)(ref A app, in RunConfig cfg, BackendPolicy policy)
 {
@@ -249,11 +260,15 @@ RunOutcome runApp(A)(ref A app, in RunConfig cfg, BackendPolicy policy)
             (ref h) { presentApp(app, h, th, snap); },
             (ref h, in Event e) { app.handle(h, e); },
             (ref h) { app.paint(h, snap.tree, snap.frames); },
+            noSetup,
+            (ref h) { shutdownApp(app, h); },
         )(cfg, policy);
     else
         return run!(
             (ref h) { presentApp(app, h, th, snap); },
             (ref h, in Event e) { app.handle(h, e); },
+            noDraw, noSetup,
+            (ref h) { shutdownApp(app, h); },
         )(cfg, policy);
 }
 
@@ -285,7 +300,7 @@ RecordingHost runAppRecorded(A)(ref A app, in RunConfig cfg, in Event[] script,
                     app.paint(h, snap.tree, snap.frames);
         },
         (ref RecordingHost h, in Event e) { app.handle(h, e); },
-        script, setup);
+        script, setup, (ref RecordingHost h) { shutdownApp(app, h); });
 }
 
 // ---------------------------------------------------------------------------
@@ -627,4 +642,43 @@ unittest
     auto rec = runAppRecorded(app, RunConfig.init, [charEvent('t')]);
     foreach (ref f; rec.frames)
         assert(f.ops[0].visual.bg == configured.pageBg);
+}
+
+@("ui_app.run_app.shutdownReleasesResourcesOnQuitAndException")
+@safe unittest
+{
+    import std.exception : assertThrown;
+
+    static struct Session
+    {
+        bool acquired;
+        bool fail;
+        uint releases;
+
+        WidgetTree view(H)(ref H h)
+        {
+            acquired = true;
+            if (fail)
+                throw new Exception("presentation failed");
+            h.quit();
+            return WidgetTree.init;
+        }
+
+        void handle(H)(ref H h, in Event e) {}
+
+        void shutdown(H)(ref H h)
+        {
+            assert(acquired, "the session still exists during shutdown");
+            acquired = false;
+            releases++;
+        }
+    }
+
+    Session ordinary;
+    runAppRecorded(ordinary, RunConfig.init, null);
+    assert(!ordinary.acquired && ordinary.releases == 1);
+    Session failing;
+    failing.fail = true;
+    assertThrown!Exception(runAppRecorded(failing, RunConfig.init, null));
+    assert(!failing.acquired && failing.releases == 1);
 }

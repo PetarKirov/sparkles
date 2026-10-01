@@ -70,6 +70,41 @@ Two hard gates carry over from the plan, unchanged:
    sync `pump()` untouched; the gallery stops per-frame-pumping background
    tabs on ring arms; the gate re-run.
 
+## Renderer fidelity and resource lifetime
+
+The GPU terminal renderer supplements libghostty-vt's state with these
+presentation contracts:
+
+- `cell_graphics.d` draws box, block, braille, sextant, octant, and legacy
+  mosaic geometry on integer cell boundaries, independently of font coverage.
+- `FontSet.drawCluster` shapes complete grapheme clusters with HarfBuzz and
+  rasterizes fallback and color glyphs with FreeType into padded RGBA atlas
+  pages. Terminal cell width, rather than the sum of constituent advances,
+  determines their span. Preferred and emoji faces precede scalar-coverage
+  fallbacks; a second shaping pass retains synthesized complex-script glyphs.
+- `kitty_images.d` retains owned image pixels and GPU textures, compares
+  changed images once per mutation epoch, and updates dirty rows. Placements
+  preserve native dimensions, crop/offset geometry, and the below-background,
+  below-text, and above-text layers. Image-only commands request a repaint.
+- `synchronized_output.d` captures the completed prefix at a mode-2026 begin
+  boundary, including image placements. Further input and query replies
+  continue without exposing partial frames. End, reset, resize, EOF, or the
+  one-second deadline releases the hold.
+- `osc_query.d` answers OSC 4 queries from the current palette, preserving
+  set/query ordering and multiple pairs within one control string.
+
+Components may implement `shutdown(ref host)`. The host invokes this optional
+hook after its daemons drain and before destroying the graphics context.
+`TerminalView.shutdown` releases terminal-owned textures and closes the
+terminal; embedding components forward the hook to their terminal children.
+This ordering is required even on exceptional exit: deleting textures after
+the GL context has gone away is not valid cleanup.
+
+Behavioral coverage lives in the terminal-view feature modules, raylib-text's
+shaping tests, and `ui_app.run_app.shutdownReleasesResourcesOnQuitAndException`.
+Actual GPU verification additionally requires the terminal application:
+headless unit tests cannot prove glyph rasterization or texture layering.
+
 ## Non-goals
 
 | Not this package's job                          | Where it belongs                                                                                                                                                                                                                   |

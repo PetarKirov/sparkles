@@ -347,9 +347,8 @@ as `main` pins its `CoreState` today, or heap-pin it as an embedder's tabs
 do).
 
 Multiple instances may coexist on one thread (`TVW7` — an embedder's tabs):
-per-instance state is fully embedded, and the only process-global pieces are
-safe there — the deferred-texture list's flushes all run pre-bracket, and
-re-registering the same PNG decoder is idempotent. Not thread-safe.
+per-instance state is fully embedded; the process-global PNG decoder registration
+is idempotent. Not thread-safe.
 */
 struct TerminalView
 {
@@ -632,7 +631,8 @@ struct TerminalView
 
     /**
     Reaps the child (hanging up its group first if still alive) and frees every
-    handle. The fonts and the window belong to the host.
+    handle. The fonts and the window belong to the host. Call while its
+    graphics context is still alive; `runApp` does this through `shutdown`.
 
     $(B The master is closed before the child is signalled.) A well-behaved
     shell exits on the EOF/EIO its side reports once the master is gone, and
@@ -656,6 +656,8 @@ struct TerminalView
             hangUpAndReap();
             s.childReaped = true;
         }
+        s.images.release();
+        s.synchronizedOutput = typeof(s.synchronizedOutput).init;
         ghostty_kitty_graphics_placement_iterator_free(s.placement_iter);
         ghostty_render_state_row_cells_free(s.cells);
         ghostty_render_state_row_iterator_free(s.row_iter);
@@ -667,6 +669,12 @@ struct TerminalView
         s.selState.free();
         ghostty_terminal_free(s.terminal);
         opened = false;
+    }
+
+    /// `runApp` calls this before the graphics context and borrowed fonts close.
+    void shutdown(H)(ref H h) @system
+    {
+        close();
     }
 
     /**
@@ -790,10 +798,8 @@ struct TerminalView
             startRingPump(h);
         }
 
-        // Last frame's bracket ended after our paint ran (HST13), so its
-        // deferred kitty textures and any atlas growth resolve here — the
-        // same after-the-bracket point the polling loop reached in-line.
-        flush_deferred_textures();
+        // Last frame's bracket ended after our paint ran (HST13), so pending
+        // font atlas growth can replace its GPU textures here.
         if (s.fonts !is null && s.fonts.flushPending() && forceFirstFrames < 1)
             forceFirstFrames = 1;
 
@@ -816,6 +822,7 @@ struct TerminalView
                 cast(ushort) (paneRows > 0 ? paneRows : 1));
 
         pump();
+        wakeForSynchronizedOutput(h);
 
         // A captured OSC title becomes the window's — the whole surface IS
         // the window here; an embedder consumes takeTitleChanged for its tab.
@@ -953,6 +960,22 @@ struct TerminalView
         drainPty();
         drainedThisFrame = false; // next frame's first event re-drains
         reapChild();
+        if (s.synchronizedOutput.held)
+        {
+            if (s.childExited)
+                s.synchronizedOutput.release(s.terminal);
+            else
+                s.synchronizedOutput.releaseExpired(s.terminal);
+        }
+    }
+
+    /// Embedded hosts must arm this after pumping, including ring-driven panes:
+    /// a child that forgets DECRST may never produce another wake of its own.
+    void wakeForSynchronizedOutput(H)(ref H h)
+    {
+        static if (__traits(hasMember, H, "wakeIn"))
+            if (s.synchronizedOutput.held)
+                h.wakeIn(s.synchronizedOutput.remaining());
     }
 
     /**
@@ -961,10 +984,23 @@ struct TerminalView
     edge, or warmup. Advances the edge/warmup bookkeeping, so call it exactly
     once per frame. The whole-surface `frame` turns a `false` into
     `h.skipFrame()`; an embedder folds it into its own frame decision.
+    While mode 2026 is held, presentation uses the completed snapshot captured
+    at the begin transition; input, queries and timeout recovery stay live.
     */
     bool decideRedraw() @system nothrow @nogc
     {
-        ghostty_render_state_update(s.render_state, s.terminal);
+        if (s.synchronizedOutput.held)
+        {
+            if (s.childExited)
+                s.synchronizedOutput.release(s.terminal);
+            else
+                s.synchronizedOutput.releaseExpired(s.terminal);
+        }
+        // The begin transition captured the completed prefix at its exact
+        // stream position. Overlay/forced paints use that same immutable
+        // snapshot, never an in-progress synchronized update.
+        if (!s.synchronizedOutput.held)
+            ghostty_render_state_update(s.render_state, s.terminal);
 
         GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
         ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
@@ -980,7 +1016,8 @@ struct TerminalView
         const cursor = CursorSnapshot.of(s.render_state);
 
         const redraw = redrawDecision(RedrawInputs(
-            contentDirty: dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE,
+            contentDirty: dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE
+                || (!s.synchronizedOutput.held && s.images.repaintPending),
             overlayActive: overlayActive,
             overlayWasActive: prevOverlayActive,
             gridChanged: pendingForce,
@@ -1590,6 +1627,9 @@ struct TerminalView
         s.cols = cols > 0 ? cols : 1;
         s.rows = rows > 0 ? rows : 1;
         ghostty_terminal_resize(s.terminal, s.cols, s.rows, s.cellWidth, s.cellHeight);
+        // libghostty explicitly ends synchronization on resize. Retire our
+        // matching gate as well; the new dimensions must be visible now.
+        s.synchronizedOutput.observe(s.terminal, s.render_state);
         s.effects_ctx.cols = s.cols;
         s.effects_ctx.rows = s.rows;
         s.effects_ctx.cellWidth = s.cellWidth;
@@ -1845,4 +1885,128 @@ char[] encodedPaste(in char[] text, bool bracketed) @trusted
     assert(current().background == opened.background, "the background is restored");
     assert(current().foreground == opened.foreground);
     assert(current().palette[1] == opened.palette[1], "and the palette");
+}
+
+@("terminal_view.component.synchronizedOutputPreservesCompletedFrames")
+@system unittest
+{
+    import core.sys.posix.unistd : pipe, close;
+    import core.time : Duration;
+
+    TerminalView tv;
+    tv.forceFirstFrames = 0;
+    GhosttyTerminalOptions options = { cols: 30, rows: 3 };
+    assert(ghostty_terminal_new(null, &tv.s.terminal, options) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_terminal_free(tv.s.terminal);
+    ghostty_render_state_new(null, &tv.s.render_state);
+    scope (exit) ghostty_render_state_free(tv.s.render_state);
+    ghostty_render_state_row_iterator_new(null, &tv.s.row_iter);
+    scope (exit) ghostty_render_state_row_iterator_free(tv.s.row_iter);
+    ghostty_render_state_row_cells_new(null, &tv.s.cells);
+    scope (exit) ghostty_render_state_row_cells_free(tv.s.cells);
+
+    int[2] replies;
+    assert(pipe(replies) == 0);
+    scope (exit)
+    {
+        close(replies[0]);
+        close(replies[1]);
+    }
+    assert(fcntl(replies[0], F_SETFL, O_NONBLOCK) == 0);
+    tv.s.effects_ctx.pty_fd = replies[1];
+    ghostty_terminal_set(tv.s.terminal, GHOSTTY_TERMINAL_OPT_USERDATA,
+        cast(const(void)*) &tv.s.effects_ctx);
+    ghostty_terminal_set(tv.s.terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
+        cast(const(void)*) &effect_write_pty);
+
+    uint firstCell()
+    {
+        ghostty_render_state_get(tv.s.render_state,
+            GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &tv.s.row_iter);
+        assert(ghostty_render_state_row_iterator_next(tv.s.row_iter));
+        ghostty_render_state_row_get(tv.s.row_iter,
+            GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &tv.s.cells);
+        assert(ghostty_render_state_row_cells_next(tv.s.cells));
+        uint count;
+        ghostty_render_state_row_cells_get(tv.s.cells,
+            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &count);
+        assert(count == 1);
+        uint codepoint;
+        ghostty_render_state_row_cells_get(tv.s.cells,
+            GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, &codepoint);
+        return codepoint;
+    }
+
+    void painted()
+    {
+        ghostty_render_state_get(tv.s.render_state,
+            GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &tv.s.row_iter);
+        bool clean = false;
+        while (ghostty_render_state_row_iterator_next(tv.s.row_iter))
+            ghostty_render_state_row_set(tv.s.row_iter,
+                GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &clean);
+        GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
+        ghostty_render_state_set(tv.s.render_state,
+            GHOSTTY_RENDER_STATE_OPTION_DIRTY, &dirty);
+    }
+
+    feedPtyChunk(tv.s, "old");
+    assert(tv.decideRedraw() && firstCell() == 'o');
+    painted();
+    feedPtyChunk(tv.s, "\x1b[?20");
+    assert(!tv.decideRedraw());
+    feedPtyChunk(tv.s, "26h\rpartial");
+    assert(tv.s.synchronizedOutput.held);
+    assert(!tv.decideRedraw() && firstCell() == 'o');
+    assert(CursorSnapshot.of(tv.s.render_state).x == 3);
+
+    // Queries consume the live state and reply immediately, without exposing
+    // the partial frame to the renderer or blocking the pty pump.
+    feedPtyChunk(tv.s, "\x1b[?2026$p\x1b[6n");
+    char[80] reply;
+    const count = read(replies[0], reply.ptr, reply.length);
+    assert(count > 0);
+    assert(reply[0 .. count] == "\x1b[?2026;1$y\x1b[1;8R");
+    assert(!tv.decideRedraw() && firstCell() == 'o');
+
+    feedPtyChunk(tv.s, "\rfinal\x1b[?2026l");
+    assert(!tv.s.synchronizedOutput.held);
+    assert(tv.decideRedraw() && firstCell() == 'f');
+    painted();
+
+    // Text preceding a begin in the SAME read is already complete. It must
+    // become the snapshot, not the older painted frame or the partial body.
+    feedPtyChunk(tv.s, "\rprefix\x1b[?2026h\runfinished");
+    assert(tv.decideRedraw() && firstCell() == 'p');
+    painted();
+    assert(!tv.decideRedraw());
+    tv.pendingForce = true;
+    assert(tv.decideRedraw() && firstCell() == 'p',
+        "forced and overlay paints retain the held snapshot");
+    painted();
+
+    // End and another begin within one read capture the intervening complete
+    // frame, even when the host never gets a turn between those bytes.
+    feedPtyChunk(tv.s, "\x1b[?2026l\x1b[?2026h\rsecond");
+    assert(tv.s.synchronizedOutput.held);
+    assert(tv.decideRedraw() && firstCell() == 'u');
+    painted();
+
+    feedPtyChunk(tv.s, "\x1bcreset");
+    assert(!tv.s.synchronizedOutput.held);
+    assert(tv.decideRedraw() && firstCell() == 'r');
+    painted();
+
+    feedPtyChunk(tv.s, "\x1b[?2026h\rresized");
+    tv.resizeGrid(35, 4);
+    assert(!tv.s.synchronizedOutput.held);
+    assert(tv.decideRedraw() && firstCell() == 'r');
+    assert(CursorSnapshot.of(tv.s.render_state).x == 7);
+    painted();
+
+    feedPtyChunk(tv.s, "\x1b[?2026h\reof");
+    tv.s.childExited = true;
+    assert(tv.decideRedraw() && firstCell() == 'e');
+    assert(!tv.s.synchronizedOutput.held);
+    assert(tv.s.synchronizedOutput.remaining() == Duration.max);
 }
