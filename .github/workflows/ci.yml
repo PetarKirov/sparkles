@@ -759,6 +759,34 @@ jobs:
             exit 1
           fi
 
+  # Every symbol a spec's evidence column cites must exist in the tree. The
+  # pre-commit hook of the same name runs it too (and so does `lint`, through
+  # `prek run --all-files`), but a hook can be skipped and a lint failure
+  # reads as formatting. This is the gate, named for what it checks. The
+  # backlog it started with (`docs/specs/evidence-backlog.txt`) is empty, so
+  # any unresolved citation fails here.
+  #
+  # `.#ci-minimal`, not `.#ci`: the check only reads files and runs `git
+  # ls-files`, so the toolchain in `.#ci`'s closure would be 2.4 GiB of
+  # nothing. For the same reason no `/nix` cache is restored.
+  spec-evidence:
+    name: Spec evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: false
+
+      - name: Every cited symbol resolves
+        run: nix run .#ci-minimal -- --check-spec-evidence
+
   ci:
     name: CI
     needs:
@@ -770,6 +798,7 @@ jobs:
       - lint
       - docs
       - cloud-env
+      - spec-evidence
     if: always()
     runs-on: ubuntu-latest
     steps:
