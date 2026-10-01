@@ -9,25 +9,87 @@ design and its requirements are in the
 
 ## Build and install
 
-It builds on x86_64 Linux and on Apple Silicon macOS — the hosts the Android
-NDK ships a toolchain for — and either host produces both device ABIs. A
+There are two variants, both built from this repository:
+
+| Variant         | Package id                              | Runs on first start                          | Build                          |
+| --------------- | --------------------------------------- | -------------------------------------------- | ------------------------------ |
+| Plain           | `dev.petar_kirov.sparkles.terminal`     | `/system/bin/sh`                             | `nix build .#terminal-apk`     |
+| Nix (bootstrap) | `dev.petar_kirov.sparkles.terminal.nix` | nix-on-droid's bootstrap install, then login | `nix build .#terminal-nix-apk` |
+
+Both are labelled `sparkles:terminal` and can be installed side by side. The
+Nix variant runs nix-on-droid in place of its Termux-based app; the bootstrap
+it installs is built for its package id by nix-on-droid's
+`lib.bootstrapPackages` (the `nix-on-droid` flake input). Its
+`terminal-nix-apk-unsigned` is the release build, for signing outside Nix.
+
+The APKs build on x86_64 Linux and Apple Silicon macOS, the hosts the Android
+NDK ships a toolchain for, and either host produces both device ABIs. A
 published build comes from Linux: the two hosts' APKs behave the same but are
-not byte-identical, and reproducible builds compare bytes.
+not byte-identical, and reproducible builds compare bytes. Devices need
+Android 10 (API 29) or newer.
+
+### On the emulator
+
+The Android dev shell's `hue-emulator` boots an emulator in the host's own
+ABI (x86_64 on Linux, arm64 on a Mac), with the host keyboard enabled; it
+serves any of the apps. Leave it running and use a second terminal:
 
 ```bash
-nix build .#terminal-apk            # a plain terminal: /system/bin/sh
-adb install result/terminal.apk
+nix develop .#android -c hue-emulator
 ```
 
-nix-on-droid's app is the same code with nix-on-droid's settings — its own
-package id (`dev.petar_kirov.sparkles.terminal.nix`), icon and bootstrap URL,
-under the same `sparkles:terminal` label — and is built by the `app/` flake in
-a nix-on-droid checkout:
+### On a phone
+
+Enable _Developer options_ (tap _Build number_ seven times), then _USB
+debugging_, and connect the phone; accept its prompt to trust the computer.
+`adb devices` lists it. Some vendors add a step: Xiaomi's MIUI needs _Install
+via USB_ enabled as well, and asks on the phone to confirm each new app.
+
+### The plain variant
 
 ```bash
-nix build ./app#apk           # downloads the bootstrap on first start
-nix build ./app#apk-offline   # carries the bootstrap inside
+nix build .#terminal-apk
+nix develop .#android -c adb install -r result/terminal.apk
 ```
+
+With both an emulator and a phone connected, pick one with
+`ANDROID_SERIAL=<serial from adb devices>`.
+
+### The Nix variant
+
+```bash
+nix build .#terminal-nix-apk
+nix develop .#android -c adb install -r result/sparkles-terminal-nix.apk
+```
+
+On first start the app asks for the bootstrap location. Its default download
+location is not hosted yet, so install the bootstrap from a file. The zip
+must be the device's architecture — `aarch64` for a phone or a Mac's
+emulator, `x86_64` for a Linux host's emulator — and building it needs
+`--impure`:
+
+```bash
+nix build --impure .#terminal-nix-bootstrap-aarch64 -o bootstrap
+nix develop .#android -c bash -c '
+  adb push bootstrap/bootstrap-aarch64.zip /data/local/tmp/
+  adb shell "run-as dev.petar_kirov.sparkles.terminal.nix sh -c \"mkdir -p files/n-o-d && cp /data/local/tmp/bootstrap-aarch64.zip files/n-o-d/\""'
+```
+
+Start the app and answer the prompt with the directory holding the zip:
+
+```text
+file:///data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/n-o-d
+```
+
+Alternatively, `nix build --impure .#terminal-nix-apk-offline` carries both
+architectures' bootstraps inside, so Enter at the prompt installs offline (the
+APK is `result/sparkles-terminal-nix-offline.apk`).
+
+The installer then starts nix-on-droid's `login`, which asks whether to use
+flakes and builds the first generation: hundreds of megabytes of downloads
+and around ten minutes on a phone, ending at a `bash` prompt.
+
+### Other flavours
 
 Any other flavour is a call to `mkTerminalApk` — app id, label, icon, and the
 session (`mode = "shell"`, or `mode = "bootstrap"` with a `bootstrapUrl`):
@@ -39,8 +101,6 @@ sparkles.legacyPackages.${system}.mkTerminalApk {
   session = { mode = "shell"; };
 }
 ```
-
-Devices need Android 10 (API 29) or newer.
 
 ## Using it
 
