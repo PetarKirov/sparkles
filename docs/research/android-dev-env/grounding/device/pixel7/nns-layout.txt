@@ -1,0 +1,27 @@
+PUBLICATION NOTE: file timestamps omitted for privacy. Command and exit status retained.
+
+command: for p in /data/adb/modules/nix/module.prop /data/nix /data/nix/store /data/nix/bin/nix-enter /data/adb/modules/nix/bin/nix-enter /data/nix/lib /data/nix/etc/nix/nix.conf /data/nix/var/nix/daemon.pid /data/nix/var/nix/daemon-socket/socket /data/nix/var/nix/profiles/profile /data/nix/var/nns/runsvdir.pid /data/ve/etc; do ls -ldZ $p; done; cat /data/adb/modules/nix/module.prop; cat /data/nix/var/nix/daemon.pid; sha256sum /data/nix/bin/nix-enter /data/adb/modules/nix/bin/nix-enter
+exit: 0
+output_limit_reached: false
+
+-rw-r--r-- 1 root root u:object_r:system_file:s0  157 [file timestamp omitted] /data/adb/modules/nix/module.prop
+drwxr-xr-x 11 root root u:object_r:system_data_file:s0  3452 [file timestamp omitted] /data/nix
+drwxr-xr-x 3677 root root u:object_r:system_data_file:s0  8343552 [file timestamp omitted] /data/nix/store
+-rwxr-xr-x 1 root root u:object_r:nns_exec:s0  149496 [file timestamp omitted] /data/nix/bin/nix-enter
+-rwxr-xr-x 1 root root u:object_r:system_file:s0  149496 [file timestamp omitted] /data/adb/modules/nix/bin/nix-enter
+drwxr-xr-x 2 root root u:object_r:system_data_file:s0  3452 [file timestamp omitted] /data/nix/lib
+-rw-rw-rw- 1 root root u:object_r:system_data_file:s0  527 [file timestamp omitted] /data/nix/etc/nix/nix.conf
+-rw-rw-rw- 1 root root u:object_r:system_data_file:s0  5 [file timestamp omitted] /data/nix/var/nix/daemon.pid
+srw-rw-rw- 1 root root u:object_r:system_data_file:s0  0 [file timestamp omitted] /data/nix/var/nix/daemon-socket/socket
+lrwxrwxrwx 1 u0_a578 u0_a578 u:object_r:system_data_file:s0  7 [file timestamp omitted] /data/nix/var/nix/profiles/profile -> default
+-rw-rw-rw- 1 root root u:object_r:system_data_file:s0  5 [file timestamp omitted] /data/nix/var/nns/runsvdir.pid
+drwxr-xr-x 2 root root u:object_r:system_data_file:s0  3452 [file timestamp omitted] /data/ve/etc
+id=nix
+name=Nix Store
+version=3.1.0
+versionCode=4
+author=reo101
+description=Native Nix store backed by /data/nix, with per-process canonical /nix namespaces
+1931
+e8ad23aed71e1f2d8cccc87289e858b2da39b47a761840b13016036f07e65b02  /data/nix/bin/nix-enter
+e8ad23aed71e1f2d8cccc87289e858b2da39b47a761840b13016036f07e65b02  /data/adb/modules/nix/bin/nix-enter

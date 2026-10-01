@@ -60,7 +60,7 @@ Hardware execution can avoid PRoot tracing, but restricted shared-memory I/O, bo
 
 ### Lifecycle and maintenance
 
-The independent owner must manage VMM lifetime, guest shutdown, instance-state reset after image identity changes and persistent root disks. Vendor kernel/VMM forks and firmware policy add maintenance beyond the guest Nix configuration. The stock Pad Microdroid probe ended with no remaining VM; see [raw evidence and cleanup][devices]. The Pixel investigation is deferred rather than represented as an unperformed comparison.
+The independent owner must manage VMM lifetime, guest shutdown, instance-state reset after image identity changes and persistent root disks. Vendor kernel/VMM forks and firmware policy add maintenance beyond the guest Nix configuration. The stock Pad Microdroid probe ended with no remaining VM; see [raw evidence and cleanup][devices]. The [contributor Pixel 7 Pro][pixel7] reports pKVM and both AVF guest modes; `CONFIG_GUNYAH=y` in its kernel does not establish an exposed Gunyah device or active Gunyah backend. Pixel 10 remains deferred.
 
 ## Strengths
 
@@ -91,6 +91,7 @@ The independent owner must manage VMM lifetime, guest shutdown, instance-state r
 
 <!-- References -->
 
+[pixel7]: ./device-validation/pixel7.md
 [guide]: https://github.com/polygraphene/gunyah-on-sd-guide/blob/61ac570c2d467274d1d7d73605dcc685af6945b8/README.md
 [pvmfw-guide]: https://github.com/polygraphene/gunyah-on-sd-guide/blob/61ac570c2d467274d1d7d73605dcc685af6945b8/PVMFW.md
 [network]: https://github.com/polygraphene/gunyah-on-sd-guide/blob/61ac570c2d467274d1d7d73605dcc685af6945b8/NETWORK.md

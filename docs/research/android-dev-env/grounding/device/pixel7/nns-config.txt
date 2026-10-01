@@ -1,0 +1,10 @@
+PUBLICATION NOTE: file timestamps omitted for privacy. Command and exit status retained.
+
+command: grep -E '^[[:space:]]*(sandbox|build-users-group|experimental-features|store)[[:space:]]*=' /data/nix/etc/nix/nix.conf; ls -lZ /data/nix/lib/libnns* /data/nix/bin/nns-resolver
+exit: 0
+output_limit_reached: false
+
+build-users-group =
+sandbox = false
+-rwxr-xr-x 1 root root u:object_r:system_data_file:s0   6816 [file timestamp omitted] /data/nix/bin/nns-resolver
+-rwxr-xr-x 1 root root u:object_r:system_data_file:s0  11344 [file timestamp omitted] /data/nix/lib/libnns-dns.so

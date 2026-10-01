@@ -1,0 +1,12 @@
+command: /apex/com.android.virt/bin/vm info
+exit: 0
+output_limit_reached: false
+
+Both protected and non-protected VMs are supported.
+Hypervisor version: kvm.arm-protected
+/dev/kvm exists.
+/dev/vfio/vfio does not exist.
+VFIO-platform is not supported.
+Assignable devices: []
+Available OS list: ["microdroid"]
+Debug policy: Ok(DebugPolicy { log: false, ramdump: false, adb: false })

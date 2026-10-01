@@ -11,6 +11,7 @@
 | nix-on-droid published baseline | `55b6449b4582a4ba3ce712543c973360a026db7d` | Published upstream commit, used for original scope/README                                              |
 | nix-on-droid-app                | `e87b6091bffa7b6eafb1b59cc7824f5692441cd0` | Local upstream clone; installer/service source inspected                                               |
 | NNS                             | `28d2229a664cbe29e55a051d648a789b6511f735` | Clean published source; launcher/kernel/bridge/tests inspected, custom VM harness not run              |
+| Contributor collector handoff   | `1fa8d36707330435fd6e7ca8e34deec1229fe542` | Command set matches Pixel logs; executable revision is not embedded in the report                      |
 | AOSP Virtualization main        | `175a51b30123fa6b02b541f1969665708f7ec2c3` | Framework, native demo, permission, pvmfw/Microdroid source; main is not universally shipping firmware |
 | AOSP Android 16 release         | `46351de83cd509bc9a9fee8fc99b07fcc0cdd0bd` | `android-16.0.0_r3` resolved to commit; custom image class checked in release tree                     |
 | nixos-avf                       | `d0a62c3f64b45a39570fde31a3a490b214bf19ee` | Guest and image construction; default owner is Android Terminal                                        |
@@ -55,6 +56,14 @@ The source paths above are relative to the original checkout. All thirteen snaps
 
 [Device validation][devices] records the commands, privilege context, failures, cleanup and limitations. Documentation CI is not presented as an Android integration test.
 
+The [contributor collector][collector-example] adds packaged root-ADB AVF/NNS inventory with selected existing-process views, bounded commands/output, private report directories and capability-aware CLI presentation. It also skips without an explicit device selection. Its real-device reports remain dated evidence, not CI assertions that every Android host has NNS or AVF.
+
+## Contributor device provenance
+
+[The Pixel 7 Pro page][pixel7] records the collection month, 28-record manifest audit and publication transformations. Nine normalized complete logs, three logs with non-epoch file timestamps explicitly omitted and seven marked excerpts retain relevant device/AVF/NNS evidence. Generic `1970-01-01` timestamps are retained. Exact collection time, the private archive digest, transient resource usage, full private mount/process inventories, the original archive and its manifest are not published.
+
+The installed NNS module reports `3.1.0`, `versionCode=4`, and matching public/module launcher hashes. That is deployment metadata, not an exact source/kernel/policy revision. The source revision ledger above remains authoritative for inspected implementation code; it must not be substituted for missing device build provenance. The Pixel report captures existing app-UID Zsh, root Nix and runit processes, but not a newly executed guest, Nix workload or Sparkles session.
+
 ## Sources
 
 - Implementation links are collected in the subject pages: [PRoot][proot-page], [AVF][avf], [Gunyah][gunyah], [native stores][native].
@@ -80,6 +89,8 @@ The source paths above are relative to the original checkout. All thirteen snaps
 [inventory-example]: ./device-validation/examples/inventory.d
 [app-example]: ./device-validation/examples/app-probe.d
 [devices]: ./device-validation/index.md
+[pixel7]: ./device-validation/pixel7.md
+[collector-example]: ./device-validation/examples/contributor-probe.d
 [proot-page]: ./nix-on-droid.md
 [avf]: ./avf.md
 [gunyah]: ./gunyah.md

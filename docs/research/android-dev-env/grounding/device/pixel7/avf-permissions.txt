@@ -1,0 +1,18 @@
+command: pm list permissions -f | grep -A 4 -E 'MANAGE_VIRTUAL_MACHINE|USE_CUSTOM_VIRTUAL_MACHINE|USE_PROTECTED_VM'; getprop | grep -E '^\[(ro\.boot\.hypervisor|ro\.boot\.avf|ro\.boot\.pvmfw|ro\.boot\.protected_vm|hypervisor\.)'
+exit: 0
+output_limit_reached: false
+
++ permission:android.permission.USE_CUSTOM_VIRTUAL_MACHINE
+  package:com.android.virtualmachine.res
+  label:null
+  description:null
+  protectionLevel:signature|development
+--
++ permission:android.permission.MANAGE_VIRTUAL_MACHINE
+  package:com.android.virtualmachine.res
+  label:null
+  description:null
+  protectionLevel:signature|development|preinstalled
+[ro.boot.hypervisor.protected_vm.supported]: [1]
+[ro.boot.hypervisor.version]: [kvm.arm-protected]
+[ro.boot.hypervisor.vm.supported]: [1]

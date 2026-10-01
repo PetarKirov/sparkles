@@ -1,0 +1,22 @@
+EXCERPT: retain app identity, security controls and syscall results; omit unrelated process, memory, scheduling and signal fields. Retained values unchanged.
+
+uid=10488 gid=10488
+/proc/self/attr/current:
+u:r:untrusted_app_27:s0:c232,c257,c512,c768
+/proc/self/status:
+Name:	app-probe
+Uid:	10488	10488	10488	10488
+Gid:	10488	10488	10488	10488
+CapInh:	0000000000000000
+CapPrm:	0000000000000000
+CapEff:	0000000000000000
+CapBnd:	0000000000000000
+CapAmb:	0000000000000000
+NoNewPrivs:	0
+Seccomp:	2
+
+unshare(CLONE_NEWUSER): result=-1 errno=22
+unshare(CLONE_NEWNS): result=-1 errno=1
+unshare(CLONE_NEWUSER|CLONE_NEWNS): result=-1 errno=22
+socket(AF_VSOCK): fd=-1 errno=13
+Capability absence/rejection is a result, not a probe failure.

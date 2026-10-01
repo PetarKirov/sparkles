@@ -1,0 +1,5 @@
+command: /apex/com.android.virt/bin/vm list
+exit: 0
+output_limit_reached: false
+
+Running VMs: []

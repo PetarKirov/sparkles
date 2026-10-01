@@ -36,7 +36,7 @@ For a Linux guest, [custom image configuration][image] supplies kernel/initrd/di
 
 [The framework README][framework] documents privileged apps on Android 14, preinstalled apps on Android 15, and explicit ADB management grants to other apps for development on both. Thus “all sideloaded apps are impossible” is too strong. A usable deployment still needs both requested permissions, successful grants, API access and a compatible custom-image path. Shizuku may provide shell authority where installed/authorized; it cannot add an absent backend or bypass arbitrary vendor SELinux policy.
 
-Probe protected and nonprotected capability bits separately. [The Pad 8 Pro observation][devices] is particularly instructive: AVF is present and a protected Microdroid boot succeeds, but `vm info` reports only protected VMs. The usual unsigned, unprotected nixos-avf image cannot be inferred to work there. Pixel 10 testing is deferred; no local Pixel result is claimed.
+Probe protected and nonprotected capability bits separately. [The Pad 8 Pro observation][devices] is particularly instructive: AVF is present and a protected Microdroid boot succeeds, but `vm info` reports only protected VMs. The usual unsigned, unprotected nixos-avf image cannot be inferred to work there. [Contributor Pixel 7 Pro evidence][pixel7] instead reports both guest modes through `kvm.arm-protected`, with `/dev/kvm` present. The read-only collector launched no guest, and its root-ADB context does not establish app grants or independent ownership. Pixel 10 testing remains deferred; MediaTek hardware is untested.
 
 For MediaTek, [crosvm's GenieZone backend][geniezone] and [the kernel UAPI][gz-uapi] show a distinct `/dev/gzvm` adapter. Support must be established for the exact device/ROM and custom guest, rather than inferred from “MediaTek” or a Dimensity model name. pKVM, GenieZone and Gunyah are separate backend paths beneath the framework.
 
@@ -114,3 +114,4 @@ Persist VM configuration/disks, supervise the owner and reconnect to guest sessi
 [devices]: ./device-validation/index.md
 [baseline]: ./sparkles-baseline.md
 [sources]: ./sources.md
+[pixel7]: ./device-validation/pixel7.md

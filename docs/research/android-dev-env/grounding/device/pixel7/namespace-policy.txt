@@ -1,0 +1,10 @@
+command: for p in /proc/sys/kernel/seccomp_bypass_paths /proc/sys/user/max_user_namespaces /proc/sys/user/max_mnt_namespaces; do echo $p; cat $p; done
+exit: 0
+output_limit_reached: false
+
+/proc/sys/kernel/seccomp_bypass_paths
+/data/nix/bin/nix-enter
+/proc/sys/user/max_user_namespaces
+41888
+/proc/sys/user/max_mnt_namespaces
+41888

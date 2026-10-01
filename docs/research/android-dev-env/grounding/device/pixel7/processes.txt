@@ -1,0 +1,17 @@
+EXCERPT: unrelated matched app/service processes omitted.
+
+command: ps -A -o PID,UID,NAME | grep -E 'PID|nix|proot|virtmgr|crosvm|microdroid|runsv|sparkles|termux|shizuku'
+exit: 0
+output_limit_reached: false
+
+  PID   UID NAME
+ 1931     0 nix-enter
+ 1946     0 nix
+ 1991     0 nix-enter
+ 2007     0 runsvdir
+ 2038     0 runsv
+ 2039     0 runsv
+ 2043     0 runsv
+10820 10578 com.termux.nix
+15606 10578 nix-enter
+15612 10578 -nix-on-droid
