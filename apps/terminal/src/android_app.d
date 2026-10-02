@@ -71,9 +71,13 @@ int androidMain()
     app.configPath = androidConfigPath(paths.home);
     app.platform.debugDir = paths.debugDir;
     app.platform.start(); // the system scheme, before the settings use it
-    // A tapped notification's pane (`TPR12`, `TSS15`).
+    // A tapped notification's pane (`TPR12`, `TSS15`); one that has closed
+    // since opens the notification log instead, its entry the newest, on top.
     app.platform.focusPane = (uint pane) {
-        cast(void) app.host.ws.focusPane(pane);
+        import pages : openPage;
+
+        if (!app.host.ws.focusPane(pane))
+            openPage(app.host, TermCommand.openNotifications);
         app.host.invalidate();
     };
     // Several notifications while away: the notification log (`TPG10`, D15);
