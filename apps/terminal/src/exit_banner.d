@@ -56,9 +56,10 @@ string statusText(int status) @safe pure
 /**
 The banner for `info`, at most `cols` wide. `expanded` shows the whole command
 with its directory and times; `actions` is false for `onExit = hold`, which
-keeps the status line alone.
+keeps the status line alone; `targetRows` makes the buttons touch targets.
 */
-WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels labels) @safe
+WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels labels,
+    int targetRows = 1) @safe
 {
     Builder b;
     uint[] lines;
@@ -82,9 +83,9 @@ WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels l
     }
     if (actions)
         lines ~= row(b, [
-            button(b, "↻", "Re-run", labels, ExitHit.rerun, primary: true),
-            button(b, "❯", "Shell", labels, ExitHit.shell),
-            button(b, "×", "Close", labels, ExitHit.close),
+            button(b, "↻", "Re-run", labels, ExitHit.rerun, primary: true, minRows: targetRows),
+            button(b, "❯", "Shell", labels, ExitHit.shell, minRows: targetRows),
+            button(b, "×", "Close", labels, ExitHit.close, minRows: targetRows),
         ]);
     return b.finish(band(b, lines));
 }

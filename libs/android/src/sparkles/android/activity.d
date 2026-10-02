@@ -143,3 +143,17 @@ transition into the foreground on the frame after it happened.
 */
 bool activityResumed() @trusted nothrow @nogc
     => GetAndroidApp().activityState == appCmdResume;
+
+private extern (C) int AConfiguration_getDensity(const(void)* config) @nogc nothrow;
+
+/// The screen's density in dots per inch (`160` = 1 dp per pixel); 160 when
+/// the configuration does not say.
+int densityDpi() @trusted nothrow @nogc
+{
+    const config = GetAndroidApp().config;
+    const d = config !is null ? AConfiguration_getDensity(config) : 0;
+    return d > 0 && d < 0xFFFE ? d : 160;
+}
+
+/// Pixels for `dp` density-independent pixels on this screen.
+int dpToPx(int dp) @trusted nothrow @nogc => (dp * densityDpi() + 80) / 160;

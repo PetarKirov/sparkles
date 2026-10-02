@@ -118,6 +118,12 @@ struct DroidTerminal
         fonts = c.fonts;
         cellW = fonts.cellW() > 0 ? fonts.cellW() : 1;
         cellH = fonts.cellH() > 0 ? fonts.cellH() : 1;
+        {
+            import sparkles.android.activity : dpToPx;
+
+            // Buttons are touch targets: 48 dp, in whole rows (`TOK7`).
+            host.theme.targetRows = (dpToPx(48) + cellH - 1) / cellH;
+        }
         if (defaultFontPx == 0)
             defaultFontPx = h.fontSizePx;
 
@@ -245,7 +251,9 @@ struct DroidTerminal
             chromeFg = colors.foreground;
         if (colors.hasBackground)
             chromeBg = colors.background;
+        const rows = host.theme.targetRows;
         host.theme = ChromeTheme.of(chromeFg, chromeBg);
+        host.theme.targetRows = rows;
         host.invalidate();
     }
 

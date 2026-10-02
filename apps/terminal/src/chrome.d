@@ -26,6 +26,9 @@ struct ChromeTheme
     Palette palette;
     RgbColor fg = RgbColor(0xcd, 0xd6, 0xf4);
     RgbColor bg = RgbColor(0x1e, 0x1e, 0x2e);
+    /// How many rows a button takes to be a touch target (`TOK7`): 1 on the
+    /// desktop, as many as 48 dp needs on a phone.
+    int targetRows = 1;
 
     /// The theme for a terminal whose default colours are `fg` on `bg`.
     static ChromeTheme of(RgbColor fg, RgbColor bg) @safe pure nothrow @nogc
@@ -155,10 +158,11 @@ void paintLayer(H)(ref H h, in Layer l, in ChromeTheme t) @system
 /**
 A button: its icon and its label as `ui.buttonLabels` says (`TCF9`) — the
 label stays the button's accessible name when only the icon shows. `hitId`
-makes the whole button a target; `primary` accents it.
+makes the whole button a target; `primary` accents it. `minRows` makes it a
+touch target (`TOK7`): the embedder asks for as many rows as 48 dp takes.
 */
 uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t hitId,
-    bool primary = false) @safe
+    bool primary = false, int minRows = 1) @safe
 {
     string caption;
     final switch (mode)
@@ -180,7 +184,10 @@ uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t 
         kind: WidgetKind.panel,
         children: [text],
         padding: Insets(0, 1, 0, 1),
+        // A touch target at least `minRows` tall (`TOK7`: 48 dp on a phone).
+        height: minRows > 1 ? SizeSpec.fixed(minRows) : SizeSpec.fit_,
         alignX: Alignment.center,
+        alignY: Alignment.center,
         hitId: hitId,
         slot: Slot.surfaceRaised,
         paintBackground: true,

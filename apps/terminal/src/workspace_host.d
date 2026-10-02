@@ -360,7 +360,7 @@ struct WorkspaceHost
             if (auto e = p.pane in ended)
                 info.ended = *e;
             const open = (p.pane in expanded) !is null;
-            banners[p.pane] = place(exitBanner(info, open, *kept, labels),
+            banners[p.pane] = place(exitBanner(info, open, *kept, labels, theme.targetRows),
                 p.rect.width, p.rect.height, area.x + p.rect.x * cw, area.y + p.rect.y * ch,
                 cw, ch, Place.bottom);
         }
