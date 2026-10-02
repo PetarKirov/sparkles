@@ -343,6 +343,11 @@ struct TerminalViewOptions
     /// — `scrollViewport`, `routePointer` — since raylib reports a finger as
     /// a mouse and a drag would otherwise select instead of scroll.
     bool pollMouse = true;
+    /// Handle the emulator's own chords — Ctrl+Shift+C/V and Ctrl+=/− — before
+    /// the key encoder. An embedder with a binding table of its own turns this
+    /// off, resolves those keys itself and calls 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF TerminalView.copy),
+    /// 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF TerminalView.pasteClipboard) and the host's `fontSize`.
+    bool builtinChords = true;
 
     /// The protocol policy (`TPR9`, `TPR19`–`TPR21`): the application's
     /// `notifications`, `paste` and `clipboard.osc52` settings.
@@ -1902,7 +1907,8 @@ struct TerminalView
             return; // nothing to forward to
 
         // Ctrl+Shift chords: copy / paste, consuming.
-        if (k.mods == Mods(ctrl: true, shift: true) && k.action == KeyAction.press)
+        if (opts.builtinChords && k.mods == Mods(ctrl: true, shift: true)
+            && k.action == KeyAction.press)
         {
             if (k.unshifted == 'c' && copySelection(h))
                 return;
@@ -1916,7 +1922,7 @@ struct TerminalView
         // Font hotkeys (HST14). Deliberately NOT consuming: the polling loop
         // also forwarded the (harmless) encoded stroke, and identical
         // behavior is the gate.
-        if (k.mods.ctrl && k.action == KeyAction.press)
+        if (opts.builtinChords && k.mods.ctrl && k.action == KeyAction.press)
         {
             if (k.unshifted == '=')
                 h.fontSize(h.fontSizePx + 2);
@@ -2052,6 +2058,20 @@ struct TerminalView
             return null;
         scope (exit) ghostty_free(null, outPtr, outLen);
         return (cast(const(char)[]) outPtr[0 .. outLen]).idup;
+    }
+
+    /**
+    Copies the selection to the clipboard (the `copy` command of an embedder
+    that resolves its own keys); false when nothing is selected.
+    */
+    bool copy(H)(ref H h) => copySelection(h);
+
+    /// Pastes the clipboard into the program, through the paste guard
+    /// (`TPR18`, `TPR19`) — the `paste` command of such an embedder.
+    void pasteClipboard() @system
+    {
+        sendPaste(opts.hooks.clipboardText !is null
+            ? opts.hooks.clipboardText() : readClipboard());
     }
 
     private bool copySelection(H)(ref H h)
