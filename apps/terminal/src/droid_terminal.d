@@ -28,12 +28,13 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.input : Event, GestureEvent, Gesture, Key, KeyAction, KeyEvent,
     match, PasteEvent, PointerAction, PointerEvent, WheelEvent;
 import sparkles.raylib_text.font_set : FontSet;
-import sparkles.terminal_view.component : TerminalView, TerminalViewOptions;
+import sparkles.terminal_view.component : ColorOverrides, TerminalView, TerminalViewOptions;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
 import chrome : ChromeTheme;
+import droid_platform : DroidPlatform;
 import key_router : KeyRouter, paintGuide, Route;
 import keymap : KeyCommand, TermCommand, TermContext;
 import screen_oracle : ScreenOracle;
@@ -45,6 +46,8 @@ struct DroidTerminal
 {
     WorkspaceHost host;
     ScreenOracle oracle;
+    /// Notifications, the system scheme, the autofill spike (`droid_platform`).
+    DroidPlatform platform;
 
     /// The options the first pane switches to when its program ends — the
     /// login that follows the installer (`NOD7`, `TSS4`: a respawn of the same
@@ -148,6 +151,14 @@ struct DroidTerminal
             host.invalidate();
         }
         host.frame(h, paneArea(g));
+        if (auto tv = host.focusedView())
+            if (platform.frame(*tv))
+            {
+                import cli : viewOptionsFrom;
+
+                string[] reported; // by `loadSettings` already
+                useColors(viewOptionsFrom(config.effective, platform.systemDark, reported).colors);
+            }
         if (host.takeDirty())
             save();
         if (auto tv = host.focusedView())
@@ -197,28 +208,44 @@ struct DroidTerminal
         config = loadTerminalConfig(configPath, termuxDir);
         string[] warnings = config.warnings;
         keys = extraKeysFromLayout(config.effective.extraKeys.layout, warnings);
-        // The system scheme reaches the app with `TPR13`; until then the
-        // dark scheme is the one in effect.
-        base = viewOptionsFrom(config.effective, systemDark: true, warnings);
+        // The system's scheme (`TPR13`); `view` follows it changing.
+        base = viewOptionsFrom(config.effective, systemDark: platform.systemDark, warnings);
         foreach (id, tv; host.pool)
         {
-            tv.recolor(base.colors);
             tv.opts.policy = base.policy;
             tv.opts.scrollbackLimit = base.scrollbackLimit;
         }
-        next.colors = base.colors;
+        useColors(base.colors);
         next.policy = base.policy;
         next.scrollbackLimit = base.scrollbackLimit;
         host.onExit = config.effective.behaviour.onExit;
         host.labels = config.effective.ui.buttonLabels;
         router.configure(config.effective, warnings);
-        if (base.colors.hasForeground)
-            chromeFg = base.colors.foreground;
-        if (base.colors.hasBackground)
-            chromeBg = base.colors.background;
-        host.theme = ChromeTheme.of(chromeFg, chromeBg);
         foreach (w; warnings)
             warning(i"$(w)");
+        host.invalidate();
+    }
+
+    /**
+    Install `colors` — the active scheme's (`activeScheme`) — on every pane,
+    the panes still to open and the chrome, and make the scheme they belong
+    to the one the panes report (`TPR13`, `TPR14`: `CSI ? 996 n`, and mode
+    2031's unsolicited report when it changed).
+    */
+    private void useColors(in ColorOverrides colors)
+    {
+        import sparkles.terminal_view.protocols : ColorScheme;
+
+        const dark = !config.effective.appearance.followSystem || platform.systemDark;
+        foreach (id, tv; host.pool)
+            tv.setColorScheme(dark ? ColorScheme.dark : ColorScheme.light, colors);
+        base.colors = colors;
+        next.colors = colors;
+        if (colors.hasForeground)
+            chromeFg = colors.foreground;
+        if (colors.hasBackground)
+            chromeBg = colors.background;
+        host.theme = ChromeTheme.of(chromeFg, chromeBg);
         host.invalidate();
     }
 

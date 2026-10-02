@@ -66,6 +66,13 @@ int androidMain()
     app.oracle.dir = paths.debugDir;
     app.termuxDir = paths.termuxDir;
     app.configPath = androidConfigPath(paths.home);
+    app.platform.debugDir = paths.debugDir;
+    app.platform.start(); // the system scheme, before the settings use it
+    // A tapped notification's pane (`TPR12`, `TSS15`).
+    app.platform.focusPane = (uint pane) {
+        cast(void) app.host.ws.focusPane(pane);
+        app.host.invalidate();
+    };
     app.loadSettings(); // the options every pane starts from
     app.host.pollPointer = false; // touch arrives as gestures
     app.statePath = buildPath(paths.files, "state", "workspace.json");
@@ -86,6 +93,7 @@ int androidMain()
         o.colors = app.base.colors;
         o.policy = app.base.policy;
         o.scrollbackLimit = app.base.scrollbackLimit;
+        o.hooks.notify = app.platform.notifyHook(spec.id);
         if (spec.cwd.length)
             o.cwd = spec.cwd.toStringz;
         if (!shell && spec.command.length)
