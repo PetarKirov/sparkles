@@ -227,24 +227,7 @@ final class TabTree : Surface
 
     /// `sparkles:fuzzy`'s score for `text` against the query; 0 when not
     /// admitted.
-    private long score(const(char)[] text) @trusted
-    {
-        import sparkles.fuzzy.common : CandidateView;
-        import sparkles.fuzzy.match : match, MatcherWorkspace;
-        import sparkles.fuzzy.query : parseQuery;
-
-        static MatcherWorkspace!()* workspace;
-        if (workspace is null)
-            workspace = new MatcherWorkspace!();
-        auto q = parseQuery(query);
-        if (!q.hasValue)
-            return 0;
-        CandidateView c;
-        c.id.low = 1;
-        c.path = text;
-        auto r = match(q.value, c, *workspace);
-        return r.hasValue && r.value.admitted ? 1 + r.value.score : 0;
-    }
+    private long score(const(char)[] text) @safe => fuzzyScore(query, text);
 
     private uint searchField(ref Builder b, in SurfaceContext ctx) @safe
     {
@@ -359,4 +342,29 @@ version (unittest)
     foreach (_; 0 .. 6)
         assert(t.key(KeyEvent(Key.backspace)));
     assert(t.search == "");
+}
+
+/**
+`sparkles:fuzzy`'s score for `text` against `query`, plus one; 0 when the
+query does not admit it (or does not parse). Shared by the searches that rank
+a short list: the tab tree, the key guide.
+*/
+long fuzzyScore(scope const(char)[] query, scope const(char)[] text) @trusted
+{
+    import sparkles.fuzzy.common : CandidateView;
+    import sparkles.fuzzy.match : match, MatcherWorkspace;
+    import sparkles.fuzzy.query : parseQuery;
+
+    // Heap, once: the workspace is far larger than a test worker's stack.
+    static MatcherWorkspace!()* workspace;
+    if (workspace is null)
+        workspace = new MatcherWorkspace!();
+    auto q = parseQuery(query);
+    if (!q.hasValue)
+        return 0;
+    CandidateView c;
+    c.id.low = 1;
+    c.path = text;
+    auto r = match(q.value, c, *workspace);
+    return r.hasValue && r.value.admitted ? 1 + r.value.score : 0;
 }

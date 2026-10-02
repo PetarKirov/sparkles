@@ -224,19 +224,36 @@ final class TouchGuide : Surface
 
     private uint[] searchResults(ref Builder b, in SurfaceContext sctx) @safe
     {
-        import std.algorithm.searching : canFind;
-        import std.uni : toLower;
+        import std.algorithm.sorting : sort;
 
-        const q = query.idup.toLower;
-        uint[] lines;
+        import tab_tree : fuzzyScore;
+
+        // Ranked by `sparkles:fuzzy` over the description and the command's
+        // name, best first; ties keep the table's order.
+        static struct Hit
+        {
+            size_t row;
+            long score;
+        }
+
+        Hit[] hits;
         bool[TermCommand] seen;
-        foreach (ref r; table)
+        foreach (i, ref r; table)
         {
             if (r.cmd == TermCommand.none || r.group.length || (r.cmd in seen) !is null)
                 continue;
-            if (!r.desc.toLower.canFind(q) && !nameOf(r.cmd).toLower.canFind(q))
+            const sd = fuzzyScore(query, r.desc), sn = fuzzyScore(query, nameOf(r.cmd));
+            if (!sd && !sn)
                 continue;
             seen[r.cmd] = true;
+            hits ~= Hit(i, sd > sn ? sd : sn);
+        }
+        hits.sort!((a, b) => a.score > b.score || a.score == b.score && a.row < b.row);
+
+        uint[] lines;
+        foreach (hit; hits)
+        {
+            const r = table[hit.row];
             string keys;
             foreach (i; 0 .. r.depth)
                 keys ~= (i ? " " : "") ~ chordText(r.path[i], r.path[i] == path[0]);
@@ -338,6 +355,11 @@ string iconOf(TermCommand c) @safe pure nothrow @nogc
         case TermCommand.paste: return "⎘";
         case TermCommand.toggleExtraKeys: return "⌨";
         case TermCommand.showGuide: return "?";
+        case TermCommand.openAbout: return "ⓘ";
+        case TermCommand.openLogs: return "≣";
+        case TermCommand.openNotifications: return "◉";
+        case TermCommand.showCredits: return "©";
+        case TermCommand.openSettings: return "⚙";
         default: return "·";
     }
 }
@@ -424,4 +446,16 @@ version (unittest)
     const shown = texts(g.build(SurfaceContext.init, 60));
     assert(shown.canFind("zoom") && shown.canFind("␣ p z"), "the full key path");
     assert(g.confirm() && ran[0].cmd == TermCommand.zoomPane);
+}
+
+@("touch_guide.searchIsFuzzyAndRanked")
+@system unittest
+{
+    // Not a substring of anything: "sprt" finds "split right" by its letters,
+    // ranked first, and Enter runs the best match.
+    auto g = guide();
+    foreach (dchar c; "sprt")
+        assert(g.key(KeyEvent(Key.char_, c)));
+    cast(void) g.build(SurfaceContext.init, 60);
+    assert(g.confirm() && ran[$ - 1].cmd == TermCommand.splitRight);
 }
