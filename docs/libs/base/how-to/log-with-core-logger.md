@@ -102,6 +102,21 @@ auto ring = installRingLog();                       // ring → file → stderr
 `initLogger` sets the level on every link of the chain. Writing to either sink
 is `@safe nothrow @nogc`.
 
+## Report the build: `buildStampOf`
+
+`buildStampOf!()` (`sparkles.base.build_stamp`) is the version and commit a
+packaging build wrote to `sparkles-build-stamp` on the compiler's `-J` path —
+`dev` for a plain `dub build`. It is a template, so the _application's_
+compilation resolves it:
+
+```
+enum stamp = buildStampOf!();
+info(i"myapp $(stamp.version_) ($(stamp.commitLabel))");
+```
+
+The Nix side is `legacyPackages.mkBuildStamp { version = …; }`, which stamps a
+dirty tree as `<rev>-dirty` (`commitLabel`: `<rev> + uncommitted changes`).
+
 ## Advanced Customization: Fatal Handlers
 
 `fatal` log calls are also `@safe nothrow @nogc`. By default, the fatal handler throws a thread-local, recycled `FatalLogError` to avoid GC allocation.

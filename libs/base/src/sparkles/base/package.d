@@ -13,6 +13,7 @@ public import sparkles.base.assert_handler;
 public import sparkles.base.meta;
 public import sparkles.base.prettyprint;
 public import sparkles.base.buffer;
+public import sparkles.base.build_stamp;
 public import sparkles.base.custom_float;
 public import sparkles.base.source_uri;
 public import sparkles.base.styled_template;

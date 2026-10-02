@@ -11,7 +11,7 @@
 # Exposed as `legacyPackages.buildSparklesApp` (flake-parts' escape hatch for
 # non-derivation values — see `build-d-wasm-module` for precedent); internal
 # consumers call it via `config.legacyPackages.buildSparklesApp`.
-{ lib, ... }:
+{ lib, inputs, ... }:
 {
   perSystem =
     { config, pkgs, ... }:
@@ -163,6 +163,20 @@
         inherit sourceFor manifestFileset;
         inherit needsUiShaders uiShaderDirs placeUiShaders;
       };
+
+      # The build stamp an application reports as its version and commit
+      # (`sparkles.base.build_stamp`, docs/specs/terminal/pages.md `TPG2`): a
+      # directory holding `sparkles-build-stamp`, for the compiler's `-J`.
+      # A tree with uncommitted changes is stamped `<rev>-dirty`, never as
+      # its last commit. The commit makes the stamped build per-commit.
+      legacyPackages.mkBuildStamp =
+        { version }:
+        let
+          rev = inputs.self.shortRev or inputs.self.dirtyShortRev or null;
+        in
+        pkgs.writeTextDir "sparkles-build-stamp" (
+          "version=${version}\n" + lib.optionalString (rev != null) "commit=${rev}\n"
+        );
 
       legacyPackages.buildSparklesApp = lib.extendMkDerivation {
         constructDrv = pkgs.buildDubPackage;
