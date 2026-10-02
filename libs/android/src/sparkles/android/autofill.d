@@ -72,6 +72,37 @@ bool requestPasswordAutofill() @trusted nothrow @nogc
     return false;
 }
 
+private shared int enabledSeen = -1; // AutofillManager.isEnabled(), last asked
+private shared bool enabledPending;
+
+/**
+Whether the selection menu may offer Autofill password (`TSE8`): the IME
+field exists and `AutofillManager.isEnabled()` said so when last asked.
+Asking is asynchronous — each call refreshes the answer for the next one —
+so the first call after start may say `false`.
+*/
+bool autofillAvailable() @trusted nothrow @nogc
+{
+    import sparkles.android.ime : imeFieldActive;
+    import sparkles.android.main_thread : postToMainThread;
+
+    if (cas(&enabledPending, false, true) && !postToMainThread(&enabledJob, null))
+        atomicStore(enabledPending, false);
+    return imeFieldActive && atomicLoad(enabledSeen) == 1;
+}
+
+private void enabledJob(JNIEnv* env, void*) nothrow @nogc
+{
+    scope (exit) atomicStore(enabledPending, false);
+    auto am = autofillManager(env);
+    if (am is null)
+        return atomicStore(enabledSeen, 0);
+    auto isEnabled = (*env).GetMethodID(env, (*env).GetObjectClass(env, am), "isEnabled", "()Z");
+    const on = (*env).CallBooleanMethodA(env, am, isEnabled, null) != 0;
+    atomicStore(enabledSeen, (*env).ExceptionCheck(env) ? 0 : on ? 1 : 0);
+    (*env).ExceptionClear(env);
+}
+
 /// `true` while a request waits for the service.
 bool autofillPending() @trusted nothrow @nogc => atomicLoad(state) == State.requested;
 
