@@ -1,79 +1,30 @@
 /**
-The modal settings pane (`SET*`): `PropertyTree` over the running
-configuration, shared by both hosts the way the picker is — one component
-value, one `buildView` widget tree, one key/pointer dispatch, mounted by the
-workspace and the window alike.
+hue's mount of the shared settings pane (`SET*`):
+$(REF SettingsPane, sparkles,ui,components,settings_pane) — the component the
+terminal mounts too (terminal `TSP1`) — with its keys resolved through hue's
+own keymap (the `settings` scope, terminal + hiding, and the `input` scope for
+the string-leaf line editor), and hue's live-apply bits.
 
 Semantics (user-decided): $(B live-apply + explicit save). Every committed
 edit mutates the running config immediately through the property tree's
-generated dispatch (validated, refusable, undoable — `PropertyEditState` is
-the history); a Save writes the $(B file draft) through the config core's
-sparse writer; closing without saving keeps the session's runtime state and
-persists nothing.
-
-The CFG11 rule is structural here: the pane mirrors every commit into
-`fileDraft` (seeded from defaults + the user file only — $(I below) env and
-CLI) and records the touched paths, so an env/CLI-shadowed value the user
-never touched can never leak into the file, while a touched one saves with
-the toggled value, not the flag's. When the selected leaf is shadowed by a
-higher layer, the footer says so.
-
-Generic over the subject so the component's whole behavior is unit-tested
-against a fixture struct; `SettingsPane` pins it to `HueConfig`.
+generated dispatch (validated, refusable, undoable); a Save writes the
+$(B file draft) through the config core's sparse writer; closing without
+saving keeps the session's runtime state and persists nothing. The `CFG11`
+rule is the component's: only touched paths reach the file.
 */
 module settings_pane;
 
-import std.conv : text;
+import sparkles.input.events : KeyEvent;
 
-import core.time : Duration;
-
-import sparkles.base.term_control : PointerShape;
-
-import sparkles.input.capability : InputCapabilities, mousePointer;
-import sparkles.input.events : Event, Key, KeyEvent, Point, PointerAction,
-    PointerButton, PointerEvent, WheelEvent;
-import std.sumtype : match;
-
-import sparkles.ui.components.property_view : propertyView,
-    PropertyViewOptions;
-import sparkles.ui.components.tree_view : treeActivate = activate,
-    treeCollapseOrUp = collapseOrUp, TreeStep, TreeViewState;
-import sparkles.ui.geometry : Constraints, Insets, Rect, SizeSpec;
-import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.state : CaptureState;
-import sparkles.ui.property_tree : applyEdit, Edit, EditPhase, editProperty,
-    EditValue, finishPending, LeafKind, PropertyEditState, PropertyNode,
-    PropertyTree, readValueAt, redoProperty, undoProperty;
-import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
-import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind,
-    WidgetTree;
+public import sparkles.ui.components.settings_pane : ApplyRule,
+    SettingsCommand, SettingsGeometry, settingsGeometryFor, SettingsResult;
+import sparkles.ui.components.settings_pane : UiSettingsPane = SettingsPane;
 
 import keymap : Command, commandFor, InputMode, KeyContext;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The host contract.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// What the host must do with a handled event.
-struct SettingsResult
-{
-    /// ditto
-    enum Kind : ubyte
-    {
-        consumed, /// nothing for the host beyond `apply`
-        closed,   /// the pane closed; return the keyboard
-        saved,    /// a save succeeded (the status line already says so)
-    }
-
-    Kind kind;
-
-    /// Actions the host performs NOW — application is host-specific (the
-    /// TUI resolves a theme name into its cycle, the window reloads fonts).
-    ApplyMask apply;
-}
-
-/// ditto
-enum ApplyMask : ubyte
+/// What a committed edit obliges a hue host to do now — the bits of
+/// `SettingsResult.apply` hue's `ApplyRule` table speaks in.
+enum ApplyMask : uint
 {
     none = 0,
     theme = 1,  /// theme / background changed — re-resolve and repaint
@@ -81,709 +32,49 @@ enum ApplyMask : ubyte
     layout = 4, /// pane geometry changed — re-arrange the dock
 }
 
-/// One live-apply rule: the longest matching prefix's mask is returned from
-/// a committed edit. The host supplies the table at `open` (the generic
-/// component knows no config paths).
-struct ApplyRule
+/// The pane over `T` with hue's keys.
+alias SettingsPaneT(T) = UiSettingsPane!(T, hueSettingsCommand);
+
+/// The context hue's keymap resolves against while the pane is open.
+KeyContext keyContext(P)(in P pane)
+    => KeyContext(settingsActive: true,
+        mode: pane.textEditing ? InputMode.settingsText : InputMode.normal);
+
+/// hue's keymap, read as the pane's vocabulary: the `settings` scope at rest,
+/// the `input` scope while the line editor owns the keyboard.
+SettingsCommand hueSettingsCommand(in KeyEvent k, bool textEditing) @safe
 {
-    string prefix;
-    ApplyMask mask;
-}
-
-/// Frame-stable overlay geometry, from the screen size alone (`INP10`):
-/// selection, filtering and editing never move a border.
-struct SettingsGeometry
-{
-    int panelCols = 72;
-    int panelRows = 24;
-}
-
-/// ditto
-SettingsGeometry settingsGeometryFor(int screenCols, int screenRows)
-    @safe pure nothrow @nogc
-{
-    int cols = screenCols - 8;
-    if (cols > 96)
-        cols = 96;
-    if (cols < 44)
-        cols = screenCols > 46 ? screenCols - 2 : 44;
-    int rows = screenRows - 4;
-    if (rows > 30)
-        rows = 30;
-    if (rows < 10)
-        rows = 10;
-    return SettingsGeometry(cols, rows);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The component.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// The tree rows' hit ids start here (`node + hitBase`).
-private enum uint hitBase = 1;
-
-/// The tree area's widget key (pointer routing finds its rect by it) and
-/// the capture-id base the scrollbar grabs claim.
-private enum size_t settingsTreeKey = 0x5e77_ba55;
-/// ditto
-private enum size_t captureBase = 0x5e77_ba00;
-
-/// ditto
-struct SettingsPaneT(T)
-{
-    // The property-tree bundle (the gallery page's shape, subject by
-    // pointer: the config outlives the pane and `editProperty` takes `ref`).
-    T* subject;                  ///
-    PropertyTree!T tree;         ///
-    TreeViewState!string tv;     ///
-    PropertyEditState edits;     ///
-    bool previewing;             /// a `v` preview session is live (`PRT19`)
-    bool active;                 ///
-
-    // Persistence (the CFG11 rule, structurally).
-    T fileDraft;                 /// defaults + user file + this session's commits
-    T savedDraft;                /// at open / last save; `dirty` compares
-    string[] touched;            /// paths committed this session
-    /// The save seam: returns `null` on success, a rendered refusal
-    /// otherwise (the config core's `saveUserConfig` behind an adapter).
-    string delegate(ref const T draft, const(string)[] touched) doSave;
-    /// Optional provenance lookup (`CFG10`'s machinery): non-empty for a
-    /// path whose effective value came from env/CLI — the shadow warning.
-    string delegate(string path) @safe originOf;
-
-    ApplyRule[] applyRules;      ///
-
-    // The string-leaf line editor (`Scope_.input` owns the keys while open).
-    bool textEditing;            ///
-    string textPath;             ///
-    string textBuf;              ///
-
-    string status;               /// footer line: saves, refusals, apply notes
-
-    /// The scrollbar-grab capture and the pointer profile the hover-expand
-    /// easing follows (`SCV1` — the same machine the tree views ease with).
-    CaptureState capture;
-    /// ditto
-    InputCapabilities caps = mousePointer;
-
-    private SettingsGeometry geom;
-
-    /// Opens over the shared config. `fileValue` seeds the save draft:
-    /// defaults + user file only, BELOW env and CLI (`CFG11`).
-    void open(T* cfg, T fileValue, SettingsGeometry g = SettingsGeometry())
+    const ctx = KeyContext(settingsActive: true,
+        mode: textEditing ? InputMode.settingsText : InputMode.normal);
+    switch (commandFor(k, ctx).cmd)
     {
-        subject = cfg;
-        fileDraft = fileValue;
-        savedDraft = fileValue;
-        touched = null;
-        status = null;
-        active = true;
-        resize(g);
-        refresh();
-    }
-
-    /// Re-derives the row window from a (possibly changed) geometry.
-    void resize(SettingsGeometry g)
-    {
-        geom = g;
-        tv.width = g.panelCols - 6;
-        tv.height = g.panelRows - 6; // borders + title + filter + footer
-        tv.chromeRows = 0;
-        tv.scrollGutterV = 1;
-        tv.scrollGutterH = 0;
-        if (subject !is null)
-            refresh();
-    }
-
-    /// Close: the session's runtime state stays, nothing persists. A live
-    /// preview drag commits first so no half-drag is left pending.
-    void close()
-    {
-        if (subject is null)
-            return;
-        if (previewing)
-        {
-            cast(void) finishPending(*subject, edits, tree.policy);
-            previewing = false;
-        }
-        textEditing = false;
-        if (tv.searching)
-            cast(void) tv.filterKey(KeyEvent(Key.escape));
-        active = false;
-    }
-
-    /// Unsaved committed edits since open / the last save.
-    bool dirty() const => fileDraft != savedDraft;
-
-    /// The context the keymap resolves against while the pane is open.
-    KeyContext keyContext() const @safe pure nothrow @nogc
-        => KeyContext(settingsActive: true,
-            mode: textEditing ? InputMode.settingsText : InputMode.normal);
-
-    /// Rebuild rows from the subject, pinning a pending edit's path.
-    void refresh() @safe
-    {
-        tree.rebuild(*subject, tv,
-            edits.pendingActive ? edits.pendingPath : null);
-    }
-
-    /// Advances the scrollbar hover-expand easings; hosts call it once per
-    /// frame while the pane is open — the same cadence the guide ticks at.
-    void tickAnims(Duration elapsed) @safe pure nothrow @nogc
-    {
-        tv.tick(caps, cast(float) elapsed.total!"hnsecs" / 10_000_000.0f);
-    }
-
-    /// The pointer shape the bar machine wants — ns-resize while hovering
-    /// or grabbing the bar, default elsewhere. The hosts' one-per-frame
-    /// shape input while the modal owns the pointer, exactly as every other
-    /// bar in the app reports through its host (`DCK9`).
-    PointerShape pointerShape() const @safe pure nothrow @nogc
-        => tv.scroll.shape();
-
-    // ── keys ────────────────────────────────────────────────────────────────
-
-    /// ditto
-    SettingsResult handleKey(in KeyEvent k)
-    {
-        // 1. The string editor owns the keyboard entirely while open.
-        if (textEditing)
-            return handleTextKey(k);
-
-        // 2. The live filter has first refusal (typed text is the query;
-        //    anything it declines still resolves — Down moves while typing).
-        if (tv.searching)
-        {
-            const st = tv.filterKey(k);
-            if (st == TreeStep.rebuild)
-            {
-                refresh();
-                return consumed();
-            }
-            if (st != TreeStep.none)
-                return consumed();
-        }
-
-        // 3. Command dispatch over the settings scope; a modal surface
-        //    swallows what it does not bind.
-        const kc = commandFor(k, keyContext());
-        switch (kc.cmd)
-        {
-            case Command.settingsClose:
-                close();
-                return SettingsResult(SettingsResult.Kind.closed);
-            case Command.settingsDown:
-                tv.moveSel(1);
-                return consumed();
-            case Command.settingsUp:
-                tv.moveSel(-1);
-                return consumed();
-            case Command.settingsPageDown:
-                tv.moveSel(tv.height > 2 ? tv.height - 2 : 1);
-                return consumed();
-            case Command.settingsPageUp:
-                tv.moveSel(-(tv.height > 2 ? tv.height - 2 : 1));
-                return consumed();
-            case Command.settingsHome:
-                tv.selHome();
-                return consumed();
-            case Command.settingsEnd:
-                tv.selEnd();
-                return consumed();
-            case Command.settingsExpand:
-            {
-                const n = selectedNode();
-                if (n !is null && n.expandable)
-                {
-                    if (tree.searching)
-                        tv.searchFold = tv.searchFold.opened(n.path);
-                    else
-                        tv.open = tv.open.opened(n.path);
-                    refresh();
-                }
-                return consumed();
-            }
-            case Command.settingsCollapse:
-                return collapseSel();
-            case Command.settingsActivate:
-                return activateSel();
-            case Command.settingsInc:
-                return stepEdit(1);
-            case Command.settingsDec:
-                return stepEdit(-1);
-            case Command.settingsPreview:
-                if (previewing)
-                {
-                    // The commit boundary: one history entry per drag
-                    // (PRT19), funneled like every commit.
-                    const a = finishPending(*subject, edits, tree.policy);
-                    previewing = false;
-                    if (a.ok)
-                        return committed(edits.undo.length
-                            ? edits.undo[$ - 1].path : null);
-                    refresh();
-                }
-                else
-                    previewing = true;
-                return consumed();
-            case Command.settingsUndo:
-            {
-                const a = undoProperty(*subject, edits, tree.policy);
-                return a.ok ? committed(a.inverse.path) : consumedRefresh();
-            }
-            case Command.settingsRedo:
-            {
-                const a = redoProperty(*subject, edits, tree.policy);
-                return a.ok ? committed(a.inverse.path) : consumedRefresh();
-            }
-            case Command.settingsFilter:
-                tv.filterStart();
-                refresh();
-                return consumed();
-            case Command.settingsMatchNext:
-                tree.jumpMatch(tv, 1);
-                return consumed();
-            case Command.settingsMatchPrev:
-                tree.jumpMatch(tv, -1);
-                return consumed();
-            case Command.settingsReveal:
-                if (tree.searching)
-                {
-                    tree.revealInBase(*subject, tv);
-                    refresh();
-                }
-                return consumed();
-            case Command.settingsOpenAll:
-                tv.open = typeof(tv.open).allOpen;
-                refresh();
-                return consumed();
-            case Command.settingsCloseAll:
-                tv.open = typeof(tv.open).allClosed;
-                refresh();
-                return consumed();
-            case Command.settingsReset:
-                return resetSel();
-            case Command.settingsSave:
-                return save();
-            default:
-                // Modal: an unbound key is spent, never a command beneath.
-                return consumed();
-        }
-    }
-
-    // ── pointer ─────────────────────────────────────────────────────────────
-
-    /**
-    Routes an overlay-local event (the host already translated it) through
-    the tree machine: a press on the scrollbar is a grab that owns the
-    pointer, hover feeds the bar's expand easing, a wheel notch scrolls
-    leaving the cursor behind, and a press on a row selects (a second press
-    activates) — the same routing every tree view has.
-    */
-    SettingsResult handleOverlay(in Event e, SettingsGeometry g)
-    {
-        auto view = buildView(g);
-        auto frames = layout(view, Constraints(maxW: g.panelCols));
-        const area = treeArea(view, frames);
-
-        SettingsResult result = consumed();
-        e.match!(
-            (in WheelEvent w) {
-                tv.scrollBy(w.dy * 3);
-            },
-            (in PointerEvent p) {
-                // Tree-local coordinates: the machine's frame is (0,0)-based
-                // at the tree area's origin — the SAME frame the paint pass
-                // laid the bar out from, so hit and paint cannot disagree.
-                PointerEvent local = p;
-                local.pos = Point(p.pos.x - area.x, p.pos.y - area.y);
-                if (tv.pointer(local, capture, captureBase)
-                    == TreeStep.activated)
-                    result = activateSel();
-            },
-            (e2) {},
-        );
-        return result;
-    }
-
-    /// The tree area's laid-out rect, found by its widget key.
-    private static Rect treeArea(in WidgetTree view,
-        scope const(Frame)[] frames) @safe pure nothrow @nogc
-    {
-        foreach (i, ref const node; view.nodes)
-            if (node.key == settingsTreeKey && i < frames.length)
-                return frames[i].rect;
-        return Rect.init;
-    }
-
-    // ── the edit engine ─────────────────────────────────────────────────────
-
-    private const(PropertyNode)* selectedNode() @safe
-    {
-        const node = tv.selectedNode;
-        if (node == uint.max || node >= tree.data.nodes.length)
-            return null;
-        return (() @trusted => &tree.data.nodes[node].value)();
-    }
-
-    private SettingsResult consumed() @safe pure nothrow @nogc
-        => SettingsResult(SettingsResult.Kind.consumed);
-
-    private SettingsResult consumedRefresh()
-    {
-        refresh();
-        return consumed();
-    }
-
-    /// One `+`/`-` (or Enter-on-a-leaf) edit through the generated dispatch.
-    private SettingsResult stepEdit(int dir)
-    {
-        const n = selectedNode();
-        if (n is null || n.synthetic || n.composite)
-            return consumed();
-
-        Edit e;
-        e.path = n.path;
-        e.phase = previewing ? EditPhase.preview : EditPhase.commit;
-        EditValue cur;
-        final switch (n.kind)
-        {
-            case LeafKind.none:
-                return consumed();
-            case LeafKind.boolean:
-                e.value = EditValue.of(n.badge != "true");
-                break;
-            case LeafKind.enumeration:
-                size_t at;
-                foreach (i, c; n.choices)
-                    if (c == n.badge)
-                        at = i;
-                const nn = n.choices.length;
-                e.value = EditValue.ofEnum(
-                    n.choices[(at + nn + (dir < 0 ? nn - 1 : 1)) % nn]);
-                break;
-            case LeafKind.integral:
-                if (!readValueAt(*subject, n.path, cur))
-                    return consumed();
-                const stepI = n.hasRange && n.step > 0
-                    ? cast(long) n.step : 1L;
-                e.value = EditValue.of(cur.i + dir * stepI);
-                break;
-            case LeafKind.floating:
-                if (!readValueAt(*subject, n.path, cur))
-                    return consumed();
-                const stepF = n.hasRange && n.step > 0 ? n.step : 0.1;
-                e.value = EditValue.of(cur.f + dir * stepF);
-                break;
-            case LeafKind.text:
-                // Strings edit through the line editor, not a step.
-                return openTextEditor(n.path);
-            case LeafKind.opaque:
-                return consumed();
-        }
-        const a = editProperty(*subject, e, edits, tree.policy);
-        if (a.ok && e.phase == EditPhase.commit)
-            return committed(e.path);
-        refresh();
-        return consumed();
-    }
-
-    /// Enter: descend a composite, toggle/cycle a bool/enum, edit a string.
-    private SettingsResult activateSel()
-    {
-        const n = selectedNode();
-        if (n is null)
-            return consumed();
-        if (n.expandable && !tree.searching)
-        {
-            // The un-scoped self-reference the delegate needs: `this` is
-            // persistent host state, alive for every frame the pane shows.
-            auto self = (() @trusted => &this)();
-            if (treeActivate(tv, tree.data,
-                (uint node) => self.tree.keyOf(node)) == TreeStep.rebuild)
-                refresh();
-            return consumed();
-        }
-        if (n.kind == LeafKind.boolean || n.kind == LeafKind.enumeration)
-            return stepEdit(1);
-        if (n.kind == LeafKind.text && n.editable)
-            return openTextEditor(n.path);
-        return consumed();
-    }
-
-    private SettingsResult collapseSel()
-    {
-        const n = selectedNode();
-        if (tree.searching)
-        {
-            // Folding under a query is the transient overlay: visibility
-            // only, discarded with the query (PRT29).
-            if (n !is null && n.expandable)
-            {
-                tv.searchFold = tv.searchFold.closed(n.path);
-                refresh();
-            }
-            return consumed();
-        }
-        auto self = (() @trusted => &this)();
-        if (treeCollapseOrUp(tv, tree.data,
-            (uint node) => self.tree.keyOf(node)) == TreeStep.rebuild)
-            refresh();
-        return consumed();
-    }
-
-    /// `r`: the selected leaf back to its compiled default — read from a
-    /// fresh `T.init`, written through the dispatch (range-checked,
-    /// refusable, undoable).
-    private SettingsResult resetSel()
-    {
-        const n = selectedNode();
-        if (n is null || n.composite || n.synthetic)
-            return consumed();
-        T defaults;
-        EditValue dv;
-        if (!readValueAt(defaults, n.path, dv))
-            return consumed();
-        const a = editProperty(*subject,
-            Edit(n.path, dv, EditPhase.commit), edits, tree.policy);
-        if (a.ok)
-            return committed(n.path);
-        refresh();
-        return consumed();
-    }
-
-    /**
-    Every successful COMMIT funnels here: mirror the subject's value at
-    `path` into the file draft (resync-by-read — also correct after
-    undo/redo, whose replayed value is already in the subject), record the
-    touched path, and answer the host's apply mask.
-    */
-    private SettingsResult committed(string path)
-    {
-        if (path.length)
-        {
-            EditValue v;
-            if (readValueAt(*subject, path, v))
-                cast(void) applyEdit(fileDraft, Edit(path, v), tree.policy);
-            noteTouched(path);
-        }
-        refresh();
-        return SettingsResult(SettingsResult.Kind.consumed, applyFor(path));
-    }
-
-    private void noteTouched(string path) @safe
-    {
-        foreach (t; touched)
-            if (t == path)
-                return;
-        touched ~= path;
-    }
-
-    private ApplyMask applyFor(string path) @safe pure nothrow @nogc
-    {
-        import std.algorithm.searching : startsWith;
-
-        ApplyMask best = ApplyMask.none;
-        size_t bestLen;
-        foreach (ref r; applyRules)
-            if (path.startsWith(r.prefix) && r.prefix.length >= bestLen)
-            {
-                best = r.mask;
-                bestLen = r.prefix.length;
-            }
-        return best;
-    }
-
-    // ── the string-leaf line editor ─────────────────────────────────────────
-
-    private SettingsResult openTextEditor(string path)
-    {
-        EditValue cur;
-        if (!readValueAt(*subject, path, cur))
-            return consumed();
-        textPath = path;
-        textBuf = cur.s.idup;
-        textEditing = true;
-        return consumed();
-    }
-
-    private SettingsResult handleTextKey(in KeyEvent k)
-    {
-        const kc = commandFor(k, keyContext());
-        switch (kc.cmd)
-        {
-            case Command.inputAccept:
-            {
-                textEditing = false;
-                const a = editProperty(*subject,
-                    Edit(textPath, EditValue.ofText(textBuf),
-                        EditPhase.commit), edits, tree.policy);
-                return a.ok ? committed(textPath) : consumedRefresh();
-            }
-            case Command.inputCancel:
-                textEditing = false;
-                return consumed();
-            case Command.inputBackspace:
-                if (textBuf.length)
-                {
-                    // Pop one code point, not one byte.
-                    size_t cut = textBuf.length - 1;
-                    while (cut > 0 && (textBuf[cut] & 0xC0) == 0x80)
-                        cut--;
-                    textBuf = textBuf[0 .. cut];
-                }
-                return consumed();
-            default:
-                if (k.key == Key.char_ && k.ch >= ' ')
-                    textBuf ~= text(k.ch);
-                return consumed();
-        }
-    }
-
-    // ── the save ────────────────────────────────────────────────────────────
-
-    /// `s` / Ctrl-S: a pending drag commits first, then the draft persists.
-    private SettingsResult save()
-    {
-        if (previewing)
-        {
-            cast(void) finishPending(*subject, edits, tree.policy);
-            previewing = false;
-            refresh();
-        }
-        if (doSave is null)
-        {
-            status = "no save target wired";
-            return consumed();
-        }
-        const failure = doSave(fileDraft, touched);
-        if (failure.length)
-        {
-            status = failure;
-            return consumed();
-        }
-        savedDraft = fileDraft;
-        status = "saved";
-        return SettingsResult(SettingsResult.Kind.saved);
-    }
-
-    // ── the view ────────────────────────────────────────────────────────────
-
-    /// ditto
-    WidgetTree buildView(SettingsGeometry g)
-    {
-        Builder b;
-
-        uint[] body_;
-
-        // The filter line.
-        {
-            TextSpan[] spans;
-            if (tv.searching || tv.filterQuery.length)
-            {
-                spans ~= TextSpan(text: "/", slot: Slot.chromeAccent);
-                spans ~= TextSpan(text: tv.filterQuery.length
-                    ? tv.filterQuery.idup : "type to search…",
-                    slot: tv.filterQuery.length ? Slot.code : Slot.muted);
-                if (tv.searching)
-                    spans ~= TextSpan(text: "▏", slot: Slot.caret);
-                if (tree.filterError.length)
-                    spans ~= TextSpan(text: text("  ⚠ ", tree.filterError),
-                        slot: Slot.error);
-                else if (tree.searching)
-                {
-                    spans ~= TextSpan(text: text("  ", tree.matchCount,
-                        " matches"), slot: Slot.info);
-                    if (tree.omittedMatches)
-                        spans ~= TextSpan(text: text("  ",
-                            tree.omittedMatches, " omitted"), slot: Slot.muted);
-                    if (tree.searchIncomplete)
-                        spans ~= TextSpan(text: "  incomplete",
-                            slot: Slot.warn);
-                }
-            }
-            else
-                spans ~= TextSpan(text: "/ filter · Enter edit · +/- step " ~
-                    "· u undo · s save · Esc close", slot: Slot.muted);
-            body_ ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
-                width: SizeSpec.grow()));
-        }
-
-        // The tree body, clipped inside the frame.
-        auto opt = PropertyViewOptions(
-            valueColumn: g.panelCols > 60 ? 30 : 20,
-            rangeBarCells: g.panelCols > 50 ? 8 : 4,
-            needsEditorMarker: "⏎ edit",
-        );
-        // The framed tree (rows + the machine-driven animated bar) carries
-        // its own fixed size now; the keyed wrapper is what pointer routing
-        // finds its origin by.
-        const treeCol = propertyView(b, tree.data, tv, edits, opt, hitBase);
-        body_ ~= b.add(Widget(kind: WidgetKind.column, children: [treeCol],
-            key: settingsTreeKey, width: SizeSpec.grow(),
-            height: SizeSpec.grow()));
-
-        // The line editor, while open.
-        if (textEditing)
-            body_ ~= b.add(Widget(kind: WidgetKind.rich, spans: [
-                TextSpan(text: textPath, slot: Slot.chromeAccent),
-                TextSpan(text: ": ", slot: Slot.muted),
-                TextSpan(text: textBuf.idup, slot: Slot.code),
-                TextSpan(text: "▏", slot: Slot.caret),
-            ], width: SizeSpec.grow()));
-
-        // The footer: history depth, shadow warning, status.
-        {
-            TextSpan[] spans;
-            spans ~= TextSpan(text: text("undo ", edits.undo.length,
-                " · redo ", edits.redo.length), slot: Slot.muted);
-            if (previewing)
-                spans ~= TextSpan(text: "  preview", slot: Slot.chromeAccent);
-            if (const n = selectedNode())
-            {
-                const r = edits.refusalFor(n.path);
-                if (r.refused)
-                    spans ~= TextSpan(text: text("  ✗ ", r.kind),
-                        slot: Slot.error);
-                if (originOf !is null && n.path.length)
-                {
-                    const org = originOf(n.path);
-                    if (org.length)
-                        spans ~= TextSpan(text: text("  ⚑ ", org,
-                            " overrides this at next launch"),
-                            slot: Slot.warn);
-                }
-            }
-            if (status.length)
-                spans ~= TextSpan(text: text("  ", status), slot: Slot.info);
-            body_ ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
-                width: SizeSpec.grow()));
-        }
-
-        // The framed panel with the title on the border (the picker's look).
-        const content = b.add(Widget(kind: WidgetKind.column, children: body_,
-            width: SizeSpec.grow(), height: SizeSpec.grow(),
-            clipX: true, clipY: true));
-        const boxed = b.add(Widget(kind: WidgetKind.panel,
-            children: [content],
-            padding: Insets(1, 2, 1, 2),
-            slot: Slot.surface, paintBackground: true,
-            decoration: Decoration(borderWidth: Insets.all(2),
-                borderStyle: BorderStyle.solid, borderRadius: 6,
-                borderSlot: Slot.highlightBorder),
-            width: SizeSpec.fixed(g.panelCols),
-            height: SizeSpec.fixed(g.panelRows)));
-        const titleText = b.add(Widget(kind: WidgetKind.text,
-            text: dirty ? " Settings ● " : " Settings ",
-            slot: Slot.chromeAccent, textStyle: TextStyle(bold: true)));
-        const titleRow = b.add(Widget(kind: WidgetKind.row,
-            children: [titleText],
-            width: SizeSpec.fixed(g.panelCols), alignX: Alignment.center));
-        const root = b.add(Widget(kind: WidgetKind.stack,
-            children: [boxed, titleRow],
-            width: SizeSpec.fixed(g.panelCols),
-            height: SizeSpec.fixed(g.panelRows)));
-        return b.finish(root);
+        case Command.settingsClose: return SettingsCommand.close;
+        case Command.settingsDown: return SettingsCommand.down;
+        case Command.settingsUp: return SettingsCommand.up;
+        case Command.settingsPageDown: return SettingsCommand.pageDown;
+        case Command.settingsPageUp: return SettingsCommand.pageUp;
+        case Command.settingsHome: return SettingsCommand.home;
+        case Command.settingsEnd: return SettingsCommand.end;
+        case Command.settingsExpand: return SettingsCommand.expand;
+        case Command.settingsCollapse: return SettingsCommand.collapse;
+        case Command.settingsActivate: return SettingsCommand.activate;
+        case Command.settingsInc: return SettingsCommand.inc;
+        case Command.settingsDec: return SettingsCommand.dec;
+        case Command.settingsPreview: return SettingsCommand.preview;
+        case Command.settingsUndo: return SettingsCommand.undo;
+        case Command.settingsRedo: return SettingsCommand.redo;
+        case Command.settingsFilter: return SettingsCommand.filter;
+        case Command.settingsMatchNext: return SettingsCommand.matchNext;
+        case Command.settingsMatchPrev: return SettingsCommand.matchPrev;
+        case Command.settingsReveal: return SettingsCommand.reveal;
+        case Command.settingsOpenAll: return SettingsCommand.openAll;
+        case Command.settingsCloseAll: return SettingsCommand.closeAll;
+        case Command.settingsReset: return SettingsCommand.reset;
+        case Command.settingsSave: return SettingsCommand.save;
+        case Command.inputAccept: return SettingsCommand.textAccept;
+        case Command.inputCancel: return SettingsCommand.textCancel;
+        case Command.inputBackspace: return SettingsCommand.textBackspace;
+        default: return SettingsCommand.none;
     }
 }
 
@@ -794,7 +85,13 @@ struct SettingsPaneT(T)
 
 version (unittest)
 {
-    import sparkles.input.events : Mods;
+    import core.time : Duration;
+
+    import sparkles.base.term_control : PointerShape;
+    import sparkles.input.events : Event, Key, Mods, Point, PointerAction,
+        PointerButton, PointerEvent, WheelEvent;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
     import sparkles.ui.property_tree : Doc, Range, readOnly;
 
     private enum FixMode : ubyte
