@@ -7,13 +7,13 @@ version (LDC)
 
 version (textSimdX86)
 {
-    package immutable bool hasAvx512Bw;
+    package immutable bool hasAvx512BwVl;
     package immutable bool hasAvx512Vbmi2;
 
     shared static this()
     {
         const capabilities = detectCapabilities();
-        hasAvx512Bw = (capabilities & 1) != 0;
+        hasAvx512BwVl = (capabilities & 1) != 0;
         hasAvx512Vbmi2 = (capabilities & 2) != 0;
     }
 
@@ -51,7 +51,10 @@ version (textSimdX86)
                 "cpuid" : "=a" (a), "=b" (b), "=c" (c), "=d" (d) : "a" (7), "c" (0);
             }
         })();
-        if ((b & ((1u << 16) | (1u << 30))) != ((1u << 16) | (1u << 30)))
+        // LLVM can narrow 512-bit comparisons to 128/256-bit opmask forms;
+        // those require VL in addition to F/BW, including the VBMI2 path.
+        enum required = (1u << 16) | (1u << 30) | (1u << 31);
+        if ((b & required) != required)
             return 0;
         return 1 | ((c & (1u << 6)) != 0 ? 2 : 0);
     }
