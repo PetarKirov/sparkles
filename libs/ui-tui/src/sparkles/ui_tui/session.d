@@ -119,6 +119,12 @@ struct TerminalSession
         s.events = PosixEvents.start();
         s.opened = true;
         auto caps = detectTermCaps();
+        // The mouse modes `Terminal.open` set: SGR button reports, and
+        // any-motion tracking (1003) where asked. Every measured terminal
+        // recognizes 1003, and tmux and zellij, which answer no `DECRQM` for
+        // it, implement it all the same (D44) — so the request is the answer.
+        caps.mouseSgr = r.mouse;
+        caps.anyMotion = r.mouse && r.motion;
         if (r.probe)
         {
             // The answers' output rows — depth, sync, graphemes, scheme
@@ -252,17 +258,18 @@ struct TerminalSession
         }
     }
 
-    /// The declared input capabilities of this target (`TGT5`/`IXB10`): a
-    /// terminal has hover and one whole-cell pointer.
+    /// What the decoders can read (`TGT5`/`IXB10`): hover and one whole-cell
+    /// pointer. The reach, not the declaration — a session declares only what
+    /// it asked the terminal for ($(LREF sessionCapabilities)).
     static auto capabilities() @safe pure nothrow @nogc => PosixEvents.capabilities;
 }
 
 /**
 A live session's declaration (`CAP1`): what `t` holds — the environment's
 answers and, when the session probed, the terminal's (`CAP3`) — with the
-input it negotiated: a terminal serves hover and one whole-cell pointer
-($(LREF TerminalSession.capabilities)), and focus and paste events only once
-asked for them — key releases too, where the application asked and the
+input it negotiated: one whole-cell pointer where mouse reports were asked
+for, hover where bare motion (1003) was too, and focus and paste events only
+once asked for them — key releases too, where the application asked and the
 terminal speaks the kitty keyboard protocol.
 
 Nothing rides along any more. Links, like styled underlines, are what the
@@ -280,6 +287,11 @@ TargetCapabilities sessionCapabilities(in TermCaps t) @safe pure nothrow @nogc
     c.input.focusEvents = t.focusReporting;
     c.input.pasteEvents = t.bracketedPaste;
     c.input.keyRelease = t.kittyKeyboard;
+    // A pointer where mouse reports were asked for, and hover only where
+    // bare motion was too: without 1003 a hover affordance would be drawn
+    // and never light up.
+    c.input.maxPointers = t.mouseSgr ? 1 : 0;
+    c.input.hover = t.anyMotion;
     return c;
 }
 
@@ -297,7 +309,13 @@ unittest
     assert(c.colorDepth == ColorDepth.ansi256 && c.unicode);
     assert(!c.hyperlinks, "links only where the probe found them");
     assert(!c.extendedUnderline, "styled underlines only where the probe found them");
-    assert(c.input == TerminalSession.capabilities);
+    // No mouse mode set: no pointer, no hover.
+    assert(c.input.maxPointers == 0 && !c.input.hover);
+    color.mouseSgr = true;
+    assert(sessionCapabilities(color).input.maxPointers == 1);
+    assert(!sessionCapabilities(color).input.hover, "button reports are not motion");
+    color.anyMotion = true;
+    assert(sessionCapabilities(color).input.hover);
     color.extendedUnderline = true; // `XTGETTCAP` answered `Smulx` and `Setulc`
     assert(sessionCapabilities(color).extendedUnderline);
     color.hyperlinks = true; // `XTVERSION` named a terminal known to draw links
