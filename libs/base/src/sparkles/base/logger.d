@@ -107,6 +107,68 @@ abstract class CoreLogger : Logger
         const ref CoreLogEntry entry,
         scope const(char)[] message,
     ) @safe nothrow @nogc;
+
+    /// A Phobos log payload as a [CoreLogEntry], stamped now — for a
+    /// `writeLogMsg` that takes the Sparkles route.
+    protected static CoreLogEntry coreEntryOf(ref Logger.LogEntry payload) @safe
+    {
+        auto dt = cast(DateTime) payload.timestamp;
+        return CoreLogEntry(
+            level: payload.logLevel,
+            file: payload.file,
+            line: payload.line,
+            funcName: payload.funcName,
+            prettyFuncName: payload.prettyFuncName,
+            moduleName: payload.moduleName,
+            monotonicTicks: MonoTime.currTime.ticks,
+            hour: dt.hour,
+            minute: dt.minute,
+            second: dt.second,
+        );
+    }
+}
+
+/**
+A [CoreLogger] that sits in front of another one and hands every entry on.
+
+Sinks that keep a copy of the log — the ring a log page reads, the file that
+survives a crash ([sparkles.base.log_sinks]) — are installed $(I in front of)
+the sink that was there (stderr, logcat), so installing one changes nothing
+else: each entry is recorded, then forwarded, and the forwarded-to logger
+still applies its own level filter. [initLogger] walks the chain, so a level
+set on the front applies to every link.
+*/
+abstract class ForwardingCoreLogger : CoreLogger
+{
+    private shared CoreLogger _next;
+
+    this(LogLevel level, shared(CoreLogger) next) @safe
+    {
+        super(level);
+        atomicStore!(MemoryOrder.raw)(_next, next);
+    }
+
+    /// The logger every entry is forwarded to, or `null` at the end of the chain.
+    @property final shared(CoreLogger) next() @safe nothrow @nogc
+        => atomicLoad!(MemoryOrder.raw)(_next);
+
+    /// Hands `entry` on to [next], which filters it by its own level.
+    protected final void forwardToNext(
+        const ref CoreLogEntry entry,
+        scope const(char)[] message,
+    ) @safe nothrow @nogc
+    {
+        if (auto n = next)
+            () @trusted { (cast() n).forwardCoreLog(entry, message); }();
+    }
+
+    /// The Phobos path: the payload becomes a [CoreLogEntry] and takes the
+    /// same route as a Sparkles call.
+    override protected void writeLogMsg(ref Logger.LogEntry payload) @safe
+    {
+        auto entry = coreEntryOf(payload);
+        writeCoreLog(entry, payload.msg);
+    }
 }
 
 /// Error thrown by [throwingFatalHandler].
@@ -242,21 +304,7 @@ class DeltaTimeLogger : CoreLogger
 
     override protected void writeLogMsg(ref Logger.LogEntry payload) @safe
     {
-        auto nowTicks = MonoTime.currTime.ticks;
-        auto dt = cast(DateTime) payload.timestamp;
-        auto entry = CoreLogEntry(
-            level: payload.logLevel,
-            file: payload.file,
-            line: payload.line,
-            funcName: payload.funcName,
-            prettyFuncName: payload.prettyFuncName,
-            moduleName: payload.moduleName,
-            monotonicTicks: nowTicks,
-            hour: dt.hour,
-            minute: dt.minute,
-            second: dt.second,
-        );
-
+        auto entry = coreEntryOf(payload);
         writeCoreLog(entry, payload.msg);
     }
 
@@ -360,10 +408,15 @@ void initLogger(LogLevel level) @safe
 
     if (auto existing = sharedCoreLog)
     {
+        // Every link of a forwarding chain (ring → file → stderr) follows.
         () @trusted {
-            auto l = cast() existing;
-            l.coreLogLevel = level;
-            l.logLevel = level;
+            for (CoreLogger l = cast() existing; l !is null;)
+            {
+                l.coreLogLevel = level;
+                l.logLevel = level;
+                auto f = cast(ForwardingCoreLogger) l;
+                l = f is null ? null : cast() f.next;
+            }
         }();
         return;
     }
@@ -846,7 +899,7 @@ void fwriteAll(
 Duration durationFromTicks(long ticks) =>
     dur!"hnsecs"(convClockFreq(ticks, MonoTime.ticksPerSecond, 10_000_000L));
 
-void writeTimeHms(Writer)(ref Writer w, int hour, int minute, int second)
+package void writeTimeHms(Writer)(ref Writer w, int hour, int minute, int second)
 {
     import sparkles.base.text.writers : writeIntegerPadded;
     import std.range.primitives : put;
@@ -858,7 +911,7 @@ void writeTimeHms(Writer)(ref Writer w, int hour, int minute, int second)
     writeIntegerPadded(w, second, 2);
 }
 
-void writeStyledLevel(bool colored = true, Writer)(ref Writer w, LogLevel level)
+package void writeStyledLevel(bool colored = true, Writer)(ref Writer w, LogLevel level)
 {
     import sparkles.base.styled_template : writeStyled;
     import sparkles.base.term_color : ColorDepth;
@@ -904,7 +957,7 @@ void writeLogPrefix(bool colored = false, Writer)(
 }
 
 @safe pure nothrow @nogc
-const(char)[] baseNameSlice(return scope const(char)[] file)
+package const(char)[] baseNameSlice(return scope const(char)[] file)
 {
     size_t start = 0;
     foreach (i, c; file)
@@ -915,14 +968,14 @@ const(char)[] baseNameSlice(return scope const(char)[] file)
 
 private shared uint loggerGlobalTestLock;
 
-void lockLoggerGlobalTests() @safe nothrow @nogc
+package void lockLoggerGlobalTests() @safe nothrow @nogc
 {
     while (!cas(&loggerGlobalTestLock, 0u, 1u))
     {
     }
 }
 
-void unlockLoggerGlobalTests() @safe nothrow @nogc
+package void unlockLoggerGlobalTests() @safe nothrow @nogc
 {
     atomicStore!(MemoryOrder.rel)(loggerGlobalTestLock, 0u);
 }

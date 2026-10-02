@@ -79,6 +79,29 @@ doc = pipeline.load(path);
 
 The closing line is `<< name <duration>` on top of the usual `Δt` / `Δtᵢ` prefix.
 
+## Keep a copy: the ring and the rotating file
+
+`sparkles.base.log_sinks` adds two sinks that install _in front of_ the one
+already there, record each entry, and forward it — so stderr (or Android's
+logcat) sees exactly what it saw before:
+
+```
+initLogger(LogLevel.info);                          // stderr
+installFileLog(buildPath(stateDir, "app.log"));     // file → stderr
+auto ring = installRingLog();                       // ring → file → stderr
+```
+
+- `RingCoreLogger` keeps the last 10 000 entries (messages over 4 KiB are cut
+  at a UTF-8 boundary) in storage allocated once; a full ring overwrites the
+  oldest entry and counts it in `dropped`. `ring.each(fun, fromSeq)` reads
+  oldest-first; pass the next `seq` you have not seen to tail it.
+- `RotatingFileCoreLogger` appends one flushed line per entry, rotating to
+  `<path>.1` at 1 MiB, and moves the previous run's file there when it opens.
+  A failed write turns it off with one warning; it never throws.
+
+`initLogger` sets the level on every link of the chain. Writing to either sink
+is `@safe nothrow @nogc`.
+
 ## Advanced Customization: Fatal Handlers
 
 `fatal` log calls are also `@safe nothrow @nogc`. By default, the fatal handler throws a thread-local, recycled `FatalLogError` to avoid GC allocation.
