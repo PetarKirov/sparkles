@@ -140,3 +140,9 @@ indent_style = unset
 # byte-exact rather than reformatting it.
 [docs/research/autological-artifacts/{boot-hybrids,content-addressed-chunking}.md]
 indent_style = unset
+
+# These deep-dives quote real gofmt'd Go source and SharpFont's tab-indented
+# C#, both written upstream with literal tabs — keep the quotes byte-exact
+# rather than reformatting the evidence.
+[docs/research/font-libraries/{sharpfont,golang-image-font,go-text-typesetting}.md]
+indent_style = unset
