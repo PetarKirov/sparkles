@@ -513,14 +513,6 @@ struct WorkspaceHost
             const m = GetMousePosition();
             const mx = cast(int) m.x, my = cast(int) m.y;
             const leftDown = IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT);
-            {
-                import raylib : GetMouseWheelMove;
-
-                // Under a page the wheel is the page's (`TKM4`).
-                const wheel = GetMouseWheelMove();
-                if (wheel != 0 && !scrollSurface(cast(int)(-wheel * 3)))
-                    cast(void) scrollBanner(mx, my, cast(int)(-wheel * 3)); // `TSS2`
-            }
             PaneId under;
             foreach (ref b; boxes)
                 if (contains(b.content, mx, my))
@@ -549,7 +541,7 @@ struct WorkspaceHost
                 under = pointerOwner = 0;
             // A viewer pane scrolls with the wheel over it; a terminal pane
             // polls its own (`pollMouse`).
-            if (auto v = viewer(under))
+            if (auto v = surfaces.modal ? null : viewer(under))
             {
                 import raylib : GetMouseWheelMove;
 
@@ -1074,8 +1066,12 @@ struct WorkspaceHost
 
         if (!surfaces.modal)
             return false;
-        foreach (_; 0 .. rows < 0 ? -rows : rows)
-            cast(void) surfaces.key(KeyEvent(rows < 0 ? Key.up : Key.down));
+        // A `Scrollable` surface scrolls itself; any other, as by arrow keys.
+        if (!surfaces.topScrolls)
+            foreach (_; 0 .. rows < 0 ? -rows : rows)
+                cast(void) surfaces.key(KeyEvent(rows < 0 ? Key.up : Key.down));
+        else
+            cast(void) surfaces.scroll(rows);
         repaint = true;
         return true;
     }
@@ -1109,6 +1105,9 @@ struct WorkspaceHost
         if (surfaces.tap(x, y))
         {
             repaint = true;
+            // The tap may be the last event for a while: draw what it changed.
+            static if (__traits(compiles, h.requestFrame()))
+                h.requestFrame();
             return true;
         }
         // The opener: the tree, a tab, a new tab (`TSS13`).
@@ -1385,6 +1384,7 @@ struct WorkspaceHost
             case TermCommand.fontSmaller:
             case TermCommand.fontReset:
             case TermCommand.showGuide:
+            case TermCommand.openSettings:
             case TermCommand.toggleExtraKeys:
             case TermCommand.dismiss:
             case TermCommand.confirm:

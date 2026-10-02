@@ -21,6 +21,8 @@ import sparkles.ui.widget : WidgetTree;
 import chrome : ChromeTheme;
 import desktop_integration : DesktopIntegration;
 import key_router : KeyRouter, paintGuide, Route;
+import settings_load : LoadedConfig;
+import settings_store : TerminalSettingsStore;
 import keymap : KeyCommand, TermCommand, TermContext;
 import selection_menu : SelectionUi;
 import workspace_host : WorkspaceHost;
@@ -45,9 +47,14 @@ struct DesktopTerminal
     RgbColor accent = RgbColor(0x89, 0xb4, 0xfa);
     /// Where the workspace is saved (`TSS14`); empty: not saved.
     string statePath;
+    /// The configuration in effect; the settings page edits it (`TSP2`).
+    LoadedConfig config;
 
     private int defaultFontPx;
     private bool guideWasShown;
+    private TerminalSettingsStore* settings; // the open page's
+    private int startFontPt; // the font size the window opened at
+    private bool fontPending; // the page changed the font size
 
     @disable this(this);
 
@@ -65,7 +72,15 @@ struct DesktopTerminal
         import raylib : GetScreenHeight, GetScreenWidth;
 
         if (defaultFontPx == 0)
+        {
             defaultFontPx = h.fontSizePx;
+            startFontPt = config.effective.appearance.font.size;
+        }
+        if (fontPending && startFontPt > 0)
+        {
+            fontPending = false;
+            h.fontSize(defaultFontPx * config.effective.appearance.font.size / startFontPt);
+        }
         keys.unseenNotifications = host.notifications.unseen; // `TPG11`
         keys.tick((cast(long)(h.frameSeconds * 1000)).msecs);
         const wait = keys.untilShown;
@@ -93,13 +108,19 @@ struct DesktopTerminal
     /// Keys through the table; a paste to the focused pane.
     void handle(H)(ref H h, in Event e)
     {
-        import sparkles.input : EndOfInput, PasteEvent;
+        import sparkles.input : EndOfInput, PasteEvent, WheelEvent;
 
         e.match!(
             (in KeyEvent k) { onKey(h, k); },
             (in PasteEvent p) {
                 if (auto tv = host.focusedView())
                     tv.onPaste(p);
+            },
+            // The wheel: a page under it (`TKM4`), else an expanded exit
+            // prompt (`TSS2`); the panes poll their own.
+            (in WheelEvent w) {
+                if (!host.scrollSurface(w.dy))
+                    cast(void) host.scrollBanner(w.pos.x, w.pos.y, w.dy);
             },
             (in EndOfInput _) { h.quit(); },
             (in _) {},
@@ -191,6 +212,9 @@ struct DesktopTerminal
                 break;
             case TermCommand.toggleExtraKeys: // no extra-keys row here
                 break;
+            case TermCommand.openSettings:
+                openSettings();
+                break;
             // The workspace's own, answered above.
             case TermCommand.newTab, TermCommand.closeTab, TermCommand.nextTab,
                 TermCommand.prevTab, TermCommand.goToTab, TermCommand.splitRight,
@@ -203,6 +227,53 @@ struct DesktopTerminal
                 TermCommand.openLogs, TermCommand.openNotifications, TermCommand.showCredits:
                 break;
         }
+    }
+
+    /// Opens the settings page as a modal panel (`TSP6`).
+    private void openSettings() @system
+    {
+        import settings_page : SettingsPage;
+
+        settings = new TerminalSettingsStore;
+        *settings = TerminalSettingsStore.from(config);
+        auto self = &this;
+        host.surfaces.push(new SettingsPage(settings, (uint mask) { self.applySettings(mask); }));
+    }
+
+    /// A committed page edit, applied to the running window (`TCF8`).
+    private void applySettings(uint mask) @system
+    {
+        import settings_load : colorOverrides;
+        import settings_page : applyToWorkspace;
+        import settings_store : TerminalApply;
+        import sparkles.base.logger : warning;
+        import sparkles.terminal_view.protocols : ColorScheme;
+
+        auto c = settings.resolved;
+        config.effective = settings.resolved;
+        config.fileValue = settings.fileValue;
+        config.fileOverlay = settings.fileOverlay;
+        applyToWorkspace(host, c);
+        string[] warnings;
+        if (mask & TerminalApply.colors)
+        {
+            desktop.followSystem = c.appearance.followSystem;
+            desktop.darkColors = colorOverrides(c.appearance.colors.dark,
+                "appearance.colors.dark", warnings);
+            desktop.lightColors = colorOverrides(c.appearance.colors.light,
+                "appearance.colors.light", warnings);
+            desktop.current = desktop.followSystem && !desktop.systemDark
+                ? ColorScheme.light : ColorScheme.dark;
+            foreach (id, tv; host.pool)
+                tv.setColorScheme(desktop.current, desktop.currentColors);
+            followColors();
+        }
+        if (mask & (TerminalApply.keys | TerminalApply.lantern))
+            keys.configure(c, warnings);
+        if (mask & TerminalApply.font)
+            fontPending = true;
+        foreach (w; warnings)
+            warning(i"$(w)");
     }
 
     /// The guide appearing or closing repaints the pane under it.

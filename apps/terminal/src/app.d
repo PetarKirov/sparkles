@@ -191,7 +191,10 @@ private int desktopMain(string[] args)
     app.host.treeHint = "Ctrl+Shift+P  tabs and panes";
     bool shotPending = debugScreenshotAndExit;
     app.host.paneOptions = (in PaneSpec spec, bool shell) {
-        TerminalViewOptions o = base;
+        // The configuration as it is now: the settings page edits it live.
+        string[] reported; // at start, below
+        TerminalViewOptions o = viewOptionsFrom(app.config.effective,
+            systemDark: app.desktop.systemDark, reported);
         o.shellCommand = shell || !spec.command.length ? null : spec.command.toStringz;
         o.cwd = spec.cwd.length ? spec.cwd.toStringz : null;
         // The scheme the panes are in now, and the pane's notifications to the
@@ -210,6 +213,7 @@ private int desktopMain(string[] args)
     // Every key goes through the terminal's table first (`TKM1`).
     app.keys.configure(lc.effective, lc.warnings);
     app.selection.useDesktop(lc.effective, app.keys.table);
+    app.config = lc;
     app.followColors();
 
     // Files opened from a pane open in the app (`TDV1`–`TDV4`): the sessions

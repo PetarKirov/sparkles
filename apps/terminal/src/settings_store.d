@@ -26,6 +26,7 @@ import sparkles.ui.components.settings_pane : ApplyRule, LayerPlacement,
     LeafOrigin, SettingsGeometry, SettingsPane;
 import sparkles.wired.overlay : mergeSparse, originAt, sparseAt, Sparse;
 
+import keymap : KeysConfig;
 import settings : TerminalConfig;
 import settings_io : saveConfig;
 import settings_load : LoadedConfig, Origin, OriginKind, Origins;
@@ -43,6 +44,10 @@ enum TerminalApply : uint
     font = 2,      /// reload the font (at the next start for now, `TCF8`)
     extraKeys = 4, /// rebuild the extra-keys row
     lantern = 8,   /// re-read the guide's settings
+    keys = 16,     /// rebuild the binding table (`TKM8`)
+    chrome = 32,   /// the button labels, overlay style, pane chrome and opener
+    behaviour = 64, /// the exit policy and the scrollback
+    policy = 128,  /// the paste, clipboard, notification and link policy
 }
 
 /// The live-apply table, longest prefix wins.
@@ -52,7 +57,15 @@ immutable ApplyRule[] terminalApplyRules = [
     ApplyRule("appearance.chromeTheme", TerminalApply.colors),
     ApplyRule("appearance.font.", TerminalApply.font),
     ApplyRule("extraKeys.", TerminalApply.extraKeys),
-    ApplyRule("lantern.", TerminalApply.lantern),
+    ApplyRule("lantern.", TerminalApply.lantern | TerminalApply.keys),
+    ApplyRule("keys", TerminalApply.keys),
+    ApplyRule("ui.", TerminalApply.chrome),
+    ApplyRule("behaviour.", TerminalApply.behaviour),
+    ApplyRule("paste.", TerminalApply.policy),
+    ApplyRule("clipboard.", TerminalApply.policy),
+    ApplyRule("notifications.", TerminalApply.policy),
+    ApplyRule("links.", TerminalApply.policy),
+    ApplyRule("open.", TerminalApply.policy),
 ];
 
 /// The configuration the page edits, and where it came from.
@@ -94,8 +107,11 @@ struct TerminalSettingsStore
         auto self = &this;
         sessionOverlay = fileOverlay;
         pane.applyRules = terminalApplyRules.dup;
+        keysEdited = false;
+        // The binding overlay is no leaf the property tree edits: once the
+        // capture editor wrote it, every save carries it (`TSP8`).
         pane.doSave = (ref const TerminalConfig d, const(string)[] changed)
-            => self.save(d, changed);
+            => self.save(d, self.keysEdited ? changed ~ "keys" : changed);
         pane.originOf = (string path) @safe => self.originOf(path);
         pane.fileLayer = "file:" ~ filePath;
         pane.open(&resolved, fileValue, g);
@@ -119,6 +135,23 @@ struct TerminalSettingsStore
         fileValue = snap;
         generation++;
         return null;
+    }
+
+    /// The capture editor wrote the `keys` overlay this session.
+    bool keysEdited;
+
+    /**
+    The capture editor's write (`TSP8`): `keys` becomes the binding overlay —
+    live in the running value and in the pane's file draft — and is saved at
+    once with the session's other changes. Returns `null` on success, the
+    refusal otherwise (the binding stays live).
+    */
+    string bindKeys(ref TerminalSettingsPane pane, KeysConfig keys)
+    {
+        resolved.keys = keys;
+        pane.fileDraft.keys = keys;
+        keysEdited = true;
+        return save(pane.fileDraft, pane.changedPaths ~ "keys");
     }
 
     /// The layer that supplied `path`'s loaded value, placed against the

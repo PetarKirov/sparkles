@@ -42,6 +42,8 @@ import keymap : KeyCommand, TermCommand, TermContext;
 import screen_oracle : ScreenOracle;
 import selection_menu : SelectionUi;
 import settings_load : LoadedConfig;
+import settings_page : SettingsPage;
+import settings_store : TerminalSettingsStore;
 import workspace_host : WorkspaceHost;
 
 /// The whole-surface Android component.
@@ -104,6 +106,9 @@ struct DroidTerminal
     private int cellW = 1, cellH = 1;
     private KeyCommand pendingCommand; // picked in the touch guide
     private bool hasPending;
+    private SettingsPage settingsPage; // the open page, for the keyboard
+    private int startFontPt; // the configured size the window opened at
+    private bool fontPending; // the page changed the font size
 
     @disable this(this);
 
@@ -182,6 +187,7 @@ struct DroidTerminal
         }
         selection.pollTouch(h, host);
         host.frame(h, paneArea(g));
+        settingsFrame(h);
         if (auto tv = host.focusedView())
             if (platform.frame(*tv))
             {
@@ -233,14 +239,23 @@ struct DroidTerminal
     */
     void loadSettings()
     {
-        import cli : viewOptionsFrom;
-        import extra_keys : extraKeysFromLayout;
         import settings_load : loadTerminalConfig;
-        import sparkles.base.logger : warning;
 
         config = loadTerminalConfig(configPath, termuxDir);
-        string[] warnings = config.warnings;
-        keys = extraKeysFromLayout(config.effective.extraKeys.layout, warnings);
+        if (startFontPt == 0)
+            startFontPt = config.effective.appearance.font.size;
+        applyConfig(config.warnings);
+    }
+
+    /// Applies `config.effective` to the running app: at load, and after each
+    /// settings-page edit (`TCF8`, `TSP2`).
+    private void applyConfig(string[] warnings)
+    {
+        import cli : viewOptionsFrom;
+        import extra_keys : extraKeysFromLayout;
+        import sparkles.base.logger : warning;
+
+        keys =extraKeysFromLayout(config.effective.extraKeys.layout, warnings);
         // The system's scheme (`TPR13`); `view` follows it changing.
         base = viewOptionsFrom(config.effective, systemDark: platform.systemDark, warnings);
         foreach (id, tv; host.pool)
@@ -386,6 +401,9 @@ struct DroidTerminal
                 rowDismissed = !rowDismissed;
                 host.invalidate();
                 break;
+            case TermCommand.openSettings:
+                openSettings();
+                break;
             // The workspace's own, answered above.
             case TermCommand.newTab, TermCommand.closeTab, TermCommand.nextTab,
                 TermCommand.prevTab, TermCommand.goToTab, TermCommand.splitRight,
@@ -397,6 +415,51 @@ struct DroidTerminal
                 TermCommand.promptClose, TermCommand.tabTree, TermCommand.openAbout,
                 TermCommand.openLogs, TermCommand.openNotifications, TermCommand.showCredits:
                 break;
+        }
+    }
+
+    /// Opens the settings page, full-screen (`TSP6`).
+    private void openSettings()
+    {
+        auto store = new TerminalSettingsStore;
+        *store = TerminalSettingsStore.from(config);
+        auto self = &this;
+        settingsPage = new SettingsPage(store, (uint mask) {
+            // The running value is the page's; apply it like a reload.
+            self.config.effective = store.resolved;
+            self.config.fileValue = store.fileValue;
+            self.config.fileOverlay = store.fileOverlay;
+            self.applyConfig(null);
+            import settings_store : TerminalApply;
+
+            if (mask & TerminalApply.font)
+                self.fontPending = true;
+        });
+        host.surfaces.push(settingsPage);
+        router.closeGuide();
+    }
+
+    /// The page's per-frame asks: the soft keyboard for a text field, a
+    /// font size it changed.
+    private void settingsFrame(H)(ref H h)
+    {
+        import sparkles.android.soft_input : showSoftKeyboard;
+
+        if (settingsPage !is null)
+        {
+            if (settingsPage.wantsKeyboard)
+            {
+                settingsPage.wantsKeyboard = false;
+                showSoftKeyboard();
+                keyboardShown = true;
+            }
+            if (settingsPage.closed)
+                settingsPage = null;
+        }
+        if (fontPending && startFontPt > 0 && defaultFontPx > 0)
+        {
+            fontPending = false;
+            h.fontSize(defaultFontPx * config.effective.appearance.font.size / startFontPt);
         }
     }
 

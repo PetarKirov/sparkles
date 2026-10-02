@@ -18,7 +18,7 @@ to infer.
 */
 module settings;
 
-import sparkles.metadata : Description, Label, Range;
+import sparkles.metadata : colorValue, Description, Label, Range, Section;
 import sparkles.wired.overlay : WireSection;
 import sparkles.wired.policy : WireName;
 
@@ -186,15 +186,19 @@ struct FontConfig
 struct SchemeColors
 {
     @Description("Default text colour.")
+    @colorValue
     string foreground;
 
     @Description("Default background colour.")
+    @colorValue
     string background;
 
     @Description("Cursor colour.")
+    @colorValue
     string cursor;
 
     @Description("The 16-colour palette, color0 to color15.")
+    @colorValue
     string[] palette;
 }
 
@@ -404,18 +408,25 @@ struct OpenConfig
 /// layer.
 struct TerminalConfig
 {
+    @Section("Appearance")
     Appearance appearance;
-    @Label("extra keys")
+    @Label("extra keys") @Section("Keyboard")
     ExtraKeysConfig extraKeys;
+    @Section("When a program exits")
     Behaviour behaviour;
+    @Section("Links")
     LinksConfig links;
+    @Section("Paste")
     PasteConfig paste;
+    @Section("Clipboard")
     ClipboardConfig clipboard;
+    @Section("Notifications")
     NotificationsConfig notifications;
+    @Section("Key guide")
     LanternConfig lantern;
-    @Label("interface")
+    @Label("interface") @Section("Interface")
     UiConfig ui;
-    @Label("opening files")
+    @Label("opening files") @Section("Opening files")
     OpenConfig open;
     /// The binding overlay: context → chord path → command, `null` unbinding
     /// (`TKM8`). Contexts are `overlay` and `pane`; `leader` spells the leader.

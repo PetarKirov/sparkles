@@ -256,6 +256,9 @@ struct Surfaces
     A wheel or a drag while a surface is modal: to the top surface when it
     scrolls. True whenever one is modal — nothing beneath scrolls then.
     */
+    /// Whether the top surface scrolls itself (`Scrollable`).
+    bool topScrolls() @safe => stack.length && cast(Scrollable) stack[$ - 1] !is null;
+
     bool scroll(int dy) @system
     {
         if (!stack.length)

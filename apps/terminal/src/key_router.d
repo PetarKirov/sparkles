@@ -150,6 +150,23 @@ struct KeyRouter
         lantern.shown = true;
     }
 
+    /**
+    Opens the guide at the leader's level — the `MENU` extra key on a touch
+    screen, where the leader cannot be typed: the next key (`s` settings,
+    `t` tabs, …) runs as if the leader had been pressed. The root when the
+    table has no leader.
+    */
+    void openGuideAtLeader() @safe pure nothrow @nogc
+    {
+        openGuide();
+        foreach (ref row; table)
+            if (row.scope_ == TermScope.pane && row.depth == 1 && row.group == "leader")
+            {
+                lantern.pending ~= row.path[0];
+                return;
+            }
+    }
+
     /// Closes the guide and forgets any pending path.
     void closeGuide() @safe pure nothrow @nogc
     {
@@ -267,6 +284,21 @@ string withUnseen(string desc, size_t unseen) @safe pure nothrow
     const k = r.route(KeyEvent(Key.char_, 'k'), TermContext.init);
     assert(k.route == Route.execute && k.command.cmd == TermCommand.toggleExtraKeys);
     assert(!r.lantern.shown);
+}
+
+@("key_router.openGuideAtLeader.menuThenSOpensSettings")
+@safe unittest
+{
+    import sparkles.input.events : Key;
+
+    KeyRouter r;
+    string[] warnings;
+    r.configure(TerminalConfig.init, warnings);
+    // `MENU` on a phone: the guide at the leader's rows, so `s` is settings.
+    r.openGuideAtLeader();
+    assert(r.lantern.shown && r.lantern.active);
+    const s = r.route(KeyEvent(Key.char_, 's'), TermContext.init);
+    assert(s.route == Route.execute && s.command.cmd == TermCommand.openSettings);
 }
 
 @("key_router.configure.guideOffAndDelayZero")

@@ -47,6 +47,7 @@ enum TermCommand : ubyte
     fontReset,
     showGuide,       /// `?` in an overlay, `leader ?` in a pane: every key here
     toggleExtraKeys, /// show or hide the extra-keys row (`TCF7`)
+    openSettings,    /// the settings page (`TSP6`)
     dismiss,         /// close the innermost overlay (`KBD1`)
     confirm,         /// the innermost overlay's primary action (`KBD1`: Enter)
     showCredits,     /// the credits page, in the document viewer (`TPG15`)
@@ -189,6 +190,8 @@ immutable Binding[] defaultBindings = [
         "notifications"),
     bind(TermScope.pane, chord(leaderMark), chord('c'), TermCommand.showCredits,
         "credits"),
+    bind(TermScope.pane, chord(leaderMark), chord('s'), TermCommand.openSettings,
+        "settings"),
     group(TermScope.pane, chord(leaderMark), chord('t'), "tab"),
     bind(TermScope.pane, chord(leaderMark), chord('t'), chord('n'), TermCommand.newTab,
         "new tab"),
