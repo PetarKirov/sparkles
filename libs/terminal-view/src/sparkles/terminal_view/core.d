@@ -548,6 +548,9 @@ struct CoreState
     bool childExited;
     bool childReaped;
     int childStatus = -1;
+    // What the exited banner offers, after the status (an embedder's exit
+    // prompt, `TSS2`); empty shows the status alone.
+    const(char)[] exitHint;
 }
 
 /**
@@ -902,7 +905,9 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
             import core.stdc.stdio : snprintf;
             char[128] msg;
             if (s.childReaped && s.childStatus >= 0)
-                snprintf(msg.ptr, msg.length, "[process exited with status %d]", s.childStatus);
+                snprintf(msg.ptr, msg.length, "[process exited with status %d]%s%.*s",
+                    s.childStatus, s.exitHint.length ? "   ".ptr : "".ptr,
+                    cast(int) s.exitHint.length, s.exitHint.ptr);
             else
                 snprintf(msg.ptr, msg.length, "[process exited]");
 
@@ -911,7 +916,9 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
             int screenH = viewH;
             int bannerH = cast(int) msgSize.y + 8;
             DrawRectangle(0, screenH - bannerH, screenW, bannerH, Color(0, 0, 0, 180));
-            DrawTextEx(s.fonts.primaryFont(), msg.ptr, Vector2((screenW - msgSize.x) / 2, screenH - bannerH + 4), s.fontSize, 0, Color(255, 255, 255, 255));
+            DrawTextEx(s.fonts.primaryFont(), msg.ptr,
+                // Centred, or from the left edge when wider than the pane.
+                Vector2(msgSize.x < screenW ? (screenW - msgSize.x) / 2 : 4, screenH - bannerH + 4), s.fontSize, 0, Color(255, 255, 255, 255));
         }
 
         // Visual bell: a brief translucent flash over the whole window.

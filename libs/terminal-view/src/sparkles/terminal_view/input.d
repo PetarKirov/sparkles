@@ -318,12 +318,16 @@ void handle_mouse(
     int view_height,
     ref SelectionState selState,
     ref OverlayScrollbar sbState,
-    ref HoverState hoverState)
+    ref HoverState hoverState,
+    float originX = 0,
+    float originY = 0)
 {
     ghostty_mouse_encoder_setopt_from_terminal(encoder, terminal);
 
-    int scr_w = GetScreenWidth();
-    int scr_h = GetScreenHeight();
+    // The pane's own extent, not the window's: an embedded pane (`TSS9`)
+    // sits at `originX`, `originY` and is `view_width` × `view_height`.
+    int scr_w = view_width;
+    int scr_h = view_height;
     GhosttyMouseEncoderSize enc_size = {
         size: GhosttyMouseEncoderSize.sizeof,
         screen_width: cast(uint)scr_w,
@@ -347,6 +351,8 @@ void handle_mouse(
 
     GhosttyMods mods = get_ghostty_mods();
     Vector2 pos = GetMousePosition();
+    pos.x -= originX;
+    pos.y -= originY;
     ghostty_mouse_event_set_mods(event, mods);
 
     GhosttyMousePosition gpos = { x: pos.x, y: pos.y };
@@ -399,8 +405,8 @@ void handle_mouse(
     bool local_selection = !mouse_tracking || shift_held;
 
     if (local_selection) {
-        int max_cols = GetScreenWidth() / cell_width;
-        int max_rows = GetScreenHeight() / cell_height;
+        int max_cols = view_width / cell_width;
+        int max_rows = view_height / cell_height;
 
         int cx = cast(int)(pos.x / cell_width);
         int cy = cast(int)(pos.y / cell_height);
@@ -556,7 +562,7 @@ void handle_mouse(
                 scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
                 scroll.value.delta = -1;
                 ghostty_terminal_scroll_viewport(terminal, scroll);
-            } else if (pos.y >= GetScreenHeight() - 1) {
+            } else if (pos.y >= view_height - 1) {
                 GhosttyTerminalScrollViewport scroll;
                 scroll.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
                 scroll.value.delta = 1;

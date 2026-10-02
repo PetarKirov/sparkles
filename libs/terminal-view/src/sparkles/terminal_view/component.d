@@ -348,6 +348,14 @@ struct TerminalViewOptions
     /// off, resolves those keys itself and calls 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF TerminalView.copy),
     /// 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF TerminalView.pasteClipboard) and the host's `fontSize`.
     bool builtinChords = true;
+    /// Whether the pane is on screen: an embedder showing several turns it off
+    /// for a pane in a background tab, so its notifications count as unseen
+    /// (`TPR9`) even while the window has the focus.
+    bool visible = true;
+    /// One pane of several: `frame` reports whether this pane must repaint
+    /// instead of skipping the window's frame itself, which only the
+    /// embedder can decide over all its panes.
+    bool embedded = false;
 
     /// The protocol policy (`TPR9`, `TPR19`–`TPR21`): the application's
     /// `notifications`, `paste` and `clipboard.osc52` settings.
@@ -409,6 +417,8 @@ struct TerminalView
     /// the byte stream), and where the ring can also reap, the per-frame
     /// `WNOHANG` poll retires with it.
     private bool ringPump;
+    // Where `paintPanePx` last put the pane, in window pixels.
+    private int originX, originY;
 
     // ── protocol state (`TPR`) ──
     // The icon string OSC 0/1 last set (empty: none, the process decides).
@@ -891,7 +901,7 @@ struct TerminalView
     layout gave the pane last frame. The standalone `view` above passes the
     whole surface.
     */
-    void frame(H)(ref H h, int paneCols, int paneRows)
+    bool frame(H)(ref H h, int paneCols, int paneRows)
     {
         // First frame: the host's session exists now, so the pty can open
         // against its fonts and the pane's size. A failed open ends the run.
@@ -902,7 +912,7 @@ struct TerminalView
             {
                 h.quit();
                 h.skipFrame();
-                return;
+                return false;
             }
             startRingPump(h);
         }
@@ -935,7 +945,7 @@ struct TerminalView
 
         // The whole surface is the window: it can be seen while focused and
         // not minimized (`TPR9`). An embedder says so per pane instead.
-        setSeen(IsWindowFocused() && !IsWindowMinimized());
+        setSeen(opts.visible && IsWindowFocused() && !IsWindowMinimized());
         deliverEvents(h);
 
         // A captured OSC title becomes the window's — the whole surface IS
@@ -975,7 +985,7 @@ struct TerminalView
             handle_mouse(s.pty_fd, s.mouse_encoder, s.mouse_event, s.terminal,
                 s.cellWidth, s.cellHeight, paneCols * s.cellWidth,
                 paneRows * s.cellHeight, s.selState, s.sbState,
-                s.hoverState);
+                s.hoverState, originX, originY);
 
         import sparkles.base.term_control : PointerShape;
 
@@ -986,7 +996,8 @@ struct TerminalView
         // whole draw (the arms keep the last frame up and skip our paint too).
         // The pane owning the surface, a "no" becomes the frame's skip; an
         // embedding application folds `decideRedraw` into its own frame.
-        if (!decideRedraw())
+        const redraw = decideRedraw();
+        if (!redraw && !opts.embedded)
             h.skipFrame();
 
         // The debug screenshot hook (the golden capture): full-rate frames,
@@ -1005,6 +1016,7 @@ struct TerminalView
             if (frameCount == 130)
                 h.quit();
         }
+        return redraw;
     }
 
     /// Keys: the hotkeys and clipboard chords first (consuming, exactly as
@@ -1053,6 +1065,10 @@ struct TerminalView
 
         if (pw <= 0 || ph <= 0)
             return;
+        // The polled mouse is read relative to here from the next frame on
+        // (`TSS9`): an embedded pane is not at the window's origin.
+        originX = px;
+        originY = py;
 
         BeginScissorMode(px, py, pw, ph);
         rlPushMatrix();
@@ -1940,6 +1956,16 @@ struct TerminalView
                     tv.s.childStatus = st.value.signaled
                         ? 128 + st.value.code : st.value.code;
                 }
+            }
+        // The daemon is done: should its reap have failed, the synchronous
+        // `reapChild` collects the status on the next pump instead of
+        // deferring to a fiber that no longer exists.
+        tv.ringPump = false;
+        if (!tv.s.childReaped)
+            debug {
+                import sparkles.base.logger : warning;
+
+                warning(i"terminal-view: the ring reap failed; reaping synchronously");
             }
         h.wake();
     }
