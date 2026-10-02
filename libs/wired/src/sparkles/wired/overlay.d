@@ -224,6 +224,46 @@ private void fillSparseAt(S, T)(ref S o, ref T part,
     }
 }
 
+/**
+The provenance recorded for the leaf field `path` names, read from an
+$(LREF Origins) mirror — what a settings page shows beside a value. A path
+into a leaf field (`searchPaths[2]`) reads that field's origin, as in
+$(LREF sparseAt). Returns `false` for a path naming no leaf field.
+*/
+bool originAt(Origin, O)(auto ref O origins, scope const(char)[] path,
+    out Origin found)
+    => originAtImpl!Origin(origins, path, null, found);
+
+private bool originAtImpl(Origin, O)(ref O origins, scope const(char)[] path,
+    string prefix, ref Origin found)
+{
+    import std.traits : Unqual;
+
+    // The declared field types, free of the caller's const: a const(Origin)
+    // must still take the leaf branch.
+    alias U = Unqual!O;
+    static foreach (i, name; FieldNameTuple!U)
+    {{
+        static if (is(typeof(U.init.tupleof[i]) == Origin))
+        {
+            if (namesField(path, prefix ~ name))
+            {
+                found = origins.tupleof[i];
+                return true;
+            }
+        }
+        else
+        {
+            enum sub = name ~ ".";
+            if (path.length > prefix.length + sub.length
+                && path[prefix.length .. prefix.length + sub.length] == sub)
+                return originAtImpl!Origin(origins.tupleof[i], path,
+                    prefix ~ sub, found);
+        }
+    }}
+    return false;
+}
+
 private bool namesField(scope const(char)[] path, scope const(char)[] field)
     @safe pure nothrow @nogc
     => path.length >= field.length && path[0 .. field.length] == field
@@ -419,4 +459,25 @@ version (unittest)
 
     // A prefix of a name is not the name.
     assert(sparseAt(value, ["them"]).theme.isNull);
+}
+
+///
+@("wired.overlay.originAt.readsTheLeafFieldsOrigin")
+@safe unittest
+{
+    Origins!(Cfg, Layer) origins;
+    origins.theme = Layer.user;
+    origins.pane.tabWidth = Layer.cli;
+    origins.searchPaths = Layer.project;
+    const view = origins;
+
+    Layer found;
+    assert(originAt(view, "theme", found) && found == Layer.user);
+    assert(originAt(view, "pane.tabWidth", found) && found == Layer.cli);
+    assert(originAt(view, "searchPaths[1]", found) && found == Layer.project,
+        "an element reads its list's origin");
+    assert(originAt(view, "pane.lineNumbers", found) && found == Layer.none);
+    assert(!originAt(view, "pane", found), "a section is not a leaf");
+    assert(!originAt(view, "panel.tabWidth", found));
+    assert(!originAt(view, "nope", found));
 }

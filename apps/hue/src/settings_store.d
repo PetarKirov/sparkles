@@ -9,10 +9,8 @@ NOTE: no module-level `@safe:` — the save path fronts wired's serde.
 */
 module settings_store;
 
-import std.algorithm.searching : startsWith;
-import std.traits : FieldNameTuple;
-
-import sparkles.wired.overlay : sparseAt;
+import sparkles.ui.components.settings_pane : LayerPlacement, LeafOrigin;
+import sparkles.wired.overlay : originAt, sparseAt;
 
 import settings : HueConfig;
 import settings_io : saveUserConfig;
@@ -88,7 +86,8 @@ struct ConfigStore
         pane.applyRules = hueApplyRules.dup;
         pane.doSave = (ref const HueConfig d, const(string)[] changed)
             => self.save(d, changed);
-        pane.originOf = (string p) @safe => self.shadowOrigin(p);
+        pane.originOf = (string p) @safe => self.originOf(p);
+        pane.fileLayer = "file:" ~ userFilePath;
         pane.open(&resolved, fileValue, g);
     }
 
@@ -114,11 +113,36 @@ struct ConfigStore
         return null;
     }
 
-    /// The pane's shadow footer: non-empty when `path`'s effective value
+    /// The layer that supplied `path`'s loaded value (`CFG10`), placed
+    /// against the user file the pane writes: the project file, the
+    /// environment and the command line all win over a saved edit.
+    LeafOrigin originOf(string path) @safe
+    {
+        Origin o;
+        if (!originAt(origins, path, o))
+            return LeafOrigin.init;
+        final switch (o.kind)
+        {
+            case OriginKind.default_:
+                return LeafOrigin("default", LayerPlacement.belowFile);
+            case OriginKind.userFile:
+                return LeafOrigin(o.detail, LayerPlacement.file);
+            case OriginKind.projectFile:
+            case OriginKind.env:
+            case OriginKind.cli:
+                return LeafOrigin(o.detail.length ? o.detail : "a flag",
+                    LayerPlacement.aboveFile);
+        }
+    }
+
+    /// The shadow footer's subject: non-empty when `path`'s effective value
     /// came from a layer ABOVE the user file — the save would be masked at
-    /// the next launch by that env var or flag.
+    /// the next launch by it.
     string shadowOrigin(string path) @safe
-        => shadowOriginIn(origins, path);
+    {
+        const o = originOf(path);
+        return o.placement == LayerPlacement.aboveFile ? o.layer : null;
+    }
 }
 
 /// The touched paths of `draft`, as a sparse overlay — the property tree's
@@ -128,39 +152,6 @@ struct ConfigStore
 Sparse!HueConfig deltasFor(HueConfig draft, const(string)[] touched) @safe
     => sparseAt(draft, touched);
 
-// By value: an `in` view would scope the details it returns.
-private string shadowOriginIn(Origins!HueConfig origins, string path) @safe
-{
-    string found;
-    findOriginImpl(origins, path, null, found);
-    return found;
-}
-
-private void findOriginImpl(O)(O origins, string path, string prefix,
-    ref string found) @safe
-{
-    static foreach (i, name; FieldNameTuple!O)
-    {
-        // `O.init.tupleof`: the declared field type, free of the `in`
-        // view's const — a const(Origin) must still take the leaf branch.
-        static if (is(typeof(O.init.tupleof[i]) == Origin))
-        {
-            if (prefix ~ name == path)
-            {
-                const o = origins.tupleof[i];
-                if (o.kind == OriginKind.env || o.kind == OriginKind.cli)
-                    found = o.detail.length ? o.detail : "a flag";
-            }
-        }
-        else
-        {
-            if (path.startsWith(prefix ~ name ~ "."))
-                findOriginImpl(origins.tupleof[i], path, prefix ~ name ~ ".",
-                    found);
-        }
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests — including the first `PropertyTree!HueConfig` instantiation.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -168,6 +159,7 @@ private void findOriginImpl(O)(O origins, string path, string prefix,
 @("settings_store.paneOverHueConfig")
 @system unittest
 {
+    import std.algorithm.searching : startsWith;
     import sparkles.input.events : Key, KeyEvent;
     import settings : TableCopyMode;
 

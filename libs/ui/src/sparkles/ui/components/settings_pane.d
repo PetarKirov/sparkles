@@ -32,6 +32,12 @@ written is $(LREF SettingsPane.changedPaths): the touched paths whose value
 differs from the file as it was at open, so an edit undone back to where it
 started leaves the file as it found it.
 
+$(B Provenance, from the host.) A host that knows its layers supplies
+`originOf` (`PRT40`); $(LREF SettingsPane.provenance) then says which layer
+supplies each leaf, that an edit now lives in the file and what lower layer it
+overrides ("overrides colors.properties"), or that a higher layer will override
+it at the next launch (terminal `TSP4`).
+
 $(B One process, one owner per array.) `open` gives the subject and both
 drafts their own copies of every array, so an in-place element edit can never
 write through into a value another layer — or the schema's `.init` — still
@@ -222,6 +228,39 @@ struct SettingsToast
     }
 }
 
+/// Where a layer sits against the file the pane writes.
+enum LayerPlacement : ubyte
+{
+    belowFile, /// defaults, compatibility files: an edit overrides them
+    file,      /// the file itself
+    aboveFile, /// environment, command line: they override an edit
+}
+
+/**
+A host's answer for one leaf (`PRT40`): the layer that supplied its loaded
+value, spelled as the app's `config show` spells it, and where that layer
+sits. `overrides` names, for a layer below the file worth naming, what an
+edit to the leaf overrides ("colors.properties"); empty for the defaults.
+*/
+struct LeafOrigin
+{
+    string layer;              ///
+    LayerPlacement placement;  ///
+    string overrides;          ///
+}
+
+/// What the pane says about a leaf's provenance now (terminal `TSP4`).
+struct LeafProvenance
+{
+    /// The layer supplying the effective value — after an edit, the file.
+    string layer;
+    /// "overrides colors.properties" once an edit beat a lower layer;
+    /// "<layer> overrides this at next launch" when a higher one wins.
+    string note;
+    /// A layer above the file wins over anything the pane writes.
+    bool shadowed;
+}
+
 /// One live-apply rule: the longest matching prefix's mask is returned from
 /// a committed edit. The host supplies the table (the component knows no
 /// config paths); the bits are the host's own vocabulary.
@@ -309,9 +348,12 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
     /// The last autosave's outcome.
     SettingsToast toast;
     private bool wrote;          // a save reached the file this session
-    /// Optional provenance lookup: non-empty for a path whose effective
-    /// value came from a layer above the file — the shadow warning.
-    string delegate(string path) @safe originOf;
+    /// The provenance capability (`PRT40`): the layer that supplied a leaf's
+    /// loaded value. Absent, the pane shows no provenance — it never guesses
+    /// one from equality.
+    LeafOrigin delegate(string path) @safe originOf;
+    /// How the file the pane writes is named once an edit lives there.
+    string fileLayer = "the config file";
 
     ApplyRule[] applyRules;      ///
 
@@ -400,6 +442,29 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
                 changed ~= path;
         }
         return changed;
+    }
+
+    /**
+    What the pane says about `path`'s provenance (terminal `TSP4`): the
+    layer the host reports — or, once this session's edit lives in the
+    file, the file — with a note when an edit overrides a lower layer the
+    host named, or when a higher layer will override the edit.
+    */
+    LeafProvenance provenance(string path)
+    {
+        if (originOf is null)
+            return LeafProvenance.init;
+        const o = originOf(path);
+        if (o.placement == LayerPlacement.aboveFile)
+            return LeafProvenance(o.layer,
+                text(o.layer, " overrides this at next launch"), true);
+        foreach (p; changedPaths())
+            if (p == path)
+                return LeafProvenance(fileLayer,
+                    o.placement == LayerPlacement.belowFile
+                        && o.overrides.length
+                        ? "overrides " ~ o.overrides : null);
+        return LeafProvenance(o.layer);
     }
 
     /// The toast's Undo: one step back through the property tree's history,
@@ -940,13 +1005,23 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
                 if (r.refused)
                     spans ~= TextSpan(text: text("  ✗ ", r.kind),
                         slot: Slot.error);
-                if (originOf !is null && n.path.length)
+                if (!n.composite && n.path.length)
                 {
-                    const org = originOf(n.path);
-                    if (org.length)
-                        spans ~= TextSpan(text: text("  ⚑ ", org,
-                            " overrides this at next launch"),
+                    // The selected leaf's provenance; the per-row column is
+                    // the page layout's (terminal `TSP5`).
+                    const pv = provenance(n.path);
+                    if (pv.shadowed)
+                        spans ~= TextSpan(text: text("  ⚑ ", pv.note),
                             slot: Slot.warn);
+                    else
+                    {
+                        if (pv.layer.length && pv.layer != "default")
+                            spans ~= TextSpan(text: text("  ↳ ", pv.layer),
+                                slot: Slot.muted);
+                        if (pv.note.length)
+                            spans ~= TextSpan(text: text(" · ", pv.note),
+                                slot: Slot.info);
+                    }
                 }
             }
             final switch (toast.kind)
@@ -1299,6 +1374,65 @@ version (UiSettingsFixtures)
 
     p.toast.dismiss();
     assert(p.toast.kind == SettingsToast.Kind.none);
+}
+
+version (UiSettingsFixtures)
+@("ui.settings_pane.provenance.followsTheEditAndNamesWhatItOverrides")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    auto cfg = new Fixture;
+    SettingsPane!Fixture p;
+    p.doSave = (ref const Fixture d, const(string)[] c) => cast(string) null;
+    p.originOf = (string path) @safe {
+        switch (path)
+        {
+            case "dark": return LeafOrigin("compat:colors.properties",
+                LayerPlacement.belowFile, "colors.properties");
+            case "size": return LeafOrigin("cli:--size", LayerPlacement.aboveFile);
+            case "name": return LeafOrigin("file:/cfg.json", LayerPlacement.file);
+            default: return LeafOrigin("default", LayerPlacement.belowFile);
+        }
+    };
+    p.fileLayer = "file:/cfg.json";
+    p.open(cfg, Fixture.init);
+
+    // Before an edit: the host's layer, no note.
+    assert(p.provenance("dark") == LeafProvenance("compat:colors.properties"));
+    assert(p.provenance("mode") == LeafProvenance("default"));
+
+    // After one: the file supplies it, and the leaf says what it overrides.
+    selectPath(p, "dark");
+    cast(void) p.handleKey(kch('+'));
+    assert(p.provenance("dark") == LeafProvenance("file:/cfg.json",
+        "overrides colors.properties"));
+    auto footer = p.buildView(SettingsGeometry(72, 20));
+    bool sawNote;
+    foreach (ref const n; footer.nodes)
+        foreach (ref const s; n.spans)
+            sawNote |= s.text.canFind("overrides colors.properties");
+    assert(sawNote, "the footer carries the note for the selected leaf");
+
+    // An edit to a defaulted leaf names the file, with nothing to override.
+    selectPath(p, "mode");
+    cast(void) p.handleKey(kch('+'));
+    assert(p.provenance("mode") == LeafProvenance("file:/cfg.json"));
+
+    // A flag wins over anything written, before and after an edit.
+    assert(p.provenance("size") == LeafProvenance("cli:--size",
+        "cli:--size overrides this at next launch", true));
+
+    // Undone, the edit no longer lives in the file.
+    selectPath(p, "dark");
+    cast(void) p.handleKey(kch('u'));
+    cast(void) p.handleKey(kch('u'));
+    assert(p.provenance("dark") == LeafProvenance("compat:colors.properties"));
+
+    // No capability, no provenance — never guessed.
+    SettingsPane!Fixture bare;
+    bare.open(new Fixture, Fixture.init);
+    assert(bare.provenance("dark") == LeafProvenance.init);
 }
 
 version (UiSettingsFixtures)
