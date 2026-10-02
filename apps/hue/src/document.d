@@ -1445,6 +1445,7 @@ goes through the shared injection-aware highlighter.
 auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
     RgbColor pageFg) @system
 {
+    import ansi_model : anchorAnsiLines;
     import gui_preview : stripSgr;
     import sparkles.source_view.markdown : highlightedFenceRenderer;
     import sparkles.ui.widget : TextSpan;
@@ -1465,7 +1466,8 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
             }
         if (start < plain.length)
             lines ~= [TextSpan(plain[start .. $], fg: pageFg, hasFg: true)];
-        return lines;
+        // `SEL6`: selectable by source byte, like the GUI's decoded fence.
+        return anchorAnsiLines(lines, body_);
     };
 }
 

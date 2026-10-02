@@ -45,7 +45,7 @@ import sparkles.ui.style : defaultTwoslashPalette, Palette,
     schemeForBackground, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, WidgetKind, WidgetTree;
 
-import ansi_model : AnsiLine, Attr;
+import ansi_model : anchorAnsiLines, AnsiLine, Attr;
 import diff_session : DiffSession;
 import diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
     FileTypes, isDiffGapKey, isDiffHunkKey, viewDiffDoc;
@@ -1302,7 +1302,8 @@ struct ViewerModel
                         bg: sp.bg, hasBg: !sp.bgDefault);
                 lines ~= spans;
             }
-            return lines;
+            // `SEL6`: each decoded span keeps the source bytes it came from.
+            return anchorAnsiLines(lines, body_);
         };
     }
 
@@ -2591,6 +2592,69 @@ struct ViewerModel
     assert(vm.matches.length == 1);
     assert(vm.visualOfMatch(vm.matches[0]) == 2);
     assert(vm.matchRects.length == 1 && vm.matchRects[0].length == 1);
+}
+
+@("viewer_model.anAnsiFenceIsSelectableBySourceByte")
+@system unittest
+{
+    import sparkles.syntax : extractMarkdown, GrammarRegistry;
+    import std.algorithm.iteration : splitter;
+    import sparkles.ui.widget : WidgetKind;
+    import ansi_model : AnsiSpan;
+    import gui_preview : stripSgr;
+
+    // `SEL6`: a decoded ` ```ansi ` fence carries its source bytes, so a
+    // selection inside it maps to the escapes-included source, on both the
+    // GUI's decoded path and the terminal's stripped one.
+    const src = "```ansi\n\x1b[31mred\x1b[0m plain\n```\n";
+    const bodyStart = "```ansi\n".length;
+    auto reg = GrammarRegistry.fromEnvironment();
+    const labels = LabelSet.standard();
+    auto cache = TsConfigCache.create(&reg, labels);
+
+    foreach (gui; [true, false])
+    {
+        ViewerModel vm;
+        vm.names = ["dark"];
+        vm.themes = [builtinDark];
+        vm.labels = labels;
+        vm.widthCols = 40;
+        vm.cache = &cache;
+        vm.applyTheme(0);
+        if (gui) // a stand-in for the off-screen VT: one span per line
+            vm.decodeAnsi = (const(char)[] b) {
+                AnsiLine[] ls;
+                foreach (l; stripSgr(b).idup.splitter('\n'))
+                    if (l.length)
+                        ls ~= AnsiLine([AnsiSpan(l, fgDefault: true,
+                            bgDefault: true)]);
+                return ls;
+            };
+
+        PreviewModel pm;
+        pm.doc = extractMarkdown(reg, src);
+        pm.present = true;
+        vm.setDocument("t.md", "", src,
+            [HighlightEvent.sourceSpan(0, src.length)], pm, TwoslashReturn.init);
+        assert(vm.showPreview);
+
+        bool sawRed, sawPlain;
+        foreach (ref node; vm.tree.nodes)
+            if (node.kind == WidgetKind.rich)
+                foreach (sp; node.spans)
+                {
+                    // Inside the body only: the header carries the opening
+                    // fence line as the block's identity, not as text.
+                    if (sp.srcStart == size_t.max || sp.srcStart < bodyStart)
+                        continue;
+                    const bytes = src[sp.srcStart .. sp.srcEnd];
+                    assert(bytes == sp.text, "a span's text is its source");
+                    sawRed |= sp.text == "red";
+                    sawPlain |= sp.text == " plain";
+                }
+        assert(sawRed && sawPlain, gui ? "the decoded fence has identity"
+            : "the stripped fence has identity");
+    }
 }
 
 /**
