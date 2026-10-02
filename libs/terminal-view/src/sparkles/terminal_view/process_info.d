@@ -27,6 +27,87 @@ pid_t foregroundProcess(int ptyFd) @system nothrow @nogc
     return pgrp > 0 ? pgrp : -1;
 }
 
+/// How the program on a pty reads its input (`ptyReading`).
+enum PtyReading : ubyte
+{
+    unknown, /// the modes could not be read (no pty, or the call is refused)
+    echoing, /// line by line, echoed: a shell's plain `read`, `cat`
+    password, /// line by line, not echoed: `sudo`, `ssh`, `gpg` asking for a secret
+    raw, /// character by character: a line editor, a full-screen program
+}
+
+/**
+How the program on the pty `ptyFd` reads its input, from the line discipline's
+modes (`tcgetattr` on the master reads the pair's modes, which the program
+sets on its slave): canonical mode with echo off is a password prompt
+(`TSE10`). A shell at its prompt reads raw (its line editor echoes itself).
+*/
+PtyReading ptyReading(int ptyFd) @system nothrow @nogc
+{
+    if (ptyFd < 0)
+        return PtyReading.unknown;
+    version (CRuntime_Bionic)
+    {
+        // druntime declares no termios functions for Bionic; `tcgetattr` is
+        // this ioctl there. The kernel's `struct termios` starts with four
+        // `tcflag_t` (uint) words, `c_lflag` the fourth.
+        import core.sys.posix.sys.ioctl : ioctl;
+
+        enum TCGETS = 0x5401, ECHO = 0x8, ICANON = 0x2;
+        uint[16] t; // 4 words + c_line + c_cc[19], with room to spare
+        if (ioctl(ptyFd, TCGETS, t.ptr) != 0)
+            return PtyReading.unknown;
+        const lflag = t[3];
+    }
+    else
+    {
+        import core.sys.posix.termios : ECHO, ICANON, tcgetattr, termios;
+
+        termios t;
+        if (tcgetattr(ptyFd, &t) != 0)
+            return PtyReading.unknown;
+        const lflag = t.c_lflag;
+    }
+    if (!(lflag & ICANON))
+        return PtyReading.raw;
+    return lflag & ECHO ? PtyReading.echoing : PtyReading.password;
+}
+
+///
+@("process_info.ptyReading.seesTheSlavesModesThroughTheMaster")
+@system unittest
+{
+    import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
+    import core.sys.posix.termios : ECHO, ICANON, tcgetattr, tcsetattr, TCSANOW, termios;
+    import core.sys.posix.unistd : close;
+    import sparkles.terminal_view.protocol_oracle : openTestPty;
+
+    char[128] slaveName = 0;
+    const master = openTestPty(slaveName);
+    scope (exit) close(master);
+    const slave = open(slaveName.ptr, O_RDWR | O_NOCTTY);
+    assert(slave >= 0);
+    scope (exit) close(slave);
+
+    void set(bool echo, bool canonical)
+    {
+        termios t;
+        assert(tcgetattr(slave, &t) == 0);
+        t.c_lflag = echo ? t.c_lflag | ECHO : t.c_lflag & ~ECHO;
+        t.c_lflag = canonical ? t.c_lflag | ICANON : t.c_lflag & ~ICANON;
+        assert(tcsetattr(slave, TCSANOW, &t) == 0);
+    }
+
+    // What `stty -echo` / `sudo` sets on its side, read from ours.
+    set(echo: true, canonical: true);
+    assert(ptyReading(master) == PtyReading.echoing);
+    set(echo: false, canonical: true);
+    assert(ptyReading(master) == PtyReading.password);
+    set(echo: false, canonical: false);
+    assert(ptyReading(master) == PtyReading.raw);
+    assert(ptyReading(-1) == PtyReading.unknown);
+}
+
 /**
 The executable name of `pid` (its `comm`: at most 15 bytes on Linux, 32 on
 macOS), written to `dst`; returns its length, `0` when unknown.
