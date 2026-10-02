@@ -729,12 +729,47 @@ struct WorkspaceHost
     }
 
     /**
+    The touch half of a divider drag (`TSS10`), for an embedder that polls
+    the raw contact (`pollPointer` off): `down` while one finger is on the
+    screen at (`x`, `y`), `slop` the target's widening (a finger: about
+    16 dp). True while a divider is held — the embedder then keeps the
+    contact from scrolling or tapping the panes.
+    */
+    bool touchDivider(int x, int y, bool down, int slop) @safe
+    {
+        const pressed = down && !touchWasDown;
+        touchWasDown = down;
+        // A lifted finger has no position: the drag ends where it was last.
+        if (down)
+        {
+            touchX = x;
+            touchY = y;
+        }
+        else
+        {
+            x = touchX;
+            y = touchY;
+        }
+        if (dragging < 0 && !pressed)
+            return false;
+        dragDivider(x, y, down, pressed, slop);
+        return dragging >= 0;
+    }
+
+    /// Whether a divider is held (`TSS10`).
+    bool draggingDivider() const @safe pure nothrow @nogc => dragging >= 0;
+
+    private bool touchWasDown;
+    private int touchX, touchY; // the last contact while down
+
+    /**
     A divider drag (`TSS10`): a press on a divider (or within a few pixels of
     it) picks it up, moving shows where it would land, and the release
     resizes the split — once, so each program sees one settled size rather
-    than one per frame.
+    than one per frame. `slop` widens the divider's target: a few pixels for
+    a mouse, a finger's width on a touch screen.
     */
-    private void dragDivider(int mx, int my, bool down, bool pressed) @safe
+    private void dragDivider(int mx, int my, bool down, bool pressed, int slop = 4) @safe
     {
         int along(in DividerFrame d) const
             => d.axis == DockAxis.horizontal ? (mx - panesArea.x) / cellW : (my - panesArea.y) / cellH;
@@ -743,7 +778,6 @@ struct WorkspaceHost
         {
             if (!pressed)
                 return;
-            enum slop = 4;
             foreach (i, r; dividerRects)
                 if (contains(Rect(r.x - slop, r.y - slop, r.width + 2 * slop, r.height + 2 * slop), mx, my))
                 {

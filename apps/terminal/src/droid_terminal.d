@@ -111,6 +111,8 @@ struct DroidTerminal
     private bool fontPending; // the page changed the font size
 
     private bool windowFocused = true; // last frame's, for the save on leaving
+    private bool dividerGesture; // this contact began on a divider (`TSS10`)
+    private bool dividerGestureHeld; // a finger was down last frame
 
     @disable this(this);
 
@@ -188,7 +190,24 @@ struct DroidTerminal
             host.phonePortrait = GetScreenHeight() > GetScreenWidth();
         }
         selection.reducedMotion = platform.reducedMotion; // `ACC5`, `TSE3`
-        selection.pollTouch(h, host);
+        // A finger on a divider resizes the split (`TSS10`); that contact,
+        // its fling included, is then the divider's, not the panes'.
+        {
+            import raylib : GetTouchPointCount, GetTouchPosition;
+            import sparkles.android.activity : dpToPx;
+
+            const n = GetTouchPointCount();
+            const p = n > 0 ? GetTouchPosition(0) : typeof(GetTouchPosition(0)).init;
+            if (host.touchDivider(cast(int) p.x, cast(int) p.y, n == 1, dpToPx(16)))
+                dividerGesture = true;
+            else if (n > 0 && !host.draggingDivider && !dividerGestureHeld)
+                dividerGesture = false; // a new contact elsewhere
+            dividerGestureHeld = n > 0;
+        }
+        if (dividerGesture)
+            selection.frame(h, host);
+        else
+            selection.pollTouch(h, host);
         host.frame(h, paneArea(g));
         settingsFrame(h);
         if (auto tv = host.focusedView())
@@ -594,6 +613,8 @@ struct DroidTerminal
             pinchBase = 0; // a new contact re-bases the next pinch
             return;
         }
+        if (dividerGesture) // a divider's drag ends without a tap (`TSS10`)
+            return;
         if (p.action != PointerAction.release)
             return;
 
@@ -635,6 +656,8 @@ struct DroidTerminal
 
     private void onWheel(H)(ref H h, in WheelEvent w)
     {
+        if (dividerGesture) // the divider's drag (`TSS10`)
+            return;
         const g = geometry(h);
         if (swipeKeyRow(g, w))
             return;
@@ -686,6 +709,8 @@ struct DroidTerminal
 
     private void onGesture(H)(ref H h, in GestureEvent g)
     {
+        if (dividerGesture) // a held divider is no long-press (`TSS10`)
+            return;
         // A long-press on a link, per `links.longPress` (`TPR5`); off by default,
         // when the long-press selects (`TSE1`).
         if (g.gesture == Gesture.longPress)
