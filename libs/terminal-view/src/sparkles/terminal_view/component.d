@@ -747,6 +747,10 @@ struct TerminalView
         return true;
     }
 
+    /// Where the cursor was at the last frame (`decideRedraw`), in the pane's
+    /// cells — what an embedder anchors a confirmation at (`TCF10`).
+    CursorSnapshot cursor() const @safe pure nothrow @nogc => prevCursor;
+
     /// Writes `bytes` into the emulator as if the program had (a respawn's
     /// separator, an error line).
     private void feedLocal(scope const(char)[] bytes) @system nothrow @nogc
