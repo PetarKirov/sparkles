@@ -110,3 +110,23 @@ what the system decorations and the soft keyboard cover, as the framework last
 reported it (`APP_CMD_CONTENT_RECT_CHANGED`). Empty before the first report.
 */
 ARect contentRect() @trusted nothrow @nogc => GetAndroidApp().contentRect;
+
+// `<android/configuration.h>` (libandroid).
+private extern (C) int AConfiguration_getKeyboard(const(void)* config) @nogc nothrow;
+private extern (C) int AConfiguration_getKeysHidden(const(void)* config) @nogc nothrow;
+private enum ACONFIGURATION_KEYBOARD_QWERTY = 2;
+private enum ACONFIGURATION_KEYSHIDDEN_NO = 1;
+
+/**
+Whether a hardware keyboard is attached and usable: the configuration names
+a full keyboard and its keys are not hidden. The glue refreshes the
+configuration on `APP_CMD_CONFIG_CHANGED`, so this follows a keyboard being
+plugged in or a cover being folded back without polling anything else.
+*/
+bool hardwareKeyboardAttached() @trusted nothrow @nogc
+{
+    const config = GetAndroidApp().config;
+    return config !is null
+        && AConfiguration_getKeyboard(config) == ACONFIGURATION_KEYBOARD_QWERTY
+        && AConfiguration_getKeysHidden(config) == ACONFIGURATION_KEYSHIDDEN_NO;
+}

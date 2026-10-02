@@ -12,6 +12,8 @@ module extra_keys;
 
 import sparkles.input : Key, KeyAction, KeyEvent, Mods;
 
+import settings : ExtraKeysVisibility;
+
 /// What a button does.
 enum ExtraKeyKind
 {
@@ -72,6 +74,69 @@ ExtraKey[][] extraKeysFrom(const(char)[] propertiesText) @safe pure
 
     assert(extraKeysFrom("extra-keys = []").length == 0, "an empty layout is a choice");
     assert(extraKeysFrom("extra-keys = [[oops").length == 2, "garbage falls back");
+}
+
+/**
+The rows an `extraKeys.layout` setting asks for (`TCF7`): Termux syntax, an
+empty list honoured as "no row". An unparsable layout falls back to the
+default and leaves a warning saying so.
+*/
+ExtraKey[][] extraKeysFromLayout(const(char)[] layout, ref string[] warnings) @safe pure
+{
+    ExtraKey[][] rows;
+    if (parseExtraKeysSpec(layout, rows))
+        return rows;
+    warnings ~= "config: $.extraKeys.layout: \"" ~ layout.idup
+        ~ "\" is not an extra-keys layout — the default layout is used";
+    const ok = parseExtraKeysSpec(defaultExtraKeysSpec, rows);
+    assert(ok);
+    return rows;
+}
+
+@("extra_keys.extraKeysFromLayout")
+@safe pure unittest
+{
+    string[] warnings;
+    assert(extraKeysFromLayout("[['ESC']]", warnings).length == 1);
+    assert(extraKeysFromLayout("[]", warnings).length == 0, "an empty layout is a choice");
+    assert(warnings.length == 0);
+    assert(extraKeysFromLayout("[[oops", warnings).length == 2, "garbage falls back");
+    assert(warnings.length == 1);
+}
+
+/**
+Whether the row shows (`TCF7`). `automatic` shows it while the soft keyboard
+is up, and while no hardware keyboard is attached; `dismissed` is the
+row swiped away, which holds until it is swiped back, whatever the setting.
+*/
+bool extraKeysShown(ExtraKeysVisibility v, bool softKeyboardShown,
+    bool hardwareKeyboard, bool dismissed) @safe pure nothrow @nogc
+{
+    if (dismissed)
+        return false;
+    final switch (v)
+    {
+        case ExtraKeysVisibility.automatic:
+            return softKeyboardShown || !hardwareKeyboard;
+        case ExtraKeysVisibility.always:
+            return true;
+        case ExtraKeysVisibility.never:
+            return false;
+    }
+}
+
+@("extra_keys.extraKeysShown")
+@safe pure nothrow @nogc unittest
+{
+    alias V = ExtraKeysVisibility;
+    // auto: a hardware keyboard with the soft one down hides the row ...
+    assert(!extraKeysShown(V.automatic, false, true, false));
+    // ... and the soft keyboard brings it back, as does detaching.
+    assert(extraKeysShown(V.automatic, true, true, false));
+    assert(extraKeysShown(V.automatic, false, false, false));
+    assert(extraKeysShown(V.always, false, true, false));
+    assert(!extraKeysShown(V.never, true, false, false));
+    assert(!extraKeysShown(V.always, true, false, true), "a swipe-away holds");
 }
 
 /**

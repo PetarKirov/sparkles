@@ -27,6 +27,7 @@ import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
 import screen_oracle : ScreenOracle;
+import settings_load : LoadedConfig;
 
 /// The whole-surface Android component.
 struct DroidTerminal
@@ -42,10 +43,17 @@ struct DroidTerminal
 
     /// The extra-keys layout, rows top to bottom (`extra_keys.extraKeysFrom`).
     ExtraKey[][] keys;
-    /// `~/.termux`, where the layout and the colour scheme live (`NOD10`,
-    /// `NOD11`); `loadSettings` reads it, at start and on
-    /// `termux-reload-settings`.
+    /// `~/.termux`, the compatibility layer below the config file (`NOD10`,
+    /// `NOD11`, `TCF3`).
     string termuxDir;
+    /// `config.json` (`TCF2`); `loadSettings` resolves it over `termuxDir`, at
+    /// start and on `termux-reload-settings`.
+    string configPath;
+    /// The configuration in effect.
+    LoadedConfig config;
+    /// The extra-keys row was swiped away; a swipe up from the bottom edge
+    /// brings it back (`TCF7`). Not persisted.
+    private bool rowDismissed;
     private Latch latch;
     private bool keyboardShown;
     private float pinchBase = 0; // the font size a pinch started from
@@ -115,38 +123,34 @@ struct DroidTerminal
     }
 
     /**
-    (Re)read `~/.termux`: the extra-keys layout, and the colour scheme for the
-    running session and the one that follows it. A missing file means the
-    defaults — deleting `colors.properties` and reloading restores them.
+    Re-resolve the configuration (`TCF2`, `TCF8`): the defaults, `~/.termux`
+    and `config.json`, applied to what can change live — the extra-keys row,
+    the colour scheme of the running session and of the one that follows it.
+    The session options take effect for a session not yet started. Every
+    warning goes to the log (`TCF4`).
     */
     void loadSettings()
     {
-        import extra_keys : extraKeysFrom;
-        import termux_config : parseTermuxColors;
-
-        keys = extraKeysFrom(readSetting("termux.properties"));
-        const colors = parseTermuxColors(readSetting("colors.properties"));
-        tv.recolor(colors);
-        next.colors = colors;
-        tv.invalidate();
-    }
-
-    private string readSetting(string name)
-    {
-        import std.file : exists, readText;
-        import std.path : buildPath;
+        import cli : viewOptionsFrom;
+        import extra_keys : extraKeysFromLayout;
+        import settings_load : loadTerminalConfig;
         import sparkles.base.logger : warning;
 
-        if (termuxDir.length == 0)
-            return "";
-        const path = buildPath(termuxDir, name);
-        try
-            return path.exists ? readText(path) : "";
-        catch (Exception e)
-        {
-            warning(i"terminal: unreadable $(path): $(e.msg)");
-            return "";
-        }
+        config = loadTerminalConfig(configPath, termuxDir);
+        string[] warnings = config.warnings;
+        keys = extraKeysFromLayout(config.effective.extraKeys.layout, warnings);
+        // The system scheme reaches the app with `TPR13`; until then the
+        // dark scheme is the one in effect.
+        const o = viewOptionsFrom(config.effective, systemDark: true, warnings);
+        tv.recolor(o.colors);
+        tv.opts.scrollbackLimit = o.scrollbackLimit;
+        tv.opts.exitBehavior = o.exitBehavior;
+        next.colors = o.colors;
+        next.scrollbackLimit = o.scrollbackLimit;
+        next.exitBehavior = o.exitBehavior;
+        foreach (w; warnings)
+            warning(i"$(w)");
+        tv.invalidate();
     }
 
     // ── keys ────────────────────────────────────────────────────────────────
@@ -234,7 +238,7 @@ struct DroidTerminal
         import sparkles.raylib_text.style : TextStyle;
         import std.utf : count;
 
-        if (keys.length == 0 || tv.s.fonts is null)
+        if (keys.length == 0 || g.keysHeight == 0 || tv.s.fonts is null)
             return;
         DrawRectangle(0, g.keysTop, g.width, g.keysHeight, Color(0x24, 0x27, 0x3a, 255));
         foreach (r, row; keys)
@@ -294,12 +298,37 @@ struct DroidTerminal
     private void onWheel(H)(ref H h, in WheelEvent w)
     {
         const g = geometry(h);
+        if (swipeKeyRow(g, w))
+            return;
         const cw = tv.s.cellWidth > 0 ? tv.s.cellWidth : 1;
         const ch = tv.s.cellHeight > 0 ? tv.s.cellHeight : 1;
         // An application tracking the mouse gets wheel reports (a pager, an
         // editor); otherwise the drag walks the scrollback.
         if (!tv.sendWheel(w.dy, w.pos.x / cw, (w.pos.y - g.top) / ch))
             tv.scrollViewport(w.dy);
+    }
+
+    /// `TCF7`: a downward swipe on the row hides it; an upward swipe from the
+    /// bottom edge brings it back. A drag reports where it began (`pos`) and
+    /// its direction (`dy` > 0: the finger moved up).
+    private bool swipeKeyRow(in Geometry g, in WheelEvent w)
+    {
+        const bottom = g.keysTop + g.keysHeight;
+        if (!rowDismissed && g.keysHeight > 0 && w.dy < 0
+            && w.pos.y >= g.keysTop && w.pos.y < bottom)
+        {
+            rowDismissed = true;
+            tv.invalidate();
+            return true;
+        }
+        const edge = 2 * (tv.s.cellHeight > 0 ? tv.s.cellHeight : 16);
+        if (rowDismissed && w.dy > 0 && w.pos.y >= bottom - edge)
+        {
+            rowDismissed = false;
+            tv.invalidate();
+            return true;
+        }
+        return false;
     }
 
     private void onGesture(H)(ref H h, in GestureEvent g)
@@ -326,7 +355,9 @@ struct DroidTerminal
     private Geometry geometry(H)(ref H h)
     {
         import raylib : GetScreenHeight, GetScreenWidth;
-        import sparkles.android.activity : contentRect;
+        import sparkles.android.activity : contentRect, hardwareKeyboardAttached;
+
+        import extra_keys : extraKeysShown;
 
         Geometry g;
         const r = contentRect();
@@ -343,7 +374,14 @@ struct DroidTerminal
             g.paneRows = h.size.height;
             return g;
         }
-        g.keyHeight = keys.length ? tv.s.cellHeight * 2 : 0;
+
+        // The soft keyboard is not reported to native code; the content rect
+        // shrinking by more than a system bar is it.
+        const screenHeight = GetScreenHeight();
+        const softKeyboard = valid && screenHeight - r.bottom > screenHeight / 6;
+        const shown = extraKeysShown(config.effective.extraKeys.visible, softKeyboard,
+            hardwareKeyboardAttached(), rowDismissed);
+        g.keyHeight = shown && keys.length ? tv.s.cellHeight * 2 : 0;
         g.keysHeight = cast(int) keys.length * g.keyHeight;
         const paneHeight = bottom - g.top - g.keysHeight;
         g.paneCols = g.width / tv.s.cellWidth > 0 ? g.width / tv.s.cellWidth : 1;

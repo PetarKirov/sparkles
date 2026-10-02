@@ -7,10 +7,12 @@ module android_app;
 
 version (Android):
 
-import cli : guiOptionsFrom, TerminalCli;
+import cli : guiOptionsFrom;
 import droid_terminal : DroidTerminal;
 import sparkles.terminal_view.component : TerminalViewOptions;
 import session;
+import settings : defaultFontFamily;
+import settings_load : androidConfigPath;
 import sparkles.base.logger : info, LogLevel, warning;
 import sparkles.ui_app.host : PointerUnit, RunConfig;
 import sparkles.ui_app.run_app : runApp;
@@ -18,9 +20,9 @@ import sparkles.ui_app.run_app : runApp;
 /// The logcat tag (`adb logcat -s terminal`).
 enum logTag = "terminal";
 
-/// The font the APK bundles (nix/packages/android/terminal.nix) and falls
-/// back from: Android's own monospace face.
-private enum bundledFont = "FiraCodeNerdFontMono";
+/// Android's own monospace face: the fallback when the configured font (by
+/// default the one the APK bundles, nix/packages/android/terminal.nix) is
+/// not there.
 private enum systemFont = "DroidSansMono";
 
 int androidMain()
@@ -43,36 +45,37 @@ int androidMain()
     const fontsDir = buildPath(paths.files, "fonts");
     static immutable owned = ["fonts"];
     if (!extractAssetBundle(paths.files, owned, buildPath(paths.files, "assets-ready")))
-        warning(i"terminal: no font bundle — falling back to $(systemFont)");
+        warning(i"terminal: no font bundle — the bundled font falls back to $(systemFont)");
 
     try
         mkdirRecurse(paths.home);
     catch (Exception e)
         warning(i"terminal: cannot create $(paths.home): $(e.msg)");
 
-    // `~/.termux/font.ttf` wins (nix-on-droid's `terminal.font`, `NOD11`),
-    // then the bundled face, then the system's.
-    const termuxFont = buildPath(paths.termuxDir, "font.ttf");
-    const font = termuxFont.exists ? termuxFont
-        : buildPath(fontsDir, bundledFont ~ "-Regular.ttf").exists ? bundledFont
-        : systemFont;
+    DroidTerminal app;
+    app.oracle.dir = paths.debugDir;
+    app.termuxDir = paths.termuxDir;
+    app.configPath = androidConfigPath(paths.home);
+    configureSession(app, config, paths);
+    app.loadSettings(); // after the session: the scheme applies to it
+
+    // The configured font (`~/.termux/font.ttf` when nix-on-droid's
+    // `terminal.font` wrote one, `NOD11`; else the bundled face), searched in
+    // the extracted bundle and the system's fonts; Android's own monospace
+    // when the bundle is missing.
+    auto gui = guiOptionsFrom(app.config.effective);
+    gui.fontDir = [fontsDir, "/system/fonts"] ~ gui.fontDir;
+    if (gui.font == defaultFontFamily
+        && !buildPath(fontsDir, defaultFontFamily ~ "-Regular.ttf").exists)
+        gui.font = systemFont;
 
     RunConfig cfg = {
         title: "sparkles:terminal",
-        gui: guiOptionsFrom(TerminalCli(
-            font: font,
-            fontDirs: [fontsDir, "/system/fonts"],
-        )),
+        gui: gui,
         keyRelease: true, // the terminal-grade keyboard
         touchGestures: true, // taps, drags and pinches — not an emulated mouse
         pointerUnit: PointerUnit.pixels, // the key row is not on the cell grid
     };
-
-    DroidTerminal app;
-    app.oracle.dir = paths.debugDir;
-    app.termuxDir = paths.termuxDir;
-    configureSession(app, config, paths);
-    app.loadSettings(); // after the session: the scheme applies to it
 
     // termux-am's server (NOD13): nix-on-droid's android-integration tools.
     import am_server : startAmServer;

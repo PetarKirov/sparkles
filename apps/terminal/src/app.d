@@ -1,23 +1,25 @@
 /**
-The shell: parse the CLI, run the terminal component.
+The shell: resolve the configuration, run the terminal component.
 
 Everything the emulator $(I is) lives in `sparkles:terminal-view`
 (`TerminalView`, a `runApp` component); everything the window/font/backend
-side is lives in `sparkles:ui-app`. This file maps the terminal's historical
-flags — spellings and defaults preserved — onto the host's options and calls
-$(REF runApp, sparkles,ui_app,run_app).
+side is lives in `sparkles:ui-app`. This file parses the desktop's flags —
+spellings preserved — as the configuration's highest layer (`TCF2`), and
+answers `terminal config show|write` (`TCF5`).
 */
 module app;
 
 import std.getopt;
 
-import cli : guiOptionsFrom, TerminalCli;
-import sparkles.terminal_view.component : TerminalView, TerminalViewOptions;
+import cli : guiOptionsFrom, onExitFromFlag, viewOptionsFrom;
+import settings : TerminalConfig;
+import settings_load : desktopConfigPath, loadTerminalConfig, LoadedConfig;
+import sparkles.terminal_view.component : TerminalView;
 import sparkles.terminal_view.core : logBuildInfo;
-import sparkles.terminal_view.input : parseExitBehavior;
 import sparkles.ui_app.host : RunConfig;
 import sparkles.ui_app.run : RunOutcome;
 import sparkles.ui_app.run_app : runApp;
+import sparkles.wired.overlay : Sparse;
 
 int main(string[] args)
 {
@@ -31,38 +33,76 @@ int main(string[] args)
         return desktopMain(args);
 }
 
+/// One explicitly typed flag: what it sets, and its spelling (the origin
+/// `config show` reports).
+private struct CliFlag
+{
+    Sparse!TerminalConfig overlay;
+    string flag;
+}
+
 private int desktopMain(string[] args)
 {
     import std.array : join;
     import std.stdio : stderr;
     import std.string : toStringz;
 
-    // The terminal's own vocabulary, defaults preserved (the shared-CLI
-    // spellings and defaults land with the CLI3 unification, not this
-    // migration — identical behavior is the gate).
-    string fontOpt = "monospace";
-    int fontSizePt = 13;
+    import sparkles.base.logger : warning;
+
+    if (args.length >= 2 && args[1] == "config")
+        return configCommand(args[0], args[2 .. $]);
+
+    string configPath = desktopConfigPath();
     int windowCols = 100;
     int windowRows = 30;
-    size_t scrollbackLimit = size_t.max;
     bool debugScreenshotAndExit = false;
-    string exitBehaviorOpt = "hold-on-failure";
-    string[] codepointMapOpt;
-    string[] fontDirOpt;
+    CliFlag[] flags;
+    string[] codepointMaps, fontDirs;
+    string badExit;
+
+    void set(string flag, scope void delegate(ref Sparse!TerminalConfig) @safe apply)
+    {
+        CliFlag f = {flag: flag};
+        apply(f.overlay);
+        flags ~= f;
+    }
 
     auto helpInfo = getopt(
         args,
         // Stop at the first non-option so a trailing command (and its own flags)
         // is left untouched: `terminal --font-size 14 -- vim file -R`.
         config.stopOnFirstNonOption,
-        "font|f", "Font path or name (e.g. '/path/to/font.ttf' or 'Fira Code')", &fontOpt,
-        "font-size|s", "Font size in points (default: 13)", &fontSizePt,
+        "config", "Configuration file (default: " ~ configPath ~ ")", &configPath,
+        "font|f", "Font path or name (e.g. '/path/to/font.ttf' or 'Fira Code')",
+            (string _, string v) { set("--font", (ref s) { s.appearance.font.family = v; }); },
+        "font-size|s", "Font size in points (default: 13)",
+            (string _, string v) {
+                import std.conv : to;
+
+                const pt = v.to!int;
+                set("--font-size", (ref s) { s.appearance.font.size = pt; });
+            },
         "window-width", "Initial window width in columns (default: 100)", &windowCols,
         "window-height", "Initial window height in rows (default: 30)", &windowRows,
-        "scrollback-limit", "Maximum number of lines to keep in scrollback history (0 to disable, default: infinite)", &scrollbackLimit,
-        "font-codepoint-map", "Render codepoints from a specific font (repeatable): 'U+XXXX-U+YYYY,U+ZZZZ=Family'", &codepointMapOpt,
-        "font-dir", "Resolve fonts by scanning this directory instead of fontconfig (repeatable). Makes a build portable and its font selection deterministic: no fc-match subprocess, no dependence on the host's fontconfig configuration. Pair with the bundle from `nix build .#sparkles-fonts`.", &fontDirOpt,
-        "exit-behavior", "On child exit: close | wait-for-key | hold | hold-on-failure (default)", &exitBehaviorOpt,
+        "scrollback-limit", "Maximum number of lines to keep in scrollback history (0 to disable, default: infinite)",
+            (string _, string v) {
+                import std.conv : to;
+
+                const n = v.to!long;
+                set("--scrollback-limit", (ref s) { s.behaviour.scrollback = n; });
+            },
+        "font-codepoint-map", "Render codepoints from a specific font (repeatable): 'U+XXXX-U+YYYY,U+ZZZZ=Family'", &codepointMaps,
+        "font-dir", "Resolve fonts by scanning this directory instead of fontconfig (repeatable). Makes a build portable and its font selection deterministic: no fc-match subprocess, no dependence on the host's fontconfig configuration. Pair with the bundle from `nix build .#sparkles-fonts`.", &fontDirs,
+        "exit-behavior", "On child exit: close | wait-for-key | hold | hold-on-failure (default)",
+            (string _, string v) {
+                import settings : OnExit;
+
+                OnExit e;
+                if (onExitFromFlag(v, e))
+                    set("--exit-behavior", (ref s) { s.behaviour.onExit = e; });
+                else
+                    badExit = v;
+            },
         "debug-take-screenshot-and-exit", "Takes a screenshot after 2 seconds and exits", &debugScreenshotAndExit
     );
 
@@ -70,12 +110,18 @@ private int desktopMain(string[] args)
     {
         defaultGetoptPrinter(
             "sparkles:terminal — a minimal terminal emulator using libghostty-vt.\n\n" ~
-            "Usage: terminal [options] [-- command [args...]]\n\n" ~
+            "Usage: terminal [options] [-- command [args...]]\n" ~
+            "       terminal config show [--changed] | write [--force]\n\n" ~
             "With no command, the login shell runs interactively. With a command,\n" ~
-            "the shell runs it via `-c` and then exits (e.g. `terminal -- vim file`).",
+            "the shell runs it via `-c` and then exits (e.g. `terminal -- vim file`).\n" ~
+            "Settings come from the configuration file; a flag overrides it.",
             helpInfo.options);
         return 0;
     }
+    if (codepointMaps.length)
+        set("--font-codepoint-map", (ref s) { s.appearance.font.codepointMap = codepointMaps; });
+    if (fontDirs.length)
+        set("--font-dir", (ref s) { s.appearance.font.fontDir = fontDirs; });
 
     // Any arguments left after the options are an optional command to run in
     // the shell. A leading `--` separator is accepted and stripped.
@@ -85,27 +131,28 @@ private int desktopMain(string[] args)
 
     logBuildInfo();
 
+    auto lc = loadTerminalConfig(configPath, null);
+    foreach (f; flags)
+        lc.applyCli(f.overlay, f.flag);
+    if (badExit.length)
+        lc.warnings ~= "config: --exit-behavior " ~ badExit ~ " is not one of "
+            ~ "close, wait-for-key, hold, hold-on-failure — the flag was ignored";
+
     RunConfig cfg = {
         title: "sparkles:terminal",
-        gui: guiOptionsFrom(TerminalCli(
-            font: fontOpt,
-            fontSizePt: fontSizePt,
-            windowCols: windowCols,
-            windowRows: windowRows,
-            codepointMaps: codepointMapOpt,
-            fontDirs: fontDirOpt,
-        )),
+        gui: guiOptionsFrom(lc.effective, windowCols, windowRows),
         keyRelease: true, // the terminal-grade keyboard (kitty releases)
     };
 
     // Stack-pinned: the VT effects hold a pointer into the component.
     TerminalView tv;
-    tv.opts = TerminalViewOptions(
-        shellCommand: command.length ? command.join(" ").toStringz : null,
-        scrollbackLimit: scrollbackLimit,
-        exitBehavior: parseExitBehavior(exitBehaviorOpt),
-        debugScreenshotAndExit: debugScreenshotAndExit,
-    );
+    // The desktop's light/dark source arrives with the portal (`TPR13`);
+    // until then the dark scheme is the one in effect.
+    tv.opts = viewOptionsFrom(lc.effective, systemDark: true, lc.warnings);
+    tv.opts.shellCommand = command.length ? command.join(" ").toStringz : null;
+    tv.opts.debugScreenshotAndExit = debugScreenshotAndExit;
+    foreach (w; lc.warnings)
+        warning(i"$(w)");
 
     const outcome = runApp(tv, cfg);
 
@@ -119,7 +166,67 @@ private int desktopMain(string[] args)
             return 1;
         case RunOutcome.openFailed:
             stderr.writeln("Error: could not open a window or load the font '",
-                fontOpt, "'.");
+                cfg.gui.font, "'.");
             return 1;
+    }
+}
+
+/// `terminal config show [--changed] [--config PATH]` and `terminal config
+/// write [--force] [--config PATH]` (`TCF5`).
+private int configCommand(string program, string[] rest)
+{
+    import std.array : appender;
+    import std.file : exists, fileWrite = write, mkdirRecurse;
+    import std.path : dirName;
+    import std.stdio : stderr, stdout, writeln;
+
+    import settings_io : renderConfigShow, renderStarterConfig;
+
+    string configPath = desktopConfigPath();
+    bool changed, force;
+    auto args = [program] ~ rest;
+    try
+        getopt(args, "config", &configPath, "changed", &changed, "force", &force);
+    catch (Exception e)
+    {
+        stderr.writeln("terminal config: ", e.msg);
+        return 2;
+    }
+    const action = args.length >= 2 ? args[1] : "show";
+    switch (action)
+    {
+        case "show":
+            auto w = appender!string;
+            renderConfigShow(w, loadTerminalConfig(configPath, null), changedOnly: changed);
+            stdout.write(w[]);
+            return 0;
+        case "write":
+            if (!configPath.length)
+            {
+                stderr.writeln("terminal: no config location (no config dir; pass --config)");
+                return 1;
+            }
+            if (configPath.exists && !force)
+            {
+                stderr.writeln("terminal: ", configPath, " already exists — pass --force to overwrite");
+                return 1;
+            }
+            auto w = appender!string;
+            renderStarterConfig(w);
+            try
+            {
+                mkdirRecurse(configPath.dirName);
+                fileWrite(configPath, w[]);
+            }
+            catch (Exception e)
+            {
+                stderr.writeln("terminal: ", e.msg);
+                return 1;
+            }
+            writeln("wrote ", configPath);
+            return 0;
+        default:
+            stderr.writeln("terminal config: unknown action '", action, "' (show, write)");
+            return 2;
     }
 }
