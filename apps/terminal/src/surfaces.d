@@ -96,6 +96,14 @@ interface SelfPlaced
     Layer placeIn(in SurfaceContext ctx) @safe;
 }
 
+/// A surface whose content scrolls: a wheel notch, or a drag on a touch
+/// screen, reaches it while it is on top (`dy` > 0 moves the content up).
+interface Scrollable
+{
+    /// ditto
+    void scroll(int dy) @system;
+}
+
 /// A transient line: a refusal, "Copied by …", "Saved".
 struct Toast
 {
@@ -242,6 +250,22 @@ struct Surfaces
         const used = stack[$ - 1].key(k);
         changed |= used;
         return used;
+    }
+
+    /**
+    A wheel or a drag while a surface is modal: to the top surface when it
+    scrolls. True whenever one is modal — nothing beneath scrolls then.
+    */
+    bool scroll(int dy) @system
+    {
+        if (!stack.length)
+            return false;
+        if (auto s = cast(Scrollable) stack[$ - 1])
+        {
+            s.scroll(dy);
+            changed = true;
+        }
+        return true;
     }
 
     /// Escape or Back: the top surface's safe answer.
