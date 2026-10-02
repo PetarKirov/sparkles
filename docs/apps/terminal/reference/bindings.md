@@ -30,11 +30,13 @@ keeps this page equal to it.
 | `Ctrl+0`              | default font size | a pane          |
 | `Leader ?`            | all keys          | a pane          |
 | `Ctrl+Shift+T`        | new tab           | a pane          |
+| `Ctrl+Shift+P`        | tabs and panes    | a pane          |
 | `Ctrl+Shift+W`        | close pane        | a pane          |
 | `Ctrl+Shift+PageUp`   | previous tab      | a pane          |
 | `Ctrl+Shift+PageDown` | next tab          | a pane          |
 | `Leader k`            | toggle extra keys | a pane          |
 | `Leader t n`          | new tab           | a pane          |
+| `Leader t t`          | tabs and panes    | a pane          |
 | `Leader t x`          | close tab         | a pane          |
 | `Leader t 1-9`        | go to tab         | a pane          |
 | `Leader p v`          | split right       | a pane          |

@@ -15,7 +15,7 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : Constraints, Insets, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : HoverTarget, hoverTargets;
-import sparkles.ui.style : Decoration, Palette, Slot, TextStyle;
+import sparkles.ui.style : BorderStyle, Decoration, Palette, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import settings : ButtonLabels;
@@ -219,7 +219,7 @@ uint band(ref Builder b, uint[] children, bool fullWidth = true) @safe
         width: fullWidth ? SizeSpec.grow() : SizeSpec.fit_,
         slot: Slot.surface,
         paintBackground: true,
-        decoration: Decoration(borderWidth: Insets(1, 0, 0, 0)),
+        decoration: Decoration(borderStyle: BorderStyle.solid, borderWidth: Insets(1, 0, 0, 0)),
     ));
 
 // ─────────────────────────────────────────────────────────────────────────────

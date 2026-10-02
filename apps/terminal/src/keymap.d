@@ -51,6 +51,7 @@ enum TermCommand : ubyte
     confirm,         /// the innermost overlay's primary action (`KBD1`: Enter)
 
     // Tabs and splits (`TSS8`).
+    tabTree,         /// the tree of tabs and panes, with search (`TSS12`)
     newTab,
     closeTab,
     nextTab,
@@ -164,6 +165,7 @@ immutable Binding[] defaultBindings = [
 
     // Tabs, as kitty and Ghostty spell them (`TSS8`).
     bind(TermScope.pane, ctrlShift('t'), TermCommand.newTab, "new tab"),
+    bind(TermScope.pane, ctrlShift('p'), TermCommand.tabTree, "tabs and panes"),
     bind(TermScope.pane, ctrlShift('w'), TermCommand.closePane, "close pane"),
     bind(TermScope.pane, ctrlShiftKey(Key.pageUp), TermCommand.prevTab, "previous tab"),
     bind(TermScope.pane, ctrlShiftKey(Key.pageDown), TermCommand.nextTab, "next tab"),
@@ -174,6 +176,8 @@ immutable Binding[] defaultBindings = [
     group(TermScope.pane, chord(leaderMark), chord('t'), "tab"),
     bind(TermScope.pane, chord(leaderMark), chord('t'), chord('n'), TermCommand.newTab,
         "new tab"),
+    bind(TermScope.pane, chord(leaderMark), chord('t'), chord('t'), TermCommand.tabTree,
+        "tabs and panes"),
     bind(TermScope.pane, chord(leaderMark), chord('t'), chord('x'), TermCommand.closeTab,
         "close tab"),
     bind(TermScope.pane, chord(leaderMark), chord('t'), chordRange('1', '9'),

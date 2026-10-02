@@ -25,13 +25,19 @@ import sparkles.ui.geometry : Rect;
 
 import std.datetime.systime : Clock, SysTime;
 
-import chrome : ChromeTheme, Layer, paintLayer;
+import std.algorithm.comparison : min;
+
+import chrome : ChromeTheme, Layer, paintLayer, place, Place;
+import opener : OpenerHit, pillBand, rail, usesPill;
+import pane_chrome : PaneBox, paneBoxes, paneFrame, paneHeader, paneToolbar, ToolAction,
+    toolHit;
+import tab_tree : TabTree, TreePane, TreeTab;
 import confirmations : ClipboardRead, PasteConfirm;
 import sparkles.terminal_view.notification_log : NotificationRoute;
 import sparkles.terminal_view.osc_scan : Notification;
 import sparkles.terminal_view.protocols : PasteConfirmRequest;
 import keymap : KeyCommand, TermCommand;
-import settings : ButtonLabels, OnExit, OverlayStyle;
+import settings : ButtonLabels, OnExit, OverlayStyle, PaneChrome, TabsOpener;
 import surfaces : SurfaceContext, Surfaces;
 import workspace : Direction, maxPanesPerTab, maxTabs, PaneSpec, Refusal, restored,
     saved, SavedWorkspace, Workspace;
@@ -90,8 +96,29 @@ struct WorkspaceHost
     /// What shows over the panes: confirmations, menus, pages and toasts.
     Surfaces surfaces;
     /// Poll the mouse for the pane under it (the desktop). A touch embedder
-    /// turns it off and routes its gestures itself (`focusAt`, the wheel).
+    /// turns it off and routes its gestures itself (`tapPane`, the wheel).
     bool pollPointer = true;
+    /// `ui.tabsOpener` and `ui.paneChrome` (`TCF12`, `TCF13`).
+    TabsOpener tabsOpener;
+    /// ditto
+    PaneChrome paneChrome;
+    /// A phone held upright: `auto` opens the tree from a pill (`TCF12`). A
+    /// touch screen also puts search fields at the bottom (`TSS13`).
+    bool phonePortrait;
+    /// ditto
+    bool touch;
+    /// The key that opens the tree, shown beside the pill on the desktop.
+    string treeHint;
+
+    // This frame's geometry, for `paint` and the hit tests.
+    private PaneBox[] boxes;
+    private Rect[] dividerRects;
+    private Rect panesArea;
+    private Layer openerLayer;
+    private Layer[] paneChromeLayers;
+    private Layer toolbarLayer;
+    private PaneId revealed; // the pane whose toolbar shows (`reveal`)
+    private int cellW = 1, cellH = 1;
 
     private bool[PaneId] prompting; // exited panes that keep their prompt
     private bool[PaneId] expanded; // prompts whose status line is open
@@ -246,9 +273,10 @@ struct WorkspaceHost
     // ── the frame ───────────────────────────────────────────────────────
 
     /**
-    Drives every pane for one frame within `area` (window pixels): opens new
-    panes at their size, resizes, pumps all of them, applies the exit policy,
-    and keeps the window title on the focused pane's.
+    Drives every pane for one frame within `area` (window pixels): lays out
+    the opener and the panes with their chrome, opens new panes at their size,
+    resizes, pumps all of them, applies the exit policy, and keeps the window
+    title on the focused pane's.
     */
     void frame(H)(ref H h, in Rect area) @system
     {
@@ -256,10 +284,9 @@ struct WorkspaceHost
             MouseButton;
 
         auto c = h.canvas;
-        const cw = c.fonts.cellW() > 0 ? c.fonts.cellW() : 1;
-        const ch = c.fonts.cellH() > 0 ? c.fonts.cellH() : 1;
-        DockFrames f;
-        ws.frames(Rect(0, 0, area.width / cw, area.height / ch), f);
+        cellW = c.fonts.cellW() > 0 ? c.fonts.cellW() : 1;
+        cellH = c.fonts.cellH() > 0 ? c.fonts.cellH() : 1;
+        layout(area);
 
         // The pointer belongs to the pane under it — or, during a drag, to the
         // pane the drag began in (`TSS9`). A press there also focuses it.
@@ -267,20 +294,30 @@ struct WorkspaceHost
         if (pollPointer)
         {
             const m = GetMousePosition();
+            const mx = cast(int) m.x, my = cast(int) m.y;
             const leftDown = IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT);
             PaneId under;
-            foreach (ref p; f.panes)
+            foreach (ref b; boxes)
+                if (contains(b.content, mx, my))
+                    under = b.id;
+            // `reveal`: a pane's toolbar shows while the pointer is at its top
+            // or on the toolbar itself (`TSS11`).
+            if (paneChrome == PaneChrome.reveal && !leftDown)
             {
-                const px = area.x + p.rect.x * cw, py = area.y + p.rect.y * ch;
-                if (m.x >= px && m.x < px + p.rect.width * cw
-                    && m.y >= py && m.y < py + p.rect.height * ch)
-                    under = p.pane;
+                PaneId top;
+                foreach (ref b; boxes)
+                    if (contains(Rect(b.outer.x, b.outer.y, b.outer.width, 2 * cellH), mx, my))
+                        top = b.id;
+                if (top != revealed && !(revealed && toolbarLayer.contains(mx, my)))
+                {
+                    revealed = top;
+                    repaint = true;
+                }
             }
             if (!leftDown)
                 pointerOwner = under;
-            // A click on an exit prompt is the prompt's, not the pane's.
-            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
-                && tap(h, cast(int) m.x, cast(int) m.y))
+            // A click on the chrome is the chrome's, not the pane's.
+            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && tap(h, mx, my))
                 under = pointerOwner = 0;
             if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && under)
             {
@@ -295,18 +332,11 @@ struct WorkspaceHost
         lastFocused = ws.focused;
         foreach (id, tv; pool)
         {
-            Rect r;
-            bool shown;
-            foreach (ref p; f.panes)
-                if (p.pane == id)
-                {
-                    r = p.rect;
-                    shown = true;
-                }
-            tv.opts.visible = shown;
-            tv.opts.pollMouse = pollPointer && shown && id == pointerOwner;
-            if (shown)
-                any |= tv.frame(h, r.width > 0 ? r.width : 1, r.height > 0 ? r.height : 1);
+            const b = boxOf(id);
+            tv.opts.visible = b !is null;
+            tv.opts.pollMouse = pollPointer && b !is null && id == pointerOwner;
+            if (b !is null)
+                any |= tv.frame(h, b.cols, b.rows);
             else if (tv.s.terminal !is null)
             {
                 tv.pump();
@@ -315,8 +345,9 @@ struct WorkspaceHost
         }
 
         applyExits();
-        placeBanners(area, cw, ch, f);
-        placeSurfaces(area, cw, ch, f);
+        placeChrome();
+        placeBanners();
+        placeSurfaces(area);
         if (clipboardPending)
         {
             clipboardPending = false;
@@ -347,92 +378,256 @@ struct WorkspaceHost
         }
     }
 
-    /// Paints every shown pane at its pixel rect, then the dividers and, with
-    /// more than one pane, the focused pane's corner mark (the `reveal` chrome,
-    /// `TSS11`).
-    void paint(H)(ref H h, in Rect area, RgbColor divider, RgbColor accent) @system
+    /// The pill band or the rail, the panes' area, and where the tree opens
+    /// (`TSS13`); the panes' boxes in it (`TSS11`).
+    private void layout(in Rect area) @system
+    {
+        const pill = usesPill(tabsOpener, phonePortrait);
+        const rows = theme.targetRows > 2 ? theme.targetRows : 2;
+        Rect openerRect;
+        Rect panelRect;
+        if (pill)
+        {
+            openerRect = Rect(area.x, area.y, area.width, rows * cellH);
+            panesArea = Rect(area.x, area.y + rows * cellH, area.width, area.height - rows * cellH);
+            const inset = touch ? cellW : 0;
+            const wide = touch ? panesArea.width - 2 * inset : min(panesArea.width, 44 * cellW);
+            panelRect = Rect(panesArea.x + inset, panesArea.y, wide, panesArea.height);
+            openerLayer = place(pillBand(treeTabs(), rows, touch, treeHint),
+                area.width / cellW, rows, area.x, area.y, cellW, cellH, Place.top);
+        }
+        else
+        {
+            const railCols = (rows * cellH + cellW - 1) / cellW;
+            openerRect = Rect(area.x, area.y, railCols * cellW, area.height);
+            panesArea = Rect(area.x + railCols * cellW, area.y, area.width - railCols * cellW,
+                area.height);
+            panelRect = Rect(panesArea.x, panesArea.y, min(panesArea.width, 36 * cellW),
+                panesArea.height);
+            openerLayer = place(rail(treeTabs(), railCols, area.height / cellH, rows),
+                railCols, area.height / cellH, area.x, area.y, cellW, cellH, Place.top);
+        }
+        this.panelRect = panelRect;
+
+        DockFrames f;
+        ws.frames(Rect(0, 0, panesArea.width / cellW, panesArea.height / cellH), f);
+        boxes = paneBoxes(f, panesArea, cellW, cellH, paneChrome, ws.focused);
+        dividerRects.length = 0;
+        foreach (ref d; f.dividers)
+            dividerRects ~= Rect(panesArea.x + d.rect.x * cellW, panesArea.y + d.rect.y * cellH,
+                d.rect.width * cellW, d.rect.height * cellH);
+    }
+
+    private Rect panelRect; // where the tree opens
+
+    /// Pane `id`'s box this frame, or null when it is not shown.
+    private const(PaneBox)* boxOf(PaneId id) const @safe pure nothrow @nogc
+    {
+        foreach (ref b; boxes)
+            if (b.id == id)
+                return &b;
+        return null;
+    }
+
+    private static bool contains(in Rect r, int x, int y) @safe pure nothrow @nogc
+        => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
+
+    /// The headers, frames and the revealed toolbar (`TSS11`).
+    private void placeChrome() @system
+    {
+        paneChromeLayers.length = 0;
+        toolbarLayer = Layer.init;
+        foreach (ref b; boxes)
+        {
+            const cols = b.outer.width / cellW, rows = b.outer.height / cellH;
+            final switch (paneChrome)
+            {
+                case PaneChrome.reveal:
+                    if (b.id == revealed)
+                        toolbarLayer = place(paneToolbar(b.id, paneTitle(b.id), paneDetail(b.id),
+                            labels, theme.targetRows, cols), cols, rows, b.outer.x, b.outer.y,
+                            cellW, cellH, Place.top);
+                    break;
+                case PaneChrome.header:
+                    paneChromeLayers ~= place(paneHeader(paneTitle(b.id), paneDetail(b.id),
+                        b.focused, cols), cols, 1, b.outer.x, b.outer.y, cellW, cellH, Place.top);
+                    break;
+                case PaneChrome.framed:
+                    paneChromeLayers ~= place(paneFrame(paneTitle(b.id), b.focused, cols, rows),
+                        cols, rows, b.outer.x, b.outer.y, cellW, cellH, Place.top);
+                    break;
+            }
+        }
+    }
+
+    /// What a pane is called: the user's pin, the program's title, the program.
+    string paneTitle(PaneId id) @system
+    {
+        if (auto s = ws.spec(id))
+            if (s.titlePin.length)
+                return s.titlePin;
+        if (auto tv = pool.byId(id))
+            if (tv.title.length)
+                return tv.title.idup;
+        return programName(id);
+    }
+
+    /// The line under a pane's title: how it ended, or where it is.
+    private string paneDetail(PaneId id) @system
+    {
+        import std.conv : text;
+
+        if (auto tv = pool.byId(id))
+            if (tv.s.childExited && tv.s.childReaped)
+                return tv.s.childStatus == 0 ? "exited" : text("exited ", tv.s.childStatus);
+        if (auto s = ws.spec(id))
+            return homeShortened(s.cwd);
+        return null;
+    }
+
+    private static string homeShortened(string path) @safe
+    {
+        import std.process : environment;
+
+        const home = environment.get("HOME");
+        if (home.length && path.length >= home.length && path[0 .. home.length] == home)
+            return "~" ~ path[home.length .. $];
+        return path;
+    }
+
+    /// The tabs and panes, as the opener and the tree show them (`TSS12`).
+    TreeTab[] treeTabs() @system
+    {
+        TreeTab[] tabs;
+        foreach (ti, ref t; ws.tabs)
+        {
+            TreeTab tab;
+            tab.current = ti == ws.current;
+            foreach (id; ws.panesOf(ti))
+            {
+                TreePane p;
+                p.id = id;
+                p.title = paneTitle(id);
+                auto tv = pool.byId(id);
+                p.icon = tv !is null && tv.icon.length ? tv.icon.idup : "❯";
+                p.detail = paneDetail(id);
+                p.focused = tab.current && id == ws.focused;
+                p.failed = tv !is null && tv.s.childExited && tv.s.childStatus != 0;
+                tab.panes ~= p;
+            }
+            const lead = t.focused ? t.focused : (tab.panes.length ? tab.panes[0].id : 0);
+            tab.title = t.titlePin.length ? t.titlePin : lead ? paneTitle(lead) : "tab";
+            foreach (ref p; tab.panes)
+                if (p.id == lead)
+                    tab.icon = p.icon;
+            tabs ~= tab;
+        }
+        return tabs;
+    }
+
+    /// Opens the tree of tabs and panes (`TSS12`), or closes it when open.
+    void toggleTree() @system
+    {
+        if (surfaces.stack.length && cast(TabTree) surfaces.stack[$ - 1] !is null)
+        {
+            surfaces.cancel();
+            return;
+        }
+        auto self = &this;
+        surfaces.push(new TabTree(() => self.treeTabs(), (size_t tab, PaneId pane) {
+            if (pane)
+                cast(void) self.ws.focusPane(pane);
+            else
+                cast(void) self.ws.selectTab(tab);
+            self.repaint = true;
+        }, () {
+            Refusal why;
+            const from = self.ws.spec(self.ws.focused);
+            const id = self.ws.newTab(from !is null ? from.cwd : null, null, why);
+            if (id)
+                cast(void) self.create(id);
+            self.repaint = true;
+        }));
+    }
+
+    /// Paints the opener, every shown pane at its box, the dividers, the
+    /// panes' chrome, the exit prompts and the surfaces.
+    void paint(H)(ref H h, in Rect, RgbColor divider, RgbColor accent) @system
     {
         import raylib : Color, DrawRectangle;
 
-        auto c = h.canvas;
-        const cw = c.fonts.cellW() > 0 ? c.fonts.cellW() : 1;
-        const ch = c.fonts.cellH() > 0 ? c.fonts.cellH() : 1;
-        DockFrames f;
-        ws.frames(Rect(0, 0, area.width / cw, area.height / ch), f);
+        static Color rgb(RgbColor x) => Color(x.r, x.g, x.b, 255);
 
-        foreach (ref p; f.panes)
-            if (auto tv = pool.byId(p.pane))
-                tv.paintPanePx(h, area.x + p.rect.x * cw, area.y + p.rect.y * ch,
-                    p.rect.width * cw, p.rect.height * ch);
-
+        paintLayer(h, openerLayer, theme);
+        foreach (ref b; boxes)
+            if (auto tv = pool.byId(b.id))
+                tv.paintPanePx(h, b.content.x, b.content.y, b.content.width, b.content.height);
+        foreach (ref d; dividerRects)
+            DrawRectangle(d.x, d.y, d.width, d.height, rgb(divider));
+        foreach (ref l; paneChromeLayers)
+            paintLayer(h, l, theme);
+        // `reveal`: the focused pane's accent corner, with more than one pane.
+        if (paneChrome == PaneChrome.reveal && boxes.length > 1)
+            foreach (ref b; boxes)
+                if (b.focused)
+                {
+                    const len = cellH > 6 ? cellH : 6, w = 3;
+                    DrawRectangle(b.outer.x, b.outer.y, len, w, rgb(accent));
+                    DrawRectangle(b.outer.x, b.outer.y, w, len, rgb(accent));
+                }
         foreach (ref l; banners)
             paintLayer(h, l, theme);
+        paintLayer(h, toolbarLayer, theme);
         surfaces.paint(h, theme);
-
-        static Color rgb(RgbColor x) => Color(x.r, x.g, x.b, 255);
-        foreach (ref d; f.dividers)
-            DrawRectangle(area.x + d.rect.x * cw, area.y + d.rect.y * ch,
-                d.rect.width * cw, d.rect.height * ch, rgb(divider));
-        if (f.panes.length > 1)
-            foreach (ref p; f.panes)
-                if (p.pane == ws.focused)
-                {
-                    const x = area.x + p.rect.x * cw, y = area.y + p.rect.y * ch;
-                    const len = ch > 6 ? ch : 6, w = 3;
-                    DrawRectangle(x, y, len, w, rgb(accent));
-                    DrawRectangle(x, y, w, len, rgb(accent));
-                }
     }
 
     /**
     Lays out the exit prompt of every shown pane that keeps one, along the
-    pane's bottom (`TSS2`, mockup E1).
+    bottom of its content (`TSS2`, mockup E1).
     */
-    private void placeBanners(in Rect area, int cw, int ch, in DockFrames f) @system
+    private void placeBanners() @system
     {
-        import chrome : place, Place;
         import exit_banner : exitBanner, ExitInfo;
 
         banners = null;
-        foreach (ref p; f.panes)
+        foreach (ref b; boxes)
         {
-            const kept = p.pane in prompting;
-            auto tv = pool.byId(p.pane);
+            const kept = b.id in prompting;
+            auto tv = pool.byId(b.id);
             if (kept is null || tv is null)
                 continue;
-            const spec = ws.spec(p.pane);
+            const spec = ws.spec(b.id);
             ExitInfo info;
             info.status = tv.s.childStatus;
             info.command = spec !is null && spec.command.length ? spec.command : shellName();
             info.cwd = spec !is null ? spec.cwd : null;
-            if (auto s = p.pane in started)
+            if (auto s = b.id in started)
                 info.started = *s;
-            if (auto e = p.pane in ended)
+            if (auto e = b.id in ended)
                 info.ended = *e;
-            const open = (p.pane in expanded) !is null;
-            banners[p.pane] = place(exitBanner(info, open, *kept, labels, theme.targetRows),
-                p.rect.width, p.rect.height, area.x + p.rect.x * cw, area.y + p.rect.y * ch,
-                cw, ch, Place.bottom);
+            const open = (b.id in expanded) !is null;
+            banners[b.id] = place(exitBanner(info, open, *kept, labels, theme.targetRows),
+                b.cols, b.rows, b.content.x, b.content.y, cellW, cellH, Place.bottom);
         }
     }
 
     /**
     Lays out the surfaces for this frame; a confirmation anchors at the
-    focused pane's cursor line (`TCF10`).
+    focused pane's cursor line (`TCF10`), the tree in its panel (`TSS13`).
     */
-    private void placeSurfaces(in Rect area, int cw, int ch, in DockFrames f) @system
+    private void placeSurfaces(in Rect area) @system
     {
-        SurfaceContext ctx = {area: area, cellW: cw, cellH: ch, labels: labels,
-            style: overlayStyle, targetRows: theme.targetRows};
+        SurfaceContext ctx = {area: panesArea, cellW: cellW, cellH: cellH, labels: labels,
+            style: overlayStyle, targetRows: theme.targetRows, touch: touch,
+            panelArea: panelRect};
         if (auto tv = focusedView())
-            foreach (ref p; f.panes)
-                if (p.pane == ws.focused)
-                {
-                    const c = tv.cursor;
-                    if (c.inViewport)
-                        ctx.subject = Rect(area.x + p.rect.x * cw, area.y + (p.rect.y + c.y) * ch,
-                            p.rect.width * cw, ch);
-                }
+            if (auto b = boxOf(ws.focused))
+            {
+                const c = tv.cursor;
+                if (c.inViewport)
+                    ctx.subject = Rect(b.content.x, b.content.y + c.y * cellH, b.content.width,
+                        cellH);
+            }
         surfaces.place(ctx);
     }
 
@@ -484,6 +679,44 @@ struct WorkspaceHost
 
         if (surfaces.tap(x, y))
         {
+            repaint = true;
+            return true;
+        }
+        // The opener: the tree, a tab, a new tab (`TSS13`).
+        if (openerLayer.contains(x, y))
+        {
+            const hit = openerLayer.hitAt(x, y);
+            if (hit == OpenerHit.tree)
+                toggleTree();
+            else if (hit == OpenerHit.newTab)
+                cast(void) run(h, KeyCommand(TermCommand.newTab), Rect.init);
+            else if (hit >= OpenerHit.tab0 && hit < OpenerHit.tab0 + ws.tabs.length)
+                cast(void) ws.selectTab(hit - OpenerHit.tab0);
+            repaint = true;
+            return true;
+        }
+        // A revealed pane's toolbar: split, zoom, close (`TSS11`).
+        if (toolbarLayer.contains(x, y))
+        {
+            const hit = toolbarLayer.hitAt(x, y);
+            if (hit >= toolHit)
+            {
+                const pane = cast(PaneId)((hit - toolHit) / 4);
+                cast(void) ws.focusPane(pane);
+                final switch (cast(ToolAction)((hit - toolHit) % 4))
+                {
+                    case ToolAction.split:
+                        cast(void) run(h, KeyCommand(TermCommand.splitRight), Rect.init);
+                        break;
+                    case ToolAction.zoom:
+                        ws.toggleZoom();
+                        break;
+                    case ToolAction.close:
+                        closePane(pane);
+                        break;
+                }
+                revealed = 0;
+            }
             repaint = true;
             return true;
         }
@@ -562,24 +795,35 @@ struct WorkspaceHost
     }
 
     /**
-    The pane at pixel (`x`, `y`) of `area` with cells `cw` × `ch`, and its
-    top-left in pixels; 0 when there is none.
+    The pane whose content is at pixel (`x`, `y`) this frame, and its
+    content's top-left in pixels; 0 when there is none.
     */
-    PaneId paneAt(in Rect area, int cw, int ch, int x, int y, out int left, out int top) const @safe
+    PaneId paneAt(int x, int y, out int left, out int top) const @safe
     {
-        DockFrames f;
-        ws.frames(Rect(0, 0, area.width / cw, area.height / ch), f);
-        foreach (ref p; f.panes)
-        {
-            const px = area.x + p.rect.x * cw, py = area.y + p.rect.y * ch;
-            if (x >= px && x < px + p.rect.width * cw && y >= py && y < py + p.rect.height * ch)
+        foreach (ref b; boxes)
+            if (contains(b.outer, x, y))
             {
-                left = px;
-                top = py;
-                return p.pane;
+                left = b.content.x;
+                top = b.content.y;
+                return b.id;
             }
-        }
         return 0;
+    }
+
+    /**
+    A tap on a pane (touch): it is focused and, under `reveal`, its toolbar
+    shows until the next tap elsewhere (`TSS9`, `TSS11`). Returns the pane.
+    */
+    PaneId tapPane(int x, int y) @safe
+    {
+        int left, top;
+        const id = paneAt(x, y, left, top);
+        if (id && id != ws.focused)
+            cast(void) ws.focusPane(id);
+        if (paneChrome == PaneChrome.reveal)
+            revealed = revealed == id ? 0 : id;
+        repaint = true;
+        return id;
     }
 
     // ── input ───────────────────────────────────────────────────────────
@@ -644,6 +888,9 @@ struct WorkspaceHost
                 break;
             case TermCommand.zoomPane:
                 ws.toggleZoom();
+                break;
+            case TermCommand.tabTree:
+                toggleTree();
                 break;
             case TermCommand.closePane:
             case TermCommand.promptClose:

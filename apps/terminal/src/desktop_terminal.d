@@ -121,6 +121,13 @@ struct DesktopTerminal
 
     private void onKey(H)(ref H h, in KeyEvent k)
     {
+        // A surface with a search field types first; it declines the chords and
+        // the keys the overlay rows answer (`TKM4`).
+        if (host.surfaces.modal && host.surfaces.key(k))
+        {
+            noteGuide();
+            return;
+        }
         const r = keys.route(k, context);
         final switch (r.route)
         {
@@ -180,7 +187,7 @@ struct DesktopTerminal
                 TermCommand.splitDown, TermCommand.focusLeft, TermCommand.focusRight,
                 TermCommand.focusUp, TermCommand.focusDown, TermCommand.zoomPane,
                 TermCommand.closePane, TermCommand.promptRerun, TermCommand.promptShell,
-                TermCommand.promptClose:
+                TermCommand.promptClose, TermCommand.tabTree:
                 break;
         }
     }

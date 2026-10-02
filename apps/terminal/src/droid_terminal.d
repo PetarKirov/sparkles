@@ -156,6 +156,11 @@ struct DroidTerminal
             lastGeometry = g;
             host.invalidate();
         }
+        {
+            import raylib : GetScreenHeight, GetScreenWidth;
+
+            host.phonePortrait = GetScreenHeight() > GetScreenWidth();
+        }
         host.frame(h, paneArea(g));
         if (auto tv = host.focusedView())
             if (platform.frame(*tv))
@@ -227,6 +232,9 @@ struct DroidTerminal
         host.onExit = config.effective.behaviour.onExit;
         host.labels = config.effective.ui.buttonLabels;
         host.overlayStyle = config.effective.ui.overlayStyle;
+        host.tabsOpener = config.effective.ui.tabsOpener;
+        host.paneChrome = config.effective.ui.paneChrome;
+        host.touch = true;
         router.configure(config.effective, warnings);
         foreach (w; warnings)
             warning(i"$(w)");
@@ -282,6 +290,12 @@ struct DroidTerminal
         auto chord = latch.apply(k);
         if (before != latch.any)
             host.invalidate(); // the released latch's highlight goes
+        // A surface with a search field types first (`TKM4`).
+        if (host.surfaces.modal && host.surfaces.key(chord))
+        {
+            noteGuide();
+            return;
+        }
         const r = router.route(chord, context);
         final switch (r.route)
         {
@@ -350,7 +364,7 @@ struct DroidTerminal
                 TermCommand.splitDown, TermCommand.focusLeft, TermCommand.focusRight,
                 TermCommand.focusUp, TermCommand.focusDown, TermCommand.zoomPane,
                 TermCommand.closePane, TermCommand.promptRerun, TermCommand.promptShell,
-                TermCommand.promptClose:
+                TermCommand.promptClose, TermCommand.tabTree:
                 break;
         }
     }
@@ -488,14 +502,9 @@ struct DroidTerminal
         // An exit prompt takes its own taps (`TSS2`).
         if (host.tap(h, p.pos.x, p.pos.y))
             return;
-        // A tap on a pane focuses it (`TSS9`) and asks for the keyboard.
-        int left, top;
-        const id = host.paneAt(paneArea(g), cellW, cellH, p.pos.x, p.pos.y, left, top);
-        if (id && id != host.ws.focused)
-        {
-            cast(void) host.ws.focusPane(id);
-            host.invalidate();
-        }
+        // A tap on a pane focuses it (`TSS9`), shows its toolbar under `reveal`
+        // (`TSS11`) and asks for the keyboard.
+        cast(void) host.tapPane(p.pos.x, p.pos.y);
         showSoftKeyboard();
         keyboardShown = true;
     }
@@ -509,7 +518,7 @@ struct DroidTerminal
         // wheel reports (a pager, an editor); otherwise the drag walks its
         // scrollback.
         int left, top;
-        const id = host.paneAt(paneArea(g), cellW, cellH, w.pos.x, w.pos.y, left, top);
+        const id = host.paneAt(w.pos.x, w.pos.y, left, top);
         auto tv = id ? host.pool.byId(id) : host.focusedView();
         if (tv is null)
             return;
