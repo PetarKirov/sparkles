@@ -36,19 +36,21 @@ From the [design system](../design-system/index.md) and the
 
 ## Surfaces
 
-| Surface                                  | Rows it decides                    | Variants | Chosen |
-| ---------------------------------------- | ---------------------------------- | -------- | ------ |
-| Workspace: tab strip, splits, headers    | `TSS11`, `TSS12`, `TSS13`          | —        | —      |
-| Extra-keys row (and its show/hide)       | `TCF7`, `TKM7`                     | —        | —      |
-| Selection handles and the selection menu | `TSE3`, `TSE5`                     | —        | —      |
-| Link confirm bar                         | [`TPR5`](./protocols.md)           | —        | —      |
-| Paste and OSC 52 read confirmations      | [`TPR19`, `TPR21`](./protocols.md) | —        | —      |
-| Exit prompt                              | `TSS2`                             | —        | —      |
-| Autofill chip                            | `TSE10`                            | —        | —      |
-| Settings page                            | `TSP5`, `TSP6`                     | —        | —      |
-| About page                               | [`TPG1`–`TPG3`](./pages.md)        | —        | —      |
-| Log page                                 | `TPG8`                             | —        | —      |
-| Notification log, unseen marks, toasts   | `TPG9`–`TPG11`                     | —        | —      |
-| Touch lantern guide                      | `TKM6`                             | —        | —      |
+| Surface                                  | Rows it decides                    | Variants                                                     | Chosen |
+| ---------------------------------------- | ---------------------------------- | ------------------------------------------------------------ | ------ |
+| Workspace: tab strip, splits, headers    | `TSS11`, `TSS12`, `TSS13`          | [A, B, C](https://claude.ai/artifact/PiwEvu54XJK3mkSZFWh7QB) | —      |
+| Extra-keys row (and its show/hide)       | `TCF7`, `TKM7`                     | [A, B, C](https://claude.ai/artifact/PiwEvu54XJK3mkSZFWh7QB) | —      |
+| Selection handles and the selection menu | `TSE3`, `TSE5`                     | —                                                            | —      |
+| Link confirm bar                         | [`TPR5`](./protocols.md)           | —                                                            | —      |
+| Paste and OSC 52 read confirmations      | [`TPR19`, `TPR21`](./protocols.md) | —                                                            | —      |
+| Exit prompt                              | `TSS2`                             | —                                                            | —      |
+| Autofill chip                            | `TSE10`                            | —                                                            | —      |
+| Settings page                            | `TSP5`, `TSP6`                     | —                                                            | —      |
+| About page                               | [`TPG1`–`TPG3`](./pages.md)        | —                                                            | —      |
+| Log page                                 | `TPG8`                             | —                                                            | —      |
+| Notification log, unseen marks, toasts   | `TPG9`–`TPG11`                     | —                                                            | —      |
+| Touch lantern guide                      | `TKM6`                             | —                                                            | —      |
+| Viewer pane chrome (header, view switch) | [`TDV5`, `TDV6`](./viewer.md)      | —                                                            | —      |
+| Credits page                             | [`TPG15`](./pages.md)              | —                                                            | —      |
 
 → [Overview](./index.md) · [Decisions](./decisions.md)

@@ -47,19 +47,21 @@ except where a row names a platform.
 
 ## Owning package per obligation
 
-| Obligation                                                             | Owner                                                         | Page                              |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------- |
-| The configuration schema, its layers and the settings page's subject   | `apps/terminal`                                               | [config](./config.md) `TCF`/`TSP` |
-| The settings pane component (lifted from hue)                          | `sparkles:ui`                                                 | [config](./config.md) `TSP`       |
-| The command table, chords and leader                                   | `apps/terminal`; machinery `sparkles:ui` `KEY`/`LTN`          | [keymap](./keymap.md) `TKM`       |
-| Escape-sequence semantics, replies and events                          | `sparkles:terminal-view`                                      | [protocols](./protocols.md) `TPR` |
-| What the app does with an event (a notification, a title, a clipboard) | `apps/terminal`                                               | [protocols](./protocols.md) `TPR` |
-| About, log, notification-log pages                                     | `apps/terminal`; the log ring `sparkles:base`                 | [pages](./pages.md) `TPG`         |
-| Selection model, word/URL expansion                                    | `sparkles:terminal-view`                                      | [selection](./selection.md) `TSE` |
-| Handles, the menu, autofill                                            | `apps/terminal`; JNI `sparkles:android`                       | [selection](./selection.md) `TSE` |
-| Respawn, the pane pool                                                 | `sparkles:terminal-view`                                      | [sessions](./sessions.md) `TSS`   |
-| Exit prompt, tabs, splits, restore                                     | `apps/terminal`; layout `sparkles:ui` `DCK`                   | [sessions](./sessions.md) `TSS`   |
-| Every surface's look                                                   | the chosen mockup; [design system](../design-system/index.md) | [design](./design.md)             |
+| Obligation                                                             | Owner                                                                          | Page                                |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------------- |
+| The configuration schema, its layers and the settings page's subject   | `apps/terminal`                                                                | [config](./config.md) `TCF`/`TSP`   |
+| The settings pane component (lifted from hue)                          | `sparkles:ui`                                                                  | [config](./config.md) `TSP`         |
+| The command table, chords and leader                                   | `apps/terminal`; machinery `sparkles:ui` `KEY`/`LTN`                           | [keymap](./keymap.md) `TKM`         |
+| Escape-sequence semantics, replies and events                          | `sparkles:terminal-view`                                                       | [protocols](./protocols.md) `TPR`   |
+| What the app does with an event (a notification, a title, a clipboard) | `apps/terminal`                                                                | [protocols](./protocols.md) `TPR`   |
+| About, log, notification-log pages                                     | `apps/terminal`; the log ring `sparkles:base`                                  | [pages](./pages.md) `TPG`           |
+| Selection model, word/URL expansion                                    | `sparkles:terminal-view`                                                       | [selection](./selection.md) `TSE`   |
+| Handles, the menu, autofill                                            | `apps/terminal`; JNI `sparkles:android`                                        | [selection](./selection.md) `TSE`   |
+| Opening files in the app; the viewer pane                              | `apps/terminal`; the viewer library (hue [`UIA14`](../hue/ui-architecture.md)) | [viewer](./viewer.md) `TDV`         |
+| The credits document and its licence staging                           | `docs/credits/`; the Nix builders                                              | [pages](./pages.md) `TPG12`–`TPG17` |
+| Respawn, the pane pool                                                 | `sparkles:terminal-view`                                                       | [sessions](./sessions.md) `TSS`     |
+| Exit prompt, tabs, splits, restore                                     | `apps/terminal`; layout `sparkles:ui` `DCK`                                    | [sessions](./sessions.md) `TSS`     |
+| Every surface's look                                                   | the chosen mockup; [design system](../design-system/index.md)                  | [design](./design.md)               |
 
 ## Pages
 
@@ -69,9 +71,10 @@ except where a row names a platform.
 | [Configuration](./config.md) | `TerminalConfig`, its layers, `config show/write`, the settings page (`TCF`, `TSP`)     |
 | [Keymap](./keymap.md)        | the command table, chords, leader, the lantern guide, the MENU key (`TKM`)              |
 | [Protocols](./protocols.md)  | titles, links, notifications, colour scheme, kitty keyboard, paste, OSC 52, cwd (`TPR`) |
-| [Pages](./pages.md)          | about, logs, notification log (`TPG`)                                                   |
+| [Pages](./pages.md)          | about, credits, logs, notification log (`TPG`)                                          |
 | [Selection](./selection.md)  | touch selection, handles, the selection menu, autofill (`TSE`)                          |
 | [Sessions](./sessions.md)    | exit prompt, tabs, splits, restore, deep-link focus (`TSS`)                             |
+| [Viewer](./viewer.md)        | opening files inside the app; the embedded document viewer (`TDV`)                      |
 | [Design](./design.md)        | the mockup register and the design-system rules every surface meets                     |
 | [Decisions](./decisions.md)  | D6 onward (Android's D1–D5 stay on its page)                                            |
 | [Delivery plan](./PLAN.md)   | milestones, gates, exclusions                                                           |
