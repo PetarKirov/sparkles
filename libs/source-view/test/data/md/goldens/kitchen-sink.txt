@@ -1,8 +1,8 @@
 󰲡 Kitchen sink — everything composed
 
 Audience: a fixture composing every feature the preview renders, modelled on the
-repo's real specs. It has bold, italic, inline code, a link, and struck prose in
-one paragraph.
+repo's real specs. It has bold, italic, inline code, a 󰖟 link, and struck prose
+in one paragraph.
 
 󰲣 Tables inside a section
 
@@ -31,7 +31,7 @@ one paragraph.
 3. An item with nested mixed lists:
    ○ bullet child
      1. ordinal grandchild
-     2. with a link
+     2. with a 󰖟 link
    󰱒 a checked task child
 
 ────────────────────────────────────────────────────────────────────────────────

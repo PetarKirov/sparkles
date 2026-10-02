@@ -30,7 +30,7 @@
 Plain quotes:
 
 ┃ A plain block quote with no marker — just prose with inline code, bold,
-┃ italic, struck, and a link.
+┃ italic, struck, and a 󰖟 link.
 
 ┃ Depth one
 ┃
@@ -80,7 +80,8 @@ Plain quotes:
 ┃ ┃ ┃
 ┃ ┃ ┃ ┃ Depth four — styles, a task list, and a code group:
 ┃ ┃ ┃ ┃
-┃ ┃ ┃ ┃ Prose at the deepest level: bold, italic, code, struck, and a link.
+┃ ┃ ┃ ┃ Prose at the deepest level: bold, italic, code, struck, and a 󰖟
+┃ ┃ ┃ ┃ link.
 ┃ ┃ ┃ ┃
 ┃ ┃ ┃ ┃ 󰄱 unchecked task at depth four
 ┃ ┃ ┃ ┃ 󰱒 checked task at depth four
