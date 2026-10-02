@@ -25,8 +25,9 @@ the missing configuration.
 
 ## Evidence ledger
 
-| Date | Rows | Revision | Command / scenario | Configuration | Result | Remaining gap |
-| ---- | ---- | -------- | ------------------ | ------------- | ------ | ------------- |
+| Date       | Rows   | Revision                  | Command / scenario                 | Configuration   | Result                                                                                     | Remaining gap |
+| ---------- | ------ | ------------------------- | ---------------------------------- | --------------- | ------------------------------------------------------------------------------------------ | ------------- |
+| 2026-10-02 | `TCF6` | `feat/terminal/workspace` | `dub test :wired`; `dub test :hue` | Linux, LDC 1.42 | 205 / 435 passed; hue's `settings_io` tests unchanged over the shared reader and renderers | —             |
 
 _No evidence yet: the tree was written on 2026-10-02 at `988a48257`._
 
