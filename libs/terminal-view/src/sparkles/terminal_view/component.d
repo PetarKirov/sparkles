@@ -1888,6 +1888,18 @@ struct TerminalView
     */
     bool ringPumped() const @safe pure nothrow @nogc => ringPump;
 
+    @("terminal_view.component.pumpBeforeOpenIsNoExit")
+    @system unittest
+    {
+        // An embedder routes a key to a pane the frame it is created, before
+        // its first `frame` opened the pty: the drain must not take the
+        // missing pty for a hangup, or the new shell is never read (the
+        // split whose prompt never showed).
+        auto tv = new TerminalView;
+        tv.pump();
+        assert(!tv.s.childExited);
+    }
+
     @("terminal_view.component.ringPumpNeedsAnOpenPtyAndAWillingHost")
     @safe unittest
     {
@@ -2274,6 +2286,12 @@ struct TerminalView
         // is in; the drain-before-encode guarantee holds by arrival order.
         if (ringPump)
             return;
+        // Not open yet (a key routed to a pane before its first frame): there
+        // is no pty, and a failed read must not read as the child's exit.
+        if (!opened)
+            return;
+        // Not open yet (a key routed to a pane before its first frame): there
+        // is no pty, and a failed read must not read as the child's exit.
         if (s.childExited)
             return;
         char[4096] buf = void;
