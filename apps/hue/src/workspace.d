@@ -2014,7 +2014,7 @@ struct WorkspaceTui
 }
 
 /**
-How 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF runWorkspace) ended. `terminalRefused` is the one a caller can still
+How $(LREF runWorkspace) ended. `terminalRefused` is the one a caller can still
 recover from: the terminal would not enter raw mode (a hung-up tty answers
 `isatty` but fails `tcgetattr`), so nothing was drawn and the document can be
 printed instead (`MOD5`).
