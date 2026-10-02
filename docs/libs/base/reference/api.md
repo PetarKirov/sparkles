@@ -107,8 +107,11 @@ combining mark, variation selector or ZWJ. Unicode segmentation reuses a
 bounded 64-codepoint decoded queue with the existing 32-codepoint cluster cap.
 Entirely printable ASCII returns before creating the decoded queue; escape-free
 run discovery uses bounded byte search at runtime and a scalar loop at CTFE.
-Packed singleton traits are derived from public Phobos boundary probes;
-complex clusters retain Phobos segmentation. ANSI interpretation, malformed
+Packed singleton traits are generated offline from public Phobos boundary probes
+by `libs/base/tools/gen_grapheme_tables.d`, avoiding repeated large CTFE probes
+in consumer builds. An exhaustive runtime parity test checks the cache.
+Other frontend versions use the public segmentation engine instead of cached
+boundary traits. Complex clusters retain Phobos segmentation. ANSI interpretation, malformed
 replacement and width policy are unchanged. Other compilers/architectures and
 CTFE retain scalar paths. Normalization and case-folding in `analysis` are
 separate operations, not covered by these SIMD changes.

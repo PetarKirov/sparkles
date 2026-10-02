@@ -34,10 +34,11 @@ version (graphemeSimdX86)
 {
     import core.cpuid : avx2;
     import sparkles.base.text.utf8_simd : validatedUtf8Prefix;
+    import sparkles.base.text.simd_io : loadVector;
     import ldc.attributes : target;
     import ldc.gccbuiltins_x86 : __builtin_ia32_pmovmskb128,
         __builtin_ia32_pmovmskb256;
-    import ldc.simd : greaterMask, loadUnaligned;
+    import ldc.simd : greaterMask;
 }
 
 @safe pure nothrow @nogc:
@@ -288,8 +289,7 @@ private size_t printableAsciiBlocks(size_t lanes)(scope const(char)[] s)
         S bad = 0;
         static foreach (block; 0 .. 4)
         {{
-            const bytes = (() @trusted =>
-                loadUnaligned!V(cast(const(ubyte)*) s.ptr + i + block * lanes))();
+            const bytes = loadVector!V(s, i + block * lanes);
             bad |= greaterMask!S(cast(S) bytes + S(96), S(-34));
         }}
         static if (lanes == 32)
@@ -302,7 +302,7 @@ private size_t printableAsciiBlocks(size_t lanes)(scope const(char)[] s)
     }
     while (s.length - i >= lanes)
     {
-        const bytes = (() @trusted => loadUnaligned!V(cast(const(ubyte)*) s.ptr + i))();
+        const bytes = loadVector!V(s, i);
         const bad = greaterMask!S(cast(S) bytes + S(96), S(-34));
         static if (lanes == 32)
             const bits = __builtin_ia32_pmovmskb256(bad);

@@ -22,8 +22,9 @@ version (textSimdX86)
     import core.bitop : popcnt;
     import ldc.attributes : target;
     import ldc.llvmasm : __ir_pure, __irEx_pure;
-    import ldc.simd : equalMask, greaterMask, loadUnaligned, shufflevector, storeUnaligned;
+    import ldc.simd : equalMask, greaterMask, shufflevector, storeUnaligned;
     import sparkles.base.text.simd_caps : hasAvx512Vbmi2;
+    import sparkles.base.text.simd_io : loadVector;
 
     private alias B32 = __vector(ubyte[32]);
     private alias B64 = __vector(ubyte[64]);
@@ -52,8 +53,7 @@ version (textSimdX86)
         const W32 positions = cast(W32) lanePositions;
         while (source.length - si >= 33)
         {
-            const input = (() @trusted =>
-                loadUnaligned!B32(cast(const(ubyte)*) source.ptr + si))();
+            const input = loadVector!B32(source, si);
             B32 nonAsciiMask = cast(B32) greaterMask!B32(input, B32(0x7F));
             if (byteBits32(nonAsciiMask) == 0)
                 break;
@@ -74,8 +74,7 @@ version (textSimdX86)
                 di += 16;
                 continue;
             }
-            const next = (() @trusted =>
-                loadUnaligned!B32(cast(const(ubyte)*) source.ptr + si + 1))();
+            const next = loadVector!B32(source, si + 1);
             // Keep the next iteration at a sequence boundary. At most three
             // bytes are deferred, so zero-extension below never needs carry.
             size_t consumed = 32;
@@ -138,8 +137,7 @@ version (textSimdX86)
         {
             if (source.length - si >= 32 && source[si] >= 0x80 && source[si] < 0x800)
             {
-                const small = (() @trusted => loadUnaligned!W32(
-                    cast(const(ushort)*) source.ptr + si))();
+                const small = loadVector!W32(source, si);
                 W32 twoByteMask = cast(W32)(greaterMask!W32(W32(0x800), small)
                     & greaterMask!W32(small, W32(0x7F)));
                 if (wordBits(twoByteMask) == uint.max)
@@ -154,16 +152,14 @@ version (textSimdX86)
                     continue;
                 }
             }
-            const input = (() @trusted =>
-                loadUnaligned!W16(cast(const(ushort)*) source.ptr + si))();
+            const input = loadVector!W16(source, si);
             if (source[si] < 0x80)
             {
                 W16 nonAsciiMask = cast(W16) greaterMask!W16(input, W16(0x7F));
                 if (wordBits16(nonAsciiMask) == 0)
                     break;
             }
-            const next = (() @trusted =>
-                loadUnaligned!W16(cast(const(ushort)*) source.ptr + si + 1))();
+            const next = loadVector!W16(source, si + 1);
             const units = widenWords(input);
             const following = widenWords(next);
             if (source[si] >= 0x800)

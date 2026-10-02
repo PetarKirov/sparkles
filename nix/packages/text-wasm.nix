@@ -3,9 +3,13 @@
 # `libs/base/wasm/spk_text_wasm.d` against the real `sparkles.base.text` via
 # the shared `buildDWasmModule` builder (see ./build-d-wasm-module.nix).
 #
+# UTF-8 validation imports the `expected` parser vocabulary even though the
+# exported width/segmentation path does not allocate. Supply its source through
+# the shared builder's import-only dependency mechanism, not a runtime library.
+#
 # x86_64-linux only (that is where the `ldc-wasm` toolchain is provided). The
 # result is copied to docs/public/spk-text.wasm (see the docs page).
-{ lib, ... }:
+{ inputs, lib, ... }:
 {
   perSystem =
     { config, system, ... }:
@@ -14,20 +18,23 @@
         pname = "spk-text-wasm";
         wasmName = "spk-text.wasm";
         entry = "libs/base/wasm/spk_text_wasm.d";
-        # `sparkles:base` carries the runner's marker UDAs unconditionally
-        # (`@betterC` on `SmallBuffer`'s own tests, and the `base.text` modules),
-        # so the SHIM — which is where `attributes.d` lives — has to be on the
-        # path even though nothing here runs a test.
+        # Marker UDAs in the base modules require the runner SHIM's
+        # `attributes.d` even without -unittest; the impl is test-only.
         sourceDirs = [
           "libs/base/src"
           "libs/test-runner/src"
-          "libs/test-runner-impl/src"
         ];
         exports = [
           "spk_buf_ptr"
           "spk_buf_cap"
           "spk_visible_width"
           "spk_segment"
+        ];
+        dubImports = [
+          {
+            name = "expected";
+            src = inputs.dub-expected;
+          }
         ];
         description = "sparkles.base.text compiled to wasm (cell-explorer widget backend)";
       };
