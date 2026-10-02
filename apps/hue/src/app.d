@@ -223,11 +223,11 @@ int executeView(in HueCli root, in View view)
         else version (Posix)
             if (backend == Backend.tui)
             {
-                import workspace : runWorkspace, WorkspaceDoc;
+                import workspace : runWorkspace, WorkspaceDoc, WorkspaceExit;
 
                 auto themeSet = sortedThemes(opt.theme, opt.groupThemes);
                 auto pl = &pipeline;
-                return runWorkspace(target, isDir: true, WorkspaceDoc.init,
+                const exit = runWorkspace(target, isDir: true, WorkspaceDoc.init,
                     delegate WorkspaceDoc(string path) @system
                         => pl.load(path),
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
@@ -239,6 +239,10 @@ int executeView(in HueCli root, in View view)
                     tableMaxLines: opt.tableMaxLines,
                     tableCopyFlag: opt.tableCopy,
                     configStore: &gStore);
+                // A terminal that would not enter raw mode drew nothing: fall
+                // through and print the directory as a stream gets it (`MOD5`).
+                if (exit != WorkspaceExit.terminalRefused)
+                    return exit == WorkspaceExit.ok ? 0 : 1;
             }
         if (backend == Backend.gui)
         {
@@ -1638,7 +1642,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
     }
     else version (Posix)
     {
-        import workspace : runWorkspace, WorkspaceDoc, WsLoader;
+        import workspace : runWorkspace, WorkspaceDoc, WorkspaceExit, WsLoader;
 
         WsLoader loader;
         if (pipeline !is null)
@@ -1655,7 +1659,7 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             reloadDiff = delegate WorkspaceDoc() @system
                 => pl.loadGitDiff(null, false, paths.dup);
         }
-        return runWorkspace(doc.path, isDir: false, doc,
+        const exit = runWorkspace(doc.path, isDir: false, doc,
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache, opt.include.dup, opt.exclude.dup, opt.treeWidth,
             opt.tabWidth, opt.listWhitespace, liveTypes: !opt.noLiveTypes,
@@ -1674,6 +1678,12 @@ private int runTuiSink(in ViewRenderOptions opt, ref Document doc, in LabelSet l
             configStore: &gStore,
             initialLine: loc.line, initialCol: loc.col,
             endLine: loc.endLine, endCol: loc.endCol);
+        // `MOD5`: a terminal that would not enter raw mode (a hung-up tty
+        // still answers `isatty`) drew nothing, so the file is printed whole,
+        // as on a platform with no terminal arm.
+        if (exit == WorkspaceExit.terminalRefused)
+            return runAnsiSink(opt, doc, theme, cache, loc);
+        return exit == WorkspaceExit.ok ? 0 : 1;
     }
     else
     {
