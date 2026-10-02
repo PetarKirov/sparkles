@@ -185,6 +185,12 @@ enum TargetCapabilities raylibCapabilities = () {
     // image order, so narrowing it to a protocol profile keeps real images
     // and narrowing it below one sends them down the cell ladder (`GLY9`).
     c.images = ImageProtocol.pixels;
+    // The window system's own errands: the clipboard everywhere (a JNI
+    // bridge on Android), the pointer shape where there is a pointer.
+    c.clipboard = true;
+    version (Android) {}
+    else
+        c.pointerShape = true;
     c.input = mousePointer;
     return c;
 }();
@@ -1134,6 +1140,9 @@ unittest
     // Not a terminal profile: it draws what no terminal can, and lacks OSC 8.
     assert(!subsetOf(c, capabilitiesOf(Profile.full)));
     assert(!c.hyperlinks && !c.subCellScroll, "M9's, not yet honoured");
+    // The window carries a copy and a pointer shape itself (`HST8`), so an
+    // application asking the target whether a copy landed is told yes.
+    assert(c.clipboard && c.pointerShape && !c.notifications);
 }
 
 @("uiRaylib.capabilities.narrowedPaintsLess")
