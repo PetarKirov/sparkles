@@ -15,11 +15,12 @@ aggregates.
 */
 module sparkles.wired.config_file;
 
+import std.array : appender;
 import std.traits : FieldNameTuple, getUDAs, hasUDA;
 
 import expected : Expected, err, ok;
 
-import sparkles.wired.json : fromJSON;
+import sparkles.wired.json : fromJSON, JsonError, JsonKind, JsonStage, JsonValue;
 import sparkles.wired.overlay : mergeSparse, Sparse, WireSection;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -151,6 +152,219 @@ void renderStarterSections(DocUda, Writer, T)(ref Writer w, in T value,
             w ~= ",\n";
         }}
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reading a hand-edited file: one bad value costs that value.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// What $(LREF readJsoncFileTolerant) returns: the layer, and every value it
+/// had to drop (each a decode error naming the file and the `$`-path).
+struct TolerantRead(T)
+{
+    /// The decoded layer, without the dropped values.
+    T value;
+    /// One error per dropped value, in the order they were found.
+    JsonError[] dropped;
+}
+
+/**
+Reads `path` as JSONC into `T`, dropping the values that fail to decode:
+each decode error's `$`-path is removed from the document and the decode is
+retried, so a typo in one setting costs that setting and the rest of the file
+still applies. A file that cannot be read or parsed at all, or a failure whose
+path cannot be located (or more than `maxDrops` of them), is an error, as from
+`readJsoncFile`.
+
+Meant for a sparse layer (`Sparse!S`), where an absent key is always valid:
+dropping a value can never make the decode fail for a missing field.
+*/
+Expected!(TolerantRead!T, JsonError) readJsoncFileTolerant(T)(string path,
+    size_t maxDrops = 32)
+{
+    import std.file : readText;
+
+    import sparkles.wired.json.jsonc : stripJsonc;
+    import sparkles.wired.json.reader : parseJsonDocument;
+
+    alias R = TolerantRead!T;
+
+    static JsonError located(JsonError e, string path)
+    {
+        e.filePath ~= path;
+        return e;
+    }
+
+    char[] text;
+    try
+        text = readText!(char[])(path);
+    catch (Exception e)
+    {
+        JsonError fe;
+        fe.stage = JsonStage.fileRead;
+        fe.filePath ~= path;
+        fe.reason = e.msg;
+        return err!R(fe);
+    }
+    stripJsonc(text);
+
+    R result;
+    const(char)[] current = text;
+    foreach (_; 0 .. maxDrops + 1)
+    {
+        auto r = fromJSON!T(current);
+        if (r.hasValue)
+        {
+            result.value = r.value;
+            return ok!JsonError(result);
+        }
+        auto e = located(r.error, path);
+        if (e.stage != JsonStage.decode)
+            return err!R(e);
+
+        auto parsed = parseJsonDocument(current);
+        if (parsed.hasError)
+            return err!R(e);
+        string rest;
+        const segments = splitWirePath(e.path[], rest);
+        if (segments is null || rest.length)
+            return err!R(e);
+        auto w = appender!(char[]);
+        if (!writeWithout(parsed.document.root, segments, w))
+            return err!R(e);
+        result.dropped ~= e;
+        current = w[];
+    }
+    JsonError last = result.dropped[$ - 1];
+    last.reason = "too many invalid values";
+    return err!R(last);
+}
+
+/// The segments of a decode error's `$`-path (`$.a.b[3]` or `.a.b[3]` → `a`, `b`, `[3]`);
+/// null when it has none. Anything it cannot read is left in `rest`.
+private string[] splitWirePath(scope const(char)[] p, out string rest) @safe pure
+{
+    string[] segs;
+    size_t i = p.length && p[0] == '$' ? 1 : 0;
+    while (i < p.length)
+    {
+        if (p[i] == '.')
+        {
+            size_t j = i + 1;
+            while (j < p.length && p[j] != '.' && p[j] != '[')
+                j++;
+            segs ~= p[i + 1 .. j].idup;
+            i = j;
+        }
+        else if (p[i] == '[' && i + 1 < p.length && p[i + 1] != '"')
+        {
+            size_t j = i + 1;
+            while (j < p.length && p[j] != ']')
+                j++;
+            if (j == p.length)
+                break;
+            segs ~= p[i .. j + 1].idup;
+            i = j + 1;
+        }
+        else
+            break;
+    }
+    rest = p[i .. $].idup;
+    return segs.length ? segs : null;
+}
+
+/// Writes `v` as JSON with the value at `segments` left out; false when the
+/// path does not name a value in `v`.
+private bool writeWithout(Writer)(JsonValue v, in string[] segments, ref Writer w)
+{
+    import std.conv : to;
+
+    import sparkles.wired.json.writer : writeJson, writeJsonString;
+
+    const seg = segments[0];
+    const last = segments.length == 1;
+    bool found;
+    if (seg[0] == '[')
+    {
+        if (v.kind != JsonKind.array)
+            return false;
+        size_t want;
+        try
+            want = seg[1 .. $ - 1].to!size_t;
+        catch (Exception)
+            return false;
+        w.put('[');
+        bool first = true;
+        size_t i;
+        foreach (e; v.byElement)
+        {
+            const hit = i++ == want;
+            found |= hit;
+            if (hit && last)
+                continue;
+            if (!first)
+                w.put(',');
+            first = false;
+            if (hit && !writeWithout(e, segments[1 .. $], w))
+                return false;
+            if (!hit)
+                writeJson(e, w);
+        }
+        w.put(']');
+        return found;
+    }
+    if (v.kind != JsonKind.object)
+        return false;
+    w.put('{');
+    bool first = true;
+    foreach (m; v.byKeyValue)
+    {
+        const hit = m.key == seg;
+        found |= hit;
+        if (hit && last)
+            continue;
+        if (!first)
+            w.put(',');
+        first = false;
+        writeJsonString(w, m.key);
+        w.put(':');
+        if (hit && !writeWithout(m.value, segments[1 .. $], w))
+            return false;
+        if (!hit)
+            writeJson(m.value, w);
+    }
+    w.put('}');
+    return found;
+}
+
+@("wired.config_file.readJsoncFileTolerant.dropsOnlyTheBadValues")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    auto fixture = TmpFS.create();
+    const path = fixture.writeFileAt("config.json", "{\n" ~
+        "  // two typos and two good settings\n" ~
+        "  \"theme\": \"builtin-dark\",\n" ~
+        "  \"viewer\": { \"tabWidth\": \"eight\", \"lineNumbers\": false },\n" ~
+        "  \"paths\": [\"/a\", 7],\n" ~
+        "}\n");
+
+    auto r = readJsoncFileTolerant!(Sparse!Cfg)(path);
+    assert(r.hasValue, r.error.toString);
+    assert(r.value.value.theme.get == "builtin-dark");
+    assert(r.value.value.viewer.lineNumbers.get == false);
+    assert(r.value.value.viewer.tabWidth.isNull, "the typo is dropped");
+    assert(r.value.dropped.length == 2);
+    assert(r.value.dropped[0].path[].canFind("tabWidth"));
+    assert(r.value.dropped[0].filePath[] == path);
+
+    // A syntax error is not a value to drop: the whole file fails, located.
+    const broken = fixture.writeFileAt("broken.json", "{\n  \"theme\": nope\n}\n");
+    auto b = readJsoncFileTolerant!(Sparse!Cfg)(broken);
+    assert(b.hasError && b.error.line == 2);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
