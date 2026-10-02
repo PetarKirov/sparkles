@@ -50,7 +50,7 @@ import sparkles.terminal_view.notification_log : NotificationLog,
 import sparkles.terminal_view.osc_scan : maxIconBytes, maxTitleBytes, Notification;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer, ClipboardReadPolicy,
     ColorScheme, PasteConfirm, PasteConfirmRequest, ProtocolPolicy, TerminalViewHooks;
-import sparkles.terminal_view.selection : bounds, Granularity, moveEnd,
+import sparkles.terminal_view.selection : bounds, findBackward, FindResult, Granularity, moveEnd,
     selectAllModel = selectAll, selectAtModel = selectAt, SelectionBounds, SelectionEnd,
     selectionEmptied, selectionHyperlinksModel = selectionHyperlinks, selectionLive,
     withSelectionText;
@@ -2326,6 +2326,23 @@ struct TerminalView
     */
     size_t selectionHyperlinks(string[] into) @system nothrow
         => opened ? selectionHyperlinksModel(s.terminal, s.selState, s.cols, s.rows, into) : 0;
+
+    /**
+    Find in scrollback (`TSE5`): selects the previous occurrence of the
+    selected text — wrapping to the last — and scrolls it into view. The
+    result counts the occurrences; none for a selection spanning rows.
+    */
+    FindResult findSelection() @system nothrow
+    {
+        import std.string : representation;
+        import std.algorithm.searching : canFind;
+
+        const needle = selectionText();
+        if (!opened || needle.length == 0 || needle.representation.canFind('\n'))
+            return FindResult.init;
+        pendingForce = true;
+        return findBackward(s.terminal, s.selState, needle);
+    }
 
     /// Whether the program asked for mouse reports (DECSET 1000/1002/1003):
     /// a click is then the program's, not a selection's.

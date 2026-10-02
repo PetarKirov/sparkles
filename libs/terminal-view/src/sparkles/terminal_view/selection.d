@@ -303,17 +303,17 @@ dchar[] readViewportRow(GhosttyTerminal t, int y, return scope dchar[] cells) @s
     return cells[0 .. n];
 }
 
-/// Points both ends at viewport cells (`x0`, `y0`) and (`x1`, `y1`), replacing
-/// any selection; false when a point is outside the viewport.
+/// Points both ends at cells (`x0`, `y0`) and (`x1`, `y1`) — viewport cells, or
+/// screen-plus-scrollback ones for `GHOSTTY_POINT_TAG_SCREEN` — replacing any
+/// selection; false when a point is outside that space.
 bool selectCells(GhosttyTerminal t, ref SelectionState sel, int x0, int y0, int x1, int y1,
-    bool rectangular = false) @system nothrow @nogc
+    bool rectangular = false, GhosttyPointTag tag = GHOSTTY_POINT_TAG_VIEWPORT) @system nothrow @nogc
 {
     sel.free();
     if (y0 < 0 || y1 < 0)
         return false;
-    if (ghostty_terminal_grid_ref_track(t, pointOf(GHOSTTY_POINT_TAG_VIEWPORT, x0, y0), &sel.start)
-            != GHOSTTY_SUCCESS
-        || ghostty_terminal_grid_ref_track(t, pointOf(GHOSTTY_POINT_TAG_VIEWPORT, x1, y1), &sel.end)
+    if (ghostty_terminal_grid_ref_track(t, pointOf(tag, x0, y0), &sel.start) != GHOSTTY_SUCCESS
+        || ghostty_terminal_grid_ref_track(t, pointOf(tag, x1, y1), &sel.end)
             != GHOSTTY_SUCCESS)
     {
         sel.free();
@@ -439,16 +439,7 @@ bool selectAll(GhosttyTerminal t, ref SelectionState sel) @system nothrow @nogc
     if (ghostty_terminal_point_from_grid_ref(t, &all.start, GHOSTTY_POINT_TAG_SCREEN, &a) != GHOSTTY_SUCCESS
         || ghostty_terminal_point_from_grid_ref(t, &all.end, GHOSTTY_POINT_TAG_SCREEN, &b) != GHOSTTY_SUCCESS)
         return false;
-    sel.free();
-    if (ghostty_terminal_grid_ref_track(t, pointOf(GHOSTTY_POINT_TAG_SCREEN, a.x, a.y), &sel.start)
-            != GHOSTTY_SUCCESS
-        || ghostty_terminal_grid_ref_track(t, pointOf(GHOSTTY_POINT_TAG_SCREEN, b.x, b.y), &sel.end)
-            != GHOSTTY_SUCCESS)
-    {
-        sel.free();
-        return false;
-    }
-    return true;
+    return selectCells(t, sel, a.x, a.y, b.x, b.y, false, GHOSTTY_POINT_TAG_SCREEN);
 }
 
 /// Whether `sel` still selects something: both ends exist and still point
@@ -570,6 +561,147 @@ size_t selectionHyperlinks(GhosttyTerminal t, in SelectionState sel, ushort cols
         }
     }
     return found;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Find in scrollback (`TSE5`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One occurrence: its row (from the top of the scrollback), its first
+/// column and how many columns it takes — columns counted in code points.
+struct TextHit
+{
+    size_t row, col, cols;
+}
+
+/// Every occurrence of `needle` in `lines` (one per row), in reading order.
+TextHit[] findAll(scope const(char)[][] lines, scope const(char)[] needle) @safe pure nothrow
+{
+    TextHit[] hits;
+    if (needle.length == 0)
+        return hits;
+    const needleCols = codePoints(needle);
+    foreach (row, line; lines)
+    {
+        size_t at;
+        while (at + needle.length <= line.length)
+        {
+            if (line[at .. at + needle.length] == needle)
+            {
+                hits ~= TextHit(row, codePoints(line[0 .. at]), needleCols);
+                at += needle.length;
+            }
+            else
+                at++;
+        }
+    }
+    return hits;
+}
+
+private size_t codePoints(scope const(char)[] s) @safe pure nothrow @nogc
+{
+    size_t n;
+    foreach (c; s)
+        n += (c & 0xC0) != 0x80;
+    return n;
+}
+
+/// The index of the last hit before (`row`, `col`) in reading order, wrapping
+/// to the last hit; `size_t.max` when there are none.
+size_t previousHit(scope const TextHit[] hits, size_t row, size_t col) @safe pure nothrow @nogc
+{
+    if (hits.length == 0)
+        return size_t.max;
+    size_t found = hits.length - 1;
+    foreach (i, h; hits)
+        if (h.row < row || (h.row == row && h.col < col))
+            found = i;
+    return found;
+}
+
+///
+@("selection.findAll.previousHitWraps")
+@safe pure nothrow unittest
+{
+    const(char)[][] lines = ["make all", "", "make: *** no rule", "  make install"];
+    const hits = findAll(lines, "make");
+    assert(hits == [TextHit(0, 0, 4), TextHit(2, 0, 4), TextHit(3, 2, 4)]);
+    assert(previousHit(hits, 3, 2) == 1, "the one above the selection");
+    assert(previousHit(hits, 0, 0) == 2, "none above: wrap to the last");
+    assert(previousHit(null, 1, 1) == size_t.max);
+    assert(findAll(["é make"], "make") == [TextHit(0, 2, 4)], "columns are code points");
+}
+
+/// Where a find landed: the hit's 1-based index from the top, and how many
+/// there are (0: none).
+struct FindResult
+{
+    size_t index, total;
+}
+
+/**
+Selects the occurrence of `needle` before the selection (before the end of
+the scrollback without one), wrapping to the last, and scrolls it into view.
+The rows are the terminal's plain text; a needle spanning rows finds nothing.
+*/
+FindResult findBackward(GhosttyTerminal t, ref SelectionState sel, scope const(char)[] needle)
+    @system nothrow
+{
+    GhosttyFormatterTerminalOptions o;
+    o.size = GhosttyFormatterTerminalOptions.sizeof;
+    o.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
+    o.unwrap = false;
+    o.trim = true;
+    GhosttyFormatter fmt;
+    if (ghostty_formatter_terminal_new(null, &fmt, t, o) != GHOSTTY_SUCCESS)
+        return FindResult.init;
+    scope (exit) ghostty_formatter_free(fmt);
+    ubyte* p;
+    size_t n;
+    if (ghostty_formatter_format_alloc(fmt, null, &p, &n) != GHOSTTY_SUCCESS)
+        return FindResult.init;
+    scope (exit) ghostty_free(null, p, n);
+    const text = cast(const(char)[]) p[0 .. n];
+    const(char)[][] lines;
+    size_t from;
+    foreach (i, c; text)
+        if (c == '\n')
+        {
+            lines ~= text[from .. i];
+            from = i + 1;
+        }
+    lines ~= text[from .. $];
+    const hits = findAll(lines, needle);
+
+    size_t row = size_t.max, col;
+    GhosttyPointCoordinate s, e;
+    if (selectionLive(sel)
+        && ghostty_tracked_grid_ref_point(sel.start, GHOSTTY_POINT_TAG_SCREEN, &s) == GHOSTTY_SUCCESS
+        && ghostty_tracked_grid_ref_point(sel.end, GHOSTTY_POINT_TAG_SCREEN, &e) == GHOSTTY_SUCCESS)
+    {
+        const startFirst = s.y < e.y || (s.y == e.y && s.x <= e.x);
+        row = startFirst ? s.y : e.y;
+        col = startFirst ? s.x : e.x;
+    }
+    const i = previousHit(hits, row, col);
+    if (i == size_t.max)
+        return FindResult.init;
+    const h = hits[i];
+    if (!selectCells(t, sel, cast(int) h.col, cast(int) h.row, cast(int)(h.col + h.cols - 1),
+            cast(int) h.row, false, GHOSTTY_POINT_TAG_SCREEN))
+        return FindResult.init;
+
+    // Into view: centred when it is off screen.
+    GhosttyTerminalScrollbar sb;
+    ghostty_terminal_get(t, GHOSTTY_TERMINAL_DATA_SCROLLBAR, cast(void*) &sb);
+    if (h.row < sb.offset || h.row >= sb.offset + sb.len)
+    {
+        GhosttyTerminalScrollViewport sv;
+        sv.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
+        sv.value.delta = cast(long) h.row - cast(long) sb.offset - cast(long)(sb.len / 2);
+        ghostty_terminal_scroll_viewport(t, sv);
+    }
+    return FindResult(i + 1, hits.length);
 }
 
 /**
@@ -773,4 +905,21 @@ version (unittest)
     assert(!selectionEmptied(v.t, v.sel), "output only scrolled it away");
     v.write("\x1b[3J");
     assert(selectionEmptied(v.t, v.sel), "`clear`'s first half");
+}
+
+@("selection.findBackward.selectsAndScrollsToTheHit")
+@system unittest
+{
+    auto v = Vt.open(20, 3);
+    scope (exit) v.close();
+    v.write("make all\r\n\r\nerr\r\nx\r\ny\r\nz\r\nmake install");
+    assert(selectAt(v.t, v.sel, 1, 2, 20, Granularity.word) && v.text == "make");
+
+    auto r = findBackward(v.t, v.sel, "make");
+    assert(r == FindResult(1, 2) && v.text == "make");
+    const b = bounds(v.t, v.sel);
+    assert(b.firstRow >= 0 && b.firstRow < 3, "scrolled into view");
+    r = findBackward(v.t, v.sel, "make");
+    assert(r == FindResult(2, 2), "none above: wraps to the last");
+    assert(findBackward(v.t, v.sel, "absent") == FindResult.init);
 }
