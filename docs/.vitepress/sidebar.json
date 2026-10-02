@@ -1382,6 +1382,10 @@
             "link": "/specs/terminal/sessions"
           },
           {
+            "text": "Opening files: the viewer",
+            "link": "/specs/terminal/viewer"
+          },
+          {
             "text": "Design: mockup register",
             "link": "/specs/terminal/design"
           },
