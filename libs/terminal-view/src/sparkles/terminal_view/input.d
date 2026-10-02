@@ -646,7 +646,7 @@ void detectLink(GhosttyTerminal terminal, GhosttyPoint pt, int max_cols,
                                         hoverState.url.writeStringz(line[i .. j]);
                                         hoverState.start_x = start_col;
                                         hoverState.end_x = end_col;
-                                        hoverState.y = hovered;
+                                        hoverState.y = pt.value.coordinate.y;
                                         break;
                                     }
                                     i = j;
