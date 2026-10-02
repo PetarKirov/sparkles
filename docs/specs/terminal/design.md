@@ -40,7 +40,7 @@ Three canvases hold the variants: [workspace](https://claude.ai/artifact/PiwEvu5
 [pages](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX). Each artboard has a dark/light switch; some are interactive
 (Play). A chosen variant is recorded here and in [decisions](./decisions.md);
 its rows then leave `open`. Once a surface is decided, the variants it rejected
-are removed from the canvas (S1, S3, E2, G1, G2, C2, LG2, N1, K2 on 2026-10-02);
+are removed from the canvas (S1, S3, E2, G1, G2, C2, LG2, N1, K1, K2 on 2026-10-02);
 the register keeps their names.
 
 | Surface                                  | Rows it decides                                    | Variants                                                                     | Chosen                                                                            |
@@ -61,7 +61,7 @@ the register keeps their names.
 | About and credits pages                  | [`TPG1`–`TPG3`, `TPG15`](./pages.md)               | [C1, C2](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)                  | **C1** ([D40](./decisions.md))                                                    |
 | Log page                                 | [`TPG8`](./pages.md)                               | [LG1, LG2](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)                | **LG1** ([D40](./decisions.md))                                                   |
 | Notification log, unseen marks           | [`TPG9`–`TPG11`, `TPG18`](./pages.md)              | [N1, N2](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)                  | **N2**, with a grouping control ([D38](./decisions.md))                           |
-| Touch key guide                          | [`TKM6`](./keymap.md)                              | [K1, K2, K3](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)              | — (K1 and K3 differ in where search sits)                                         |
+| Touch key guide                          | [`TKM6`](./keymap.md)                              | [K1, K2, K3](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)              | **K3**, search at the bottom ([D40](./decisions.md))                              |
 | Viewer pane                              | [`TDV5`, `TDV6`](./viewer.md)                      | [V1, V2](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)                  | **both**: tab and split ([D40](./decisions.md))                                   |
 
 → [Overview](./index.md) · [Decisions](./decisions.md)
