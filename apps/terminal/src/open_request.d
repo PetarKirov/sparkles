@@ -323,7 +323,7 @@ string installOpenShim() @system
     return dir;
 }
 
-/// Removes the per-app directory 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF installOpenShim) made; quietly, at exit.
+/// Removes the per-app directory $(LREF installOpenShim) made; quietly, at exit.
 void removeOpenDir(string dir) @system nothrow
 {
     import std.file : rmdirRecurse;

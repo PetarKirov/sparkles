@@ -668,7 +668,7 @@ struct TerminalView
     Makes the fresh master close-on-exec and non-blocking; on failure closes
     it and reaps the child, and returns false.
 
-    100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B Close-on-exec, before anything else can fork:) `forkpty` returns a
+    $(B Close-on-exec, before anything else can fork:) `forkpty` returns a
     plain master, so the NEXT terminal opened in this process hands its shell
     a copy of THIS one's master. Audited live in the gallery, the first
     embedder to open more than one: the second tab's shell listed
@@ -678,7 +678,7 @@ struct TerminalView
     parent keeps; the child already forked is unaffected (its 0/1/2 are the
     slave).
 
-    100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B Non-blocking:) `read` must return EAGAIN, never stall a frame.
+    $(B Non-blocking:) `read` must return EAGAIN, never stall a frame.
     */
     private bool prepareMaster() @system
     {
