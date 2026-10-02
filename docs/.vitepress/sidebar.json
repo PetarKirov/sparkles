@@ -6703,6 +6703,209 @@
         ]
       },
       {
+        "text": "Font Libraries",
+        "link": "/research/font-libraries/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Overview",
+            "link": "/research/font-libraries/"
+          },
+          {
+            "text": "Concepts",
+            "link": "/research/font-libraries/concepts"
+          },
+          {
+            "text": "Comparison",
+            "link": "/research/font-libraries/comparison"
+          },
+          {
+            "text": "C / C++ cores",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "FreeType",
+                "link": "/research/font-libraries/freetype"
+              },
+              {
+                "text": "HarfBuzz",
+                "link": "/research/font-libraries/harfbuzz"
+              },
+              {
+                "text": "stb_truetype",
+                "link": "/research/font-libraries/stb-truetype"
+              },
+              {
+                "text": "msdfgen",
+                "link": "/research/font-libraries/msdfgen"
+              },
+              {
+                "text": "Slug",
+                "link": "/research/font-libraries/slug"
+              }
+            ]
+          },
+          {
+            "text": "Platform text stacks",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Skia",
+                "link": "/research/font-libraries/skia"
+              },
+              {
+                "text": "Core Text",
+                "link": "/research/font-libraries/coretext"
+              },
+              {
+                "text": "DirectWrite",
+                "link": "/research/font-libraries/directwrite"
+              },
+              {
+                "text": "Pango",
+                "link": "/research/font-libraries/pango"
+              }
+            ]
+          },
+          {
+            "text": "Discovery & databases",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Fontconfig",
+                "link": "/research/font-libraries/fontconfig"
+              },
+              {
+                "text": "fontdb",
+                "link": "/research/font-libraries/fontdb"
+              },
+              {
+                "text": "font-kit",
+                "link": "/research/font-libraries/font-kit"
+              }
+            ]
+          },
+          {
+            "text": "Terminal font stacks",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Ghostty",
+                "link": "/research/font-libraries/ghostty"
+              },
+              {
+                "text": "crossfont",
+                "link": "/research/font-libraries/crossfont"
+              }
+            ]
+          },
+          {
+            "text": "Rust: parsers & shapers",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Fontations",
+                "link": "/research/font-libraries/fontations"
+              },
+              {
+                "text": "ttf-parser",
+                "link": "/research/font-libraries/ttf-parser"
+              },
+              {
+                "text": "rustybuzz",
+                "link": "/research/font-libraries/rustybuzz"
+              },
+              {
+                "text": "Allsorts",
+                "link": "/research/font-libraries/allsorts"
+              },
+              {
+                "text": "swash",
+                "link": "/research/font-libraries/swash"
+              }
+            ]
+          },
+          {
+            "text": "Rust: layout & rendering",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "cosmic-text",
+                "link": "/research/font-libraries/cosmic-text"
+              },
+              {
+                "text": "Parley + Fontique",
+                "link": "/research/font-libraries/parley"
+              },
+              {
+                "text": "fontdue",
+                "link": "/research/font-libraries/fontdue"
+              },
+              {
+                "text": "ab_glyph",
+                "link": "/research/font-libraries/ab-glyph"
+              },
+              {
+                "text": "Vello",
+                "link": "/research/font-libraries/vello"
+              },
+              {
+                "text": "glyphon",
+                "link": "/research/font-libraries/glyphon"
+              }
+            ]
+          },
+          {
+            "text": "Managed: C# & Go",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "SixLabors.Fonts",
+                "link": "/research/font-libraries/sixlabors-fonts"
+              },
+              {
+                "text": "Typography",
+                "link": "/research/font-libraries/typography"
+              },
+              {
+                "text": "SharpFont",
+                "link": "/research/font-libraries/sharpfont"
+              },
+              {
+                "text": "go-text/typesetting",
+                "link": "/research/font-libraries/go-text-typesetting"
+              },
+              {
+                "text": "x/image/font",
+                "link": "/research/font-libraries/golang-image-font"
+              }
+            ]
+          },
+          {
+            "text": "Inspector engines: JS & Python",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "opentype.js",
+                "link": "/research/font-libraries/opentype-js"
+              },
+              {
+                "text": "fontkit",
+                "link": "/research/font-libraries/fontkit"
+              },
+              {
+                "text": "lib-font",
+                "link": "/research/font-libraries/lib-font"
+              },
+              {
+                "text": "fontTools",
+                "link": "/research/font-libraries/fonttools"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "Autological Artifacts",
         "link": "/research/autological-artifacts/",
         "collapsed": true,
