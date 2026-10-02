@@ -2014,12 +2014,25 @@ struct WorkspaceTui
 }
 
 /**
+How 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF runWorkspace) ended. `terminalRefused` is the one a caller can still
+recover from: the terminal would not enter raw mode (a hung-up tty answers
+`isatty` but fails `tcgetattr`), so nothing was drawn and the document can be
+printed instead (`MOD5`).
+*/
+enum WorkspaceExit
+{
+    ok,
+    failed,
+    terminalRefused,
+}
+
+/**
 Runs the workspace until the user quits. `target` is a file (tree hidden,
 rooted at its directory, revealed at the file), a directory (tree focused),
 or empty (the embedded self-view: `initial` supplies the document). One
 terminal session, one loop — the panes swap content, never the screen.
 */
-int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
+WorkspaceExit runWorkspace(string target, bool isDir, WorkspaceDoc initial,
     WsLoader loadDoc,
     const(string)[] names, immutable(Theme)[] themes, size_t themeIdx,
     LabelSet labels, TsConfigCache* cache,
@@ -2206,10 +2219,10 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
             case RunOutcome.ok:
                 break;
             case RunOutcome.openFailed:
-                return 1; // raw mode refused: nothing was drawn
+                return WorkspaceExit.terminalRefused; // nothing was drawn
             case RunOutcome.noBackend:
             case RunOutcome.notInteractive:
-                return 1;
+                return WorkspaceExit.failed;
         }
     }
 
@@ -2220,7 +2233,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
 
         stderr.writeln("hue: live D types unavailable: ", notice);
     }
-    return 0;
+    return WorkspaceExit.ok;
 }
 
 /**
