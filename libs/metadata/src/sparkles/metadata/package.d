@@ -47,6 +47,17 @@ struct Range
     double step = 0;
 }
 
+/// A heading that groups a field's contents with a human-facing title; a
+/// presenting domain shows the field as a section under it.
+struct Section
+{
+    string label;
+}
+
+/// A text field holding a colour (`#rrggbb` or `#rgb`; empty for "none"). On
+/// an array field it marks every element.
+enum colorValue;
+
 @("metadata.passiveAttributes")
 @safe pure nothrow @nogc
 unittest

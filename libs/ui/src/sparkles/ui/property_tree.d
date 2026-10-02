@@ -50,7 +50,7 @@ import sparkles.fuzzy.match : match, MatchConfig, MatcherWorkspace, MatchKind,
     Scoring;
 import sparkles.fuzzy.query : parseQuery, QueryStorage;
 import sparkles.fuzzy.rank : RankedResult, TopK;
-public import sparkles.metadata : Description, Label, Range;
+public import sparkles.metadata : colorValue, Description, Label, Range, Section;
 
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.components.tree_widget : flatten, TreeData;
@@ -494,6 +494,18 @@ struct PropertyNode
     ByteSpan[] labelSpans; /// canonical witness ranges in `label`
     ByteSpan[] badgeSpans; /// ditto in `badge`
     string snippet;     /// bounded secondary snippet for path/doc-only hits
+    /// A section header row (`PRT36`): every top-level aggregate, and any
+    /// field marked `@Section`.
+    bool section;
+    /// ditto: the section's heading (`@Section`'s label, else `label`)
+    string heading;
+    /// A colour value (`@colorValue`, `PRT38`): a text leaf, or a
+    /// collection whose elements are colours.
+    bool color;
+    /// The enumeration members as the wire spells them (`@WireName`),
+    /// parallel to `choices` — what a view shows; `choices` is what an
+    /// edit names.
+    string[] choiceLabels;
 }
 
 /// Automatic-walk budgets and the component-wide write gate (`PRT4`, `PRT16`).
@@ -517,6 +529,9 @@ private struct MemberMeta
     bool readOnly;
     bool hasRange;
     double lo = 0, hi = 0, step = 0;
+    bool hasSection;
+    string heading;
+    bool color;
 }
 
 /**
@@ -1327,7 +1342,7 @@ private void walkValue(U, V)(ref U v, string path, string label, int depth,
             vis.onCapped(depth + 1);
         else
             walkChildren(v, path, depth, meta.readOnly, policy, vis, count,
-                halted);
+                halted, meta.color);
         vis.leave();
     }
 }
@@ -1340,7 +1355,7 @@ private void walkChildrenOf(U, V)(ref U v, string path, int depth,
 
 private void walkChildren(U, V)(ref U v, string path, int depth,
     bool inheritedRO, in PropertyTreePolicy policy, scope ref V vis,
-    ref int count, ref bool halted) @safe
+    ref int count, ref bool halted, bool elementColor = false) @safe
 {
     if (halted)
         return;
@@ -1384,8 +1399,8 @@ private void walkChildren(U, V)(ref U v, string path, int depth,
                     break;
                 walkValue(e, keyedPath(path, e.propElementKey),
                     "[#" ~ e.propElementKey.to!string ~ "]", depth + 1,
-                    MemberMeta(readOnly: inheritedRO), policy, vis, count,
-                    halted);
+                    MemberMeta(readOnly: inheritedRO, color: elementColor), policy,
+                    vis, count, halted);
             }
         }
         else
@@ -1395,8 +1410,8 @@ private void walkChildren(U, V)(ref U v, string path, int depth,
                 if (halted)
                     break;
                 walkValue(e, elementPath(path, i), "[" ~ i.to!string ~ "]",
-                    depth + 1, MemberMeta(readOnly: inheritedRO), policy, vis,
-                    count, halted);
+                    depth + 1, MemberMeta(readOnly: inheritedRO, color: elementColor),
+                    policy, vis, count, halted);
             }
         }
     }
@@ -1427,6 +1442,12 @@ private void walkChildren(U, V)(ref U v, string path, int depth,
                         meta.label = getUDAs!(M, Label)[0].text;
                     static if (hasUDA!(M, Doc))
                         meta.doc = getUDAs!(M, Doc)[0].text;
+                    static if (hasUDA!(M, Section))
+                    {
+                        meta.hasSection = true;
+                        meta.heading = getUDAs!(M, Section)[0].label;
+                    }
+                    meta.color = hasUDA!(M, colorValue);
                     static if (hasUDA!(M, Range))
                     {
                         meta.hasRange = true;
@@ -1480,6 +1501,8 @@ private PropertyNode makeNode(U)(ref U v, string path, string label,
         hi: meta.hi,
         step: meta.step,
     };
+    n.heading = meta.heading.length ? meta.heading : label;
+    n.color = meta.color;
 
     static if (descends!U)
     {
@@ -1519,6 +1542,10 @@ private PropertyNode makeNode(U)(ref U v, string path, string label,
             n.expandable = true;
             n.editable = false;
         }
+        // A section (`PRT36`): a field marked `@Section`, else every
+        // top-level aggregate — an array or a pointer stays a drill-in row.
+        static if (isAggregateType!U)
+            n.section = meta.hasSection || depth == 0;
     }
     else
     {
@@ -1528,8 +1555,14 @@ private PropertyNode makeNode(U)(ref U v, string path, string label,
         n.editable = !meta.readOnly && !policy.readOnly
             && n.kind != LeafKind.opaque;
         static if (is(U == enum))
+        {
+            import sparkles.wired.policy : AnyFormat, resolveCaseStyle, wireNames;
+
             static foreach (m; __traits(allMembers, U))
                 n.choices ~= m;
+            n.choiceLabels = wireNames!(AnyFormat, U,
+                resolveCaseStyle!(AnyFormat, U)).dup;
+        }
     }
     return n;
 }
@@ -3242,4 +3275,71 @@ version (UiPropertyFixtures)
         assert(parsed.hasValue, parsed.error.message);
         assert(evalDql!Schema(engine, parsed.value, r) == expected, query);
     }
+}
+
+version (UiPropertyFixtures)
+{
+    import sparkles.wired.policy : WireName;
+
+    private enum PtVisibility : ubyte
+    {
+        @WireName("auto") automatic,
+        always,
+    }
+
+    private struct PtInner
+    {
+        int x;
+    }
+
+    private struct PtLook
+    {
+        @colorValue string fg = "#ffffff";
+        @colorValue string[] palette = ["#000000", "#ff0000"];
+        PtInner nested;
+        PtVisibility visible;
+    }
+
+    private struct PtSectioned
+    {
+        @Section("Looks") PtLook look;
+        int plain;
+        PtInner other;
+    }
+}
+
+version (UiPropertyFixtures)
+@("ui.property_tree.sectionsColoursAndWireChoices")
+@safe unittest
+{
+    PtSectioned subject;
+    PropertyTree!PtSectioned pt;
+    auto tv = freshView();
+    tv.open = typeof(tv.open).allOpen;
+    pt.rebuild(subject, tv);
+
+    const(PropertyNode) byPath(string p) @safe
+    {
+        foreach (ref const nd; pt.data.nodes)
+            if (nd.value.path == p)
+                return nd.value;
+        assert(false, "no row " ~ p);
+    }
+
+    // `PRT36`: a top-level aggregate is a section, headed by its `@Section`
+    // label (else its own); a nested aggregate and a top-level leaf are not.
+    assert(byPath("look").section && byPath("look").heading == "Looks");
+    assert(byPath("other").section && byPath("other").heading == "other");
+    assert(!byPath("plain").section);
+    assert(!byPath("look.nested").section, "a nested aggregate drills in");
+
+    // `PRT38`: a colour leaf, and a colour array whose elements are colours.
+    assert(byPath("look.fg").color && byPath("look.fg").kind == LeafKind.text);
+    assert(byPath("look.palette").color && byPath("look.palette[1]").color);
+    assert(!byPath("look.nested.x").color);
+
+    // An enum's choices stay its member names (what an edit names); the
+    // labels are the wire's.
+    assert(byPath("look.visible").choices == ["automatic", "always"]);
+    assert(byPath("look.visible").choiceLabels == ["auto", "always"]);
 }
