@@ -679,7 +679,70 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
     private SettingsResult stepEdit(int dir)
     {
         const n = selectedNode();
-        if (n is null || n.synthetic || n.composite)
+        return n is null ? consumed() : stepNode(*n, dir);
+    }
+
+    // ── edits by path (a host's inline controls, `PRT38`) ──────────────────
+
+    /// The row whose path is `path` in the current rows, or `null`.
+    const(PropertyNode)* nodeAt(string path) @safe
+    {
+        foreach (ref nd; tree.data.nodes)
+            if (nd.value.path == path)
+                return (() @trusted => &nd.value)();
+        return null;
+    }
+
+    /// One step of `path` — a stepper's ± (`PRT13`'s step), the next or
+    /// previous enum member, a toggled bool — committed like a key's.
+    SettingsResult stepAt(string path, int dir)
+    {
+        const n = nodeAt(path);
+        return n is null ? consumed() : stepNode(*n, dir);
+    }
+
+    /// Sets `path` to `v` through the dispatch (range-checked, refusable,
+    /// undoable) — a segment or a dropdown choice, a toggle.
+    SettingsResult setAt(string path, EditValue v)
+    {
+        const a = editProperty(*subject, Edit(path, v, EditPhase.commit), edits,
+            tree.policy);
+        if (a.ok)
+            return committed(path);
+        return consumedRefresh();
+    }
+
+    /// `path` back to its compiled default — the per-row reset (`PRT39`).
+    SettingsResult resetAt(string path)
+    {
+        T defaults;
+        EditValue dv;
+        if (!readValueAt(defaults, path, dv))
+            return consumed();
+        return setAt(path, dv);
+    }
+
+    /// Whether `path` holds its compiled default (`PRT39`'s changed marker is
+    /// the negation). A path the dispatch cannot read counts as default.
+    bool atDefault(string path)
+    {
+        T defaults;
+        EditValue dv, now;
+        if (!readValueAt(defaults, path, dv) || !readValueAt(*subject, path, now))
+            return true;
+        return dv == now;
+    }
+
+    /// Opens the line editor on the text leaf `path`.
+    SettingsResult editTextAt(string path) => openTextEditor(path);
+
+    /// The path the last commit changed — what a "Saved" toast names.
+    string lastCommitted;
+
+    private SettingsResult stepNode(ref const PropertyNode node, int dir)
+    {
+        const n = &node;
+        if (n.synthetic || n.composite)
             return consumed();
 
         Edit e;
@@ -802,6 +865,7 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
     */
     private SettingsResult committed(string path)
     {
+        lastCommitted = path;
         if (path.length)
         {
             EditValue v;
@@ -1219,6 +1283,39 @@ version (UiSettingsFixtures)
 
     cast(void) p.handleKey(kch('u', Mods(shift: true)));
     assert(cfg.dark == false && p.dirty);
+}
+
+version (UiSettingsFixtures)
+@("ui.settings_pane.editsByPathCommitThroughTheDispatch")
+@system unittest
+{
+    auto cfg = new Fixture;
+    SettingsPane!Fixture p;
+    p.open(cfg, Fixture.init);
+    p.tv.open = typeof(p.tv.open).allOpen;
+    p.refresh();
+
+    // A segment, a stepper and a toggle — by path, no selection involved.
+    cast(void) p.setAt("mode", EditValue.ofEnum("gamma"));
+    assert(cfg.mode == FixMode.gamma && p.lastCommitted == "mode");
+    cast(void) p.stepAt("nested.depth", 1);
+    assert(cfg.nested.depth == 4 && !p.atDefault("nested.depth"));
+    cast(void) p.stepAt("dark", 1);
+    assert(!cfg.dark);
+
+    // Range-checked like a key: a refusal changes nothing.
+    cast(void) p.setAt("size", EditValue.of(500L));
+    assert(cfg.size == 18 && p.edits.refusalFor("size").refused);
+
+    // The per-row reset is one undoable edit back to the default.
+    cast(void) p.resetAt("nested.depth");
+    assert(cfg.nested.depth == 3 && p.atDefault("nested.depth"));
+    cast(void) p.undoLast();
+    assert(cfg.nested.depth == 4);
+
+    // A text leaf opens the line editor.
+    cast(void) p.editTextAt("name");
+    assert(p.textEditing && p.textBuf == "start");
 }
 
 version (UiSettingsFixtures)
