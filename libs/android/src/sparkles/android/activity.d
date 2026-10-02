@@ -130,3 +130,16 @@ bool hardwareKeyboardAttached() @trusted nothrow @nogc
         && AConfiguration_getKeyboard(config) == ACONFIGURATION_KEYBOARD_QWERTY
         && AConfiguration_getKeysHidden(config) == ACONFIGURATION_KEYSHIDDEN_NO;
 }
+
+// native_app_glue's `APP_CMD_*` lifecycle values, which it stores in
+// `android_app.activityState`.
+private enum appCmdResume = 11;
+
+/**
+Whether the activity is resumed — in the foreground, past `onResume` and not
+yet paused. The glue records each lifecycle step (`START`, `RESUME`, `PAUSE`,
+`STOP`) as it processes it, so a caller polling this each frame sees the
+transition into the foreground on the frame after it happened.
+*/
+bool activityResumed() @trusted nothrow @nogc
+    => GetAndroidApp().activityState == appCmdResume;

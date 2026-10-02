@@ -60,6 +60,31 @@ void withJni(scope void delegate(ref JniFrame) nothrow job) @trusted nothrow
     runOnWorker(run);
 }
 
+/// A `jvalue` holding an object reference (`jv(obj)`), an `int` or a
+/// `boolean` — the argument cells of the `…A` call forms.
+jvalue jv(jobject o) @trusted pure nothrow @nogc
+{
+    jvalue v;
+    v.l = o;
+    return v;
+}
+
+/// ditto
+jvalue jv(int x) @trusted pure nothrow @nogc
+{
+    jvalue v;
+    v.i = x;
+    return v;
+}
+
+/// ditto
+jvalue jv(bool b) @trusted pure nothrow @nogc
+{
+    jvalue v;
+    v.z = b;
+    return v;
+}
+
 // ── the worker ──────────────────────────────────────────────────────────────
 
 import core.sync.condition : Condition;
@@ -223,6 +248,97 @@ struct JniFrame
     /// astral scalar must arrive as a CESU-8 surrogate pair.
     jstring newString(scope const(wchar)[] text) @trusted nothrow @nogc
         => (*env).NewString(env, cast(const(jchar)*) text.ptr, cast(jsize) text.length);
+
+    // ── chained calls ───────────────────────────────────────────────────────
+    //
+    // Each helper does nothing and returns `null`/`0`/`false` when its
+    // receiver is null or an exception is already pending, so a bridge can
+    // chain several calls and test `failed` (or the last result) once: a JNI
+    // call made with an exception pending is undefined behaviour, and these
+    // never make one.
+
+    /// `obj.name(args)` returning an object, by JNI signature `sig`.
+    jobject callObject(jobject obj, const(char)* name, const(char)* sig,
+        scope jvalue[] args = null) @trusted nothrow @nogc
+    {
+        auto m = method(obj, name, sig);
+        if (m is null)
+            return null;
+        auto r = (*env).CallObjectMethodA(env, obj, m, args.ptr);
+        return failed ? null : r;
+    }
+
+    /// ditto, returning nothing; `false` when the call did not happen or threw.
+    bool callVoid(jobject obj, const(char)* name, const(char)* sig,
+        scope jvalue[] args = null) @trusted nothrow @nogc
+    {
+        auto m = method(obj, name, sig);
+        if (m is null)
+            return false;
+        (*env).CallVoidMethodA(env, obj, m, args.ptr);
+        return !failed;
+    }
+
+    /// ditto, returning an `int` (`fallback` when the call failed).
+    int callInt(jobject obj, const(char)* name, const(char)* sig,
+        scope jvalue[] args = null, int fallback = 0) @trusted nothrow @nogc
+    {
+        auto m = method(obj, name, sig);
+        if (m is null)
+            return fallback;
+        const r = (*env).CallIntMethodA(env, obj, m, args.ptr);
+        return failed ? fallback : r;
+    }
+
+    /// ditto, returning a `boolean` (`false` when the call failed).
+    bool callBool(jobject obj, const(char)* name, const(char)* sig,
+        scope jvalue[] args = null) @trusted nothrow @nogc
+    {
+        auto m = method(obj, name, sig);
+        if (m is null)
+            return false;
+        const r = (*env).CallBooleanMethodA(env, obj, m, args.ptr);
+        return !failed && r != 0;
+    }
+
+    /// `ClassName.name(args)`, a static method returning an object.
+    jobject callStaticObject(const(char)* className, const(char)* name,
+        const(char)* sig, scope jvalue[] args = null) @trusted nothrow @nogc
+    {
+        if (failed)
+            return null;
+        auto cls = (*env).FindClass(env, className);
+        if (cls is null)
+            return null;
+        auto m = (*env).GetStaticMethodID(env, cls, name, sig);
+        if (m is null)
+            return null;
+        auto r = (*env).CallStaticObjectMethodA(env, cls, m, args.ptr);
+        return failed ? null : r;
+    }
+
+    /// `new ClassName(args)` through the constructor of signature `sig`.
+    jobject newObject(const(char)* className, const(char)* sig,
+        scope jvalue[] args = null) @trusted nothrow @nogc
+    {
+        if (failed)
+            return null;
+        auto cls = (*env).FindClass(env, className);
+        if (cls is null)
+            return null;
+        auto ctor = (*env).GetMethodID(env, cls, "<init>", sig);
+        if (ctor is null)
+            return null;
+        auto r = (*env).NewObjectA(env, cls, ctor, args.ptr);
+        return failed ? null : r;
+    }
+
+    private jmethodID method(jobject obj, const(char)* name, const(char)* sig) @trusted nothrow @nogc
+    {
+        if (obj is null || failed)
+            return null;
+        return (*env).GetMethodID(env, (*env).GetObjectClass(env, obj), name, sig);
+    }
 
     /// A D string from a `java.lang.String`; `null` for a null reference.
     string toDString(jstring s) @trusted nothrow
