@@ -145,9 +145,11 @@ struct DroidTerminal
         tv.recolor(o.colors);
         tv.opts.scrollbackLimit = o.scrollbackLimit;
         tv.opts.exitBehavior = o.exitBehavior;
+        tv.opts.policy = o.policy;
         next.colors = o.colors;
         next.scrollbackLimit = o.scrollbackLimit;
         next.exitBehavior = o.exitBehavior;
+        next.policy = o.policy;
         foreach (w; warnings)
             warning(i"$(w)");
         tv.invalidate();

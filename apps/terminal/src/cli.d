@@ -9,6 +9,8 @@ module cli;
 
 import sparkles.terminal_view.component : TerminalViewOptions;
 import sparkles.terminal_view.input : ExitBehavior;
+import sparkles.terminal_view.notification_log : NotifyWhen;
+import sparkles.terminal_view.protocols : ProtocolPolicy;
 import sparkles.ui_app.gui_options : GuiOptions;
 
 import settings : OnExit, TerminalConfig;
@@ -51,11 +53,25 @@ TerminalViewOptions viewOptionsFrom(TerminalConfig c, bool systemDark,
     o.scrollbackLimit = c.behaviour.scrollback < 0 ? size_t.max
         : cast(size_t) c.behaviour.scrollback;
     o.exitBehavior = exitBehaviorFor(c.behaviour.onExit);
+    o.policy = protocolPolicyFrom(c);
     o.colors = colorOverrides(activeScheme(c, systemDark),
         !c.appearance.followSystem || systemDark ? "appearance.colors.dark"
             : "appearance.colors.light", warnings);
     return o;
 }
+
+/**
+The protocol policy a configuration sets (`TPR9`, `TPR19`–`TPR21`). With
+notifications turned off, nothing reaches the system; a pane still shows its
+toast and the log still records it.
+*/
+ProtocolPolicy protocolPolicyFrom(TerminalConfig c) @safe pure nothrow @nogc
+    => ProtocolPolicy(
+        notifyWhen: c.notifications.enabled ? c.notifications.when : NotifyWhen.never,
+        pasteConfirm: c.paste.confirm,
+        osc52Write: c.clipboard.osc52.write,
+        osc52Read: c.clipboard.osc52.read,
+    );
 
 /**
 `behaviour.onExit` as the emulator's exit behaviour. Until the exit prompt
@@ -162,6 +178,23 @@ unittest
     assert(o.exitBehavior == ExitBehavior.close);
     assert(o.colors.background == RgbColor(0x1e, 0x1e, 0x2e), "pinned: the dark scheme");
     assert(warnings.length == 0);
+}
+
+@("cli.protocolPolicyFrom.carriesTheSettings")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.terminal_view.protocols : ClipboardReadPolicy, PasteConfirm;
+
+    TerminalConfig c;
+    assert(protocolPolicyFrom(c) == ProtocolPolicy.init, "the defaults agree");
+    c.paste.confirm = PasteConfirm.never;
+    c.clipboard.osc52.read = ClipboardReadPolicy.deny;
+    c.notifications.enabled = false;
+    const p = protocolPolicyFrom(c);
+    assert(p.pasteConfirm == PasteConfirm.never);
+    assert(p.osc52Read == ClipboardReadPolicy.deny);
+    assert(p.notifyWhen == NotifyWhen.never);
 }
 
 @("cli.onExitFromFlag.keepsTheHistoricalSpellings")

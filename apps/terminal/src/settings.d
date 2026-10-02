@@ -22,6 +22,11 @@ import sparkles.metadata : Description, Label, Range;
 import sparkles.wired.overlay : WireSection;
 import sparkles.wired.policy : WireName;
 
+// The protocol policies are the emulator's own vocabulary: one declaration,
+// which the configuration names (`TCF1`).
+import sparkles.terminal_view.notification_log : NotifyWhen;
+import sparkles.terminal_view.protocols : ClipboardReadPolicy, PasteConfirm;
+
 import extra_keys : defaultExtraKeysSpec;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,39 +66,6 @@ enum LinkAction : ubyte
     open,
     /// Nothing: the gesture falls through.
     off,
-}
-
-/// `TPR19`: when a paste is confirmed first.
-enum PasteConfirm : ubyte
-{
-    /// A paste containing a line break, outside bracketed paste.
-    multiline,
-    /// Every paste.
-    always,
-    /// Never.
-    never,
-}
-
-/// `TPR21`: how an OSC 52 clipboard read is answered.
-enum ClipboardRead : ubyte
-{
-    /// Ask: once, always for this pane, or deny.
-    ask,
-    /// Answer.
-    allow,
-    /// Answer nothing.
-    deny,
-}
-
-/// `TPR9`: when a notification becomes a system notification.
-enum NotifyWhen : ubyte
-{
-    /// Only when its pane is not being seen.
-    unseen,
-    /// Always.
-    always,
-    /// Never (the log still records it).
-    never,
 }
 
 /// `TCF9`: how buttons and menu items are labelled.
@@ -330,7 +302,7 @@ struct Osc52Config
     bool write = true;
 
     @Description("Whether programs may read the clipboard: ask, allow or deny.")
-    ClipboardRead read = ClipboardRead.ask;
+    ClipboardReadPolicy read = ClipboardReadPolicy.ask;
 }
 
 /// ditto
