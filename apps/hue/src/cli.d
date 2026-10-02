@@ -535,6 +535,36 @@ struct ConfigCmd
     }
 }
 
+@(Command("credits",
+    shortDescription: "Show hue's credits: the components it ships and their licences",
+))
+struct CreditsCmd
+{
+    @Flatten("Output Sinks")
+    RenderSinkOptions sink;
+
+    /// `TPG17`: the credits document hue ships, opened as any document is
+    /// (includes resolved, `VIW5`) — the installed copy beside the
+    /// executable, else the repository's for a build run from the tree.
+    int run(Program)(in Program program)
+    {
+        import std.stdio : stderr;
+
+        import app : creditsDocument, executeView;
+
+        const path = creditsDocument();
+        if (!path.length)
+        {
+            stderr.writeln("hue: no credits are bundled with this build");
+            return 1;
+        }
+        View v;
+        v.paths = [path];
+        v.sink = sink;
+        return executeView(program.value, v);
+    }
+}
+
 // ── Root Command ────────────────────────────────────────────────────────────
 
 @(Command("hue",
@@ -570,7 +600,7 @@ struct HueCli
     GuiOptions gui;
 
     @Subcommands
-    SumType!(View, Diff, Pr, Gallery, Site, ThemeCmd, OverlayCmd, ConfigCmd) command;
+    SumType!(View, Diff, Pr, Gallery, Site, ThemeCmd, OverlayCmd, ConfigCmd, CreditsCmd) command;
 }
 
 // ── CLI value parsing (string → enum, warn-and-default) ─────────────────────

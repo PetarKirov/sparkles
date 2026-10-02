@@ -1190,6 +1190,26 @@ private string shortDate(string iso) @safe pure nothrow
 private bool isMarkdownPath(string path) @safe
     => canonicalLanguage(path.extension.chompPrefix(".")) == "markdown";
 
+/**
+hue's credits document (`TPG17`): `share/hue/credits/hue.md` beside an
+installed executable (staged with its licence texts), else the repository's
+`docs/credits/` for a build run from the tree. Empty when none is found.
+*/
+string creditsDocument() @system
+{
+    import std.file : exists, thisExePath;
+    import std.path : buildNormalizedPath, dirName;
+
+    const bin = thisExePath.dirName;
+    foreach (dir; ["../share/hue/credits", "../../../docs/credits"])
+    {
+        const doc = buildNormalizedPath(bin, dir, "hue.md");
+        if (doc.exists)
+            return doc;
+    }
+    return null;
+}
+
 /// A URL's text over the forge client, for the document pipeline: the viewer
 /// library makes no requests of its own (`UIA14`).
 private string fetchUrlText(string url) @system

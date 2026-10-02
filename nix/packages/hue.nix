@@ -52,6 +52,14 @@
 
         env = d-toolchain.env;
 
+        # `hue credits` (`TPG17`): the credits document and its staged
+        # licence texts, beside the executable — the docs site's files (`TPG16`).
+        installPhase = ''
+          install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
+          mkdir -p $out/share/hue
+          cp -r ${config.legacyPackages.sparklesCredits.bundle} $out/share/hue/credits
+        '';
+
         # Wrap so grammars resolve outside the devshell ($SPARKLES_TS_GRAMMAR_PATH
         # is only a *default* — a caller who exports their own still wins), so the
         # GUI's fontconfig lookups (fc-match) work under `nix run`, and so live D
