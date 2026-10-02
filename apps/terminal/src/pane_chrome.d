@@ -179,3 +179,21 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     assert(ids == [toolHit + 28 + ToolAction.split, toolHit + 28 + ToolAction.zoom,
         toolHit + 28 + ToolAction.close]);
 }
+
+@("pane_chrome.paneToolbar.aLongTitleNeverCutsAButton")
+@safe unittest
+{
+    import chrome : place, Place;
+
+    // A directory far wider than the pane: the title gives way, the three
+    // captions stay whole (they were cut to "S", "Zo", "Cl").
+    const l = place(paneToolbar(1, "sh", "/tmp/a/very/long/working/directory/that/goes/on",
+        ButtonLabels.iconText, 1, 40), 40, 3, 0, 0, 1, 1, Place.top);
+    import sparkles.ui.geometry : cellsOf;
+
+    // Each hit is a button: its rect holds its whole caption plus padding.
+    const captions = ["◫ Split", "⤢ Zoom", "× Close"];
+    assert(l.hits.length == 3);
+    foreach (i, ref t; l.hits)
+        assert(t.rect.width >= cellsOf(captions[i]) + 2, captions[i]);
+}

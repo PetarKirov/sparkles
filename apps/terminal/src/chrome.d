@@ -12,7 +12,7 @@ change, light or dark, with nothing else to configure.
 module chrome;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.geometry : Constraints, Insets, Rect, SizeSpec;
+import sparkles.ui.geometry : cellsOf, Constraints, Insets, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : HoverTarget, hoverTargets;
 import sparkles.ui.style : BorderStyle, Decoration, Palette, Slot, TextStyle;
@@ -190,10 +190,15 @@ uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t 
     const text = b.add(Widget(kind: WidgetKind.text, text: caption,
         slot: primary ? Slot.accentPrimary : Slot.textPrimary,
         textStyle: TextStyle(bold: primary)));
+    // A row too narrow for everything cuts its other content, never a
+    // button's caption: an action must say what it does.
+    SizeSpec width;
+    width.min = cast(int) cellsOf(caption) + 2;
     return b.add(Widget(
         kind: WidgetKind.panel,
         children: [text],
         padding: Insets(0, 1, 0, 1),
+        width: width,
         // A touch target at least `minRows` tall (`TOK7`: 48 dp on a phone).
         height: minRows > 1 ? SizeSpec.fixed(minRows) : SizeSpec.fit_,
         alignX: Alignment.center,
