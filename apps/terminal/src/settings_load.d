@@ -428,6 +428,7 @@ version (unittest)
     assert(t.warnings[0].canFind("links.tap") && t.warnings[0].canFind("sometimes"),
         t.warnings[0]);
     assert(t.warnings[0].canFind("this value was ignored"));
+    assert(t.warnings[0].canFind("(line 1, column 17)"), t.warnings[0]);
     assert(t.effective.links.tap == LinkAction.confirm);
     assert(t.effective.links.longPress == LinkAction.open);
     assert(t.effective.paste.confirm != TerminalConfig.init.paste.confirm);

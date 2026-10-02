@@ -253,6 +253,7 @@ private int desktopMain(string[] args)
     }
     foreach (w; lc.warnings)
         warning(i"$(w)");
+    app.host.reportConfigWarnings(lc.warnings);
 
     const outcome = runApp(app, cfg);
 

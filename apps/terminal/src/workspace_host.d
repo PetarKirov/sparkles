@@ -414,6 +414,49 @@ struct WorkspaceHost
         }
     }
 
+    /**
+    Tells the user about configuration problems once (`TCF4`): one toast for
+    the warnings not reported before, naming the first and counting the rest;
+    each is in the log in full. A reload that repeats a known problem stays
+    quiet, a new one speaks again.
+    */
+    void reportConfigWarnings(in string[] warnings) @safe
+    {
+        import core.time : seconds;
+        import std.conv : text;
+
+        string first;
+        size_t fresh;
+        foreach (w; warnings)
+            if (w !in reportedWarnings)
+            {
+                reportedWarnings[w] = true;
+                if (fresh++ == 0)
+                    first = toastForm(w);
+            }
+        if (fresh)
+            surfaces.toast(fresh == 1 ? first
+                : text(first, " (and ", fresh - 1, " more in the log)"), 6.seconds);
+    }
+
+    private bool[string] reportedWarnings;
+
+    // A warning as a toast says it: the log line's `config: /abs/path/x.json:`
+    // becomes `x.json:` — the path is in the log, and on a phone it would be
+    // all the toast had room for.
+    private static string toastForm(string w) @safe pure
+    {
+        import std.algorithm.searching : findSplit, startsWith;
+        import std.path : baseName;
+
+        if (w.startsWith("config: "))
+            w = w["config: ".length .. $];
+        if (w.startsWith("/"))
+            if (auto parts = w.findSplit(": "))
+                return baseName(parts[0]) ~ ": " ~ parts[2];
+        return w;
+    }
+
     /// Closes pane `id`: its program is hung up, its tab closes with it when
     /// it was the last.
     void closePane(PaneId id) @system
@@ -1407,4 +1450,23 @@ import sparkles.input : KeyEvent;
     assert(exitActionFor(OnExit.prompt, false, 0) == ExitAction.prompt);
     assert(exitActionFor(OnExit.close, true, 0) == ExitAction.prompt);
     assert(exitActionFor(OnExit.hold, true, 1) == ExitAction.hold);
+}
+
+@("workspace_host.reportConfigWarnings.onceEach")
+@system unittest
+{
+    auto h = new WorkspaceHost;
+    h.reportConfigWarnings(["config.json:4:27: tabWidth", "config.json:5:19: paths[1]"]);
+    assert(h.surfaces.toasts.length == 1);
+    assert(h.surfaces.toasts[0].text == "config.json:4:27: tabWidth (and 1 more in the log)");
+
+    // A reload with the same problems is quiet; a new one speaks.
+    h.reportConfigWarnings(["config.json:4:27: tabWidth", "config.json:5:19: paths[1]"]);
+    assert(h.surfaces.toasts.length == 1);
+    h.reportConfigWarnings(["config.json:2:3: font"]);
+    assert(h.surfaces.toasts.length == 2 && h.surfaces.toasts[1].text == "config.json:2:3: font");
+
+    // The toast names the file, not its path; the log keeps the path.
+    h.reportConfigWarnings(["config: /home/u/.config/sparkles-terminal/config.json: bad"]);
+    assert(h.surfaces.toasts[2].text == "config.json: bad");
 }

@@ -172,14 +172,22 @@ struct Surfaces
         toastLayer = Layer.init;
         if (toasts.length)
         {
-            import chrome : band, label;
-            import sparkles.ui.widget : Builder;
+            import chrome : band;
+            import sparkles.ui.geometry : SizeSpec;
+            import sparkles.ui.style : Slot;
+            import sparkles.ui.widget : Builder, Widget, WidgetKind;
+            import sparkles.ui.wrap : TextWrap;
 
+            // A long toast wraps rather than running off the screen: at most
+            // 60 columns, less on a narrow one.
+            const cols = ctx.area.width / ctx.cellW;
+            SizeSpec width;
+            width.max = cols - 4 < 60 ? (cols - 4 > 8 ? cols - 4 : 8) : 60;
             Builder b;
             uint[] lines;
             foreach (ref t; toasts)
-                lines ~= label(b, t.text);
-            const cols = ctx.area.width / ctx.cellW;
+                lines ~= b.add(Widget(kind: WidgetKind.text, text: t.text,
+                    slot: Slot.textPrimary, wrap: TextWrap.greedy, width: width));
             toastLayer = .place(b.finish(band(b, lines, fullWidth: false)), cols,
                 ctx.area.height / ctx.cellH, ctx.area.x + ctx.cellW, ctx.area.y,
                 ctx.cellW, ctx.cellH, Place.top);

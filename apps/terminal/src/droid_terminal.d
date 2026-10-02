@@ -265,6 +265,7 @@ struct DroidTerminal
         router.configure(config.effective, warnings);
         foreach (w; warnings)
             warning(i"$(w)");
+        host.reportConfigWarnings(warnings);
         host.invalidate();
     }
 
