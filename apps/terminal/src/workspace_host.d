@@ -181,6 +181,7 @@ struct WorkspaceHost
     private bool[PaneId] expanded; // prompts whose status line is open
     private SysTime[PaneId] started, ended; // when each program ran
     private Layer[PaneId] banners; // the exit prompts, placed this frame
+    private int[PaneId] bannerScroll; // how far each expanded command is scrolled
     private bool[PaneId] restoredCommand; // explicit commands not yet re-run
     private PaneId pointerOwner; // the pane a drag started in
     private string shownTitle;
@@ -469,6 +470,7 @@ struct WorkspaceHost
         pool.closeFor(id);
         prompting.remove(id);
         expanded.remove(id);
+        bannerScroll.remove(id);
         started.remove(id);
         ended.remove(id);
         banners.remove(id);
@@ -516,8 +518,8 @@ struct WorkspaceHost
 
                 // Under a page the wheel is the page's (`TKM4`).
                 const wheel = GetMouseWheelMove();
-                if (wheel != 0)
-                    cast(void) scrollSurface(cast(int)(-wheel * 3));
+                if (wheel != 0 && !scrollSurface(cast(int)(-wheel * 3)))
+                    cast(void) scrollBanner(mx, my, cast(int)(-wheel * 3)); // `TSS2`
             }
             PaneId under;
             foreach (ref b; boxes)
@@ -973,7 +975,17 @@ struct WorkspaceHost
             if (auto e = b.id in ended)
                 info.ended = *e;
             const open = (b.id in expanded) !is null;
-            banners[b.id] = place(exitBanner(info, open, *kept, labels, theme.targetRows),
+            // The command wraps across the pane and takes at most half of it;
+            // a longer one scrolls (`TSS2`).
+            import exit_banner : commandLines, commandScroll;
+
+            const wrapCols = b.cols - 2;
+            const commandRows = b.rows / 2 - 3 > 3 ? b.rows / 2 - 3 : 3;
+            const scroll = cast(int) commandScroll(commandLines(info.command, wrapCols).length,
+                commandRows, bannerScroll.get(b.id, 0));
+            bannerScroll[b.id] = scroll;
+            banners[b.id] = place(exitBanner(info, open, *kept, labels, theme.targetRows,
+                wrapCols, commandRows, scroll),
                 b.cols, b.rows, b.content.x, b.content.y, cellW, cellH, Place.bottom);
         }
     }
@@ -1032,6 +1044,23 @@ struct WorkspaceHost
         if (t == size_t.max)
             return null;
         return ws.tabs[t].titlePin.length ? ws.tabs[t].titlePin : programName(ws.panesOf(t)[0]);
+    }
+
+    /**
+    A wheel or a drag of `rows` (positive: down) at window pixel (`x`, `y`):
+    over an expanded exit prompt, its command scrolls (`TSS2`). False when the
+    point is on no expanded prompt — the pane's then.
+    */
+    bool scrollBanner(int x, int y, int rows) @safe
+    {
+        foreach (id, ref l; banners)
+            if ((id in expanded) !is null && l.contains(x, y))
+            {
+                bannerScroll[id] = bannerScroll.get(id, 0) + rows;
+                repaint = true; // `placeBanners` clamps it next frame
+                return true;
+            }
+        return false;
     }
 
     /**

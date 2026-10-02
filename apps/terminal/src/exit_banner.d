@@ -57,9 +57,13 @@ string statusText(int status) @safe pure
 The banner for `info`, at most `cols` wide. `expanded` shows the whole command
 with its directory and times; `actions` is false for `onExit = hold`, which
 keeps the status line alone; `targetRows` makes the buttons touch targets.
+
+Expanded, the command wraps at `wrapCols` and takes at most `commandRows`
+rows; a longer one shows the window `scroll` lines down (`commandScroll`
+clamps it), with how many lines lie above and below (`TSS2`).
 */
 WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels labels,
-    int targetRows = 1) @safe
+    int targetRows = 1, int wrapCols = int.max, int commandRows = int.max, int scroll = 0) @safe
 {
     Builder b;
     uint[] lines;
@@ -67,6 +71,12 @@ WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels l
     const ok = info.status == 0;
     const mark = label(b, (ok ? "✓ " : "✗ ") ~ statusText(info.status),
         ok ? Slot.success : Slot.error, bold: true);
+    // The status is the line's point: a long command gives way to it.
+    {
+        import sparkles.ui.geometry : cellsOf;
+
+        b.nodes[mark].width.min = cast(int) cellsOf(b.nodes[mark].text);
+    }
     const cmd = label(b, info.command.length ? "· " ~ info.command : "", Slot.muted);
     const chevron = label(b, expanded ? "▴" : "▾", Slot.muted);
     auto status = row(b, [mark, cmd, chevron]);
@@ -75,7 +85,17 @@ WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels l
 
     if (expanded)
     {
-        lines ~= label(b, info.command, Slot.textPrimary);
+        import std.conv : text;
+
+        const all = commandLines(info.command, wrapCols);
+        const room = commandRoom(all.length, commandRows);
+        const first = commandScroll(all.length, commandRows, scroll);
+        if (first)
+            lines ~= label(b, text("↑ ", first, first == 1 ? " line" : " lines"), Slot.muted);
+        foreach (l; all[first .. first + room])
+            lines ~= label(b, l, Slot.textPrimary);
+        if (const below = all.length - first - room)
+            lines ~= label(b, text("↓ ", below, below == 1 ? " line" : " lines"), Slot.muted);
         if (info.cwd.length)
             lines ~= label(b, "cwd   " ~ info.cwd, Slot.textSecondary);
         if (info.started != SysTime.init)
@@ -88,6 +108,62 @@ WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels l
             button(b, "×", "Close", labels, ExitHit.close, minRows: targetRows),
         ]);
     return b.finish(band(b, lines));
+}
+
+/**
+`command` in lines at most `width` cells: wrapped at spaces, and a word wider
+than a line — a long path or URL — split where it must be.
+*/
+string[] commandLines(string command, int width) @safe pure
+{
+    import sparkles.ui.geometry : cellsOf, takeCells;
+    import sparkles.ui.wrap : wrapLines;
+
+    static int cols(scope const(char)[] s) @safe pure nothrow @nogc
+        => cast(int) cellsOf(s);
+
+    if (width < 1)
+        width = 1;
+    string[] lines;
+    foreach (l; wrapLines(command, width, &cols))
+    {
+        const(char)[] rest = l;
+        if (!rest.length)
+        {
+            lines ~= "";
+            continue;
+        }
+        do
+        {
+            auto head = takeCells(rest, width);
+            if (!head.length) // one character wider than the line
+            {
+                import std.utf : stride;
+
+                head = rest[0 .. stride(rest)];
+            }
+            lines ~= head.idup;
+            rest = rest[head.length .. $];
+        }
+        while (rest.length);
+    }
+    return lines;
+}
+
+// How many of `total` command lines show in `budget` rows: all of them when
+// they fit, else two fewer, for the lines-above and lines-below marks.
+private size_t commandRoom(size_t total, int budget) @safe pure nothrow @nogc
+{
+    const b = budget < 1 ? 1 : cast(size_t) budget;
+    return total <= b ? total : b > 2 ? b - 2 : 1;
+}
+
+/// `scroll` clamped to the first line a window of `budget` rows may show.
+size_t commandScroll(size_t total, int budget, int scroll) @safe pure nothrow @nogc
+{
+    const room = commandRoom(total, budget);
+    const last = total - room;
+    return scroll < 0 ? 0 : scroll > last ? last : scroll;
 }
 
 /// "09:41:07 – 09:43:52 (2 min 45 s)".
@@ -123,6 +199,8 @@ private string ranText(SysTime started, SysTime ended) @safe
 @("exit_banner.exitBanner.collapsedExpandedAndHold")
 @safe unittest
 {
+    import std.array : join;
+    import std.range : repeat;
     import std.algorithm.searching : canFind;
     import std.datetime : DateTime, seconds;
 
@@ -148,7 +226,61 @@ private string ranText(SysTime started, SysTime ended) @safe
         sawRan |= n.text.canFind("09:41:07 – 09:43:52 (2 min 45 s)");
     assert(sawRan);
 
+    // A command far wider than the banner never squeezes out the status.
+    auto squeezed = place(exitBanner(ExitInfo(3, "x".repeat(200).join), false, false,
+        ButtonLabels.iconText), 40, 20, 0, 0, 1, 1);
+    foreach (i, ref n; squeezed.tree.nodes)
+        if (n.text == "✗ exited with status 3")
+            assert(squeezed.frames[i].rect.width >= 22);
+
     // `hold`: the status line alone, no actions.
     auto held = place(exitBanner(info, false, false, ButtonLabels.iconText), 60, 20, 0, 0, 1, 1);
     assert(held.bounds.height == 1 && held.hits.length == 1);
+}
+
+@("exit_banner.commandLines.wrapsAndSplitsLongWords")
+@safe pure unittest
+{
+    assert(commandLines("make -j8 all", 80) == ["make -j8 all"]);
+    assert(commandLines("make -j8 all", 8) == ["make -j8", "all"]);
+    // A path wider than the line is split, not left to overflow.
+    assert(commandLines("cat /a/very/long/path", 8) == ["cat", "/a/very/", "long/pat", "h"]);
+    assert(commandLines("", 8) == [""]);
+}
+
+@("exit_banner.exitBanner.aLongCommandScrolls")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.range : repeat;
+    import std.array : join;
+
+    import chrome : place, Place;
+
+    // Twenty words of ten cells: ten 20-cell lines, in a budget of 5 rows —
+    // three show, with the marks above and below (`TSS2`).
+    const command = "abcdefghi".repeat(20).join(" ");
+    const info = ExitInfo(1, command);
+    assert(commandLines(command, 20).length == 10);
+    assert(commandScroll(10, 5, 0) == 0 && commandScroll(10, 5, 99) == 7
+        && commandScroll(10, 5, -3) == 0);
+    assert(commandScroll(3, 5, 4) == 0, "what fits never scrolls");
+
+    const(char)[][] texts(int scroll)
+    {
+        const(char)[][] t;
+        auto l = place(exitBanner(info, true, false, ButtonLabels.iconText, 1, 20, 5, scroll),
+            40, 30, 0, 0, 1, 1, Place.top);
+        foreach (ref n; l.tree.nodes)
+            if (n.text.length)
+                t ~= n.text;
+        return t;
+    }
+
+    auto top = texts(0);
+    assert(!top.canFind!(t => t.canFind("↑")) && top.canFind("↓ 7 lines"));
+    auto mid = texts(2);
+    assert(mid.canFind("↑ 2 lines") && mid.canFind("↓ 5 lines"));
+    auto end = texts(99);
+    assert(end.canFind("↑ 7 lines") && !end.canFind!(t => t.canFind("↓")));
 }

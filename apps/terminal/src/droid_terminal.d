@@ -571,6 +571,9 @@ struct DroidTerminal
         // scrollback.
         int left, top;
         const id = host.paneAt(w.pos.x, w.pos.y, left, top);
+        // An expanded exit prompt scrolls its command (`TSS2`).
+        if (host.scrollBanner(w.pos.x, w.pos.y, w.dy))
+            return;
         // A viewer pane scrolls its document (`TDV6`).
         if (host.scrollViewer(id ? id : host.ws.focused, w.dy))
             return;
