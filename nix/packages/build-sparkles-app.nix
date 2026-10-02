@@ -167,12 +167,17 @@
       # The build stamp an application reports as its version and commit
       # (`sparkles.base.build_stamp`, docs/specs/terminal/pages.md `TPG2`): a
       # directory holding `sparkles-build-stamp`, for the compiler's `-J`.
-      # A tree with uncommitted changes is stamped `<rev>-dirty`, never as
-      # its last commit. The commit makes the stamped build per-commit.
+      # Only a release build (`withCommit`) records the commit — and then a
+      # tree with uncommitted changes is stamped `<rev>-dirty`, never as its
+      # last commit. Every other build carries the version alone, so it stays
+      # cached across commits that do not touch its sources.
       legacyPackages.mkBuildStamp =
-        { version }:
+        {
+          version,
+          withCommit ? false,
+        }:
         let
-          rev = inputs.self.shortRev or inputs.self.dirtyShortRev or null;
+          rev = if withCommit then inputs.self.shortRev or inputs.self.dirtyShortRev or null else null;
         in
         pkgs.writeTextDir "sparkles-build-stamp" (
           "version=${version}\n" + lib.optionalString (rev != null) "commit=${rev}\n"

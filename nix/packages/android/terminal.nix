@@ -27,85 +27,93 @@ in
       fonts = config.legacyPackages.sparklesFonts;
       credits = config.legacyPackages.sparklesCredits;
 
-      libterminal = config.legacyPackages.buildDAndroidLib {
-        pname = "libterminal-android";
-        libName = "terminal";
-        mainFile = "apps/terminal/src/app.d";
-        srcDirs = sources.srcClosure "apps/terminal" ++ [ "libs/android/c" ];
-        cFiles = [
-          "libs/android/c/jni_c.c"
-          "libs/ghostty/src/sparkles/ghostty/ghostty_modes.c"
-          "libs/raylib-text/src/sparkles/raylib_text/shaping_c.c"
-        ];
-        # dub's version set for `:terminal`'s `application` configuration
-        # (`dub describe :terminal --data=versions`), plus sparkles:android.
-        versions = [
-          "UiAppGui"
-          # sparkles:ui's `gpu-effects` configuration, which dub would select
-          # through ui-raylib; its GLSL comes prebuilt from `ui-shaders`.
-          "SparklesUiGpuEffects"
-          "Have_bolts"
-          "Have_expected"
-          "Have_optional"
-          "Have_raylib_d"
-          "Have_sparkles_android"
-          "Have_sparkles_base"
-          "Have_sparkles_core_cli"
-          "Have_sparkles_event_horizon"
-          "Have_sparkles_fuzzy"
-          "Have_sparkles_ghostty"
-          "Have_sparkles_input"
-          "Have_sparkles_metadata"
-          "Have_sparkles_raylib_text"
-          "Have_sparkles_reflection"
-          "Have_sparkles_shader"
-          "Have_sparkles_terminal"
-          "Have_sparkles_terminal_view"
-          "Have_sparkles_ui"
-          "Have_sparkles_ui_app"
-          "Have_sparkles_ui_raylib"
-          "Have_sparkles_wired"
-        ];
-        dubDeps = [
-          {
-            name = "raylib-d";
-            src = inputs.dub-raylib-d;
-          }
-          {
-            name = "expected";
-            src = inputs.dub-expected;
-          }
-          {
-            name = "optional";
-            src = inputs.dub-optional;
-          }
-          {
-            name = "bolts";
-            src = inputs.dub-bolts;
-          }
-        ];
-        stringImportDirs = [
-          "libs/ui/src/sparkles/ui/shaders"
-          "${config.packages.ui-shaders}"
-          # The version and commit `logBuildInfo` reports (`TPG2`).
-          "${config.legacyPackages.mkBuildStamp { version = "0.1.0"; }}"
-        ];
-        cIncludes = [
-          "${config.packages.libghostty-vt-android}/include"
-          "${config.packages.freetype-android}/include/freetype2"
-          "${config.packages.harfbuzz-android}/include/harfbuzz"
-        ];
-        staticLibs = abi: [
-          "${config.packages.raylib-android}/lib/${abi}/libraylib.a"
-          "${config.packages.harfbuzz-android}/lib/${abi}/libharfbuzz.a"
-          "${config.packages.freetype-android}/lib/${abi}/libfreetype.a"
-          "${config.packages.freetype-android}/lib/${abi}/libpng16.a"
-          "${config.packages.freetype-android}/lib/${abi}/libz.a"
-          "${config.packages.libghostty-vt-android}/lib/${abi}/libghostty-vt.a"
-          "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a"
-        ];
-        description = "apps/terminal as an Android shared library, per ABI";
-      };
+      # `release` records the commit in the build stamp (`TPG2`); only the
+      # release APK pays for a per-commit library build.
+      mkLibterminal =
+        { release }:
+        config.legacyPackages.buildDAndroidLib {
+          pname = "libterminal-android";
+          libName = "terminal";
+          mainFile = "apps/terminal/src/app.d";
+          srcDirs = sources.srcClosure "apps/terminal" ++ [ "libs/android/c" ];
+          cFiles = [
+            "libs/android/c/jni_c.c"
+            "libs/ghostty/src/sparkles/ghostty/ghostty_modes.c"
+            "libs/raylib-text/src/sparkles/raylib_text/shaping_c.c"
+          ];
+          # dub's version set for `:terminal`'s `application` configuration
+          # (`dub describe :terminal --data=versions`), plus sparkles:android.
+          versions = [
+            "UiAppGui"
+            # sparkles:ui's `gpu-effects` configuration, which dub would select
+            # through ui-raylib; its GLSL comes prebuilt from `ui-shaders`.
+            "SparklesUiGpuEffects"
+            "Have_bolts"
+            "Have_expected"
+            "Have_optional"
+            "Have_raylib_d"
+            "Have_sparkles_android"
+            "Have_sparkles_base"
+            "Have_sparkles_core_cli"
+            "Have_sparkles_event_horizon"
+            "Have_sparkles_fuzzy"
+            "Have_sparkles_ghostty"
+            "Have_sparkles_input"
+            "Have_sparkles_metadata"
+            "Have_sparkles_raylib_text"
+            "Have_sparkles_reflection"
+            "Have_sparkles_shader"
+            "Have_sparkles_terminal"
+            "Have_sparkles_terminal_view"
+            "Have_sparkles_ui"
+            "Have_sparkles_ui_app"
+            "Have_sparkles_ui_raylib"
+            "Have_sparkles_wired"
+          ];
+          dubDeps = [
+            {
+              name = "raylib-d";
+              src = inputs.dub-raylib-d;
+            }
+            {
+              name = "expected";
+              src = inputs.dub-expected;
+            }
+            {
+              name = "optional";
+              src = inputs.dub-optional;
+            }
+            {
+              name = "bolts";
+              src = inputs.dub-bolts;
+            }
+          ];
+          stringImportDirs = [
+            "libs/ui/src/sparkles/ui/shaders"
+            "${config.packages.ui-shaders}"
+            # The version (and, released, the commit) `logBuildInfo` reports.
+            "${config.legacyPackages.mkBuildStamp {
+              version = "0.1.0";
+              withCommit = release;
+            }}"
+          ];
+          cIncludes = [
+            "${config.packages.libghostty-vt-android}/include"
+            "${config.packages.freetype-android}/include/freetype2"
+            "${config.packages.harfbuzz-android}/include/harfbuzz"
+          ];
+          staticLibs = abi: [
+            "${config.packages.raylib-android}/lib/${abi}/libraylib.a"
+            "${config.packages.harfbuzz-android}/lib/${abi}/libharfbuzz.a"
+            "${config.packages.freetype-android}/lib/${abi}/libfreetype.a"
+            "${config.packages.freetype-android}/lib/${abi}/libpng16.a"
+            "${config.packages.freetype-android}/lib/${abi}/libz.a"
+            "${config.packages.libghostty-vt-android}/lib/${abi}/libghostty-vt.a"
+            "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a"
+          ];
+          description = "apps/terminal as an Android shared library, per ABI";
+        };
+      libterminal = mkLibterminal { release = false; };
 
       # Nerd-icon coverage and a classic fallback; Maple Mono NF CN (hue's
       # face) is left out — its CJK glyphs are most of the bundle's 61 MB.
@@ -156,10 +164,12 @@ in
             | xargs -0 sha256sum | sha256sum | cut -d' ' -f1 > bundle-hash)
         '';
 
-      apkLibs = lib.mapAttrs' (name: t: {
-        name = t.abi;
-        value."libterminal.so" = "${libterminal}/lib/${t.abi}/libterminal.so";
-      }) ndk.targets;
+      apkLibs =
+        library:
+        lib.mapAttrs' (name: t: {
+          name = t.abi;
+          value."libterminal.so" = "${library}/lib/${t.abi}/libterminal.so";
+        }) ndk.targets;
     in
     lib.optionalAttrs (androidHost system).supported {
       packages.libterminal-android = libterminal;
@@ -207,7 +217,8 @@ in
               ;
             renamePackage = appId;
             resDir = "${icon}/res";
-            libs = apkLibs;
+            # A release APK reports the commit it was built from (`TPG2`).
+            libs = apkLibs (if debug then libterminal else mkLibterminal { release = true; });
             assetsDir = mkAssets session bootstraps;
             targetSdk = 28;
             description = "${label} — sparkles:terminal (Android NativeActivity APK)";
