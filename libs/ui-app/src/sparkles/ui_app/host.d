@@ -101,7 +101,9 @@ struct RunConfig
     set as press/repeat/release with the unshifted codepoint, typed text
     paired onto its keystroke. What a terminal emulator component needs
     (`INP15`); everything else leaves it off and gets the classic stream.
-    The terminal target ignores it — a tty cannot report releases (`INP16`).
+    A terminal honours it where it speaks the kitty keyboard protocol (flag
+    2, negotiated after the probe), and keeps the classic stream elsewhere —
+    `capabilities.keyRelease` says which.
     */
     bool keyRelease;
     /**

@@ -101,10 +101,12 @@ struct TuiHost
     /// The surface, in cells.
     Size size() const @safe pure nothrow @nogc => size_;
 
-    /// A terminal serves hover and one whole-cell pointer, and cannot report a
-    /// key release at all (`INP16`).
-    static InputCapabilities capabilities() @safe pure nothrow @nogc
-        => TerminalSession.capabilities;
+    /// What the session declared for input: hover and one whole-cell
+    /// pointer, and focus, paste and key-release events where it negotiated
+    /// them. The declaration, not a narrowed preview of it: a release the
+    /// terminal sends arrives whatever the preview shows.
+    InputCapabilities capabilities() const @safe pure nothrow @nogc
+        => declaredTarget.input;
 
     /// ditto
     Backend backend() const @safe pure nothrow @nogc => Backend.tui;
@@ -274,7 +276,7 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
     import sparkles.base.term_color : RgbColor;
 
     auto session = TerminalSession.open(TerminalRequest(
-        mouse: cfg.mouse, motion: cfg.motion, probe: cfg.probeTerminal));
+        mouse: cfg.mouse, motion: cfg.motion, probe: cfg.probeTerminal, keyRelease: cfg.keyRelease));
     if (!session.active)
         return false;
 
