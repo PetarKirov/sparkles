@@ -290,6 +290,11 @@
         pkgs.xcb-imdkit
         pkgs.xorg.xcbutil
         pkgs.xorg.xcbutil.dev
+
+        # `dbus-daemon`, exec'd by apps/terminal's D-Bus tests (`dbus_conn`,
+        # `desktop_bus`) as a private bus with a fake notification server
+        # and portal. Without it they skip, so `ci --test` needs it.
+        pkgs.dbus
       ]
       ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
         # MoltenVK is Darwin's Vulkan ICD (Vulkan-on-Metal). The loader
