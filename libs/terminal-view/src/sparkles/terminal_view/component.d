@@ -42,9 +42,14 @@ import sparkles.raylib_text : FontSet;
 import sparkles.terminal_view.child_env : sanitizeChildEnv;
 import sparkles.terminal_view.core;
 import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyButtonOf,
-    ghosttyKeyOf, ghosttyModsOf, withKeyIdentity;
+    ghosttyKeyOf, ghosttyModsOf, isDetachedText, utf8Of, withKeyIdentity;
 import sparkles.terminal_view.input : ExitBehavior, handle_mouse,
     mouse_encode_and_write, pty_write;
+import sparkles.terminal_view.notification_log : NotificationLog,
+    NotificationRecord, NotificationRoute, routeNotification;
+import sparkles.terminal_view.osc_scan : maxIconBytes, maxTitleBytes, Notification;
+import sparkles.terminal_view.protocols : ClipboardReadAnswer, ClipboardReadPolicy,
+    ColorScheme, PasteConfirm, PasteConfirmRequest, ProtocolPolicy, TerminalViewHooks;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
@@ -338,6 +343,19 @@ struct TerminalViewOptions
     /// — `scrollViewport`, `routePointer` — since raylib reports a finger as
     /// a mouse and a drag would otherwise select instead of scroll.
     bool pollMouse = true;
+
+    /// The protocol policy (`TPR9`, `TPR19`–`TPR21`): the application's
+    /// `notifications`, `paste` and `clipboard.osc52` settings.
+    ProtocolPolicy policy;
+    /// What protocol events do — the application's hooks, called from
+    /// $(LREF TerminalView.deliverEvents). All optional.
+    TerminalViewHooks hooks;
+    /// The application's notification log (`TPG9`), shared by its panes and
+    /// outliving them; null, the pane records into a log of its own
+    /// (`TerminalView.notificationLog`).
+    NotificationLog* notificationLog = null;
+    /// Whether the target has a Nerd Font, for process icons (`TPR3`).
+    bool nerdFont = true;
 }
 
 /**
@@ -386,6 +404,32 @@ struct TerminalView
     /// the byte stream), and where the ring can also reap, the per-frame
     /// `WNOHANG` poll retires with it.
     private bool ringPump;
+
+    // ── protocol state (`TPR`) ──
+    // The icon string OSC 0/1 last set (empty: none, the process decides).
+    private char[maxIconBytes] iconBuf = 0;
+    private size_t iconLen;
+    // The validated OSC 7 directory, NUL-terminated.
+    private char[4096] cwdBuf = 0;
+    private size_t cwdLen;
+    // A user rename pins the label against OSC 0/2 until cleared (`TPR3`).
+    private char[maxTitleBytes + 1] renamedBuf = 0;
+    private size_t renamedLen;
+    private bool renamed;
+    private bool renameEdge; // a rename or its clearing, not yet taken
+    // Can the user see this pane now (`TPR9`)? The embedder says.
+    private bool paneSeen = true;
+    // An OSC 52 read awaiting the embedder's answer, and the pane's grant.
+    private bool readPending;
+    private char[12] readSelectors = 0;
+    private size_t readSelectorsLen;
+    private bool readEndedWithBel;
+    private bool readAlways;
+    // A paste awaiting confirmation (`TPR19`).
+    private char[] pendingPaste;
+    private bool pastePending;
+    // The log used when the embedder supplies none.
+    private NotificationLog* ownLog;
 
     @disable this(this);
 
@@ -526,6 +570,7 @@ struct TerminalView
         ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_XTVERSION, cast(const(void)*) &effect_xtversion);
         ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_ENQUIRY, cast(const(void)*) &effect_enquiry);
         ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, cast(const(void)*) &effect_title_changed);
+        ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_PWD_CHANGED, cast(const(void)*) &effect_pwd_changed);
         ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, cast(const(void)*) &effect_color_scheme);
         ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_BELL, cast(const(void)*) &effect_bell);
 
@@ -824,10 +869,21 @@ struct TerminalView
         pump();
         wakeForSynchronizedOutput(h);
 
+        // The whole surface is the window: it can be seen while focused and
+        // not minimized (`TPR9`). An embedder says so per pane instead.
+        setSeen(IsWindowFocused() && !IsWindowMinimized());
+        deliverEvents(h);
+
         // A captured OSC title becomes the window's — the whole surface IS
-        // the window here; an embedder consumes takeTitleChanged for its tab.
+        // the window here; an embedder consumes takeTitleChanged for its tab
+        // (or sets `hooks.titleChanged`, which `deliverEvents` serves first).
         if (takeTitleChanged())
-            SetWindowTitle(s.effects_ctx.titleBuf.ptr);
+        {
+            const t = title;
+            char[maxTitleBytes + 1] z = 0;
+            z[0 .. t.length] = t[];
+            SetWindowTitle(z.ptr);
+        }
 
         // The exit policy's frame-level half (waitForKey closes in `handle`).
         if (s.childExited)
@@ -1057,6 +1113,17 @@ struct TerminalView
         if (s.childExited)
             return false;
 
+        // Text no key produced, under a pushed kitty mode (`TPR17`, `D23`):
+        // a soft keyboard's letters become the press and release of the key
+        // that types them, anything else associated text. Without a pushed
+        // mode the bytes stay what they always were.
+        ubyte kittyFlags;
+        if (isDetachedText(k)
+            && ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_KITTY_KEYBOARD_FLAGS,
+                &kittyFlags) == GHOSTTY_SUCCESS
+            && kittyFlags != 0)
+            return sendDetachedText(k);
+
         // A terminal-decoded char event carries only `ch`; give the encoder
         // the key identity and the text channel it works through. The GUI
         // arm's events already carry both, so the oracle path is untouched.
@@ -1080,6 +1147,61 @@ struct TerminalView
             return true;
         }
         return false;
+    }
+
+    // ditto — the synthesis. One code point with a key: press + release of
+    // it. Otherwise the text alone, which the encoder reports with key 0
+    // where associated text is on, and which is written raw where no
+    // escape form exists for it.
+    private bool sendDetachedText(in KeyEvent k) @system nothrow @nogc
+    {
+        import sparkles.terminal_view.event_map : softKeyPress;
+
+        dchar c = k.ch;
+        size_t cps;
+        if (k.text.length)
+        {
+            // Count code points (lead bytes); a multi-point text has no key.
+            foreach (b; k.text)
+                cps += (b & 0xC0) != 0x80;
+            if (cps == 1 && c == 0)
+            {
+                import sparkles.base.text.utf : decodeFirstUtf8;
+
+                c = decodeFirstUtf8(k.text);
+            }
+        }
+        else
+            cps = 1;
+
+        ghostty_key_encoder_setopt_from_terminal(s.key_encoder, s.terminal);
+        char[128] buf;
+        KeyEvent press;
+        if (cps == 1 && softKeyPress(c, press))
+        {
+            const down = encodeKeyEvent(s.key_encoder, s.key_event, press, buf);
+            if (down.length)
+                pty_write(s.pty_fd, down.ptr, down.length);
+            else if (press.text.length)
+                pty_write(s.pty_fd, press.text.ptr, press.text.length);
+            KeyEvent release = press;
+            release.action = KeyAction.release;
+            release.text(null);
+            const up = encodeKeyEvent(s.key_encoder, s.key_event, release, buf);
+            if (up.length)
+                pty_write(s.pty_fd, up.ptr, up.length);
+            return true;
+        }
+
+        char[4] ub = void;
+        const text = k.text.length ? k.text : ub[0 .. utf8Of(ub, c)];
+        if (text.length == 0)
+            return false;
+        ubyte flags;
+        ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_KITTY_KEYBOARD_FLAGS, &flags);
+        const out_ = kittyTextEvent(text, flags, buf);
+        pty_write(s.pty_fd, out_.ptr, out_.length);
+        return true;
     }
 
     /// Install `c` as the default colours of the running terminal (a user
@@ -1245,19 +1367,327 @@ struct TerminalView
             offset: cast(long) sb.offset);
     }
 
-    /// The last OSC 0/2 title the shell set (empty until one arrives) — an
-    /// embedding application's tab label.
+    /// The pane's title — the user's rename while one is pinned, else the
+    /// last OSC 0/2 title the program set, sanitized (`TPR1`, `TPR2`; empty
+    /// until one arrives). An embedding application's tab label.
     const(char)[] title() const scope return @safe pure nothrow @nogc
+        => renamed ? renamedBuf[0 .. renamedLen] : programTitle;
+
+    /// The last title the program set, whatever a rename pins.
+    const(char)[] programTitle() const scope return @safe pure nothrow @nogc
         => s.effects_ctx.titleBuf[0 .. s.effects_ctx.titleLen];
 
-    /// True once per title change — the whole-surface `frame` turns it into
-    /// `SetWindowTitle`; an embedder refreshes its tab label instead.
+    /// True once per change of $(LREF title) — the whole-surface `frame`
+    /// turns it into `SetWindowTitle`; an embedder refreshes its tab label
+    /// instead. While a rename is pinned, program titles change nothing.
     bool takeTitleChanged() @safe pure nothrow @nogc
     {
         const was = s.effects_ctx.titleDirty;
         s.effects_ctx.titleDirty = false;
-        return was;
+        const edge = renameEdge;
+        renameEdge = false;
+        return (was && !renamed) || edge;
     }
+
+    /**
+    Pins the pane's title to `name` (a user rename, `TPR3`): OSC 0/2 titles
+    keep arriving ($(LREF programTitle)) but no longer label the pane until
+    $(LREF clearRename). Sanitized and capped like a program's title.
+    */
+    void rename(scope const(char)[] name) @safe pure nothrow @nogc
+    {
+        import sparkles.terminal_view.osc_scan : sanitizeTitle;
+
+        renamedLen = sanitizeTitle(name, renamedBuf[0 .. maxTitleBytes]);
+        renamed = true;
+        renameEdge = true;
+    }
+
+    /// ditto — the program's title labels the pane again.
+    void clearRename() @safe pure nothrow @nogc
+    {
+        renamed = false;
+        renameEdge = true;
+    }
+
+    /// ditto
+    bool isRenamed() const @safe pure nothrow @nogc => renamed;
+
+    /**
+    The pane's icon (`TPR3`, `D21`): the icon string OSC 0/1 set (one
+    grapheme cluster, at most two cells), else the Nerd Font icon of the
+    foreground process, else the generic terminal glyph — and with
+    `opts.nerdFont` off, nothing but an OSC icon.
+    */
+    const(char)[] icon() @system nothrow @nogc
+    {
+        import sparkles.terminal_view.process_info : foregroundProcess,
+            iconForProcess, processName;
+
+        if (iconLen)
+            return iconBuf[0 .. iconLen];
+        char[64] name;
+        const n = processName(foregroundProcess(s.pty_fd), name);
+        return iconForProcess(name[0 .. n], opts.nerdFont);
+    }
+
+    /// The foreground process's executable name, `null` if unknown (`TPG9`).
+    string foregroundProcessName() @system
+    {
+        import sparkles.terminal_view.process_info : foregroundProcess, processName;
+
+        char[64] name;
+        const n = processName(foregroundProcess(s.pty_fd), name);
+        return n ? name[0 .. n].idup : null;
+    }
+
+    /// The pane's working directory as OSC 7 last reported it (an existing
+    /// local directory), empty until one arrives (`TPR4`) — where a tab or
+    /// split opened from this pane starts.
+    const(char)[] cwd() const scope return @safe pure nothrow @nogc
+        => cwdBuf[0 .. cwdLen];
+
+    /**
+    Whether the user can see this pane now (`TPR9`) — false while the
+    application is in the background or the screen is off, or the pane sits
+    on another tab or is zoomed away. The embedder keeps it current; the
+    whole-surface `frame` follows window focus.
+    */
+    void setSeen(bool seen) @safe pure nothrow @nogc
+    {
+        paneSeen = seen;
+    }
+
+    /// ditto
+    bool seen() const @safe pure nothrow @nogc => paneSeen;
+
+    /// The log this pane records notifications into (`TPG9`): the
+    /// application's when given, else its own.
+    NotificationLog* notificationLog() @safe nothrow
+    {
+        if (opts.notificationLog !is null)
+            return opts.notificationLog;
+        if (ownLog is null)
+            ownLog = new NotificationLog;
+        return ownLog;
+    }
+
+    /**
+    Delivers what the pty asked of the host since the last call (`TPR`):
+    the title, icon and working directory to their hooks, notifications
+    routed (`TPR9`), logged (`TPG9`) and handed to `hooks.notify`, OSC 52
+    writes and reads under `opts.policy` (`TPR20`, `TPR21`). Call it after
+    `pump`, from the frame — never from inside a hook. The whole-surface
+    `frame` does.
+    */
+    void deliverEvents(H)(ref H h)
+    {
+        import sparkles.base.logger : warning;
+
+        if (!opened)
+            return;
+        auto hooks = &opts.hooks;
+        auto inbox = &s.protocol;
+
+        if (hooks.titleChanged !is null && takeTitleChanged())
+            hooks.titleChanged(title);
+
+        if (inbox.iconDirty)
+        {
+            inbox.iconDirty = false;
+            iconLen = inbox.iconLen;
+            iconBuf[0 .. iconLen] = inbox.icon[0 .. iconLen];
+            if (hooks.iconChanged !is null)
+                hooks.iconChanged(iconBuf[0 .. iconLen]);
+        }
+
+        if (s.effects_ctx.pwdDirty)
+        {
+            s.effects_ctx.pwdDirty = false;
+            if (acceptWorkingDirectory() && hooks.cwdChanged !is null)
+                hooks.cwdChanged(cwd);
+        }
+
+        if (inbox.notifications.length)
+        {
+            foreach (ref n; inbox.notifications[])
+                deliverNotification(n);
+            inbox.notifications.clear(releaseStorage: false);
+        }
+        if (inbox.droppedNotifications)
+        {
+            warning(i"terminal: $(inbox.droppedNotifications) notifications dropped (more than 32 in one frame)");
+            inbox.droppedNotifications = 0;
+        }
+
+        // OSC 52. The payload is never logged (`TPR20`).
+        if (inbox.clipboardOversize)
+        {
+            inbox.clipboardOversize = false;
+            warning(i"terminal: an OSC 52 clipboard write over 1 MiB was ignored");
+        }
+        if (inbox.clipboardWrite)
+        {
+            inbox.clipboardWrite = false;
+            const text = cast(const(char)[]) inbox.clipboard[];
+            if (opts.policy.osc52Write)
+            {
+                if (hooks.clipboardWrite !is null)
+                    hooks.clipboardWrite(text);
+                else static if (__traits(hasMember, H, "clipboard"))
+                    h.clipboard(text);
+            }
+            inbox.clipboard.clear();
+        }
+        if (inbox.clipboardRead)
+        {
+            inbox.clipboardRead = false;
+            readSelectorsLen = inbox.readSelectorsLen;
+            readSelectors[0 .. readSelectorsLen] = inbox.readSelectors[0 .. readSelectorsLen];
+            readEndedWithBel = inbox.readEndedWithBel;
+            final switch (opts.policy.osc52Read)
+            {
+                case ClipboardReadPolicy.deny:
+                    break;
+                case ClipboardReadPolicy.allow:
+                    answerClipboard();
+                    break;
+                case ClipboardReadPolicy.ask:
+                    if (readAlways)
+                        answerClipboard();
+                    else if (hooks.clipboardReadRequest !is null)
+                    {
+                        readPending = true;
+                        hooks.clipboardReadRequest();
+                    }
+                    break;
+            }
+        }
+    }
+
+    /**
+    The embedder's answer to `hooks.clipboardReadRequest` (`TPR21`): deny
+    sends nothing; allowing answers the read with the clipboard's text, and
+    `allowAlways` answers every later read from this pane unasked. Without a
+    read pending, nothing happens.
+    */
+    void answerClipboardRead(ClipboardReadAnswer answer) @system
+    {
+        if (!readPending)
+            return;
+        readPending = false;
+        if (answer == ClipboardReadAnswer.deny)
+            return;
+        if (answer == ClipboardReadAnswer.allowAlways)
+            readAlways = true;
+        answerClipboard();
+    }
+
+    /// Whether an OSC 52 read awaits `answerClipboardRead`.
+    bool clipboardReadPending() const @safe pure nothrow @nogc => readPending;
+
+    // `OSC 52 ; Pc ; base64 ST` — xterm echoes the selection letters it
+    // read from and the query's terminator.
+    private void answerClipboard() @system
+    {
+        import std.array : appender;
+        import sparkles.base.text.base_codecs : encodeBase64;
+
+        if (s.childExited)
+            return;
+        const text = opts.hooks.clipboardText !is null
+            ? opts.hooks.clipboardText() : readClipboard();
+        auto w = appender!(char[]);
+        w.put("\x1b]52;");
+        w.put(readSelectors[0 .. readSelectorsLen]);
+        w.put(';');
+        encodeBase64(w, cast(const(ubyte)[]) text);
+        w.put(readEndedWithBel ? "\x07" : "\x1b\\");
+        pty_write(s.pty_fd, w[].ptr, w[].length);
+    }
+
+    private void deliverNotification(in Notification n) @system
+    {
+        import std.datetime.systime : Clock;
+
+        const route = routeNotification(opts.policy.notifyWhen, paneSeen);
+        const tab = opts.hooks.tabTitle !is null ? opts.hooks.tabTitle() : title;
+        notificationLog.record(NotificationRecord(
+            time: Clock.currTime,
+            tabTitle: tab.idup,
+            paneTitle: title.idup,
+            process: foregroundProcessName(),
+            cwd: cwd.idup,
+            title: n.title.idup,
+            body: n.body.idup,
+            protocol: n.protocol,
+            route: opts.hooks.notify !is null ? route : NotificationRoute.none,
+        ));
+        if (opts.hooks.notify !is null)
+            opts.hooks.notify(n, route);
+    }
+
+    // OSC 7 (`TPR4`): a `file:` URI on this host, or a bare absolute path,
+    // naming a directory that exists. Anything else leaves `cwd` as it was.
+    private bool acceptWorkingDirectory() @system nothrow @nogc
+    {
+        import core.sys.posix.sys.stat : S_ISDIR, stat, stat_t;
+        import core.sys.posix.unistd : gethostname;
+        import sparkles.terminal_view.osc_scan : parseWorkingDirectory;
+
+        if (s.effects_ctx.pwdTooLong)
+            return false;
+        char[256] host = 0;
+        if (gethostname(host.ptr, host.length - 1) != 0)
+            host[0] = 0;
+        size_t hostLen;
+        while (hostLen < host.length && host[hostLen])
+            ++hostLen;
+
+        char[4096] path = 0;
+        const n = parseWorkingDirectory(s.effects_ctx.pwdBuf[0 .. s.effects_ctx.pwdLen],
+            host[0 .. hostLen], path[0 .. $ - 1]);
+        if (n == 0)
+            return false;
+        stat_t st;
+        if (stat(path.ptr, &st) != 0 || !S_ISDIR(st.st_mode))
+            return false;
+        cwdBuf[0 .. n] = path[0 .. n];
+        cwdBuf[n] = 0;
+        cwdLen = n;
+        return true;
+    }
+
+    /**
+    Follows a light/dark switch (`TPR13`, `TPR14`): installs `colors` as
+    the scheme's colours (see $(LREF recolor)) and makes `scheme` the one
+    `CSI ? 996 n` reports. When the scheme changed and the program enabled
+    mode 2031, it is told once, unsolicited: `CSI ? 997 ; 1 n` (dark) or
+    `CSI ? 997 ; 2 n` (light). Calling again with the same scheme recolours
+    without reporting.
+    */
+    void setColorScheme(ColorScheme scheme, in ColorOverrides colors) @system nothrow @nogc
+    {
+        const before = opened ? schemeInEffect(s.terminal, s.effects_ctx)
+            : s.effects_ctx.scheme;
+        recolor(colors);
+        s.effects_ctx.scheme = scheme;
+        s.effects_ctx.schemeSet = true;
+        if (!opened || before == scheme || s.childExited)
+            return;
+        bool report = false;
+        if (ghostty_terminal_mode_get(s.terminal, cast(GhosttyMode) 2031, &report) == GHOSTTY_SUCCESS
+            && report)
+        {
+            static immutable dark = "\x1b[?997;1n", light = "\x1b[?997;2n";
+            const bytes = scheme == ColorScheme.dark ? dark : light;
+            pty_write(s.pty_fd, bytes.ptr, bytes.length);
+        }
+    }
+
+    /// The scheme `CSI ? 996 n` reports now.
+    ColorScheme colorScheme() @system nothrow @nogc
+        => opened ? schemeInEffect(s.terminal, s.effects_ctx) : s.effects_ctx.scheme;
 
     /**
     Resizes the pty and the VT grid to `cols`×`rows` cells — the embedder's
@@ -1514,20 +1944,62 @@ struct TerminalView
     }
 
     /**
-    Writes pasted `text` to the shell the way a terminal does: through
-    libghostty's paste encoder, which replaces unsafe control bytes and —
-    when the program in the pane turned bracketed paste on (DECSET 2004) —
-    wraps it in `CSI 200~` … `CSI 201~`, else turns newlines into carriage
-    returns. A multi-line paste into a shell is then text, not a run of
-    commands.
+    Writes pasted `text` to the shell the way a terminal does (`TPR18`):
+    C0 controls other than HT, LF and CR removed first — so no byte sequence
+    in it can close a bracket (`ESC [ 201 ~` loses its `ESC`) — then
+    libghostty's paste encoder, which wraps it in `CSI 200~` … `CSI 201~`
+    when the program turned bracketed paste on (DECSET 2004), else turns
+    newlines into carriage returns.
+
+    Without bracketed paste, a paste the policy says to confirm (`TPR19`,
+    `opts.policy.pasteConfirm`: a line break by default) is held and
+    `hooks.pasteConfirm` asked; $(LREF confirmPaste) sends or drops it.
     */
     void sendPaste(in char[] text) @system
     {
-        if (text.length == 0)
+        if (text.length == 0 || s.childExited)
             return;
+        auto clean = stripPasteControls(text);
+        if (clean.length == 0)
+            return;
+        if (!bracketedPaste && opts.hooks.pasteConfirm !is null
+            && pasteNeedsConfirm(opts.policy.pasteConfirm, clean))
+        {
+            pendingPaste = clean;
+            pastePending = true;
+            opts.hooks.pasteConfirm(PasteConfirmRequest(pasteLines(clean), clean));
+            return;
+        }
+        writePaste(clean);
+    }
+
+    /// The embedder's answer to `hooks.pasteConfirm`: `send` writes the held
+    /// paste (bracketed if the program has meanwhile enabled it), otherwise
+    /// it is dropped and nothing is sent (`TPR19`).
+    void confirmPaste(bool send) @system
+    {
+        if (!pastePending)
+            return;
+        pastePending = false;
+        auto text = pendingPaste;
+        pendingPaste = null;
+        if (send && !s.childExited)
+            writePaste(text);
+    }
+
+    /// Whether a paste awaits `confirmPaste`.
+    bool pasteConfirmPending() const @safe pure nothrow @nogc => pastePending;
+
+    private bool bracketedPaste() @system nothrow @nogc
+    {
         bool bracketed = false;
         ghostty_terminal_mode_get(s.terminal, cast(GhosttyMode) 2004, &bracketed);
-        const encoded = encodedPaste(text, bracketed);
+        return bracketed;
+    }
+
+    private void writePaste(in char[] clean) @system
+    {
+        const encoded = encodedPaste(clean, bracketedPaste);
         if (encoded.length)
             pty_write(s.pty_fd, encoded.ptr, encoded.length);
     }
@@ -1722,6 +2194,149 @@ char[] encodedPaste(in char[] text, bool bracketed) @trusted
     return encoded[0 .. written];
 }
 
+/**
+A pure text event — text no key produced — under kitty flags `flags`
+(`TPR17`): "If no known key is associated with the text the key number 0
+must be used", so with report-all-keys (`0b1000`) it is `CSI 0 u`, its code
+points appended as the third field when associated text (`0b10000`) is on;
+without report-all-keys, the text itself. The same shapes as kitty's own
+encoder (`key_encoding.c`, `serialize`). libghostty's key encoder emits
+nothing for a key-less event, hence this.
+*/
+const(char)[] kittyTextEvent(scope const(char)[] text, ubyte flags, return scope char[] buf)
+    @safe pure nothrow @nogc
+{
+    import sparkles.base.text.utf8 : utf8SequenceLength;
+
+    if (!(flags & 8))
+    {
+        const n = text.length <= buf.length ? text.length : buf.length;
+        buf[0 .. n] = text[0 .. n];
+        return buf[0 .. n];
+    }
+    size_t len;
+    void put(scope const(char)[] s)
+    {
+        foreach (ch; s)
+            if (len < buf.length)
+                buf[len++] = ch;
+    }
+    void putNumber(uint v)
+    {
+        char[10] d;
+        size_t i = d.length;
+        do
+        {
+            d[--i] = cast(char)('0' + v % 10);
+            v /= 10;
+        }
+        while (v);
+        put(d[i .. $]);
+    }
+
+    put("\x1b[0");
+    if (flags & 16)
+    {
+        put(";;");
+        bool first = true;
+        for (size_t i = 0; i < text.length;)
+        {
+            uint cp = text[i];
+            size_t n = 1;
+            if (cp >= 0x80)
+            {
+                n = utf8SequenceLength(text, i);
+                if (n == 0)
+                {
+                    ++i;
+                    continue;
+                }
+                cp &= n == 2 ? 0x1F : n == 3 ? 0x0F : 0x07;
+                foreach (b; text[i + 1 .. i + n])
+                    cp = (cp << 6) | (b & 0x3F);
+            }
+            i += n;
+            if (cp < 0x20 || (cp >= 0x7F && cp <= 0x9F))
+                continue; // "must not contain control codes"
+            if (!first)
+                put(":");
+            first = false;
+            putNumber(cp);
+        }
+    }
+    put("u");
+    return buf[0 .. len];
+}
+
+///
+@("terminal_view.component.kittyTextEvent")
+@safe pure nothrow @nogc unittest
+{
+    char[64] b;
+    // kitty keyboard-protocol.rst: `alt+a -> CSI 0 ; ; 229 u` (text 'å').
+    assert(kittyTextEvent("å", 8 | 16, b) == "\x1b[0;;229u");
+    assert(kittyTextEvent("👍🏽", 8 | 16, b) == "\x1b[0;;128077:127997u");
+    assert(kittyTextEvent("©", 8, b) == "\x1b[0u");
+    assert(kittyTextEvent("©", 1 | 2, b) == "©");
+}
+
+/// `text` without the C0 controls a paste may not carry (`TPR18`): all but
+/// HT, LF and CR.
+char[] stripPasteControls(in char[] text) @safe pure nothrow
+{
+    char[] clean;
+    clean.reserve(text.length);
+    foreach (c; text)
+        if (c >= 0x20 || c == '\t' || c == '\n' || c == '\r')
+            clean ~= c;
+    return clean;
+}
+
+/// The lines a paste spans: its line breaks (CR LF counts once), plus the
+/// unterminated last line if any.
+size_t pasteLines(in char[] text) @safe pure nothrow @nogc
+{
+    size_t lines;
+    foreach (i, c; text)
+        if (c == '\n' || (c == '\r' && (i + 1 == text.length || text[i + 1] != '\n')))
+            ++lines;
+    const last = text.length ? text[$ - 1] : '\n';
+    return lines + (last != '\n' && last != '\r' ? 1 : 0);
+}
+
+/// Whether `policy` asks before sending `text` without bracketed paste.
+bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @nogc
+{
+    final switch (policy)
+    {
+        case PasteConfirm.never:
+            return false;
+        case PasteConfirm.always:
+            return true;
+        case PasteConfirm.multiline:
+            foreach (c; text)
+                if (c == '\n' || c == '\r')
+                    return true;
+            return false;
+    }
+}
+
+///
+@("terminal_view.component.pasteHelpers")
+@safe pure nothrow unittest
+{
+    assert(stripPasteControls("a\x1b[201~b\x00\x07\tc\r\nd\x7f") == "a[201~b\tc\r\nd\x7f");
+    assert(pasteLines("one") == 1);
+    assert(pasteLines("one\n") == 1);
+    assert(pasteLines("one\r\ntwo") == 2);
+    assert(pasteLines("a\rb\nc\n") == 3);
+    assert(pasteLines("") == 0);
+    assert(pasteNeedsConfirm(PasteConfirm.multiline, "a\nb"));
+    assert(!pasteNeedsConfirm(PasteConfirm.multiline, "ab"));
+    assert(pasteNeedsConfirm(PasteConfirm.always, "ab"));
+    assert(!pasteNeedsConfirm(PasteConfirm.never, "a\nb"));
+}
+
 @("terminal_view.component.pasteIsTextForTheShell")
 @safe unittest
 {
@@ -1776,18 +2391,17 @@ char[] encodedPaste(in char[] text, bool bracketed) @trusted
 @system unittest
 {
     import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
-    import core.sys.posix.stdlib : grantpt, posix_openpt, ptsname, unlockpt;
     import core.sys.posix.unistd : close, write;
     import core.thread : Thread;
     import core.time : msecs;
     import std.algorithm.searching : canFind;
+    import sparkles.terminal_view.protocol_oracle : openTestPty;
 
     // What an in-process program (Android's installer) looks like to the
     // component: a pty whose slave some thread of ours holds — no child.
-    const master = posix_openpt(O_RDWR | O_NOCTTY);
-    assert(master >= 0);
-    assert(grantpt(master) == 0 && unlockpt(master) == 0);
-    const slave = open(ptsname(master), O_RDWR | O_NOCTTY);
+    char[128] slavePath = 0;
+    const master = openTestPty(slavePath);
+    const slave = open(slavePath.ptr, O_RDWR | O_NOCTTY);
     assert(slave >= 0);
 
     TerminalView tv;

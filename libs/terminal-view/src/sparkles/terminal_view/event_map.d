@@ -107,6 +107,97 @@ KeyEvent withKeyIdentity(in KeyEvent k)
     return patched;
 }
 
+/**
+Is `k` text that no key produced — a soft keyboard's commit, an IME or
+compose result, a terminal decoder's bare character? Such an event names no
+physical key (`unshifted` 0) and carries no ctrl/alt chord.
+*/
+@safe pure nothrow @nogc
+bool isDetachedText(in KeyEvent k)
+    => k.key == Key.char_ && k.unshifted == 0 && k.action == KeyAction.press
+    && !k.mods.ctrl && !k.mods.alt && (k.ch != 0 || k.text.length != 0);
+
+/**
+The key a US layout types `c` with (`TPR17`, `D23`): the press of that key —
+`Key.char_` with its unshifted code point, shift added where the layout
+needs it, `c` as its text — or Enter/Tab/Backspace for their controls.
+`false` when no key on the layout produces `c` (`©`, emoji): such text is
+sent as associated text instead.
+*/
+@safe pure nothrow @nogc
+bool softKeyPress(dchar c, out KeyEvent press)
+{
+    static immutable string shiftedDigits = ")!@#$%^&*(";
+    static immutable string plainPunct = " -=[]\\;',./`";
+    static immutable string shiftedPunct = " _+{}|:\"<>?~";
+
+    Key key = Key.char_;
+    dchar base = 0;
+    bool shift;
+    if (c == '\r' || c == '\n')
+        key = Key.enter;
+    else if (c == '\t')
+        key = Key.tab;
+    else if (c == 0x7F || c == 0x08)
+        key = Key.backspace;
+    else if (c >= 'a' && c <= 'z')
+        base = c;
+    else if (c >= 'A' && c <= 'Z')
+    {
+        base = c - 'A' + 'a';
+        shift = true;
+    }
+    else if (c >= '0' && c <= '9')
+        base = c;
+    else
+    {
+        foreach (i, s; shiftedDigits)
+            if (s == c)
+            {
+                base = cast(dchar)('0' + i);
+                shift = true;
+            }
+        foreach (i, s; plainPunct)
+            if (s == c)
+                base = c;
+        foreach (i, s; shiftedPunct)
+            if (s == c && i > 0)
+            {
+                base = plainPunct[i];
+                shift = true;
+            }
+        if (base == 0)
+            return false;
+    }
+    press = KeyEvent(key: key, ch: key == Key.char_ ? c : 0, mods: Mods(shift: shift),
+        action: KeyAction.press, unshifted: base);
+    if (key == Key.char_)
+    {
+        char[4] ub = void;
+        press.text(ub[0 .. utf8Of(ub, c)]);
+    }
+    return true;
+}
+
+///
+@("terminal_view.event_map.softKeyPress.usLayout")
+@safe pure nothrow @nogc unittest
+{
+    KeyEvent k;
+    assert(softKeyPress('a', k) && k.unshifted == 'a' && !k.mods.shift && k.text == "a");
+    assert(softKeyPress('A', k) && k.unshifted == 'a' && k.mods.shift && k.text == "A");
+    assert(softKeyPress('!', k) && k.unshifted == '1' && k.mods.shift);
+    assert(softKeyPress(')', k) && k.unshifted == '0' && k.mods.shift);
+    assert(softKeyPress('_', k) && k.unshifted == '-' && k.mods.shift);
+    assert(softKeyPress('~', k) && k.unshifted == '`' && k.mods.shift);
+    assert(softKeyPress('/', k) && k.unshifted == '/' && !k.mods.shift);
+    assert(softKeyPress(' ', k) && k.unshifted == ' ' && !k.mods.shift);
+    assert(softKeyPress('\n', k) && k.key == Key.enter);
+    assert(softKeyPress('\t', k) && k.key == Key.tab);
+    assert(!softKeyPress('©', k));
+    assert(!softKeyPress('é', k));
+}
+
 /// Encodes `c` as UTF-8 into `buf`, returning the byte count — `0` for a
 /// surrogate or out-of-range scalar. `@nogc` by construction, unlike
 /// `std.utf.encode`, which throws.

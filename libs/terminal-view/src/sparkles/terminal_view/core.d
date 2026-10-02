@@ -19,6 +19,8 @@ import sparkles.terminal_view.input : ExitBehavior, SelectionState,
     OverlayScrollbar, HoverState;
 import sparkles.terminal_view.kitty_images : KittyImageRenderer;
 import sparkles.terminal_view.osc_query : OscScanner;
+import sparkles.terminal_view.osc_scan : maxTitleBytes;
+import sparkles.terminal_view.protocols : ColorScheme, ProtocolInbox;
 import sparkles.terminal_view.synchronized_output : SynchronizedOutput;
 
 // Context threaded to every terminal effect callback via the userdata pointer
@@ -34,12 +36,25 @@ struct EffectsContext
 
     // OSC 0/2 title, captured rather than applied: the effect fires inside
     // vt_write, where the owner (a window title? an embedder's tab label?)
-    // is not this layer's to know. NUL-terminated for SetWindowTitle;
-    // truncating at the buffer. Multiple changes in one chunk coalesce to
-    // the last — whoever consumes titleDirty sees only the newest.
-    char[256] titleBuf = '\0';
+    // is not this layer's to know. Sanitized and capped (`TPR2`), then
+    // NUL-terminated for SetWindowTitle. Multiple changes in one chunk
+    // coalesce to the last — whoever consumes titleDirty sees only the newest.
+    char[maxTitleBytes + 1] titleBuf = '\0';
     size_t titleLen;
     bool titleDirty;
+
+    // OSC 7 (and ConEmu's/iTerm2's bare-path forms), raw as the engine
+    // stores it; `pwdTooLong` marks a value that did not fit, which is
+    // ignored rather than truncated into a different path.
+    char[4096] pwdBuf = '\0';
+    size_t pwdLen;
+    bool pwdDirty;
+    bool pwdTooLong;
+
+    // The light/dark scheme `CSI ? 996 n` reports (`TPR14`): the embedder's
+    // when it set one, else the default background's lightness.
+    ColorScheme scheme;
+    bool schemeSet;
 }
 
 // Device-attribute constants from <ghostty/vt/device.h>. They are C #defines,
@@ -116,20 +131,66 @@ void effect_title_changed(GhosttyTerminal terminal, void* userdata)
     if (ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_TITLE, &title) != GHOSTTY_SUCCESS)
         return;
 
-    import core.stdc.string : memcpy;
+    import sparkles.terminal_view.osc_scan : sanitizeTitle;
+
     auto ctx = cast(EffectsContext*) userdata;
-    size_t n = title.len < ctx.titleBuf.length - 1 ? title.len : ctx.titleBuf.length - 1;
-    if (n > 0) memcpy(ctx.titleBuf.ptr, title.ptr, n);
+    const raw = title.ptr is null ? null : (cast(const(char)*) title.ptr)[0 .. title.len];
+    const n = sanitizeTitle(raw, ctx.titleBuf[0 .. maxTitleBytes]);
     ctx.titleBuf[n] = '\0';
     ctx.titleLen = n;
     ctx.titleDirty = true;
 }
 
-// color_scheme: raylib can't query the OS scheme, so ignore the query.
+// pwd_changed: captures the raw OSC 7 value; the component validates it
+// (local host, existing directory — `TPR4`) at frame time.
+extern(C) nothrow @nogc
+void effect_pwd_changed(GhosttyTerminal terminal, void* userdata)
+{
+    GhosttyString pwd;
+    if (ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_PWD, &pwd) != GHOSTTY_SUCCESS)
+        return;
+    auto ctx = cast(EffectsContext*) userdata;
+    ctx.pwdTooLong = pwd.len > ctx.pwdBuf.length;
+    ctx.pwdLen = ctx.pwdTooLong ? 0 : pwd.len;
+    if (ctx.pwdLen)
+        ctx.pwdBuf[0 .. ctx.pwdLen] = (cast(const(char)*) pwd.ptr)[0 .. ctx.pwdLen];
+    ctx.pwdDirty = true;
+}
+
+// color_scheme: answers `CSI ? 996 n` (`TPR14`) from the scheme the embedder
+// set, else from the default background — what the pane shows.
 extern(C) nothrow @nogc
 bool effect_color_scheme(GhosttyTerminal terminal, void* userdata, GhosttyColorScheme* out_scheme)
 {
-    return false;
+    auto ctx = cast(EffectsContext*) userdata;
+    *out_scheme = schemeInEffect(terminal, *ctx) == ColorScheme.dark
+        ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT;
+    return true;
+}
+
+/// The scheme a pane reports: the one set, else its default background's.
+@system nothrow @nogc
+ColorScheme schemeInEffect(GhosttyTerminal terminal, in EffectsContext ctx)
+{
+    if (ctx.schemeSet)
+        return ctx.scheme;
+    GhosttyColorRgb bg;
+    if (ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND, &bg) != GHOSTTY_SUCCESS)
+        return ColorScheme.dark;
+    return schemeOfBackground(bg.r, bg.g, bg.b);
+}
+
+/// A background is light when its relative luminance (Rec. 709) exceeds ½.
+ColorScheme schemeOfBackground(ubyte r, ubyte g, ubyte b) @safe pure nothrow @nogc
+    => 2126 * r + 7152 * g + 722 * b > 10_000 * 255 / 2 ? ColorScheme.light : ColorScheme.dark;
+
+@("terminal_view.core.schemeOfBackground")
+@safe pure nothrow @nogc unittest
+{
+    assert(schemeOfBackground(0, 0, 0) == ColorScheme.dark);
+    assert(schemeOfBackground(0x28, 0x2c, 0x34) == ColorScheme.dark);
+    assert(schemeOfBackground(255, 255, 255) == ColorScheme.light);
+    assert(schemeOfBackground(0xfd, 0xf6, 0xe3) == ColorScheme.light); // solarized light
 }
 
 // bell: BEL (0x07) — trigger a brief screen flash as a visual bell.
@@ -472,6 +533,9 @@ struct CoreState
     // Streaming OSC scanner answering palette/default color queries (see
     // feedPtyChunk); persists across pty read chunks.
     OscScanner oscScan;
+    // What the OSC traffic asked of the host (icons, notifications, OSC 52),
+    // recorded by the feed and delivered at frame time (`TPR`).
+    ProtocolInbox protocol;
     SynchronizedOutput synchronizedOutput;
 
     // The emulator's own overlay scrollbar (mouse-driven). The standalone
@@ -618,6 +682,12 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
                 else
                     foreach (code; codes[])
                         replyColorQuery(s, code);
+            }
+            if (oscBoundary)
+            {
+                import sparkles.terminal_view.protocols : observeOsc;
+
+                observeOsc(s.protocol, s.oscScan, s.pty_fd);
             }
         }
     }
