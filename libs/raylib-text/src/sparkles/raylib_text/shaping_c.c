@@ -2,8 +2,10 @@
 #undef _FORTIFY_SOURCE
 #define _FORTIFY_SOURCE 0
 
-#pragma attribute(push, nogc, nothrow)
+// Match shaping_api.h and Ghostty's unannotated system callback types.
 #include <stdint.h>
+
+#pragma attribute(push, nogc, nothrow)
 #include <stddef.h>
 #include <stdlib.h>
 #include <limits.h>

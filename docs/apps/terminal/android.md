@@ -28,6 +28,17 @@ published build comes from Linux: the two hosts' APKs behave the same but are
 not byte-identical, and reproducible builds compare bytes. Devices need
 Android 10 (API 29) or newer.
 
+Validate the complete Android CI build, including APK assets and licenses:
+
+```bash
+nix build --print-build-logs .#all-android
+```
+
+Building only `.#libterminal-android` checks the native library, not APK
+packaging. The terminal and hue asset builders merge font and native-library
+licenses; their copied Nix-store license directory must be made writable before
+adding the native-library notices.
+
 ### On the emulator
 
 The Android dev shell's `hue-emulator` boots an emulator in the host's own

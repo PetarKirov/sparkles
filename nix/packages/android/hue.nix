@@ -88,11 +88,8 @@ in
         "Have_during"
       ];
 
-      # The app closure + libs/android/c, which `sourceFor` turns into this
-      # derivation's src. The JNI ImportC shim (jni_c.c) lives there rather
-      # than under libs/android/src precisely so dub never scans it — a
-      # desktop host has no NDK <jni.h> — and it is passed to ldc2 by explicit
-      # path below.
+      # Raw ldc2 -i follows imports, but cannot discover unimported C bodies.
+      # The JNI shim additionally lives outside the normal app source closure.
       srcDirs = sources.srcClosure "apps/hue" ++ [ "libs/android/c" ];
 
       libhue = config.legacyPackages.buildDAndroidLib {
@@ -100,6 +97,11 @@ in
         libName = "hue";
         mainFile = "apps/hue/src/app.d";
         inherit srcDirs versions dubDeps;
+        cFiles = [
+          "libs/android/c/jni_c.c"
+          "libs/ghostty/src/sparkles/ghostty/ghostty_modes.c"
+          "libs/raylib-text/src/sparkles/raylib_text/shaping_c.c"
+        ];
         stringImportDirs = [
           "apps/hue/src"
           "libs/twoslash/src/sparkles/twoslash/views"
@@ -256,6 +258,8 @@ in
             # copy, not a second recipe to keep in sync.
             cp -rL ${fonts.fontBundle}/fonts $out/fonts
             cp -rL ${fonts.fontBundle}/licenses $out/licenses
+            # The copied Nix-store directory is read-only; allow sibling licenses.
+            chmod u+w $out/licenses
             cp -r ${config.packages.freetype-android}/share/licenses/* $out/licenses/
             cp -r ${config.packages.harfbuzz-android}/share/licenses/* $out/licenses/
 

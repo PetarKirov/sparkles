@@ -45,8 +45,8 @@ in
           # registry zip (a flake input).
           dubDeps ? [ ],
           stringImportDirs ? [ ],
-          # C files compiled through ImportC (the JNI shim, sparkles:ghostty's
-          # `c.c` wrapper is reached by -i).
+          # C files compiled through ImportC. List implementation files
+          # explicitly: -i reaches declarations but not unimported bodies.
           cFiles ? [ "libs/android/c/jni_c.c" ],
           # Extra ImportC include dirs (store paths).
           cIncludes ? [ ],
