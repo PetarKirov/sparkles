@@ -46,7 +46,9 @@ import sparkles.ui.effect : applyThemeEffects, Builtin, EffectBinding,
     EffectParam, EffectRegistry, ThemeEffects;
 import sparkles.ui.image : ImageRegistry;
 import state;
-import term_store : TerminalStore;
+import sparkles.terminal_view.component : TerminalViewOptions;
+import sparkles.terminal_view.input : ExitBehavior;
+import sparkles.terminal_view.pool : TerminalPool;
 
 // No module-level `@safe:` here, deliberately. `view` and `handle` are member
 // templates instantiated against every host, and the GPU host's `size` and
@@ -135,7 +137,8 @@ struct Gallery
 
     /// The Terminal page's live instances — non-copyable, pointer-pinned, so
     /// they cannot live inside the state value. Keyed by tab id.
-    TerminalStore store;
+    /// The tabs' instances, keyed by the tab's minted id.
+    TerminalPool!maxTerms store;
 
     /// Reap children and release pane textures before the host closes its window.
     void shutdown(H)(ref H h) @trusted
@@ -992,7 +995,10 @@ struct Gallery
         const id = s.terms.spawn();
         if (id == 0)
             return;
-        auto tv = store.create(id);
+        // `hold`: the component must never quit the gallery — the exit policy
+        // (and its toggle) is the tab model's; the gallery draws its own bar.
+        auto tv = store.create(id, TerminalViewOptions(exitBehavior: ExitBehavior.hold,
+            internalScrollbar: false));
         if (tv is null)
         {
             s.terms.close(s.terms.active);

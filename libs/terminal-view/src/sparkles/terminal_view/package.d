@@ -21,6 +21,7 @@ public import sparkles.terminal_view.log;
 public import sparkles.terminal_view.notification_log;
 public import sparkles.terminal_view.osc_query;
 public import sparkles.terminal_view.osc_scan;
+public import sparkles.terminal_view.pool;
 public import sparkles.terminal_view.posix_util;
 public import sparkles.terminal_view.process_info;
 public import sparkles.terminal_view.protocols;
