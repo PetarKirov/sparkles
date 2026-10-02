@@ -17,6 +17,7 @@ in
   perSystem =
     {
       config,
+      inputs',
       pkgs,
       system,
       ...
@@ -95,6 +96,7 @@ in
             "${config.legacyPackages.mkBuildStamp {
               version = "0.1.0";
               withCommit = release;
+              components."libghostty-vt" = inputs'.ghostty.packages.libghostty-vt.version;
             }}"
           ];
           cIncludes = [

@@ -170,17 +170,22 @@
       # Only a release build (`withCommit`) records the commit — and then a
       # tree with uncommitted changes is stamped `<rev>-dirty`, never as its
       # last commit. Every other build carries the version alone, so it stays
-      # cached across commits that do not touch its sources.
+      # cached across commits that do not touch its sources. `components`
+      # names the versions of what it links in (an about page lists them,
+      # `TPG1`), as `component.<name>=<version>` lines.
       legacyPackages.mkBuildStamp =
         {
           version,
           withCommit ? false,
+          components ? { },
         }:
         let
           rev = if withCommit then inputs.self.shortRev or inputs.self.dirtyShortRev or null else null;
         in
         pkgs.writeTextDir "sparkles-build-stamp" (
-          "version=${version}\n" + lib.optionalString (rev != null) "commit=${rev}\n"
+          "version=${version}\n"
+          + lib.optionalString (rev != null) "commit=${rev}\n"
+          + lib.concatStrings (lib.mapAttrsToList (n: v: "component.${n}=${v}\n") components)
         );
 
       legacyPackages.buildSparklesApp = lib.extendMkDerivation {

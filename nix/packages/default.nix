@@ -200,7 +200,10 @@
           chmod -R u+w "$NIX_BUILD_TOP"
           mkdir -p views
           cp ${
-            config.legacyPackages.mkBuildStamp { inherit (finalAttrs) version; }
+            config.legacyPackages.mkBuildStamp {
+              inherit (finalAttrs) version;
+              components."libghostty-vt" = inputs'.ghostty.packages.libghostty-vt.version;
+            }
           }/sparkles-build-stamp views/
         '';
 

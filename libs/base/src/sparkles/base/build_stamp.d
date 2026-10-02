@@ -17,6 +17,8 @@ $(UL
     $(LI `version=0.1.0`)
     $(LI `commit=4f2c1aa` — or `4f2c1aa-dirty` for a tree with uncommitted
         changes, which is then never reported as that commit)
+    $(LI `component.libghostty-vt=0.1.0-dev+4749c4e` — the version of a
+        component the build linked in, one line each)
 )
 */
 module sparkles.base.build_stamp;
@@ -35,6 +37,27 @@ struct BuildStamp
 
     /// Whether the tree had uncommitted changes on top of `commit`.
     bool dirty;
+
+    /// The versions of the components the build linked in, as it named them
+    /// (`component.<name>=<version>` lines): what an about page lists.
+    Component[] components;
+
+    /// One linked component and its version.
+    static struct Component
+    {
+        string name;
+        string version_;
+    }
+
+    /// The version the build gave for component `name`; `null` when it gave
+    /// none (a plain `dub build`).
+    string componentVersion(scope const(char)[] name) const @safe pure nothrow @nogc
+    {
+        foreach (ref c; components)
+            if (c.name == name)
+                return c.version_;
+        return null;
+    }
 
     /// `true` when a packaging build stamped this binary.
     bool stamped() const @safe pure nothrow @nogc => commit.length != 0 || version_ != "dev";
@@ -56,10 +79,11 @@ an older reader accepts a newer stamp.
 BuildStamp parseBuildStamp(string text) @safe pure
 {
     import std.algorithm.iteration : splitter;
-    import std.algorithm.searching : endsWith, findSplit;
+    import std.algorithm.searching : endsWith, findSplit, startsWith;
     import std.string : strip;
 
     enum dirtySuffix = "-dirty";
+    enum componentPrefix = "component.";
 
     BuildStamp s;
     foreach (line; text.splitter('\n'))
@@ -76,6 +100,9 @@ BuildStamp parseBuildStamp(string text) @safe pure
             s.dirty = value.endsWith(dirtySuffix);
             s.commit = s.dirty ? value[0 .. $ - dirtySuffix.length] : value;
         }
+        else if (key.startsWith(componentPrefix) && key.length > componentPrefix.length
+            && value.length)
+            s.components ~= BuildStamp.Component(key[componentPrefix.length .. $], value);
     }
     return s;
 }
@@ -93,6 +120,17 @@ BuildStamp parseBuildStamp(string text) @safe pure
     const dirty = parseBuildStamp("version=0.1.0\ncommit=4f2c1aa-dirty\n");
     assert(dirty.commit == "4f2c1aa" && dirty.dirty);
     assert(dirty.commitLabel == "4f2c1aa + uncommitted changes");
+}
+
+///
+@("build_stamp.parseBuildStamp.components")
+@safe pure unittest
+{
+    const s = parseBuildStamp("version=0.1.0\ncomponent.libghostty-vt=0.1.0-dev+4749c4e\n"
+        ~ "component.=nameless\ncomponent.raylib=\n");
+    assert(s.componentVersion("libghostty-vt") == "0.1.0-dev+4749c4e");
+    assert(s.components.length == 1, "a nameless or versionless line is ignored");
+    assert(s.componentVersion("raylib") is null);
 }
 
 @("build_stamp.parseBuildStamp.unstampedIsDev")
