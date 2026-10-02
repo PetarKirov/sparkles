@@ -2168,7 +2168,7 @@ unittest
 @system
 unittest
 {
-    import core.stdc.errno : EACCES, ENOEXEC, ENOENT;
+    import core.stdc.errno : EACCES, ENOEXEC, ENOENT, errno;
     import core.sys.posix.sys.stat : chmod;
     import core.sys.posix.unistd : getpid;
     import std.conv : text;
@@ -2192,9 +2192,12 @@ unittest
     const execProbe = tmp.writeFileAt("exec/ehprobe", "#!/bin/sh\nprintf right\n");
     const garbageProbe =
         tmp.writeFileAt("garbage/ehprobe", "\x00\x01\x02not-an-executable");
-    cast(void) chmod(unexecProbe.toStringz, 420 /* 0o644 */);
-    cast(void) chmod(execProbe.toStringz, 493 /* 0o755 */);
-    cast(void) chmod(garbageProbe.toStringz, 493 /* 0o755 */);
+    assert(chmod(unexecProbe.toStringz, 420 /* 0o644 */) == 0,
+        text("chmod nonexecutable fixture failed: errno=", errno));
+    assert(chmod(execProbe.toStringz, 493 /* 0o755 */) == 0,
+        text("chmod executable fixture failed: errno=", errno));
+    assert(chmod(garbageProbe.toStringz, 493 /* 0o755 */) == 0,
+        text("chmod unrecognised fixture failed: errno=", errno));
 
     auto r = s.run(() {
         // EACCES is sticky: a later miss does not downgrade it to ENOENT.
@@ -2203,13 +2206,19 @@ unittest
             ["PATH=" ~ unexec ~ ":/definitely/not/here"]);
         auto denied = capture(s, ["ehprobe"], sticky);
         assert(denied.hasError && denied.error.errnoValue == EACCES,
-            "the unexecutable match is reported, not hidden as ENOENT");
+            denied.hasError
+                ? text("unexecutable PATH match: errno=", denied.error.errnoValue,
+                    " ", denied.error.context)
+                : "spawned the nonexecutable fixture");
 
         // …but EACCES does not stop the search: a later executable wins.
         ProcessConfig later;
         later.env = cast(const(char[])[])(["PATH=" ~ unexec ~ ":" ~ exec]);
         auto found = capture(s, ["ehprobe"], later);
-        assert(found.hasValue, found.hasError ? found.error.context : "");
+        assert(found.hasValue, found.hasError
+            ? text("later executable PATH match: errno=", found.error.errnoValue,
+                " ", found.error.context, " candidate=", execProbe)
+            : "");
         assert(found.value.stdout_[] == cast(const(ubyte)[]) "right");
 
         // A miss everywhere is ENOENT.

@@ -29,6 +29,11 @@ used from the test's own thread — and `create` itself is safe to call
 concurrently. Sharing a single instance across threads needs the caller's own
 synchronization.
 
+On POSIX, fixture writers are close-on-exec from the instant they open.
+An unrelated child executing concurrently cannot retain a writer after its
+exec and keep an executable fixture `ETXTBSY` after the parent's write has
+completed. This applies to both `writeFile` and `writeFileAt`.
+
 Removal is best effort and never throws. A destructor that throws during
 unwinding replaces the assertion that actually failed with a cleanup error,
 and on Windows that is not hypothetical — git leaves read-only objects behind
@@ -36,7 +41,7 @@ that make recursive removal fail.
 */
 struct TmpFS
 {
-    import std.file : mkdirRecurse, tempDir, remove, writeFile = write;
+    import std.file : mkdirRecurse, tempDir, remove;
     import std.path : buildPath;
 
     enum uuid = 0;
@@ -155,7 +160,7 @@ struct TmpFS
 
         string end = suffix == uuid ? randomUUID.toString() : suffix.to!string;
         const filepath = buildPath(root, "tmpfs-file#" ~ end);
-        writeFile(filepath, contents);
+        writeContents(filepath, contents);
         this.files ~= filepath;
         return filepath;
     }
@@ -268,9 +273,85 @@ struct TmpFS
 
         const filepath = buildPath(root, relativePath);
         mkdirRecurse(filepath.dirName);
-        writeFile(filepath, contents);
+        writeContents(filepath, contents);
         this.files ~= filepath;
         return filepath;
+    }
+
+    private static void writeContents(string path, string contents) @safe
+    {
+        version (Posix)
+        {
+            import core.stdc.errno : EINTR, EIO, errno;
+            import core.sys.posix.fcntl : O_CREAT, O_TRUNC, O_WRONLY, open;
+            import core.sys.posix.unistd : close, write;
+            import std.algorithm.comparison : min;
+            import std.file : FileException;
+            import std.string : toStringz;
+
+            // druntime omits these platforms' O_CLOEXEC definitions. Darwin
+            // follows the same SDK constant as test_runner.cache_regime.
+            version (OSX)
+                enum closeOnExec = 0x0100_0000;
+            else version (iOS)
+                enum closeOnExec = 0x0100_0000;
+            else version (TVOS)
+                enum closeOnExec = 0x0100_0000;
+            else version (WatchOS)
+                enum closeOnExec = 0x0100_0000;
+            else version (FreeBSD)
+                // https://github.com/freebsd/freebsd-src/blob/main/sys/sys/fcntl.h
+                enum closeOnExec = 0x0010_0000;
+            else version (NetBSD)
+                // https://github.com/NetBSD/src/blob/trunk/sys/sys/fcntl.h
+                enum closeOnExec = 0x0040_0000;
+            else version (Solaris)
+                // https://github.com/illumos/illumos-gate/blob/master/usr/src/uts/common/sys/fcntl.h
+                enum closeOnExec = 0x0080_0000;
+            else
+            {
+                import core.sys.posix.fcntl : O_CLOEXEC;
+
+                enum closeOnExec = O_CLOEXEC;
+            }
+
+            // Setting FD_CLOEXEC afterwards still races a concurrent spawn.
+            // An inherited writer can keep an executable fixture ETXTBSY
+            // even after this function has closed its own descriptor.
+            const pathz = path.toStringz;
+            int fd = (() @trusted => open(pathz,
+                O_CREAT | O_WRONLY | O_TRUNC | closeOnExec, 438 /* 0o666 */))();
+            if (fd < 0)
+                throw new FileException(path, errno);
+            scope (exit) if (fd >= 0) (() @trusted => close(fd))();
+
+            size_t offset;
+            while (offset < contents.length)
+            {
+                const count = min(contents.length - offset, cast(size_t) 1 << 30);
+                const written = (() @trusted =>
+                    write(fd, contents.ptr + offset, count))();
+                if (written < 0)
+                {
+                    if (errno == EINTR)
+                        continue;
+                    throw new FileException(path, errno);
+                }
+                if (written == 0)
+                    throw new FileException(path, EIO);
+                offset += written;
+            }
+            const rc = (() @trusted => close(fd))();
+            fd = -1;
+            if (rc != 0)
+                throw new FileException(path, errno);
+        }
+        else
+        {
+            import std.file : write;
+
+            write(path, contents);
+        }
     }
 }
 
@@ -459,4 +540,128 @@ unittest
 
     auto tmp = TmpFS.create();
     assertThrown!AssertError(TmpFS.share(buildPath(tmp.dir(), "absent")));
+}
+
+version (linux)
+{
+    @("testUtils.tmpFS.writerDoesNotLeakIntoConcurrentExec")
+    @system unittest
+    {
+        import core.stdc.errno : EAGAIN, EINTR, errno;
+        import core.sys.linux.sys.eventfd : EFD_CLOEXEC, eventfd;
+        import core.sys.posix.fcntl : O_CLOEXEC, O_NONBLOCK, O_RDONLY, fcntl, open;
+        import core.sys.posix.poll : POLLHUP, POLLIN, poll, pollfd;
+        import core.sys.posix.sys.stat : mkfifo;
+        import core.sys.posix.unistd : close, read, write;
+        import core.thread : Thread;
+        import std.algorithm.comparison : min;
+        import std.array : replicate;
+        import std.path : buildPath;
+        import std.process : Config, execute;
+        import std.string : toStringz;
+
+        auto tmp = TmpFS.create("fixture-writer-inheritance");
+        const fifo = buildPath(tmp.dir, "held-writer");
+        assert(mkfifo(fifo.toStringz, 384 /* 0o600 */) == 0);
+        const reader = open(fifo.toStringz, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+        assert(reader >= 0);
+        scope (exit) close(reader);
+        const finished = eventfd(0, EFD_CLOEXEC);
+        assert(finished >= 0);
+        scope (exit) close(finished);
+
+        // Linux's F_GETPIPE_SZ is not declared by druntime. Twice the actual
+        // capacity blocks the writer until we drain it: no sleeps or races
+        // are needed to keep a real writeFileAt descriptor open during exec.
+        enum F_GETPIPE_SZ = 1032;
+        const capacity = fcntl(reader, F_GETPIPE_SZ);
+        assert(capacity > 0);
+        immutable contents = "x".replicate(2 * cast(size_t) capacity);
+
+        Throwable writerFailure;
+        auto writer = new Thread(() {
+            scope (exit)
+            {
+                ulong one = 1;
+                ptrdiff_t sent;
+                do sent = write(finished, &one, one.sizeof);
+                while (sent < 0 && errno == EINTR);
+                assert(sent == one.sizeof);
+            }
+            try tmp.writeFileAt("held-writer", contents);
+            catch (Throwable failure) writerFailure = failure;
+        });
+        bool awaitWriterData()
+        {
+            pollfd[2] ready = [
+                pollfd(reader, POLLIN, 0), pollfd(finished, POLLIN, 0)];
+            int rc;
+            do rc = poll(ready.ptr, ready.length, -1);
+            while (rc < 0 && errno == EINTR);
+            assert(rc > 0);
+            if (ready[0].revents & POLLIN)
+                return true;
+            if (ready[1].revents & POLLIN)
+                return false;
+            // The writer may close the FIFO before recording its path and
+            // signalling completion. Wait for that signal, not a HUP loop.
+            assert(ready[0].revents & POLLHUP);
+            do rc = poll(&ready[1], 1, -1);
+            while (rc < 0 && errno == EINTR);
+            assert(rc == 1 && (ready[1].revents & POLLIN));
+            return false;
+        }
+        size_t consumed;
+        bool joined;
+        void finishWriter()
+        {
+            ubyte[4096] buffer;
+            while (consumed < contents.length)
+            {
+                const count = read(reader, buffer.ptr,
+                    min(buffer.length, contents.length - consumed));
+                if (count > 0)
+                    consumed += count;
+                else if (count < 0 && errno == EINTR)
+                    continue;
+                else
+                {
+                    assert(count == 0 || (count < 0 && errno == EAGAIN));
+                    // An early writer exception also signals completion,
+                    // so cleanup cannot wait forever for missing payload.
+                    if (!awaitWriterData())
+                        break;
+                }
+            }
+            writer.join();
+            joined = true;
+        }
+        writer.start();
+        scope (exit) if (!joined) finishWriter();
+
+        // An open FIFO with no writer can return EOF even in blocking mode.
+        // Readability, rather than a first-byte read, proves the writer has
+        // connected and is blocked on more than the FIFO's capacity.
+        if (!awaitWriterData())
+        {
+            finishWriter();
+            if (writerFailure !is null)
+                throw writerFailure;
+            assert(0, "fixture writer completed before filling the FIFO");
+        }
+        // The reader is close-on-exec, so any matching fd in this child is
+        // the fixture writer. Explicit inheritance models a normal POSIX
+        // spawn rather than Phobos's default closing of unrelated handles.
+        auto child = execute(["/bin/sh", "-c",
+            "for fd in /proc/self/fd/*; do"
+            ~ " if [ \"$fd\" -ef \"$1\" ]; then printf inherited; exit 1; fi;"
+            ~ " done; printf isolated", "descriptor-probe", fifo],
+            null, Config.inheritFDs);
+        finishWriter();
+        if (writerFailure !is null)
+            throw writerFailure;
+        assert(consumed == contents.length, "fixture write must deliver every byte");
+        assert(child.status == 0 && child.output == "isolated",
+            "a concurrent exec must not inherit the fixture writer");
+    }
 }
