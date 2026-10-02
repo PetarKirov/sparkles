@@ -1,30 +1,30 @@
 󰲡 Links
 
-Inline: a plain link and one carrying a title (The example site).
+Inline: a 󰖟 plain link and one carrying a 󰖟 title (The example site).
 
-Autolink: https://example.com/autolink.
+Autolink: 󰖟 https://example.com/autolink.
 
-Reference forms: a full reference (Reference destination), a collapsed, and a
-bare shortcut.
+Reference forms: a 󰖟 full reference (Reference destination), a 󰖟 collapsed, and
+a bare 󰖟 shortcut.
 
-Formatting inside a reference label: an important code note (Reference
+Formatting inside a reference label: 󰖟 an important code note (Reference
 destination) keeps its bold, its code pill and its italics.
 
 An undefined label stays literal text: [not defined][missing-ref].
 
-A reference image renders its alt text: diagram (A diagram).
+A reference image renders its alt text: 󰥶 diagram → diagram.png (A diagram).
 
 Links in a table:
 
-╭───────────┬──────────────────────────────────╮
-│ Form      │ Example                          │
-┝━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
-│ inline    │ inline                           │
-├───────────┼──────────────────────────────────┤
-│ reference │ bold ref (Reference destination) │
-├───────────┼──────────────────────────────────┤
-│ shortcut  │ shortcut                         │
-╰───────────┴──────────────────────────────────╯
+╭───────────┬────────────────────────────────────╮
+│ Form      │ Example                            │
+┝━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┥
+│ inline    │ 󰖟 inline                           │
+├───────────┼────────────────────────────────────┤
+│ reference │ 󰖟 bold ref (Reference destination) │
+├───────────┼────────────────────────────────────┤
+│ shortcut  │ 󰖟 shortcut                         │
+╰───────────┴────────────────────────────────────╯
 
 A callout marker is a shortcut link with no definition, so it stays a marker:
 

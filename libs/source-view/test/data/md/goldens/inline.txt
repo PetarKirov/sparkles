@@ -4,9 +4,9 @@ Plain text with emphasis, strong, both, strikethrough, and inline code.
 
 Nested: bold with italic inside and code too.
 
-A link, a link with bold text, and an autolink https://example.com.
+A 󰖟 link, a 󰖟 link with bold text, and an autolink 󰖟 https://example.com.
 
-An image: alt text inline with prose.
+An image: 󰥶 alt text → image.png inline with prose.
 
 A hard break at the end of this line
 continues here.

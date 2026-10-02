@@ -435,6 +435,31 @@ struct MdViewGlyphs
     string cautionIcon = "\U000F0CE6";   /// 󰳦
     string copyIcon = "\U0000F0C5";      ///  (fence header copy affordance)
     string copiedIcon = "\U0000F00C";    ///  (feedback after a copy)
+    /// A link's leading icon, by destination (`MDP8`): see 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF linkIcon).
+    string linkGithubIcon = "\U0000F09B"; ///  github
+    string linkGitlabIcon = "\U0000F296"; ///  gitlab
+    string linkMailIcon = "\U000F01EE";   /// 󰇮 mailto
+    string linkWebIcon = "\U000F059F";    /// 󰖟 any other http(s)
+    string linkFileIcon = "\U0000F15C";   ///  a local path
+    /// An image's glyph (`MDP9`): a monochrome Nerd icon, not the `🖼` emoji,
+    /// which rasterizes as tofu through a font atlas.
+    string imageIcon = "\U000F0976";      /// 󰥶
+
+    /// The icon for a link to `dest`: by host, then by scheme, else a file.
+    string linkIcon(scope const(char)[] dest) const @safe pure nothrow @nogc
+    {
+        import std.algorithm.searching : canFind, startsWith;
+
+        if (dest.canFind("github.com"))
+            return linkGithubIcon;
+        if (dest.canFind("gitlab"))
+            return linkGitlabIcon;
+        if (dest.startsWith("mailto:"))
+            return linkMailIcon;
+        if (dest.startsWith("http://") || dest.startsWith("https://"))
+            return linkWebIcon;
+        return linkFileIcon;
+    }
 }
 
 /// The whole document as its own tree (the common non-embedded case).
@@ -1099,7 +1124,8 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 spans ~= TextSpan(opt.glyphs.headingIcons[lvl - 1] ~ " ",
                     opt.proseSlot, style, fg: accent, hasFg: true, noBreak: true);
                 inlinesToSpans(blk.inlines, src, style, opt.proseSlot, spans,
-                    &opt.theme, opt.emph, opt.linkTable);
+                    &opt.theme, opt.emph, opt.linkTable,
+                    &opt.glyphs);
                 foreach (ref s; spans[1 .. $])
                     if (!s.hasFg)
                     {
@@ -1114,7 +1140,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 return b.add(w);
             }
             inlinesToSpans(blk.inlines, src, style, Slot.chromeAccent, spans,
-                null, opt.emph, opt.linkTable);
+                null, opt.emph, opt.linkTable, &opt.glyphs);
             return proseRow(b, spans, opt);
         }
 
@@ -1122,7 +1148,8 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
         {
             TextSpan[] spans;
             inlinesToSpans(blk.inlines, src, opt.baseStyle, opt.proseSlot, spans,
-                opt.theme.present ? &opt.theme : null, opt.emph, opt.linkTable);
+                opt.theme.present ? &opt.theme : null, opt.emph, opt.linkTable,
+                &opt.glyphs);
             return proseRow(b, spans, opt);
         }
 
@@ -1196,7 +1223,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     : (item.children.length ? item.children[0].inlines : null);
                 inlinesToSpans(inls, src, opt.baseStyle, opt.proseSlot, spans,
                     opt.theme.present ? &opt.theme : null, opt.emph,
-                    opt.linkTable);
+                    opt.linkTable, &opt.glyphs);
                 const lead = leaderHang(leader);
                 rows ~= proseRow(b, spans, opt, lead);
                 // Nested blocks (a sub-list, a nested paragraph) after the
@@ -1582,7 +1609,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     style.bold = ri == 0; // the header row
                     inlinesToSpans(cell.inlines, src, style, cellOpt.proseSlot,
                         spans, opt.theme.present ? &opt.theme : null,
-                        cellOpt.emph, opt.linkTable);
+                        cellOpt.emph, opt.linkTable, &opt.glyphs);
                     fillDiffTints(spans); // the cell path is not a prose row
                     trimCellEdges(spans); // measured text sizes the track
                     // The sort-rank badge (`DSS1`): chrome, not content —
@@ -1891,10 +1918,15 @@ emphasis/strong/strikethrough/link and slicing leaves from `src`. Inline
 `code` is an unbreakable pill span. $(B The) inline mapper — the twoslash
 popup and the document view share it, which is what "JSDoc renders through
 the same markdown view" means concretely.
+
+With `glyphs`, a link leads with its destination's icon (`MDP8`) and an
+image renders as its glyph, its alt text and its destination (`MDP9`).
+Without them (the twoslash popup) both show their text alone.
 */
 void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
     Slot slot, ref TextSpan[] spans, scope const(MdViewTheme)* vt = null,
-    scope const(MdEmphasis)* em = null, scope MdLinkTable* links = null)
+    scope const(MdEmphasis)* em = null, scope MdLinkTable* links = null,
+    scope const(MdViewGlyphs)* glyphs = null)
 {
     foreach (ref const inl; inls)
         final switch (inl.kind) with (MdInlineKind)
@@ -1907,21 +1939,24 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
             {
                 auto s = base;
                 s.bold = true;
-                inlinesToSpans(inl.children, src, s, slot, spans, vt, em, links);
+                inlinesToSpans(inl.children, src, s, slot, spans, vt, em, links,
+                    glyphs);
                 break;
             }
             case emphasis:
             {
                 auto s = base;
                 s.italic = true;
-                inlinesToSpans(inl.children, src, s, slot, spans, vt, em, links);
+                inlinesToSpans(inl.children, src, s, slot, spans, vt, em, links,
+                    glyphs);
                 break;
             }
             case strikethrough:
             {
                 auto s = base;
                 s.strikethrough = true;
-                inlinesToSpans(inl.children, src, s, slot, spans, vt, em, links);
+                inlinesToSpans(inl.children, src, s, slot, spans, vt, em, links,
+                    glyphs);
                 break;
             }
             case codeSpan:
@@ -1985,10 +2020,18 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
             }
             case link:
             {
+                // `MDP8`: the destination's icon first, outside the label —
+                // not underlined, not clickable, no source identity.
+                if (glyphs !is null)
+                    spans ~= TextSpan(glyphs.linkIcon(inl.linkDest) ~ " ",
+                        Slot.info, base,
+                        fg: vt !is null ? vt.linkFg : RgbColor.init,
+                        hasFg: vt !is null);
                 auto s = base;
                 s.underline = UnderlineStyle.single;
                 const before = spans.length;
-                inlinesToSpans(inl.children, src, s, Slot.info, spans, vt, em, links);
+                inlinesToSpans(inl.children, src, s, Slot.info, spans, vt, em, links,
+                    glyphs);
                 if (vt !is null)
                     foreach (ref sp; spans[before .. $])
                         if (!sp.hasFg)
@@ -2009,7 +2052,17 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
                 break;
             }
             case image:
-                inlinesToSpans(inl.children, src, base, slot, spans, vt, em, links);
+                // `MDP9`: a terminal or a text view cannot show the picture,
+                // so it shows what it is: the glyph, the alt text, and where
+                // the image lives.
+                if (glyphs !is null)
+                    spans ~= TextSpan(glyphs.imageIcon ~ " ", slot, base,
+                        fg: vt !is null ? vt.linkFg : RgbColor.init,
+                        hasFg: vt !is null);
+                inlinesToSpans(inl.children, src, base, slot, spans, vt, em, links,
+                    glyphs);
+                if (glyphs !is null && inl.linkDest.length)
+                    pushImageDest(inl.linkDest, base, spans, vt);
                 pushLinkTitle(inl.linkTitle, base, spans, vt);
                 break;
             case lineBreak:
@@ -2033,6 +2086,21 @@ definition somewhere else entirely in the document. Leaving it out of the
 identity channel keeps it from widening a link's hover range, joining a
 selection, or reaching `DocRow.sourceText`.
 */
+/// An image's destination as a trailing ` → dest`, muted like a link title
+/// and, like it, outside the source identity: the arrow is synthetic and the
+/// destination may come from a reference definition elsewhere.
+private void pushImageDest(const(char)[] dest, TextStyle base,
+    ref TextSpan[] spans, scope const(MdViewTheme)* vt)
+{
+    auto s = base;
+    s.underline = UnderlineStyle.none;
+    s.bold = false;
+    spans ~= TextSpan(" → ", Slot.inherit, s,
+        fg: vt !is null ? vt.quoteFg : RgbColor.init, hasFg: vt !is null);
+    spans ~= TextSpan(dest, Slot.inherit, s,
+        fg: vt !is null ? vt.quoteFg : RgbColor.init, hasFg: vt !is null);
+}
+
 private void pushLinkTitle(const(char)[] title, TextStyle base,
     ref TextSpan[] spans, scope const(MdViewTheme)* vt)
 {
@@ -3015,6 +3083,56 @@ private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
             assert(s.srcStart == size_t.max,
                 "the title carries no source identity");
         }
+}
+
+@("md.render_widgets.linkIconAndImageGlyphLeadTheirText")
+@safe unittest
+{
+    // `MDP8`: a link leads with its destination's icon, outside the label.
+    // `MDP9`: an image is its glyph, its alt text and where it lives.
+    const src = "a gh b ![alt](pic.png)";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.paragraph, span: Span(0, src.length), inlines: [
+            MdInline(kind: MdInlineKind.link, span: Span(2, 4),
+                linkDest: "https://github.com/x", children: [
+                    MdInline(kind: MdInlineKind.text, span: Span(2, 4))]),
+            MdInline(kind: MdInlineKind.image, span: Span(7, src.length),
+                linkDest: "pic.png", children: [
+                    MdInline(kind: MdInlineKind.text, span: Span(9, 12))]),
+        ]),
+    ]), src);
+    const glyphs = MdViewGlyphs.init;
+
+    TextSpan[] spans;
+    inlinesToSpans(doc.root.children[0].inlines, src, TextStyle.init,
+        Slot.inherit, spans, glyphs: &glyphs);
+
+    string all;
+    foreach (ref const s; spans)
+        all ~= s.text;
+    assert(all == glyphs.linkGithubIcon ~ " gh" ~ glyphs.imageIcon ~ " alt → pic.png",
+        all);
+
+    // The icon is not part of the link: no underline, no source identity.
+    assert(spans[0].text == glyphs.linkGithubIcon ~ " ");
+    assert(spans[0].textStyle.underline == UnderlineStyle.none);
+    assert(spans[0].srcStart == size_t.max);
+    assert(spans[1].text == "gh" && spans[1].textStyle.underline != UnderlineStyle.none);
+
+    // Each destination picks its own icon.
+    assert(glyphs.linkIcon("mailto:a@b") == glyphs.linkMailIcon);
+    assert(glyphs.linkIcon("https://gitlab.example/x") == glyphs.linkGitlabIcon);
+    assert(glyphs.linkIcon("https://dlang.org") == glyphs.linkWebIcon);
+    assert(glyphs.linkIcon("./README.md") == glyphs.linkFileIcon);
+
+    // Without glyphs (the twoslash popup) both keep their text alone.
+    TextSpan[] plain;
+    inlinesToSpans(doc.root.children[0].inlines, src, TextStyle.init,
+        Slot.inherit, plain);
+    string bare;
+    foreach (ref const s; plain)
+        bare ~= s.text;
+    assert(bare == "ghalt", bare);
 }
 
 /// With a link table, a link's LABEL spans carry its interned id and the title
