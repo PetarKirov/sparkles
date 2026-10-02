@@ -31,6 +31,11 @@ in
         libName = "terminal";
         mainFile = "apps/terminal/src/app.d";
         srcDirs = sources.srcClosure "apps/terminal" ++ [ "libs/android/c" ];
+        cFiles = [
+          "libs/android/c/jni_c.c"
+          "libs/ghostty/src/sparkles/ghostty/ghostty_modes.c"
+          "libs/raylib-text/src/sparkles/raylib_text/shaping_c.c"
+        ];
         # dub's version set for `:terminal`'s `application` configuration
         # (`dub describe :terminal --data=versions`), plus sparkles:android.
         versions = [
@@ -131,6 +136,8 @@ in
           # All script fallbacks and emoji are shared with the desktop bundle.
           cp ${fonts.fontBundle}/fonts/Noto* $out/fonts/
           cp -r ${fonts.fontBundle}/licenses $out/licenses
+          # The copied Nix-store directory is read-only; allow sibling licenses.
+          chmod u+w $out/licenses
           cp -r ${config.packages.freetype-android}/share/licenses/* $out/licenses/
           cp -r ${config.packages.harfbuzz-android}/share/licenses/* $out/licenses/
           cp ${sessionConf session} $out/session.conf

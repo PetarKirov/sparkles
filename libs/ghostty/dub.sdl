@@ -9,6 +9,9 @@ dflags "-preview=in" "-preview=dip1000"
 
 libs "ghostty-vt"
 
+// Emit the shared header-only mode constructor bridge; c.c remains import-only.
+sourceFiles "src/sparkles/ghostty/ghostty_modes.c"
+
 configuration "library" {
     targetType "sourceLibrary"
 }

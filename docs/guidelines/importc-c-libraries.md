@@ -34,26 +34,54 @@ from `pkg-config`:
 `libs/ghostty/src/sparkles/ghostty/c.c`:
 
 ```c
+// Preload shared system types outside the D attribute scope.
+#include <stdint.h>
+
 // Mark every declaration `nothrow @nogc` on the D side; `pure` is omitted
 // because these calls mutate terminal state. See dlang.org/spec/importc#pragma.
 #pragma attribute(push, nogc, nothrow)
+#define ghostty_mode_new sparkles_ghostty_mode_new_impl
 #include <ghostty/vt.h>
+#undef ghostty_mode_new
+
+GhosttyMode ghostty_mode_new(uint16_t value, bool ansi);
 #pragma attribute(pop)
 ```
 
 - **The file name becomes the D module.** `c.c` → `sparkles.ghostty.c`. Consumers
-  write `import sparkles.ghostty.c;` and every declaration in the header is a
-  callable D symbol (all `extern(C)` automatically).
-- ImportC compiles this `.c` directly — a `.c`/`.i` file in the source tree is
-  picked up and compiled with no extra directive.
+  write `import sparkles.ghostty.c;` and externally linked declarations in the
+  header are callable D symbols (all `extern(C)` automatically).
+- ImportC parses this declaration module on import. Function bodies that need
+  linking must also be explicitly compiled as sources, as below.
 - `#pragma attribute(push, …)` ([spec](https://dlang.org/spec/importc#pragma))
   stamps attributes onto **every** C declaration so callers can stay in
   `@nogc nothrow` code. Supported storage classes: `nogc`, `nothrow`, `pure`
   (unrecognized ones are ignored). Omit `pure` for any library that holds state.
   **Do not cast C function pointers to fake attributes** — use the pragma; it is
   the only honest way to give the bindings `@nogc`/`nothrow`.
-- Keep the shim to just the wrapped `#include`(s). Put any D-side conveniences
-  (RAII wrappers, helpers) in separate `.d` modules.
+- **Header-only `static inline` functions need a shared entry point.** DMD
+  cannot emit a call from a D module to a C function with internal linkage.
+  Ghostty's `GHOSTTY_MODE_*` macros call `ghostty_mode_new`, so even using
+  `GHOSTTY_MODE_SYNC_OUTPUT` can trigger this error. Rename the upstream helper
+  during inclusion, then expose an external wrapper under the original name.
+  The mode macros expand after the rename is undone and call the wrapper;
+  direct D callers use that same entry point. Keep the upstream body rather
+  than duplicating its mode encoding or hardcoding individual constants.
+- Keep the shim to the wrapped `#include`(s) and necessary C linkage bridges.
+  Put D-side conveniences (RAII wrappers, helpers) in separate `.d` modules.
+
+`libs/ghostty/src/sparkles/ghostty/ghostty_modes.c` supplies the constructor body without making
+the imported declaration module a root source (and changing its module name):
+
+```c
+#include "c.c"
+
+#pragma attribute(push, nogc, nothrow)
+GhosttyMode ghostty_mode_new(uint16_t value, bool ansi) {
+    return sparkles_ghostty_mode_new_impl(value, ansi);
+}
+#pragma attribute(pop)
+```
 
 ### 2. The `dub.sdl`
 
@@ -64,6 +92,7 @@ name "ghostty"
 dflags "-preview=in" "-preview=dip1000"
 
 libs "ghostty-vt"
+sourceFiles "src/sparkles/ghostty/ghostty_modes.c"
 
 configuration "library" {
     targetType "sourceLibrary"
@@ -77,8 +106,11 @@ Three things matter:
   include path.
 - **`targetType "sourceLibrary"`** — required for the pkg-config include to reach
   ImportC. See [the gotcha](#the-sourcelibrary-gotcha-read-this).
-- The `.c` shim is auto-discovered; no `cSourcePaths` needed when it sits next to
-  the `.d` sources.
+- **`sourceFiles "src/sparkles/ghostty/ghostty_modes.c"`** — explicitly compiles
+  the wrapper body without compiling the declaration-only `c.c` as a root.
+  The `sourceLibrary` target propagates it to consumers; keeping it under `src`
+  also includes it in Nix's filtered source closure. A plain import of
+  `sparkles.ghostty.c` only supplies declarations.
 
 ### 3. How dub feeds pkg-config into ImportC
 
@@ -306,6 +338,18 @@ with another module c`). Give each shim a **unique stem** —
 - **Sized structs.** Many C APIs lead a struct with `size_t size;` as a version
   tag — set it (`s.size = S.sizeof;`) before passing the struct out/in, as the
   upstream C examples do.
+- **Shared system types must use the same attributes.** ImportC merges C structs
+  across imported translation units, including function-pointer field types.
+  Wrapping system headers in `#pragma attribute(push, nogc, nothrow)` in only one
+  import makes those types incompatible (Darwin's pthread cleanup callback is
+  one example). Ghostty's shim, `raylib-text/shaping_c.c`, and `shaping_api.h`
+  all include `<stdint.h>` outside the attribute scope. On Darwin that header
+  transitively supplies the pthread types, so later attributed includes reuse
+  their original unannotated definitions.
+- **A same-stem `.h` shadows `.c` on import.** ImportC searches `.i`, then `.h`,
+  then `.c` after the D extensions. `import sparkles.raylib_text.shaping_api`
+  therefore imports `shaping_api.h` directly: put the API's attributes in that
+  header, after its system includes, rather than in a same-stem `.c` wrapper.
 
 ---
 
