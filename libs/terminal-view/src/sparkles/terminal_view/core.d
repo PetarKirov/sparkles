@@ -548,8 +548,11 @@ struct CoreState
     bool childExited;
     bool childReaped;
     int childStatus = -1;
-    // What the exited banner offers, after the status (an embedder's exit
-    // prompt, `TSS2`); empty shows the status alone.
+    // The embedder draws its own exit prompt over the pane (`TSS2`): the
+    // built-in banner stays away.
+    bool embedderOwnsExit;
+    // Unused since `embedderOwnsExit`; the terminal's banner stops setting
+    // it with the E1 prompt, which removes it.
     const(char)[] exitHint;
 }
 
@@ -900,14 +903,12 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
 
         // Banner shown once the child has exited, so the user knows the shell
         // is gone (they can still scroll / inspect the final output).
-        if (s.childExited)
+        if (s.childExited && !s.embedderOwnsExit)
         {
             import core.stdc.stdio : snprintf;
             char[128] msg;
             if (s.childReaped && s.childStatus >= 0)
-                snprintf(msg.ptr, msg.length, "[process exited with status %d]%s%.*s",
-                    s.childStatus, s.exitHint.length ? "   ".ptr : "".ptr,
-                    cast(int) s.exitHint.length, s.exitHint.ptr);
+                snprintf(msg.ptr, msg.length, "[process exited with status %d]", s.childStatus);
             else
                 snprintf(msg.ptr, msg.length, "[process exited]");
 

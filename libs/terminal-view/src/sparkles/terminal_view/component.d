@@ -715,7 +715,14 @@ struct TerminalView
         s.pty_fd = -1;
         opts.adoptMaster = -1;
 
-        static immutable resetModes = "\x1b[?1049l\x1b[?1000l\x1b[?1002l"
+        // Leaving the alternate screen restores the cursor it saved, so only
+        // when the old program left it on: on the primary screen it would
+        // jump the cursor back and the rule would overwrite the last line.
+        GhosttyTerminalScreen screen;
+        ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &screen);
+        if (screen != GHOSTTY_TERMINAL_SCREEN_PRIMARY)
+            feedLocal("\x1b[?1049l");
+        static immutable resetModes = "\x1b[?1000l\x1b[?1002l"
             ~ "\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<99u\x1b[=0;1u"
             ~ "\x1b[!p\x1b[0m\r\n";
         feedLocal(resetModes);
@@ -2742,7 +2749,7 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     static struct NoDaemons {}
     NoDaemons h;
 
-    static immutable(char)*[4] first = ["-sh", "-c", "printf 'first-run'; exit 3", null];
+    static immutable(char)*[4] first = ["-sh", "-c", "printf 'first-run\\nlast-line\\n'; exit 3", null];
     static immutable(char)*[4] second = ["-sh", "-c", "printf 'second-run'", null];
     static immutable(char)*[2] env = ["PATH=/usr/bin:/bin", null];
 
@@ -2777,4 +2784,5 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     const text = tv.screenText();
     assert(text.canFind("first-run") && text.canFind("second-run"), text);
     assert(text.canFind("────"), "the separator marks the boundary");
+    assert(text.canFind("last-line"), "the separator goes below the old output, not over it");
 }
