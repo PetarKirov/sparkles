@@ -1,6 +1,6 @@
 # Design: the mockup register
 
-_**Status:** partly chosen — see the table · **Date:** 2026-10-02 · **Owner:**
+_**Status:** every surface chosen — see the table · **Date:** 2026-10-02 · **Owner:**
 the repository owner chooses; `apps/terminal` implements · **Scope:** how each
 surface of the terminal's own UI will look and be laid out, and the rules
 every candidate must meet._
