@@ -101,8 +101,9 @@ The test filter intentionally excludes dependency-package tests.
   writing, independent of Sparkles' decoder and implementation.
 - **`utf.display`:** visible width and complete UTF-8 cluster-end offset arrays
   for hand-specified printable fixtures: ASCII, two-byte Latin/Greek, CJK,
-  supplementary emoji, mixed scripts, combining marks, ZWJ emoji, and regional
-  indicator flags. Expected widths and boundaries are fixture constants,
+  supplementary emoji, mixed scripts, sparse Unicode followed by ASCII,
+  combining marks, ZWJ emoji, and regional indicator flags.
+  Expected widths and boundaries are fixture constants,
   constructed before timing. The default field contains Sparkles only; the
   optional real xutf adapter provides a competitor for this matched subset.
   Sparkles segmentation also computes its cluster width metadata, so this is a
@@ -126,6 +127,10 @@ corpora cover stray continuations, overlongs, surrogates, out-of-range scalars,
 wrong continuations, truncation, and every byte of CJK/supplementary sequences
 placed around block boundaries. UTF-16 failures include lone high and low
 surrogates at the same boundary offsets.
+
+Sparse fixtures begin with `é漢😀` and fill the remaining bytes with ASCII.
+They exercise resumption of ASCII validation/conversion and width shortcuts
+after a non-ASCII prefix, rather than only homogeneous repeated Unicode.
 
 ## Semantic limits
 

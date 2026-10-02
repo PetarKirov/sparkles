@@ -18,6 +18,9 @@ version (textSimdX86)
     import ldc.gccbuiltins_x86 : __builtin_ia32_packuswb128,
         __builtin_ia32_pmovmskb128;
     import ldc.simd : equalMask, greaterMask, loadUnaligned, shufflevector, storeUnaligned;
+    import ldc.llvmasm : __ir_pure;
+
+    import sparkles.base.text.simd_caps : hasAvx512Bw;
 
     private alias Bytes = __vector(ubyte[16]);
     private alias SignedBytes = __vector(byte[16]);
@@ -132,6 +135,12 @@ version (textSimdX86)
     {
         size_t i;
         size_t units;
+        if (source.length >= 64 && hasAvx512Bw)
+        {
+            const measured = countUtf8Wide(source, rejectNul);
+            i = measured.consumed;
+            units = measured.required;
+        }
         while (source.length - i >= 16)
         {
             const input = (() @trusted =>
@@ -163,6 +172,12 @@ version (textSimdX86)
     {
         size_t i;
         size_t bytes;
+        if (source.length >= 32 && hasAvx512Bw)
+        {
+            const measured = measureUtf16Wide(source, rejectNul);
+            i = measured.consumed;
+            bytes = measured.required;
+        }
         while (source.length - i >= 16)
         {
             const low = (() @trusted =>
@@ -186,6 +201,68 @@ version (textSimdX86)
             bytes += 48 - popcnt(ascii) / 2 - popcnt(below800) / 2 - popcnt(tails)
                 - (deferred ? 3 : 0);
             i += deferred ? 15 : 16;
+        }
+        return MeasuredPrefix(consumed: i, required: bytes);
+    }
+
+    private alias WideBytes = __vector(ubyte[64]);
+    private alias WideWords = __vector(ushort[32]);
+    private alias wideByteBits = __ir_pure!(
+        "%m = icmp ne <64 x i8> %0, zeroinitializer\n"
+        ~ "%b = bitcast <64 x i1> %m to i64\nret i64 %b", ulong, WideBytes);
+    private alias wideWordBits = __ir_pure!(
+        "%m = icmp ne <32 x i16> %0, zeroinitializer\n"
+        ~ "%b = bitcast <32 x i1> %m to i32\nret i32 %b", uint, WideWords);
+
+    private MeasuredPrefix countUtf8Wide(scope const(char)[] source, bool rejectNul)
+        @target("avx512f,avx512bw") @safe pure nothrow @nogc
+    {
+        size_t i, units;
+        while (source.length - i >= 64)
+        {
+            const input = (() @trusted => loadUnaligned!WideBytes(
+                cast(const(ubyte)*) source.ptr + i))();
+            WideBytes zeros = cast(WideBytes) equalMask!WideBytes(input, WideBytes(0));
+            if (rejectNul && wideByteBits(zeros) != 0)
+                break;
+            WideBytes continuation = cast(WideBytes) equalMask!WideBytes(
+                input & WideBytes(0xC0), WideBytes(0x80));
+            WideBytes supplementary = cast(WideBytes) equalMask!WideBytes(
+                input & WideBytes(0xF8), WideBytes(0xF0));
+            units += 64 - popcnt(wideByteBits(continuation))
+                + popcnt(wideByteBits(supplementary));
+            i += 64;
+        }
+        return MeasuredPrefix(consumed: i, required: units);
+    }
+
+    private MeasuredPrefix measureUtf16Wide(scope const(wchar)[] source, bool rejectNul)
+        @target("avx512f,avx512bw") @safe pure nothrow @nogc
+    {
+        size_t i, bytes;
+        while (source.length - i >= 32)
+        {
+            const input = (() @trusted => loadUnaligned!WideWords(
+                cast(const(ushort)*) source.ptr + i))();
+            WideWords zeros = cast(WideWords) equalMask!WideWords(input, WideWords(0));
+            if (rejectNul && wideWordBits(zeros) != 0)
+                break;
+            WideWords headMask = cast(WideWords) equalMask!WideWords(
+                input & WideWords(0xFC00), WideWords(0xD800));
+            WideWords tailMask = cast(WideWords) equalMask!WideWords(
+                input & WideWords(0xFC00), WideWords(0xDC00));
+            const heads = wideWordBits(headMask);
+            const tails = wideWordBits(tailMask);
+            if (tails != (heads << 1))
+                break;
+            WideWords ascii = cast(WideWords) equalMask!WideWords(
+                input & WideWords(0xFF80), WideWords(0));
+            WideWords below800 = cast(WideWords) equalMask!WideWords(
+                input & WideWords(0xF800), WideWords(0));
+            const deferred = (heads >> 31) != 0;
+            bytes += 96 - popcnt(wideWordBits(ascii)) - popcnt(wideWordBits(below800))
+                - 2 * popcnt(tails) - (deferred ? 3 : 0);
+            i += deferred ? 31 : 32;
         }
         return MeasuredPrefix(consumed: i, required: bytes);
     }

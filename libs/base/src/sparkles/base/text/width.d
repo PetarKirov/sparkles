@@ -24,7 +24,7 @@
  */
 module sparkles.base.text.width;
 
-import std.uni : CodepointSet, isControl, unicode;
+import std.uni : CodepointSet, codepointSetTrie, graphemeStride, isControl, unicode;
 
 import sparkles.base.text.unicode_tables : isEastAsianWide, isEmojiVsBase;
 
@@ -64,6 +64,107 @@ private CodepointSet makeZeroWidthSet() @safe pure
     return s;
 }
 
+// Pack width and singleton-boundary traits into one byte for the BMP and
+// first supplementary plane. Public Phobos probes preserve the compiler's
+// own Extend/SpacingMark/Prepend behavior; no private property DB is imported.
+private enum size_t directWidthLimit = 0x20000;
+private immutable ubyte[directWidthLimit] directTraits = makeDirectTraits();
+private immutable zeroWidthTrie = codepointSetTrie!(8, 5, 8)(makeZeroWidthSet());
+
+private ubyte[directWidthLimit] makeDirectTraits() @safe pure
+{
+    ubyte[directWidthLimit] result = void;
+    foreach (cp; 0 .. directWidthLimit)
+        result[cp] = isEastAsianWide(cast(dchar) cp) ? 2 : 1;
+    auto zeros = makeZeroWidthSet();
+    foreach (interval; zeros.byInterval)
+    {
+        const end = interval.b < directWidthLimit ? interval.b : directWidthLimit;
+        if (interval.a < end)
+            result[interval.a .. end] = 0;
+    }
+    result[0 .. 0x20] = 0;
+    result[0x7F .. 0xA0] = 0;
+    result[lineSeparator] = result[paragraphSeparator] = 0;
+    result[0xFDD0 .. 0xFDF0] = 0;
+    result[0xFFFE .. 0x10000] = 0;
+    result[0x1FFFE .. 0x20000] = 0;
+    result[regionalIndicatorFirst .. regionalIndicatorLast + 1] = 2;
+    dchar[2] probe;
+    foreach (cp; 0 .. directWidthLimit)
+    {
+        probe[0] = 'a';
+        probe[1] = cast(dchar) cp;
+        if (graphemeStride(probe[], 0) != 1)
+            result[cp] |= 4; // Attaches to a preceding ordinary starter.
+        probe[0] = cast(dchar) cp;
+        probe[1] = 'a';
+        if (graphemeStride(probe[], 0) == 1)
+            result[cp] |= 64; // Not an outgoing Prepend.
+        result[cp] |= cast(ubyte)(singletonKind(cast(dchar) cp) << 3);
+    }
+    return result;
+}
+
+private enum SingletonKind : ubyte { other, l, v, t, lv, lvt, ri, cr }
+
+private SingletonKind singletonKind(dchar cp) @safe pure nothrow @nogc
+{
+    if (cp == '\r')
+        return SingletonKind.cr;
+    if (isRegionalIndicator(cp))
+        return SingletonKind.ri;
+    if ((cp >= 0x1100 && cp <= 0x115F) || (cp >= 0xA960 && cp <= 0xA97C))
+        return SingletonKind.l;
+    if ((cp >= 0x1160 && cp <= 0x11A7) || (cp >= 0xD7B0 && cp <= 0xD7C6))
+        return SingletonKind.v;
+    if ((cp >= 0x11A8 && cp <= 0x11FF) || (cp >= 0xD7CB && cp <= 0xD7FB))
+        return SingletonKind.t;
+    if (cp >= 0xAC00 && cp <= 0xD7A3)
+        return (cp - 0xAC00) % 28 == 0 ? SingletonKind.lv : SingletonKind.lvt;
+    return SingletonKind.other;
+}
+
+// Width in bits 0..1; incoming attachment in bit 2; Hangul/RI/CR kind in
+// bits 3..5; ordinary outgoing break in bit 6. Uncovered/CTFE points force
+// the public grapheme engine rather than assuming a property classification.
+package ubyte codepointTraits()(dchar cp) @safe pure nothrow @nogc
+{
+    pragma(inline, true);
+    if (!__ctfe && cp < directWidthLimit)
+        return directTraits[cp];
+    return cast(ubyte) codepointWidth(cp);
+}
+
+package bool singletonBreak()(ubyte first, ubyte next, dchar nextCp)
+    @safe pure nothrow @nogc
+{
+    pragma(inline, true);
+    if ((first & 64) == 0 || (next & 4) != 0)
+        return false;
+    // An uncovered next code point has no outgoing trait bit either.
+    if ((next & 64) == 0)
+        return false;
+    const a = cast(SingletonKind)((first >> 3) & 7);
+    const b = cast(SingletonKind)((next >> 3) & 7);
+    switch (a)
+    {
+        case SingletonKind.l:
+            return b != SingletonKind.l && b != SingletonKind.v
+                && b != SingletonKind.lv && b != SingletonKind.lvt;
+        case SingletonKind.v, SingletonKind.lv:
+            return b != SingletonKind.v && b != SingletonKind.t;
+        case SingletonKind.t, SingletonKind.lvt:
+            return b != SingletonKind.t;
+        case SingletonKind.ri:
+            return b != SingletonKind.ri;
+        case SingletonKind.cr:
+            return nextCp != '\n';
+        default:
+            return true;
+    }
+}
+
 /// Display width of one code point **in isolation**, by the kitty width classes
 /// in decreasing priority: 2 for a regional indicator (flag half); 0 for a
 /// noncharacter, control, line/paragraph separator, or zero-width code point
@@ -73,6 +174,16 @@ private CodepointSet makeZeroWidthSet() @safe pure
 /// cluster -- see `graphemeClusterWidth`.
 int codepointWidth(dchar cp) @safe pure nothrow @nogc
 {
+    if (!__ctfe)
+    {
+        if (cp < directWidthLimit)
+            return directTraits[cp] & 3;
+        if (isNoncharacter(cp))
+            return 0;
+        if (cp < 0x110000 && zeroWidthTrie[cp])
+            return 0;
+        return isEastAsianWide(cp) ? 2 : 1;
+    }
     if (cp >= 0x20 && cp <= 0x7E)
         return 1;
     if (cp == 0)
@@ -90,6 +201,38 @@ int codepointWidth(dchar cp) @safe pure nothrow @nogc
     if (isEastAsianWide(cp))         // UAX #11 Wide/Fullwidth (incl. emoji modifiers)
         return 2;
     return 1;
+}
+
+@("width.codepointWidth.categoryAndPlaneBoundaries")
+@safe pure nothrow @nogc unittest
+{
+    // Independent scalar policy: exercise every direct-table code point and
+    // supplementary-plane transitions against the same public Unicode sets
+    // that defined the original implementation.
+    int reference(dchar cp) @safe pure nothrow @nogc
+    {
+        if (isControl(cp) || cp == lineSeparator || cp == paragraphSeparator
+            || isNoncharacter(cp))
+            return 0;
+        if (isRegionalIndicator(cp))
+            return 2;
+        if (zeroWidthSet[cp])
+            return 0;
+        return isEastAsianWide(cp) ? 2 : 1;
+    }
+    foreach (cp; 0 .. directWidthLimit)
+        assert(codepointWidth(cast(dchar) cp) == reference(cast(dchar) cp));
+    foreach (plane; 2 .. 17)
+        foreach (offset; [0, 1, 0xFFFD, 0xFFFE, 0xFFFF])
+        {
+            const cp = cast(dchar) (plane * 0x10000 + offset);
+            assert(codepointWidth(cp) == reference(cp));
+        }
+    foreach (cp; [cast(dchar) 0xE0000, 0xE0001, 0xE007F, 0xE0080,
+        0xE0100, 0xE01EF, 0xE01F0, 0x110000, 0xFFFFFFFF])
+        assert(codepointWidth(cp) == reference(cp));
+    static assert(codepointWidth('\U0001F1E6') == 2);
+    static assert(codepointWidth('\U000E0100') == 0);
 }
 
 @("width.codepointWidth.basics")

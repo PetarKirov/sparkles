@@ -1,8 +1,8 @@
 # Measured SIMD UTF and Unicode performance
 
-Bounded SIMD fast paths make Sparkles competitive on long validation and lead this field on long ASCII validation and terminal width. They do **not** make it the fastest library across Unicode: simdutf8 still leads multilingual validation, simdutf leads conversion, and xutf leads non-ASCII width and segmentation.
+Sparkles leads this field on long ASCII validation and terminal width. The October 2 non-ASCII pass also exceeds xutf on matched two-byte, CJK, supplementary and mixed-script width fixtures, and simdutf on mixed UTF-8→UTF-16 conversion. It is **not universally fastest**: simdutf8 leads multilingual validation, simdutf leads most conversion rows, and xutf leads complex-grapheme width and boundary enumeration.
 
-**Measured:** September 30–October 1, 2026. See [UTF algorithms](./utf-algorithms.md), [Unicode algorithms](./unicode-algorithms.md), and the [survey inventory](./index.md#performance-oriented-inventory) for papers, locally inspected checkouts, versions and source licensing.
+**Measured:** September 30–October 2, 2026. The first three operation sections retain the initial SIMD pass; [the October 2 follow-up](#october-2-non-ascii-follow-up) records the subsequent optimization. See [UTF algorithms](./utf-algorithms.md), [Unicode algorithms](./unicode-algorithms.md), and the [survey inventory](./index.md#performance-oriented-inventory) for papers, locally inspected checkouts, versions and source licensing.
 
 ## Environment and contracts
 
@@ -17,7 +17,7 @@ Bounded SIMD fast paths make Sparkles competitive on long validation and lead th
 | Small inputs   | Under 256 bytes: 64 operations per timed batch; B/s includes all batch input bytes                                                                       |
 | Provenance     | simdutf `cf8715fad4d55c87aad3006a9a82531f740605b8`; simdutf8 `641d57f313df57354246d2b68d4778c092e076c3`; xutf `9bb347af041369a68a4effd1ca85c6d2f9b4e17b` |
 
-The baseline was captured before attaching the new kernels. Both baseline and final UTF runs contain **4,419 rows, zero errors**, including malformed-input rows and an independent scalar D implementation. Only a representative subset is tabulated below. Compiler flags are deliberately disclosed, not asserted equivalent across languages. Native D can inline; separately compiled foreign calls cross a C ABI and retain their library's dispatch overhead. No overhead is subtracted.
+The initial scalar-to-SIMD baseline and result both contain **4,419 rows, zero errors**, including malformed-input rows and an independent scalar D implementation. Only a representative subset is tabulated below; the follow-up uses its own focused baseline. Compiler flags are deliberately disclosed, not asserted equivalent across languages. Native D can inline; separately compiled foreign calls cross a C ABI and retain their library's dispatch overhead. No overhead is subtracted.
 
 These are separate contracts:
 
@@ -67,7 +67,7 @@ The corpus suffix names the original UTF-8 fixture size. `to16` throughput count
 | UTF-16 → UTF-8 | Supplementary |                1.093 |               1.737 |   1.59× |        5.758 |
 | UTF-16 → UTF-8 | Mixed scripts |                0.944 |               1.592 |   1.69× |        7.240 |
 
-ASCII widening/narrowing is vectorized, as is much of the sizing pass. Non-ASCII output emission remains scalar. **simdutf leads every conversion row in this table**, even after the substantial ASCII improvement. The researched shuffle-table and AVX-512 compaction algorithms explain a remaining algorithmic gap; they are not implemented by merely increasing the vector width.
+In this initial pass, ASCII widening/narrowing and much of sizing were vectorized, but non-ASCII emission remained scalar. **simdutf led every conversion row in this table.** The October 2 pass below implements the compaction algorithm family rather than merely widening classification.
 
 ## Terminal width and cluster boundaries
 
@@ -92,7 +92,104 @@ The ASCII width median fell from **4,094,913 ns to 440 ns**, versus xutf's 641 n
 | Mixed scripts           |                0.031 |               0.051 |   1.65× |     0.683 |
 | Combining/ZWJ/flags     |                0.050 |               0.085 |   1.69× |     0.751 |
 
-**xutf remains substantially faster on non-ASCII width and all tabulated boundary-enumeration rows.** Sparkles retains Phobos segmentation and the existing bounded 32-codepoint window rather than changing Unicode behavior to win the benchmark.
+**In this initial pass, xutf led non-ASCII width and every tabulated boundary-enumeration row.** Sparkles retains Phobos segmentation and the 32-codepoint cluster cap rather than changing Unicode behavior to win the benchmark.
+
+## October 2 non-ASCII follow-up
+
+Same host, toolchains, foreign revisions and assertion-enabled native flags;
+**100 ms** minimum sample time per row. The focused baseline contains
+**60 rows, zero errors**; the final expanded subset adds sparse Unicode and
+ASCII checks for **166 rows, zero errors**. The baseline already includes the
+initial SIMD validator, ASCII conversion and fixed-window segmentation; these
+speedups measure the subsequent non-ASCII work, not the scalar-to-SIMD cutover.
+Inputs are repeated 65,536-byte UTF-8 fixtures; conversion byte accounting is
+unchanged from the earlier section.
+
+| Visible-width corpus | Sparkles before GB/s | Sparkles after GB/s | Speedup | xutf GB/s |
+| -------------------- | -------------------: | ------------------: | ------: | --------: |
+| Two-byte             |                0.050 |               1.594 |  31.65× |     0.917 |
+| CJK                  |                0.066 |               1.905 |  29.01× |     1.193 |
+| Supplementary        |                0.085 |               2.121 |  24.82× |     0.866 |
+| Mixed scripts        |                0.076 |               1.771 |  23.29× |     1.004 |
+| Combining/ZWJ/flags  |                0.105 |               0.236 |   2.25× |     0.895 |
+
+Ordinary singleton-run aggregation and bounded escape search exceed xutf by
+**60–145%** on the four matched simple-Unicode fixtures. CJK width retires
+**1.060 M instructions** instead of **20.397 M**. Complex clusters still use Phobos and remain about
+four times slower than xutf; retaining the original segmentation policy is
+not evidence that this gap has disappeared.
+
+| Direction      | Corpus        | Sparkles before GB/s | Sparkles after GB/s | Speedup | simdutf GB/s |
+| -------------- | ------------- | -------------------: | ------------------: | ------: | -----------: |
+| UTF-8 → UTF-16 | Two-byte      |                0.943 |               5.130 |   5.44× |        8.721 |
+| UTF-8 → UTF-16 | CJK           |                1.279 |               4.785 |   3.74× |        7.535 |
+| UTF-8 → UTF-16 | Supplementary |                1.231 |               4.692 |   3.81× |        5.162 |
+| UTF-8 → UTF-16 | Mixed scripts |                1.016 |               4.877 |   4.80× |        4.349 |
+| UTF-16 → UTF-8 | Two-byte      |                1.272 |               3.745 |   2.94× |       20.151 |
+| UTF-16 → UTF-8 | CJK           |                1.351 |               7.601 |   5.63× |        9.525 |
+| UTF-16 → UTF-8 | Supplementary |                1.710 |               3.561 |   2.08× |        5.963 |
+| UTF-16 → UTF-8 | Mixed scripts |                1.530 |               3.831 |   2.50× |        7.240 |
+
+Register compaction, wide preflight and homogeneous-width emission improve
+conversion **2.1–5.6×**. Mixed UTF-8→UTF-16 exceeds simdutf by **12%** while
+retaining bounded destinations and fail-before-write. simdutf still leads
+the other seven rows; the transactional contracts remain different.
+
+Grouped AVX-512 validation reduces CJK offset-validation instructions from
+**75.164 k to 30.906 k**, but throughput rises only from **23.027 to 25.255 GB/s**,
+versus simdutf8 compat's **29.336 GB/s**. Wider vectors and fewer retired
+instructions do not alone establish higher throughput on this Zen 4 host.
+Other multilingual offset rows measure 25.158–25.352 GB/s; Boolean rows
+measure 25.148–25.255 GB/s, below simdutf8 basic's 30.710–31.432 GB/s.
+
+| Cluster-boundary corpus | Sparkles before GB/s | Sparkles after GB/s | Speedup | xutf GB/s |
+| ----------------------- | -------------------: | ------------------: | ------: | --------: |
+| Two-byte                |                0.033 |               0.124 |   3.76× |     0.519 |
+| CJK                     |                0.048 |               0.168 |   3.49× |     0.698 |
+| Supplementary           |                0.062 |               0.217 |   3.48× |     0.670 |
+| Mixed scripts           |                0.053 |               0.161 |   3.02× |     0.669 |
+| Combining/ZWJ/flags     |                0.078 |               0.189 |   2.43× |     0.748 |
+
+Decoded-window reuse and fixed-width decoding improve boundary enumeration,
+but xutf still leads every row. Sparkles' range computes full cluster metadata;
+the Rust shim emits boundary offsets without that additional terminal policy.
+
+### Sparse Unicode and ASCII resumption
+
+A separate **14-row, zero-error** pre-correction field starts with `é漢😀`
+and follows it with ASCII to total 65,536 bytes. Validation and conversion
+must resume their ASCII paths; width must not discover escape-free runs with
+a scalar byte loop. The final expanded subset exercises the same fixtures.
+
+| Operation               | Before correction GB/s | Final GB/s | Speedup | Best peer | Peer GB/s |
+| ----------------------- | ---------------------: | ---------: | ------: | --------- | --------: |
+| Exact-offset validation |                 25.451 |    105.363 |   4.14× | simdutf8  |   102.240 |
+| Boolean validation      |                 24.871 |    103.861 |   4.18× | simdutf8  |   107.260 |
+| UTF-8 → UTF-16          |                  5.162 |     19.764 |   3.83× | simdutf   |    44.191 |
+| UTF-16 → UTF-8          |                  3.753 |     10.847 |   2.89× | simdutf   |    89.037 |
+| Visible width           |                  4.863 |     60.569 |  12.45× | xutf      |    99.147 |
+| Cluster boundaries      |                  0.089 |      0.090 |   1.01× | xutf      |     0.840 |
+
+The sparse exact-offset row narrowly leads this measurement; Boolean validation,
+conversion, width and boundaries still have competitor leads.
+
+The larger scanner also exposed a small-ASCII width initialization regression.
+Returning printable ASCII before constructing the scanner removes it:
+
+| ASCII bytes | Initial SIMD pass GB/s | Intermediate GB/s | Final GB/s |
+| ----------- | ---------------------: | ----------------: | ---------: |
+| 1           |                  0.291 |             0.069 |      0.400 |
+| 64          |                 12.012 |             4.171 |     15.694 |
+| 65,536      |                148.608 |           145.313 |    148.608 |
+
+This is not a win for every small operation: one-byte boundary enumeration
+measures 0.045 GB/s versus 0.068 GB/s in the initial pass. The larger metadata
+queue still has per-iterator overhead; the width shortcut does not remove it.
+
+These are **hot/reused-input** measurements, not DRAM bandwidth or cold-cache
+results. The earlier ~149 GB/s ASCII row repeatedly scans a 64 KiB input;
+no equivalent streaming-memory throughput is claimed. CPU affinity and
+governor isolation are not claimed, and absent LLC counters are not zero misses.
 
 ## Wired: measured consumer, not an inferred speedup
 
@@ -100,45 +197,47 @@ The same `wired-native` runtime field was measured before and after: **15 rows, 
 
 | Dataset / operation      | Before µs | After µs | Before GB/s | After GB/s |
 | ------------------------ | --------: | -------: | ----------: | ---------: |
-| canada / parse           |  1411.837 | 1392.280 |       1.594 |      1.617 |
-| canada / validate        |  1477.114 | 1460.255 |       1.524 |      1.542 |
-| citm_catalog / parse     |   406.491 |  401.823 |       4.249 |      4.298 |
-| citm_catalog / validate  |   939.372 |  928.414 |       1.839 |      1.860 |
-| github_events / parse    |    15.631 |   15.440 |       4.167 |      4.218 |
-| github_events / validate |    42.233 |   41.120 |       1.542 |      1.584 |
-| mesh / parse             |   420.698 |  425.189 |       1.720 |      1.702 |
-| mesh / validate          |   560.731 |  570.962 |       1.290 |      1.267 |
-| mesh_pretty / parse      |   809.390 |  794.598 |       1.949 |      1.985 |
-| mesh_pretty / validate   |   960.018 |  985.135 |       1.643 |      1.601 |
-| osm / parse              |  1943.662 | 1934.740 |       1.535 |      1.542 |
-| osm / validate           |  2443.735 | 2410.478 |       1.221 |      1.238 |
-| twitter / decode         |   197.414 |  192.465 |       3.199 |      3.281 |
-| twitter / parse          |   168.989 |  163.238 |       3.737 |      3.869 |
-| twitter / validate       |   422.231 |  426.922 |       1.496 |      1.479 |
+| canada / parse           |  1411.837 | 1357.391 |       1.594 |      1.658 |
+| canada / validate        |  1477.114 | 1454.651 |       1.524 |      1.547 |
+| citm_catalog / parse     |   406.491 |  406.666 |       4.249 |      4.247 |
+| citm_catalog / validate  |   939.372 | 1007.085 |       1.839 |      1.715 |
+| github_events / parse    |    15.631 |   15.410 |       4.167 |      4.227 |
+| github_events / validate |    42.233 |   41.601 |       1.542 |      1.566 |
+| mesh / parse             |   420.698 |  420.719 |       1.720 |      1.720 |
+| mesh / validate          |   560.731 |  563.737 |       1.290 |      1.284 |
+| mesh_pretty / parse      |   809.390 |  786.190 |       1.949 |      2.006 |
+| mesh_pretty / validate   |   960.018 |  939.634 |       1.643 |      1.679 |
+| osm / parse              |  1943.662 | 1897.152 |       1.535 |      1.573 |
+| osm / validate           |  2443.735 | 2355.650 |       1.221 |      1.267 |
+| twitter / decode         |   197.414 |  193.346 |       3.199 |      3.266 |
+| twitter / parse          |   168.989 |  164.640 |       3.737 |      3.836 |
+| twitter / validate       |   422.231 |  413.895 |       1.496 |      1.526 |
 
-Twitter parse time improved **3.5%** and decode **2.6%**. Retired instructions fell from 3.774 M to 3.645 M for parse and 4.098 M to 3.969 M for decode. Validation instructions were effectively unchanged at 11.258 M. Other datasets show small changes in both directions. **There is no broad wired speedup in this measurement.** Small timing changes without corresponding work reduction should not be presented as a statistically established win.
+The final non-ASCII kernels were measured against the original consumer baseline. Twitter parse time improved **2.6%** and decode **2.1%**. Retired instructions fell from 3.774 M to 3.625 M for parse and 4.098 M to 3.950 M for decode. Validation instructions were effectively unchanged at 11.258 M. Other datasets show changes in both directions, including slower citm_catalog validation. **There is no broad wired speedup in this measurement.** Small timing changes without corresponding work reduction should not be presented as a statistically established win.
 
 Counters covered kernel+user. The runner dropped LLC events because they would multiplex with the available counters; the absent cache-miss values are not zero cache misses. No CPU affinity/governor isolation is claimed.
 
 ## Implementation and invariants
 
-- [`utf8_simd.d`](../../../libs/base/src/sparkles/base/text/utf8_simd.d) carries previous vector bytes across blocks. AVX2 uses nibble classification and continuation consistency from the researched lookup algorithm family; the classification tables are independently derived in D. SSE2 uses byte-class masks. An initial four-vector ASCII sweep avoids speculative four-vector probes on every multilingual block. Scalar refinement preserves first-invalid **sequence-lead** offsets, including a sequence crossing a block boundary.
-- [`utf8.d`](../../../libs/base/src/sparkles/base/text/utf8.d) enters runtime SIMD on eligible inputs of at least 64 bytes. AVX2 admission uses CPU **and OS state** support through `core.cpuid`; SSE2 is the x86-64 fallback. DMD, other architectures and CTFE retain scalar behavior. Intrinsics use LDC's own vector/builtin surface; no foreign dependency was added to base.
-- [`utf16_simd.d`](../../../libs/base/src/sparkles/base/text/utf16_simd.d) counts UTF-8 units and validates/sizes UTF-16 blocks, checks surrogate-pair masks, and defers a final high surrogate. ASCII conversion admits only complete bounded blocks. [`utf16.d`](../../../libs/base/src/sparkles/base/text/utf16.d) validates capacity and source before writing, avoids redundant decoder work after preflight, and emits non-ASCII output directly.
-- [`grapheme.d`](../../../libs/base/src/sparkles/base/text/grapheme.d) replaces temporary shared buffers with bounded stack windows, avoids unused unclustered metadata for width-only scans, and aggregates printable ASCII using SSE2/AVX2. The last ASCII starter before non-ASCII stays on the cluster path for combining marks, variation selectors and keycaps. Boundary iteration still produces full metadata.
+- [`utf8_simd.d`](../../../libs/base/src/sparkles/base/text/utf8_simd.d) carries previous vector bytes across blocks. AVX2 and AVX-512BW use independently derived nibble classifications and continuation consistency from the researched lookup algorithm family; SSE2 uses byte-class masks. An initial four-vector ASCII sweep avoids speculative four-vector probes on every multilingual block. Four multilingual vectors share one error reduction. Scalar replay preserves first-invalid **sequence-lead** offsets, including a sequence crossing a group boundary.
+- [`simd_caps.d`](../../../libs/base/src/sparkles/base/text/simd_caps.d) checks CPUID and XCR0 before admitting AVX-512BW or BW/VBMI2. [`utf8.d`](../../../libs/base/src/sparkles/base/text/utf8.d) dispatches eligible runtime inputs to the bounded validator and provides fixed-width decoding for already-validated prefixes. Malformed replacement still delegates to Phobos, preserving byte consumption. DMD, other architectures and CTFE retain scalar behavior; no foreign dependency was added to base.
+- [`utf16_simd.d`](../../../libs/base/src/sparkles/base/text/utf16_simd.d) counts UTF-8 units and validates/sizes UTF-16 blocks, including AVX-512BW paths, surrogate-pair masks and a deferred final high surrogate. [`utf16.d`](../../../libs/base/src/sparkles/base/text/utf16.d) completes source/capacity preflight before any write. [`utf16_emit.d`](../../../libs/base/src/sparkles/base/text/utf16_emit.d) emits non-ASCII blocks using register compaction followed by exact masked stores; homogeneous two-byte and three-byte blocks avoid general conversion work. Memory-form compaction regressed on this Zen 4 host and was rejected.
+- [`grapheme.d`](../../../libs/base/src/sparkles/base/text/grapheme.d) reuses a bounded 64-codepoint decoded queue while retaining the 32-codepoint cluster cap. [`width.d`](../../../libs/base/src/sparkles/base/text/width.d) packs width and singleton-boundary traits derived from public Phobos probes. Width-only scans aggregate ordinary singleton runs, withholding their final starter until attachment is ruled out. Complex clusters retain Phobos; failed aggregation is retried after a promising queue refill rather than at every cluster. Boundary iteration still produces full metadata.
+- Compaction intrinsics live in explicitly targeted functions rather than trusted callsite lambdas: lambdas do not inherit the parent's target UDA. This also allows nonoptimized, baseline-target LDC builds; an isolated debug emitter compile failed before that correction and passed afterward.
 - [`scan.d`](../../../libs/wired/src/sparkles/wired/json/scan.d) uses the shared validator's string-body mode from its four UTF-8 run callsites. Quote, backslash and control bytes stop bulk scanning and re-enter the existing grammar path. Its padding contract remains unchanged; vector loads are bounded by the actual available pool.
 
 All vector loads/stores are bounded; caller input/output does not acquire a padding requirement. Public signatures, `@safe pure nothrow @nogc` behavior, embedded-NUL policy, transactional conversion and Unicode tables remain unchanged.
 
 ## Correctness evidence and limits
 
-Observed on the final kernels:
+Observed across the initial and non-ASCII passes:
 
 - Independent scalar UTF-8 differential smoke: **6,157,573 inputs**, covering every scalar value, truncations, corrupted bytes and 32 alignments; exact-offset parity.
 - Guard-page smoke: **2,556 cases**, source/destination bounds through length 512, ordinary and NUL-terminated conversion, invalid tails and insufficient capacity; compile-time round-trip and transaction checks also passed.
-- Direct LDC module unittests: UTF-8 SIMD, UTF-16 and grapheme modules passed, including forced SSE2/AVX2 boundary checks. The normal full LDC base unittest build encountered an existing negative-copy static assertion in `unique.d` under `-allinst`; this is not represented as a full LDC suite pass.
-- Full DMD base suite: **609 passed**. Full LDC wired suite: **201 passed**.
-- Real competitor correctness sweep: passed; final matrix **4,419 rows, zero errors**.
+- Direct LDC module unittests: all five changed test modules passed, including forced SSE2/AVX2/AVX-512 boundary checks and the permanent 1,026-case guard-page conversion test. The normal full LDC base unittest build encountered an existing negative-copy static assertion in `unique.d` under `-allinst`; this is not represented as a full LDC suite pass.
+- Full DMD base suite after the non-ASCII and ASCII-resumption changes: **618 passed**.
+- Final full LDC wired consumer suite: **201 passed**.
+- Real competitor correctness sweep: passed again after the final kernels and sparse fixtures. The intermediate complete measurement field contains **4,419 rows, zero errors**; the final expanded subset contains **166 rows, zero errors**, reported in the follow-up section.
 - Offline conformance layers 1 and 2: **1,112,064 scalar widths** and **3,655 RGI emoji cases** passed.
 
 Layer 0 is **not all green**: on LDC 1.42, Unicode 15 `GraphemeBreakTest` passed 601/602 cases. `U+2701 U+200D U+2701` split as `[2, 1]` instead of `[3]`. A direct Phobos probe and the original shared-buffer window produce the same first stride of two. This predates the optimized window; neither expected results nor the divergence allowlist were changed to hide it. The [conformance documentation](../../specs/base/text/conformance-harness.md#the-two-unicode-versions) records the compiler-version observation.
@@ -158,6 +257,19 @@ libs/base/bench/utf/build/base-utf-bench-test-unittest-foreign \
   --bench-json=/tmp/sparkles-base-utf-final.json --no-colors
 ```
 
+For the final non-ASCII, sparse and ASCII subset, use the same built binary:
+
+```sh
+UTF_BENCH_CORPORA='two-byte/65536,cjk/65536,supplementary/65536,mixed/65536,grapheme/65536,sparse/65536,ascii/1,ascii/64,ascii/65536' \
+UTF_BENCH_ENGINES=sparkles,simdutf,simdutf8,xutf \
+  libs/base/bench/utf/build/base-utf-bench-test-unittest-foreign \
+  --bench --perf -i 'utf\.(offset|boolean|to16|to8|display)$' \
+  --group-by=operation,corpus --bench-min-time=100 \
+  --bench-json=/tmp/base-nonascii-final.json --no-colors
+```
+
+Corpus selectors are prefixes: `ascii/1` also selects 15, 16, 127, 128 and 129.
+
 The assertion-enabled warning is a runner heuristic, not evidence that this optimized `bench` build is a debug build. Do not disable assertions to silence it. See [runner configuration](../../libs/test-runner/how-to/benchmark.md).
 
 Run wired from `libs/wired/bench/runtime`, preserving the same flags on both sides:
@@ -172,4 +284,4 @@ DC=ldc2 WIRED_BENCH_ENGINES=wired-native \
 
 `WIRED_BENCH_DATA` pointed to the flake's `wired-bench-data` store output for the measured runs; use the [wired benchmark setup](../../../libs/wired/bench/runtime/README.md) for the dataset environment.
 
-Session raw JSON artifacts are retained at `/tmp/sparkles-base-utf-before.json`, `/tmp/sparkles-base-utf-final.json`, `/tmp/wired-utf-before.json` and `/tmp/wired-utf-after.json`. They are local measurement artifacts, not files shipped with this catalog. The tables above preserve the representative observations; do not treat an absent local artifact as reproducible baseline evidence on another host.
+Session raw JSON artifacts are retained at `/tmp/sparkles-base-utf-before.json`, `/tmp/sparkles-base-utf-final.json`, `/tmp/base-nonascii-before.json`, `/tmp/base-utf-oct2-final.json` (intermediate complete field), `/tmp/base-sparse-before.json`, `/tmp/base-nonascii-final.json`, `/tmp/wired-utf-before.json`, `/tmp/wired-utf-after.json` (initial pass) and `/tmp/wired-utf-oct2.json` (final kernels). They are local measurement artifacts, not files shipped with this catalog. The tables above preserve the representative observations; do not treat an absent local artifact as reproducible baseline evidence on another host.
