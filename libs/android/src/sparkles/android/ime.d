@@ -31,13 +31,14 @@ version (Android):
 import core.atomic : atomicLoad, atomicStore, cas;
 
 import jni_c;
+import sparkles.android.autofill : autofillOwnsField;
 import sparkles.android.ime_diff : diff, eachCodePoint, FieldEdit, isSentinelRun,
     sentinel, sentinelLength;
 import sparkles.android.main_thread : mainThreadReady, postToMainThread;
 import sparkles.android.text_input : imeBackspace, imeEnter, pushTyped;
 
 // android.text.InputType / EditorInfo
-private enum int inputTypeText = 0x1 // TYPE_CLASS_TEXT
+package enum int inputTypeText = 0x1 // TYPE_CLASS_TEXT
     | 0x90 // TYPE_TEXT_VARIATION_VISIBLE_PASSWORD: no learning, no composing
     | 0x20000 // TYPE_TEXT_FLAG_MULTI_LINE: Enter commits "\n", never an action
     | 0x80000; // TYPE_TEXT_FLAG_NO_SUGGESTIONS
@@ -45,7 +46,7 @@ private enum int imeOptions = 0x02000000 // IME_FLAG_NO_FULLSCREEN
     | 0x10000000; // IME_FLAG_NO_EXTRACT_UI
 private enum int showForced = 2; // InputMethodManager.SHOW_FORCED
 
-private __gshared jobject field; // global ref, main thread only
+package __gshared jobject field; // global ref, main thread only (autofill.d borrows it)
 private shared bool installed, pollPending;
 
 /**
@@ -132,7 +133,9 @@ private void installJob(JNIEnv* env, void*) nothrow @nogc
 private void pollJob(JNIEnv* env, void*) nothrow @nogc
 {
     scope (exit) atomicStore(pollPending, false);
-    if (field is null)
+    // While an autofill request holds the field its text is a secret on its
+    // way to the pty, never an edit to diff (`TSE9`).
+    if (field is null || autofillOwnsField)
         return;
 
     auto viewCls = (*env).GetObjectClass(env, field);
@@ -209,7 +212,7 @@ private void hideJob(JNIEnv* env, void*) nothrow @nogc
 
 /// Put the sentinel run back, cursor at its end — through the `Editable`, so
 /// the IME sees an edit, not a new field (`setText` would restart input).
-private void resetField(JNIEnv* env) nothrow @nogc
+package void resetField(JNIEnv* env) nothrow @nogc
 {
     wchar[sentinelLength] run = sentinel;
     auto s = (*env).NewString(env, cast(const(jchar)*) run.ptr, sentinelLength);
@@ -244,7 +247,7 @@ private jobject inputMethodManager(JNIEnv* env) nothrow @nogc
     return (*env).ExceptionCheck(env) ? null : imm;
 }
 
-private void callInt(JNIEnv* env, jobject o, const(char)* name, int v) nothrow @nogc
+package void callInt(JNIEnv* env, jobject o, const(char)* name, int v) nothrow @nogc
 {
     auto m = (*env).GetMethodID(env, (*env).GetObjectClass(env, o), name, "(I)V");
     if (m is null)
