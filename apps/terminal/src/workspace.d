@@ -353,6 +353,21 @@ struct Workspace
         t.zoomed = t.zoomed ? 0 : t.focused;
     }
 
+    /**
+    Resizes a split of the current tab (`TSS10`): the child before the divider
+    takes `extent` cells along the split's axis and the one after it flexes.
+    */
+    void resizeSplit(uint beforeNode, uint afterNode, int extent) @safe pure nothrow @nogc
+    {
+        if (!tabs.length || extent < 1)
+            return;
+        auto nodes = tabs[current].layout.nodes;
+        if (beforeNode >= nodes.length || afterNode >= nodes.length)
+            return;
+        nodes[beforeNode].extent = extent;
+        nodes[afterNode].extent = 0;
+    }
+
     /// Records a pane's working directory (OSC 7, `TPR4`).
     void setCwd(PaneId id, string cwd) @safe pure nothrow @nogc
     {
@@ -568,4 +583,20 @@ version (unittest)
     assert(partial.panesOf(0).length == 1 && partial.focused != 0);
     s.format = 99;
     assert(restored(s).empty);
+}
+
+@("workspace.resizeSplit.movesTheDivider")
+@safe unittest
+{
+    PaneId a;
+    auto w = oneTab(a);
+    Refusal why;
+    cast(void) w.split(DockAxis.horizontal, why);
+    DockFrames f;
+    w.frames(screen, f);
+    assert(f.dividers.length == 1);
+    const d = f.dividers[0];
+    w.resizeSplit(d.beforeNode, d.afterNode, 20);
+    w.frames(screen, f);
+    assert(f.panes[0].rect.width == 20 || f.panes[1].rect.width == 20, "the left pane is 20 wide");
 }

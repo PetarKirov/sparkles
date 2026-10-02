@@ -20,7 +20,7 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.terminal_view.component : TerminalView, TerminalViewOptions;
 import sparkles.terminal_view.input : ExitBehavior;
 import sparkles.terminal_view.pool : TerminalPool;
-import sparkles.ui.components.dock : DockAxis, DockFrames, PaneId;
+import sparkles.ui.components.dock : DockAxis, DockFrames, DividerFrame, PaneId;
 import sparkles.ui.geometry : Rect;
 
 import std.datetime.systime : Clock, SysTime;
@@ -119,7 +119,10 @@ struct WorkspaceHost
 
     // This frame's geometry, for `paint` and the hit tests.
     private PaneBox[] boxes;
+    private DividerFrame[] dividers; // in cells, beside `dividerRects`
     private Rect[] dividerRects;
+    private ptrdiff_t dragging = -1; // the divider being dragged (`TSS10`)
+    private int dragPos; // where it would land, in cells along its axis
     private Rect panesArea;
     private Layer openerLayer;
     private Layer[] paneChromeLayers;
@@ -323,10 +326,13 @@ struct WorkspaceHost
                     repaint = true;
                 }
             }
+            dragDivider(mx, my, leftDown, IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT));
+            if (dragging >= 0)
+                under = pointerOwner = 0;
             if (!leftDown)
                 pointerOwner = under;
             // A click on the chrome is the chrome's, not the pane's.
-            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && tap(h, mx, my))
+            if (dragging < 0 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && tap(h, mx, my))
                 under = pointerOwner = 0;
             if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && under)
             {
@@ -421,10 +427,58 @@ struct WorkspaceHost
         DockFrames f;
         ws.frames(Rect(0, 0, panesArea.width / cellW, panesArea.height / cellH), f);
         boxes = paneBoxes(f, panesArea, cellW, cellH, paneChrome, ws.focused);
+        dividers = f.dividers.dup;
         dividerRects.length = 0;
         foreach (ref d; f.dividers)
             dividerRects ~= Rect(panesArea.x + d.rect.x * cellW, panesArea.y + d.rect.y * cellH,
                 d.rect.width * cellW, d.rect.height * cellH);
+    }
+
+    /**
+    A divider drag (`TSS10`): a press on a divider (or within a few pixels of
+    it) picks it up, moving shows where it would land, and the release
+    resizes the split — once, so each program sees one settled size rather
+    than one per frame.
+    */
+    private void dragDivider(int mx, int my, bool down, bool pressed) @safe
+    {
+        int along(in DividerFrame d) const
+            => d.axis == DockAxis.horizontal ? (mx - panesArea.x) / cellW : (my - panesArea.y) / cellH;
+
+        if (dragging < 0)
+        {
+            if (!pressed)
+                return;
+            enum slop = 4;
+            foreach (i, r; dividerRects)
+                if (contains(Rect(r.x - slop, r.y - slop, r.width + 2 * slop, r.height + 2 * slop), mx, my))
+                {
+                    dragging = i;
+                    const d = dividers[i];
+                    dragPos = d.axis == DockAxis.horizontal ? d.rect.x : d.rect.y;
+                    return;
+                }
+            return;
+        }
+        const d = dividers[dragging];
+        // Neither neighbour shrinks below a few cells, where the dock allows it.
+        enum keep = 4;
+        const lo = d.lo + keep <= d.hi - keep ? d.lo + keep : d.lo;
+        const hi = d.lo + keep <= d.hi - keep ? d.hi - keep : d.hi;
+        const at = along(d), pos = at < lo ? lo : at > hi ? hi : at;
+        if (pos != dragPos)
+        {
+            dragPos = pos;
+            repaint = true;
+        }
+        if (down)
+            return;
+        dragging = -1;
+        if (pos != (d.axis == DockAxis.horizontal ? d.rect.x : d.rect.y))
+        {
+            ws.resizeSplit(d.beforeNode, d.afterNode, pos - d.start);
+            repaint = dirty = true;
+        }
     }
 
     private Rect panelRect; // where the tree opens
@@ -630,6 +684,17 @@ struct WorkspaceHost
                 tv.paintPanePx(h, b.content.x, b.content.y, b.content.width, b.content.height);
         foreach (ref d; dividerRects)
             DrawRectangle(d.x, d.y, d.width, d.height, rgb(divider));
+        // Where a dragged divider would land.
+        if (dragging >= 0)
+        {
+            const d = dividers[dragging];
+            if (d.axis == DockAxis.horizontal)
+                DrawRectangle(panesArea.x + dragPos * cellW + cellW / 2 - 1,
+                    panesArea.y + d.rect.y * cellH, 3, d.rect.height * cellH, rgb(accent));
+            else
+                DrawRectangle(panesArea.x + d.rect.x * cellW,
+                    panesArea.y + dragPos * cellH + cellH / 2 - 1, d.rect.width * cellW, 3, rgb(accent));
+        }
         foreach (ref l; paneChromeLayers)
             paintLayer(h, l, theme);
         // `reveal`: the focused pane's accent corner, with more than one pane.
