@@ -571,23 +571,34 @@ void logBuildInfo(string appName = "sparkles:terminal") @system nothrow @nogc
     enum commit = stamp.commitLabel;
     info(i"$(appName) $(stamp.version_) ($(commit))");
 
-    bool simd = false;
-    ghostty_build_info(GHOSTTY_BUILD_INFO_SIMD, &simd);
+    const vt = ghosttyBuild();
+    const simdName = vt.simd ? "enabled" : "disabled";
+    info(i"ghostty-vt: simd $(simdName), optimize $(vt.optimize)");
+}
+
+/// How the linked libghostty-vt was built (`ghostty_build_info`).
+struct GhosttyBuild
+{
+    bool simd;
+    string optimize; /// `Debug`, `ReleaseSafe`, `ReleaseSmall` or `ReleaseFast`
+}
+
+/// ditto
+GhosttyBuild ghosttyBuild() @system nothrow @nogc
+{
+    GhosttyBuild r;
+    ghostty_build_info(GHOSTTY_BUILD_INFO_SIMD, &r.simd);
 
     GhosttyOptimizeMode opt = GHOSTTY_OPTIMIZE_DEBUG;
     ghostty_build_info(GHOSTTY_BUILD_INFO_OPTIMIZE, &opt);
-
-    string optName;
     switch (opt) {
-        case GHOSTTY_OPTIMIZE_DEBUG:         optName = "Debug";        break;
-        case GHOSTTY_OPTIMIZE_RELEASE_SAFE:  optName = "ReleaseSafe";  break;
-        case GHOSTTY_OPTIMIZE_RELEASE_SMALL: optName = "ReleaseSmall"; break;
-        case GHOSTTY_OPTIMIZE_RELEASE_FAST:  optName = "ReleaseFast";  break;
-        default:                             optName = "Unknown";      break;
+        case GHOSTTY_OPTIMIZE_DEBUG:         r.optimize = "Debug";        break;
+        case GHOSTTY_OPTIMIZE_RELEASE_SAFE:  r.optimize = "ReleaseSafe";  break;
+        case GHOSTTY_OPTIMIZE_RELEASE_SMALL: r.optimize = "ReleaseSmall"; break;
+        case GHOSTTY_OPTIMIZE_RELEASE_FAST:  r.optimize = "ReleaseFast";  break;
+        default:                             r.optimize = "Unknown";      break;
     }
-
-    const simdName = simd ? "enabled" : "disabled";
-    info(i"ghostty-vt: simd $(simdName), optimize $(optName)");
+    return r;
 }
 
 // Write an xterm-style dynamic color report, or an OSC 4 palette report when
