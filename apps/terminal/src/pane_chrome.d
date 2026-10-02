@@ -127,6 +127,10 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
 {
     Builder b;
     const base = toolHit + 4 * pane;
+    // Three captioned buttons need about 32 columns; a narrower pane (half a
+    // phone) shows their icons, so Close stays on screen.
+    if (labels != ButtonLabels.icon && cols < 40)
+        labels = ButtonLabels.icon;
     uint[] name = [label(b, title, Slot.textPrimary, bold: true)];
     if (detail.length)
         name ~= label(b, detail, Slot.muted);
@@ -196,4 +200,18 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     assert(l.hits.length == 3);
     foreach (i, ref t; l.hits)
         assert(t.rect.width >= cellsOf(captions[i]) + 2, captions[i]);
+}
+
+@("pane_chrome.paneToolbar.aNarrowPaneShowsIcons")
+@safe unittest
+{
+    import chrome : place, Place;
+
+    // Half a phone: captions would run past the edge; icons keep all three
+    // buttons inside the pane.
+    const l = place(paneToolbar(1, "bash", "~", ButtonLabels.iconText, 1, 20), 20, 3,
+        0, 0, 1, 1, Place.top);
+    assert(l.hits.length == 3);
+    foreach (ref t; l.hits)
+        assert(t.rect.x + t.rect.width <= 20);
 }
