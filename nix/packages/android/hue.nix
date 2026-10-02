@@ -134,112 +134,7 @@ in
       # The font set is defined once, in nix/packages/fonts.nix, and shared
       # with the desktop bundle — nothing about it is Android-specific.
       fonts = config.legacyPackages.sparklesFonts;
-      mapleMono = fonts.maple-mono;
-
-      # Attribution for everything third-party the APK ships. OFL (the fonts)
-      # and Bitstream Vera (DejaVu) require the notice to accompany the fonts;
-      # zlib (raylib) and MIT (tree-sitter, libghostty-vt, Uiua386) require it
-      # in binary distributions. Nothing carried one before this.
-      #
-      # Generated from each package's `meta.license` rather than hand-listed,
-      # so it cannot drift from what is actually bundled — nixpkgs is the
-      # authority on the licence, and the font packages ship no LICENSE file
-      # in their outputs to copy.
-      licenseOf =
-        c:
-        if c ? licence then
-          c.licence # nixpkgs metadata too vague to attribute with
-        else
-          let
-            l = c.pkg.meta.license;
-            ls = if builtins.isList l then l else [ l ];
-          in
-          lib.concatMapStringsSep ", " (m: m.spdxId or m.shortName or "unknown") ls;
-
-      noticedComponents = [
-        {
-          what = "Maple Mono NF CN (bundled font)";
-          pkg = mapleMono;
-          home = "https://github.com/subframe7536/maple-font";
-        }
-        {
-          what = "FiraCode Nerd Font Mono (bundled font)";
-          pkg = pkgs.nerd-fonts.fira-code;
-          home = "https://github.com/ryanoasis/nerd-fonts";
-        }
-        {
-          what = "DejaVu Sans Mono (bundled font)";
-          pkg = pkgs.dejavu_fonts;
-          # nixpkgs records only `free`, which attributes nothing; DejaVu is
-          # Bitstream Vera plus the Arev additions.
-          licence = "Bitstream-Vera + Arev";
-          home = "https://dejavu-fonts.github.io";
-        }
-        {
-          what = "Uiua386 (bundled font)";
-          pkg = pkgs.uiua386;
-          home = "https://www.uiua.org";
-        }
-        {
-          what = "Noto Sans (Unicode fallback fonts)";
-          pkg = pkgs.noto-fonts;
-          home = "https://notofonts.github.io";
-        }
-        {
-          what = "Noto Color Emoji (bundled font)";
-          pkg = pkgs.noto-fonts-color-emoji;
-          home = "https://github.com/googlefonts/noto-emoji";
-        }
-        {
-          what = "FreeType (statically linked)";
-          pkg = pkgs.freetype;
-          home = "https://freetype.org";
-        }
-        {
-          what = "HarfBuzz (statically linked)";
-          pkg = pkgs.harfbuzz;
-          home = "https://harfbuzz.github.io";
-        }
-        {
-          what = "libpng (statically linked)";
-          pkg = pkgs.libpng;
-          home = "https://www.libpng.org";
-        }
-        {
-          what = "zlib (statically linked)";
-          pkg = pkgs.zlib;
-          home = "https://zlib.net";
-        }
-        {
-          what = "raylib (statically linked)";
-          pkg = pkgs.raylib;
-          home = "https://www.raylib.com";
-        }
-        {
-          what = "tree-sitter + grammars (statically linked / shipped as .so)";
-          pkg = pkgs.tree-sitter;
-          home = "https://tree-sitter.github.io";
-        }
-      ];
-
-      noticeFile = pkgs.writeText "hue-android-NOTICE" ''
-        hue for Android bundles the following third-party components.
-        Licence identifiers are SPDX, taken from each component's nixpkgs
-        metadata at build time.
-
-        ${lib.concatMapStringsSep "\n" (c: ''
-          ${c.what}
-            licence: ${licenseOf c}
-            home:    ${c.home}
-        '') noticedComponents}
-        libghostty-vt (statically linked)
-          licence: MIT
-          home:    https://ghostty.org
-        This software is based in part on the work of the FreeType Team.
-
-        hue itself and the sparkles libraries are part of this repository; see
-        its LICENSE.
-      '';
+      credits = config.legacyPackages.sparklesCredits;
 
       # The APK asset bundle, parameterized over the docs/ tree (the
       # explorer's browse surface — `stageDocs` fills $out/docs). Fonts +
@@ -262,11 +157,6 @@ in
             # `.charset` sidecar (fc-query ran at ITS build time), so this is a
             # copy, not a second recipe to keep in sync.
             cp -rL ${fonts.fontBundle}/fonts $out/fonts
-            cp -rL ${fonts.fontBundle}/licenses $out/licenses
-            # The copied Nix-store directory is read-only; allow sibling licenses.
-            chmod u+w $out/licenses
-            cp -r ${config.packages.freetype-android}/share/licenses/* $out/licenses/
-            cp -r ${config.packages.harfbuzz-android}/share/licenses/* $out/licenses/
 
             # Grammar queries — the desktop bundle's normalized queries/ dirs
             # verbatim (parsers ship separately as native libs; the registry's
@@ -283,7 +173,11 @@ in
             mkdir -p $out/docs
             ${stageDocs}
 
-            cp ${noticeFile} $out/NOTICE
+            # The credits document with its licence texts — the files the
+            # documentation site renders, from the same derivation (TPG16) —
+            # and the plain NOTICE generated from the parts hue ships.
+            cp -r ${credits.bundle} $out/credits
+            cp ${credits.notice "hue"} $out/NOTICE
 
             # The manifest lists itself (the redirect creates the empty file
             # before `find` walks) and omits bundle-hash (written after). Both

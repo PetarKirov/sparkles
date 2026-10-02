@@ -25,6 +25,7 @@ in
       ndk = config.legacyPackages.androidNdk;
       sources = config.legacyPackages.sparklesSources;
       fonts = config.legacyPackages.sparklesFonts;
+      credits = config.legacyPackages.sparklesCredits;
 
       libterminal = config.legacyPackages.buildDAndroidLib {
         pname = "libterminal-android";
@@ -126,8 +127,8 @@ in
 
       # The asset bundle: fonts with their charset sidecars — the only part
       # `sparkles.android.assets` extracts (the manifest lists fonts/ alone,
-      # so nothing else lands beside the user's home) — plus session.conf and
-      # NOTICE, read in place from the APK.
+      # so nothing else lands beside the user's home) — plus session.conf,
+      # NOTICE and the credits/ document, read in place from the APK.
       mkAssets =
         session: bootstraps:
         pkgs.runCommand "terminal-android-assets" { } ''
@@ -143,29 +144,12 @@ in
           '') bundledFonts}
           # All script fallbacks and emoji are shared with the desktop bundle.
           cp ${fonts.fontBundle}/fonts/Noto* $out/fonts/
-          cp -r ${fonts.fontBundle}/licenses $out/licenses
-          # The copied Nix-store directory is read-only; allow sibling licenses.
-          chmod u+w $out/licenses
-          cp -r ${config.packages.freetype-android}/share/licenses/* $out/licenses/
-          cp -r ${config.packages.harfbuzz-android}/share/licenses/* $out/licenses/
+          # The credits document with its licence texts — the files the
+          # documentation site renders, from the same derivation (TPG16) —
+          # and the plain NOTICE generated from the parts this app ships.
+          cp -r ${credits.bundle} $out/credits
+          cp ${credits.notice "terminal"} $out/NOTICE
           cp ${sessionConf session} $out/session.conf
-
-          cat > $out/NOTICE <<'EOF'
-          The terminal bundles the following third-party components.
-
-          FiraCode Nerd Font Mono (bundled font)     OFL-1.1   https://github.com/ryanoasis/nerd-fonts
-          DejaVu Sans Mono (bundled font)            Bitstream-Vera + Arev   https://dejavu-fonts.github.io
-          Noto Sans (Unicode fallback fonts)         OFL-1.1   https://notofonts.github.io
-          Noto Color Emoji (bundled font)            OFL-1.1   https://github.com/googlefonts/noto-emoji
-          FreeType (statically linked)               FTL       https://freetype.org
-          HarfBuzz (statically linked)               MIT       https://harfbuzz.github.io
-          libpng (statically linked)                 libpng-2.0 https://www.libpng.org
-          zlib (statically linked)                   Zlib      https://zlib.net
-          raylib (statically linked)                 Zlib      https://www.raylib.com
-          libghostty-vt (statically linked)          MIT       https://ghostty.org
-          libkqueue (statically linked)              BSD-2-Clause   https://github.com/mheily/libkqueue
-          This software is based in part on the work of the FreeType Team.
-          EOF
 
           (cd $out && find fonts -type f | sort > asset-manifest.txt)
           (cd $out && find fonts -type f -print0 | sort -z \
