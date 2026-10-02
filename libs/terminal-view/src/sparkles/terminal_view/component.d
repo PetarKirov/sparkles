@@ -519,43 +519,9 @@ struct TerminalView
             return false;
         }
 
-        // Close-on-exec, before anything else can fork: `forkpty` returns a
-        // plain master, so the NEXT terminal opened in this process hands its
-        // shell a copy of THIS one's master. Audited live in the gallery,
-        // which is the first embedder to open more than one: the second tab's
-        // shell listed `5 -> /dev/ptmx` — the first tab's master, readable and
-        // writable by an unrelated shell, and (the functional half) an extra
-        // holder keeping that pty open. A hangup is delivered when the LAST
-        // master closes, so closing the first tab would not have hung its
-        // shell up while the second one lived; the tab would go and the
-        // process would stay. `apps/terminal` never saw it — one pty, no
-        // second fork. This flag is on the fd the parent keeps, so the child
-        // already forked is unaffected: its 0/1/2 are the slave.
-        if (fcntl(s.pty_fd, F_SETFD, fcntl(s.pty_fd, F_GETFD) | FD_CLOEXEC) < 0)
+        // Close-on-exec and non-blocking, before anything else can fork.
+        if (!prepareMaster())
         {
-            import core.sys.posix.unistd : close;
-
-            close(s.pty_fd);
-            s.pty_fd = -1;
-            hangUpAndReap();
-            s.childReaped = true;
-            ghostty_terminal_free(s.terminal);
-            s.terminal = null;
-            return false;
-        }
-
-        // Non-blocking master: read() must return EAGAIN, never stall a frame.
-        int flags = fcntl(s.pty_fd, F_GETFL);
-        if (flags < 0 || fcntl(s.pty_fd, F_SETFL, flags | O_NONBLOCK) < 0)
-        {
-            import core.sys.posix.unistd : close;
-
-            // Master first, then the reap — the same ordering `close` documents:
-            // the child's hangup does not arrive while a master fd is open.
-            close(s.pty_fd);
-            s.pty_fd = -1;
-            hangUpAndReap();
-            s.childReaped = true;
             ghostty_terminal_free(s.terminal);
             s.terminal = null;
             return false;
@@ -677,6 +643,99 @@ struct TerminalView
             _exit(127);
         }
         return true;
+    }
+
+    /**
+    Makes the fresh master close-on-exec and non-blocking; on failure closes
+    it and reaps the child, and returns false.
+
+    100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B Close-on-exec, before anything else can fork:) `forkpty` returns a
+    plain master, so the NEXT terminal opened in this process hands its shell
+    a copy of THIS one's master. Audited live in the gallery, the first
+    embedder to open more than one: the second tab's shell listed
+    `5 -> /dev/ptmx` — the first tab's master, readable and writable by an
+    unrelated shell, and an extra holder keeping that pty open, so closing
+    the first tab would not have hung its shell up. The flag is on the fd the
+    parent keeps; the child already forked is unaffected (its 0/1/2 are the
+    slave).
+
+    100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B Non-blocking:) `read` must return EAGAIN, never stall a frame.
+    */
+    private bool prepareMaster() @system
+    {
+        import core.sys.posix.unistd : close;
+
+        int flags;
+        if (fcntl(s.pty_fd, F_SETFD, fcntl(s.pty_fd, F_GETFD) | FD_CLOEXEC) < 0
+            || (flags = fcntl(s.pty_fd, F_GETFL)) < 0
+            || fcntl(s.pty_fd, F_SETFL, flags | O_NONBLOCK) < 0)
+        {
+            // Master first, then the reap — the ordering `close` documents:
+            // the child's hangup does not arrive while a master fd is open.
+            close(s.pty_fd);
+            s.pty_fd = -1;
+            hangUpAndReap();
+            s.childReaped = true;
+            return false;
+        }
+        return true;
+    }
+
+    /**
+    Runs the pane's program again in place (`TSS3`): a fresh pty and child
+    under the current `opts` (set `opts.shellCommand` / `program` first to run
+    something else), the same instance, grid and scrollback. The modes the
+    old program left behind are reset — the alternate screen, mouse
+    reporting, bracketed paste, kitty keyboard flags, SGR — and a separator
+    rule marks the boundary in the scrollback.
+
+    Only once the old child is reaped (its status is the reason to respawn,
+    and the pump's reap must not land on the new process): returns false
+    before that, or when the program cannot be started — a line saying so is
+    written to the pane and it stays exited.
+    */
+    bool respawn(H)(ref H h) @system
+    {
+        import core.sys.posix.unistd : close;
+
+        if (!opened || !s.childExited || (s.child > 0 && !s.childReaped))
+            return false;
+        if (s.pty_fd >= 0 && s.pty_fd != opts.adoptMaster)
+            close(s.pty_fd);
+        s.pty_fd = -1;
+        opts.adoptMaster = -1;
+
+        static immutable resetModes = "\x1b[?1049l\x1b[?1000l\x1b[?1002l"
+            ~ "\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<99u\x1b[=0;1u"
+            ~ "\x1b[!p\x1b[0m\r\n";
+        feedLocal(resetModes);
+        foreach (_; 0 .. s.cols)
+            feedLocal("─");
+        feedLocal("\r\n");
+
+        if (!spawnChild() || !prepareMaster())
+        {
+            feedLocal("\x1b[1m[the program could not be started]\x1b[0m\r\n");
+            s.pty_fd = -1;
+            invalidate();
+            return false;
+        }
+        s.effects_ctx.pty_fd = s.pty_fd;
+        s.childExited = false;
+        s.childReaped = false;
+        s.childStatus = -1;
+        ringPump = false;
+        startRingPump(h);
+        invalidate();
+        return true;
+    }
+
+    /// Writes `bytes` into the emulator as if the program had (a respawn's
+    /// separator, an error line).
+    private void feedLocal(scope const(char)[] bytes) @system nothrow @nogc
+    {
+        ghostty_terminal_vt_write(s.terminal, cast(const(ubyte)*) bytes.ptr,
+            cast(uint) bytes.length);
     }
 
     /**
@@ -2643,4 +2702,53 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     assert(tv.decideRedraw() && firstCell() == 'e');
     assert(!tv.s.synchronizedOutput.held);
     assert(tv.s.synchronizedOutput.remaining() == Duration.max);
+}
+
+@("terminal_view.component.respawnRunsTheProgramAgainInPlace")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+    import std.algorithm.searching : canFind, count;
+
+    // `TSS3`: the same instance, a new child; the old screen stays above a
+    // separator. A host that spawns no daemons keeps the synchronous drain.
+    static struct NoDaemons {}
+    NoDaemons h;
+
+    static immutable(char)*[4] first = ["-sh", "-c", "printf 'first-run'; exit 3", null];
+    static immutable(char)*[4] second = ["-sh", "-c", "printf 'second-run'", null];
+    static immutable(char)*[2] env = ["PATH=/usr/bin:/bin", null];
+
+    TerminalView tv;
+    tv.opts = TerminalViewOptions(program: "/bin/sh",
+        argv: cast(const(char)*[]) first[], env: cast(const(char)*[]) env[],
+        exitBehavior: ExitBehavior.hold);
+    assert(tv.openCore(40, 6, 0, 0));
+    scope (exit) tv.close();
+
+    void runOut()
+    {
+        foreach (_; 0 .. 300)
+        {
+            tv.pump();
+            if (tv.s.childExited && tv.s.childReaped)
+                break;
+            Thread.sleep(10.msecs);
+        }
+        tv.pump();
+    }
+
+    assert(!tv.respawn(h), "a live child is not respawned");
+    runOut();
+    assert(tv.s.childStatus == 3);
+
+    tv.opts.argv = cast(const(char)*[]) second[];
+    assert(tv.respawn(h));
+    assert(!tv.s.childExited && tv.s.childStatus == -1);
+    runOut();
+    assert(tv.s.childStatus == 0);
+    const text = tv.screenText();
+    assert(text.canFind("first-run") && text.canFind("second-run"), text);
+    assert(text.canFind("────"), "the separator marks the boundary");
 }
