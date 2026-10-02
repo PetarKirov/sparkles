@@ -19,7 +19,10 @@ module droid_terminal;
 
 version (Android):
 
+import core.time : Duration, msecs;
+
 import extra_keys : ExtraKey, ExtraKeyKind, Latch;
+import sparkles.base.term_color : RgbColor;
 import sparkles.input : Event, GestureEvent, Gesture, Key, KeyAction, KeyEvent,
     match, PointerAction, PointerEvent, WheelEvent;
 import sparkles.terminal_view.component : TerminalView, TerminalViewOptions;
@@ -28,6 +31,8 @@ import sparkles.ui.widget : WidgetTree;
 
 import screen_oracle : ScreenOracle;
 import settings_load : LoadedConfig;
+import key_router : KeyRouter, paintGuide, Route;
+import keymap : KeyCommand, TermCommand, TermContext;
 
 /// The whole-surface Android component.
 struct DroidTerminal
@@ -54,6 +59,15 @@ struct DroidTerminal
     /// The extra-keys row was swiped away; a swipe up from the bottom edge
     /// brings it back (`TCF7`). Not persisted.
     private bool rowDismissed;
+    /// Every key goes through the terminal's table first (`TKM1`).
+    KeyRouter router;
+    /// The chrome's colours: the terminal scheme's foreground and background
+    /// (D17).
+    RgbColor chromeFg = RgbColor(0xcd, 0xd6, 0xf4);
+    /// ditto
+    RgbColor chromeBg = RgbColor(0x1e, 0x1e, 0x2e);
+    private bool guideWasShown;
+    private int defaultFontPx;
     private Latch latch;
     private bool keyboardShown;
     private float pinchBase = 0; // the font size a pinch started from
@@ -87,6 +101,15 @@ struct DroidTerminal
         if (takeReloadRequest())
             loadSettings();
 
+        if (defaultFontPx == 0)
+            defaultFontPx = h.fontSizePx;
+        router.tick((cast(long)(h.frameSeconds * 1000)).msecs);
+        const wait = router.untilShown;
+        if (wait != Duration.max)
+            static if (__traits(compiles, h.wakeIn(wait)))
+                h.wakeIn(wait);
+        noteGuide();
+
         const g = geometry(h);
         // The key row moves with the keyboard even when the pane's cell grid
         // does not change (a sub-cell difference): repaint it anyway.
@@ -119,6 +142,8 @@ struct DroidTerminal
         const g = geometry(h);
         tv.paintPanePx(h, 0, g.top, g.paneCols * tv.s.cellWidth,
             g.paneRows * tv.s.cellHeight);
+        paintGuide(h, router, TermContext.init, g.paneCols, g.paneRows, 0, g.top,
+            chromeFg, chromeBg);
         paintKeys(g);
     }
 
@@ -150,6 +175,13 @@ struct DroidTerminal
         next.scrollbackLimit = o.scrollbackLimit;
         next.exitBehavior = o.exitBehavior;
         next.policy = o.policy;
+        router.configure(config.effective, warnings);
+        tv.opts.builtinChords = false;
+        next.builtinChords = false;
+        if (o.colors.hasForeground)
+            chromeFg = o.colors.foreground;
+        if (o.colors.hasBackground)
+            chromeBg = o.colors.background;
         foreach (w; warnings)
             warning(i"$(w)");
         tv.invalidate();
@@ -173,7 +205,64 @@ struct DroidTerminal
         auto chord = latch.apply(k);
         if (before != latch.any)
             tv.invalidate(); // the released latch's highlight goes
-        tv.handle(h, Event(chord));
+        const r = router.route(chord, TermContext.init);
+        final switch (r.route)
+        {
+            case Route.program:
+                tv.handle(h, Event(chord));
+                break;
+            case Route.consumed:
+                break;
+            case Route.execute:
+                run(h, r.command);
+                break;
+        }
+        noteGuide();
+    }
+
+    /// Runs one of the terminal's commands.
+    private void run(H)(ref H h, KeyCommand c)
+    {
+        final switch (c.cmd)
+        {
+            case TermCommand.none:
+            case TermCommand.showGuide: // the guide consumes its own row
+                break;
+            case TermCommand.dismiss:
+                router.closeGuide();
+                break;
+            case TermCommand.copy:
+                cast(void) tv.copy(h);
+                break;
+            case TermCommand.paste:
+                tv.pasteClipboard();
+                break;
+            case TermCommand.fontLarger:
+                h.fontSize(h.fontSizePx + 2);
+                break;
+            case TermCommand.fontSmaller:
+                if (h.fontSizePx > 8)
+                    h.fontSize(h.fontSizePx - 2);
+                break;
+            case TermCommand.fontReset:
+                if (defaultFontPx > 0)
+                    h.fontSize(defaultFontPx);
+                break;
+            case TermCommand.toggleExtraKeys:
+                rowDismissed = !rowDismissed;
+                tv.invalidate();
+                break;
+        }
+    }
+
+    /// The guide appearing or closing repaints the pane under it.
+    private void noteGuide()
+    {
+        if (router.lantern.shown != guideWasShown)
+        {
+            guideWasShown = router.lantern.shown;
+            tv.invalidate();
+        }
     }
 
     private void pressExtraKey(H)(ref H h, in ExtraKey key)
@@ -183,6 +272,10 @@ struct DroidTerminal
             case ExtraKeyKind.modifier:
                 latch.toggle(key.key);
                 tv.invalidate();
+                return;
+            case ExtraKeyKind.menu:
+                router.openGuide();
+                noteGuide();
                 return;
             case ExtraKeyKind.keyboard:
                 toggleKeyboard();

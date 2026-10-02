@@ -14,7 +14,7 @@ import std.getopt;
 import cli : guiOptionsFrom, onExitFromFlag, viewOptionsFrom;
 import settings : TerminalConfig;
 import settings_load : desktopConfigPath, loadTerminalConfig, LoadedConfig;
-import sparkles.terminal_view.component : TerminalView;
+import desktop_terminal : DesktopTerminal;
 import sparkles.terminal_view.core : logBuildInfo;
 import sparkles.terminal_view.log : routeTraceLog;
 import sparkles.ui_app.host : RunConfig;
@@ -112,7 +112,7 @@ private int desktopMain(string[] args)
         defaultGetoptPrinter(
             "sparkles:terminal — a minimal terminal emulator using libghostty-vt.\n\n" ~
             "Usage: terminal [options] [-- command [args...]]\n" ~
-            "       terminal config show [--changed] | write [--force]\n\n" ~
+            "       terminal config show [--changed] | write [--force] | keys\n\n" ~
             "With no command, the login shell runs interactively. With a command,\n" ~
             "the shell runs it via `-c` and then exits (e.g. `terminal -- vim file`).\n" ~
             "Settings come from the configuration file; a flag overrides it.",
@@ -153,17 +153,25 @@ private int desktopMain(string[] args)
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };
 
-    // Stack-pinned: the VT effects hold a pointer into the component.
-    TerminalView tv;
+    // Stack-pinned: the VT effects hold a pointer into the pane.
+    DesktopTerminal app;
+    ref tv = app.tv;
     // The desktop's light/dark source arrives with the portal (`TPR13`);
     // until then the dark scheme is the one in effect.
     tv.opts = viewOptionsFrom(lc.effective, systemDark: true, lc.warnings);
     tv.opts.shellCommand = command.length ? command.join(" ").toStringz : null;
     tv.opts.debugScreenshotAndExit = debugScreenshotAndExit;
+    // Every key goes through the terminal's table first (`TKM1`).
+    tv.opts.builtinChords = false;
+    app.keys.configure(lc.effective, lc.warnings);
+    if (tv.opts.colors.hasForeground)
+        app.chromeFg = tv.opts.colors.foreground;
+    if (tv.opts.colors.hasBackground)
+        app.chromeBg = tv.opts.colors.background;
     foreach (w; lc.warnings)
         warning(i"$(w)");
 
-    const outcome = runApp(tv, cfg);
+    const outcome = runApp(app, cfg);
 
     final switch (outcome)
     {
@@ -234,8 +242,13 @@ private int configCommand(string program, string[] rest)
             }
             writeln("wrote ", configPath);
             return 0;
+        case "keys":
+            import keymap : bindingsMarkdown;
+
+            stdout.write(bindingsMarkdown());
+            return 0;
         default:
-            stderr.writeln("terminal config: unknown action '", action, "' (show, write)");
+            stderr.writeln("terminal config: unknown action '", action, "' (show, write, keys)");
             return 2;
     }
 }

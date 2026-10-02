@@ -28,6 +28,7 @@ import sparkles.terminal_view.notification_log : NotifyWhen;
 import sparkles.terminal_view.protocols : ClipboardReadPolicy, PasteConfirm;
 
 import extra_keys : defaultExtraKeysSpec;
+import keymap : KeysConfig;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Closed domains.
@@ -413,6 +414,10 @@ struct TerminalConfig
     UiConfig ui;
     @Label("opening files")
     OpenConfig open;
+    /// The binding overlay: context → chord path → command, `null` unbinding
+    /// (`TKM8`). Contexts are `overlay` and `pane`; `leader` spells the leader.
+    @Description("Key bindings over the defaults: context, chord path, command or null.")
+    KeysConfig keys;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

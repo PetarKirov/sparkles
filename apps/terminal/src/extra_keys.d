@@ -21,6 +21,7 @@ enum ExtraKeyKind
     text, /// a literal string (`-`, `/`, `~`)
     modifier, /// `CTRL`, `ALT`, `SHIFT`: latch for the next key
     keyboard, /// `KEYBOARD`: show/hide the soft keyboard
+    menu, /// `MENU`: the key guide at the root (`TKM7`)
 }
 
 /// One button.
@@ -32,9 +33,11 @@ struct ExtraKey
     string label; /// what the button shows
 }
 
-/// Termux's default layout (`TermuxPropertyConstants`).
+/// The default layout: Termux's (`TermuxPropertyConstants`) with `PGDN`
+/// giving its place to `MENU`, the key guide (`TKM7`, mockup E) — on a phone the
+/// guide is the only way to the terminal's commands.
 enum defaultExtraKeysSpec = `[['ESC','/','-','HOME','UP','END','PGUP'],` ~
-    ` ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]`;
+    ` ['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','MENU']]`;
 
 /// The rows `termux.properties` asks for, or the default layout when the file
 /// has no (or an unparsable) `extra-keys` entry. An explicit empty layout
@@ -63,6 +66,7 @@ ExtraKey[][] extraKeysFrom(const(char)[] propertiesText) @safe pure
     assert(def[0][0] == ExtraKey(ExtraKeyKind.key, Key.escape, null, "ESC"));
     assert(def[0][1] == ExtraKey(ExtraKeyKind.text, Key.none, "/", "/"));
     assert(def[1][1] == ExtraKey(ExtraKeyKind.modifier, Key.ctrl, null, "CTRL"));
+    assert(def[1][6] == ExtraKey(ExtraKeyKind.menu, Key.none, null, "☰"), "MENU by default");
 
     // The emulator test's layout (nix-on-droid tests/emulator), across a
     // continuation line, with a `{key: …}` object.
@@ -267,6 +271,7 @@ ExtraKey extraKey(string name, string display = null) @safe pure
         case "ALT": return ExtraKey(ExtraKeyKind.modifier, Key.alt, null, label);
         case "SHIFT": return ExtraKey(ExtraKeyKind.modifier, Key.shift, null, label);
         case "KEYBOARD": return ExtraKey(ExtraKeyKind.keyboard, Key.none, null, label);
+        case "MENU": return ExtraKey(ExtraKeyKind.menu, Key.none, null, display.length ? display : "☰");
         case "SPACE": return ExtraKey(ExtraKeyKind.text, Key.none, " ", display.length ? display : "␣");
         case "BACKSLASH": return ExtraKey(ExtraKeyKind.text, Key.none, "\\", display.length ? display : "\\");
         case "QUOTE": return ExtraKey(ExtraKeyKind.text, Key.none, "\"", display.length ? display : "\"");

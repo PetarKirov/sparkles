@@ -1,17 +1,44 @@
 # Key and mouse bindings
 
-Bindings are fixed (there is no configuration file). Everything not listed
-here is encoded and forwarded to the running application — including Escape —
-honoring whatever keyboard modes the application has enabled.
+Everything not listed here is encoded and forwarded to the running
+application — including Escape — honoring whatever keyboard modes the
+application has enabled.
 
 ## Keyboard
 
-| Shortcut        | Action                              |
-| --------------- | ----------------------------------- |
-| Ctrl+Shift+C    | Copy the selection to the clipboard |
-| Ctrl+Shift+V    | Paste from the clipboard            |
-| Ctrl+= / Ctrl++ | Increase font size                  |
-| Ctrl+-          | Decrease font size                  |
+The terminal claims a few chords in a pane; everything else is under the
+**leader**, `Ctrl+Shift+Space` by default (`lantern.leader`). After the leader,
+the key guide lists what follows once `lantern.delayMs` has passed — type
+faster and it never appears. On a phone the `MENU` extra key (☰) opens the
+guide. In a page or menu, `Escape`, `q` and Back close it and `?` lists its keys.
+
+The table is the binary's own: `terminal config keys` prints it, and a test
+keeps this page equal to it.
+
+| Keys           | Action            | Where          |
+| -------------- | ----------------- | -------------- |
+| `Escape`       | close             | a page or menu |
+| `q`            | close             | a page or menu |
+| `Back`         | close             | a page or menu |
+| `?`            | key guide         | a page or menu |
+| `Ctrl+Shift+C` | copy              | a pane         |
+| `Ctrl+Shift+V` | paste             | a pane         |
+| `Ctrl+=`       | larger font       | a pane         |
+| `Ctrl++`       | larger font       | a pane         |
+| `Ctrl+-`       | smaller font      | a pane         |
+| `Ctrl+0`       | default font size | a pane         |
+| `Leader ?`     | all keys          | a pane         |
+| `Leader k`     | toggle extra keys | a pane         |
+
+Bindings are rebound or removed in the configuration file's `keys` section —
+context (`pane`, `overlay`), then a chord path, then a command name or `null`:
+
+```json
+{ "keys": { "pane": { "leader e": "toggleExtraKeys", "ctrl+0": null } } }
+```
+
+`Ctrl-C`, `Ctrl-Z`, `Ctrl-S`, `Ctrl-Q` and `Ctrl-\` belong to the program and
+cannot be bound.
 
 Font-size changes reload every loaded face at the new size and resize the
 cell grid to fit the window (the application is notified via `TIOCSWINSZ`,
