@@ -14,16 +14,34 @@ import sparkles.base.buffer : UniqueBuffer;
 
 /// Streaming scanner for OSC sequences. Tracks just enough state to extract
 /// complete OSC payloads even when a sequence is split across read() chunks.
-/// Payloads longer than the limit (e.g. OSC 52 clipboard writes) are marked
-/// overflowed and must be ignored. The limit accommodates all 256 palette queries.
+/// Payloads longer than their command's limit are marked overflowed and must
+/// be ignored. The default limit accommodates all 256 palette queries; a
+/// kitty notification chunk (OSC 99) may carry 4096 encoded bytes plus its
+/// metadata, and an OSC 52 clipboard write up to 1 MiB decoded (`TPR20`).
 struct OscScanner
 {
     enum State : ubyte { ground, esc, osc, oscEsc }
     enum maxPayloadLength = 4096;
+    /// ditto — OSC 99: a 4096-byte encoded chunk and its metadata.
+    enum maxNotificationPayloadLength = 8192;
+    /// ditto — OSC 52: `52;`, up to twelve selection letters, `;`, then the
+    /// base64 of 1 MiB.
+    enum maxClipboardPayloadLength = 3 + 12 + 1 + (1024 * 1024 + 2) / 3 * 4;
     State state;
     bool overflowed;
     bool endedWithBel; /// sequence terminator: BEL (true) or ESC \ (false)
     UniqueBuffer!(char, 48) payload;
+
+    /// The cap for the payload collected so far, by its command prefix.
+    size_t limit() const scope @safe pure nothrow @nogc
+    {
+        const p = payload[];
+        if (p.length >= 3 && p[0] == '5' && p[1] == '2' && p[2] == ';')
+            return maxClipboardPayloadLength;
+        if (p.length >= 3 && p[0] == '9' && p[1] == '9' && p[2] == ';')
+            return maxNotificationPayloadLength;
+        return maxPayloadLength;
+    }
 }
 
 /// Advance the scanner by one byte. Returns true when an OSC sequence just
@@ -59,7 +77,8 @@ bool oscScanByte(ref OscScanner sc, char b)
                 sc.state = OscScanner.State.oscEsc;
                 return false;
             }
-            if (sc.payload.length < OscScanner.maxPayloadLength)
+            if (sc.payload.length < OscScanner.maxPayloadLength
+                || sc.payload.length < sc.limit)
                 sc.payload ~= b;
             else
                 sc.overflowed = true;
@@ -139,7 +158,7 @@ unittest
 unittest
 {
     OscScanner sc;
-    foreach (b; "\x1b]52;c;")
+    foreach (b; "\x1b]2;")
         oscScanByte(sc, b);
     foreach (i; 0 .. OscScanner.maxPayloadLength + 1)
         oscScanByte(sc, 'A');
@@ -151,6 +170,36 @@ unittest
     assert(oscScanByte(sc, '\x07'));
     assert(!sc.overflowed);
     assert(sc.payload[] == "11;?");
+}
+
+@("oscScanByte.limitFollowsTheCommand")
+@safe nothrow @nogc
+unittest
+{
+    // OSC 52 may carry 1 MiB decoded: its base64 fits; one byte more does not.
+    OscScanner sc;
+    foreach (b; "\x1b]52;c;")
+        oscScanByte(sc, b);
+    foreach (i; 0 .. (1024 * 1024 + 2) / 3 * 4)
+        oscScanByte(sc, 'A');
+    assert(oscScanByte(sc, '\x07'));
+    assert(!sc.overflowed);
+    assert(sc.payload.length == 5 + (1024 * 1024 + 2) / 3 * 4);
+
+    foreach (b; "\x1b]52;cpqs01234567;")
+        oscScanByte(sc, b);
+    foreach (i; 0 .. (1024 * 1024 + 2) / 3 * 4 + 1)
+        oscScanByte(sc, 'A');
+    assert(oscScanByte(sc, '\x07'));
+    assert(sc.overflowed);
+
+    // OSC 99 chunks: 4096 encoded bytes and their metadata.
+    foreach (b; "\x1b]99;i=1:e=1;")
+        oscScanByte(sc, b);
+    foreach (i; 0 .. 4096)
+        oscScanByte(sc, 'A');
+    assert(oscScanByte(sc, '\x07'));
+    assert(!sc.overflowed);
 }
 
 /// Parse a complete OSC payload, appending every queried dynamic color code
