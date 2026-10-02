@@ -44,7 +44,7 @@ private enum evidenceHeaders = ["traces to", "evidence"];
 
 /++
 Whether a row's status cell says it is not delivered. Such a row names the
-code it 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998I will) be (`proposed line_range.d parseRange`), so its evidence
+code it $(I will) be (`proposed line_range.d parseRange`), so its evidence
 column is a design, not a claim that the code exists, and is not resolved.
 A row that claims delivery (`full`, `partial`, `shipped`, anything not listed
 here) is.

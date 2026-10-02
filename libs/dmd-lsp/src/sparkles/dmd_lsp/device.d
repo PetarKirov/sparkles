@@ -40,7 +40,7 @@ enum defaultDcomputeTarget = "vulkan-130";
 /**
 The names of the device configurations `recipePath` declares — those whose
 `dflags` carry `-mdcompute-targets=` — in declaration order. Every recipe
-form is read (100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998MREF sparkles,dmd_lsp,recipe)); an unreadable recipe declares
+form is read ($(MREF sparkles,dmd_lsp,recipe)); an unreadable recipe declares
 none.
 
 The recipe is read, not described: finding the configuration is what decides
@@ -108,7 +108,7 @@ $(LIST
         compiles the module with. `host` is ignored.
     * Otherwise (no recipe, no device configuration, or a describe that
         fails) `host` — its dub project's paths — is retargeted
-        (100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF retargetToDevice)).
+        ($(LREF retargetToDevice)).
 )
 */
 AnalyzerConfig deviceConfigFor(string file, const AnalyzerConfig host,
