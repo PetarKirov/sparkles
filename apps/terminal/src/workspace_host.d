@@ -42,8 +42,8 @@ import settings : ButtonLabels, LinkAction, NotificationsConfig, OnExit, OpenTar
     OverlayStyle, PaneChrome, TabsOpener;
 import links : canOpen, LinkConfirm, openUri, schemeOf;
 import surfaces : SurfaceContext, Surfaces;
-import workspace : Direction, maxPanesPerTab, maxTabs, PaneSpec, Placement, Refusal,
-    restored, saved, SavedWorkspace, Workspace;
+import workspace : dividerAt, dividerClamp, Direction, maxPanesPerTab, maxTabs, PaneSpec,
+    Placement, Refusal, restored, saved, SavedWorkspace, Workspace;
 
 /// What a pane does when its program has exited (`TSS1`).
 enum ExitAction : ubyte
@@ -73,6 +73,11 @@ ExitAction exitActionFor(OnExit policy, bool explicitCommand, int status) @safe 
             return ExitAction.hold;
     }
 }
+
+/// The direction a resize command moves the focused pane's border (`TSS8`).
+private Direction resizeDirection(TermCommand c) @safe pure nothrow @nogc
+    => c == TermCommand.resizeLeft ? Direction.left : c == TermCommand.resizeRight
+        ? Direction.right : c == TermCommand.resizeUp ? Direction.up : Direction.down;
 
 /// Where `open.target` puts an opened file; `external` never reaches the
 /// workspace (the request is declined first) and maps to a tab.
@@ -644,17 +649,13 @@ struct WorkspaceHost
                 {
                     dragging = i;
                     const d = dividers[i];
-                    dragPos = d.axis == DockAxis.horizontal ? d.rect.x : d.rect.y;
+                    dragPos = dividerAt(d);
                     return;
                 }
             return;
         }
         const d = dividers[dragging];
-        // Neither neighbour shrinks below a few cells, where the dock allows it.
-        enum keep = 4;
-        const lo = d.lo + keep <= d.hi - keep ? d.lo + keep : d.lo;
-        const hi = d.lo + keep <= d.hi - keep ? d.hi - keep : d.hi;
-        const at = along(d), pos = at < lo ? lo : at > hi ? hi : at;
+        const pos = dividerClamp(d, along(d));
         if (pos != dragPos)
         {
             dragPos = pos;
@@ -663,11 +664,8 @@ struct WorkspaceHost
         if (down)
             return;
         dragging = -1;
-        if (pos != (d.axis == DockAxis.horizontal ? d.rect.x : d.rect.y))
-        {
-            ws.resizeSplit(d.beforeNode, d.afterNode, pos - d.start);
+        if (ws.moveDivider(d, pos))
             repaint = dirty = true;
-        }
     }
 
     private Rect panelRect; // where the tree opens
@@ -1223,6 +1221,11 @@ struct WorkspaceHost
     bool run(H)(ref H h, KeyCommand c, in Rect cellArea) @system
     {
         Refusal why;
+        // Geometry in the cells the panes are laid out in (`layout`): the
+        // caller's area includes the opener, and a resize measured there
+        // would fix the wrong extent.
+        const panes = panesArea.width > 0
+            ? Rect(0, 0, panesArea.width / cellW, panesArea.height / cellH) : cellArea;
         final switch (c.cmd)
         {
             case TermCommand.newTab:
@@ -1252,16 +1255,23 @@ struct WorkspaceHost
                     cast(void) create(id);
                 break;
             case TermCommand.focusLeft:
-                cast(void) ws.focusToward(Direction.left, cellArea);
+                cast(void) ws.focusToward(Direction.left, panes);
                 break;
             case TermCommand.focusRight:
-                cast(void) ws.focusToward(Direction.right, cellArea);
+                cast(void) ws.focusToward(Direction.right, panes);
                 break;
             case TermCommand.focusUp:
-                cast(void) ws.focusToward(Direction.up, cellArea);
+                cast(void) ws.focusToward(Direction.up, panes);
                 break;
             case TermCommand.focusDown:
-                cast(void) ws.focusToward(Direction.down, cellArea);
+                cast(void) ws.focusToward(Direction.down, panes);
+                break;
+            case TermCommand.resizeLeft:
+            case TermCommand.resizeRight:
+            case TermCommand.resizeUp:
+            case TermCommand.resizeDown:
+                if (ws.resizeToward(resizeDirection(c.cmd), panes))
+                    repaint = dirty = true;
                 break;
             case TermCommand.zoomPane:
                 ws.toggleZoom();

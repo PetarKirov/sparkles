@@ -340,3 +340,30 @@ string withUnseen(string desc, size_t unseen) @safe pure nothrow
     assert(claimed > 0 && claimed <= 2 * rootRows, "only the table's few chords are claimed");
     assert(swept > 1500);
 }
+
+@("key_router.route.shiftSeparatesFocusFromResize")
+@safe unittest
+{
+    import sparkles.input.events : Key, Mods;
+
+    KeyRouter r;
+    string[] warnings;
+    r.configure(TerminalConfig.init, warnings);
+
+    // raylib reports Shift+h as 'H' with shift; normalising makes it 'h' +
+    // shift, which only the `ShiftReq.yes` row takes (`TSS8`).
+    TermCommand after(KeyEvent last)
+    {
+        cast(void) r.route(KeyEvent(Key.char_, ' ', Mods(ctrl: true, shift: true)),
+            TermContext.init);
+        cast(void) r.route(KeyEvent(Key.char_, 'p'), TermContext.init);
+        const res = r.route(last, TermContext.init);
+        assert(res.route == Route.execute);
+        return res.command.cmd;
+    }
+
+    assert(after(KeyEvent(Key.char_, 'h')) == TermCommand.focusLeft);
+    assert(after(KeyEvent(Key.char_, 'H', Mods(shift: true))) == TermCommand.resizeLeft);
+    assert(after(KeyEvent(Key.char_, 'L')) == TermCommand.resizeRight,
+        "a terminal's bare capital is Shift too");
+}

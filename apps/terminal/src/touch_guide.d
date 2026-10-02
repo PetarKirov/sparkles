@@ -329,6 +329,8 @@ string iconOf(TermCommand c) @safe pure nothrow @nogc
         case TermCommand.closePane, TermCommand.closeTab: return "×";
         case TermCommand.focusLeft, TermCommand.focusRight, TermCommand.focusUp,
             TermCommand.focusDown: return "✥";
+        case TermCommand.resizeLeft, TermCommand.resizeRight, TermCommand.resizeUp,
+            TermCommand.resizeDown: return "⇔";
         case TermCommand.newTab: return "＋";
         case TermCommand.tabTree: return "☰";
         case TermCommand.goToTab: return "#";

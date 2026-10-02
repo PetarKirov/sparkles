@@ -189,7 +189,9 @@ struct DesktopTerminal
             case TermCommand.newTab, TermCommand.closeTab, TermCommand.nextTab,
                 TermCommand.prevTab, TermCommand.goToTab, TermCommand.splitRight,
                 TermCommand.splitDown, TermCommand.focusLeft, TermCommand.focusRight,
-                TermCommand.focusUp, TermCommand.focusDown, TermCommand.zoomPane,
+                TermCommand.focusUp, TermCommand.focusDown, TermCommand.resizeLeft,
+                TermCommand.resizeRight, TermCommand.resizeUp, TermCommand.resizeDown,
+                TermCommand.zoomPane,
                 TermCommand.closePane, TermCommand.promptRerun, TermCommand.promptShell,
                 TermCommand.promptClose, TermCommand.tabTree, TermCommand.openAbout,
                 TermCommand.openLogs, TermCommand.openNotifications, TermCommand.showCredits:

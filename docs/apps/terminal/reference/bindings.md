@@ -49,6 +49,10 @@ keeps this page equal to it.
 | `Leader p j`          | focus down        | a pane          |
 | `Leader p k`          | focus up          | a pane          |
 | `Leader p l`          | focus right       | a pane          |
+| `Leader p Shift+H`    | resize left       | a pane          |
+| `Leader p Shift+J`    | resize down       | a pane          |
+| `Leader p Shift+K`    | resize up         | a pane          |
+| `Leader p Shift+L`    | resize right      | a pane          |
 | `Leader p z`          | zoom              | a pane          |
 | `Leader p x`          | close pane        | a pane          |
 | `Enter`               | run again         | the exit prompt |

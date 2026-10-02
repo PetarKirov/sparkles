@@ -13,8 +13,8 @@ module workspace;
 
 import std.path : dirName;
 
-import sparkles.ui.components.dock : DockAxis, DockFrames, dockFrames, DockLayout,
-    DockZone, PaneId;
+import sparkles.ui.components.dock : DividerFrame, DockAxis, DockFrames, dockFrames,
+    DockLayout, DockZone, PaneId;
 import sparkles.ui.geometry : Rect;
 
 /// The workspace's limits (`TSS6`).
@@ -93,6 +93,23 @@ enum Direction : ubyte
     right,
     up,
     down,
+}
+
+/// Where divider `d` sits along its axis, in cells.
+int dividerAt(in DividerFrame d) @safe pure nothrow @nogc
+    => d.axis == DockAxis.horizontal ? d.rect.x : d.rect.y;
+
+/**
+`pos` clamped to where divider `d` may go: the dock's bounds, narrowed so
+neither neighbour gets under four cells where there is room for that.
+*/
+int dividerClamp(in DividerFrame d, int pos) @safe pure nothrow @nogc
+{
+    // The dock's bounds already leave each neighbour one cell; three more.
+    enum keep = 3;
+    const roomy = d.lo + keep <= d.hi - keep;
+    const lo = roomy ? d.lo + keep : d.lo, hi = roomy ? d.hi - keep : d.hi;
+    return pos < lo ? lo : pos > hi ? hi : pos;
 }
 
 /// The tabs and splits.
@@ -410,6 +427,62 @@ struct Workspace
         nodes[afterNode].extent = 0;
     }
 
+    /**
+    Moves divider `d` (one of `frames`'s) to `pos` along its axis, clamped by
+    `dividerClamp`; false when it stays where it is (`TSS10`).
+    */
+    bool moveDivider(in DividerFrame d, int pos) @safe pure nothrow @nogc
+    {
+        pos = dividerClamp(d, pos);
+        if (pos == dividerAt(d))
+            return false;
+        resizeSplit(d.beforeNode, d.afterNode, pos - d.start);
+        return true;
+    }
+
+    /**
+    Moves the focused pane's border toward `d` by `step` cells (`TSS8`): the
+    divider on that side when there is one, which grows the pane, else the one
+    on the opposite side, which shrinks it — as tmux's `resize-pane` does.
+    False when no divider borders the pane along that axis, or it is pinned.
+    */
+    bool resizeToward(Direction d, in Rect area, int step = 2) @safe
+    {
+        if (!tabs.length || tabs[current].zoomed)
+            return false;
+        DockFrames f;
+        frames(area, f);
+        Rect p;
+        bool have;
+        foreach (ref pf; f.panes)
+            if (pf.pane == focused)
+            {
+                p = pf.rect;
+                have = true;
+            }
+        if (!have)
+            return false;
+
+        const across = d == Direction.left || d == Direction.right;
+        const axis = across ? DockAxis.horizontal : DockAxis.vertical;
+        const forward = d == Direction.right || d == Direction.down;
+        // Whether `v` borders the pane on its far (`after`) or near side.
+        bool borders(in DividerFrame v, bool after)
+        {
+            const r = v.rect;
+            if (across)
+                return (after ? r.x == p.x + p.width : r.x + r.width == p.x)
+                    && r.y <= p.y && p.y + p.height <= r.y + r.height;
+            return (after ? r.y == p.y + p.height : r.y + r.height == p.y)
+                && r.x <= p.x && p.x + p.width <= r.x + r.width;
+        }
+        foreach (side; [forward, !forward])
+            foreach (ref v; f.dividers)
+                if (v.axis == axis && borders(v, side))
+                    return moveDivider(v, dividerAt(v) + (forward ? step : -step));
+        return false;
+    }
+
     /// Records a pane's working directory (OSC 7, `TPR4`).
     void setCwd(PaneId id, string cwd) @safe pure nothrow @nogc
     {
@@ -681,4 +754,38 @@ version (unittest)
     auto back = fromJSON!SavedWorkspace(text.value[]);
     assert(!back.hasError, back.error.toString);
     assert(restored(back.value).spec(v).document == "/srv/notes/README.md");
+}
+
+@("workspace.resizeToward.growsTowardElseShrinks")
+@safe unittest
+{
+    PaneId a;
+    auto w = oneTab(a);
+    Refusal why;
+    const b = w.split(DockAxis.horizontal, why);
+    assert(w.focused == b);
+
+    int widthOf(PaneId id)
+    {
+        DockFrames f;
+        w.frames(screen, f);
+        foreach (ref p; f.panes)
+            if (p.pane == id)
+                return p.rect.width;
+        return 0;
+    }
+
+    // The right pane has a divider on its left only: Left grows it, Right
+    // moves that same divider back — the pane shrinks.
+    const before = widthOf(b);
+    assert(w.resizeToward(Direction.left, screen));
+    assert(widthOf(b) == before + 2);
+    assert(w.resizeToward(Direction.right, screen));
+    assert(widthOf(b) == before);
+    assert(!w.resizeToward(Direction.up, screen), "no divider along that axis");
+
+    // Never past four cells of the other pane.
+    foreach (_; 0 .. 100)
+        cast(void) w.resizeToward(Direction.left, screen);
+    assert(widthOf(a) == 4);
 }
