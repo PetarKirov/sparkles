@@ -18,6 +18,7 @@ import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
+import desktop_integration : DesktopIntegration;
 import key_router : KeyRouter, paintGuide, Route;
 import keymap : KeyCommand, TermCommand, TermContext;
 import workspace_host : WorkspaceHost;
@@ -27,6 +28,8 @@ struct DesktopTerminal
 {
     WorkspaceHost host;
     KeyRouter keys;
+    /// The session bus: the system scheme and notifications (D43).
+    DesktopIntegration desktop;
     /// The chrome's colours: the terminal scheme's foreground and background
     /// (D17).
     RgbColor chromeFg = RgbColor(0xcd, 0xd6, 0xf4);
@@ -66,6 +69,8 @@ struct DesktopTerminal
                 h.wakeIn(wait);
         noteGuide();
 
+        if (desktop.tick(host))
+            followColors();
         host.frame(h, Rect(0, 0, GetScreenWidth(), GetScreenHeight()));
         if (host.takeDirty())
             save();
@@ -98,6 +103,16 @@ struct DesktopTerminal
 
         host.paint(h, Rect(0, 0, GetScreenWidth(), GetScreenHeight()), divider, accent);
         paintGuide(h, keys, context, h.size.width, h.size.height, 0, 0, chromeFg, chromeBg);
+    }
+
+    /// The chrome takes the scheme's foreground and background (D17).
+    void followColors() @safe pure nothrow @nogc
+    {
+        const c = desktop.currentColors;
+        if (c.hasForeground)
+            chromeFg = c.foreground;
+        if (c.hasBackground)
+            chromeBg = c.background;
     }
 
     private TermContext context() const => TermContext(promptOpen: host.promptOpen);

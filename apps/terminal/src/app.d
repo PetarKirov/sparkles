@@ -19,6 +19,8 @@ import logging : desktopStateDir;
 import sparkles.terminal_view.component : TerminalViewOptions;
 import sparkles.wired.json : readJSONFile;
 import workspace : PaneSpec, SavedWorkspace;
+import sparkles.terminal_view.notification_log : NotificationRoute;
+import sparkles.terminal_view.osc_scan : Notification;
 import sparkles.terminal_view.core : logBuildInfo;
 import sparkles.terminal_view.log : routeTraceLog;
 import sparkles.ui_app.host : RunConfig;
@@ -161,15 +163,24 @@ private int desktopMain(string[] args)
 
     // Stack-pinned: the panes' delegates hold pointers into the workspace.
     DesktopTerminal app;
-    // The desktop's light/dark source arrives with the portal (`TPR13`);
-    // until then the dark scheme is the one in effect.
-    auto base = viewOptionsFrom(lc.effective, systemDark: true, lc.warnings);
+    // The session bus first: the portal's light/dark preference picks the
+    // scheme the panes open in (`TPR13`).
+    app.desktop.start(lc.effective, lc.warnings);
+    auto base = viewOptionsFrom(lc.effective, systemDark: app.desktop.systemDark, lc.warnings);
     app.host.onExit = lc.effective.behaviour.onExit;
     bool shotPending = debugScreenshotAndExit;
     app.host.paneOptions = (in PaneSpec spec, bool shell) {
         TerminalViewOptions o = base;
         o.shellCommand = shell || !spec.command.length ? null : spec.command.toStringz;
         o.cwd = spec.cwd.length ? spec.cwd.toStringz : null;
+        // The scheme the panes are in now, and the pane's notifications to the
+        // desktop (`TPR11`), naming it so a click can come back to it.
+        o.colors = app.desktop.currentColors;
+        const id = spec.id;
+        o.hooks.notify = (in Notification n, NotificationRoute route) {
+            auto tv = app.host.pool.byId(id);
+            app.desktop.notify(id, n, route, tv !is null ? tv.title : null);
+        };
         // The debug capture belongs to the first pane only.
         o.debugScreenshotAndExit = shotPending;
         shotPending = false;
@@ -177,10 +188,7 @@ private int desktopMain(string[] args)
     };
     // Every key goes through the terminal's table first (`TKM1`).
     app.keys.configure(lc.effective, lc.warnings);
-    if (base.colors.hasForeground)
-        app.chromeFg = base.colors.foreground;
-    if (base.colors.hasBackground)
-        app.chromeBg = base.colors.background;
+    app.followColors();
 
     // The last session's tabs and splits (`TSS14`), unless a command was
     // given — then that command is the session.
