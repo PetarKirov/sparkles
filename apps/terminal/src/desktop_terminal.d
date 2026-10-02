@@ -18,6 +18,7 @@ import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
+import chrome : ChromeTheme;
 import desktop_integration : DesktopIntegration;
 import key_router : KeyRouter, paintGuide, Route;
 import keymap : KeyCommand, TermCommand, TermContext;
@@ -71,6 +72,7 @@ struct DesktopTerminal
 
         if (desktop.tick(host))
             followColors();
+        host.theme = ChromeTheme.of(chromeFg, chromeBg);
         host.frame(h, Rect(0, 0, GetScreenWidth(), GetScreenHeight()));
         if (host.takeDirty())
             save();

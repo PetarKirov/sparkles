@@ -551,9 +551,6 @@ struct CoreState
     // The embedder draws its own exit prompt over the pane (`TSS2`): the
     // built-in banner stays away.
     bool embedderOwnsExit;
-    // Unused since `embedderOwnsExit`; the terminal's banner stops setting
-    // it with the E1 prompt, which removes it.
-    const(char)[] exitHint;
 }
 
 /**

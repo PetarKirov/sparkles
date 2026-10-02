@@ -33,6 +33,7 @@ import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
+import chrome : ChromeTheme;
 import key_router : KeyRouter, paintGuide, Route;
 import keymap : KeyCommand, TermCommand, TermContext;
 import screen_oracle : ScreenOracle;
@@ -209,11 +210,13 @@ struct DroidTerminal
         next.policy = base.policy;
         next.scrollbackLimit = base.scrollbackLimit;
         host.onExit = config.effective.behaviour.onExit;
+        host.labels = config.effective.ui.buttonLabels;
         router.configure(config.effective, warnings);
         if (base.colors.hasForeground)
             chromeFg = base.colors.foreground;
         if (base.colors.hasBackground)
             chromeBg = base.colors.background;
+        host.theme = ChromeTheme.of(chromeFg, chromeBg);
         foreach (w; warnings)
             warning(i"$(w)");
         host.invalidate();
@@ -438,6 +441,9 @@ struct DroidTerminal
             }
             return;
         }
+        // An exit prompt takes its own taps (`TSS2`).
+        if (host.tap(h, p.pos.x, p.pos.y))
+            return;
         // A tap on a pane focuses it (`TSS9`) and asks for the keyboard.
         int left, top;
         const id = host.paneAt(paneArea(g), cellW, cellH, p.pos.x, p.pos.y, left, top);

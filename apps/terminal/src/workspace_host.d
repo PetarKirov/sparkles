@@ -23,8 +23,11 @@ import sparkles.terminal_view.pool : TerminalPool;
 import sparkles.ui.components.dock : DockAxis, DockFrames, PaneId;
 import sparkles.ui.geometry : Rect;
 
+import std.datetime.systime : Clock, SysTime;
+
+import chrome : ChromeTheme, Layer, paintLayer;
 import keymap : KeyCommand, TermCommand;
-import settings : OnExit;
+import settings : ButtonLabels, OnExit;
 import workspace : Direction, maxPanesPerTab, maxTabs, PaneSpec, Refusal, restored,
     saved, SavedWorkspace, Workspace;
 
@@ -57,10 +60,6 @@ ExitAction exitActionFor(OnExit policy, bool explicitCommand, int status) @safe 
     }
 }
 
-/// The exit prompt's keys, as the banner lists them until the E1 banner
-/// (`TSS2`, M8) replaces it.
-enum promptHint = "Enter run again · Esc shell · Ctrl+C close";
-
 /// The panes, their model, and the per-frame drive.
 struct WorkspaceHost
 {
@@ -76,11 +75,19 @@ struct WorkspaceHost
     TerminalViewOptions delegate(in PaneSpec spec, bool shell) @system paneOptions;
     /// The last refusal, for the embedder's toast (`TSS6`); cleared on read.
     string notice;
+    /// The chrome's colours (D17) and button labels (`TCF9`); the embedder
+    /// keeps them current.
+    ChromeTheme theme;
+    /// ditto
+    ButtonLabels labels;
     /// Poll the mouse for the pane under it (the desktop). A touch embedder
     /// turns it off and routes its gestures itself (`focusAt`, the wheel).
     bool pollPointer = true;
 
     private bool[PaneId] prompting; // exited panes that keep their prompt
+    private bool[PaneId] expanded; // prompts whose status line is open
+    private SysTime[PaneId] started, ended; // when each program ran
+    private Layer[PaneId] banners; // the exit prompts, placed this frame
     private bool[PaneId] restoredCommand; // explicit commands not yet re-run
     private PaneId pointerOwner; // the pane a drag started in
     private string shownTitle;
@@ -174,6 +181,7 @@ struct WorkspaceHost
             notice = "too many panes";
             return false;
         }
+        started[id] = Clock.currTime;
         dirty = true;
         return true;
     }
@@ -192,6 +200,10 @@ struct WorkspaceHost
     {
         pool.closeFor(id);
         prompting.remove(id);
+        expanded.remove(id);
+        started.remove(id);
+        ended.remove(id);
+        banners.remove(id);
         restoredCommand.remove(id);
         ws.close(id);
         dirty = true;
@@ -232,6 +244,10 @@ struct WorkspaceHost
             }
             if (!leftDown)
                 pointerOwner = under;
+            // A click on an exit prompt is the prompt's, not the pane's.
+            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
+                && tap(h, cast(int) m.x, cast(int) m.y))
+                under = pointerOwner = 0;
             if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && under)
             {
                 pointerOwner = under;
@@ -265,6 +281,7 @@ struct WorkspaceHost
         }
 
         applyExits();
+        placeBanners(area, cw, ch, f);
         // One pane changed: the whole window repaints (panes share it); none:
         // the last frame stays up (`HST6`).
         if (!any && !repaint)
@@ -299,6 +316,9 @@ struct WorkspaceHost
                 tv.paintPanePx(h, area.x + p.rect.x * cw, area.y + p.rect.y * ch,
                     p.rect.width * cw, p.rect.height * ch);
 
+        foreach (ref l; banners)
+            paintLayer(h, l, theme);
+
         static Color rgb(RgbColor x) => Color(x.r, x.g, x.b, 255);
         foreach (ref d; f.dividers)
             DrawRectangle(area.x + d.rect.x * cw, area.y + d.rect.y * ch,
@@ -312,6 +332,89 @@ struct WorkspaceHost
                     DrawRectangle(x, y, len, w, rgb(accent));
                     DrawRectangle(x, y, w, len, rgb(accent));
                 }
+    }
+
+    /**
+    Lays out the exit prompt of every shown pane that keeps one, along the
+    pane's bottom (`TSS2`, mockup E1).
+    */
+    private void placeBanners(in Rect area, int cw, int ch, in DockFrames f) @system
+    {
+        import chrome : place, Place;
+        import exit_banner : exitBanner, ExitInfo;
+
+        banners = null;
+        foreach (ref p; f.panes)
+        {
+            const kept = p.pane in prompting;
+            auto tv = pool.byId(p.pane);
+            if (kept is null || tv is null)
+                continue;
+            const spec = ws.spec(p.pane);
+            ExitInfo info;
+            info.status = tv.s.childStatus;
+            info.command = spec !is null && spec.command.length ? spec.command : shellName();
+            info.cwd = spec !is null ? spec.cwd : null;
+            if (auto s = p.pane in started)
+                info.started = *s;
+            if (auto e = p.pane in ended)
+                info.ended = *e;
+            const open = (p.pane in expanded) !is null;
+            banners[p.pane] = place(exitBanner(info, open, *kept, labels),
+                p.rect.width, p.rect.height, area.x + p.rect.x * cw, area.y + p.rect.y * ch,
+                cw, ch, Place.bottom);
+        }
+    }
+
+    /// The user's shell, by name, for a pane that ran no command.
+    private static string shellName() @safe
+    {
+        import std.path : baseName;
+        import std.process : environment;
+
+        const sh = environment.get("SHELL");
+        return sh.length ? sh.baseName : "shell";
+    }
+
+    /**
+    A tap or click at pixel (`x`, `y`): true when an exit prompt took it —
+    its status line expands or collapses, its buttons re-run, start the
+    shell or close the pane (`TSS2`, `TSS3`).
+    */
+    bool tap(H)(ref H h, int x, int y) @system
+    {
+        import exit_banner : ExitHit;
+
+        foreach (id, ref l; banners)
+        {
+            if (!l.contains(x, y))
+                continue;
+            const hit = l.hitAt(x, y);
+            cast(void) ws.focusPane(id);
+            switch (hit)
+            {
+                case ExitHit.toggle:
+                    if (id in expanded)
+                        expanded.remove(id);
+                    else
+                        expanded[id] = true;
+                    break;
+                case ExitHit.rerun:
+                    respawnFocused(h, false);
+                    break;
+                case ExitHit.shell:
+                    respawnFocused(h, true);
+                    break;
+                case ExitHit.close:
+                    closePane(id);
+                    break;
+                default:
+                    break;
+            }
+            repaint = true;
+            return true;
+        }
+        return false;
     }
 
     /// The exit policy, for every pane whose program has exited and been
@@ -333,11 +436,15 @@ struct WorkspaceHost
                     break;
                 case ExitAction.prompt:
                     prompting[id] = true;
-                    tv.s.exitHint = promptHint;
-                    tv.invalidate();
+                    tv.s.embedderOwnsExit = true;
+                    ended[id] = Clock.currTime;
+                    repaint = true;
                     break;
                 case ExitAction.hold:
                     prompting[id] = false;
+                    tv.s.embedderOwnsExit = true;
+                    ended[id] = Clock.currTime;
+                    repaint = true;
                     break;
             }
         }
@@ -495,7 +602,12 @@ struct WorkspaceHost
         if (tv.respawn(h))
         {
             prompting.remove(id);
-            tv.s.exitHint = null;
+            expanded.remove(id);
+            ended.remove(id);
+            banners.remove(id);
+            started[id] = Clock.currTime;
+            tv.s.embedderOwnsExit = false;
+            repaint = true;
         }
     }
 }
