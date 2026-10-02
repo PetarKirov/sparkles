@@ -48,6 +48,26 @@ enum TermCommand : ubyte
     showGuide,       /// `?` in an overlay, `leader ?` in a pane: every key here
     toggleExtraKeys, /// show or hide the extra-keys row (`TCF7`)
     dismiss,         /// close the innermost overlay (`KBD1`)
+
+    // Tabs and splits (`TSS8`).
+    newTab,
+    closeTab,
+    nextTab,
+    prevTab,
+    goToTab,         /// `1`–`9`: the ranged row carries which
+    splitRight,
+    splitDown,
+    focusLeft,
+    focusRight,
+    focusUp,
+    focusDown,
+    zoomPane,
+    closePane,
+
+    // The exit prompt (`TSS2`).
+    promptRerun,     /// Enter: the same command again
+    promptShell,     /// Esc: the user's shell in the last directory
+    promptClose,     /// Ctrl+C: close the pane
 }
 
 /// Which surface a binding belongs to; declaration order is precedence.
@@ -57,6 +77,9 @@ enum TermScope : ubyte
     always,
     /// a page, menu or prompt over the panes: modal (`TKM4`)
     @terminalScope @hidesLaterScopes overlay,
+    /// the focused pane's exit prompt (`TSS2`): Enter, Esc and Ctrl+C are
+    /// its own; the pane's chords and the leader still work beneath it
+    prompt,
     /// the focused pane: the few chords the terminal claims (`TKM2`)
     pane,
 }
@@ -65,6 +88,7 @@ enum TermScope : ubyte
 struct TermContext
 {
     bool overlayOpen; /// a page or menu has the keyboard
+    bool promptOpen;  /// the focused pane shows its exit prompt
 
 @safe pure nothrow @nogc const:
 
@@ -74,6 +98,7 @@ struct TermContext
         {
             case always: return true;
             case overlay: return overlayOpen;
+            case prompt: return !overlayOpen && promptOpen;
             case pane: return !overlayOpen;
         }
     }
@@ -93,10 +118,17 @@ private alias bind = ui_keymap.bind;
 /// A prefix node with the terminal's types pinned.
 private Binding group(TermScope s, Chord a, string name) @safe pure nothrow @nogc
     => ui_keymap.group!(TermCommand, TermScope)(s, a, name);
+/// ditto
+private Binding group(TermScope s, Chord a, Chord b, string name) @safe pure nothrow @nogc
+    => ui_keymap.group!(TermCommand, TermScope)(s, a, b, name);
 
 /// A Ctrl+Shift chord on a letter or key.
 private Chord ctrlShift(dchar c) @safe pure nothrow @nogc
     => Chord(key: Key.char_, ch: c, ctrl: true, shift: ShiftReq.yes);
+
+/// ditto
+private Chord ctrlShiftKey(Key k) @safe pure nothrow @nogc
+    => Chord(key: k, ctrl: true, shift: ShiftReq.yes);
 
 /// ditto
 private Chord ctrlKey(dchar c) @safe pure nothrow @nogc
@@ -128,9 +160,44 @@ immutable Binding[] defaultBindings = [
     bind(TermScope.pane, chord(leaderMark), chord('?'), TermCommand.showGuide,
         "all keys", reveal: true),
 
+    // Tabs, as kitty and Ghostty spell them (`TSS8`).
+    bind(TermScope.pane, ctrlShift('t'), TermCommand.newTab, "new tab"),
+    bind(TermScope.pane, ctrlShift('w'), TermCommand.closePane, "close pane"),
+    bind(TermScope.pane, ctrlShiftKey(Key.pageUp), TermCommand.prevTab, "previous tab"),
+    bind(TermScope.pane, ctrlShiftKey(Key.pageDown), TermCommand.nextTab, "next tab"),
+
     // ── under the leader ─────────────────────────────────────────────────
     bind(TermScope.pane, chord(leaderMark), chord('k'), TermCommand.toggleExtraKeys,
         "toggle extra keys"),
+    group(TermScope.pane, chord(leaderMark), chord('t'), "tab"),
+    bind(TermScope.pane, chord(leaderMark), chord('t'), chord('n'), TermCommand.newTab,
+        "new tab"),
+    bind(TermScope.pane, chord(leaderMark), chord('t'), chord('x'), TermCommand.closeTab,
+        "close tab"),
+    bind(TermScope.pane, chord(leaderMark), chord('t'), chordRange('1', '9'),
+        TermCommand.goToTab, "go to tab"),
+    group(TermScope.pane, chord(leaderMark), chord('p'), "pane"),
+    bind(TermScope.pane, chord(leaderMark), chord('p'), chord('v'), TermCommand.splitRight,
+        "split right"),
+    bind(TermScope.pane, chord(leaderMark), chord('p'), chord('s'), TermCommand.splitDown,
+        "split down"),
+    bind(TermScope.pane, chord(leaderMark), chord('p'), chord('h'), TermCommand.focusLeft,
+        "focus left"),
+    bind(TermScope.pane, chord(leaderMark), chord('p'), chord('j'), TermCommand.focusDown,
+        "focus down"),
+    bind(TermScope.pane, chord(leaderMark), chord('p'), chord('k'), TermCommand.focusUp,
+        "focus up"),
+    bind(TermScope.pane, chord(leaderMark), chord('p'), chord('l'), TermCommand.focusRight,
+        "focus right"),
+    bind(TermScope.pane, chord(leaderMark), chord('p'), chord('z'), TermCommand.zoomPane,
+        "zoom"),
+    bind(TermScope.pane, chord(leaderMark), chord('p'), chord('x'), TermCommand.closePane,
+        "close pane"),
+
+    // ── the exit prompt (`TSS2`): the program is gone, so Ctrl+C is free ──
+    bind(TermScope.prompt, chord(Key.enter), TermCommand.promptRerun, "run again"),
+    bind(TermScope.prompt, chord(Key.escape), TermCommand.promptShell, "shell here"),
+    bind(TermScope.prompt, ctrlKey('c'), TermCommand.promptClose, "close pane"),
 ];
 
 /**
@@ -197,7 +264,9 @@ immutable(Binding)[] terminalBindings(Chord leader, KeysConfig keys,
         {
             if (b.path[i].key == Key.char_ && b.path[i].ch == leaderMark)
                 b.path[i] = leader;
-            reserved |= isReserved(b.path[i]);
+            // `TKM3`'s one exception: the exit prompt's Ctrl+C, when the pane
+            // has no program to send it to.
+            reserved |= b.scope_ != TermScope.prompt && isReserved(b.path[i]);
         }
         if (reserved)
         {
@@ -257,6 +326,8 @@ string bindingsMarkdown() @safe pure
             }
         if (s.length == 1)
             return out_ ~ (out_.length ? s.toUpper : s);
+        if (s == "pageup" || s == "pagedown")
+            return out_ ~ "Page" ~ (s == "pageup" ? "Up" : "Down");
         return out_ ~ s[0 .. 1].toUpper ~ s[1 .. $];
     }
 
@@ -275,7 +346,8 @@ string bindingsMarkdown() @safe pure
             keys ~= (i ? " " : "") ~ spelled;
         }
         rows ~= ["`" ~ keys ~ "`", b.desc,
-            b.scope_ == TermScope.overlay ? "a page or menu" : "a pane"];
+            b.scope_ == TermScope.overlay ? "a page or menu"
+                : b.scope_ == TermScope.prompt ? "the exit prompt" : "a pane"];
     }
 
     // Aligned as prettier aligns a table, so the formatted page contains it.
@@ -329,8 +401,9 @@ version (unittest)
 {
     // `TKM3`: a static test over the table — every row, every scope.
     foreach (ref row; defaults())
-        foreach (i; 0 .. row.depth)
-            assert(!isReserved(row.path[i]), commandName(row.cmd));
+        if (row.scope_ != TermScope.prompt) // no program there to send them to
+            foreach (i; 0 .. row.depth)
+                assert(!isReserved(row.path[i]), commandName(row.cmd));
     foreach (r; reservedChords)
         assert(key(defaults(), KeyEvent(Key.char_, r.ch, Mods(ctrl: true))).cmd
             == TermCommand.none);

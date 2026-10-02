@@ -12,6 +12,7 @@ import droid_terminal : DroidTerminal;
 import sparkles.terminal_view.component : TerminalViewOptions;
 import sparkles.terminal_view.log : routeTraceLog;
 import session;
+import workspace : PaneSpec;
 import settings : defaultFontFamily;
 import settings_load : androidConfigPath;
 import sparkles.base.logger : info, LogLevel, warning;
@@ -65,8 +66,52 @@ int androidMain()
     app.oracle.dir = paths.debugDir;
     app.termuxDir = paths.termuxDir;
     app.configPath = androidConfigPath(paths.home);
-    configureSession(app, config, paths);
-    app.loadSettings(); // after the session: the scheme applies to it
+    app.loadSettings(); // the options every pane starts from
+    app.host.pollPointer = false; // touch arrives as gestures
+    app.statePath = buildPath(paths.files, "state", "workspace.json");
+
+    // The first pane is the session (`NOD4`–`NOD7`): the installer while the
+    // bootstrap is missing, then its login; every later pane — a tab, a
+    // split, a shell after an exit — the session's shell in its directory.
+    TerminalViewOptions first;
+    const installing = configureSession(app, config, paths, first);
+    const bootstrapped = config.mode != SessionMode.shell;
+    bool firstPending = true;
+    app.host.paneOptions = (in PaneSpec spec, bool shell) {
+        import std.string : toStringz;
+
+        TerminalViewOptions o = firstPending ? first
+            : sessionOptions(paths, bootstrapped && paths.login.exists);
+        firstPending = false;
+        o.colors = app.base.colors;
+        o.policy = app.base.policy;
+        o.scrollbackLimit = app.base.scrollbackLimit;
+        if (spec.cwd.length)
+            o.cwd = spec.cwd.toStringz;
+        if (!shell && spec.command.length)
+        {
+            o.program = "/system/bin/sh";
+            o.argv = ["-sh".ptr, "-c".ptr, spec.command.toStringz, null];
+        }
+        return o;
+    };
+
+    // The last session's tabs and splits (`TSS14`) — not while installing,
+    // when the one pane is the installer.
+    bool restoredSession;
+    if (!installing && app.config.effective.behaviour.restore && app.statePath.exists)
+    {
+        import sparkles.wired.json : readJSONFile;
+        import workspace : SavedWorkspace;
+
+        auto saved = readJSONFile!SavedWorkspace(app.statePath);
+        if (saved.hasError)
+            warning(i"workspace: not restored: $(saved.error.toString)");
+        else
+            restoredSession = app.host.restore(saved.value);
+    }
+    if (!restoredSession)
+        cast(void) app.host.start(paths.home, null);
 
     // The configured font (`~/.termux/font.ttf` when nix-on-droid's
     // `terminal.font` wrote one, `NOD11`; else the bundled face), searched in
@@ -97,36 +142,38 @@ int androidMain()
     exit(0);
 }
 
-/// Point the terminal at the session `config` asks for (`NOD4`, `NOD5`,
+/// The first pane's options for the session `config` asks for (`NOD4`, `NOD5`,
 /// `NOD7`): a plain shell, the login of an installed bootstrap, or — when the
-/// bootstrap is not installed yet — the installer, followed by that login.
-private void configureSession(ref DroidTerminal app, const SessionConfig config,
-    const SessionPaths paths)
+/// bootstrap is not installed yet — the installer, followed by that login
+/// (`app.next`). True while installing.
+private bool configureSession(ref DroidTerminal app, const SessionConfig config,
+    const SessionPaths paths, out TerminalViewOptions first)
 {
     import std.file : exists;
 
     if (config.mode == SessionMode.shell)
     {
-        app.tv.opts = sessionOptions(paths, false);
-        return;
+        first = sessionOptions(paths, false);
+        return false;
     }
     if (paths.login.exists)
     {
-        app.tv.opts = sessionOptions(paths, true);
-        return;
+        first = sessionOptions(paths, true);
+        return false;
     }
 
     const master = startInstaller(paths, config.bootstrapUrl);
     if (master < 0)
     {
         warning(i"terminal: cannot start the installer — starting a plain shell");
-        app.tv.opts = sessionOptions(paths, false);
-        return;
+        first = sessionOptions(paths, false);
+        return false;
     }
-    app.tv.opts = sessionOptions(paths, false);
-    app.tv.opts.adoptMaster = master;
+    first = sessionOptions(paths, false);
+    first.adoptMaster = master;
     app.next = sessionOptions(paths, true);
     app.hasNext = true;
+    return true;
 }
 
 /// The options for a plain shell (`bootstrapped = false`) or the bootstrap's

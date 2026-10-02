@@ -15,20 +15,38 @@ guide. In a page or menu, `Escape`, `q` and Back close it and `?` lists its keys
 The table is the binary's own: `terminal config keys` prints it, and a test
 keeps this page equal to it.
 
-| Keys           | Action            | Where          |
-| -------------- | ----------------- | -------------- |
-| `Escape`       | close             | a page or menu |
-| `q`            | close             | a page or menu |
-| `Back`         | close             | a page or menu |
-| `?`            | key guide         | a page or menu |
-| `Ctrl+Shift+C` | copy              | a pane         |
-| `Ctrl+Shift+V` | paste             | a pane         |
-| `Ctrl+=`       | larger font       | a pane         |
-| `Ctrl++`       | larger font       | a pane         |
-| `Ctrl+-`       | smaller font      | a pane         |
-| `Ctrl+0`       | default font size | a pane         |
-| `Leader ?`     | all keys          | a pane         |
-| `Leader k`     | toggle extra keys | a pane         |
+| Keys                  | Action            | Where           |
+| --------------------- | ----------------- | --------------- |
+| `Escape`              | close             | a page or menu  |
+| `q`                   | close             | a page or menu  |
+| `Back`                | close             | a page or menu  |
+| `?`                   | key guide         | a page or menu  |
+| `Ctrl+Shift+C`        | copy              | a pane          |
+| `Ctrl+Shift+V`        | paste             | a pane          |
+| `Ctrl+=`              | larger font       | a pane          |
+| `Ctrl++`              | larger font       | a pane          |
+| `Ctrl+-`              | smaller font      | a pane          |
+| `Ctrl+0`              | default font size | a pane          |
+| `Leader ?`            | all keys          | a pane          |
+| `Ctrl+Shift+T`        | new tab           | a pane          |
+| `Ctrl+Shift+W`        | close pane        | a pane          |
+| `Ctrl+Shift+PageUp`   | previous tab      | a pane          |
+| `Ctrl+Shift+PageDown` | next tab          | a pane          |
+| `Leader k`            | toggle extra keys | a pane          |
+| `Leader t n`          | new tab           | a pane          |
+| `Leader t x`          | close tab         | a pane          |
+| `Leader t 1-9`        | go to tab         | a pane          |
+| `Leader p v`          | split right       | a pane          |
+| `Leader p s`          | split down        | a pane          |
+| `Leader p h`          | focus left        | a pane          |
+| `Leader p j`          | focus down        | a pane          |
+| `Leader p k`          | focus up          | a pane          |
+| `Leader p l`          | focus right       | a pane          |
+| `Leader p z`          | zoom              | a pane          |
+| `Leader p x`          | close pane        | a pane          |
+| `Enter`               | run again         | the exit prompt |
+| `Escape`              | shell here        | the exit prompt |
+| `Ctrl+C`              | close pane        | the exit prompt |
 
 Bindings are rebound or removed in the configuration file's `keys` section —
 context (`pane`, `overlay`), then a chord path, then a command name or `null`:

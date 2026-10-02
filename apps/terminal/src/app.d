@@ -15,6 +15,10 @@ import cli : guiOptionsFrom, onExitFromFlag, viewOptionsFrom;
 import settings : TerminalConfig;
 import settings_load : desktopConfigPath, loadTerminalConfig, LoadedConfig;
 import desktop_terminal : DesktopTerminal;
+import logging : desktopStateDir;
+import sparkles.terminal_view.component : TerminalViewOptions;
+import sparkles.wired.json : readJSONFile;
+import workspace : PaneSpec, SavedWorkspace;
 import sparkles.terminal_view.core : logBuildInfo;
 import sparkles.terminal_view.log : routeTraceLog;
 import sparkles.ui_app.host : RunConfig;
@@ -45,6 +49,8 @@ private struct CliFlag
 private int desktopMain(string[] args)
 {
     import std.array : join;
+    import std.file : exists, getcwd;
+    import std.path : buildPath;
     import std.stdio : stderr;
     import std.string : toStringz;
 
@@ -153,21 +159,47 @@ private int desktopMain(string[] args)
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };
 
-    // Stack-pinned: the VT effects hold a pointer into the pane.
+    // Stack-pinned: the panes' delegates hold pointers into the workspace.
     DesktopTerminal app;
-    ref tv = app.tv;
     // The desktop's light/dark source arrives with the portal (`TPR13`);
     // until then the dark scheme is the one in effect.
-    tv.opts = viewOptionsFrom(lc.effective, systemDark: true, lc.warnings);
-    tv.opts.shellCommand = command.length ? command.join(" ").toStringz : null;
-    tv.opts.debugScreenshotAndExit = debugScreenshotAndExit;
+    auto base = viewOptionsFrom(lc.effective, systemDark: true, lc.warnings);
+    app.host.onExit = lc.effective.behaviour.onExit;
+    bool shotPending = debugScreenshotAndExit;
+    app.host.paneOptions = (in PaneSpec spec, bool shell) {
+        TerminalViewOptions o = base;
+        o.shellCommand = shell || !spec.command.length ? null : spec.command.toStringz;
+        o.cwd = spec.cwd.length ? spec.cwd.toStringz : null;
+        // The debug capture belongs to the first pane only.
+        o.debugScreenshotAndExit = shotPending;
+        shotPending = false;
+        return o;
+    };
     // Every key goes through the terminal's table first (`TKM1`).
-    tv.opts.builtinChords = false;
     app.keys.configure(lc.effective, lc.warnings);
-    if (tv.opts.colors.hasForeground)
-        app.chromeFg = tv.opts.colors.foreground;
-    if (tv.opts.colors.hasBackground)
-        app.chromeBg = tv.opts.colors.background;
+    if (base.colors.hasForeground)
+        app.chromeFg = base.colors.foreground;
+    if (base.colors.hasBackground)
+        app.chromeBg = base.colors.background;
+
+    // The last session's tabs and splits (`TSS14`), unless a command was
+    // given — then that command is the session.
+    app.statePath = buildPath(desktopStateDir(), "sparkles-terminal", "workspace.json");
+    bool restoredSession;
+    if (!command.length && lc.effective.behaviour.restore && app.statePath.exists)
+    {
+        auto saved = readJSONFile!SavedWorkspace(app.statePath);
+        if (saved.hasError)
+            lc.warnings ~= "workspace: " ~ app.statePath ~ " was not restored: "
+                ~ saved.error.toString;
+        else
+            restoredSession = app.host.restore(saved.value);
+    }
+    if (!restoredSession && !app.host.start(getcwd(), command.join(" ")))
+    {
+        stderr.writeln("Error: could not start a pane.");
+        return 1;
+    }
     foreach (w; lc.warnings)
         warning(i"$(w)");
 

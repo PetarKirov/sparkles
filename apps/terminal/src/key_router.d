@@ -15,7 +15,7 @@ import core.time : Duration, msecs;
 import sparkles.input.events : KeyAction, KeyEvent;
 import sparkles.ui.lantern : LanternState;
 
-import keymap : Binding, KeyCommand, KeysConfig, TermCommand, TermContext;
+import keymap : Binding, KeyCommand, KeysConfig, TermCommand, TermContext, TermScope;
 import settings : TerminalConfig;
 
 /// What to do with a key.
@@ -306,8 +306,11 @@ import sparkles.base.term_color : RgbColor;
         foreach (dchar c; 0x20 .. 0x7F)
             check(KeyEvent(Key.char_, c, m));
     }
-    // copy, paste (each as c/C), =, +, -, 0 and the leader, without and
-    // with Shift where the row ignores it.
-    assert(claimed > 0 && claimed <= 16, "only the table's few chords are claimed");
+    // At most each one-key pane row (and the leader), spelled with and
+    // without Shift where the row ignores it, or as an uppercase letter.
+    size_t rootRows;
+    foreach (ref row; r.table)
+        rootRows += row.scope_ == TermScope.pane && row.path[0].ctrl;
+    assert(claimed > 0 && claimed <= 2 * rootRows, "only the table's few chords are claimed");
     assert(swept > 1500);
 }
