@@ -1,0 +1,62 @@
+# Selection, the selection menu and autofill (`TSE`)
+
+_**Status:** proposed · **Date:** 2026-10-02 · **Owners:**
+`sparkles:terminal-view` (the selection model: anchors, expansion, text);
+`apps/terminal` (handles, the menu, gestures); `sparkles:android` (share,
+autofill) · **Scope:** selecting, copying and acting on terminal text by touch
+and by mouse, and filling a password into the terminal from a password
+manager._
+
+## Why
+
+Selection exists only in the desktop's polled mouse path (`handle_mouse`):
+drag selects, Alt makes it rectangular, Ctrl+Shift+C copies. Android disables
+that path, so a phone cannot select at all — and a phone is where a
+Termux-style long-press, handles and a menu are the expected interaction.
+Termux also offers "Autofill password" so a password manager can fill `sudo`
+and `ssh` prompts; this app's hidden input field
+([NOD8](./android.md#requirements)) can carry the same request.
+
+## Design
+
+The selection becomes a **model in the component**, independent of the input
+that drives it: a pair of grid points (anchor, head) in screen-plus-scrollback
+coordinates, a shape (stream or block), and operations — select at a point
+with a granularity (character, word, URL, line), move either end, select all,
+read the text. The desktop's mouse path and the touch path both drive the
+model; neither owns it.
+
+The menu is an anchored overlay drawn natively ([D6](./decisions.md)). The
+toolkit's anchored-overlay primitive ([`POP`](../ui/popup.md)) is not built;
+until it is, the menu is placed by a pure local function that follows its
+contracts — a text-range anchor ([`ANC1`](../ui/popup.md)), flip-then-slide
+with the start edge pinned (`PLC5`–`PLC8`), the soft keyboard and extra-keys
+row as boundary insets (`PLC14`), the last side as an input (`PLC13`),
+dismissal with a reason where Esc and Back are one cause (`DSM2`/`DSM3`) — and
+moves onto `POP` when it lands.
+
+## Requirements
+
+| ID      | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                            | Status      | Traces to                                               |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------- |
+| `TSE1`  | A long-press on the terminal (not on a link with `links.longPress` set, [`TPR5`](./protocols.md)) must select the word under the point — a URL as a whole when the point is inside one — and show both handles and the menu. Word boundaries: runs of letters, digits and `_-./~:@%+` (a path or a URL is one word); a long-press on blank cells selects nothing and shows the menu with Paste only.                                   | not started | `SelectionState`                                        |
+| `TSE2`  | The selection model must live in `sparkles:terminal-view`, with operations select-at(point, granularity), set-end(which, point), select-all, clear and text, used by both the desktop mouse path and touch. Its text for a block selection is the rectangle's rows joined by `\n`; for a stream, soft-wrapped rows are joined without a newline. Violation: the desktop and touch paths producing different text for the same anchors. | not started | `handle_mouse` (`input.d`)                              |
+| `TSE3`  | Two handles mark the selection's ends; dragging one moves that end cell by cell and the ends may cross (they swap). Dragging a handle within one cell of the pane's top or bottom edge scrolls the scrollback at a rate proportional to the overshoot, bounded; under reduced motion ([`ACC5`](../design-system/SPEC.md)) it steps a row at a time. A handle's touch target is at least 48 dp, larger than its drawing.                | open        | [design](./design.md)                                   |
+| `TSE4`  | While a selection is shown, a one-finger drag that starts on a handle moves it and never scrolls; a drag elsewhere scrolls and keeps the selection; a tap elsewhere clears it. Output that scrolls the selected text away keeps the selection on its text (it is anchored in scrollback coordinates), and clearing the screen or the scrollback clears it.                                                                             | not started | `scrollViewport`                                        |
+| `TSE5`  | The menu offers, in order: **Copy**, **Paste**, **Select all**, **Open URL** (only when the selection is, or contains exactly one, link — through [`TPR6`](./protocols.md)'s allow-list), **Share** (Android `ACTION_SEND` text), **Autofill password** (`TSE8`). An item that cannot act is hidden, not disabled. Copy clears the selection and confirms with a toast.                                                                | open        | [design](./design.md)                                   |
+| `TSE6`  | The menu is placed above the selection, flipping below when there is no room, sliding horizontally to stay inside the pane, never under the soft keyboard or the extra-keys row; a placement test covers top-edge flip, side slide and the keyboard inset. Back, Esc, a tap outside or a scroll dismisses it (the selection stays); the press that dismisses does not reach the terminal.                                              | not started | `PLC5`–`PLC8`, `PLC14`, `DSM2`                          |
+| `TSE7`  | **Desktop:** the existing drag, Alt (block) and Shift (bypass mouse reporting) behaviours are kept, now over the model; a right-click opens the same menu without Share or Autofill; a double-click selects a word and a triple-click a line.                                                                                                                                                                                          | partial     | `handle_mouse` (`input.d`)                              |
+| `TSE8`  | **Autofill password (Android):** shown only when `AutofillManager.isEnabled()` and the hidden input field exists. Activating it switches the field to a password input with the `password` autofill hint and requests autofill for it; the value the service fills is written to the pty as typed text and then cleared from the field, and the field returns to its normal mode. Cancelling sends nothing.                            | not started | proposed `sparkles.android.autofill`; `installImeField` |
+| `TSE9`  | The autofilled value must reach only the pty: never the IME diff (which would send backspaces for the sentinel run), the log, the screen oracle's `keys.txt`, the clipboard or the notification log. Violation: a fake service filling a marker, then a search for it in each.                                                                                                                                                         | not started | `ime_diff.d`                                            |
+| `TSE10` | An **Autofill** chip is offered above the keyboard while the focused pane's pty has `ECHO` off and `ICANON` on (a program reading a password: `sudo`, `ssh`, `gpg`), checked with `tcgetattr` on the master at most once per frame and only while the soft keyboard is shown. It disappears when echo returns.                                                                                                                         | open        | [design](./design.md)                                   |
+
+## Open questions
+
+1. **The anchor view's size.** Autofill services anchor their dropdown to the
+   requesting view; the hidden field is 1×1 and transparent. Whether services
+   (Bitwarden, Google) show their dropdown there is unverified. First step of
+   the autofill milestone: try it; if they do not, size the field to the
+   selection's (or the cursor row's) rectangle while the request is open.
+   Affects `TSE8`.
+
+→ [Overview](./index.md) · [Protocols](./protocols.md) · [Anchored overlays](../ui/popup.md)

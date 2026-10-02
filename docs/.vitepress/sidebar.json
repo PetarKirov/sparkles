@@ -1350,8 +1350,52 @@
         "collapsed": true,
         "items": [
           {
+            "text": "Overview",
+            "link": "/specs/terminal/"
+          },
+          {
             "text": "Android (nix-on-droid app)",
             "link": "/specs/terminal/android"
+          },
+          {
+            "text": "Configuration and settings",
+            "link": "/specs/terminal/config"
+          },
+          {
+            "text": "Keymap and key guide",
+            "link": "/specs/terminal/keymap"
+          },
+          {
+            "text": "Terminal protocols",
+            "link": "/specs/terminal/protocols"
+          },
+          {
+            "text": "About, logs, notifications",
+            "link": "/specs/terminal/pages"
+          },
+          {
+            "text": "Selection and autofill",
+            "link": "/specs/terminal/selection"
+          },
+          {
+            "text": "Exit prompt, tabs and splits",
+            "link": "/specs/terminal/sessions"
+          },
+          {
+            "text": "Design: mockup register",
+            "link": "/specs/terminal/design"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/terminal/decisions"
+          },
+          {
+            "text": "Delivery plan",
+            "link": "/specs/terminal/PLAN"
+          },
+          {
+            "text": "Testing and evidence",
+            "link": "/specs/terminal/testing"
           }
         ]
       },
