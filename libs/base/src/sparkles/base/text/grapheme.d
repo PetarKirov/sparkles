@@ -8,11 +8,12 @@
  * regex-based `unstyledLength`, correct for CJK (wide), combining marks (zero),
  * emoji and flags (one 2-cell cluster).
  *
- * The @nogc linchpin: grapheme segmentation runs on a decoded `dchar` window via
- * `std.uni.graphemeStride` (which infers `@nogc nothrow` for `dchar[]`). We never
- * segment raw `char[]` -- `byGrapheme`/`decodeGrapheme` decode through a throwing,
- * non-@nogc path. UTF-8 is decoded with `Yes.useReplacementDchar` so malformed
- * input yields U+FFFD instead of throwing.
+ * The @nogc linchpin: grapheme segmentation runs on a reusable decoded `dchar`
+ * window via `std.uni.graphemeStride` (which infers `@nogc nothrow` for
+ * `dchar[]`). Successive cluster scans reuse decoded code points rather than
+ * rebuilding the window.
+ * UTF-8 uses `Yes.useReplacementDchar`, preserving Phobos's malformed-byte
+ * consumption and yielding U+FFFD instead of throwing.
  */
 module sparkles.base.text.grapheme;
 
@@ -21,7 +22,9 @@ import std.uni : graphemeStride;
 import std.utf : decode;
 
 import sparkles.base.text.ansi : escapeLength;
-import sparkles.base.text.width : graphemeClusterWidth, unclusteredWidth;
+import sparkles.base.text.width : codepointTraits, singletonBreak,
+    graphemeClusterWidth, unclusteredWidth;
+import sparkles.base.text.utf8 : decodeReplacement, decodeValidated;
 
 version (LDC)
     version (X86_64)
@@ -30,6 +33,7 @@ version (LDC)
 version (graphemeSimdX86)
 {
     import core.cpuid : avx2;
+    import sparkles.base.text.utf8_simd : validatedUtf8Prefix;
     import ldc.attributes : target;
     import ldc.gccbuiltins_x86 : __builtin_ia32_pmovmskb128,
         __builtin_ia32_pmovmskb256;
@@ -67,44 +71,126 @@ private struct ClusterScan
     ubyte codepoints;
 }
 
-/// Scan the first grapheme cluster of `run` (which begins at a cluster boundary
-/// and contains no escape). Decodes code points into a `dchar` window until
-/// `graphemeStride` reports a boundary, mapping back to a byte length.
-private ClusterScan scanCluster(bool fullMetadata = true)(in char[] run)
-in (run.length > 0)
+// A bounded decoded queue shared by successive clusters of one escape-free
+// run. Keep two cap-sized windows so compaction happens at most once per
+// window, not once per cluster. Offsets stay relative to the original run:
+// consuming a cluster does not rewrite all the queued byte offsets.
+private struct ClusterScanner
 {
-    // Printable ASCII has a boundary before any following ASCII byte. Keep an
-    // ASCII starter before a high byte for the normal combining/VS/keycap path.
-    if (run[0] >= 0x20 && run[0] <= 0x7E
-        && (run.length == 1 || run[1] < 0x80))
-        return ClusterScan(1, 1, run[0], 1, 1);
+    dchar[maxClusterCps * 2] window = void;
+    size_t[maxClusterCps * 2] ends = void;
+    size_t begin;
+    size_t end;
+    size_t decodedBytes;
+    size_t consumedBytes;
+    bool aggregateSingletons = true;
 
-    dchar[maxClusterCps] win = void;
-    size_t[maxClusterCps] ends = void; // byte offset just past each decoded cp
-    size_t count;
-    size_t pos = 0;
-    while (pos < run.length && count < maxClusterCps)
+    void reset() scope @safe pure nothrow @nogc
     {
-        size_t idx = pos;
-        dchar cp = decode!(Yes.useReplacementDchar)(run, idx);
-        win[count] = cp;
-        ends[count] = idx;
-        ++count;
-        pos = idx;
-        if (count >= 2)
-        {
-            const stride = graphemeStride(win[0 .. count], 0);
-            if (stride < count) // boundary found before the lookahead end
-                return ClusterScan(ends[stride - 1],
-                    graphemeClusterWidth(win[0 .. stride]), win[0],
-                    fullMetadata ? unclusteredWidth(win[0 .. stride]) : 0, cast(ubyte) stride);
-        }
+        begin = end = decodedBytes = consumedBytes = 0;
+        aggregateSingletons = true;
     }
-    // Reached the run end (or the cap): the window is a single cluster.
-    const stride = graphemeStride(win[0 .. count], 0);
-    const k = stride < count ? stride : count;
-    return ClusterScan(ends[k - 1], graphemeClusterWidth(win[0 .. k]), win[0],
-        fullMetadata ? unclusteredWidth(win[0 .. k]) : 0, cast(ubyte) k);
+
+    void skipBytes(size_t bytes) scope @safe pure nothrow @nogc
+    {
+        consumedBytes += bytes;
+        while (begin < end && ends[begin] <= consumedBytes)
+            ++begin;
+        if (decodedBytes < consumedBytes)
+            decodedBytes = consumedBytes;
+    }
+
+    ClusterScan scan(bool fullMetadata = true)(scope const(char)[] run) scope
+    in (run.length > 0)
+    {
+        pragma(inline, true);
+        // Plain ASCII boundaries need no segmentation, even when an earlier
+        // Unicode cluster has already decoded this byte into the queue.
+        if (run[0] >= 0x20 && run[0] <= 0x7E
+            && (run.length == 1 || run[1] < 0x80))
+        {
+            if (begin == end)
+                ++decodedBytes;
+            else
+                ++begin;
+            ++consumedBytes;
+            return ClusterScan(1, 1, run[0], 1, 1);
+        }
+
+        if (end - begin < maxClusterCps)
+            refill(run);
+
+        const available = end - begin;
+        const count = available < maxClusterCps ? available : maxClusterCps;
+        const first = window[begin];
+        const traits = codepointTraits(first);
+        if (count == 1 || singletonBreak(traits, codepointTraits(window[begin + 1]),
+                window[begin + 1]))
+        {
+            const nextBytes = ends[begin++];
+            const width = traits & 3;
+            const unclustered = fullMetadata
+                ? (first >= 0x1F1E6 && first <= 0x1F1FF ? 1 : width) : 0;
+            const result = ClusterScan(nextBytes - consumedBytes, width,
+                first, unclustered, 1);
+            consumedBytes = nextBytes;
+            return result;
+        }
+        return scanComplex!fullMetadata(count);
+    }
+
+    private void refill(scope const(char)[] run) scope @safe pure nothrow @nogc
+    {
+        if (begin != 0)
+        {
+            const remaining = end - begin;
+            // The ranges may overlap: copy forwards, towards lower indices.
+            foreach (i; 0 .. remaining)
+            {
+                window[i] = window[begin + i];
+                ends[i] = ends[begin + i];
+            }
+            begin = 0;
+            end = remaining;
+        }
+        const base = consumedBytes;
+        size_t pos = decodedBytes - base;
+        size_t filled = end;
+        size_t validEnd = pos;
+        version (graphemeSimdX86)
+        {
+            if (!__ctfe)
+            {
+                const bound = (window.length - filled) * 4;
+                const bytes = run.length - pos < bound ? run.length - pos : bound;
+                validEnd += validatedUtf8Prefix(run[pos .. pos + bytes]);
+            }
+        }
+        while (pos < run.length && filled < window.length)
+        {
+            window[filled] = pos < validEnd
+                ? decodeValidated(run, pos) : decodeReplacement(run, pos);
+            ends[filled++] = base + pos;
+        }
+        end = filled;
+        decodedBytes = base + pos;
+        // Retry aggregation only when a refill discovers a promising head,
+        // not after every cluster in a combining/ZWJ-heavy run.
+        aggregateSingletons = end != 0 && (codepointTraits(window[0]) & 0xFC) == 64
+            && (end == 1 || (codepointTraits(window[1]) & 0xFC) == 64);
+    }
+
+    private ClusterScan scanComplex(bool fullMetadata)(size_t count) scope
+    {
+        const cluster = window[begin .. begin + graphemeStride(window[begin .. begin + count], 0)];
+        const nextBytes = ends[begin + cluster.length - 1];
+        const result = ClusterScan(nextBytes - consumedBytes,
+            graphemeClusterWidth(cluster), cluster[0],
+            fullMetadata ? unclusteredWidth(cluster) : 0, cast(ubyte) cluster.length);
+        begin += cluster.length;
+        consumedBytes = nextBytes;
+        return result;
+    }
 }
 
 /// Lazy range over the escape sequences and grapheme clusters of `s`.
@@ -114,6 +200,7 @@ struct GraphemeClusterRange
     private size_t _runLen; // bytes of the current escape-free text run remaining
     private ClusterMeasure _front;
     private bool _empty;
+    private ClusterScanner _scanner;
 
     @safe pure nothrow @nogc:
 
@@ -148,17 +235,34 @@ struct GraphemeClusterRange
                 return;
             }
             // Start of a text run: measure it up to the next escape.
-            size_t j = 0;
-            while (j < _rest.length && _rest[j] != '\x1b')
-                j++;
-            _runLen = j;
+            _runLen = escapeFreePrefix(_rest);
+            _scanner.reset();
         }
-        const scan = scanCluster(_rest[0 .. _runLen]);
+        const scan = _scanner.scan(_rest[0 .. _runLen]);
         _front = ClusterMeasure(_rest[0 .. scan.bytes], scan.width, false, scan.first,
             scan.unclustered, scan.codepoints);
         _rest = _rest[scan.bytes .. $];
         _runLen -= scan.bytes;
     }
+}
+
+private size_t escapeFreePrefix(scope const(char)[] s) @safe pure nothrow @nogc
+{
+    if (__ctfe)
+    {
+        foreach (i, c; s)
+            if (c == '\x1b')
+                return i;
+        return s.length;
+    }
+    if (s.length == 0)
+        return 0;
+    import core.stdc.string : memchr;
+
+    return (() @trusted {
+        const found = cast(const(char)*) memchr(s.ptr, '\x1b', s.length);
+        return found is null ? s.length : cast(size_t)(found - s.ptr);
+    })();
 }
 
 /// Iterate `s` as escape sequences and grapheme clusters.
@@ -167,9 +271,9 @@ GraphemeClusterRange byGraphemeCluster(return scope const(char)[] s)
     return GraphemeClusterRange(s);
 }
 
-// Only byte classification is vectorized; segmentation and presentation stay
-// with Phobos and the existing width policy. AVX2 is selected only when the
-// CPU and OS support it; SSE2 is the x86-64 baseline.
+// Only byte classification is vectorized; segmentation stays with the public
+// Phobos API and presentation with the existing width policy. AVX2 is selected
+// only when CPU/OS support it; SSE2 is the x86-64 baseline.
 version (graphemeSimdX86)
 private size_t printableAsciiBlocks(size_t lanes)(scope const(char)[] s)
     @target(lanes == 32 ? "avx2" : "sse2") @safe pure nothrow @nogc
@@ -229,17 +333,58 @@ private size_t printableAsciiPrefix(scope const(char)[] s)
     return i;
 }
 
+version (graphemeSimdX86)
+private size_t singletonWidthPrefix(scope const(char)[] run, ref size_t total)
+{
+    // Only ordinary singleton traits participate. Retain the final starter
+    // until its following scalar is known: Extend/VS/ZWJ can still attach.
+    const bytes = run.length < 256 ? run.length : 256;
+    const validEnd = validatedUtf8Prefix(run[0 .. bytes]);
+    size_t pos, accepted, width, pendingEnd, pendingWidth;
+    while (pos < validEnd)
+    {
+        const cp = decodeValidated(run, pos);
+        const traits = codepointTraits(cp);
+        if ((traits & 0xFC) != 64)
+            break;
+        width += pendingWidth;
+        accepted = pendingEnd;
+        pendingEnd = pos;
+        pendingWidth = traits & 3;
+    }
+    if (pos == run.length && pendingEnd == pos)
+    {
+        width += pendingWidth;
+        accepted = pendingEnd;
+    }
+    total += width;
+    return accepted;
+}
+
 /// Visible width of UTF-8 text in terminal cells: ANSI escapes count 0, each
 /// grapheme cluster counts its display width (wide CJK 2, combining 0, emoji /
 /// flags one 2-cell cluster). The @nogc replacement for `unstyledLength`.
 size_t visibleWidth(in char[] s)
 {
-    size_t total = 0;
-    size_t pos;
+    auto plain = printableAsciiPrefix(s);
+    if (plain == s.length)
+        return plain;
+    return visibleWidthMixed(s, plain);
+}
+
+private size_t visibleWidthMixed(in char[] s, size_t plain)
+{
+    // Keep the ASCII-only call free of scanner initialization and its frame.
+    if (plain != 0 && s[plain] >= 0x80)
+        --plain;
+    size_t total = plain;
+    size_t pos = plain;
     size_t runEnd;
+    ClusterScanner scanner;
+    scanner.skipBytes(plain);
     while (pos < s.length)
     {
-        auto plain = printableAsciiPrefix(s[pos .. $]);
+        plain = printableAsciiPrefix(s[pos .. $]);
         // The last ASCII starter can acquire combining marks or a presentation
         // selector, including keycaps. Leave it and its continuation together.
         if (plain != 0 && plain < s.length - pos && s[pos + plain] >= 0x80)
@@ -248,23 +393,37 @@ size_t visibleWidth(in char[] s)
         {
             total += plain;
             pos += plain;
+            scanner.skipBytes(plain);
             continue;
         }
         if (s[pos] == '\x1b')
         {
             pos += escapeLength(s[pos .. $]);
             runEnd = 0;
+            scanner.reset();
             continue;
         }
         // Cache the escape-free run end, as the iterator does. Unicode clusters
         // never rescan the full remaining run: discovery is once per text run.
         if (pos >= runEnd)
         {
-            runEnd = pos;
-            while (runEnd < s.length && s[runEnd] != '\x1b')
-                ++runEnd;
+            runEnd = pos + escapeFreePrefix(s[pos .. $]);
         }
-        const scan = scanCluster!false(s[pos .. runEnd]);
+        version (graphemeSimdX86)
+        {
+            if (!__ctfe && scanner.aggregateSingletons)
+            {
+                const bytes = singletonWidthPrefix(s[pos .. runEnd], total);
+                if (bytes != 0)
+                {
+                    pos += bytes;
+                    scanner.skipBytes(bytes);
+                    continue;
+                }
+                scanner.aggregateSingletons = false;
+            }
+        }
+        const scan = scanner.scan!false(s[pos .. runEnd]);
         total += scan.width;
         pos += scan.bytes;
     }
@@ -407,4 +566,165 @@ unittest
             assert(visibleWidth(text[]) == expected);
         }
     }
+}
+
+version (unittest)
+private ClusterScan referenceScan(scope const(char)[] run)
+{
+    // The original growing-window algorithm is deliberately test-only. It
+    // checks queue boundaries against Phobos independently of the new scanner.
+    dchar[maxClusterCps] window = void;
+    size_t[maxClusterCps] ends = void;
+    size_t count;
+    size_t pos;
+    while (pos < run.length && count < maxClusterCps)
+    {
+        window[count] = decode!(Yes.useReplacementDchar)(run, pos);
+        ends[count++] = pos;
+        const stride = graphemeStride(window[0 .. count], 0);
+        if (stride < count)
+            return ClusterScan(ends[stride - 1],
+                graphemeClusterWidth(window[0 .. stride]), window[0],
+                unclusteredWidth(window[0 .. stride]), cast(ubyte) stride);
+    }
+    const stride = graphemeStride(window[0 .. count], 0);
+    return ClusterScan(ends[stride - 1], graphemeClusterWidth(window[0 .. stride]),
+        window[0], unclusteredWidth(window[0 .. stride]), cast(ubyte) stride);
+}
+
+version (unittest)
+private void checkReference(scope const(char)[] text)
+{
+    const original = text;
+    auto actual = byGraphemeCluster(text);
+    size_t total;
+    while (text.length != 0)
+    {
+        if (text[0] == '\x1b')
+        {
+            const bytes = escapeLength(text);
+            assert(actual.front == ClusterMeasure(text[0 .. bytes], 0, true, '\x1b'));
+            text = text[bytes .. $];
+        }
+        else
+        {
+            size_t runEnd;
+            while (runEnd < text.length && text[runEnd] != '\x1b')
+                ++runEnd;
+            const expected = referenceScan(text[0 .. runEnd]);
+            assert(actual.front == ClusterMeasure(text[0 .. expected.bytes], expected.width,
+                false, expected.first, expected.unclustered, expected.codepoints));
+            total += expected.width;
+            text = text[expected.bytes .. $];
+        }
+        actual.popFront();
+    }
+    assert(actual.empty);
+    // The width-only loop skips ASCII separately and must share the same
+    // semantics even when a decoded window straddles that skip.
+    assert(visibleWidth(original) == total);
+}
+
+@("grapheme.decodedQueue.phobosStateAndMetadata")
+unittest
+{
+    import std.utf : encode;
+    static immutable dchar[] representatives = [
+        'A', '\0', '\r', '\n', '\t', '\x7F', '\u0085', '\u0301',
+        '\u0903', '\u093E', '\u0600', '\u0D4E', '\u1100', '\u1161',
+        '\u11A8', '\uAC00', '\uAC01', '\uA960', '\uD7B0', '\uD7CB',
+        '\u200B', '\u200D', '\u2028', '\uFE0E', '\uFE0F', '\u20E3',
+        '\u2701', '\u2764', '\u4E16', '\U00020000', '\U0001F1E6',
+        '\U0001F1E7', '\U0001F1E8', '\U0001F469', '\U0001F467',
+        '\U0001F3FE', '\U000110BD', '\U000E0020', '\U000E007F', '\uFFFD'
+    ];
+    char[2048] storage = void;
+    uint seed = 0xCAFE0123;
+    foreach (trial; 0 .. 64)
+    {
+        size_t bytes;
+        foreach (i; 0 .. 192)
+        {
+            seed = seed * 1664525U + 1013904223U;
+            const cp = representatives[(seed >> 16) % representatives.length];
+            char[4] encoded = void;
+            const n = encode!(Yes.useReplacementDchar)(encoded, cp);
+            storage[bytes .. bytes + n] = encoded[0 .. n];
+            bytes += n;
+        }
+        const text = storage[0 .. bytes];
+        checkReference(text);
+    }
+    foreach (a; representatives)
+        foreach (b; representatives)
+            foreach (c; [cast(dchar) 'A', '\u0301', '\u200D', '\U0001F469'])
+            {
+                size_t bytes;
+                foreach (cp; [a, b, c])
+                {
+                    char[4] encoded = void;
+                    const n = encode!(Yes.useReplacementDchar)(encoded, cp);
+                    storage[bytes .. bytes + n] = encoded[0 .. n];
+                    bytes += n;
+                }
+                checkReference(storage[0 .. bytes]);
+            }
+}
+
+@("grapheme.singletonRuns.deferTrailingAttachments")
+@safe pure nothrow @nogc
+unittest
+{
+    char[512] storage = void;
+    foreach (starter; ["A", "\u00E9", "\u4E16", "\U0001F469"])
+        foreach (count; 0 .. 97)
+        {
+            const prefixBytes = count * starter.length;
+            foreach (i; 0 .. count)
+                storage[i * starter.length .. (i + 1) * starter.length] = starter[];
+            foreach (suffix; ["\u0301", "\uFE0F", "\uFE0E",
+                "\u200D\U0001F469", "\u0600A", "\r\n",
+                "\U0001F1E6\U0001F1E7", "\xFF\u0301"])
+            {
+                storage[prefixBytes .. prefixBytes + suffix.length] = suffix[];
+                checkReference(storage[0 .. prefixBytes + suffix.length]);
+            }
+        }
+}
+
+@("grapheme.decodedQueue.capMalformedAndEscapeTransitions")
+unittest
+{
+    enum malformed = ["\x80", "\xC0\xAF", "\xE2\x82", "\xED\xA0\x80",
+        "\xF0\x80\x80\xAF", "\xF4\x90\x80\x80", "\xE2A\x80", "\xFF\xFF"];
+    foreach (bad; malformed)
+    {
+        char[256] storage = void;
+        size_t length;
+        string[5] parts = ["\u0600A\u0301", bad, "\x1b[31m\u2764\uFE0F",
+            bad, "\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u0301"];
+        foreach (part; parts)
+        {
+            storage[length .. length + part.length] = part[];
+            length += part.length;
+        }
+        checkReference(storage[0 .. length]);
+    }
+    char[1024] text = void;
+    size_t bytes;
+    foreach (i; 0 .. 256)
+    {
+        text[bytes++] = 'A';
+        foreach (_; 0 .. i % 40)
+        {
+            if (bytes + 2 > text.length)
+                break;
+            text[bytes .. bytes + 2] = "\u0301";
+            bytes += 2;
+        }
+        if (bytes + 81 > text.length)
+            break;
+    }
+    checkReference(text[0 .. bytes]);
+    static assert(visibleWidth("\u0600\u2764\uFE0F\x1b[31mA\u0301\r\n") == 1);
 }

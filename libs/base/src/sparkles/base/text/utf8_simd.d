@@ -12,17 +12,22 @@ version (LDC)
 version (textSimdX86)
 {
     import core.cpuid : avx2;
+    import sparkles.base.text.simd_caps : hasAvx512Bw;
 
     import ldc.attributes : target;
     import ldc.gccbuiltins_x86 : __builtin_ia32_pmovmskb128,
-        __builtin_ia32_pmovmskb256, __builtin_ia32_pshufb256;
+        __builtin_ia32_pmovmskb256, __builtin_ia32_pshufb256,
+        __builtin_ia32_pshufb512;
     import ldc.simd : equalMask, greaterMask, loadUnaligned, shufflevector;
+    import ldc.llvmasm : __ir_pure;
 
     // The JSON mode is an internal cross-library seam: stop before quotes,
     // escapes and controls while validating the same loaded bytes once.
     package(sparkles) size_t validatedUtf8Prefix(bool stringBody = false)(
         scope const(char)[] s) @safe pure nothrow @nogc
     {
+        if (s.length >= 256 && hasAvx512Bw)
+            return validateBlocks!(64, stringBody)(s);
         return avx2() ? validateBlocks!(32, stringBody)(s)
             : validateBlocks!(16, stringBody)(s);
     }
@@ -32,13 +37,17 @@ version (textSimdX86)
     // overlaps loads nor walks trailing continuation bytes.
     private size_t validateBlocks(size_t lanes, bool stringBody = false)(
         scope const(char)[] s)
-        @target(lanes == 32 ? "avx2" : "sse2") @safe pure nothrow @nogc
+        @target(lanes == 64 ? "avx512f,avx512bw" : lanes == 32 ? "avx2" : "sse2")
+        @safe pure nothrow @nogc
     {
         alias V = __vector(ubyte[lanes]);
         alias S = __vector(byte[lanes]);
         size_t i;
         V previous = 0;
-        uint previousMask;
+        static if (lanes == 64)
+            ulong previousMask;
+        else
+            uint previousMask;
         static if (!stringBody)
         {
             // One initial ASCII sweep, not four speculative loads on every
@@ -54,9 +63,52 @@ version (textSimdX86)
                     combined |= bytes;
                     last = bytes;
                 }}
-                if (mask(cast(S) combined) != 0)
+                // Name wide-vector arguments: LDC's baseline ABI passes
+                // 512-bit values indirectly and cannot address a cast rvalue.
+                S signedCombined = cast(S) combined;
+                if (mask(signedCombined) != 0)
                     break;
                 previous = last;
+                i += lanes * 4;
+            }
+        }
+        static if (lanes >= 32 && !stringBody)
+        {
+            // Four independent lookup4 blocks share one error reduction.
+            // A rejection replays from this group's preceding sequence
+            // boundary, preserving the scalar caller's exact lead offset.
+            while (s.length - i >= lanes * 4)
+            {
+                const firstInput = (() @trusted =>
+                    loadUnaligned!V(cast(const(ubyte)*) s.ptr + i))();
+                if ((previousMask >> (lanes - 3)) == 0)
+                {
+                    S signedFirst = cast(S) firstInput;
+                    if (mask(signedFirst) == 0)
+                    {
+                        previous = firstInput;
+                        previousMask = 0;
+                        i += lanes;
+                        continue;
+                    }
+                }
+                S bad = 0;
+                static foreach (block; 0 .. 4)
+                {{
+                    V input = void;
+                    static if (block == 0)
+                        input = firstInput;
+                    else
+                        input = (() @trusted => loadUnaligned!V(
+                            cast(const(ubyte)*) s.ptr + i + block * lanes))();
+                    bad |= lookupPairErrors(input, preceding!1(input, previous),
+                        preceding!2(input, previous), preceding!3(input, previous));
+                    previous = input;
+                }}
+                if (mask(bad) != 0)
+                    return sequenceBoundaryBefore(s, i);
+                S signedPrevious = cast(S) previous;
+                previousMask = mask(signedPrevious);
                 i += lanes * 4;
             }
         }
@@ -71,7 +123,8 @@ version (textSimdX86)
                 if (mask(stops) != 0)
                     return sequenceBoundaryBefore(s, i);
             }
-            const inputMask = mask(cast(S) input);
+            S signedInput = cast(S) input;
+            const inputMask = mask(signedInput);
             // The last three previous bytes being ASCII proves that no
             // continuation is pending. Otherwise validate even an ASCII block.
             if ((inputMask | (previousMask >> (lanes - 3))) == 0)
@@ -85,7 +138,7 @@ version (textSimdX86)
             const p2 = preceding!2(input, previous);
             const p3 = preceding!3(input, previous);
             S bad;
-            static if (lanes == 32)
+            static if (lanes >= 32)
                 bad = lookupPairErrors(input, p1, p2, p3);
             else
             {
@@ -122,10 +175,15 @@ version (textSimdX86)
         return end - lead < length ? lead : end;
     }
 
-    private uint mask(S)(S v)
-        @target(S.sizeof == 32 ? "avx2" : "sse2") @safe pure nothrow @nogc
+    private auto mask(S)(S v)
+        @target(S.sizeof == 64 ? "avx512f,avx512bw" : S.sizeof == 32 ? "avx2" : "sse2")
+        @safe pure nothrow @nogc
     {
-        static if (S.sizeof == 32)
+        static if (S.sizeof == 64)
+            return __ir_pure!(
+                "%m = icmp slt <64 x i8> %0, zeroinitializer\n"
+                ~ "%r = bitcast <64 x i1> %m to i64\nret i64 %r", ulong, S)(v);
+        else static if (S.sizeof == 32)
             return cast(uint) __builtin_ia32_pmovmskb256(v);
         else
             return cast(uint) __builtin_ia32_pmovmskb128(v);
@@ -162,34 +220,37 @@ version (textSimdX86)
             : 0x86 | (n < 10 ? 0x08 : 0x10)
                 | (n == 8 ? 0x20 : 0x40));
 
-    private ubyte[32] nibbleTable(alias classify)()
+    private ubyte[lanes] nibbleTable(alias classify, size_t lanes)()
     {
-        ubyte[32] table;
+        ubyte[lanes] table;
         foreach (i, ref value; table)
             value = classify(cast(ubyte)(i & 15));
         return table;
     }
 
     pragma(inline, true)
-    private __vector(byte[32]) lookupPairErrors()(
-        __vector(ubyte[32]) input, __vector(ubyte[32]) p1,
-        __vector(ubyte[32]) p2, __vector(ubyte[32]) p3)
-        @target("avx2") @safe pure nothrow @nogc
+    private auto lookupPairErrors(V)(V input, V p1, V p2, V p3)
+        @target(V.sizeof == 64 ? "avx512f,avx512bw" : "avx2")
+        @safe pure nothrow @nogc
     {
-        alias V = __vector(ubyte[32]);
-        alias S = __vector(byte[32]);
-        alias W = __vector(ushort[16]);
-        enum highTable = nibbleTable!previousHigh();
-        enum lowTable = nibbleTable!previousLow();
-        enum inputTable = nibbleTable!currentHigh();
+        alias S = __vector(byte[V.sizeof]);
+        alias W = __vector(ushort[V.sizeof / 2]);
+        enum highTable = nibbleTable!(previousHigh, V.sizeof)();
+        enum lowTable = nibbleTable!(previousLow, V.sizeof)();
+        enum inputTable = nibbleTable!(currentHigh, V.sizeof)();
         const V high = highTable;
         const V low = lowTable;
         const V current = inputTable;
         const high1 = cast(V)(cast(W) p1 >> 4) & V(0x0F);
         const high0 = cast(V)(cast(W) input >> 4) & V(0x0F);
-        const pairs = __builtin_ia32_pshufb256(cast(S) high, cast(S) high1)
-            & __builtin_ia32_pshufb256(cast(S) low, cast(S)(p1 & V(0x0F)))
-            & __builtin_ia32_pshufb256(cast(S) current, cast(S) high0);
+        static if (V.sizeof == 64)
+            const pairs = __builtin_ia32_pshufb512(cast(S) high, cast(S) high1)
+                & __builtin_ia32_pshufb512(cast(S) low, cast(S)(p1 & V(0x0F)))
+                & __builtin_ia32_pshufb512(cast(S) current, cast(S) high0);
+        else
+            const pairs = __builtin_ia32_pshufb256(cast(S) high, cast(S) high1)
+                & __builtin_ia32_pshufb256(cast(S) low, cast(S)(p1 & V(0x0F)))
+                & __builtin_ia32_pshufb256(cast(S) current, cast(S) high0);
         const expected = (equalMask!V(p2 & V(0xE0), V(0xE0))
             | equalMask!V(p3 & V(0xF8), V(0xF0))) & S(cast(byte) 0x80);
         const errors = (pairs ^ expected) | greaterMask!V(input, V(0xF4));
@@ -235,6 +296,11 @@ version (textSimdX86)
                         const avx = validateBlocks!32(input);
                         assert(avx + scalarOffset(input[avx .. $]) == expected);
                     }
+                    if (hasAvx512Bw)
+                    {
+                        const wide = validateBlocks!64(input);
+                        assert(wide + scalarOffset(input[wide .. $]) == expected);
+                    }
                 }
                 foreach (position; offset .. offset + text.length)
                 {
@@ -250,6 +316,11 @@ version (textSimdX86)
                         {
                             const avx = validateBlocks!32(input);
                             assert(avx + scalarOffset(input[avx .. $]) == expected);
+                        }
+                        if (hasAvx512Bw)
+                        {
+                            const wide = validateBlocks!64(input);
+                            assert(wide + scalarOffset(input[wide .. $]) == expected);
                         }
                     }
                     storage[position] = original;

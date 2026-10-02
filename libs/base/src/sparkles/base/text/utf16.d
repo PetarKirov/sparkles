@@ -24,6 +24,7 @@ version (textSimdX86)
 {
     import sparkles.base.text.utf16_simd : asciiUtf8Prefix, asciiUtf16Prefix,
         widenAsciiUtf8, narrowAsciiUtf16, countUtf8Units, measureUtf16Prefix;
+    import sparkles.base.text.utf16_emit : emitUtf8, emitUtf16, hasCompaction;
     import sparkles.base.text.utf8_simd : validatedUtf8Prefix;
 }
 
@@ -127,6 +128,16 @@ private UtfConversionResult!size_t utf8ToUtf16Impl(
             destination[di++] = cast(wchar) source[si++];
             continue;
         }
+        version (textSimdX86)
+        {
+            if (!__ctfe && source.length - si >= 33 && hasCompaction())
+            {
+                const emitted = emitUtf8(source[si .. $], destination[di .. payloadUnits]);
+                si += emitted.consumed;
+                di += emitted.written;
+                continue;
+            }
+        }
         // The preflight already validated every sequence.
         const len = source[si] < 0xE0 ? 2 : source[si] < 0xF0 ? 3 : 4;
         const scalar = decodeScalar(source, si, len);
@@ -181,6 +192,16 @@ private UtfConversionResult!size_t utf16ToUtf8Impl(
             destination[di++] = cast(char) scalar;
             ++si;
             continue;
+        }
+        version (textSimdX86)
+        {
+            if (!__ctfe && source.length - si >= 17 && hasCompaction())
+            {
+                const emitted = emitUtf16(source[si .. $], destination[di .. payloadBytes]);
+                si += emitted.consumed;
+                di += emitted.written;
+                continue;
+            }
         }
         ++si;
         if (scalar >= 0xD800 && scalar <= 0xDBFF)
@@ -582,4 +603,152 @@ unittest
         assert(badTail.hasError && badTail.error.code == UtfConversionErrorCode.invalidUtf16);
         assert(badTail.error.offset == position && bytes == before);
     }
+}
+
+@("text.utf16.compactedEmissionMatchesIndependentScalarReference")
+unittest
+{
+    import std.utf : codeLength, toUTF8, toUTF16;
+
+    enum scalars = (() {
+        dchar[128] result;
+        immutable dchar[12] edges = [cast(dchar) 0, 0x7F, 0x80, 0x7FF, 0x800, 0xD7FF,
+            0xE000, 0xFFFF, 0x10000, 0x103FF, 0x10400, 0x10FFFF];
+        uint state = 0x31415926;
+        foreach (i; 0 .. result.length)
+        {
+            state = state * 1664525 + 1013904223;
+            auto scalar = state % 0x110000;
+            if (scalar >= 0xD800 && scalar <= 0xDFFF)
+                scalar = 0xE000;
+            result[i] = i % 3 == 0 ? cast(dchar) scalar : edges[(state >> 16) % edges.length];
+        }
+        return result;
+    })();
+    static immutable reference8 = toUTF8(scalars[]);
+    static immutable reference16 = toUTF16(scalars[]);
+    size_t length8, length16;
+    foreach (scalar; scalars)
+    {
+        length8 += codeLength!char(scalar);
+        length16 += codeLength!wchar(scalar);
+        // Every scalar prefix gives exact capacities on both sides, including
+        // all final block lengths and surrogate-pair boundary positions.
+        foreach (alignment; 0 .. 8)
+        {
+            char[528] input8;
+            wchar[272] input16;
+            input8[alignment .. alignment + length8] = reference8[0 .. length8];
+            input16[alignment .. alignment + length16] = reference16[0 .. length16];
+            wchar[272] wide = 0xA5A5;
+            char[528] bytes = cast(char) 0x5A;
+            const encoded = utf8ToUtf16(input8[alignment .. alignment + length8],
+                wide[alignment .. alignment + length16]);
+            const decoded = utf16ToUtf8(input16[alignment .. alignment + length16],
+                bytes[alignment .. alignment + length8]);
+            assert(encoded.hasValue && encoded.value == length16);
+            assert(decoded.hasValue && decoded.value == length8);
+            assert(wide[alignment .. alignment + length16] == reference16[0 .. length16]);
+            assert(bytes[alignment .. alignment + length8] == reference8[0 .. length8]);
+            foreach (unit; wide[0 .. alignment])
+                assert(unit == 0xA5A5);
+            foreach (unit; wide[alignment + length16 .. $])
+                assert(unit == 0xA5A5);
+            foreach (unit; bytes[0 .. alignment])
+                assert(unit == 0x5A);
+            foreach (unit; bytes[alignment + length8 .. $])
+                assert(unit == 0x5A);
+        }
+    }
+}
+
+@("text.utf16.uniformWidthEdgesAndExactCapacity")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.utf : toUTF8, toUTF16;
+
+    static foreach (edges; [[cast(dchar) 0x80, 0x7FF],
+        [cast(dchar) 0x800, 0xD7FF], [cast(dchar) 0xE000, 0xFFFF]])
+    {{
+        enum scalars = (() {
+            immutable dchar[2] pair = edges;
+            dchar[96] result;
+            foreach (i, ref scalar; result)
+                scalar = pair[i & 1];
+            return result;
+        })();
+        static immutable reference8 = toUTF8(scalars[]);
+        static immutable reference16 = toUTF16(scalars[]);
+        enum bytesPerScalar = edges[0] < 0x800 ? 2 : 3;
+        foreach (count; 1 .. scalars.length + 1)
+            foreach (alignment; 0 .. 8)
+            {
+                const byteCount = count * bytesPerScalar;
+                char[304] source8 = void;
+                wchar[112] source16 = void;
+                source8[alignment .. alignment + byteCount] = reference8[0 .. byteCount];
+                source16[alignment .. alignment + count] = reference16[0 .. count];
+                wchar[112] wide = 0xA5A5;
+                char[304] bytes = cast(char) 0x5A;
+                const encoded = utf8ToUtf16(source8[alignment .. alignment + byteCount],
+                    wide[alignment .. alignment + count]);
+                const decoded = utf16ToUtf8(source16[alignment .. alignment + count],
+                    bytes[alignment .. alignment + byteCount]);
+                assert(encoded.hasValue && encoded.value == count);
+                assert(decoded.hasValue && decoded.value == byteCount);
+                assert(wide[alignment .. alignment + count] == reference16[0 .. count]);
+                assert(bytes[alignment .. alignment + byteCount] == reference8[0 .. byteCount]);
+                foreach (unit; wide[0 .. alignment])
+                    assert(unit == 0xA5A5);
+                foreach (unit; wide[alignment + count .. $])
+                    assert(unit == 0xA5A5);
+                foreach (unit; bytes[0 .. alignment])
+                    assert(unit == 0x5A);
+                foreach (unit; bytes[alignment + byteCount .. $])
+                    assert(unit == 0x5A);
+            }
+    }}
+}
+
+@("text.utf16.nonAsciiPreflightPreservesFailurePrecedence")
+unittest
+{
+    enum prefix8 = "é世😀é世😀é世😀é世😀é世😀é世😀é世😀é世😀";
+    enum prefix16 = "é世😀é世😀é世😀é世😀é世😀é世😀é世😀é世😀"w;
+    wchar[128] wide = 0xA5A5;
+    char[256] bytes = cast(char) 0x5A;
+    const beforeWide = wide;
+    const beforeBytes = bytes;
+    foreach (extra; ["\xF4\x90\x80\x80", "\xED\xA0\x80", "\xF0\x90\x80", "\x80"])
+    {
+        char[128] input;
+        input[0 .. prefix8.length] = prefix8[];
+        input[prefix8.length .. prefix8.length + extra.length] = extra[];
+        const invalid = utf8ToUtf16(input[0 .. prefix8.length + extra.length], wide[0 .. 1]);
+        assert(invalid.hasError && invalid.error.code == UtfConversionErrorCode.invalidUtf8);
+        assert(invalid.error.offset == prefix8.length && invalid.error.required == 0);
+        assert(wide == beforeWide);
+    }
+    wchar[128] input16;
+    input16[0 .. prefix16.length] = prefix16[];
+    input16[prefix16.length] = 0xD800;
+    const invalid16 = utf16ToUtf8(input16[0 .. prefix16.length + 1], bytes[0 .. 1]);
+    assert(invalid16.hasError && invalid16.error.code == UtfConversionErrorCode.invalidUtf16);
+    assert(invalid16.error.offset == prefix16.length && invalid16.error.required == 0);
+    assert(bytes == beforeBytes);
+    const capacity8 = utf8ToUtf16(prefix8, wide[0 .. prefix16.length - 1]);
+    const capacity16 = utf16ToUtf8(prefix16, bytes[0 .. prefix8.length - 1]);
+    assert(capacity8.hasError && capacity8.error.code == UtfConversionErrorCode.insufficientSpace);
+    assert(capacity16.hasError && capacity16.error.code == UtfConversionErrorCode.insufficientSpace);
+    assert(capacity8.error.required == prefix16.length && wide == beforeWide);
+    assert(capacity16.error.required == prefix8.length && bytes == beforeBytes);
+    const nul8 = utf8ToUtf16z(prefix8 ~ "\0\x80", wide[0 .. 1]);
+    input16[prefix16.length] = 0;
+    input16[prefix16.length + 1] = 0xDC00;
+    const nul16 = utf16ToUtf8z(input16[0 .. prefix16.length + 2], bytes[0 .. 1]);
+    assert(nul8.hasError && nul8.error.code == UtfConversionErrorCode.embeddedNul);
+    assert(nul16.hasError && nul16.error.code == UtfConversionErrorCode.embeddedNul);
+    assert(nul8.error.offset == prefix8.length && wide == beforeWide);
+    assert(nul16.error.offset == prefix16.length && bytes == beforeBytes);
 }

@@ -57,6 +57,16 @@ Corpus[] corpora()
         foreach (size; sizes)
             result ~= fromText(kinds[k] ~ "/" ~ size.to!string, fill(tile, size));
 
+    // A Unicode header followed by a long ASCII tail catches fast paths that
+    // accidentally stay in their general multilingual loop after the header.
+    enum unicodeHeader = "é漢😀";
+    foreach (size; [31UL, 32UL, 33UL, 63UL, 64UL, 65UL, 127UL, 128UL, 129UL, 4096UL, 65536UL])
+    {
+        auto text = fill("a", size);
+        text[0 .. unicodeHeader.length] = unicodeHeader[];
+        result ~= fromText("sparse/" ~ size.to!string, text);
+    }
+
     enum string[] malformed = ["\x80", "\xC0\x80", "\xE0\x9F\xBF", "\xED\xA0\x80", "\xF4\x90\x80\x80", "\xF5\x80\x80\x80", "\xC2", "\xE1\x80", "\xF1\x80\x80", "\xE2(\xA1"];
     enum size_t[] offsets = [0, 7, 8, 15, 16, 31, 32, 33, 63, 64, 65, 127, 128, 4095, 65535];
     foreach (m, bad; malformed)
@@ -132,5 +142,23 @@ DisplayCorpus[] displayCorpora()
             }
             result ~= c;
         }
+
+    enum unicodeHeader = "é漢😀";
+    foreach (size; [64UL, 4096UL, 65536UL])
+    {
+        DisplayCorpus c;
+        c.name = "sparse/" ~ size.to!string;
+        c.text = fill("a", size);
+        c.text[0 .. unicodeHeader.length] = unicodeHeader[];
+        c.boundaries = [2, 5, unicodeHeader.length];
+        c.width = 5;
+        foreach (at; unicodeHeader.length .. size)
+        {
+            c.boundaries ~= at + 1;
+            ++c.width;
+        }
+        result ~= c;
+    }
+
     return result;
 }

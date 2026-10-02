@@ -85,23 +85,33 @@ Importing the package pulls in every module below.
 ### UTF and terminal-text acceleration
 
 Under LDC on x86-64, UTF-8 validation uses bounded SIMD blocks: SSE2 baseline
-classification or an AVX2 nibble-lookup validator. AVX2 dispatch checks both
-CPU capability and OS vector-state support. Rejected blocks and incomplete
-tails fall back to scalar decoding, preserving the first invalid **sequence
-lead** offset. Inputs require neither padding nor alignment.
+classification or an AVX2/AVX-512BW nibble-lookup validator. Runtime dispatch
+checks CPU capability and OS vector-state support. Multilingual blocks share
+an error reduction across four vectors; ASCII tails resume the ASCII shortcut.
+Rejected groups and incomplete tails
+fall back to scalar decoding, preserving the first invalid **sequence lead**
+offset. Inputs require neither padding nor alignment.
 
 UTF-8/UTF-16 conversion vectorizes validation/sizing and ASCII widening or
-narrowing. The complete preflight still precedes any destination write:
+narrowing. AVX-512BW/VBMI2 also accelerates non-ASCII emission with register
+compaction and exact masked stores; homogeneous two-byte and three-byte
+blocks avoid the general surrogate/compaction work where possible.
+Entirely ASCII blocks return to widening/narrowing rather than compaction.
+The complete preflight still precedes any destination write:
 malformed input, embedded NUL in a `z` conversion, and insufficient capacity
 leave the destination unchanged. Counts exclude the optional terminator.
 
-`visibleWidth` batches printable ASCII, retaining the last ASCII starter
-before a high byte for combining marks, variation selectors and keycaps.
-Unicode segmentation uses a fixed 32-codepoint stack window and the existing
-Phobos rules; ANSI interpretation, malformed replacement and width policy
-are unchanged. Other compilers/architectures and CTFE retain scalar paths.
-Normalization and case-folding in `analysis` are separate operations, not
-covered by these SIMD changes.
+`visibleWidth` batches printable ASCII and ordinary Unicode singleton runs,
+retaining their final starter until a following scalar rules out an attached
+combining mark, variation selector or ZWJ. Unicode segmentation reuses a
+bounded 64-codepoint decoded queue with the existing 32-codepoint cluster cap.
+Entirely printable ASCII returns before creating the decoded queue; escape-free
+run discovery uses bounded byte search at runtime and a scalar loop at CTFE.
+Packed singleton traits are derived from public Phobos boundary probes;
+complex clusters retain Phobos segmentation. ANSI interpretation, malformed
+replacement and width policy are unchanged. Other compilers/architectures and
+CTFE retain scalar paths. Normalization and case-folding in `analysis` are
+separate operations, not covered by these SIMD changes.
 
 See [measured comparisons and limits](../../../research/simd-unicode/performance.md)
 and the [runnable benchmark matrix](../../../../libs/base/bench/utf/README.md).

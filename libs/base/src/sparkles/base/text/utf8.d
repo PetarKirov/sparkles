@@ -161,6 +161,117 @@ ParseExpected!void validateUtf8(scope const(char)[] s) @safe pure nothrow @nogc
     return parseErr!void(ParseErrorCode.invalidUtf8, i);
 }
 
+// Decode the common well-formed case without Phobos's general decoder state.
+// Malformed input delegates to Phobos so replacement-byte consumption stays
+// identical, including malformed sequences that consume more than one byte.
+package dchar decodeReplacement()(scope const(char)[] input, ref size_t index)
+    @safe pure nothrow @nogc
+in (index < input.length)
+{
+    pragma(inline, true);
+    const first = input[index];
+    if (first < 0x80)
+    {
+        ++index;
+        return first;
+    }
+    const n = utf8SequenceLength(input, index);
+    if (n == 0)
+    {
+        import std.typecons : Yes;
+        import std.utf : decode;
+        return decode!(Yes.useReplacementDchar)(input, index);
+    }
+    uint cp = first & (n == 2 ? 0x1F : n == 3 ? 0x0F : 0x07);
+    foreach (j; 1 .. n)
+        cp = (cp << 6) | (input[index + j] & 0x3F);
+    index += n;
+    return cast(dchar) cp;
+}
+
+// Internal decoder for a prefix already proved well-formed. A single bounded
+// sequence slice removes repeated continuation/range validation; malformed
+// text must still use decodeReplacement to retain Phobos's consumption.
+package dchar decodeValidated()(scope const(char)[] input, ref size_t index)
+    @safe pure nothrow @nogc
+in (index < input.length)
+{
+    pragma(inline, true);
+    const first = input[index];
+    if (first < 0x80)
+    {
+        ++index;
+        return first;
+    }
+    if (first < 0xE0)
+    {
+        const bytes = input[index .. index + 2];
+        const cp = ((first & 0x1F) << 6) | (bytes[1] & 0x3F);
+        index += 2;
+        return cast(dchar) cp;
+    }
+    if (first < 0xF0)
+    {
+        const bytes = input[index .. index + 3];
+        const cp = ((first & 0x0F) << 12) | ((bytes[1] & 0x3F) << 6)
+            | (bytes[2] & 0x3F);
+        index += 3;
+        return cast(dchar) cp;
+    }
+    const bytes = input[index .. index + 4];
+    const cp = ((first & 7) << 18) | ((bytes[1] & 0x3F) << 12)
+        | ((bytes[2] & 0x3F) << 6) | (bytes[3] & 0x3F);
+    index += 4;
+    return cast(dchar) cp;
+}
+
+@("utf8.decodeReplacement.matchesPhobosConsumption")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.typecons : Yes;
+    import std.utf : decode;
+    void compare(scope const(char)[] input)
+    {
+        size_t actualIndex;
+        size_t expectedIndex;
+        while (expectedIndex < input.length)
+        {
+            const expected = decode!(Yes.useReplacementDchar)(input, expectedIndex);
+            const actual = decodeReplacement(input, actualIndex);
+            assert(actual == expected && actualIndex == expectedIndex);
+        }
+    }
+    char[8] bytes = 'x';
+    foreach (first; 0 .. 256)
+        foreach (second; 0 .. 256)
+        {
+            bytes[0] = cast(char) first;
+            bytes[1] = cast(char) second;
+            compare(bytes[]);
+            compare(bytes[0 .. 1]);
+            compare(bytes[0 .. 2]);
+        }
+    foreach (text; ["é", "漢", "😀", "\xE0\x9F\xBF", "\xED\xA0\x80",
+        "\xF0\x8F\xBF\xBF", "\xF4\x90\x80\x80", "\xF5\x80\x80\x80"])
+    {
+        bytes[] = 'x';
+        bytes[0 .. text.length] = text[];
+        foreach (length; 1 .. text.length + 1)
+            compare(bytes[0 .. length]);
+        foreach (at; 0 .. text.length)
+        {
+            const original = bytes[at];
+            foreach (value; 0 .. 256)
+            {
+                bytes[at] = cast(char) value;
+                compare(bytes[]);
+            }
+            bytes[at] = original;
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
