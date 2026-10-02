@@ -42,10 +42,14 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
         return Event(ColorSchemeEvent(dark: s[6] == '1'));
 
     // Parse `p1 [; p2 …] final`. Keep the Kitty shifted-key subfield in
-    // the first parameter: `[47:63;2u` means `?`, not `/`. Other subfields
-    // (base-layout key and event type) are outside this decoder's vocabulary.
+    // the first parameter: `[47:63;2u` means `?`, not `/`. And the event
+    // type in the second, `mods:type` (kitty flag 2): `1` press, `2` repeat,
+    // `3` release — on every key form, letters and `~` included, so a
+    // release is never read as a second press. The base-layout key is outside
+    // this decoder's vocabulary.
     uint[3] p;
     uint shiftedKey;
+    uint eventType;
     size_t np;
     size_t i = 1;
     bool sawDigit;
@@ -72,6 +76,8 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
                 p[np] = p[np] * 10 + (c - '0');
             else if (np == 0 && subfield == 1)
                 shiftedKey = shiftedKey * 10 + (c - '0');
+            else if (np == 1 && subfield == 1)
+                eventType = eventType * 10 + (c - '0');
             sawDigit = true;
             continue;
         }
@@ -88,40 +94,42 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
         return Event(FocusEvent(f == 'I'));
     // The modifier param (`[1;<m><final>`), 1-based: m-1 is the modifier bitset.
     const mods = np >= 2 ? modsFromParam(p[1]) : Mods();
+    const action = eventType == 3 ? KeyAction.release
+        : eventType == 2 ? KeyAction.repeat : KeyAction.press;
 
     switch (f)
     {
-        case 'A': return keyEvent(Key.up, mods);
-        case 'B': return keyEvent(Key.down, mods);
-        case 'C': return keyEvent(Key.right, mods);
-        case 'D': return keyEvent(Key.left, mods);
-        case 'H': return keyEvent(Key.home, mods);
-        case 'F': return keyEvent(Key.end, mods);
-        case 'P': return keyEvent(Key.f1, mods); // SS3 F1–F4
-        case 'Q': return keyEvent(Key.f2, mods);
-        case 'R': return keyEvent(Key.f3, mods);
-        case 'S': return keyEvent(Key.f4, mods);
+        case 'A': return keyEvent(Key.up, mods, action);
+        case 'B': return keyEvent(Key.down, mods, action);
+        case 'C': return keyEvent(Key.right, mods, action);
+        case 'D': return keyEvent(Key.left, mods, action);
+        case 'H': return keyEvent(Key.home, mods, action);
+        case 'F': return keyEvent(Key.end, mods, action);
+        case 'P': return keyEvent(Key.f1, mods, action); // SS3 F1–F4
+        case 'Q': return keyEvent(Key.f2, mods, action);
+        case 'R': return keyEvent(Key.f3, mods, action);
+        case 'S': return keyEvent(Key.f4, mods, action);
         case '~':
             switch (np >= 1 ? p[0] : 0)
             {
-                case 1, 7:  return keyEvent(Key.home, mods);
-                case 2:     return keyEvent(Key.insert, mods);
-                case 3:     return keyEvent(Key.delete_, mods);
-                case 4, 8:  return keyEvent(Key.end, mods);
+                case 1, 7:  return keyEvent(Key.home, mods, action);
+                case 2:     return keyEvent(Key.insert, mods, action);
+                case 3:     return keyEvent(Key.delete_, mods, action);
+                case 4, 8:  return keyEvent(Key.end, mods, action);
                 case 5:     return keyEvent(Key.pageUp, mods);
                 case 6:     return keyEvent(Key.pageDown, mods);
-                case 11:    return keyEvent(Key.f1, mods);
-                case 12:    return keyEvent(Key.f2, mods);
-                case 13:    return keyEvent(Key.f3, mods);
-                case 14:    return keyEvent(Key.f4, mods);
-                case 15:    return keyEvent(Key.f5, mods);
-                case 17:    return keyEvent(Key.f6, mods);
-                case 18:    return keyEvent(Key.f7, mods);
-                case 19:    return keyEvent(Key.f8, mods);
-                case 20:    return keyEvent(Key.f9, mods);
-                case 21:    return keyEvent(Key.f10, mods);
-                case 23:    return keyEvent(Key.f11, mods);
-                case 24:    return keyEvent(Key.f12, mods);
+                case 11:    return keyEvent(Key.f1, mods, action);
+                case 12:    return keyEvent(Key.f2, mods, action);
+                case 13:    return keyEvent(Key.f3, mods, action);
+                case 14:    return keyEvent(Key.f4, mods, action);
+                case 15:    return keyEvent(Key.f5, mods, action);
+                case 17:    return keyEvent(Key.f6, mods, action);
+                case 18:    return keyEvent(Key.f7, mods, action);
+                case 19:    return keyEvent(Key.f8, mods, action);
+                case 20:    return keyEvent(Key.f9, mods, action);
+                case 21:    return keyEvent(Key.f10, mods, action);
+                case 23:    return keyEvent(Key.f11, mods, action);
+                case 24:    return keyEvent(Key.f12, mods, action);
                 default:    return Event(NoEvent());
             }
         case 'u':
@@ -133,15 +141,15 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
                     return Event(NoEvent());
                 switch (p[0])
                 {
-                    case '\r', '\n': return keyEvent(Key.enter, mods);
-                    case '\t':       return keyEvent(Key.tab, mods);
-                    case 0x7f, 0x08: return keyEvent(Key.backspace, mods);
-                    case 0x1b:       return keyEvent(Key.escape, mods);
+                    case '\r', '\n': return keyEvent(Key.enter, mods, action);
+                    case '\t':       return keyEvent(Key.tab, mods, action);
+                    case 0x7f, 0x08: return keyEvent(Key.backspace, mods, action);
+                    case 0x1b:       return keyEvent(Key.escape, mods, action);
                     default:
                         if (mods.shift && shiftedKey != 0)
                             return Event(KeyEvent(Key.char_, cast(dchar) shiftedKey,
-                                mods, KeyAction.press, cast(dchar) p[0]));
-                        return charEvent(cast(dchar) p[0], mods);
+                                mods, action, cast(dchar) p[0]));
+                        return charEvent(cast(dchar) p[0], mods, action);
                 }
             }
             return Event(NoEvent());
@@ -651,4 +659,24 @@ unittest
     assert(decodeEscape("[?997;2n") == Event(ColorSchemeEvent(dark: false)));
     // Anything else in that shape is not a scheme.
     assert(decodeEscape("[?997;3n") != Event(ColorSchemeEvent(dark: false)));
+}
+
+@("tui.input.kittyEventTypes")
+@safe pure nothrow @nogc
+unittest
+{
+    // Kitty flag 2: `mods:type` in the second parameter, on every key form.
+    // A release must never decode as a second press.
+    assert(decodeEscape("[97;1:3u") == charEvent('a', Mods(), KeyAction.release));
+    assert(decodeEscape("[97;1:2u") == charEvent('a', Mods(), KeyAction.repeat));
+    assert(decodeEscape("[97;1:1u") == charEvent('a'));
+    assert(decodeEscape("[32;5:3u") == charEvent(' ', Mods(ctrl: true), KeyAction.release));
+    assert(decodeEscape("[1;1:3A") == keyEvent(Key.up, Mods(), KeyAction.release));
+    assert(decodeEscape("[3;1:3~") == keyEvent(Key.delete_, Mods(), KeyAction.release));
+    assert(decodeEscape("[13;1:3u") == keyEvent(Key.enter, Mods(), KeyAction.release));
+    // The shifted key and the event type together.
+    assert(decodeEscape("[47:63;2:3u") == Event(KeyEvent(Key.char_,
+        '?', Mods(shift: true), KeyAction.release, '/')));
+    // No event type is a press, as before flag 2.
+    assert(decodeEscape("[1;5A") == keyEvent(Key.up, Mods(ctrl: true)));
 }
