@@ -1198,10 +1198,20 @@ struct DocumentPipeline
             && (forceDsv || ((lang.length == 0 || lang == "text" || lang == "txt")
                 && contentLooksDsv(source))))
             return fromDsvSource(path, title, source, "");
+        const kind = !raw && (forceMarkdown || lang == "markdown")
+            ? ContentKind.markdown : ContentKind.code;
+        // `VIW5`/`VIW6`: VitePress includes and snippet imports, expanded
+        // before the parse. The expanded text is the document in every view,
+        // as `DVN6`'s merged text is, so the gutter, search and goto agree;
+        // `--raw` shows the file's own bytes.
+        if (kind == ContentKind.markdown && path.length)
+        {
+            import sparkles.syntax.md.include : expandIncludesFromDisk;
+
+            source = expandIncludesFromDisk(source, path);
+        }
         Document doc = {
-            path: path, title: title, source: source, lang: lang,
-            kind: !raw && (forceMarkdown || lang == "markdown")
-                ? ContentKind.markdown : ContentKind.code,
+            path: path, title: title, source: source, lang: lang, kind: kind,
         };
         doc.events = highlight(lang, source);
         if (doc.kind == ContentKind.markdown)
