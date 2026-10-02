@@ -244,7 +244,49 @@ struct WorkspaceHost
     }
 
     /// The saved form, for restore.
-    SavedWorkspace snapshot() const @safe => saved(ws);
+    SavedWorkspace snapshot() @system
+    {
+        refreshCwds();
+        return saved(ws);
+    }
+
+    /**
+    Each pane's directory, where its program does not report one with OSC 7
+    (`TPR4`): read from the shell's own `/proc` entry. Bash as most
+    distributions ship it never sends OSC 7, and without this a restored pane
+    or a new split started in the home directory rather than where the shell
+    was (`TSS14`, `TSS8`).
+
+    $(B Desktop Linux only.) On Android the pane's process is proot, which
+    emulates `chdir`: its `/proc` entry never moves, and one spawned without a
+    directory reads `/` — saving that put restored panes in `/`. There OSC 7
+    is the only source; elsewhere too.
+    */
+    void refreshCwds() @system
+    {
+        version (Android) {}
+        else version (linux)
+        {
+            import std.conv : text;
+            import std.file : readLink;
+
+            foreach (id, tv; pool)
+            {
+                if ((id in osc7) !is null || tv.s.child <= 0 || tv.s.childExited)
+                    continue;
+                try
+                {
+                    const dir = readLink(text("/proc/", tv.s.child, "/cwd"));
+                    if (auto s = ws.spec(id))
+                        if (s.cwd != dir)
+                            ws.setCwd(id, dir);
+                }
+                catch (Exception) {} // the shell went: keep the last known
+            }
+        }
+    }
+
+    private bool[PaneId] osc7; // panes whose program reports its directory
 
     private bool create(PaneId id) @system
     {
@@ -296,7 +338,11 @@ struct WorkspaceHost
         };
         // Ctrl+click on a link (`TPR7`), through the allow-list (`TPR6`).
         o.hooks.openLink = (scope const(char)[] uri) { self.open(uri.idup); };
-        o.hooks.cwdChanged = (scope const(char)[] p) { self.ws.setCwd(id, p.idup); self.dirty = true; };
+        o.hooks.cwdChanged = (scope const(char)[] p) {
+            self.osc7[id] = true;
+            self.ws.setCwd(id, p.idup);
+            self.dirty = true;
+        };
         // One log for every pane, each entry naming its pane (`TPG9`, `TPG10`).
         o.notificationLog = &notifications;
         o.notificationSource = id;
@@ -471,6 +517,7 @@ struct WorkspaceHost
         prompting.remove(id);
         expanded.remove(id);
         bannerScroll.remove(id);
+        osc7.remove(id);
         started.remove(id);
         ended.remove(id);
         banners.remove(id);
@@ -888,6 +935,7 @@ struct WorkspaceHost
             self.repaint = true;
         }, () {
             Refusal why;
+            self.refreshCwds();
             const from = self.ws.spec(self.ws.focused);
             const id = self.ws.newTab(from !is null ? from.cwd : null, null, why);
             if (id)
@@ -1291,6 +1339,7 @@ struct WorkspaceHost
     */
     bool run(H)(ref H h, KeyCommand c, in Rect cellArea) @system
     {
+        refreshCwds(); // a new pane starts where the focused shell is
         Refusal why;
         // Geometry in the cells the panes are laid out in (`layout`): the
         // caller's area includes the opener, and a resize measured there

@@ -56,6 +56,8 @@ struct DesktopTerminal
     private int startFontPt; // the font size the window opened at
     private bool fontPending; // the page changed the font size
 
+    private bool windowFocused = true; // last frame's, for the save on leaving
+
     @disable this(this);
 
     /// Every pane's GPU resources belong to this live host session; the
@@ -99,6 +101,17 @@ struct DesktopTerminal
         host.frame(h, Rect(0, 0, GetScreenWidth(), GetScreenHeight()));
         if (host.takeDirty())
             save();
+        // Leaving the foreground saves too (`TSS14`): a phone may kill the app
+        // there without a shutdown, and the directories the shells moved to
+        // (`refreshCwds`) mark nothing dirty.
+        {
+            import raylib : IsWindowFocused;
+
+            const focusedNow = IsWindowFocused();
+            if (windowFocused && !focusedNow)
+                save();
+            windowFocused = focusedNow;
+        }
         // The last pane closed: the window goes with it (`TSS5`).
         if (host.ws.empty)
             h.quit();

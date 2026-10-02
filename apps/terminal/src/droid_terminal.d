@@ -110,6 +110,8 @@ struct DroidTerminal
     private int startFontPt; // the configured size the window opened at
     private bool fontPending; // the page changed the font size
 
+    private bool windowFocused = true; // last frame's, for the save on leaving
+
     @disable this(this);
 
     /// Every pane's GPU resources belong to this live host session.
@@ -198,6 +200,17 @@ struct DroidTerminal
             }
         if (host.takeDirty())
             save();
+        // Leaving the foreground saves too (`TSS14`): a phone may kill the app
+        // there without a shutdown, and the directories the shells moved to
+        // (`refreshCwds`) mark nothing dirty.
+        {
+            import raylib : IsWindowFocused;
+
+            const focusedNow = IsWindowFocused();
+            if (windowFocused && !focusedNow)
+                save();
+            windowFocused = focusedNow;
+        }
         if (auto tv = host.focusedView())
             oracle.frame(*tv, keyLabels());
         return WidgetTree.init;
