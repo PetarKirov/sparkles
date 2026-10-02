@@ -2886,3 +2886,39 @@ private void openWithPlatform(scope const(char)[] uri) @system nothrow
     assert(builtinOpenable("https://a") && builtinOpenable("HTTP://a") && builtinOpenable("mailto:x@y"));
     assert(!builtinOpenable("javascript:alert(1)") && !builtinOpenable("file:///etc/passwd"));
 }
+
+@("terminal_view.component.linkAtFindsPrintedAndHyperlinks")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs;
+
+    // `TPR5`: a URL in the text, and an OSC 8 hyperlink whose text differs
+    // from its URI — the URI is what `linkAt` reports (`TPR6`).
+    static immutable(char)*[4] argv = ["-sh", "-c",
+        "printf 'See https://example.org/docs now\\n\\033]8;;https://a.example/x\\033\\\\click\\033]8;;\\033\\\\\\n'; sleep 5",
+        null];
+    static immutable(char)*[2] env = ["PATH=/usr/bin:/bin", null];
+    TerminalView tv;
+    tv.opts = TerminalViewOptions(program: "/bin/sh", argv: cast(const(char)*[]) argv[],
+        env: cast(const(char)*[]) env[], exitBehavior: ExitBehavior.hold);
+    assert(tv.openCore(60, 4, 0, 0));
+    scope (exit) tv.close();
+    foreach (_; 0 .. 100)
+    {
+        tv.pump();
+        if (tv.screenText().length > 30)
+            break;
+        Thread.sleep(10.msecs);
+    }
+    tv.pump();
+
+    LinkSpan l;
+    assert(tv.linkAt(10, 0, l), tv.screenText());
+    assert(l.uri == "https://example.org/docs" && !l.hyperlink, l.uri);
+    assert(l.row == 0 && l.startCol == 4 && l.endCol == 27);
+    assert(!tv.linkAt(1, 0, l), "no link under `See`");
+
+    assert(tv.linkAt(2, 1, l));
+    assert(l.uri == "https://a.example/x" && l.hyperlink);
+}
