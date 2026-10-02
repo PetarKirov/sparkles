@@ -342,10 +342,12 @@ with another module c`). Give each shim a **unique stem** —
   across imported translation units, including function-pointer field types.
   Wrapping system headers in `#pragma attribute(push, nogc, nothrow)` in only one
   import makes those types incompatible (Darwin's pthread cleanup callback is
-  one example). Ghostty's shim, `raylib-text/shaping_c.c`, and `shaping_api.h`
-  all include `<stdint.h>` outside the attribute scope. On Darwin that header
-  transitively supplies the pthread types, so later attributed includes reuse
-  their original unannotated definitions.
+  one example). Ghostty's shim, `tree-sitter/tree_sitter_c.c`,
+  `raylib-text/shaping_c.c`, and `shaping_api.h` all include `<stdint.h>` outside
+  the attribute scope. On Darwin that header transitively supplies the pthread
+  types, so later attributed includes reuse their original unannotated
+  definitions. Validate consumers that combine bindings: terminal alone does
+  not exercise hue's tree-sitter and shaping combination.
 - **A same-stem `.h` shadows `.c` on import.** ImportC searches `.i`, then `.h`,
   then `.c` after the D extensions. `import sparkles.raylib_text.shaping_api`
   therefore imports `shaping_api.h` directly: put the API's attributes in that
