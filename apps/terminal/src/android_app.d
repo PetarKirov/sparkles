@@ -10,6 +10,7 @@ version (Android):
 import cli : guiOptionsFrom;
 import droid_terminal : DroidTerminal;
 import sparkles.terminal_view.component : TerminalViewOptions;
+import sparkles.terminal_view.log : routeTraceLog;
 import session;
 import settings : defaultFontFamily;
 import settings_load : androidConfigPath;
@@ -36,6 +37,14 @@ int androidMain()
     import sparkles.android.log : installLogcatSink;
 
     installLogcatSink(LogLevel.info, logTag);
+    {
+        import logging : installTerminalLog;
+        import sparkles.terminal_view.core : logBuildInfo;
+
+        // logcat, then the file (`files/state/sparkles-terminal/`) and the ring.
+        installTerminalLog(buildPath(internalDataPath, "state"));
+        logBuildInfo();
+    }
 
     const conf = readAssetText("session.conf");
     const config = conf is null ? SessionConfig.init : parseSessionConfig(conf);
@@ -75,6 +84,7 @@ int androidMain()
         keyRelease: true, // the terminal-grade keyboard
         touchGestures: true, // taps, drags and pinches — not an emulated mouse
         pointerUnit: PointerUnit.pixels, // the key row is not on the cell grid
+        traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };
 
     // termux-am's server (NOD13): nix-on-droid's android-integration tools.

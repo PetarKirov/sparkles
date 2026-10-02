@@ -86,6 +86,8 @@ in
         stringImportDirs = [
           "libs/ui/src/sparkles/ui/shaders"
           "${config.packages.ui-shaders}"
+          # The version and commit `logBuildInfo` reports (`TPG2`).
+          "${config.legacyPackages.mkBuildStamp { version = "0.1.0"; }}"
         ];
         cIncludes = [
           "${config.packages.libghostty-vt-android}/include"

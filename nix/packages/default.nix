@@ -194,6 +194,16 @@
 
         env = d-toolchain.env;
 
+        # The version and commit `logBuildInfo` reports (`TPG2`): the stamp
+        # lands in the `stringImportPaths "views"` apps/terminal/dub.sdl names.
+        preBuild = ''
+          chmod -R u+w "$NIX_BUILD_TOP"
+          mkdir -p views
+          cp ${
+            config.legacyPackages.mkBuildStamp { inherit (finalAttrs) version; }
+          }/sparkles-build-stamp views/
+        '';
+
         # The terminal shells out to `fc-match` (fontconfig) at runtime to
         # resolve fonts (see apps/terminal/src/app.d). Under `nix run` PATH is
         # the ambient user environment, so wrap the binary to guarantee

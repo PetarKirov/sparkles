@@ -16,6 +16,7 @@ import settings : TerminalConfig;
 import settings_load : desktopConfigPath, loadTerminalConfig, LoadedConfig;
 import sparkles.terminal_view.component : TerminalView;
 import sparkles.terminal_view.core : logBuildInfo;
+import sparkles.terminal_view.log : routeTraceLog;
 import sparkles.ui_app.host : RunConfig;
 import sparkles.ui_app.run : RunOutcome;
 import sparkles.ui_app.run_app : runApp;
@@ -129,6 +130,13 @@ private int desktopMain(string[] args)
     if (command.length && command[0] == "--")
         command = command[1 .. $];
 
+    {
+        import logging : desktopStateDir, installTerminalLog;
+        import sparkles.base.logger : initLogger, LogLevel;
+
+        initLogger(LogLevel.info); // stderr, then the file and the ring
+        installTerminalLog(desktopStateDir());
+    }
     logBuildInfo();
 
     auto lc = loadTerminalConfig(configPath, null);
@@ -142,6 +150,7 @@ private int desktopMain(string[] args)
         title: "sparkles:terminal",
         gui: guiOptionsFrom(lc.effective, windowCols, windowRows),
         keyRelease: true, // the terminal-grade keyboard (kitty releases)
+        traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };
 
     // Stack-pinned: the VT effects hold a pointer into the component.

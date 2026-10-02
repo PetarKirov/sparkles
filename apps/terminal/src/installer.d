@@ -45,7 +45,11 @@ bool runInstaller(int tty, const SessionPaths paths, string defaultUrl, scope Fe
     import std.string : strip;
 
     import bootstrap_zip : extractBootstrap;
+    import sparkles.base.logger : info, warning;
 
+    // The log gets what happened, never what was typed (`TPG6`): a typed URL
+    // — and a fetch error, which may quote it — stays on the screen.
+    info(i"installer: started");
     say(tty, "\x1b[1mnix-on-droid\x1b[0m — first start: installing the bootstrap.\n\n");
     for (;;)
     {
@@ -65,6 +69,9 @@ bool runInstaller(int tty, const SessionPaths paths, string defaultUrl, scope Fe
 
         const arch = bootstrapArch();
         const zipPath = buildPath(paths.files, "bootstrap-" ~ arch ~ ".zip");
+        const typed = !useBundled && answer.length != 0;
+        const source = useBundled ? "bundled" : typed ? "typed-URL" : "default-URL";
+        info(i"installer: getting the $(source) bootstrap for $(arch)");
         auto meter = ProgressMeter(tty);
         string fetchErr;
         if (useBundled)
@@ -85,6 +92,8 @@ bool runInstaller(int tty, const SessionPaths paths, string defaultUrl, scope Fe
         say(tty, "\n");
         if (fetchErr !is null)
         {
+            const reason = typed ? "(withheld: the URL was typed)" : fetchErr;
+            warning(i"installer: could not get the $(source) bootstrap: $(reason)");
             say(tty, "\x1b[31mCould not get the bootstrap:\x1b[0m " ~ fetchErr ~ "\n\n");
             continue;
         }
@@ -98,6 +107,7 @@ bool runInstaller(int tty, const SessionPaths paths, string defaultUrl, scope Fe
         catch (Exception) {}
         if (extractErr !is null)
         {
+            warning(i"installer: extraction failed: $(extractErr)");
             say(tty, "\x1b[31mExtraction failed:\x1b[0m " ~ extractErr ~ "\n\n");
             continue;
         }
@@ -113,9 +123,11 @@ bool runInstaller(int tty, const SessionPaths paths, string defaultUrl, scope Fe
         }
         catch (Exception e)
         {
+            warning(i"installer: installation failed: $(e.msg)");
             say(tty, "\x1b[31mInstallation failed:\x1b[0m " ~ e.msg ~ "\n\n");
             continue;
         }
+        info(i"installer: installed the $(source) bootstrap");
         say(tty, "Installed. Starting nix-on-droid…\n");
         return true;
     }
@@ -359,6 +371,23 @@ version (unittest)
         return null;
     };
 
+    import std.logger : sharedLog;
+    import sparkles.base.log_sinks : installRingLog, RingLogRecord;
+    import sparkles.base.logger : coreGlobalLogLevel, LogLevel, sharedCoreLog;
+
+    auto oldCore = sharedCoreLog;
+    auto oldShared = sharedLog;
+    auto oldLevel = coreGlobalLogLevel;
+    scope (exit)
+    {
+        sharedCoreLog = oldCore;
+        sharedLog = oldShared;
+        coreGlobalLogLevel = oldLevel;
+    }
+    sharedCoreLog = null;
+    coreGlobalLogLevel = LogLevel.trace;
+    auto ring = installRingLog(capacity: 64);
+
     string transcript;
     // A typo'd URL, then Enter (the default) — typed on the master, as the
     // pane's key encoder would.
@@ -366,6 +395,13 @@ version (unittest)
         ["https://typo/boot\r", "\r"], fetch, null, transcript);
 
     assert(installed);
+
+    // `TPG6`: the log says a typed URL failed, and never which.
+    string logged;
+    ring.each((scope const ref RingLogRecord r) { logged ~= r.message; logged ~= '\n'; });
+    assert(logged.canFind("could not get the typed-URL bootstrap"), logged);
+    assert(logged.canFind("installed the default-URL bootstrap"), logged);
+    assert(!logged.canFind("typo"), logged);
     assert(fetched == [
         "https://typo/boot/bootstrap-" ~ bootstrapArch() ~ ".zip",
         "https://default/boot/bootstrap-" ~ bootstrapArch() ~ ".zip",
