@@ -1,6 +1,6 @@
 # Design: the mockup register
 
-_**Status:** open — no mockup chosen yet · **Date:** 2026-10-02 · **Owner:**
+_**Status:** partly chosen — see the table · **Date:** 2026-10-02 · **Owner:**
 the repository owner chooses; `apps/terminal` implements · **Scope:** how each
 surface of the terminal's own UI will look and be laid out, and the rules
 every candidate must meet._
@@ -36,21 +36,32 @@ From the [design system](../design-system/index.md) and the
 
 ## Surfaces
 
-| Surface                                  | Rows it decides                    | Variants                                                     | Chosen |
-| ---------------------------------------- | ---------------------------------- | ------------------------------------------------------------ | ------ |
-| Workspace: tab strip, splits, headers    | `TSS11`, `TSS12`, `TSS13`          | [A, B, C](https://claude.ai/artifact/PiwEvu54XJK3mkSZFWh7QB) | —      |
-| Extra-keys row (and its show/hide)       | `TCF7`, `TKM7`                     | [A, B, C](https://claude.ai/artifact/PiwEvu54XJK3mkSZFWh7QB) | —      |
-| Selection handles and the selection menu | `TSE3`, `TSE5`                     | —                                                            | —      |
-| Link confirm bar                         | [`TPR5`](./protocols.md)           | —                                                            | —      |
-| Paste and OSC 52 read confirmations      | [`TPR19`, `TPR21`](./protocols.md) | —                                                            | —      |
-| Exit prompt                              | `TSS2`                             | —                                                            | —      |
-| Autofill chip                            | `TSE10`                            | —                                                            | —      |
-| Settings page                            | `TSP5`, `TSP6`                     | —                                                            | —      |
-| About page                               | [`TPG1`–`TPG3`](./pages.md)        | —                                                            | —      |
-| Log page                                 | `TPG8`                             | —                                                            | —      |
-| Notification log, unseen marks, toasts   | `TPG9`–`TPG11`                     | —                                                            | —      |
-| Touch lantern guide                      | `TKM6`                             | —                                                            | —      |
-| Viewer pane chrome (header, view switch) | [`TDV5`, `TDV6`](./viewer.md)      | —                                                            | —      |
-| Credits page                             | [`TPG15`](./pages.md)              | —                                                            | —      |
+Three canvases hold the variants: [workspace](https://claude.ai/artifact/PiwEvu54XJK3mkSZFWh7QB), [overlays](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq) and
+[pages](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX). Each artboard has a dark/light switch; some are interactive
+(Play). A chosen variant is recorded here and in [decisions](./decisions.md);
+its rows then leave `open`. Once a surface is decided, the variants it rejected
+are removed from the canvas (S1, S3, E2, G1, G2, C2, LG2, N1, K2 on 2026-10-02);
+the register keeps their names.
+
+| Surface                                  | Rows it decides                                    | Variants                                                                     | Chosen                                                                            |
+| ---------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Workspace: tab strip, splits, headers    | `TSS11`, `TSS12`, `TSS13`                          | [A, B, C](https://claude.ai/artifact/PiwEvu54XJK3mkSZFWh7QB)                 | —                                                                                 |
+| Extra-keys row (and its show/hide)       | `TCF7`, `TKM7`                                     | [A, B, C](https://claude.ai/artifact/PiwEvu54XJK3mkSZFWh7QB)                 | —                                                                                 |
+| Selection handles and the selection menu | [`TSE3`, `TSE5`](./selection.md)                   | [S1, S2, S3](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq)              | **S2**, bottom sheet with a swipeable action row ([D33](./decisions.md))          |
+| Button labels                            | [`TCF9`](./config.md)                              | [S2, E1, L3, D1 (Tweaks)](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq) | a setting ([D35](./decisions.md))                                                 |
+| Confirmations: anchored card or sheet    | [`TCF10`](./config.md)                             | [P1 (Tweaks)](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq)             | a setting ([D34](./decisions.md))                                                 |
+| Link confirm                             | [`TPR5`](./protocols.md)                           | [L1, L2](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq)                  | —                                                                                 |
+| File link                                | [`TDV12`](./viewer.md)                             | [L3](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq)                      | —                                                                                 |
+| Paste guard                              | [`TPR19`](./protocols.md)                          | [P1](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq)                      | —                                                                                 |
+| OSC 52 read confirmation                 | [`TPR21`](./protocols.md)                          | [P2](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq)                      | **P2** ([D40](./decisions.md))                                                    |
+| Exit prompt                              | [`TSS2`](./sessions.md)                            | [E1, E2](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq)                  | **E1**, expanding status line ([D39](./decisions.md))                             |
+| Autofill chip                            | [`TSE10`](./selection.md)                          | [A1](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq)                      | **A1** ([D40](./decisions.md))                                                    |
+| Desktop context menu and link bar        | [`TSE7`](./selection.md), [`TPR7`](./protocols.md) | [D1](https://claude.ai/artifact/RacV5BXgLBvk198GrcLUyq)                      | —                                                                                 |
+| Settings page                            | [`TSP5`–`TSP8`](./config.md)                       | [G1, G2, G3, G4](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)          | **G3**, with the G4 capture editor ([D36](./decisions.md), [D37](./decisions.md)) |
+| About and credits pages                  | [`TPG1`–`TPG3`, `TPG15`](./pages.md)               | [C1, C2](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)                  | **C1** ([D40](./decisions.md))                                                    |
+| Log page                                 | [`TPG8`](./pages.md)                               | [LG1, LG2](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)                | **LG1** ([D40](./decisions.md))                                                   |
+| Notification log, unseen marks           | [`TPG9`–`TPG11`, `TPG18`](./pages.md)              | [N1, N2](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)                  | **N2**, with a grouping control ([D38](./decisions.md))                           |
+| Touch key guide                          | [`TKM6`](./keymap.md)                              | [K1, K2, K3](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)              | — (K1 and K3 differ in where search sits)                                         |
+| Viewer pane                              | [`TDV5`, `TDV6`](./viewer.md)                      | [V1, V2](https://claude.ai/artifact/LS6JhR9X6iPq7Ysv8UFUXX)                  | **both**: tab and split ([D40](./decisions.md))                                   |
 
 → [Overview](./index.md) · [Decisions](./decisions.md)
