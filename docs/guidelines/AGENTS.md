@@ -11,25 +11,25 @@ list is the `subPackage` entries in the root `dub.sdl`. **Before working in an
 unfamiliar package, read its entry in the [Package Catalog](./packages.md)** —
 the detailed descriptions and the module map live there.
 
-| Package                                                                            | One line                                                                     |
-| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `ci`                                                                               | repo CI helper: tests, markdown examples, link/sidebar audits                |
-| `hue`                                                                              | syntax-highlighting viewer (ANSI/HTML/`--gui`), diff/PR viewer, APK          |
-| `release`                                                                          | tag scanning, bump suggestion, notes, publishing                             |
-| `shader-compile`                                                                   | D shaders → SPIR-V → GLSL, built by `sparkles:ui`'s `gpu-effects` build      |
-| `terminal`, `terminal-benchmark`                                                   | raylib terminal emulator on libghostty-vt; its render-CPU benchmark          |
-| `ui-gallery`, `diagram`                                                            | `sparkles:ui-app` apps: the toolkit catalog; a camera-driven diagram board   |
-| `nix-eval`, `twoslash-extract`                                                     | `sparkles:nix` demo; batch D twoslash extractor                              |
-| `base`                                                                             | `Buffer`, `@nogc` text, lifetime, logging, `term_caps`, `hw_caps`            |
-| `core-cli`                                                                         | argument parsing, help, prompts, process utilities                           |
-| `ui`, `ui-app`, `ui-tui`, `ui-raylib`, `ui-sdl3`, `input`, `tui`                   | the one UI stack: toolkit, host, backends, input vocabulary, cell grid       |
-| `syntax`, `tree-sitter`, `source-view`, `diff`, `dsv`                              | highlighting, markdown model, code/markdown views, diff and DSV engines      |
-| `twoslash`, `twoslash-d`, `twoslash-protocol`, `dmd-lsp`, `dmd-fmt`                | type overlays, the DMD-frontend semantic core, the D formatter               |
-| `event-horizon`, `http`                                                            | completion-first event loop with effects; HTTP/1.1 over it                   |
-| `wsi`, `vulkan`, `vulkan-wsi`, `raylib-text`, `ghostty`, `terminal-view`, `shader` | windowing, GPU, fonts, VT engine, embeddable terminal, shader vocabulary     |
-| `wired`, `reflection`, `metadata`, `dql`, `fuzzy`                                  | serialization, reflection kernel, UDA vocabulary, query engine, fuzzy search |
-| `build-primitives`, `code-instrumentation`, `docs`, `nix`, `versions`, `math`      | gitignore/walk/`runGit`, coverage, SSG, Nix C API, versioning, vectors       |
-| `test-runner` (+ internal `test-runner-impl`), `test-utils`                        | the unittest runner; test helpers                                            |
+| Package                                                                            | One line                                                                                     |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `ci`                                                                               | repo CI helper: tests, markdown examples, link/sidebar audits                                |
+| `hue`                                                                              | syntax-highlighting viewer (ANSI/HTML/`--gui`), diff/PR viewer, APK                          |
+| `release`                                                                          | tag scanning, bump suggestion, notes, publishing                                             |
+| `shader-compile`                                                                   | D shaders → SPIR-V → GLSL, built by `sparkles:ui`'s `gpu-effects` build                      |
+| `terminal`, `terminal-benchmark`                                                   | raylib terminal emulator on libghostty-vt; its render-CPU benchmark                          |
+| `ui-gallery`, `diagram`                                                            | `sparkles:ui-app` apps: the toolkit catalog; a camera-driven diagram board                   |
+| `nix-eval`, `twoslash-extract`                                                     | `sparkles:nix` demo; batch D twoslash extractor                                              |
+| `base`                                                                             | `Buffer`, `@nogc` text, lifetime, logging, `term_caps`, `hw_caps`                            |
+| `core-cli`                                                                         | argument parsing, help, prompts, process utilities                                           |
+| `ui`, `ui-app`, `ui-tui`, `ui-raylib`, `ui-sdl3`, `input`, `tui`                   | the one UI stack: toolkit, host, backends, input vocabulary, cell grid                       |
+| `syntax`, `tree-sitter`, `source-view`, `doc-view`, `diff`, `dsv`                  | highlighting, markdown model, code/markdown views, the document viewer, diff and DSV engines |
+| `twoslash`, `twoslash-d`, `twoslash-protocol`, `dmd-lsp`, `dmd-fmt`                | type overlays, the DMD-frontend semantic core, the D formatter                               |
+| `event-horizon`, `http`                                                            | completion-first event loop with effects; HTTP/1.1 over it                                   |
+| `wsi`, `vulkan`, `vulkan-wsi`, `raylib-text`, `ghostty`, `terminal-view`, `shader` | windowing, GPU, fonts, VT engine, embeddable terminal, shader vocabulary                     |
+| `wired`, `reflection`, `metadata`, `dql`, `fuzzy`                                  | serialization, reflection kernel, UDA vocabulary, query engine, fuzzy search                 |
+| `build-primitives`, `code-instrumentation`, `docs`, `nix`, `versions`, `math`      | gitignore/walk/`runGit`, coverage, SSG, Nix C API, versioning, vectors                       |
+| `test-runner` (+ internal `test-runner-impl`), `test-utils`                        | the unittest runner; test helpers                                                            |
 
 Libraries are documented under `docs/libs/<name>/` as a [Diátaxis](https://diataxis.fr/)
 tree (`tutorial/`, `how-to/`, `reference/`, `explanation/`); designs live in

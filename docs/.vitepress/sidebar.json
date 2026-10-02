@@ -552,6 +552,21 @@
         ]
       },
       {
+        "text": "doc-view",
+        "link": "/libs/doc-view/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Embed a viewer pane",
+            "link": "/libs/doc-view/how-to/embed-a-viewer-pane"
+          },
+          {
+            "text": "Module reference",
+            "link": "/libs/doc-view/reference/modules"
+          }
+        ]
+      },
+      {
         "text": "metadata",
         "link": "/libs/metadata/",
         "collapsed": true,
