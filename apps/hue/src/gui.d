@@ -63,6 +63,7 @@ import sparkles.doc_view.preview_model : PreviewModel, stripSgr;
 import sparkles.diff.model : DiffDoc;
 import sparkles.doc_view.ansi_decode : decodeAnsi;
 import sparkles.doc_view.viewer_model : Dims, MdCell, MdFence, ScrollAnchorMode, ViewerModel;
+import sparkles.doc_view.view_ops : emitVisibleOps;
 import format_preview : formatPreviewActive, formatPreviewChip,
     formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
     formatPreviewRulerCol, formatPreviewRulerDragging, formatPreviewRulerHits,
@@ -1718,50 +1719,11 @@ int runGui(GuiArgs guiArgs) @system
             const dx = cellsOf(originPx, cellW);
             const dy = cellsOf(docY0, cellH) - cast(int) vm.top;
             frameList.emit(ui, pushClipOp(clip), dx, dy);
-            foreach (ref sourceOp; vm.ops)
-            {
-                const oy = sourceOp.rect.y;
-                if (sourceOp.kind != OpKind.pushClip
-                    && sourceOp.kind != OpKind.popClip
-                    && (oy + sourceOp.rect.height <= vm.top
-                        || oy > vm.top + docRows))
-                    continue;
-                auto op = sourceOp;
-                const activeSv = vm.activeBar();
-                if (activeSv !is null
-                    && (vm.activeFenceOwner != size_t.max
-                        || vm.activeTableOwner != size_t.max))
-                {
-                    // The hover/drag animation is applied to the copy, on the
-                    // one arm that has somewhere to put it.
-                    op.payload.match!(
-                        (ref Scrollbar bar)
-                        {
-                            const h = bar.edge == RuleEdge.centerY;
-                            const isFence = vm.activeFenceOwner != size_t.max;
-                            const want = isFence
-                                ? (h ? vm.fenceHBarHitBase : vm.fenceVBarHitBase)
-                                    + vm.activeFenceOwner
-                                : (h ? vm.tableHBarHitBase : vm.tableVBarHitBase)
-                                    + vm.activeTableOwner;
-                            foreach (ref const t; vm.targets)
-                            {
-                                if (t.hitId != want || t.rect != bar.rect)
-                                    continue;
-                                bar.expandPercent = barPercent(h
-                                    ? activeSv.hAnim.percent
-                                    : activeSv.vAnim.percent);
-                                bar.trackLit = h
-                                    ? activeSv.h.hovered || activeSv.h.dragging
-                                    : activeSv.v.hovered || activeSv.v.dragging;
-                                break;
-                            }
-                        },
-                        (ref _) {},
-                    );
-                }
+            // The culling and the in-document bars' animation are the
+            // library's, shared with every embedded pane (`UIA14`).
+            emitVisibleOps(vm, docRows, (ref DrawOp op) {
                 frameList.emit(ui, op, dx, dy);
-            }
+            });
             frameList.emit(ui, popClipOp());
         }
         {
