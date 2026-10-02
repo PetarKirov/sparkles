@@ -37,7 +37,8 @@ import sparkles.terminal_view.notification_log : NotificationRoute;
 import sparkles.terminal_view.osc_scan : Notification;
 import sparkles.terminal_view.protocols : PasteConfirmRequest;
 import keymap : KeyCommand, TermCommand;
-import settings : ButtonLabels, OnExit, OverlayStyle, PaneChrome, TabsOpener;
+import settings : ButtonLabels, LinkAction, OnExit, OverlayStyle, PaneChrome, TabsOpener;
+import links : canOpen, LinkConfirm, openUri, schemeOf;
 import surfaces : SurfaceContext, Surfaces;
 import workspace : Direction, maxPanesPerTab, maxTabs, PaneSpec, Refusal, restored,
     saved, SavedWorkspace, Workspace;
@@ -109,6 +110,12 @@ struct WorkspaceHost
     bool touch;
     /// The key that opens the tree, shown beside the pill on the desktop.
     string treeHint;
+    /// `links.tap`, `links.longPress` and `links.schemes` (`TPR5`, `TPR6`).
+    LinkAction linkTap = LinkAction.confirm;
+    /// ditto
+    LinkAction linkLongPress = LinkAction.off;
+    /// ditto
+    string[] linkSchemes;
 
     // This frame's geometry, for `paint` and the hit tests.
     private PaneBox[] boxes;
@@ -234,6 +241,8 @@ struct WorkspaceHost
             self.clipboardPending = true;
             self.surfaces.toast("Copied by " ~ self.programName(id));
         };
+        // Ctrl+click on a link (`TPR7`), through the allow-list (`TPR6`).
+        o.hooks.openLink = (scope const(char)[] uri) { self.open(uri.idup); };
         o.hooks.cwdChanged = (scope const(char)[] p) { self.ws.setCwd(id, p.idup); self.dirty = true; };
         auto tv = pool.create(id, o);
         if (tv is null)
@@ -523,6 +532,63 @@ struct WorkspaceHost
             tabs ~= tab;
         }
         return tabs;
+    }
+
+    /// Opens `uri` if its scheme is allowed (`TPR6`); otherwise says why not.
+    void open(string uri) @system
+    {
+        version (Android)
+            enum android = true;
+        else
+            enum android = false;
+        if (canOpen(uri, linkSchemes, android))
+            openUri(uri);
+        else
+            surfaces.toast("Not opened: " ~ (schemeOf(uri).length ? schemeOf(uri) : "this")
+                ~ " links are not in links.schemes");
+    }
+
+    /**
+    A tap (or, `longPress`, a long-press) at pixel (`x`, `y`) on a link: what
+    `links.tap` or `links.longPress` says (`TPR5`) — the confirmation
+    (L1/L2), opening at once, or nothing (the gesture falls through). True
+    when the link took the gesture.
+    */
+    bool tapLink(int x, int y, bool longPress) @system
+    {
+        import sparkles.terminal_view.component : LinkSpan;
+
+        const action = longPress ? linkLongPress : linkTap;
+        if (action == LinkAction.off)
+            return false;
+        int left, top;
+        const id = paneAt(x, y, left, top);
+        auto tv = id ? pool.byId(id) : null;
+        LinkSpan link;
+        if (tv is null || !tv.linkAt((x - left) / cellW, (y - top) / cellH, link))
+            return false;
+        if (action == LinkAction.open)
+        {
+            open(link.uri);
+            return true;
+        }
+        version (Android)
+            enum android = true;
+        else
+            enum android = false;
+        const where = Rect(left + link.startCol * cellW, top + link.row * cellH,
+            (link.endCol - link.startCol + 1) * cellW, cellH);
+        const spec = ws.spec(id);
+        auto self = &this;
+        surfaces.push(new LinkConfirm(link.uri, link.hyperlink,
+            canOpen(link.uri, linkSchemes, android), android,
+            spec !is null ? homeShortened(spec.cwd) : null, where, (string text) {
+                self.pendingClipboard = text;
+                self.clipboardPending = true;
+                self.surfaces.toast("Copied");
+            }));
+        repaint = true;
+        return true;
     }
 
     /// Opens the tree of tabs and panes (`TSS12`), or closes it when open.

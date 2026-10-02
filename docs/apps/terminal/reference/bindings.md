@@ -91,8 +91,12 @@ on hover and can be clicked or dragged to jump.
 ### Links
 
 OSC 8 hyperlinks and plain `http://`/`https://` URLs are recognized under the
-cursor: hovering underlines the link and switches to a pointing-hand cursor,
-and a left click opens it with `xdg-open`.
+cursor: hovering underlines the link and switches to a pointing-hand cursor.
+**Ctrl+click** opens it with `xdg-open` (`open` on macOS) when its scheme is
+`http`, `https`, `mailto` or one listed in `links.schemes`; any other link
+opens nothing. A plain click selects, and a right-click on a link offers Copy
+and, under More, Open URL. On a touch screen a tap shows the link's full
+address with Open, Copy and Share first (`links.tap`).
 
 ## Window
 

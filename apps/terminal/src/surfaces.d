@@ -74,6 +74,17 @@ interface Surface
     bool key(in KeyEvent k) @system;
 }
 
+/**
+A surface about something other than the cursor line — a link, a selection —
+says where it is, in pixels; an anchored card goes above or below that
+instead (`TCF10`). Optional: a surface that is not one anchors at the cursor.
+*/
+interface Anchored
+{
+    /// The subject's pixel rect.
+    Rect anchor() const @safe;
+}
+
 /// A transient line: a refusal, "Copied by …", "Saved".
 struct Toast
 {
@@ -141,7 +152,12 @@ struct Surfaces
     {
         layers.length = 0;
         foreach (s; stack)
-            layers ~= placeOne(s, ctx);
+        {
+            SurfaceContext own = ctx;
+            if (auto a = cast(Anchored) s)
+                own.subject = a.anchor;
+            layers ~= placeOne(s, own);
+        }
         toastLayer = Layer.init;
         if (toasts.length)
         {

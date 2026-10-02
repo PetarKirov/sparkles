@@ -172,6 +172,9 @@ private int desktopMain(string[] args)
     app.host.overlayStyle = lc.effective.ui.overlayStyle;
     app.host.tabsOpener = lc.effective.ui.tabsOpener;
     app.host.paneChrome = lc.effective.ui.paneChrome;
+    app.host.linkTap = lc.effective.links.tap;
+    app.host.linkLongPress = lc.effective.links.longPress;
+    app.host.linkSchemes = lc.effective.links.schemes.dup;
     app.host.treeHint = "Ctrl+Shift+P  tabs and panes";
     bool shotPending = debugScreenshotAndExit;
     app.host.paneOptions = (in PaneSpec spec, bool shell) {

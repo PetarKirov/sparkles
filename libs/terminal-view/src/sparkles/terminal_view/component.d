@@ -747,6 +747,33 @@ struct TerminalView
         return true;
     }
 
+    /**
+    The link at cell (`col`, `row`) of the viewport (`TPR5`): an OSC 8
+    hyperlink, else a detected `http(s)://` URL. False when there is none.
+    */
+    bool linkAt(int col, int row, out LinkSpan link) @system
+    {
+        import sparkles.terminal_view.input : detectLink, HoverState;
+
+        if (!opened || col < 0 || row < 0 || col >= s.cols || row >= s.rows)
+            return false;
+        HoverState h;
+        GhosttyPoint pt = {
+            tag: GHOSTTY_POINT_TAG_VIEWPORT,
+            value: { coordinate: { x: cast(ushort) col, y: cast(uint) row } }
+        };
+        detectLink(s.terminal, pt, s.cols, h);
+        if (!h.isHoveringUrl)
+            return false;
+        const raw = h.url[];
+        link.uri = (raw.length && raw[$ - 1] == 0 ? raw[0 .. $ - 1] : raw).idup;
+        link.row = row;
+        link.startCol = h.start_x;
+        link.endCol = h.end_x;
+        link.hyperlink = h.hyperlink;
+        return true;
+    }
+
     /// Where the cursor was at the last frame (`decideRedraw`), in the pane's
     /// cells — what an embedder anchors a confirmation at (`TCF10`).
     CursorSnapshot cursor() const @safe pure nothrow @nogc => prevCursor;
@@ -997,6 +1024,15 @@ struct TerminalView
                 s.cellWidth, s.cellHeight, paneCols * s.cellWidth,
                 paneRows * s.cellHeight, s.selState, s.sbState,
                 s.hoverState, originX, originY);
+        if (s.hoverState.openRequested)
+        {
+            s.hoverState.openRequested = false;
+            const uri = s.hoverState.url[];
+            if (opts.hooks.openLink !is null)
+                opts.hooks.openLink(uri);
+            else
+                openWithPlatform(uri);
+        }
 
         import sparkles.base.term_control : PointerShape;
 
@@ -2789,4 +2825,64 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     assert(text.canFind("first-run") && text.canFind("second-run"), text);
     assert(text.canFind("────"), "the separator marks the boundary");
     assert(text.canFind("last-line"), "the separator goes below the old output, not over it");
+}
+
+/// A link in the viewport (`TerminalView.linkAt`).
+struct LinkSpan
+{
+    /// The URI it opens — never its text (`TPR6`).
+    string uri;
+    /// Its row and first and last column, in viewport cells.
+    int row, startCol, endCol;
+    /// An OSC 8 hyperlink, not a URL found in the text.
+    bool hyperlink;
+}
+
+/// Whether `uri`'s scheme is one any embedder may open without asking for
+/// more: `http`, `https`, `mailto` (`TPR6`'s built-in allow-list).
+bool builtinOpenable(scope const(char)[] uri) @safe pure nothrow @nogc
+{
+    import std.algorithm.searching : startsWith;
+    import std.ascii : toLower;
+
+    static bool starts(scope const(char)[] s, string prefix)
+    {
+        if (s.length < prefix.length)
+            return false;
+        foreach (i, c; prefix)
+            if (toLower(s[i]) != c)
+                return false;
+        return true;
+    }
+
+    return starts(uri, "http://") || starts(uri, "https://") || starts(uri, "mailto:");
+}
+
+/// Opens `uri` with the platform's opener when the built-in allow-list allows
+/// it; the default for an embedder without `TerminalViewHooks.openLink`.
+private void openWithPlatform(scope const(char)[] uri) @system nothrow
+{
+    import std.string : toStringz;
+
+    import sparkles.terminal_view.posix_util : spawnDetached;
+
+    if (!builtinOpenable(uri))
+        return;
+    version (OSX)
+        static immutable opener = "open\0";
+    else
+        static immutable opener = "xdg-open\0";
+    try
+    {
+        const(char)*[3] argv = [opener.ptr, uri.toStringz, null];
+        cast(void) spawnDetached(argv[]);
+    }
+    catch (Exception) {}
+}
+
+@("terminal_view.component.builtinOpenable.schemes")
+@safe pure nothrow @nogc unittest
+{
+    assert(builtinOpenable("https://a") && builtinOpenable("HTTP://a") && builtinOpenable("mailto:x@y"));
+    assert(!builtinOpenable("javascript:alert(1)") && !builtinOpenable("file:///etc/passwd"));
 }

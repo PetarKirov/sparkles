@@ -234,6 +234,9 @@ struct DroidTerminal
         host.overlayStyle = config.effective.ui.overlayStyle;
         host.tabsOpener = config.effective.ui.tabsOpener;
         host.paneChrome = config.effective.ui.paneChrome;
+        host.linkTap = config.effective.links.tap;
+        host.linkLongPress = config.effective.links.longPress;
+        host.linkSchemes = config.effective.links.schemes.dup;
         host.touch = true;
         router.configure(config.effective, warnings);
         foreach (w; warnings)
@@ -502,6 +505,9 @@ struct DroidTerminal
         // An exit prompt takes its own taps (`TSS2`).
         if (host.tap(h, p.pos.x, p.pos.y))
             return;
+        // A link takes a tap per `links.tap` (`TPR5`).
+        if (host.tapLink(p.pos.x, p.pos.y, longPress: false))
+            return;
         // A tap on a pane focuses it (`TSS9`), shows its toolbar under `reveal`
         // (`TSS11`) and asks for the keyboard.
         cast(void) host.tapPane(p.pos.x, p.pos.y);
@@ -551,6 +557,13 @@ struct DroidTerminal
 
     private void onGesture(H)(ref H h, in GestureEvent g)
     {
+        // A long-press on a link, per `links.longPress` (`TPR5`); off by default,
+        // when the long-press selects (`TSE1`).
+        if (g.gesture == Gesture.longPress)
+        {
+            cast(void) host.tapLink(g.pos.x, g.pos.y, longPress: true);
+            return;
+        }
         if (g.gesture != Gesture.pinch)
             return;
         if (pinchBase <= 0)

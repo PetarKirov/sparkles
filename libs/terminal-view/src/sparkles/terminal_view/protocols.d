@@ -109,6 +109,10 @@ struct TerminalViewHooks
     /// `TerminalView.confirmPaste`. Unset, the paste is sent unasked — an
     /// embedder without a confirmation surface cannot enforce the policy.
     void delegate(in PasteConfirmRequest r) pasteConfirm;
+    /// A Ctrl+click on a link (`TPR7`): open `uri` if its scheme is allowed
+    /// (`TPR6`). Unset, `http`, `https` and `mailto` open with the platform's
+    /// opener and nothing else does.
+    void delegate(scope const(char)[] uri) openLink;
     /// The label of the tab holding this pane, for the notification log
     /// (`TPG9`). Unset, the pane's title.
     const(char)[] delegate() tabTitle;

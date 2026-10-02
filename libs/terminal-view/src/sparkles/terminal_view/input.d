@@ -294,6 +294,12 @@ struct HoverState {
     // the mouse moves) rather than every frame.
     int lastCellX = int.min;
     int lastCellY = int.min;
+    // A Ctrl+click on the hovered link asked to open it; the component
+    // answers through `TerminalViewHooks.openLink` (`TPR7`), outside this
+    // @nogc poll.
+    bool openRequested;
+    // The hovered link came from OSC 8 (not detected in the text).
+    bool hyperlink;
 }
 
 @system nothrow @nogc
@@ -430,124 +436,15 @@ void handle_mouse(
             hoverState.lastCellX = cx;
             hoverState.lastCellY = cy;
 
-            hoverState.isHoveringUrl = false;
-            hoverState.url.clear();
-            hoverState.start_x = -1;
-            hoverState.end_x = -1;
-            hoverState.y = -1;
-
-            GhosttyGridRef hoverRef;
-            if (ghostty_terminal_grid_ref(terminal, pt, &hoverRef) == GHOSTTY_SUCCESS) {
-                size_t uri_len = 0;
-                if (ghostty_grid_ref_hyperlink_uri(&hoverRef, null, 0, &uri_len) == GHOSTTY_OUT_OF_SPACE && uri_len > 0) {
-                    import core.memory : pureMalloc, pureFree;
-                    ubyte* buf = cast(ubyte*)pureMalloc(uri_len);
-                    if (buf) {
-                        if (ghostty_grid_ref_hyperlink_uri(&hoverRef, buf, uri_len, &uri_len) == GHOSTTY_SUCCESS) {
-                            hoverState.isHoveringUrl = true;
-                            hoverState.url.writeStringz(cast(const(char)[])buf[0 .. uri_len]);
-                            hoverState.y = pt.value.coordinate.y;
-
-                            // Scan left to find start of link
-                            int left_x = pt.value.coordinate.x;
-                            while (left_x > 0) {
-                                GhosttyPoint p = pt; p.value.coordinate.x = cast(ushort)(left_x - 1);
-                                GhosttyGridRef r; ghostty_terminal_grid_ref(terminal, p, &r);
-                                size_t l = 0; ghostty_grid_ref_hyperlink_uri(&r, null, 0, &l);
-                                if (l != uri_len) break;
-                                left_x--;
-                            }
-
-                            // Scan right to find end of link
-                            int right_x = pt.value.coordinate.x;
-                            while (right_x < max_cols - 1) {
-                                GhosttyPoint p = pt; p.value.coordinate.x = cast(ushort)(right_x + 1);
-                                GhosttyGridRef r; ghostty_terminal_grid_ref(terminal, p, &r);
-                                size_t l = 0; ghostty_grid_ref_hyperlink_uri(&r, null, 0, &l);
-                                if (l != uri_len) break;
-                                right_x++;
-                            }
-
-                            hoverState.start_x = left_x;
-                            hoverState.end_x = right_x;
-                        }
-                        pureFree(buf);
-                    }
-                }
-            }
-
-            if (!hoverState.isHoveringUrl) {
-                GhosttyPoint p1 = { tag: GHOSTTY_POINT_TAG_VIEWPORT, value: { coordinate: { x: 0, y: pt.value.coordinate.y } } };
-                GhosttyPoint p2 = { tag: GHOSTTY_POINT_TAG_VIEWPORT, value: { coordinate: { x: cast(ushort)(max_cols - 1), y: pt.value.coordinate.y } } };
-                GhosttyGridRef r1, r2;
-                if (ghostty_terminal_grid_ref(terminal, p1, &r1) == GHOSTTY_SUCCESS &&
-                    ghostty_terminal_grid_ref(terminal, p2, &r2) == GHOSTTY_SUCCESS) {
-
-                    GhosttySelection sel = { start: r1, end: r2, rectangle: false };
-                    GhosttyFormatterTerminalOptions fmt_opts;
-                    fmt_opts.size = GhosttyFormatterTerminalOptions.sizeof;
-                    fmt_opts.selection = &sel;
-                    GhosttyFormatter fmt;
-                    if (ghostty_formatter_terminal_new(null, &fmt, terminal, fmt_opts) == GHOSTTY_SUCCESS) {
-                        size_t len = 0;
-                        if (ghostty_formatter_format_buf(fmt, null, 0, &len) == GHOSTTY_OUT_OF_SPACE && len > 0) {
-                            import core.memory : pureMalloc, pureFree;
-                            ubyte* buf = cast(ubyte*)pureMalloc(len);
-                            if (buf) {
-                                if (ghostty_formatter_format_buf(fmt, buf, len, &len) == GHOSTTY_SUCCESS) {
-                                    // Hand-rolled @nogc scan for an http(s) URL covering
-                                    // the hovered column. Replaces std.regex (which
-                                    // allocates and can throw on invalid UTF-8). Byte
-                                    // offsets map to columns by counting UTF-8 lead
-                                    // bytes, matching the old code-point-based mapping.
-                                    const(char)[] line = cast(const(char)[])buf[0 .. len];
-                                    const hovered = pt.value.coordinate.x;
-                                    size_t i = 0;
-                                    while (i < line.length) {
-                                        if (urlSchemeAt(line, i)) {
-                                            size_t j = i;
-                                            while (j < line.length && !isUrlBoundary(line[j])) j++;
-                                            const start_col = cast(int)utf8Cols(line[0 .. i]);
-                                            const end_col = start_col + cast(int)utf8Cols(line[i .. j]) - 1;
-                                            if (hovered >= start_col && hovered <= end_col) {
-                                                hoverState.isHoveringUrl = true;
-                                                hoverState.url.writeStringz(line[i .. j]);
-                                                hoverState.start_x = start_col;
-                                                hoverState.end_x = end_col;
-                                                hoverState.y = hovered;
-                                                break;
-                                            }
-                                            i = j;
-                                        } else {
-                                            i++;
-                                        }
-                                    }
-                                }
-                                pureFree(buf);
-                            }
-                        }
-                        ghostty_formatter_free(fmt);
-                    }
-                }
-            }
+            detectLink(terminal, pt, max_cols, hoverState);
         }
 
         if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)) {
             if (IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL) || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL)) {
                 if (hoverState.isHoveringUrl && hoverState.url.length > 0) {
-                    // url is stored NUL-terminated; hand it to the platform's
-                    // opener as an ARGUMENT (best-effort; errors are ignored).
-                    //
-                    // It used to be argv[0] with no opener at all, which is what
-                    // `execvp` resolves — so the grandchild always _exit(127)'d
-                    // and Ctrl-click had never opened anything on any platform.
-                    version (OSX)
-                        static immutable opener = "open\0";
-                    else
-                        static immutable opener = "xdg-open\0";
-                    const(char)*[3] argv =
-                        [opener.ptr, hoverState.url[].ptr, null];
-                    cast(void) spawnDetached(argv[]);
+                    // The component opens it, through the embedder's allow-list
+                    // (`TPR6`, `TPR7`).
+                    hoverState.openRequested = true;
                     return;
                 }
             }
@@ -628,6 +525,121 @@ void handle_mouse(
             sv.tag = GHOSTTY_SCROLL_VIEWPORT_DELTA;
             sv.value.delta = scroll_delta;
             ghostty_terminal_scroll_viewport(terminal, sv);
+        }
+    }
+}
+
+
+/**
+Finds the link at `pt` (a viewport cell): an OSC 8 hyperlink, else a
+detected `http(s)://` URL, its span on the row in `hoverState`
+(`isHoveringUrl`, `url`, `start_x`, `end_x`, `y`). `max_cols` bounds the
+row. Shared by the hover and by `TerminalView.linkAt` (`TPR5`).
+*/
+@system nothrow @nogc
+void detectLink(GhosttyTerminal terminal, GhosttyPoint pt, int max_cols,
+    ref HoverState hoverState)
+{
+    hoverState.hyperlink = false;
+    hoverState.isHoveringUrl = false;
+    hoverState.url.clear();
+    hoverState.start_x = -1;
+    hoverState.end_x = -1;
+    hoverState.y = -1;
+
+    GhosttyGridRef hoverRef;
+    if (ghostty_terminal_grid_ref(terminal, pt, &hoverRef) == GHOSTTY_SUCCESS) {
+        size_t uri_len = 0;
+        if (ghostty_grid_ref_hyperlink_uri(&hoverRef, null, 0, &uri_len) == GHOSTTY_OUT_OF_SPACE && uri_len > 0) {
+            import core.memory : pureMalloc, pureFree;
+            ubyte* buf = cast(ubyte*)pureMalloc(uri_len);
+            if (buf) {
+                if (ghostty_grid_ref_hyperlink_uri(&hoverRef, buf, uri_len, &uri_len) == GHOSTTY_SUCCESS) {
+                    hoverState.isHoveringUrl = true;
+                    hoverState.hyperlink = true;
+                    hoverState.url.writeStringz(cast(const(char)[])buf[0 .. uri_len]);
+                    hoverState.y = pt.value.coordinate.y;
+
+                    // Scan left to find start of link
+                    int left_x = pt.value.coordinate.x;
+                    while (left_x > 0) {
+                        GhosttyPoint p = pt; p.value.coordinate.x = cast(ushort)(left_x - 1);
+                        GhosttyGridRef r; ghostty_terminal_grid_ref(terminal, p, &r);
+                        size_t l = 0; ghostty_grid_ref_hyperlink_uri(&r, null, 0, &l);
+                        if (l != uri_len) break;
+                        left_x--;
+                    }
+
+                    // Scan right to find end of link
+                    int right_x = pt.value.coordinate.x;
+                    while (right_x < max_cols - 1) {
+                        GhosttyPoint p = pt; p.value.coordinate.x = cast(ushort)(right_x + 1);
+                        GhosttyGridRef r; ghostty_terminal_grid_ref(terminal, p, &r);
+                        size_t l = 0; ghostty_grid_ref_hyperlink_uri(&r, null, 0, &l);
+                        if (l != uri_len) break;
+                        right_x++;
+                    }
+
+                    hoverState.start_x = left_x;
+                    hoverState.end_x = right_x;
+                }
+                pureFree(buf);
+            }
+        }
+    }
+
+    if (!hoverState.isHoveringUrl) {
+        GhosttyPoint p1 = { tag: GHOSTTY_POINT_TAG_VIEWPORT, value: { coordinate: { x: 0, y: pt.value.coordinate.y } } };
+        GhosttyPoint p2 = { tag: GHOSTTY_POINT_TAG_VIEWPORT, value: { coordinate: { x: cast(ushort)(max_cols - 1), y: pt.value.coordinate.y } } };
+        GhosttyGridRef r1, r2;
+        if (ghostty_terminal_grid_ref(terminal, p1, &r1) == GHOSTTY_SUCCESS &&
+            ghostty_terminal_grid_ref(terminal, p2, &r2) == GHOSTTY_SUCCESS) {
+
+            GhosttySelection sel = { start: r1, end: r2, rectangle: false };
+            GhosttyFormatterTerminalOptions fmt_opts;
+            fmt_opts.size = GhosttyFormatterTerminalOptions.sizeof;
+            fmt_opts.selection = &sel;
+            GhosttyFormatter fmt;
+            if (ghostty_formatter_terminal_new(null, &fmt, terminal, fmt_opts) == GHOSTTY_SUCCESS) {
+                size_t len = 0;
+                if (ghostty_formatter_format_buf(fmt, null, 0, &len) == GHOSTTY_OUT_OF_SPACE && len > 0) {
+                    import core.memory : pureMalloc, pureFree;
+                    ubyte* buf = cast(ubyte*)pureMalloc(len);
+                    if (buf) {
+                        if (ghostty_formatter_format_buf(fmt, buf, len, &len) == GHOSTTY_SUCCESS) {
+                            // Hand-rolled @nogc scan for an http(s) URL covering
+                            // the hovered column. Replaces std.regex (which
+                            // allocates and can throw on invalid UTF-8). Byte
+                            // offsets map to columns by counting UTF-8 lead
+                            // bytes, matching the old code-point-based mapping.
+                            const(char)[] line = cast(const(char)[])buf[0 .. len];
+                            const hovered = pt.value.coordinate.x;
+                            size_t i = 0;
+                            while (i < line.length) {
+                                if (urlSchemeAt(line, i)) {
+                                    size_t j = i;
+                                    while (j < line.length && !isUrlBoundary(line[j])) j++;
+                                    const start_col = cast(int)utf8Cols(line[0 .. i]);
+                                    const end_col = start_col + cast(int)utf8Cols(line[i .. j]) - 1;
+                                    if (hovered >= start_col && hovered <= end_col) {
+                                        hoverState.isHoveringUrl = true;
+                                        hoverState.url.writeStringz(line[i .. j]);
+                                        hoverState.start_x = start_col;
+                                        hoverState.end_x = end_col;
+                                        hoverState.y = hovered;
+                                        break;
+                                    }
+                                    i = j;
+                                } else {
+                                    i++;
+                                }
+                            }
+                        }
+                        pureFree(buf);
+                    }
+                }
+                ghostty_formatter_free(fmt);
+            }
         }
     }
 }
