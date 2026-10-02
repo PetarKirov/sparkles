@@ -32,6 +32,7 @@ import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.ui_tui : CellStyle, Color, Grid;
 import sparkles.ui_app.backend : Backend, BackendPolicy;
 import sparkles.ui_app.host : RunConfig;
+import sparkles.ui.tokens : TargetCapabilities;
 import sparkles.ui_app.run : run, RunOutcome;
 import sparkles.input : EndOfInput, Event, isEndOfInput, isNoEvent, Key,
     KeyEvent, linesPerNotch, match, mousePointer, NoEvent, PointerAction,
@@ -1956,7 +1957,13 @@ struct WorkspaceTui
         // OSC 22 on a terminal, the window system's own calls in a window.
         const clip = viewer.takeClipboard();
         if (clip.length)
+        {
             h.clipboard(clip);
+            // The viewer said "copied"; where the target cannot vouch for
+            // the copy landing, say what is known instead.
+            if (const notice = copyNotice(h.target))
+                viewer.showToast(notice);
+        }
         PointerShape shape;
         if (takeCursorShape(shape))
             h.pointerShape(shape);
@@ -2452,6 +2459,27 @@ version (unittest)
         w.openDoc(buildPath(root, "alpha.d"));
         return tmp;
     }
+}
+
+/**
+What to tell the user after a copy went out to `target`, or `null` when
+"copied" already says it: a window carries the copy itself, and a terminal
+that named itself as one keeping OSC 52 writes (D42) will keep it. Anywhere
+else the copy was sent and may have landed (Alacritty keeps them, and gives
+no name), so the notice says exactly that.
+*/
+string copyNotice(in TargetCapabilities target) @safe pure nothrow @nogc
+    => target.clipboard ? null : "Copy sent; this terminal may not keep it";
+
+@("workspace.copyNotice")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+
+    // `full` vouches for the clipboard, `enhanced` does not.
+    assert(copyNotice(capabilitiesOf(Profile.full)) is null);
+    assert(copyNotice(capabilitiesOf(Profile.enhanced)).length);
 }
 
 
