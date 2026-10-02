@@ -14,7 +14,7 @@ version (textSimdX86)
     // from its AVX caller without inlining. Keep the vector return targeted;
     // the trusted pointer operation communicates through a captured reference.
     package V loadVector(V, T)(scope const(T)[] source, size_t offset)
-        @target(V.sizeof == 64 ? "avx512f,avx512bw" : V.sizeof == 32 ? "avx2" : "sse2")
+        @target(V.sizeof == 64 ? "avx512f,avx512bw,avx512vl,evex512" : V.sizeof == 32 ? "avx2" : "sse2")
     if (is(typeof(V.init.array)) && T.sizeof == typeof(V.init.array[0]).sizeof)
     in (offset <= source.length && source.length - offset >= V.sizeof / T.sizeof)
     {

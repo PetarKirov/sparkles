@@ -44,7 +44,7 @@ version (textSimdX86)
     // nevertheless stay within source, and all stores have exact lane masks.
     package EmittedPrefix emitUtf8(scope const(char)[] source,
         scope wchar[] destination)
-        @target("avx512f,avx512bw,avx512vbmi2") @safe pure nothrow @nogc
+        @target("avx512f,avx512bw,avx512vl,avx512vbmi2,evex512") @safe pure nothrow @nogc
     {
         size_t si, di;
         const ushort[32] lanePositions = [
@@ -129,7 +129,7 @@ version (textSimdX86)
 
     package EmittedPrefix emitUtf16(scope const(wchar)[] source,
         scope char[] destination)
-        @target("avx512f,avx512bw,avx512vbmi2") @safe pure nothrow @nogc
+        @target("avx512f,avx512bw,avx512vl,avx512vbmi2,evex512") @safe pure nothrow @nogc
     {
         size_t si, di;
         const D16 positions = cast(D16) [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
@@ -220,11 +220,11 @@ version (textSimdX86)
 
     // A trusted call-site lambda does not inherit its parent's target UDA.
     // Keep ISA-specific intrinsics in targeted functions even without inlining.
-    @target("avx512f,avx512bw,avx512vbmi2")
+    @target("avx512f,avx512bw,avx512vl,avx512vbmi2,evex512")
     private void compressWords(W32 value, W32 keep, uint count, ushort* destination)
         @system pure nothrow @nogc => compressWordsImpl(value, keep, count, destination);
 
-    @target("avx512f,avx512bw,avx512vbmi2")
+    @target("avx512f,avx512bw,avx512vl,avx512vbmi2,evex512")
     private void compressBytes(B64 value, B64 keep, uint count, ubyte* destination)
         @system pure nothrow @nogc => compressBytesImpl(value, keep, count, destination);
 

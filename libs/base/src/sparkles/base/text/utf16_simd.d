@@ -20,7 +20,7 @@ version (textSimdX86)
     import ldc.simd : equalMask, greaterMask, shufflevector, storeUnaligned;
     import ldc.llvmasm : __ir_pure;
 
-    import sparkles.base.text.simd_caps : hasAvx512Bw;
+    import sparkles.base.text.simd_caps : hasAvx512BwVl;
     import sparkles.base.text.simd_io : loadVector;
 
     private alias Bytes = __vector(ubyte[16]);
@@ -130,7 +130,7 @@ version (textSimdX86)
     {
         size_t i;
         size_t units;
-        if (source.length >= 64 && hasAvx512Bw)
+        if (source.length >= 64 && hasAvx512BwVl)
         {
             const measured = countUtf8Wide(source, rejectNul);
             i = measured.consumed;
@@ -166,7 +166,7 @@ version (textSimdX86)
     {
         size_t i;
         size_t bytes;
-        if (source.length >= 32 && hasAvx512Bw)
+        if (source.length >= 32 && hasAvx512BwVl)
         {
             const measured = measureUtf16Wide(source, rejectNul);
             i = measured.consumed;
@@ -207,7 +207,7 @@ version (textSimdX86)
         ~ "%b = bitcast <32 x i1> %m to i32\nret i32 %b", uint, WideWords);
 
     private MeasuredPrefix countUtf8Wide(scope const(char)[] source, bool rejectNul)
-        @target("avx512f,avx512bw") @safe pure nothrow @nogc
+        @target("avx512f,avx512bw,avx512vl,evex512") @safe pure nothrow @nogc
     {
         size_t i, units;
         while (source.length - i >= 64)
@@ -228,7 +228,7 @@ version (textSimdX86)
     }
 
     private MeasuredPrefix measureUtf16Wide(scope const(wchar)[] source, bool rejectNul)
-        @target("avx512f,avx512bw") @safe pure nothrow @nogc
+        @target("avx512f,avx512bw,avx512vl,evex512") @safe pure nothrow @nogc
     {
         size_t i, bytes;
         while (source.length - i >= 32)

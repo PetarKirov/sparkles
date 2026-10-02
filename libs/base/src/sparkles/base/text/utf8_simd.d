@@ -12,7 +12,7 @@ version (LDC)
 version (textSimdX86)
 {
     import core.cpuid : avx2;
-    import sparkles.base.text.simd_caps : hasAvx512Bw;
+    import sparkles.base.text.simd_caps : hasAvx512BwVl;
     import sparkles.base.text.simd_io : loadVector;
 
     import ldc.attributes : target;
@@ -27,7 +27,7 @@ version (textSimdX86)
     package(sparkles) size_t validatedUtf8Prefix(bool stringBody = false)(
         scope const(char)[] s) @safe pure nothrow @nogc
     {
-        if (s.length >= 256 && hasAvx512Bw)
+        if (s.length >= 256 && hasAvx512BwVl)
             return validateBlocks!(64, stringBody)(s);
         return avx2() ? validateBlocks!(32, stringBody)(s)
             : validateBlocks!(16, stringBody)(s);
@@ -36,9 +36,10 @@ version (textSimdX86)
     // Carry the preceding three bytes across full blocks. Only exits refine
     // the accepted prefix back to a sequence boundary; the hot loop neither
     // overlaps loads nor walks trailing continuation bytes.
+    // LLVM 18 separates ZMM/64-bit-mask lowering (EVEX512) from AVX512F.
     private size_t validateBlocks(size_t lanes, bool stringBody = false)(
         scope const(char)[] s)
-        @target(lanes == 64 ? "avx512f,avx512bw" : lanes == 32 ? "avx2" : "sse2")
+        @target(lanes == 64 ? "avx512f,avx512bw,avx512vl,evex512" : lanes == 32 ? "avx2" : "sse2")
         @safe pure nothrow @nogc
     {
         alias V = __vector(ubyte[lanes]);
@@ -174,7 +175,7 @@ version (textSimdX86)
     }
 
     private auto mask(S)(S v)
-        @target(S.sizeof == 64 ? "avx512f,avx512bw" : S.sizeof == 32 ? "avx2" : "sse2")
+        @target(S.sizeof == 64 ? "avx512f,avx512bw,avx512vl,evex512" : S.sizeof == 32 ? "avx2" : "sse2")
         @safe pure nothrow @nogc
     {
         static if (S.sizeof == 64)
@@ -188,7 +189,7 @@ version (textSimdX86)
     }
 
     private V preceding(size_t count, V)(V input, V previous)
-        @target(V.sizeof == 64 ? "avx512f,avx512bw" : V.sizeof == 32 ? "avx2" : "sse2")
+        @target(V.sizeof == 64 ? "avx512f,avx512bw,avx512vl,evex512" : V.sizeof == 32 ? "avx2" : "sse2")
     {
         import std.meta : AliasSeq;
         template Indices(size_t index = 0)
@@ -229,7 +230,7 @@ version (textSimdX86)
 
     pragma(inline, true)
     private auto lookupPairErrors(V)(V input, V p1, V p2, V p3)
-        @target(V.sizeof == 64 ? "avx512f,avx512bw" : "avx2")
+        @target(V.sizeof == 64 ? "avx512f,avx512bw,avx512vl,evex512" : "avx2")
         @safe pure nothrow @nogc
     {
         alias S = __vector(byte[V.sizeof]);
@@ -295,7 +296,7 @@ version (textSimdX86)
                         const avx = validateBlocks!32(input);
                         assert(avx + scalarOffset(input[avx .. $]) == expected);
                     }
-                    if (hasAvx512Bw)
+                    if (hasAvx512BwVl)
                     {
                         const wide = validateBlocks!64(input);
                         assert(wide + scalarOffset(input[wide .. $]) == expected);
@@ -316,7 +317,7 @@ version (textSimdX86)
                             const avx = validateBlocks!32(input);
                             assert(avx + scalarOffset(input[avx .. $]) == expected);
                         }
-                        if (hasAvx512Bw)
+                        if (hasAvx512BwVl)
                         {
                             const wide = validateBlocks!64(input);
                             assert(wide + scalarOffset(input[wide .. $]) == expected);
