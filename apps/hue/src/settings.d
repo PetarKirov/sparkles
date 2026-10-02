@@ -32,11 +32,11 @@ module settings;
 
 import sparkles.ui.property_tree : Doc, hidden, Label, Range;
 
-import ansi_model : BackgroundMode;
+import sparkles.doc_view.ansi_model : BackgroundMode;
 import keymap_config : KeysConfig;
-import diff_structural : StructuralPolicy;
-import diff_view : DiffLayout;
-import viewer_model : ScrollAnchorMode;
+import sparkles.doc_view.diff_structural : StructuralPolicy;
+import sparkles.doc_view.diff_view : DiffLayout;
+import sparkles.doc_view.viewer_model : ScrollAnchorMode;
 
 import sparkles.source_view.search : SearchPolicy;
 import sparkles.diff.normalize : WhitespaceMode;

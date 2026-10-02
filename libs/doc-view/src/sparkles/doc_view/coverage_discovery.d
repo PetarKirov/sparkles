@@ -19,7 +19,7 @@
 // And an artifact older than the file it describes is not merely stale, it is
 // wrong — its line numbers refer to text that has since moved. That case warns
 // and attaches nothing.
-module coverage_discovery;
+module sparkles.doc_view.coverage_discovery;
 
 import std.file : DirEntry, dirEntries, exists, isDir, isFile, SpanMode, timeLastModified;
 import std.path : absolutePath, buildPath, dirName;

@@ -51,9 +51,9 @@ import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchIter, blackBox;
 import sparkles.ui.themes : builtinDark;
 
-import dsv_view : adaptDsv, DsvFlags, DsvModel, DsvProjection, DsvWindow;
-import gui_preview : PreviewModel, previewOf;
-import viewer_model : ViewerModel;
+import sparkles.doc_view.dsv_view : adaptDsv, DsvFlags, DsvModel, DsvProjection, DsvWindow;
+import sparkles.doc_view.preview_model : PreviewModel, previewOf;
+import sparkles.doc_view.viewer_model : ViewerModel;
 
 /// The corpus: a `files.csv`-shaped table — one row per tracked file, the
 /// column mix (paths, sizes, extensions, dates) the sample corpus generates —

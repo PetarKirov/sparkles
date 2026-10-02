@@ -13,7 +13,7 @@
 // (Mergiraf's `LangProfile` shape) rather than inferred, the defaults are the
 // two cases that are unambiguous, and `--diff-commutative` is how a project
 // says it has more.
-module diff_commutative;
+module sparkles.doc_view.diff_commutative;
 
 import sparkles.tree_sitter : nodeChild, nodeChildCount, nodeRange, nodeType,
     TSNode;

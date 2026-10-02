@@ -33,11 +33,11 @@ import sparkles.base.term_caps : isTerminal, StdStream;
 import sparkles.source_view.markdown : OverflowPolicy, ScrollOverflow,
     WrapAtOverflow, WrapOverflow;
 
-import ansi_model : BackgroundMode;
-import diff_commutative : CommutativeKind;
-import diff_structural : StructuralPolicy;
-import diff_view : DiffLayout;
-import viewer_model : ScrollAnchorMode;
+import sparkles.doc_view.ansi_model : BackgroundMode;
+import sparkles.doc_view.diff_commutative : CommutativeKind;
+import sparkles.doc_view.diff_structural : StructuralPolicy;
+import sparkles.doc_view.diff_view : DiffLayout;
+import sparkles.doc_view.viewer_model : ScrollAnchorMode;
 import sparkles.diff : WhitespaceMode;
 
 import sparkles.ui_app.backend : Backend, BackendPolicy,
@@ -630,7 +630,7 @@ WhitespaceMode parseWhitespaceMode(string spelling) @safe
 
 StructuralPolicy parseStructural(string spelling) @safe
 {
-    import diff_structural : parseStructuralPolicy;
+    import sparkles.doc_view.diff_structural : parseStructuralPolicy;
 
     bool ok;
     const p = parseStructuralPolicy(spelling, ok);
@@ -641,7 +641,7 @@ StructuralPolicy parseStructural(string spelling) @safe
 
 CommutativeKind[] parseCommutative(string spelling) @safe
 {
-    import diff_commutative : parseCommutativeKinds;
+    import sparkles.doc_view.diff_commutative : parseCommutativeKinds;
 
     bool ok;
     auto kinds = parseCommutativeKinds(spelling, ok);

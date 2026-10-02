@@ -15,13 +15,13 @@
 // view's structure does not change when the colors arrive. Lives in
 // `apps/hue` for now (the sinks are all here); promotable to a render lib
 // when an external consumer appears.
-module diff_view;
+module sparkles.doc_view.diff_view;
 
 import std.conv : text;
 
-import diff_session : AnchoredThread, DiffSession, FileChange, SessionEntry,
+import sparkles.doc_view.diff_session : AnchoredThread, DiffSession, FileChange, SessionEntry,
     SessionHeader, statusGlyph;
-import document : DiffSides;
+import sparkles.doc_view.document : DiffSides;
 import sparkles.diff.model : Degradation, DiffDoc, FileEntry, Hunk, Row,
     RowKind, Span;
 import sparkles.twoslash.overlay : planTwoslash, TwoslashPlan;
@@ -1323,7 +1323,7 @@ version (unittest)
 @("diff_view.viewDiffDoc.sessionHeaderStatusAndCounts")
 @safe unittest
 {
-    import diff_session : buildDiffSession;
+    import sparkles.doc_view.diff_session : buildDiffSession;
     import sparkles.diff : parsePatch;
 
     enum patch =
@@ -1408,7 +1408,7 @@ version (unittest)
 @("diff_view.viewDiffDoc.collapsedFileAndPerFileError")
 @safe unittest
 {
-    import diff_session : buildDiffSession;
+    import sparkles.doc_view.diff_session : buildDiffSession;
     import sparkles.diff : parsePatch;
 
     enum patch = "--- a/x.d\n+++ b/x.d\n@@ -1,2 +1,2 @@\n a\n-b\n+c\n";
@@ -1715,7 +1715,7 @@ import sparkles.ui.style : Slot;
 @("diff_view.sessionHeader.rendersThePrAboveItsFiles")
 @safe unittest
 {
-    import diff_session : buildDiffSession;
+    import sparkles.doc_view.diff_session : buildDiffSession;
     import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdDoc, MdInline,
         MdInlineKind, Span;
 
@@ -1770,7 +1770,7 @@ import sparkles.ui.style : Slot;
 @("diff_view.threads.anchorUnderTheirLineAndFoldWhenResolved")
 @safe unittest
 {
-    import diff_session : AnchoredThread, buildDiffSession, ThreadComment;
+    import sparkles.doc_view.diff_session : AnchoredThread, buildDiffSession, ThreadComment;
     import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdDoc, MdInline,
         MdInlineKind, Span;
 
@@ -1842,7 +1842,7 @@ import sparkles.ui.style : Slot;
 @("diff_view.threads.anOutdatedThreadHasNoLineToHangOn")
 @safe unittest
 {
-    import diff_session : AnchoredThread, buildDiffSession, ThreadComment;
+    import sparkles.doc_view.diff_session : AnchoredThread, buildDiffSession, ThreadComment;
 
     // GitHub reports an outdated thread with a null line, which decodes to
     // zero. Zero must not match row 0 of anything — it means "nowhere".

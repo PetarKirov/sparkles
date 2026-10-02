@@ -131,12 +131,12 @@ stays there.
 
 ## Module coverage
 
-| Source (proposed)           | Key symbols                                           | Requirements          |
-| --------------------------- | ----------------------------------------------------- | --------------------- |
-| `apps/hue/src/pager.d`      | `PagingMode`, `shouldPage`, `spawnPager`              | `PAG1`–`PAG6`         |
-| `apps/hue/src/overstrike.d` | `decodeOverstrike` (pure, `@nogc`)                    | `PIN3`                |
-| `apps/hue/src/document.d`   | `ContentKind.preformatted`, `looksPreformatted`       | `PIN1`, `PIN4`–`PIN5` |
-| `apps/hue/src/ansi_model.d` | the existing SGR → cell decoder, reused whole         | `PIN2`                |
-| `apps/hue/src/stream.d`     | incremental append, follow state, the fd registration | `STR1`–`STR5`         |
+| Source (proposed)                                  | Key symbols                                           | Requirements          |
+| -------------------------------------------------- | ----------------------------------------------------- | --------------------- |
+| `apps/hue/src/pager.d`                             | `PagingMode`, `shouldPage`, `spawnPager`              | `PAG1`–`PAG6`         |
+| `apps/hue/src/overstrike.d`                        | `decodeOverstrike` (pure, `@nogc`)                    | `PIN3`                |
+| `libs/doc-view/src/sparkles/doc_view/document.d`   | `ContentKind.preformatted`, `looksPreformatted`       | `PIN1`, `PIN4`–`PIN5` |
+| `libs/doc-view/src/sparkles/doc_view/ansi_model.d` | the existing SGR → cell decoder, reused whole         | `PIN2`                |
+| `apps/hue/src/stream.d`                            | incremental append, follow state, the fd registration | `STR1`–`STR5`         |
 
 → [Feature requirements](./feature-requirements.md) · [Document chrome](./chrome.md) · [TUI](./tui.md) · [Overview](./index.md)

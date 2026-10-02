@@ -62,10 +62,14 @@ dependency "sparkles:wired" path="../.."
 // schema carries the property-tree metadata vocabulary (`@Label`/`@Doc`/
 // `@Range`) and the settings pane embeds `PropertyTree!HueConfig`.
 dependency "sparkles:ui" path="../.."
+// The document viewer (`UIA14`): loading, the viewer model and its views —
+// the pipeline every sink below paints. hue keeps its policy (the tree, the
+// picker, the diff session's writes, settings).
+dependency "sparkles:doc-view" path="../.."
 
 // Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
-// the preview support modules (gui_ansi.d libghostty bridge,
-// gui_preview.d model+layout) are compiled in, so a stock `dub build :hue` and
+// sparkles:doc-view's ansi-fence decoder (`ansi_decode`, compiled because
+// this configuration links sparkles:ghostty) are in, so a stock `dub build :hue` and
 // the installed binary have `--gui` and the markdown preview out of the box.
 // Pulls raylib (a system dependency) + libghostty-vt.
 configuration "application" {
@@ -84,7 +88,7 @@ configuration "application" {
     // extracted from the old in-app src/gui_canvas.d.
     dependency "sparkles:ui-raylib" path="../.."
     subConfiguration "sparkles:ui" "gpu-effects"
-    // The off-screen VT that decodes ` ```ansi ` fenced blocks (gui_ansi.d).
+    // The off-screen VT that decodes ` ```ansi ` fenced blocks (`sparkles.doc_view.ansi_decode`).
     dependency "sparkles:ghostty" path="../.."
     subConfiguration "sparkles:ui-app" "full"
     versions "HueGui"
@@ -130,11 +134,10 @@ configuration "android" {
 }
 
 // Raylib-/ghostty-free terminal-only build (BLD2) — the minimal-closure variant
-// for headless installs. It still ships the markdown preview: the preview model
-// (gui_preview.d), its metrics (`sparkles:source-view`), and the neutral types
-// (ansi_model.d) are all raylib- and ghostty-free. Only the raylib window
-// (gui.d) and the off-screen-VT ansi-fence decoder (gui_ansi.d, which pulls
-// sparkles:ghostty) are excluded — `--gui` errors cleanly, and ` ```ansi `
+// for headless installs. It still ships the markdown preview: sparkles:doc-view's model is raylib- and
+// ghostty-free. Only the raylib window (gui.d) is excluded, and with no
+// sparkles:ghostty in the closure the library leaves its off-screen-VT
+// ansi-fence decoder out — `--gui` errors cleanly, and ` ```ansi `
 // fences degrade to stripped plain text (no VT). Build with
 // `dub build :hue -c no-gui`.
 configuration "no-gui" {
@@ -149,13 +152,12 @@ configuration "no-gui" {
     dependency "sparkles:dmd-fmt" path="../.."
     versions "HueDmdFmt"
 
-    excludedSourceFiles "src/gui.d" "src/gui_ansi.d"
+    excludedSourceFiles "src/gui.d"
 }
 
-// Optimized unittest build for `@benchmark` runs (the resize-path relayout
-// bench in gui_preview.d). `unittests` is load-bearing — without it `dub test`
-// registers zero tests; a plain `-b release` drops it and the runner never
-// takes over. Run: `dub test :hue -b bench -- --bench -i resizeSweep`.
+// Optimized unittest build for `@benchmark` runs. `unittests` is load-bearing
+// — without it `dub test` registers zero tests; a plain `-b release` drops it
+// and the runner never takes over. Run: `dub test :hue -b bench -- --bench`.
 buildType "bench" {
     buildOptions "unittests" "releaseMode" "optimize" "inline"
     dflags "-mcpu=native" platform="ldc"
@@ -163,13 +165,13 @@ buildType "bench" {
 
 configuration "unittest" {
     targetType "library"
-    // gui.d (raylib) is excluded so `dub test :hue` links no GL/window; the
-    // preview support modules gui_ansi.d / gui_preview.d ARE
-    // compiled and unit-tested here. gui_ansi.d drives an off-screen VT, so the
-    // test build links libghostty-vt (headless, no window).
+    // gui.d (raylib) is excluded so `dub test :hue` links no GL/window. The
+    // document pipeline is sparkles:doc-view's (tested there); its
+    // ansi-fence decoder drives an off-screen VT, so the test build links
+    // libghostty-vt (headless, no window).
     excludedSourceFiles "src/app.d" "src/gui.d" "test/fixtures/*"
 
-    // The off-screen VT bridge (gui_ansi.d) + preview model (gui_preview.d).
+    // The off-screen VT behind sparkles:doc-view's ansi-fence decoder.
     dependency "sparkles:ghostty" path="../.."
 
     // The in-process formatter, so the format-preview provider tests run here

@@ -15,11 +15,11 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : mix;
 import sparkles.code_instrumentation : CoveragePlan;
 import sparkles.diff.model : DiffDoc;
-import diff_session : DiffSession, SessionEntry;
-import diff_view : TypeOverlay;
+import sparkles.doc_view.diff_session : DiffSession, SessionEntry;
+import sparkles.doc_view.diff_view : TypeOverlay;
 import sparkles.source_view.markdown : FenceScroll, TableScroll;
-import table_select : serializeTable, TableCopyFormat, TableRegion;
-import dsv_view : DsvCopy, serializeGridCopy;
+import sparkles.doc_view.table_select : serializeTable, TableCopyFormat, TableRegion;
+import sparkles.doc_view.dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration, msecs;
 import input_line : InputState, Mode;
 import keymap : Binding, bindingsAt, Command, InputMode, KeyContext;
@@ -28,7 +28,7 @@ import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
 import sparkles.ui.components.lantern_view : BoxLayout, LabelArena,
     LanternStyle, Placement,
     viewLantern;
-import document : DiffEmphasis, DiffSides;
+import sparkles.doc_view.document : DiffEmphasis, DiffSides;
 import staging : StageAction;
 import sparkles.base.text.writers : writeInteger;
 
@@ -59,13 +59,13 @@ import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot,
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_tui : Cell, CellStyle, Color, Grid, paintGrid;
 
-import ansi_model : Attr, BackgroundMode;
-import viewer_model : ViewerModel;
-import format_preview : formatPreviewActive, formatPreviewChip,
+import sparkles.doc_view.ansi_model : Attr, BackgroundMode;
+import sparkles.doc_view.viewer_model : ViewerModel;
+import format_preview : formatPreviewActive, formatSession, formatPreviewChip,
     formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
     formatPreviewRulerCol, formatPreviewRulerDragging, formatPreviewRulerHits,
     formatPreviewRulerPointer, formatPreviewToggle;
-import gui_preview : PreviewModel;
+import sparkles.doc_view.preview_model : PreviewModel;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor fallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
@@ -797,7 +797,7 @@ struct PreviewTui
     /// The pane's shape contribution (`RUL3`): ew-resize while the ruler is
     /// hovered or dragged.
     bool rulerHovering() const @safe pure nothrow @nogc
-        => formatPreviewActive(vm) && (rulerHover || vm.fmt.rulerDrag);
+        => formatPreviewActive(vm) && (rulerHover || formatSession(vm).rulerDrag);
 
     /// Pointer hover over a markdown link, kept by the same bare-move branch
     /// and for the same reason as `rulerHover`.
@@ -2796,11 +2796,11 @@ version (HueDmdFmt)
 
     // Toggle on, pin a width inside the pane, wait for the buffer to apply.
     assert(formatPreviewToggle(t.vm) is null);
-    t.vm.fmt.requestWidth(t.vm, 60);
+    formatSession(t.vm).requestWidth(t.vm, 60);
     foreach (_; 0 .. 2500)
     {
         formatPreviewPump(t.vm);
-        if (t.vm.fmt.flow.shownCol == 60)
+        if (formatSession(t.vm).flow.shownCol == 60)
             break;
         Thread.sleep(2.msecs);
     }
@@ -2827,20 +2827,20 @@ version (HueDmdFmt)
     assert(formatPreviewRulerDragging(t.vm));
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.drag, pos: Point(50, 2)))));
-    assert(t.vm.fmt.rulerCol == 50);
+    assert(formatSession(t.vm).rulerCol == 50);
     assert(t.handle(Event(PointerEvent(button: PointerButton.left,
         action: PointerAction.release, pos: Point(50, 2)))));
     assert(!formatPreviewRulerDragging(t.vm));
 
     formatPreviewToggle(t.vm); // off restores
     assert(t.vm.source is src);
-    t.vm.fmt.service.shutdown();
+    formatSession(t.vm).service.shutdown();
 }
 
 @("tui.dsv.headerClickSortsAndFilterPromptApplies")
 @system unittest
 {
-    import dsv_view : adaptDsv, DsvCopy, DsvFlags;
+    import sparkles.doc_view.dsv_view : adaptDsv, DsvCopy, DsvFlags;
     import sparkles.input : Mods;
     import sparkles.syntax : LabelSet;
 

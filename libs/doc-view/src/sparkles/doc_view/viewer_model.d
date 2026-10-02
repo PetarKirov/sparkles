@@ -4,10 +4,10 @@
 // Raylib-free, so the whole view/relayout/search/fold surface is unit-testable
 // without a window. The remaining window-level interaction groups still live
 // in gui.d (`HUE-O1`), beside windowing, native-input translation and painting.
-module viewer_model;
+module sparkles.doc_view.viewer_model;
 
 
-import format_preview : FormatPreviewSession;
+import sparkles.doc_view.document_session : DocumentSession;
 
 import sparkles.base.term_color : mix;
 import sparkles.base.term_style : UnderlineStyle;
@@ -45,13 +45,13 @@ import sparkles.ui.style : defaultTwoslashPalette, Palette,
     schemeForBackground, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, WidgetKind, WidgetTree;
 
-import ansi_model : anchorAnsiLines, AnsiLine, Attr;
-import diff_session : DiffSession;
-import diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
+import sparkles.doc_view.ansi_model : anchorAnsiLines, AnsiLine, Attr;
+import sparkles.doc_view.diff_session : DiffSession;
+import sparkles.doc_view.diff_view : diffFileKey, diffGapKeyBase, diffHunkIndexOf, DiffLayout,
     FileTypes, isDiffGapKey, isDiffHunkKey, viewDiffDoc;
-import document : coverageChannel, coverageChannelId, coverageTintedRanges, DiffEmphasis,
+import sparkles.doc_view.document : coverageChannel, coverageChannelId, coverageTintedRanges, DiffEmphasis,
     DiffSides, Document, hueFenceRenderer;
-import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
+import sparkles.doc_view.preview_model : PreviewModel, quoteBarColors, quoteBarCycle;
 import sparkles.source_view.search : buildLineStarts, findMatches, lineCount, Match, SearchPolicy;
 
 /// Sane concrete fallbacks when a theme leaves the page fore-/background unset
@@ -200,7 +200,7 @@ struct ViewerModel
     /// The format-preview session (`FMV`), lazily created on first toggle.
     /// Lives here — the one document model both backends drive — so the
     /// preview has exactly one owner and no per-backend state split (`RUL8`).
-    FormatPreviewSession fmt;
+    DocumentSession fmt;
     const(char)[] source;
     string lang;                    /// canonical language (CST fold provider)
     /// The document's retained parse (`TSI`): the root tree + injected layer
@@ -1050,7 +1050,7 @@ struct ViewerModel
             // A diff document (`DVL1`/`DVL4`): the unified diff widget view;
             // Tab (`showPreview = false`) falls through to the raw view of
             // the backing patch text.
-            import diff_view : DiffViewOptions;
+            import sparkles.doc_view.diff_view : DiffViewOptions;
 
             // DVM5: per-file re-highlight of the known sides; the view
             // layers the diff tints over the syntax colors.
@@ -2255,7 +2255,7 @@ struct ViewerModel
     string diffCursorPatch()
     {
         import sparkles.diff : selectHunk;
-        import staging : selectionPatch;
+        import sparkles.doc_view.diff_session : selectionPatch;
 
         if (!diffSession.stageable || diff.files.length == 0)
             return null;
@@ -2445,7 +2445,7 @@ struct ViewerModel
 @("viewer_model.diffSessionNavigatesAndFolds")
 @system unittest
 {
-    import diff_session : buildDiffSession;
+    import sparkles.doc_view.diff_session : buildDiffSession;
     import sparkles.diff : parsePatch;
 
     ViewerModel vm;
@@ -2496,7 +2496,7 @@ struct ViewerModel
 @("viewer_model.diffHunkMotionCrossesFilesAndSkipsFolds")
 @system unittest
 {
-    import diff_session : buildDiffSession;
+    import sparkles.doc_view.diff_session : buildDiffSession;
     import sparkles.diff : parsePatch;
 
     ViewerModel vm;
@@ -2600,8 +2600,8 @@ struct ViewerModel
     import sparkles.syntax : extractMarkdown, GrammarRegistry;
     import std.algorithm.iteration : splitter;
     import sparkles.ui.widget : WidgetKind;
-    import ansi_model : AnsiSpan;
-    import gui_preview : stripSgr;
+    import sparkles.doc_view.ansi_model : AnsiSpan;
+    import sparkles.doc_view.preview_model : stripSgr;
 
     // `SEL6`: a decoded ` ```ansi ` fence carries its source bytes, so a
     // selection inside it maps to the escapes-included source, on both the
@@ -2821,7 +2821,7 @@ terminal gets the destinations it needs to make the text clickable.
 {
     import std.conv : text;
 
-    import diff_session : buildDiffSession;
+    import sparkles.doc_view.diff_session : buildDiffSession;
     import sparkles.diff : diffText;
 
     ViewerModel vm;
@@ -3113,7 +3113,7 @@ terminal gets the destinations it needs to make the text clickable.
 @system unittest
 {
     import sparkles.diff : diffText, parsePatch;
-    import diff_session : buildDiffSession;
+    import sparkles.doc_view.diff_session : buildDiffSession;
     import std.algorithm.searching : canFind;
 
     enum before = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\n";

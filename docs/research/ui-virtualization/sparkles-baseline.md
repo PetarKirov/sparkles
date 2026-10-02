@@ -40,7 +40,7 @@ canvas
 ```
 
 `adaptDsv` runs the whole of the top half on **every window change**
-(`apps/hue/src/dsv_view.d`), and `Workspace.applyDsvBrowser` calls it from the
+(`libs/doc-view/src/sparkles/doc_view/dsv_view.d`), and `Workspace.applyDsvBrowser` calls it from the
 scroll hook (`apps/hue/src/workspace.d`).
 
 ## What is already virtualized
@@ -61,7 +61,7 @@ struct DsvWindow
 }
 ```
 
-— [`apps/hue/src/dsv_view.d`](../../../apps/hue/src/dsv_view.d)
+— [`libs/doc-view/src/sparkles/doc_view/dsv_view.d`](../../../libs/doc-view/src/sparkles/doc_view/dsv_view.d)
 
 `rows == 0` means "the whole view", which is what every non-scrolling sink uses
 — `--html`, the pager, the goldens, copy. The window is the same
@@ -122,7 +122,7 @@ data row's index. `DsvCopy.rawCell` has to say so explicitly:
 const dataRow = viewRow - 1 + info.windowStart;
 ```
 
-— [`apps/hue/src/dsv_view.d`](../../../apps/hue/src/dsv_view.d)
+— [`libs/doc-view/src/sparkles/doc_view/dsv_view.d`](../../../libs/doc-view/src/sparkles/doc_view/dsv_view.d)
 
 That is exactly the hazard [egui fixes with
 `skip_ahead_auto_ids`](./egui-show-rows.md) and Avalonia with its out-of-window
@@ -204,7 +204,7 @@ the _build_ is identical, the difference was entirely unbounded model work.
 ### What changed: `DSN7`, the retained model
 
 The catalog's [win 2](./comparison.md#the-consensus) — _don't re-derive data you
-already had_ — is now implemented. `DsvModel` (`apps/hue/src/dsv_view.d`) holds
+already had_ — is now implemented. `DsvModel` (`libs/doc-view/src/sparkles/doc_view/dsv_view.d`) holds
 the resolved dialect, the parse, the sampled column types and the header names,
 and memoizes both the row permutation and the fuzzy filter mask.
 `adaptDsv(model, proj, window)`, `DsvCopy.of(model, …)` and
@@ -343,9 +343,9 @@ Declared and exact, via `virtualLines` / `virtualOffset`.
 
 ## Sources
 
-- [`apps/hue/src/dsv_view.d`](../../../apps/hue/src/dsv_view.d) — `DsvModel`, `modelFor`, `adaptDsv`, `DsvWindow`, `sampledColumnWidths`, `DsvCopy`
+- [`libs/doc-view/src/sparkles/doc_view/dsv_view.d`](../../../libs/doc-view/src/sparkles/doc_view/dsv_view.d) — `DsvModel`, `modelFor`, `adaptDsv`, `DsvWindow`, `sampledColumnWidths`, `DsvCopy`
 - [`apps/hue/src/workspace.d`](../../../apps/hue/src/workspace.d) — `applyDsvBrowser`, `dsvWindowRows`, `dsvGridTop`
-- [`apps/hue/src/viewer_model.d`](../../../apps/hue/src/viewer_model.d) — `remateralizeWindow`, `rebuildTree`
+- [`libs/doc-view/src/sparkles/doc_view/viewer_model.d`](../../../libs/doc-view/src/sparkles/doc_view/viewer_model.d) — `remateralizeWindow`, `rebuildTree`
 - [`apps/hue/src/dsv_bench.d`](../../../apps/hue/src/dsv_bench.d) — the phase decomposition above
 - [`libs/ui/src/sparkles/ui/components/table/widgets.d`](../../../libs/ui/src/sparkles/ui/components/table/widgets.d) — `TableViewportSpec`
 - [`libs/source-view/src/sparkles/source_view/markdown.d`](../../../libs/source-view/src/sparkles/source_view/markdown.d) — `MdTableExtras`

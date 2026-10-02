@@ -3,7 +3,7 @@
 // (`gui_preview.d`) compiles into the raylib-/ghostty-free `no-gui` build:
 // only `decodeAnsi` (the off-screen libghostty-vt bridge) still lives in
 // `gui_ansi.d` and is pulled in solely by the GUI build.
-module ansi_model;
+module sparkles.doc_view.ansi_model;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.syntax : AnsiOptions, ColorDepth;

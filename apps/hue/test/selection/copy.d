@@ -17,12 +17,12 @@ import sparkles.syntax : LabelSet, MdBlock, MdBlockKind, MdDoc, MdInline,
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinDark;
 
-import gui_preview : PreviewModel;
+import sparkles.doc_view.preview_model : PreviewModel;
 import gui_state : Regime, SelectionDrag;
 import keymap : Command, InputMode, KeyContext;
 import lantern : LanternState, step, StepKind;
 import tui : PreviewTui;
-import viewer_model : ViewerModel;
+import sparkles.doc_view.viewer_model : ViewerModel;
 
 /// Common interface adapter for TUI mode.
 struct TuiModeAdapter

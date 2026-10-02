@@ -13,13 +13,13 @@
 // The pass reuses `sparkles:diff`'s LCS, changed-ratio gate and span emission
 // through `refinePairTokens` — the engine stays tree-sitter-free (decision 5)
 // and merely stops assuming it knows where tokens begin.
-module diff_token_view;
+module sparkles.doc_view.diff_token_view;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.diff : DiffDoc, DiffOptions, FileEntry, RefineToken, Row,
     RowKind, refinePairTokens;
 
-import diff_structural : Token;
+import sparkles.doc_view.diff_structural : Token;
 
 /**
 Rewrites one file's paired-row emphasis from the two token streams.

@@ -16,7 +16,7 @@ import std.conv : text;
 import std.file : dirEntries, SpanMode;
 import std.path : baseName, buildPath, dirName;
 
-import diff_session : FileChange, SessionEntry;
+import sparkles.doc_view.diff_session : FileChange, SessionEntry;
 import core.time : Duration;
 import keymap : Command, KeyContext;
 import lantern : defaultDelay, LanternState, ltnStep = step, ltnTick = tick,
@@ -1652,7 +1652,7 @@ unittest
 @("explorer.sessionTree.pathsBecomeATreeWithBadgesAndCounts")
 @system unittest
 {
-    import diff_session : FileChange, SessionEntry;
+    import sparkles.doc_view.diff_session : FileChange, SessionEntry;
 import keymap : Command, KeyContext;
 import lantern : LanternState, ltnStep = step, ltnTick = tick,
     untilShown, LtnStepKind = StepKind;

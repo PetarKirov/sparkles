@@ -18,13 +18,13 @@
 // reflowed one function while editing another). Both are conservative in the
 // same direction — any doubt is "not equivalent", so a real change can never
 // be dismissed as noise.
-module diff_structural;
+module sparkles.doc_view.diff_structural;
 
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.tree_sitter : nodeChild, nodeChildCount, nodeRange,
     ParseGuards, TsError, TsParser, TSNode;
 
-import diff_commutative : CommutativeKind, findPermutations, Permutation;
+import sparkles.doc_view.diff_commutative : CommutativeKind, findPermutations, Permutation;
 
 /// A cap on the tokens compared per side (`DVM6`'s family): past this the
 /// oracle declines rather than walking a pathological tree. Chosen so a

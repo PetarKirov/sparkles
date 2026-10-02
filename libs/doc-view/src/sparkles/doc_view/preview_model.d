@@ -3,9 +3,9 @@
 // (`buildPreviewModel`), plus the small theme-derived helpers the widget
 // views and painters share (`quoteBarColors`, `stripSgr`). All raylib-free;
 // rendering is the composable widget views' job (sparkles.source_view.markdown).
-module gui_preview;
+module sparkles.doc_view.preview_model;
 
-import ansi_model : AnsiLine;
+import sparkles.doc_view.ansi_model : AnsiLine;
 
 import sparkles.syntax : MdDecoration, MdDoc, MdBlock, MdBlockKind, HighlightEvent,
     ResolvedTheme, toRgb, RgbColor, GrammarRegistry, TsConfigCache,
@@ -290,7 +290,7 @@ unittest
     import sparkles.syntax : GrammarRegistry, TsConfigCache, LabelSet;
     import std.algorithm.searching : any, canFind;
 
-    import gui_ansi : decodeAnsi;
+    import sparkles.doc_view.ansi_decode : decodeAnsi;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");

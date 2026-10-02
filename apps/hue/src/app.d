@@ -43,18 +43,18 @@ import sparkles.base.logger : trace, traceSpan, warning;
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_caps : isTerminal, StdStream;
 
-import ansi_model : BackgroundMode, backgroundOptions;
-import document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
-import viewer_model : GutterSelection;
-import diff_commutative : CommutativeKind;
-import diff_session : AnchoredThread, SessionHeader, ThreadComment;
+import sparkles.doc_view.ansi_model : BackgroundMode, backgroundOptions;
+import sparkles.doc_view.document : ContentKind, Document, DocumentPipeline, hueFenceRenderer;
+import sparkles.doc_view.viewer_model : GutterSelection;
+import sparkles.doc_view.diff_commutative : CommutativeKind;
+import sparkles.doc_view.diff_session : AnchoredThread, SessionHeader, ThreadComment;
 import forge : CommentThread, PullRequest, ThreadSide;
-import diff_structural : StructuralPolicy;
-import diff_view : DiffLayout, DiffViewOptions;
+import sparkles.doc_view.diff_structural : StructuralPolicy;
+import sparkles.doc_view.diff_view : DiffLayout, DiffViewOptions;
 import sparkles.diff : WhitespaceMode;
 import sparkles.docs.source_set : SourceEntry, SourceSet;
-import table_select : TableCopyFormat;
-import dsv_view : resolveTableCopy;
+import sparkles.doc_view.table_select : TableCopyFormat;
+import sparkles.doc_view.dsv_view : resolveTableCopy;
 
 import sparkles.ui_app.gui_options : defaultGuiFont, defaultGuiFontFamily,
     defaultTheme, GuiOptions;
@@ -174,6 +174,7 @@ int executeView(in HueCli root, in View view)
     auto pipeline = DocumentPipeline(&registry, &cache, view.markdown, view.raw,
         view.patch, eff.diff.ignoreWhitespace, eff.diff.structural,
         parseCommutative(view.diffOptions.diffCommutative));
+    pipeline.fetchUrl = (string url) => fetchUrlText(url);
     pipeline.diffContext = eff.diff.context;
     pipeline.minPairSimilarity = eff.diff.minPairSimilarity;
     pipeline.maxEditDistance = eff.diff.maxEditDistance;
@@ -262,7 +263,7 @@ int executeView(in HueCli root, in View view)
             if (target == "-" || (target.length == 0 && !isTerminal(StdStream.stdin)))
             {
                 const stdinText = readStdinText();
-                import document : looksLikePatch;
+                import sparkles.doc_view.document : looksLikePatch;
 
                 if (stdinText.length && (view.patch || looksLikePatch(stdinText)))
                     doc = pipeline.fromPatchSource("", "stdin", stdinText);
@@ -319,6 +320,7 @@ int executeDiff(in HueCli root, in Diff diff)
     auto pipeline = DocumentPipeline(&registry, &cache, false, false,
         false, eff.diff.ignoreWhitespace, eff.diff.structural,
         parseCommutative(diff.diff.diffCommutative));
+    pipeline.fetchUrl = (string url) => fetchUrlText(url);
     pipeline.diffContext = eff.diff.context;
     pipeline.minPairSimilarity = eff.diff.minPairSimilarity;
     pipeline.maxEditDistance = eff.diff.maxEditDistance;
@@ -384,6 +386,7 @@ int executePr(in HueCli root, in Pr pr)
     auto pipeline = DocumentPipeline(&registry, &cache, false, false,
         false, eff.diff.ignoreWhitespace, eff.diff.structural,
         parseCommutative(pr.diff.diffCommutative));
+    pipeline.fetchUrl = (string url) => fetchUrlText(url);
     pipeline.diffContext = eff.diff.context;
     pipeline.minPairSimilarity = eff.diff.minPairSimilarity;
     pipeline.maxEditDistance = eff.diff.maxEditDistance;
@@ -1183,6 +1186,18 @@ private string shortDate(string iso) @safe pure nothrow
 private bool isMarkdownPath(string path) @safe
     => canonicalLanguage(path.extension.chompPrefix(".")) == "markdown";
 
+/// A URL's text over the forge client, for the document pipeline: the viewer
+/// library makes no requests of its own (`UIA14`).
+private string fetchUrlText(string url) @system
+{
+    import forge_client : fetchUrl;
+
+    auto res = fetchUrl(url);
+    if (res.hasError)
+        throw new Exception(res.error.toString);
+    return res.value;
+}
+
 private GrammarRegistry defaultRegistry() @safe
 {
     version (Android)
@@ -1342,7 +1357,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             // The cost is that a plain `hue file.d` now expands tabs and pads
             // rows to the grid width, as markdown and diff always have.
             {
-                import document : coverageTintedRanges;
+                import sparkles.doc_view.document : coverageTintedRanges;
                 import sparkles.source_view.code : CodeViewOptions,
                     viewCodeDocumentInto;
                 import sparkles.ui.widget : Builder;
@@ -1397,7 +1412,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             }
             break;
         case diff:
-            import diff_view : viewDiffDoc;
+            import sparkles.doc_view.diff_view : viewDiffDoc;
             import sparkles.ui.display_list : buildDisplayList;
             import sparkles.ui.geometry : Constraints;
             import sparkles.ui.interp.cells : BgEmit, CellGrid;
@@ -1405,7 +1420,7 @@ private int runAnsiSink(in ViewRenderOptions opt, ref Document doc,
             import sparkles.ui.layout : layout;
             import sparkles.ui.style : defaultTwoslashPalette;
 
-            import diff_view : DiffViewOptions;
+            import sparkles.doc_view.diff_view : DiffViewOptions;
             import sparkles.source_view.markdown : highlightedFenceRenderer;
 
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
@@ -1451,7 +1466,7 @@ private auto staticGutter(B)(ref B b, uint docRoot, in Document doc,
     in GutterSelection sel) @system
 {
     import sparkles.ui.widget : Builder, WidgetTree;
-    import document : coverageChannel;
+    import sparkles.doc_view.document : coverageChannel;
     import sparkles.source_view.search : buildLineStarts, lineCount;
     import sparkles.code_instrumentation : maxCountWidth;
     import sparkles.ui.components.gutter : GutterChannel, gutterWidth,
@@ -1459,7 +1474,7 @@ private auto staticGutter(B)(ref B b, uint docRoot, in Document doc,
     import sparkles.ui.geometry : Constraints;
     import sparkles.ui.layout : layout;
     import sparkles.ui.state : documentRows;
-    import viewer_model : digitCount, lineNumberCells, lineNumberChannelId,
+    import sparkles.doc_view.viewer_model : digitCount, lineNumberCells, lineNumberChannelId,
         srcLineOf;
 
     // Line numbers are opt-in here and on by default in a pane, which is the
@@ -1528,7 +1543,7 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             // page rather than a `<pre>` fragment, which is what `--diff`
             // already did. The gallery keeps its own fragment writer.
             {
-                import document : coverageTintedRanges;
+                import sparkles.doc_view.document : coverageTintedRanges;
                 import sparkles.source_view.code : CodeViewOptions,
                     viewCodeDocumentInto;
                 import sparkles.ui.widget : Builder;
@@ -1592,11 +1607,11 @@ private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
             return 0;
         }
         case diff:
-            import diff_view : viewDiffDoc;
+            import sparkles.doc_view.diff_view : viewDiffDoc;
             import sparkles.ui.interp.html : writeWidgetHtmlPage;
             import sparkles.ui.style : defaultTwoslashPalette;
 
-            import diff_view : DiffViewOptions;
+            import sparkles.doc_view.diff_view : DiffViewOptions;
             import sparkles.source_view.markdown : highlightedFenceRenderer;
 
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);

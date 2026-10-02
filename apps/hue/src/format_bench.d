@@ -30,9 +30,9 @@ import sparkles.test_runner.bench : benchIter, blackBox;
 import sparkles.test_runner.skip : skipTest;
 
 import format_dmd : formatDSource;
-import gui_preview : PreviewModel;
+import sparkles.doc_view.preview_model : PreviewModel;
 import sparkles.twoslash.protocol : TwoslashReturn;
-import viewer_model : ViewerModel;
+import sparkles.doc_view.viewer_model : ViewerModel;
 
 // ~2 kLOC of ordinary D: a 20-line unit repeated 100 times with unique names,
 // wide enough that the ruler's travel actually re-wraps lines.

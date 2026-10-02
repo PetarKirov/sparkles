@@ -35,7 +35,8 @@ import sparkles.syntax : HighlightEvent;
 import sparkles.syntax.ts.highlighter : ParsedLayer;
 version (unittest) import sparkles.ui.themes : builtinDark;
 
-import viewer_model : ViewerModel;
+import sparkles.doc_view.viewer_model : ViewerModel;
+import sparkles.doc_view.document_session : DocumentSession;
 
 import sparkles.base.term_control : PointerShape;
 import sparkles.input.events : PointerAction;
@@ -981,7 +982,7 @@ Backends interact only through the free functions below (`formatPreview*`) —
 their command arms are one-liners, and anything decision-shaped that tries to
 grow in an adapter belongs here instead.
 */
-final class FormatPreviewSession
+final class FormatPreviewSession : DocumentSession
 {
     FormatterRegistry registry;
     FormatService service;
@@ -1291,10 +1292,14 @@ final class FormatPreviewSession
 
 // ── the shared backend surface: every arm is one of these calls ─────────────
 
+/// The model's attached session as the format preview's own, or null.
+inout(FormatPreviewSession) formatSession(ref inout ViewerModel vm) @safe pure nothrow @nogc
+    => cast(inout(FormatPreviewSession)) vm.fmt;
+
 /// `true` while the preview shows (drives `CtxFlag.formatPreviewActive` and
 /// the ruler paint in both backends).
 bool formatPreviewActive(ref const ViewerModel vm) @safe pure nothrow @nogc
-    => vm.fmt !is null && vm.fmt.active;
+    => vm.fmt !is null && formatSession(vm).active;
 
 /// Toggle (`FMV1`). Returns the user-facing notice ("format preview off",
 /// "no formatter for 'x'"), or null when entering succeeded quietly.
@@ -1302,51 +1307,51 @@ string formatPreviewToggle(ref ViewerModel vm) @system
 {
     if (vm.fmt is null)
         vm.fmt = new FormatPreviewSession();
-    if (vm.fmt.active)
+    if (formatSession(vm).active)
     {
-        vm.fmt.exit_(vm);
+        formatSession(vm).exit_(vm);
         return "format preview off";
     }
-    return vm.fmt.enter(vm);
+    return formatSession(vm).enter(vm);
 }
 
 /// Per-frame/tick drain (`FPR9`); `true` when the visible buffer changed
 /// (the caller repaints).
 bool formatPreviewPump(ref ViewerModel vm) @system
-    => vm.fmt !is null && vm.fmt.pump(vm);
+    => vm.fmt !is null && formatSession(vm).pump(vm);
 
 /// `<`/`>`: nudge the ruler through the same clamp as the drag (`RUL5`).
 void formatPreviewNudge(ref ViewerModel vm, int delta) @system
 {
     if (formatPreviewActive(vm))
-        vm.fmt.requestWidth(vm, cast(long) vm.fmt.rulerCol + delta);
+        formatSession(vm).requestWidth(vm, cast(long) formatSession(vm).rulerCol + delta);
 }
 
 /// Cycle the formatter (`FPR6`); the notice, or null.
 string formatPreviewCycle(ref ViewerModel vm) @system
-    => vm.fmt is null ? null : vm.fmt.cycle(vm);
+    => vm.fmt is null ? null : formatSession(vm).cycle(vm);
 
 /// The status chip, or null when the preview is off (`FMV7`).
 string formatPreviewChip(ref const ViewerModel vm) @safe
-    => vm.fmt is null ? null : vm.fmt.chip();
+    => vm.fmt is null ? null : formatSession(vm).chip();
 
 /// The ruler's document column, or −1 when the preview is off (`RUL1`: the
 /// paint anchor — each backend converts to its device coordinates).
 int formatPreviewRulerCol(ref const ViewerModel vm) @safe pure nothrow @nogc
-    => formatPreviewActive(vm) ? vm.fmt.rulerCol : -1;
+    => formatPreviewActive(vm) ? formatSession(vm).rulerCol : -1;
 
 /// `RUL2`: hover test at a fractional document column.
 bool formatPreviewRulerHits(ref const ViewerModel vm, double docCol) @safe pure nothrow @nogc
-    => vm.fmt !is null && vm.fmt.rulerHits(docCol);
+    => vm.fmt !is null && formatSession(vm).rulerHits(docCol);
 
 /// `RUL2`: `true` while the ruler drag owns the pointer.
 bool formatPreviewRulerDragging(ref const ViewerModel vm) @safe pure nothrow @nogc
-    => vm.fmt !is null && vm.fmt.rulerDrag;
+    => vm.fmt !is null && formatSession(vm).rulerDrag;
 
 /// The one pointer entry (`RUL2`); `true` when the ruler consumed the event.
 bool formatPreviewRulerPointer(ref ViewerModel vm, PointerAction action,
     double docCol) @system
-    => vm.fmt !is null && vm.fmt.rulerPointer(vm, action, docCol);
+    => vm.fmt !is null && formatSession(vm).rulerPointer(vm, action, docCol);
 
 /// `FMV8`: start `view` already in the preview (the CLI flags). Applies the
 /// width/formatter overrides, then enters; the returned notice reports a
@@ -1356,9 +1361,9 @@ string formatPreviewStart(ref ViewerModel vm, int widthCols,
 {
     if (vm.fmt is null)
         vm.fmt = new FormatPreviewSession();
-    vm.fmt.preferredFormatter = formatterName;
-    vm.fmt.forcedCol = widthCols > 0 ? clampRulerCol(widthCols) : 0;
-    return vm.fmt.active ? null : formatPreviewToggle(vm);
+    formatSession(vm).preferredFormatter = formatterName;
+    formatSession(vm).forcedCol = widthCols > 0 ? clampRulerCol(widthCols) : 0;
+    return formatSession(vm).active ? null : formatPreviewToggle(vm);
 }
 
 /// `FPR8`'s user-facing text for a provider failure.
@@ -1387,8 +1392,8 @@ string describeFormatError(in FormatError e) @safe
 /// synchronous format + re-highlight through the standard pipeline. No
 /// session, no worker, no ruler. Returns the error text, or null with `doc`
 /// replaced.
-string formatDocumentForSink(ref imported!"document".DocumentPipeline pipe,
-    ref imported!"document".Document doc, int widthCols,
+string formatDocumentForSink(ref imported!"sparkles.doc_view.document".DocumentPipeline pipe,
+    ref imported!"sparkles.doc_view.document".Document doc, int widthCols,
     string formatterName) @system
 {
     import std.algorithm.iteration : map;
@@ -1396,7 +1401,7 @@ string formatDocumentForSink(ref imported!"document".DocumentPipeline pipe,
     import std.array : join;
     import std.conv : text;
 
-    import document : ContentKind;
+    import sparkles.doc_view.document : ContentKind;
 
     if (doc.kind != ContentKind.code)
         return "format preview: only for plain code views";
@@ -1439,7 +1444,7 @@ version (HueDmdFmt)
 
     import sparkles.syntax : LabelSet;
 
-    import gui_preview : PreviewModel;
+    import sparkles.doc_view.preview_model : PreviewModel;
     import sparkles.twoslash.protocol : TwoslashReturn;
 
     ViewerModel vm;
@@ -1481,7 +1486,7 @@ version (HueDmdFmt)
     assert(formatPreviewToggle(vm) is null);
     assert(vm.source == "int answer = 42;\nint more = 1;\n");
     formatPreviewToggle(vm);
-    vm.fmt.service.shutdown();
+    formatSession(vm).service.shutdown();
 }
 
 @("format_preview.toggle.refusesWithoutFormatter")
@@ -1489,7 +1494,7 @@ version (HueDmdFmt)
 {
     import sparkles.syntax : LabelSet;
 
-    import gui_preview : PreviewModel;
+    import sparkles.doc_view.preview_model : PreviewModel;
     import sparkles.twoslash.protocol : TwoslashReturn;
 
     ViewerModel vm;
@@ -1562,7 +1567,7 @@ version (HueDmdFmt)
 
     import sparkles.syntax : LabelSet;
 
-    import gui_preview : PreviewModel;
+    import sparkles.doc_view.preview_model : PreviewModel;
     import sparkles.twoslash.protocol : TwoslashReturn;
 
     ViewerModel vm;
@@ -1577,7 +1582,7 @@ version (HueDmdFmt)
         TwoslashReturn.init, "d");
 
     assert(formatPreviewToggle(vm) is null);
-    const startCol = vm.fmt.rulerCol;
+    const startCol = formatSession(vm).rulerCol;
 
     // A press away from the ruler is not the ruler's (the selection arm may
     // have it); a press on it captures.
@@ -1587,7 +1592,7 @@ version (HueDmdFmt)
 
     // Drag far left: the width request passes the shared clamp (RUL5).
     assert(formatPreviewRulerPointer(vm, PointerAction.drag, 1.0));
-    assert(vm.fmt.rulerCol == minRulerCol);
+    assert(formatSession(vm).rulerCol == minRulerCol);
 
     // Release ends the drag and pins the final width.
     assert(formatPreviewRulerPointer(vm, PointerAction.release, 1.0));
@@ -1596,13 +1601,13 @@ version (HueDmdFmt)
     // The final format lands via pump.
     foreach (_; 0 .. 2500)
     {
-        if (formatPreviewPump(vm) && vm.fmt.flow.shownCol == minRulerCol)
+        if (formatPreviewPump(vm) && formatSession(vm).flow.shownCol == minRulerCol)
             break;
         Thread.sleep(2.msecs);
     }
     assert(vm.source == "int a;\n");
     formatPreviewToggle(vm);
-    vm.fmt.service.shutdown();
+    formatSession(vm).service.shutdown();
 }
 
 version (HueDmdFmt)
@@ -1614,7 +1619,7 @@ version (HueDmdFmt)
 
     import sparkles.syntax : LabelSet;
 
-    import gui_preview : PreviewModel;
+    import sparkles.doc_view.preview_model : PreviewModel;
     import sparkles.twoslash.protocol : TwoslashReturn;
 
     ViewerModel vm;
@@ -1634,10 +1639,10 @@ version (HueDmdFmt)
     assert(!formatPreviewActive(vm));
 
     // A named hit with a pinned width enters at that width (clamped).
-    vm.fmt.preferredFormatter = null;
+    formatSession(vm).preferredFormatter = null;
     assert(formatPreviewStart(vm, 72, "dmd-fmt") is null);
     assert(formatPreviewActive(vm));
-    assert(vm.fmt.rulerCol == 72);
+    assert(formatSession(vm).rulerCol == 72);
 
     // Switching documents drops the preview: the restore pair belongs to
     // the old buffer, and exit across documents must be impossible.
@@ -1647,7 +1652,7 @@ version (HueDmdFmt)
         TwoslashReturn.init, "d");
     assert(!formatPreviewActive(vm));
     assert(vm.source is src2);
-    vm.fmt.service.shutdown();
+    formatSession(vm).service.shutdown();
 }
 
 version (HueDmdFmt) version (Posix)
@@ -1662,7 +1667,7 @@ version (HueDmdFmt) version (Posix)
     import format_dmd : startFormatForkServer;
     import sparkles.syntax : LabelSet;
 
-    import gui_preview : PreviewModel;
+    import sparkles.doc_view.preview_model : PreviewModel;
     import sparkles.twoslash.protocol : TwoslashReturn;
 
     // The zygote needs the fork-safety window: run with
@@ -1690,20 +1695,20 @@ version (HueDmdFmt) version (Posix)
     }
     assert(vm.source == "int a;\nint b = 1;\n");
     // The proof the fork backend served it: the thread worker never started.
-    assert(vm.fmt.service.worker is null,
+    assert(formatSession(vm).service.worker is null,
         "the worker thread ran — the fork backend was bypassed");
 
     // A width change rides the fork path too, and lands via the cache/pump.
-    vm.fmt.requestWidth(vm, 60);
+    formatSession(vm).requestWidth(vm, 60);
     foreach (_; 0 .. 2500)
     {
         formatPreviewPump(vm);
-        if (vm.fmt.flow.shownCol == 60)
+        if (formatSession(vm).flow.shownCol == 60)
             break;
         Thread.sleep(2.msecs);
     }
-    assert(vm.fmt.flow.shownCol == 60);
-    assert(vm.fmt.service.worker is null);
+    assert(formatSession(vm).flow.shownCol == 60);
+    assert(formatSession(vm).service.worker is null);
 
     formatPreviewToggle(vm);
     assert(vm.source is src);

@@ -25,7 +25,7 @@
 // This is the one format that can do it. Every other artifact this library
 // ingests records numbers alone, and for those the old whole-file refusal is
 // still the only honest answer.
-module coverage_rebase;
+module sparkles.doc_view.coverage_rebase;
 
 import sparkles.code_instrumentation : FileCoverage, LineCoverage, LineState;
 import sparkles.diff.myers : diffLines, LineSpans, splitDiffLines;

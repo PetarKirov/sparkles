@@ -13,7 +13,7 @@
 // Entries are parallel to `DiffDoc.files` by index, which is also how
 // `Document.diffSides` is indexed — so the session, the model and the side
 // texts all agree on "file number 3" with no lookup.
-module diff_session;
+module sparkles.doc_view.diff_session;
 
 import std.conv : text;
 
@@ -251,6 +251,19 @@ char statusGlyph(FileChange c) @safe pure nothrow @nogc
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────
+
+/// The patch for a selection of `doc`'s rows (`DST1`), or empty when nothing
+/// was selected — what staging applies and what the viewer hands its host.
+string selectionPatch(in DiffDoc doc, scope const(bool)[] selected) @safe
+{
+    import sparkles.base.buffer : SharedBuffer;
+    import sparkles.diff : emitSelectionPatch;
+
+    SharedBuffer!char buf;
+    foreach (fi; 0 .. doc.files.length)
+        emitSelectionPatch(doc, doc.files[fi], selected, buf);
+    return buf[].idup;
+}
 
 @("diff_session.classify.pathSpellings")
 @safe pure nothrow @nogc

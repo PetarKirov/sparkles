@@ -15,8 +15,9 @@ module staging;
 
 import expected : err, Expected;
 
-import sparkles.base.buffer : SharedBuffer;
-import sparkles.diff : DiffDoc, emitSelectionPatch, FileEntry;
+// The patch a selection stands for is the viewer's (`sparkles:doc-view`);
+// applying it to a repository is hue's.
+public import sparkles.doc_view.diff_session : selectionPatch;
 
 /// What a staging operation can report. Text for the human; the operation is
 /// either done or it is not.
@@ -40,15 +41,6 @@ enum StageAction : ubyte
     /// `DST4`: undo it in the WORKING TREE. Destructive — the caller is
     /// responsible for having asked first.
     discard,
-}
-
-/// The patch for a selection, or empty when nothing was selected.
-string selectionPatch(in DiffDoc doc, scope const(bool)[] selected) @safe
-{
-    SharedBuffer!char buf;
-    foreach (fi; 0 .. doc.files.length)
-        emitSelectionPatch(doc, doc.files[fi], selected, buf);
-    return buf[].idup;
 }
 
 /**

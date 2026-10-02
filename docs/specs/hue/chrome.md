@@ -134,11 +134,11 @@ The `changes` component. Registered as [`CLI17`](./feature-requirements.md).
 
 ## Module coverage
 
-| Source (proposed)                     | Key symbols                                                | Requirements          |
-| ------------------------------------- | ---------------------------------------------------------- | --------------------- |
-| `libs/ui/src/.../components/chrome.d` | `GutterColumn`, `gutter`, `header`, `grid`, `rule`, `snip` | `CHW1`–`CHW6`         |
-| `apps/hue/src/style.d`                | `StyleComponent`, `StyleComponents`, `DecorationPolicy`    | `STY1`–`STY5`, `STY7` |
-| `apps/hue/src/git_changes.d`          | `LineChange`, `changeMap`, the TTL refresh                 | `CHG1`–`CHG3`, `CHG5` |
-| `apps/hue/src/viewer_model.d`         | `RenderOptions` carrying the resolved set                  | `STY7`, `CHW2`        |
+| Source (proposed)                                    | Key symbols                                                | Requirements          |
+| ---------------------------------------------------- | ---------------------------------------------------------- | --------------------- |
+| `libs/ui/src/.../components/chrome.d`                | `GutterColumn`, `gutter`, `header`, `grid`, `rule`, `snip` | `CHW1`–`CHW6`         |
+| `apps/hue/src/style.d`                               | `StyleComponent`, `StyleComponents`, `DecorationPolicy`    | `STY1`–`STY5`, `STY7` |
+| `apps/hue/src/git_changes.d`                         | `LineChange`, `changeMap`, the TTL refresh                 | `CHG1`–`CHG3`, `CHG5` |
+| `libs/doc-view/src/sparkles/doc_view/viewer_model.d` | `RenderOptions` carrying the resolved set                  | `STY7`, `CHW2`        |
 
 → [Feature requirements](./feature-requirements.md) · [Pager & streaming](./pager.md) · [Overview](./index.md)

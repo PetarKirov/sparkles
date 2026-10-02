@@ -9,7 +9,7 @@
 // payload IS a twoslash document; a `.md` file IS markdown), with the CLI
 // flags reduced to detection inputs. Backends then differ only in how they
 // paint the same value — the backend is a sink choice, not a pipeline.
-module document;
+module sparkles.doc_view.document;
 
 import std.algorithm.searching : endsWith, startsWith;
 import std.conv : text;
@@ -19,9 +19,9 @@ import std.string : chompPrefix;
 
 import sparkles.base.logger : info, warning;
 import sparkles.base.buffer : SharedBuffer;
-import diff_session : buildDiffSession, DiffSession;
-import diff_commutative : CommutativeKind, defaultCommutativeKinds;
-import diff_structural : StructuralPolicy;
+import sparkles.doc_view.diff_session : buildDiffSession, DiffSession;
+import sparkles.doc_view.diff_commutative : CommutativeKind, defaultCommutativeKinds;
+import sparkles.doc_view.diff_structural : StructuralPolicy;
 import sparkles.code_instrumentation : CoverageFormat, CoverageGutterItem,
     CoveragePlan, CoverageReport, detectFormat, dmdListingText, FileCoverage,
     formatFromExtension, LineState, loadCoverage, maxCountWidth, planCoverage;
@@ -37,12 +37,12 @@ import sparkles.ui.state : DocRow;
 import sparkles.ui.style : Slot;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
-import coverage_discovery : findCoverageArtifact;
-import coverage_rebase : rebasedCoverage;
-import dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, DsvModel,
+import sparkles.doc_view.coverage_discovery : findCoverageArtifact;
+import sparkles.doc_view.coverage_rebase : rebasedCoverage;
+import sparkles.doc_view.dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo, DsvModel,
     DsvProjection,
     dsvStatusNote, DsvWindow;
-import gui_preview : PreviewModel;
+import sparkles.doc_view.preview_model : PreviewModel;
 
 /// What a document *is* — detected from the content, not selected by a mode
 /// switch. Kinds compose the way tree-sitter injections do (markdown embeds
@@ -397,6 +397,15 @@ struct DocumentPipeline
     /// On by default, like live types — the reader should not have to ask for
     /// data the repository already has.
     bool autoCoverage = true;
+    /**
+    Fetches an `http(s)` URL's text for $(LREF load). The library makes no
+    network requests of its own: a host that opens URLs supplies this (hue,
+    over its forge client); without it a URL is refused like a missing file.
+    */
+    string delegate(string url) @system fetchUrl;
+    /// Reads a document from
+    /// somewhere other than the filesystem — APK assets; null: the filesystem.
+    string delegate(string path) @system readFile;
 
 @system:
 
@@ -512,9 +521,9 @@ struct DocumentPipeline
             case markdown:
             case code:
                 const ext = path.extension.chompPrefix(".");
-                const contents = readSourceText(path);
                 const lang = language.length ? canonicalLanguage(language)
                     : canonicalLanguageOfPath(path);
+                const contents = readSourceText(path);
                 // Opening a coverage artifact shows the source it describes,
                 // with its own gutter. That means reading a path out of the
                 // file's *contents*, so it is fenced twice: only an extension
@@ -560,17 +569,16 @@ struct DocumentPipeline
         }
     }
 
-    private static string readSourceText(string path) @system
+    private string readSourceText(string path) @system
     {
         if (path.startsWith("http://") || path.startsWith("https://"))
         {
-            import forge_client : fetchUrl;
-
-            auto res = fetchUrl(path);
-            if (res.hasError)
-                throw new Exception(res.error.toString);
-            return res.value;
+            if (fetchUrl is null)
+                throw new Exception(text(path, ": this viewer does not fetch URLs"));
+            return fetchUrl(path);
         }
+        if (readFile !is null)
+            return readFile(path);
         return readValidatedUtf8(path);
     }
 
@@ -650,7 +658,7 @@ struct DocumentPipeline
             dsvText: dsvText, dsvInfo: adapted.info, dsvModel: model,
             dsvNote: dsvStatusNote(adapted.info),
         };
-        import gui_preview : previewOf;
+        import sparkles.doc_view.preview_model : previewOf;
 
         doc.preview = previewOf(*cache, adapted.doc);
         doc.preview.tableExtras = adapted.extras;
@@ -861,9 +869,9 @@ struct DocumentPipeline
     */
     private void classifyStructural(ref Document doc) @system
     {
-        import diff_structural : analyze, HunkSpan, parses, StructuralPolicy,
+        import sparkles.doc_view.diff_structural : analyze, HunkSpan, parses, StructuralPolicy,
             StructuralVerdict, waivesCeiling;
-        import diff_token_view : applyTokenEmphasis;
+        import sparkles.doc_view.diff_token_view : applyTokenEmphasis;
 
         // Half a megabyte a side: past this the parse stops being free, and a
         // file that large is not what a formatter-noise verdict is for.
@@ -1110,8 +1118,8 @@ struct DocumentPipeline
     */
     Document loadDiffPreview(string oldPath, string newPath)
     {
-        import gui_preview : previewOf;
-        import md_diff : diffMarkdown;
+        import sparkles.doc_view.preview_model : previewOf;
+        import sparkles.doc_view.md_diff : diffMarkdown;
         import sparkles.syntax.md.model : extractMarkdown;
 
         auto merged = diffMarkdown(extractMarkdown(*registry, readText(oldPath)),
@@ -1143,8 +1151,8 @@ struct DocumentPipeline
     */
     Document loadGitDiffPreview(string revspec, bool staged, string[] paths)
     {
-        import gui_preview : previewOf;
-        import md_diff : diffMarkdown;
+        import sparkles.doc_view.preview_model : previewOf;
+        import sparkles.doc_view.md_diff : diffMarkdown;
         import sparkles.syntax.md.model : extractMarkdown;
 
         auto git = loadGitDiff(revspec, staged, paths);
@@ -1267,11 +1275,11 @@ struct DocumentPipeline
     /// stripped plain text (see gui_preview).
     PreviewModel buildMdPreview(scope const(char)[] source)
     {
-        import gui_preview : buildPreviewModel;
+        import sparkles.doc_view.preview_model : buildPreviewModel;
 
-        version (HueGui)
+        version (Have_sparkles_ghostty)
         {
-            import gui_ansi : decodeAnsi;
+            import sparkles.doc_view.ansi_decode : decodeAnsi;
 
             return buildPreviewModel(*registry, *cache, source, &decodeAnsi);
         }
@@ -1445,8 +1453,8 @@ goes through the shared injection-aware highlighter.
 auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
     RgbColor pageFg) @system
 {
-    import ansi_model : anchorAnsiLines;
-    import gui_preview : stripSgr;
+    import sparkles.doc_view.ansi_model : anchorAnsiLines;
+    import sparkles.doc_view.preview_model : stripSgr;
     import sparkles.source_view.markdown : highlightedFenceRenderer;
     import sparkles.ui.widget : TextSpan;
 

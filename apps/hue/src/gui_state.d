@@ -24,7 +24,7 @@ import sparkles.ui.state : CaptureState, KeyTarget, Timeline;
 import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
 import lantern : LanternState;
-import table_select : TableCopyFormat;
+import sparkles.doc_view.table_select : TableCopyFormat;
 
 /// Which selection regime a drag runs (`SEL`/`TBL`).
 enum Regime

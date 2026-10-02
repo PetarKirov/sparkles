@@ -12,7 +12,7 @@
 /// spans at the raw bytes would display quoted cells with their quotes. The
 /// original bytes stay on the `Document` untouched — the raw-fidelity copy
 /// contract (`DSC2`–`DSC5`) is post-CHK and will reconcile the two buffers.
-module dsv_view;
+module sparkles.doc_view.dsv_view;
 
 import std.array : appender;
 import std.conv : text;
@@ -20,7 +20,7 @@ import std.conv : text;
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.width : CellAlign = Align;
 import sparkles.source_view.markdown : MdTableExtras;
-import table_select : serializeTable, TableCopyFormat, TableRegion;
+import sparkles.doc_view.table_select : serializeTable, TableCopyFormat, TableRegion;
 
 version (unittest) import sparkles.source_view.markdown : TableScroll;
 import sparkles.dsv : applyProjection, classifyValue, ColumnType, decodeCell,
@@ -1101,11 +1101,11 @@ string serializeGridCopy(const DsvCopy copy, in TableRegion reg, size_t rows,
 // (`viewMarkdown` → `layout` → `CellGrid`) and compared as a plain glyph grid
 // — the `md/goldens.d` idiom. This is the layout oracle for every cell sink
 // (the GUI/TUI/ANSI arms paint this same tree); color stays out on purpose.
-// Fixtures: `apps/hue/test/fixtures/dsv/<name>.csv` + `<name>.txt`.
+// Fixtures: `libs/doc-view/test/fixtures/dsv/<name>.csv` + `<name>.txt`.
 // Regenerate after an intended change:
 //
-//   SPARKLES_UPDATE_GOLDENS=1 dub test :hue -- -i dsv_view.golden
-//   git diff apps/hue/test/fixtures/dsv
+//   SPARKLES_UPDATE_GOLDENS=1 dub test :doc-view -- -i dsv_view.golden
+//   git diff libs/doc-view/test/fixtures/dsv
 
 version (unittest)
 {
@@ -1116,7 +1116,7 @@ version (unittest)
         import std.path : buildNormalizedPath, dirName;
 
         return __FILE_FULL_PATH__.dirName
-            .buildNormalizedPath("../test/fixtures/dsv");
+            .buildNormalizedPath("../../../test/fixtures/dsv");
     }
 
     private string dsvGridText(in DsvAdapted a, int maxLines = 0,
@@ -1191,7 +1191,7 @@ version (unittest)
         }
         assert(rendered == readText(golden), name ~ ": rendered grid differs "
             ~ "from " ~ name ~ ".txt — if intended, regenerate with "
-            ~ "SPARKLES_UPDATE_GOLDENS=1 dub test :hue -- -i dsv_view.golden "
+            ~ "SPARKLES_UPDATE_GOLDENS=1 dub test :doc-view -- -i dsv_view.golden "
             ~ "and review the diff");
     }
 }

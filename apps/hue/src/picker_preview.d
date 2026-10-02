@@ -34,7 +34,7 @@ import sparkles.ui.geometry : Rect;
 import sparkles.ui.state : CaptureState;
 import sparkles.ui_tui : Grid;
 
-import document : Document;
+import sparkles.doc_view.document : Document;
 import live_types : applyTip, LiveTypesSession;
 import picker_view : pickerOriginRow;
 import tui : PreviewTui;

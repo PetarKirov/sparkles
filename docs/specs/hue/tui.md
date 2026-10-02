@@ -182,11 +182,11 @@ lands somewhere useful.
 
 ## Module coverage (TUI)
 
-| Source                                                      | Requirements                                          |
-| ----------------------------------------------------------- | ----------------------------------------------------- |
-| `apps/hue/src/previewer.d` (extended to a full viewer)      | `TSF*`, `TSB*`, `TSL*`, `MDP-T*`, `TCP*`, `PRV*`      |
-| `apps/hue/src/gui_preview.d` / `gui_text.d` (reused as-is)  | `TSF3` (shared layout); `RND`/`WRP`/`NUM`/`SEL` model |
-| `sparkles:core-cli` `key_input.d` (expanded), `term_caps.d` | `TIN*`, `TCP1`                                        |
-| OSC 52 writer (proposed)                                    | `TCL*`                                                |
+| Source                                                                              | Requirements                                          |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `apps/hue/src/previewer.d` (extended to a full viewer)                              | `TSF*`, `TSB*`, `TSL*`, `MDP-T*`, `TCP*`, `PRV*`      |
+| `libs/doc-view/src/sparkles/doc_view/preview_model.d` / `gui_text.d` (reused as-is) | `TSF3` (shared layout); `RND`/`WRP`/`NUM`/`SEL` model |
+| `sparkles:core-cli` `key_input.d` (expanded), `term_caps.d`                         | `TIN*`, `TCP1`                                        |
+| OSC 52 writer (proposed)                                                            | `TCL*`                                                |
 
 → [GUI requirements](./gui.md) · [General requirements](./feature-requirements.md) · [Notifier](./notifier.md) · [Overview](./index.md)

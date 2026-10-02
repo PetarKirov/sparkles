@@ -2,7 +2,7 @@
 // `TBL5`): resolve a smart drag (+ Shift/Alt) into a `TableRegion`, and serialize
 // a region to clipboard text. No raylib — pure over `GridHit`s (from the
 // `sparkles:core-cli` table map) and a cell-text accessor, so it is unit-testable.
-module table_select;
+module sparkles.doc_view.table_select;
 
 import sparkles.ui.components.table : GridHit;
 

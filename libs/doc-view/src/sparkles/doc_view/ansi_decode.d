@@ -12,7 +12,11 @@
 // output is neutral RgbColor + attribute bits that gui.d maps onto raylib-text's
 // TextStyle at draw time. Compiled by the `gui` and `unittest` configs, excluded
 // from the default `application` build (which is both raylib- and ghostty-free).
-module gui_ansi;
+module sparkles.doc_view.ansi_decode;
+
+// Only where the consumer links libghostty-vt (`sparkles:ghostty`): a build
+// without it keeps ` ```ansi ` fences as SGR-stripped text.
+version (Have_sparkles_ghostty):
 
 import sparkles.ghostty;
 import sparkles.base.term_color : RgbColor;
@@ -20,9 +24,9 @@ import sparkles.base.term_color : RgbColor;
 // The neutral presentation types (Attr / AnsiSpan / AnsiLine) live in the
 // ghostty-free `ansi_model` module so the preview model (`gui_preview`) can
 // use them without pulling libghostty-vt; this module keeps only `decodeAnsi`
-// (the off-screen VT). Re-exported so existing `import gui_ansi : Attr, …`
+// (the off-screen VT). Re-exported so existing `import sparkles.doc_view.ansi_decode : Attr, …`
 // sites keep working.
-public import ansi_model : Attr, AnsiSpan, AnsiLine;
+public import sparkles.doc_view.ansi_model : Attr, AnsiSpan, AnsiLine;
 
 /**
 Decode `block` (bytes containing SGR escapes) into styled lines by parsing it

@@ -14,7 +14,7 @@
 // admits overall when EVERY part does).
 module dsv_browser;
 
-import dsv_view : DsvInfo, DsvModel, DsvProjection, flagsOf;
+import sparkles.doc_view.dsv_view : DsvInfo, DsvModel, DsvProjection, flagsOf;
 import sparkles.dsv : ColumnType, Constraint, ConstraintOp, decodeCell,
     Dialect, DsvDoc, parseDsv, ProjectionSpec, SortKey;
 

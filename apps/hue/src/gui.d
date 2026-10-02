@@ -56,13 +56,13 @@ import sparkles.input.capability : InputCapabilities, mousePointer,
 import sparkles.source_view.search : Match;
 
 // Markdown-preview model (raylib-free) and the ANSI-fence decoder.
-import diff_session : DiffSession;
-import diff_view : TypeOverlay;
-import document : DiffEmphasis, DiffSides, Document;
-import gui_preview : PreviewModel, stripSgr;
+import sparkles.doc_view.diff_session : DiffSession;
+import sparkles.doc_view.diff_view : TypeOverlay;
+import sparkles.doc_view.document : DiffEmphasis, DiffSides, Document;
+import sparkles.doc_view.preview_model : PreviewModel, stripSgr;
 import sparkles.diff.model : DiffDoc;
-import gui_ansi : decodeAnsi;
-import viewer_model : Dims, MdCell, MdFence, ScrollAnchorMode, ViewerModel;
+import sparkles.doc_view.ansi_decode : decodeAnsi;
+import sparkles.doc_view.viewer_model : Dims, MdCell, MdFence, ScrollAnchorMode, ViewerModel;
 import format_preview : formatPreviewActive, formatPreviewChip,
     formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
     formatPreviewRulerCol, formatPreviewRulerDragging, formatPreviewRulerHits,
@@ -76,9 +76,9 @@ import sparkles.ui.components.tree_view : viewSlice;
 
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
 import sparkles.ui.components.table : GridHit;
-import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
+import sparkles.doc_view.table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
 import dsv_browser : DsvBrowser, PaletteRow, paletteRows, rowMaskFor;
-import dsv_view : adaptDsv, DsvCopy, DsvInfo, DsvModel, dsvStatusNote,
+import sparkles.doc_view.dsv_view : adaptDsv, DsvCopy, DsvInfo, DsvModel, dsvStatusNote,
     DsvWindow, modelFor,
     flagsOf, resolveTableCopy, serializeGridCopy;
 
@@ -902,7 +902,7 @@ int runGui(GuiArgs guiArgs) @system
     /// reset; the copy format and document identity survive.
     void applyDsvBrowser(uint firstRow = uint.max)
     {
-        import gui_preview : previewOf;
+        import sparkles.doc_view.preview_model : previewOf;
 
         auto st = dsvCopy;
         if (!st.info.present)

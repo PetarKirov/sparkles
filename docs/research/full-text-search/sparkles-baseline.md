@@ -160,7 +160,7 @@ nothrow` but not `@nogc`** — it appends a `size_t[]` — so it cannot be built
 **Absent:**
 
 - Any **bounded or streaming file reader**. Every read in hue is
-  `std.file.readText` (`apps/hue/src/document.d:496-528`), which slurps into GC
+  `std.file.readText` (`libs/doc-view/src/sparkles/doc_view/document.d:496-528`), which slurps into GC
   memory and throws `UTFException` on invalid UTF-8 — that throw is the de-facto
   binary guard.
 - Any **content-based binary detection**. The guards that exist are path- and

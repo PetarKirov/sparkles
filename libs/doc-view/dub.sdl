@@ -1,0 +1,59 @@
+name "doc-view"
+description "The GPU document viewer extracted from hue: load a file as a document (code, markdown, DSV, diff, twoslash) and view it — the model, and an embeddable raylib pane"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "expected" version="~>0.4.1"
+dependency "sparkles:base" path="../.."
+dependency "sparkles:syntax" path="../.."
+dependency "sparkles:tree-sitter" path="../.."
+dependency "sparkles:source-view" path="../.."
+dependency "sparkles:diff" path="../.."
+dependency "sparkles:dsv" path="../.."
+dependency "sparkles:twoslash" path="../.."
+dependency "sparkles:code-instrumentation" path="../.."
+dependency "sparkles:build-primitives" path="../.."
+dependency "sparkles:input" path="../.."
+dependency "sparkles:ui" path="../.."
+
+// Two halves, gated on what the consumer links rather than on a
+// configuration of this package (`Have_<package>` versions):
+//
+//   * the model — loading, the viewer model, its views, folding, search —
+//     needs only the packages above and builds everywhere hue's `no-gui`
+//     configuration does;
+//   * `ansi_decode` (an off-screen libghostty-vt) compiles where the consumer
+//     depends on `sparkles:ghostty`, and the pane (`sparkles.doc_view.pane`)
+//     where it depends on `sparkles:ui-raylib`.
+//
+// sourceLibrary because sparkles:syntax is one (ImportC types in its
+// signatures) — see docs/guidelines/importc-c-libraries.md.
+configuration "library" {
+    targetType "sourceLibrary"
+}
+
+configuration "unittest" {
+    dependency "sparkles:ghostty" path="../.."
+    dependency "sparkles:ui-raylib" path="../.."
+    subConfiguration "sparkles:ui" "gpu-effects"
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:test-utils" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses. Neither `debug` (which compiles those blocks in) nor
+// `release` (which deletes assert *expressions*, side effects included).
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}

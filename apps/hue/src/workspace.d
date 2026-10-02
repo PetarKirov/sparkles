@@ -43,11 +43,11 @@ import sparkles.ui.widget : WidgetTree;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.style : Slot;
 
-import ansi_model : BackgroundMode;
-import diff_view : DiffLayout;
-import document : Document;
+import sparkles.doc_view.ansi_model : BackgroundMode;
+import sparkles.doc_view.diff_view : DiffLayout;
+import sparkles.doc_view.document : Document;
 import dsv_browser : DsvBrowser, PaletteRow, paletteRows, rowMaskFor;
-import dsv_view : adaptDsv, DsvCopy, DsvModel, dsvStatusNote, DsvWindow,
+import sparkles.doc_view.dsv_view : adaptDsv, DsvCopy, DsvModel, dsvStatusNote, DsvWindow,
     flagsOf, modelFor,
     resolveTableCopy;
 import sparkles.source_view.markdown : TableScroll;
@@ -62,11 +62,11 @@ import settings : DubBuildSettings, HueConfig, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
 import settings_store : ConfigStore, SettingsPane;
-import gui_preview : PreviewModel;
+import sparkles.doc_view.preview_model : PreviewModel;
 import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import tui : PreviewTui;
-import viewer_model : ScrollAnchorMode;
+import sparkles.doc_view.viewer_model : ScrollAnchorMode;
 
 version (linux)
     import sparkles.event_horizon.watch : Watcher;
@@ -1124,7 +1124,7 @@ struct WorkspaceTui
     /// keymap and format survive.
     void applyDsvBrowser(uint firstRow = uint.max) @system
     {
-        import gui_preview : previewOf;
+        import sparkles.doc_view.preview_model : previewOf;
         import sparkles.syntax : HighlightEvent;
 
         auto st = viewer.dsvCopy;
@@ -2609,8 +2609,8 @@ unittest
 @system
 unittest
 {
-    import dsv_view : adaptDsv, DsvFlags;
-    import gui_preview : PreviewModel;
+    import sparkles.doc_view.dsv_view : adaptDsv, DsvFlags;
+    import sparkles.doc_view.preview_model : PreviewModel;
     import sparkles.input : charEvent, keyEvent;
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.ui_app.host : RunConfig;
@@ -3260,7 +3260,7 @@ unittest
 @("workspace.selection.edgeAutoscrollExtendsWithoutPointerMotion")
 @system unittest
 {
-    import gui_preview : PreviewModel;
+    import sparkles.doc_view.preview_model : PreviewModel;
 
     WorkspaceTui w;
     auto tmp = fixtureWorkspace(w, "hue-workspace-autoscroll-test");
@@ -3492,7 +3492,7 @@ unittest
     import core.thread : Thread;
     import core.time : msecs;
 
-    import document : DocumentPipeline;
+    import sparkles.doc_view.document : DocumentPipeline;
     import live_types : liveTypesBinary;
     import sparkles.syntax : GrammarRegistry, LabelSet,
         resolveTheme;
@@ -3577,7 +3577,7 @@ unittest
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.syntax.ts.registry : GrammarRegistry;
     import sparkles.test_runner.skip : skipTest;
-    import gui_preview : PreviewModel;
+    import sparkles.doc_view.preview_model : PreviewModel;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
@@ -3661,7 +3661,7 @@ unittest
     import sparkles.syntax.ts.injection : TsConfigCache;
     import sparkles.syntax.ts.registry : GrammarRegistry;
     import sparkles.test_runner.skip : skipTest;
-    import gui_preview : PreviewModel;
+    import sparkles.doc_view.preview_model : PreviewModel;
 
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
@@ -3940,7 +3940,7 @@ unittest
     // `ViewerModel.search`, its documented entry point, since `gui.d` links
     // raylib and is excluded from `dub test :hue`.
     import sparkles.source_view.search : SearchPolicy;
-    import viewer_model : ViewerModel;
+    import sparkles.doc_view.viewer_model : ViewerModel;
 
     static immutable src = "Foo\nfoo\nFOO bar\n";
 

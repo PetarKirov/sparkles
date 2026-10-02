@@ -54,7 +54,7 @@ import sparkles.ui.state : CaptureState, DisclosureState;
 import sparkles.ui.widget : Builder;
 
 import ts_inspect : CstInspect, inspectCst;
-import viewer_model : ViewerModel;
+import sparkles.doc_view.viewer_model : ViewerModel;
 
 @safe:
 

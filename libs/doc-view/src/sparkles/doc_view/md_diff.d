@@ -19,12 +19,12 @@
 // A block's identity in the decoration channel is its span start, the same
 // source-anchored convention the renderer already uses for folds, code tabs
 // and table cells.
-module md_diff;
+module sparkles.doc_view.md_diff;
 
 import sparkles.syntax.md.model : MdBlock, MdBlockKind, MdDecoration,
     MdDiffStatus, MdDoc, MdInline, Span;
 
-import diff_commutative : normalizedText;
+import sparkles.doc_view.diff_commutative : normalizedText;
 
 /// The merged document plus its decorations, sorted by `spanStart`.
 struct MdDiffResult
