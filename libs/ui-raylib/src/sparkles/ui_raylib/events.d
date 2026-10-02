@@ -502,6 +502,8 @@ private int[] buildFullKeySet() @safe pure nothrow
             KEY_MINUS, KEY_EQUAL, KEY_LEFT_BRACKET, KEY_RIGHT_BRACKET,
             KEY_BACKSLASH, KEY_SEMICOLON, KEY_APOSTROPHE, KEY_COMMA,
             KEY_PERIOD, KEY_SLASH, KEY_GRAVE,
+            // Android's system keys: Back closes the innermost surface (`KBD1`).
+            KEY_BACK, KEY_MENU,
         ];
         for (int k = KEY_F1; k <= KEY_F12; k++)
             keys ~= k;
@@ -608,6 +610,11 @@ unittest
         assert(namedKey(KEY_MENU) == Key.menu);
         assert(isDismiss(KeyEvent(namedKey(KEY_BACK))));
         assert(isDismiss(KeyEvent(namedKey(KEY_ESCAPE))));
+        // ...and the terminal-grade keyboard polls them, so Back reaches a
+        // surface there too.
+        import std.algorithm.searching : canFind;
+
+        assert(fullKeySet.canFind(cast(int) KEY_BACK) && fullKeySet.canFind(cast(int) KEY_MENU));
     }
 }
 
