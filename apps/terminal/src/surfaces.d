@@ -85,6 +85,17 @@ interface Anchored
     Rect anchor() const @safe;
 }
 
+/**
+A surface that places itself: a menu at the pointer, the selection menu clear
+of its selection and handles (`TSE6`). An empty layer falls back to its
+`placement`.
+*/
+interface SelfPlaced
+{
+    /// Its layer for this frame.
+    Layer placeIn(in SurfaceContext ctx) @safe;
+}
+
 /// A transient line: a refusal, "Copied by …", "Saved".
 struct Toast
 {
@@ -250,6 +261,12 @@ becomes a sheet when it fits neither side or `ui.overlayStyle` is `sheet`.
 */
 Layer placeOne(Surface s, in SurfaceContext ctx) @safe
 {
+    if (auto p = cast(SelfPlaced) s)
+    {
+        auto l = p.placeIn(ctx);
+        if (!l.empty)
+            return l;
+    }
     const cols = ctx.area.width / ctx.cellW, rows = ctx.area.height / ctx.cellH;
     final switch (s.placement)
     {

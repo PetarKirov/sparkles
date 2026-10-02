@@ -39,6 +39,7 @@ import key_router : KeyRouter, paintGuide, Route;
 import touch_guide : TouchGuide;
 import keymap : KeyCommand, TermCommand, TermContext;
 import screen_oracle : ScreenOracle;
+import selection_menu : SelectionUi;
 import settings_load : LoadedConfig;
 import workspace_host : WorkspaceHost;
 
@@ -49,6 +50,8 @@ struct DroidTerminal
     ScreenOracle oracle;
     /// Notifications, the system scheme, the autofill spike (`droid_platform`).
     DroidPlatform platform;
+    /// Long-press selection, its handles and its menu (`TSE1`–`TSE6`).
+    SelectionUi selection;
 
     /// The options the first pane switches to when its program ends — the
     /// login that follows the installer (`NOD7`, `TSS4`: a respawn of the same
@@ -170,6 +173,7 @@ struct DroidTerminal
 
             host.phonePortrait = GetScreenHeight() > GetScreenWidth();
         }
+        selection.pollTouch(h, host);
         host.frame(h, paneArea(g));
         if (auto tv = host.focusedView())
             if (platform.frame(*tv))
@@ -208,6 +212,7 @@ struct DroidTerminal
     {
         const g = geometry(h);
         host.paint(h, paneArea(g), divider, accent);
+        selection.paint(accent);
         paintGuide(h, router, context, g.paneCols, g.paneRows, 0, g.top, chromeFg, chromeBg);
         paintKeys(g);
     }
@@ -248,6 +253,7 @@ struct DroidTerminal
         host.linkLongPress = config.effective.links.longPress;
         host.linkSchemes = config.effective.links.schemes.dup;
         host.touch = true;
+        selection.useAndroid(config.effective);
         router.configure(config.effective, warnings);
         foreach (w; warnings)
             warning(i"$(w)");
@@ -522,6 +528,13 @@ struct DroidTerminal
         // An exit prompt takes its own taps (`TSS2`).
         if (host.tap(h, p.pos.x, p.pos.y))
             return;
+        // A tap on the selection or a handle shows its menu; elsewhere it
+        // clears it and goes on (`TSE4`).
+        if (selection.tap(p.pos))
+        {
+            host.invalidate();
+            return;
+        }
         // A link takes a tap per `links.tap` (`TPR5`).
         if (host.tapLink(p.pos.x, p.pos.y, longPress: false))
             return;
@@ -536,6 +549,8 @@ struct DroidTerminal
     {
         const g = geometry(h);
         if (swipeKeyRow(g, w))
+            return;
+        if (selection.wheel(w.pos)) // a handle's or the menu's drag (`TSE4`)
             return;
         // Under a page the drag scrolls it (finger up: towards the end).
         if (host.scrollSurface(w.dy))
@@ -584,7 +599,10 @@ struct DroidTerminal
         // when the long-press selects (`TSE1`).
         if (g.gesture == Gesture.longPress)
         {
-            cast(void) host.tapLink(g.pos.x, g.pos.y, longPress: true);
+            if (host.tapLink(g.pos.x, g.pos.y, longPress: true))
+                return;
+            if (selection.longPress(host, paneArea(geometry(h)), cellW, cellH, g.pos))
+                host.invalidate();
             return;
         }
         if (g.gesture != Gesture.pinch)

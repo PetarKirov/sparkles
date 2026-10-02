@@ -1339,6 +1339,22 @@ struct WorkspaceHost
         return true;
     }
 
+    /// Runs `command` in a new pane split from the focused one — the
+    /// selection menu's Run (`TSE5`); false, with a toast, when none opens.
+    bool runInNewPane(string command) @system
+    {
+        Refusal why;
+        const id = ws.split(DockAxis.vertical, why);
+        if (id == 0)
+        {
+            surfaces.toast(why == Refusal.tooManyPanes ? "at most 16 panes in a tab" : "no pane to split");
+            return false;
+        }
+        ws.spec(id).command = command;
+        dirty = true;
+        return create(id);
+    }
+
     /// Enter: the same command again; Esc (`shell`): the user's shell in the
     /// pane's last directory (`TSS3`, `TSS4`). A failed start keeps the prompt.
     private void respawnFocused(H)(ref H h, bool shell) @system

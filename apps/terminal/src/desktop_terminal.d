@@ -22,6 +22,7 @@ import chrome : ChromeTheme;
 import desktop_integration : DesktopIntegration;
 import key_router : KeyRouter, paintGuide, Route;
 import keymap : KeyCommand, TermCommand, TermContext;
+import selection_menu : SelectionUi;
 import workspace_host : WorkspaceHost;
 
 /// The whole-window desktop component.
@@ -31,6 +32,8 @@ struct DesktopTerminal
     KeyRouter keys;
     /// The session bus: the system scheme and notifications (D43).
     DesktopIntegration desktop;
+    /// The right-click menu over the selection (`TSE7`).
+    SelectionUi selection;
     /// The chrome's colours: the terminal scheme's foreground and background
     /// (D17).
     RgbColor chromeFg = RgbColor(0xcd, 0xd6, 0xf4);
@@ -77,6 +80,7 @@ struct DesktopTerminal
             host.setViewerColors(chromeFg, chromeBg); // `TDV7`
         }
         host.theme = ChromeTheme.of(chromeFg, chromeBg);
+        selection.pollDesktop(h, host, Rect(0, 0, GetScreenWidth(), GetScreenHeight()));
         host.frame(h, Rect(0, 0, GetScreenWidth(), GetScreenHeight()));
         if (host.takeDirty())
             save();
@@ -139,6 +143,8 @@ struct DesktopTerminal
                 // Under a surface nothing typed reaches a pane (`TKM4`).
                 if (!host.surfaces.modal)
                     host.forward(h, k);
+                else
+                    cast(void) host.surfaces.key(k);
                 break;
             case Route.consumed:
                 break;

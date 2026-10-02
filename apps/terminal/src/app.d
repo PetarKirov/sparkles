@@ -209,6 +209,7 @@ private int desktopMain(string[] args)
     };
     // Every key goes through the terminal's table first (`TKM1`).
     app.keys.configure(lc.effective, lc.warnings);
+    app.selection.useDesktop(lc.effective, app.keys.table);
     app.followColors();
 
     // Files opened from a pane open in the app (`TDV1`–`TDV4`): the sessions
