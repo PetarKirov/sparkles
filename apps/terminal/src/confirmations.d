@@ -20,6 +20,7 @@ answer.
 */
 module confirmations;
 
+import sparkles.input.events : KeyEvent;
 import sparkles.terminal_view.component : TerminalView;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer;
 import sparkles.ui.style : Slot;
@@ -113,6 +114,7 @@ final class PasteConfirm : Surface
 
     bool confirm() @system => activate(Hit.paste);
     void cancel() @system => pane.confirmPaste(false);
+    bool key(in KeyEvent k) @system => false;
 }
 
 /// The lines of `text` joined by single spaces, trailing breaks dropped.
@@ -178,6 +180,7 @@ final class ClipboardRead : Surface
 
     bool confirm() @system => activate(Hit.allowOnce);
     void cancel() @system => pane.answerClipboardRead(ClipboardReadAnswer.deny);
+    bool key(in KeyEvent k) @system => false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

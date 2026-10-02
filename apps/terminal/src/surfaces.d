@@ -17,6 +17,7 @@ module surfaces;
 
 import core.time : Duration, MonoTime, seconds;
 
+import sparkles.input.events : KeyEvent;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.widget : WidgetTree;
 
@@ -39,6 +40,11 @@ struct SurfaceContext
     OverlayStyle style;
     /// How many rows a button takes to be a touch target (`TOK7`).
     int targetRows = 1;
+    /// A touch screen: search fields sit at the bottom, within reach of the
+    /// keyboard (`TSS13`).
+    bool touch;
+    /// Where a `panel` goes: beside the tab rail, or below the tab pill.
+    Rect panelArea;
 }
 
 /// Where a surface goes.
@@ -47,6 +53,7 @@ enum Placement : ubyte
     sheet,    /// a band along the bottom of the area
     anchored, /// a card at the subject (a sheet when none fits)
     page,     /// the whole area
+    panel,    /// the tab tree's place: `SurfaceContext.panelArea`
 }
 
 /// One surface on the stack.
@@ -62,6 +69,9 @@ interface Surface
     bool confirm() @system;
     /// Escape, Back or a tap outside: the safe answer.
     void cancel() @system;
+    /// A key nothing bound — typing into a search field, moving a
+    /// selection; true when the surface used it.
+    bool key(in KeyEvent k) @system;
 }
 
 /// A transient line: a refusal, "Copied by …", "Saved".
@@ -189,6 +199,16 @@ struct Surfaces
             pop();
     }
 
+    /// A key nothing bound, to the top surface; true when it used it.
+    bool key(in KeyEvent k) @system
+    {
+        if (!stack.length)
+            return false;
+        const used = stack[$ - 1].key(k);
+        changed |= used;
+        return used;
+    }
+
     /// Escape or Back: the top surface's safe answer.
     void cancel() @system
     {
@@ -219,6 +239,10 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
     {
         case Placement.page:
             return place(s.build(ctx, cols), cols, rows, ctx.area.x, ctx.area.y, ctx.cellW,
+                ctx.cellH, Place.top);
+        case Placement.panel:
+            const pc = ctx.panelArea.width / ctx.cellW, pr = ctx.panelArea.height / ctx.cellH;
+            return place(s.build(ctx, pc), pc, pr, ctx.panelArea.x, ctx.panelArea.y, ctx.cellW,
                 ctx.cellH, Place.top);
         case Placement.sheet:
             return place(s.build(ctx, cols), cols, rows, ctx.area.x, ctx.area.y, ctx.cellW,
@@ -300,6 +324,7 @@ version (unittest)
         bool activate(size_t id) @system { activated = id; return true; }
         bool confirm() @system { confirmed = true; return true; }
         void cancel() @system { cancelled = true; }
+        bool key(in KeyEvent k) @system { return false; }
     }
 }
 
