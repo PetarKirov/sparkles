@@ -312,33 +312,49 @@ struct WorkspaceHost
         o.internalScrollbar = true;
         o.embedded = true;
         auto self = &this;
-        o.hooks.titleChanged = (scope const(char)[] _) {};
+        // Every protocol event reaches the log at `trace` — "debug" in the
+        // log page (`TPG7`). What a program put on the clipboard is logged by
+        // size only: it may be a password (`TPG6`).
+        import sparkles.base.logger : trace;
+
+        o.hooks.titleChanged = (scope const(char)[] t) { trace(i"pane $(id): title \"$(t)\""); };
         // What the pane asks of the user (`TPR19`, `TPR21`) goes on the
         // surface stack; what it says goes in a toast (`TPR9`, `TPR20`).
         auto inner = o.hooks.notify;
         o.hooks.notify = (in Notification n, NotificationRoute route) {
+            import std.conv : to;
+
+            const what = n.title.length ? n.title : n.body;
+            trace(i"pane $(id): notification \"$(what)\" ($(route.to!string))");
             if (route == NotificationRoute.toast)
                 self.surfaces.toast(n.title.length ? n.title.idup ~ ": " ~ n.body.idup : n.body.idup);
             if (inner !is null)
                 inner(n, route);
         };
         o.hooks.pasteConfirm = (in PasteConfirmRequest r) {
+            trace(i"pane $(id): paste of $(r.lines) lines held for confirmation");
             if (auto tv = self.pool.byId(id))
                 self.surfaces.push(new PasteConfirm(tv, r.lines, r.text.idup));
         };
         o.hooks.clipboardReadRequest = () {
+            trace(i"pane $(id): OSC 52 clipboard read requested");
             if (auto tv = self.pool.byId(id))
                 self.surfaces.push(new ClipboardRead(tv, self.programName(id),
                     self.paneWhere(id)));
         };
         o.hooks.clipboardWrite = (scope const(char)[] text) {
+            trace(i"pane $(id): OSC 52 clipboard write, $(text.length) bytes");
             self.pendingClipboard = text.idup;
             self.clipboardPending = true;
             self.surfaces.toast("Copied by " ~ self.programName(id));
         };
         // Ctrl+click on a link (`TPR7`), through the allow-list (`TPR6`).
-        o.hooks.openLink = (scope const(char)[] uri) { self.open(uri.idup); };
+        o.hooks.openLink = (scope const(char)[] uri) {
+            trace(i"pane $(id): open $(uri)");
+            self.open(uri.idup);
+        };
         o.hooks.cwdChanged = (scope const(char)[] p) {
+            trace(i"pane $(id): directory $(p)");
             self.osc7[id] = true;
             self.ws.setCwd(id, p.idup);
             self.dirty = true;

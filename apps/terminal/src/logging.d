@@ -36,12 +36,19 @@ RingCoreLogger installTerminalLog(string stateDir) @safe
 
     import sparkles.base.log_sinks : installFileLog, installRingLog;
 
+    import sparkles.base.logger : coreGlobalLogLevel, LogLevel;
+
+    // The file and the ring keep `trace` — protocol events, the log page's
+    // "debug" (`TPG7`) — while the platform sink behind them keeps its own
+    // level: each forwarding sink hands an entry on, and the next one filters.
+    coreGlobalLogLevel = LogLevel.trace;
     if (stateDir.length)
     {
-        installFileLog(logPath(stateDir));
+        installFileLog(logPath(stateDir)).coreLogLevel = LogLevel.trace;
         appStateDir = buildPath(stateDir, logDirName);
     }
     ring = installRingLog();
+    ring.coreLogLevel = LogLevel.trace;
     return ring;
 }
 
