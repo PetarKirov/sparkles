@@ -1,6 +1,7 @@
 /**
-Starting other apps: an `ACTION_VIEW` intent for a URI, over JNI into the
-framework's `Intent` and `Activity.startActivity` (no Java in the APK).
+Starting other apps over JNI into the framework's `Intent` and
+`Activity.startActivity` (no Java in the APK): `ACTION_VIEW` for a URI, and
+`ACTION_SEND` to share text through the system's share sheet.
 */
 module sparkles.android.intents;
 
@@ -94,6 +95,42 @@ private string viewOnWorker(ref JniFrame f, string uri, string mimeType, bool ch
         return "no app can open " ~ uri;
     }
     return null;
+}
+
+/**
+Share `text` (`ACTION_SEND`, `text/plain`) through the system's share sheet
+(`Intent.createChooser`), with an optional `subject` (`EXTRA_SUBJECT`, which
+mail apps use). `null` once the sheet is started, else the reason. What the
+user then picks, if anything, is not reported back.
+*/
+string shareText(string text, string subject = null) @trusted nothrow
+{
+    return withJni((ref JniFrame f) {
+        jvalue[1] action = [jv(utf8String(f, "android.intent.action.SEND"))];
+        auto intent = f.newObject("android/content/Intent", "(Ljava/lang/String;)V", action);
+        jvalue[1] mime = [jv(utf8String(f, "text/plain"))];
+        f.callObject(intent, "setType", "(Ljava/lang/String;)Landroid/content/Intent;", mime);
+        enum putString = "(Ljava/lang/String;Ljava/lang/String;)Landroid/content/Intent;";
+        jvalue[2] body = [jv(utf8String(f, "android.intent.extra.TEXT")), jv(utf8String(f, text))];
+        f.callObject(intent, "putExtra", putString, body);
+        if (subject.length)
+        {
+            jvalue[2] subj = [jv(utf8String(f, "android.intent.extra.SUBJECT")),
+                jv(utf8String(f, subject))];
+            f.callObject(intent, "putExtra", putString, subj);
+        }
+        jvalue[2] ch = [jv(intent), jv(cast(jobject) null)];
+        auto chooser = f.callStaticObject("android/content/Intent", "createChooser",
+            "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;", ch);
+        jvalue[1] fl = [jv(flagActivityNewTask)];
+        f.callObject(chooser, "addFlags", "(I)Landroid/content/Intent;", fl);
+        if (chooser is null || f.failed)
+            return "cannot build the share intent";
+        jvalue[1] start = [jv(chooser)];
+        if (!f.callVoid(f.activity, "startActivity", "(Landroid/content/Intent;)V", start))
+            return "the share sheet did not start";
+        return string.init;
+    });
 }
 
 /// A `java.lang.String` from UTF-8 text (`null` on failure).
