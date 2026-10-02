@@ -26,8 +26,13 @@ import sparkles.ui.geometry : Rect;
 import std.datetime.systime : Clock, SysTime;
 
 import chrome : ChromeTheme, Layer, paintLayer;
+import confirmations : ClipboardRead, PasteConfirm;
+import sparkles.terminal_view.notification_log : NotificationRoute;
+import sparkles.terminal_view.osc_scan : Notification;
+import sparkles.terminal_view.protocols : PasteConfirmRequest;
 import keymap : KeyCommand, TermCommand;
-import settings : ButtonLabels, OnExit;
+import settings : ButtonLabels, OnExit, OverlayStyle;
+import surfaces : SurfaceContext, Surfaces;
 import workspace : Direction, maxPanesPerTab, maxTabs, PaneSpec, Refusal, restored,
     saved, SavedWorkspace, Workspace;
 
@@ -80,6 +85,10 @@ struct WorkspaceHost
     ChromeTheme theme;
     /// ditto
     ButtonLabels labels;
+    /// `ui.overlayStyle`: confirmations anchored or as sheets (`TCF10`).
+    OverlayStyle overlayStyle;
+    /// What shows over the panes: confirmations, menus, pages and toasts.
+    Surfaces surfaces;
     /// Poll the mouse for the pane under it (the desktop). A touch embedder
     /// turns it off and routes its gestures itself (`focusAt`, the wheel).
     bool pollPointer = true;
@@ -94,6 +103,8 @@ struct WorkspaceHost
     private bool dirty; // a structural change not yet saved
     private bool repaint = true; // the arrangement changed: every pane redraws
     private PaneId lastFocused;
+    private string pendingClipboard; // an OSC 52 write, set by the next frame
+    private bool clipboardPending;
 
     @disable this(this);
 
@@ -173,6 +184,29 @@ struct WorkspaceHost
         o.embedded = true;
         auto self = &this;
         o.hooks.titleChanged = (scope const(char)[] _) {};
+        // What the pane asks of the user (`TPR19`, `TPR21`) goes on the
+        // surface stack; what it says goes in a toast (`TPR9`, `TPR20`).
+        auto inner = o.hooks.notify;
+        o.hooks.notify = (in Notification n, NotificationRoute route) {
+            if (route == NotificationRoute.toast)
+                self.surfaces.toast(n.title.length ? n.title.idup ~ ": " ~ n.body.idup : n.body.idup);
+            if (inner !is null)
+                inner(n, route);
+        };
+        o.hooks.pasteConfirm = (in PasteConfirmRequest r) {
+            if (auto tv = self.pool.byId(id))
+                self.surfaces.push(new PasteConfirm(tv, r.lines, r.text.idup));
+        };
+        o.hooks.clipboardReadRequest = () {
+            if (auto tv = self.pool.byId(id))
+                self.surfaces.push(new ClipboardRead(tv, self.programName(id),
+                    self.paneWhere(id)));
+        };
+        o.hooks.clipboardWrite = (scope const(char)[] text) {
+            self.pendingClipboard = text.idup;
+            self.clipboardPending = true;
+            self.surfaces.toast("Copied by " ~ self.programName(id));
+        };
         o.hooks.cwdChanged = (scope const(char)[] p) { self.ws.setCwd(id, p.idup); self.dirty = true; };
         auto tv = pool.create(id, o);
         if (tv is null)
@@ -282,6 +316,21 @@ struct WorkspaceHost
 
         applyExits();
         placeBanners(area, cw, ch, f);
+        placeSurfaces(area, cw, ch, f);
+        if (clipboardPending)
+        {
+            clipboardPending = false;
+            static if (__traits(compiles, h.clipboard(pendingClipboard)))
+                h.clipboard(pendingClipboard);
+        }
+        if (surfaces.expire() || surfaces.changed)
+        {
+            surfaces.changed = false;
+            repaint = true;
+        }
+        if (surfaces.toasts.length)
+            static if (__traits(compiles, h.wakeIn(surfaces.nextExpiry)))
+                h.wakeIn(surfaces.nextExpiry);
         // One pane changed: the whole window repaints (panes share it); none:
         // the last frame stays up (`HST6`).
         if (!any && !repaint)
@@ -318,6 +367,7 @@ struct WorkspaceHost
 
         foreach (ref l; banners)
             paintLayer(h, l, theme);
+        surfaces.paint(h, theme);
 
         static Color rgb(RgbColor x) => Color(x.r, x.g, x.b, 255);
         foreach (ref d; f.dividers)
@@ -366,6 +416,53 @@ struct WorkspaceHost
         }
     }
 
+    /**
+    Lays out the surfaces for this frame; a confirmation anchors at the
+    focused pane's cursor line (`TCF10`).
+    */
+    private void placeSurfaces(in Rect area, int cw, int ch, in DockFrames f) @system
+    {
+        SurfaceContext ctx = {area: area, cellW: cw, cellH: ch, labels: labels,
+            style: overlayStyle, targetRows: theme.targetRows};
+        if (auto tv = focusedView())
+            foreach (ref p; f.panes)
+                if (p.pane == ws.focused)
+                {
+                    const c = tv.cursor;
+                    if (c.inViewport)
+                        ctx.subject = Rect(area.x + p.rect.x * cw, area.y + (p.rect.y + c.y) * ch,
+                            p.rect.width * cw, ch);
+                }
+        surfaces.place(ctx);
+    }
+
+    /// Who is running in pane `id`: its foreground program, else its title.
+    private string programName(PaneId id) @system
+    {
+        auto tv = pool.byId(id);
+        if (tv is null)
+            return "a program";
+        const p = tv.foregroundProcessName;
+        return p.length ? p.idup : tv.title.length ? tv.title.idup : "a program";
+    }
+
+    /// "Tab 'nvim', pane 2" — where pane `id` is, for a confirmation.
+    private string paneWhere(PaneId id) @system
+    {
+        import std.conv : text;
+
+        const t = ws.tabOf(id);
+        if (t == size_t.max)
+            return "A pane";
+        const panes = ws.panesOf(t);
+        size_t n = 1;
+        foreach (i, p; panes)
+            if (p == id)
+                n = i + 1;
+        const title = ws.tabs[t].titlePin.length ? ws.tabs[t].titlePin : programName(panes[0]);
+        return text("Tab \"", title, "\", pane ", n);
+    }
+
     /// The user's shell, by name, for a pane that ran no command.
     private static string shellName() @safe
     {
@@ -385,6 +482,11 @@ struct WorkspaceHost
     {
         import exit_banner : ExitHit;
 
+        if (surfaces.tap(x, y))
+        {
+            repaint = true;
+            return true;
+        }
         foreach (id, ref l; banners)
         {
             if (!l.contains(x, y))
@@ -560,6 +662,7 @@ struct WorkspaceHost
             case TermCommand.showGuide:
             case TermCommand.toggleExtraKeys:
             case TermCommand.dismiss:
+            case TermCommand.confirm:
                 return false;
         }
         final switch (why)
@@ -573,6 +676,11 @@ struct WorkspaceHost
             case Refusal.tooManyPanes:
                 notice = "at most 16 panes in a tab";
                 break;
+        }
+        if (notice.length)
+        {
+            surfaces.toast(notice);
+            notice = null;
         }
         dirty = true;
         return true;

@@ -226,6 +226,7 @@ struct DroidTerminal
         next.scrollbackLimit = base.scrollbackLimit;
         host.onExit = config.effective.behaviour.onExit;
         host.labels = config.effective.ui.buttonLabels;
+        host.overlayStyle = config.effective.ui.overlayStyle;
         router.configure(config.effective, warnings);
         foreach (w; warnings)
             warning(i"$(w)");
@@ -257,7 +258,7 @@ struct DroidTerminal
         host.invalidate();
     }
 
-    private TermContext context() const => TermContext(promptOpen: host.promptOpen);
+    private TermContext context() const => TermContext(overlayOpen: host.surfaces.modal, promptOpen: host.promptOpen);
 
     /// The panes' area, in pixels: the content rect above the key row.
     private Rect paneArea(in Geometry g) const
@@ -285,7 +286,9 @@ struct DroidTerminal
         final switch (r.route)
         {
             case Route.program:
-                host.forward(h, chord);
+                // Under a surface nothing typed reaches a pane (`TKM4`).
+                if (!host.surfaces.modal)
+                    host.forward(h, chord);
                 break;
             case Route.consumed:
                 break;
@@ -310,7 +313,13 @@ struct DroidTerminal
             case TermCommand.showGuide: // the guide consumes its own row
                 break;
             case TermCommand.dismiss:
-                router.closeGuide();
+                if (host.surfaces.modal)
+                    host.surfaces.cancel();
+                else
+                    router.closeGuide();
+                break;
+            case TermCommand.confirm:
+                host.surfaces.confirm();
                 break;
             case TermCommand.copy:
                 if (auto tv = host.focusedView())

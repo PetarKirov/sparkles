@@ -48,6 +48,7 @@ enum TermCommand : ubyte
     showGuide,       /// `?` in an overlay, `leader ?` in a pane: every key here
     toggleExtraKeys, /// show or hide the extra-keys row (`TCF7`)
     dismiss,         /// close the innermost overlay (`KBD1`)
+    confirm,         /// the innermost overlay's primary action (`KBD1`: Enter)
 
     // Tabs and splits (`TSS8`).
     newTab,
@@ -143,6 +144,7 @@ immutable Binding[] defaultBindings = [
     bind(TermScope.overlay, chord(Key.escape), TermCommand.dismiss, "close"),
     bind(TermScope.overlay, chord('q'), TermCommand.dismiss, "close"),
     bind(TermScope.overlay, chord(Key.back), TermCommand.dismiss, "close"),
+    bind(TermScope.overlay, chord(Key.enter), TermCommand.confirm, "confirm"),
     bind(TermScope.overlay, chord('?'), TermCommand.showGuide, "key guide",
         reveal: true),
     group(TermScope.overlay, chord(leaderMark), "leader"),

@@ -117,7 +117,7 @@ struct DesktopTerminal
             chromeBg = c.background;
     }
 
-    private TermContext context() const => TermContext(promptOpen: host.promptOpen);
+    private TermContext context() const => TermContext(overlayOpen: host.surfaces.modal, promptOpen: host.promptOpen);
 
     private void onKey(H)(ref H h, in KeyEvent k)
     {
@@ -125,7 +125,9 @@ struct DesktopTerminal
         final switch (r.route)
         {
             case Route.program:
-                host.forward(h, k);
+                // Under a surface nothing typed reaches a pane (`TKM4`).
+                if (!host.surfaces.modal)
+                    host.forward(h, k);
                 break;
             case Route.consumed:
                 break;
@@ -164,7 +166,12 @@ struct DesktopTerminal
                 break;
             case TermCommand.none:
             case TermCommand.showGuide: // the guide consumes its own row
-            case TermCommand.dismiss: // no overlay on the desktop yet
+            case TermCommand.dismiss:
+                host.surfaces.cancel();
+                break;
+            case TermCommand.confirm:
+                host.surfaces.confirm();
+                break;
             case TermCommand.toggleExtraKeys: // no extra-keys row here
                 break;
             // The workspace's own, answered above.

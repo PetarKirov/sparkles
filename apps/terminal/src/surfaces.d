@@ -37,6 +37,8 @@ struct SurfaceContext
     ButtonLabels labels;
     /// ditto
     OverlayStyle style;
+    /// How many rows a button takes to be a touch target (`TOK7`).
+    int targetRows = 1;
 }
 
 /// Where a surface goes.
@@ -76,6 +78,9 @@ struct Surfaces
     Toast[] toasts;
     private Layer[] layers; // `stack`, placed this frame, bottom to top
     private Layer toastLayer;
+    /// Set when something was shown, closed or expired: the frame must
+    /// repaint. The host clears it.
+    bool changed;
 
     /// Whether a surface owns the keyboard.
     bool modal() const @safe pure nothrow @nogc => stack.length != 0;
@@ -84,12 +89,14 @@ struct Surfaces
     void push(Surface s) @safe pure nothrow
     {
         stack ~= s;
+        changed = true;
     }
 
     /// Shows `text` for `forDuration`.
     void toast(string text, Duration forDuration = 3.seconds) @safe nothrow
     {
         toasts ~= Toast(text, MonoTime.currTime + forDuration);
+        changed = true;
     }
 
     /// Whether anything is showing or about to stop showing (the frame must
@@ -104,6 +111,7 @@ struct Surfaces
         const now = MonoTime.currTime;
         const before = toasts.length;
         toasts = toasts.remove!(t => t.until <= now);
+        changed |= toasts.length != before;
         return toasts.length != before;
     }
 
@@ -138,6 +146,9 @@ struct Surfaces
             toastLayer = .place(b.finish(band(b, lines, fullWidth: false)), cols,
                 ctx.area.height / ctx.cellH, ctx.area.x + ctx.cellW, ctx.area.y,
                 ctx.cellW, ctx.cellH, Place.top);
+            // Top-right: clear of the prompt, which a terminal keeps at the left.
+            toastLayer.x = ctx.area.x + ctx.area.width
+                - (toastLayer.bounds.width + 1) * ctx.cellW;
         }
     }
 
@@ -190,6 +201,7 @@ struct Surfaces
     private void pop() @safe pure nothrow
     {
         stack = stack[0 .. $ - 1];
+        changed = true;
         if (layers.length > stack.length)
             layers = layers[0 .. stack.length];
     }

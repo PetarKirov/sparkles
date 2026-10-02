@@ -169,6 +169,7 @@ private int desktopMain(string[] args)
     auto base = viewOptionsFrom(lc.effective, systemDark: app.desktop.systemDark, lc.warnings);
     app.host.onExit = lc.effective.behaviour.onExit;
     app.host.labels = lc.effective.ui.buttonLabels;
+    app.host.overlayStyle = lc.effective.ui.overlayStyle;
     bool shotPending = debugScreenshotAndExit;
     app.host.paneOptions = (in PaneSpec spec, bool shell) {
         TerminalViewOptions o = base;

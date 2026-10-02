@@ -20,6 +20,7 @@ keeps this page equal to it.
 | `Escape`              | close             | a page or menu  |
 | `q`                   | close             | a page or menu  |
 | `Back`                | close             | a page or menu  |
+| `Enter`               | confirm           | a page or menu  |
 | `?`                   | key guide         | a page or menu  |
 | `Ctrl+Shift+C`        | copy              | a pane          |
 | `Ctrl+Shift+V`        | paste             | a pane          |
