@@ -50,7 +50,11 @@ import sparkles.terminal_view.notification_log : NotificationLog,
 import sparkles.terminal_view.osc_scan : maxIconBytes, maxTitleBytes, Notification;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer, ClipboardReadPolicy,
     ColorScheme, PasteConfirm, PasteConfirmRequest, ProtocolPolicy, TerminalViewHooks;
-import sparkles.ui.geometry : Rect;
+import sparkles.terminal_view.selection : bounds, Granularity, moveEnd,
+    selectAllModel = selectAll, selectAtModel = selectAt, SelectionBounds, SelectionEnd,
+    selectionEmptied, selectionHyperlinksModel = selectionHyperlinks, selectionLive,
+    withSelectionText;
+import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
@@ -422,6 +426,8 @@ struct TerminalView
     private bool ringPump;
     // Where `paintPanePx` last put the pane, in window pixels.
     private int originX, originY;
+    // Rows the content is painted above the pane's top (`liftContent`).
+    private int liftRows;
 
     // ── protocol state (`TPR`) ──
     // The icon string OSC 0/1 last set (empty: none, the process decides).
@@ -1122,7 +1128,7 @@ struct TerminalView
 
         BeginScissorMode(px, py, pw, ph);
         rlPushMatrix();
-        rlTranslatef(px, py, 0);
+        rlTranslatef(px, py - liftRows * s.cellHeight, 0);
         paintFrame(s, pw, ph);
         rlPopMatrix();
         EndScissorMode();
@@ -1190,6 +1196,13 @@ struct TerminalView
 
         GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
         ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
+
+        // A selection whose text was cleared away goes with it (`TSE4`).
+        if (dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE && selectionCleared())
+        {
+            s.selState.free();
+            pendingForce = true;
+        }
 
         const overlayActive =
             s.effects_ctx.bellFlashFrames > 0
@@ -2224,42 +2237,132 @@ struct TerminalView
 
     private bool copySelection(H)(ref H h)
     {
-        if (!s.selState.start || !s.selState.end)
+        if (!opened)
             return false;
-
-        GhosttyGridRef startSnap, endSnap;
-        if (ghostty_tracked_grid_ref_snapshot(s.selState.start, &startSnap) != GHOSTTY_SUCCESS
-            || ghostty_tracked_grid_ref_snapshot(s.selState.end, &endSnap) != GHOSTTY_SUCCESS)
-            return false;
-
-        GhosttySelection sel;
-        sel.start = startSnap;
-        sel.end = endSnap;
-        sel.rectangle = s.selState.isRectangular;
-
-        GhosttyFormatterTerminalOptions fmtOpts;
-        fmtOpts.size = GhosttyFormatterTerminalOptions.sizeof;
-        fmtOpts.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
-        fmtOpts.unwrap = true;
-        fmtOpts.trim = true;
-        fmtOpts.selection = &sel;
-
-        GhosttyFormatter fmt;
-        if (ghostty_formatter_terminal_new(null, &fmt, s.terminal, fmtOpts) != GHOSTTY_SUCCESS)
-            return false;
-        scope (exit) ghostty_formatter_free(fmt);
-
-        ubyte* outPtr;
-        size_t outLen;
-        if (ghostty_formatter_format_alloc(fmt, null, &outPtr, &outLen) != GHOSTTY_SUCCESS)
-            return false;
-        scope (exit) ghostty_free(null, outPtr, outLen);
-
         // The host's clipboard errand — recorder-assertable, unlike the raw
-        // SetClipboardText the polling loop made.
-        h.clipboard(cast(const(char)[]) outPtr[0 .. outLen]);
+        // SetClipboardText the polling loop made. The text is the model's
+        // (`TSE2`), whichever path made the selection.
+        string text;
+        if (!withSelectionText(s.terminal, s.selState, (scope const(char)[] t) {
+                text = t.idup;
+            }))
+            return false;
+        h.clipboard(text);
         return true;
     }
+
+    // ── the selection (`TSE1`–`TSE4`) ───────────────────────────────────────
+    // The model (`sparkles.terminal_view.selection`) driven programmatically:
+    // what a touch embedder calls, over the same state the polled mouse uses.
+    // Points are the pane's viewport cells.
+
+    /**
+    Selects at cell (`col`, `row`) with granularity `g` — a long-press asks
+    for `Granularity.word`, which takes a URL whole (`TSE1`). False, with no
+    selection left, when that takes nothing (a blank cell).
+    */
+    bool selectAt(int col, int row, Granularity g) @system nothrow @nogc
+    {
+        if (!opened)
+            return false;
+        const ok = selectAtModel(s.terminal, s.selState, col, row, s.cols, g);
+        pendingForce = true;
+        return ok;
+    }
+
+    /// Moves the selection's end `which` to cell (`col`, `row`), clamped to
+    /// the pane; the ends may cross (`TSE3`). False without a selection.
+    bool moveSelectionEnd(SelectionEnd which, int col, int row) @system nothrow @nogc
+    {
+        if (!opened)
+            return false;
+        col = col < 0 ? 0 : col >= s.cols ? s.cols - 1 : col;
+        row = row < 0 ? 0 : row >= s.rows ? s.rows - 1 : row;
+        pendingForce = true;
+        return moveEnd(s.terminal, s.selState, which, col, row);
+    }
+
+    /// Selects the scrollback and the screen; false when both are empty.
+    bool selectAll() @system nothrow @nogc
+    {
+        if (!opened)
+            return false;
+        pendingForce = true;
+        return selectAllModel(s.terminal, s.selState);
+    }
+
+    /// Drops the selection.
+    void clearSelection() @system nothrow @nogc
+    {
+        if (s.selState.start !is null || s.selState.end !is null)
+            pendingForce = true;
+        s.selState.free();
+    }
+
+    /// Whether something is selected.
+    bool hasSelection() @system nothrow @nogc => opened && selectionLive(s.selState);
+
+    /// The selection's extent in the viewport's cells, ends in reading order
+    /// (rows outside the viewport when scrolled away).
+    SelectionBounds selectionBounds() @system nothrow @nogc
+        => opened ? bounds(s.terminal, s.selState) : SelectionBounds.init;
+
+    /// The selected text (`TSE2`): soft wraps joined, a block's rows by `\n`;
+    /// null without a selection.
+    string selectionText() @system nothrow
+    {
+        if (!opened)
+            return null;
+        string text;
+        cast(void) withSelectionText(s.terminal, s.selState, (scope const(char)[] t) {
+            text = t.idup;
+        });
+        return text;
+    }
+
+    /**
+    The distinct OSC 8 hyperlinks under the selection's visible cells: up to
+    `into.length` of them written to `into`; returns how many there are.
+    */
+    size_t selectionHyperlinks(string[] into) @system nothrow
+        => opened ? selectionHyperlinksModel(s.terminal, s.selState, s.cols, s.rows, into) : 0;
+
+    /// Whether the program asked for mouse reports (DECSET 1000/1002/1003):
+    /// a click is then the program's, not a selection's.
+    bool mouseTracking() @system nothrow @nogc
+    {
+        if (!opened)
+            return false;
+        bool tracking;
+        ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING,
+            cast(void*) &tracking);
+        return tracking;
+    }
+
+    // Whether a selection exists whose text the program cleared away.
+    private bool selectionCleared() @system nothrow @nogc
+        => (s.selState.start !is null || s.selState.end !is null)
+            && selectionEmptied(s.terminal, s.selState);
+
+    /// Where `paintPanePx` last put the pane, in window pixels.
+    Point paneOrigin() const @safe pure nothrow @nogc => Point(originX, originY);
+
+    /**
+    Paints the content `rows` rows higher than the pane's top, the pane's
+    rect unchanged (its top rows hidden): what keeps a selection above a
+    bottom sheet without moving the scrollback (`TSE6`). 0 restores it.
+    */
+    void liftContent(int rows) @safe pure nothrow @nogc
+    {
+        if (rows < 0)
+            rows = 0;
+        if (rows != liftRows)
+            pendingForce = true;
+        liftRows = rows;
+    }
+
+    /// ditto
+    int contentLift() const @safe pure nothrow @nogc => liftRows;
 
     private void resizeGrid(ushort cols, ushort rows) @system nothrow @nogc
     {
@@ -2943,4 +3046,39 @@ private void openWithPlatform(scope const(char)[] uri) @system nothrow
 
     assert(tv.linkAt(2, 1, l));
     assert(l.uri == "https://a.example/x" && l.hyperlink);
+}
+
+@("terminal_view.component.selection.oneModelForEveryPath")
+@system unittest
+{
+    // `TSE2`: the touch calls and the copy the desktop's chord makes read
+    // the same model — the same ends give the same text.
+    static struct Clip
+    {
+        string copied;
+        void clipboard(scope const(char)[] t) { copied = t.idup; }
+    }
+
+    TerminalView tv;
+    tv.opts = TerminalViewOptions(program: "/bin/sh",
+        argv: [cast(const(char)*) "sh", "-c", "exit 0", null]);
+    assert(tv.openCore(30, 4, 0, 0));
+    scope (exit) tv.close();
+    tv.feedLocal("cat ~/notes/todo.md\r\nhttps://ex.org/x?y=1.\r\n");
+
+    assert(tv.selectAt(8, 0, Granularity.word));
+    assert(tv.selectionText == "~/notes/todo.md");
+    Clip c;
+    assert(tv.copy(c) && c.copied == "~/notes/todo.md");
+
+    // A handle dragged to the next row: the selection spans the line break.
+    assert(tv.moveSelectionEnd(SelectionEnd.end, 4, 1));
+    assert(tv.selectionText == "~/notes/todo.md\nhttps");
+    const b = tv.selectionBounds;
+    assert(b.firstRow == 0 && b.firstCol == 4 && b.lastRow == 1 && b.lastCol == 4);
+
+    assert(tv.selectAt(3, 1, Granularity.word));
+    assert(tv.selectionText == "https://ex.org/x?y=1", "the URL whole, its full stop not");
+    assert(!tv.selectAt(25, 0, Granularity.word) && !tv.hasSelection);
+    assert(!tv.copy(c), "nothing selected, nothing copied");
 }

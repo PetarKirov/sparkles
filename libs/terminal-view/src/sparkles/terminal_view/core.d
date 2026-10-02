@@ -745,20 +745,22 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
 
         GhosttyPointCoordinate sel_start_pt, sel_end_pt;
         bool has_selection = false;
-        if (s.selState.start && s.selState.end)
+        // The selection in reading order, clipped to the viewport: an end
+        // scrolled out of view (select-all, a long drag) still shows the
+        // visible part (`TSE4`).
         {
-            if (ghostty_tracked_grid_ref_point(s.selState.start, GHOSTTY_POINT_TAG_VIEWPORT, &sel_start_pt) == GHOSTTY_SUCCESS &&
-                ghostty_tracked_grid_ref_point(s.selState.end, GHOSTTY_POINT_TAG_VIEWPORT, &sel_end_pt) == GHOSTTY_SUCCESS)
+            import sparkles.terminal_view.selection : bounds;
+
+            const b = bounds(s.terminal, s.selState);
+            if (b.any && b.lastRow >= 0 && b.firstRow < s.rows)
             {
                 has_selection = true;
-
-                // ensure start is before end
-                if (sel_start_pt.y > sel_end_pt.y || (sel_start_pt.y == sel_end_pt.y && sel_start_pt.x > sel_end_pt.x))
-                {
-                    auto temp = sel_start_pt;
-                    sel_start_pt = sel_end_pt;
-                    sel_end_pt = temp;
-                }
+                const stream = !b.rectangular;
+                const clipTop = b.firstRow < 0, clipBottom = b.lastRow >= s.rows;
+                sel_start_pt.y = cast(uint)(clipTop ? 0 : b.firstRow);
+                sel_start_pt.x = cast(ushort)(clipTop && stream ? 0 : b.firstCol);
+                sel_end_pt.y = cast(uint)(clipBottom ? s.rows - 1 : b.lastRow);
+                sel_end_pt.x = cast(ushort)(clipBottom && stream ? s.cols - 1 : b.lastCol);
             }
         }
 

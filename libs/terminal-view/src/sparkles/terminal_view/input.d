@@ -14,6 +14,8 @@ import sparkles.ui.components.scroll_view : scrollLayout, ScrollArea,
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.state : CaptureState;
 import sparkles.terminal_view.posix_util : spawnDetached;
+import sparkles.terminal_view.selection : Granularity, moveEnd, selectAt, selectCells,
+    SelectionEnd;
 
 // --- @nogc byte-string helpers (URL hover detection) ------------------------
 
@@ -261,11 +263,18 @@ unittest
     assert(raylib_mouse_to_ghostty(99) == GHOSTTY_MOUSE_BUTTON_UNKNOWN);
 }
 
+/// The selection's tracked ends and shape — the model
+/// `sparkles.terminal_view.selection` operates on (`TSE2`) — plus the
+/// desktop path's click counting.
 struct SelectionState {
     bool isSelecting = false;
     bool isRectangular = false;
     GhosttyTrackedGridRef start = null;
     GhosttyTrackedGridRef end = null;
+    // The last left press, for double- and triple-click (`TSE7`).
+    double lastPressTime = -1;
+    int lastPressX = -1, lastPressY = -1;
+    ubyte clicks;
 
     @system nothrow @nogc
     void free() {
@@ -448,11 +457,24 @@ void handle_mouse(
                     return;
                 }
             }
-            selState.free();
+            // A second press on the same cell soon after selects its word, a
+            // third its line (`TSE7`); the first starts a drag over the model.
+            const now = GetTime();
+            const again = now - selState.lastPressTime < 0.4
+                && cx == selState.lastPressX && cy == selState.lastPressY;
+            const clicks = again && selState.clicks < 3 ? selState.clicks + 1 : 1;
+            selState.lastPressTime = now;
+            selState.lastPressX = cx;
+            selState.lastPressY = cy;
+            selState.clicks = cast(ubyte) clicks;
+            if (clicks > 1) {
+                cast(void) selectAt(terminal, selState, cx, cy, cast(ushort) max_cols,
+                    clicks == 2 ? Granularity.word : Granularity.line);
+                return;
+            }
+            const rect = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
+            cast(void) selectCells(terminal, selState, cx, cy, cx, cy, rect);
             selState.isSelecting = true;
-            selState.isRectangular = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
-            ghostty_terminal_grid_ref_track(terminal, pt, &selState.start);
-            ghostty_terminal_grid_ref_track(terminal, pt, &selState.end);
         } else if (selState.isSelecting && IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT)) {
             if (pos.y <= 0) {
                 GhosttyTerminalScrollViewport scroll;
@@ -465,9 +487,7 @@ void handle_mouse(
                 scroll.value.delta = 1;
                 ghostty_terminal_scroll_viewport(terminal, scroll);
             }
-            if (selState.end) {
-                ghostty_tracked_grid_ref_set(selState.end, terminal, pt);
-            }
+            cast(void) moveEnd(terminal, selState, SelectionEnd.end, cx, cy);
         } else if (selState.isSelecting && IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT)) {
             selState.isSelecting = false;
         }
