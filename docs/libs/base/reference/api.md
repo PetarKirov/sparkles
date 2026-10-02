@@ -85,8 +85,10 @@ Importing the package pulls in every module below.
 ### UTF and terminal-text acceleration
 
 Under LDC on x86-64, UTF-8 validation uses bounded SIMD blocks: SSE2 baseline
-classification or an AVX2/AVX-512BW nibble-lookup validator. Runtime dispatch
-checks CPU capability and OS vector-state support. Multilingual blocks share
+classification or an AVX2/AVX-512BW nibble-lookup validator. Wide runtime
+dispatch requires AVX-512F/BW/VL and OS vector-state support; compaction also
+requires VBMI2. LLVM's explicit `evex512` target feature enables ZMM lowering.
+Multilingual blocks share
 an error reduction across four vectors; ASCII tails resume the ASCII shortcut.
 Rejected groups and incomplete tails
 fall back to scalar decoding, preserving the first invalid **sequence lead**
@@ -117,7 +119,7 @@ CTFE retain scalar paths. Normalization and case-folding in `analysis` are
 separate operations, not covered by these SIMD changes.
 
 See [measured comparisons and limits](../../../research/simd-unicode/performance.md)
-and the [runnable benchmark matrix](../../../../libs/base/bench/utf/README.md).
+and the [runnable benchmark matrix](https://github.com/PetarKirov/sparkles/blob/878ee7e3ce1b8586d3dbf08d0132cfe568016ac6/libs/base/bench/utf/README.md).
 
 ## `sparkles.base.term_style`
 

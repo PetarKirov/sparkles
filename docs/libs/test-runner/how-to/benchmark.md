@@ -83,7 +83,7 @@ an opt-in `benchmark` configuration using `-singleobj`. Select it with
 in-tree dependency on the implementation package), or pass
 `--override-config=sparkles:test-runner-impl/benchmark`. The normal library
 configuration is unchanged. The
-[UTF matrix](../../../../libs/base/bench/utf/README.md) exercises this route.
+[UTF matrix](https://github.com/PetarKirov/sparkles/blob/878ee7e3ce1b8586d3dbf08d0132cfe568016ac6/libs/base/bench/utf/README.md) exercises this route.
 
 ## Excluding setup: `benchIter`
 

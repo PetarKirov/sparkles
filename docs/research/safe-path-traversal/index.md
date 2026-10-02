@@ -151,7 +151,7 @@ memory.
 [axis4]: ./comparison.md#axis-4-the-fallback-ladder-and-how-it-is-detected
 [axis6]: ./comparison.md#axis-6-deletion
 [delta]: ./comparison.md#delta-dir-handle-against-the-field
-[examples]: ./examples/
+[examples]: https://github.com/PetarKirov/sparkles/tree/878ee7e3ce1b8586d3dbf08d0132cfe568016ac6/docs/research/safe-path-traversal/examples
 [ex-flags]: ./examples/openat2-resolve-flags.d
 [ex-walk]: ./examples/component-walk.d
 [ex-rm]: ./examples/fd-remove-tree.d
