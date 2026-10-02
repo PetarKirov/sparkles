@@ -58,6 +58,11 @@ struct TerminalRequest
     /// to answer, which costs the timeout — see
     /// $(REF Terminal.probe, sparkles,tui,terminal).
     bool probe = true;
+    /// Ask for key releases (and repeats): kitty keyboard flag 2, set where
+    /// the probe found the kitty keyboard protocol. Off by default, as it is
+    /// for a window (`RunConfig.keyRelease`): an application that does not
+    /// read `KeyAction` would take every release for a second press.
+    bool keyRelease;
 }
 
 /**
@@ -148,6 +153,13 @@ struct TerminalSession
             // mode (kitty), needs nothing.
             if (s.replies.graphemes == ModeReply.reset && s.replies.clusterWidth != 2)
                 s.term.enableGraphemeClusters();
+            // Key releases, where asked for and the terminal speaks the kitty
+            // keyboard protocol; `TermCaps.kittyKeyboard` means negotiated.
+            if (r.keyRelease && s.replies.kittyKeyboard)
+            {
+                s.term.enableKeyReleases();
+                caps.kittyKeyboard = s.term.keyReleases;
+            }
             s.typedAhead = s.term.takeTypedAhead();
         }
         s.target = sessionCapabilities(caps);
@@ -250,7 +262,8 @@ A live session's declaration (`CAP1`): what `t` holds — the environment's
 answers and, when the session probed, the terminal's (`CAP3`) — with the
 input it negotiated: a terminal serves hover and one whole-cell pointer
 ($(LREF TerminalSession.capabilities)), and focus and paste events only once
-asked for them.
+asked for them — key releases too, where the application asked and the
+terminal speaks the kitty keyboard protocol.
 
 Nothing rides along any more. Links, like styled underlines, are what the
 probe found — for links, the terminal naming itself in `XTVERSION` (D42) — so
@@ -266,6 +279,7 @@ TargetCapabilities sessionCapabilities(in TermCaps t) @safe pure nothrow @nogc
     // reports, but only a terminal asked for them sends any.
     c.input.focusEvents = t.focusReporting;
     c.input.pasteEvents = t.bracketedPaste;
+    c.input.keyRelease = t.kittyKeyboard;
     return c;
 }
 
@@ -318,5 +332,8 @@ unittest
     // Bracketed paste negotiated: pastes declared too.
     t.bracketedPaste = true;
     c = sessionCapabilities(t);
-    assert(c.input.focusEvents && c.input.pasteEvents);
+    assert(c.input.focusEvents && c.input.pasteEvents && !c.input.keyRelease);
+    // Kitty flag 2 set: releases declared.
+    t.kittyKeyboard = true;
+    assert(sessionCapabilities(t).input.keyRelease);
 }

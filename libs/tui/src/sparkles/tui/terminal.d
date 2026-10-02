@@ -63,6 +63,7 @@ struct Terminal
         bool _bracketedPaste;    // mode 2004 negotiated, to reset on close
         bool _schemeReports;     // mode 2031 negotiated, to reset on close
         bool _graphemeClusters;  // mode 2027 negotiated, to reset on close
+        bool _keyReleases;       // kitty flag 2 set on the pushed entry (the pop undoes it)
         CellPixels _answeredCell; // the terminal's own answer to `CSI 16 t`
         ubyte[] _typedAhead; // input that arrived during a probe, for replay
         SharedBuffer!char _buf;
@@ -381,6 +382,27 @@ struct Terminal
         writeAll(_outFd, s[]);
         _graphemeClusters = true;
     }
+
+    /**
+    Turns on key releases: kitty keyboard flag 2 (event types) on the entry
+    `open` pushed, set in place (`CSI = 15 ; 1 u`, flags 1|2|4|8) so the one
+    pop at close still restores the terminal. Keys then arrive as press,
+    repeat and release, which the decoders read from `mods:type`.
+
+    Negotiation, as focus reports are: for a terminal that answered the kitty
+    keyboard query, and an application that asked for releases — every other
+    one keeps a stream of presses.
+    */
+    void enableKeyReleases() @trusted
+    {
+        if (!_active || _keyReleases)
+            return;
+        writeAll(_outFd, "\x1b[=15;1u");
+        _keyReleases = true;
+    }
+
+    /// Whether key releases were turned on ($(LREF enableKeyReleases)).
+    bool keyReleases() const @safe pure @nogc => _keyReleases;
 
     /// Whether grapheme clustering was turned on
     /// ($(LREF enableGraphemeClusters)).
