@@ -43,6 +43,7 @@ import sparkles.doc_view.dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo
     DsvProjection,
     dsvStatusNote, DsvWindow;
 import sparkles.doc_view.preview_model : PreviewModel;
+import sparkles.doc_view.include : expandIncludes, IncludeOptions;
 
 /// What a document *is* — detected from the content, not selected by a mode
 /// switch. Kinds compose the way tree-sitter injections do (markdown embeds
@@ -403,9 +404,15 @@ struct DocumentPipeline
     over its forge client); without it a URL is refused like a missing file.
     */
     string delegate(string url) @system fetchUrl;
-    /// Reads a document from
+    /// Reads a document (and, for includes, the files it names) from
     /// somewhere other than the filesystem — APK assets; null: the filesystem.
     string delegate(string path) @system readFile;
+    /// `VIW5`/`VIW7`: expand VitePress `@include` directives in a markdown
+    /// document before it is parsed, confined by `includeOptions`. Off by
+    /// default: the raw view then shows the expanded text, not the comments.
+    bool resolveIncludes;
+    /// ditto
+    IncludeOptions includeOptions;
 
 @system:
 
@@ -523,7 +530,12 @@ struct DocumentPipeline
                 const ext = path.extension.chompPrefix(".");
                 const lang = language.length ? canonicalLanguage(language)
                     : canonicalLanguageOfPath(path);
-                const contents = readSourceText(path);
+                // `VIW5`: a previewed markdown page is parsed with its
+                // includes in place — when the host asked for them.
+                const contents = resolveIncludes && !raw
+                    && (forceMarkdown || lang == "markdown")
+                    ? expandIncludes(readSourceText(path), path, includesFor())
+                    : readSourceText(path);
                 // Opening a coverage artifact shows the source it describes,
                 // with its own gutter. That means reading a path out of the
                 // file's *contents*, so it is fenced twice: only an extension
@@ -567,6 +579,15 @@ struct DocumentPipeline
                     attachCoverage(doc, artifact);
                 return doc;
         }
+    }
+
+    // The include options with this pipeline's reader as the default.
+    private IncludeOptions includesFor()
+    {
+        auto o = includeOptions;
+        if (o.read is null)
+            o.read = readFile;
+        return o;
     }
 
     private string readSourceText(string path) @system
