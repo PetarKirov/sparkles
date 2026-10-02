@@ -230,6 +230,7 @@ enum AmRequestKind
     setupStorage, /// `termux-setup-storage`
     wakeLock, /// `termux-wake-lock`
     wakeUnlock, /// `termux-wake-unlock`
+    shareText, /// `am start -a SEND --es android.intent.extra.TEXT <text>`: the share sheet
     unsupported,
 }
 
@@ -237,7 +238,8 @@ enum AmRequestKind
 struct AmRequest
 {
     AmRequestKind kind;
-    string target; /// the URL or file (`openUrl`/`openFile`)
+    string target; /// the URL or file (`openUrl`/`openFile`), the text (`shareText`)
+    string subject; /// `shareText`'s `EXTRA_SUBJECT`
     string mimeType;
     bool chooser; /// `termux-open --chooser`
 }
@@ -274,6 +276,17 @@ AmRequest classify(const AmCommand c) @safe pure
         if (auto ch = "chooser" in c.boolExtras)
             r.chooser = *ch;
         return r;
+    }
+    if (c.verb == "start" && c.action == "android.intent.action.SEND")
+    {
+        if (auto text = "android.intent.extra.TEXT" in c.stringExtras)
+        {
+            r.kind = AmRequestKind.shareText;
+            r.target = *text;
+            if (auto s = "android.intent.extra.SUBJECT" in c.stringExtras)
+                r.subject = *s;
+            return r;
+        }
     }
     if (c.verb == "start" && c.action == "android.intent.action.VIEW" && isUrl(c.data))
     {
@@ -331,6 +344,11 @@ bool isUrl(const(char)[] s) @safe pure nothrow @nogc
     assert(req(`broadcast --user 0 --es dev.petar_kirov.sparkles.terminal.nix.app.reload_style storage -a dev.petar_kirov.sparkles.terminal.nix.app.reload_style dev.petar_kirov.sparkles.terminal.nix`).kind == AmRequestKind.setupStorage);
     assert(req(`force-stop com.example`).kind == AmRequestKind.unsupported);
     assert(req(`start -a android.intent.action.VIEW -d file:///x`).kind == AmRequestKind.unsupported);
+    // Text to the share sheet; a SEND with no text is not one this app can make.
+    auto share = req(`start --user 0 -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT 'hello world' --es android.intent.extra.SUBJECT hi`);
+    assert(share.kind == AmRequestKind.shareText);
+    assert(share.target == "hello world" && share.subject == "hi");
+    assert(req(`start -a android.intent.action.SEND -t image/png`).kind == AmRequestKind.unsupported);
 }
 
 /// The reply termux-am-socket expects: `<code>\0<stdout>\0<stderr>\0`.

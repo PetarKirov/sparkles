@@ -142,10 +142,16 @@ private void answer(int conn, string home)
             const err = setWakeLock(r.kind == AmRequestKind.wakeLock);
             return err is null ? reply(conn, 0, "", "")
                 : reply(conn, 1, "", "am: " ~ err ~ "\n");
+        case AmRequestKind.shareText:
+            import sparkles.android.intents : shareText;
+
+            const err = shareText(r.target, r.subject);
+            return err is null ? reply(conn, 0, "", "")
+                : reply(conn, 1, "", "am: " ~ err ~ "\n");
         case AmRequestKind.unsupported:
             return reply(conn, 1, "", "am: this app answers only the requests of "
                 ~ "nix-on-droid's android-integration tools (open a URL, wake lock, "
-                ~ "reload settings, setup storage): " ~ cast(string) request ~ "\n");
+                ~ "reload settings, setup storage, share text): " ~ cast(string) request ~ "\n");
     }
 }
 
