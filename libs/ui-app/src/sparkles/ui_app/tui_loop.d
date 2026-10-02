@@ -122,9 +122,16 @@ struct TuiHost
     A `final switch` over the enum rather than concatenation, so each sequence
     is a compile-time string and setting a shape allocates nothing — this is
     called once a frame by a host that composes shapes from hover state.
+
+    Sent only where the target declares `pointerShape` — the terminal named
+    itself as one known to draw it (D42) — so a terminal that would drop it
+    is not handed a sequence a frame. A narrowed target (a profile preview)
+    sends none either: what a preview shows is what that terminal would do.
     */
     void pointerShape(PointerShape s) @system
     {
+        if (!target.pointerShape)
+            return;
         final switch (s)
         {
             static foreach (m; __traits(allMembers, PointerShape))
@@ -138,8 +145,16 @@ struct TuiHost
         }
     }
 
-    /// The system clipboard, as OSC 52 — the only portable in-band route a
-    /// terminal has. Base64 by the protocol, not by choice.
+    /**
+    The system clipboard, as OSC 52 — the only portable in-band route a
+    terminal has. Base64 by the protocol, not by choice.
+
+    Sent whether or not the target declares `clipboard`: a terminal that
+    keeps OSC 52 writes may not have named itself (Alacritty answers no
+    `XTVERSION`), and one that does not keep them drops the sequence. The
+    declaration says whether the copy is $(I known) to land — an application
+    tells its user so ($(B hue): "sent — this terminal may not keep it").
+    */
     void clipboard(scope const(char)[] text) @system
     {
         import std.base64 : Base64;
@@ -527,4 +542,13 @@ unittest
     assert(!bare.spawnDaemon(delegate void() {}),
         "no ring drives a bare host — the component keeps its polled path");
     bare.wake(); // and a wake asks nothing
+
+    // A target with no pointer shape is sent no OSC 22: narrowed to
+    // `enhanced`, the bare host — which has no terminal to write to —
+    // returns before it would write.
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+
+    bare.narrowTarget(capabilitiesOf(Profile.enhanced));
+    assert(!bare.target.pointerShape);
+    bare.pointerShape(PointerShape.grab);
 }
