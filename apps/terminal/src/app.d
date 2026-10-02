@@ -170,6 +170,7 @@ private int desktopMain(string[] args)
     app.host.onExit = lc.effective.behaviour.onExit;
     app.host.labels = lc.effective.ui.buttonLabels;
     app.host.overlayStyle = lc.effective.ui.overlayStyle;
+    app.host.notificationsConfig = lc.effective.notifications;
     app.host.tabsOpener = lc.effective.ui.tabsOpener;
     app.host.paneChrome = lc.effective.ui.paneChrome;
     app.host.linkTap = lc.effective.links.tap;

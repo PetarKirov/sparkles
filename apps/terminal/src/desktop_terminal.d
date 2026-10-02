@@ -63,6 +63,7 @@ struct DesktopTerminal
 
         if (defaultFontPx == 0)
             defaultFontPx = h.fontSizePx;
+        keys.unseenNotifications = host.notifications.unseen; // `TPG11`
         keys.tick((cast(long)(h.frameSeconds * 1000)).msecs);
         const wait = keys.untilShown;
         if (wait != Duration.max)
@@ -187,7 +188,8 @@ struct DesktopTerminal
                 TermCommand.splitDown, TermCommand.focusLeft, TermCommand.focusRight,
                 TermCommand.focusUp, TermCommand.focusDown, TermCommand.zoomPane,
                 TermCommand.closePane, TermCommand.promptRerun, TermCommand.promptShell,
-                TermCommand.promptClose, TermCommand.tabTree:
+                TermCommand.promptClose, TermCommand.tabTree, TermCommand.openAbout,
+                TermCommand.openLogs, TermCommand.openNotifications:
                 break;
         }
     }

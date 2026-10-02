@@ -254,8 +254,10 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
     final switch (s.placement)
     {
         case Placement.page:
-            return place(s.build(ctx, cols), cols, rows, ctx.area.x, ctx.area.y, ctx.cellW,
-                ctx.cellH, Place.top);
+            auto page = place(s.build(ctx, cols), cols, rows, ctx.area.x, ctx.area.y,
+                ctx.cellW, ctx.cellH, Place.top);
+            page.opaque = true; // the panes under it do not show through
+            return page;
         case Placement.panel:
             const pc = ctx.panelArea.width / ctx.cellW, pr = ctx.panelArea.height / ctx.cellH;
             return place(s.build(ctx, pc), pc, pr, ctx.panelArea.x, ctx.panelArea.y, ctx.cellW,

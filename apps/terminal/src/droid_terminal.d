@@ -149,6 +149,7 @@ struct DroidTerminal
             hasPending = false;
             run(h, pendingCommand);
         }
+        router.unseenNotifications = host.notifications.unseen; // `TPG11`
         router.tick((cast(long)(h.frameSeconds * 1000)).msecs);
         const wait = router.untilShown;
         if (wait != Duration.max)
@@ -240,6 +241,7 @@ struct DroidTerminal
         host.onExit = config.effective.behaviour.onExit;
         host.labels = config.effective.ui.buttonLabels;
         host.overlayStyle = config.effective.ui.overlayStyle;
+        host.notificationsConfig = config.effective.notifications;
         host.tabsOpener = config.effective.ui.tabsOpener;
         host.paneChrome = config.effective.ui.paneChrome;
         host.linkTap = config.effective.links.tap;
@@ -375,7 +377,8 @@ struct DroidTerminal
                 TermCommand.splitDown, TermCommand.focusLeft, TermCommand.focusRight,
                 TermCommand.focusUp, TermCommand.focusDown, TermCommand.zoomPane,
                 TermCommand.closePane, TermCommand.promptRerun, TermCommand.promptShell,
-                TermCommand.promptClose, TermCommand.tabTree:
+                TermCommand.promptClose, TermCommand.tabTree, TermCommand.openAbout,
+                TermCommand.openLogs, TermCommand.openNotifications:
                 break;
         }
     }
@@ -531,6 +534,9 @@ struct DroidTerminal
     {
         const g = geometry(h);
         if (swipeKeyRow(g, w))
+            return;
+        // Under a page the drag scrolls it (finger up: towards the end).
+        if (host.scrollSurface(w.dy))
             return;
         // The pane the drag began in: an application tracking the mouse gets
         // wheel reports (a pager, an editor); otherwise the drag walks its

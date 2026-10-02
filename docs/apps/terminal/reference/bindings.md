@@ -35,6 +35,9 @@ keeps this page equal to it.
 | `Ctrl+Shift+PageUp`   | previous tab      | a pane          |
 | `Ctrl+Shift+PageDown` | next tab          | a pane          |
 | `Leader k`            | toggle extra keys | a pane          |
+| `Leader a`            | about             | a pane          |
+| `Leader l`            | logs              | a pane          |
+| `Leader n`            | notifications     | a pane          |
 | `Leader t n`          | new tab           | a pane          |
 | `Leader t t`          | tabs and panes    | a pane          |
 | `Leader t x`          | close tab         | a pane          |

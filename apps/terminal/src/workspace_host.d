@@ -33,11 +33,12 @@ import pane_chrome : PaneBox, paneBoxes, paneFrame, paneHeader, paneToolbar, Too
     toolHit;
 import tab_tree : TabTree, TreePane, TreeTab;
 import confirmations : ClipboardRead, PasteConfirm;
-import sparkles.terminal_view.notification_log : NotificationRoute;
+import sparkles.terminal_view.notification_log : NotificationLog, NotificationRoute;
 import sparkles.terminal_view.osc_scan : Notification;
 import sparkles.terminal_view.protocols : PasteConfirmRequest;
 import keymap : KeyCommand, TermCommand;
-import settings : ButtonLabels, LinkAction, OnExit, OverlayStyle, PaneChrome, TabsOpener;
+import settings : ButtonLabels, LinkAction, NotificationsConfig, OnExit, OverlayStyle,
+    PaneChrome, TabsOpener;
 import links : canOpen, LinkConfirm, openUri, schemeOf;
 import surfaces : SurfaceContext, Surfaces;
 import workspace : Direction, maxPanesPerTab, maxTabs, PaneSpec, Refusal, restored,
@@ -116,6 +117,11 @@ struct WorkspaceHost
     LinkAction linkLongPress = LinkAction.off;
     /// ditto
     string[] linkSchemes;
+    /// Every pane's notifications, in one log (`TPG9`), and the config's
+    /// `notifications` section its page groups by (`TPG18`).
+    NotificationLog notifications;
+    /// ditto
+    NotificationsConfig notificationsConfig;
 
     // This frame's geometry, for `paint` and the hit tests.
     private PaneBox[] boxes;
@@ -247,6 +253,10 @@ struct WorkspaceHost
         // Ctrl+click on a link (`TPR7`), through the allow-list (`TPR6`).
         o.hooks.openLink = (scope const(char)[] uri) { self.open(uri.idup); };
         o.hooks.cwdChanged = (scope const(char)[] p) { self.ws.setCwd(id, p.idup); self.dirty = true; };
+        // One log for every pane, each entry naming its pane (`TPG9`, `TPG10`).
+        o.notificationLog = &notifications;
+        o.notificationSource = id;
+        o.hooks.tabTitle = () => self.tabTitle(id);
         auto tv = pool.create(id, o);
         if (tv is null)
         {
@@ -308,6 +318,14 @@ struct WorkspaceHost
             const m = GetMousePosition();
             const mx = cast(int) m.x, my = cast(int) m.y;
             const leftDown = IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT);
+            {
+                import raylib : GetMouseWheelMove;
+
+                // Under a page the wheel is the page's (`TKM4`).
+                const wheel = GetMouseWheelMove();
+                if (wheel != 0)
+                    cast(void) scrollSurface(cast(int)(-wheel * 3));
+            }
             PaneId under;
             foreach (ref b; boxes)
                 if (contains(b.content, mx, my))
@@ -349,7 +367,8 @@ struct WorkspaceHost
         {
             const b = boxOf(id);
             tv.opts.visible = b !is null;
-            tv.opts.pollMouse = pollPointer && b !is null && id == pointerOwner;
+            tv.opts.pollMouse = pollPointer && b !is null && id == pointerOwner
+                && !surfaces.modal;
             if (b !is null)
                 any |= tv.frame(h, b.cols, b.rows);
             else if (tv.s.terminal !is null)
@@ -377,6 +396,14 @@ struct WorkspaceHost
         if (surfaces.toasts.length)
             static if (__traits(compiles, h.wakeIn(surfaces.nextExpiry)))
                 h.wakeIn(surfaces.nextExpiry);
+        // A page may show what changes without input (the log's tail).
+        if (surfaces.modal)
+            static if (__traits(compiles, h.wakeIn(surfaces.nextExpiry)))
+            {
+                import core.time : msecs;
+
+                h.wakeIn(500.msecs);
+            }
         // One pane changed: the whole window repaints (panes share it); none:
         // the last frame stays up (`HST6`).
         if (!any && !repaint)
@@ -785,8 +812,41 @@ struct WorkspaceHost
         foreach (i, p; panes)
             if (p == id)
                 n = i + 1;
-        const title = ws.tabs[t].titlePin.length ? ws.tabs[t].titlePin : programName(panes[0]);
-        return text("Tab \"", title, "\", pane ", n);
+        return text("Tab \"", tabTitle(id), "\", pane ", n);
+    }
+
+    /// The title of the tab pane `id` is in: its pinned title, else its first
+    /// pane's program.
+    private string tabTitle(PaneId id) @system
+    {
+        const t = ws.tabOf(id);
+        if (t == size_t.max)
+            return null;
+        return ws.tabs[t].titlePin.length ? ws.tabs[t].titlePin : programName(ws.panesOf(t)[0]);
+    }
+
+    /**
+    A wheel or a drag of `rows` (positive: towards the end) while a surface
+    is modal: the top one scrolls, as by that many arrow keys. False when no
+    surface is shown — the panes' then.
+    */
+    bool scrollSurface(int rows) @system
+    {
+        import sparkles.input.events : Key;
+
+        if (!surfaces.modal)
+            return false;
+        foreach (_; 0 .. rows < 0 ? -rows : rows)
+            cast(void) surfaces.key(KeyEvent(rows < 0 ? Key.up : Key.down));
+        repaint = true;
+        return true;
+    }
+
+    /// Puts `text` on the clipboard with the next frame (a page's Copy).
+    void setClipboard(string text) @safe pure nothrow @nogc
+    {
+        pendingClipboard = text;
+        clipboardPending = true;
     }
 
     /// The user's shell, by name, for a pane that ran no command.
@@ -1031,6 +1091,13 @@ struct WorkspaceHost
             case TermCommand.promptShell:
                 respawnFocused(h, c.cmd == TermCommand.promptShell);
                 break;
+            case TermCommand.openAbout:
+            case TermCommand.openLogs:
+            case TermCommand.openNotifications:
+                import pages : openPage;
+
+                openPage(this, c.cmd);
+                return true;
             case TermCommand.none:
             case TermCommand.copy:
             case TermCommand.paste:

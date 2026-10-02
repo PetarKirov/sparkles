@@ -50,6 +50,9 @@ struct KeyRouter
     /// `lantern.enabled`: off, a prefix still works but the panel never shows
     /// on its own (an explicit `?` still opens it).
     bool guideEnabled = true;
+    /// Notifications not yet seen: the guide's notifications row says how
+    /// many (`TPG11`). The embedder keeps it current.
+    size_t unseenNotifications;
 
     /**
     (Re)builds the table from the configuration: the leader, the `keys`
@@ -183,6 +186,9 @@ void paintGuide(H)(ref H h, ref KeyRouter router, in TermContext ctx, int cols,
     bindingsAt(listed, router.table, ctx, router.lantern.pending[]);
     if (listed.length == 0)
         return;
+    foreach (ref row; listed[])
+        if (row.cmd == TermCommand.openNotifications)
+            row.desc = withUnseen(row.desc, router.unseenNotifications);
 
     static LabelArena labels;
     Builder b;
@@ -208,6 +214,23 @@ void paintGuide(H)(ref H h, ref KeyRouter router, in TermContext ctx, int cols,
 }
 
 import sparkles.base.term_color : RgbColor;
+
+/// `desc` with the count of unseen notifications after it, when there are
+/// any: `notifications · 3 new` (`TPG11`).
+string withUnseen(string desc, size_t unseen) @safe pure nothrow
+{
+    import std.conv : to;
+
+    return unseen ? desc ~ " · " ~ unseen.to!string ~ " new" : desc;
+}
+
+///
+@("key_router.withUnseen")
+@safe pure nothrow unittest
+{
+    assert(withUnseen("notifications", 0) == "notifications");
+    assert(withUnseen("notifications", 3) == "notifications · 3 new");
+}
 
 // ---------------------------------------------------------------------------
 // Tests.

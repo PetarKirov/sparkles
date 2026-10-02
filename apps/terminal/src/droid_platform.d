@@ -11,6 +11,8 @@ JNI half is $(LREF DroidPlatform), driven once per frame by
 */
 module droid_platform;
 
+import keymap : TermCommand;
+
 /// The tag a pane's system notification is posted under: a later one from
 /// the same pane replaces it (`TPR10`).
 string paneTag(uint pane) @safe pure nothrow
@@ -124,6 +126,35 @@ DeepLink deepLinkOnResume(scope const uint[] posted, scope const uint[] shown,
     assert(deepLinkOnResume(two, none_, false).kind == K.openLog);
 }
 
+/// The page a debug trigger names: `about`, `logs` or `notifications`
+/// (surrounding space ignored); `none` for anything else.
+TermCommand pageCommand(scope const(char)[] name) @safe pure nothrow @nogc
+{
+    import std.ascii : isWhite;
+
+    while (name.length && isWhite(name[0]))
+        name = name[1 .. $];
+    while (name.length && isWhite(name[$ - 1]))
+        name = name[0 .. $ - 1];
+    switch (name)
+    {
+        case "about": return TermCommand.openAbout;
+        case "logs": return TermCommand.openLogs;
+        case "notifications": return TermCommand.openNotifications;
+        default: return TermCommand.none;
+    }
+}
+
+///
+@("droid_platform.pageCommand")
+@safe pure nothrow @nogc unittest
+{
+    assert(pageCommand("logs\n") == TermCommand.openLogs);
+    assert(pageCommand(" about") == TermCommand.openAbout);
+    assert(pageCommand("notifications") == TermCommand.openNotifications);
+    assert(pageCommand("settings") == TermCommand.none);
+}
+
 version (Android):
 
 import sparkles.android.autofill : AutofillReport;
@@ -142,8 +173,10 @@ struct DroidPlatform
 {
     /// Asked to focus a pane (`TSS15`); unset, a deep link only logs.
     void delegate(uint pane) focusPane;
-    /// Asked to open the notification log (`TPG10`); unset, it only logs.
-    void delegate() openNotificationLog;
+    /// Asked to open a page: the notification log after a deep link that
+    /// could not tell which pane (`TPG10`), any page from a debug trigger;
+    /// unset, a deep link only logs.
+    void delegate(TermCommand page) openPage;
     /// Where the autofill spike's test triggers live (`SessionPaths.debugDir`).
     string debugDir;
 
@@ -263,8 +296,8 @@ struct DroidPlatform
                 break;
             case DeepLink.Kind.openLog:
                 info(i"terminal: deep link to the notification log");
-                if (openNotificationLog !is null)
-                    openNotificationLog();
+                if (openPage !is null)
+                    openPage(TermCommand.openNotifications);
                 break;
         }
     }
@@ -326,6 +359,15 @@ struct DroidPlatform
         {
             fakeAutofill(marker);
             marker[] = 0;
+        }
+        // `open-page` holding `about`, `logs` or `notifications` opens that
+        // page — the on-device test of the pages (`TPG`).
+        if (auto page = takeTrigger("open-page"))
+        {
+            const cmd = pageCommand(page);
+            info(i"terminal: debug trigger opens $(page)");
+            if (cmd != TermCommand.none && openPage !is null)
+                openPage(cmd);
         }
         const rep = autofillReport;
         if (rep != lastReport)

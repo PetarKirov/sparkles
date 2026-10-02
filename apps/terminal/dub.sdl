@@ -18,6 +18,7 @@ dependency "expected" version="~>0.4.0"
 
 dependency "sparkles:android" path="../.."
 dependency "sparkles:core-cli" path="../.."
+dependency "sparkles:fuzzy" path="../.."
 dependency "sparkles:base" path="../.."
 dependency "sparkles:ghostty" path="../.."
 dependency "sparkles:raylib-text" path="../.."

@@ -9,6 +9,7 @@ version (Android):
 
 import cli : guiOptionsFrom;
 import droid_terminal : DroidTerminal;
+import keymap : TermCommand;
 import sparkles.terminal_view.component : TerminalViewOptions;
 import sparkles.terminal_view.log : routeTraceLog;
 import session;
@@ -72,6 +73,13 @@ int androidMain()
     app.platform.focusPane = (uint pane) {
         cast(void) app.host.ws.focusPane(pane);
         app.host.invalidate();
+    };
+    // Several notifications while away: the notification log (`TPG10`, D15);
+    // a debug trigger opens any page (on-device tests).
+    app.platform.openPage = (TermCommand page) {
+        import pages : openPage;
+
+        openPage(app.host, page);
     };
     app.loadSettings(); // the options every pane starts from
     app.host.pollPointer = false; // touch arrives as gestures

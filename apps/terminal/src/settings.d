@@ -343,6 +343,9 @@ struct NotificationsConfig
 
     @Description("The notification log's grouping rules, first match wins.")
     NotificationGroupRule[] groups;
+
+    @Description("Processes the log groups as coding agents, beyond claude, codex, aider and the like.")
+    string[] agents;
 }
 
 /// ditto

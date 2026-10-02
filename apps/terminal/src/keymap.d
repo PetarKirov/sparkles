@@ -66,6 +66,11 @@ enum TermCommand : ubyte
     zoomPane,
     closePane,
 
+    // The pages (`TPG`).
+    openAbout,         /// the build, and the way to the source and the credits
+    openLogs,          /// the application's log
+    openNotifications, /// the notification log
+
     // The exit prompt (`TSS2`).
     promptRerun,     /// Enter: the same command again
     promptShell,     /// Esc: the user's shell in the last directory
@@ -173,6 +178,10 @@ immutable Binding[] defaultBindings = [
     // ── under the leader ─────────────────────────────────────────────────
     bind(TermScope.pane, chord(leaderMark), chord('k'), TermCommand.toggleExtraKeys,
         "toggle extra keys"),
+    bind(TermScope.pane, chord(leaderMark), chord('a'), TermCommand.openAbout, "about"),
+    bind(TermScope.pane, chord(leaderMark), chord('l'), TermCommand.openLogs, "logs"),
+    bind(TermScope.pane, chord(leaderMark), chord('n'), TermCommand.openNotifications,
+        "notifications"),
     group(TermScope.pane, chord(leaderMark), chord('t'), "tab"),
     bind(TermScope.pane, chord(leaderMark), chord('t'), chord('n'), TermCommand.newTab,
         "new tab"),

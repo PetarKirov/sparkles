@@ -52,6 +52,9 @@ struct Layer
     int cellW = 1, cellH = 1;
     /// The hit rects, in the surface's cells.
     HoverTarget[] hits;
+    /// Paint the terminal's background under it first: a page hides the
+    /// panes it covers, where a card or a sheet only covers its own boxes.
+    bool opaque;
 
     /// Whether anything was built.
     bool empty() const @safe pure nothrow @nogc => frames.length == 0;
@@ -142,6 +145,13 @@ void paintLayer(H)(ref H h, in Layer l, in ChromeTheme t) @system
 
     if (l.empty)
         return;
+    if (l.opaque)
+    {
+        import raylib : Color, DrawRectangle;
+
+        const r = l.pixelBounds;
+        DrawRectangle(r.x, r.y, r.width, r.height, Color(t.bg.r, t.bg.g, t.bg.b, 255));
+    }
     static FrameOps ops;
     ops.reset();
     buildDisplayListInto(l.tree, l.frames, t.palette, t.fg, t.bg, ops);
