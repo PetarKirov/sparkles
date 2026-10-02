@@ -435,7 +435,7 @@ struct MdViewGlyphs
     string cautionIcon = "\U000F0CE6";   /// 󰳦
     string copyIcon = "\U0000F0C5";      ///  (fence header copy affordance)
     string copiedIcon = "\U0000F00C";    ///  (feedback after a copy)
-    /// A link's leading icon, by destination (`MDP8`): see 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF linkIcon).
+    /// A link's leading icon, by destination (`MDP8`): see $(LREF linkIcon).
     string linkGithubIcon = "\U0000F09B"; ///  github
     string linkGitlabIcon = "\U0000F296"; ///  gitlab
     string linkMailIcon = "\U000F01EE";   /// 󰇮 mailto
