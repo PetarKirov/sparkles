@@ -187,6 +187,49 @@ Sparse!T mergeSparse(T)(Sparse!T base, Sparse!T deltas) @safe
     return merged;
 }
 
+/**
+The fields of `value` that `paths` name, as a sparse overlay — what a settings
+page writes back: the paths the user changed, and nothing a lower or higher
+layer supplied.
+
+A path is a leaf field's dotted name through the $(LREF WireSection)s
+(`pane.tabWidth`). One that continues past a leaf field — an element
+(`searchPaths[2]`) or a member of one (`rules[0].name`) — names that whole
+field, because a layer sets a leaf field, a list included, as one value.
+*/
+Sparse!T sparseAt(T)(T value, scope const(string)[] paths)
+{
+    Sparse!T o;
+    fillSparseAt(o, value, paths, null);
+    return o;
+}
+
+private void fillSparseAt(S, T)(ref S o, ref T part,
+    scope const(string)[] paths, string prefix)
+{
+    static foreach (i, name; FieldNameTuple!T)
+    {
+        static if (hasUDA!(typeof(T.tupleof[i]), WireSection))
+            fillSparseAt(o.tupleof[i], part.tupleof[i], paths,
+                prefix ~ name ~ ".");
+        else
+        {
+            foreach (p; paths)
+                if (namesField(p, prefix ~ name))
+                {
+                    o.tupleof[i] = part.tupleof[i];
+                    break;
+                }
+        }
+    }
+}
+
+private bool namesField(scope const(char)[] path, scope const(char)[] field)
+    @safe pure nothrow @nogc
+    => path.length >= field.length && path[0 .. field.length] == field
+        && (path.length == field.length || path[field.length] == '['
+            || path[field.length] == '.');
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests. The serde-touching ones are `@system` — wired infers that for
 // aggregates; the pure merge tests stay `@safe`.
@@ -355,4 +398,25 @@ version (unittest)
     // And the same generator produces the provenance mirror.
     static assert(is(typeof(Origins!(Cfg, Layer).pane) == Origins!(Pane, Layer)));
     static assert(is(typeof(Origins!(Cfg, Layer).theme) == Layer));
+}
+
+///
+@("wired.overlay.sparseAt.takesExactlyTheNamedFields")
+@safe unittest
+{
+    Cfg value;
+    value.theme = "dark";
+    value.pane.tabWidth = 8;
+    value.mode = Mode.off;
+    value.searchPaths = ["a", "b"];
+
+    const o = sparseAt(value, ["theme", "pane.tabWidth", "searchPaths[1]"]);
+    assert(o.theme.get == "dark");
+    assert(o.pane.tabWidth.get == 8);
+    assert(o.searchPaths.get == ["a", "b"], "an element names its whole list");
+    assert(o.mode.isNull, "a field no path names stays unset");
+    assert(o.pane.lineNumbers.isNull);
+
+    // A prefix of a name is not the name.
+    assert(sparseAt(value, ["them"]).theme.isNull);
 }

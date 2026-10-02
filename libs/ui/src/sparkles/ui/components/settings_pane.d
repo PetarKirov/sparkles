@@ -23,6 +23,15 @@ line). Only the paths the user touched are ever persisted, so a value a
 higher layer supplied but the user never touched cannot leak into the file
 (hue `CFG11`, terminal `TSP3`).
 
+$(B Autosave, with Undo in the toast.) There is no Save command (terminal
+`D36`, superseding hue's `SET4`): each committed edit is written at once
+through the host's `doSave`, and a $(LREF SettingsToast) says "Saved" and
+offers Undo — which is the property tree's own history, not a second stack,
+so undoing is one more committed edit and saves the file back. What is
+written is $(LREF SettingsPane.changedPaths): the touched paths whose value
+differs from the file as it was at open, so an edit undone back to where it
+started leaves the file as it found it.
+
 $(B One process, one owner per array.) `open` gives the subject and both
 drafts their own copies of every array, so an in-place element edit can never
 write through into a value another layer — or the schema's `.init` — still
@@ -91,7 +100,6 @@ enum SettingsCommand : ubyte
     openAll,   ///
     closeAll,  ///
     reset,     /// the selected leaf back to its compiled default
-    save,      /// persist the file draft
     textAccept,    /// the line editor: commit the text
     textCancel,    /// the line editor: discard it
     textBackspace, /// the line editor: erase one code point
@@ -151,9 +159,6 @@ immutable Binding!(SettingsCommand, SettingsScope)[] defaultSettingsBindings = [
     bind(SettingsScope.pane, chord('o', ShiftReq.yes), SettingsCommand.openAll, "open all"),
     bind(SettingsScope.pane, chord('c', ShiftReq.yes), SettingsCommand.closeAll, "close all"),
     bind(SettingsScope.pane, chord('r'), SettingsCommand.reset, "reset to default"),
-    bind(SettingsScope.pane, chord('s', ShiftReq.no), SettingsCommand.save, "save"),
-    bind(SettingsScope.pane, Chord(key: Key.char_, ch: 's', ctrl: true),
-        SettingsCommand.save, "save"),
     bind(SettingsScope.pane, chord(Key.escape), SettingsCommand.close, "close"),
     bind(SettingsScope.pane, chord('q'), SettingsCommand.close, "close"),
     bind(SettingsScope.pane, chord(Key.back), SettingsCommand.close, "close"),
@@ -177,7 +182,7 @@ struct SettingsResult
     {
         consumed, /// nothing for the host beyond `apply`
         closed,   /// the pane closed; return the keyboard
-        saved,    /// a save succeeded (the status line already says so)
+        saved,    /// a commit was autosaved (the toast already says so)
     }
 
     Kind kind; ///
@@ -186,6 +191,35 @@ struct SettingsResult
     /// $(LREF ApplyRule) table says the edited path obliges it to do now
     /// (re-resolve a theme, reload a font, re-arrange a dock).
     uint apply;
+}
+
+/**
+The outcome of the last autosave, as a host shows it: "Saved" with an Undo
+action (terminal `TSP3`), or the refusal. Undo is
+$(LREF SettingsPane.undoLast) — the property tree's own history. A host that
+times toasts out clears it with `dismiss`; the pane replaces it at the next
+commit.
+*/
+struct SettingsToast
+{
+    /// ditto
+    enum Kind : ubyte
+    {
+        none,   ///
+        saved,  /// the commit is in the file
+        failed, /// the commit is live but not in the file; `message` says why
+    }
+
+    Kind kind;      ///
+    string message; /// "Saved", or the rendered refusal
+    /// Whether the toast's Undo applies: the history holds the edit.
+    bool offersUndo;
+
+    /// ditto
+    void dismiss() @safe pure nothrow @nogc
+    {
+        this = SettingsToast.init;
+    }
 }
 
 /// One live-apply rule: the longest matching prefix's mask is returned from
@@ -261,12 +295,20 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
     bool active;                 ///
 
     // Persistence (the CFG11 rule, structurally).
+    T seed;                      /// the file seed as it was at open
     T fileDraft;                 /// the file seed + this session's commits
     T savedDraft;                /// at open / last save; `dirty` compares
     string[] touched;            /// paths committed this session
-    /// The save seam: returns `null` on success, a rendered refusal
-    /// otherwise (the host's sparse writer behind an adapter).
-    string delegate(ref const T draft, const(string)[] touched) doSave;
+    /**
+    The autosave seam: write the file as it was at open with `changed` taken
+    from `draft` (and nothing else — a path not in `changed` keeps whatever
+    the file said at open, present or absent). Returns `null` on success, a
+    rendered refusal otherwise (the host's sparse writer behind an adapter).
+    */
+    string delegate(ref const T draft, const(string)[] changed) doSave;
+    /// The last autosave's outcome.
+    SettingsToast toast;
+    private bool wrote;          // a save reached the file this session
     /// Optional provenance lookup: non-empty for a path whose effective
     /// value came from a layer above the file — the shadow warning.
     string delegate(string path) @safe originOf;
@@ -297,10 +339,13 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
     {
         subject = cfg;
         *subject = ownedCopy(*subject);
+        seed = ownedCopy(fileValue);
         fileDraft = ownedCopy(fileValue);
         savedDraft = ownedCopy(fileValue);
         touched = null;
         status = null;
+        toast = SettingsToast.init;
+        wrote = false;
         active = true;
         resize(g);
         refresh();
@@ -319,25 +364,51 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
             refresh();
     }
 
-    /// Close: the session's runtime state stays, nothing persists. A live
-    /// preview drag commits first so no half-drag is left pending.
+    /// Close: the session's runtime state stays. A live preview drag commits
+    /// first — and, like every commit, is saved — so no half-drag is left
+    /// pending.
     void close()
     {
         if (subject is null)
             return;
         if (previewing)
-        {
-            cast(void) finishPending(*subject, edits, tree.policy);
-            previewing = false;
-        }
+            cast(void) commitPreview();
         textEditing = false;
         if (tv.searching)
             cast(void) tv.filterKey(KeyEvent(Key.escape));
         active = false;
     }
 
-    /// Unsaved committed edits since open / the last save.
+    /// Committed edits the file does not hold — only after a refused save.
     bool dirty() const => fileDraft != savedDraft;
+
+    /**
+    The paths an autosave writes: those touched this session whose value in
+    the draft differs from the file seed at open. A path edited and then
+    undone (or set back by hand) drops out, so the file returns to what it
+    said — a value a lower layer supplied is never baked in by a round trip.
+    */
+    string[] changedPaths()
+    {
+        string[] changed;
+        foreach (path; touched)
+        {
+            EditValue now, then;
+            const hasNow = readValueAt(fileDraft, path, now);
+            const hasThen = readValueAt(seed, path, then);
+            if (hasNow != hasThen || now != then)
+                changed ~= path;
+        }
+        return changed;
+    }
+
+    /// The toast's Undo: one step back through the property tree's history,
+    /// committed (and so saved) like any other edit.
+    SettingsResult undoLast()
+    {
+        const a = undoProperty(*subject, edits, tree.policy);
+        return a.ok ? committed(a.inverse.path) : consumedRefresh();
+    }
 
     /// Rebuild rows from the subject, pinning a pending edit's path.
     void refresh() @safe
@@ -428,24 +499,11 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
                 return stepEdit(-1);
             case SettingsCommand.preview:
                 if (previewing)
-                {
-                    // The commit boundary: one history entry per drag
-                    // (PRT19), funneled like every commit.
-                    const a = finishPending(*subject, edits, tree.policy);
-                    previewing = false;
-                    if (a.ok)
-                        return committed(edits.undo.length
-                            ? edits.undo[$ - 1].path : null);
-                    refresh();
-                }
-                else
-                    previewing = true;
+                    return commitPreview();
+                previewing = true;
                 return consumed();
             case SettingsCommand.undo:
-            {
-                const a = undoProperty(*subject, edits, tree.policy);
-                return a.ok ? committed(a.inverse.path) : consumedRefresh();
-            }
+                return undoLast();
             case SettingsCommand.redo:
             {
                 const a = redoProperty(*subject, edits, tree.policy);
@@ -478,8 +536,6 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
                 return consumed();
             case SettingsCommand.reset:
                 return resetSel();
-            case SettingsCommand.save:
-                return save();
             case SettingsCommand.none:
             case SettingsCommand.textAccept:
             case SettingsCommand.textCancel:
@@ -677,7 +733,7 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
     Every successful COMMIT funnels here: mirror the subject's value at
     `path` into the file draft (resync-by-read — also correct after
     undo/redo, whose replayed value is already in the subject), record the
-    touched path, and answer the host's apply mask.
+    touched path, autosave, and answer the host's apply mask.
     */
     private SettingsResult committed(string path)
     {
@@ -689,7 +745,20 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
             noteTouched(path);
         }
         refresh();
-        return SettingsResult(SettingsResult.Kind.consumed, applyFor(path));
+        const saved = path.length && autosave();
+        return SettingsResult(saved ? SettingsResult.Kind.saved
+            : SettingsResult.Kind.consumed, applyFor(path));
+    }
+
+    /// The `v` drag's commit boundary: one history entry per drag (PRT19),
+    /// funneled like every commit.
+    private SettingsResult commitPreview()
+    {
+        const a = finishPending(*subject, edits, tree.policy);
+        previewing = false;
+        if (a.ok && edits.undo.length)
+            return committed(edits.undo[$ - 1].path);
+        return consumedRefresh();
     }
 
     private void noteTouched(string path) @safe
@@ -762,29 +831,35 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
 
     // ── the save ────────────────────────────────────────────────────────────
 
-    /// `s` / Ctrl-S: a pending drag commits first, then the draft persists.
-    private SettingsResult save()
+    /**
+    Writes the committed state through `doSave` and sets the toast. Nothing
+    is written while no path differs from the seed and nothing was written
+    yet this session — opening and browsing never creates a file. Returns
+    whether the file now holds the commit. A host with no `doSave` keeps
+    the edits live and unsaved.
+    */
+    private bool autosave()
     {
-        if (previewing)
-        {
-            cast(void) finishPending(*subject, edits, tree.policy);
-            previewing = false;
-            refresh();
-        }
         if (doSave is null)
+            return false;
+        const changed = changedPaths();
+        if (!changed.length && !wrote)
         {
-            status = "no save target wired";
-            return consumed();
+            savedDraft = ownedCopy(fileDraft);
+            toast = SettingsToast.init;
+            return false;
         }
-        const failure = doSave(fileDraft, touched);
+        const failure = doSave(fileDraft, changed);
         if (failure.length)
         {
-            status = failure;
-            return consumed();
+            toast = SettingsToast(SettingsToast.Kind.failed, failure, false);
+            return false;
         }
+        wrote = true;
         savedDraft = ownedCopy(fileDraft);
-        status = "saved";
-        return SettingsResult(SettingsResult.Kind.saved);
+        toast = SettingsToast(SettingsToast.Kind.saved, "Saved",
+            edits.undo.length > 0);
+        return true;
     }
 
     // ── the view ────────────────────────────────────────────────────────────
@@ -824,7 +899,7 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
             }
             else
                 spans ~= TextSpan(text: "/ filter · Enter edit · +/- step " ~
-                    "· u undo · s save · Esc close", slot: Slot.muted);
+                    "· u undo · Esc close", slot: Slot.muted);
             body_ ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
                 width: SizeSpec.grow()));
         }
@@ -873,6 +948,19 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
                             " overrides this at next launch"),
                             slot: Slot.warn);
                 }
+            }
+            final switch (toast.kind)
+            {
+                case SettingsToast.Kind.none:
+                    break;
+                case SettingsToast.Kind.saved:
+                    spans ~= TextSpan(text: toast.offersUndo
+                        ? "  ✓ Saved — u undo" : "  ✓ Saved", slot: Slot.info);
+                    break;
+                case SettingsToast.Kind.failed:
+                    spans ~= TextSpan(text: text("  ✗ not saved: ",
+                        toast.message), slot: Slot.error);
+                    break;
             }
             if (status.length)
                 spans ~= TextSpan(text: text("  ", status), slot: Slot.info);
@@ -1133,6 +1221,108 @@ version (UiSettingsFixtures)
     assert(seed.list[0] == "one" && p.savedDraft.list[0] == "one");
     assert(Fixture.init.list[0] == "one", "the schema's init is untouched");
     assert(p.touched == ["list[0]"]);
+}
+
+version (UiSettingsFixtures)
+@("ui.settings_pane.autosave.eachCommitIsWrittenAndUndoWritesItBack")
+@system unittest
+{
+    // The launch situation `TSP3`/`CFG11` protect: a higher layer (a flag)
+    // set size=99 in the running config; the file seed says 18.
+    auto cfg = new Fixture;
+    cfg.size = 99;
+    Fixture fileValue;
+
+    SettingsPane!Fixture p;
+    size_t saves;
+    Fixture lastDraft;
+    string[] lastChanged;
+    p.doSave = (ref const Fixture draft, const(string)[] changed) {
+        saves++;
+        lastDraft = ownedCopy((() @trusted => cast() draft)());
+        lastChanged = changed.dup;
+        return cast(string) null;
+    };
+    p.open(cfg, fileValue);
+
+    // Browsing writes nothing: no file appears for opening the page.
+    selectPath(p, "nested");
+    cast(void) p.handleKey(knk(Key.right));
+    cast(void) p.handleKey(kch('j'));
+    assert(saves == 0 && p.toast.kind == SettingsToast.Kind.none);
+
+    // A commit is saved at once — only the touched path, with its value.
+    selectPath(p, "dark");
+    const r = p.handleKey(kch('+'));
+    assert(r.kind == SettingsResult.Kind.saved);
+    assert(saves == 1 && lastChanged == ["dark"]);
+    assert(lastDraft.dark == false);
+    assert(lastDraft.size == 18, "the flag's 99 is never baked in");
+    assert(p.toast.kind == SettingsToast.Kind.saved && p.toast.offersUndo);
+    assert(!p.dirty);
+
+    // The toast's Undo is the tree's own history: the subject goes back,
+    // and the file is written back to what it said at open.
+    cast(void) p.undoLast();
+    assert(cfg.dark == true);
+    assert(saves == 2 && lastChanged.length == 0,
+        "an undone edit leaves the file as it found it");
+    assert(!p.toast.offersUndo, "nothing left to undo");
+    assert(p.edits.redo.length == 1, "and redo stays available");
+
+    // `u` is the same step: redo, then undo through the key.
+    cast(void) p.handleKey(kch('u', Mods(shift: true)));
+    assert(cfg.dark == false && lastChanged == ["dark"]);
+    cast(void) p.handleKey(kch('u'));
+    assert(cfg.dark == true && lastChanged.length == 0);
+}
+
+version (UiSettingsFixtures)
+@("ui.settings_pane.autosave.aRefusalKeepsTheEditLiveAndSaysWhy")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    auto cfg = new Fixture;
+    SettingsPane!Fixture p;
+    p.doSave = (ref const Fixture d, const(string)[] c)
+        => "config.json carries comments";
+    p.open(cfg, Fixture.init);
+
+    selectPath(p, "dark");
+    const r = p.handleKey(kch('+'));
+    assert(r.kind == SettingsResult.Kind.consumed);
+    assert(cfg.dark == false, "the edit is live");
+    assert(p.toast.kind == SettingsToast.Kind.failed);
+    assert(p.toast.message.canFind("comments"));
+    assert(p.dirty, "the file does not hold it");
+
+    p.toast.dismiss();
+    assert(p.toast.kind == SettingsToast.Kind.none);
+}
+
+version (UiSettingsFixtures)
+@("ui.settings_pane.autosave.closingSettlesAndSavesADrag")
+@system unittest
+{
+    auto cfg = new Fixture;
+    SettingsPane!Fixture p;
+    string[] lastChanged;
+    p.doSave = (ref const Fixture d, const(string)[] c) {
+        lastChanged = c.dup;
+        return cast(string) null;
+    };
+    p.open(cfg, Fixture.init);
+
+    selectPath(p, "size");
+    cast(void) p.handleKey(kch('v'));
+    cast(void) p.handleKey(kch('+'));
+    cast(void) p.handleKey(kch('+'));
+    assert(lastChanged.length == 0, "a live drag is not a commit yet");
+    assert(p.handleKey(knk(Key.escape)).kind == SettingsResult.Kind.closed);
+    assert(lastChanged == ["size"] && p.fileDraft.size == 20,
+        "the drag's end is committed, mirrored and saved");
+    assert(p.edits.undo.length == 1);
 }
 
 version (UiSettingsFixtures)

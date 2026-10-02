@@ -1008,7 +1008,7 @@ struct ExplorerTui
             case Command.settingsMatchNext: case Command.settingsMatchPrev:
             case Command.settingsReveal:
             case Command.settingsOpenAll: case Command.settingsCloseAll:
-            case Command.settingsSave: case Command.settingsReset:
+            case Command.settingsReset:
                 break;
 
 

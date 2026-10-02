@@ -339,7 +339,6 @@ enum Command : ubyte
     settingsMatchNext, settingsMatchPrev, /// `n` / `Shift-N`
     settingsReveal,      /// `b` — reveal the match in the base tree
     settingsOpenAll, settingsCloseAll,    /// `Shift-O` / `Shift-C`
-    settingsSave,        /// `s` / `Ctrl-S` — persist to the user file
     settingsReset,       /// `r` — the selected leaf back to its default
 }
 
@@ -894,12 +893,6 @@ immutable Binding[] hueBindings = [
         "close all"),
     bind(Scope_.settings, chord('r'), Command.settingsReset,
         "reset to default"),
-    bind(Scope_.settings, chord('s', ShiftReq.no), Command.settingsSave,
-        "save"),
-    bind(Scope_.settings, Chord(key: Key.char_, ch: 's', ctrl: true),
-        Command.settingsSave, "save"),
-    bind(Scope_.settings, Chord(key: Key.char_, ch: 's', super_: true),
-        Command.settingsSave, "save"),
     bind(Scope_.settings, chord(Key.escape), Command.settingsClose, "close"),
     bind(Scope_.settings, chord('q'), Command.settingsClose, "close"),
     bind(Scope_.settings, chord(Key.back), Command.settingsClose, "close"),
@@ -991,8 +984,8 @@ unittest
     assert(ch('j', set).cmd == Command.settingsDown);
     assert(ch('q', set).cmd == Command.settingsClose, "close, never quit");
     assert(nk(Key.escape, set).cmd == Command.settingsClose);
-    assert(ch('s', set).cmd == Command.settingsSave);
-    assert(ch('s', set, Mods(ctrl: true)).cmd == Command.settingsSave);
+    assert(ch('s', set).cmd == Command.none,
+        "no save key: every commit autosaves (TSP3)");
     assert(ch('e', set).cmd == Command.none, "swallowed, not toggleExplorer");
     assert(ch('u', set).cmd == Command.settingsUndo);
     assert(ch('u', set, Mods(shift: true)).cmd == Command.settingsRedo);

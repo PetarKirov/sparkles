@@ -61,7 +61,7 @@ import picker_view : PickerGeometry;
 import settings : DubBuildSettings, HueConfig, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
-import settings_store : ConfigStore, hueApplyRules, SettingsPane;
+import settings_store : ConfigStore, SettingsPane;
 import gui_preview : PreviewModel;
 import live_types : applyTip, LiveTypesSession;
 import sparkles.twoslash.protocol : TwoslashReturn;
@@ -566,12 +566,7 @@ struct WorkspaceTui
     {
         if (cfg is null || settings.active)
             return;
-        auto store = cfg;
-        settings.applyRules = hueApplyRules.dup;
-        settings.doSave = (ref const HueConfig d, const(string)[] t)
-            => store.save(d, t);
-        settings.originOf = (string p) @safe => store.shadowOrigin(p);
-        settings.open(&store.resolved, store.fileValue, settingsGeometry());
+        cfg.mount(settings, settingsGeometry());
     }
 
     /// The live-apply half the pane cannot do itself: application is the
@@ -2549,6 +2544,7 @@ unittest
 @system
 unittest
 {
+    import std.file : exists;
     import std.path : buildPath;
     import sparkles.input : charEvent;
     import sparkles.ui_app.host : RunConfig;
@@ -2575,7 +2571,7 @@ unittest
             charEvent('j'), // move: appearance → panes
             charEvent('j'), // → behaviour
             charEvent('j'), // → diff
-            charEvent('s'), // save (nothing touched yet: writes {} sparsely)
+            charEvent('s'), // no longer a save: every commit autosaves
             charEvent('q'), // close; runtime state kept, keyboard returned
             charEvent('e'), // …and the workspace answers keys again
         ],
@@ -2583,11 +2579,30 @@ unittest
 
     assert(!rec.quitRequested, "q closed the PANE, not the app");
     assert(!w.settings.active, "closed");
+    assert(!exists(store.userFilePath), "browsing writes no file");
 
-    // The save wrote the (empty) sparse user file atomically.
+    // A commit is written at once (TSP3), sparsely: only the touched path.
+    w.openSettings();
+    w.settings.tv.open = w.settings.tv.open.opened("appearance");
+    w.settings.refresh();
+    foreach (i, ref const r; w.settings.tv.rows)
+        if (w.settings.tree.data.nodes[r.node].value.path
+            == "appearance.groupThemes")
+        {
+            w.settings.tv.sel = cast(long) i;
+            w.settings.tv.clamp();
+        }
+    cast(void) w.settings.handleKey(KeyEvent(Key.char_, '+'));
     auto back = readJsoncFile!(Sparse!HueConfig)(store.userFilePath);
     assert(!back.hasError, back.error.toString);
-    assert(back.value == Sparse!HueConfig.init, "nothing touched, all sparse");
+    assert(back.value.appearance.groupThemes.get == false);
+    assert(back.value.appearance.theme.isNull, "only the touched path");
+
+    // The toast's Undo writes the file back to what it said at open.
+    cast(void) w.settings.undoLast();
+    back = readJsoncFile!(Sparse!HueConfig)(store.userFilePath);
+    assert(!back.hasError, back.error.toString);
+    assert(back.value == Sparse!HueConfig.init, "undone: all sparse again");
 }
 
 @("workspace.dsvColumnsPalette.togglesAndReorders")

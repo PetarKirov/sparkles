@@ -147,7 +147,7 @@ import crt_config : applyCrtCapture, applyCrtConfig;
 import settings : DubBuildSettings, HueConfig, PointerMode, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
-import settings_store : ConfigStore, hueApplyRules, SettingsPane;
+import settings_store : ConfigStore, SettingsPane;
 import sparkles.twoslash.ingest : loadTwoslashFile;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 
@@ -1019,14 +1019,9 @@ int runGui(GuiArgs guiArgs) @system
     {
         if (configStore is null || settingsPane.active)
             return;
-        auto store = configStore;
-        settingsPane.applyRules = hueApplyRules.dup;
-        settingsPane.doSave = (ref const HueConfig d, const(string)[] t)
-            => store.save(d, t);
-        settingsPane.originOf = (string p) @safe => store.shadowOrigin(p);
         // Geometry is the frame's (it needs the live cell metrics): the
         // first frame's `ensureSettingsGeometry` sizes the rows.
-        settingsPane.open(&store.resolved, store.fileValue);
+        configStore.mount(settingsPane);
     }
 
     SettingsGeometry lastSettingsG;
@@ -3305,7 +3300,7 @@ int runGui(GuiArgs guiArgs) @system
             case Command.settingsMatchNext: case Command.settingsMatchPrev:
             case Command.settingsReveal:
             case Command.settingsOpenAll: case Command.settingsCloseAll:
-            case Command.settingsSave: case Command.settingsReset:
+            case Command.settingsReset:
                 break;
 
 

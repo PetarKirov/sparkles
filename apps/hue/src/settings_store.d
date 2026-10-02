@@ -9,15 +9,17 @@ NOTE: no module-level `@safe:` — the save path fronts wired's serde.
 */
 module settings_store;
 
-import std.algorithm.searching : canFind, startsWith;
-import std.traits : FieldNameTuple, hasUDA;
+import std.algorithm.searching : startsWith;
+import std.traits : FieldNameTuple;
 
-import settings : ConfigSection, HueConfig;
+import sparkles.wired.overlay : sparseAt;
+
+import settings : HueConfig;
 import settings_io : saveUserConfig;
 import settings_load : LoadedConfig;
 import settings_overlay : applyOverlay, mergeSparse, Origin, OriginKind,
     Origins, Sparse;
-import settings_pane : ApplyMask, ApplyRule, SettingsPaneT;
+import settings_pane : ApplyMask, ApplyRule, SettingsGeometry, SettingsPaneT;
 
 /// The concrete pane both hosts mount.
 alias SettingsPane = SettingsPaneT!HueConfig;
@@ -70,23 +72,43 @@ struct ConfigStore
         return s;
     }
 
+    /// The user overlay as it was when the pane opened: every autosave is
+    /// that plus the session's changed paths, so an undone edit drops out.
+    Sparse!HueConfig sessionOverlay;
+
     /**
-    The pane's save seam: serializes the draft's $(B touched) paths merged
-    onto the existing user overlay (`settings_io.saveUserConfig` — sparse,
+    Opens `pane` over this store — the one wiring both hosts share: hue's
+    apply table, the autosave seam, the shadow lookup, and the session's
+    base overlay.
+    */
+    void mount(ref SettingsPane pane, SettingsGeometry g = SettingsGeometry())
+    {
+        auto self = &this;
+        sessionOverlay = userOverlay;
+        pane.applyRules = hueApplyRules.dup;
+        pane.doSave = (ref const HueConfig d, const(string)[] changed)
+            => self.save(d, changed);
+        pane.originOf = (string p) @safe => self.shadowOrigin(p);
+        pane.open(&resolved, fileValue, g);
+    }
+
+    /**
+    The pane's autosave seam: the session's base overlay with the draft's
+    `changed` paths merged on (`settings_io.saveUserConfig` — sparse,
     atomic, refusing a human-owned file). Returns `null` on success, the
     rendered refusal otherwise.
     */
-    string save(ref const HueConfig draft, const(string)[] touched)
+    string save(ref const HueConfig draft, const(string)[] changed)
     {
         // Un-const snapshot: HueConfig carries an AA (`keys`), which blocks
         // the implicit const copy; the pane's draft is a value snapshot
         // nothing else aliases mutably.
         auto snap = (() @trusted => cast(HueConfig) draft)();
-        auto deltas = deltasFor(snap, touched);
-        auto r = saveUserConfig(userFilePath, userOverlay, deltas);
+        auto deltas = deltasFor(snap, changed);
+        auto r = saveUserConfig(userFilePath, sessionOverlay, deltas);
         if (r.hasError)
             return r.error.message;
-        userOverlay = mergeSparse!HueConfig(userOverlay, deltas);
+        userOverlay = mergeSparse!HueConfig(sessionOverlay, deltas);
         fileValue = snap;
         generation++;
         return null;
@@ -101,29 +123,10 @@ struct ConfigStore
 
 /// The touched paths of `draft`, as a sparse overlay — the property tree's
 /// dotted paths are exactly the schema's field paths, so a compile-time walk
-/// pairs them without a second declaration.
+/// pairs them without a second declaration (an element path names its whole
+/// list).
 Sparse!HueConfig deltasFor(HueConfig draft, const(string)[] touched) @safe
-{
-    Sparse!HueConfig o;
-    fillDeltas(o, draft, touched, null);
-    return o;
-}
-
-private void fillDeltas(S, T)(ref S o, T part, const(string)[] touched,
-    string prefix) @safe
-{
-    static foreach (i, name; FieldNameTuple!T)
-    {
-        static if (hasUDA!(typeof(T.tupleof[i]), ConfigSection))
-            fillDeltas(o.tupleof[i], part.tupleof[i], touched,
-                prefix ~ name ~ ".");
-        else
-        {
-            if (touched.canFind(prefix ~ name))
-                o.tupleof[i] = part.tupleof[i];
-        }
-    }
-}
+    => sparseAt(draft, touched);
 
 // By value: an `in` view would scope the details it returns.
 private string shadowOriginIn(Origins!HueConfig origins, string path) @safe
@@ -262,4 +265,34 @@ private void findOriginImpl(O)(O origins, string path, string prefix,
     assert(back.value.panes.viewer.tabWidth.isNull, "sparse: only touched");
     assert(s.userOverlay.appearance.theme.get == "builtin-dark");
     assert(s.fileValue.appearance.theme == "builtin-dark");
+}
+
+@("settings_store.autosaveRewritesFromTheSessionBase")
+@system unittest
+{
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    import settings_io : readJsoncFile;
+
+    auto fixture = TmpFS.create();
+    ConfigStore s;
+    s.userFilePath = fixture.writeFileAt("config.json",
+        `{"appearance":{"theme":"builtin-dark"}}`);
+    s.userOverlay.appearance.theme = "builtin-dark";
+    s.sessionOverlay = s.userOverlay;
+
+    // An edit lands beside what the file already said…
+    HueConfig draft;
+    draft.appearance.theme = "builtin-dark";
+    draft.panes.viewer.tabWidth = 8;
+    assert(s.save(draft, ["panes.viewer.tabWidth"]) is null);
+    auto back = readJsoncFile!(Sparse!HueConfig)(s.userFilePath);
+    assert(back.value.appearance.theme.get == "builtin-dark");
+    assert(back.value.panes.viewer.tabWidth.get == 8);
+
+    // …and once undone (no longer changed), the file is what it was.
+    assert(s.save(draft, null) is null);
+    back = readJsoncFile!(Sparse!HueConfig)(s.userFilePath);
+    assert(back.value.appearance.theme.get == "builtin-dark");
+    assert(back.value.panes.viewer.tabWidth.isNull);
 }

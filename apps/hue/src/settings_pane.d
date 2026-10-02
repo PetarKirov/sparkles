@@ -5,12 +5,12 @@ terminal mounts too (terminal `TSP1`) — with its keys resolved through hue's
 own keymap (the `settings` scope, terminal + hiding, and the `input` scope for
 the string-leaf line editor), and hue's live-apply bits.
 
-Semantics (user-decided): $(B live-apply + explicit save). Every committed
-edit mutates the running config immediately through the property tree's
-generated dispatch (validated, refusable, undoable); a Save writes the
-$(B file draft) through the config core's sparse writer; closing without
-saving keeps the session's runtime state and persists nothing. The `CFG11`
-rule is the component's: only touched paths reach the file.
+Semantics: $(B live-apply + autosave) (terminal `D36`, superseding hue's
+explicit save). Every committed edit mutates the running config immediately
+through the property tree's generated dispatch (validated, refusable,
+undoable) and is written at once through the config core's sparse writer; a
+"Saved" toast offers Undo, which is the same history. The `CFG11` rule is
+the component's: only touched paths reach the file.
 */
 module settings_pane;
 
@@ -70,7 +70,6 @@ SettingsCommand hueSettingsCommand(in KeyEvent k, bool textEditing) @safe
         case Command.settingsOpenAll: return SettingsCommand.openAll;
         case Command.settingsCloseAll: return SettingsCommand.closeAll;
         case Command.settingsReset: return SettingsCommand.reset;
-        case Command.settingsSave: return SettingsCommand.save;
         case Command.inputAccept: return SettingsCommand.textAccept;
         case Command.inputCancel: return SettingsCommand.textCancel;
         case Command.inputBackspace: return SettingsCommand.textBackspace;
@@ -238,9 +237,11 @@ version (unittest)
     assert(!p.textEditing && cfg.name == "start-us");
 }
 
-@("settings_pane.saveCapturesTheCfg11Rule")
+@("settings_pane.autosaveCapturesTheCfg11Rule")
 @system unittest
 {
+    import sparkles.ui.components.settings_pane : SettingsToast;
+
     // The launch situation CFG11 protects: a CLI flag set size=99 (visible
     // in the running config), while the user FILE said 18 — the seed.
     auto cfg = new Fixture;
@@ -249,38 +250,36 @@ version (unittest)
 
     SettingsPaneT!Fixture p;
     Fixture savedDraft;
-    const(string)[] savedTouched;
+    const(string)[] savedChanged;
     bool saved;
-    p.doSave = (ref const Fixture draft, const(string)[] touched) {
+    p.doSave = (ref const Fixture draft, const(string)[] changed) {
         savedDraft = draft;
-        savedTouched = touched.dup;
+        savedChanged = changed.dup;
         saved = true;
         return null;
     };
     p.open(cfg, fileValue);
 
-    // The user toggles dark but never touches size.
+    // The user toggles dark but never touches size: the commit IS the save
+    // (TSP3 supersedes SET4's `s`, which is no longer bound).
     selectPath(p, "dark");
-    cast(void) p.handleKey(kch('+'));
-
-    const r = p.handleKey(kch('s'));
+    const r = p.handleKey(kch('+'));
     assert(r.kind == SettingsResult.Kind.saved && saved);
-    assert(savedTouched == ["dark"]);
+    assert(savedChanged == ["dark"]);
     assert(savedDraft.dark == false, "the toggled value");
     assert(savedDraft.size == 18,
         "the FILE's value — the CLI's 99 was never baked in");
-    assert(!p.dirty && p.status == "saved");
+    assert(!p.dirty && p.toast.kind == SettingsToast.Kind.saved);
 
     // A refused save surfaces and keeps dirty. (Not size: stepping from
     // the CLI's out-of-range 99 is itself refused by @Range — correctly.)
-    selectPath(p, "opacity");
-    cast(void) p.handleKey(kch('+'));
     p.doSave = (ref const Fixture d, const(string)[] t) {
         return "config.json carries comments hue would destroy";
     };
-    const r2 = p.handleKey(kch('s'));
+    selectPath(p, "opacity");
+    const r2 = p.handleKey(kch('+'));
     assert(r2.kind == SettingsResult.Kind.consumed);
-    assert(p.dirty && p.status.length && p.status != "saved");
+    assert(p.dirty && p.toast.kind == SettingsToast.Kind.failed);
 }
 
 @("settings_pane.applyMaskAndPreview")
