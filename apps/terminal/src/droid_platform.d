@@ -201,6 +201,7 @@ struct DroidPlatform
         const d = currentSystemDark;
         night = d;
         info(i"terminal: system scheme $(d < 0 ? "unknown" : d ? "dark" : "light")");
+        readReducedMotion();
     }
 
     /// Whether the system is in dark mode now (unknown counts as dark, the
@@ -226,7 +227,10 @@ struct DroidPlatform
         const nowResumed = activityResumed();
         const cameBack = nowResumed && !resumed;
         if (cameBack)
+        {
             onResume();
+            readReducedMotion();
+        }
         resumed = nowResumed;
 
         probe(tv);
@@ -307,6 +311,23 @@ struct DroidPlatform
         import sparkles.android.system_scheme : systemDarkMode;
 
         return systemDarkMode();
+    }
+
+    /// Whether the user removed animations (`ACC5`): the selection's edge
+    /// scroll then steps a row at a time (`TSE3`). Read at start and on every
+    /// return to the foreground, where a change in the settings shows up.
+    bool reducedMotion;
+
+    private void readReducedMotion() @trusted nothrow
+    {
+        import sparkles.android.motion : animationsRemoved;
+
+        const r = animationsRemoved();
+        if (r >= 0 && (r == 1) != reducedMotion)
+        {
+            reducedMotion = r == 1;
+            info(i"terminal: animations $(reducedMotion ? "removed" : "on")");
+        }
     }
 
     // ── the password probe and the autofill spike ───────────────────────────

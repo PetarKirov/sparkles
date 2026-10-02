@@ -187,6 +187,7 @@ struct DroidTerminal
 
             host.phonePortrait = GetScreenHeight() > GetScreenWidth();
         }
+        selection.reducedMotion = platform.reducedMotion; // `ACC5`, `TSE3`
         selection.pollTouch(h, host);
         host.frame(h, paneArea(g));
         settingsFrame(h);
