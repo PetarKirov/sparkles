@@ -312,6 +312,7 @@ private KeyEvent key(Key k, Mods m = Mods(), dchar unshifted = 0, string text = 
     auto log = new NotificationLog;
     TerminalViewOptions o;
     o.notificationLog = log;
+    o.notificationSource = 42;
     o.hooks.notify = (in Notification n, NotificationRoute r) {
         got ~= Got(n.protocol, n.title.idup, n.body.idup, r);
     };
@@ -352,6 +353,7 @@ private KeyEvent key(Key k, Mods m = Mods(), dchar unshifted = 0, string text = 
     assert((*log)[0].protocol == NotificationProtocol.osc9 && (*log)[0].body == "Build finished");
     assert((*log)[2].title == "Hello world" && (*log)[2].tabTitle == "tab 3");
     assert((*log)[2].paneTitle == "pane title");
+    assert((*log)[2].source == 42, "TPG10: the pane it came from");
     assert((*log)[3].route == NotificationRoute.system);
     assert(p.take() == "", "no notification is answered");
 }

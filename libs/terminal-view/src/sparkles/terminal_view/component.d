@@ -345,8 +345,8 @@ struct TerminalViewOptions
     bool pollMouse = true;
     /// Handle the emulator's own chords — Ctrl+Shift+C/V and Ctrl+=/− — before
     /// the key encoder. An embedder with a binding table of its own turns this
-    /// off, resolves those keys itself and calls 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF TerminalView.copy),
-    /// 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF TerminalView.pasteClipboard) and the host's `fontSize`.
+    /// off, resolves those keys itself and calls $(LREF TerminalView.copy),
+    /// $(LREF TerminalView.pasteClipboard) and the host's `fontSize`.
     bool builtinChords = true;
     /// Whether the pane is on screen: an embedder showing several turns it off
     /// for a pane in a background tab, so its notifications count as unseen
@@ -367,6 +367,9 @@ struct TerminalViewOptions
     /// outliving them; null, the pane records into a log of its own
     /// (`TerminalView.notificationLog`).
     NotificationLog* notificationLog = null;
+    /// The embedder's name for this pane, recorded with each notification so
+    /// an entry of a shared log leads back to it (`TPG10`); 0 for none.
+    ulong notificationSource;
     /// Whether the target has a Nerd Font, for process icons (`TPR3`).
     bool nerdFont = true;
 }
@@ -1749,6 +1752,7 @@ struct TerminalView
             body: n.body.idup,
             protocol: n.protocol,
             route: opts.hooks.notify !is null ? route : NotificationRoute.none,
+            source: opts.notificationSource,
         ));
         if (opts.hooks.notify !is null)
             opts.hooks.notify(n, route);

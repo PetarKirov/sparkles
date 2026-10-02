@@ -73,19 +73,53 @@ struct NotificationRecord
     string body;
     NotificationProtocol protocol;
     NotificationRoute route;
+    /// The embedder's name for the pane (`TerminalViewOptions.notificationSource`),
+    /// so an entry can lead back to it (`TPG10`); 0 when it gave none.
+    ulong source;
 }
 
-/// The last $(LREF capacity) notifications, oldest first.
+/**
+The last $(LREF capacity) notifications, oldest first, and how many of them
+the user has seen (`TPG11`): opening the log marks everything in it seen
+($(LREF NotificationLog.markAllSeen)); what arrives later is unseen until the
+next time.
+*/
 struct NotificationLog
 {
     enum size_t capacity = 500;
 
     private NotificationRecord[] ring;
     private size_t head; // index of the oldest entry once full
+    private ulong recorded; // entries ever recorded
+    private ulong seenUpTo; // `recorded` when the log was last seen
+
+    /// Entries ever recorded, evicted ones included — a counter a reader
+    /// can compare to notice new ones.
+    ulong total() const @safe pure nothrow @nogc => recorded;
+
+    /// How many of the kept entries arrived since the log was last seen.
+    size_t unseen() const @safe pure nothrow @nogc
+    {
+        const n = recorded - seenUpTo;
+        return n < ring.length ? cast(size_t) n : ring.length;
+    }
+
+    /// Whether the `i`-th entry (oldest first) arrived since the log was
+    /// last seen.
+    bool isUnseen(size_t i) const @safe pure nothrow @nogc
+    in (i < ring.length)
+        => i >= ring.length - unseen;
+
+    /// Marks every entry seen.
+    void markAllSeen() @safe pure nothrow @nogc
+    {
+        seenUpTo = recorded;
+    }
 
     /// Appends `r`, evicting the oldest entry when full.
     void record(NotificationRecord r) @safe pure nothrow
     {
+        recorded++;
         if (ring.length < capacity)
         {
             ring ~= r;
@@ -122,4 +156,24 @@ struct NotificationLog
     assert(log[0].title == "3", "the three oldest went");
     assert(log.back.title == "502");
     assert(log[499].title == "502");
+}
+
+///
+@("notification_log.NotificationLog.unseenUntilMarked")
+@safe pure nothrow unittest
+{
+    NotificationLog log;
+    log.record(NotificationRecord(title: "a"));
+    log.record(NotificationRecord(title: "b"));
+    assert(log.unseen == 2 && log.isUnseen(0) && log.isUnseen(1));
+    log.markAllSeen();
+    assert(log.unseen == 0 && !log.isUnseen(1));
+    log.record(NotificationRecord(title: "c"));
+    assert(log.unseen == 1 && !log.isUnseen(1) && log.isUnseen(2));
+    assert(log.total == 3);
+
+    // Never more unseen than kept, once the oldest are evicted.
+    foreach (_; 0 .. NotificationLog.capacity + 5)
+        log.record(NotificationRecord.init);
+    assert(log.unseen == NotificationLog.capacity);
 }
