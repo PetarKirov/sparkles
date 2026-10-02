@@ -15,7 +15,7 @@ import core.time : Duration, msecs;
 import sparkles.input.events : KeyAction, KeyEvent;
 import sparkles.ui.lantern : LanternState;
 
-import keymap : Binding, KeyCommand, KeysConfig, TermCommand, TermContext, TermScope;
+import keymap : Binding, Chord, KeyCommand, KeysConfig, TermCommand, TermContext, TermScope;
 import settings : TerminalConfig;
 
 /// What to do with a key.
@@ -41,6 +41,8 @@ struct KeyRouter
 {
     /// The merged table (`terminalBindings`).
     immutable(Binding)[] table;
+    /// The leader chord in effect (`lantern.leader`).
+    Chord leader;
     /// The pending path and whether the panel shows.
     LanternState lantern;
     /// How long a pending prefix waits before the panel shows (`lantern.delayMs`).
@@ -58,7 +60,8 @@ struct KeyRouter
     {
         import keymap : leaderChord, terminalBindings;
 
-        table = terminalBindings(leaderChord(c.lantern.leader, warnings), c.keys, warnings);
+        leader = leaderChord(c.lantern.leader, warnings);
+        table = terminalBindings(leader, c.keys, warnings);
         delay = c.lantern.delayMs.msecs;
         guideEnabled = c.lantern.enabled;
         lantern = LanternState.init;

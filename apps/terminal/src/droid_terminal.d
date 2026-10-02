@@ -36,6 +36,7 @@ import sparkles.ui.widget : WidgetTree;
 import chrome : ChromeTheme;
 import droid_platform : DroidPlatform;
 import key_router : KeyRouter, paintGuide, Route;
+import touch_guide : TouchGuide;
 import keymap : KeyCommand, TermCommand, TermContext;
 import screen_oracle : ScreenOracle;
 import settings_load : LoadedConfig;
@@ -95,6 +96,8 @@ struct DroidTerminal
     private Geometry lastGeometry;
     private FontSet* fonts; // the host's, for the key row's labels
     private int cellW = 1, cellH = 1;
+    private KeyCommand pendingCommand; // picked in the touch guide
+    private bool hasPending;
 
     @disable this(this);
 
@@ -141,6 +144,11 @@ struct DroidTerminal
                         hasNext = false;
                 }
 
+        if (hasPending)
+        {
+            hasPending = false;
+            run(h, pendingCommand);
+        }
         router.tick((cast(long)(h.frameSeconds * 1000)).msecs);
         const wait = router.untilShown;
         if (wait != Duration.max)
@@ -391,8 +399,12 @@ struct DroidTerminal
                 host.invalidate();
                 return;
             case ExtraKeyKind.menu:
-                router.openGuide();
-                noteGuide();
+                // The touch guide at the leader (`TKM6`, `TKM7`): what it picks
+                // runs on the next frame, where the host is at hand.
+                auto self = &this;
+                host.surfaces.push(new TouchGuide(router.table, context, router.leader,
+                    (KeyCommand c) { self.pendingCommand = c; self.hasPending = true; }));
+                host.invalidate();
                 return;
             case ExtraKeyKind.keyboard:
                 toggleKeyboard();
