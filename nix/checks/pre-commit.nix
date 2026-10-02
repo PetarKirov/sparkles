@@ -396,6 +396,23 @@ in
                 require_serial = true;
               };
 
+              # The credits document against the build inputs (apps/ci
+              # --check-credits, docs/specs/terminal/pages.md TPG14): every
+              # component an application links or ships has a part, and every
+              # part names something shipped. Whole-tree, triggered by the
+              # document and by everything that names a component — the dub
+              # lock and manifests, and the Nix builders.
+              check-credits = {
+                enable = true;
+                name = "check-credits";
+                files = "(^docs/credits/|dub\\.sdl$|dub\\.selections\\.json$|^nix/)";
+                entry = lib.getExe config.packages.ci;
+                args = [ "--check-credits" ];
+                language = "system";
+                pass_filenames = false;
+                require_serial = true;
+              };
+
               # Every symbol a spec's evidence column cites must exist in the
               # tree (apps/ci --check-spec-evidence), against the committed
               # backlog of ones that did not when the gate went on. Whole-tree,

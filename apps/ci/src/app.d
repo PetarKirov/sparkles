@@ -29,6 +29,7 @@ nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files
 nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-docs-sidebar
 nix run .#ci -- --check-glossary
+nix run .#ci -- --check-credits
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
@@ -55,6 +56,7 @@ $(LIST
     $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
     $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/sidebar.json` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
     $(ITEM `--check-glossary` — verify `docs/.vitepress/glossary.json` (ids, owners, plain-text summaries, cross-references) and that every docs link into the glossary names an existing entry; entries no page links to are reported, not failed)
+    $(ITEM `--check-credits` — verify the credits document (`docs/credits/`) against the build inputs: every dub package, native library, static archive, bundled font and grammar bundle the applications link or ship has a part, every part names something shipped, and each application page includes exactly its own parts (see the `credits` module))
     $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
 )
 
@@ -320,6 +322,11 @@ struct CliParams
         ~ "plain-text summaries, portable links, cross-references — and that every docs link "
         ~ "into the glossary names an existing entry. Unused entries are reported, not failed."))
     bool checkGlossary;
+    @(Option(`check-credits`,
+        description: "Verify the credits document (docs/credits/) against the build inputs: "
+        ~ "every component an application links or ships has a part, every part names "
+        ~ "something shipped, and each application page includes exactly its parts."))
+    bool checkCredits;
 
     @(Option(`check-blob-paths`,
         description: "Verify that every SHA-pinned GitHub blob citation names a path that "
@@ -465,6 +472,7 @@ enum ProgramMode
     checkDocsSidebar,
     checkSpecEvidence,
     checkGlossary,
+    checkCredits,
     checkBlobPaths,
     ciStats,
     mirrorChecks,
@@ -617,6 +625,8 @@ int ciMain(string[] args)
 
     if (mode == ProgramMode.checkGlossary)
         return runCheckGlossary();
+    if (mode == ProgramMode.checkCredits)
+        return runCheckCredits();
 
     // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
     // so it must not fall through to the shared "no input files" usage error.
@@ -915,6 +925,8 @@ private ProgramMode resolveProgramMode(in CliParams cli)
 
     if (cli.checkGlossary)
         return ProgramMode.checkGlossary;
+    if (cli.checkCredits)
+        return ProgramMode.checkCredits;
 
     if (cli.checkBlobPaths)
         return ProgramMode.checkBlobPaths;
@@ -943,6 +955,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkDocsSidebar:   return "--check-docs-sidebar";
         case ProgramMode.checkSpecEvidence:  return "--check-spec-evidence";
         case ProgramMode.checkGlossary:      return "--check-glossary";
+        case ProgramMode.checkCredits:       return "--check-credits";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.mirrorChecks:       return "--mirror-checks";
@@ -1520,6 +1533,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkDocsSidebar:
             case ProgramMode.checkSpecEvidence:
             case ProgramMode.checkGlossary:
+            case ProgramMode.checkCredits:
             case ProgramMode.checkBlobPaths:
                 rc = 1;
                 break;
@@ -2288,6 +2302,59 @@ private int runCheckGlossary()
 
     info(i"✓ Glossary is consistent: $(entries.value.length) entries, $(refs.length) links from $(files) docs pages.");
     return 0;
+}
+
+/// `--check-credits`: the credits document against the build inputs (`credits`).
+private int runCheckCredits()
+{
+    import credits : checkCredits, creditsDir, partsDir;
+    import std.file : dirEntries, isFile, SpanMode;
+    import std.path : stripExtension;
+    import std.stdio : stderr;
+
+    const repoRoot = detectRepoRoot();
+    string readOrNull(string rel) @safe
+    {
+        const path = buildPath(repoRoot, rel);
+        return path.exists ? readText(path) : null;
+    }
+
+    string[string] parts;
+    const partsPath = buildPath(repoRoot, partsDir);
+    if (partsPath.exists)
+        foreach (e; dirEntries(partsPath, "*.md", SpanMode.shallow))
+            parts[e.name.baseName.stripExtension] = readText(e.name);
+
+    string[string] pages;
+    foreach (e; dirEntries(buildPath(repoRoot, creditsDir), "*.md", SpanMode.shallow))
+        pages[e.name.baseName.stripExtension] = readText(e.name);
+
+    const report = checkCredits(&readOrNull, parts, pages);
+    if (report.ok)
+    {
+        info(i"{green ✓} Credits are complete: $(report.partCount) parts cover the $(report.tokenCount) components the build inputs name, and every page includes exactly its own parts.");
+        return 0;
+    }
+
+    void section(string title, in string[] lines)
+    {
+        if (!lines.length)
+            return;
+        stderr.writefln("✗ %s (%d):", title, lines.length);
+        foreach (line; lines)
+            stderr.writefln("  %s", line);
+        stderr.writeln;
+    }
+
+    section("Malformed inputs or parts", report.problems);
+    section("Shipped, and credited by no part — add docs/credits/parts/<id>.md naming it in `Ships as`",
+        report.uncredited
+            .map!(s => s.token ~ "  (" ~ (s.app.length ? s.app ~ ", " : "") ~ "from " ~ s.origin ~ ")")
+            .array);
+    section("Parts that name nothing the build ships — remove the part or fix its `Ships as`",
+        report.unshipped.map!(s => partsDir ~ "/" ~ s ~ ".md").array);
+    section("Pages that include the wrong parts", report.pageErrors);
+    return 1;
 }
 
 private int runCheckDocsSidebar()

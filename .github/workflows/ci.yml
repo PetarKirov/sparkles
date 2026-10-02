@@ -789,6 +789,11 @@ jobs:
       - name: Every cited symbol resolves
         run: nix run .#ci-minimal -- --check-spec-evidence
 
+      # Same shape of check, same job: it reads the credits document and the
+      # build inputs, nothing more (docs/specs/terminal/pages.md TPG14).
+      - name: Every shipped component is credited
+        run: nix run .#ci-minimal -- --check-credits
+
   ci:
     name: CI
     needs:
