@@ -33,6 +33,7 @@ import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
+import autofill_chip : AutofillChip;
 import chrome : ChromeTheme;
 import droid_platform : DroidPlatform;
 import key_router : KeyRouter, paintGuide, Route;
@@ -52,6 +53,8 @@ struct DroidTerminal
     DroidPlatform platform;
     /// Long-press selection, its handles and its menu (`TSE1`–`TSE6`).
     SelectionUi selection;
+    /// The Autofill chip at a password prompt (`TSE10`).
+    AutofillChip chip;
 
     /// The options the first pane switches to when its program ends — the
     /// login that follows the installer (`NOD7`, `TSS4`: a respawn of the same
@@ -160,7 +163,11 @@ struct DroidTerminal
                 h.wakeIn(wait);
         noteGuide();
 
+        if (chip.frame(host.focusedView()))
+            host.invalidate();
         const g = geometry(h);
+        chip.place(host.labels, host.theme.targetRows,
+            Rect(0, g.keysTop - g.chipHeight, g.width, g.chipHeight), cellW, cellH);
         // The key row moves with the keyboard even when the panes' cell grid
         // does not change (a sub-cell difference): repaint it anyway.
         if (g != lastGeometry)
@@ -213,6 +220,7 @@ struct DroidTerminal
         const g = geometry(h);
         host.paint(h, paneArea(g), divider, accent);
         selection.paint(accent);
+        chip.paint(h, host.theme);
         paintGuide(h, router, context, g.paneCols, g.paneRows, 0, g.top, chromeFg, chromeBg);
         paintKeys(g);
     }
@@ -525,6 +533,8 @@ struct DroidTerminal
             }
             return;
         }
+        if (chip.tap(p.pos.x, p.pos.y))
+            return;
         // An exit prompt takes its own taps (`TSS2`).
         if (host.tap(h, p.pos.x, p.pos.y))
             return;
@@ -654,6 +664,7 @@ struct DroidTerminal
     {
         int top, width, paneCols, paneRows;
         int keysTop, keysHeight, keyHeight;
+        int chipHeight; // the Autofill chip's band, above the key row
     }
 
     private Geometry geometry(H)(ref H h)
@@ -678,7 +689,8 @@ struct DroidTerminal
             hardwareKeyboardAttached(), rowDismissed);
         g.keyHeight = shown && keys.length ? cellH * 2 : 0;
         g.keysHeight = cast(int) keys.length * g.keyHeight;
-        const paneHeight = bottom - g.top - g.keysHeight;
+        g.chipHeight = chip.height(cellH, host.theme.targetRows);
+        const paneHeight = bottom - g.top - g.keysHeight - g.chipHeight;
         g.paneCols = g.width / cellW > 0 ? g.width / cellW : 1;
         g.paneRows = paneHeight / cellH > 0 ? paneHeight / cellH : 1;
         g.keysTop = bottom - g.keysHeight;
