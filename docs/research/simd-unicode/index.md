@@ -10,7 +10,7 @@ UTF well-formedness, transcoding, terminal-cell width, segmentation, and normali
 - [Unicode algorithms](./unicode-algorithms.md): Rust/C/C++ source inspection, Unicode versions, property tables, terminal width, grapheme segmentation, normalization, and semantic comparison boundaries.
 - [Measured performance](./performance.md): before/after and real simdutf, simdutf8 and xutf results, bounded SIMD implementation, correctness evidence, wired integration and remaining leaders.
 
-The runnable local matrix lives in [`libs/base/bench/utf`](../../../libs/base/bench/utf/README.md). It uses `sparkles:test-runner`, real separately compiled foreign implementations, independent scalar references, output guards, and distinct Boolean/exact-offset rows. The [wired runtime benchmark](../../../libs/wired/bench/runtime/README.md) measures the JSON consumer separately: its fused scanner does not automatically benefit from an isolated base validator improvement.
+The runnable local matrix lives in [`libs/base/bench/utf`](https://github.com/PetarKirov/sparkles/blob/878ee7e3ce1b8586d3dbf08d0132cfe568016ac6/libs/base/bench/utf/README.md). It uses `sparkles:test-runner`, real separately compiled foreign implementations, independent scalar references, output guards, and distinct Boolean/exact-offset rows. The [wired runtime benchmark](../../../libs/wired/bench/runtime/README.md) measures the JSON consumer separately: its fused scanner does not automatically benefit from an isolated base validator improvement.
 
 ## Performance-oriented inventory
 
