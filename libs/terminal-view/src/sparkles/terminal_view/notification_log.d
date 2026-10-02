@@ -129,6 +129,16 @@ struct NotificationLog
         head = (head + 1) % capacity;
     }
 
+    /// How many of the unseen entries came from `source` — a pane's or a
+    /// tab's mark where the pages are reached from (`TPG11`).
+    size_t unseenFrom(ulong source) const @safe pure nothrow @nogc
+    {
+        size_t n;
+        foreach (i; ring.length - unseen .. ring.length)
+            n += this[i].source == source;
+        return n;
+    }
+
     /// The number of entries kept.
     size_t length() const @safe pure nothrow @nogc => ring.length;
 
@@ -176,4 +186,19 @@ struct NotificationLog
     foreach (_; 0 .. NotificationLog.capacity + 5)
         log.record(NotificationRecord.init);
     assert(log.unseen == NotificationLog.capacity);
+}
+
+@("terminal_view.notification_log.unseenFromAPane")
+@safe pure nothrow unittest
+{
+    NotificationLog log;
+    log.record(NotificationRecord(title: "a", source: 1));
+    log.markAllSeen();
+    log.record(NotificationRecord(title: "b", source: 1));
+    log.record(NotificationRecord(title: "c", source: 2));
+    log.record(NotificationRecord(title: "d", source: 1));
+    // Only what arrived since the log was seen counts, per pane.
+    assert(log.unseenFrom(1) == 2 && log.unseenFrom(2) == 1 && log.unseenFrom(3) == 0);
+    log.markAllSeen();
+    assert(log.unseenFrom(1) == 0);
 }

@@ -865,6 +865,10 @@ struct WorkspaceHost
                 p.detail = paneDetail(id);
                 p.focused = tab.current && id == ws.focused;
                 p.failed = tv !is null && tv.s.childExited && tv.s.childStatus != 0;
+                // Unseen notifications mark the pane and count on its tab (`TPG11`).
+                const unseen = notifications.unseenFrom(id);
+                p.unread = unseen != 0;
+                tab.unread += unseen;
                 tab.panes ~= p;
             }
             const lead = t.focused ? t.focused : (tab.panes.length ? tab.panes[0].id : 0);
