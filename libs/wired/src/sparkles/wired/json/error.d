@@ -156,6 +156,29 @@ struct JsonError
 
     /// Renders the human-readable message; the fragments (path syntax,
     /// target type, kind, reason) are the contract, exact wording is not.
+    /**
+    Places the error at byte `at` of `text`, deriving the 1-based line and
+    column (columns count bytes — good enough for editors and the
+    contract). A decode error located this way names where its value sits in
+    the file, not only its `$`-path.
+    */
+    void setLocation(scope const(char)[] text, size_t at) @safe pure nothrow @nogc
+    {
+        offset = at;
+        line = 1;
+        column = 1;
+        foreach (c; text[0 .. at < text.length ? at : text.length])
+        {
+            if (c == '\n')
+            {
+                line++;
+                column = 1;
+            }
+            else
+                column++;
+        }
+    }
+
     void toString(Writer)(ref Writer w) const
     {
         import std.range.primitives : put;
@@ -179,6 +202,14 @@ struct JsonError
             put(w, targetType);
             put(w, " at $");
             put(w, path[]);
+            if (line)
+            {
+                put(w, " (line ");
+                writeInteger(w, line);
+                put(w, ", column ");
+                writeInteger(w, column);
+                put(w, ')');
+            }
             if (actualKind != JsonKind.none)
             {
                 put(w, " from JSON ");
@@ -223,21 +254,8 @@ JsonError parseStageError(const ParseError e, scope const(char)[] text)
     JsonError err;
     err.stage = JsonStage.parse;
     err.code = e.code;
-    err.offset = e.offset;
     err.reason = e.context;
-    err.line = 1;
-    err.column = 1;
-    const upTo = e.offset < text.length ? e.offset : text.length;
-    foreach (c; text[0 .. upTo])
-    {
-        if (c == '\n')
-        {
-            err.line++;
-            err.column = 1;
-        }
-        else
-            err.column++;
-    }
+    err.setLocation(text, e.offset);
     return err;
 }
 

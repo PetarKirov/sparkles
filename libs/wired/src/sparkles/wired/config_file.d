@@ -232,6 +232,11 @@ Expected!(TolerantRead!T, JsonError) readJsoncFileTolerant(T)(string path,
         auto w = appender!(char[]);
         if (!writeWithout(parsed.document.root, segments, w))
             return err!R(e);
+        // Located in the file as written: earlier drops rewrote `current`,
+        // but the path still names the same value in the original text.
+        size_t at;
+        if (locateWirePath(text, segments, at))
+            e.setLocation(text, at);
         result.dropped ~= e;
         current = w[];
     }
@@ -271,6 +276,130 @@ private string[] splitWirePath(scope const(char)[] p, out string rest) @safe pur
     }
     rest = p[i .. $].idup;
     return segs.length ? segs : null;
+}
+
+/**
+Finds the value `segments` names in the JSON `text` and sets `offset` to its
+first byte; false when the path is not there. A scanner, not a parse: it
+skips what it does not descend into, so `text` must be valid JSON (it is: a
+decode error comes after a successful parse).
+*/
+private bool locateWirePath(scope const(char)[] text, in string[] segments,
+    out size_t offset) @safe pure nothrow @nogc
+{
+    size_t i;
+
+    void space()
+    {
+        while (i < text.length && (text[i] == ' ' || text[i] == '\n'
+            || text[i] == '\r' || text[i] == '\t'))
+            i++;
+    }
+
+    // Skips a string at `i`; `[start, end)` are its raw contents (escapes
+    // intact) — positions, not a slice, so nothing escapes `text`.
+    void str(out size_t start, out size_t end)
+    {
+        start = ++i;
+        while (i < text.length && text[i] != '"')
+            i += text[i] == '\\' ? 2 : 1;
+        end = i < text.length ? i : text.length;
+        i++;
+    }
+
+    void skip()
+    {
+        space();
+        if (i >= text.length)
+            return;
+        if (text[i] == '"')
+        {
+            size_t s, e;
+            str(s, e);
+            return;
+        }
+        if (text[i] == '{' || text[i] == '[')
+        {
+            int depth;
+            while (i < text.length)
+            {
+                const c = text[i];
+                if (c == '"')
+                {
+                    size_t s, e;
+                    str(s, e);
+                    continue;
+                }
+                if (c == '{' || c == '[')
+                    depth++;
+                else if (c == '}' || c == ']')
+                {
+                    i++;
+                    if (--depth == 0)
+                        return;
+                    continue;
+                }
+                i++;
+            }
+            return;
+        }
+        while (i < text.length && text[i] != ',' && text[i] != '}' && text[i] != ']')
+            i++;
+    }
+
+    foreach (seg; segments)
+    {
+        space();
+        if (i >= text.length)
+            return false;
+        if (seg.length && seg[0] == '[')
+        {
+            if (text[i] != '[')
+                return false;
+            size_t want;
+            foreach (c; seg[1 .. $ - 1])
+            {
+                if (c < '0' || c > '9')
+                    return false;
+                want = want * 10 + (c - '0');
+            }
+            i++;
+            foreach (_; 0 .. want)
+            {
+                skip();
+                space();
+                if (i >= text.length || text[i] != ',')
+                    return false;
+                i++;
+            }
+            continue;
+        }
+        if (text[i] != '{')
+            return false;
+        i++;
+        for (;;)
+        {
+            space();
+            if (i >= text.length || text[i] != '"')
+                return false;
+            size_t ks, ke;
+            str(ks, ke);
+            space();
+            if (i >= text.length || text[i] != ':')
+                return false;
+            i++;
+            if (text[ks .. ke] == seg)
+                break;
+            skip();
+            space();
+            if (i >= text.length || text[i] != ',')
+                return false;
+            i++;
+        }
+    }
+    space();
+    offset = i;
+    return i < text.length;
 }
 
 /// Writes `v` as JSON with the value at `segments` left out; false when the
@@ -360,6 +489,11 @@ private bool writeWithout(Writer)(JsonValue v, in string[] segments, ref Writer 
     assert(r.value.dropped.length == 2);
     assert(r.value.dropped[0].path[].canFind("tabWidth"));
     assert(r.value.dropped[0].filePath[] == path);
+    // Each names where its value sits in the file as written, comments and
+    // all, not only its `$`-path.
+    assert(r.value.dropped[0].line == 4 && r.value.dropped[0].column == 27);
+    assert(r.value.dropped[1].line == 5 && r.value.dropped[1].column == 19);
+    assert(r.value.dropped[0].toString.canFind("(line 4, column 27)"));
 
     // A syntax error is not a value to drop: the whole file fails, located.
     const broken = fixture.writeFileAt("broken.json", "{\n  \"theme\": nope\n}\n");
