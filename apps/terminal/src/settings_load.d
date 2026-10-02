@@ -59,6 +59,10 @@ struct LoadedConfig
 {
     /// The effective value after every layer.
     TerminalConfig effective;
+    /// Layers 1–3 — the defaults, the Termux files and `config.json` —
+    /// without the command line: what the settings page's file draft
+    /// starts from, so a flag's value is never written to the file (`TSP3`).
+    TerminalConfig fileValue;
     /// Where each field's value came from.
     Origins!TerminalConfig origins;
     /// `config.json`'s own sparse content — a save rewrites this, never the
@@ -124,6 +128,7 @@ LoadedConfig loadTerminalConfig(string filePath, string termuxDir)
                 Origin(OriginKind.file, "file:" ~ filePath));
         }
     }
+    lc.fileValue = lc.effective;
     return lc;
 }
 
@@ -441,6 +446,8 @@ version (unittest)
     assert(lc.effective.appearance.font.size == 9);
     assert(lc.origins.appearance.font.size.text == "cli:--font-size");
     assert(lc.fileOverlay.appearance.font.size.get == 20);
+    assert(lc.fileValue.appearance.font.size == 20,
+        "the file seed stays below the command line");
 }
 
 @("settings_load.colorOverrides.dropsOnlyTheBadColour")
