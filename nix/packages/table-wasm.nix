@@ -4,12 +4,12 @@
 # `sparkles.ui.components.table` via the shared `buildDWasmModule` builder (see
 # ./build-d-wasm-module.nix).
 #
-# Unlike text-wasm, drawTable allocates (GC) and imports `expected` (for name
-# resolution only — validateTable is a never-instantiated template), so the
-# build adds `libs/ui/src` + `libs/core-cli/src`, the `-preview=in -preview=dip1000` flags
-# that libs/core-cli/dub.sdl uses, the `expected` dub package source on the
-# import path, and exports `__wasm_call_ctors` so the embedder can run the
-# druntime initialization the GC needs.
+# Both wasm widgets need `expected` sources for the base UTF-8 parser vocabulary.
+# Unlike text-wasm, drawTable allocates (GC), so this build also adds
+# `libs/ui/src` + `libs/core-cli/src`, the `-preview=in -preview=dip1000` flags
+# that libs/core-cli/dub.sdl uses, and exports `__wasm_call_ctors` so the embedder
+# can run the druntime initialization the GC needs. The base buffer's text
+# writers also require the dependency-free `sparkles:reflection` sources.
 #
 # x86_64-linux only (that is where the `ldc-wasm` toolchain is provided). The
 # result is copied to docs/public/spk-table.wasm (see the docs page).
@@ -22,16 +22,14 @@
         pname = "spk-table-wasm";
         wasmName = "spk-table.wasm";
         entry = "libs/core-cli/wasm/spk_table_wasm.d";
-        # `sparkles:base` carries the runner's marker UDAs unconditionally
-        # (`@betterC` on `SmallBuffer`'s own tests, and the `base.text` modules),
-        # so the SHIM — which is where `attributes.d` lives — has to be on the
-        # path even though nothing here runs a test.
+        # Marker UDAs in the base modules require the runner SHIM's
+        # `attributes.d` even without -unittest; the impl is test-only.
         sourceDirs = [
           "libs/base/src"
+          "libs/reflection/src"
           "libs/test-runner/src"
           "libs/core-cli/src"
           "libs/ui/src"
-          "libs/test-runner-impl/src"
         ];
         exports = [
           "spk_buf_ptr"

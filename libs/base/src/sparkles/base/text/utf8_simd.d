@@ -13,12 +13,13 @@ version (textSimdX86)
 {
     import core.cpuid : avx2;
     import sparkles.base.text.simd_caps : hasAvx512Bw;
+    import sparkles.base.text.simd_io : loadVector;
 
     import ldc.attributes : target;
     import ldc.gccbuiltins_x86 : __builtin_ia32_pmovmskb128,
         __builtin_ia32_pmovmskb256, __builtin_ia32_pshufb256,
         __builtin_ia32_pshufb512;
-    import ldc.simd : equalMask, greaterMask, loadUnaligned, shufflevector;
+    import ldc.simd : equalMask, greaterMask, shufflevector;
     import ldc.llvmasm : __ir_pure;
 
     // The JSON mode is an internal cross-library seam: stop before quotes,
@@ -58,8 +59,7 @@ version (textSimdX86)
                 V last;
                 static foreach (block; 0 .. 4)
                 {{
-                    const bytes = (() @trusted =>
-                        loadUnaligned!V(cast(const(ubyte)*) s.ptr + i + block * lanes))();
+                    const bytes = loadVector!V(s, i + block * lanes);
                     combined |= bytes;
                     last = bytes;
                 }}
@@ -79,8 +79,7 @@ version (textSimdX86)
             // boundary, preserving the scalar caller's exact lead offset.
             while (s.length - i >= lanes * 4)
             {
-                const firstInput = (() @trusted =>
-                    loadUnaligned!V(cast(const(ubyte)*) s.ptr + i))();
+                const firstInput = loadVector!V(s, i);
                 if ((previousMask >> (lanes - 3)) == 0)
                 {
                     S signedFirst = cast(S) firstInput;
@@ -99,8 +98,7 @@ version (textSimdX86)
                     static if (block == 0)
                         input = firstInput;
                     else
-                        input = (() @trusted => loadUnaligned!V(
-                            cast(const(ubyte)*) s.ptr + i + block * lanes))();
+                        input = loadVector!V(s, i + block * lanes);
                     bad |= lookupPairErrors(input, preceding!1(input, previous),
                         preceding!2(input, previous), preceding!3(input, previous));
                     previous = input;
@@ -114,7 +112,7 @@ version (textSimdX86)
         }
         while (s.length - i >= lanes)
         {
-            const input = (() @trusted => loadUnaligned!V(cast(const(ubyte)*) s.ptr + i))();
+            const input = loadVector!V(s, i);
             static if (stringBody)
             {
                 const stops = equalMask!V(input, V('"'))
@@ -190,6 +188,7 @@ version (textSimdX86)
     }
 
     private V preceding(size_t count, V)(V input, V previous)
+        @target(V.sizeof == 64 ? "avx512f,avx512bw" : V.sizeof == 32 ? "avx2" : "sse2")
     {
         import std.meta : AliasSeq;
         template Indices(size_t index = 0)

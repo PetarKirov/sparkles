@@ -17,10 +17,11 @@ version (textSimdX86)
     import ldc.attributes : target;
     import ldc.gccbuiltins_x86 : __builtin_ia32_packuswb128,
         __builtin_ia32_pmovmskb128;
-    import ldc.simd : equalMask, greaterMask, loadUnaligned, shufflevector, storeUnaligned;
+    import ldc.simd : equalMask, greaterMask, shufflevector, storeUnaligned;
     import ldc.llvmasm : __ir_pure;
 
     import sparkles.base.text.simd_caps : hasAvx512Bw;
+    import sparkles.base.text.simd_io : loadVector;
 
     private alias Bytes = __vector(ubyte[16]);
     private alias SignedBytes = __vector(byte[16]);
@@ -33,8 +34,7 @@ version (textSimdX86)
         size_t i;
         while (source.length - i >= 16)
         {
-            const input = (() @trusted =>
-                loadUnaligned!Bytes(cast(const(ubyte)*) source.ptr + i))();
+            const input = loadVector!Bytes(source, i);
             if (!asciiBytes(input, rejectNul))
                 break;
             i += 16;
@@ -53,10 +53,8 @@ version (textSimdX86)
         size_t i;
         while (source.length - i >= 16)
         {
-            const low = (() @trusted =>
-                loadUnaligned!Words(cast(const(ushort)*) source.ptr + i))();
-            const high = (() @trusted =>
-                loadUnaligned!Words(cast(const(ushort)*) source.ptr + i + 8))();
+            const low = loadVector!Words(source, i);
+            const high = loadVector!Words(source, i + 8);
             if (!asciiWords(low, high, rejectNul))
                 break;
             i += 16;
@@ -73,8 +71,7 @@ version (textSimdX86)
         size_t i;
         while (source.length - i >= 16 && destination.length - i >= 16)
         {
-            const input = (() @trusted =>
-                loadUnaligned!Bytes(cast(const(ubyte)*) source.ptr + i))();
+            const input = loadVector!Bytes(source, i);
             if (!asciiBytes(input, false))
                 break;
             const Bytes zero = 0;
@@ -102,10 +99,8 @@ version (textSimdX86)
         size_t i;
         while (source.length - i >= 16 && destination.length - i >= 16)
         {
-            const low = (() @trusted =>
-                loadUnaligned!Words(cast(const(ushort)*) source.ptr + i))();
-            const high = (() @trusted =>
-                loadUnaligned!Words(cast(const(ushort)*) source.ptr + i + 8))();
+            const low = loadVector!Words(source, i);
+            const high = loadVector!Words(source, i + 8);
             if (!asciiWords(low, high, false))
                 break;
             const packed = __builtin_ia32_packuswb128(
@@ -143,8 +138,7 @@ version (textSimdX86)
         }
         while (source.length - i >= 16)
         {
-            const input = (() @trusted =>
-                loadUnaligned!Bytes(cast(const(ubyte)*) source.ptr + i))();
+            const input = loadVector!Bytes(source, i);
             if (rejectNul && __builtin_ia32_pmovmskb128(
                     equalMask!Bytes(input, Bytes(0))) != 0)
                 break;
@@ -180,10 +174,8 @@ version (textSimdX86)
         }
         while (source.length - i >= 16)
         {
-            const low = (() @trusted =>
-                loadUnaligned!Words(cast(const(ushort)*) source.ptr + i))();
-            const high = (() @trusted =>
-                loadUnaligned!Words(cast(const(ushort)*) source.ptr + i + 8))();
+            const low = loadVector!Words(source, i);
+            const high = loadVector!Words(source, i + 8);
             if (rejectNul && (wordMask(equalMask!Words(low, Words(0)))
                     | wordMask(equalMask!Words(high, Words(0)))) != 0)
                 break;
@@ -220,8 +212,7 @@ version (textSimdX86)
         size_t i, units;
         while (source.length - i >= 64)
         {
-            const input = (() @trusted => loadUnaligned!WideBytes(
-                cast(const(ubyte)*) source.ptr + i))();
+            const input = loadVector!WideBytes(source, i);
             WideBytes zeros = cast(WideBytes) equalMask!WideBytes(input, WideBytes(0));
             if (rejectNul && wideByteBits(zeros) != 0)
                 break;
@@ -242,8 +233,7 @@ version (textSimdX86)
         size_t i, bytes;
         while (source.length - i >= 32)
         {
-            const input = (() @trusted => loadUnaligned!WideWords(
-                cast(const(ushort)*) source.ptr + i))();
+            const input = loadVector!WideWords(source, i);
             WideWords zeros = cast(WideWords) equalMask!WideWords(input, WideWords(0));
             if (rejectNul && wideWordBits(zeros) != 0)
                 break;

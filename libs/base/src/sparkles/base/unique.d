@@ -596,10 +596,11 @@ extern (C) private pure nothrow @nogc @system
 
     // Copying is not merely discouraged, it does not compile — and the type
     // reports as move-only rather than as a postblit type.
-    static assert(!__traits(compiles, {
+    static assert(!__traits(compiles, (() {
         auto owner = makeUnique!Counted(1);
         auto copy = owner;
-    }));
+        owner.reset();
+    })()));
     static assert(!__traits(hasPostblit, Unique!Counted));
     static assert(!__traits(isCopyable, Unique!Counted));
 }

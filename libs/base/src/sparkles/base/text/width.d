@@ -27,6 +27,8 @@ module sparkles.base.text.width;
 import std.uni : CodepointSet, codepointSetTrie, graphemeStride, isControl, unicode;
 
 import sparkles.base.text.unicode_tables : isEastAsianWide, isEmojiVsBase;
+import sparkles.base.text.grapheme_tables : singletonBoundaryRuns,
+    singletonCacheLimit, singletonCompilerVersion;
 
 /// Variation selectors that switch emoji vs text presentation (UTS #51).
 private enum dchar vs15 = '\uFE0E'; // text presentation
@@ -65,9 +67,10 @@ private CodepointSet makeZeroWidthSet() @safe pure
 }
 
 // Pack width and singleton-boundary traits into one byte for the BMP and
-// first supplementary plane. Public Phobos probes preserve the compiler's
-// own Extend/SpacingMark/Prepend behavior; no private property DB is imported.
-private enum size_t directWidthLimit = 0x20000;
+// first supplementary plane. Public Phobos probes run in the offline generator,
+// not in every consumer's CTFE heap. Unsupported frontend versions keep the
+// public grapheme engine; the runtime parity test catches stale cached policy.
+private enum size_t directWidthLimit = singletonCacheLimit;
 private immutable ubyte[directWidthLimit] directTraits = makeDirectTraits();
 private immutable zeroWidthTrie = codepointSetTrie!(8, 5, 8)(makeZeroWidthSet());
 
@@ -90,20 +93,38 @@ private ubyte[directWidthLimit] makeDirectTraits() @safe pure
     result[0xFFFE .. 0x10000] = 0;
     result[0x1FFFE .. 0x20000] = 0;
     result[regionalIndicatorFirst .. regionalIndicatorLast + 1] = 2;
+    static if (__VERSION__ == singletonCompilerVersion)
+    {
+        foreach (span; singletonBoundaryRuns)
+            foreach (cp; span.begin .. span.end)
+                result[cp] |= span.traits;
+        foreach (cp; 0 .. directWidthLimit)
+            result[cp] |= cast(ubyte)(singletonKind(cast(dchar) cp) << 3);
+    }
+    return result;
+}
+
+@("width.singletonCache.matchesPhobos")
+@safe pure nothrow @nogc
+unittest
+{
     dchar[2] probe;
     foreach (cp; 0 .. directWidthLimit)
     {
-        probe[0] = 'a';
-        probe[1] = cast(dchar) cp;
-        if (graphemeStride(probe[], 0) != 1)
-            result[cp] |= 4; // Attaches to a preceding ordinary starter.
-        probe[0] = cast(dchar) cp;
-        probe[1] = 'a';
-        if (graphemeStride(probe[], 0) == 1)
-            result[cp] |= 64; // Not an outgoing Prepend.
-        result[cp] |= cast(ubyte)(singletonKind(cast(dchar) cp) << 3);
+        static if (__VERSION__ == singletonCompilerVersion)
+        {
+            probe[0] = 'a';
+            probe[1] = cast(dchar) cp;
+            ubyte expected = graphemeStride(probe[], 0) != 1 ? 4 : 0;
+            probe[0] = cast(dchar) cp;
+            probe[1] = 'a';
+            if (graphemeStride(probe[], 0) == 1)
+                expected |= 64;
+            assert((codepointTraits(cast(dchar) cp) & 68) == expected);
+        }
+        else
+            assert((codepointTraits(cast(dchar) cp) & 68) == 0);
     }
-    return result;
 }
 
 private enum SingletonKind : ubyte { other, l, v, t, lv, lvt, ri, cr }

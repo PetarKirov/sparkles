@@ -40,9 +40,9 @@
           # Extra D flags, e.g. the -preview flags of the library being wrapped.
           dflags ? [ ],
           # Dub registry packages whose `source/` dir is put on the import path
-          # (name resolution only — nothing is linked). Each entry is
-          # `{ name, src }` where `src` is a flake-input zip (see the
-          # `dub-*` inputs in flake.nix).
+          # for declarations and template instantiation; no separate library
+          # is linked. Each entry is `{ name, src }` where `src` is a flake-input
+          # zip (see the `dub-*` inputs in flake.nix).
           dubImports ? [ ],
         }:
         let
