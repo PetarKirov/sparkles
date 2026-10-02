@@ -463,7 +463,7 @@ dchar typedChar() @system
 
 /**
 A soft keyboard's backspace or Enter, which arrive in the typed-text queue
-with its text on Android (100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998REF imeBackspace, sparkles,android,text_input));
+with its text on Android ($(REF imeBackspace, sparkles,android,text_input));
 `false` for text.
 */
 bool imeKeyOf(dchar cp, out Key key) @safe pure nothrow @nogc
