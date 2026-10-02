@@ -10,6 +10,10 @@ This guide governs new specifications and substantial revisions under
 `docs/specs/`. Existing trees need not be mechanically reorganized. Apply these
 rules to the work being changed; repair contradictions that affect it.
 
+This guide governs what a specification contains. How it reads — its front
+matter, abstract, introduction, and body prose — is governed by
+[Writing Specification Prose](./spec-prose.md).
+
 ## Separate the Jobs
 
 | Document kind         | Question it answers                                             | Location                                             |

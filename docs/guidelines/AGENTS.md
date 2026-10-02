@@ -48,6 +48,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 - **[DDoc](./ddoc.md)** — documentation comments, sections, macros
 - **[Writing Research Docs](./research-docs.md)** — research catalogs, house style, VitePress gotchas
 - **[Writing Specification Docs](./spec-docs.md)** — falsifiable contracts, test oracles, delivery gates
+- **[Writing Specification Prose](./spec-prose.md)** — front matter, abstract, introduction, timeless prose, the cold read
 - **[Cutting a Release](./release.md)** — monorepo versioning, changelog tags, code.dlang.org
 - **[Integrating C Libraries (ImportC)](./importc-c-libraries.md)** — ImportC + pkg-config + Nix + dub (`sourceLibrary` gotcha)
 - **[Benchmarking & Profiling](./benchmarking-and-profiling.md)** — the measure→profile→fix loop for the terminal renderer
