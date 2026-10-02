@@ -92,6 +92,8 @@ in
           stringImportDirs = [
             "libs/ui/src/sparkles/ui/shaders"
             "${config.packages.ui-shaders}"
+            # The document viewer (sparkles:doc-view) renders twoslash payloads.
+            "libs/twoslash/src/sparkles/twoslash/views"
             # The version (and, released, the commit) `logBuildInfo` reports.
             "${config.legacyPackages.mkBuildStamp {
               version = "0.1.0";
@@ -100,6 +102,7 @@ in
             }}"
           ];
           cIncludes = [
+            "${config.packages.tree-sitter-android}/include"
             "${config.packages.libghostty-vt-android}/include"
             "${config.packages.freetype-android}/include/freetype2"
             "${config.packages.harfbuzz-android}/include/harfbuzz"
@@ -110,6 +113,7 @@ in
             "${config.packages.freetype-android}/lib/${abi}/libfreetype.a"
             "${config.packages.freetype-android}/lib/${abi}/libpng16.a"
             "${config.packages.freetype-android}/lib/${abi}/libz.a"
+            "${config.packages.tree-sitter-android}/lib/${abi}/libtree-sitter.a"
             "${config.packages.libghostty-vt-android}/lib/${abi}/libghostty-vt.a"
             "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a"
           ];
@@ -128,6 +132,23 @@ in
         "DejaVuSansMono-BoldOblique.ttf"
       ];
 
+      # The grammars the document viewer gets on the phone (`TDV1`, OQ6): a
+      # common subset rather than hue's every one — markdown (the credits
+      # page and README previews need its parser) and the languages a
+      # nix-on-droid user opens most. Each costs a parser `.so` per ABI.
+      viewerGrammars = lib.filter (l: lib.elem l config.legacyPackages.tsGrammarsAndroid.languages) [
+        "markdown"
+        "markdown-inline"
+        "d"
+        "c"
+        "bash"
+        "nix"
+        "json"
+        "yaml"
+        "toml"
+        "python"
+      ];
+
       # `session.conf` (session.d parses it): KEY=VALUE lines.
       sessionConf =
         session:
@@ -136,7 +157,8 @@ in
         );
 
       # The asset bundle: fonts with their charset sidecars — the only part
-      # `sparkles.android.assets` extracts (the manifest lists fonts/ alone,
+      # `sparkles.android.assets` extracts, with the viewer's grammar queries (the
+      # manifest lists fonts/ and grammars/ alone,
       # so nothing else lands beside the user's home) — plus session.conf,
       # NOTICE and the credits/ document, read in place from the APK.
       mkAssets =
@@ -160,9 +182,17 @@ in
           cp -r ${credits.bundle} $out/credits
           cp ${credits.notice "terminal"} $out/NOTICE
           cp ${sessionConf session} $out/session.conf
+          # The viewer's grammar queries, extracted beside the fonts (the
+          # registry's soname layout reads <root>/<lang>/queries/*.scm).
+          ${lib.concatMapStrings (lang: ''
+            if [ -d ${config.packages.ts-grammars}/${lang}/queries ]; then
+              mkdir -p $out/grammars/${lang}
+              cp -rL ${config.packages.ts-grammars}/${lang}/queries $out/grammars/${lang}/queries
+            fi
+          '') viewerGrammars}
 
-          (cd $out && find fonts -type f | sort > asset-manifest.txt)
-          (cd $out && find fonts -type f -print0 | sort -z \
+          (cd $out && find fonts grammars -type f | sort > asset-manifest.txt)
+          (cd $out && find fonts grammars -type f -print0 | sort -z \
             | xargs -0 sha256sum | sha256sum | cut -d' ' -f1 > bundle-hash)
         '';
 
@@ -170,7 +200,22 @@ in
         library:
         lib.mapAttrs' (name: t: {
           name = t.abi;
-          value."libterminal.so" = "${library}/lib/${t.abi}/libterminal.so";
+          value = {
+            "libterminal.so" = "${library}/lib/${t.abi}/libterminal.so";
+          }
+          # The viewer's parsers, dlopen'd by bare soname (ts-grammars.nix).
+          // lib.listToAttrs (
+            map (
+              lang:
+              let
+                so = config.legacyPackages.tsGrammarsAndroid.soname lang;
+              in
+              {
+                name = so;
+                value = "${config.packages.ts-grammars-android}/lib/${t.abi}/${so}";
+              }
+            ) viewerGrammars
+          );
         }) ndk.targets;
     in
     lib.optionalAttrs (androidHost system).supported {

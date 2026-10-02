@@ -54,7 +54,9 @@ int androidMain()
 
     const paths = SessionPaths(internalDataPath, config.amSocket);
     const fontsDir = buildPath(paths.files, "fonts");
-    static immutable owned = ["fonts"];
+    // The viewer's grammar queries are extracted beside the fonts; their
+    // parsers ship as native libraries (`TDV1`, OQ6).
+    static immutable owned = ["fonts", "grammars"];
     if (!extractAssetBundle(paths.files, owned, buildPath(paths.files, "assets-ready")))
         warning(i"terminal: no font bundle — the bundled font falls back to $(systemFont)");
 
@@ -148,6 +150,31 @@ int androidMain()
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };
 
+    // Files programs open (`termux-open`, `am start -a VIEW`) become viewer
+    // panes (`TDV1`, `TDV2`): grammars from the APK's libraries and the
+    // extracted queries, the credits read in place from the assets.
+    {
+        import am_server : setOpenInApp;
+        import settings : OpenTarget;
+        import sparkles.doc_view.pane : DocViewEnv;
+        import sparkles.syntax : GrammarRegistry;
+        import workspace_host : placementFor;
+
+        const target = app.config.effective.open.target;
+        setOpenInApp(target != OpenTarget.external);
+        app.host.openPlacement = placementFor(target);
+        app.host.setViewerColors(app.chromeFg, app.chromeBg);
+        const grammars = buildPath(paths.files, "grammars");
+        app.host.creditsPath = "asset:credits/terminal.md";
+        app.host.makeDocEnv = () {
+            auto env = DocViewEnv.create(GrammarRegistry.fromSonames(grammars),
+                (string p) => readViewerFile(p));
+            // The credits' includes stay inside the bundled document (`VIW7`).
+            env.pipeline.includeOptions.root = "asset:credits";
+            return env;
+        };
+    }
+
     // termux-am's server (NOD13): nix-on-droid's android-integration tools.
     import am_server : startAmServer;
 
@@ -162,6 +189,25 @@ int androidMain()
 /// `NOD7`): a plain shell, the login of an installed bootstrap, or — when the
 /// bootstrap is not installed yet — the installer, followed by that login
 /// (`app.next`). True while installing.
+/**
+The viewer's reader: `asset:<name>` is read in place from the APK (the credits,
+`TPG15`); anything else from the filesystem.
+*/
+private string readViewerFile(string path) @system
+{
+    import std.algorithm.searching : startsWith;
+    import std.file : readText;
+
+    import sparkles.android.assets : readAssetText;
+
+    if (!path.startsWith("asset:"))
+        return readText(path);
+    auto text = readAssetText(path["asset:".length .. $]);
+    if (text is null)
+        throw new Exception("not in the APK");
+    return text;
+}
+
 private bool configureSession(ref DroidTerminal app, const SessionConfig config,
     const SessionPaths paths, out TerminalViewOptions first)
 {

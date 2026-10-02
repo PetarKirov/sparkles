@@ -38,6 +38,7 @@ keeps this page equal to it.
 | `Leader a`            | about             | a pane          |
 | `Leader l`            | logs              | a pane          |
 | `Leader n`            | notifications     | a pane          |
+| `Leader c`            | credits           | a pane          |
 | `Leader t n`          | new tab           | a pane          |
 | `Leader t t`          | tabs and panes    | a pane          |
 | `Leader t x`          | close tab         | a pane          |

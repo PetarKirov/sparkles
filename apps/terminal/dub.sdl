@@ -24,14 +24,25 @@ dependency "sparkles:ghostty" path="../.."
 dependency "sparkles:raylib-text" path="../.."
 dependency "sparkles:terminal-view" path="../.."
 dependency "sparkles:ui-app" path="../.."
+// Named so its configuration can be selected: dub ignores a `subConfiguration`
+// for a package that is not a direct dependency.
+dependency "sparkles:ui" path="../.."
 dependency "sparkles:metadata" path="../.."
 dependency "sparkles:wired" path="../.."
+// The document viewer (`TDV`): files programs ask to open become panes.
+dependency "sparkles:doc-view" path="../.."
 
 libs "raylib"
 
 configuration "application" {
     targetType "executable"
     subConfiguration "sparkles:ui-app" "gui"
+    // Declared, not inherited through ui-app: the viewer's GPU pane compiles
+    // where the consumer names sparkles:ui-raylib (`Have_sparkles_ui_raylib`).
+    // It runs the built-in effects' GPU halves, which sparkles:ui builds only in
+    // its `gpu-effects` configuration, selected beside it.
+    dependency "sparkles:ui-raylib" path="../.."
+    subConfiguration "sparkles:ui" "gpu-effects"
 }
 
 configuration "unittest" {
@@ -40,6 +51,8 @@ configuration "unittest" {
 
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:test-utils" path="../.."
+    dependency "sparkles:ui-raylib" path="../.."
+    subConfiguration "sparkles:ui" "gpu-effects"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

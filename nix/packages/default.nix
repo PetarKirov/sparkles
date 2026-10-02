@@ -187,12 +187,23 @@
         nativeBuildInputs = [ pkgs.pkg-config ];
 
         buildInputs = [
+          # The document viewer (`TDV`, sparkles:doc-view) highlights through
+          # sparkles:syntax.
+          pkgs.tree-sitter
           pkgs.raylib
           inputs'.ghostty.packages.libghostty-vt
           inputs'.ghostty.packages.libghostty-vt.dev
         ];
 
         env = d-toolchain.env;
+
+        # The credits page (`TPG15`), beside the executable: the document and
+        # its staged licence texts, the files the docs site renders (`TPG16`).
+        installPhase = ''
+          install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
+          mkdir -p $out/share/sparkles-terminal
+          cp -r ${config.legacyPackages.sparklesCredits.bundle} $out/share/sparkles-terminal/credits
+        '';
 
         # The version and commit `logBuildInfo` reports (`TPG2`): the stamp
         # lands in the `stringImportPaths "views"` apps/terminal/dub.sdl names.
@@ -213,6 +224,7 @@
         # fontconfig is reachable instead of relying on the user's PATH.
         postFixup = ''
           wrapProgram $out/bin/${finalAttrs.pname} \
+            --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
             --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
         '';
 

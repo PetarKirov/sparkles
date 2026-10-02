@@ -11,6 +11,8 @@ turns into a toast.
 */
 module workspace;
 
+import std.path : dirName;
+
 import sparkles.ui.components.dock : DockAxis, DockFrames, dockFrames, DockLayout,
     DockZone, PaneId;
 import sparkles.ui.geometry : Rect;
@@ -40,6 +42,21 @@ struct PaneSpec
     /// An explicit command (`terminal -- cmd`, a "run command" pane); empty
     /// for the user's shell.
     string command;
+    /// A viewer pane's file (`TDV5`): set, the pane shows this document in
+    /// the embedded viewer instead of running a program, and restore re-opens
+    /// it.
+    string document;
+
+    /// Whether this is a viewer pane.
+    bool isDocument() const @safe pure nothrow @nogc => document.length != 0;
+}
+
+/// Where an opened file goes (`TDV2`), the workspace's half of `open.target`.
+enum Placement : ubyte
+{
+    tab,        /// a new tab after the current one
+    splitRight, /// a split to the right of the requesting pane
+    splitDown,  /// a split below it
 }
 
 /// One tab: a layout of panes, the focused one and the zoomed one (0: none).
@@ -199,6 +216,29 @@ struct Workspace
     pane's directory (`TSS8`) and takes the focus; a zoom ends.
     */
     PaneId split(DockAxis axis, out Refusal why) @safe
+        => splitWith(axis, null, why);
+
+    /**
+    Opens `path` in a viewer pane (`TDV2`, `TDV5`): a new tab, or a split
+    beside `from` — the pane whose program asked — which is focused first.
+    A `from` that is gone opens a tab. The new pane takes the focus; it
+    starts in the file's directory, so a split or tab made from it does too.
+    */
+    PaneId openDocument(string path, Placement where, PaneId from, out Refusal why) @safe
+    {
+        if (where == Placement.tab || tabOf(from) == size_t.max)
+        {
+            const id = newTab(path.dirName, null, why);
+            if (id)
+                spec(id).document = path;
+            return id;
+        }
+        cast(void) focusPane(from);
+        return splitWith(where == Placement.splitRight ? DockAxis.horizontal
+            : DockAxis.vertical, path, why);
+    }
+
+    private PaneId splitWith(DockAxis axis, string document, out Refusal why) @safe
     {
         if (!tabs.length)
         {
@@ -212,7 +252,9 @@ struct Workspace
             return 0;
         }
         const from = spec(t.focused);
-        const id = mint(from !is null ? from.cwd : null, null);
+        const id = mint(document.length ? document.dirName
+            : from !is null ? from.cwd : null, null);
+        spec(id).document = document;
 
         // A leaf for the new pane beside the root, then moved next to the
         // focused one: `redocked` owns the split's construction rules.
@@ -599,4 +641,44 @@ version (unittest)
     w.resizeSplit(d.beforeNode, d.afterNode, 20);
     w.frames(screen, f);
     assert(f.panes[0].rect.width == 20 || f.panes[1].rect.width == 20, "the left pane is 20 wide");
+}
+
+@("workspace.openDocument.tabOrSplitBesideTheRequester")
+@system unittest
+{
+    import sparkles.wired.json : fromJSON, toJSON;
+
+    PaneId a;
+    auto w = oneTab(a);
+    Refusal why;
+    const b = w.split(DockAxis.horizontal, why);
+
+    // A split opens beside the pane that asked, not the focused one, and
+    // takes the focus (`TDV2`).
+    const v = w.openDocument("/srv/notes/README.md", Placement.splitDown, a, why);
+    assert(v && w.focused == v && w.spec(v).isDocument);
+    assert(w.spec(v).cwd == "/srv/notes", "a viewer starts in its file's directory");
+    DockFrames f;
+    w.frames(screen, f);
+    Rect ra, rv;
+    foreach (ref p; f.panes)
+        if (p.pane == a)
+            ra = p.rect;
+        else if (p.pane == v)
+            rv = p.rect;
+    assert(rv.y > ra.y && rv.x == ra.x, "below the requester");
+    assert(!w.spec(b).isDocument);
+
+    // A tab; and a requester that is gone opens a tab too.
+    const t = w.openDocument("/tmp/x.csv", Placement.tab, a, why);
+    assert(w.current == 1 && w.focused == t && w.panesOf(1).length == 1);
+    const g = w.openDocument("/tmp/y.png", Placement.splitRight, 999, why);
+    assert(w.tabs.length == 3 && w.focused == g);
+
+    // Restore re-opens the path (`TDV5`).
+    auto text = toJSON(saved(w));
+    assert(!text.hasError);
+    auto back = fromJSON!SavedWorkspace(text.value[]);
+    assert(!back.hasError, back.error.toString);
+    assert(restored(back.value).spec(v).document == "/srv/notes/README.md");
 }

@@ -225,7 +225,7 @@ AmCommand parseAmCommand(const string[] args) @safe pure
 enum AmRequestKind
 {
     openUrl, /// `am start -a VIEW -d <url>`, or `termux-open <url>`
-    openFile, /// `termux-open <file>` — needs a ContentProvider; refused
+    openFile, /// `termux-open <file>`, `am start -a VIEW -d file://…`: the viewer (`TDV1`)
     reloadSettings, /// `termux-reload-settings`
     setupStorage, /// `termux-setup-storage`
     wakeLock, /// `termux-wake-lock`
@@ -288,9 +288,11 @@ AmRequest classify(const AmCommand c) @safe pure
             return r;
         }
     }
-    if (c.verb == "start" && c.action == "android.intent.action.VIEW" && isUrl(c.data))
+    if (c.verb == "start" && c.action == "android.intent.action.VIEW"
+        && (isUrl(c.data) || startsWith(c.data, "file://") || startsWith(c.data, "/")))
     {
-        r.kind = AmRequestKind.openUrl;
+        // A `file:` URI or a path is a local file (`TDV1`): the viewer's.
+        r.kind = isUrl(c.data) ? AmRequestKind.openUrl : AmRequestKind.openFile;
         r.target = c.data;
         r.mimeType = c.mimeType;
         return r;
@@ -343,12 +345,15 @@ bool isUrl(const(char)[] s) @safe pure nothrow @nogc
     // Verbatim from the script nix-on-droid builds for dev.petar_kirov.sparkles.terminal.nix.
     assert(req(`broadcast --user 0 --es dev.petar_kirov.sparkles.terminal.nix.app.reload_style storage -a dev.petar_kirov.sparkles.terminal.nix.app.reload_style dev.petar_kirov.sparkles.terminal.nix`).kind == AmRequestKind.setupStorage);
     assert(req(`force-stop com.example`).kind == AmRequestKind.unsupported);
-    assert(req(`start -a android.intent.action.VIEW -d file:///x`).kind == AmRequestKind.unsupported);
     // Text to the share sheet; a SEND with no text is not one this app can make.
     auto share = req(`start --user 0 -a android.intent.action.SEND -t text/plain --es android.intent.extra.TEXT 'hello world' --es android.intent.extra.SUBJECT hi`);
     assert(share.kind == AmRequestKind.shareText);
     assert(share.target == "hello world" && share.subject == "hi");
     assert(req(`start -a android.intent.action.SEND -t image/png`).kind == AmRequestKind.unsupported);
+    auto local = req(`start -a android.intent.action.VIEW -d file:///sdcard/x.md`);
+    assert(local.kind == AmRequestKind.openFile && local.target == "file:///sdcard/x.md");
+    assert(req(`start -a android.intent.action.VIEW -d /sdcard/y.png`).kind == AmRequestKind.openFile);
+    assert(req(`start -a android.intent.action.VIEW`).kind == AmRequestKind.unsupported);
 }
 
 /// The reply termux-am-socket expects: `<code>\0<stdout>\0<stderr>\0`.

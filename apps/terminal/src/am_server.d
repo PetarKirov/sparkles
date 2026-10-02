@@ -13,7 +13,7 @@ module am_server;
 
 version (Android):
 
-import core.atomic : atomicExchange, atomicStore;
+import core.atomic : atomicExchange, atomicLoad, atomicStore;
 
 import am_command;
 import sparkles.base.logger : info, warning;
@@ -24,6 +24,16 @@ private shared bool reloadRequested;
 
 /// Whether a settings reload was requested since the last call.
 bool takeReloadRequest() @trusted nothrow @nogc => atomicExchange(&reloadRequested, false);
+
+/// Whether `termux-open` of a file the viewer shows opens it in the app
+/// (`open.target` other than `external`, `TDV1`).
+private shared bool openInApp = true;
+
+/// ditto
+void setOpenInApp(bool yes) @trusted nothrow @nogc
+{
+    atomicStore(openInApp, yes);
+}
 
 /**
 Start the server on a thread of its own, listening on `path`
@@ -124,6 +134,25 @@ private void answer(int conn, string home)
             return err is null ? reply(conn, 0, "", "")
                 : reply(conn, 1, "", "am: " ~ err ~ "\n");
         case AmRequestKind.openFile:
+            // `TDV1`: a file the viewer shows opens in a pane beside the
+            // requesting one; the rest keeps the refusal below (`NOD18`).
+            if (atomicLoad(openInApp))
+            {
+                import open_request : awaitOpen, checkOpen, cwdOf, enqueueOpen, OpenCheck,
+                    localPathOf, OpenVerdict, peerProcess;
+
+                const pid = peerProcess(conn);
+                const path = localPathOf(r.target, cwdOf(pid));
+                const check = path is null ? OpenCheck.init : checkOpen(path);
+                if (path !is null && check.verdict == OpenVerdict.refuse)
+                    return reply(conn, 1, "", "termux-open: " ~ check.message ~ "\n");
+                if (path !is null && check.verdict == OpenVerdict.open)
+                {
+                    string msg;
+                    return awaitOpen(enqueueOpen(path, pid), msg) ? reply(conn, 0, "", "")
+                        : reply(conn, 1, "", "termux-open: " ~ msg ~ "\n");
+                }
+            }
             return reply(conn, 1, "", "termux-open: this app has no content provider "
                 ~ "(it ships no Java), so other apps cannot read files from its "
                 ~ "private storage; open a URL, or copy the file to ~/storage/shared "

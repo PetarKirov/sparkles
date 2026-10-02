@@ -58,6 +58,18 @@ private int desktopMain(string[] args)
 
     import sparkles.base.logger : warning;
 
+    // Run as `xdg-open` (the shim on every session's PATH, `TDV4`): hand the
+    // file to the terminal that owns the session, or to the next xdg-open.
+    {
+        import std.path : baseName;
+
+        if (args.length && args[0].baseName == "xdg-open")
+        {
+            import open_request : xdgOpenShim;
+
+            return xdgOpenShim(args);
+        }
+    }
     if (args.length >= 2 && args[1] == "config")
         return configCommand(args[0], args[2 .. $]);
 
@@ -199,6 +211,27 @@ private int desktopMain(string[] args)
     app.keys.configure(lc.effective, lc.warnings);
     app.followColors();
 
+    // Files opened from a pane open in the app (`TDV1`–`TDV4`): the sessions
+    // find this terminal's `xdg-open` first on their PATH, which forwards
+    // over the per-app socket. The viewer wears the chrome's colours (`TDV7`).
+    import open_request : installOpenShim, removeOpenDir, startOpenServer;
+    import settings : OpenTarget;
+    import workspace_host : placementFor;
+
+    app.host.openPlacement = placementFor(lc.effective.open.target);
+    app.host.creditsPath = bundledCredits();
+    app.host.setViewerColors(app.chromeFg, app.chromeBg);
+    string openDir;
+    if (lc.effective.open.intercept && lc.effective.open.target != OpenTarget.external)
+    {
+        openDir = installOpenShim();
+        if (openDir.length && !startOpenServer(buildPath(openDir, "open.sock")))
+            lc.warnings ~= "open: files opened from a pane go to the desktop's handler";
+    }
+    scope (exit)
+        if (openDir.length)
+            removeOpenDir(openDir);
+
     // The last session's tabs and splits (`TSS14`), unless a command was
     // given — then that command is the session.
     app.statePath = buildPath(desktopStateDir(), "sparkles-terminal", "workspace.json");
@@ -235,6 +268,27 @@ private int desktopMain(string[] args)
                 cfg.gui.font, "'.");
             return 1;
     }
+}
+
+/**
+The credits document (`TPG15`): beside the executable in an installed build
+(`share/sparkles-terminal/credits/`, staged with its licence texts), else the
+repository's `docs/credits/` for a build run from the tree — whose licence
+includes then show as located errors, the texts being staged only by Nix.
+*/
+private string bundledCredits()
+{
+    import std.file : exists, thisExePath;
+    import std.path : buildNormalizedPath, dirName;
+
+    const bin = thisExePath.dirName;
+    foreach (dir; ["../share/sparkles-terminal/credits", "../../../docs/credits"])
+    {
+        const doc = buildNormalizedPath(bin, dir, "terminal.md");
+        if (doc.exists)
+            return doc;
+    }
+    return null;
 }
 
 /// `terminal config show [--changed] [--config PATH]` and `terminal config

@@ -72,7 +72,10 @@ struct DesktopTerminal
         noteGuide();
 
         if (desktop.tick(host))
+        {
             followColors();
+            host.setViewerColors(chromeFg, chromeBg); // `TDV7`
+        }
         host.theme = ChromeTheme.of(chromeFg, chromeBg);
         host.frame(h, Rect(0, 0, GetScreenWidth(), GetScreenHeight()));
         if (host.takeDirty())
@@ -189,7 +192,7 @@ struct DesktopTerminal
                 TermCommand.focusUp, TermCommand.focusDown, TermCommand.zoomPane,
                 TermCommand.closePane, TermCommand.promptRerun, TermCommand.promptShell,
                 TermCommand.promptClose, TermCommand.tabTree, TermCommand.openAbout,
-                TermCommand.openLogs, TermCommand.openNotifications:
+                TermCommand.openLogs, TermCommand.openNotifications, TermCommand.showCredits:
                 break;
         }
     }

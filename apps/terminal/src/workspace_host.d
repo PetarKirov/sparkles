@@ -17,6 +17,7 @@ WorkspaceHost.paneOptions)), and the keys; it keeps the binding table.
 module workspace_host;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.doc_view.pane : chromeTheme, DocViewEnv, DocViewPane, PaneKey;
 import sparkles.terminal_view.component : TerminalView, TerminalViewOptions;
 import sparkles.terminal_view.input : ExitBehavior;
 import sparkles.terminal_view.pool : TerminalPool;
@@ -37,12 +38,12 @@ import sparkles.terminal_view.notification_log : NotificationLog, NotificationRo
 import sparkles.terminal_view.osc_scan : Notification;
 import sparkles.terminal_view.protocols : PasteConfirmRequest;
 import keymap : KeyCommand, TermCommand;
-import settings : ButtonLabels, LinkAction, NotificationsConfig, OnExit, OverlayStyle,
-    PaneChrome, TabsOpener;
+import settings : ButtonLabels, LinkAction, NotificationsConfig, OnExit, OpenTarget,
+    OverlayStyle, PaneChrome, TabsOpener;
 import links : canOpen, LinkConfirm, openUri, schemeOf;
 import surfaces : SurfaceContext, Surfaces;
-import workspace : Direction, maxPanesPerTab, maxTabs, PaneSpec, Refusal, restored,
-    saved, SavedWorkspace, Workspace;
+import workspace : Direction, maxPanesPerTab, maxTabs, PaneSpec, Placement, Refusal,
+    restored, saved, SavedWorkspace, Workspace;
 
 /// What a pane does when its program has exited (`TSS1`).
 enum ExitAction : ubyte
@@ -70,6 +71,22 @@ ExitAction exitActionFor(OnExit policy, bool explicitCommand, int status) @safe 
             return ExitAction.close;
         case OnExit.hold:
             return ExitAction.hold;
+    }
+}
+
+/// Where `open.target` puts an opened file; `external` never reaches the
+/// workspace (the request is declined first) and maps to a tab.
+Placement placementFor(OpenTarget t) @safe pure nothrow @nogc
+{
+    final switch (t)
+    {
+        case OpenTarget.tab:
+        case OpenTarget.external:
+            return Placement.tab;
+        case OpenTarget.splitRight:
+            return Placement.splitRight;
+        case OpenTarget.splitDown:
+            return Placement.splitDown;
     }
 }
 
@@ -136,6 +153,25 @@ struct WorkspaceHost
     private PaneId revealed; // the pane whose toolbar shows (`reveal`)
     private int cellW = 1, cellH = 1;
 
+    /// What every viewer pane shares (`TDV5`): grammars and the loader.
+    /// Made on the first viewer, by `makeDocEnv` when the embedder supplies
+    /// one (Android's asset reader), else from the environment.
+    DocViewEnv* docEnv;
+    /// ditto
+    DocViewEnv* delegate() @system makeDocEnv;
+    /// Where an opened file appears (`open.target`, `TDV2`).
+    Placement openPlacement = Placement.tab;
+    /// The credits document the `showCredits` command opens (`TPG15`):
+    /// beside the executable on the desktop, `asset:credits/terminal.md` on
+    /// Android; empty when the build bundles none.
+    string creditsPath;
+    /// The chrome's colours, which viewer panes wear (`TDV7`).
+    RgbColor viewerFg = RgbColor(0xcd, 0xd6, 0xf4);
+    /// ditto
+    RgbColor viewerBg = RgbColor(0x1e, 0x1e, 0x2e);
+
+    private DocViewPane*[PaneId] viewers; // the viewer panes, by id
+    private float wheelRest = 0; // the polled wheel's fractional rows
     private bool[PaneId] prompting; // exited panes that keep their prompt
     private bool[PaneId] expanded; // prompts whose status line is open
     private SysTime[PaneId] started, ended; // when each program ran
@@ -208,6 +244,8 @@ struct WorkspaceHost
     {
         const spec = ws.spec(id);
         assert(spec !is null);
+        if (spec.isDocument)
+            return createViewer(id, spec.document);
         TerminalViewOptions o = paneOptions !is null
             ? paneOptions(*spec, spec.command.length == 0 || (id in restoredCommand) !is null)
             : TerminalViewOptions.init;
@@ -277,10 +315,109 @@ struct WorkspaceHost
         return ["-sh".ptr, "-c".ptr, script.toStringz, "-sh".ptr, command.toStringz, null];
     }
 
+    // A viewer pane for `path` (`TDV5`). A file that cannot be shown still
+    // makes the pane — restore shows where the file went, as a located error.
+    private bool createViewer(PaneId id, string path) @system
+    {
+        if (docEnv is null)
+        {
+            import sparkles.syntax : GrammarRegistry;
+
+            docEnv = makeDocEnv !is null ? makeDocEnv()
+                : DocViewEnv.create(GrammarRegistry.fromEnvironment());
+        }
+        auto p = new DocViewPane;
+        cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
+        viewers[id] = p;
+        dirty = true;
+        return true;
+    }
+
+    /**
+    Opens `path` in a viewer pane per `openPlacement`, beside `from` — the
+    pane whose program asked, 0 when unknown (`TDV2`) — and focuses it. False
+    with `notice` set when the workspace refused.
+    */
+    bool openDocument(string path, PaneId from) @system
+    {
+        Refusal why;
+        const id = ws.openDocument(path, openPlacement, from, why);
+        if (!id)
+        {
+            notice = why == Refusal.tooManyTabs ? "at most 32 tabs"
+                : why == Refusal.tooManyPanes ? "at most 16 panes in a tab" : "cannot open " ~ path;
+            return false;
+        }
+        repaint = true;
+        return create(id);
+    }
+
+    /// The viewer pane `id`, or null when it is a terminal pane.
+    DocViewPane* viewer(PaneId id) @safe pure nothrow @nogc
+    {
+        if (auto p = id in viewers)
+            return *p;
+        return null;
+    }
+
+    /// Re-themes every viewer pane to the chrome's colours (`TDV7`).
+    void setViewerColors(RgbColor fg, RgbColor bg) @system
+    {
+        if (fg == viewerFg && bg == viewerBg)
+            return;
+        viewerFg = fg;
+        viewerBg = bg;
+        foreach (p; viewers)
+            p.setTheme(chromeTheme(fg, bg));
+        repaint = true;
+    }
+
+    /// Scrolls viewer pane `id` by `rows` (a touch drag); false when `id` is
+    /// not a viewer, so the caller scrolls a terminal pane instead.
+    bool scrollViewer(PaneId id, long rows) @system
+    {
+        auto p = viewer(id);
+        if (p is null)
+            return false;
+        if (p.scrollBy(rows))
+            repaint = true;
+        return true;
+    }
+
+    /**
+    Opens what programs asked for since the last frame (`TDV1`): each request
+    beside the pane its process descends from, answered so the requesting
+    command can return (`TDV3`).
+    */
+    private void takeOpenRequests() @system
+    {
+        version (Posix)
+        {
+            import open_request : answerOpen, paneOfProcess, takeRequests = takeOpenRequests;
+
+            foreach (r; takeRequests())
+            {
+                const from = cast(PaneId) paneOfProcess(r.pid, (int pid) {
+                    foreach (id, tv; pool)
+                        if (tv.s.child == pid)
+                            return cast(ulong) id;
+                    return 0UL;
+                });
+                const ok = openDocument(r.path, from);
+                answerOpen(r.id, ok, ok ? null : notice);
+            }
+        }
+    }
+
     /// Closes pane `id`: its program is hung up, its tab closes with it when
     /// it was the last.
     void closePane(PaneId id) @system
     {
+        if (auto p = id in viewers)
+        {
+            (*p).release();
+            viewers.remove(id);
+        }
         pool.closeFor(id);
         prompting.remove(id);
         expanded.remove(id);
@@ -304,6 +441,14 @@ struct WorkspaceHost
     {
         import raylib : GetMousePosition, IsMouseButtonDown, IsMouseButtonPressed,
             MouseButton;
+        import core.time : msecs;
+
+        // Files programs asked to open (`TDV1`) become panes before the layout
+        // is read; a quarter-second wake bounds how long a request waits on an
+        // idle window.
+        takeOpenRequests();
+        static if (__traits(compiles, h.wakeIn(250.msecs)))
+            h.wakeIn(250.msecs);
 
         auto c = h.canvas;
         cellW = c.fonts.cellW() > 0 ? c.fonts.cellW() : 1;
@@ -352,6 +497,18 @@ struct WorkspaceHost
             // A click on the chrome is the chrome's, not the pane's.
             if (dragging < 0 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && tap(h, mx, my))
                 under = pointerOwner = 0;
+            // A viewer pane scrolls with the wheel over it; a terminal pane
+            // polls its own (`pollMouse`).
+            if (auto v = viewer(under))
+            {
+                import raylib : GetMouseWheelMove;
+
+                wheelRest -= GetMouseWheelMove() * 3;
+                const rows = cast(long) wheelRest;
+                wheelRest -= rows;
+                if (v.scrollBy(rows))
+                    repaint = true;
+            }
             if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && under)
             {
                 pointerOwner = under;
@@ -377,6 +534,10 @@ struct WorkspaceHost
                 tv.deliverEvents(h);
             }
         }
+
+        // A viewer reloads its file when it changed on disk (`TDV8`).
+        foreach (id, p; viewers)
+            any |= p.poll() || p.needsPaint;
 
         applyExits();
         placeChrome();
@@ -408,15 +569,16 @@ struct WorkspaceHost
         // the last frame stays up (`HST6`).
         if (!any && !repaint)
             h.skipFrame();
+        const(char)[] t;
         if (auto tv = focusedView())
+            t = tv.title;
+        else if (auto v = viewer(ws.focused))
+            t = v.title;
+        if (t != shownTitle)
         {
-            const t = tv.title;
-            if (t != shownTitle)
-            {
-                shownTitle = t.idup;
-                static if (__traits(compiles, h.title(t)))
-                    h.title(t.length ? t : "sparkles:terminal");
-            }
+            shownTitle = t.idup;
+            static if (__traits(compiles, h.title(t)))
+                h.title(t.length ? t : "sparkles:terminal");
         }
     }
 
@@ -556,6 +718,8 @@ struct WorkspaceHost
         if (auto s = ws.spec(id))
             if (s.titlePin.length)
                 return s.titlePin;
+        if (auto v = viewer(id))
+            return v.title.idup;
         if (auto tv = pool.byId(id))
             if (tv.title.length)
                 return tv.title.idup;
@@ -706,9 +870,13 @@ struct WorkspaceHost
         static Color rgb(RgbColor x) => Color(x.r, x.g, x.b, 255);
 
         paintLayer(h, openerLayer, theme);
+        auto canvas = h.canvas;
         foreach (ref b; boxes)
             if (auto tv = pool.byId(b.id))
                 tv.paintPanePx(h, b.content.x, b.content.y, b.content.width, b.content.height);
+            else if (auto v = viewer(b.id))
+                v.paint(canvas, b.content.x, b.content.y, b.content.width, b.content.height,
+                    focused: b.focused);
         foreach (ref d; dividerRects)
             DrawRectangle(d.x, d.y, d.width, d.height, rgb(divider));
         // Where a dragged divider would land.
@@ -1025,6 +1193,24 @@ struct WorkspaceHost
     {
         import sparkles.input : Event;
 
+        // A viewer pane has no program: its keys are the viewer's, and
+        // `q`/`Esc` close it (`TDV6`).
+        if (auto v = viewer(ws.focused))
+        {
+            final switch (v.key(k))
+            {
+                case PaneKey.ignored:
+                    break;
+                case PaneKey.handled:
+                    repaint = true;
+                    break;
+                case PaneKey.close:
+                    closePane(ws.focused);
+                    repaint = true;
+                    break;
+            }
+            return;
+        }
         if (auto tv = focusedView())
             if (!tv.s.childExited)
                 tv.handle(h, Event(k));
@@ -1098,6 +1284,18 @@ struct WorkspaceHost
 
                 openPage(this, c.cmd);
                 return true;
+            case TermCommand.showCredits:
+                // `TPG15`/`TDV10`: the credits are a document like any other,
+                // in a tab of their own.
+                if (creditsPath.length)
+                {
+                    const id = ws.openDocument(creditsPath, Placement.tab, 0, why);
+                    if (id)
+                        cast(void) create(id);
+                }
+                else
+                    notice = "no credits bundled with this build";
+                break;
             case TermCommand.none:
             case TermCommand.copy:
             case TermCommand.paste:

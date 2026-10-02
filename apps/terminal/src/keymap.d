@@ -49,6 +49,7 @@ enum TermCommand : ubyte
     toggleExtraKeys, /// show or hide the extra-keys row (`TCF7`)
     dismiss,         /// close the innermost overlay (`KBD1`)
     confirm,         /// the innermost overlay's primary action (`KBD1`: Enter)
+    showCredits,     /// the credits page, in the document viewer (`TPG15`)
 
     // Tabs and splits (`TSS8`).
     tabTree,         /// the tree of tabs and panes, with search (`TSS12`)
@@ -182,6 +183,8 @@ immutable Binding[] defaultBindings = [
     bind(TermScope.pane, chord(leaderMark), chord('l'), TermCommand.openLogs, "logs"),
     bind(TermScope.pane, chord(leaderMark), chord('n'), TermCommand.openNotifications,
         "notifications"),
+    bind(TermScope.pane, chord(leaderMark), chord('c'), TermCommand.showCredits,
+        "credits"),
     group(TermScope.pane, chord(leaderMark), chord('t'), "tab"),
     bind(TermScope.pane, chord(leaderMark), chord('t'), chord('n'), TermCommand.newTab,
         "new tab"),

@@ -378,7 +378,7 @@ struct DroidTerminal
                 TermCommand.focusUp, TermCommand.focusDown, TermCommand.zoomPane,
                 TermCommand.closePane, TermCommand.promptRerun, TermCommand.promptShell,
                 TermCommand.promptClose, TermCommand.tabTree, TermCommand.openAbout,
-                TermCommand.openLogs, TermCommand.openNotifications:
+                TermCommand.openLogs, TermCommand.openNotifications, TermCommand.showCredits:
                 break;
         }
     }
@@ -543,6 +543,9 @@ struct DroidTerminal
         // scrollback.
         int left, top;
         const id = host.paneAt(w.pos.x, w.pos.y, left, top);
+        // A viewer pane scrolls its document (`TDV6`).
+        if (host.scrollViewer(id ? id : host.ws.focused, w.dy))
+            return;
         auto tv = id ? host.pool.byId(id) : host.focusedView();
         if (tv is null)
             return;

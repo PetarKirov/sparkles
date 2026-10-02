@@ -20,6 +20,10 @@ cover every application.
 
 <!-- @include: ./parts/libkqueue.md -->
 
+<!-- @include: ./parts/tree-sitter.md -->
+
+<!-- @include: ./parts/tree-sitter-grammars.md -->
+
 ## Fonts
 
 <!-- @include: ./parts/fira-code-nerd-font.md -->

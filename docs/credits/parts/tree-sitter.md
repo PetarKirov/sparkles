@@ -9,8 +9,9 @@
 
 The incremental parser behind hue's syntax highlighting. `sparkles:tree-sitter`
 binds its runtime; `sparkles:syntax` runs the grammars below and their
-highlight queries over every file hue opens, and the markdown model reads its
-structure from the markdown grammars.
+highlight queries over every file hue opens — and every file `sparkles:terminal`
+opens in its document viewer (`sparkles:doc-view`) — and the markdown model
+reads its structure from the markdown grammars.
 
 ::: details Licence text
 
