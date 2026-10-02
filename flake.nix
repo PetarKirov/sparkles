@@ -210,6 +210,7 @@
         ./nix/packages/android
         ./nix/packages/build-d-wasm-module.nix
         ./nix/packages/build-sparkles-app.nix
+        ./nix/packages/credits.nix
         ./nix/packages/default.nix
         ./nix/packages/dmd-import-paths.nix
         ./nix/packages/ldc-import-paths.nix

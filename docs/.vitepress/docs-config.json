@@ -6,6 +6,8 @@
     "**/research/iroh/prompt.md",
     "**/guidelines/d-language-features/AGENTS.md",
     "**/guidelines/d-language-features/grounding/**",
-    "**/specs/fuzzy/adversarial-review.md"
+    "**/specs/fuzzy/adversarial-review.md",
+    "credits/parts/**",
+    "credits/licenses/**"
   ]
 }

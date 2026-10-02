@@ -10,6 +10,24 @@
       {
         "text": "Glossary",
         "link": "/glossary"
+},
+        {
+        "text": "Credits",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "All components",
+            "link": "/credits/"
+          },
+          {
+            "text": "sparkles:terminal",
+            "link": "/credits/terminal"
+          },
+          {
+            "text": "hue",
+            "link": "/credits/hue"
+          }
+        ]
       }
     ]
   },

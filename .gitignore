@@ -78,6 +78,9 @@ docs/public/spk-table.wasm
 docs/public/apps/hue/twoslash/
 # Source-code listings rendered by `hue site` (docs/scripts/build-source-listings.sh)
 docs/public/src/
+# The credits document's licence texts, staged from each component's source
+# (nix build .#credits) by docs/scripts/build-credits.sh — never hand-copied.
+docs/credits/licenses/
 
 # `hue gallery <dir>` with no `--out` writes to `<dir>/html`, so running it on
 # the repo root — the natural way to try `--twoslash` over the whole tree —

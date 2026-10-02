@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "build:wasm": "bash docs/scripts/build-wasm.sh",
+    "build:credits": "bash docs/scripts/build-credits.sh",
     "build:twoslash-showcase": "bash docs/scripts/build-twoslash-showcase.sh",
-    "docs:dev": "yarn build:wasm && yarn build:twoslash-showcase && yarn build:listings && vitepress dev docs --host",
-    "docs:build": "yarn build:wasm && yarn build:twoslash-showcase && yarn build:listings && vitepress build docs",
+    "docs:dev": "yarn build:wasm && yarn build:credits && yarn build:twoslash-showcase && yarn build:listings && vitepress dev docs --host",
+    "docs:build": "yarn build:wasm && yarn build:credits && yarn build:twoslash-showcase && yarn build:listings && vitepress build docs",
     "docs:preview": "vitepress preview docs",
     "build:listings": "bash docs/scripts/build-source-listings.sh"
   },

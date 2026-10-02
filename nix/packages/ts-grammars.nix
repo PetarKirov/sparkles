@@ -248,10 +248,49 @@
       ) langs.fetched;
 
       languages = plain // special // fetched;
+
+      # The grammar each bundle entry's parser comes from — the same choice
+      # `plain`, `special` and `fetched` make above, as data.
+      inHouse = {
+        d = config.packages.tree-sitter-d;
+        sdl = config.packages.tree-sitter-sdl;
+      };
+      grammarOf =
+        name:
+        if inHouse ? ${name} then
+          inHouse.${name}
+        else if langs.fetched ? ${name} then
+          fetchedGrammar name langs.fetched.${name}
+        else
+          g."tree-sitter-${name}";
     in
     {
       packages.ts-grammars = pkgs.linkFarm "sparkles-ts-grammars" (
         pkgs.lib.mapAttrsToList (name: path: { inherit name path; }) languages
       );
+
+      # Each bundled grammar's upstream source, version and nixpkgs licence,
+      # for the credits document's licence texts (nix/packages/credits.nix).
+      # The queries some entries take from nvim-treesitter ship too, so its
+      # source is listed alongside.
+      legacyPackages.tsGrammarSources = {
+        grammars = builtins.mapAttrs (
+          name: _:
+          let
+            grammar = grammarOf name;
+          in
+          {
+            inherit (grammar) src version;
+            # The grammar's root inside a monorepo source, where its own
+            # licence file sits.
+            location = langs.fetched.${name}.location or (grammar.location or null);
+            license = grammar.meta.license or null;
+          }
+        ) languages;
+        nvim-treesitter = {
+          inherit (pkgs.vimPlugins.nvim-treesitter) src version;
+          license = pkgs.vimPlugins.nvim-treesitter.meta.license or null;
+        };
+      };
     };
 }
