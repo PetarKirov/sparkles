@@ -34,271 +34,41 @@ shifted one is one more line; `unshift+` is reserved for later.
 */
 module keymap_config;
 
-import sparkles.input.events : Key,
-    InputChordPath = ChordPath,
-    parseInputChordPath = parseChordPath,
-    unparseInputChordPath = unparseChordPath;
-import sparkles.wired.policy : WireConvert;
+import std.typecons : Nullable;
+
+import sparkles.input.events : Key;
 import ui_keymap = sparkles.ui.keymap;
-import sparkles.ui.keymap : Chord, chordRange, maxPathLength, ModeReq, ShiftReq;
+import sparkles.ui.keymap : Chord, ShiftReq;
+import sparkles.ui.keymap_config : ChordParsedOf, ChordPathOf, KeysConfigOf,
+    parseChordPathAs, unparseChordPathAs;
+public import sparkles.ui.keymap_config : ChordError;
+static import sparkles.ui.keymap_config;
 
 import keymap : Binding, Command, leader, Scope_;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The wire form.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// The `keys` section: an overlay entry per (context, chord path). `null`
-/// unbinds. The whole map is one layer-scalar in the CFG2 merge (a higher
-/// layer's `keys` replaces a lower's; row-level layering can come later).
-alias KeysConfig = CommandRef[ChordPath][Scope_];
-
-/// `Command`-or-null without dragging `Nullable` into an AA value (wired maps
-/// its empty state to JSON `null` natively).
-import std.typecons : Nullable;
-
-/// ditto
-alias CommandRef = Nullable!Command;
+// The codec and the merge are the toolkit's (`sparkles.ui.keymap_config`);
+// hue pins them to its command, scope and leader.
 
 /// A binding path in its typed form; the wire form is the chord string.
-@WireConvert!(unparseChordPath, parseChordPath)
-struct ChordPath
-{
-    Chord[maxPathLength] path;
-    ubyte depth = 1;
-}
-
-/// A chord-parse failure, Expected-shaped for wired's converter seam (§8).
-struct ChordError
-{
-    string msg;
-}
-
+alias ChordPath = ChordPathOf!leader;
 /// ditto
-struct ChordParsed
-{
-    ChordPath value;
-    ChordError error;
-    bool bad;
-    bool hasValue() const @safe pure nothrow @nogc => !bad;
-    bool hasError() const @safe pure nothrow @nogc => bad;
-}
+alias ChordParsed = ChordParsedOf!leader;
+/// The `keys` section: an overlay entry per (context, chord path).
+alias KeysConfig = KeysConfigOf!(Command, Scope_, leader);
+/// `Command`-or-null.
+alias CommandRef = Nullable!Command;
 
-private ChordParsed chordFail(string msg) @safe pure nothrow
-    => ChordParsed(ChordPath.init, ChordError(msg), true);
+/// Parses one path (`leader` spells `space`).
+ChordParsed parseChordPath(string text) @safe pure => parseChordPathAs!leader(text);
 
-/**
-Parses one path. Total over its grammar; every rejection carries a reason
-wired renders as a located decode error at the offending key.
-*/
-ChordParsed parseChordPath(string text) @safe pure
-{
-    InputChordPath p;
-    string err;
-    if (!parseInputChordPath(text, p, err, leader))
-        return chordFail(err);
-    ChordPath res;
-    res.path = p.path;
-    res.depth = p.depth;
-    return ChordParsed(res);
-}
+/// The canonical spelling (`leader` unparses as `space`).
+string unparseChordPath(ChordPath p) @safe pure => unparseChordPathAs!leader(p);
 
-/// The canonical spelling: mods in `ctrl+alt+shift+super` order, named keys
-/// by their table above, `' '` as `space`, chords joined by single spaces.
-/// Aliases (`cmd`, `opt`, `meta`, …) and symbols (`⌘`, `⌥`) parse in and
-/// unparse as `super+` / `alt+`. `parseChordPath ∘ unparseChordPath` is the
-/// identity on canonical spellings (pinned by test).
-string unparseChordPath(ChordPath p) @safe pure
-{
-    InputChordPath ip;
-    ip.path = p.path;
-    ip.depth = p.depth;
-    return unparseInputChordPath(ip, leader);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The overlay merge.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
-Applies the user overlay onto the compiled table.
-
-Each entry is matched against the $(B base) table only — never against other
-entries — so entries commute and the result is independent of AA iteration
-order. A match is same scope + the user path claiming the row: `row.depth >=
-user.depth` with each user chord equal to the row's (a user `ignore` shift
-matches any row shift; `yes` matches only `yes`; a single code point does
-$(B not) match a range — unbind the whole range instead). `null` drops the
-matched rows; a command drops them and prepends one unconditional row, whose
-description is borrowed from the first base row carrying that command so the
-guide still explains it. New rows sort by (scope, canonical spelling) and go
-$(B before) the surviving base rows: within a scope, first row wins, so a
-user row shadows what it did not delete; base survivors keep their relative
-order (which is load-bearing once: the diff-session `[`/`]` rows).
-
-The wire shape has no vocabulary for `require`/`forbid`/`ModeReq` gates, so
-an assignment replaces the whole family a path meant, gates included — the
-guide shows the honest result.
-*/
+/// Applies the user overlay onto the compiled table — see
+/// `sparkles.ui.keymap_config.applyKeysOverlay`.
 immutable(Binding)[] applyKeysOverlay(immutable(Binding)[] base,
     KeysConfig keys, scope void delegate(string) @safe warn) @safe
-{
-    import std.algorithm.sorting : sort;
-
-    if (!keys.length)
-        return base;
-
-    bool[] dropped = new bool[base.length];
-    Binding[] added;
-
-    foreach (scope_, chordMap; keys)
-    {
-        foreach (cpath, cmdRef; chordMap)
-        {
-            size_t matched;
-            foreach (ri, ref row; base)
-            {
-                if (row.scope_ != scope_ || row.depth < cpath.depth)
-                    continue;
-                bool claims = true;
-                foreach (i; 0 .. cpath.depth)
-                    if (!overlayChordMatches(cpath.path[i], row.path[i]))
-                    {
-                        claims = false;
-                        break;
-                    }
-                if (!claims)
-                    continue;
-                dropped[ri] = true;
-                matched++;
-            }
-
-            if (cmdRef.isNull)
-            {
-                if (!matched && warn !is null)
-                    warn("keys." ~ scopeName(scope_) ~ "[\""
-                        ~ unparseChordPath(cpath)
-                        ~ "\"]: null unbinds nothing (typo?)");
-                continue;
-            }
-            const cmd = cmdRef.get;
-            if (cmd == Command.none)
-            {
-                if (warn !is null)
-                    warn("keys." ~ scopeName(scope_) ~ "[\""
-                        ~ unparseChordPath(cpath)
-                        ~ "\"]: 'none' does not unbind — use null");
-                continue;
-            }
-            const last = cpath.path[cpath.depth - 1];
-            if (last.ctrl && last.key == Key.char_ && scope_ != Scope_.ctrl
-                && scope_ != Scope_.always && warn !is null)
-                warn("keys." ~ scopeName(scope_) ~ "[\""
-                    ~ unparseChordPath(cpath)
-                    ~ "\"]: a ctrl+letter outside the 'ctrl' context can " ~
-                    "never fire (the ctrl scope resolves it first)");
-
-            Binding b;
-            b.path = cpath.path;
-            b.depth = cpath.depth;
-            b.scope_ = scope_;
-            b.cmd = cmd;
-            b.arg = last.chEnd != 0 ? 1 : 0;
-            b.desc = descFor(base, cmd);
-            added ~= b;
-        }
-    }
-
-    // Deterministic order under AA iteration — and correct precedence: a
-    // shift-specific row sorts before a shift-agnostic one on the same key,
-    // so restoring `shift+r` beside a rebound bare `r` actually wins when
-    // Shift is held (first row per scope fires).
-    static string shiftless(in Binding b) @safe pure
-    {
-        auto p = ChordPath(b.path, b.depth);
-        foreach (i; 0 .. p.depth)
-            p.path[i].shift = ShiftReq.ignore;
-        return unparseChordPath(p);
-    }
-
-    static int agnostic(in Binding b) @safe pure nothrow @nogc
-    {
-        int n;
-        foreach (i; 0 .. b.depth)
-            if (b.path[i].shift == ShiftReq.ignore)
-                n++;
-        return n;
-    }
-
-    added.sort!((a, b) {
-        if (a.scope_ != b.scope_)
-            return a.scope_ < b.scope_;
-        const at = shiftless(a), bt = shiftless(b);
-        if (at != bt)
-            return at < bt;
-        return agnostic(a) < agnostic(b);
-    });
-
-    Binding[] merged;
-    merged.reserve(added.length + base.length);
-    merged ~= added;
-    foreach (ri, ref row; base)
-        if (!dropped[ri])
-            merged ~= row;
-
-    // Freshly built, no other mutable reference escapes — the one place the
-    // immutability of the published table is asserted rather than inferred.
-    import std.exception : assumeUnique;
-
-    return (() @trusted => merged.assumeUnique)();
-}
-
-/// The user-chord-claims-row comparison described on `applyKeysOverlay`.
-private bool overlayChordMatches(Chord user, Chord row) @safe pure nothrow @nogc
-{
-    if (user.key != row.key || user.ch != row.ch || user.chEnd != row.chEnd
-        || user.ctrl != row.ctrl || user.alt != row.alt || user.super_ != row.super_)
-        return false;
-    final switch (user.shift)
-    {
-        case ShiftReq.ignore: return true;
-        case ShiftReq.yes:    return row.shift == ShiftReq.yes;
-        case ShiftReq.no:     return row.shift == ShiftReq.no;
-    }
-}
-
-/// The wire spelling of a scope, for warnings (`shared_` → `shared`).
-private string scopeName(Scope_ s) @safe pure nothrow @nogc
-{
-    if (s == Scope_.shared_)
-        return "shared";
-    final switch (s)
-    {
-        static foreach (m; __traits(allMembers, Scope_))
-        {
-            case __traits(getMember, Scope_, m):
-                return m;
-        }
-    }
-}
-
-/// The first base row's description for `cmd`, else the member name — so a
-/// rebound command still reads as itself in the guide.
-private string descFor(immutable(Binding)[] base, Command cmd)
-    @safe pure nothrow @nogc
-{
-    foreach (ref row; base)
-        if (row.cmd == cmd && !row.group.length && row.desc.length)
-            return row.desc;
-    final switch (cmd)
-    {
-        static foreach (m; __traits(allMembers, Command))
-        {
-            case __traits(getMember, Command, m):
-                return m;
-        }
-    }
-}
+    => sparkles.ui.keymap_config.applyKeysOverlay!leader(base, keys, warn);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests.
