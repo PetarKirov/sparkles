@@ -900,5 +900,163 @@
     ],
     "owner": "sparkles:ui-app",
     "seeAlso": ["display-list", "application-host"]
+  },
+  {
+    "id": "leader",
+    "term": "leader",
+    "aliases": ["leader key", "leader chord"],
+    "summary": "One key chord that a terminal claims for itself and that opens a guide to every other terminal command, so the program in the terminal keeps all other keys.",
+    "definition": "The chord the Sparkles terminal reserves to reach its own commands: pressed, it opens the [key guide](/glossary#key-guide), and the next keys pick a command from it. `Ctrl+Shift+Space` on the desktop and `Ctrl+Alt+Space` on Android by default; configurable as `lantern.leader`.",
+    "authority": [
+      {
+        "text": "sparkles:terminal keymap (TKM)",
+        "link": "/specs/terminal/keymap"
+      },
+      {
+        "text": "Vim's mapleader, the term's origin",
+        "link": "https://vimhelp.org/map.txt.html#mapleader"
+      }
+    ],
+    "owner": "sparkles:terminal",
+    "seeAlso": ["key-guide", "extra-keys-row"]
+  },
+  {
+    "id": "key-guide",
+    "term": "key guide",
+    "aliases": ["guide", "lantern", "touch guide"],
+    "summary": "A panel that lists the commands reachable from the keys pressed so far, so commands are discovered by browsing rather than memorised; on a touch screen its rows are tapped.",
+    "definition": "The `sparkles:ui` lantern: after a prefix key such as the [leader](/glossary#leader), it shows the next keys and what they do, and descends into groups. Its touch form adds breadcrumbs, tappable rows and a search across every command.",
+    "authority": [
+      {
+        "text": "sparkles:ui keymap and lantern (KEY, LTN)",
+        "link": "/specs/ui/keymap"
+      },
+      {
+        "text": "sparkles:terminal keymap (TKM)",
+        "link": "/specs/terminal/keymap"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["leader"]
+  },
+  {
+    "id": "extra-keys-row",
+    "term": "extra-keys row",
+    "aliases": ["extra keys", "MENU key"],
+    "summary": "A row of keys a terminal draws above the phone's soft keyboard, such as Esc, Tab, Ctrl, Alt and the arrows, which phone keyboards lack.",
+    "definition": "The row Termux introduced and the Sparkles terminal keeps, in Termux's `extra-keys` layout syntax. Ctrl and Alt latch for the next key; a `MENU` key opens the [key guide](/glossary#key-guide).",
+    "authority": [
+      {
+        "text": "Termux: touch keyboard",
+        "link": "https://wiki.termux.com/wiki/Touch_Keyboard"
+      },
+      {
+        "text": "sparkles:terminal on Android (NOD10)",
+        "link": "/specs/terminal/android#requirements"
+      }
+    ],
+    "owner": "sparkles:terminal",
+    "seeAlso": ["key-guide"]
+  },
+  {
+    "id": "workspace",
+    "term": "workspace",
+    "summary": "Everything one terminal window holds: an ordered list of tabs, each a layout of panes, saved and reopened across restarts.",
+    "definition": "The Sparkles terminal's top-level state: tabs, each a split layout of [panes](/glossary#pane), with the focused pane and each pane's title, directory and command. Restoring it reopens the layout with fresh programs; running processes are not restored.",
+    "authority": [
+      {
+        "text": "sparkles:terminal sessions (TSS)",
+        "link": "/specs/terminal/sessions"
+      }
+    ],
+    "owner": "sparkles:terminal",
+    "seeAlso": ["pane", "exit-prompt"]
+  },
+  {
+    "id": "pane",
+    "term": "pane",
+    "aliases": ["terminal pane", "viewer pane", "panes"],
+    "summary": "One rectangle of a terminal tab that shows a single thing: a program in its own terminal, or a file in the document viewer.",
+    "definition": "A terminal pane runs one program on its own pseudo-terminal; a viewer pane shows a file through the embedded document viewer. Both take part in tabs, splits, focus, zoom and restore alike.",
+    "authority": [
+      {
+        "text": "sparkles:terminal sessions (TSS)",
+        "link": "/specs/terminal/sessions"
+      },
+      {
+        "text": "sparkles:terminal viewer (TDV)",
+        "link": "/specs/terminal/viewer"
+      }
+    ],
+    "owner": "sparkles:terminal",
+    "seeAlso": ["workspace"]
+  },
+  {
+    "id": "exit-prompt",
+    "term": "exit prompt",
+    "summary": "The banner a terminal pane shows when its program ends, with how it ended and actions to run the command again, start a shell, or close the pane.",
+    "definition": "Shown at the bottom of a [pane](/glossary#pane) whose program exited, over its last screen: the exit status or signal, the command, and Enter to re-run, Esc for a shell, Ctrl+C to close. Modelled on zellij's command panes.",
+    "authority": [
+      {
+        "text": "sparkles:terminal sessions (TSS1–TSS5)",
+        "link": "/specs/terminal/sessions"
+      },
+      {
+        "text": "zellij: command panes",
+        "link": "https://zellij.dev/documentation/command-panes.html"
+      }
+    ],
+    "owner": "sparkles:terminal",
+    "seeAlso": ["pane"]
+  },
+  {
+    "id": "opener",
+    "term": "opener",
+    "aliases": ["pill", "rail"],
+    "summary": "The control that opens the terminal's tree of tabs and panes: a pill naming the current tab, or a narrow rail of tab icons along one edge.",
+    "definition": "The pill suits a phone held upright; the rail suits landscape, tablets and the desktop. Both also carry a button that opens the [key guide](/glossary#key-guide) on a touch screen. Chosen by `ui.tabsOpener`.",
+    "authority": [
+      {
+        "text": "sparkles:terminal sessions (TSS13)",
+        "link": "/specs/terminal/sessions"
+      }
+    ],
+    "owner": "sparkles:terminal",
+    "seeAlso": ["workspace"]
+  },
+  {
+    "id": "surface",
+    "term": "surface",
+    "aliases": ["surfaces", "page", "sheet", "anchored card"],
+    "summary": "Anything a terminal draws over its panes, placed as a full page, a sheet rising from the bottom, a card anchored beside what it refers to, or a side panel.",
+    "definition": "The Sparkles terminal keeps its surfaces in one stack that receives input before the panes. A page fills the window, a sheet rises from the bottom edge, an anchored card sits next to its subject without covering it, and a panel slides out beside the [opener](/glossary#opener).",
+    "authority": [
+      {
+        "text": "sparkles:terminal pages (TPG)",
+        "link": "/specs/terminal/pages"
+      },
+      {
+        "text": "sparkles:ui anchored overlays (POP)",
+        "link": "/specs/ui/popup"
+      }
+    ],
+    "owner": "sparkles:terminal",
+    "seeAlso": ["pane"]
+  },
+  {
+    "id": "sparse-overlay",
+    "term": "sparse overlay",
+    "aliases": ["layer"],
+    "summary": "A configuration layer that records only the settings it changes, so every setting it leaves out is inherited from the layer below it.",
+    "definition": "Layers of sparse overlays resolve from lowest to highest: compiled defaults, then files, then command-line flags. A setting present in a layer wins even when it equals the default, so a user can pin a value against a lower layer.",
+    "authority": [
+      { "text": "hue configuration (CFG)", "link": "/specs/hue/config" },
+      {
+        "text": "sparkles:terminal configuration (TCF2)",
+        "link": "/specs/terminal/config"
+      }
+    ],
+    "owner": "sparkles:hue",
+    "seeAlso": []
   }
 ]
