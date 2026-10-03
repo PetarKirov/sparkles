@@ -447,30 +447,31 @@ unittest
 {
     enum source = "0123456789abcdefé€😀abcdefghijklmnop\0qrstuvwxyz012345";
     enum expected = "0123456789abcdefé€😀abcdefghijklmnop\0qrstuvwxyz012345"w;
-    // Unaligned sources/destinations, non-ASCII transitions and a preserved
-    // NUL exercise both bulk paths and the bounded scalar tails.
-    foreach (alignment; 0 .. 16)
+    // Independently aligned inputs/outputs, non-ASCII transitions and a NUL
+    // exercise bounded stores across baseline/feature-targeted call sites.
+    foreach (sourceAlignment; 0 .. 16)
+    foreach (destinationAlignment; 0 .. 16)
     {
         char[128] input;
-        input[alignment .. alignment + source.length] = source[];
+        input[sourceAlignment .. sourceAlignment + source.length] = source[];
         wchar[128] wide = 0xA5A5;
-        const encoded = utf8ToUtf16(input[alignment .. alignment + source.length],
-            wide[alignment .. alignment + expected.length]);
+        const encoded = utf8ToUtf16(input[sourceAlignment .. sourceAlignment + source.length],
+            wide[destinationAlignment .. destinationAlignment + expected.length]);
         assert(encoded.hasValue && encoded.value == expected.length);
-        assert(wide[alignment .. alignment + expected.length] == expected);
-        foreach (unit; wide[0 .. alignment])
+        assert(wide[destinationAlignment .. destinationAlignment + expected.length] == expected);
+        foreach (unit; wide[0 .. destinationAlignment])
             assert(unit == 0xA5A5);
-        foreach (unit; wide[alignment + expected.length .. $])
+        foreach (unit; wide[destinationAlignment + expected.length .. $])
             assert(unit == 0xA5A5);
 
         char[128] bytes = cast(char) 0x5A;
-        const decoded = utf16ToUtf8(wide[alignment .. alignment + expected.length],
-            bytes[alignment .. alignment + source.length]);
+        const decoded = utf16ToUtf8(wide[destinationAlignment .. destinationAlignment + expected.length],
+            bytes[sourceAlignment .. sourceAlignment + source.length]);
         assert(decoded.hasValue && decoded.value == source.length);
-        assert(bytes[alignment .. alignment + source.length] == source);
-        foreach (unit; bytes[0 .. alignment])
+        assert(bytes[sourceAlignment .. sourceAlignment + source.length] == source);
+        foreach (unit; bytes[0 .. sourceAlignment])
             assert(unit == 0x5A);
-        foreach (unit; bytes[alignment + source.length .. $])
+        foreach (unit; bytes[sourceAlignment + source.length .. $])
             assert(unit == 0x5A);
     }
 
