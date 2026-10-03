@@ -36,7 +36,95 @@ extern (C) void routeTraceLog(int level, const(char)* text, va_list args) @nogc 
         return;
     const len = written < cast(int) buf.length ? cast(size_t) written : buf.length - 1;
     const msg = () @trusted { return cast(const(char)[]) buf[0 .. len]; }();
+
+    // A face whose glyphs overshoot the requested size warns once per glyph
+    // — thousands of lines that buried the log page. They become one line
+    // with a count, written when the next message (the load's summary)
+    // arrives.
+    if (isTallGlyphWarning(msg))
+    {
+        if (tallGlyphs++ == 0)
+        {
+            // `[0x2320] 18 > 17`: the code point and the sizes, not the phrase.
+            const sample = tallGlyphSample(msg, firstTall[]);
+            firstTallLen = sample.length;
+        }
+        return;
+    }
+    if (tallGlyphs)
+    {
+        const first = firstTall[0 .. firstTallLen];
+        const n = tallGlyphs;
+        log(LogLevel.info, i"raylib: FONT: $(n) glyphs taller than asked (first $(first))");
+        tallGlyphs = 0;
+    }
     log(coreLevel, i"raylib: $(msg)");
+}
+
+// The run of glyph-height warnings `routeTraceLog` is collapsing (per thread:
+// raylib loads fonts on the render thread).
+private size_t tallGlyphs;
+private char[96] firstTall;
+private size_t firstTallLen;
+
+/// Whether `msg` is raylib's per-glyph "taller than requested" warning.
+bool isTallGlyphWarning(scope const(char)[] msg) @safe pure nothrow @nogc
+{
+    import std.algorithm.searching : canFind;
+
+    return msg.canFind("Glyph height is bigger than requested font size");
+}
+
+/// The warning's code point and sizes (`[0x2573] 50 > 48`), written into
+/// `buf`; what fits of them.
+const(char)[] tallGlyphSample(scope const(char)[] msg, return scope char[] buf)
+    @safe pure nothrow @nogc
+{
+    // Byte scans: `std.string`'s decode and may throw.
+    static ptrdiff_t indexOf(scope const(char)[] s, char c)
+    {
+        foreach (i, x; s)
+            if (x == c)
+                return i;
+        return -1;
+    }
+
+    static ptrdiff_t lastIndexOf(scope const(char)[] s, string pat)
+    {
+        foreach_reverse (i; 0 .. s.length >= pat.length ? s.length - pat.length + 1 : 0)
+            if (s[i .. i + pat.length] == pat)
+                return i;
+        return -1;
+    }
+
+    size_t n;
+    void put(scope const(char)[] s)
+    {
+        const k = s.length < buf.length - n ? s.length : buf.length - n;
+        buf[n .. n + k] = s[0 .. k];
+        n += k;
+    }
+
+    const open = indexOf(msg, '['), close = indexOf(msg, ']');
+    if (open >= 0 && close > open)
+        put(msg[open .. close + 1]);
+    const sizes = lastIndexOf(msg, ": ");
+    if (sizes >= 0)
+    {
+        put(" ");
+        put(msg[sizes + 2 .. $]);
+    }
+    return buf[0 .. n];
+}
+
+@("terminal_view.log.tallGlyphWarnings")
+@safe pure nothrow @nogc unittest
+{
+    enum warning = "FONT: [0x2573] Glyph height is bigger than requested font size: 50 > 48";
+    assert(isTallGlyphWarning(warning));
+    assert(!isTallGlyphWarning("FONT: Requested codepoints glyphs found: [2264/8480]"));
+    char[32] buf;
+    assert(tallGlyphSample(warning, buf[]) == "[0x2573] 50 > 48");
 }
 
 /// raylib's `TraceLogLevel` numbering as a core [LogLevel].
