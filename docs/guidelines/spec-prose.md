@@ -58,7 +58,10 @@ explain, not by the order they happen to appear in.
 A specification opens with four parts, in this order: front matter, an
 abstract, an introduction, and a compact statement of the contract. Short
 topic pages may merge the abstract into the introduction's first paragraph;
-every page that carries requirements keeps the other jobs.
+every page that carries requirements keeps the other jobs. The abstract and
+introduction are unnumbered and come before the first numbered section. When
+adding them to an existing specification, leave the existing sections and
+their numbers alone: other pages link to their anchors.
 
 ### Front Matter
 
@@ -300,7 +303,7 @@ picker can highlight them. Every operation is pure, bounded, and works in
 caller-owned storage, so a host can run a search in slices between frames
 and abandon it at any slice.
 
-## 1. Introduction
+## Introduction
 
 An interactive picker asks the same question on every keystroke: which of
 these hundreds of thousands of candidates resemble what the user has typed
