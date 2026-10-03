@@ -38,6 +38,11 @@ the _decision_.
 
 ## Documentation map
 
+The [text-sizing contract](./text-sizing.md), [delivery plan](./text-sizing-plan.md),
+and [verification matrix](./text-sizing-testing.md) record the agreed cross-stack
+sizing design. Implementation is pending; this does not upgrade existing layout,
+editor, or backend requirements to delivered status.
+
 | Page                                                | What it covers                                                                                                                                                                                                                                                                    |
 | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Overview** (this page)                            | what the toolkit is · the three levels · the package graph · the status/ID/traceability scheme · module coverage                                                                                                                                                                  |
@@ -60,6 +65,14 @@ the _decision_.
 | [Interaction review](./interaction-review.md)       | the 2026-07-31 audit of every pointer/keyboard behavior: where it lives (toolkit vs `apps/hue`), the GUI/TUI divergences, and the Phase B redesign scope (`IXR`/`IXB`)                                                                                                            |
 | [Migration](./migration.md)                         | absorbing `core-cli`'s UI components and porting `apps/hue` onto the toolkit — the milestone plan                                                                                                                                                                                 |
 | [Application host](../ui-app/index.md) _(proposed)_ | the sibling `sparkles:ui-app` package: backend selection, the shared window/font CLI, and the frame/event loop — the layer **above** the canvases, so an application never names one                                                                                              |
+
+The sizing extension has separate contract, delivery, and evidence pages:
+
+| Page                                                 | What it covers                                                                                                         |
+| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| [Text sizing](./text-sizing.md)                      | `TSZ1`-`TSZ16`: width declaration versus packing, shared grapheme geometry, fallback, editing, producers and receivers |
+| [Text-sizing delivery](./text-sizing-plan.md)        | M0-M6 dependencies, blocking `cellsOf`/editor prerequisites, independently verifiable slices                           |
+| [Text-sizing verification](./text-sizing-testing.md) | Requirement falsifiers, independent oracles, publication checks and unverified feature evidence                        |
 
 ## The three levels
 
@@ -109,12 +122,13 @@ within a document (e.g. `LAY4`, `WGT2`, `TGT1`). Areas: `UIA`/`PKG`/`NFR`
 (library-wide), `PRN` (principles), `LAY` (layout), `THM` (theme), `WGT`/`VMD`
 (widgets and view models), `INP` (input), `STM` (state machines), `INS`
 (inspector), `GUT` (gutter channels), `PRT` (property tree), `TGT` (backends),
-`MIG` (migration),
+`MIG` (migration), `TSZ` ([cross-stack text sizing](./text-sizing.md)),
 and — for
 [anchored overlays](./popup.md) — `POP` (the primitive), `ANC` (anchors),
 `PLC` (placement), `TRG` (triggers), `DSM` (dismissal), `LYR` (layering) and
 `MDL` (modality and focus). Each area's mnemonic is expanded at its section
-heading.
+heading. Base-owned `TSW` requirements live in the separate
+[wire/display-unit specification](../base/text/sizing.md), not in the UI ID space.
 
 ## Traceability
 
@@ -155,5 +169,21 @@ own it, so coverage is auditable in both directions: requirement → code (the
 | `libs/ui/src/sparkles/ui/overlay/arena.d` _(planned)_   | [anchored overlays](./popup.md) — `POP4`, `POP7`, `LYR1`–`LYR4`, `LYR9`, `LYR10`, `LYR12`                                                                        |
 | `libs/ui/src/sparkles/ui/overlay/policy.d` _(planned)_  | [anchored overlays](./popup.md) — `TRG1`–`TRG5`, `DSM1`–`DSM6`, `DSM11`, `MDL2`, `MDL3`                                                                          |
 | `libs/ui/src/sparkles/ui/overlay/package.d` _(planned)_ | [anchored overlays](./popup.md) — re-exports only                                                                                                                |
+
+The following planned obligations extend, rather than replace, the primary
+coverage above. All sizing implementation statuses are **not started**; the
+[module coverage](./text-sizing.md#module-coverage) records their owners.
+
+| Source area                                                                 | Text-sizing obligations                                                                                                                                       |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `libs/ui/src/sparkles/ui/{geometry,style,theme,widget}.d`                   | [TSZ1-TSZ6](./text-sizing.md#values-and-geometry)                                                                                                             |
+| `libs/ui/src/sparkles/ui/{wrap,layout,canvas,display_list}.d`               | [TSZ3-TSZ8](./text-sizing.md#values-and-geometry), [TSZ10](./text-sizing.md#tsz10-bounded-ownership-and-failure)                                              |
+| `libs/ui/src/sparkles/ui/state.d`, text-input components and planned editor | [TSZ8-TSZ11](./text-sizing.md#tsz8-one-source-and-caret-geometry)                                                                                             |
+| `libs/ui/src/sparkles/ui/components/`                                       | [TSZ11 all-widget closure](./text-sizing.md#tsz11-all-text-widgets)                                                                                           |
+| `libs/base/src/sparkles/base/term_caps.d`                                   | [TSZ12 capability vocabulary and resolution](./text-sizing.md#tsz12-session-owned-capability-resolution)                                                      |
+| `libs/ui-app/`, `libs/ui-tui/`, `libs/tui/`                                 | [TSZ12 capability](./text-sizing.md#tsz12-session-owned-capability-resolution), [TSZ13 retained picture](./text-sizing.md#tsz13-retained-multicell-rendering) |
+| `libs/ui-raylib/`, `libs/raylib-text/`, `libs/ui/src/sparkles/ui/interp/`   | [TSZ14 output](./text-sizing.md#tsz14-gpu-html-and-secondary-output)                                                                                          |
+| `libs/source-view/`, `apps/hue/`                                            | [TSZ15 headings](./text-sizing.md#tsz15-hue-heading-activation)                                                                                               |
+| `libs/ghostty/`, `libs/terminal-view/`, hue ANSI fences                     | [TSZ16 receiver](./text-sizing.md#tsz16-independent-receiver-delivery)                                                                                        |
 
 → [Feature requirements](./feature-requirements.md) · [Principles](./principles.md) · [Layout](./layout.md) · [Widgets](./widgets.md)

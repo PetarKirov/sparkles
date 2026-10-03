@@ -1,5 +1,11 @@
 # Sparkles Text Sizing Proposal
 
+> [!NOTE]
+> This is the historical research proposal. The subsequent
+> [implementation contract](../../../specs/ui/text-sizing.md) and
+> [delivery plan](../../../specs/ui/text-sizing-plan.md) supersede its policy
+> recommendations, including fallback, first-release scope, and heading defaults.
+
 A research plan for source-mapped, backend-neutral sized text, from base utilities
 through markdown headings to receiving terminals and ANSI fences.
 

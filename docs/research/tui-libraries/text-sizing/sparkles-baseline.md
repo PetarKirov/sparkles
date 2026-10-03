@@ -71,7 +71,7 @@ Neither licenses executing controls found inside an untrusted text payload.
 ### UI style transport is ahead of measurement
 
 [`TextStyle` and `Visual`][style] already contain `fontScale = 100`.
-[`TextInk` and the canvas conversions][canvas] carry it onward, and display-list
+[`Ink` and the canvas conversions][canvas] carry it onward, and display-list
 tests assert that it survives style resolution. This is transport evidence,
 not evidence that any particular painter honors it.
 
@@ -104,6 +104,25 @@ enough to make this distinction material even at scale `100`.
 The [UI wrapping engine][ui-wrap], display-list offsets, and selection code must
 agree on one resolved run layout. Replacing the helper alone would not fix callers
 which still step through bytes/codepoints to invert a cell position.
+
+The module documentation in `libs/ui/src/sparkles/ui/geometry.d` explicitly
+defers this upgrade to hue's [DEF7][width-deferred] and [FNT6][font-contract].
+Those older contracts must be reconciled: shared grapheme geometry is a blocking
+prerequisite for layout and selection at **all** sizes, including normal size,
+not a separate advanced-shaping dependency. Reuse base grapheme/width primitives
+and inventory both width walks and inverse cell-to-source walks before migration.
+The existing [LAY5][layout-contract] measurement contract and
+[MIG5][migration-contract] migration already require grapheme-correct shared
+widths; reconcile their delivery status with this prerequisite rather than
+creating a competing width authority.
+
+The [protocol][protocol] distinguishes another boundary: on a capable terminal,
+non-ASCII text needs explicit per-grapheme `w` declarations to convey the client's
+chosen widths. That is not author-opt-in multi-grapheme packing; each grapheme
+remains independently addressable. Without width-protocol support, ordinary
+Unicode output cannot promise exact client/terminal width parity. The delivery
+plan's M0 gate must declare a mismatch policy and the weaker fallback guarantees,
+rather than treating the client's width table as control over the receiving sink.
 
 ### Source identity and shared frames
 
@@ -154,6 +173,12 @@ runs, lead/continuation ownership, content-based equality across frames, and dam
 closure over **both old and new** footprints. Reused arena indices are not identity.
 It must preclear stale covered cells, potentially with ECH under explicit style and
 cursor positioning, before re-emitting owners. It must emit no continuation text.
+In particular, a replacement write into an old owner's covered lower row is
+displaced past that owner even with DECAWM disabled: positioned/styled ECH must
+precede the replacement, not merely follow an absolute cursor move. Producers
+must preflight footprints against screen dimensions and active margins because
+oversized blocks can be discarded. Resize must recompute fit, clipping, and
+damage for exposed old owners and their coverage; prior owners may have been lost.
 
 Hardware scrolling must initially be disabled when relevant old or new frames
 contain sized footprints. This is a proposed correctness restriction, not existing
@@ -354,6 +379,10 @@ than treating the presence of source identifiers as a passing integration test.
 [gui-ansi]: ../../../../apps/hue/src/gui_ansi.d
 [ansi-model]: ../../../../apps/hue/src/ansi_model.d
 [theme-spec]: ../../../specs/ui/theme.md
+[width-deferred]: ../../../specs/hue/feature-requirements.md
+[font-contract]: ../../../specs/hue/gui.md#font-fnt
+[layout-contract]: ../../../specs/ui/layout.md
+[migration-contract]: ../../../specs/ui/migration.md
 [render-bench]: ../../../specs/tui/render-bench-baseline.md
 [terminal-spec]: ../../../specs/ui-app/terminal-view.md
 [android]: ../../../specs/hue/android.md

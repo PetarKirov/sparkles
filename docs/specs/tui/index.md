@@ -1,5 +1,9 @@
 # Spec: `sparkles:tui` — a full-screen interactive TUI library
 
+The planned [text-sizing integration](../ui/text-sizing.md#tsz13-retained-multicell-rendering)
+owns multicell picture/damage obligations; its [delivery plan](../ui/text-sizing-plan.md)
+tracks the retained-renderer work without claiming it is shipped here.
+
 **Status:** living inventory · **Date:** 2026-07-12 · **Scope:** a new
 `sparkles:tui` sub-package (`libs/tui/`) layered on `sparkles:core-cli` and
 `sparkles:base`.
