@@ -158,6 +158,7 @@ checked, on the configuration that ran them.
 | Is an accumulation rasterizer small enough to own?             | [`outline-sink-raster.d`][ex-raster]                                          | A 71-line core renders correct coverage for Noto Sans and Maple Mono at 28 px. Overlapping contours (`FTR2`) are not yet demonstrated.                                                      |
 | Do programming ligatures break a cell grid?                    | [`ligature-cells.d`][ex-ligature], 160 sequences in eight faces               | No glyph-count change and no off-cell advance in Cascadia Code, JetBrains Mono, Fira Code and Maple Mono, plain and Nerd Font builds; ink reaches up to 6 cells past its own cell (`FTX7`). |
 | Does variation change contour topology?                        | [`outline-sink-raster.d`][ex-raster] on Noto Sans `g` at `wght` 100 and 900   | No for that glyph: 2 moves, 8 lines, 31 quadratics at both ends. `FTO4` makes it a corpus-wide property.                                                                                    |
+| Is a synchronous catalog build fast enough?                    | [`font-scan-timing.d`][ex-scan] over `fc-list` and the bundle                 | Yes: 2,222 desktop files in 44 ms warm, 20 ms on 4 workers, 1.6 s on first touch; the 180-file bundle in 1.9 ms (`FTX8`).                                                                   |
 | Does Phobos provide zlib's `inflate` without an extra library? | `nm` on LDC 1.42's `libphobos2-ldc.a`                                         | Yes: `inflate` and `inflateInit2_` are defined in its `inflate.c.o` member.                                                                                                                 |
 | Is the bundled emoji font outline-free?                        | The table directory of the bundled `NotoColorEmoji.ttf`                       | Yes: `CBDT`, `CBLC` and no `glyf`, which is why `FTR7` exists.                                                                                                                              |
 
@@ -175,3 +176,4 @@ gap, per the [spec guideline](../../guidelines/spec-docs.md#keep-evidence-scoped
 [ex-shape]: ../../research/font-libraries/examples/harfbuzz-shape-features.d
 [ex-raster]: ../../research/font-libraries/examples/outline-sink-raster.d
 [ex-ligature]: ../../research/font-libraries/examples/ligature-cells.d
+[ex-scan]: ../../research/font-libraries/examples/font-scan-timing.d

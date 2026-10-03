@@ -202,6 +202,38 @@ misaligns in a terminal. The explorer's
 [cell-grid audit](../../glossary.md#cell-grid-audit) reports such a face.
 **Revisit when** the audit finds one in a font users ask for.
 
+## FTX8: The catalog builds synchronously over a worker pool
+
+**State:** proposed · **Affects:** `FTD1`–`FTD3`, milestone M7 ·
+**Resolves:** `FTQ2`
+
+**Question.** Is describing every font file on a machine fast enough to do
+synchronously at launch, or does the catalog need a background builder and a
+progress surface?
+
+**Evidence.** [`font-scan-timing.d`][ex-scan] reads the table directory, the
+family name, the `OS/2` weight class and the code-point coverage of the best
+Unicode `cmap` subtable of every face, through `mmap`, on 2026-10-03 (AMD
+Ryzen 9 7940HX, NVMe, ZFS):
+
+| Font set                      | Files | Size    | First pass | Warm, serial | Warm, 4 workers |
+| ----------------------------- | ----- | ------- | ---------- | ------------ | --------------- |
+| Linux desktop (`fc-list`)     | 2,222 | 2.85 GB | 1,564 ms   | 44 ms        | 20 ms           |
+| The bundle (`sparkles-fonts`) | 180   | 125 MB  | 23 ms      | 1.9 ms       | 1.8 ms          |
+
+The desktop's first pass read files no process had read since boot; it is the
+only cold figure, because eviction needs root and ZFS's cache ignores
+`posix_fadvise`. Neither set holds a collection, so each file is one face.
+
+**Choice.** The catalog builds synchronously, on a worker pool, with no
+background builder and no progress surface. The `FTD3` cache stays: it turns
+the cold first launch after boot into one `stat` per file.
+
+**Trade-off.** A cold launch with a stale cache over a large font set blocks
+for over a second, measured here at 1.6 s single-threaded. **Revisit when** a
+warm build exceeds 1 s on a supported platform; Android's `/system/fonts` and
+macOS are not yet measured.
+
 ---
 
 ## Open questions
@@ -217,11 +249,7 @@ measured distribution on the corpus before the milestone starts, then frozen.
 
 ### FTQ2: Background or synchronous scanning
 
-**Blocks:** `FTD3`'s cache design, milestone M7. **Resolver:** spike S1.
-
-Is parsing a large font directory (a typical Linux system has 1,000–5,000 font
-files) fast enough at first launch to scan synchronously? The answer decides
-whether the font catalog needs a background builder and a progress surface.
+Answered by spike S1; see [`FTX8`](#ftx8-the-catalog-builds-synchronously-over-a-worker-pool).
 
 ### FTQ3: Ligatures that change glyph count in a cell grid
 
@@ -238,3 +266,4 @@ Answered by spike S3; see [`FTX7`](#ftx7-ligatures-keep-one-glyph-per-cell-their
 [font-kit]: ../../research/font-libraries/font-kit.md
 [ex-raster]: ../../research/font-libraries/examples/outline-sink-raster.d
 [ex-ligature]: ../../research/font-libraries/examples/ligature-cells.d
+[ex-scan]: ../../research/font-libraries/examples/font-scan-timing.d
