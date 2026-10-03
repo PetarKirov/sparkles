@@ -16,8 +16,9 @@ logcat` is out of reach for most users, the licences sit in an APK asset
 nobody can open, and a notification dismissed while the screen was off is
 gone.
 
-This page specifies the application's read-mostly pages: about, credits, the
-log and the notification log. Each is a [surface](../../glossary.md#surface)
+This page specifies the application's read-mostly pages: about, credits (the
+third-party components the app ships and their licences), the log and the
+notification log. Each is a [surface](../../glossary.md#surface)
 reached from the [key guide](../../glossary.md#key-guide), and each has a
 chosen mockup for its layout ([design](./design.md)); this page fixes its
 content and behaviour. The log ring and its file sink belong to

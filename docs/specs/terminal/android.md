@@ -37,18 +37,23 @@ the usual answers to background work, file sharing and notification taps.
 This app is a pure NativeActivity: no DEX, built by a Nix derivation, and
 rendering with the same `sparkles:terminal-view` component as the desktop.
 Where it needs Android, it calls framework classes over JNI from native code,
-which runs no Java of its own. Its installer is a program inside the terminal
-rather than a second user interface, and the APK is data-driven: an asset
-selects the session mode, so the same code builds a plain terminal and
-nix-on-droid's app. [Decisions](#decisions) D1–D5 record these choices.
+which runs no Java of its own. It targets API 28, the last level that lets
+`login` execute from the data directory. nix-on-droid's tools reach it the way
+they reached Termux: over a Unix socket that speaks Termux's `am` request
+protocol, which the app answers itself. Its installer is a program inside the
+terminal rather than a second user interface, and the APK is data-driven: an
+asset selects the session mode, so the same code builds a plain terminal and
+nix-on-droid's app. [Decisions](#decisions) D1–D5 record these choices; the
+`NOD` requirements below are numbered for nix-on-droid.
 
 **In scope:** the Android build of `apps/terminal`; two session modes (a plain
 shell, and a nix-on-droid bootstrap followed by its login); the soft keyboard
 and the [extra-keys row](../../glossary.md#extra-keys-row); the clipboard; the
-`~/.termux/` appearance files nix-on-droid's `terminal` module writes; native
-replacements for the Termux requests that nix-on-droid's opt-in
+`~/.termux/` font, colour and key-layout files nix-on-droid's `terminal`
+module writes; native answers to the requests (open a URL, take a wake lock,
+link shared storage, reload settings) that nix-on-droid's opt-in
 `android-integration` tools send; the APK builder; and an on-device test
-oracle. Everything else the terminal does on Android, from configuration to
+oracle that dumps the screen text for emulator tests. Everything else the terminal does on Android, from configuration to
 selection and sessions, is specified once for every platform on the
 [overview](./index.md)'s pages.
 

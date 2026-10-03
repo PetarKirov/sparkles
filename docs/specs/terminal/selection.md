@@ -32,14 +32,21 @@ by rules that keep the selection, its handles, the soft keyboard and the
 [extra-keys row](../../glossary.md#extra-keys-row) uncovered, and falls back to
 a sheet that scrolls the selection into view when no other placement works.
 
+Autofill uses Android's own autofill framework, called over JNI on the
+app's hidden text field: the password manager fills that field, and the app
+types its contents into the terminal.
+
 This page covers selecting, copying and acting on terminal text by touch and
 by mouse, and filling a password into the terminal from a password manager.
 The selection model belongs to `sparkles:terminal-view`; the handles, the
 menu and the gestures to `apps/terminal`; sharing and autofill to
-`sparkles:android`. A native Android text-selection `ActionMode` is out of
-scope, because it needs Java ([D6](./decisions.md)); the menu is drawn by the
-app. Which menu style is shown is configured by [`TCF11`](./config.md); what
-a link tap does is [`TPR5`](./protocols.md)'s.
+`sparkles:android`, the package of JNI calls into Android's framework. A
+native Android text-selection `ActionMode` is out of scope, because it needs
+Java ([D6](./decisions.md)); the menu is drawn by the app. Sharing selected
+text out through Android's share sheet is in scope; receiving shared text is
+not ([Android](./android.md)). Whether the menu is a sheet, a card or a pill
+of icons is configured by [`TCF11`](./config.md); what a link tap does is
+[`TPR5`](./protocols.md)'s.
 
 [Requirements](#requirements) holds the obligations and their status;
 [Open questions](#open-questions) lists what is unsettled; the evidence is in

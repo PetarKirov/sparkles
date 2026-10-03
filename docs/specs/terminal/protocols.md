@@ -33,9 +33,9 @@ or a clipboard write, belongs to `apps/terminal`.
 This page covers titles and icons, the working directory, links,
 notifications, the colour scheme, the encoding of keys and pastes, and OSC 52
 clipboard access. The screen semantics are libghostty-vt's and are out of
-scope, including every sequence the engine handles itself. What a
-selection's Paste does before it reaches the encoder is
-[Selection](./selection.md)'s.
+scope, including every sequence the engine handles itself; keys are encoded
+by the engine's key encoder, configured by the host. The selection menu's
+Paste is [Selection](./selection.md)'s until it reaches the encoder.
 
 [What the engine provides](#what-the-engine-provides) separates the engine's
 part from the host's; [Authorities](#authorities) names the reference for

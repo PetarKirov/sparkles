@@ -27,10 +27,13 @@ and a pane that behaves like every other pane.
 The viewer therefore lives in `sparkles:doc-view`, extracted from hue
 ([`UIA14`](../hue/ui-architecture.md)), and the terminal embeds it as a
 viewer [pane](../../glossary.md#pane). Open requests are intercepted where
-programs make them: an `xdg-open` on the desktop that forwards to the app,
-and the `am` server on Android. A request opens in the app when the viewer
-supports the file's [content kind](../../glossary.md#content-kind), and falls
-through to the platform otherwise.
+programs make them: on the desktop, an `xdg-open` placed first on each
+session's `PATH` forwards them to the app; on Android, the app's socket server
+for Termux-style `am` requests receives them. The app finds the requesting
+pane from the requesting process's ancestry. A request opens in the app when
+the viewer supports the file's [content kind](../../glossary.md#content-kind);
+otherwise the desktop hands it to its default application, and Android
+refuses it with a message.
 
 This page covers what happens when a program asks to open a local file, and
 the viewer pane that shows it. Routing a request to a pane belongs to

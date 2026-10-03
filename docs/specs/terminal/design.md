@@ -24,8 +24,11 @@ an affordance and motion; behaviour stays with the requirement pages, and
 
 This page registers every surface, its variants and the choice, and states the
 rules any variant must meet. A requirement whose layout waits on a choice has
-the status `open`; once its mockup is chosen it becomes `not started` with a
-link to the chosen variant.
+the status `open`, meaning undecided; once its mockup is chosen it becomes
+`not started`, meaning decided but not built, with a link to the chosen
+variant. Behaviour, and the design system's own tokens and rules, are out of
+scope here: the requirement pages and the
+[design system](../design-system/index.md) own them.
 
 ## Rules every variant must meet
 

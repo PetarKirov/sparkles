@@ -27,8 +27,10 @@ split layout of [panes](../../glossary.md#pane), saved on every structural
 change and reopened at the next start with fresh shells in the panes' last
 directories. A pane whose program ends shows the
 [exit prompt](../../glossary.md#exit-prompt), modelled on zellij's: the last
-screen stays, the status says how the program ended, and one key re-runs the
-command, starts a shell or closes the pane. A tree of tabs and panes, opened
+screen stays, the status says how the program ended, and Enter re-runs the
+command, Esc starts a shell, and Ctrl+C closes the pane. A pane's directory
+is the one its shell last reported (OSC 7, [`TPR4`](./protocols.md)), which
+not every shell reports. A tree of tabs and panes, opened
 from an [opener](../../glossary.md#opener) suited to the screen, makes the
 arrangement navigable by touch.
 

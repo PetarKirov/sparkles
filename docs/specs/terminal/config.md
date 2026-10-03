@@ -21,11 +21,13 @@ as soon as any of the four is written by hand. Two sources of configuration,
 Termux's files and the app's own, also need a precedence the user can see.
 
 The configuration is therefore one D aggregate, reflected rather than
-restated: `sparkles:wired` derives its JSON file, its printed form, its
-starter file and its settings page from the struct, the design hue's
-configuration already uses ([`CFG`](../hue/config.md)). Its sources stack as
-[sparse overlays](../../glossary.md#sparse-overlay), the app's own file above
-Termux's, and the settings page shows which layer supplied every value.
+restated: the serialization library `sparkles:wired` derives the JSON file,
+the printed form, the starter file and the settings page from the struct. The
+hue code viewer configures itself the same way ([`CFG`](../hue/config.md)).
+The sources stack as [sparse overlays](../../glossary.md#sparse-overlay):
+compiled defaults, then Termux's files, then the app's own file, then the
+desktop's command-line flags. The settings page writes the app's own file and
+shows which layer supplied every value.
 
 This page covers the configuration value, the files it is read from, and the
 page that edits it. `apps/terminal` owns the schema and its layers; the
@@ -33,9 +35,10 @@ settings pane component belongs to `sparkles:ui`, lifted from hue so both
 applications share one copy ([D27](./decisions.md)). What each setting does
 is specified with the behaviour it governs: links and the clipboard in
 [Protocols](./protocols.md), keys in [Keymap](./keymap.md), tabs and panes in
-[Sessions](./sessions.md). The Termux layer reads only the three files
-nix-on-droid writes; the rest of `termux.properties` is out of scope, because
-the app does not have the Termux features it configures.
+[Sessions](./sessions.md). The Termux layer reads only what nix-on-droid
+writes: the key layout in `termux.properties`, `colors.properties` and
+`font.ttf`. The rest of `termux.properties` is out of scope, because the app
+does not have the Termux features it configures.
 
 [Design](#design) describes the value and its layers. The obligations follow
 in [Requirements](#requirements-tcf) and [The settings page](#the-settings-page-tsp),
