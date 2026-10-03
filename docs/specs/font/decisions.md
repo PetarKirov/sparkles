@@ -234,6 +234,36 @@ for over a second, measured here at 1.6 s single-threaded. **Revisit when** a
 warm build exceeds 1 s on a supported platform; Android's `/system/fonts` and
 macOS are not yet measured.
 
+## FTX9: Flatten to 0.02 px; supersample flagged overlaps 4×4
+
+**State:** proposed · **Affects:** `FTR1`–`FTR3`, milestone M5
+
+**Question.** How does the accumulation rasterizer flatten curves, and how
+does it keep overlapping contours from doubling edge coverage (`FTR2`)?
+
+**Evidence.** Spike S2 ran [`raster-oracle-diff.d`][ex-oracle] on 2026-10-03
+over the 48,330 glyphs of four bundled faces at four sizes (testing.md §
+Raster oracle). Plain accumulation adds the coverage of every edge that
+crosses a pixel, so a pixel half-covered by the edges of two overlapping
+contours reads as fully covered. Maple Mono NF CN builds its CJK glyphs from
+overlapping strokes; there, 59% of glyphs differed from FreeType by more than
+32 steps, the worst by 123. FreeType avoids this only for glyphs whose `glyf`
+data sets `OVERLAP_SIMPLE` or `OVERLAP_COMPOUND`, 22,931 of that face's 33,637:
+it renders them at 4×4 and averages ([`ttgload.c`][ft-ttgload],
+[`ftsmooth.c`][ft-smooth]). Doing the same brought every glyph of the face
+within 33 steps. Supersampling every glyph costs 6–10× a plain render: 11–33
+µs rise to 64–327 µs per glyph from 12 to 48 px on Fira Code Nerd Font Mono.
+Eight uniform steps per curve, the research example's choice, raised that
+face's largest difference from 28 to 37 against adaptive flattening.
+
+**Choice.** Curves are flattened adaptively to 0.02 px. A glyph flagged
+`OVERLAP_SIMPLE` or `OVERLAP_COMPOUND` renders at 4×4 and is averaged; every
+other glyph renders by plain accumulation. This is FreeType's rule.
+
+**Trade-off.** An overlap the font does not flag still doubles edge coverage,
+in FreeType as here. [`FTQ4`](#ftq4-overlaps-the-font-does-not-flag) asks
+whether `FTR2` requires more.
+
 ---
 
 ## Open questions
@@ -247,6 +277,10 @@ correct rasterizers differ in curve flattening and in how they treat pixels
 crossed by several edges. The tolerance must be chosen from the spike's
 measured distribution on the corpus before the milestone starts, then frozen.
 
+**Status.** Spike S2 measured the distribution and proposes a tolerance in
+[`testing.md`](./testing.md#raster-oracle). It is accepted or changed in
+review, then frozen.
+
 ### FTQ2: Background or synchronous scanning
 
 Answered by spike S1; see [`FTX8`](#ftx8-the-catalog-builds-synchronously-over-a-worker-pool).
@@ -254,6 +288,18 @@ Answered by spike S1; see [`FTX8`](#ftx8-the-catalog-builds-synchronously-over-a
 ### FTQ3: Ligatures that change glyph count in a cell grid
 
 Answered by spike S3; see [`FTX7`](#ftx7-ligatures-keep-one-glyph-per-cell-their-ink-crosses-cells).
+
+### FTQ4: Overlaps the font does not flag
+
+**Blocks:** `FTR2` acceptance, milestone M5. **Resolver:** review of `FTX9`.
+
+Unflagged overlapping contours exist. Supersampling every glyph of Fira Code
+Nerd Font Mono moved 1.5% of them more than 32 steps away from FreeType, up to
+195, because plain accumulation, FreeType's included, darkens their
+overlaps. CFF and CFF2 outlines carry no flag at all. The options are to
+restrict `FTR2` to flagged glyphs, matching FreeType; to supersample every
+glyph with more than one contour, at 6–10× the raster cost of each first
+render; or to compute exact nonzero coverage, which is not yet researched.
 
 <!-- References -->
 
@@ -267,3 +313,6 @@ Answered by spike S3; see [`FTX7`](#ftx7-ligatures-keep-one-glyph-per-cell-their
 [ex-raster]: ../../research/font-libraries/examples/outline-sink-raster.d
 [ex-ligature]: ../../research/font-libraries/examples/ligature-cells.d
 [ex-scan]: ../../research/font-libraries/examples/font-scan-timing.d
+[ex-oracle]: ../../research/font-libraries/examples/raster-oracle-diff.d
+[ft-ttgload]: https://github.com/freetype/freetype/blob/aff94e1306400217dfd14a35009418d142871f87/src/truetype/ttgload.c#L461
+[ft-smooth]: https://github.com/freetype/freetype/blob/aff94e1306400217dfd14a35009418d142871f87/src/smooth/ftsmooth.c#L628
