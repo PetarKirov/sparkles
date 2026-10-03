@@ -29,6 +29,7 @@ enum OpenerHit : size_t
     none,
     tree = 0x0BE0_0000, /// open (or close) the tree
     newTab,
+    guide, /// the touch key guide (`TSS16`)
     tab0 = 0x0BE0_0100, /// `tab0 + i` selects tab `i`
 }
 
@@ -39,9 +40,11 @@ bool usesPill(TabsOpener setting, bool phonePortrait) @safe pure nothrow @nogc
 
 /**
 The pill band, `rows` tall: `❯ title  2/4  ●1 ▾` centred on a phone, at the
-start on the desktop with `hint` (the key that opens the tree) beside it.
+start on the desktop with `hint` (the key that opens the tree) beside it. `guide`
+adds the touch guide's `⋯` after the pill (`TSS16`).
 */
-WidgetTree pillBand(in TreeTab[] tabs, int rows, bool centred, string hint) @safe
+WidgetTree pillBand(in TreeTab[] tabs, int rows, bool centred, string hint,
+    bool guide = false) @safe
 {
     import std.conv : text;
 
@@ -67,14 +70,23 @@ WidgetTree pillBand(in TreeTab[] tabs, int rows, bool centred, string hint) @saf
     uint[] band = [pill];
     if (!centred && hint.length)
         band ~= label(b, hint, Slot.muted);
+    // On touch, the guide's button beside the pill (`TSS16`, D46): the way
+    // to every command while a keyboard cover hides the extra keys.
+    if (guide)
+        band ~= b.add(Widget(kind: WidgetKind.row, children: [label(b, "⋯", Slot.textPrimary)],
+            padding: Insets(0, 2, 0, 2), alignX: Alignment.center, alignY: Alignment.center,
+            height: SizeSpec.fixed(rows > 1 ? rows - 1 : 1),
+            slot: Slot.surfaceRaised, paintBackground: true,
+            decoration: Decoration(borderRadius: 16), hitId: OpenerHit.guide));
     return b.finish(b.add(Widget(kind: WidgetKind.row, children: band, gap: 2,
         padding: Insets(0, 1, 0, 1), width: SizeSpec.grow(), height: SizeSpec.fixed(rows),
         alignX: centred ? Alignment.center : Alignment.start, alignY: Alignment.center,
         slot: Slot.chrome, paintBackground: true)));
 }
 
-/// The rail, `cols` wide and `rows` tall, each button `buttonRows` tall.
-WidgetTree rail(in TreeTab[] tabs, int cols, int rows, int buttonRows) @safe
+/// The rail, `cols` wide and `rows` tall, each button `buttonRows` tall;
+/// `guide` adds the touch guide's `⋯` under `☰` (`TSS16`).
+WidgetTree rail(in TreeTab[] tabs, int cols, int rows, int buttonRows, bool guide = false) @safe
 {
     Builder b;
 
@@ -94,6 +106,8 @@ WidgetTree rail(in TreeTab[] tabs, int cols, int rows, int buttonRows) @safe
     }
 
     uint[] items = [button("☰", Slot.accentPrimary, OpenerHit.tree)];
+    if (guide) // the touch guide, under the tree (`TSS16`)
+        items ~= button("⋯", Slot.textPrimary, OpenerHit.guide);
     foreach (i, ref t; tabs)
     {
         if ((items.length + 2) * buttonRows > rows)
@@ -152,4 +166,23 @@ version (unittest)
     assert(l.hitAt(1, 2) == OpenerHit.tab0);
     assert(l.hitAt(1, 4) == OpenerHit.tab0 + 1);
     assert(l.hitAt(1, 6) == OpenerHit.newTab);
+}
+
+@("opener.guide.onTouchOnly")
+@safe unittest
+{
+    import chrome : place, Place;
+
+    // `TSS16`: the rail's `⋯` under `☰`, the pill band's after the pill; neither
+    // without `guide` (the desktop).
+    const r = place(rail(two(), 4, 20, 2, guide: true), 4, 20, 0, 0, 1, 1, Place.top);
+    assert(r.hitAt(1, 0) == OpenerHit.tree && r.hitAt(1, 2) == OpenerHit.guide);
+    assert(r.hitAt(1, 4) == OpenerHit.tab0, "the tabs follow");
+    const p = place(pillBand(two(), 2, true, null, guide: true), 40, 2, 0, 0, 1, 1, Place.top);
+    bool sawGuide;
+    foreach (ref t; p.hits)
+        sawGuide |= t.hitId == OpenerHit.guide;
+    assert(sawGuide);
+    foreach (ref t; place(rail(two(), 4, 20, 2), 4, 20, 0, 0, 1, 1, Place.top).hits)
+        assert(t.hitId != OpenerHit.guide);
 }

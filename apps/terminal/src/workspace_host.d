@@ -706,7 +706,7 @@ struct WorkspaceHost
             const inset = touch ? cellW : 0;
             const wide = touch ? panesArea.width - 2 * inset : min(panesArea.width, 44 * cellW);
             panelRect = Rect(panesArea.x + inset, panesArea.y, wide, panesArea.height);
-            openerLayer = place(pillBand(treeTabs(), rows, touch, treeHint),
+            openerLayer = place(pillBand(treeTabs(), rows, touch, treeHint, guide: touch),
                 area.width / cellW, rows, area.x, area.y, cellW, cellH, Place.top);
         }
         else
@@ -717,7 +717,7 @@ struct WorkspaceHost
                 area.height);
             panelRect = Rect(panesArea.x, panesArea.y, min(panesArea.width, 36 * cellW),
                 panesArea.height);
-            openerLayer = place(rail(treeTabs(), railCols, area.height / cellH, rows),
+            openerLayer = place(rail(treeTabs(), railCols, area.height / cellH, rows, guide: touch),
                 railCols, area.height / cellH, area.x, area.y, cellW, cellH, Place.top);
         }
         this.panelRect = panelRect;
@@ -759,6 +759,17 @@ struct WorkspaceHost
         dragDivider(x, y, down, pressed, slop);
         return dragging >= 0;
     }
+
+    /// Whether the opener's `⋯` was tapped since the last call: the embedder
+    /// opens its touch guide (`TSS16`), as it does for `MENU`.
+    bool takeGuideRequest() @safe pure nothrow @nogc
+    {
+        const r = guideRequested;
+        guideRequested = false;
+        return r;
+    }
+
+    private bool guideRequested;
 
     /// Whether a divider is held (`TSS10`).
     bool draggingDivider() const @safe pure nothrow @nogc => dragging >= 0;
@@ -1235,6 +1246,8 @@ struct WorkspaceHost
                 toggleTree();
             else if (hit == OpenerHit.newTab)
                 cast(void) run(h, KeyCommand(TermCommand.newTab), Rect.init);
+            else if (hit == OpenerHit.guide)
+                guideRequested = true; // the embedder opens it (`TSS16`)
             else if (hit >= OpenerHit.tab0 && hit < OpenerHit.tab0 + ws.tabs.length)
                 cast(void) ws.selectTab(hit - OpenerHit.tab0);
             repaint = true;

@@ -520,12 +520,7 @@ struct DroidTerminal
                 host.invalidate();
                 return;
             case ExtraKeyKind.menu:
-                // The touch guide at the leader (`TKM6`, `TKM7`): what it picks
-                // runs on the next frame, where the host is at hand.
-                auto self = &this;
-                host.surfaces.push(new TouchGuide(router.table, context, router.leader,
-                    (KeyCommand c) { self.pendingCommand = c; self.hasPending = true; }));
-                host.invalidate();
+                openTouchGuide();
                 return;
             case ExtraKeyKind.keyboard:
                 toggleKeyboard();
@@ -609,6 +604,17 @@ struct DroidTerminal
 
     // ── touch ───────────────────────────────────────────────────────────────
 
+    /// The touch guide at the leader (`TKM6`, `TKM7`), from `MENU` or the
+    /// opener's `⋯` (`TSS16`): what it picks runs on the next frame, where
+    /// the host is at hand.
+    private void openTouchGuide()
+    {
+        auto self = &this;
+        host.surfaces.push(new TouchGuide(router.table, context, router.leader,
+            (KeyCommand c) { self.pendingCommand = c; self.hasPending = true; }));
+        host.invalidate();
+    }
+
     private void onPointer(H)(ref H h, in PointerEvent p)
     {
         import sparkles.android.soft_input : showSoftKeyboard;
@@ -639,9 +645,14 @@ struct DroidTerminal
         }
         if (chip.tap(p.pos.x, p.pos.y))
             return;
-        // An exit prompt takes its own taps (`TSS2`).
+        // The chrome takes its own taps: an exit prompt (`TSS2`), the opener
+        // — whose `⋯` opens the guide (`TSS16`).
         if (host.tap(h, p.pos.x, p.pos.y))
+        {
+            if (host.takeGuideRequest())
+                openTouchGuide();
             return;
+        }
         // A tap on the selection or a handle shows its menu; elsewhere it
         // clears it and goes on (`TSE4`).
         if (selection.tap(p.pos))
