@@ -812,7 +812,20 @@ struct DroidTerminal
         const softKeyboard = valid && screenHeight - r.bottom > screenHeight / 6;
         const shown = extraKeysShown(config.effective.extraKeys.visible, softKeyboard,
             hardwareKeyboardAttached(), rowDismissed);
-        g.keyHeight = shown && keys.length ? cellH * 2 : 0;
+        // A key is a touch target: 48 dp (`TOK7`), two cells at the least —
+        // two cells alone were 35 dp at 440 dpi. Unless that leaves the
+        // terminal fewer than 8 rows (a phone in landscape with the keyboard
+        // up kept none): then two cells, as before.
+        {
+            import sparkles.android.activity : dpToPx;
+
+            const twoCells = cellH * 2;
+            int target = dpToPx(48) > twoCells ? dpToPx(48) : twoCells;
+            const n = cast(int) keys.length;
+            if ((bottom - g.top - n * target) / cellH < 8)
+                target = twoCells;
+            g.keyHeight = shown && keys.length ? target : 0;
+        }
         g.keysHeight = cast(int) keys.length * g.keyHeight;
         g.chipHeight = chip.height(cellH, host.theme.targetRows);
         const paneHeight = bottom - g.top - g.keysHeight - g.chipHeight;
