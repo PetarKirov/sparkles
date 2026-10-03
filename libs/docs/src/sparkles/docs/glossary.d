@@ -117,6 +117,65 @@ bool isGlossaryId(scope const(char)[] s)
     return true;
 }
 
+/++
+The `owner` a page declares in its YAML front matter, or an empty slice.
+
+A specification names its owning package in front matter
+(`docs/guidelines/spec-prose.md`), and may do so before the package exists:
+a draft spec is how a library is proposed. `ci --check-glossary` therefore
+accepts an owner declared here as well as the in-tree package names, so a
+draft can own its terms from the start.
+
+Only the block delimited by `---` lines at the very start of the page is read;
+the value is trimmed, and a trailing `# comment` is dropped.
++/
+@safe pure nothrow @nogc
+inout(char)[] frontMatterOwner(return scope inout(char)[] markdown)
+{
+    static bool isDelimiter(scope const(char)[] line) => line == "---" || line == "---\r";
+
+    size_t pos;
+    // Bounds of the next line (without its `\n`), advancing `pos` past it.
+    size_t[2] nextLine()
+    {
+        const start = pos;
+        while (pos < markdown.length && markdown[pos] != '\n')
+            ++pos;
+        const end = pos;
+        if (pos < markdown.length)
+            ++pos;
+        return [start, end];
+    }
+
+    const first = nextLine();
+    if (!isDelimiter(markdown[first[0] .. first[1]]))
+        return null;
+    while (pos < markdown.length)
+    {
+        const bounds = nextLine();
+        auto line = markdown[bounds[0] .. bounds[1]];
+        if (isDelimiter(line))
+            break;
+        enum key = "owner:";
+        if (line.length < key.length || line[0 .. key.length] != key)
+            continue;
+        auto value = line[key.length .. $];
+        foreach (i, c; value)
+            if (c == '#')
+            {
+                value = value[0 .. i];
+                break;
+            }
+        size_t b = 0, e = value.length;
+        while (b < e && (value[b] == ' ' || value[b] == '\t'))
+            ++b;
+        while (e > b && (value[e - 1] == ' ' || value[e - 1] == '\t' || value[e - 1] == '\r'))
+            --e;
+        return value[b .. e];
+    }
+    return null;
+}
+
 /// A link from a documentation page into the glossary.
 struct GlossaryReference
 {
@@ -328,6 +387,23 @@ unittest
     assert(!isGlossaryId("trail-"));
     assert(!isGlossaryId("double--hyphen"));
     assert(!isGlossaryId("under_score"));
+}
+
+@("glossary.frontMatterOwner")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(frontMatterOwner("---\nstatus: draft\nowner: sparkles:font\nreviewed:\n---\n# Title\n")
+        == "sparkles:font");
+    // Comments, padding and CRLF line ends are tolerated.
+    assert(frontMatterOwner("---\r\nowner:  sparkles:fuzzy  # the library\r\n---\r\n")
+        == "sparkles:fuzzy");
+    // No front matter, or an owner only after it closes, declares nothing.
+    assert(frontMatterOwner("# Title\nowner: sparkles:font\n").length == 0);
+    assert(frontMatterOwner("---\nstatus: draft\n---\nowner: sparkles:font\n").length == 0);
+    // A key that merely starts like `owner` is not it.
+    assert(frontMatterOwner("---\nowners: x\n---\n").length == 0);
+    assert(frontMatterOwner("").length == 0);
 }
 
 @("glossary.GlossaryEntry.decode")

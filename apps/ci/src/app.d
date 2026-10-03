@@ -154,8 +154,8 @@ import blob_paths :
     parseBlobRefs, resolveClone;
 import sparkles.docs.sidebar : loadDocsConfig, loadSidebar, sidebarDataPath;
 import docs_sidebar : checkDocsSidebar;
-import sparkles.docs.glossary : checkGlossary, glossaryDataPath, glossaryReferences,
-    GlossaryReference, loadGlossary;
+import sparkles.docs.glossary : checkGlossary, frontMatterOwner, glossaryDataPath,
+    glossaryReferences, GlossaryReference, loadGlossary;
 import spec_evidence : backlogPath, Citation, citationsIn, ratchet, renderBacklog,
     unresolvedCitations;
 import dub_deps : inTreePackageNames, parseSubPackages, rewriteInTreeDeps;
@@ -2256,17 +2256,25 @@ private int runCheckGlossary()
     }
 
     GlossaryReference[] refs;
+    // A draft specification may own terms before its package exists, so an
+    // owner declared in a spec page's front matter counts as known.
+    string[] owners = inTreePackageNames(repoRoot);
     size_t files;
     foreach (path; listed.output.lineSplitter.filter!(l => l.endsWith(".md")))
     {
         const full = repoRoot.buildPath(path);
         if (!full.exists) // deleted in the working tree, not yet staged
             continue;
-        refs ~= glossaryReferences(path.idup, full.readText);
+        const markdown = full.readText;
+        refs ~= glossaryReferences(path.idup, markdown);
+        if (path.startsWith("docs/specs/"))
+            if (const owner = frontMatterOwner(markdown))
+                if (!owners.canFind(owner))
+                    owners ~= owner.idup;
         ++files;
     }
 
-    const report = checkGlossary(entries.value, inTreePackageNames(repoRoot), refs);
+    const report = checkGlossary(entries.value, owners, refs);
     foreach (id; report.unused)
         info(i"Glossary entry $(id) is not linked from any docs page.");
 
