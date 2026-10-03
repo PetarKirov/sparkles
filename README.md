@@ -508,6 +508,37 @@ apps
 libs
 ```
 
+For data that is already a recursive structure, `sparkles.ui.components.tree_draw`
+renders it directly by Design by Introspection: any node type with `.label` and
+`.children` works, each level may be a different type, and a `Hook` supplies
+either member for types that lack it.
+
+```d
+import sparkles.ui.components.tree_draw : drawTree, TreeViewProps;
+
+struct FileNode
+{
+    string label;
+    const(FileNode)[] children;
+}
+
+drawTree(FileNode("project/", [
+    FileNode("src/", [FileNode("main.d"), FileNode("util.d")]),
+    FileNode("tests/", [FileNode("test_main.d")]),
+    FileNode("README.md"),
+]), TreeViewProps!void(useColors: false));
+```
+
+```text
+project/
+├─┬ src/
+│   ├── main.d
+│   └── util.d
+├─┬ tests/
+│   └── test_main.d
+└── README.md
+```
+
 #### Live Task Lists
 
 `LiveRegion` repaints a block of lines in place at the bottom of normal
@@ -896,6 +927,7 @@ dub run --single libs/core-cli/examples/table-leaderboard.d # animated, re-sorti
 dub run --single libs/core-cli/examples/table-bench-ticker.d # animated benchmark results
 dub run --single libs/core-cli/examples/box.d
 dub run --single libs/core-cli/examples/streaming-box.d     # animated
+dub run --single libs/core-cli/examples/tree-draw.d
 dub run --single libs/core-cli/examples/header.d
 dub run --single libs/core-cli/examples/osc-link.d
 dub run --single libs/core-cli/examples/color.d
