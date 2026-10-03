@@ -1,17 +1,75 @@
+---
+status: accepted
+owner: sparkles:diagram
+reviewed: 2026-08-08
+---
+
 # `apps/diagram` — Overview
 
-_**Status:** proposed · **Date:** 2026-08-08 · **Scope:** the planned
-`apps/diagram` application: a draw.io-style board — infinite canvas, camera pan,
-wheel zoom, minimap, create/select/group/label, orthogonal connectors, context
-menu — built on `sparkles:ui-app` with **zero** backend imports._
+## Abstract
 
-This is [phase 3 of the ui-app plan](../ui-app/PLAN.md#phase-3): the application
-that exists to **stress the abstraction**. hue is a document viewer and terminal
-is a cell renderer; neither has a camera, a world coordinate space, or an
-infinite surface. If the host, the toolkit and the input vocabulary can express
-this app without one backend name appearing under `apps/diagram/`, the stack's
-central claim — an application never names a canvas — holds for an application
-shaped like none of its authors' previous ones.
+`sparkles:diagram` is a diagram board in the style of draw.io: boxes, groups,
+labels and orthogonal arrows on an unbounded canvas, viewed through a camera
+that pans and zooms toward the pointer, with a minimap and a right-click menu.
+It runs unchanged in a terminal and in a desktop window, and its source names
+neither. The board exists to test whether the Sparkles interface stack can
+carry an application unlike the ones it was built for. A camera, a world
+coordinate space and an infinite surface are things no earlier Sparkles
+application needed.
+
+## Introduction
+
+The Sparkles interface stack makes one central promise: an application never
+names the surface it draws on. The [toolkit](../ui/index.md), `sparkles:ui`,
+reduces an interface to a [display list](../../glossary.md#display-list) of
+drawing operations, and the [application host](../ui-app/index.md),
+`sparkles:ui-app`, picks a terminal or a window backend at run time and
+replays that list onto it. The applications that shaped the stack share a
+structure, though. hue is a document viewer and the terminal emulator is a
+grid of character [cells](../../glossary.md#cell). Both lay out a bounded page
+in screen space, so neither tests the promise on an application whose content
+lives somewhere else.
+
+A board does. Its boxes live in an unbounded world, a camera maps that world
+onto the screen, and the mapping changes with every pan and zoom. The two
+targets also disagree about what zoom can mean. A terminal cell cannot be
+subdivided, so a terminal can only zoom by doublings, while a mouse wheel,
+trackpad or touchscreen in a window expects continuous zoom. A hit test has to
+agree with the paint on both, or a click lands on a box the user cannot see
+there. If the host, the toolkit and the input vocabulary can express this
+application without a backend name anywhere in its source, the promise holds
+beyond the shapes that motivated it.
+
+The board is a display-list application rather than a widget tree. Freeform
+world content has no expression in box layout, so the board's render functions
+emit drawing operations directly, and the toolbar, status line and menus
+follow in the same stream so that z-order is append order. All board state
+lives in one value that plain functions read and update, so every behavior is
+testable as scripted input against a recording host, with no terminal or
+window.
+
+Magnification is split like a floating-point number. An integer exponent, a
+power of two, counts world cells per screen cell and is all the
+world-to-screen mapping reads. A mantissa scales only how many pixels a cell is
+drawn with, and only a window ever moves it. Paint and hit test therefore both
+work in whole cells, and a window converts the pointer from pixels to cells at
+the drawn size, so the two agree on either target.
+
+These pages specify the application: its package boundary, the camera, the
+world model, interaction, rendering, the grid backdrop, and the settings pane.
+The toolkit, the host and the input vocabulary have their own specifications,
+and the grid backdrop's reusable core belongs to the toolkit. Saving and
+loading diagrams, undo of board edits, freehand drawing, diagonal connectors,
+resize handles, edge labels and nested groups are out of scope. The board
+exercises the stack; it does not compete with full diagram editors.
+
+The sections below explain the [zoom design](#zoom-is-per-target-by-design)
+and how the board [sits on the stack](#how-it-sits-on-the-stack).
+[Feature requirements](./feature-requirements.md) holds every requirement,
+grouped by the prefixes in the [ID scheme](#id-scheme), and lists the full
+non-goals. The [delivery plan](./PLAN.md) holds the commit series, their
+gates and their progress. The board is the third phase of the
+[ui-app plan](../ui-app/PLAN.md#phase-3).
 
 ## What it is
 

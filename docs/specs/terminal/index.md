@@ -1,34 +1,88 @@
+---
+status: draft
+owner: sparkles:terminal
+reviewed: 2026-10-02
+---
+
 # `sparkles:terminal` — Overview
 
-_**Status:** proposed (Stage 0: specification; layout open pending mockups) ·
-**Date:** 2026-10-02 · **Owners:** `apps/terminal` (the application, its
-pages and its policy), `sparkles:terminal-view` (the emulator component and
-its protocol surface), `sparkles:ui` (the shared components it lifts),
-`sparkles:android` (JNI plumbing), `sparkles:base` (logging) · **Scope:** the
-terminal as an application on the desktop and on Android — configuration and
-its settings page, the key table and its guide, the about, log and
-notification pages, touch selection, the terminal protocols an application
-inside it may use, the exit prompt, tabs and splits._
+## Abstract
 
-## Why
+`sparkles:terminal` is the Sparkles terminal emulator as a complete
+application on Linux, macOS and Android. Around each terminal pane it provides
+what people expect of a modern terminal: configuration editable from inside
+the app, commands that can be found by key and by touch, text selection on a
+phone, tabs and splits that survive a restart, and a prompt when a program
+exits. Programs running inside it can raise notifications, write the clipboard
+and follow the system's light or dark scheme, and files they ask to open
+appear in a viewer pane beside them. Pages show the build, its licences and
+its logs. Every feature exists on every platform, adapted to keyboard or
+touch, and the Android app contains no Java.
 
-The terminal runs on Linux, macOS and Android ([the Android
-spec](./android.md)), but as an application it is one pane and a command line:
+## Introduction
 
-- **It cannot be configured from inside.** On the desktop the configuration is
-  a handful of flags; on Android there is no command line, so it is
-  `~/.termux/*` or nothing. Nothing shows the version, the licences, or what
-  the app logged.
-- **On a phone it cannot select text.** Selection, copy and link hover live in
-  the polled mouse path (`handle_mouse`), which Android disables
-  (`TerminalViewOptions.pollMouse`); a long-press is ignored.
-- **A program's exit ends the app** (or holds a banner), with no way to run the
-  command again or drop to a shell.
-- **One session.** `TerminalView` already supports many instances (ui-gallery's
-  `TerminalStore` hosts eight), but the application shows one.
-- **Programs cannot talk to it.** Titles reach the window but not a tab;
-  notifications (OSC 9/99/777), clipboard writes (OSC 52), colour-scheme
-  reports (mode 2031) and the icon name (OSC 1) are dropped.
+A terminal emulator is two things: an engine that interprets the bytes
+a program writes, and an application around it that people configure,
+arrange and talk to. In Sparkles the engine is libghostty-vt, wrapped by the
+embeddable `sparkles:terminal-view` component. The same component renders in
+a desktop window and in a native Android app that serves as the terminal of
+[nix-on-droid](https://github.com/nix-community/nix-on-droid). Without the
+obligations specified here, the application around it is a single pane. On
+the desktop a handful of command-line flags configure it. On Android,
+which has no command line, only the configuration files of Termux, the
+Android terminal nix-on-droid used before, configure it, and nothing shows
+the version, the licences or what the app logged.
+
+Growing that pane into an application is harder than adding features one by
+one. A phone cannot select text, because selection is driven by mouse handling
+that touch input bypasses, and it has almost no keys to bind commands to.
+On the desktop the keyboard belongs to the program inside the pane, so
+every key the terminal claims is one the program loses. The escape sequences
+a program uses to reach beyond the screen, such as titles, notifications,
+clipboard writes and links, come from untrusted code: a title must not inject
+control bytes and a link must not launch an arbitrary scheme. Finally, much
+of what is needed already exists in the repository, including the settings
+pane of the hue code viewer and the toolkit's key-binding and split layout
+machinery, and copying it into the app would fork it.
+
+The specification therefore gives every obligation an owning package. The
+component owns what any host would share: the meaning of each escape
+sequence, the replies it sends, the events it raises, the selection model,
+and restarting a pane's program. The application owns policy, such as what an
+event becomes, which keys it claims, and how tabs and splits are arranged.
+Shared pieces come from `sparkles:ui`, with hue's settings pane lifted
+there so both applications use one copy. One configuration value configures
+every platform: the app's own file is read above Termux's files, so an
+existing Termux setup keeps working and the app's file wins where both set
+a value. On the desktop the application claims only a few Ctrl+Shift chords
+and a _leader_, a chord that opens a guide listing every other command,
+which a phone user taps instead. Each surface's behaviour is specified in
+prose; its layout is chosen from HTML mockups ([design](./design.md)).
+
+This tree covers the application on all three platforms: configuration
+and its settings page, the key table and its guide, the about, credits,
+log and notification pages, touch selection and password autofill for
+prompts such as `sudo`'s, the terminal protocols, the exit prompt, tabs
+and splits, and opening files in an embedded document viewer. Restoring
+a workspace reopens its tabs and splits with their titles, starting fresh
+shells in their last directories; a pane that ran a command reopens at its
+exit prompt. The screen semantics themselves belong to libghostty-vt, and
+the document viewer is hue's, extracted into a library. Android packaging,
+session modes and the nix-on-droid bootstrap are specified on the [Android
+page](./android.md). Restoring running processes is a non-goal, because a
+process cannot be serialized; so are Java components on Android, session
+sharing and remote attach in the style of tmux, plugins, and Play Store
+distribution. [Scope](#scope) gives the reason for each.
+
+The [ownership table](#owning-package-per-obligation) maps each obligation
+to its package and page. The topic pages, [Configuration](./config.md),
+[Keymap](./keymap.md), [Protocols](./protocols.md), [Pages](./pages.md),
+[Selection](./selection.md), [Sessions](./sessions.md) and
+[Viewer](./viewer.md), each hold their requirements under their own ID
+prefixes. [Design](./design.md) registers the mockups and the design-system
+rules every surface meets, [Decisions](./decisions.md) records the choices
+behind the tree, [Testing](./testing.md) holds the oracles and the evidence
+ledger, and the [delivery plan](./PLAN.md) holds milestones and gates.
 
 ## Scope
 

@@ -848,5 +848,57 @@
     ],
     "owner": "sparkles:docs",
     "seeAlso": ["cell"]
+  },
+  {
+    "id": "application-host",
+    "term": "application host",
+    "aliases": ["host"],
+    "summary": "The Sparkles package layer that chooses a terminal or window backend for an interactive program, sets up its window and fonts, and runs its input and frame loop.",
+    "definition": "`sparkles:ui-app` is the application host: a sibling of the UI toolkit that owns backend selection, the shared window and font options, and the frame loop, so an application supplies only a present and a handle function and never names a backend.",
+    "authority": [
+      {
+        "text": "sparkles:ui-app overview",
+        "link": "/specs/ui-app/#introduction"
+      },
+      {
+        "text": "sparkles:ui-app host contract (HST)",
+        "link": "/specs/ui-app/feature-requirements#the-host-contract-hst"
+      }
+    ],
+    "owner": "sparkles:ui-app",
+    "seeAlso": ["recording-target", "render-level"]
+  },
+  {
+    "id": "recording-target",
+    "term": "recording target",
+    "summary": "A headless backend of the application host that feeds a scripted list of events to an application and records the frames, draw operations and platform calls it produces.",
+    "definition": "The recording target is the third backend of `sparkles:ui-app`, beside the terminal and the window. It opens no window and no terminal, so a whole application session can be asserted in an ordinary unit test; it extends the toolkit's recording canvas from one frame to a session.",
+    "authority": [
+      {
+        "text": "sparkles:ui-app render targets",
+        "link": "/specs/ui-app/#render-targets"
+      },
+      {
+        "text": "sparkles:ui-app testability (TST)",
+        "link": "/specs/ui-app/feature-requirements#testability-tst"
+      }
+    ],
+    "owner": "sparkles:ui-app",
+    "seeAlso": ["application-host", "display-list"]
+  },
+  {
+    "id": "render-level",
+    "term": "render level",
+    "aliases": ["render levels"],
+    "summary": "How much of the drawing pipeline an application hands to the application host: a widget tree, a display list, or the concrete drawing surface.",
+    "definition": "At the widget level the host lays out and paints a tree; at the display-list level the application appends drawing operations the host replays; at the direct level the application drives the backend's canvas itself, as a terminal emulator's per-cell renderer does.",
+    "authority": [
+      {
+        "text": "sparkles:ui-app: the three render levels",
+        "link": "/specs/ui-app/#the-three-render-levels"
+      }
+    ],
+    "owner": "sparkles:ui-app",
+    "seeAlso": ["display-list", "application-host"]
   }
 ]
