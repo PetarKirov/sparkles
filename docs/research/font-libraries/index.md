@@ -181,6 +181,9 @@ cleanly when no font can be found.
 - [`outline-sink-raster.d`](./examples/outline-sink-raster.d) — the outline
   sink, a variation reaching both advances and outlines, and a 71-line
   signed-area rasterizer rendering the result.
+- [`ligature-cells.d`](./examples/ligature-cells.d) — 160 programming
+  ligatures shaped on and off: whether glyph count or advances leave the cell
+  grid, and how far ligature ink reaches past its own cell.
 
 ```bash
 dub run --single docs/research/font-libraries/examples/outline-sink-raster.d -- /path/to/font.ttf g

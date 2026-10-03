@@ -41,11 +41,11 @@ implied by merging.
 
 ### Stage 0 spikes
 
-| Spike | Question                                                                                          | Experiment                                                                                                                                                                                                                             | Decision criterion                                                                                                   |
-| ----- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| S1    | Is a synchronous first-launch scan of a large font directory acceptable? (`FTQ2`)                 | Time reading the table directory, `name`, `OS/2` and `cmap` coverage of every font file on a Linux desktop and in the bundle, cold and warm cache.                                                                                     | Under 1 s warm for the machine's full font set → synchronous with a cache; otherwise a background builder.           |
-| S2    | What tolerance does an overlap-correct accumulation rasterizer achieve against FreeType? (`FTQ1`) | Extend the research example with per-contour accumulation; diff every glyph of three bundled faces at four sizes against FreeType unhinted.                                                                                            | Record the distribution; propose the `FTR3` tolerance at a percentile that a reviewer accepts as visually identical. |
-| S3    | Does any common programming font's `liga`/`calt` change glyph count? (`FTQ3`)                     | Run the shaping example over Fira Code, JetBrains Mono, Cascadia Code and Maple Mono on a ligature sample string. **Partial, 2026-10-03:** Maple Mono NF CN and Fira Code Nerd Font Mono keep one glyph per cell on `a -> b != c ffi`. | Record per font; decides whether the terminal migration needs multi-cell glyph placement.                            |
+| Spike | Question                                                                                          | Experiment                                                                                                                                                                                                                                                           | Decision criterion                                                                                                   |
+| ----- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| S1    | Is a synchronous first-launch scan of a large font directory acceptable? (`FTQ2`)                 | Time reading the table directory, `name`, `OS/2` and `cmap` coverage of every font file on a Linux desktop and in the bundle, cold and warm cache.                                                                                                                   | Under 1 s warm for the machine's full font set → synchronous with a cache; otherwise a background builder.           |
+| S2    | What tolerance does an overlap-correct accumulation rasterizer achieve against FreeType? (`FTQ1`) | Extend the research example with per-contour accumulation; diff every glyph of three bundled faces at four sizes against FreeType unhinted.                                                                                                                          | Record the distribution; propose the `FTR3` tolerance at a percentile that a reviewer accepts as visually identical. |
+| S3    | Does any common programming font's `liga`/`calt` change glyph count? (`FTQ3`)                     | Shape 160 ligature sequences in Fira Code, JetBrains Mono, Cascadia Code and Maple Mono with `calt` and `liga` on and off. **Done, 2026-10-03:** no glyph-count change and no off-cell advance in eight faces; ink reaches up to 6 cells past its own cell (`FTX7`). | Record per font; decides whether the terminal migration needs multi-cell glyph placement.                            |
 
 ## M1 Parse
 
@@ -124,14 +124,16 @@ filter types pass.
 
 **Obligations.** `FTA12`–`FTA14`.
 
-**Prerequisites.** M1–M7. Spike S3's result for the terminal.
+**Prerequisites.** M1–M7. [`FTX7`](decisions.md#ftx7-ligatures-keep-one-glyph-per-cell-their-ink-crosses-cells) sets the terminal's ligature constraints.
 
 **Deliverable.** `sparkles:raylib-text` rebuilt over `sparkles:font`; the
 spike's `shaping_c.c`, `shaping_api.h` and `shaping.d` and the discovery modules
 deleted; `hue`, `terminal`, `terminal-view`, `ui-raylib` and `ui-app` updated.
 
 **Acceptance.** All consumers' test suites pass; the Android APKs build in CI;
-local screenshot goldens identical or listed with captures (`FTA14`).
+local screenshot goldens identical or listed with captures (`FTA14`); with a
+ligature font, the terminal neither clips a ligature's ink to one cell nor leaves
+stale ink when one of its cells changes (`FTX7`).
 
 **Consumer surface to replace**, measured on 2026-10-03 at `d4bf07306`:
 
@@ -143,4 +145,4 @@ local screenshot goldens identical or listed with captures (`FTA14`).
 | `sparkles:terminal-view`        | `drawGrapheme`, `drawSolid`, `drawCluster`, `resolveFace`, `primaryFont`, `whiteFace`                     | fallback lookup, shaping, and atlas upload in `raylib-text`          |
 | `apps/terminal` (Android)       | `drawText`, `TextStyle`                                                                                   | the same `raylib-text` calls                                         |
 
-**Handoff.** Not started. Next executable action: run spikes S1–S3.
+**Handoff.** Not started. Next executable action: run spikes S1 and S2.
