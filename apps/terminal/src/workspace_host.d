@@ -191,6 +191,7 @@ struct WorkspaceHost
     private string shownTitle;
     private bool dirty; // a structural change not yet saved
     private bool repaint = true; // the arrangement changed: every pane redraws
+    private Rect lastArea; // the area of the last frame
     private PaneId lastFocused;
     private string pendingClipboard; // an OSC 52 write, set by the next frame
     private bool clipboardPending;
@@ -571,6 +572,14 @@ struct WorkspaceHost
         auto c = h.canvas;
         cellW = c.fonts.cellW() > 0 ? c.fonts.cellW() : 1;
         cellH = c.fonts.cellH() > 0 ? c.fonts.cellH() : 1;
+        // A new area (a rotation, a resized window) is a new frame, whatever
+        // the panes say: a viewer pane has nothing dirty, and the old frame,
+        // stretched to the new surface, stayed up until a tap.
+        if (area != lastArea)
+        {
+            lastArea = area;
+            repaint = true;
+        }
         layout(area);
 
         // The pointer belongs to the pane under it — or, during a drag, to the
