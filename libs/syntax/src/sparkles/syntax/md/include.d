@@ -158,11 +158,20 @@ void expandInto(ref Appender!string output, string source, string docDir,
     {
         const bare = line.stripRight;
         const body = bare.stripLeft;
-        // Directives inside a fenced code block are code, not directives.
+        // Inside a fenced code block a snippet import is code, but an include
+        // still expands: VitePress replaces include comments across the whole
+        // text before it parses (`processIncludes`), which is how a licence
+        // fills a `text` fence on the credits pages.
         if (inFence)
         {
+            Directive d;
             if (body.startsWith(fenceMarker) && body.strip == body[0 .. fenceRun(body)])
                 inFence = false;
+            else if (parseInclude(body, d))
+            {
+                expandDirective(output, d, docDir, roots, read, stack);
+                continue;
+            }
             output ~= line;
             continue;
         }
@@ -541,13 +550,16 @@ version (unittest)
         == "`````md\n````\nnested\n````\n`````\n");
 }
 
-@("md.include.directivesInsideFencesAreCode")
+@("md.include.insideAFenceOnlyIncludesExpand")
 @safe unittest
 {
     FakeFs fs;
-    const src = "```md\n<!--@include: ./x.md-->\n<<< ./y.d\n```\n";
-    assert(expandIncludes(src, "/repo/docs", roots, &fs.read) == src);
-    assert(fs.reads.length == 0);
+    fs.files["/repo/docs/LICENSE"] = "MIT\n";
+    // As on the site: the include fills the fence, the snippet stays code.
+    const src = "```text\n<!-- @include: ./LICENSE -->\n<<< ./y.d\n```\n";
+    assert(expandIncludes(src, "/repo/docs", roots, &fs.read)
+        == "```text\nMIT\n<<< ./y.d\n```\n");
+    assert(fs.reads == ["/repo/docs/LICENSE"]);
 }
 
 @("md.include.confinedToTheRepository")
