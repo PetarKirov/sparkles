@@ -421,5 +421,108 @@
     ],
     "owner": "sparkles:hue",
     "seeAlso": ["content-kind", "cell"]
+  },
+  {
+    "id": "stage-tree",
+    "term": "stage tree",
+    "summary": "The logical tree of files, directories and symbolic links that a package will contain, described independently of any host filesystem and validated before anything is written.",
+    "definition": "The format-neutral input to `sparkles:packaging`: an ordered tree of regular files, directories and symbolic links with logical `/`-separated paths and honest metadata. Every artifact format is produced from it, and its paths are validated before any host path is joined.",
+    "authority": [
+      {
+        "text": "sparkles:packaging specification §5",
+        "link": "/specs/application-packaging/SPEC#_5-the-stage-tree"
+      },
+      {
+        "text": "Application-packaging concepts: Stage",
+        "link": "/research/application-packaging/concepts#stage"
+      }
+    ],
+    "owner": "sparkles:packaging",
+    "seeAlso": ["artifact-receipt"]
+  },
+  {
+    "id": "artifact-receipt",
+    "term": "artifact receipt",
+    "aliases": ["receipt"],
+    "summary": "A canonical, versioned JSON record, written last by a packaging run, of the final bytes and digests of every artifact it produced and how each was made.",
+    "definition": "The machine-readable output of a successful `sparkles:packaging` run for one target: resolved identity, stage inventory, final artifact sizes and SHA-256 digests, encoder or tool versions, and signing status. It is evidence for later publishing tools, not an SBOM or a provenance attestation.",
+    "authority": [
+      {
+        "text": "sparkles:packaging specification §9",
+        "link": "/specs/application-packaging/SPEC#_9-receipt-and-supply-chain-boundary"
+      },
+      {
+        "text": "Application-packaging concepts: checksums, SBOM, provenance",
+        "link": "/research/application-packaging/concepts#checksums-sbom-provenance-and-reproducibility"
+      }
+    ],
+    "owner": "sparkles:packaging",
+    "seeAlso": ["stage-tree"]
+  },
+  {
+    "id": "command-graph",
+    "term": "command graph",
+    "summary": "The tree of commands and subcommands that a command-line parser derives at compile time from a root command type and the command types nested in or registered into it.",
+    "definition": "In `sparkles:core-cli`, the compile-time tree of a CLI's commands. A command's children are its nested `@(Command)` structs and the types it registers with `mixin addSubCommand`, in compiler member order, or the variants of an explicit `@Subcommands` field when it has one.",
+    "authority": [
+      {
+        "text": "core-cli args specification: The command graph",
+        "link": "/specs/core-cli/SPEC#the-command-graph"
+      },
+      {
+        "text": "core-cli args specification: Command child discovery",
+        "link": "/specs/core-cli/SPEC#command-child-discovery"
+      }
+    ],
+    "owner": "sparkles:core-cli",
+    "seeAlso": ["command-group"]
+  },
+  {
+    "id": "command-group",
+    "term": "command group",
+    "summary": "A command-line command that has subcommands of its own, such as worktree in git worktree list.",
+    "definition": "In `sparkles:core-cli`, a command with at least one child in the [command graph](/glossary#command-graph). Its parse-tree node holds the selected child's node, and selecting the group without naming a child is an incorrect call unless the group declares default handling.",
+    "authority": [
+      {
+        "text": "core-cli args specification: Default handlers for command groups",
+        "link": "/specs/core-cli/SPEC#default-handlers-for-command-groups"
+      }
+    ],
+    "owner": "sparkles:core-cli",
+    "seeAlso": ["command-graph"]
+  },
+  {
+    "id": "split-mode",
+    "term": "split mode",
+    "aliases": ["--split"],
+    "summary": "The release tool's mode that cuts an unreleased backlog into a chain of consecutive releases, each with its own version and notes, at boundaries proposed by an AI agent and validated by the tool.",
+    "definition": "The `release --split` mode of `sparkles:release`. It matches commits to the pull requests that introduced them, groups them into [pull-request-atomic units](/glossary#pr-atomic-unit), asks a command-line agent for release boundaries and themes, validates and approves the plan, and tags each slice oldest first. Its counterpart, classic mode, makes a single release.",
+    "authority": [
+      {
+        "text": "release SPEC §1 Overview",
+        "link": "/specs/release/SPEC#_1-overview"
+      },
+      {
+        "text": "release SPEC §7 Segmentation",
+        "link": "/specs/release/SPEC#_7-segmentation-split-mode"
+      }
+    ],
+    "owner": "sparkles:release",
+    "seeAlso": ["pr-atomic-unit"]
+  },
+  {
+    "id": "pr-atomic-unit",
+    "term": "pull-request-atomic unit",
+    "aliases": ["PR-atomic unit"],
+    "summary": "A contiguous run of commits that the release tool never divides between two releases: one merged pull request with all its commits, or a single commit pushed directly.",
+    "definition": "The indivisible element of a [split mode](/glossary#split-mode) backlog. A unit ends at the first commit where every pull request opened so far has closed, so interleaved pull requests merge into one wider unit; release boundaries fall only between units.",
+    "authority": [
+      {
+        "text": "release SPEC §7.1 Agent input",
+        "link": "/specs/release/SPEC#_7-1-agent-input"
+      }
+    ],
+    "owner": "sparkles:release",
+    "seeAlso": ["split-mode"]
   }
 ]
