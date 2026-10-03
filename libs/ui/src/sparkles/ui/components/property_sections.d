@@ -508,8 +508,12 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
     // The controls keep their width; the label and description wrap instead.
     foreach (p; parts[1 .. $])
         b.nodes[p].width = SizeSpec(SizeSpec.Kind.fit, 0, naturalCells(b, p));
+    // A described row keeps a blank row under its text: a description that
+    // wraps to fill the 48 dp target otherwise runs straight into the next
+    // row's label (the tablet's "Long press", `PRT37`).
     const main = b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
         width: SizeSpec.grow(), height: atLeast(rows), alignY: Alignment.center,
+        padding: n.doc.length ? Insets(0, 0, 1, 0) : Insets.init,
         hitId: hit(SectionPart.row)));
     uint[] stack_ = [main];
 
@@ -824,4 +828,33 @@ version (UiPropertyFixtures)
         }
     assert(painted == 4, "fg and the three palette entries");
     assert(count == "4", "four values in the level");
+}
+
+version (UiPropertyFixtures)
+@("ui.property_sections.sectionRow.aDescriptionKeepsAGapBelow")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+
+    // However "Switch with the system." wraps, the described row ends in a blank
+    // row, so the next row's label never sits right under its last line.
+    PsFixture f;
+    f.rebuild();
+    const node = nodeOf(f.tree.data, "look.follow");
+    foreach (width; 16 .. 61)
+    {
+        Builder b;
+        const item = SectionItem(SectionItem.Kind.leaf, node, "Follow system");
+        const st = RowState.init;
+        const root = sectionRow(b, f.tree.data, item, st,
+            SectionsOptions(targetRows: 3, width: width), 1);
+        auto tree = b.finish(root);
+        auto frames = layout(tree, Constraints(maxW: width));
+        const bottom = frames[tree.root].rect.y + frames[tree.root].rect.height;
+        foreach (i, ref w; tree.nodes)
+            if (w.text.length || w.spans.length)
+                assert(frames[i].rect.y + frames[i].rect.height <= bottom - 1,
+                    "text on the row's last row");
+    }
 }
