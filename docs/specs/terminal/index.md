@@ -55,7 +55,7 @@ there so both applications use one copy. One configuration value configures
 every platform: the app's own file is read above Termux's files, so an
 existing Termux setup keeps working and the app's file wins where both set
 a value. On the desktop the application claims only a few Ctrl+Shift chords
-and a _leader_, a chord that opens a guide listing every other command,
+and a [_leader_](../../glossary.md#leader), a chord that opens a guide listing every other command,
 which a phone user taps instead. Each surface's behaviour is specified in
 prose; its layout is chosen from HTML mockups ([design](./design.md)).
 
@@ -83,6 +83,17 @@ prefixes. [Design](./design.md) registers the mockups and the design-system
 rules every surface meets, [Decisions](./decisions.md) records the choices
 behind the tree, [Testing](./testing.md) holds the oracles and the evidence
 ledger, and the [delivery plan](./PLAN.md) holds milestones and gates.
+
+## Terminology
+
+The terms this specification coins, or uses in a narrower sense than usual,
+are defined once in the [glossary](../../glossary.md) and listed here:
+
+<GlossaryList owner="sparkles:terminal" />
+
+It also relies on the [key guide](../../glossary.md#key-guide) of
+`sparkles:ui` and the [sparse overlay](../../glossary.md#sparse-overlay) of
+hue's configuration.
 
 ## Scope
 
