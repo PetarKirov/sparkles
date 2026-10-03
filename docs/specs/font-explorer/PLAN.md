@@ -10,21 +10,23 @@ _Delivery order for [`SPEC.md`](./SPEC.md). The font library's milestones are
 in [`../font/PLAN.md`](../font/PLAN.md); each app milestone names the library
 milestones it waits for._
 
-| Milestone                                                 | Waits for (library)   | State       |
-| --------------------------------------------------------- | --------------------- | ----------- |
-| [Stage 0](#stage-0)                                       | —                     | in progress |
-| [A1 `inspect` subcommand](#a1-inspect)                    | M1, M2                | not started |
-| [A2 Explorer shell](#a2-explorer-shell)                   | M4, M5, layout chosen | not started |
-| [A3 Specimens and inspector](#a3-specimens-and-inspector) | M3–M6                 | not started |
-| [A4 Programming-font checks](#a4-programming-font-checks) | M4, M5                | not started |
-| [A5 Library pane](#a5-library-pane)                       | M7                    | not started |
-| [A6 Live terminal](#a6-live-terminal)                     | M8                    | not started |
+| Milestone                                                 | Waits for (library) | State       |
+| --------------------------------------------------------- | ------------------- | ----------- |
+| [Stage 0](#stage-0)                                       | —                   | in progress |
+| [A1 `inspect` subcommand](#a1-inspect)                    | M1, M2              | not started |
+| [A2 Explorer shell](#a2-explorer-shell)                   | M4, M5              | not started |
+| [A3 Specimens and inspector](#a3-specimens-and-inspector) | M3–M6               | not started |
+| [A4 Programming-font checks](#a4-programming-font-checks) | M4, M5              | not started |
+| [A5 Library pane](#a5-library-pane)                       | M7                  | not started |
+| [A6 Live terminal](#a6-live-terminal)                     | M8                  | not started |
 
 ## Stage 0
 
-This specification accepted; mockups for every surface in
-[`design.md`](./design.md) produced and one variant chosen per surface. Layout
-work does not start before the choice; non-visual work may.
+This specification accepted, and one mockup variant chosen per surface in
+[`design.md`](./design.md).
+
+**Progress.** Variants were chosen on 2026-10-03 and the chosen explorer was
+redrawn at each width class. Acceptance of the specification is open.
 
 ## A1 `inspect`
 
@@ -39,7 +41,8 @@ for a non-font, a truncated font and a usage error; the JSON round-trips through
 
 ## A2 Explorer shell
 
-**Obligations.** `FXP1`–`FXP3`, `FXP5`, `FXP6`, `FXP14`, `FXP25` (info view).
+**Obligations.** `FXP1`–`FXP3`, `FXP5`, `FXP6`, `FXP14`, `FXP25` (info view),
+`FXP32`, `FXP33`.
 
 **Deliverable.** The chosen layout on both arms with a preview specimen and the
 info view; the image-op path end to end.
@@ -49,15 +52,15 @@ the terminal arm; `FXP1`'s grep check; the `FXP3` frame-with-no-change check.
 
 ## A3 Specimens and inspector
 
-**Obligations.** `FXP15`–`FXP19`, `FXP25`, `FXP26`, `FXP27`.
+**Obligations.** `FXP15`–`FXP19`, `FXP25`–`FXP27`, `FXP30`.
 
 ## A4 Programming-font checks
 
-**Obligations.** `FXP17` (code), `FXP20`–`FXP23`.
+**Obligations.** `FXP17` (code), `FXP20`–`FXP23`, `FXP31`.
 
 ## A5 Library pane
 
-**Obligations.** `FXP10`–`FXP13`, `FXP12`'s facets.
+**Obligations.** `FXP10`–`FXP13`, `FXP28`, `FXP29`.
 
 ## A6 Live terminal
 
