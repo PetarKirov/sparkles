@@ -10,6 +10,10 @@ that work: the [feature spec](#deliverable-1) (the [`index.md`](./index.md) this
 sits beside) and the [render-cost benchmark](#deliverable-2) that picks the core.
 Building `libs/tui/src/` is a **follow-up plan**, not part of this one.
 
+Library build-out, tracked outside this plan: the render core, terminal
+backend, input decoder, event loop and kitty/sixel images are landed in
+`libs/tui/src/sparkles/tui/`; layout and widgets are built in `sparkles:ui`.
+
 ## Milestone overview
 
 | #      | Deliverable                                                                                                         | Depends on | Status      |

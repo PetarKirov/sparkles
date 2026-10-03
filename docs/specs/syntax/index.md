@@ -1,11 +1,83 @@
-# `sparkles:syntax` — Design Proposal
+---
+status: accepted
+owner: sparkles:syntax
+---
 
-_Audience: contributors and coding agents evaluating whether/how to build the Sparkles
-syntax-highlighting library. This document is a **proposal**, not a normative spec — it
-states what to build and why, grounded in the
-[syntax-highlighting cluster](../../research/parsing/syntax-highlighting.md) of the
-[parsing survey][survey]. For the milestoned delivery plan see [PLAN.md](./PLAN.md); for
-the cross-ecosystem evidence base see the cluster's thirteen deep-dives._
+# `sparkles:syntax` — Specification
+
+## Abstract
+
+`sparkles:syntax` highlights source code for terminals, web pages, and GPU text
+renderers through one pipeline. A parsing engine reduces a buffer to a stream
+of events that assign each span of text a role, such as keyword or string. A
+theme maps roles to styles once, and interchangeable backends fold the stream
+into ANSI escape sequences, HTML, or runs of text with their resolved styles.
+Engines and backends meet only at the stream, so one theme styles every output
+alike. Highlighting is total. A query pattern the engine cannot evaluate is
+disabled alone; a missing grammar or an exhausted size or time limit leaves
+the whole buffer uncolored; and a backend given a stream renders all of it.
+
+## Introduction
+
+Sparkles shows code in many places: the hue viewer in a terminal and in a GPU
+window, the documentation site's static HTML, test reports, and diffs. Each
+place wants the same code colored the same way under one theme, but in a
+different medium. A terminal needs escape sequences, a web page needs markup,
+and a GPU text engine needs resolved style data with neither.
+
+No existing highlighter covers that matrix. bat prints ANSI but has no HTML
+and no syntax-tree mode; Shiki produces HTML but no ANSI; the tree-sitter
+highlighter has a precise engine but no product layer around it; editors keep
+their highlighters to themselves. Two engine families compete as well. The
+_fast_ family tokenizes line by line with TextMate-style regular-expression
+grammars; the _precise_ family parses the whole buffer with
+[tree-sitter](https://tree-sitter.github.io/) and queries the syntax tree with
+pattern files. Their grammars name roles in overlapping but different
+dialects, and a highlighter, unlike a parser, may never reject its input.
+
+The library is engine-agnostic in the middle and pluggable at both ends. Every
+engine emits one [highlight event stream](../../glossary.md#highlight-event-stream):
+an ordered, balanced sequence of "enter role", "leave role", and "text range"
+events over byte offsets. Roles are
+[highlight labels](../../glossary.md#highlight-label), hierarchical dotted
+names such as `keyword.control`. A theme resolves against the label
+vocabulary once, by longest dotted prefix, so a label without a rule of its
+own inherits its parent's style and every later lookup is an index.
+
+Renderers are folds over the stream, and each output line they write is valid
+on its own, with every open style closed at the line's end and reopened on the
+next. The first engine is the precise one. It ports the semantics of
+tree-sitter's reference highlighter, including _injections_: languages
+embedded in another, such as code fences in markdown. Guards bound the size,
+parse time, and query work of every run. Under the
+[totality law](../../glossary.md#totality-law), an engine that fails reports
+an error instead of a stream, and the caller shows the source uncolored rather
+than half-colored.
+
+This page covers the event stream, the label vocabulary, themes and colors,
+the ANSI and HTML backends, the styled-run data a GPU backend consumes, the
+tree-sitter engine with its guards, and how grammars are supplied: pinned
+through Nix, never vendored. The C binding itself is `sparkles:tree-sitter`,
+and how hue or the documentation site lays highlighted code out is theirs to
+specify. The package also hosts a structural markdown model that walks the
+syntax tree directly instead of reading the event stream; this page does not
+specify it. Out of scope, each for a reason given in §4, are a fast engine
+(designed as a second engine behind the same stream), combined injections
+whose separate fragments parse together as one document, scope-aware
+local-variable coloring, incremental editor-style re-highlighting, language
+detection beyond file extensions and fence labels, semantic tokens from a
+language server, and terminal-capability detection beyond classifying color
+depth.
+
+§1 states why the library exists, §2 the design decisions, §3 the in-tree code
+it reuses, §4 the non-goals, and §5 maps each decision to its prior art.
+Delivery order lives in [PLAN.md](./PLAN.md).
+[Label-vocabulary dialects](./label-vocabulary-dialects.md) records how
+capture names from different grammar dialects reconcile with the vocabulary,
+and the [next-milestones handoff](./next-milestones-handoff.md) guides the
+deferred engine and renderer work. The evidence base is the
+[syntax-highlighting cluster](../../research/parsing/syntax-highlighting.md)
+of the [parsing survey][survey].
 
 ## 1. Why
 

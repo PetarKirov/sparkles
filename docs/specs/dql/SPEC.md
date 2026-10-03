@@ -1,16 +1,79 @@
+---
+status: accepted
+owner: sparkles:dql
+---
+
 # `sparkles:dql` — D Query Language — Specification
 
-_Audience: developers and coding agents building against or integrating with `sparkles:dql`.
-This document is the normative specification for the D Query Language library: its grammar,
-operator semantics, zero-allocation execution model, fuzzy integration, and schema introspection._
+## Abstract
+
+`sparkles:dql` lets a user filter and inspect typed D values with a short
+query written in D's own expression syntax, such as "key events released
+without the Alt modifier". A query names fields by readable dotted paths,
+compares them with literals, and matches text with regular expressions,
+globs, or fuzzy search. The library derives the set of valid paths from the
+queried type itself, so it can reject a mistyped path when the query is
+parsed and print the paths a type offers as help. Parsing keeps a query's
+strings and compiled matchers in one reusable engine, and evaluation reads
+each value in place without copying it.
+
+## Introduction
+
+Tools in Sparkles routinely face a stream of structured values that a person
+wants to narrow down: window-system events in an input echo, rows of a
+delimited data file, widget properties that should appear only under some
+condition. Each of these needs a small filter language, typed by the user on
+a command line or in a settings field, and evaluated against ordinary D
+structs, tagged unions such as `SumType`, and arrays.
+
+Ad hoc filter flags do not scale. Each tool invents its own operator
+spelling, accepts typos silently and so matches nothing, cannot tell a user
+which fields exist, and duplicates code that walks its value types. A query
+over typed values also has to settle questions that string matching never
+meets: how to address a field that lives inside one alternative of a tagged
+union, what a comparison means when that alternative is not the active one,
+and when a pointer, empty string, or empty optional counts as null.
+
+This library answers them with one query language whose paths come from the
+type. At compile time it walks the queried type through the shared
+[reflection kernel](../../libs/reflection/index.md) and builds a
+[DQL schema](../../glossary.md#dql-schema): the table of every
+[DQL path](../../glossary.md#dql-path) the type offers, with its type and
+documentation. A query is parsed at run time and, when the queried type is
+known, checked against that table. The fields of a tagged union's
+alternatives join the path of the field that holds the union, so a key
+event's action is simply `key.action`.
+The same naming rules drive both the schema and the run-time walk that
+reads a value, so a path the parser accepts always resolves. Expressions
+use D's operators, so a D programmer can read a query without learning a
+new syntax.
+
+Evaluation separates a typo from a missing value. When a value cannot answer
+a valid path, because another alternative is active or a pointer along the
+path is null, the path is absent. An absent path compares equal to `null`
+and fails every other comparison or match, `!=` included, so evaluation
+answers every query with a plain yes or no and never raises an error.
+
+DQL only selects: it does not project, sort, aggregate, or modify the values
+it inspects, and it supports a subset of D's syntax with no arithmetic. It
+filters values already in memory and does not index, store, or fetch them.
+Queried types need no dependency on DQL; they may carry the attributes of
+`sparkles:metadata` to rename or document a path. Where a query is typed,
+where help is printed, and how matches are displayed belong to the host
+tool. Typo-tolerant ranking itself is the job of
+[`sparkles:fuzzy`](../fuzzy/SPEC.md); DQL uses it only to decide whether a
+text field matches.
+
+§1 states the design principles and §2 the path grammar, operators, and
+null semantics. §3 describes the two ways a parsed query is evaluated, and
+§4 the help protocol: how a tool exposing DQL answers a `?` query with the
+paths it accepts. §5 lists the packages that consume DQL and what each uses
+it for, among them the [property tree](../ui/property-tree.md), the
+`sparkles:ui` view that presents one D value as a filterable tree of rows.
 
 ---
 
 ## 1. Overview and Design Principles
-
-`sparkles:dql` provides a unified, allocation-conscious query engine for navigating, inspecting,
-and filtering typed D aggregates (`struct`, `class`, `SumType`, `Tuple`, arrays, and associative arrays)
-using idiomatic D expression syntax.
 
 ```mermaid
 graph TD
