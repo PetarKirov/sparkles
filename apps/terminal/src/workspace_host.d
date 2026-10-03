@@ -139,6 +139,10 @@ struct WorkspaceHost
     LinkAction linkLongPress = LinkAction.off;
     /// ditto
     string[] linkSchemes;
+    /// The focused pane's accent corner, in pixels: its arms and their
+    /// thickness. A dense screen sets them from dp (16 and 3); 0 keeps the
+    /// cell-sized default (`TSS11`, `ACC4`).
+    int cornerPx, cornerThickPx;
     /// Every pane's notifications, in one log (`TPG9`), and the config's
     /// `notifications` section its page groups by (`TPG18`).
     NotificationLog notifications;
@@ -1040,7 +1044,8 @@ struct WorkspaceHost
             foreach (ref b; boxes)
                 if (b.focused)
                 {
-                    const len = cellH > 6 ? cellH : 6, w = 3;
+                    const len = cornerPx > cellH ? cornerPx : cellH > 6 ? cellH : 6;
+                    const w = cornerThickPx > 3 ? cornerThickPx : 3;
                     DrawRectangle(b.outer.x, b.outer.y, len, w, rgb(accent));
                     DrawRectangle(b.outer.x, b.outer.y, w, len, rgb(accent));
                 }

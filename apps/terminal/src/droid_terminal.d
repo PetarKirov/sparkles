@@ -141,6 +141,8 @@ struct DroidTerminal
 
             // Buttons are touch targets: 48 dp, in whole rows (`TOK7`).
             host.theme.targetRows = (dpToPx(48) + cellH - 1) / cellH;
+            host.cornerPx = dpToPx(16);
+            host.cornerThickPx = dpToPx(3);
         }
         if (defaultFontPx == 0)
             defaultFontPx = h.fontSizePx;
