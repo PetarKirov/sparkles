@@ -165,7 +165,7 @@ reaches the ring or the file — while raylib's chatter and the build info do
 @system unittest
 {
     import core.thread : Thread;
-    import core.time : msecs;
+    import core.time : MonoTime, msecs, seconds;
     import std.algorithm.searching : canFind;
     import std.conv : text;
     import std.file : exists, readText, rmdirRecurse, tempDir;
@@ -220,7 +220,8 @@ reaches the ring or the file — while raylib's chatter and the build info do
     foreach (char c; typed)
         tv.sendKey(KeyEvent(key: Key.char_, ch: c));
     tv.sendPaste(pasted);
-    foreach (_; 0 .. 200)
+    // `cat` echoes within milliseconds when idle; a loaded machine can take seconds.
+    for (const deadline = MonoTime.currTime + 10.seconds; MonoTime.currTime < deadline;)
     {
         tv.pump();
         const screen = tv.screenText();

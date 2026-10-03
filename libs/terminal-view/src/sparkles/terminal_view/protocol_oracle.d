@@ -268,6 +268,8 @@ private KeyEvent key(Key k, Mods m = Mods(), dchar unshifted = 0, string text = 
     import core.sys.posix.unistd : gethostname;
     import std.file : mkdirRecurse, rmdirRecurse, tempDir;
     import std.path : buildPath;
+    import std.conv : text;
+    import std.process : thisProcessID;
     import std.string : fromStringz;
 
     string[] seen;
@@ -279,7 +281,7 @@ private KeyEvent key(Key k, Mods m = Mods(), dchar unshifted = 0, string text = 
     char[256] hostBuf = 0;
     gethostname(hostBuf.ptr, hostBuf.length - 1);
     const host = fromStringz(hostBuf.ptr).idup;
-    const dir = buildPath(tempDir, "tpr4 dir");
+    const dir = buildPath(tempDir, text("tpr4-", thisProcessID, " dir"));
     mkdirRecurse(dir);
     scope (exit) rmdirRecurse(dir);
 
