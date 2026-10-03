@@ -99,6 +99,8 @@ narrowing. AVX-512BW/VBMI2 also accelerates non-ASCII emission with register
 compaction and exact masked stores; homogeneous two-byte and three-byte
 blocks avoid the general surrogate/compaction work where possible.
 Entirely ASCII blocks return to widening/narrowing rather than compaction.
+Compaction helpers pass vector inputs by reference, keeping their pointer/scalar
+call boundary stable between baseline and feature-targeted code on Windows.
 The complete preflight still precedes any destination write:
 malformed input, embedded NUL in a `z` conversion, and insufficient capacity
 leave the destination unchanged. Counts exclude the optional terminator.

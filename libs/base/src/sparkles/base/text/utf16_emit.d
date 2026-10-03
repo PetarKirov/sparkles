@@ -218,14 +218,18 @@ version (textSimdX86)
         return EmittedPrefix(consumed: si, written: di);
     }
 
-    // A trusted call-site lambda does not inherit its parent's target UDA.
-    // Keep ISA-specific intrinsics in targeted functions even without inlining.
+    // Baseline trusted lambdas do not inherit their parent's ISA target.
+    // Pass vectors by reference: vectorcall lowers by-value wide arguments
+    // differently with and without AVX-512 on Windows. Pointer/scalar
+    // arguments keep this boundary stable even without inlining.
     @target("avx512f,avx512bw,avx512vl,avx512vbmi2,evex512")
-    private void compressWords(W32 value, W32 keep, uint count, ushort* destination)
+    private void compressWords(ref const W32 value, ref const W32 keep,
+        uint count, ushort* destination)
         @system pure nothrow @nogc => compressWordsImpl(value, keep, count, destination);
 
     @target("avx512f,avx512bw,avx512vl,avx512vbmi2,evex512")
-    private void compressBytes(B64 value, B64 keep, uint count, ubyte* destination)
+    private void compressBytes(ref const B64 value, ref const B64 keep,
+        uint count, ubyte* destination)
         @system pure nothrow @nogc => compressBytesImpl(value, keep, count, destination);
 
     private alias widenBytes = __ir_pure!(
