@@ -1,24 +1,77 @@
+---
+status: accepted
+owner: sparkles:ui-gallery
+---
+
 # `apps/ui-gallery` — the toolkit's catalog
 
-**Status:** implemented (M0–M7) · **Requirement ids:** `UGL*`
+## Abstract
 
-> [!NOTE]
-> Not to be confused with [hue's gallery](../hue/gallery.md) (`GAL*`/`GNV*`),
-> which browses a set of **source files**. This one browses the **toolkit**.
+`sparkles:ui-gallery` is the browsable catalog of the Sparkles user-interface
+toolkit: one interactive application with a page for every widget kind, layout
+rule, visual role, theme, component and interaction behavior the toolkit
+offers. The same pages run unchanged in a terminal and in a desktop window, so
+the catalog doubles as a side-by-side check that both targets draw the toolkit
+alike. Its tests sweep every page at several surface sizes and fail when the
+toolkit gains a vocabulary item the catalog does not display, which keeps the
+catalog complete as the toolkit grows.
 
-## Why
+## Introduction
 
-`sparkles:ui` had no showcase. Ten widget kinds, a layout engine, thirty-five
-semantic slots, thirty-six themes, a component set and fifteen interaction
-machines, and the only way to see any of it was to read a unit test. There was
-also no artifact that demonstrated the backend-neutrality claim by _running the
-same code_ in a terminal and in a window — `apps/hue` exercises a narrow slice
-and, at the time this was written, still carried its own private frame loops.
+The [`sparkles:ui`](../ui/index.md) toolkit lets an application describe its
+interface once and paint it in a terminal or a window. It offers widget kinds,
+a layout engine, named visual roles called [slots](../../glossary.md#slot),
+dozens of built-in themes, reusable components, and interaction machines. An
+interaction machine is a small immutable state value that one input step
+advances, such as a press that activates only on release over the same target.
+Without a catalog, the only way to see any of this is to read a unit test, and
+a newcomer choosing between two widgets has no picture to compare.
 
-`apps/ui-gallery` answers both. It is a Flutter-Gallery-shaped catalog written
-as a `sparkles:ui-app` **component**, so it is simultaneously the toolkit's
-documentation, its cross-backend parity check, and the host contract's first
-real consumer.
+The toolkit's central promise, that one description serves every target, is
+also the hardest to see. Backend-neutral tests check the data the toolkit
+produces, meaning the layout and the list of drawing operations, but not the
+picture each backend paints from it. Two border styles drawn identically, an
+edge drawn across its box, or a glyph measured at different widths on two
+targets passes every such test, yet is obvious on screen. Larger applications,
+such as the hue code viewer, exercise only the slice of the toolkit they use, so
+most of it has no running consumer at all.
+
+The gallery is an ordinary application written against the
+[application host](../../glossary.md#application-host). It is a _component_: a
+value that presents its state and handles events, with no knowledge of which
+backend runs it. Each page is a pure view over one state value, and the catalog
+is a flat table of pages rather than code that names them, so a test can visit
+every page without knowing what it shows. Each page also asserts completeness
+against the enumerations that define the toolkit vocabulary it catalogs, so an
+addition to the toolkit that the gallery does not show fails a test instead of
+going unseen. The same pages run under the host's
+[recording target](../../glossary.md#recording-target) in unit tests, render a
+single frame to text with no terminal or display, and are walked live in both
+backends. The automated sweep is backend-neutral, so the comparison between
+backends is that live walk, and a divergence it finds becomes an open issue.
+
+This specification covers the gallery's shell: navigation, keyboard and pointer
+routing, the panes that tile its body, and the inspector panel. It also covers
+the page contract, the coverage the tests assert, and the Terminal page, whose
+live shell sessions are spawned only by the running application, never by a
+test. How widgets, layout and themes behave belongs to
+`sparkles:ui`, and the frame loop and backend selection to `sparkles:ui-app`.
+When a page exposes a gap in either, the gallery records it as an open issue
+against the owner rather than working around it in the page. Terminal emulation
+belongs to `sparkles:terminal-view`, which the Terminal page only embeds. This
+catalog is also distinct from [hue's gallery](../hue/gallery.md), which browses
+a set of source files rather than the toolkit.
+
+[Requirements](#requirements) lists the gallery's obligations under `UGL` ids.
+[Shape](#shape) describes the source layout and how a page plugs into the
+shell. [Coverage the catalog asserts](#coverage-the-catalog-asserts) explains
+the test sweep, and [What the catalog has already
+caught](#what-the-catalog-has-already-caught) lists the toolkit defects it
+exposed. [Verification](#verification) gives the commands and the walk through
+both backends that precedes a change. [Open issues](./open-issues.md) tracks
+the toolkit and host gaps the gallery found, under `UGL-O` ids, and the
+[user guide](../../apps/ui-gallery/index.md) describes running the gallery and
+its pages.
 
 ## Requirements
 

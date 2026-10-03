@@ -1,24 +1,83 @@
+---
+status: accepted
+owner: sparkles:docs
+reviewed: 2026-08-21
+---
+
 # `sparkles:docs` — Feature Specification
 
-_**Status:** living inventory · **Date:** 2026-08-21 · **Scope:** `libs/docs`
-(`sparkles:docs`) — the markdown-based SSG-style documentation-site library —
-plus the hue subcommands that drive it (`hue gallery` today; `hue site` and the
-API doc generator to come)._
+## Abstract
 
-`sparkles:docs` is the repository's static documentation-site library: the
-content-fragment builders, the VitePress-lookalike page shell (theme-derived
-chrome, appearance toggle, breadcrumbs), the mirrored site tree with
-per-directory indexes, the shared stylesheet assets, the document set, and the
-docs-site sidebar data schema. It was extracted from hue's gallery — the code
-shipped first, inside `apps/hue`, and moved to `libs/docs` byte-identically once
-the roadmap made it a library three consumers want (`hue gallery`, the planned
-`hue site`, and the API doc generator).
+`sparkles:docs` is the D library that builds the static pages of the Sparkles
+documentation site that a Markdown site generator cannot: highlighted source
+listings, optionally annotated with compiler-verified types, and the API
+reference of D packages. Each page sits in a shell that matches the rest of
+the site, with its navigation, sidebar, breadcrumbs, and light and dark
+appearance, and each directory gets an index page. The library decides which
+repository files deserve a page by following the links the documentation's
+Markdown actually makes, and it defines the data formats of the site's sidebar
+and glossary. Its output is plain static files that the site serves as they
+are.
 
-This spec is the requirement of record for the library and for the two efforts
-that build on it. ID families, one per page: `DOC*` (the SSG surface), `DSC*`
-(site discovery), `APD*` (the API doc generator), `FLW*` (flow-mode
-`sparkles:ui` components). Status legend and traceability scheme: see the
-[hue overview](../hue/index.md).
+## Introduction
+
+The Sparkles documentation is mostly prose, written in Markdown and built into
+a website by [VitePress](https://vitepress.dev/). Much of that prose points at
+code: source files in the repository, samples whose types the D compiler
+explains, and the public API of each D package. A JavaScript site generator is
+the wrong place to highlight D, to ask the D compiler about a sample, or to
+render hundreds of source files on every build. Those pages are better produced
+by D programs that already have the highlighter and the compiler front end, and
+written out as static HTML that the site only has to serve. Several programs
+need the ability: the `gallery` and `site` commands of the hue code viewer
+render pages, the repository's `ci` tool validates the site's data files, and
+the API reference generator specified here renders symbol pages.
+
+Pages built outside the site's own build must still read as one site. They need
+the same chrome, theme and sidebar, and every link between the two halves must
+resolve. When two builds each decide which files get pages, which routes exist,
+or what the sidebar holds, any rule that lives in both copies eventually
+drifts. Rendering adds a second tension. The `sparkles:ui` toolkit lays out in
+whole [cells](../../glossary.md#cell), so its HTML output looks like a
+terminal, while documentation needs proportional prose that the browser wraps.
+
+The library is therefore the single D-side owner of everything a generated page
+shares with the site. Small, pure builders render each document into a page
+shell modeled on the site's theme, and a mirrored tree turns repository paths
+into routes with an index page per directory. The site's data files have their
+schemas here, so the site build, the generators and `ci` read one definition.
+Which files get pages is decided once, by
+[link-driven discovery](../../glossary.md#link-driven-discovery). The library
+records that decision in a manifest listing every page and every file skipped
+on purpose, and the site build reads the manifest instead of deciding again.
+Prose always renders through a semantic Markdown-to-HTML emitter that leaves
+text measurement to the browser. Page chrome, the navigation, sidebar and
+breadcrumbs around the prose, is built as plain HTML until a
+[flow mode](../../glossary.md#flow-mode) of `sparkles:ui` lets a widget subtree
+emit no cell geometry; through that mode the chrome becomes toolkit widgets one
+component at a time.
+
+This specification covers the library with its page builders and data
+schemas, the discovery and manifest that hue's `site` command drives, the API
+reference generator built on [`sparkles:dmd-lsp`](../dmd-lsp/index.md), and the
+conditions under which doc components migrate onto `sparkles:ui`. The VitePress site itself, with its
+configuration, theme and Markdown pages, is out of scope: the library matches
+its look and feeds it data but does not replace it. The flow-mode emitter's own
+requirements belong to the toolkit's [backends page](../ui/backends.md), and
+hue's interactive gallery navigation stays in [hue's gallery
+spec](../hue/gallery.md). Highlighting belongs to `sparkles:syntax`, type
+overlays to `sparkles:twoslash`, D semantic analysis to `sparkles:dmd-lsp`,
+and gitignore-aware directory walking to `sparkles:build-primitives`.
+
+[Design & rationale](#design-rationale) records the three findings the design
+rests on, including why many requirements here take over hue's `GAL*` and
+`HTM*` rows by citing them rather than renumbering them, so those IDs stay
+valid wherever they appear. Each sibling page holds one requirement family:
+[the static-site surface](./site.md) (`DOC*`), [site discovery](./discovery.md)
+(`DSC*`), [the API doc generator](./apidoc.md) (`APD*`) and
+[flow-mode components](./components.md) (`FLW*`). The status legend and
+traceability scheme are those of the [hue overview](../hue/index.md), and
+[Milestones](#milestones) tracks delivery.
 
 ## Design & rationale
 

@@ -1,34 +1,96 @@
+---
+status: accepted
+owner: sparkles:ui-app
+reviewed: 2026-08-07
+---
+
 # `sparkles:ui-app` — Overview
 
-_**Status:** phase 1 shipped, phase 2 (app migration) in progress · **Date:**
-2026-08-07 · **Scope:** the `libs/ui-app` package: the **application host** that
-owns backend selection, the shared window/font CLI, and the frame/event loop, so
-an application never names a canvas._
+## Abstract
 
-`sparkles:ui` is backend-free by construction ([`PKG1`](../ui/feature-requirements.md),
-[`TGT6`](../ui/backends.md)), and the concrete canvases live in sibling packages.
-Nothing owns the layer **above** them: opening the right backend, resolving fonts,
-sizing a window, draining input, and driving a frame. Today `apps/hue` and
-`apps/terminal` each implement that layer privately, in mutually incompatible ways.
+`sparkles:ui-app` is the application host for the Sparkles user-interface
+toolkit: the layer that turns an interface description into a running
+interactive program. It decides whether the program runs in a terminal or a
+desktop window, gives every application the same window and font
+command-line options, and runs the loop that reads input and draws frames.
+An application written against the host never names a backend, so one
+program serves both targets. The same loop also runs headless over scripted
+input, so an application's behavior is testable without a window or a
+terminal.
 
-`sparkles:ui-app` is that layer, as one more sibling package — not a change to the
-toolkit.
+## Introduction
 
-## Why
+The [`sparkles:ui`](../ui/index.md) toolkit describes an interface as data and
+paints it through small backends. A backend is the code that serves one
+target, such as a terminal or a GPU window, and by design the toolkit knows
+nothing about which one is running. An interactive program still needs
+someone to make that choice and act on it. Someone must pick the target for
+this process, open a window and load its fonts, and read the user's window and
+font options. Someone must drain input, decide when a frame is drawn, and
+perform platform errands such as setting the pointer shape, the clipboard and
+the window title. Every Sparkles application with an interface needs this
+layer, from the hue code viewer to the terminal emulator and the diagram
+board.
 
-Three concrete duplications, each currently a source of drift:
+Written privately inside each application, the layer drifts. Two programs
+that each declare font and window flags end up with different spellings,
+defaults and resolution orders for the same job. A platform rule such as "on
+Android the window is the whole application, so there is no terminal to
+choose" lives in one program's comments, where the next program never sees
+it. Each hand-written frame loop settles resize, quit and repaint its own
+way. Worst, a loop that opens a real window or terminal cannot run in a unit
+test, so the application logic written inside it is checked only by hand.
+Yet folding input, routing the pointer and deciding whether to draw are pure
+or nearly pure.
 
-| Today                                                                                           | Consequence                                                                                           |
-| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| hue and terminal each declare `--font`, `--font-size`, `--window-width/height`, `--font-dir`, … | different spellings, different defaults (13 pt vs 14 pt), different resolution order for the same job |
-| hue owns the backend decision (`--gui`/`--no-gui`, `$DISPLAY`, tty, Android); terminal has none | the Android "the surface **is** the app" rule lives in one app's private comment                      |
-| Each app hand-writes a frame loop against `Window`/`RaylibEvents` or `TerminalSession`          | two loops with divergent resize, quit, pointer-shape and repaint policy; neither is unit-testable     |
+The host owns that layer once, as a sibling package of the toolkit rather
+than a layer inside it, so the toolkit gains no dependency. An application
+supplies a function that presents its state and one that handles each event;
+the host does everything else. Choosing the backend is a pure decision over
+an injected policy of command-line flags, terminal presence and display
+presence, and reading the environment is a separate function, so every
+combination is testable. The host, never the application, is specialized
+per backend at compile time instead of being dispatched through an
+interface, so the frame path has no indirection and inherits each backend's
+guarantees. Besides the terminal and the window, the host offers a third
+target: the [recording target](../../glossary.md#recording-target) takes a
+scripted list of events and records the frames, draw operations and platform
+calls they cause, so a whole session is assertable in an ordinary unit test.
+On every target, an application hands over as much of drawing as it wants,
+at one of three [render levels](../../glossary.md#render-level). It gives
+the host a widget tree to lay out and paint, appends to a
+[display list](../../glossary.md#display-list), or takes the concrete drawing
+surface for a renderer of its own.
 
-The last row is the expensive one. `apps/hue/src/gui.d` (2536 lines),
-`apps/hue/src/app.d` (934) and `apps/terminal/src/app.d` (1340) are all excluded
-from their unittest builds, so **4810 lines** of application behavior is verified
-only by manual passes and the screenshot oracle — not because the logic is
-untestable, but because it sits next to a window.
+This specification covers backend selection, the shared window and font
+options with the order in which a window is set up, the host's frame loop
+and contract, the package's build configurations, and the testability
+obligations the host places on the applications that use it. Widget
+composition, layout and theming belong to the toolkit, and drawing
+primitives, glyph atlases and cell grids to its backend packages. The event
+vocabulary belongs to `sparkles:input`, and argument parsing to
+`sparkles:core-cli`, to which the host contributes options but no parser.
+Waiting, timers and background work belong to
+[`sparkles:event-horizon`](../event-horizon/SPEC.md); the host's live loops
+run on it, while the host keeps the frame policy. Native windowing belongs to
+[`sparkles:wsi`](../window-system-integration/SPEC.md), and what to render is
+always the application's decision. The backend vocabulary also names
+non-interactive HTML and ANSI output, which the host reports rather than
+runs; [`UIAPP-O3`](./open-issues.md#uiapp-o3) tracks whether it should own
+those outputs too.
+
+This page lists what the host owns, its [render targets](#render-targets),
+the [three render levels](#the-three-render-levels) and the
+[package graph](#package-graph), and defines the [status](#status-scheme),
+[ID](#id-scheme) and [traceability](#traceability) schemes of every page in
+the tree. [Feature requirements](./feature-requirements.md) holds the
+requirements by area: architecture, backend selection, the options, the host
+contract and testability. [Terminal view](./terminal-view.md) specifies
+`sparkles:terminal-view`, the terminal emulator's core as a component any
+application can embed. [Open issues](./open-issues.md) records deferred
+decisions, and the [delivery plan](./PLAN.md) holds delivery order and
+progress. [Relationship to existing specs](#relationship-to-existing-specs)
+places the host among the specifications it depends on and serves.
 
 ## What it owns
 

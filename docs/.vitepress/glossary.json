@@ -421,5 +421,484 @@
     ],
     "owner": "sparkles:hue",
     "seeAlso": ["content-kind", "cell"]
+  },
+  {
+    "id": "stage-tree",
+    "term": "stage tree",
+    "summary": "The logical tree of files, directories and symbolic links that a package will contain, described independently of any host filesystem and validated before anything is written.",
+    "definition": "The format-neutral input to `sparkles:packaging`: an ordered tree of regular files, directories and symbolic links with logical `/`-separated paths and honest metadata. Every artifact format is produced from it, and its paths are validated before any host path is joined.",
+    "authority": [
+      {
+        "text": "sparkles:packaging specification §5",
+        "link": "/specs/application-packaging/SPEC#_5-the-stage-tree"
+      },
+      {
+        "text": "Application-packaging concepts: Stage",
+        "link": "/research/application-packaging/concepts#stage"
+      }
+    ],
+    "owner": "sparkles:packaging",
+    "seeAlso": ["artifact-receipt"]
+  },
+  {
+    "id": "artifact-receipt",
+    "term": "artifact receipt",
+    "aliases": ["receipt"],
+    "summary": "A canonical, versioned JSON record, written last by a packaging run, of the final bytes and digests of every artifact it produced and how each was made.",
+    "definition": "The machine-readable output of a successful `sparkles:packaging` run for one target: resolved identity, stage inventory, final artifact sizes and SHA-256 digests, encoder or tool versions, and signing status. It is evidence for later publishing tools, not an SBOM or a provenance attestation.",
+    "authority": [
+      {
+        "text": "sparkles:packaging specification §9",
+        "link": "/specs/application-packaging/SPEC#_9-receipt-and-supply-chain-boundary"
+      },
+      {
+        "text": "Application-packaging concepts: checksums, SBOM, provenance",
+        "link": "/research/application-packaging/concepts#checksums-sbom-provenance-and-reproducibility"
+      }
+    ],
+    "owner": "sparkles:packaging",
+    "seeAlso": ["stage-tree"]
+  },
+  {
+    "id": "command-graph",
+    "term": "command graph",
+    "summary": "The tree of commands and subcommands that a command-line parser derives at compile time from a root command type and the command types nested in or registered into it.",
+    "definition": "In `sparkles:core-cli`, the compile-time tree of a CLI's commands. A command's children are its nested `@(Command)` structs and the types it registers with `mixin addSubCommand`, in compiler member order, or the variants of an explicit `@Subcommands` field when it has one.",
+    "authority": [
+      {
+        "text": "core-cli args specification: The command graph",
+        "link": "/specs/core-cli/SPEC#the-command-graph"
+      },
+      {
+        "text": "core-cli args specification: Command child discovery",
+        "link": "/specs/core-cli/SPEC#command-child-discovery"
+      }
+    ],
+    "owner": "sparkles:core-cli",
+    "seeAlso": ["command-group"]
+  },
+  {
+    "id": "command-group",
+    "term": "command group",
+    "summary": "A command-line command that has subcommands of its own, such as worktree in git worktree list.",
+    "definition": "In `sparkles:core-cli`, a command with at least one child in the [command graph](/glossary#command-graph). Its parse-tree node holds the selected child's node, and selecting the group without naming a child is an incorrect call unless the group declares default handling.",
+    "authority": [
+      {
+        "text": "core-cli args specification: Default handlers for command groups",
+        "link": "/specs/core-cli/SPEC#default-handlers-for-command-groups"
+      }
+    ],
+    "owner": "sparkles:core-cli",
+    "seeAlso": ["command-graph"]
+  },
+  {
+    "id": "design-token",
+    "term": "design token",
+    "aliases": ["token", "tokens", "design tokens"],
+    "summary": "One named design decision with a value, such as a color, a length, a glyph choice or a font role, addressed by a dotted path like text.primary.",
+    "definition": "In the Sparkles design system every token sits on one of three tiers: a *primitive* holds a raw value, a *semantic* token names a role, and a *component* token names a part of one component; each tier aliases the one below, and the alias graph must be acyclic. A theme assigns values to tokens.",
+    "authority": [
+      {
+        "text": "Design system vocabulary",
+        "link": "/specs/design-system/SPEC#vocabulary"
+      },
+      {
+        "text": "Tiers and paths (TOK1, TOK2)",
+        "link": "/specs/design-system/SPEC#tiers-and-paths"
+      },
+      {
+        "text": "W3C Design Tokens Community Group",
+        "link": "https://www.designtokens.org/"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["slot", "interaction-state"]
+  },
+  {
+    "id": "interaction-state",
+    "term": "interaction state",
+    "aliases": ["interaction states"],
+    "summary": "A condition of a widget, such as hover, focused, selected, pressed or disabled, that can change how its visual roles are drawn.",
+    "definition": "Slot resolution in `sparkles:ui` takes the set of active interaction states as a second argument. A theme overrides a state sparsely; where no active state has an override the resting appearance is used, and among several active states the highest-precedence override wins.",
+    "authority": [
+      {
+        "text": "Interaction states (TOK4, TOK5)",
+        "link": "/specs/design-system/SPEC#interaction-states"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["slot", "design-token"]
+  },
+  {
+    "id": "projection",
+    "term": "projection",
+    "summary": "The defined rule by which a rendering target that cannot draw a design value exactly, such as a pixel corner radius on a character grid, renders it anyway.",
+    "definition": "In the Sparkles design system a metric finer than a [cell](/glossary#cell) is typed in device pixels and carries a projection onto cell targets; each target declares per metric whether it honours or projects it, so no value is silently dropped. Glyphs and borders are projected the same way.",
+    "authority": [
+      {
+        "text": "Units and metrics (TOK7)",
+        "link": "/specs/design-system/SPEC#units-and-metrics"
+      },
+      {
+        "text": "Glyphs and typography",
+        "link": "/specs/design-system/glyphs"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["cell", "design-token"]
+  },
+  {
+    "id": "dql-path",
+    "term": "DQL path",
+    "aliases": ["query path"],
+    "summary": "A dotted address, such as key.action, that names one field reachable from a queried D type in a DQL query.",
+    "definition": "A dotted address that names one field, getter or index reachable from a queried D type, such as `pointer.logicalPosition.x`. The alternatives of a `SumType` field are transparent: their fields join the path of the field that holds the union, so `key.action` reads the keyboard alternative's action.",
+    "authority": [
+      {
+        "text": "DQL specification §2.1",
+        "link": "/specs/dql/SPEC#_2-1-path-addressing-grammar"
+      }
+    ],
+    "owner": "sparkles:dql",
+    "seeAlso": ["dql-schema"]
+  },
+  {
+    "id": "dql-schema",
+    "term": "DQL schema",
+    "summary": "The table of every path a D type offers to DQL queries, generated from the type at compile time and used to validate queries and print help.",
+    "definition": "The table of every [DQL path](/glossary#dql-path) a D type offers, with each path's type, category and documentation, generated at compile time through the [reflection kernel](/libs/reflection/). The parser rejects a query naming a path outside it, and the help protocol prints it.",
+    "authority": [
+      {
+        "text": "DQL specification §4",
+        "link": "/specs/dql/SPEC#_4-schema-introspection-help-protocol"
+      }
+    ],
+    "owner": "sparkles:dql",
+    "seeAlso": ["dql-path"]
+  },
+  {
+    "id": "split-mode",
+    "term": "split mode",
+    "aliases": ["--split"],
+    "summary": "The release tool's mode that cuts an unreleased backlog into a chain of consecutive releases, each with its own version and notes, at boundaries proposed by an AI agent and validated by the tool.",
+    "definition": "The `release --split` mode of `sparkles:release`. It matches commits to the pull requests that introduced them, groups them into [pull-request-atomic units](/glossary#pr-atomic-unit), asks a command-line agent for release boundaries and themes, validates and approves the plan, and tags each slice oldest first. Its counterpart, classic mode, makes a single release.",
+    "authority": [
+      {
+        "text": "release SPEC §1 Overview",
+        "link": "/specs/release/SPEC#_1-overview"
+      },
+      {
+        "text": "release SPEC §7 Segmentation",
+        "link": "/specs/release/SPEC#_7-segmentation-split-mode"
+      }
+    ],
+    "owner": "sparkles:release",
+    "seeAlso": ["pr-atomic-unit"]
+  },
+  {
+    "id": "pr-atomic-unit",
+    "term": "pull-request-atomic unit",
+    "aliases": ["PR-atomic unit"],
+    "summary": "A contiguous run of commits that the release tool never divides between two releases: one merged pull request with all its commits, or a single commit pushed directly.",
+    "definition": "The indivisible element of a [split mode](/glossary#split-mode) backlog. A unit ends at the first commit where every pull request opened so far has closed, so interleaved pull requests merge into one wider unit; release boundaries fall only between units.",
+    "authority": [
+      {
+        "text": "release SPEC §7.1 Agent input",
+        "link": "/specs/release/SPEC#_7-1-agent-input"
+      }
+    ],
+    "owner": "sparkles:release",
+    "seeAlso": ["split-mode"]
+  },
+  {
+    "id": "highlight-event-stream",
+    "term": "highlight event stream",
+    "aliases": ["highlight events"],
+    "summary": "The ordered, balanced sequence of enter-label, leave-label and source-range events over byte offsets that every syntax-highlighting engine emits and every renderer folds.",
+    "definition": "The single seam of `sparkles:syntax`: engines emit `source(start, end)`, `push(label)` and `pop` events in position order with every push matched by a pop, and renderers fold that sequence into ANSI, HTML or styled runs. The stream is infallible; engine failures surface before it, never inside it. The event model follows tree-sitter's reference highlighter.",
+    "authority": [
+      {
+        "text": "sparkles:syntax design proposal",
+        "link": "/specs/syntax/"
+      },
+      {
+        "text": "tree-sitter-highlight: the HighlightEvent stream",
+        "link": "/research/parsing/tree-sitter-highlight#the-highlightevent-stream"
+      }
+    ],
+    "owner": "sparkles:syntax",
+    "seeAlso": ["highlight-label", "totality-law"]
+  },
+  {
+    "id": "highlight-label",
+    "term": "highlight label",
+    "summary": "A hierarchical dotted name, such as keyword.control, that a syntax-highlighting engine assigns to a span of source text and a theme maps to a style.",
+    "definition": "A name from the canonical, TextMate-scope-compatible vocabulary of `sparkles:syntax`, interned to a numeric id at configure time. Themes and capture names both resolve by longest dotted prefix, so `keyword.control.import` falls back to `keyword.control` and then `keyword`; capture names additionally consult an alias table that reconciles other grammar dialects.",
+    "authority": [
+      {
+        "text": "sparkles:syntax design proposal",
+        "link": "/specs/syntax/"
+      },
+      {
+        "text": "Label-vocabulary dialect reconciliation",
+        "link": "/specs/syntax/label-vocabulary-dialects"
+      }
+    ],
+    "owner": "sparkles:syntax",
+    "seeAlso": ["highlight-event-stream"]
+  },
+  {
+    "id": "totality-law",
+    "term": "totality law",
+    "summary": "The rule that a syntax highlighter never rejects its input: the worst legal output is the source text uncolored.",
+    "definition": "Unlike a parser, a highlighter must render whatever it is given. In `sparkles:syntax` an engine failure is reported before any event stream reaches a renderer, the caller then shows the plain source, and an unevaluable query pattern disables only itself; no degradation is sticky.",
+    "authority": [
+      {
+        "text": "Syntax highlighting survey: the highlighting problem",
+        "link": "/research/parsing/syntax-highlighting#the-highlighting-problem"
+      }
+    ],
+    "owner": "sparkles:syntax",
+    "seeAlso": ["highlight-event-stream"]
+  },
+  {
+    "id": "packed-cell",
+    "term": "packed cell",
+    "aliases": ["compact packed cell"],
+    "summary": "A terminal grid cell stored in a few fixed bytes, with its code point and flattened style packed inline and only long graphemes kept out of line.",
+    "definition": "The cell representation of the `sparkles:tui` frame grid: a packed code point plus a flat style, with graphemes too long to pack spilled to out-of-line storage, after the Notcurses and libvaxis inline packing. The render-core benchmark found that it lets a D renderer match a C one on the common workload.",
+    "authority": [
+      {
+        "text": "sparkles:tui specification §3.1",
+        "link": "/specs/tui/#_3-1-rendering-core-line-diff-vs-2-d-cell-grid"
+      },
+      {
+        "text": "Render-core benchmark baseline",
+        "link": "/specs/tui/render-bench-baseline#findings"
+      }
+    ],
+    "owner": "sparkles:tui",
+    "seeAlso": ["cell-diff-compositor"]
+  },
+  {
+    "id": "cell-diff-compositor",
+    "term": "cell-diff compositor",
+    "aliases": ["cell diff", "cell-diff"],
+    "summary": "A terminal renderer that keeps the previous frame's cell grid and, for each new frame, writes only the runs of cells that changed.",
+    "definition": "The `sparkles:tui` renderer: it retains the last rendered grid, compares the next one cell by cell, and emits one cursor move plus the styled text for each run of changed cells, so repainting a whole frame costs only its differences. Its retained grid reuses its storage, so a steady render loop allocates nothing.",
+    "authority": [
+      {
+        "text": "sparkles:tui specification §3.1",
+        "link": "/specs/tui/#_3-1-rendering-core-line-diff-vs-2-d-cell-grid"
+      },
+      {
+        "text": "TUI library comparison: rendering models",
+        "link": "/research/tui-libraries/comparison#_1-rendering-models-compared"
+      }
+    ],
+    "owner": "sparkles:tui",
+    "seeAlso": ["packed-cell", "cell"]
+  },
+  {
+    "id": "inline-decoration",
+    "term": "inline decoration",
+    "summary": "A Twoslash annotation drawn within a code line over the span it describes, such as a hover underline, a highlight box, or an error squiggle.",
+    "definition": "The part of a Twoslash overlay that marks a span inside one line of code: hovers, highlights, and errors. The overlay planner sorts inline decorations so an enclosing span opens before a nested one; they never cross a line break.",
+    "authority": [
+      {
+        "text": "sparkles:twoslash spec §2",
+        "link": "/specs/twoslash/SPEC#_2-overlay-planner-overlay-d"
+      }
+    ],
+    "owner": "sparkles:twoslash",
+    "seeAlso": ["below-line-block"]
+  },
+  {
+    "id": "below-line-block",
+    "term": "below-line block",
+    "summary": "A Twoslash annotation rendered as extra rows beneath the code line it belongs to, such as an error message, a queried type, a completion list, or a tag line.",
+    "definition": "The part of a Twoslash overlay that adds rows under a line of code: error messages, `^?` query results, completion lists, and `// @tag` lines. The overlay planner sorts them by line, and every backend flushes them at the line's end.",
+    "authority": [
+      {
+        "text": "sparkles:twoslash spec §2",
+        "link": "/specs/twoslash/SPEC#_2-overlay-planner-overlay-d"
+      }
+    ],
+    "owner": "sparkles:twoslash",
+    "seeAlso": ["inline-decoration"]
+  },
+  {
+    "id": "command-schema",
+    "term": "command schema",
+    "summary": "A D struct annotated with option and argument attributes that both parses a command line into a value and renders a value back into the argument list of a tool to invoke.",
+    "definition": "In `sparkles:dman`, the struct-with-UDAs model of a command: the same declaration parses `argv` into a struct for dman's own CLI and renders a struct into `argv` for third-party tools such as `git`, `jj` and `gh`, whose output a return-type-driven collector then decodes. Its option attributes are aliases over the `sparkles:wired` policy vocabulary, so one schema governs both the command line and JSON.",
+    "authority": [
+      {
+        "text": "dman command schema — three directions over one schema",
+        "link": "/specs/dman/command-schema#three-directions-over-one-schema"
+      }
+    ],
+    "owner": "sparkles:dman",
+    "seeAlso": ["capability-row"]
+  },
+  {
+    "id": "token-spine",
+    "term": "token spine",
+    "aliases": ["spine"],
+    "summary": "The complete token stream of a D source file, whitespace and comments included, that the D formatter lays out instead of a syntax tree.",
+    "definition": "The sequence of tokens produced by DMD's lexer in its trivia configuration, which emits whitespace and comments as tokens, plus explicit entries for directives, a leading byte-order mark and the `__EOF__` tail. Concatenating the entries reproduces the input byte for byte, so the formatter can never lose text the way a tree-based printer can.",
+    "authority": [
+      {
+        "text": "sparkles:dmd-fmt decision record",
+        "link": "/specs/dmd-fmt/#decisions"
+      },
+      {
+        "text": "dmd-fmt proposal",
+        "link": "/research/code-formatting/dmd-fmt-proposal"
+      }
+    ],
+    "owner": "sparkles:dmd-fmt",
+    "seeAlso": ["offset-oracle"]
+  },
+  {
+    "id": "offset-oracle",
+    "term": "offset oracle",
+    "aliases": ["start-offset oracle"],
+    "summary": "Sorted arrays of syntax-node start positions that the D formatter queries by binary search instead of walking a syntax tree.",
+    "definition": "The facts the formatter takes from DMD's parser: the start offsets of declarations, statements and expressions, collected in one parse-only pass and stored in sorted arrays. Layout consults them by binary search and never walks the tree; when the input does not parse, the oracle is empty and grouping falls back to bracket matching.",
+    "authority": [
+      {
+        "text": "sparkles:dmd-fmt decision record",
+        "link": "/specs/dmd-fmt/#decisions"
+      }
+    ],
+    "owner": "sparkles:dmd-fmt",
+    "seeAlso": ["token-spine"]
+  },
+  {
+    "id": "rewrite-tier",
+    "term": "rewrite tier",
+    "summary": "The D formatter's set of transformations that add, remove or respell tokens, each with its own verifier and, except the trailing comma, off by default.",
+    "definition": "The second of the formatter's two tiers. The layout tier changes only whitespace and is verified by token equality; a rewrite breaks token equality by construction, so each one ships with a verifier of its own and is opt-in, apart from trailing commas on broken lists. Rewrites whose safety needs resolved types are codemods, not part of this tier.",
+    "authority": [
+      {
+        "text": "sparkles:dmd-fmt decision record",
+        "link": "/specs/dmd-fmt/#decisions"
+      },
+      {
+        "text": "D codemods",
+        "link": "/specs/dmd-fmt/codemods"
+      }
+    ],
+    "owner": "sparkles:dmd-fmt",
+    "seeAlso": ["token-spine"]
+  },
+  {
+    "id": "target-profile",
+    "term": "target profile",
+    "aliases": ["profile"],
+    "summary": "The compiler identity a D analysis assumes, DMD, LDC, or LDC's GPU device compile, which fixes the predefined version identifiers, runtime sources and language rules applied to the code.",
+    "definition": "A setting of a `sparkles:dmd-lsp` analysis that makes the DMD frontend see code as a particular compiler would: `dmd` (the default), `ldc`, or `ldcDevice` for the dcompute LDC's device compile of `@compute` shader modules. A `-mdcompute-targets=` flag selects `ldcDevice` on its own.",
+    "authority": [
+      {
+        "text": "sparkles:dmd-lsp target profiles & device code",
+        "link": "/specs/dmd-lsp/targets#what-the-frontend-is-told-tgt1-tgt4"
+      }
+    ],
+    "owner": "sparkles:dmd-lsp"
+  },
+  {
+    "id": "analysis-sample",
+    "term": "sample",
+    "summary": "A self-contained D snippet analyzed with no context beyond its own annotations and the compiler runtime's import path, as opposed to a file analyzed inside its dub project.",
+    "definition": "The unit a Twoslash-style D analysis reads when no project is involved: one buffer whose only context is the runtime import path plus whatever its own `// @import:` and `// @dflags:` annotations declare. A file from a real project needs its dub project context instead, or every sibling import becomes an error.",
+    "authority": [
+      {
+        "text": "sparkles:dmd-lsp dub-project context",
+        "link": "/specs/dmd-lsp/project"
+      }
+    ],
+    "owner": "sparkles:dmd-lsp",
+    "seeAlso": ["target-profile"]
+  },
+  {
+    "id": "link-driven-discovery",
+    "term": "link-driven discovery",
+    "summary": "Choosing which repository files get documentation pages by following the links the documentation's Markdown makes, rather than walking the whole tree.",
+    "definition": "The page-selection rule of `sparkles:docs`: a file gets a source-listing page only when the docs link to it, and a linked directory expands to its renderable subtree. The outcome, including every file skipped on purpose, is recorded in a manifest the site build reads instead of deciding again.",
+    "authority": [
+      {
+        "text": "sparkles:docs site discovery (DSC)",
+        "link": "/specs/docs/discovery#site-discovery-dsc"
+      }
+    ],
+    "owner": "sparkles:docs"
+  },
+  {
+    "id": "flow-mode",
+    "term": "flow mode",
+    "aliases": ["flow-mode emission"],
+    "summary": "An HTML output mode of the Sparkles UI toolkit in which a widget subtree carries no cell geometry, so the browser measures and wraps its text.",
+    "definition": "A third HTML mode of `sparkles:ui`: a designated subtree emits semantic elements with class-based styling and no fixed cell widths, and composes with cell-grid subtrees on one page. It is the path by which documentation chrome becomes toolkit widgets without giving up proportional prose.",
+    "authority": [
+      {
+        "text": "sparkles:docs flow-mode components (FLW)",
+        "link": "/specs/docs/components#flow-mode-components-flw"
+      }
+    ],
+    "owner": "sparkles:docs",
+    "seeAlso": ["cell"]
+  },
+  {
+    "id": "application-host",
+    "term": "application host",
+    "aliases": ["host"],
+    "summary": "The Sparkles package layer that chooses a terminal or window backend for an interactive program, sets up its window and fonts, and runs its input and frame loop.",
+    "definition": "`sparkles:ui-app` is the application host: a sibling of the UI toolkit that owns backend selection, the shared window and font options, and the frame loop, so an application supplies only a present and a handle function and never names a backend.",
+    "authority": [
+      {
+        "text": "sparkles:ui-app overview",
+        "link": "/specs/ui-app/#introduction"
+      },
+      {
+        "text": "sparkles:ui-app host contract (HST)",
+        "link": "/specs/ui-app/feature-requirements#the-host-contract-hst"
+      }
+    ],
+    "owner": "sparkles:ui-app",
+    "seeAlso": ["recording-target", "render-level"]
+  },
+  {
+    "id": "recording-target",
+    "term": "recording target",
+    "summary": "A headless backend of the application host that feeds a scripted list of events to an application and records the frames, draw operations and platform calls it produces.",
+    "definition": "The recording target is the third backend of `sparkles:ui-app`, beside the terminal and the window. It opens no window and no terminal, so a whole application session can be asserted in an ordinary unit test; it extends the toolkit's recording canvas from one frame to a session.",
+    "authority": [
+      {
+        "text": "sparkles:ui-app render targets",
+        "link": "/specs/ui-app/#render-targets"
+      },
+      {
+        "text": "sparkles:ui-app testability (TST)",
+        "link": "/specs/ui-app/feature-requirements#testability-tst"
+      }
+    ],
+    "owner": "sparkles:ui-app",
+    "seeAlso": ["application-host", "display-list"]
+  },
+  {
+    "id": "render-level",
+    "term": "render level",
+    "aliases": ["render levels"],
+    "summary": "How much of the drawing pipeline an application hands to the application host: a widget tree, a display list, or the concrete drawing surface.",
+    "definition": "At the widget level the host lays out and paints a tree; at the display-list level the application appends drawing operations the host replays; at the direct level the application drives the backend's canvas itself, as a terminal emulator's per-cell renderer does.",
+    "authority": [
+      {
+        "text": "sparkles:ui-app: the three render levels",
+        "link": "/specs/ui-app/#the-three-render-levels"
+      }
+    ],
+    "owner": "sparkles:ui-app",
+    "seeAlso": ["display-list", "application-host"]
   }
 ]

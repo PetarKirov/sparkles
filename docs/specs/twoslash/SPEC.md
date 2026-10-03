@@ -1,15 +1,78 @@
+---
+status: accepted
+owner: sparkles:twoslash
+---
+
 # `sparkles:twoslash` — render-side spec (issue #123)
 
-**Status:** shipped (render-side). Backend (`sparkles:dmd-lsp`, #124) is future work.
+## Abstract
 
-`sparkles:twoslash` proves the **render surface** of a D-native Twoslash (umbrella
-issue #120) by consuming the _existing_ TypeScript
-[`twoslash`](https://github.com/twoslashes/twoslash) node model as **opaque data**
-and rendering it as a type-annotation overlay over `sparkles:syntax` — in **HTML**,
-**ANSI**, and the **raylib GUI** (`hue --gui`). Using the real, working TS twoslash
-as the semantic source validates the renderer overlay (#120 §5) without waiting on
-the D backend. Swapping the data source for `sparkles:dmd-lsp` later is a backend
-substitution behind this proven seam.
+`sparkles:twoslash` draws compiler-verified type information over
+highlighted source code: hover signatures, queried types, completion lists,
+compiler errors, highlighted spans, and annotation lines, each placed at the
+characters it describes. It renders one annotated snippet three ways from a
+single shared plan of what sits inside each line and what goes beneath it:
+as static HTML whose popups need no script, as colored terminal text, and in
+a GPU-drawn window. It takes the annotations as data from any
+Twoslash-compatible producer and never runs a compiler itself, so analysis
+and rendering evolve separately, and a build that only renders needs none of
+the analyzer's toolchain.
+
+## Introduction
+
+Documentation for a typed language is more convincing when its examples
+show what the compiler actually concluded: the inferred type under a cursor,
+the error a line provokes, the members a completion would offer.
+[Twoslash](https://github.com/twoslashes/twoslash) is the established answer
+in the TypeScript world. Comments in a snippet, such as a `^?` caret under an
+identifier, ask the compiler questions. The tool answers with a flat list of
+positioned results, called _nodes_, which a highlighter then draws over the
+code.
+
+That rendering half is tied to its ecosystem. The reference renderer is a
+plugin for the [Shiki](https://shiki.style) highlighter, produces HTML only,
+and expects a TypeScript toolchain in the build. Sparkles highlights code
+with its own engine, [`sparkles:syntax`](../../libs/syntax/index.md), and
+shows code in terminals and native windows as well as on the web. It also
+aims to annotate D, not only TypeScript. The overlay must therefore work
+wherever Sparkles shows code, and it must be buildable and testable without
+waiting for any particular analyzer.
+
+This library reads the nodes as data, never re-deriving them from the code,
+and separates analysis from rendering at that seam. One planner splits the
+nodes into [inline decorations](../../glossary.md#inline-decoration), which
+mark a span within a line, and
+[below-line blocks](../../glossary.md#below-line-block), which add rows
+beneath the line they annotate. An error is both: its span is underlined and
+its message printed beneath the line. The plan fixes only this line-level
+structure; each backend sets its own geometry.
+
+The HTML, terminal, and GUI backends all draw that one plan over the
+highlighting that `sparkles:syntax` produces. The HTML output follows the
+reference renderer's markup closely enough that its stylesheet carries over.
+A popup whose grammar is missing degrades to plain text instead of failing.
+Because the TypeScript tool already produces correct nodes, it serves as the
+data source that proves the renderer, and a D producer fills the same seam.
+
+Analysis is out of scope: this library never parses notation comments or
+type-checks code. The node model and its JSON decoding live in the separate
+`sparkles:twoslash-protocol` package, so a producer depends on neither the
+renderer nor its highlighter. TypeScript nodes come from a generator whose
+committed output the build reads. That generator and the checks against the
+reference renderer are developer-only tools, so building and testing need no
+JavaScript runtime. The D-native producer, which emits the same node shape,
+is specified with [`sparkles:dmd-lsp`](../dmd-lsp/index.md). How hue, the
+Sparkles code viewer, presents the overlay belongs to
+[hue's Twoslash requirements](../hue/twoslash.md). Serving the overlay on the
+documentation site is out of scope here; the [Deferred](#deferred) section
+records it.
+
+§1 defines the node model and the fields the renderers read, and §2 the
+overlay planner they share. §3, §4, and §5 specify the HTML, terminal, and
+GUI backends. §6 covers the example corpus, its generator, and the
+developer-only checks of fidelity and geometry against the reference
+renderer. The usage guide and API overview live in the
+[library documentation](../../libs/twoslash/index.md).
 
 ## 1. Node model (consumed as data)
 

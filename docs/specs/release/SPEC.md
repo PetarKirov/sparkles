@@ -1,9 +1,81 @@
+---
+status: accepted
+owner: sparkles:release
+---
+
 # `release` — Specification
 
-_Audience: developers and coding agents building against the tool. This document
-is normative and self-contained — it states what the tool does, not why. For the
-delivery plan, see [PLAN.md](./PLAN.md); for the policy the tool encodes, see
-[Cutting a Release](../../guidelines/release.md)._
+## Abstract
+
+`sparkles:release` cuts releases of the Sparkles monorepo, whose one version
+is a git tag shared by every package. From the commits since the latest tag
+it suggests a semantic-version bump, gathers release notes written by hand or
+drafted by a command-line AI coding agent, and creates an annotated tag whose
+message is those notes. It then carries the release only as far as asked:
+pushing the tag, drafting or publishing a GitHub release, and signing the
+Android app for its stores. When work has piled up, it can instead cut the
+backlog into a chain of releases at pull-request boundaries, each with its
+own version and notes.
+
+## Introduction
+
+Sparkles ships as a single version: one `vX.Y.Z` tag moves every sub-package
+together. A release mixes steps that can be undone with steps that cannot.
+Choosing the version, writing the notes, and creating a local tag are private
+and reversible. Pushing the tag publishes the source to the D package
+registry, [code.dlang.org](https://code.dlang.org/), where downstream
+consumers cache it. Publishing a GitHub release, and signing the Android
+build of hue for F-Droid and Google Play, are just as public. The policy
+behind each step is set out in
+[Cutting a Release](../../guidelines/release.md).
+
+Done by hand, these steps fail in predictable ways. The bump follows from
+the [conventional commit](https://www.conventionalcommits.org/) messages, but
+finding the one breaking change among hundreds of subjects is tedious and
+easy to miss. The notes are the tag's message, so they must be final before
+the tag exists. When releases lag behind the work, the backlog spans several
+unrelated themes that deserve separate releases. A tag contains its whole
+ancestry, so a backlog can only be cut into consecutive slices of history.
+The repository merges pull requests by rebase, so history alone does not say
+which pull request a commit came from, and a careless cut can split one
+pull request's work across two releases.
+
+The tool treats a release as a ladder of cumulative stages. The user names
+the last stage to reach, each stage implies the ones before it, and the
+default stops at a local tag. Before any stage that leaves the machine, the
+tool lists exactly what will be published and asks for confirmation. In
+_classic mode_ it makes one release, from the latest tag to the current
+commit.
+
+In [split mode](../../glossary.md#split-mode) the tool asks GitHub which
+pull request introduced each commit and groups the backlog into
+[pull-request-atomic units](../../glossary.md#pr-atomic-unit), which no
+release boundary can divide. It then asks an agent where the boundaries fall
+and what each release is about. The agent only proposes: the tool validates
+the reply and raises any bump below what the commits require. After the user
+approves the plan, the tool takes each slice in turn, oldest first: it
+gathers that slice's notes, then tags the slice's last commit. The plan is
+saved before the first tag, so an interrupted run resumes from it.
+
+The tool decides, tags, and publishes releases of this repository from its
+own history. It does not version packages separately or keep a changelog
+file. It does not build the app either: CI builds and caches the artifacts,
+and the tool signs and publishes them, as the last stage or later through a
+subcommand. Agents are external command-line programs, such as Claude Code
+or Codex, run once per prompt; the tool contains no model client. Split mode
+requires a GitHub origin and the `gh` command-line client. Version parsing
+and ordering come from [`sparkles:versions`](../versions/SPEC.md). Why the
+policy is what it is belongs to the guideline: this document states only
+what the tool does.
+
+§1 summarizes the two modes and the subcommands that act on a tag that
+already exists, and §2 maps the modules. §3 defines the command line, §4 the
+version policy and the integer version code that the app stores require,
+and §5 the classic pipeline and its stages. §6 and §7 specify split mode:
+how commits are matched to pull requests, the agent's input and reply
+contract, validation, plan review, per-slice execution, and resuming a saved
+plan. §8 defines the notes, §9 the run artifacts, and §10 errors and exit
+codes. The milestones that built the tool live in [PLAN.md](./PLAN.md).
 
 ## 1. Overview
 

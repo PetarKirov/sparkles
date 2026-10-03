@@ -10,6 +10,10 @@ that work: the [feature spec](#deliverable-1) (the [`index.md`](./index.md) this
 sits beside) and the [render-cost benchmark](#deliverable-2) that picks the core.
 Building `libs/tui/src/` is a **follow-up plan**, not part of this one.
 
+Library build-out, tracked outside this plan: the render core, terminal
+backend, input decoder, event loop and kitty/sixel images are landed in
+`libs/tui/src/sparkles/tui/`; layout and widgets are built in `sparkles:ui`.
+
 ## Milestone overview
 
 | #      | Deliverable                                                                                                         | Depends on | Status      |
@@ -129,5 +133,5 @@ full-repaint reference. A mismatch is an isolated error row that fails the run.
   widgets, images) — a follow-up plan, gated on M5.
 - FTXUI (C++) as a bench engine (redundant with Ratatui + Notcurses for the core
   question — spec §3.1).
-- The non-goals in [spec §4](./index.md#4-non-goals) (terminfo, accessibility,
+- The non-goals in [spec §4](./index.md#_4-non-goals) (terminfo, accessibility,
   terminal handshake queries).

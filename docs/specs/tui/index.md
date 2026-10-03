@@ -1,41 +1,86 @@
+---
+status: accepted
+owner: sparkles:tui
+reviewed: 2026-07-12
+---
+
 # Spec: `sparkles:tui` — a full-screen interactive TUI library
 
-**Status:** living inventory · **Date:** 2026-07-12 · **Scope:** a new
-`sparkles:tui` sub-package (`libs/tui/`) layered on `sparkles:core-cli` and
-`sparkles:base`.
+## Abstract
 
-This is the single source of truth for the interactive-TUI feature set: what the
-existing sparkles stack already provides, what a full-screen interactive library
-additionally needs, per-item status, and the design questions still open. It is
-the forward-looking companion to the shipped
-[`core-cli` TUI component suite](../core-cli/tui-components/index.md), whose §F
-deliberately scoped out exactly this layer — "full-screen TUI loop (alt screen,
-general `Event`/`Backend` framework, an app-owned event loop)" and "a cell-grid
-diff compositor." Those deferrals are now the subject of this spec.
+`sparkles:tui` is the terminal layer beneath Sparkles' full-screen interactive
+applications. It holds each frame as a two-dimensional grid of styled
+character cells, compares the grid with the previous frame, and writes only
+the cells that changed. An application can therefore repaint its whole
+interface on every event without flicker or wasted output. Around that core
+the library owns the terminal's lifecycle, restoring raw mode, the alternate
+screen and mouse reporting on exit. It also decodes keys, mouse reports and
+resizes into a shared input vocabulary, runs an application-driven event loop,
+and places inline images. Its rendering architecture was chosen by benchmark
+rather than by preference.
 
-The motivating consumer is a full-screen, interactive terminal application — a
-live multi-pane operations dashboard: a header with status pills, a scrollable
-streaming log pane, a data table with a moving selection, an expand/collapse
-tree, animated spinners and per-item progress, mouse interaction, and live
-resize handling.
+## Introduction
 
-The evidence base is the in-repo
-[TUI-libraries survey](../../research/tui-libraries/index.md) — the
-[comparison synthesis](../../research/tui-libraries/comparison.md) (written
-explicitly as a design brief for a D TUI library), the
-[tree-view](../../research/tui-libraries/tree-view-case-study.md) and
-[table-span](../../research/tui-libraries/table-span-case-study.md) case studies,
-and the per-library deep dives cited inline below. Every feature and design
-option in this spec is grounded in a surveyed library or in existing sparkles
-code; no external application is treated as the specification.
+A full-screen terminal application, such as a live operations dashboard with a
+streaming log, a selectable table, an expandable tree, spinners, mouse
+interaction and resizing, redraws parts of the screen many times a second. The
+terminal offers it only a byte stream. Escape sequences move the cursor, set
+colors and switch modes, and input arrives the same way: keys, mouse reports
+and resizes are further sequences that must be decoded. Sparkles' text
+engine already measures grapheme widths and wraps styled text correctly, but
+it produces text once; nothing in it owns a screen that changes.
 
-> [!IMPORTANT]
-> **The core rendering architecture was decided by measurement, not taste.** The
-> two candidates (line-diff vs 2-D cell-grid — §3.1) were implemented as D PoCs
-> and benchmarked under `sparkles:test-runner --bench --perf`; the
-> [render-cost benchmark](./PLAN.md#deliverable-2) chose the **2-D cell-grid with a
-> compact packed cell** (see the [baseline](./render-bench-baseline.md)). The rest
-> of this spec inventories the requirements that are invariant to that choice.
+The interactive layer must decide what a frame is and how the difference
+between two frames becomes bytes. The surveyed libraries split into two
+families. Line-diff renderers, such as Bubble Tea, re-emit every changed line
+of styled text; cell-grid renderers, such as Ratatui, libvaxis and Notcurses,
+compare individual cells. The choice fixes output volume and CPU cost per
+frame, and decides whether overlapping or absolutely placed content is
+possible at all. It is hard to undo once widgets are written against it. The
+terminal adds hazards of its own: a crash must not leave it in raw mode on the
+alternate screen, and decoding input must never stall rendering.
+
+The library settles the rendering question by measurement. A render-cost
+benchmark implements both families in D and drives them through one dashboard
+scene under sparse, churning, scrolling and resizing workloads. The cell grid
+is best or tied on CPU at every change density and smallest in output bytes on
+every profile. Built on a [packed cell](../../glossary.md#packed-cell), whose
+code point and style fit in a few bytes, a D renderer matches a C one on the
+common workload. A frame is therefore a grid of packed cells, and a retained
+[cell-diff compositor](../../glossary.md#cell-diff-compositor) emits only the
+runs of cells that changed and allocates nothing in steady state. Each frame
+is bracketed by synchronized output, DEC private mode 2026, so a terminal that
+supports it displays the frame at once rather than mid-draw.
+
+The application owns the loop and repaints the whole grid on every event; the
+diff, not the application, tracks damage. Terminal control uses fixed escape
+sequences rather than terminfo.
+
+This package owns the terminal substrate: the grid and compositor, the
+terminal lifecycle with its restore-on-exit guard, input decoding into the
+events of `sparkles:input`, the event loop, the folding of truecolor styles
+down to the 256 or 16 colors a terminal supports, and inline images over the
+kitty and sixel protocols. Layout, styling, focus and widgets belong to the
+[`sparkles:ui`](../ui/index.md) toolkit, which paints into this grid through
+the terminal backend adapter `sparkles:ui-tui`. The inventory in §2 still
+lists those rows so that the whole feature set has one account. Three things
+are non-goals: terminfo, screen-reader accessibility, and terminal queries,
+such as keyboard-protocol handshakes, beyond what an in-scope feature forces.
+Whether a framework-owned model–view–update loop is layered over the
+application-owned one stays an open question.
+
+The decision ledger below summarizes every settled choice. §1 lists the
+substrate the library reuses, §2 inventories the features a full-screen
+application needs with each item's status, §3 records the open architectural
+questions and the rendering decision, §4 the non-goals, §5 the consumers, and
+§6 where execution is tracked. The [delivery plan](./PLAN.md) orders the work,
+and the [render-core benchmark baseline](./render-bench-baseline.md) holds the
+measurements behind the decision. The evidence base is the
+[TUI-libraries survey](../../research/tui-libraries/index.md), whose
+[comparison](../../research/tui-libraries/comparison.md) is written as a
+design brief for a D TUI library. The
+[TUI component suite](../core-cli/tui-components/index.md) specifies the static
+producers this layer builds on.
 
 ## Decision ledger
 

@@ -1,14 +1,78 @@
+---
+status: accepted
+owner: sparkles:core-cli
+---
+
 # core-cli args subcommand specification
 
-This document records the `sparkles.core_cli.args` command model: how a CLI is declared as
-a struct with UDAs, how the parser discovers a command's children, and how it dispatches.
+## Abstract
 
-> **Status.** Both models below are implemented in the `sparkles.core_cli.args` package.
-> The next step is to re-express the shared axes — name, case, optionality, enum
-> representation, value conversion — on `sparkles:wired`'s `@Wire*` policy under a `Cli`
-> format marker, so one schema serves both parsing and `struct → argv` rendering. See
-> [the dman command schema](../dman/command-schema.md); this document is rewritten when
-> that lands.
+`sparkles:core-cli` lets a D program declare its command-line interface as
+ordinary structs marked with attributes, and derives parsing, help and
+dispatch from that declaration at compile time. This specification covers
+how commands nest into subcommands. A program may list a command's
+subcommands explicitly in one field, or simply nest command structs and
+register externally defined ones, and the library discovers the tree
+itself. Either way, parsing returns one stable result type that records the
+whole chain of selected commands. The selected command runs through the
+first handler it provides, in a fixed order of precedence, and that handler
+may read the options given at every level of the chain.
+
+## Introduction
+
+Command-line tools with many operations group them into subcommands, often
+several levels deep: `git worktree list` selects `list` within `worktree`
+within `git`, and each level has its own options and help. A declarative
+parser in D describes each command as a struct whose fields are its options
+and positional arguments, so the compiler checks names and types and the
+help text cannot drift from the parser. The subcommand hierarchy has to be
+described too, and the way it is described shapes every program that uses
+the library.
+
+The direct description gives each command with subcommands a field that
+holds whichever child the user selected, typed as a tagged union of the
+child command types. It works, but it repeats the hierarchy in fields that
+exist only for the parser to fill, and it keeps a command's children apart
+from the struct nesting D already offers. Dropping the field raises
+questions of its own: where the parsed child lives when no field holds it,
+in which order children appear in help and take precedence in dispatch,
+what happens when the user names a group but none of its children, and how
+a handler deep in the tree reads options given to its ancestors.
+
+The library answers them with a [command
+graph](../../glossary.md#command-graph) that it builds at compile time from
+the root command type. A command's children are the command structs nested
+inside it and the command types registered into it with a mixin,
+interleaved in the order the compiler lists its members. A command that
+keeps the explicit field takes its children from that field instead. When
+no field stores the selection, the parser synthesizes a parse tree whose
+nodes each hold one command's parsed fields and, for a [command
+group](../../glossary.md#command-group), the selected child's node.
+Parsing returns one public result type whichever model the program uses,
+so callers do not depend on where the selection is stored. A handler may
+take the whole tree as a template parameter and read any level of it.
+
+This page specifies command declaration, child discovery, the parse tree,
+handler dispatch, and the compatibility between the explicit and the
+graph-based models. It does not define the syntax of options and
+arguments, value conversion, or help layout beyond the order of children.
+The package's table renderer and terminal components have their own
+specifications, [table.md](./table.md) and [the TUI component
+suite](./tui-components/index.md). Rendering a declaration back into an
+argument vector, and sharing naming and conversion rules with
+`sparkles:wired`, are out of scope; the [command schema
+page](../dman/command-schema.md) of `sparkles:dman` describes that design.
+
+[Explicit subcommand fields](#explicit-subcommand-fields) describes the
+field-based model and [Motivation](#motivation) its drawbacks. [The command
+graph](#the-command-graph) and [Command child
+discovery](#command-child-discovery) define the two ways to register
+children and the order they take. [Synthesized parse
+tree](#synthesized-parse-tree) and [Program tree
+access](#program-tree-access) define the parse result, [Dispatch and
+handlers](#dispatch-and-handlers) the handler precedence and the defaults
+of command groups, and [Compatibility
+requirements](#compatibility-requirements) what both models share.
 
 ## Explicit subcommand fields
 

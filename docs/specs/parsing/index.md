@@ -1,11 +1,80 @@
+---
+status: draft
+owner: sparkles:parsing
+---
+
 # `sparkles:parsing` — Design Proposal
 
-_Audience: contributors and coding agents evaluating whether/how to build a Sparkles
-parsing toolkit. This document is a **proposal**, not a normative spec — it states what to
-build and why, grounded in the [parsing survey](../../research/parsing/index.md). For the
-milestoned delivery plan see [PLAN.md](./PLAN.md); for the cross-ecosystem evidence base see
-the [survey](../../research/parsing/index.md), its [capstone][comparison], and the
-[D-ecosystem landscape][d-landscape]._
+## Abstract
+
+`sparkles:parsing` is a proposed toolkit for writing parsers of the
+small languages Sparkles reads: version strings and version constraints,
+command-line tokens, filter expressions, and configuration. A parser is an
+ordinary D value, built from a handful of combinators and a precedence loop
+for operator grammars. It reads its input in place and returns slices of
+it rather than copies. A parser that only validates its input allocates
+nothing, so a grammar can run in code that must neither allocate from
+the garbage collector nor throw. Each parser decides when it is built
+whether to stop at the first error or to recover, returning a partial
+result together with every error it found.
+
+## Introduction
+
+Sparkles parses several small languages by hand: the version strings of each
+package ecosystem's [version scheme](../../glossary.md#version-scheme),
+command-line arguments, and terminal control sequences. Most of that code
+runs in contexts that forbid garbage-collected allocation and exceptions.
+Each parser is written from scratch over the zero-copy readers in
+[`sparkles:base`][base-text], small functions that read an integer or a
+token from the front of a string slice and advance past it. Every parser
+therefore solves sequencing, alternatives, repetition, and error reporting
+again. A reusable layer would let the next grammars, such as a version
+constraint like `>=1.2 <2.0 || ^3`, a filter expression, or a configuration
+file, be stated rather than hand-rolled.
+
+Existing libraries do not fill that role. The [parsing survey][survey]
+locates the [design center][comparison] for an allocation-conscious parser
+in zero-copy recursive descent built from combinators, as in Rust's
+[nom] and [winnow], and [flatparse] shows that such an API can validate
+input without allocating. The [D ecosystem][d-landscape] offers a
+compile-time PEG generator, [Pegged], that depends on the garbage collector;
+hand-written parsers for D source itself; and a fast serialization stack for
+JSON-like data. It has no maintained combinator library that is
+allocation-free and zero-copy, and no parser that recovers from errors.
+
+The toolkit is a thin policy layer over the existing readers, which
+supply the mechanism. Parsing is scannerless recursive descent: there
+is no separate lexer, the input slice itself is the cursor, and a parser
+advances it only when it succeeds. Combinators join parsers in sequence,
+repetition, and [PEG][peg] ordered choice, where the first alternative
+that matches wins, so no input ever has two parses. A [Pratt][pratt]
+binding-power loop handles operator precedence without tables. Results use
+the [`Expected`](../../guidelines/idioms/expected/index.md) error vocabulary
+the readers already return. That vocabulary separates a _failure_, a miss
+that an enclosing alternative may recover from by trying its next branch,
+from an _error_, which ends the parse because it occurs after an explicit
+commit point that rules out the other branches. Combinators inherit
+their safety and allocation guarantees from the parsers they combine, so
+a grammar is exactly as allocation-free as its leaf parsers. A recovering
+parser also needs storage for the errors it collects.
+
+This proposal covers the parser shape, the combinators, the precedence
+engine, and the choice between failing fast and recovering. Its first client
+is a version-constraint grammar whose accepted and rejected inputs must match
+those of the [existing version parsers][v-parsing]. It leaves out
+vectorized parsing, because Sparkles reads no inputs large enough to need
+it. It also leaves out incremental re-parsing, which earns its cost only
+under an editor that re-parses on every keystroke, and a compile-time grammar
+language. A lossless syntax tree that can print its input back waits for a
+client such as a formatter. The toolkit is not a general parsing framework
+and does not replace Phobos's argument parser or the libraries above.
+
+Section 1 summarizes the survey's conclusions and §2 states the design
+decisions. Section 3 lists the existing code the toolkit builds on, §4 gives
+each non-goal with its reason, and §5 maps every decision to the prior art
+it borrows from. The delivery order lives in [PLAN.md](./PLAN.md). The
+evidence lives in the [parsing survey][survey], its [comparison][comparison],
+and the [D-ecosystem landscape][d-landscape].
 
 ## 1. Why
 

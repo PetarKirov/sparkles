@@ -1,27 +1,96 @@
+---
+status: accepted
+owner: sparkles:dmd-lsp
+reviewed: 2026-07-30
+---
+
 # `sparkles:dmd-lsp` — Feature Specification
 
-_**Status:** in design/implementation (branch `feat/dmd-twoslash`) ·
-**Date:** 2026-07-30 · **Scope:** the D-native twoslash backend — the
-`sparkles:dmd-lsp` semantic core (`libs/dmd-lsp`), the twoslash analyzer
-`sparkles:twoslash-d` (`libs/twoslash-d`), the batch extractor
-`apps/twoslash-extract`, and the seam changes they require in
-`libs/twoslash-protocol` and `apps/hue`._
+## Abstract
 
-`sparkles:dmd-lsp` is a reusable **DMD-as-a-library semantic core**: it runs the
-real DMD frontend over an in-memory D buffer (parse → full semantic) and answers
-positional queries — diagnostics, resolved-type-at-position ("hover"),
-per-identifier semantic classification, and (later) completions. Its first
-consumer is the **D-native twoslash backend** ([issue
-#124](https://github.com/PetarKirov/sparkles/issues/124)): a batch-mode
-extractor that turns an annotated D sample into a `.twoslash.json` node payload
-rendered by the already-shipped `sparkles:twoslash` render side and `apps/hue`.
-Longer term it is the seed of a real D language server (issue #124's D4).
+`sparkles:dmd-lsp` runs the D reference compiler's own frontend as a library
+over one source buffer and answers questions about the result: which
+diagnostics the compiler reports, what type and documentation the symbol at a
+position resolves to, what kind of symbol each identifier names, and where a
+symbol is declared. The answers come from the compiler's full semantic
+analysis, so they agree with what a build concludes, through templates, mixins
+and compile-time evaluation. A file can be analyzed in the context of its dub
+project, and as the LDC compiler or a GPU device compile sees it. Its
+consumers draw compiler-verified type overlays over D code in documentation
+and in the hue code viewer.
 
-This spec is a **traceable feature inventory** in the style of
-[`docs/specs/hue/`](../hue/index.md): every requirement carries an ID, a status,
-and a trace; the status and ID conventions are the hue spec's
-([status scheme](../hue/index.md#status-scheme) ·
-[ID scheme](../hue/index.md#id-scheme)).
+## Introduction
+
+Tools that show D code, from documentation pages to a code viewer, are more
+useful when they show what the compiler concluded: the type an `auto`
+declaration inferred, the overload a call resolved to, the error a line
+provokes, the documentation of the symbol under the cursor. The
+[Twoslash](https://github.com/twoslashes/twoslash) convention captures this
+for a code sample. Comments in the sample ask the compiler questions, and a
+renderer draws the answers over the code. Sparkles renders such overlays with
+[`sparkles:twoslash`](../twoslash/SPEC.md) in HTML, terminals and windows; it
+needs a producer that answers the questions for D.
+
+Answering them correctly takes the compiler's whole semantic analysis. D's
+types depend on template instantiation, compile-time function evaluation,
+string mixins and conditional compilation, so a parser-level tool guesses
+exactly where the language is most interesting, and a reimplementation of the
+semantics falls behind the language. The reference frontend links as a
+library, but in its mainline form it cannot map a source position back to the
+symbol it resolved to. It also lowers constructs such as `foreach` into
+compiler temporaries that would leak into the answers, and its global mutable
+state assumes one compilation per process. Finally, a file from a real project
+analyzed on its own is wrong in a way that looks like a defect in the source:
+every import of a sibling module becomes an error.
+
+The package therefore builds on a fork of the frontend made for the language
+server of the VisualD IDE, which records which declaration each expression
+resolved to and skips the lowering; the build pins that fork by commit. Each
+analysis is one full semantic pass over an in-memory module. Every query is
+then answered from the same analyzed tree, without running the compiler again.
+Diagnostics are captured as structured records through the frontend's own
+hook, never parsed out of rendered text. Documentation comments are rendered by
+the compiler's own DDoc engine, steered to emit CommonMark rather than HTML.
+Context a file does not carry comes from outside it: dub's own description of
+the enclosing project supplies import paths, version identifiers and flags, and
+a [target profile](../../glossary.md#target-profile) tells the frontend to
+analyze the code as LDC or a GPU device compile would.
+
+Two layers stack on the core. `sparkles:twoslash-d` parses the question
+notation in a [sample](../../glossary.md#analysis-sample) or in a file of a dub
+project, drives the core, and assembles the positioned answers that Twoslash
+calls nodes; it is the only layer that knows both the compiler and the overlay
+format. The `twoslash-extract` tool writes those nodes to a payload file,
+giving each input a process of its own so that no compiler state carries over
+between analyses. It can also stay resident for a viewer, answering one
+tooltip at a time from its single analysis. The core knows nothing of
+Twoslash, and the render side never imports the core.
+
+This specification covers the core, the analyzer, the extractor, and the
+changes they require in the shared Twoslash protocol package and in hue.
+Drawing overlays belongs to `sparkles:twoslash`, and hue's presentation of them
+to the [hue Twoslash surface](../hue/twoslash.md). The core stops after
+semantic analysis and generates no machine code. It never analyzes twice in
+one process: a second analysis needs a fresh process. It does not read dub
+recipes itself, because dub resolves its own configurations and dependencies
+and a second implementation would drift. It is not a language server: serving
+an editor over the Language Server Protocol, with find-references and
+incremental re-analysis, lies outside this contract, although the core is
+shaped so that a server can grow around it.
+
+[Design sources](#design-sources) lists the issues and specifications this one
+builds on. [Architecture](#architecture) gives the layers, their coupling
+rules, the reasons for the fork, and the coordinate contract between the
+compiler's line-and-column positions and the renderer's byte offsets. The
+requirements live in [Feature requirements](./feature-requirements.md); each
+carries an ID, a status and a trace, under the
+[status](../hue/index.md#status-scheme) and [ID](../hue/index.md#id-scheme)
+conventions of the hue specification. Three pages specify one concern each:
+[DDoc test plan](./ddoc.md) the documentation renderer,
+[Dub-project context](./project.md) analysis inside a real project, and
+[Target profiles & device code](./targets.md) analysis as LDC and as GPU
+code. [Milestones](#milestones) records delivery, and
+[Module coverage](#module-coverage-planned) maps requirements to source files.
 
 ## Design sources
 
@@ -78,7 +147,7 @@ resolved to `line`/`character` against the post-cut display code.
 
 | Page                                              | What it covers                                                                                                                                                                                                 |
 | ------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Overview** (this page)                          | what `sparkles:dmd-lsp` is · architecture · why the fork · milestones · module coverage                                                                                                                        |
+| **Overview** (this page)                          | abstract and introduction · design sources · architecture · milestones · module coverage                                                                                                                       |
 | [Feature requirements](./feature-requirements.md) | the requirement inventory: build & pinning (`BLD`), semantic core (`COR`), type oracle (`TIP`), ddoc (`DOC`), analyzer (`NTN`), extractor (`EXT`)                                                              |
 | [DDoc test plan](./ddoc.md)                       | the whole DDoc language as a traceable test matrix (`DDC1`–`DDC84`), grounded in `spec/ddoc.dd`; supersedes `DOC3` as the requirement of record for ddoc rendering                                             |
 | [Dub-project context](./project.md)               | analyzing files that belong to a real project (`PRJ`): recipe discovery, `dub describe`, the translation to `AnalyzerConfig`, and the viewer path that consumes it                                             |
