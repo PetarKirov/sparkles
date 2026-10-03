@@ -158,6 +158,28 @@ int densityDpi() @trusted nothrow @nogc
 /// Pixels for `dp` density-independent pixels on this screen.
 int dpToPx(int dp) @trusted nothrow @nogc => (dp * densityDpi() + 80) / 160;
 
+private extern (C) void ANativeActivity_setWindowFlags(ANativeActivity* activity, uint add,
+    uint remove) @nogc nothrow;
+
+private enum uint awindowFlagFullscreen = 0x00000400; // AWINDOW_FLAG_FULLSCREEN
+
+/**
+Shows the status bar: clears the fullscreen flag raylib sets when it opens
+the window. The content rect then starts below the bar (it arrives with the
+next `APP_CMD_CONTENT_RECT_CHANGED`). Safe from any thread — the activity
+applies it on its own.
+
+Why an app would: some systems draw over a fullscreen window — HyperOS puts
+its multitasking handle over the top centre — where a status bar gives that
+handle a band of its own, as Termux and Chrome have.
+*/
+void showStatusBar() @trusted nothrow @nogc
+{
+    auto app = GetAndroidApp();
+    if (app !is null && app.activity !is null)
+        ANativeActivity_setWindowFlags(app.activity, 0, awindowFlagFullscreen);
+}
+
 private extern (C) int AConfiguration_getSmallestScreenWidthDp(const(void)* config) @nogc nothrow;
 
 /**

@@ -144,8 +144,16 @@ struct DroidTerminal
             host.cornerPx = dpToPx(16);
             host.cornerThickPx = dpToPx(3);
         }
-        if (defaultFontPx == 0)
+        if (defaultFontPx == 0) // the first frame
+        {
+            import sparkles.android.activity : showStatusBar;
+
             defaultFontPx = h.fontSizePx;
+            // raylib opens the window fullscreen; the status bar gives the
+            // system's own overlays (HyperOS's multitasking handle) a band of
+            // their own, as Termux has (D48).
+            showStatusBar();
+        }
 
         // The installer's pty ended: the login takes the pane over in place
         // (`TSS4`) — the installer's output stays above a separator.
