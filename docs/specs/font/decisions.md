@@ -162,6 +162,46 @@ parsing, `FTV` variation, `FTM` metrics, `FTO` outlines, `FTR` rasterization,
 `FTS` shaping, `FTD` discovery, `FTI` inspection; `FTX` decisions and `FTQ`
 open questions. None was in use under `docs/specs/` on 2026-10-03.
 
+## FTX7: Ligatures keep one glyph per cell; their ink crosses cells
+
+**State:** proposed · **Affects:** `FTR1`, `FTS4`, milestone M8 ·
+**Resolves:** `FTQ3`
+
+**Question.** Does any common programming font's `calt` or `liga` merge
+characters into fewer glyphs, so that a terminal would need multi-cell glyph
+placement?
+
+**Evidence.** [`ligature-cells.d`][ex-ligature] shaped 160 ligature sequences,
+the union of the four fonts' inventories, each as `a<seq>b` with `calt` and
+`liga` on and off, on 2026-10-03. "Reach" is how far, in cells, a glyph's ink
+extends outside the cell its advance occupies.
+
+| Face                                | Shaped differently | Glyph count changed | Off-cell advance | Ink outside own cell | Worst reach      |
+| ----------------------------------- | ------------------ | ------------------- | ---------------- | -------------------- | ---------------- |
+| Cascadia Code 2407.24               | 131                | 0                   | 0                | 126                  | 2.77 (`<!--`)    |
+| Cascadia Code NF 2407.24            | 131                | 0                   | 0                | 126                  | 2.77 (`<!--`)    |
+| JetBrains Mono 2.304                | 127                | 0                   | 0                | 127                  | 2.89 (`####`)    |
+| JetBrains Mono Nerd Font Mono 3.4.0 | 127                | 0                   | 0                | 127                  | 2.89 (`####`)    |
+| Fira Code 6.2 (variable)            | 138                | 0                   | 0                | 122                  | 2.95 (`<!--`)    |
+| Fira Code Nerd Font Mono 3.4.0      | 138                | 0                   | 0                | 122                  | 2.96 (`<!--`)    |
+| Maple Mono 7.9                      | 124                | 0                   | 0                | 117                  | 6.00 (`[ERROR]`) |
+| Maple Mono NF CN 7.9                | 126                | 0                   | 0                | 119                  | 6.00 (`[ERROR]`) |
+
+Every face keeps one glyph per character at the cell advance: a ligature is
+drawn by spacer glyphs, the last of which carries the whole shape and reaches
+back over the cells before it.
+
+**Choice.** The library adds no multi-cell glyph placement. A cell-grid
+consumer places glyph _i_ of a run in cell _i_, **does not clip** a glyph's ink
+to its own cell, and redraws every cell a glyph's ink reaches when any of them
+changes. The ink bounds `FTR1` reports are enough for both.
+
+**Trade-off.** One glyph per cell is a property of these fonts, not of
+OpenType: a face whose ligature does merge characters shapes correctly but
+misaligns in a terminal. The explorer's
+[cell-grid audit](../../glossary.md#cell-grid-audit) reports such a face.
+**Revisit when** the audit finds one in a font users ask for.
+
 ---
 
 ## Open questions
@@ -185,15 +225,7 @@ whether the font catalog needs a background builder and a progress surface.
 
 ### FTQ3: Ligatures that change glyph count in a cell grid
 
-**Blocks:** the terminal half of milestone M8. **Resolver:** the terminal
-migration's design review.
-
-`FTS4` gives clusters; how a terminal places a ligature glyph that spans
-several cells is the consumer's policy, but
-the library must expose enough (cluster spans, glyph advances relative to the
-cell) for it. The two bundled programming fonts do not (spike S3, partial): both
-use spacer glyphs to keep one glyph per cell. JetBrains Mono and Cascadia Code
-remain to be measured.
+Answered by spike S3; see [`FTX7`](#ftx7-ligatures-keep-one-glyph-per-cell-their-ink-crosses-cells).
 
 <!-- References -->
 
@@ -205,3 +237,4 @@ remain to be measured.
 [ghostty]: ../../research/font-libraries/ghostty.md
 [font-kit]: ../../research/font-libraries/font-kit.md
 [ex-raster]: ../../research/font-libraries/examples/outline-sink-raster.d
+[ex-ligature]: ../../research/font-libraries/examples/ligature-cells.d
