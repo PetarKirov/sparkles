@@ -59,11 +59,11 @@ the application requires of it.
 
 Section 2 states the contract at a glance, section 3 its invariants as
 requirements, and section 4 the command line. Section 5 covers sources,
-section 6 specimens, section 7 programming-font checks, and section 8
-inspection and persistence. Layout is decided by
-mockup and recorded in [`design.md`](./design.md); the requirements here hold
-for any layout. [`PLAN.md`](./PLAN.md) orders delivery against the font
-library's milestones.
+section 6 specimens, section 7 programming-font checks, section 8
+inspection and persistence, and section 9 how panes share the screen at
+different widths. The visual design chosen for each surface, and the mockups
+it was chosen from, are recorded in [`design.md`](./design.md).
+[`PLAN.md`](./PLAN.md) orders delivery against the font library's milestones.
 
 ### Where it sits among existing tools
 
@@ -171,6 +171,24 @@ ranges.
 remain listed, marked with its error, and selectable, so its error and its
 readable tables can be inspected.
 
+**FXP28: Source navigator.** A navigator **must** list the sources of
+`FXP10` as a tree with a face count on every node, followed by saved filters
+for the `FXP12` facets and a list of scripts. Selecting a node **must**
+restrict the family list to that node's faces.
+
+_Rationale:_ Every surveyed font manager separates where fonts come from from
+the fonts themselves. A single mixed list stops working once a user has more
+than a few hundred families.
+
+**FXP29: Family rows.** Each family list row **must** show the family's name,
+style count, source and capability marks, and a sample rendered in that
+family's own face. One sample text and one sample size apply to every row. A
+names-only density **must** be available, showing each row without its
+sample.
+
+_Rationale:_ Rendering every family's sample is how a reader scans a library
+by eye; one shared sample keeps the rows comparable.
+
 ## 6. Specimens
 
 **FXP14: Preview.** Custom text **must** render at a chosen pixel size, line
@@ -192,6 +210,16 @@ The grid is one image, hit-tested by the application.
 **FXP19: Compare.** Two to five faces **must** render side by side with
 shared text, size and features, each annotated with baseline, x-height, cap
 height, ascender and descender.
+
+**FXP30: Compare modes.** Comparison **must** offer three modes over the same
+faces, text, size and features. _Cards_ sets faces side by side for reading
+along a line. _Rows_ stacks one line per face for reading down a column.
+_Overlay_ superimposes two faces' glyph outlines, distinguished by line style
+as well as colour. Switching modes **must** keep the faces, text, size and
+features.
+
+_Rationale:_ Cards and rows compare runs of text in the two reading
+directions; only an overlay shows how individual glyphs differ.
 
 ## 7. Programming-font checks
 
@@ -216,6 +244,16 @@ Codicons, Octicons and Weather ranges, as counts and as a glyph strip.
 **FXP24: Live terminal.** A shell **must** run in a `sparkles:terminal-view`
 pane painted in the selected face at the chosen size.
 
+**FXP31: Checks as a dock.** The checks of `FXP17` and `FXP20`–`FXP24`
+**must** be panes of a `sparkles:ui` dock container. The user **may** split,
+stack, resize, close and re-add them. The arrangement **must** persist and be
+restored on the next launch, and a reset **must** restore the default
+arrangement.
+
+_Rationale:_ Which checks matter differs per user and per font. The dock
+already provides splits, tabbed groups, drag-to-redock and a serializable
+layout, so the dashboard reuses it rather than inventing one.
+
 ## 8. Inspector and persistence
 
 **FXP25: Inspector views.** Info, metrics, features, axes, coverage and
@@ -230,3 +268,25 @@ typing in the preview meets.
 directories and the last selection **must** persist in a `sparkles:wired`
 JSON file in the user's configuration directory. An unreadable file **must**
 be reported and replaced by defaults, never be fatal.
+
+## 9. Layout across widths
+
+The explorer's panes are the source navigator, the family list, the specimen
+area and the inspector. Which of them share the screen depends on the width
+of the window or terminal, measured in the user interface's cells, so one
+rule serves both targets and scales with the interface font.
+
+**FXP32: Width classes.** At 150 cells or more, all four panes **must** be
+shown side by side. From 100 to 149 cells, the navigator **must** fold into a
+source picker at the top of the family list, and the inspector **must**
+become an overlay. Below 100 cells, only the specimen area **must** be shown,
+and both the family list and the inspector **must** become overlays.
+
+**FXP33: Overlays.** An overlay **must** open and close from a visible control
+and from a key: `[` for the family list and `]` for the inspector. An open
+overlay **must** cover the specimen area without changing its layout, and
+`Esc` **must** close it. Crossing a width class **must** keep the selection,
+the active tab and the specimen settings.
+
+_Rationale:_ Overlaying rather than reflowing keeps a specimen at the size the
+user chose, which is the subject of the application.

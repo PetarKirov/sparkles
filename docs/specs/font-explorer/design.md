@@ -6,9 +6,9 @@ reviewed:
 
 # `font-explorer` — Design register
 
-_Mockups for every surface, and the variant chosen for each. Layout stays open
-until a variant is chosen; behaviour in [`SPEC.md`](./SPEC.md) holds for any
-choice._
+The mockups drawn for every surface, the variant chosen for each, and what
+the reference applications showed. Behaviour is specified in
+[`SPEC.md`](./SPEC.md); this page records appearance and layout.
 
 **Mockups:** the "Font Explorer mockups" design canvas (private to the project
 owner until shared), produced 2026-10-03.
@@ -27,13 +27,58 @@ owner until shared), produced 2026-10-03.
 
 ## Surfaces
 
-| Surface                 | Variants                                                                                                                                                                                               | Chosen |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ |
-| Explorer window         | **A** three panes: library, specimen tabs, inspector tabs. **B** specimen first: a fuzzy face palette and a bottom inspector drawer. **C** family grid of sample cards beside a scrolling detail page. | open   |
-| Compare                 | **A** synced cards in columns with metric lines and per-face figures. **B** aligned rows, one per face, sortable by a metric. **C** two faces' outlines overlaid, distinguished by line style.         | open   |
-| Programming-font checks | **A** dashboard of six blocks: code, cell grid, Nerd Font coverage, disambiguation, seams. **B** code first, ligature sites underlined, a checklist and live terminal beside it.                       | open   |
-| Terminal arm (120×36)   | **A** the three panes of explorer A in cells, specimen as one kitty image. **B** tabbed, library rows with per-row sample images, a which-key guide.                                                   | open   |
-| `inspect` output        | **A** boxed sections. **B** compact headed key/value lines.                                                                                                                                            | open   |
+Chosen by the project owner on 2026-10-03.
+
+| Surface                 | Variants drawn                                                                                                                | Chosen                                                                                          |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Explorer window         | **A** three panes. **B** specimen first, with a face palette and an inspector drawer. **C** family grid beside a detail page. | **A**, with the left pane reworked into a source navigator and a family list (`FXP28`, `FXP29`) |
+| Compare                 | **A** synced cards. **B** aligned rows. **C** outline overlay.                                                                | **All three**, as modes of one view (`FXP30`)                                                   |
+| Programming-font checks | **A** dashboard of blocks. **B** code first with a checklist.                                                                 | **A**, built on the dock container so users arrange it (`FXP31`)                                |
+| Terminal arm            | **A** explorer A in cells. **B** tabs with a key guide.                                                                       | **A**, with the window's width classes and overlays (`FXP32`, `FXP33`)                          |
+| `inspect` output        | **A** boxed sections. **B** compact key/value lines.                                                                          | **A**                                                                                           |
+
+### Revised explorer A
+
+The second round of mockups draws the chosen layout at each width class:
+
+| Board                      | Size           | Width class | Shows                                                                         |
+| -------------------------- | -------------- | ----------- | ----------------------------------------------------------------------------- |
+| Explorer A revised, wide   | 1440 × 900 px  | wide        | navigator, family list with own-face samples, specimen, inspector             |
+| Explorer A revised, medium | 1024 × 768 px  | medium      | source picker folded into the list; inspector collapsed to an edge handle     |
+| Explorer A revised, narrow | 640 × 860 px   | narrow      | specimen only, with the library overlay open over it                          |
+| Terminal A, wide           | 160 × 48 cells | wide        | the four panes in cells; each family row's sample is one kitty image          |
+| Terminal A, medium         | 120 × 36 cells | medium      | the original terminal A, with the source picker in the library header         |
+| Terminal A, narrow         | 80 × 24 cells  | narrow      | specimen only, and the same with the library overlay open                     |
+| Checks on the dock         | 1440 × 900 px  | —           | split and tabbed panes, a tab mid-drag over an east drop zone, a saved layout |
+
+At the mockups' 13 px interface font, 1,440 px is about 184 cells, 1,024 px
+about 131, and 640 px about 82, which places the three window boards in the
+three classes.
+
+### What the reference apps showed
+
+The left-pane rework follows three font managers, read from their product
+screenshots on 2026-10-03:
+
+- **Sources and fonts are separate panes.** FontBase, RightFont and Typeface
+  each keep a navigator of where fonts come from beside a separate list of the
+  fonts. Their navigators hold "All" with a total, recents or favourites,
+  collections, providers, folders as a tree with per-node counts, and tags or
+  smart filters.
+- **The list renders each family in itself.** All three show a sample per
+  family in that family's face, under one global sample text and size
+  control, with the family name, a style count and a status mark above it.
+  FontBase uses full-width rows, while RightFont and Typeface use a card grid.
+- **A family opens into its styles.** Typeface lists a family's styles as rows
+  with designer, version, source and file, with tabs for characters, text,
+  features, variables and info. That last set matches this application's
+  inspector.
+- **Smart filters are saved rule sets.** RightFont builds them from rules such
+  as "languages contains Arabic". `FXP28` keeps the facets as saved filters and
+  leaves a rule editor out of scope.
+
+Families not available as web fonts, such as Maple Mono and DejaVu Sans Mono,
+are drawn with a stand-in face in the mockups.
 
 ## Findings made while drawing
 
