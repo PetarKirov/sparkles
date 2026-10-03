@@ -1,0 +1,529 @@
+---
+status: draft
+owner: sparkles:font
+reviewed:
+---
+
+# `sparkles:font` — Specification
+
+## Abstract
+
+`sparkles:font` reads font files and turns text into glyphs, outlines and
+pixels for Sparkles programs: a terminal emulator, a code viewer, and a font
+explorer that shows everything inside a font. Its parser reads TrueType and
+OpenType files in place, in the caller's memory and without allocating, so a
+hostile file can produce an error but never an out-of-bounds read. Every step,
+including the HarfBuzz shaper it delegates to, receives the same variable-font
+coordinates. Font matching and fallback follow the same rules on every
+platform, including those without a system font service.
+
+## 1. Introduction
+
+Every program that draws text from a font file answers the same questions.
+Which file serves this character? Which glyphs does this text become, and
+where do they go? What pixels does each glyph cover at this size? A terminal
+answers them for a fixed grid of cells sixty times a second. A code viewer
+answers them for styled runs it can zoom. A font explorer answers them for
+thousands of files the user downloaded, and must also show what each file
+contains: its tables, its OpenType features, its variation axes, the
+characters it covers and its metrics.
+
+No single existing component serves all three. Rasterization libraries hide a
+font's tables behind their own API, so an inspector cannot show them. Parsers
+that expose the tables do not render. Platform text stacks render and match
+well, but differ on every operating system and are absent on Android. Variable
+fonts add a further trap: the coordinates that select an instance must reach
+the shaper, the metrics and the outline decoder identically, and libraries
+that let each layer take them separately drift apart. Finally, a program that
+opens downloaded files is exposed to every malformed offset an attacker can
+write.
+
+This library owns the parts where correctness and inspection matter, and
+delegates text shaping, the one part that is large and well solved. It parses
+fonts in D, directly over a borrowed byte buffer, validating every read
+against the buffer's bounds. A _face_ is an immutable view of one font in
+those bytes; an _instance_ adds a size and one normalized coordinate vector,
+and every later step reads that vector from the instance. Section 2 defines
+both terms. Outlines are decoded and rasterized in D. Shaping goes to
+HarfBuzz, which receives the instance's coordinates unchanged. Discovery
+builds a _font catalog_ from the files each platform lists, described by this
+library's own parser. Platforms differ in which files they list, but the
+matching and fallback rules applied to them are the same everywhere.
+
+Several things are deliberately left to others. Line breaking, bidirectional
+reordering and paragraph layout belong to a layout layer above this library.
+Drawing rasterized pixels on a screen belongs to the consumer: a GPU backend
+uploads them, a terminal backend sends them as an image. HarfBuzz parses the
+same hostile bytes when it shapes; its robustness is HarfBuzz's own, and this
+library's trust guarantees cover only its own reads. Font hinting, LCD subpixel
+rendering, web-font containers (WOFF and WOFF2), writing or subsetting font
+files, and installing fonts system-wide are out of scope. `COLR` version 1
+and `SVG ` colour glyphs are reported but not rendered. [`decisions.md`](./decisions.md)
+records why each of these was excluded and what would bring it back.
+
+Section 2 defines the vocabulary, and section 3 states the contract at a
+glance. Sections 4–15 give the requirements: the trust boundary, objects and
+ownership, errors, parsing, variation, metrics, outlines, rasterization,
+shaping, discovery, inspection, and the Sparkles programs that draw text
+through `sparkles:raylib-text`.
+[`testing.md`](./testing.md) names the independent oracle and scenarios for
+every requirement and holds the evidence ledger. [`PLAN.md`](./PLAN.md) orders
+delivery and tracks progress, including the migration of existing consumers.
+The evidence base is the [font-libraries research catalog][research].
+
+## 2. Vocabulary
+
+Terms this document uses in a sense specific to it. Font-format terms
+(`glyf`, `GSUB`, upem, F2Dot14) follow the [OpenType specification][ot-spec];
+the research catalog's [concepts page][concepts] explains them for readers new
+to font internals.
+
+- **Face.** One font inside a byte buffer: a single-font file, or one member
+  of a collection. A face is identified by its bytes and its index.
+- **Collection.** A `ttcf` file holding several faces that may share tables.
+- **Instance.** A face at a size in pixels per em, which scales its metrics
+  and selects bitmap strikes, with one normalized
+  coordinate vector, empty for a static face, and a synthesis value. The only
+  carrier of variation coordinates.
+- **User and normalized coordinates.** User coordinates are an axis's own
+  units, such as `wght` 650. Normalized coordinates are the −1…0…+1 values,
+  after `avar` remapping, that every variation table interpolates in.
+- **Synthesis.** What a match had to fake to approximate a request: an
+  emboldening amount, a skew angle, or an axis setting.
+- **Coverage.** Used alone, the fraction of a pixel a glyph covers. Which
+  characters a face maps is called character coverage.
+- **Cell metrics.** The fixed box a terminal lays characters out in: cell
+  width and height, baseline, underline and strikeout, in whole device pixels.
+- **Glyph key.** A value that fully determines one rasterization: face
+  identity, glyph, size, coordinates, subpixel offset and render flags.
+- **Source.** Somewhere fonts come from: explicit files, a directory, the
+  bundled font directory, or the platform's list of installed fonts.
+- **Font catalog.** The library's index of known faces, built from sources.
+  Distinct from a collection index, which picks a face inside one file.
+- **Face record.** What the catalog stores about one face, enough to match it
+  and test its coverage without opening it.
+- **Fallback chain.** An ordered list of face records consulted per
+  character when the preferred face lacks a glyph.
+
+## 3. The contract at a glance
+
+1. **Bounded reading.** No operation reads outside the caller's byte buffer
+   or does unbounded work, whatever the bytes contain.
+2. **Borrowed bytes.** Faces and everything derived from them borrow the
+   caller's buffer; the library never copies or frees it.
+3. **Immutable faces.** A face never changes after it opens, so any number
+   of threads may read it at once.
+4. **One coordinate vector.** An instance holds the only copy of its
+   normalized coordinates, and every consumer of variation reads that copy.
+5. **Caller-owned working memory.** Decoding, shaping and rasterization
+   write into storage the caller provides and keep nothing between calls.
+6. **Caches beside, not inside.** Faces and instances never cache; caches
+   are separate values keyed by glyph keys.
+7. **No windowing.** Nothing in the library depends on a window system, a
+   GPU API, raylib or `sparkles:ui`.
+8. **The same behaviour everywhere.** Matching and fallback use this
+   library's own face records on every platform.
+
+## 4. Trust boundary
+
+Font files are attacker-controlled input. The enforcement boundary is every
+public operation that reads font bytes.
+
+**FTB1: No out-of-bounds read.** For any byte sequence, every operation that
+reads font data **must** return a value derived only from bytes inside the
+borrowed buffer, or return an error.
+
+_Rationale:_ A read past the buffer is a violation whether or not it crashes,
+because the explorer opens files from untrusted sources.
+
+**FTB2: No assertion on data.** Malformed input **must not** reach an
+`assert`, a contract precondition, an array bounds check or an
+integer-overflow trap. Those **may** reject only caller-controlled arguments,
+and each such precondition is documented on its operation.
+
+**FTB3: Bounded work.** Every operation **must** have a documented
+worst-case cost in terms of input sizes and these fixed limits: composite
+glyph depth 8 and 512 components per glyph; `CFF` subroutine depth 10 and
+65,536 charstring operations per glyph; 1,024 `COLR` layers per glyph; 64
+`cmap` subtables per face. Exceeding a limit **must** produce an error that
+names it, never a silent truncation.
+
+**FTB4: Declared allocation.** Parsing, metrics and outline decoding **must
+not** allocate. Rasterization **must** write into caller-owned storage. An
+operation that allocates **must** say so in its documentation and state a
+memory bound.
+
+**FTB5: Cycles are errors.** A composite glyph or `CFF` subroutine that
+refers back to itself, directly or transitively within the depth limit,
+**must** produce a `cycle` error.
+
+## 5. Objects and ownership
+
+**FTA1: Borrowed bytes.** A face **must** hold the caller's bytes as a
+`scope const(ubyte)[]` slice and never copy them. The owner of the buffer
+keeps it alive while any face or derived value exists.
+
+_Rationale:_ With `-preview=dip1000`, `@safe` callers get this lifetime
+checked by the compiler, and a mapped file or an APK asset can back a face
+without a copy.
+
+**FTA2: Immutable face.** A face **must not** change after a successful
+open. Concurrent calls to its `const` operations from several threads
+**must** be safe without synchronization.
+
+**FTA3: Instance as a value.** An instance **must** be a copyable value
+holding a face, a size, a normalized coordinate vector and a synthesis value,
+with no mutable state. It is the only place variation coordinates are
+stored.
+
+**FTA4: Caller-owned scratch.** Shaping, outline decoding into arrays and
+rasterization **must** take their working storage from the caller and
+**must not** retain it between calls.
+
+**FTA5: Caches beside, not inside.** No operation on a face or an instance
+**may** consult or fill a cache. Glyph, outline and shaping caches are
+separate values keyed by values such as the glyph key.
+
+**FTA6: No windowing dependency.** No module of the library **may** import
+raylib, a GPU binding, `sparkles:ui` or a `sparkles:ui` backend.
+
+### Package configurations
+
+The package has two configurations. The default, `library`, provides
+parsing, variation, metrics, outlines, rasterization, discovery and
+inspection in D, depending only on `sparkles:base` and `expected`. The
+`engine` configuration adds shaping and links HarfBuzz, reached through
+hand-declared `extern(C)` prototypes over opaque handles with no C source
+file compiled.
+
+**FTA7: A pure-D default.** The `library` configuration **must** build and
+pass its tests with no C library on the link line other than those of the D
+runtime, on the desktop targets and on Android.
+
+**FTA8: Checked HarfBuzz layouts.** Every HarfBuzz struct whose fields the
+library reads or writes **must** have its size and field offsets checked
+against the installed `hb.h` by a test.
+
+_Rationale:_ Hand-declared layouts avoid a C shim and the build constraints
+of ImportC, at the risk of drifting from the headers. This test turns drift
+into a failure instead of memory corruption.
+
+Packages depend on the library, never the reverse: the font explorer,
+`sparkles:raylib-text` and `sparkles:terminal-view` use `sparkles:font`,
+which uses `sparkles:base`.
+
+## 6. Errors
+
+**FTA9: Structured errors.** Fallible operations **must** return
+`Expected!(T, FontError)`. A `FontError` carries a kind, the table tag
+involved if any, and the byte offset where the problem was found. The kinds
+include at least `notAFont`, `truncated`, `badOffset`, `badValue`,
+`unsupportedVersion`, `missingTable`, `limitExceeded`, `cycle` and
+`indexOutOfRange`.
+
+**FTA10: Absent is not malformed.** A table the font lacks **must** yield
+`missingTable`, never `badOffset`. A field that the table's version predates
+**must** yield its documented default, never an error.
+
+**FTA11: Partial results stay reachable.** Where a table is a list, such as
+name records, `cmap` subtables, axes or layout features, a malformed entry
+**must** produce an error for that entry while the well-formed entries remain
+readable.
+
+_Rationale:_ An inspector exists to show broken fonts. Refusing a whole table
+for one bad record hides exactly what the user came to see.
+
+## 7. Parsing
+
+### Opening a face
+
+**FTP1: Format detection.** The first four bytes **must** select the
+container: `0x00010000` or `true` for TrueType outlines, `OTTO` for `CFF` or
+`CFF2` outlines, `ttcf` for a collection. Any other value is `notAFont`,
+except the WOFF (`wOFF`) and WOFF2 (`wOF2`) signatures, which **must** yield
+`unsupportedVersion`.
+
+_Rationale:_ Naming a web font as unsupported, rather than as not a font,
+tells the user what to do with the file.
+
+**FTP2: Collections.** Opening a collection **must** read its header, in
+versions 1.0 and 2.0, and report the face count. Opening face `i` of a
+collection succeeds for `0 ≤ i < count`; a single-font file accepts only
+index 0. Any other index is `indexOutOfRange`. A face count above 65,535, or
+an offset array that does not fit the buffer, is `badValue` or `truncated`.
+
+**FTP3: Table directory.** Opening **must** check that the directory's
+records fit the buffer, that each record's offset plus length fits without
+overflow, and that tags are unique. A record failing a check makes only that
+table unreadable, reported as `badOffset`, unless it is `head`, `maxp` or
+`cmap`, whose failure **must** fail the open.
+
+**FTP4: Checksums are reported.** Table checksums and
+`head.checkSumAdjustment` **must** be computable on request. A mismatch is
+reported to the caller and **must not** make the library refuse the face.
+
+**FTP5: Cheap opening.** Opening a face **must** cost time proportional to
+the number of tables, plus the fixed-size reads of `head` and `maxp`. It
+**must not** decode glyphs, `cmap` subtables or layout tables.
+
+### Tables
+
+**FTP6: Raw access.** The bytes of every table in the directory **must** be
+obtainable as a slice of the borrowed buffer, including tables the library
+does not understand.
+
+**FTP7: Typed tables.** The library **must** return a plain struct for each
+of `head`, `hhea`, `maxp`, `OS/2` (versions 0–5), `post` (versions 1, 2,
+2.5 and 3), `name`, `hmtx`, `cmap`, `fvar`, `avar` and `STAT`. Field names
+**must** match the OpenType specification's. Fields a version lacks hold their
+documented defaults.
+
+**FTP8: Name records.** Every `name` record **must** be enumerable with its
+platform, encoding, language, name ID and text. Text in UTF-16BE **must**
+decode, which covers platform 0 and platform 3 encodings 0, 1 and 10; so
+**must** Mac Roman, platform 1 encoding 0. Other encodings are reported with
+their raw bytes. Version 1 language-tag records **must** decode. Decoding
+writes into caller storage.
+
+**FTP9: Character mapping.** Mapping a codepoint to a glyph **must** choose a
+`cmap` subtable in this order: platform 3 encoding 10; platform 0 encoding 4
+or 6; platform 3 encoding 1; platform 0 encoding 3 or lower; otherwise the
+first format-0 subtable. Formats 0, 4, 6, 12 and 13 **must** decode, and
+format 14 **must** decode for variation-sequence lookups. An unmapped
+codepoint yields glyph 0.
+
+**FTP10: Character coverage.** The mapped codepoints of the chosen subtable **must** be
+enumerable as sorted, merged ranges, in time proportional to the subtable's
+size and without allocating.
+
+**FTP11: Glyph names.** A glyph's name **must** come from `post` version 2
+or the `CFF` charset. A font with neither yields no name, not an error.
+
+**FTP12: Measured spacing.** The library **must** classify a face as `mono`,
+`dual` or `proportional` from its `hmtx` advances, ignoring zero advances.
+`dual` means exactly two advances, the larger twice the smaller, as in CJK
+monospace fonts. `post.isFixedPitch` is reported separately and **must not**
+decide the classification.
+
+## 8. Variation
+
+**FTV1: Axes and instances.** The `fvar` axes **must** be enumerable with tag,
+user-space minimum, default and maximum, the hidden flag and name ID. Named
+instances **must** be enumerable with subfamily name ID, optional PostScript
+name ID and user coordinates.
+
+**FTV2: Normalization.** Building an instance from user coordinates **must**
+normalize them exactly once: clamp to the axis range, map piecewise-linearly
+to −1…0…+1, then apply the `avar` segment maps if present. The result is
+stored as F2Dot14 values. An axis left unspecified takes its default.
+
+**FTV3: One vector for every consumer.** Metrics, outlines, shaping and glyph
+keys **must** take coordinates from the instance. No operation **may** accept
+variation coordinates by another route.
+
+_Rationale:_ Libraries that let layers take coordinates separately drift. An
+advance computed at one location and an outline drawn at another produce text
+that overlaps or gaps.
+
+**FTV4: User values retained.** An instance **must** keep the user
+coordinates it was built from, so a reader can be shown `wght 650` rather
+than `0.4375`.
+
+**FTV5: Exact normalization.** For every axis and `avar` map in the test
+corpus, normalized values **must** equal an independent reference to the
+F2Dot14 unit.
+
+## 9. Metrics
+
+**FTM1: All vertical sets.** The `hhea` ascender, descender and line gap,
+the `OS/2` typographic set and the `OS/2` Windows set **must** each be
+reported in font units, together with the `USE_TYPO_METRICS` flag.
+
+**FTM2: One line-metric rule.** The library's line metrics **must** use the
+typographic set when `USE_TYPO_METRICS` is set; otherwise `hhea` when its
+ascender or descender is non-zero; otherwise the typographic set; otherwise
+the Windows set with the descent negated. The result names the set it used.
+
+**FTM3: Absent, not zero.** x-height, cap height, underline position and
+thickness, and strikeout position and size are optional. A value the font
+does not provide **must** be reported as absent.
+
+**FTM4: Fractional values.** Advances and metrics at an instance **must** be
+fractional pixels, including `HVAR` and `MVAR` deltas. The library **must
+not** round them.
+
+**FTM5: Cell metrics.** For an instance, the library **must** compute cell
+metrics in whole device pixels. The cell width is the rounded advance of
+U+0030 DIGIT ZERO, or `OS/2.xAvgCharWidth` when the face does not map it. The
+rounding rule is documented on the operation and is part of the contract.
+
+## 10. Outlines
+
+**FTO1: Outline sink.** Drawing a glyph's outline **must** drive any sink
+type providing `moveTo`, `lineTo`, `quadTo` and `close`, and optionally
+`cubicTo` and `begin(contourCount)`. A sink without `cubicTo` receives cubic
+curves as quadratic approximations within 1/16 font unit.
+
+**FTO2: Outline as data.** The same outline **must** be decodable into a
+caller-owned segment array with explicit contour starts and closes. When the
+array is too small, the operation **must** return `limitExceeded` and write
+nothing past the array's end.
+
+**FTO3: Font units.** Outlines **must** be in font units, y-up and unscaled.
+Scaling and flipping belong to the rasterizer or the caller.
+
+**FTO4: Variation keeps topology.** For any glyph, the sequence of segment
+kinds at any instance **must** equal the sequence at the default instance.
+
+_Rationale:_ This lets an outline cache key on glyph and coordinates without
+re-deriving structure, and it is cheap to test across a whole corpus.
+
+**FTO5: Composites and phantom points.** Composite `glyf` glyphs **must** be
+flattened with their transforms. In a face without `HVAR`, the advance at an
+instance **must** include the `gvar` phantom-point deltas.
+
+## 11. Rasterization
+
+**FTR1: Pixel coverage into caller storage.** Rasterizing a glyph **must** write
+8-bit coverage into a caller-owned region with its own row stride and report
+the glyph's bounding box and bearing. It **must not** allocate.
+
+**FTR2: Nonzero winding.** Coverage **must** follow the nonzero rule,
+including for glyphs whose contours overlap, as variable-font glyphs often
+do.
+
+**FTR3: Accuracy against an independent renderer.** For every glyph of the
+test corpus at 12, 16, 24 and 48 pixels per em, unhinted coverage **must** be
+within the tolerance recorded in [`testing.md`](./testing.md#raster-oracle)
+of FreeType's unhinted rendering. The tolerance is fixed before the
+requirement is accepted and is not adjusted to make a run pass.
+
+**FTR4: Explicit gamma.** Coverage **must** be linear. A separate,
+documented transfer function maps it for display, chosen by the consumer.
+
+**FTR5: Layered colour glyphs.** `COLR` version 0 glyphs **must** render as
+`CPAL`-coloured layers into a premultiplied RGBA target. The foreground
+palette index `0xFFFF` takes a colour the caller supplies.
+
+**FTR6: Deterministic glyph keys.** Rasterizations with equal glyph keys
+**must** produce byte-identical output.
+
+**FTR7: Bitmap colour strikes.** `CBDT`/`CBLC` and `sbix` glyphs **must**
+decode from their embedded PNG data in 8-bit greyscale, RGB, RGBA or indexed
+colour, without interlacing. Other PNG forms yield `unsupportedVersion`. The
+strike chosen is the smallest at least as large as the requested size, else
+the largest, scaled to the requested size.
+
+_Rationale:_ The emoji font Sparkles bundles is a `CBDT` font with no
+outlines, so this is the only way emoji render without FreeType.
+
+## 12. Shaping
+
+These requirements apply to the `engine` configuration.
+
+**FTS1: Shaped runs.** Shaping text with an instance **must** return glyph
+IDs, clusters as UTF-8 byte offsets into the text, and fractional advances
+and offsets, using the instance's coordinates.
+
+**FTS2: Typed options.** Features **must** be values carrying a tag, a value
+and an optional byte range. Script, language and direction **may** be given or
+guessed, and the result **must** report the ones used.
+
+**FTS3: Coordinates passed unchanged.** HarfBuzz **must** receive exactly the
+instance's normalized coordinates. Shaping **must not** normalize again.
+
+**FTS4: Cluster integrity.** For a left-to-right run, cluster offsets **must**
+be non-decreasing, and every byte of the text **must** belong to exactly one
+cluster.
+
+**FTS5: Deterministic release.** HarfBuzz objects created for a face or
+instance **must** be released when their owner is destroyed, and none **may**
+outlive the bytes it borrows.
+
+**FTS6: Layout check.** The D declarations of `hb_glyph_info_t`,
+`hb_glyph_position_t`, `hb_feature_t`, `hb_variation_t` and
+`hb_ot_var_axis_info_t` **must** match the installed headers in size and in
+every field's offset. This is the test `FTA8` requires.
+
+## 13. Discovery, matching and fallback
+
+The requirements in this section are stated at contract level. Their
+operation contracts are added to this section before they are implemented.
+
+**FTD1: One catalog.** A font catalog **must** be built from sources into face
+records produced by this library's parser. No record's content **may** come
+from a platform service's description of a font.
+
+**FTD2: Platforms list files.** The platform source **must** list font files:
+through fontconfig on Linux, Core Text on macOS, the system and per-user font
+directories on Windows, and `/system/fonts` plus the application's assets on
+Android. When a platform service is missing, the catalog **must** build from the
+remaining sources and report why.
+
+**FTD3: Persistent catalog.** Face records **must** be cached on disk, keyed by
+path, collection index, file size and modification time, so an unchanged file is
+not parsed again. The cache format is versioned; a cache of an unknown version
+is discarded, not migrated.
+
+**FTD4: Matching.** Matching a request **must** implement the [CSS Fonts
+Level 4][css-match] font-matching algorithm over family, width, style and
+weight. The result carries the chosen record, a comparable score, and the
+synthesis needed to approximate the request.
+
+**FTD5: Fallback chains.** A fallback chain **must** begin with the match and
+contain only records that add coverage, in order. A record's face opens on
+first use, and lookups of a character and presentation **must** be memoized
+per chain.
+
+**FTD6: Explicit routes.** Codepoint-range routes chosen by the user and a
+procedural face for box-drawing and block characters **must** take part in
+the chain as ordinary entries.
+
+_Rationale:_ Treating procedural glyphs as a face lets them share shaping,
+caching and fallback with real fonts, instead of being a renderer special
+case.
+
+## 14. Inspection
+
+**FTI1: Reflectable tables.** Every typed table of `FTP7` **must** be a plain
+struct, so a `sparkles:reflection` walk enumerates its fields under their
+specification names.
+
+**FTI2: Feature enumeration.** Layout features **must** be enumerable per
+script and language system for both `GSUB` and `GPOS`, each with its lookup
+indices.
+
+**FTI3: Substitution records.** For each single, multiple, alternate and
+ligature lookup reachable from a feature, the substitutions **must** be
+enumerable as pairs of input and output glyph sequences. Contextual and
+chaining lookups **must** report the lookups they invoke.
+
+**FTI4: Colour capability.** The library **must** report which of `COLR`
+version 0, `COLR` version 1, `CPAL`, `CBDT`, `sbix` and `SVG ` a face
+contains, independent of which it renders.
+
+**FTI5: Table directory.** The table directory **must** be enumerable with
+each record's tag, offset, length, stored checksum and computed checksum,
+including records `FTP3` declared unreadable.
+
+## 15. Consumers
+
+**FTA12: No font code left behind.** Once its consumers use this library,
+`sparkles:raylib-text` **must** contain no font parsing, discovery, shaping or
+rasterization, and no C source file. It uploads and draws coverage this
+library produces.
+
+**FTA13: Android.** The Android builds of `hue` and `terminal` **must** build
+with this library and render the bundled fonts without fontconfig.
+
+**FTA14: Visible rendering changes.** A rendering change caused by moving a
+consumer onto this library **must** be either byte-identical in that
+consumer's screenshot goldens or listed with before-and-after captures in the
+evidence ledger.
+
+<!-- References -->
+
+[research]: ../../research/font-libraries/index.md
+[concepts]: ../../research/font-libraries/concepts.md
+[ot-spec]: https://learn.microsoft.com/en-us/typography/opentype/spec/
+[css-match]: https://www.w3.org/TR/css-fonts-4/#font-matching-algorithm
