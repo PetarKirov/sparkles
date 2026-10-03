@@ -404,10 +404,11 @@ final class RotatingFileCoreLogger : ForwardingCoreLogger
     {
         import core.stdc.stdio : fopen, fseek, ftell, SEEK_END;
 
-        file = fopen(pathz.ptr, "a");
+        // Binary: Windows' text mode would write each "\n" as "\r\n".
+        file = fopen(pathz.ptr, "ab");
         if (file is null)
             return false;
-        // "a" positions writes at the end, but ftell reports 0 until the first
+        // "ab" positions writes at the end, but ftell reports 0 until the first
         // one: seek there to learn how much the file already holds.
         fseek(file, 0, SEEK_END);
         const at = ftell(file);
