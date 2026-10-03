@@ -103,7 +103,7 @@ Core rules:
 - The raw layer is a faithful, attribute-stamped (`nothrow @nogc`) view of
   the C ABI; it adds nothing. All ergonomics live in the wrapper layer.
 - Every fallible wrapper operation returns
-  [`NixResult!T`](#4-error-handling) (`Expected!(T, NixError)`) — no
+  [`NixResult!T`](#_4-error-handling) (`Expected!(T, NixError)`) — no
   exceptions cross the API for ordinary failures (bad expression, type
   mismatch, missing attribute, build failure). Programmer/contract
   violations (a C function returning `null` _without_ setting an error,

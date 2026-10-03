@@ -133,5 +133,5 @@ full-repaint reference. A mismatch is an isolated error row that fails the run.
   widgets, images) — a follow-up plan, gated on M5.
 - FTXUI (C++) as a bench engine (redundant with Ratatui + Notcurses for the core
   question — spec §3.1).
-- The non-goals in [spec §4](./index.md#4-non-goals) (terminfo, accessibility,
+- The non-goals in [spec §4](./index.md#_4-non-goals) (terminfo, accessibility,
   terminal handshake queries).
