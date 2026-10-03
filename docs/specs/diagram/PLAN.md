@@ -6,6 +6,9 @@ _Audience: contributors. Execution-only; IDs refer to the
 
 Two commit series, stacked (`gh stack`), each commit green on its own.
 
+Progress: Series 1–3 delivered (D1.1–D3.3); per-requirement status lives in the
+[feature requirements](./feature-requirements.md).
+
 ## Series 1 — the MVP board
 
 | Step | Deliverable                                                                                                                              | IDs                                    |
