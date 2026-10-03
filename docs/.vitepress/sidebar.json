@@ -1180,6 +1180,24 @@
         ]
       },
       {
+        "text": "Font Explorer (proposal)",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/font-explorer/SPEC"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/font-explorer/PLAN"
+          },
+          {
+            "text": "Design Register",
+            "link": "/specs/font-explorer/design"
+          }
+        ]
+      },
+      {
         "text": "Fuzzy",
         "collapsed": true,
         "items": [
