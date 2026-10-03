@@ -245,5 +245,181 @@
     ],
     "owner": "sparkles:font-explorer",
     "seeAlso": ["cell-metrics"]
+  },
+  {
+    "id": "capability-row",
+    "term": "capability row",
+    "aliases": ["effect row"],
+    "summary": "A statically typed record of handler values, one per service such as the clock, the network or processes, passed to code instead of letting it reach those services directly.",
+    "definition": "In `sparkles:event-horizon`, a `Ctx` struct holding one handler per uniquely labeled capability; a function that needs several services takes a row, one that needs one takes it bare. Swapping a handler means passing a value of a different type, so tests substitute virtual time or a simulated network with no run-time dispatch. It is a testability and least-authority convention, not a security boundary.",
+    "authority": [
+      {
+        "text": "sparkles:event-horizon specification §10.2",
+        "link": "/specs/event-horizon/SPEC#_10-2-the-row"
+      },
+      {
+        "text": "Algebraic effects research survey",
+        "link": "/research/algebraic-effects/"
+      }
+    ],
+    "owner": "sparkles:event-horizon",
+    "seeAlso": ["sans-io"]
+  },
+  {
+    "id": "version-scheme",
+    "term": "version scheme",
+    "summary": "In sparkles:versions, a type that is both a version value of one package ecosystem and the handle that parses that ecosystem's version strings.",
+    "definition": "A plain struct that is at once the version value for one ecosystem (SemVer, PEP 440, Debian, …) and the handle carrying its parser and Package URL type. It satisfies the version concept, a total order plus text rendering, and the scheme concept; every further capability is optional and detected at compile time.",
+    "authority": [
+      {
+        "text": "sparkles:versions specification §6",
+        "link": "/specs/versions/SPEC#_6-the-scheme-concept"
+      },
+      {
+        "text": "sparkles:versions specification §3",
+        "link": "/specs/versions/SPEC#_3-the-version-concept"
+      }
+    ],
+    "owner": "sparkles:versions"
+  },
+  {
+    "id": "workload-window",
+    "term": "workload window",
+    "summary": "The span of a workload test's body, run once or a few times, across which the test runner reports how every measurement source changed.",
+    "definition": "A `@workload` test is measured as a window rather than per iteration: each source is read once at the window's opening and closing edges, and the runner reports the deltas, including a split of elapsed time into on-CPU and off-CPU components. The body is never re-run for counting.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner specification §4",
+        "link": "/specs/test-runner/SPEC#_4-measurement-protocol"
+      },
+      {
+        "text": "sparkles:test-runner specification §3",
+        "link": "/specs/test-runner/SPEC#_3-attribute-and-in-body-surface"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["metric-class"]
+  },
+  {
+    "id": "metric-class",
+    "term": "metric class",
+    "aliases": ["quantitative metric", "diagnostic metric"],
+    "summary": "Whether a measured metric barely perturbs the work, and so may back a reported result, or only helps explain one.",
+    "definition": "Every metric in the test runner's catalog is either _quantitative_, with near-zero perturbation and the only class a reported or gated number may read, or _diagnostic_, which perturbs the measurement and is rendered separately, never blended into a headline.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner specification §1",
+        "link": "/specs/test-runner/SPEC#_1-overview"
+      },
+      {
+        "text": "sparkles:test-runner specification §5.1",
+        "link": "/specs/test-runner/SPEC#_5-1-types"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["reported-absence"]
+  },
+  {
+    "id": "reported-absence",
+    "term": "reported absence",
+    "aliases": ["capability absence"],
+    "summary": "A capability a measurement source cannot provide on this host, reported by name with its reason instead of failing the run or printing a number.",
+    "definition": "Each measurement source opens through a run-time probe and reports what it can measure. A missing capability is recorded as an absence with a human-readable reason; its columns are omitted or render as unavailable, never as zero or an unlabeled estimate.",
+    "authority": [
+      {
+        "text": "sparkles:test-runner specification §6.2",
+        "link": "/specs/test-runner/SPEC#_6-2-the-capability-model"
+      },
+      {
+        "text": "sparkles:test-runner specification §6.3",
+        "link": "/specs/test-runner/SPEC#_6-3-degradation-rules-normative"
+      }
+    ],
+    "owner": "sparkles:test-runner",
+    "seeAlso": ["metric-class"]
+  },
+  {
+    "id": "slot",
+    "term": "slot",
+    "aliases": ["semantic slot", "slots"],
+    "summary": "A named visual role, such as error text or a selected row, that a widget refers to instead of a concrete color.",
+    "definition": "In `sparkles:ui`, a widget names a slot rather than a color or style; the theme's palette resolves each slot to a concrete appearance (colors, attributes, border, font role) while the display list is built, so one theme restyles every target.",
+    "authority": [
+      {
+        "text": "sparkles:ui theme specification",
+        "link": "/specs/ui/theme#requirements"
+      },
+      {
+        "text": "Theme channels",
+        "link": "/specs/ui/theme#channels"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["display-list", "cell"]
+  },
+  {
+    "id": "cell",
+    "term": "cell",
+    "aliases": ["cells"],
+    "summary": "The integer unit of space in which the UI toolkit lays out every widget: one character position on a terminal, and a backend-chosen size elsewhere.",
+    "definition": "Every coordinate and extent in `sparkles:ui` layout is a whole number of cells; no floating-point value enters layout. Mapping cells to pixels or CSS lengths is the canvas's job, so pixel backends may still position content more finely.",
+    "authority": [
+      {
+        "text": "Why integers, everywhere",
+        "link": "/specs/ui/layout#why-integers-everywhere"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["slot", "display-list"]
+  },
+  {
+    "id": "display-list",
+    "term": "display list",
+    "summary": "The flat sequence of drawing operations the UI toolkit produces from a laid-out widget tree, with every visual role already resolved.",
+    "definition": "In `sparkles:ui`, the display list is the last backend-neutral stage: each operation carries its slot, its resolved appearance and its clip state, so a backend paints it without consulting the theme or the widget tree. Tests inspect it through a recording canvas.",
+    "authority": [
+      {
+        "text": "sparkles:ui backends: design and rationale",
+        "link": "/specs/ui/backends#design-rationale"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["slot", "cell"]
+  },
+  {
+    "id": "content-kind",
+    "term": "content kind",
+    "summary": "The category hue assigns to a loaded document, such as highlighted source, markdown, a delimiter-separated table, a diff or an annotated code sample, which decides how it is viewed.",
+    "definition": "The category a document gets when hue loads a target, chosen from its content rather than from a command-line mode. Each kind produces one `sparkles:ui` widget tree that every backend paints, and kinds compose: a markdown document may embed a code block of another kind.",
+    "authority": [
+      {
+        "text": "hue output-mode dispatch (MOD)",
+        "link": "/specs/hue/feature-requirements#output-mode-dispatch-mod"
+      },
+      {
+        "text": "hue UI architecture",
+        "link": "/specs/hue/ui-architecture"
+      }
+    ],
+    "owner": "sparkles:hue",
+    "seeAlso": ["interaction-tier"]
+  },
+  {
+    "id": "interaction-tier",
+    "term": "interaction tier",
+    "summary": "The level of interactivity a viewer requirement needs: static output, a live event loop, or positions finer than a terminal cell.",
+    "definition": "A classification of hue's viewer requirements by what they need from a backend, not by which backend paints them: `passive` (static output), `interactive` (a live event loop) and `precise` (sub-cell positions or continuous time). Where a backend cannot reach a tier, the requirement states the degradation; any other difference between backends is a defect.",
+    "authority": [
+      {
+        "text": "hue viewer tiers",
+        "link": "/specs/hue/viewer#tiers"
+      },
+      {
+        "text": "hue UI architecture (UIA13)",
+        "link": "/specs/hue/ui-architecture#hue-s-consumption-uia"
+      }
+    ],
+    "owner": "sparkles:hue",
+    "seeAlso": ["content-kind", "cell"]
   }
 ]
