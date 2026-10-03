@@ -7,7 +7,7 @@ application has enabled.
 ## Keyboard
 
 The terminal claims a few chords in a pane; everything else is under the
-**leader**, `Ctrl+Shift+Space` by default (`lantern.leader`). After the leader,
+**leader**, `Ctrl+Shift+Space` by default — `Ctrl+Alt+Space` on Android, whose keyboard layout switch takes the other (`lantern.leader`). After the leader,
 the key guide lists what follows once `lantern.delayMs` has passed — type
 faster and it never appears. On a phone the `MENU` extra key (☰) opens the
 guide. In a page or menu, `Escape`, `q` and Back close it and `?` lists its keys.

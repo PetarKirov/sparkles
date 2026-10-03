@@ -28,7 +28,7 @@ import sparkles.terminal_view.notification_log : NotifyWhen;
 import sparkles.terminal_view.protocols : ClipboardReadPolicy, PasteConfirm;
 
 import extra_keys : defaultExtraKeysSpec;
-import keymap : KeysConfig;
+import keymap : defaultLeader, KeysConfig;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Closed domains.
@@ -364,8 +364,8 @@ struct LanternConfig
     @Range(0, 5000, 50)
     int delayMs = 400;
 
-    @Description("The chord that opens the guide on the desktop.")
-    string leader = "ctrl+shift+space";
+    @Description("The chord that opens the guide: ctrl+shift+space, or ctrl+alt+space on Android.")
+    string leader = defaultLeader;
 }
 
 /// ditto

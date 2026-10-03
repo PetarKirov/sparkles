@@ -24,14 +24,14 @@ the terminal ([D18](./decisions.md)).
 
 **In a pane,** a key is the program's unless it is one of:
 
-| Chord                          | Command                       |
-| ------------------------------ | ----------------------------- |
-| `Ctrl+Shift+C` / `+V`          | copy / paste                  |
-| `Ctrl+Shift+T`                 | new tab                       |
-| `Ctrl+Shift+W`                 | close pane                    |
-| `Ctrl+Shift+PgUp` / `+PgDn`    | previous / next tab           |
-| `Ctrl+=` / `Ctrl+−` / `Ctrl+0` | font larger / smaller / reset |
-| leader (`Ctrl+Shift+Space`)    | open the guide at the root    |
+| Chord                                                    | Command                       |
+| -------------------------------------------------------- | ----------------------------- |
+| `Ctrl+Shift+C` / `+V`                                    | copy / paste                  |
+| `Ctrl+Shift+T`                                           | new tab                       |
+| `Ctrl+Shift+W`                                           | close pane                    |
+| `Ctrl+Shift+PgUp` / `+PgDn`                              | previous / next tab           |
+| `Ctrl+=` / `Ctrl+−` / `Ctrl+0`                           | font larger / smaller / reset |
+| leader (`Ctrl+Shift+Space`; `Ctrl+Alt+Space` on Android) | open the guide at the root    |
 
 These are the chords kitty and Ghostty use, so muscle memory carries over. The
 leader opens the [lantern](../hue/lantern.md) guide; everything else —
@@ -73,6 +73,6 @@ is a list.
 | `TKM7`  | The extra-keys syntax gains a `MENU` token that opens the guide at the root; the default layout includes it. Unknown tokens keep their Termux meaning (literal text).                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | full                                                                                                                                 | `ExtraKeyKind.menu`, `defaultExtraKeysSpec`                         |
 | `TKM8`  | User overlays (`keys` in the config) rebind or unbind (`null`) rows by command name and scope, as hue's `CFG6`; the guide shows the merged table. A binding that names an unknown command or an unparsable chord is a located warning, not a crash.                                                                                                                                                                                                                                                                                                                                                                                                | full                                                                                                                                 | `applyKeysOverlay`, `KeysConfig`                                    |
 | `TKM9`  | `docs/apps/terminal/reference/bindings.md` must list the effective default table, generated from or checked against `bindingsAt` ([`KBD6`](../design-system/keyboard.md)), so the docs and the binary agree.                                                                                                                                                                                                                                                                                                                                                                                                                                       | full                                                                                                                                 | `bindingsMarkdown`, `bindingsMarkdown.matchesTheReference`          |
-| `TKM10` | **The leader per platform** ([D45](./decisions.md)): `lantern.leader` defaults to `Ctrl+Alt+Space` on Android and `Ctrl+Shift+Space` elsewhere; neither is a chord the platform takes from a hardware keyboard. Violation: the default leader reaching the input method instead of the app.                                                                                                                                                                                                                                                                                                                                                        | not started                                                                                                                          | [D45](./decisions.md)                                               |
+| `TKM10` | **The leader per platform** ([D45](./decisions.md)): `lantern.leader` defaults to `Ctrl+Alt+Space` on Android and `Ctrl+Shift+Space` elsewhere; neither is a chord the platform takes from a hardware keyboard. Violation: the default leader reaching the input method instead of the app.                                                                                                                                                                                                                                                                                                                                                        | full                                                                                                                                 | `defaultLeader`, `androidLeader`, `LanternConfig.leader`            |
 
 → [Overview](./index.md) · [`KEY`/`LTN`](../ui/keymap.md) · [Keyboard vocabulary](../design-system/keyboard.md)

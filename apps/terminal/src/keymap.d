@@ -121,8 +121,18 @@ struct TermContext
 /// no keyboard produces. $(LREF terminalBindings) substitutes the real chord.
 enum dchar leaderMark = '';
 
-/// The default leader (`TKM5`, `lantern.leader`).
-enum defaultLeader = "ctrl+shift+space";
+/**
+The default leader (`TKM5`, `TKM10`, `lantern.leader`): `Ctrl+Shift+Space`,
+and `Ctrl+Alt+Space` on Android, which takes Ctrl+Shift+Space from a hardware
+keyboard to switch layouts (D45) — the app never receives it.
+*/
+version (Android)
+    enum defaultLeader = androidLeader;
+else
+    enum defaultLeader = desktopLeader;
+
+/// ditto — each platform's, for the tests and the reference.
+enum desktopLeader = "ctrl+shift+space", androidLeader = "ctrl+alt+space";
 
 /// The `keys` overlay's wire form (`TKM8`).
 alias KeysConfig = KeysConfigOf!(TermCommand, TermScope, leaderMark);
@@ -554,4 +564,27 @@ version (unittest)
     assert(readText(page).canFind(bindingsMarkdown()),
         "docs/apps/terminal/reference/bindings.md is stale — regenerate its table "
         ~ "with `terminal config keys`:\n" ~ bindingsMarkdown());
+}
+
+@("keymap.eachPlatformsLeaderBindsCleanly")
+@safe unittest
+{
+    import sparkles.input.events : Key;
+
+    // `TKM10`: both defaults parse, collide with no reserved chord, and open
+    // the guide's prefix — Android's must not be a chord its keyboard layout
+    // switch takes (Ctrl+Shift+Space, Ctrl+Space).
+    foreach (leader; [desktopLeader, androidLeader])
+    {
+        string[] warnings;
+        const c = leaderChord(leader, warnings);
+        assert(!warnings.length, leader);
+        assert(!isReserved(c), leader);
+        auto t = terminalBindings(c, KeysConfig.init, warnings);
+        assert(!warnings.length, leader);
+    }
+    string[] w;
+    const android = leaderChord(androidLeader, w);
+    assert(android.ctrl && android.alt && android.key == Key.char_ && android.ch == ' ',
+        "Android's leader is Ctrl+Alt+Space");
 }
