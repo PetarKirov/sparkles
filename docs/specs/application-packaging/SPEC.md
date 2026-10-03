@@ -1,11 +1,88 @@
+---
+status: draft
+owner: sparkles:packaging
+---
+
 # `sparkles:packaging` — Specification
 
-_Audience: developers and coding agents building against the library and its
-optional command-line frontend. This document is the desired-state contract.
-Decisions still requiring product input are explicitly marked **Open** rather
-than silently fixed. For delivery order, see [PLAN.md](./PLAN.md); for evidence,
-terminology, and prior art, see the
-[application-packaging research catalog](../../research/application-packaging/)._
+## Abstract
+
+`sparkles:packaging` turns an application that has already been built
+into release artifacts for Linux, Windows and macOS: portable TAR and ZIP
+archives, Debian packages, macOS application bundles and disk images,
+and Inno Setup installers for Windows. One description of the product,
+its target platform and the files to ship is validated and turned into a
+plan that can be inspected before anything is written. Built-in encoders
+produce identical unsigned bytes from identical inputs on any host. For
+signing, and for formats whose tools it does not embed, the library runs
+external tools only when the caller has provided them. Every run ends with
+a machine-readable receipt recording the final digest of each artifact
+it produced.
+
+## Introduction
+
+A program is ready to ship once its binaries and data files exist, but its
+users do not receive a directory. They download an archive, install a Debian
+package, open a signed macOS application from a disk image, or run a Windows
+installer. Each of these formats has its own file layout, identity fields,
+version syntax, permission metadata and trust steps. The release process
+that publishes them also needs an exact record of which bytes it shipped,
+so that checksums, signatures and later audits refer to the same files.
+
+Doing this well is harder than writing each container format. Host state
+leaks into the output: file order, timestamps, owners, the umask and the
+locale all change the bytes unless something pins them. A version string
+that is valid in one ecosystem may be invalid or misordered in another,
+and a commit hash, which carries no order, cannot stand in for a numeric
+build number. Signing and notarization modify bytes, so a checksum taken
+before them does not describe the file that is published. A packager that
+discovers a missing signing tool halfway through leaves partial output
+behind, and one that downloads tools on demand makes the build depend on
+whatever the network returned that day.
+
+This library therefore separates deciding from doing. The caller describes
+a [stage tree](../../glossary.md#stage-tree): a logical tree of files,
+directories and symbolic links, independent of any host filesystem, whose
+paths are validated before a host path is ever touched. Planning combines
+that tree with the product's identity and its target platform, which need
+not be the host the library runs on. It resolves every format's identity
+and native version through named, tested mappings, lists every operation
+and external command, and marks the point after which a digest is final.
+
+Each step that relies on something outside the library, such as a vendor's
+signing tool, is a capability that planning probes, without changing
+anything, and reports as available, unavailable or unknown with a reason. A
+plan with an unavailable requirement is reported as not executable; the
+library never substitutes a fallback or fetches the tool. A dry run stops
+after planning and has no side effects. Because a plan does not promise that
+files or tools stay unchanged, execution checks the inputs and capabilities
+again, works in a private workspace, installs finished artifacts atomically
+and writes the [artifact receipt](../../glossary.md#artifact-receipt) last.
+
+The input is always a prebuilt payload: the library compiles nothing
+and does not replace dub, Nix or a CI build matrix. It does not publish,
+upload, index repositories, promote releases or deliver updates; later
+tools consume its receipts for that. It stores no secrets and accepts
+only references to credentials. The receipt records what was packaged
+and is not an SBOM or a provenance attestation, though either may later
+be generated from it. The library does not promise that every format can
+be finished on every host; Apple signing, for example, needs Apple's own
+tools on the host. Formats beyond the baseline matrix, such as MSI, MSIX,
+RPM, Flatpak and Snap, stay out of scope until a concrete product needs
+one. A thin command-line frontend, `sparkles-package`, drives the library
+from a versioned JSON request; the D API remains the authority.
+
+Sections 1–3 give an overview of the pipeline, the committed scope and
+dependency policy, and the module layout with the command-line frontend.
+Section 4 defines the request: product identity, target and host, and version
+mappings. Section 5 specifies the stage tree, §6 the artifact lifecycle and
+the format matrix, §7 planning, dry runs and execution, and §8 capabilities
+and backends. Sections 9–11 cover the receipt, signing and notarization,
+and errors and safety, §12 the verification contract, and §13 the scope
+decisions, of which those still open gate the milestones that depend on
+them. Delivery order lives in [PLAN.md](./PLAN.md). Terminology, prior
+art and the evidence behind each choice are in the [application-packaging
+research catalog](../../research/application-packaging/).
 
 ## 1. Overview
 

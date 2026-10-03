@@ -5,6 +5,10 @@ specification. Each milestone is independently green (builds + tests + lints).
 The classic single-release mode (SPEC §5) shipped earlier; M2–M6 deliver the
 split mode (SPEC §6–§9) on top of it._
 
+**Progress:** M1–M6 delivered. The plan resume (SPEC §7.6) and the app
+channels (SPEC §3.1, §4.1, `publish-apps`) landed later, outside these
+milestones.
+
 ## M1 — Specification
 
 [SPEC.md](./SPEC.md) — the normative surface: the CLI (§3), the version policy

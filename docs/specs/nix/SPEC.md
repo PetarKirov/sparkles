@@ -1,14 +1,82 @@
+---
+status: accepted
+owner: sparkles:nix
+---
+
 # `sparkles:nix` — Specification
 
-_Audience: developers and coding agents building against the library.
-This document is normative and self-contained — it states what the
-library provides, not why. For the delivery plan and milestone
-orchestration, see [PLAN.md](./PLAN.md). The reference implementation we
-mirror is the Rust [`nix-bindings-rust`][nbr] workspace; the raw C surface
-is Nix's own [C API][nix-c-api]._
+## Abstract
 
-[nbr]: https://github.com/nixops4/nix-bindings-rust
-[nix-c-api]: https://nix.dev/manual/nix/latest/c-api
+`sparkles:nix` embeds the Nix evaluator in D programs. Through it a program
+opens a Nix store, evaluates Nix expressions and flakes, builds derivations,
+and reads the results back as typed D values, all in-process rather than by
+running the Nix command-line tool and parsing its output. It binds Nix's
+stable C API in two layers: a raw layer generated from the C headers
+themselves, so it cannot drift from the Nix it links against, and a
+memory-safe layer that owns every handle, releases it exactly once, and
+returns each ordinary failure as a value instead of throwing it.
+
+## Introduction
+
+Tools that work with Nix need the values a Nix expression produces: the
+outputs of a [flake](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-flake),
+a package's version, a store path to build. The usual route runs the `nix`
+command and parses its JSON output. That costs a process and a fresh
+evaluation per question, forces everything it prints, and reports errors as
+text on standard error. Nix also ships a
+[C API](https://nix.dev/manual/nix/latest/c-api) for embedding its evaluator
+in-process, and the Rust
+[`nix-bindings-rust`](https://github.com/nixops4/nix-bindings-rust)
+workspace, on which nixops4 and devenv build, shows that real tools can rely
+on it.
+
+The C API is not usable as-is from safe code. Each call reports failure
+through a separate error context rather than its return value. Each handle
+must be released by hand, some exactly once and some by reference count.
+Strings arrive through callbacks. The evaluator runs its own
+[Boehm garbage collector](https://www.hboehm.info/gc/), which scans only the
+threads it has registered, yet the C API offers no way to register a thread.
+A binding that leaves these rules implicit makes every caller rediscover
+them as lost errors, leaks, double frees, and collector crashes on the wrong
+thread.
+
+The library follows the split `nix-bindings-rust` draws between raw and safe
+crates, collapsed into one package. The raw layer is
+[ImportC](../../guidelines/importc-c-libraries.md) compiling the real Nix
+headers, so every C declaration is callable from D with exactly the layout
+of the installed Nix; it adds nothing. Calls that need a newer Nix than the
+linked one are compiled out by a build-time version check. The wrapper layer
+above the raw one turns each convention of the C API into a D one. The
+error context becomes a returned result carrying both code and message,
+manual release becomes handles that free their resource exactly once,
+string callbacks become D output ranges, and the collector's thread rule
+becomes an explicit single-thread contract. Ordinary failures, such as a
+bad expression or a missing attribute, are results; a broken C contract is
+an assertion. A small facade over the wrapper layer bundles initialization,
+a store, and an evaluator for programs that only want to evaluate an
+expression.
+
+Evaluation is confined to one thread. The thread that initializes Nix
+performs all evaluation, which includes forcing a lazy value and extracting
+its contents; other threads may only hold, copy, and release value handles.
+Multi-threaded evaluation, which needs a direct binding to the Boehm
+collector, is out of scope, as are Nix functions implemented by D
+callbacks, Nix's external values (opaque host objects inside Nix values), a
+persistent evaluation cache such as devenv's, and package or SBOM models
+built on top of the store. The wrapper layer allocates on D's
+garbage-collected heap, because an evaluator that runs its own collector
+cannot be allocation-free; only a few string sinks avoid it. Callers who
+need an unbound part of the C API may use the raw layer directly, outside
+the wrapper's safety guarantees.
+
+§1 restates the two layers and their rules as the contract at a glance, §2
+lays out the modules, and §3 the raw bindings. §4 and §5 define error
+handling and string bridging, and §6 the library lifecycle, settings, and
+the normative threading and collector model. §7–§10 specify the store,
+evaluation, values, and flakes, and §11 the facade. §12 collects the safety
+conventions, §13 the example application, and §14 the non-goals. Delivery
+order and risks live in [PLAN.md](./PLAN.md), and the binding workflow in
+[Integrating C Libraries](../../guidelines/importc-c-libraries.md).
 
 ## 1. Overview
 
