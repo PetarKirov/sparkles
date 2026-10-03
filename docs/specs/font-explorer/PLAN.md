@@ -1,6 +1,6 @@
 ---
 status: draft
-owner: apps/font-explorer
+owner: sparkles:font-explorer
 reviewed:
 ---
 

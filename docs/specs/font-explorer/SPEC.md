@@ -1,6 +1,6 @@
 ---
 status: draft
-owner: apps/font-explorer
+owner: sparkles:font-explorer
 reviewed:
 ---
 
@@ -40,7 +40,7 @@ already works.
 This application is built on `sparkles:font`, which parses fonts, shapes and
 rasterizes text, and builds a catalog of fonts, and on the `sparkles:ui` toolkit,
 whose single view description runs both as a window and in a terminal. Every
-rendered specimen is a bitmap the font library produces in the font being
+rendered [specimen](../../glossary.md#specimen) is a bitmap the font library produces in the font being
 examined, and the toolkit shows it as an image. In a terminal, specimens
 therefore appear in the candidate font, never in the terminal's own font. A
 terminal that speaks the kitty graphics protocol displays the same specimens
@@ -64,6 +64,14 @@ inspection and persistence, and section 9 how panes share the screen at
 different widths. The visual design chosen for each surface, and the mockups
 it was chosen from, are recorded in [`design.md`](./design.md).
 [`PLAN.md`](./PLAN.md) orders delivery against the font library's milestones.
+
+### Terminology
+
+The terms this specification coins are defined in the
+[glossary](../../glossary.md); the font terms it relies on, such as face and
+instance, belong to [`sparkles:font`](../font/SPEC.md).
+
+<GlossaryList owner="sparkles:font-explorer" />
 
 ### Where it sits among existing tools
 
@@ -223,7 +231,7 @@ directions; only an overlay shows how individual glyphs differ.
 
 ## 7. Programming-font checks
 
-**FXP20: Cell-grid audit.** The explorer **must** list every glyph whose
+**FXP20: Cell-grid audit.** The [cell-grid audit](../../glossary.md#cell-grid-audit) **must** list every glyph whose
 advance differs from the face's cell advance, and every ligature that changes
 the number of glyphs, with the characters involved.
 
@@ -276,7 +284,7 @@ area and the inspector. Which of them share the screen depends on the width
 of the window or terminal, measured in the user interface's cells, so one
 rule serves both targets and scales with the interface font.
 
-**FXP32: Width classes.** At 150 cells or more, all four panes **must** be
+**FXP32: Width classes.** The layout is chosen by [width class](../../glossary.md#width-class). At 150 cells or more, all four panes **must** be
 shown side by side. From 100 to 149 cells, the navigator **must** fold into a
 source picker at the top of the family list, and the inspector **must**
 become an overlay. Below 100 cells, only the specimen area **must** be shown,
