@@ -189,7 +189,10 @@ struct DroidTerminal
         {
             import raylib : GetScreenHeight, GetScreenWidth;
 
-            host.phonePortrait = GetScreenHeight() > GetScreenWidth();
+            import sparkles.android.activity : largeScreen;
+
+            // A tablet keeps the rail in portrait too (`TCF14`, D47).
+            host.phonePortrait = GetScreenHeight() > GetScreenWidth() && !largeScreen();
         }
         selection.reducedMotion = platform.reducedMotion; // `ACC5`, `TSE3`
         // A finger on a divider resizes the split (`TSS10`); that contact,

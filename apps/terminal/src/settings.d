@@ -92,6 +92,8 @@ enum OverlayStyle : ubyte
 /// `TCF11`: the touch selection menu.
 enum SelectionMenu : ubyte
 {
+    /// The card on a large screen (a tablet, `TCF14`), the sheet on a phone.
+    @WireName("auto") automatic,
     /// A bottom sheet with a swipeable action row.
     sheet,
     /// An anchored card of labelled actions.
@@ -103,7 +105,7 @@ enum SelectionMenu : ubyte
 /// `TCF12`: what opens the tab and pane tree.
 enum TabsOpener : ubyte
 {
-    /// The pill on a phone in portrait, the rail otherwise.
+    /// The pill on a phone in portrait, the rail otherwise (a tablet too).
     @WireName("auto") automatic,
     /// A pill naming the current tab.
     pill,
@@ -380,9 +382,10 @@ struct UiConfig
     @Label("overlay style")
     OverlayStyle overlayStyle = OverlayStyle.anchored;
 
-    @Description("The touch selection menu: sheet, card or compact.")
+    @Description("The touch selection menu: auto (a card on a tablet, a sheet on a phone), "
+        ~ "sheet, card or compact.")
     @Label("selection menu")
-    SelectionMenu selectionMenu = SelectionMenu.sheet;
+    SelectionMenu selectionMenu = SelectionMenu.automatic;
 
     @Description("What opens the tab and pane tree: auto, pill or rail.")
     @Label("tabs opener")

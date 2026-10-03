@@ -157,3 +157,16 @@ int densityDpi() @trusted nothrow @nogc
 
 /// Pixels for `dp` density-independent pixels on this screen.
 int dpToPx(int dp) @trusted nothrow @nogc => (dp * densityDpi() + 80) / 160;
+
+private extern (C) int AConfiguration_getSmallestScreenWidthDp(const(void)* config) @nogc nothrow;
+
+/**
+Whether this is a large screen — a tablet: its smallest width is at least
+600 dp, Android's own `sw600dp` line. False when the configuration does not
+say. Follows the configuration, so a foldable opening flips it.
+*/
+bool largeScreen() @trusted nothrow @nogc
+{
+    const config = GetAndroidApp().config;
+    return config !is null && AConfiguration_getSmallestScreenWidthDp(config) >= 600;
+}

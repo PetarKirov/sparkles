@@ -404,6 +404,22 @@ enum Presentation : ubyte
     context, /// X1: the desktop's right-click menu
 }
 
+/// `ui.selectionMenu` resolved (`TCF14`, D47): `auto` is the anchored card on
+/// a large screen, where a full-width sheet puts the actions far from the
+/// selection, and the sheet on a phone.
+SelectionMenu menuStyle(SelectionMenu setting, bool largeScreen) @safe pure nothrow @nogc
+    => setting != SelectionMenu.automatic ? setting
+        : largeScreen ? SelectionMenu.card : SelectionMenu.sheet;
+
+@("selection_menu.menuStyle.autoByScreen")
+@safe pure nothrow @nogc unittest
+{
+    assert(menuStyle(SelectionMenu.automatic, largeScreen: true) == SelectionMenu.card);
+    assert(menuStyle(SelectionMenu.automatic, largeScreen: false) == SelectionMenu.sheet);
+    assert(menuStyle(SelectionMenu.compact, largeScreen: true) == SelectionMenu.compact);
+    assert(menuStyle(SelectionMenu.sheet, largeScreen: true) == SelectionMenu.sheet);
+}
+
 /// What the menu acts through: the embedder's side.
 interface MenuHost
 {
@@ -970,6 +986,8 @@ struct SelectionUi
     SelectionPlatform platform;
     /// `ui.selectionMenu` (`TCF11`).
     SelectionMenu style;
+    /// A large screen — a tablet (`TCF14`): `auto` means the card there.
+    bool largeScreen;
     /// The shortcut hints of the desktop menu (`TCF9`).
     string[MenuAction.max + 1] shortcuts;
     /// A handle's drawing and its touch target, in pixels (`TSE3`: the
@@ -1249,8 +1267,9 @@ struct SelectionUi
         f.canAutofill = platform.canAutofill !is null && platform.canAutofill();
 
         const p = !platform.touch ? Presentation.context
-            : style == SelectionMenu.card ? Presentation.card
-            : style == SelectionMenu.compact ? Presentation.compact : Presentation.sheet;
+            : menuStyle(style, largeScreen) == SelectionMenu.card ? Presentation.card
+            : menuStyle(style, largeScreen) == SelectionMenu.compact ? Presentation.compact
+            : Presentation.sheet;
         menu = new ActionMenu(bridge, f, p);
         menu.shortcuts = shortcuts;
         menu.liftShown = tv.contentLift; // already said, when a drag kept it
@@ -1418,6 +1437,11 @@ struct SelectionUi
                 cast(void) autofillAvailable(); // the first answer, early
             }
             style = c.ui.selectionMenu;
+            {
+                import sparkles.android.activity : isLarge = largeScreen;
+
+                largeScreen = isLarge();
+            }
             handlePx = dpToPx(20);
             targetPx = dpToPx(48);
         }
