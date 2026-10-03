@@ -91,7 +91,7 @@ WidgetTree paneHeader(string title, string detail, bool focused, int cols) @safe
 {
     Builder b;
     uint[] parts = [label(b, focused ? "▍" : "│", Slot.accentPrimary),
-        label(b, title, focused ? Slot.textPrimary : Slot.muted, bold: focused)];
+        keepTitle(b, label(b, title, focused ? Slot.textPrimary : Slot.muted, bold: focused))];
     if (detail.length)
         parts ~= label(b, detail, Slot.muted);
     return b.finish(b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
@@ -120,6 +120,18 @@ WidgetTree paneFrame(string title, bool focused, int cols, int rows) @safe
         width: SizeSpec.fixed(cols), height: SizeSpec.fixed(rows))));
 }
 
+/// A pane's title gives way after its directory does: it keeps up to 16
+/// cells when the row overflows (the tablet showed "b" for bash beside the
+/// whole `/data/user/0/…` path).
+private uint keepTitle(ref Builder b, uint title) @safe
+{
+    import sparkles.ui.geometry : cellsOf;
+
+    const cells = cast(int) cellsOf(b.nodes[title].text);
+    b.nodes[title].width.min = cells < 16 ? cells : 16;
+    return title;
+}
+
 /// The toolbar `reveal` shows over a pane's top: its title and directory,
 /// then split, zoom and close.
 WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels labels,
@@ -131,7 +143,7 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     // phone) shows their icons, so Close stays on screen.
     if (labels != ButtonLabels.icon && cols < 40)
         labels = ButtonLabels.icon;
-    uint[] name = [label(b, title, Slot.textPrimary, bold: true)];
+    uint[] name = [keepTitle(b, label(b, title, Slot.textPrimary, bold: true))];
     if (detail.length)
         name ~= label(b, detail, Slot.muted);
     const titleRow = b.add(Widget(kind: WidgetKind.row, children: name, gap: 1,
@@ -214,4 +226,19 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     assert(l.hits.length == 3);
     foreach (ref t; l.hits)
         assert(t.rect.x + t.rect.width <= 20);
+}
+
+@("pane_chrome.paneToolbar.theTitleOutlastsTheDirectory")
+@safe unittest
+{
+    import chrome : place, Place;
+
+    // A pane of 50 columns in a long directory: "bash" stays whole, the
+    // directory takes the cut.
+    enum dir = "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/home";
+    const l = place(paneToolbar(1, "bash", dir, ButtonLabels.iconText, 1, 50), 50, 3,
+        0, 0, 1, 1, Place.top);
+    foreach (i, ref n; l.tree.nodes)
+        if (n.text == "bash")
+            assert(l.frames[i].rect.width == 4, "the title is cut");
 }
