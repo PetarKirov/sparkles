@@ -38,7 +38,7 @@ built-in dark or light syntax colours chosen by the background. Call
 
 Pass a reader to `DocViewEnv.create` when files do not come from the
 filesystem — the terminal on Android serves `asset:credits/…` from the APK that
-way, and sets `env.pipeline.includeOptions.root` to keep includes inside it.
+way, and sets `env.pipeline.includeRoot` to keep includes inside it.
 
 ## 3. Drive it each frame
 

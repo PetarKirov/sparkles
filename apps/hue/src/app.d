@@ -184,10 +184,6 @@ int executeView(in HueCli root, in View view)
     pipeline.dsvHeader = view.dsvHeader;
     pipeline.coverageArtifact = coverageArtifact;
     pipeline.autoCoverage = !root.overlay.noAutoCov;
-    // `VIW5`/`VIW7`: a previewed page shows its VitePress includes in place,
-    // confined to its docs tree and the repository around it.
-    pipeline.resolveIncludes = true;
-    pipeline.includeOptions.withinRepository = true;
 
     // `DSN4`: an interactive grid materializes a screenful, not the file —
     // the terminal's height is a safe upper bound for any pane inside it,

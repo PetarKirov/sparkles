@@ -43,7 +43,7 @@ import sparkles.doc_view.dsv_view : adaptDsv, contentLooksDsv, DsvFlags, DsvInfo
     DsvProjection,
     dsvStatusNote, DsvWindow;
 import sparkles.doc_view.preview_model : PreviewModel;
-import sparkles.doc_view.include : expandIncludes, IncludeOptions;
+import sparkles.syntax.md.include : expandIncludes, expandIncludesFromDisk, IncludeRoots;
 
 /// What a document *is* — detected from the content, not selected by a mode
 /// switch. Kinds compose the way tree-sitter injections do (markdown embeds
@@ -407,12 +407,11 @@ struct DocumentPipeline
     /// Reads a document (and, for includes, the files it names) from
     /// somewhere other than the filesystem — APK assets; null: the filesystem.
     string delegate(string path) @system readFile;
-    /// `VIW5`/`VIW7`: expand VitePress `@include` directives in a markdown
-    /// document before it is parsed, confined by `includeOptions`. Off by
-    /// default: the raw view then shows the expanded text, not the comments.
-    bool resolveIncludes;
-    /// ditto
-    IncludeOptions includeOptions;
+    /// `VIW5`/`VIW7`: where the includes of a document served by `readFile`
+    /// resolve — what `@/` names and what no path may leave (`asset:credits`);
+    /// empty: the document's directory. A document on disk finds both itself
+    /// (the docs tree and the repository around it).
+    string includeRoot;
 
 @system:
 
@@ -530,12 +529,7 @@ struct DocumentPipeline
                 const ext = path.extension.chompPrefix(".");
                 const lang = language.length ? canonicalLanguage(language)
                     : canonicalLanguageOfPath(path);
-                // `VIW5`: a previewed markdown page is parsed with its
-                // includes in place — when the host asked for them.
-                const contents = resolveIncludes && !raw
-                    && (forceMarkdown || lang == "markdown")
-                    ? expandIncludes(readSourceText(path), path, includesFor())
-                    : readSourceText(path);
+                const contents = readSourceText(path);
                 // Opening a coverage artifact shows the source it describes,
                 // with its own gutter. That means reading a path out of the
                 // file's *contents*, so it is fenced twice: only an extension
@@ -581,13 +575,28 @@ struct DocumentPipeline
         }
     }
 
-    // The include options with this pipeline's reader as the default.
-    private IncludeOptions includesFor()
+    // `VIW5`/`VIW7`: `source` with its VitePress includes and snippets in
+    // place, read through `readFile` when the host serves files itself.
+    private string withIncludes(string source, string path)
     {
-        auto o = includeOptions;
-        if (o.read is null)
-            o.read = readFile;
-        return o;
+        import std.path : dirName;
+
+        if (readFile is null)
+            return expandIncludesFromDisk(source, path);
+        const dir = dirName(path);
+        const root = includeRoot.length ? includeRoot : dir;
+        bool read(string p, out string text) @trusted
+        {
+            try
+            {
+                text = readFile(p);
+                return true;
+            }
+            catch (Exception)
+                return false;
+        }
+
+        return expandIncludes(source, dir, IncludeRoots(root, root), &read);
     }
 
     private string readSourceText(string path) @system
@@ -1234,11 +1243,7 @@ struct DocumentPipeline
         // as `DVN6`'s merged text is, so the gutter, search and goto agree;
         // `--raw` shows the file's own bytes.
         if (kind == ContentKind.markdown && path.length)
-        {
-            import sparkles.syntax.md.include : expandIncludesFromDisk;
-
-            source = expandIncludesFromDisk(source, path);
-        }
+            source = withIncludes(source, path);
         Document doc = {
             path: path, title: title, source: source, lang: lang, kind: kind,
         };
@@ -1521,6 +1526,36 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
 
     auto real_ = p.fromSource("y.md", "y.md", "# Title\n\nbody\n", "markdown");
     assert(real_.kind == ContentKind.markdown);
+}
+
+@("document.fromSource.includesThroughTheHostsReader")
+@system unittest
+{
+    // Android serves the credits from APK assets: the host's reader and an
+    // `asset:` root resolve and confine includes like a directory (`VIW7`).
+    import std.algorithm.searching : canFind;
+    import sparkles.syntax : LabelSet;
+
+    DocumentPipeline p;
+    auto reg = GrammarRegistry.fromEnvironment();
+    const labels = LabelSet.standard();
+    auto cache = TsConfigCache.create(&reg, labels);
+    p.registry = &reg;
+    p.cache = &cache;
+    p.readFile = (string path) {
+        if (path == "asset:credits/licenses/a/LICENSE")
+            return "MIT\n";
+        throw new Exception("no such asset");
+    };
+    p.includeRoot = "asset:credits";
+
+    auto doc = p.fromSource("asset:credits/parts/a.md", "a.md",
+        "# A\n\n```text\n<!-- @include: ../licenses/a/LICENSE -->\n```\n", "markdown");
+    assert(doc.source == "# A\n\n```text\nMIT\n```\n", doc.source);
+
+    doc = p.fromSource("asset:credits/terminal.md", "terminal.md",
+        "# T\n\n<!-- @include: ../../etc/passwd -->\n", "markdown");
+    assert(doc.source.canFind("outside the repository"), doc.source);
 }
 
 @("document.classifyStructural.reflowedCodeFoldsAsNoise")

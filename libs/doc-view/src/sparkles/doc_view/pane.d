@@ -33,7 +33,6 @@ import sparkles.ui.themes : builtinDark, builtinLight;
 import sparkles.ui_raylib : RaylibCanvas;
 
 import sparkles.doc_view.document : DocumentPipeline;
-import sparkles.doc_view.include : IncludeOptions;
 import sparkles.doc_view.kind : ViewKind, viewKindOf;
 import sparkles.doc_view.view_ops : emitVisibleOps;
 import sparkles.doc_view.viewer_model : ScrollAnchor, ViewerModel;
@@ -55,8 +54,8 @@ struct DocViewEnv
     /**
     An environment over `registry`. `read`, when given, serves every file the
     viewer opens or includes (APK assets). Markdown includes resolve
-    (`VIW5`), confined to the document's tree and — reading the filesystem —
-    its repository (`VIW7`); `pipeline.includeOptions` narrows that.
+    (`VIW5`), confined to the document's docs tree and repository, or to
+    `pipeline.includeRoot` for files `read` serves (`VIW7`).
     */
     static DocViewEnv* create(GrammarRegistry registry,
         string delegate(string path) @system read = null) @system
@@ -69,8 +68,6 @@ struct DocViewEnv
         e.pipeline.readFile = read;
         // `TDV9`: a viewer embedded in another application never fetches
         // what a document names; `fetchUrl` stays null.
-        e.pipeline.resolveIncludes = true;
-        e.pipeline.includeOptions.withinRepository = read is null;
         return e;
     }
 }

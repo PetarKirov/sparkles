@@ -140,7 +140,7 @@ int androidMain()
             auto env = DocViewEnv.create(GrammarRegistry.fromSonames(grammars),
                 (string p) => readViewerFile(p));
             // The credits' includes stay inside the bundled document (`VIW7`).
-            env.pipeline.includeOptions.root = "asset:credits";
+            env.pipeline.includeRoot = "asset:credits";
             return env;
         };
     }
