@@ -67,7 +67,7 @@ final class TouchGuide : Surface
             {
                 uint[] chips = [label(b, "Recent", Slot.muted)];
                 foreach (i, c; recent)
-                    chips ~= chip(b, sctx, iconOf(c.cmd) ~ " " ~ nameOf(c.cmd), recentHit + i);
+                    chips ~= chip(b, sctx, iconOf(c.cmd) ~ " " ~ descOf(c), recentHit + i);
                 lines ~= row(b, chips);
             }
         }
@@ -185,6 +185,16 @@ final class TouchGuide : Surface
             recent.length = 3;
         run(c);
         return true;
+    }
+
+    /// What the guide's rows call `c` ("split right"), not its config name
+    /// (`splitRight`) — the Recent chips repeat a row the user tapped.
+    private string descOf(KeyCommand c) const @safe pure nothrow
+    {
+        foreach (ref r; table)
+            if (r.cmd == c.cmd && r.desc.length)
+                return r.desc;
+        return nameOf(c.cmd);
     }
 
     private uint crumbs(ref Builder b, in SurfaceContext sctx) @safe
@@ -427,7 +437,8 @@ version (unittest)
     // Tap `split right`: it runs and the guide closes.
     assert(g.activate(hitOf(g, "split right")));
     assert(ran.length == 1 && ran[0].cmd == TermCommand.splitRight);
-    assert(texts(g.build(SurfaceContext.init, 60)).canFind("◫ splitRight"), "a Recent chip");
+    assert(texts(g.build(SurfaceContext.init, 60)).canFind("◫ split right"),
+        "a Recent chip, described");
 
     // Back pops a level; at the root it declines (the overlay row closes).
     assert(g.key(KeyEvent(Key.back)));
