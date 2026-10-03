@@ -998,9 +998,15 @@ struct WorkspaceHost
         }));
     }
 
-    /// Paints the opener, every shown pane at its box, the dividers, the
-    /// panes' chrome, the exit prompts and the surfaces.
-    void paint(H)(ref H h, in Rect, RgbColor divider, RgbColor accent) @system
+    /**
+    Paints the opener, every shown pane at its box, the dividers, the panes'
+    chrome, the exit prompts and — unless `withSurfaces` is false — the
+    surfaces. An embedder that draws over the panes itself (the selection's
+    handles, the Autofill chip) passes false and calls $(LREF paintSurfaces)
+    after, so a page or a menu stays on top of them.
+    */
+    void paint(H)(ref H h, in Rect, RgbColor divider, RgbColor accent,
+        bool withSurfaces = true) @system
     {
         import raylib : Color, DrawRectangle;
 
@@ -1041,8 +1047,12 @@ struct WorkspaceHost
         foreach (ref l; banners)
             paintLayer(h, l, theme);
         paintLayer(h, toolbarLayer, theme);
-        surfaces.paint(h, theme);
+        if (withSurfaces)
+            paintSurfaces(h);
     }
+
+    /// ditto — the toasts, then the surface stack, bottom to top.
+    void paintSurfaces(H)(ref H h) @system => surfaces.paint(h, theme);
 
     /**
     Lays out the exit prompt of every shown pane that keeps one, along the

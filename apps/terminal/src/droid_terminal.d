@@ -257,9 +257,12 @@ struct DroidTerminal
     void paint(H)(ref H h, in WidgetTree, in Frame[])
     {
         const g = geometry(h);
-        host.paint(h, paneArea(g), divider, accent);
+        // The handles and the chip mark the panes; a page or a menu covers
+        // them (`TSE3`, `TSE10`).
+        host.paint(h, paneArea(g), divider, accent, withSurfaces: false);
         selection.paint(accent);
         chip.paint(h, host.theme);
+        host.paintSurfaces(h);
         paintGuide(h, router, context, g.paneCols, g.paneRows, 0, g.top, chromeFg, chromeBg);
         paintKeys(g);
     }
