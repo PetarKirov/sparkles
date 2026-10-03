@@ -1,8 +1,9 @@
 # Testing: oracles and the evidence ledger
 
-_**Date:** 2026-10-02 · The one evidence ledger for this tree's `TCF`, `TSP`,
-`TKM`, `TPR`, `TPG`, `TSE` and `TSS` rows (the Android page keeps its own
-verification table for `NOD`)._
+The oracles behind the terminal specification's requirements, and the one
+evidence ledger for its `TCF`, `TSP`, `TKM`, `TPR`, `TPG`, `TSE`, `TSS` and
+`TDV` requirements. The Android page keeps its own verification table for
+`NOD`.
 
 ## Oracles
 
