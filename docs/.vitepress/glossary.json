@@ -61,5 +61,189 @@
     ],
     "owner": "sparkles:fuzzy",
     "seeAlso": ["admission"]
+  },
+  {
+    "id": "face",
+    "term": "face",
+    "aliases": ["font face"],
+    "summary": "One font inside a font file: the whole file for a single-font file, or one member of a collection, identified by the file's bytes and an index.",
+    "definition": "In `sparkles:font`, one font inside a byte buffer, read in place and never changed after it opens. A single-font file holds one face; an [OpenType collection](https://learn.microsoft.com/en-us/typography/opentype/spec/otff#font-collections) holds several, picked by index.",
+    "authority": [
+      {
+        "text": "sparkles:font specification §5",
+        "link": "/specs/font/SPEC#_5-objects-and-ownership"
+      }
+    ],
+    "owner": "sparkles:font",
+    "seeAlso": ["font-instance", "face-record"]
+  },
+  {
+    "id": "font-instance",
+    "term": "instance",
+    "aliases": ["font instance"],
+    "summary": "A face at a particular size, with one fixed set of variable-font coordinates and any faked styling, from which every glyph, metric and shaping result is derived.",
+    "definition": "In `sparkles:font`, a copyable value combining a [face](/glossary#face), a size in pixels per em, one vector of [normalized variation coordinates](https://learn.microsoft.com/en-us/typography/opentype/spec/otvaroverview#coordinate-scales-and-normalization) and a [synthesis](/glossary#synthesis). It is the only place variation coordinates are stored, so shaping, metrics, outlines and rasterization all read the same ones. Not to be confused with an OpenType *named* instance.",
+    "authority": [
+      {
+        "text": "sparkles:font specification §8",
+        "link": "/specs/font/SPEC#_8-variation"
+      }
+    ],
+    "owner": "sparkles:font",
+    "seeAlso": ["face", "glyph-key"]
+  },
+  {
+    "id": "synthesis",
+    "term": "synthesis",
+    "summary": "What font matching had to fake to approximate a requested style: an emboldening amount, a slant, or a variation-axis setting.",
+    "definition": "In `sparkles:font`, the value a match returns alongside the chosen face, saying how to approximate what the face lacks: embolden by an amount, skew by an angle, or set an axis. Shaping and rasterization both consume it, so faked bold and italic look the same everywhere.",
+    "authority": [
+      {
+        "text": "sparkles:font specification §13",
+        "link": "/specs/font/SPEC#_13-discovery-matching-and-fallback"
+      }
+    ],
+    "owner": "sparkles:font",
+    "seeAlso": ["font-instance"]
+  },
+  {
+    "id": "cell-metrics",
+    "term": "cell metrics",
+    "summary": "The fixed box a terminal lays characters out in, with its baseline, underline and strikeout positions, in whole device pixels.",
+    "definition": "In `sparkles:font`, the cell width and height, baseline, and underline and strikeout positions and thicknesses derived from a face at a size, rounded to whole device pixels by one documented rule. The cell width is the advance of the digit zero.",
+    "authority": [
+      {
+        "text": "sparkles:font specification §9",
+        "link": "/specs/font/SPEC#_9-metrics"
+      }
+    ],
+    "owner": "sparkles:font"
+  },
+  {
+    "id": "glyph-key",
+    "term": "glyph key",
+    "summary": "A value that fully determines one rendered glyph, so equal keys always produce identical pixels and caches can be keyed by it.",
+    "definition": "In `sparkles:font`, the face identity, glyph, size, variation coordinates, subpixel offset and render flags of one rasterization. Equal keys produce byte-identical output, which is what makes glyph caches separate values instead of state inside a face.",
+    "authority": [
+      {
+        "text": "sparkles:font specification §11",
+        "link": "/specs/font/SPEC#_11-rasterization"
+      }
+    ],
+    "owner": "sparkles:font",
+    "seeAlso": ["font-instance"]
+  },
+  {
+    "id": "font-source",
+    "term": "font source",
+    "summary": "Somewhere fonts come from: explicit files, a directory, the bundled fonts, or the system's list of installed fonts.",
+    "definition": "An input to the [font catalog](/glossary#font-catalog): explicit files, a directory, the font directory Sparkles bundles, or the files the platform lists as installed. A platform source only lists files; the library's own parser describes them.",
+    "authority": [
+      {
+        "text": "sparkles:font specification §13",
+        "link": "/specs/font/SPEC#_13-discovery-matching-and-fallback"
+      }
+    ],
+    "owner": "sparkles:font",
+    "seeAlso": ["font-catalog"]
+  },
+  {
+    "id": "face-record",
+    "term": "face record",
+    "summary": "What the font catalog stores about one face: enough to match it and to test which characters it covers without opening it.",
+    "definition": "In `sparkles:font`, the catalog's description of one [face](/glossary#face): names, style, width, weight, spacing and character coverage, read by the library's own parser and cached on disk against the file's size and modification time.",
+    "authority": [
+      {
+        "text": "sparkles:font specification §13",
+        "link": "/specs/font/SPEC#_13-discovery-matching-and-fallback"
+      }
+    ],
+    "owner": "sparkles:font",
+    "seeAlso": ["font-catalog", "face"]
+  },
+  {
+    "id": "font-catalog",
+    "term": "font catalog",
+    "summary": "The index of known fonts built from every font source, over which matching and fallback run identically on every platform.",
+    "definition": "In `sparkles:font`, the set of [face records](/glossary#face-record) built from all [font sources](/glossary#font-source). Platforms differ only in which files they list; matching and fallback rules over the catalog are the same everywhere. Distinct from a collection index, which picks a face inside one file.",
+    "authority": [
+      {
+        "text": "sparkles:font specification §13",
+        "link": "/specs/font/SPEC#_13-discovery-matching-and-fallback"
+      }
+    ],
+    "owner": "sparkles:font",
+    "seeAlso": ["fallback-chain", "font-source"]
+  },
+  {
+    "id": "fallback-chain",
+    "term": "fallback chain",
+    "summary": "The ordered list of fonts consulted, character by character, when the preferred font cannot draw a character.",
+    "definition": "In `sparkles:font`, an ordered list of [face records](/glossary#face-record) beginning with the matched face and keeping only faces that add character coverage. A face opens on first use, and each character's answer is remembered.",
+    "authority": [
+      {
+        "text": "sparkles:font specification §13",
+        "link": "/specs/font/SPEC#_13-discovery-matching-and-fallback"
+      }
+    ],
+    "owner": "sparkles:font",
+    "seeAlso": ["font-catalog"]
+  },
+  {
+    "id": "coverage",
+    "term": "coverage",
+    "aliases": ["pixel coverage"],
+    "summary": "Used alone, the fraction of each pixel a glyph's shape covers, which a rasterizer produces; which characters a font maps is called character coverage.",
+    "definition": "In `sparkles:font`, the 8-bit per-pixel value a rasterizer writes for a glyph: 0 where the outline leaves the pixel empty, 255 where it covers it. The set of characters a face maps through its `cmap` table is called *character coverage*.",
+    "authority": [
+      {
+        "text": "sparkles:font specification §11",
+        "link": "/specs/font/SPEC#_11-rasterization"
+      }
+    ],
+    "owner": "sparkles:font",
+    "seeAlso": ["glyph-key"]
+  },
+  {
+    "id": "specimen",
+    "term": "specimen",
+    "summary": "A rendered sample of a font: preview text, a waterfall of sizes, a code sample, a glyph map or a comparison, shown as one image.",
+    "definition": "In the font explorer, a block of sample text or glyphs rendered in the font being examined. Every specimen is one bitmap the font library rasterizes, shown as an image in a window or over the kitty graphics protocol in a terminal, never drawn in the terminal's own font.",
+    "authority": [
+      {
+        "text": "font-explorer specification §6",
+        "link": "/specs/font-explorer/SPEC#_6-specimens"
+      }
+    ],
+    "owner": "sparkles:font-explorer",
+    "seeAlso": ["width-class"]
+  },
+  {
+    "id": "width-class",
+    "term": "width class",
+    "summary": "One of three layouts the font explorer chooses from its width in interface cells: wide, medium or narrow.",
+    "definition": "In the font explorer, the layout chosen by width measured in interface cells, so one rule serves a window and a terminal: *wide* at 150 cells or more shows every pane, *medium* folds the sources into the family list, and *narrow* below 100 shows only the specimens with the other panes as overlays.",
+    "authority": [
+      {
+        "text": "font-explorer specification §9",
+        "link": "/specs/font-explorer/SPEC#_9-layout-across-widths"
+      }
+    ],
+    "owner": "sparkles:font-explorer",
+    "seeAlso": ["specimen"]
+  },
+  {
+    "id": "cell-grid-audit",
+    "term": "cell-grid audit",
+    "summary": "A check that lists every glyph whose width differs from a terminal cell and every ligature that changes the number of glyphs.",
+    "definition": "In the font explorer, the check that tells whether a programming font keeps a terminal's character grid: glyphs whose advance differs from the face's [cell metrics](/glossary#cell-metrics), and ligatures that change the glyph count, each with the characters involved.",
+    "authority": [
+      {
+        "text": "font-explorer specification §7",
+        "link": "/specs/font-explorer/SPEC#_7-programming-font-checks"
+      }
+    ],
+    "owner": "sparkles:font-explorer",
+    "seeAlso": ["cell-metrics"]
   }
 ]

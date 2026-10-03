@@ -41,12 +41,12 @@ write.
 This library owns the parts where correctness and inspection matter, and
 delegates text shaping, the one part that is large and well solved. It parses
 fonts in D, directly over a borrowed byte buffer, validating every read
-against the buffer's bounds. A _face_ is an immutable view of one font in
-those bytes; an _instance_ adds a size and one normalized coordinate vector,
-and every later step reads that vector from the instance. Section 2 defines
-both terms. Outlines are decoded and rasterized in D. Shaping goes to
+against the buffer's bounds. A [face](../../glossary.md#face) is an immutable view of one font in
+those bytes; an [instance](../../glossary.md#font-instance) adds a size and one normalized coordinate vector,
+and every later step reads that vector from the instance.
+Outlines are decoded and rasterized in D. Shaping goes to
 HarfBuzz, which receives the instance's coordinates unchanged. Discovery
-builds a _font catalog_ from the files each platform lists, described by this
+builds a [font catalog](../../glossary.md#font-catalog) from the files each platform lists, described by this
 library's own parser. Platforms differ in which files they list, but the
 matching and fallback rules applied to them are the same everywhere.
 
@@ -61,7 +61,7 @@ files, and installing fonts system-wide are out of scope. `COLR` version 1
 and `SVG ` colour glyphs are reported but not rendered. [`decisions.md`](./decisions.md)
 records why each of these was excluded and what would bring it back.
 
-Section 2 defines the vocabulary, and section 3 states the contract at a
+Section 2 lists the terms this document defines, and section 3 states the contract at a
 glance. Sections 4–15 give the requirements: the trust boundary, objects and
 ownership, errors, parsing, variation, metrics, outlines, rasterization,
 shaping, discovery, inspection, and the Sparkles programs that draw text
@@ -71,39 +71,20 @@ every requirement and holds the evidence ledger. [`PLAN.md`](./PLAN.md) orders
 delivery and tracks progress, including the migration of existing consumers.
 The evidence base is the [font-libraries research catalog][research].
 
-## 2. Vocabulary
+## 2. Terminology
 
-Terms this document uses in a sense specific to it. Font-format terms
-(`glyf`, `GSUB`, upem, F2Dot14) follow the [OpenType specification][ot-spec];
-the research catalog's [concepts page][concepts] explains them for readers new
-to font internals.
+The terms this specification coins, or uses in a narrower sense than usual,
+are defined once in the [glossary](../../glossary.md) and listed here:
 
-- **Face.** One font inside a byte buffer: a single-font file, or one member
-  of a collection. A face is identified by its bytes and its index.
-- **Collection.** A `ttcf` file holding several faces that may share tables.
-- **Instance.** A face at a size in pixels per em, which scales its metrics
-  and selects bitmap strikes, with one normalized
-  coordinate vector, empty for a static face, and a synthesis value. The only
-  carrier of variation coordinates.
-- **User and normalized coordinates.** User coordinates are an axis's own
-  units, such as `wght` 650. Normalized coordinates are the −1…0…+1 values,
-  after `avar` remapping, that every variation table interpolates in.
-- **Synthesis.** What a match had to fake to approximate a request: an
-  emboldening amount, a skew angle, or an axis setting.
-- **Coverage.** Used alone, the fraction of a pixel a glyph covers. Which
-  characters a face maps is called character coverage.
-- **Cell metrics.** The fixed box a terminal lays characters out in: cell
-  width and height, baseline, underline and strikeout, in whole device pixels.
-- **Glyph key.** A value that fully determines one rasterization: face
-  identity, glyph, size, coordinates, subpixel offset and render flags.
-- **Source.** Somewhere fonts come from: explicit files, a directory, the
-  bundled font directory, or the platform's list of installed fonts.
-- **Font catalog.** The library's index of known faces, built from sources.
-  Distinct from a collection index, which picks a face inside one file.
-- **Face record.** What the catalog stores about one face, enough to match it
-  and test its coverage without opening it.
-- **Fallback chain.** An ordered list of face records consulted per
-  character when the preferred face lacks a glyph.
+<GlossaryList owner="sparkles:font" />
+
+Font-format terms follow the [OpenType specification][ot-spec]: a
+[collection](https://learn.microsoft.com/en-us/typography/opentype/spec/otff#font-collections)
+is a `ttcf` file holding several faces that may share tables, and
+[user and normalized coordinates](https://learn.microsoft.com/en-us/typography/opentype/spec/otvaroverview#coordinate-scales-and-normalization)
+are an axis's own units and the −1…0…+1 values, after `avar` remapping, that
+variation tables interpolate in. The research catalog's [concepts
+page][concepts] explains these and other font internals for newcomers.
 
 ## 3. The contract at a glance
 
@@ -172,7 +153,7 @@ open. Concurrent calls to its `const` operations from several threads
 **must** be safe without synchronization.
 
 **FTA3: Instance as a value.** An instance **must** be a copyable value
-holding a face, a size, a normalized coordinate vector and a synthesis value,
+holding a face, a size, a normalized coordinate vector and a [synthesis](../../glossary.md#synthesis) value,
 with no mutable state. It is the only place variation coordinates are
 stored.
 
@@ -182,7 +163,7 @@ rasterization **must** take their working storage from the caller and
 
 **FTA5: Caches beside, not inside.** No operation on a face or an instance
 **may** consult or fill a cache. Glyph, outline and shaping caches are
-separate values keyed by values such as the glyph key.
+separate values keyed by values such as the [glyph key](../../glossary.md#glyph-key).
 
 **FTA6: No windowing dependency.** No module of the library **may** import
 raylib, a GPU binding, `sparkles:ui` or a `sparkles:ui` backend.
@@ -352,8 +333,8 @@ does not provide **must** be reported as absent.
 fractional pixels, including `HVAR` and `MVAR` deltas. The library **must
 not** round them.
 
-**FTM5: Cell metrics.** For an instance, the library **must** compute cell
-metrics in whole device pixels. The cell width is the rounded advance of
+**FTM5: Cell metrics.** For an instance, the library **must** compute [cell
+metrics](../../glossary.md#cell-metrics) in whole device pixels. The cell width is the rounded advance of
 U+0030 DIGIT ZERO, or `OS/2.xAvgCharWidth` when the face does not map it. The
 rounding rule is documented on the operation and is part of the contract.
 
@@ -385,7 +366,7 @@ instance **must** include the `gvar` phantom-point deltas.
 ## 11. Rasterization
 
 **FTR1: Pixel coverage into caller storage.** Rasterizing a glyph **must** write
-8-bit coverage into a caller-owned region with its own row stride and report
+8-bit [coverage](../../glossary.md#coverage) into a caller-owned region with its own row stride and report
 the glyph's bounding box and bearing. It **must not** allocate.
 
 **FTR2: Nonzero winding.** Coverage **must** follow the nonzero rule,
@@ -450,8 +431,8 @@ every field's offset. This is the test `FTA8` requires.
 The requirements in this section are stated at contract level. Their
 operation contracts are added to this section before they are implemented.
 
-**FTD1: One catalog.** A font catalog **must** be built from sources into face
-records produced by this library's parser. No record's content **may** come
+**FTD1: One catalog.** A font catalog **must** be built from [font sources](../../glossary.md#font-source) into [face
+records](../../glossary.md#face-record) produced by this library's parser. No record's content **may** come
 from a platform service's description of a font.
 
 **FTD2: Platforms list files.** The platform source **must** list font files:
@@ -470,7 +451,7 @@ Level 4][css-match] font-matching algorithm over family, width, style and
 weight. The result carries the chosen record, a comparable score, and the
 synthesis needed to approximate the request.
 
-**FTD5: Fallback chains.** A fallback chain **must** begin with the match and
+**FTD5: Fallback chains.** A [fallback chain](../../glossary.md#fallback-chain) **must** begin with the match and
 contain only records that add coverage, in order. A record's face opens on
 first use, and lookups of a character and presentation **must** be memoized
 per chain.
