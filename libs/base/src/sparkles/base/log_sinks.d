@@ -586,6 +586,11 @@ version (unittest)
 @safe
 unittest
 {
+    // `forwardCoreLog` reads the global level, which `logger`'s tests change.
+    lockLoggerGlobalTests();
+    scope (exit)
+        unlockLoggerGlobalTests();
+
     auto ring = new RingCoreLogger(LogLevel.all, null, capacity: 4);
     foreach (i; 0 .. 6)
     {
@@ -611,6 +616,11 @@ unittest
 @safe
 unittest
 {
+    // `forwardCoreLog` reads the global level, which `logger`'s tests change.
+    lockLoggerGlobalTests();
+    scope (exit)
+        unlockLoggerGlobalTests();
+
     auto ring = new RingCoreLogger(LogLevel.all, null, capacity: 4, entryBytes: 4, textBytes: 64);
     const e = entryAt(LogLevel.info, 1);
     ring.forwardCoreLog(e, "abcé!"); // 'é' is two bytes at offsets 3–4
@@ -625,6 +635,11 @@ unittest
 @safe
 unittest
 {
+    // `forwardCoreLog` reads the global level, which `logger`'s tests change.
+    lockLoggerGlobalTests();
+    scope (exit)
+        unlockLoggerGlobalTests();
+
     // Eight slots but sixteen bytes of text: the arena, not the slot count,
     // is what overwrites here — and the skipped tail never splits a message.
     auto ring = new RingCoreLogger(LogLevel.all, null, capacity: 8, entryBytes: 6, textBytes: 16);
@@ -645,6 +660,11 @@ unittest
 @safe
 unittest
 {
+    // `forwardCoreLog` reads the global level, which `logger`'s tests change.
+    lockLoggerGlobalTests();
+    scope (exit)
+        unlockLoggerGlobalTests();
+
     static void write(RingCoreLogger ring) @safe nothrow @nogc
     {
         const e = entryAt(LogLevel.warning, 7);
@@ -721,6 +741,11 @@ unittest
 @safe
 unittest
 {
+    // `forwardCoreLog` reads the global level, which `logger`'s tests change.
+    lockLoggerGlobalTests();
+    scope (exit)
+        unlockLoggerGlobalTests();
+
     import std.algorithm.searching : canFind, count;
     import std.file : exists, getSize, readText, rmdirRecurse;
     import std.path : buildPath;
