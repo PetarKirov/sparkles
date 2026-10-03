@@ -18,6 +18,7 @@ module tab_tree;
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.components.dock : PaneId;
 import sparkles.ui.style : Slot;
+import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row;
@@ -107,17 +108,26 @@ final class TabTree : Surface
             lines ~= label(b, "No tab or pane matches.", Slot.muted);
         if (newTab !is null && !query.length)
         {
-            import sparkles.ui.geometry : SizeSpec;
-
             lines ~= b.add(Widget(kind: WidgetKind.row,
                 children: [label(b, "+ New tab", Slot.accentPrimary)],
                 width: SizeSpec.grow(),
                 height: ctx.targetRows > 1 ? SizeSpec.fixed(ctx.targetRows) : SizeSpec.fit_,
                 hitId: newTabHit));
         }
+        // Beside the rail the tree fills its panel, the touch search at the
+        // panel's bottom; below the pill it floats, as tall as its rows.
+        const full = ctx.panelFull && ctx.cellH > 0 && ctx.panelArea.height > 0;
+        if (full)
+            lines ~= b.add(Widget(kind: WidgetKind.column, height: SizeSpec.grow()));
         if (ctx.touch)
             lines ~= searchField(b, ctx);
-        return b.finish(band(b, lines));
+        const root = band(b, lines);
+        if (full)
+        {
+            b.nodes[root].height = SizeSpec.fixed(ctx.panelArea.height / ctx.cellH);
+            b.nodes[b.nodes[root].children[0]].height = SizeSpec.grow();
+        }
+        return b.finish(root);
     }
 
     Placement placement() const @safe => Placement.panel;
@@ -240,8 +250,6 @@ final class TabTree : Surface
     private uint entry(ref Builder b, in SurfaceContext ctx, string title, string detail,
         string badge, bool marked, bool failed, size_t hit) @safe
     {
-        import sparkles.ui.geometry : SizeSpec;
-
         const line = row(b, [label(b, title, failed ? Slot.error
             : marked ? Slot.accentPrimary : Slot.textPrimary, bold: marked),
             label(b, badge, Slot.warn)]);
@@ -367,4 +375,27 @@ long fuzzyScore(scope const(char)[] query, scope const(char)[] text) @trusted
     c.path = text;
     auto r = match(q.value, c, *workspace);
     return r.hasValue && r.value.admitted ? 1 + r.value.score : 0;
+}
+
+@("tab_tree.build.besideTheRailItFillsThePanel")
+@system unittest
+{
+    import sparkles.ui.geometry : Rect;
+
+    import chrome : place, Place;
+
+    // Mockup E: beside the rail the tree slides out at the panel's full
+    // height, its touch search at the bottom; below the pill it floats.
+    auto t = tree();
+    SurfaceContext rail = {touch: true, cellW: 1, cellH: 1, panelArea: Rect(0, 0, 40, 30),
+        panelFull: true};
+    const full = place(t.build(rail, 40), 40, 30, 0, 0, 1, 1, Place.top);
+    assert(full.bounds.height == 30);
+    foreach (i, ref n; full.tree.nodes)
+        if (n.text.length && n.text[0 .. 3] == "⌕")
+            assert(full.frames[i].rect.y == 29, "the search field on the last row");
+
+    SurfaceContext pill = rail;
+    pill.panelFull = false;
+    assert(place(t.build(pill, 40), 40, 30, 0, 0, 1, 1, Place.top).bounds.height < 30);
 }

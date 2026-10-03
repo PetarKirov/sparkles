@@ -45,6 +45,9 @@ struct SurfaceContext
     bool touch;
     /// Where a `panel` goes: beside the tab rail, or below the tab pill.
     Rect panelArea;
+    /// The panel takes all of `panelArea`'s height — the tree slid out beside
+    /// the rail (mockup E) — rather than floating below the pill.
+    bool panelFull;
 }
 
 /// Where a surface goes.
