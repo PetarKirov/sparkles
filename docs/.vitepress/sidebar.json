@@ -1158,6 +1158,28 @@
         ]
       },
       {
+        "text": "Font (proposal)",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/font/SPEC"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/font/PLAN"
+          },
+          {
+            "text": "Testing & Evidence",
+            "link": "/specs/font/testing"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/font/decisions"
+          }
+        ]
+      },
+      {
         "text": "Fuzzy",
         "collapsed": true,
         "items": [
