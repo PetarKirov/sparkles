@@ -26,7 +26,8 @@ import surfaces : Placement, Scrollable, Surface, SurfaceContext;
 
 /// Hit ids.
 private enum size_t crumbHit = 0x6C00_0000, rowHit = 0x6C10_0000, recentHit = 0x6C20_0000,
-    backHit = 0x6BFF_FFFF, moreAboveHit = 0x6C30_0000, moreBelowHit = 0x6C30_0001;
+    backHit = 0x6BFF_FFFF, moreAboveHit = 0x6C30_0000, moreBelowHit = 0x6C30_0001,
+    searchHit = 0x6C30_0002;
 
 /// The commands run from the guide most recently, newest first (shared by
 /// every guide opened in this run).
@@ -47,6 +48,10 @@ final class TouchGuide : Surface, Scrollable
     private size_t listed; // how many list rows there were
     private size_t builtDepth, builtQuery; // what `top` belongs to
     private enum unknownRoom = int.max; // no area to fit: show every row
+
+    /// A tap on the search field: the embedder brings up a keyboard to type
+    /// into it (the phone's soft keyboard, which opening the guide hid).
+    void delegate() @system onSearch;
 
     /// Opens at `root` (the leader's chord) over `table`; `run` executes a
     /// chosen command.
@@ -95,7 +100,8 @@ final class TouchGuide : Surface, Scrollable
         lines ~= b.add(Widget(kind: WidgetKind.panel,
             children: [label(b, query.length ? "⌕ " ~ query.idup : "⌕ Search all commands",
                 query.length ? Slot.textPrimary : Slot.muted)],
-            width: SizeSpec.grow(), slot: Slot.surfaceSunken, paintBackground: true));
+            width: SizeSpec.grow(), slot: Slot.surfaceSunken, paintBackground: true,
+            hitId: searchHit));
         return b.finish(band(b, lines));
     }
 
@@ -147,6 +153,12 @@ final class TouchGuide : Surface, Scrollable
 
     bool activate(size_t id) @system
     {
+        if (id == searchHit)
+        {
+            if (onSearch !is null)
+                onSearch();
+            return false;
+        }
         if (id == moreAboveHit || id == moreBelowHit)
         {
             scroll(id == moreAboveHit ? -cast(int) fit : cast(int) fit);

@@ -620,9 +620,21 @@ struct DroidTerminal
     /// the host is at hand.
     private void openTouchGuide()
     {
+        import sparkles.android.soft_input : hideSoftKeyboard;
+
+        // The guide is navigation first: the soft keyboard goes, or a phone
+        // in landscape leaves it two rows (`TPG19`). Its search field brings
+        // the keyboard back.
+        hideSoftKeyboard();
         auto self = &this;
-        host.surfaces.push(new TouchGuide(router.table, context, router.leader,
-            (KeyCommand c) { self.pendingCommand = c; self.hasPending = true; }));
+        auto guide = new TouchGuide(router.table, context, router.leader,
+            (KeyCommand c) { self.pendingCommand = c; self.hasPending = true; });
+        guide.onSearch = () {
+            import sparkles.android.soft_input : showSoftKeyboard;
+
+            cast(void) showSoftKeyboard();
+        };
+        host.surfaces.push(guide);
         host.invalidate();
     }
 
