@@ -259,8 +259,10 @@ says which (`ACC3`). `hitId` makes it a target; `rows` its height (`TOK7`).
 */
 uint chip(ref Builder b, string label, bool on, size_t hitId, int rows = 1) @safe
 {
+    // On: the selection's fill under primary text — accent-coloured text on
+    // a grey mix read poorly on the tablet.
     const text = b.add(Widget(kind: WidgetKind.text, text: (on ? "✓ " : "○ ") ~ label,
-        slot: on ? Slot.chromeAccent : Slot.textPrimary, textStyle: TextStyle(bold: on)));
+        slot: Slot.textPrimary, textStyle: TextStyle(bold: on)));
     return b.add(Widget(
         kind: WidgetKind.panel,
         children: [text],
@@ -268,7 +270,7 @@ uint chip(ref Builder b, string label, bool on, size_t hitId, int rows = 1) @saf
         height: rows > 1 ? SizeSpec.fixed(rows) : SizeSpec.fit_,
         alignY: Alignment.center,
         hitId: hitId,
-        slot: on ? Slot.chromeAccent : Slot.surfaceRaised,
+        slot: on ? Slot.selection : Slot.surfaceRaised,
         paintBackground: true,
         decoration: Decoration(borderRadius: 8),
     ));
