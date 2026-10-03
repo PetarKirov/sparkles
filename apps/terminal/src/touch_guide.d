@@ -8,7 +8,10 @@ row does what its key does: a group row descends, a command row runs and
 closes the guide. The breadcrumbs — `←`, `␣ leader`, the groups below it —
 are tappable; Back and `Esc` pop one level, closing at the root.
 
-A surface (`surfaces.Surface`) shown as a sheet above the extra keys.
+A surface (`surfaces.Surface`) shown as a sheet above the extra keys. A level
+or a result list taller than the room left (`TPG19`: a soft keyboard up, a
+long group) shows a window onto its rows with how many lie above and below;
+the marks are tappable, and a drag or the wheel scrolls it (`Scrollable`).
 */
 module touch_guide;
 
@@ -19,18 +22,18 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row;
 import keymap : Binding, Chord, KeyCommand, TermCommand, TermContext;
-import surfaces : Placement, Surface, SurfaceContext;
+import surfaces : Placement, Scrollable, Surface, SurfaceContext;
 
 /// Hit ids.
 private enum size_t crumbHit = 0x6C00_0000, rowHit = 0x6C10_0000, recentHit = 0x6C20_0000,
-    backHit = 0x6BFF_FFFF;
+    backHit = 0x6BFF_FFFF, moreAboveHit = 0x6C30_0000, moreBelowHit = 0x6C30_0001;
 
 /// The commands run from the guide most recently, newest first (shared by
 /// every guide opened in this run).
 private KeyCommand[] recent;
 
 /// The touch key guide.
-final class TouchGuide : Surface
+final class TouchGuide : Surface, Scrollable
 {
     private immutable(Binding)[] table;
     private TermContext ctx;
@@ -39,6 +42,11 @@ final class TouchGuide : Surface
     private char[] query;
     private Binding[] shown; // the rows built, for the hits
     private KeyCommand[] found; // the search results
+    private size_t top; // the first list row shown, when they do not all fit
+    private size_t fit; // how many list rows the last build showed
+    private size_t listed; // how many list rows there were
+    private size_t builtDepth, builtQuery; // what `top` belongs to
+    private enum unknownRoom = int.max; // no area to fit: show every row
 
     /// Opens at `root` (the leader's chord) over `table`; `run` executes a
     /// chosen command.
@@ -58,12 +66,25 @@ final class TouchGuide : Surface
         lines ~= crumbs(b, sctx);
         shown.length = 0;
         found.length = 0;
+        // Another level or another query starts at its top.
+        if (path.length != builtDepth || query.length != builtQuery)
+            top = 0;
+        builtDepth = path.length;
+        builtQuery = query.length;
+
+        // The rows left for the list: the area less the top border, the
+        // breadcrumbs, the Recent row and the search field (`TPG19`).
+        const per = sctx.targetRows > 1 ? sctx.targetRows : 1;
+        const areaRows = sctx.cellH > 0 ? sctx.area.height / sctx.cellH : 0;
+        const showRecent = !query.length && recent.length;
+        const room = areaRows > 0 ? areaRows - 1 - per - (showRecent ? per : 0) - 1 : unknownRoom;
+
         if (query.length)
-            lines ~= searchResults(b, sctx);
+            lines ~= windowed(b, searchResults(b, sctx), room, per);
         else
         {
-            lines ~= levelRows(b, sctx);
-            if (recent.length)
+            lines ~= windowed(b, levelRows(b, sctx), room, per);
+            if (showRecent)
             {
                 uint[] chips = [label(b, "Recent", Slot.muted)];
                 foreach (i, c; recent)
@@ -80,8 +101,57 @@ final class TouchGuide : Surface
 
     Placement placement() const @safe => Placement.sheet;
 
+    /// `Scrollable`: a drag or the wheel moves the list by whole rows.
+    void scroll(int dy) @system
+    {
+        if (dy > 0)
+            top += dy;
+        else
+            top = -dy >= top ? 0 : top + dy;
+        // `windowed` clamps the far end on the next build.
+    }
+
+    /**
+    `items` (each `per` rows tall) within `room` rows: all of them when they
+    fit, else a window from `top` with a mark for what lies above and below —
+    the marks take a row each, and a tap on one turns a page.
+    */
+    private uint[] windowed(ref Builder b, uint[] items, int room, int per) @safe
+    {
+        import std.conv : text;
+
+        listed = items.length;
+        // An unknown area (`room` from no area at all) shows everything; a
+        // known one too small for the marks still shows a row.
+        if (room == unknownRoom || items.length * per <= room)
+        {
+            top = 0;
+            fit = items.length;
+            return items;
+        }
+        fit = (room - 2) / per > 0 ? (room - 2) / per : 1;
+        if (top + fit > items.length)
+            top = items.length - fit;
+        uint[] window;
+        if (top)
+            window ~= mark(b, text("↑ ", top, " more"), moreAboveHit);
+        window ~= items[top .. top + fit];
+        if (const below = items.length - top - fit)
+            window ~= mark(b, text("↓ ", below, " more"), moreBelowHit);
+        return window;
+    }
+
+    private static uint mark(ref Builder b, string text, size_t hit) @safe
+        => b.add(Widget(kind: WidgetKind.row, children: [label(b, text, Slot.muted)],
+            width: SizeSpec.grow(), hitId: hit));
+
     bool activate(size_t id) @system
     {
+        if (id == moreAboveHit || id == moreBelowHit)
+        {
+            scroll(id == moreAboveHit ? -cast(int) fit : cast(int) fit);
+            return false;
+        }
         if (id == backHit)
             return pop();
         if (id >= crumbHit && id < crumbHit + path.length)
@@ -469,4 +539,51 @@ version (unittest)
         assert(g.key(KeyEvent(Key.char_, c)));
     cast(void) g.build(SurfaceContext.init, 60);
     assert(g.confirm() && ran[$ - 1].cmd == TermCommand.splitRight);
+}
+
+@("touch_guide.aTallLevelScrollsInsteadOfOverlapping")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.ui.geometry : Rect;
+
+    import chrome : place, Place;
+
+    // The pane group (12 commands) in a 14-row area, two rows a command: it
+    // cannot all show, and nothing may be drawn over anything else (`TPG19`).
+    auto g = guide();
+    assert(!g.activate(hitOf(g, "+pane")));
+    SurfaceContext ctx = {area: Rect(0, 0, 60, 14), cellW: 1, cellH: 1, targetRows: 2};
+
+    auto layout() => place(g.build(ctx, 60), 60, 14, 0, 0, 1, 1, Place.bottom);
+
+    // What is laid out: the texts under each placed target (a row cut from
+    // the window is built, but never placed).
+    const(char)[][] targets(L)(in L l)
+    {
+        const(char)[][] r;
+        foreach (ref t; l.hits)
+            foreach (ref n; l.tree.nodes)
+                if (n.hitId == t.hitId)
+                    foreach (c; n.children)
+                        r ~= l.tree.nodes[c].text;
+        return r;
+    }
+
+    auto l = layout();
+    assert(l.bounds.height <= 14, "the sheet stays within its area");
+    foreach (i, ref a; l.hits)
+        foreach (ref c; l.hits[i + 1 .. $])
+            assert(a.rect.y + a.rect.height <= c.rect.y || c.rect.y + c.rect.height <= a.rect.y
+                || a.rect.x + a.rect.width <= c.rect.x || c.rect.x + c.rect.width <= a.rect.x,
+                "two targets overlap");
+    auto shown = targets(l);
+    assert(shown.canFind("split right") && !shown.canFind("close pane"));
+    assert(shown.canFind!(t => t.length > 2 && t[0 .. 3] == "↓"), "what lies below is counted");
+
+    // A tap on the mark (or a drag) turns the page: the end of the list shows.
+    assert(!g.activate(moreBelowHit));
+    assert(!g.activate(moreBelowHit));
+    shown = targets(layout());
+    assert(shown.canFind("close pane") && !shown.canFind("split right"));
 }
