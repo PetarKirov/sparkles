@@ -1,15 +1,84 @@
+---
+status: accepted
+owner: sparkles:wsi
+reviewed: 2026-08-21
+---
+
 # `sparkles:wsi` — Specification
 
-_Audience: contributors implementing window-system backends and renderer hosts. This
-document is normative. Requirements are enumerated in
-[feature-requirements.md](./feature-requirements.md), delivery order is in
-[PLAN.md](./PLAN.md), unresolved questions are isolated in
-[open-issues.md](./open-issues.md), and the evidence base is the
-[window-system-integration research](../../research/window-system-integration/index.md)._
+## Abstract
 
-**Status:** M0 specification; implementation in progress
+`sparkles:wsi` opens and manages native desktop windows for Sparkles
+applications on Wayland, X11, Windows and macOS without a cross-platform
+windowing library underneath. It reports what the operating system says about
+each window, including input, composed text, size, scale, displays and frame
+timing, as plain values that keep every detail the platform supplied. It hands
+renderers typed native handles from which to create a GPU surface. Its
+distinctive property is that it adds no event loop of its own: window events
+join the single loop that already serves the application's timers, I/O and
+cross-thread wakes, so a window never blocks that loop or competes with it.
 
-**Last reviewed:** August 21, 2026
+## Introduction
+
+A graphical application must open a window, learn its size in both
+device-independent units and pixels, receive keyboard, pointer and composed
+text input, and give a GPU renderer what it needs to draw into the window.
+Each desktop platform offers this through its own client API, with its own
+threading rules, event pump and coordinate conventions. A Sparkles application
+also runs on [Event Horizon](../event-horizon/SPEC.md), the asynchronous loop
+that owns its timers, file and network I/O, and wakes from other threads.
+
+A cross-platform windowing library hides the platform differences but brings
+its own event pump, which must either own the thread's blocking wait or be
+polled beside the application's loop. Two loops on one thread wake each other
+late or spin. The handles such a library gives a renderer carry their lifetime
+and threading rules in documentation rather than in their types, and on
+Wayland those rules matter: a Vulkan driver that reads the shared display
+connection while the window layer holds a prepared read deadlocks both. A
+window-system layer has to settle who blocks, who reads the native
+connection, and what a renderer may touch, instead of leaving each application
+to discover it.
+
+This library confines every window to one owner thread and leaves that
+thread's only blocking wait to Event Horizon. Its four peer backends are
+Wayland and X11 on Linux, Win32 on Windows, and AppKit on macOS. Each submits
+its native event source to Event Horizon and performs only non-blocking native
+dispatch when the loop reports it ready. Native callbacks do the minimum the
+platform requires synchronously and append an event to a bounded queue. The
+application drains that queue when it chooses, so application code never runs
+inside a native callback. Events, identifiers and commands are
+[Regular](../../glossary.md#regular-type) values that can be recorded and
+replayed. Events are lossless: they keep the physical and logical key,
+composition spans, logical and pixel geometry, and timestamps the platform
+reported. Converting them into the toolkit's cell-based input vocabulary is
+left to the application host. Other threads reach the library only through
+value commands and a wake signal, and a renderer receives one of a closed set
+of typed handle variants.
+
+The library draws nothing and owns no widgets. The one exception is Wayland
+client-side decoration, whose regions and frame actions it reports for the
+renderer above it to paint. It creates no graphics device, shader or
+swapchain; `sparkles:vulkan-wsi` and the renderers above it own those. It does
+not decide how an application gets its window either: `sparkles:ui-app`
+chooses between this library and other hosts. An SDL 3 compatibility host
+lives in a separate package and is never a hidden fallback. Mobile and web
+platforms stay out of scope until all four desktop backends meet the
+native-desktop baseline that §13 defines. Windows TSF text input stays out of
+scope until the IMM32 contract and native desktop integration are complete.
+
+Sections 1–3 state the platform set, package boundaries and ownership model;
+§4 specifies the integrated loop on each platform and event delivery under
+load; §5–§8 define the values: geometry, identity and errors, commands,
+events, and native handles. Section 9 lists each platform's protocol
+obligations, §10 places the compatibility and renderer layers, and §11–§13
+give the evidence lanes, non-goals and completion definition. The requirement
+ledger is [feature-requirements.md](./feature-requirements.md), delivery order
+and progress live in [PLAN.md](./PLAN.md), and
+[comparison.md](./comparison.md) records per-feature evidence beside nine
+third-party designs. Unresolved questions are in
+[open-issues.md](./open-issues.md), the reasoning behind event delivery is in
+[event-delivery.md](./event-delivery.md), and the evidence base is the
+[window-system-integration research](../../research/window-system-integration/index.md).
 
 ## 1. Purpose and scope
 

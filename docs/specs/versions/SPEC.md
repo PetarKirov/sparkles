@@ -1,21 +1,87 @@
+---
+status: accepted
+owner: sparkles:versions
+---
+
 # `sparkles:versions` — Specification
 
-_Audience: developers and coding agents building against the library.
-This document is normative and self-contained — it states what the
-library provides, not why. For design history, prior-art, and the
-reasoning behind each decision, see the
-[explanation guides](../../libs/versions/explanation/design.md); for the
-delivery plan, see [PLAN.md](./PLAN.md); for the per-scheme catalogue
-(real-world examples, edge cases, provenance, and how to add a scheme),
-see the [scheme catalogue](../../libs/versions/reference/schemes.md)._
+## Abstract
+
+`sparkles:versions` is a D library that parses, orders, and constrains the
+version strings of many package ecosystems — Semantic Versioning, Python,
+Maven, Debian, calendar versions, and others — and reads the
+cross-ecosystem Package URL and VERS notations. Each ecosystem keeps its
+own grammar and ordering rules, so a version is never compared by rules
+that are not its own. Versions from different ecosystems cannot be ordered
+against each other: the mistake is rejected at compile time, and a
+collection that mixes ecosystems gets an explicit "no order" instead of a
+guess. Parsing never throws; it returns the value or a structured error
+with the byte offset of the failure.
+
+## Introduction
+
+Tools that handle software from more than one ecosystem keep asking the
+same questions: is this version newer than that one, does it fall inside
+this range, which release is the latest? A vulnerability scanner matches a
+Python package against an advisory, a release tool picks the next tag, and
+an inventory of installed packages spans Debian, Python, and Maven at once.
+Every ecosystem answers these questions with its own grammar. In Semantic
+Versioning `1.0.0-rc.1` precedes `1.0.0`; Python spells the same idea
+`1.0rc1`; Debian sorts `1.0~beta1` before `1.0` and lets an epoch such as
+`2:` override everything after it.
+
+Comparing such strings by one universal rule gives answers that look
+plausible and are quietly wrong, while supporting a single ecosystem leaves
+every other one unhandled. Ranges are harder still: each ecosystem writes
+them in its own syntax, and SemVer-style ranges add the rule that a
+prerelease belongs to a range only when the range itself names a
+prerelease of the same release. The [Package
+URL](https://github.com/package-url/purl-spec) and
+[VERS](https://github.com/package-url/vers-spec) standards give versions
+and ranges a portable spelling, but a portable spelling still needs each
+ecosystem's rules to mean anything.
+
+The library therefore models each ecosystem as its own type — a
+[version scheme](../../glossary.md#version-scheme) — that meets one small
+contract: its values are totally ordered and render back to text. Every
+further ability, such as a compact integer sort key, prerelease handling,
+or named numeric components, is optional and detected at compile time, in
+the style of [Design by
+Introspection](../../guidelines/design-by-introspection-00-intro.md#what-is-design-by-introspection).
+Generic algorithms take a faster path when an ability is present and
+produce the same result without it. A range is one generic set of
+intervals, whatever the scheme; native range syntax and VERS both
+translate into it. Because two schemes are two distinct types, ordering
+versions across schemes does not compile. A collection that mixes schemes
+holds its versions in a tagged union, whose comparison returns an order
+for two versions of the same scheme and an explicit null for two of
+different schemes.
+
+This specification defines the contract a scheme meets, the generic range
+and its operations, parsing, and the Package URL and VERS interop. It does
+not resolve dependencies; a solver belongs in a separate library built on
+the range algebra. It provides no helpers that edit a version, such as
+bumping one, and no total order across ecosystems. A program may define
+its own scheme type and use it directly, but the mixed-scheme union and
+the resolution of an ecosystem named in a Package URL or VERS string cover
+only the built-in schemes, and nothing is registered at run time. Package
+URLs are parsed, never generated. Some ecosystems are not covered, notably
+those that write a prerelease without a separator, as Go's `go1.22rc1`
+does. Each such grammar needs a parser of its own; Python's `1.0rc1` is
+supported because the Python scheme has one.
+
+Section 1 states the contract at a glance and §2 the package layout.
+Section 3 defines the version concept, §4 the range concept, §5 the
+generic operations, §6 the scheme concept, and §7 parsing. Section 8
+surveys the shipped schemes, §§9–11 cover VERS, Package URL, and
+mixed-scheme values, and §12 lists the public surface. Delivery order and
+deferred work live in [PLAN.md](./PLAN.md), the reasoning and prior art
+behind each decision in the [explanation
+guides](../../libs/versions/explanation/design.md), and per-scheme grammars,
+examples, and provenance in the [scheme
+catalogue](../../libs/versions/reference/schemes.md).
 
 ## 1. Overview
-
-`sparkles:versions` parses, compares, and constrains the version strings
-of many package ecosystems — Semantic Versioning, PEP 440 (PyPI), Maven,
-Debian, CalVer, and several internal schemes — and interoperates with
-[pURL](https://github.com/package-url/purl-spec) (Package URL) and
-[VERS](https://github.com/package-url/vers-spec) (version-range URI).
 
 Each ecosystem is one hand-written struct (`SemVer`, `PypiVersion`,
 `DebianVersion`, …) that conforms to the compile-time concept

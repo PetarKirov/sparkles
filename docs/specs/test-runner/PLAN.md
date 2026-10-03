@@ -12,6 +12,10 @@ The audit of the shipped layer is
 gap-to-milestone mapping is the
 [delta table](../../research/cpu-pmu/comparison.md#the-delta-table-the-survey-vs-the-sparkles-baseline)._
 
+SPEC.md marks each passage not yet delivered with **(target — Bn/Mn)**,
+naming the milestone below that makes it true; its unmarked statements
+describe shipped behavior.
+
 ## Shipped: M1-M3 and riders
 
 Merged via PR [#88](https://github.com/PetarKirov/sparkles/pull/88) and
