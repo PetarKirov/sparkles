@@ -171,9 +171,10 @@ specification releases are from the [OpenType version history][ot-changes].
 
 ## Runnable examples
 
-Two programs back the comparison's measured claims. Both talk to HarfBuzz
-through hand-declared `extern(C)` prototypes with no C shim, and both skip
-cleanly when no font can be found.
+Five programs back measured claims: the first two the comparison's, the last
+three the font specification's Stage 0 spikes. Those that use HarfBuzz or
+FreeType reach it through hand-declared `extern(C)` prototypes with no C shim,
+and all skip cleanly when no font can be found.
 
 - [`harfbuzz-shape-features.d`](./examples/harfbuzz-shape-features.d) —
   HarfBuzz's object layers, the feature inventory an inspector lists, `fvar`
@@ -187,6 +188,9 @@ cleanly when no font can be found.
 - [`font-scan-timing.d`](./examples/font-scan-timing.d) — what a font
   catalog reads per face (table directory, family, weight, `cmap` coverage),
   timed over every installed font, serially and on a worker pool.
+- [`raster-oracle-diff.d`](./examples/raster-oracle-diff.d) — the
+  accumulation rasterizer against FreeType over every glyph of a face at four
+  sizes, with FreeType's overlap rule and, as a diagnostic, its flattening.
 
 ```bash
 dub run --single docs/research/font-libraries/examples/outline-sink-raster.d -- /path/to/font.ttf g

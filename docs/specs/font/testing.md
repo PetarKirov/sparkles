@@ -86,12 +86,44 @@ face at its axis extremes.
 
 ### Raster oracle
 
-For every glyph of three bundled faces at 12, 16, 24 and 48 ppem, unhinted,
+For every glyph of four bundled faces at 12, 16, 24 and 48 ppem, unhinted,
 coverage is compared per pixel with FreeType's `FT_LOAD_NO_HINTING` normal-mode
-render. The acceptance tolerance is decided by spike S2 and recorded here before
-milestone M5 starts (`FTQ1`). Hand-built overlap fixtures — two identical
-overlapping squares, and a glyph whose contours cross — must render the nonzero
-union, not a doubled coverage.
+render, over the pixels either renderer inks. The faces are Fira Code Nerd Font
+Mono, Noto Sans Arabic, Maple Mono NF CN (TrueType outlines) and Noto Sans
+Anatolian Hieroglyphs (CFF outlines). Hand-built overlap fixtures, two
+identical overlapping squares and a glyph whose contours cross, must render
+the nonzero union, not a doubled coverage.
+
+**Measured distribution.** Spike S2 ran
+[`raster-oracle-diff.d`][ex-oracle] on 2026-10-03 against FreeType 2.14.3 and HarfBuzz
+13.2.1, flattening to 0.02 px and supersampling flagged overlapping glyphs 4×4
+(`FTX9`). Differences are in 1/255 steps; each cell is the largest value over
+the four sizes.
+
+| Face                      | Pixel p99 | Pixel max | Glyph max, p50 | Glyph max, p99 |
+| ------------------------- | --------- | --------- | -------------- | -------------- |
+| Fira Code Nerd Font Mono  | 10        | 28        | 9              | 18             |
+| Noto Sans Arabic          | 12        | 21        | 11             | 19             |
+| Maple Mono NF CN          | 6         | 33        | 8              | 16             |
+| Noto Sans Anatolian (CFF) | 24        | 53        | 28             | 42             |
+
+The same run with FreeType's own flattening rules reproduced in the D sink
+lowers the median glyph maximum to 3 or 4 on every face, and the CFF face's
+from 16–28 to 3. Most of the difference is therefore FreeType's flattening,
+which bisects a cubic until each control point is within about 1/6 px of a
+trisection point of its chord, not the accumulation arithmetic.
+
+**Proposed tolerance**, pending review (`FTQ1`). Per face and size, against
+FreeType:
+
+| Outlines        | Every pixel within | 99th percentile within |
+| --------------- | ------------------ | ---------------------- |
+| TrueType `glyf` | 48                 | 16                     |
+| CFF and CFF2    | 64                 | 32                     |
+
+Each bound is the next multiple of 16 above the largest value measured. The CFF
+bounds are looser only because FreeType's cubic flattening is coarser than its
+quadratic flattening.
 
 ### Hostile input
 
@@ -155,7 +187,7 @@ checked, on the configuration that ran them.
 | Question                                                       | Evidence                                                                      | Result                                                                                                                                                                                      |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Can D drive HarfBuzz with no C shim?                           | [`harfbuzz-shape-features.d`][ex-shape], [`outline-sink-raster.d`][ex-raster] | Yes: opaque handles plus five plain structs, run by `ci --example-files`.                                                                                                                   |
-| Is an accumulation rasterizer small enough to own?             | [`outline-sink-raster.d`][ex-raster]                                          | A 71-line core renders correct coverage for Noto Sans and Maple Mono at 28 px. Overlapping contours (`FTR2`) are not yet demonstrated.                                                      |
+| Is an accumulation rasterizer small enough to own?             | [`outline-sink-raster.d`][ex-raster]                                          | A 71-line core renders correct coverage for Noto Sans and Maple Mono at 28 px. Spike S2 extends it to every glyph of four faces at four sizes (§ Raster oracle).                            |
 | Do programming ligatures break a cell grid?                    | [`ligature-cells.d`][ex-ligature], 160 sequences in eight faces               | No glyph-count change and no off-cell advance in Cascadia Code, JetBrains Mono, Fira Code and Maple Mono, plain and Nerd Font builds; ink reaches up to 6 cells past its own cell (`FTX7`). |
 | Does variation change contour topology?                        | [`outline-sink-raster.d`][ex-raster] on Noto Sans `g` at `wght` 100 and 900   | No for that glyph: 2 moves, 8 lines, 31 quadratics at both ends. `FTO4` makes it a corpus-wide property.                                                                                    |
 | Is a synchronous catalog build fast enough?                    | [`font-scan-timing.d`][ex-scan] over `fc-list` and the bundle                 | Yes: 2,222 desktop files in 44 ms warm, 20 ms on 4 workers, 1.6 s on first touch; the 180-file bundle in 1.9 ms (`FTX8`).                                                                   |
@@ -177,3 +209,4 @@ gap, per the [spec guideline](../../guidelines/spec-docs.md#keep-evidence-scoped
 [ex-raster]: ../../research/font-libraries/examples/outline-sink-raster.d
 [ex-ligature]: ../../research/font-libraries/examples/ligature-cells.d
 [ex-scan]: ../../research/font-libraries/examples/font-scan-timing.d
+[ex-oracle]: ../../research/font-libraries/examples/raster-oracle-diff.d
