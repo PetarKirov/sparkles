@@ -91,9 +91,10 @@ unittest
 /// Names of all packages — root + subpackages — that live in this repo.
 /// Used to decide which `dependency "<name>" version="*"` lines in
 /// markdown examples should be redirected to the local working copy
-/// during `docs run`/`verify`/`update`.
+/// during `docs run`/`verify`/`update`, and which owners a glossary entry
+/// may name (`--check-glossary`).
 @safe
-private string[] inTreePackageNames(string repoRoot)
+string[] inTreePackageNames(string repoRoot)
 {
     auto rootName = repoRoot.buildPath("dub.sdl").readPackageName;
     if (rootName.length == 0)

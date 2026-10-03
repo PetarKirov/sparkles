@@ -28,6 +28,7 @@ nix run .#ci -- --test-sanitize [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- --check-docs-sidebar
+nix run .#ci -- --check-glossary
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
@@ -53,6 +54,7 @@ $(LIST
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
     $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
     $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/sidebar.json` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
+    $(ITEM `--check-glossary` — verify `docs/.vitepress/glossary.json` (ids, owners, plain-text summaries, cross-references) and that every docs link into the glossary names an existing entry; entries no page links to are reported, not failed)
     $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
 )
 
@@ -152,9 +154,11 @@ import blob_paths :
     parseBlobRefs, resolveClone;
 import sparkles.docs.sidebar : loadDocsConfig, loadSidebar, sidebarDataPath;
 import docs_sidebar : checkDocsSidebar;
+import sparkles.docs.glossary : checkGlossary, glossaryDataPath, glossaryReferences,
+    GlossaryReference, loadGlossary;
 import spec_evidence : backlogPath, Citation, citationsIn, ratchet, renderBacklog,
     unresolvedCitations;
-import dub_deps : parseSubPackages, rewriteInTreeDeps;
+import dub_deps : inTreePackageNames, parseSubPackages, rewriteInTreeDeps;
 import coverage : collectCoverage, PackageCoverage;
 import example_manifest : exampleRunsOnHost;
 import fence_audit : AuditScope, FenceAuditOptions, runFenceAudit, wrapperFenceEnd;
@@ -311,6 +315,12 @@ struct CliParams
         ~ "to list exactly the citations that resolve nowhere now."))
     bool updateSpecEvidenceBacklog;
 
+    @(Option(`check-glossary`,
+        description: "Verify docs/.vitepress/glossary.json — unique slug ids, known owners, "
+        ~ "plain-text summaries, portable links, cross-references — and that every docs link "
+        ~ "into the glossary names an existing entry. Unused entries are reported, not failed."))
+    bool checkGlossary;
+
     @(Option(`check-blob-paths`,
         description: "Verify that every SHA-pinned GitHub blob citation names a path that "
         ~ "exists at that commit, using local clones under --clone-root. "
@@ -454,6 +464,7 @@ enum ProgramMode
     checkVcsUrls,
     checkDocsSidebar,
     checkSpecEvidence,
+    checkGlossary,
     checkBlobPaths,
     ciStats,
     mirrorChecks,
@@ -604,6 +615,9 @@ int ciMain(string[] args)
     if (mode == ProgramMode.checkSpecEvidence)
         return runCheckSpecEvidence(cli.updateSpecEvidenceBacklog);
 
+    if (mode == ProgramMode.checkGlossary)
+        return runCheckGlossary();
+
     // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
     // so it must not fall through to the shared "no input files" usage error.
     if (mode == ProgramMode.seedDubCache)
@@ -700,8 +714,8 @@ private string validateCliMode(
     if (cli.seedDubCache && (cli.verify || cli.update || cli.exampleFiles || cli.build || cli.test
             || cli.testExtracted || cli.testSanitize || cli.buildEachCommit || cli.auditFences
             || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope
-            || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkSpecEvidence || cli.checkBlobPaths
-            || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.linuxHostProbe
+            || cli.checkVcsUrls || cli.checkDocsSidebar || cli.checkSpecEvidence || cli.checkGlossary
+            || cli.checkBlobPaths || cli.ciStats || cli.mirrorChecks || cli.reportLinkRot || cli.linuxHostProbe
             || cli.hostSystem.length || cli.files.length || cli.exclude.length))
         return "--seed-dub-cache cannot be combined with other modes or file selection";
 
@@ -899,6 +913,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
     if (cli.checkSpecEvidence)
         return ProgramMode.checkSpecEvidence;
 
+    if (cli.checkGlossary)
+        return ProgramMode.checkGlossary;
+
     if (cli.checkBlobPaths)
         return ProgramMode.checkBlobPaths;
 
@@ -925,6 +942,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkVcsUrls:       return "--check-vcs-urls";
         case ProgramMode.checkDocsSidebar:   return "--check-docs-sidebar";
         case ProgramMode.checkSpecEvidence:  return "--check-spec-evidence";
+        case ProgramMode.checkGlossary:      return "--check-glossary";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.mirrorChecks:       return "--mirror-checks";
@@ -1501,6 +1519,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkVcsUrls:
             case ProgramMode.checkDocsSidebar:
             case ProgramMode.checkSpecEvidence:
+            case ProgramMode.checkGlossary:
             case ProgramMode.checkBlobPaths:
                 rc = 1;
                 break;
@@ -2208,6 +2227,58 @@ private int runCheckSpecEvidence(bool updateBacklog)
         info(i"✓ Spec evidence: no new unresolved citations of $(cites.length) across $(files) spec files; $(r.known) known ones remain in $(backlogPath).");
     else
         info(i"✓ Spec evidence resolves: all $(cites.length) cited symbols across $(files) spec files name something in the tree.");
+    return 0;
+}
+
+/++
+`--check-glossary`: the glossary data is well formed, and every docs link into
+it names an entry (`sparkles.docs.glossary.checkGlossary`).
+
+Whole-tree, like `--check-docs-sidebar`: deleting an entry breaks pages the
+change never touched.
++/
+private int runCheckGlossary()
+{
+    const repoRoot = detectRepoRoot();
+
+    auto entries = loadGlossary(repoRoot);
+    if (entries.hasError)
+    {
+        error(i"Could not read the glossary $(glossaryDataPath): $(entries.error)");
+        return 1;
+    }
+
+    const listed = execute(["git", "-C", repoRoot, "ls-files", "--", "docs"]);
+    if (listed.status != 0)
+    {
+        error(i"Failed to enumerate docs files with git ls-files");
+        return 1;
+    }
+
+    GlossaryReference[] refs;
+    size_t files;
+    foreach (path; listed.output.lineSplitter.filter!(l => l.endsWith(".md")))
+    {
+        const full = repoRoot.buildPath(path);
+        if (!full.exists) // deleted in the working tree, not yet staged
+            continue;
+        refs ~= glossaryReferences(path.idup, full.readText);
+        ++files;
+    }
+
+    const report = checkGlossary(entries.value, inTreePackageNames(repoRoot), refs);
+    foreach (id; report.unused)
+        info(i"Glossary entry $(id) is not linked from any docs page.");
+
+    if (!report.ok)
+    {
+        foreach (e; report.errors)
+            error(i"✗ $(e)");
+        error(i"$(report.errors.length) glossary problem(s); see docs/guidelines/spec-prose.md#link-terms-to-the-glossary.");
+        return 1;
+    }
+
+    info(i"✓ Glossary is consistent: $(entries.value.length) entries, $(refs.length) links from $(files) docs pages.");
     return 0;
 }
 
