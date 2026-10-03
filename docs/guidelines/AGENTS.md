@@ -16,7 +16,7 @@ the detailed descriptions and the module map live there.
 | `ci`                                                                               | repo CI helper: tests, markdown examples, link/sidebar audits                |
 | `hue`                                                                              | syntax-highlighting viewer (ANSI/HTML/`--gui`), diff/PR viewer, APK          |
 | `release`                                                                          | tag scanning, bump suggestion, notes, publishing                             |
-| `shader-compile`                                                                   | D shaders → SPIR-V → committed GLSL (`libs/ui/src/sparkles/ui/shaders/`)     |
+| `shader-compile`                                                                   | D shaders → SPIR-V → GLSL, built by `sparkles:ui`'s `gpu-effects` build      |
 | `terminal`, `terminal-benchmark`                                                   | raylib terminal emulator on libghostty-vt; its render-CPU benchmark          |
 | `ui-gallery`, `diagram`                                                            | `sparkles:ui-app` apps: the toolkit catalog; a camera-driven diagram board   |
 | `nix-eval`, `twoslash-extract`                                                     | `sparkles:nix` demo; batch D twoslash extractor                              |
@@ -566,10 +566,9 @@ Hooks run on commit and may modify or block it; each bypasses with
       `release`) keep inheriting.
 - [ ] Dependency version changes update both `dub.selections.json` and
       `nix/dub-lock.json`.
-- [ ] After changing `sparkles.ui.effect_shaders` or `libs/ui/shaders/effects.d`,
-      regenerate with
-      `nix run .#shader-compile -- --package=libs/ui --out=libs/ui/src/sparkles/ui/shaders`
-      and commit the result (`--verify` reports staleness). `@compute`
+- [ ] Nothing generated from `sparkles.ui.effect_shaders` or `libs/ui/shaders/effects.d`
+      is committed: the `gpu-effects` build (anything on `ui-raylib`) re-derives the GLSL
+      when its inputs change, and needs `ldc2-vulkan` (the dev and CI shells have it). `@compute`
       modules hold no string literals (a test name is one), so their tests live
       in a host-only module.
 

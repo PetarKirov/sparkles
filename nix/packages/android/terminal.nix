@@ -40,6 +40,9 @@ in
         # (`dub describe :terminal --data=versions`), plus sparkles:android.
         versions = [
           "UiAppGui"
+          # sparkles:ui's `gpu-effects` configuration, which dub would select
+          # through ui-raylib; its GLSL comes prebuilt from `ui-shaders`.
+          "SparklesUiGpuEffects"
           "Have_bolts"
           "Have_expected"
           "Have_optional"
@@ -80,7 +83,10 @@ in
             src = inputs.dub-bolts;
           }
         ];
-        stringImportDirs = [ "libs/ui/src/sparkles/ui/shaders" ];
+        stringImportDirs = [
+          "libs/ui/src/sparkles/ui/shaders"
+          "${config.packages.ui-shaders}"
+        ];
         cIncludes = [
           "${config.packages.libghostty-vt-android}/include"
           "${config.packages.freetype-android}/include/freetype2"
