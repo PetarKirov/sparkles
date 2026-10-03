@@ -118,6 +118,33 @@ int androidMain()
         return o;
     };
 
+    // Files programs open (`termux-open`, `am start -a VIEW`) become viewer
+    // panes (`TDV1`, `TDV2`): grammars from the APK's libraries and the
+    // extracted queries, the credits read in place from the assets. Before the
+    // restore below: a restored viewer pane (the credits) reads its file
+    // through `makeDocEnv`'s asset reader, and without it found nothing.
+    {
+        import am_server : setOpenInApp;
+        import settings : OpenTarget;
+        import sparkles.doc_view.pane : DocViewEnv;
+        import sparkles.syntax : GrammarRegistry;
+        import workspace_host : placementFor;
+
+        const target = app.config.effective.open.target;
+        setOpenInApp(target != OpenTarget.external);
+        app.host.openPlacement = placementFor(target);
+        app.host.setViewerColors(app.chromeFg, app.chromeBg);
+        const grammars = buildPath(paths.files, "grammars");
+        app.host.creditsPath = "asset:credits/terminal.md";
+        app.host.makeDocEnv = () {
+            auto env = DocViewEnv.create(GrammarRegistry.fromSonames(grammars),
+                (string p) => readViewerFile(p));
+            // The credits' includes stay inside the bundled document (`VIW7`).
+            env.pipeline.includeOptions.root = "asset:credits";
+            return env;
+        };
+    }
+
     // The last session's tabs and splits (`TSS14`) — not while installing,
     // when the one pane is the installer.
     bool restoredSession;
@@ -153,31 +180,6 @@ int androidMain()
         pointerUnit: PointerUnit.pixels, // the key row is not on the cell grid
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };
-
-    // Files programs open (`termux-open`, `am start -a VIEW`) become viewer
-    // panes (`TDV1`, `TDV2`): grammars from the APK's libraries and the
-    // extracted queries, the credits read in place from the assets.
-    {
-        import am_server : setOpenInApp;
-        import settings : OpenTarget;
-        import sparkles.doc_view.pane : DocViewEnv;
-        import sparkles.syntax : GrammarRegistry;
-        import workspace_host : placementFor;
-
-        const target = app.config.effective.open.target;
-        setOpenInApp(target != OpenTarget.external);
-        app.host.openPlacement = placementFor(target);
-        app.host.setViewerColors(app.chromeFg, app.chromeBg);
-        const grammars = buildPath(paths.files, "grammars");
-        app.host.creditsPath = "asset:credits/terminal.md";
-        app.host.makeDocEnv = () {
-            auto env = DocViewEnv.create(GrammarRegistry.fromSonames(grammars),
-                (string p) => readViewerFile(p));
-            // The credits' includes stay inside the bundled document (`VIW7`).
-            env.pipeline.includeOptions.root = "asset:credits";
-            return env;
-        };
-    }
 
     // termux-am's server (NOD13): nix-on-droid's android-integration tools.
     import am_server : startAmServer;
