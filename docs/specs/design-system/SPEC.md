@@ -1,18 +1,95 @@
+---
+status: accepted
+owner: sparkles:ui
+reviewed: 2026-09-21
+---
+
 # Sparkles design system — Specification (`TOK` / `ACC` / `FMT`)
 
-_**Status:** proposed · **Date:** 2026-09-21 · **Owner:** `sparkles:ui`
-(`sparkles.ui.tokens`, `sparkles.ui.style`, `sparkles.ui.theme`); file I/O via
-`sparkles:wired` · **Scope:** the framework contract — what a design system
-\_is_ as data, how a slot resolves under an interaction state, what unit a metric
-is in, which slots a component may use, the accessibility floors, and the file
-format a theme ships in. Capabilities, glyphs, keyboard and web are separate
-pages under this tree.\_
+## Abstract
 
-> [!NOTE]
-> Symbols marked _proposed_ do not exist yet. `sparkles.ui.tokens`
-> (`libs/ui/src/sparkles/ui/tokens.d`) is the **draft** of the types this page
-> traces to; it compiles and has tests, but `Slot`/`Palette`/`GlyphSet` are not
-> yet migrated onto it ([`PLAN.md` M1](./PLAN.md)).
+`sparkles:ui` expresses a design system as data: one value that names every
+visual decision an application makes, from colors and lengths to glyph
+choices and font roles, and resolves it the same way for a terminal, a GPU
+window and a web page. This specification defines the core of that
+framework. Widgets name roles rather than colors. A role's appearance may
+vary with interaction states such as hover or disabled, and falls back to its
+resting appearance wherever a theme is silent. Layout lengths are whole
+character cells, while finer metrics carry a declared fallback for targets
+that cannot draw them. Every theme is measured against contrast floors, and
+themes are stored in the W3C design-tokens interchange format.
+
+## Introduction
+
+The `sparkles:ui` toolkit renders one widget tree to a terminal's character
+grid, to a GPU window and to static HTML, as the [backends
+specification](../ui/backends.md) describes. The applications built on it
+and the project's documentation sites should share one visual language,
+while a user of an application such as `hue` still switches at runtime among
+dozens of editor color schemes borrowed from upstream. A design system, in
+the sense of web practice, is what makes both possible: a vocabulary of named
+decisions, such as "primary text", "focus ring" or "overlay padding", whose
+values a theme supplies.
+
+A palette of named colors is not yet a design system. It cannot say what a
+hovered or disabled control looks like without a separate color per state.
+It does not say which roles a component may use, so restyling one component
+can silently restyle another. It sets no floor on legibility and has no file
+format that a user or a web tool can edit. The three targets compound each
+gap: a corner radius or a hairline border exists in a window and in CSS but
+has no direct form on a character grid. Parity between targets is worth
+little if the design language must be authored separately for each.
+
+The framework makes the design language one value. A widget names a
+[slot](../../glossary.md#slot), the role it plays, instead of a color. Each
+slot is a [design token](../../glossary.md#design-token) on one of three
+tiers: raw values, semantic roles, and parts of a single component, each
+tier aliasing the one below. A semantic role a theme leaves unset falls back
+to a documented default. Resolving a slot also takes the active
+[interaction states](../../glossary.md#interaction-state), and a state the
+theme does not override leaves the resting appearance unchanged, so every
+theme resolves every slot in every state. Layout lengths are whole
+[cells](../../glossary.md#cell). A metric finer than a cell, such as a corner
+radius, is given in device pixels together with a defined
+[projection](../../glossary.md#projection) onto a target that cannot draw it,
+so no metric is silently dropped.
+
+Each component declares the slots it uses, and a test holds it to that set.
+Every theme is measured against
+[WCAG](https://www.w3.org/TR/WCAG22/#contrast-minimum) contrast floors. A
+failure is a test failure for the Sparkles theme and for any theme that
+declares it must conform. A borrowed scheme that fails is labelled rather
+than rejected, so it keeps its upstream colors. Themes are stored as
+[Design Tokens Community Group](https://www.designtokens.org/) (DTCG)
+documents, which `sparkles:wired` reads and writes.
+
+This page specifies the tokens, the accessibility floors and the theme file
+format: the contract every theme fills. It assigns no token values; the
+concrete Sparkles theme, the brand the repository's own applications and
+documentation follow, has [its own page](./sparkles-theme.md). Which
+features each target supports and how a terminal is probed for them, glyph and
+typography projection, the shared keyboard bindings, and the CSS mapping for
+the web are specified by sibling pages of this tree. Syntax highlighting
+stays outside the token model: `sparkles:syntax` resolves its rules, and the
+tokens treat them as opaque. Following the operating system's light or dark
+preference is out of scope and deferred, as the
+[overview](./index.md#relationship-to-existing-specs) records.
+
+[Vocabulary](#vocabulary) defines the terms the requirements use.
+[Tokens](#tokens-tok) specifies tiers and paths, interaction states, and
+units and metrics; [Accessibility](#accessibility-acc) the contrast floors
+and the rule that color never carries meaning alone; and [Theme file
+format](#theme-file-format-fmt) the DTCG mapping. [Relationship to
+`THM`](#relationship-to-thm) lists which rows of the toolkit's [theme
+specification](../ui/theme.md) these requirements realise. Where a
+requirement table's "Traces to" column marks a symbol _proposed_, that
+symbol does not exist yet. The [overview](./index.md) names the owning
+package of every obligation in this tree, and its sibling pages cover
+[capabilities](./capabilities.md), [glyphs and typography](./glyphs.md), the
+[keyboard vocabulary](./keyboard.md) and the [web](./web.md).
+[testing.md](./testing.md) holds the oracles and evidence,
+[PLAN.md](./PLAN.md) the delivery order, and [decisions.md](./decisions.md)
+the choices behind each requirement.
 
 ## Vocabulary
 

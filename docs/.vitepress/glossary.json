@@ -492,6 +492,91 @@
     "seeAlso": ["command-graph"]
   },
   {
+    "id": "design-token",
+    "term": "design token",
+    "aliases": ["token", "tokens", "design tokens"],
+    "summary": "One named design decision with a value, such as a color, a length, a glyph choice or a font role, addressed by a dotted path like text.primary.",
+    "definition": "In the Sparkles design system every token sits on one of three tiers: a *primitive* holds a raw value, a *semantic* token names a role, and a *component* token names a part of one component; each tier aliases the one below, and the alias graph must be acyclic. A theme assigns values to tokens.",
+    "authority": [
+      {
+        "text": "Design system vocabulary",
+        "link": "/specs/design-system/SPEC#vocabulary"
+      },
+      {
+        "text": "Tiers and paths (TOK1, TOK2)",
+        "link": "/specs/design-system/SPEC#tiers-and-paths"
+      },
+      {
+        "text": "W3C Design Tokens Community Group",
+        "link": "https://www.designtokens.org/"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["slot", "interaction-state"]
+  },
+  {
+    "id": "interaction-state",
+    "term": "interaction state",
+    "aliases": ["interaction states"],
+    "summary": "A condition of a widget, such as hover, focused, selected, pressed or disabled, that can change how its visual roles are drawn.",
+    "definition": "Slot resolution in `sparkles:ui` takes the set of active interaction states as a second argument. A theme overrides a state sparsely; where no active state has an override the resting appearance is used, and among several active states the highest-precedence override wins.",
+    "authority": [
+      {
+        "text": "Interaction states (TOK4, TOK5)",
+        "link": "/specs/design-system/SPEC#interaction-states"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["slot", "design-token"]
+  },
+  {
+    "id": "projection",
+    "term": "projection",
+    "summary": "The defined rule by which a rendering target that cannot draw a design value exactly, such as a pixel corner radius on a character grid, renders it anyway.",
+    "definition": "In the Sparkles design system a metric finer than a [cell](/glossary#cell) is typed in device pixels and carries a projection onto cell targets; each target declares per metric whether it honours or projects it, so no value is silently dropped. Glyphs and borders are projected the same way.",
+    "authority": [
+      {
+        "text": "Units and metrics (TOK7)",
+        "link": "/specs/design-system/SPEC#units-and-metrics"
+      },
+      {
+        "text": "Glyphs and typography",
+        "link": "/specs/design-system/glyphs"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["cell", "design-token"]
+  },
+  {
+    "id": "dql-path",
+    "term": "DQL path",
+    "aliases": ["query path"],
+    "summary": "A dotted address, such as key.action, that names one field reachable from a queried D type in a DQL query.",
+    "definition": "A dotted address that names one field, getter or index reachable from a queried D type, such as `pointer.logicalPosition.x`. The alternatives of a `SumType` field are transparent: their fields join the path of the field that holds the union, so `key.action` reads the keyboard alternative's action.",
+    "authority": [
+      {
+        "text": "DQL specification §2.1",
+        "link": "/specs/dql/SPEC#_2-1-path-addressing-grammar"
+      }
+    ],
+    "owner": "sparkles:dql",
+    "seeAlso": ["dql-schema"]
+  },
+  {
+    "id": "dql-schema",
+    "term": "DQL schema",
+    "summary": "The table of every path a D type offers to DQL queries, generated from the type at compile time and used to validate queries and print help.",
+    "definition": "The table of every [DQL path](/glossary#dql-path) a D type offers, with each path's type, category and documentation, generated at compile time through the [reflection kernel](/libs/reflection/). The parser rejects a query naming a path outside it, and the help protocol prints it.",
+    "authority": [
+      {
+        "text": "DQL specification §4",
+        "link": "/specs/dql/SPEC#_4-schema-introspection-help-protocol"
+      }
+    ],
+    "owner": "sparkles:dql",
+    "seeAlso": ["dql-path"]
+  },
+  {
     "id": "split-mode",
     "term": "split mode",
     "aliases": ["--split"],
@@ -524,5 +609,122 @@
     ],
     "owner": "sparkles:release",
     "seeAlso": ["split-mode"]
+  },
+  {
+    "id": "highlight-event-stream",
+    "term": "highlight event stream",
+    "aliases": ["highlight events"],
+    "summary": "The ordered, balanced sequence of enter-label, leave-label and source-range events over byte offsets that every syntax-highlighting engine emits and every renderer folds.",
+    "definition": "The single seam of `sparkles:syntax`: engines emit `source(start, end)`, `push(label)` and `pop` events in position order with every push matched by a pop, and renderers fold that sequence into ANSI, HTML or styled runs. The stream is infallible; engine failures surface before it, never inside it. The event model follows tree-sitter's reference highlighter.",
+    "authority": [
+      {
+        "text": "sparkles:syntax design proposal",
+        "link": "/specs/syntax/"
+      },
+      {
+        "text": "tree-sitter-highlight: the HighlightEvent stream",
+        "link": "/research/parsing/tree-sitter-highlight#the-highlightevent-stream"
+      }
+    ],
+    "owner": "sparkles:syntax",
+    "seeAlso": ["highlight-label", "totality-law"]
+  },
+  {
+    "id": "highlight-label",
+    "term": "highlight label",
+    "summary": "A hierarchical dotted name, such as keyword.control, that a syntax-highlighting engine assigns to a span of source text and a theme maps to a style.",
+    "definition": "A name from the canonical, TextMate-scope-compatible vocabulary of `sparkles:syntax`, interned to a numeric id at configure time. Themes and capture names both resolve by longest dotted prefix, so `keyword.control.import` falls back to `keyword.control` and then `keyword`; capture names additionally consult an alias table that reconciles other grammar dialects.",
+    "authority": [
+      {
+        "text": "sparkles:syntax design proposal",
+        "link": "/specs/syntax/"
+      },
+      {
+        "text": "Label-vocabulary dialect reconciliation",
+        "link": "/specs/syntax/label-vocabulary-dialects"
+      }
+    ],
+    "owner": "sparkles:syntax",
+    "seeAlso": ["highlight-event-stream"]
+  },
+  {
+    "id": "totality-law",
+    "term": "totality law",
+    "summary": "The rule that a syntax highlighter never rejects its input: the worst legal output is the source text uncolored.",
+    "definition": "Unlike a parser, a highlighter must render whatever it is given. In `sparkles:syntax` an engine failure is reported before any event stream reaches a renderer, the caller then shows the plain source, and an unevaluable query pattern disables only itself; no degradation is sticky.",
+    "authority": [
+      {
+        "text": "Syntax highlighting survey: the highlighting problem",
+        "link": "/research/parsing/syntax-highlighting#the-highlighting-problem"
+      }
+    ],
+    "owner": "sparkles:syntax",
+    "seeAlso": ["highlight-event-stream"]
+  },
+  {
+    "id": "packed-cell",
+    "term": "packed cell",
+    "aliases": ["compact packed cell"],
+    "summary": "A terminal grid cell stored in a few fixed bytes, with its code point and flattened style packed inline and only long graphemes kept out of line.",
+    "definition": "The cell representation of the `sparkles:tui` frame grid: a packed code point plus a flat style, with graphemes too long to pack spilled to out-of-line storage, after the Notcurses and libvaxis inline packing. The render-core benchmark found that it lets a D renderer match a C one on the common workload.",
+    "authority": [
+      {
+        "text": "sparkles:tui specification §3.1",
+        "link": "/specs/tui/#_3-1-rendering-core-line-diff-vs-2-d-cell-grid"
+      },
+      {
+        "text": "Render-core benchmark baseline",
+        "link": "/specs/tui/render-bench-baseline#findings"
+      }
+    ],
+    "owner": "sparkles:tui",
+    "seeAlso": ["cell-diff-compositor"]
+  },
+  {
+    "id": "cell-diff-compositor",
+    "term": "cell-diff compositor",
+    "aliases": ["cell diff", "cell-diff"],
+    "summary": "A terminal renderer that keeps the previous frame's cell grid and, for each new frame, writes only the runs of cells that changed.",
+    "definition": "The `sparkles:tui` renderer: it retains the last rendered grid, compares the next one cell by cell, and emits one cursor move plus the styled text for each run of changed cells, so repainting a whole frame costs only its differences. Its retained grid reuses its storage, so a steady render loop allocates nothing.",
+    "authority": [
+      {
+        "text": "sparkles:tui specification §3.1",
+        "link": "/specs/tui/#_3-1-rendering-core-line-diff-vs-2-d-cell-grid"
+      },
+      {
+        "text": "TUI library comparison: rendering models",
+        "link": "/research/tui-libraries/comparison#_1-rendering-models-compared"
+      }
+    ],
+    "owner": "sparkles:tui",
+    "seeAlso": ["packed-cell", "cell"]
+  },
+  {
+    "id": "inline-decoration",
+    "term": "inline decoration",
+    "summary": "A Twoslash annotation drawn within a code line over the span it describes, such as a hover underline, a highlight box, or an error squiggle.",
+    "definition": "The part of a Twoslash overlay that marks a span inside one line of code: hovers, highlights, and errors. The overlay planner sorts inline decorations so an enclosing span opens before a nested one; they never cross a line break.",
+    "authority": [
+      {
+        "text": "sparkles:twoslash spec §2",
+        "link": "/specs/twoslash/SPEC#_2-overlay-planner-overlay-d"
+      }
+    ],
+    "owner": "sparkles:twoslash",
+    "seeAlso": ["below-line-block"]
+  },
+  {
+    "id": "below-line-block",
+    "term": "below-line block",
+    "summary": "A Twoslash annotation rendered as extra rows beneath the code line it belongs to, such as an error message, a queried type, a completion list, or a tag line.",
+    "definition": "The part of a Twoslash overlay that adds rows under a line of code: error messages, `^?` query results, completion lists, and `// @tag` lines. The overlay planner sorts them by line, and every backend flushes them at the line's end.",
+    "authority": [
+      {
+        "text": "sparkles:twoslash spec §2",
+        "link": "/specs/twoslash/SPEC#_2-overlay-planner-overlay-d"
+      }
+    ],
+    "owner": "sparkles:twoslash",
+    "seeAlso": ["inline-decoration"]
   }
 ]
