@@ -1,27 +1,110 @@
+---
+status: accepted
+owner: sparkles:ui
+reviewed: 2026-08-05
+---
+
 # `sparkles:ui` — Feature Specification
 
-_**Status:** living inventory · **Date:** 2026-08-05 · **Scope:** `libs/ui`
-(`libs/ui/src/sparkles/ui/*.d`), the sibling backend adapters
-(`sparkles:ui-raylib`, `sparkles:ui-tui`), and `sparkles:input` — the shared
-visual language behind every sparkles UI._
+## Abstract
 
-`sparkles:ui` is a **canvas-first UI toolkit**: one widget tree, laid out once,
-painted by pluggable backends. A widget names a semantic
-[`Slot`](./theme.md), never a concrete color; a backend supplies only draw
-primitives and input events. The pipeline is
-`view() → layout() → buildDisplayList() → paint(canvas)`, and every stage before
-`paint` is `@safe` and GL-free, so the whole toolkit is unit-testable through a
-`RecordingCanvas` with no window and no terminal.
+`sparkles:ui` is the user-interface toolkit Sparkles applications share,
+whether they appear in a terminal, a desktop window, or a static HTML page. An
+application describes its interface once, as a tree of widgets derived from its
+state. The toolkit lays that tree out and reduces it to a flat list of drawing
+operations, which a small backend paints for its target. Widgets name the role
+each part plays rather than its color, so one theme restyles every target at
+once. No step before painting needs a window or a terminal, so an entire
+interface can be tested as data.
 
-This spec is the **source of truth** for the toolkit and the **decision record**
-for the choices behind it — in particular the layout model
-([`LAY2`](./layout.md)), which requirement pre-narrowed to a survey of
-[`docs/research/ui-layout/`](../../research/ui-layout/index.md) and which is
-settled here.
+## Introduction
 
-It supersedes [`docs/specs/hue/ui-architecture.md`](../hue/ui-architecture.md),
-which proposed the library before it existed; that page now holds only hue's
-own consumption requirements.
+Sparkles applications must look and behave alike in very different places. The
+hue file viewer runs both in a terminal and in a GPU-accelerated window, a
+documentation gallery renders the same views to HTML, and a terminal emulator
+embeds as one pane of a larger interface. Each place measures space in its own
+unit: character cells, pixels, or CSS lengths. Each delivers input differently,
+from escape sequences to polled device state, while static HTML offers only
+what pure CSS can express. And each can draw a different subset of what a
+design asks for.
+
+Writing every widget once per target multiplies the code, and worse, lets
+behavior drift. Selection, scrolling and focus end up modeled several times,
+the models disagree, and a fix on one target never reaches the others. Native
+widget toolkits do not close the gap, because a terminal has none and the
+browser's behave differently from a desktop's. A floating-point layout engine
+borrowed from the web brings its own defect: rounding produces off-by-one cells
+on a terminal grid.
+
+The toolkit is _canvas-first_. It owns all semantic behavior and composition,
+and a backend contributes only primitive drawing, text measurement and the
+translation of native input. The toolkit is built in three levels, each usable
+without the ones above it. State machines hold behavior that has no
+appearance, such as scrolling, selection, hover and focus. Layout places every
+widget in whole [cells](../../glossary.md#cell), the abstract grid unit that is
+one character position on a terminal and whose device size a pixel or HTML
+backend chooses. Widgets compose the two, and each names a semantic
+[slot](../../glossary.md#slot), such as "error text" or "selected row", never a
+concrete color.
+
+The laid-out tree then becomes a
+[display list](../../glossary.md#display-list): a flat sequence of drawing
+operations whose slots are already resolved against the theme, so a backend
+never consults the theme or the tree. Layout obtains text measurement through
+the canvas rather than a device, so a test substitutes a recording canvas,
+which measures and records without any window, and inspects the list directly.
+A target that cannot honour a
+feature declares the limitation, and the toolkit degrades visibly rather than
+silently.
+
+This specification, spread across the pages listed below, covers the toolkit,
+the abstract input vocabulary `sparkles:input`, and the contract each backend
+adapter package must meet. It uses no native OS widgets on any target.
+Choosing a backend, opening a window, loading fonts and running the frame loop
+belong to the [application host](../ui-app/index.md), `sparkles:ui-app`, which
+has its own specification. Decoding terminal escape sequences belongs to
+`sparkles:tui`, and rasterizing glyphs to `sparkles:raylib-text`. The layout
+model is deliberately smaller than CSS: no constraint solver, no full grid, no
+wrapping of boxes; the [layout page](./layout.md) records each exclusion and
+its reason. [hue's UI architecture](../hue/ui-architecture.md) holds only the
+requirements hue places on the toolkit as a consumer; what the library is and
+does is defined here.
+
+This page is the source of truth for the toolkit and the record of the
+decisions behind it, the layout model ([`LAY2`](./layout.md)) above all. It
+defines the [three levels](#the-three-levels), the
+[render targets](#render-targets), and the [status](#status-scheme),
+[ID](#id-scheme) and [traceability](#traceability) schemes every sibling page
+follows. Each sibling page below holds the requirements for one area under its
+own ID prefix, and [Design sources](#design-sources) lists the research catalogs
+the decisions rest on.
+
+## Documentation map
+
+| Page                                              | What it covers                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Overview** (this page)                          | what the toolkit is · the three levels · the package graph · the status/ID/traceability scheme · module coverage                                                                                                                                                                  |
+| [Feature requirements](./feature-requirements.md) | library-wide requirements: the three levels, the canvas-first contract, the package graph and its dependency-cycle constraints, build/`@nogc` posture                                                                                                                             |
+| [Architectural principles](./principles.md)       | the binding rules the toolkit is held to, each traced to its source in the Sean Parent catalog — no incidental data structures, value semantics, explicit relationships, narrow contracts                                                                                         |
+| [Layout](./layout.md)                             | **the `LAY2` decision record** — the surveyed families, the verdict (box-flow + orientation-aware measure + clip), the integer-unit rule, and the explicit list of what is _not_ implemented                                                                                      |
+| [Theme](./theme.md)                               | the unified runtime-swappable design language — syntax rules, semantic slots, glyph sets and metrics in one value, gated by terminal capabilities                                                                                                                                 |
+| [Widgets](./widgets.md)                           | the view-model/view split, the widget catalog, `Props` vs handlers, keys and element identity                                                                                                                                                                                     |
+| [Input](./input.md)                               | the abstract event vocabulary, the tier-0/1/2 capability ladder, and the backend adapter contracts                                                                                                                                                                                |
+| [State machines](./state-machines.md)             | presentation-free behavior: scrollbar, selection, hover, focus, disclosure, timeline                                                                                                                                                                                              |
+| [Keymap & lantern](./keymap.md)                   | keyboard policy as data — `Binding!(Cmd, Scope)` tables over app-supplied enums, scope-order precedence with marker UDAs, two-direction resolution (`resolve`/`bindingsAt`), and the which-key-style guide machine + panel — `KEY`/`LTN`                                          |
+| [Gutter channels](./gutter.md)                    | the per-line chrome model — line numbers, coverage counts, fold arrows, diff markers and blame as one set of layout channels beside the content, composed after layout, width-reserved, priority-merged and budgeted — `GUT`                                                      |
+| [Containers](./containers.md)                     | the container tier: `ScrollView` (owned scrolling) and the single-window docking layout (splits, tabbed groups, drag-to-redock, focus/capture ownership) — `SCV`/`DCK`                                                                                                            |
+| [Inspector](./inspector.md)                       | the generic **inspector component** — a tree over a subject + details pane + the adapter-defined selection/extent contract, with the widget-tree adapter (toolkit self-inspection) — `INS`                                                                                        |
+| [Property tree](./property-tree.md)               | the reflective **property-tree component** — `PropertyTree!T` as an adapter over the tree widget: the type-only walk, metadata UDAs, path addressing, ranked fuzzy filtering, value-semantic edits with host-stored undo/redo, and the read-only script-free HTML posture — `PRT` |
+| [Anchored overlays](./popup.md) _(proposed)_      | the one anchored-overlay primitive behind every floating surface: the anchor value, the placement solve, the ordered top-layer arena that fills `DCK13`'s rung, triggers, dismissal, layering and modality — `POP`/`ANC`/`PLC`/`TRG`/`DSM`/`LYR`/`MDL`                            |
+| [Editor](./editor.md) _(planned)_                 | the **editable-text component** — the `EditorState` machine (`EDT`), per-backend text input incl. IME/soft-keyboard phasing (`EDI`), the editor widget (`EDR`), and its consumers (`EDU`) — the capability behind hue's diff **write wave** ([`UIA9`](../hue/ui-architecture.md)) |
+| [Effects & images](./effects.md)                  | raster images in the widget tree and subtree effects: the effect bracket, the tier model that decides what survives to a cell grid, the effect registry, and built-in effects written once in D for both the terminal and the GPU — `EFX`/`IMG`                                   |
+| [Effects demos](./effects-demos.md)               | the acceptance demos for `EFX`/`IMG`: one runnable command per visible feature, and what it should show                                                                                                                                                                           |
+| [Backends](./backends.md)                         | the `isCanvas` seam, the shipped targets, per-backend declared capabilities, and forward-compatibility rules for additional GPU backends                                                                                                                                          |
+| [Open implementation issues](./open-issues.md)    | concrete deferred gaps: Whole/copy semantics, the closed widget sum, and the native pointer grab                                                                                                                                                                                  |
+| [Interaction review](./interaction-review.md)     | the dated audit of every pointer/keyboard behavior: where it lives (toolkit vs `apps/hue`), the GUI/TUI divergences, and the redesign it scoped (`IXR`/`IXB`)                                                                                                                     |
+| [Migration](./migration.md)                       | absorbing `core-cli`'s UI components and porting `apps/hue` onto the toolkit — the milestone plan                                                                                                                                                                                 |
+| [Application host](../ui-app/index.md)            | the sibling `sparkles:ui-app` package: backend selection, the shared window/font CLI, and the frame/event loop — the layer **above** the canvases, so an application never names one                                                                                              |
 
 ## Design sources
 
@@ -35,31 +118,6 @@ the _decision_.
 | [Sean Parent catalog](../../research/sean-parent/index.md)                   | the architectural rules — Whole/Part ownership, value semantics, explicit relationships, illegal states unrepresentable ([`PRN`](./principles.md))        |
 | [Tree-view case study](../../research/tui-libraries/tree-view-case-study.md) | the view-model/view split, exemplified by the tree widget ([`WGT`](./widgets.md), [`VMD`](./widgets.md))                                                  |
 | [Anchored-overlay catalog](../../research/anchored-overlays/index.md)        | the anchored-overlay primitive — 38 subjects on anchors, placement, layering, triggers, dismissal and modality ([`POP`](./popup.md))                      |
-
-## Documentation map
-
-| Page                                                | What it covers                                                                                                                                                                                                                                                                    |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Overview** (this page)                            | what the toolkit is · the three levels · the package graph · the status/ID/traceability scheme · module coverage                                                                                                                                                                  |
-| [Feature requirements](./feature-requirements.md)   | library-wide requirements: the three levels, the canvas-first contract, the package graph and its dependency-cycle constraints, build/`@nogc` posture                                                                                                                             |
-| [Architectural principles](./principles.md)         | the binding rules the toolkit is held to, each traced to its source in the Sean Parent catalog — no incidental data structures, value semantics, explicit relationships, narrow contracts                                                                                         |
-| [Layout](./layout.md)                               | **the `LAY2` decision record** — the surveyed families, the verdict (box-flow + orientation-aware measure + clip), the integer-unit rule, and the explicit list of what is _not_ implemented                                                                                      |
-| [Theme](./theme.md)                                 | the unified runtime-swappable design language — syntax rules, semantic slots, glyph sets and metrics in one value, gated by terminal capabilities                                                                                                                                 |
-| [Widgets](./widgets.md)                             | the view-model/view split, the widget catalog, `Props` vs handlers, keys and element identity                                                                                                                                                                                     |
-| [Input](./input.md)                                 | the abstract event vocabulary, the tier-0/1/2 capability ladder, and the backend adapter contracts                                                                                                                                                                                |
-| [State machines](./state-machines.md)               | presentation-free behavior: scrollbar, selection, hover, focus, disclosure, timeline                                                                                                                                                                                              |
-| [Keymap & lantern](./keymap.md)                     | keyboard policy as data — `Binding!(Cmd, Scope)` tables over app-supplied enums, scope-order precedence with marker UDAs, two-direction resolution (`resolve`/`bindingsAt`), and the which-key-style guide machine + panel — `KEY`/`LTN` (moved from hue with the extraction)     |
-| [Gutter channels](./gutter.md)                      | the per-line chrome model — line numbers, coverage counts, fold arrows, diff markers and blame as one set of layout channels beside the content, composed after layout, width-reserved, priority-merged and budgeted — `GUT`                                                      |
-| [Containers](./containers.md)                       | the container tier: `ScrollView` (owned scrolling) and the single-window docking layout (splits, tabbed groups, drag-to-redock, focus/capture ownership) — `SCV`/`DCK`                                                                                                            |
-| [Inspector](./inspector.md)                         | the generic **inspector component** — a tree over a subject + details pane + the adapter-defined selection/extent contract, with the widget-tree adapter (toolkit self-inspection) — `INS`                                                                                        |
-| [Property tree](./property-tree.md)                 | the reflective **property-tree component** — `PropertyTree!T` as an adapter over the tree widget: the type-only walk, metadata UDAs, path addressing, ranked fuzzy filtering, value-semantic edits with host-stored undo/redo, and the read-only script-free HTML posture — `PRT` |
-| [Anchored overlays](./popup.md) _(proposed)_        | the one anchored-overlay primitive behind every floating surface: the anchor value, the placement solve, the ordered top-layer arena that fills `DCK13`'s rung, triggers, dismissal, layering and modality — `POP`/`ANC`/`PLC`/`TRG`/`DSM`/`LYR`/`MDL`                            |
-| [Editor](./editor.md) _(planned)_                   | the **editable-text component** — the `EditorState` machine (`EDT`), per-backend text input incl. IME/soft-keyboard phasing (`EDI`), the editor widget (`EDR`), and its consumers (`EDU`) — the capability behind hue's diff **write wave** ([`UIA9`](../hue/ui-architecture.md)) |
-| [Backends](./backends.md)                           | the `isCanvas` seam, the shipped targets, per-backend declared capabilities, and forward-compatibility rules for additional GPU backends                                                                                                                                          |
-| [Open implementation issues](./open-issues.md)      | concrete deferred gaps: Whole/copy semantics, the closed widget sum, and the native pointer grab                                                                                                                                                                                  |
-| [Interaction review](./interaction-review.md)       | the 2026-07-31 audit of every pointer/keyboard behavior: where it lives (toolkit vs `apps/hue`), the GUI/TUI divergences, and the Phase B redesign scope (`IXR`/`IXB`)                                                                                                            |
-| [Migration](./migration.md)                         | absorbing `core-cli`'s UI components and porting `apps/hue` onto the toolkit — the milestone plan                                                                                                                                                                                 |
-| [Application host](../ui-app/index.md) _(proposed)_ | the sibling `sparkles:ui-app` package: backend selection, the shared window/font CLI, and the frame/event loop — the layer **above** the canvases, so an application never names one                                                                                              |
 
 ## The three levels
 
