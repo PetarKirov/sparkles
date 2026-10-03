@@ -28,6 +28,9 @@ let
   keyOrderedJsonFiles = [
     "docs/.vitepress/sidebar.json"
     "docs/.vitepress/docs-config.json"
+    # Each entry reads id → term → summary → definition; sorted, the term
+    # would land between `owner` and `seeAlso`.
+    "docs/.vitepress/glossary.json"
     # Not key-ordered, but the same docs-data-file class: prettier owns its
     # shape, and the sorter's multiline-array style fights prettier's inline
     # one — the two can never both pass on a short array.
@@ -374,6 +377,20 @@ in
                 files = "^docs/";
                 entry = lib.getExe config.packages.ci;
                 args = [ "--check-docs-sidebar" ];
+                language = "system";
+                pass_filenames = false;
+                require_serial = true;
+              };
+
+              # The glossary data (docs/.vitepress/glossary.json) and every docs
+              # link into it (apps/ci --check-glossary). Whole-tree like the
+              # sidebar check: removing an entry breaks pages nobody staged.
+              check-glossary = {
+                enable = true;
+                name = "check-glossary";
+                files = "^docs/";
+                entry = lib.getExe config.packages.ci;
+                args = [ "--check-glossary" ];
                 language = "system";
                 pass_filenames = false;
                 require_serial = true;
