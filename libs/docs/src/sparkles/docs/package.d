@@ -13,6 +13,7 @@ module sparkles.docs;
 public import sparkles.docs.assets;
 public import sparkles.docs.breadcrumbs;
 public import sparkles.docs.fragment;
+public import sparkles.docs.glossary;
 public import sparkles.docs.options;
 public import sparkles.docs.page_shell;
 public import sparkles.docs.sidebar;
