@@ -164,6 +164,37 @@ link it to the one place that defines it. A term has exactly one defining
 entry, just as a contract has one owner; other pages link to it rather than
 restating it.
 
+### Link Terms to the Glossary
+
+That one place is the [glossary](../glossary.md). Its entries live in
+`docs/.vitepress/glossary.json`, which renders the glossary page and is
+checked by `ci --check-glossary`. An entry has these fields:
+
+| Field        | Holds                                                                           |
+| ------------ | ------------------------------------------------------------------------------- |
+| `id`         | The anchor slug (`canonical-witness`). Never renamed, never reused.             |
+| `term`       | The term as written in prose.                                                   |
+| `aliases`    | Other spellings that mean the same thing (`witness`).                           |
+| `summary`    | One plain-text sentence that makes sense alone, for surfaces that show only it. |
+| `definition` | One to three sentences of inline Markdown for the glossary page.                |
+| `authority`  | Labeled links to the sources that define the term, most authoritative first     |
+| `owner`      | `global`, or the package that owns the term (`sparkles:fuzzy`).                 |
+| `seeAlso`    | Ids of related entries.                                                         |
+
+Link a term's first important use on a page to its entry with an ordinary
+Markdown link, such as [canonical witness](../glossary.md#canonical-witness)
+or [sans-I/O](../glossary.md#sans-io). The link works everywhere: on GitHub,
+in an editor, and in an agent's plain-text read. Links inside an entry are
+site-absolute (`/research/…`) or external, because the entry renders on more
+than one page.
+
+Add an entry when a page needs one, not in advance. Write the summary for a
+reader who sees nothing else; keep the definition short enough that a page
+need never restate it, and let `authority` carry the depth. A library's
+specification may list its own terms in a Terminology section with
+`<GlossaryList owner="sparkles:fuzzy" />`, which renders the same entries
+rather than a copy of them.
+
 ## Principles for the Body
 
 The body carries the contract, and precision governs it. These principles

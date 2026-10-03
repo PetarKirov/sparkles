@@ -392,6 +392,13 @@ group is `{ "text", "collapsed": true, "items": [ … ] }`); the link is the rou
 — leading `/`, no `.md`, `/dir/` for `dir/index.md`. Then run
 `ci --check-docs-sidebar`.
 
+The glossary is data too: `docs/.vitepress/glossary.json` (schema:
+`sparkles.docs.glossary`) renders the `/glossary` page and every
+`<GlossaryList owner="…" />`, and `ci --check-glossary` validates it together
+with every docs link into it. Link a term to `…/glossary.md#<id>`; never
+redefine it in prose. See
+[Writing Specification Prose](./spec-prose.md#link-terms-to-the-glossary).
+
 ### Runnable README examples
 
 A new feature gets a runnable README example: a `d` fence holding a dub

@@ -1,0 +1,65 @@
+[
+  {
+    "id": "regular-type",
+    "term": "Regular type",
+    "aliases": ["Regular"],
+    "summary": "A type whose copies equal their original and change independently of it, so values can be copied, assigned and compared like integers.",
+    "definition": "A type whose copy, assignment and equality behave as they do for `int`: a copy compares equal to its original, and changing one never affects the other. Sparkles requires it of events and identifiers so tests can compare and replay them; see [local reasoning](/research/sean-parent/local-reasoning).",
+    "authority": [
+      {
+        "text": "Stepanov & McJones, Elements of Programming, §1.5",
+        "link": "https://elementsofprogramming.com/"
+      },
+      {
+        "text": "Sean Parent: contracts and regular types",
+        "link": "/research/sean-parent/contracts"
+      }
+    ],
+    "owner": "global",
+    "seeAlso": ["sans-io"]
+  },
+  {
+    "id": "sans-io",
+    "term": "sans-I/O",
+    "summary": "A design in which a protocol or state machine performs no I/O itself: the caller supplies bytes, time and events, and performs the actions it returns.",
+    "definition": "A protocol or state-machine implementation that never reads, writes, sleeps or consults a clock. Its caller feeds it input and carries out the effects it requests, which makes the core deterministic and testable without sockets or timers. [Writing Specification Docs](/guidelines/spec-docs) asks for this separation wherever the domain permits.",
+    "authority": [
+      {
+        "text": "Sans-I/O: network protocol implementations",
+        "link": "https://sans-io.readthedocs.io/"
+      }
+    ],
+    "owner": "global",
+    "seeAlso": ["regular-type"]
+  },
+  {
+    "id": "admission",
+    "term": "admission",
+    "aliases": ["admit", "admitted"],
+    "summary": "The decision whether a candidate matches a fuzzy query at all, made separately from how highly it ranks.",
+    "definition": "In `sparkles:fuzzy`, a query part admits a candidate when the part, after deleting at most its typo budget of characters, occurs in order within the candidate. Admission alone decides which candidates match and what is highlighted; ranking only orders the admitted ones.",
+    "authority": [
+      {
+        "text": "sparkles:fuzzy specification §4",
+        "link": "/specs/fuzzy/SPEC#_4-exact-admission-and-positions"
+      }
+    ],
+    "owner": "sparkles:fuzzy",
+    "seeAlso": ["canonical-witness"]
+  },
+  {
+    "id": "canonical-witness",
+    "term": "canonical witness",
+    "aliases": ["witness"],
+    "summary": "The one deterministically chosen set of candidate characters that proves a fuzzy match and is highlighted to the user.",
+    "definition": "Of all the ways an admitted query part can be found in a candidate, the one with the fewest deleted query characters, then the earliest final character, then the earliest positions. It supplies both the highlighted ranges and the window the ranking score is computed over.",
+    "authority": [
+      {
+        "text": "sparkles:fuzzy specification §4.3",
+        "link": "/specs/fuzzy/SPEC#_4-3-canonical-witness"
+      }
+    ],
+    "owner": "sparkles:fuzzy",
+    "seeAlso": ["admission"]
+  }
+]
