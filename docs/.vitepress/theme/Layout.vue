@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick, h, render } from 'vue';
 import Tooltip from './Tooltip.vue';
+import GlossaryHover from './components/GlossaryHover.vue';
+import SpecFrontMatter from './components/SpecFrontMatter.vue';
 
 import { useRoute } from 'vitepress';
 import DefaultTheme from 'vitepress/theme';
@@ -326,7 +328,12 @@ watch(
 </script>
 
 <template>
-  <VPLayout />
+  <VPLayout>
+    <template #doc-before>
+      <SpecFrontMatter />
+    </template>
+  </VPLayout>
+  <GlossaryHover />
   <Teleport to="body">
     <div
       v-if="isOverlayOpen"
