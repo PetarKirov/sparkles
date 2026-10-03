@@ -1,18 +1,68 @@
+---
+status: accepted
+owner: sparkles:fuzzy
+reviewed: 2026-08-17
+---
+
 # `sparkles:fuzzy` — Specification
 
-_**Status:** F0 implemented and verified · **Date:** 2026-08-17_
+## Abstract
 
-_Normative at the contract level. Delivery order and gates live in
-[PLAN.md](./PLAN.md); hue's host-side lifecycle is specified in
-[picker.md](../hue/picker.md). The evidence base is the
-[fuzzy-matching research catalog](../../research/fuzzy-matching/index.md)._
+`sparkles:fuzzy` ranks short typed queries against large candidate lists —
+file paths, symbols, commands — fast enough to answer on every keystroke.
+It forgives a few mistyped query characters, understands a small constraint
+language, and reports exactly which characters justified each match so a
+picker can highlight them. Every operation is pure, bounded, and works in
+caller-owned storage, so a host can run a search in slices between frames
+and abandon it at any slice.
+
+## Introduction
+
+An interactive picker asks the same question on every keystroke: which of
+these hundreds of thousands of candidates resemble what the user has typed
+so far, and in what order? The answer must arrive within a frame. It must
+not reshuffle when nothing relevant changed, and it must explain itself by
+marking the characters that matched.
+
+Scoring alone does not settle these demands. A matcher must also decide
+when a near miss counts as a match, whether the highlighted characters are
+the ones that earned admission, whether ties break the same way on every
+run and machine, and how a search too large for one frame can pause and
+resume. Popular matchers answer these differently, and a host that leaves
+them implicit inherits the differences as flicker and nondeterminism.
+
+This library separates [admission](../../glossary.md#admission) from
+ranking. A candidate matches when the query, after dropping at most a small
+budget of its characters, appears in order within the candidate. A mistyped
+character is handled the same way: it is one of the dropped ones. The
+canonical choice of the characters that remain, the
+[canonical witness](../../glossary.md#canonical-witness), is also exactly
+what the picker highlights. A Smith–Waterman alignment then orders the
+admitted candidates, combined with caller-supplied signals such as recent
+use and distance from the current file; it changes the order, never which
+candidates match or what is highlighted. All arithmetic is integer and
+every ordering is total, so the results do not depend on how a host splits
+the work into slices or spreads them across threads.
+
+The library owns no clock and performs no I/O. Clocks, cancellation, worker
+threads, and the file system belong to the host; hue's picker is the
+reference host and is specified separately in [picker.md](../hue/picker.md).
+The library does not index files or watch directories. Its history tables
+are bounded values the host owns: the library updates and scores them from
+timestamps the host supplies, but saving and loading them is the host's
+job. Locale-aware tokenization, such as ICU or CJK segmentation, is likewise
+left to adapters outside this package.
+
+Sections 2–9 define the text model, query language, admission, ranking,
+history, globbing, and incremental search; §10 lists the public surface,
+§11 the performance and verification contract, and §12 maps each finding of
+the adversarial review in `adversarial-review.md` to the section that
+resolves it. Delivery order and progress live in [PLAN.md](./PLAN.md), the
+measured baseline in [benchmarks.md](./benchmarks.md), and the evidence for
+each design choice in the
+[fuzzy-matching research catalog](../../research/fuzzy-matching/index.md).
 
 ## 1. Purpose and invariants
-
-`sparkles:fuzzy` is the allocation-free compute core behind interactive
-candidate pickers: it analyzes query and candidate text, parses constraints,
-performs typo-tolerant fuzzy admission and scoring, ranks matches, keeps bounded
-history models, and advances searches in deterministic chunks.
 
 The library depends only on `sparkles:base` and `expected`. It reads no clock,
 filesystem, git repository, global cancellation flag, or event loop.

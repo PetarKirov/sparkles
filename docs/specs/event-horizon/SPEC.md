@@ -1,12 +1,98 @@
+---
+status: accepted
+owner: sparkles:event-horizon
+---
+
 # `sparkles:event-horizon` — Specification
 
-_Audience: developers and coding agents building against the library. This
-document is normative and self-contained — it states what the library
-provides, not why. For the delivery plan, see [PLAN.md](./PLAN.md); for
-unresolved design questions, see [open-issues.md](./open-issues.md); for the
-research that motivated each decision, see the
+## Abstract
+
+`sparkles:event-horizon` is the event loop Sparkles programs use for
+asynchronous work: network and file I/O, timers, subprocesses, and
+window-system input wait at a single point. The loop is completion-based. A
+program hands the operating system whole operations and learns when each one
+finished, over io_uring on Linux, kqueue on macOS, and I/O completion ports on
+Windows. One loop serves three programming styles, from allocation-free
+callbacks to blocking-looking code on fibers whose child tasks are always
+joined and cancelled together. The services a program uses are passed in as
+replaceable values, so the same code runs against the real system or against
+deterministic test doubles with virtual time.
+
+## Introduction
+
+Interactive tools and servers spend most of their time waiting: for a socket,
+a child process's output, a file change, a timer, a keypress, or a window
+event. A terminal emulator must react to whichever of these arrives first
+without stalling its next frame; a server must keep many operations in flight
+at once. Both are best served by one wait point per thread. A second loop
+beside it, such as a helper thread polling a child or a toolkit's own run
+loop, adds latency, locking, and shutdown races.
+
+Building that wait point well leaves several questions open. Readiness-based
+loops such as epoll report that a descriptor may be usable and leave the I/O
+to the program. Completion-based kernel interfaces such as
+[io_uring](https://man7.org/linux/man-pages/man7/io_uring.7.html) accept the whole operation instead,
+so the loop must keep each buffer alive until the kernel is done with it and
+must be able to cancel work the kernel still holds. Above the loop, no
+programming model is free: callbacks are fast but scatter logic across
+handlers, `async`/`await`
+[colors every function](https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/)
+it touches, and fibers read like blocking code but leak work unless
+cancellation is structured. Code wired directly to a live loop is also hard to
+test deterministically.
+
+This library answers with a completion contract shared by every backend: a
+program submits an operation, and the operation ends in exactly one final
+result, a byte count or an error code, even when it is cancelled. A multishot
+operation, such as accepting connections repeatedly, delivers further results
+before that final one. Backends that only report readiness, such as kqueue,
+wait for readiness, perform the I/O themselves, and report the outcome as a
+completion. Buffers move into an operation, stay with the loop until its final
+result, and come back with that result, so the program and the kernel never
+own one at the same time. Failures are returned as values on every tier.
+
+Three tiers of API share that one loop. The
+callback tier allocates nothing and throws nothing. The fiber tier parks a
+fiber on each I/O call and resumes it on completion, inside
+[structured-concurrency](https://vorpus.org/blog/notes-on-structured-concurrency-or-go-statement-considered-harmful/)
+scopes that always join their children. A thin effect-description tier lowers
+onto fibers. The clock, network, and process services arrive as a
+[capability row](../../glossary.md#capability-row): a statically typed record
+of handler values, where swapping a handler means passing a value of a
+different type. This is the library's form of
+[algebraic effects](../../research/algebraic-effects/index.md). Each effect
+operation is an ordinary call on the current fiber, resolved at compile time;
+no handler ever captures a continuation. Tests therefore substitute virtual
+time or a simulated network at no runtime cost.
+
+On Linux the library requires io_uring on a 6.1 or newer kernel and has no
+epoll fallback; a system without a working io_uring gets a structured error
+at loop creation. Platform coverage beyond Linux is stated per section: the
+Windows backend, for instance, covers sockets, timers, and cross-thread
+wake-ups but not subprocesses. A program may run several worker threads, each
+with its own loop, but a started fiber never moves between them; work stealing
+is limited to tasks that have not yet started. The capability
+row is a testing and least-authority convention, not a security boundary,
+because D code can still make any system call. Protocols and windowing live in
+other libraries, such as `sparkles:http` and
+[`sparkles:wsi`](../window-system-integration/SPEC.md); this library supplies
+only the wait they attach to. The effect-description tier is specified as a
+non-normative sketch.
+
+Sections 1–4 give the overview, the module layout, the backends and how they
+are probed, and the vocabulary of operations and completions. Sections 5–7
+specify the callback tier, buffer ownership, and the fiber tier; sections
+8–10 cover structured concurrency, errors, and capabilities. Section 11 covers
+multi-threaded topologies and section 12 the effect tier. Sections 13–15 cover
+subprocesses, channels, and the integration that lets a UI application make
+this its only loop. Section 16 lists the public API, section 17 the fork
+server that runs requests in disposable child processes, and the final
+section the tutorial conveniences. Delivery order and progress live in
+[PLAN.md](./PLAN.md), unresolved questions in
+[open-issues.md](./open-issues.md), and measured results in
+[benchmarks.md](./benchmarks.md). The research behind each decision is in the
 [async-io](../../research/async-io/index.md) and
-[algebraic-effects](../../research/algebraic-effects/index.md) surveys._
+[algebraic-effects](../../research/algebraic-effects/index.md) surveys.
 
 ## 1. Overview
 

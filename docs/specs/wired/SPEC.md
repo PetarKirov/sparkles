@@ -1,13 +1,92 @@
+---
+status: accepted
+owner: sparkles:wired
+---
+
 # `sparkles:wired` — Specification
 
-_Audience: developers and coding agents building against the library. This
-document is normative and self-contained — it states what the library
-provides, not why. For the delivery plan, see [PLAN.md](./PLAN.md); for the
-library overview, see [`sparkles:base`](../../libs/base/index.md). The
-**expressiveness upgrade** — the reified schema layer, tagged unions,
-validation, metadata, and the other new policy axes — is specified
-separately in [expressiveness/SPEC.md](./expressiveness/SPEC.md), which
-extends this document without renumbering it._
+## Abstract
+
+`sparkles:wired` converts D values to and from serialized text by reading their
+types at compile time. A struct, enum, or array declaration is the whole
+description of its wire shape, so there is nothing to register, generate, or
+keep in sync. Small attributes adjust how names, enums, optional fields, and
+custom conversions appear on the wire, and each attribute may apply to one
+format or to all of them. JSON ships with the library, over its own strict
+parser and a writer whose output is deterministic. Every encode, decode, and
+file operation returns its failure as a value that names the path to the
+offending element, so callers branch on a result instead of catching
+exceptions.
+
+## Introduction
+
+Programs exchange structured data with files, tools, and services:
+configuration, caches, API payloads, golden test fixtures. In D the shape of
+that data is already declared as structs, enums, arrays, and associative
+arrays. A serializer's job is to map those declarations onto a wire format and
+back without a second description of the same shape. The wire side has its own
+conventions, though: keys in `snake_case`, enums spelled as names or as
+numbers, fields that may be absent. The same type is often written to more than
+one format, each with different conventions.
+
+A mapping derived from declarations alone must therefore still be steerable,
+and every steering choice raises a question the serializer has to settle.
+Which rule wins when a type and one of its fields disagree, or when one format
+needs different names from another? Are an absent field, a `null`, and a
+default value the same thing? Can an optional value that wraps another
+optional value round-trip, when both empty states would be written as `null`?
+How is a failure deep inside a nested document reported? Phobos's `std.json`
+leaves all of this to the caller: it parses into an untyped tree and reports
+failures by throwing. Files kept under version control add one more demand.
+The bytes written must not depend on hash order, or on defaults a later
+release might change.
+
+This library derives the mapping by compile-time introspection of each value's
+type, and treats every departure from that default as _policy_: a
+[user-defined attribute](https://dlang.org/spec/attribute.html#uda) on the
+declaration. A _format_ is a type that serves only as a tag, so any package can
+define a new one. Each policy attribute either names the format it applies to
+or applies to all of them. A fixed precedence decides every conflict: between a
+field and its type, and between a format-specific attribute, a format-neutral
+one, and the built-in default. Because policy is resolved at compile time for
+each format and type, there is no runtime registry to consult, and a type whose
+empty states would be indistinguishable on the wire is rejected at compile
+time. Failures are plain values returned in an
+[`Expected`](../../guidelines/idioms/expected/index.md) result, built without
+the garbage collector. Each records the stage that failed (parse, decode,
+encode, file read, or file write), the path from the root to the failing
+element, the type involved, and the reason. JSON runs on the library's own
+engine: a reader that enforces RFC 8259 strictly by default and parses into
+one arena-backed document, and a writer that emits struct fields in
+declaration order, sorts associative-array keys, and takes its layout as an
+explicit parameter a caller can pin.
+
+This document specifies the format concept, the policy attributes and how they
+resolve, the JSON type mapping and file helpers, error reporting, and the
+native JSON engine.
+Users never write a schema, register a type, or run a code generator, and the
+library offers no throwing wrappers. A compile-time schema value derived from
+the same declarations, together with tagged unions, validation, and metadata,
+belongs to the [expressiveness upgrade](./expressiveness/SPEC.md), which extends
+this document without renumbering it. The library's backend for SDL, the
+Simple Declarative Language, is specified separately in the
+[SDL backend specification](./sdl/SPEC.md). The
+format-neutral text primitives this library builds on belong to
+`sparkles:base` and are specified there; these include case conversion,
+enum-name lookup, parse-error values, and number formatting. Exact
+error-message wording is not part of the contract; only the path and reason
+fragments of §9 are.
+
+Sections 2 and 3 give the package layout and the format concept. Section 4
+maps D types to JSON, and §5–8 define the policy attributes, case styles, enum
+representation, and value transforms. Section 9 states the error contract,
+§10 the public surface, and §11 the native JSON engine. Delivery order lives in
+[PLAN.md](./PLAN.md), unresolved behavioral questions in
+[open-issues.md](./open-issues.md), and the performance evidence for §11 in
+[bench-baseline.md](./bench-baseline.md). The [library guide](../../libs/wired/index.md)
+teaches the same surface by example, and the
+[case-style specification](../base/text/case-style.md) defines the name
+conversions of §6.
 
 ## 1. Overview
 

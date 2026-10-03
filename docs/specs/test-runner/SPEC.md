@@ -1,26 +1,99 @@
+---
+status: accepted
+owner: sparkles:test-runner
+---
+
 # `sparkles:test-runner` — Measurement-layer specification
 
-_Audience: developers and coding agents building against the runner. This
-document is normative at the contract level — it states what the layer
-provides (and, for marked sections, what it is specified to provide once its
-milestone lands), not why. For the delivery plan, see [PLAN.md](./PLAN.md);
-for unresolved behavioral questions, see [open-issues.md](./open-issues.md);
-for tutorial/how-to exposition, see the
-[library docs](../../libs/test-runner/index.md). The design evidence base is
-the [CPU-PMU research catalog](../../research/cpu-pmu/index.md) — in
-particular the [audit baseline](../../research/cpu-pmu/sparkles-baseline.md)
-and the [backend proposal](../../research/cpu-pmu/backend-proposal.md)._
+## Abstract
 
-Sections describing behavior that is not yet implemented carry an explicit
-**(target — Bn/Mn)** marker naming the [PLAN.md](./PLAN.md) milestone that
-makes them true. Unmarked statements describe shipped behavior.
+`sparkles:test-runner` runs a D package's unit tests in parallel and carries
+them into places ordinary unit tests cannot reach: compile-time evaluation,
+programs built without the D runtime, WebAssembly, and measurement. Its
+measurement layer turns a test into a benchmark or a measured workload and
+reports time alongside hardware and operating-system counters. Its rule is
+that a reported number is either a measurement or labeled as something less.
+A benchmark's clock runs only while no counter is enabled, so counting
+cannot distort a reported duration. Every measurement source is probed on
+the host that runs it: a missing capability yields a named absence with its
+reason, an estimate is marked as one, and nothing unmeasured is shown as
+zero.
+
+## Introduction
+
+D compiles a module's `unittest` blocks into the program itself, and the
+language's built-in runner executes them one after another, with no way to
+name, filter, or parallelize them. A library also needs some of its tests to
+run where the ordinary test build never goes: during compilation, without the
+D runtime, or compiled to WebAssembly. And the test block, sitting next to
+the code it exercises, is the natural home for a benchmark of that code.
+
+Measurement is the hard part. The counters that explain a timing — retired
+instructions, cache misses, system calls, time spent waiting for the CPU or
+the disk — differ by operating system and processor, often need privileges,
+and perturb the very work they observe. A processor with too few counters
+time-shares them and returns scaled estimates; a counter that never ran
+reads as zero. Harnesses that leave these facts implicit either fail on a
+host that lacks a counter, or print a guess that looks exactly like a
+measurement. Some work, such as a build or a burst of file I/O, cannot be
+repeated millions of times to average out noise at all.
+
+The runner answers with two measurement models, and a test opts into
+exactly one of them by attribute. A _benchmark_ runs its body many times
+and reports per-iteration statistics. It times and counts in separate
+passes, so no counter is read while the clock runs. A _workload_ runs its
+body once, or a few times, and reports what changed across that single
+[window](../../glossary.md#workload-window), including how the elapsed time
+divides into time on the CPU and time off it. Because a workload cannot be
+re-run, it reads every source at the window's two edges and discloses, rather
+than subtracts, the small, deterministic overhead those reads add. It may also
+ask for the files it reads to start cold or warm in the operating system's
+page cache; the runner prepares only those files, then verifies which state
+it achieved and records both.
+
+Two rules hold for both models. Every metric
+carries a [class](../../glossary.md#metric-class): _quantitative_ metrics
+barely perturb the work and are the only ones a reported result may rest
+on, while _diagnostic_ ones explain a result and are rendered apart from
+it. And every measurement source, such as the kernel's performance-counter
+interface, opens through a run-time probe, so a missing capability becomes a
+[reported absence](../../glossary.md#reported-absence) with its reason. All
+sources render through one metric catalog, so a new source appears in tables,
+column filters, and machine-readable output without changes to any of them.
+
+This document specifies the whole runner at the contract level and the
+measurement layer in depth. Test discovery and the compile-time,
+runtime-free, and WebAssembly modes appear only as far as their package
+layout and command-line contract; the
+[library docs](../../libs/test-runner/index.md) describe their behavior and
+carry the tutorials and how-to guides. The runner ships as a thin shim
+compiled into every test binary plus a prebuilt implementation library,
+`sparkles:test-runner-impl`. Its floor is the timing and resource counters
+an operating system grants every process, and it needs no privileges; every
+source beyond it is optional and degrades on its own. C libraries enter only
+as soft dependencies, used when present and reported absent otherwise. The
+runner never evicts system-wide caches: cache control touches only the files
+a test names.
+
+Section 1 states the two models and the rules they share as the contract at
+a glance; §2–3 give the package layout and the attributes and in-body calls
+a test uses; §4 fixes the measurement protocol for both models. Sections 5–6
+define the metric catalog and the backend contract, including capabilities
+and the rules for degrading. Sections 7–8 pin the command line and the
+output surfaces, and §9 the per-platform floors and privilege rules.
+Passages marked _target_ belong to the contract but are delivered by the
+[PLAN.md](./PLAN.md) milestone they name; PLAN.md also holds the delivery
+order. Unresolved behavioral questions live in
+[open-issues.md](./open-issues.md). The evidence for the design is the
+[CPU-PMU research catalog](../../research/cpu-pmu/index.md), in particular
+its [audit baseline](../../research/cpu-pmu/sparkles-baseline.md) and
+[backend proposal](../../research/cpu-pmu/backend-proposal.md).
 
 ## 1. Overview
 
 `sparkles:test-runner` is a general-purpose `unittest` runner (parallel
 runtime tests plus `@ctfe`, `@betterC`, and `@wasm` modes) with a
-benchmark-measurement layer under `--bench`. This specification covers the
-whole surface at contract level and the measurement layer in depth.
+benchmark-measurement layer under `--bench`.
 
 The measurement layer has **two measurement models**:
 
