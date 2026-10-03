@@ -184,6 +184,9 @@ cleanly when no font can be found.
 - [`ligature-cells.d`](./examples/ligature-cells.d) — 160 programming
   ligatures shaped on and off: whether glyph count or advances leave the cell
   grid, and how far ligature ink reaches past its own cell.
+- [`font-scan-timing.d`](./examples/font-scan-timing.d) — what a font
+  catalog reads per face (table directory, family, weight, `cmap` coverage),
+  timed over every installed font, serially and on a worker pool.
 
 ```bash
 dub run --single docs/research/font-libraries/examples/outline-sink-raster.d -- /path/to/font.ttf g

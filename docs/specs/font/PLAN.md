@@ -41,11 +41,11 @@ implied by merging.
 
 ### Stage 0 spikes
 
-| Spike | Question                                                                                          | Experiment                                                                                                                                                                                                                                                           | Decision criterion                                                                                                   |
-| ----- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| S1    | Is a synchronous first-launch scan of a large font directory acceptable? (`FTQ2`)                 | Time reading the table directory, `name`, `OS/2` and `cmap` coverage of every font file on a Linux desktop and in the bundle, cold and warm cache.                                                                                                                   | Under 1 s warm for the machine's full font set → synchronous with a cache; otherwise a background builder.           |
-| S2    | What tolerance does an overlap-correct accumulation rasterizer achieve against FreeType? (`FTQ1`) | Extend the research example with per-contour accumulation; diff every glyph of three bundled faces at four sizes against FreeType unhinted.                                                                                                                          | Record the distribution; propose the `FTR3` tolerance at a percentile that a reviewer accepts as visually identical. |
-| S3    | Does any common programming font's `liga`/`calt` change glyph count? (`FTQ3`)                     | Shape 160 ligature sequences in Fira Code, JetBrains Mono, Cascadia Code and Maple Mono with `calt` and `liga` on and off. **Done, 2026-10-03:** no glyph-count change and no off-cell advance in eight faces; ink reaches up to 6 cells past its own cell (`FTX7`). | Record per font; decides whether the terminal migration needs multi-cell glyph placement.                            |
+| Spike | Question                                                                                          | Experiment                                                                                                                                                                                                                                                                            | Decision criterion                                                                                                   |
+| ----- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| S1    | Is a synchronous first-launch scan of a large font directory acceptable? (`FTQ2`)                 | Time reading the table directory, `name`, `OS/2` and `cmap` coverage of every font file on a Linux desktop and in the bundle, cold and warm cache. **Done, 2026-10-03:** 2,222 desktop files in 44 ms warm (20 ms on 4 workers), 1.6 s on first touch; the bundle in 1.9 ms (`FTX8`). | Under 1 s warm for the machine's full font set → synchronous with a cache; otherwise a background builder.           |
+| S2    | What tolerance does an overlap-correct accumulation rasterizer achieve against FreeType? (`FTQ1`) | Extend the research example with per-contour accumulation; diff every glyph of three bundled faces at four sizes against FreeType unhinted.                                                                                                                                           | Record the distribution; propose the `FTR3` tolerance at a percentile that a reviewer accepts as visually identical. |
+| S3    | Does any common programming font's `liga`/`calt` change glyph count? (`FTQ3`)                     | Shape 160 ligature sequences in Fira Code, JetBrains Mono, Cascadia Code and Maple Mono with `calt` and `liga` on and off. **Done, 2026-10-03:** no glyph-count change and no off-cell advance in eight faces; ink reaches up to 6 cells past its own cell (`FTX7`).                  | Record per font; decides whether the terminal migration needs multi-cell glyph placement.                            |
 
 ## M1 Parse
 
@@ -115,7 +115,7 @@ filter types pass.
 
 **Obligations.** `FTD1`–`FTD6`.
 
-**Prerequisites.** Spike S1's result; contracts refined to operation level in
+**Prerequisites.** [`FTX8`](decisions.md#ftx8-the-catalog-builds-synchronously-over-a-worker-pool); contracts refined to operation level in
 `SPEC.md` § 10 before work starts.
 
 **Acceptance.** Refined with the contracts.
@@ -145,4 +145,4 @@ stale ink when one of its cells changes (`FTX7`).
 | `sparkles:terminal-view`        | `drawGrapheme`, `drawSolid`, `drawCluster`, `resolveFace`, `primaryFont`, `whiteFace`                     | fallback lookup, shaping, and atlas upload in `raylib-text`          |
 | `apps/terminal` (Android)       | `drawText`, `TextStyle`                                                                                   | the same `raylib-text` calls                                         |
 
-**Handoff.** Not started. Next executable action: run spikes S1 and S2.
+**Handoff.** Not started. Next executable action: run spike S2.
