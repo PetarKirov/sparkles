@@ -1224,6 +1224,10 @@
             "link": "/specs/hue/"
           },
           {
+            "text": "Delivery Status",
+            "link": "/specs/hue/PLAN"
+          },
+          {
             "text": "Feature Requirements",
             "link": "/specs/hue/feature-requirements"
           },
