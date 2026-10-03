@@ -63,8 +63,9 @@ every page that carries requirements keeps the other jobs.
 ### Front Matter
 
 Facts about the document — its acceptance state, owner, and review date — are
-data, not prose. Put them in YAML front matter, where tools can read them and
-the prose never has to repeat them:
+data, not prose. Put them in YAML front matter. The site renders them as a strip
+above the title, tools can read them, and the prose never has to repeat
+them:
 
 ```yaml
 ---
@@ -175,7 +176,7 @@ checked by `ci --check-glossary`. An entry has these fields:
 | `id`         | The anchor slug (`canonical-witness`). Never renamed, never reused.                                                                                           |
 | `term`       | The term as written in prose.                                                                                                                                 |
 | `aliases`    | Other spellings that mean the same thing (`witness`).                                                                                                         |
-| `summary`    | One plain-text sentence that makes sense alone, for surfaces that show only it.                                                                               |
+| `summary`    | One plain-text sentence that makes sense alone: the hover card shows only it.                                                                                 |
 | `definition` | One to three sentences of inline Markdown for the glossary page.                                                                                              |
 | `authority`  | Labeled links to the sources that define the term, most authoritative first                                                                                   |
 | `owner`      | `global`, or the package that owns the term (`sparkles:fuzzy`). A draft spec may own terms before its package exists: the `owner` in its front matter counts. |
@@ -184,7 +185,8 @@ checked by `ci --check-glossary`. An entry has these fields:
 Link a term's first important use on a page to its entry with an ordinary
 Markdown link, such as [canonical witness](../glossary.md#canonical-witness)
 or [sans-I/O](../glossary.md#sans-io). The link works everywhere: on GitHub,
-in an editor, and in an agent's plain-text read. Links inside an entry are
+in an editor, and in an agent's plain-text read. On the site, hovering or
+focusing it also shows the entry's summary, with no extra markup. Links inside an entry are
 site-absolute (`/research/…`) or external, because the entry renders on more
 than one page.
 
