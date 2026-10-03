@@ -726,5 +726,127 @@
     ],
     "owner": "sparkles:twoslash",
     "seeAlso": ["inline-decoration"]
+  },
+  {
+    "id": "command-schema",
+    "term": "command schema",
+    "summary": "A D struct annotated with option and argument attributes that both parses a command line into a value and renders a value back into the argument list of a tool to invoke.",
+    "definition": "In `sparkles:dman`, the struct-with-UDAs model of a command: the same declaration parses `argv` into a struct for dman's own CLI and renders a struct into `argv` for third-party tools such as `git`, `jj` and `gh`, whose output a return-type-driven collector then decodes. Its option attributes are aliases over the `sparkles:wired` policy vocabulary, so one schema governs both the command line and JSON.",
+    "authority": [
+      {
+        "text": "dman command schema — three directions over one schema",
+        "link": "/specs/dman/command-schema#three-directions-over-one-schema"
+      }
+    ],
+    "owner": "sparkles:dman",
+    "seeAlso": ["capability-row"]
+  },
+  {
+    "id": "token-spine",
+    "term": "token spine",
+    "aliases": ["spine"],
+    "summary": "The complete token stream of a D source file, whitespace and comments included, that the D formatter lays out instead of a syntax tree.",
+    "definition": "The sequence of tokens produced by DMD's lexer in its trivia configuration, which emits whitespace and comments as tokens, plus explicit entries for directives, a leading byte-order mark and the `__EOF__` tail. Concatenating the entries reproduces the input byte for byte, so the formatter can never lose text the way a tree-based printer can.",
+    "authority": [
+      {
+        "text": "sparkles:dmd-fmt decision record",
+        "link": "/specs/dmd-fmt/#decisions"
+      },
+      {
+        "text": "dmd-fmt proposal",
+        "link": "/research/code-formatting/dmd-fmt-proposal"
+      }
+    ],
+    "owner": "sparkles:dmd-fmt",
+    "seeAlso": ["offset-oracle"]
+  },
+  {
+    "id": "offset-oracle",
+    "term": "offset oracle",
+    "aliases": ["start-offset oracle"],
+    "summary": "Sorted arrays of syntax-node start positions that the D formatter queries by binary search instead of walking a syntax tree.",
+    "definition": "The facts the formatter takes from DMD's parser: the start offsets of declarations, statements and expressions, collected in one parse-only pass and stored in sorted arrays. Layout consults them by binary search and never walks the tree; when the input does not parse, the oracle is empty and grouping falls back to bracket matching.",
+    "authority": [
+      {
+        "text": "sparkles:dmd-fmt decision record",
+        "link": "/specs/dmd-fmt/#decisions"
+      }
+    ],
+    "owner": "sparkles:dmd-fmt",
+    "seeAlso": ["token-spine"]
+  },
+  {
+    "id": "rewrite-tier",
+    "term": "rewrite tier",
+    "summary": "The D formatter's set of transformations that add, remove or respell tokens, each with its own verifier and, except the trailing comma, off by default.",
+    "definition": "The second of the formatter's two tiers. The layout tier changes only whitespace and is verified by token equality; a rewrite breaks token equality by construction, so each one ships with a verifier of its own and is opt-in, apart from trailing commas on broken lists. Rewrites whose safety needs resolved types are codemods, not part of this tier.",
+    "authority": [
+      {
+        "text": "sparkles:dmd-fmt decision record",
+        "link": "/specs/dmd-fmt/#decisions"
+      },
+      {
+        "text": "D codemods",
+        "link": "/specs/dmd-fmt/codemods"
+      }
+    ],
+    "owner": "sparkles:dmd-fmt",
+    "seeAlso": ["token-spine"]
+  },
+  {
+    "id": "target-profile",
+    "term": "target profile",
+    "aliases": ["profile"],
+    "summary": "The compiler identity a D analysis assumes, DMD, LDC, or LDC's GPU device compile, which fixes the predefined version identifiers, runtime sources and language rules applied to the code.",
+    "definition": "A setting of a `sparkles:dmd-lsp` analysis that makes the DMD frontend see code as a particular compiler would: `dmd` (the default), `ldc`, or `ldcDevice` for the dcompute LDC's device compile of `@compute` shader modules. A `-mdcompute-targets=` flag selects `ldcDevice` on its own.",
+    "authority": [
+      {
+        "text": "sparkles:dmd-lsp target profiles & device code",
+        "link": "/specs/dmd-lsp/targets#what-the-frontend-is-told-tgt1-tgt4"
+      }
+    ],
+    "owner": "sparkles:dmd-lsp"
+  },
+  {
+    "id": "analysis-sample",
+    "term": "sample",
+    "summary": "A self-contained D snippet analyzed with no context beyond its own annotations and the compiler runtime's import path, as opposed to a file analyzed inside its dub project.",
+    "definition": "The unit a Twoslash-style D analysis reads when no project is involved: one buffer whose only context is the runtime import path plus whatever its own `// @import:` and `// @dflags:` annotations declare. A file from a real project needs its dub project context instead, or every sibling import becomes an error.",
+    "authority": [
+      {
+        "text": "sparkles:dmd-lsp dub-project context",
+        "link": "/specs/dmd-lsp/project"
+      }
+    ],
+    "owner": "sparkles:dmd-lsp",
+    "seeAlso": ["target-profile"]
+  },
+  {
+    "id": "link-driven-discovery",
+    "term": "link-driven discovery",
+    "summary": "Choosing which repository files get documentation pages by following the links the documentation's Markdown makes, rather than walking the whole tree.",
+    "definition": "The page-selection rule of `sparkles:docs`: a file gets a source-listing page only when the docs link to it, and a linked directory expands to its renderable subtree. The outcome, including every file skipped on purpose, is recorded in a manifest the site build reads instead of deciding again.",
+    "authority": [
+      {
+        "text": "sparkles:docs site discovery (DSC)",
+        "link": "/specs/docs/discovery#site-discovery-dsc"
+      }
+    ],
+    "owner": "sparkles:docs"
+  },
+  {
+    "id": "flow-mode",
+    "term": "flow mode",
+    "aliases": ["flow-mode emission"],
+    "summary": "An HTML output mode of the Sparkles UI toolkit in which a widget subtree carries no cell geometry, so the browser measures and wraps its text.",
+    "definition": "A third HTML mode of `sparkles:ui`: a designated subtree emits semantic elements with class-based styling and no fixed cell widths, and composes with cell-grid subtrees on one page. It is the path by which documentation chrome becomes toolkit widgets without giving up proportional prose.",
+    "authority": [
+      {
+        "text": "sparkles:docs flow-mode components (FLW)",
+        "link": "/specs/docs/components#flow-mode-components-flw"
+      }
+    ],
+    "owner": "sparkles:docs",
+    "seeAlso": ["cell"]
   }
 ]

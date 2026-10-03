@@ -1,20 +1,97 @@
-# `sparkles:dmd-fmt` — M0 Decision Record
+---
+status: accepted
+owner: sparkles:dmd-fmt
+reviewed: 2026-08-23
+---
 
-_**Status:** M0–M8 delivered (v1 formatter; M9 deferred by its own gate) ·
-**Date:** 2026-08-17, revised 2026-08-23 (D9) · **Scope:** the D formatter on the DMD substrate
-(`libs/dmd-fmt`), per
-[the research proposal](../../research/code-formatting/dmd-fmt-proposal.md)._
+# `sparkles:dmd-fmt` — Decision Record
 
-This is the M0 deliverable the proposal calls for: a decision record backed by
-the four spikes, written before any engine code exists. The full traceable
-feature spec (`FMT*` requirement IDs in the style of
-[`docs/specs/dmd-lsp/`](../dmd-lsp/index.md)) arrives with M1; this page fixes
-the decisions M1–M9 build on and records the experimental evidence for each.
+## Abstract
 
-Everything below is backed by code on this branch: the spike modules
-(`libs/dmd-fmt/src/sparkles/dmd_fmt/{spine,oracle,groups,loc_inventory,bench}.d`)
-pin every claimed fact as a test, so a fork rebase that invalidates a fact
-fails the suite rather than this page silently rotting.
+`sparkles:dmd-fmt` formats D source code with the reference compiler's own
+lexer and parser, so it reads every construct exactly as the compiler does,
+including files that do not yet parse. It reports its result as text edits
+rather than a rewritten file, which lets an editor format a selection or keep
+the cursor in place, and it is fast enough to process a whole file on every
+request. By default it changes layout, not code: it recomputes indentation
+and spacing, keeps nearly all of the author's line breaks, and changes no
+token except a list's trailing comma. Every other rewrite that changes tokens
+is opt-in. Every result, layout or rewrite, passes a check against its input
+before it is offered.
+
+## Introduction
+
+A D formatter answers to two kinds of caller. An editor asks it to tidy a
+file, a selection or the line just typed, expects the answer within a
+keystroke, and must not lose the cursor. Continuous integration asks whether
+a tree is already formatted, and needs the same answer on every machine. Both
+need the formatter to read D exactly as the compiler does, from token strings
+and nested comments to `__EOF__` and both arms of conditional compilation.
+Both also hand it files that do not parse: an editor holds such a file most of
+the time.
+
+The hard part is fidelity, not taste. A formatter that regenerates source
+from a syntax tree must put back every comment the tree dropped, and one built
+on a parser other than the compiler's falls behind whenever the language
+moves. Layout changes can also change meaning in ways ordinary tests rarely
+catch. A moved documentation comment can attach to a different declaration,
+and reordered declarations change what compile-time reflection sees. A
+formatter that cannot show it preserved the program is not one a project can
+run unattended on save.
+
+This formatter therefore lays out a
+[token spine](../../glossary.md#token-spine): every byte of the file,
+whitespace and comments included, as lexed by the compiler's lexer. It
+consults the syntax tree only as an
+[offset oracle](../../glossary.md#offset-oracle), sorted start positions of
+declarations, statements and expressions gathered in one parse-only pass and
+queried by binary search. When a file does not parse, the oracle is empty
+and the formatter falls back to what brackets alone reveal. From brackets,
+oracle positions and keywords it builds a tree of nested groups, and a greedy
+layout engine in the
+[Wadler–Lindig tradition](../../research/code-formatting/index.md) prints
+each group flat or broken to fit the line width. The output is a list of text
+edits against the input. A selection is formatted by formatting the whole file
+and keeping the edits that touch it, which a budget of 30 ms at the 95th
+percentile per 2,000 lines makes affordable.
+
+Changes come in two tiers. The layout tier never adds, removes or respells a
+token, and is always on. It keeps each line break the author wrote, except a
+few that carry no information, such as one stranding a comma at the start of
+a line. A mechanical verifier checks every result of that tier: the tokens
+must be equal apart from whitespace, a second lex must show every
+[DDoc](https://dlang.org/spec/ddoc.html) comment attached where it was, and
+formatting the output again must change nothing. The
+[rewrite tier](../../glossary.md#rewrite-tier) may change tokens, so that
+check cannot cover it, and each rewrite ships with a verifier of its own.
+One rewrite is on by default: a list broken one element per line gains a
+trailing comma, and a flat list loses it. The others are off unless a
+project's configuration asks for them.
+
+This page specifies the library and its command-line tool. Transformations
+whose safety depends on resolved types, such as replacing a format string
+with an interpolated one, are codemods: a separate tool built on this
+formatter and the language server, with its own
+[roadmap](./codemods.md). Format-on-type belongs to the language server,
+which composes it from this library's range and cursor primitives. The
+formatter creates no alignment the author did not write. A cost-based layout
+search is not part of this contract; the engine is greedy, and the search is
+held back until measurements show greedy output materially worse than dfmt's,
+the established D formatter.
+
+The [Decisions](#decisions) below, D1 to D13, are the contract; each records
+its evidence. [Spike results](#spike-results) and
+[the S4 inventory](#the-s4-inventory) give the experiments those decisions
+rest on, and tests in the package pin every claimed fact, so a compiler
+upgrade that invalidates one fails the suite. [Milestone
+delivery](#milestone-delivery-m1–m8) records what is delivered and its known
+limitations, [Risks](#risks-retired-and-open) what remains open, and
+[Traceability](#traceability) the research and code behind it.
+[Testing](./testing.md) specifies how each formatting rule becomes a fixture
+and a published documentation page. The
+[proposal](../../research/code-formatting/dmd-fmt-proposal.md) and the
+[formatter survey](../../research/code-formatting/index.md) hold the
+research.
 
 ## Decisions
 
