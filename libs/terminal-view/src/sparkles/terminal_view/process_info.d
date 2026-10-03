@@ -12,6 +12,10 @@ module sparkles.terminal_view.process_info;
 
 import core.sys.posix.sys.types : pid_t;
 
+// libproc. Declared at module scope: inside a function `extern (C)` still mangles
+// as a nested D symbol, which the linker cannot find.
+version (OSX) private extern (C) int proc_name(int pid, void* buffer, uint size) nothrow @nogc;
+
 /**
 The leader of the pty's foreground process group — the program the user is
 talking to (`vim`, not the shell that launched it) — or `-1` when there is
@@ -118,8 +122,6 @@ size_t processName(pid_t pid, ref char[64] dst) @system nothrow @nogc
         return 0;
     version (OSX)
     {
-        extern (C) int proc_name(int pid, void* buffer, uint size) nothrow @nogc;
-
         const n = proc_name(pid, dst.ptr, cast(uint) dst.length);
         return n > 0 ? cast(size_t) n : 0;
     }
