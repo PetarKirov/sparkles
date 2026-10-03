@@ -294,6 +294,9 @@ Places `s` (`TCF10`): a page fills the area; a sheet runs along its bottom; an
 anchored card goes above its subject, else below it — never over it — and
 becomes a sheet when it fits neither side or `ui.overlayStyle` is `sheet`.
 */
+/// The widest a page or a sheet gets, in columns (`TPG19`, D47).
+enum maxSurfaceCols = 100;
+
 Layer placeOne(Surface s, in SurfaceContext ctx) @safe
 {
     if (auto p = cast(SelfPlaced) s)
@@ -303,19 +306,24 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
             return l;
     }
     const cols = ctx.area.width / ctx.cellW, rows = ctx.area.height / ctx.cellH;
+    // A page or a sheet stops at `maxSurfaceCols`, centred (`TPG19`): on a
+    // tablet a full-width settings row put its control 2,900 px from its label.
+    const capped = cols > maxSurfaceCols ? maxSurfaceCols : cols;
+    const x = ctx.area.x + (cols - capped) / 2 * ctx.cellW;
     final switch (s.placement)
     {
         case Placement.page:
-            auto page = place(s.build(ctx, cols), cols, rows, ctx.area.x, ctx.area.y,
+            auto page = place(s.build(ctx, capped), capped, rows, x, ctx.area.y,
                 ctx.cellW, ctx.cellH, Place.top);
             page.opaque = true; // the panes under it do not show through
+            page.backdrop = ctx.area;
             return page;
         case Placement.panel:
             const pc = ctx.panelArea.width / ctx.cellW, pr = ctx.panelArea.height / ctx.cellH;
             return place(s.build(ctx, pc), pc, pr, ctx.panelArea.x, ctx.panelArea.y, ctx.cellW,
                 ctx.cellH, Place.top);
         case Placement.sheet:
-            return place(s.build(ctx, cols), cols, rows, ctx.area.x, ctx.area.y, ctx.cellW,
+            return place(s.build(ctx, capped), capped, rows, x, ctx.area.y, ctx.cellW,
                 ctx.cellH, Place.bottom);
         case Placement.anchored:
             if (ctx.style == OverlayStyle.anchored && ctx.subject.height > 0)
@@ -324,7 +332,7 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
                 if (anchor(s, ctx, card))
                     return card;
             }
-            return place(s.build(ctx, cols), cols, rows, ctx.area.x, ctx.area.y, ctx.cellW,
+            return place(s.build(ctx, capped), capped, rows, x, ctx.area.y, ctx.cellW,
                 ctx.cellH, Place.bottom);
     }
 }
@@ -370,6 +378,7 @@ version (unittest)
         int lines;
         bool cancelled, confirmed;
         size_t activated;
+        int builtCols; // the width `build` was given
 
         this(Placement where, int lines) @safe pure nothrow
         {
@@ -382,6 +391,7 @@ version (unittest)
             import chrome : band, button, label;
             import sparkles.ui.widget : Builder;
 
+            builtCols = cols;
             Builder b;
             uint[] rows;
             foreach (_; 0 .. lines - 1)
@@ -467,4 +477,25 @@ version (unittest)
     assert(!s.expire());
     Thread.sleep(40.msecs);
     assert(s.expire() && !s.active);
+}
+
+@("surfaces.placeOne.aWideScreenCapsPagesAndSheets")
+@safe unittest
+{
+    // A tablet: 300 columns of 10-pixel cells. A page and a sheet get 100,
+    // centred; the page still hides the panes beside it (`TPG19`).
+    SurfaceContext ctx = {area: Rect(0, 0, 3000, 480), cellW: 10, cellH: 20};
+    auto page = new Probe(Placement.page, 3);
+    const p = placeOne(page, ctx);
+    assert(page.builtCols == maxSurfaceCols && p.x == 1000);
+    assert(p.opaque && p.backdrop == ctx.area);
+
+    auto sheet = new Probe(Placement.sheet, 3);
+    const s = placeOne(sheet, ctx);
+    assert(sheet.builtCols == maxSurfaceCols && s.x == 1000);
+
+    // A phone's 50 columns are not touched.
+    ctx.area = Rect(0, 0, 500, 480);
+    const narrow = placeOne(page, ctx);
+    assert(page.builtCols == 50 && narrow.x == 0);
 }

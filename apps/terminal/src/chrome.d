@@ -55,6 +55,9 @@ struct Layer
     /// Paint the terminal's background under it first: a page hides the
     /// panes it covers, where a card or a sheet only covers its own boxes.
     bool opaque;
+    /// What an opaque layer covers, in pixels, when more than its own extent:
+    /// a page narrower than its area (`TPG19`) still hides the panes beside it.
+    Rect backdrop;
 
     /// Whether anything was built.
     bool empty() const @safe pure nothrow @nogc => frames.length == 0;
@@ -149,7 +152,7 @@ void paintLayer(H)(ref H h, in Layer l, in ChromeTheme t) @system
     {
         import raylib : Color, DrawRectangle;
 
-        const r = l.pixelBounds;
+        const r = l.backdrop.width > 0 ? l.backdrop : l.pixelBounds;
         DrawRectangle(r.x, r.y, r.width, r.height, Color(t.bg.r, t.bg.g, t.bg.b, 255));
     }
     static FrameOps ops;
