@@ -599,7 +599,7 @@ the first values; then how many values the level holds.
 private uint drillPreview(ref Builder b, ref const TreeData!PropertyNode data, uint node)
 {
     TextSpan[] spans;
-    size_t leaves, swatches;
+    size_t leaves, swatches, values;
     string firsts;
 
     void visit(uint c)
@@ -619,15 +619,24 @@ private uint drillPreview(ref Builder b, ref const TreeData!PropertyNode data, u
                 if (swatches++ < 5)
                     spans ~= TextSpan(text: "  ", bg: col, hasBg: true, paintBackground: true);
             }
-            else if (!v.color && firsts.length < 16 && unquoted(v.badge).length)
-                firsts ~= (firsts.length ? ", " : "") ~ unquoted(v.badge);
+            else if (!v.color && values < 2 && unquoted(v.badge).length)
+            {
+                firsts ~= (values++ ? " · " : "") ~ unquoted(v.badge);
+            }
         }
     }
 
+    // The first two values, cut visibly, then what the count counts: a bare
+    // "5" after "FiraCodeNerdFontMo" read as a font size.
     visit(node);
+    enum room = 28;
     if (!swatches && firsts.length)
-        spans ~= TextSpan(text: clipCells(firsts, 18), slot: Slot.muted);
-    spans ~= TextSpan(text: text(spans.length ? " " : "", leaves), slot: Slot.muted);
+        spans ~= TextSpan(text: cellsOf(firsts) > room ? clipCells(firsts, room - 1) ~ "…" : firsts,
+            slot: Slot.muted);
+    const sep = !spans.length ? "" : swatches ? " " : " · ";
+    // An empty list ("Schemes") says so, not "0 settings".
+    spans ~= TextSpan(text: leaves == 0 ? text(sep, "none")
+        : text(sep, leaves, leaves == 1 ? " setting" : " settings"), slot: Slot.muted);
     return b.add(Widget(kind: WidgetKind.rich, spans: spans));
 }
 
@@ -823,7 +832,7 @@ version (UiPropertyFixtures)
         {
             if (s.hasBg && s.paintBackground)
                 painted++;
-            if (s.text == " 4")
+            if (s.text == " 4 settings")
                 count = "4";
         }
     assert(painted == 4, "fg and the three palette entries");
