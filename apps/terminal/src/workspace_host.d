@@ -331,7 +331,8 @@ struct WorkspaceHost
             const what = n.title.length ? n.title : n.body;
             trace(i"pane $(id): notification \"$(what)\" ($(route.to!string))");
             if (route == NotificationRoute.toast)
-                self.surfaces.toast(n.title.length ? n.title.idup ~ ": " ~ n.body.idup : n.body.idup);
+                self.surfaces.toast(n.title.length ? n.title.idup ~ ": " ~ n.body.idup
+                    : n.body.idup);
             if (inner !is null)
                 inner(n, route);
         };
@@ -604,7 +605,8 @@ struct WorkspaceHost
             if (!leftDown)
                 pointerOwner = under;
             // A click on the chrome is the chrome's, not the pane's.
-            if (dragging < 0 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && tap(h, mx, my))
+            if (dragging < 0 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
+                && tap(h, mx, my))
                 under = pointerOwner = 0;
             // A viewer pane scrolls with the wheel over it; a terminal pane
             // polls its own (`pollMouse`).
@@ -786,15 +788,16 @@ struct WorkspaceHost
     */
     private void dragDivider(int mx, int my, bool down, bool pressed, int slop = 4) @safe
     {
-        int along(in DividerFrame d) const
-            => d.axis == DockAxis.horizontal ? (mx - panesArea.x) / cellW : (my - panesArea.y) / cellH;
+        int along(in DividerFrame d) const => d.axis == DockAxis.horizontal
+            ? (mx - panesArea.x) / cellW : (my - panesArea.y) / cellH;
 
         if (dragging < 0)
         {
             if (!pressed)
                 return;
             foreach (i, r; dividerRects)
-                if (contains(Rect(r.x - slop, r.y - slop, r.width + 2 * slop, r.height + 2 * slop), mx, my))
+                if (contains(Rect(r.x - slop, r.y - slop, r.width + 2 * slop,
+                    r.height + 2 * slop), mx, my))
                 {
                     dragging = i;
                     const d = dividers[i];
@@ -1046,7 +1049,8 @@ struct WorkspaceHost
                     panesArea.y + d.rect.y * cellH, 3, d.rect.height * cellH, rgb(accent));
             else
                 DrawRectangle(panesArea.x + d.rect.x * cellW,
-                    panesArea.y + dragPos * cellH + cellH / 2 - 1, d.rect.width * cellW, 3, rgb(accent));
+                    panesArea.y + dragPos * cellH + cellH / 2 - 1, d.rect.width * cellW, 3,
+                    rgb(accent));
         }
         foreach (ref l; paneChromeLayers)
             paintLayer(h, l, theme);
@@ -1550,7 +1554,8 @@ struct WorkspaceHost
         const id = ws.split(DockAxis.vertical, why);
         if (id == 0)
         {
-            surfaces.toast(why == Refusal.tooManyPanes ? "at most 16 panes in a tab" : "no pane to split");
+            surfaces.toast(why == Refusal.tooManyPanes ? "at most 16 panes in a tab"
+                : "no pane to split");
             return false;
         }
         ws.spec(id).command = command;
