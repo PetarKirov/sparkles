@@ -1223,6 +1223,10 @@
             "link": "/specs/font/SPEC"
           },
           {
+            "text": "Parsing Operations (M1)",
+            "link": "/specs/font/parsing"
+          },
+          {
             "text": "Delivery Plan",
             "link": "/specs/font/PLAN"
           },

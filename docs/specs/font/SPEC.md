@@ -137,9 +137,9 @@ and each such precondition is documented on its operation.
 **FTB3: Bounded work.** Every operation **must** have a documented
 worst-case cost in terms of input sizes and these fixed limits: composite
 glyph depth 8 and 512 components per glyph; `CFF` subroutine depth 10 and
-65,536 charstring operations per glyph; 1,024 `COLR` layers per glyph; 64
-`cmap` subtables per face. Exceeding a limit **must** produce an error that
-names it, never a silent truncation.
+65,536 charstring operations per glyph; 1,024 `COLR` layers per glyph; 4,096
+table records per face; 64 `cmap` subtables per face. Exceeding a limit
+**must** produce an error that names it, never a silent truncation.
 
 **FTB4: Declared allocation.** Parsing, metrics and outline decoding **must
 not** allocate. Rasterization **must** write into caller-owned storage. An
@@ -237,6 +237,10 @@ _Rationale:_ An inspector exists to show broken fonts. Refusing a whole table
 for one bad record hides exactly what the user came to see.
 
 ## 7. Parsing
+
+[`parsing.md`](./parsing.md) refines these requirements to operation level for
+milestone M1: inputs, results, borrowing, errors and bounds for each
+operation.
 
 ### Opening a face
 
