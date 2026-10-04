@@ -458,8 +458,8 @@ immutable Binding[] hueBindings = [
     bind(Scope_.input, chord(Key.enter), Command.inputAccept, "accept"),
 
     // ── ctrl / cmd (terminal) ─────────────────────────────────────────────
-    bind(Scope_.ctrl, Chord(key: Key.char_, ch: 'c', ctrl: true),
-        Command.copySelection, "copy selection"),
+    // Ctrl-C is the host's interrupt and no application binds it (`KBD3`):
+    // copy is `y` (shared scope) and Cmd-C, which no terminal reserves.
     bind(Scope_.ctrl, Chord(key: Key.char_, ch: 'c', super_: true),
         Command.copySelection, "copy selection"),
     bind(Scope_.ctrl, Chord(key: Key.char_, ch: '=', ctrl: true),
@@ -806,7 +806,9 @@ immutable Binding[] hueBindings = [
         "scroll left"),
     bind(Scope_.picker, chord(Key.right), Command.pickerScrollRight,
         "scroll right"),
-    bind(Scope_.picker, Chord(key: Key.char_, ch: 's', ctrl: true),
+    // Ctrl-B rather than Ctrl-S: Ctrl-S is XOFF to a terminal that keeps
+    // flow control on (`KBD3` reserves it).
+    bind(Scope_.picker, Chord(key: Key.char_, ch: 'b', ctrl: true),
         Command.pickerToggleScore, "score breakdown"),
     bind(Scope_.picker, Chord(key: Key.char_, ch: 's', super_: true),
         Command.pickerToggleScore, "score breakdown"),
@@ -1194,10 +1196,13 @@ unittest
 unittest
 {
     const ctrl = Mods(ctrl: true);
-    // Ctrl-C copies; plain `c` toggles code line numbers. Resolving the chord
+    // Cmd-C copies; plain `c` toggles code line numbers. Resolving the chord
     // first is what keeps them from colliding.
-    assert(ch('c', KeyContext.init, ctrl).cmd == Command.copySelection);
+    assert(ch('c', KeyContext.init, Mods(super_: true)).cmd
+        == Command.copySelection);
     assert(ch('c').cmd == Command.toggleCodeLineNumbers);
+    // Ctrl-C is the host's (`KBD3`): no row of hue's answers it.
+    assert(ch('c', KeyContext.init, ctrl).cmd == Command.none);
     assert(ch('=', KeyContext.init, ctrl).cmd == Command.fontBigger);
     assert(ch('-', KeyContext.init, ctrl).cmd == Command.fontSmaller);
     // An unbound chord is not silently the plain binding.
@@ -1208,15 +1213,16 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    // The four spellings Ctrl+C arrives in across backends and producers
-    assert(commandForH(KeyEvent(Key.char_, 'c', Mods(ctrl: true)), KeyContext.init).cmd
-        == Command.copySelection);
-    assert(commandForH(KeyEvent(Key.char_, '\x03'), KeyContext.init).cmd
-        == Command.copySelection);
-    assert(commandForH(KeyEvent(Key.char_, 0, Mods(ctrl: true), KeyAction.press, 'c'),
-        KeyContext.init).cmd == Command.copySelection);
-    assert(commandForH(KeyEvent(Key.char_, 0, Mods(ctrl: true), KeyAction.press, 'C'),
-        KeyContext.init).cmd == Command.copySelection);
+    // The four spellings Ctrl+D arrives in across backends and producers
+    const pk = KeyContext(pickerActive: true);
+    assert(commandForH(KeyEvent(Key.char_, 'd', Mods(ctrl: true)), pk).cmd
+        == Command.pickerPreviewDown);
+    assert(commandForH(KeyEvent(Key.char_, '\x04'), pk).cmd
+        == Command.pickerPreviewDown);
+    assert(commandForH(KeyEvent(Key.char_, 0, Mods(ctrl: true), KeyAction.press, 'd'),
+        pk).cmd == Command.pickerPreviewDown);
+    assert(commandForH(KeyEvent(Key.char_, 0, Mods(ctrl: true), KeyAction.press, 'D'),
+        pk).cmd == Command.pickerPreviewDown);
     // macOS Cmd+C (super_)
     assert(commandForH(KeyEvent(Key.char_, 'c', Mods(super_: true)), KeyContext.init).cmd
         == Command.copySelection);
@@ -1421,7 +1427,9 @@ unittest
     assert(ch('e', pk).cmd == Command.none);
     assert(ch('c', pk, Mods(ctrl: true)).cmd == Command.none,
         "the ctrl scope is gated off while the picker is open");
-    assert(ch('s', pk, Mods(ctrl: true)).cmd == Command.pickerToggleScore);
+    assert(ch('b', pk, Mods(ctrl: true)).cmd == Command.pickerToggleScore);
+    assert(ch('s', pk, Mods(super_: true)).cmd == Command.pickerToggleScore);
+    assert(ch('s', pk, Mods(ctrl: true)).cmd == Command.none, "KBD3");
     assert(ch('d', pk, Mods(ctrl: true)).cmd == Command.pickerPreviewDown);
 
     // The focused pane adds its keys: the list navigates with letters…

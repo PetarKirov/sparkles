@@ -979,7 +979,7 @@ unittest
     assert(host.handleKey(KeyEvent(Key.up)) == PickerAction.consumed);
     assert(host.state.selection == 0);
 
-    assert(host.handleKey(KeyEvent(Key.char_, 's', Mods(ctrl: true)))
+    assert(host.handleKey(KeyEvent(Key.char_, 'b', Mods(ctrl: true)))
         == PickerAction.consumed);
     assert(host.state.showScoreDebug && host.state.debugScore.present);
 

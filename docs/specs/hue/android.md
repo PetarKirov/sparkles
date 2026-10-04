@@ -67,7 +67,7 @@ raylib's Android input into every existing binding.
 | Font size (Ctrl-±)                   | pinch zoom                                                                                                                                      |
 | Click (fold chevrons, tree, buttons) | tap                                                                                                                                             |
 | Text/table selection (mouse drag)    | long-press, then drag                                                                                                                           |
-| Copy (Ctrl-C / copy buttons)         | works — the JNI `ClipboardManager` bridge (`sparkles.android.clipboard` over an ImportC'd `<jni.h>`; raylib's own Android clipboard is a no-op) |
+| Copy (`y` / copy buttons)            | works — the JNI `ClipboardManager` bridge (`sparkles.android.clipboard` over an ImportC'd `<jni.h>`; raylib's own Android clipboard is a no-op) |
 | Search `/`, goto `g`, copy-modes y/t | **keyboard-only** (no soft-keyboard IME through raylib)                                                                                         |
 | Set navigation `[` `]` `i`           | keyboard-only (explorer covers browsing)                                                                                                        |
 | Fullscreen F11                       | n/a — the surface is the screen                                                                                                                 |
