@@ -26,6 +26,9 @@ struct DiagramOptions
         "Load a grid JSON config at startup. Invalid file aborts.",
         placeholder: "PATH"))
     string configFile;
+    @(Option("list-keys", description:
+        "Print the effective key table (KBD6) and exit."))
+    bool listKeys;
 }
 
 int main(string[] args)
@@ -37,6 +40,15 @@ int main(string[] args)
     ));
     if (!parsed)
         return reportCliError(parsed.error);
+    if (parsed.value.listKeys)
+    {
+        import std.stdio : stdout;
+        import keymap : writeKeys;
+
+        auto w = stdout.lockingTextWriter;
+        writeKeys(w);
+        return 0;
+    }
     // Mutable: `GuiOptions` carries array fields (the codepoint maps), and the
     // parsed value arrives `const`, so the copy has to duplicate them.
     GuiOptions gui;
@@ -52,8 +64,9 @@ int main(string[] args)
         title: "diagram",
         gui: gui,
         motion: true, // hover affordances want bare pointer motion
-        // Space+LMB pan needs key releases on the window (`IXN3` / `INP16`);
-        // the terminal arm ignores this — it cannot report them.
+        // Space+LMB pan needs key releases (`IXN3` / `INP16`): a window
+        // reports them, and so does a terminal speaking the kitty keyboard
+        // protocol (D44); elsewhere Space is a sticky toggle.
         keyRelease: true,
         // The GUI board hit-tests in pixels at the drawn cell size (`HST18`);
         // the terminal arm ignores the unit and keeps delivering cells.
