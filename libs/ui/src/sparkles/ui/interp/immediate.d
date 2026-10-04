@@ -38,7 +38,13 @@ if (isCanvas!Canvas)
                 // `t.text` borrows the arena that interned it — valid for as
                 // long as the buffer holding these operations is, which is
                 // longer than this call. Backends take `scope const(char)[]`.
-                canvas.textRun(t.rect.origin, t.text, visualOf(t.ink));
+                // A canvas that sizes its own faces (design-system `GLY10`)
+                // may take the run's whole cell rect, to centre and clip in it.
+                static if (__traits(compiles,
+                        canvas.textRunIn(t.rect, t.text, visualOf(t.ink))))
+                    canvas.textRunIn(t.rect, t.text, visualOf(t.ink));
+                else
+                    canvas.textRun(t.rect.origin, t.text, visualOf(t.ink));
             },
             (in Glyph g) { canvas.glyph(g.at, g.glyph, visualOf(g.ink)); },
             (in Line l) { canvas.line(l.from, l.to, visualOf(l.ink), l.style); },

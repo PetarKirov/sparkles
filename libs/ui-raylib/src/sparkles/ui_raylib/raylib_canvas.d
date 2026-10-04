@@ -16,7 +16,7 @@ module sparkles.ui_raylib.raylib_canvas;
 
 import raylib;
 
-import sparkles.raylib_text : TextStyle, FontSet, drawText;
+import sparkles.raylib_text : TextStyle, FontSet, drawText, uiCentreOffset, UiFonts;
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.text.cstring : writeStringz;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
@@ -34,7 +34,8 @@ import sparkles.ui_raylib.image_textures : ImageTextures;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.ui.degradation : projectColor;
 import sparkles.ui.glyphs : admits, projectGlyph;
-import sparkles.ui.style : BorderStyle, Shadow, Visual;
+import sparkles.ui.style : BorderStyle, FontRole, Shadow, Visual;
+import sparkles.ui.style : UiTextStyle = TextStyle, TypeStep;
 import sparkles.ui.tokens : TargetCapabilities;
 
 /// The idle scrollbar rail thickness for a cell extent, in device pixels.
@@ -164,8 +165,10 @@ no probing for what this canvas draws: every color, procedural box drawing and
 the bundled font's block elements, the bundled Nerd Font's icons, and the chrome
 a pixel target honours rather than projects — rounded rects, drop shadows,
 alpha. What it does not draw yet stays off: link targets, styled underlines (a
-`TextStyle` underline is straight), a second face or a scaled run (the grid
-keeps mono at 1em), and sub-cell scrolling (design-system M9 turns those on).
+`TextStyle` underline is straight), a scaled run (the grid keeps mono at 1em),
+and sub-cell scrolling (design-system M9 turns those on). A proportional face
+(`proportionalText`) is the host's: one that loads the interface faces into
+`RaylibCanvas.uiFonts` turns it on (`GLY7`, `GLY10`).
 Input is the mouse `RaylibEvents` synthesizes.
 */
 enum TargetCapabilities raylibCapabilities = () {
@@ -211,6 +214,12 @@ struct RaylibCanvas
     int cellH;                 /// one cell's pixel height
     float originX = 0;         /// pixel x of cell column 0
     float originY = 0;         /// pixel y of cell row 0
+    /// The interface faces (design-system `GLY10`): `FontRole.ui` runs draw in
+    /// them at their type step. Null or not `present`: they draw in the cell font.
+    UiFonts* uiFonts;
+    /// Device pixels per density-independent pixel. Corner radii, rounded
+    /// outlines and shadows are CSS px (`TOK7`) and scale by it.
+    float density = 1;
 
     /**
     What this canvas paints for (`CAP1`): $(LREF raylibCapabilities) unless a
@@ -433,7 +442,7 @@ struct RaylibCanvas
     /// fast path (no chrome ⇒ one `DrawRectangle`).
     void fillRect(in Rect r, in Visual visual) @system
     {
-        const v = narrowed(visual);
+        const v = densityScaled(narrowed(visual));
         const x = px(r.x), y = py(r.y);
         const w = cast(float)(r.width * cellW), h = cast(float)(r.height * cellH);
 
@@ -535,6 +544,46 @@ struct RaylibCanvas
         const v = narrowed(visual);
         drawText(*fonts, cstr(projected(text)), px(at.x), py(at.y), rlTextStyle(v), rlFg(v));
     }
+
+    /**
+    Draws `text` in its cell rect `r`. An interface run (`FontRole.ui`) draws in
+    the interface face at its type step, centred down the rows the layout gave
+    it (design-system `GLY10`); the layout measured it with $(LREF GuiMeasure),
+    so it fits the rect's width. Any other run is `textRun` at the rect's origin.
+    */
+    void textRunIn(in Rect r, scope const(char)[] text, in Visual visual) @system
+    {
+        if (!drawsUiFace(visual))
+            return textRun(r.origin, text, visual);
+        const v = narrowed(visual);
+        const step = cast(size_t) uiStepOf(v.fontRole, v.typeStep, v.fontScale);
+        const bold = (v.styleBits & TextAttr.bold.bits) != 0;
+        const dy = uiCentreOffset(uiFonts.lineHeight(step), r.height, cellH);
+        uiFonts.draw(step, bold, projected(text), px(r.x), py(r.y) + dy, rlFg(v));
+    }
+
+    /// `v` with its corner radius and shadow in device pixels: they are CSS px
+    /// (`TOK7`), so a 16 px pill radius is 16 dp — 44 device pixels on a
+    /// 440 dpi phone, not the 6 dp a raw 16 would be there.
+    private Visual densityScaled(in Visual v) const @safe pure nothrow @nogc
+    {
+        static int dp(int px, float density) @safe pure nothrow @nogc
+            => cast(int)(px * density + (px >= 0 ? 0.5f : -0.5f));
+
+        Visual s = v;
+        if (density == 1)
+            return s;
+        s.borderRadius = dp(v.borderRadius, density);
+        s.shadow.dx = dp(v.shadow.dx, density);
+        s.shadow.dy = dp(v.shadow.dy, density);
+        s.shadow.blur = dp(v.shadow.blur, density);
+        return s;
+    }
+
+    /// Whether `v` is an interface run this canvas draws in the interface face.
+    private bool drawsUiFace(in Visual v) const @safe pure nothrow @nogc
+        => uiStepOf(v.fontRole, v.typeStep, v.fontScale) >= 0
+            && uiFonts !is null && uiFonts.present && capabilities.proportionalText;
 
     /// Draws a single glyph `g` at `at` in `v.fg` (with its face).
     void glyph(in Point at, dchar glyph, in Visual visual) @system
@@ -668,7 +717,7 @@ struct RaylibCanvas
         const c = rlBorder(v);
         if (v.borderRadius > 0)
         {
-            const thick = maxSide(b.width);
+            const thick = maxSide(b.width) * density;
             DrawRectangleRoundedLinesEx(Rectangle(x, y, w, h),
                 roundnessOf(v.borderRadius, w, h), 8, thick, c);
             return;
@@ -785,6 +834,144 @@ struct RaylibCanvas
         (*buf).writeStringz(s);
         return (*buf)[0 .. $ - 1];
     }
+}
+
+/**
+The text measurer for a raylib window (`LAY5`, design-system `GLY10`): cell font
+runs measure one column a code point, and an interface run (`FontRole.ui`)
+measures in the interface face at its type step — its pixel width rounded up to
+whole cells, and as many rows as one line of that step needs. Pass it to
+`layout` and `buildDisplayList` so the layout, the display list and
+`RaylibCanvas.textRunIn` agree on every run's extent.
+*/
+struct GuiMeasure
+{
+    UiFonts* uiFonts; /// the interface faces; null or absent: cell metrics only
+    int cellW = 1;    /// one cell's width, in the faces' drawing units
+    int cellH = 1;    /// one cell's height, in the same units
+
+    /// The cell font's width of `s`.
+    int width(scope const(char)[] s) const @safe pure nothrow @nogc
+        => cast(int) cellsOf(s);
+
+    /// The width of `s` in `style`, in whole cells.
+    int width(scope const(char)[] s, in UiTextStyle style) @safe
+    {
+        if (!usesUiFace(style))
+            return cast(int) cellsOf(s);
+        const step = uiStepOf(style.fontRole, style.typeStep, style.fontScale);
+        // The faces' advances live in raylib's glyph tables, which `UiFonts`
+        // indexes through raw pointers; reading them changes nothing.
+        const px = () @trusted {
+            return uiFonts.width(cast(size_t) step, style.bold, s);
+        }();
+        return cellsCeil(px, cellW);
+    }
+
+    /// The rows one line in `style` occupies.
+    int rows(in UiTextStyle style) const @safe pure nothrow @nogc
+        => usesUiFace(style) ? cellsCeil(uiFonts.lineHeight(cast(size_t)
+                uiStepOf(style.fontRole, style.typeStep, style.fontScale)), cellH) : 1;
+
+    /// The image cell size, so `IMG2` images lay out as on the canvas.
+    Size cellPixels() const @safe pure nothrow @nogc => Size(cellW, cellH);
+
+    private bool usesUiFace(in UiTextStyle style) const @safe pure nothrow @nogc
+        => uiStepOf(style.fontRole, style.typeStep, style.fontScale) >= 0
+            && uiFonts !is null && uiFonts.present;
+}
+
+/**
+The interface-face step a run draws at, or -1 for the cell font: an interface
+run (`FontRole.ui`, `GLY10`) at its own step, and a docs run (`GLY7`) at body
+size, or caption when it asks for less than 90 % of the cell font.
+*/
+int uiStepOf(FontRole role, TypeStep step, ushort fontScale) @safe pure nothrow @nogc
+{
+    switch (role)
+    {
+        case FontRole.ui:
+            return step;
+        case FontRole.docs:
+            return fontScale < 90 ? TypeStep.caption : TypeStep.body;
+        default:
+            return -1;
+    }
+}
+
+@("uiRaylib.uiStepOf")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(uiStepOf(FontRole.ui, TypeStep.title, 100) == TypeStep.title);
+    assert(uiStepOf(FontRole.docs, TypeStep.body, 80) == TypeStep.caption);
+    assert(uiStepOf(FontRole.docs, TypeStep.body, 100) == TypeStep.body);
+    assert(uiStepOf(FontRole.code, TypeStep.title, 100) == -1);
+    assert(uiStepOf(FontRole.inherit, TypeStep.body, 100) == -1);
+}
+
+/// `px` in whole cells of `cell`, rounded up; at least one cell for any ink.
+int cellsCeil(float px, int cell) @safe pure nothrow @nogc
+{
+    if (px <= 0 || cell <= 0)
+        return 0;
+    const n = cast(int)(px / cell);
+    return n * cell < px ? n + 1 : n;
+}
+
+@("uiRaylib.guiMeasure.cellsCeil")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(cellsCeil(0, 8) == 0);
+    assert(cellsCeil(8, 8) == 1);
+    assert(cellsCeil(8.01f, 8) == 2);
+    assert(cellsCeil(23, 17) == 2);
+    assert(cellsCeil(5, 0) == 0);
+}
+
+@("uiRaylib.guiMeasure.withoutFacesIsTheCellMeasure")
+@system unittest
+{
+    import sparkles.ui.layout : isStyledTextMeasure;
+    import sparkles.ui.style : TypeStep;
+
+    static assert(isStyledTextMeasure!GuiMeasure);
+    GuiMeasure m = { cellW: 8, cellH: 17 };
+    const title = UiTextStyle(fontRole: FontRole.ui, typeStep: TypeStep.title);
+    assert(m.width("Logs", title) == 4 && m.rows(title) == 1,
+        "no interface face loaded: the run keeps the cell font's extent");
+
+    // And it drives the layout and the display list end to end.
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : Palette;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    const t = b.add(Widget(kind: WidgetKind.text, text: "Logs", textStyle: title));
+    auto tree = b.finish(t);
+    const frames = layout(tree, Constraints.init, m);
+    assert(frames[t].rect.width == 4 && frames[t].lineRows == 1);
+    auto ops = buildDisplayList(tree, frames, Palette.init, RgbColor.init,
+        RgbColor.init, m);
+    assert(ops.length == 1);
+}
+
+@("uiRaylib.densityScaled.chromeInDeviceMetrics")
+@system unittest
+{
+    Visual v;
+    v.borderRadius = 16;
+    v.shadow.dx = 0;
+    v.shadow.dy = 4;
+    v.shadow.blur = 12;
+    RaylibCanvas c;
+    assert(c.densityScaled(v) == v, "density 1: as authored");
+    c.density = 2.75f; // 440 dpi
+    const s = c.densityScaled(v);
+    assert(s.borderRadius == 44 && s.shadow.dy == 11 && s.shadow.blur == 33);
 }
 
 @("uiRaylib.scrollbarRail.metricsAndOddCells")

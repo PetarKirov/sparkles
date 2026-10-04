@@ -87,7 +87,7 @@ provides it; the layout then measures every text and rich node through it.
 Widths stay whole cells: the measurer rounds a run's pixel extent up.
 */
 enum bool isStyledTextMeasure(T) = isTextMeasure!T
-    && __traits(compiles, (ref T m) {
+    && __traits(compiles, (ref T m) @system {
         int w = m.width("x", TextStyle.init);
         int r = m.rows(TextStyle.init);
     });
