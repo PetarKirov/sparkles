@@ -260,10 +260,11 @@ index 0. Any other index is `indexOutOfRange`. A face count above 65,535, or
 an offset array that does not fit the buffer, is `badValue` or `truncated`.
 
 **FTP3: Table directory.** Opening **must** check that the directory's
-records fit the buffer, that each record's offset plus length fits without
-overflow, and that tags are unique. A record failing a check makes only that
-table unreadable, reported as `badOffset`, unless it is `head`, `maxp` or
-`cmap`, whose failure **must** fail the open.
+records fit the buffer and that each record's offset plus length fits without
+overflow. A record failing a check makes only that table unreadable, reported
+as `badOffset`, unless it is `head`, `maxp` or `cmap`, whose failure **must**
+fail the open. When several records share a tag, the first is the table and
+the rest are reported by inspection ([`FTP21`](./parsing.md#_2-opening)).
 
 **FTP4: Checksums are reported.** Table checksums and
 `head.checkSumAdjustment` **must** be computable on request. A mismatch is
@@ -295,19 +296,23 @@ byte count return `invalidEncoding` for that record, with table-relative byte
 offset and no partial decoded string. Other well-formed records remain readable.
 Decoding writes into caller storage; raw record bytes remain accessible.
 
-**FTP9: Character mapping.** Mapping a codepoint to a glyph **must** choose a
-`cmap` subtable in this order: platform 3 encoding 10; platform 0 encoding 4
-or 6; platform 3 encoding 1; platform 0 encoding 3 or lower; otherwise the
-first format-0 subtable. Formats 0, 4, 6, 12 and 13 **must** decode, and
-format 14 **must** decode for variation-sequence lookups. An unmapped
-codepoint yields glyph 0.
+**FTP9: Character mapping.** Mapping a codepoint to a glyph **must** use the
+first `cmap` subtable that passes its checks, trying in order the symbol
+subtable (platform 3 encoding 0), the full-repertoire subtables, the BMP
+subtables and the Macintosh ones, as HarfBuzz does; a rejected subtable is
+counted and reported. Formats 0, 4, 6, 12 and 13 **must** decode, and format
+14 **must** decode for variation-sequence lookups. An unmapped codepoint
+yields glyph 0. [`FTP25`](./parsing.md#_4-character-mapping) gives the exact
+order and lookup rules.
 
-**FTP10: Character coverage.** The mapped codepoints of the chosen subtable **must** be
-enumerable as sorted, merged ranges, in time proportional to the subtable's
-size and without allocating.
+**FTP10: Character coverage.** The mapped codepoints of the chosen subtable
+**must** be enumerable as sorted, merged ranges, in O(L + 65,536) time for a
+subtable of `L` bytes and without allocating
+([`FTP27`](./parsing.md#_4-character-mapping)).
 
-**FTP11: Glyph names.** A glyph's name **must** come from `post` version 2
-or the `CFF` charset. A font with neither yields no name, not an error.
+**FTP11: Glyph names.** A glyph's name **must** come from `post` version 1.0,
+2.0 or 2.5, or, for a glyph `post` does not name, from the `CFF` charset. A
+font with neither yields no name, not an error.
 
 **FTP12: Measured spacing.** The library **must** classify a face as `mono`,
 `dual` or `proportional` from its `hmtx` advances, ignoring zero advances.
