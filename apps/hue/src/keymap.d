@@ -46,6 +46,7 @@ door and no site can pass a different table by accident.
 module keymap;
 
 import sparkles.input.events : Key, KeyEvent;
+import sparkles.ui.keymap_universal : means, UniversalCommand;
 import sparkles.wired.policy : WireName;
 
 import ui_keymap = sparkles.ui.keymap;
@@ -206,7 +207,7 @@ enum Command : ubyte
 
     // Always available, whatever owns the keyboard.
     toggleFullscreen,
-    dismiss, /// Escape, or Android's system Back
+    @means(UniversalCommand.close) dismiss, /// Escape, or Android's system Back
 
     // The two line-editing modes.
     inputBackspace,
@@ -226,14 +227,15 @@ enum Command : ubyte
     treeCloseAll,      /// `c`
     treeToggleHidden,  /// `Shift-H`
     treeCollapseOrUp,  /// `h`
-    treeFilter,        /// `/` while the tree is focused
+    @means(UniversalCommand.search) treeFilter, /// `/` while the tree is focused
 
     // The document viewer.
     viewDown, viewUp, viewHome, viewEnd,
     viewPageDown, viewPageUp,
 
     // Available in normal mode regardless of which pane has focus.
-    focusNext, focusPrev,  /// `Tab` / `Shift-Tab` — the other pane (`KBD1`)
+    @means(UniversalCommand.focusNext) focusNext,
+    @means(UniversalCommand.focusPrev) focusPrev, /// `Tab` / `Shift-Tab` — the other pane (`KBD1`)
     toggleExplorer,        /// `e`
     toggleInspector,       /// `<leader>vi` — the tree-sitter inspector pane
     themeNext, themePrev,  /// `<leader>ut` / `<leader>uT`
@@ -252,21 +254,21 @@ enum Command : ubyte
     formatWidthNarrower,   /// `<` while the preview is active
     formatWidthWider,      /// `>` — same clamp as the ruler drag (`RUL5`)
     toggleTableCopy,       /// `t`
-    startSearch,           /// `/`
+    @means(UniversalCommand.search) startSearch, /// `/`
     startGoto,             /// `gl`
-    dsvFilter,             /// `/` over a DSV grid — the filter bar (`DSF1`)
+    @means(UniversalCommand.search) dsvFilter, /// `/` over a DSV grid — the filter bar (`DSF1`)
     dsvReset,              /// `Shift-R` — back to the pristine grid (`DSB2`)
     dsvColumns,            /// `Shift-C` over a DSV grid — the columns palette (`DSB3`)
     dsvPalDown, dsvPalUp,  /// palette cursor
     dsvPalToggle,          /// Space / Enter — show/hide the selected column
     dsvPalMoveUp, dsvPalMoveDown, /// `Shift-K` / `Shift-J` — reorder
-    dsvPalClose,           /// Escape / `q` / `Shift-C` — close the palette
-    lanternAll,            /// `?` / `<leader>?` — list every binding live here
+    @means(UniversalCommand.close) dsvPalClose, /// Escape / `q` / `Shift-C` — close the palette
+    @means(UniversalCommand.guide) lanternAll, /// `?` / `<leader>?` — list every binding live here
     pickerFiles,           /// `<leader>ff` — the fuzzy file picker
     pickerGrep,            /// `<leader>/` — the content-search picker (`PKS2`)
     pickerCycleMode,       /// `Ctrl-R` in grep — plain / regex / fuzzy (`PKL5`)
     pickerScrollLeft, pickerScrollRight, /// `←`/`→` — the list sideways (`PKL8`)
-    quit,                  /// `q` — leave the viewer
+    @means(UniversalCommand.close) quit, /// `q` — leave the viewer
     viewTop, viewBottom,   /// `gg` / `G`
     toggleHoverRegions,    /// Enter — open a twoslash signature's collapsed runs
     cycleHoverPopup,       /// `p` — step through the twoslash hover popups
@@ -307,18 +309,20 @@ enum Command : ubyte
     // the guide can list them (`PKL3`), gated on `pickerActive` + pane focus.
     // Only the hosts' picker branch answers these; every other dispatch
     // carries empty arms (`KEY11`).
-    pickerClose, pickerAccept, pickerErase,
+    @means(UniversalCommand.close) pickerClose,
+    @means(UniversalCommand.activate) pickerAccept, pickerErase,
     pickerUp, pickerDown, pickerPageUp, pickerPageDown,
     pickerTop, pickerBottom,
-    pickerFocusNext, pickerFocusPrev,  /// `Tab` / `Shift-Tab` cycle the panes
-    pickerToggleScore,                 /// `Ctrl-S` — `PKR4`'s debug view
+    @means(UniversalCommand.focusNext) pickerFocusNext,
+    @means(UniversalCommand.focusPrev) pickerFocusPrev, /// `Tab` / `Shift-Tab` cycle the panes
+    pickerToggleScore,                 /// `Ctrl-B` — `PKR4`'s debug view
     pickerPreviewDown, pickerPreviewUp, /// `Ctrl-D`/`Ctrl-U` — scroll the preview
 
     // The tree-sitter inspector pane, while it holds focus (`INS*`) — the
     // same pattern: table rows in a focused scope, one pane dispatch.
     inspDown, inspUp, inspPageDown, inspPageUp, inspHome, inspEnd,
     inspCollapse, inspExpand, inspActivate,
-    inspClose,           /// `q` / `Escape` — close and return the focus
+    @means(UniversalCommand.close) inspClose, /// `q` / `Escape` — close and return the focus
     inspToggleAnonymous, /// `a` — show/hide anonymous nodes
     inspTogglePick,      /// `s` — DevTools' pick-from-source mode
 
@@ -327,7 +331,7 @@ enum Command : ubyte
     // save. Same pattern as the picker: table rows in a hiding scope, one
     // pane dispatch; every other dispatch carries empty arms (`KEY11`).
     settingsOpen,        /// `,` or `<leader>us` — open the pane
-    settingsClose,       /// `Escape` / `q` — close (runtime state kept)
+    @means(UniversalCommand.close) settingsClose, /// `Escape` / `q` — close (runtime state kept)
     settingsDown, settingsUp, settingsPageDown, settingsPageUp,
     settingsHome, settingsEnd,
     settingsExpand, settingsCollapse,
@@ -335,7 +339,7 @@ enum Command : ubyte
     settingsInc, settingsDec, /// `+`/`=` / `-` — step the selected leaf
     settingsPreview,     /// `v` — a preview drag: one undo entry on commit
     settingsUndo, settingsRedo, /// `u` / `Shift-U`
-    settingsFilter,      /// `/` — the fuzzy filter
+    @means(UniversalCommand.search) settingsFilter, /// `/` — the fuzzy filter
     settingsMatchNext, settingsMatchPrev, /// `n` / `Shift-N`
     settingsReveal,      /// `b` — reveal the match in the base tree
     settingsOpenAll, settingsCloseAll,    /// `Shift-O` / `Shift-C`
@@ -1009,6 +1013,38 @@ unittest
     // At rest, `,` opens; while the picker is up it must not.
     assert(ch(',').cmd == Command.settingsOpen);
     assert(ch(',', KeyContext(pickerActive: true)).cmd != Command.settingsOpen);
+}
+
+@("keymap.universalRowsAndReservedKeys")
+@safe unittest
+{
+    import sparkles.ui.keymap_universal : firstRebound, firstReserved, meaningOf;
+
+    // `KBD1`: no fixed universal key means anything else in any scope;
+    // `KBD3`: no reserved key is bound. Space is a focus row — hue's leader.
+    assert(firstRebound!(meaningOf!Command)(hueBindings) == size_t.max);
+    assert(firstReserved(hueBindings) == size_t.max);
+}
+
+/// The effective key table, one row per line (`KBD6`) — what `--list-keys`
+/// prints: $(LREF activeBindings), so the user's `keys` overlay included.
+void writeKeys(W)(ref W w)
+{
+    import sparkles.ui.keymap_universal : writeKeyTable;
+
+    writeKeyTable!leader(w, activeBindings);
+}
+
+@("keymap.listingHasEveryRow")
+@safe unittest
+{
+    import std.algorithm.searching : canFind, count;
+    import std.array : appender;
+
+    auto w = appender!string;
+    writeKeys(w);
+    assert(w[].count('\n') == hueBindings.length);
+    assert(w[].canFind("space ?"), "the leader spells as the overlay does");
 }
 
 @("keymap.tableIsSpelledInNormalisedForm")
