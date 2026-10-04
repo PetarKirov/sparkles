@@ -33,7 +33,7 @@ for tooltips.
 The grounding source is the language specification — `spec/ddoc.dd` in a
 `dlang/dmd` checkout (1349 lines); `ddoc.dd:NNN` traces are line references into
 it.
-Sample traces name planned additions to the D corpus in
+Sample traces name samples of the D corpus in
 `libs/twoslash-d/examples/{src,fixtures}`: `29-ddoc-sections`,
 `30-ddoc-params`, `31-ddoc-macros`, `32-ddoc-fences`, `33-ddoc-markdown`,
 `34-ddoc-escapes`, `35-ddoc-ditto`, `36-ddoc-unittest-examples`.
@@ -83,14 +83,14 @@ prose: the idiom exists so a second example needs no second write-up.
 
 Two gates apply, and they differ by module. The body text is only captured when
 `compileEnv.ddocOutput` is set — the lexer's own copy of `params.ddoc.doOutput`,
-which `init_` now sets alongside it. And the **root** module's own unittests
+which `init_` sets alongside it. And the **root** module's own unittests
 need `-unittest`, because without it the parser has no reason to build their
 ASTs at all.
 
-Imported symbols need neither: `parse.d` used to skip those bodies wholesale
+Imported symbols need neither. Mainline `parse.d` skips those bodies wholesale
 (`doUnittests && mod.isRoot()`, a template codegen-culling guard), so no Phobos
-hover could ever show an example. Under `version(LanguageServer)` the fork's
-skip branch now records the body's extent as it counts braces and copies the
+hover can show an example there. Under `version(LanguageServer)` the fork's
+skip branch records the body's extent as it counts braces and copies the
 text out — no AST, no semantic, and so none of the hazard the guard exists to
 avoid — then links the declaration's `ddocUnittest` (`+ls.4`).
 
@@ -270,7 +270,7 @@ writer, which the tooltip path never does.
 `DDC83` note: `renderDdocText` does pass the module's escape table to
 `DocComment.parseMacros`, so an `ESCAPES` definition in one symbol's `Macros:`
 section is stored on the **module** and would then affect `highlightText` for
-every later symbol in that module. Nothing pins this today; the safest fix is a
+every later symbol in that module. Nothing pins this; the safest fix is a
 per-render throwaway `Escape` table.
 
 ## Canonical fixtures
