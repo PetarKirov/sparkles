@@ -21,7 +21,7 @@ enum Key { up, down, enter, cancel, other }
 
 /// A raw-mode key-reading session: `next` blocks for one decoded key,
 /// `finish` restores the terminal's original mode and is idempotent — call it
-/// from `scope (exit)` (mirrors $(REF LiveRegion, sparkles,core_cli,ui,live)'s
+/// from `scope (exit)` (mirrors $(REF LiveRegion, sparkles,ui,components,live)'s
 /// enter/use/finish lifecycle).
 struct KeySession
 {

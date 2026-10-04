@@ -8,9 +8,14 @@ Paint a frame into a $(REF Grid, sparkles,tui,cell) and hand it to a
 $(REF Screen, sparkles,tui,render): only the cells that changed since the last
 frame are emitted.
 
-$(B Shipped:) the render core ($(MREF sparkles,tui,cell) + $(MREF sparkles,tui,render)).
-The backend/lifecycle, input, event loop, layout, and widget layers are being
-built out on top of it (see `docs/specs/tui/`).
+Around that core: the terminal backend and its restore-on-exit lifecycle
+($(MREF sparkles,tui,terminal)), input decoding into `sparkles:input`'s events
+($(MREF sparkles,tui,input)), an app-owned event loop ($(MREF sparkles,tui,app)),
+inline images over kitty and sixel ($(MREF sparkles,tui,images),
+$(MREF sparkles,tui,sixel)), and the cell geometry vocabulary
+($(MREF sparkles,tui,geometry)). Layout and widgets are not here: they belong
+to `sparkles:ui`, which paints into a `Grid` through `sparkles:ui-tui` (see
+`docs/specs/tui/`).
 +/
 module sparkles.tui;
 
