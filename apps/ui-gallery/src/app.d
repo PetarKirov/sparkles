@@ -46,6 +46,10 @@ struct Params
     @(Option("list-themes", description: "Print the built-in themes and exit."))
     bool listThemes;
 
+    @(Option("list-keys", description:
+        "Print the effective key table (KBD6) and exit."))
+    bool listKeys;
+
     @(Option("render", description:
         "Render one frame to stdout and exit, opening nothing. Use with "
         ~ "--page, --keys and --window-width/--window-height."))
@@ -112,6 +116,16 @@ int main(string[] args)
     {
         foreach (n; themeNames)
             writeln(n);
+        return 0;
+    }
+
+    if (cli.listKeys)
+    {
+        import std.stdio : stdout;
+        import keymap : writeKeys;
+
+        auto w = stdout.lockingTextWriter;
+        writeKeys(w);
         return 0;
     }
 

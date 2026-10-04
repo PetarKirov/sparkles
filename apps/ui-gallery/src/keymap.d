@@ -11,20 +11,21 @@ and the status bar, and a collision is a test failure instead of a source
 read.
 
 $(B Scopes are the routing.) Declaration order is precedence
-(`docs/specs/ui/keymap.md` `KEY2`): the help overlay is a modal scope
-(`FOC4` — while it shows, `reachable` answers `false` for everything below,
-so `q` closes the overlay instead of quitting); each interactive page has a
-scope reachable only while it shows $(I and) the keyboard is in the content
-region (the old "page gets first refusal" rule, now row order); the shell's
-own keys sit last. The terminal pane's capture is not a scope at all — it is
-a $(REF KeyGrab, sparkles,ui,focus) checked before resolution, with the
-release chords and the scrollback pass-through as data.
+(`docs/specs/ui/keymap.md` `KEY2`): each interactive page has a scope
+reachable only while it shows $(I and) the keyboard is in the content region
+(the old "page gets first refusal" rule, now row order); the shell's own keys
+sit last. `?` opens the key guide — the lantern, as every Sparkles
+application's does (design-system `KBD1`) — which lists this table. The
+terminal pane's capture is not a scope at all — it is a
+$(REF KeyGrab, sparkles,ui,focus) checked before resolution, with the release
+chords and the scrollback pass-through as data.
 */
 module keymap;
 
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.focus : GrabPolicy;
 import ui_keymap = sparkles.ui.keymap;
+import sparkles.ui.keymap_universal : means, UniversalCommand;
 public import sparkles.ui.keymap : acceptsTyped, Chord, chord, chordRange,
     hidesLaterScopes, maxPathLength, ModeReq, ResolveKind, sameKey, ShiftReq,
     terminalScope;
@@ -42,11 +43,14 @@ enum GalleryCommand : ubyte
 {
     none,
 
-    // The shell.
-    quit,
-    showHelp, helpClose,
-    regionToggle,      /// `Tab` — page list ⇄ page
-    enterContent,      /// `Enter` / `Space` from the list
+    // The shell. `@means` is the universal meaning a command implements
+    // (design-system `KBD1`), checked against the table by test.
+    @means(UniversalCommand.close) quit,
+    @means(UniversalCommand.guide) showHelp, /// `?` — the key guide (lantern)
+    @means(UniversalCommand.focusNext) regionToggle, /// `Tab` — page list ⇄ page
+    /// `Shift-Tab` — the same move: with two regions, back is forward
+    @means(UniversalCommand.focusPrev) regionBack,
+    @means(UniversalCommand.activate) enterContent, /// `Enter` / `Space` from the list
     moveDown, moveUp,  /// within the focused region
     pagePrev, pageNext,
     pageJump,          /// `1`–`9`, `0` — the row's ranged arg names the page
@@ -76,13 +80,15 @@ enum GalleryCommand : ubyte
     compScrollDown, compScrollUp,
 
     // The Tree page.
-    treeDown, treeUp, treeExpand, treeCollapse, treeActivate,
+    treeDown, treeUp, treeExpand, treeCollapse,
+    @means(UniversalCommand.activate) treeActivate,
     treeOpenAll, treeCloseAll,
 
     // The Property page.
     propDown, propUp, propExpand, propCollapse, propActivate,
     propInc, propDec, propPreview, propUndo, propRedo,
-    propFilter, propMatchNext, propMatchPrev, propReveal,
+    @means(UniversalCommand.search) propFilter,
+    propMatchNext, propMatchPrev, propReveal,
     propPolicy, propExternal, propOpenAll, propCloseAll, propReset,
 
     // The Table page.
@@ -105,20 +111,19 @@ enum GalleryCommand : ubyte
     dockWest, dockEast, dockNorth, dockSouth, dockReset,
 
     // The Terminal page.
-    termNew, termClose, termPrev, termNext, termKeepExited, termFocus,
+    termNew, termClose, termPrev, termNext, termKeepExited,
+    @means(UniversalCommand.activate) termFocus,
 }
 
 /**
 Which surface a binding belongs to — and, by declaration order, when it is
 resolved. The page scopes sit before `shell`, which $(I is) the old "page
-gets first refusal in the content region" rule; `help` is modal.
+gets first refusal in the content region" rule.
 */
 enum GalleryScope : ubyte
 {
     /// resolves in every context; empty today (`resolveAlways`'s scope)
     always,
-    /// the `?` overlay: modal — it swallows what it does not answer
-    @terminalScope @hidesLaterScopes help,
     pageLayout,
     pageTracks,
     pageGrid,
@@ -145,19 +150,14 @@ struct GalleryContext
 {
     GalleryScope pageScope = GalleryScope.always;
     bool contentRegion; /// the keyboard is in the content region
-    bool helpShown;     /// the `?` overlay is up (modal, `FOC4`)
 
 @safe pure nothrow @nogc const:
 
     bool reachable(GalleryScope s)
     {
-        if (s == GalleryScope.always)
+        if (s == GalleryScope.always || s == GalleryScope.shell)
             return true;
-        if (s == GalleryScope.help)
-            return helpShown;
-        if (s == GalleryScope.shell)
-            return !helpShown;
-        return !helpShown && contentRegion && s == pageScope;
+        return contentRegion && s == pageScope;
     }
 }
 
@@ -169,16 +169,6 @@ The gallery's keyboard policy. Rows are grouped by scope; within a scope the
 keys are disjoint, so order never decides an outcome here.
 */
 immutable Binding[] galleryBindings = [
-    // ── help (modal): everything underneath is inert until it closes ─────
-    bind(GalleryScope.help, chord(Key.escape), GalleryCommand.helpClose,
-        "close"),
-    bind(GalleryScope.help, chord(Key.back), GalleryCommand.helpClose,
-        "close"),
-    bind(GalleryScope.help, chord(Key.enter), GalleryCommand.helpClose,
-        "close"),
-    bind(GalleryScope.help, chord('?'), GalleryCommand.helpClose, "close"),
-    bind(GalleryScope.help, chord('q'), GalleryCommand.helpClose, "close"),
-
     // ── the Layout page ──────────────────────────────────────────────────
     bind(GalleryScope.pageLayout, chord('w'), GalleryCommand.layoutWidthMode,
         "width mode"),
@@ -391,10 +381,14 @@ immutable Binding[] galleryBindings = [
     bind(GalleryScope.shell, chord(Key.escape), GalleryCommand.quit, "quit"),
     bind(GalleryScope.shell, chord(Key.back), GalleryCommand.quit, "quit"),
     bind(GalleryScope.shell, chord('q'), GalleryCommand.quit, "quit"),
-    bind(GalleryScope.shell, chord('?'), GalleryCommand.showHelp, "keys"),
-    // Two regions, so forward and backward are the same move; Shift-Tab is
-    // accepted because a reader who knows the convention will press it.
-    bind(GalleryScope.shell, chord(Key.tab), GalleryCommand.regionToggle,
+    // The guide consumes a `reveal` row and opens its panel (`LTN`).
+    bind(GalleryScope.shell, chord('?'), GalleryCommand.showHelp, "keys",
+        reveal: true),
+    // Two regions, so forward and backward are the same move — but they are
+    // two universal keys (`KBD1`), so each has its own command.
+    bind(GalleryScope.shell, chord(Key.tab, ShiftReq.no), GalleryCommand.regionToggle,
+        "page list / page"),
+    bind(GalleryScope.shell, chord(Key.tab, ShiftReq.yes), GalleryCommand.regionBack,
         "page list / page"),
     bind(GalleryScope.shell, chord(Key.enter), GalleryCommand.enterContent,
         "to the page"),
@@ -541,19 +535,22 @@ unittest
     assert(ch('t', text).cmd == GalleryCommand.none);
 }
 
-@("ui_gallery.keymap.helpIsModal")
-@safe pure nothrow @nogc
-unittest
+@("ui_gallery.keymap.universalRowsAndReservedKeys")
+@safe unittest
 {
-    const help = GalleryContext(pageScope: GalleryScope.pageDock,
-        contentRegion: true, helpShown: true);
-    assert(ch('q', help).cmd == GalleryCommand.helpClose,
-        "q closes the overlay instead of quitting");
-    assert(nk(Key.escape, help).cmd == GalleryCommand.helpClose);
-    assert(ch('?', help).cmd == GalleryCommand.helpClose);
-    assert(ch(']', help).cmd == GalleryCommand.none,
-        "everything underneath is inert until it closes");
-    assert(nk(Key.tab, help).cmd == GalleryCommand.none);
+    import sparkles.input.events : Mods;
+    import sparkles.ui.keymap_universal : firstRebound, firstReserved, meaningOf;
+
+    // `KBD1`: no fixed universal key means anything else; `KBD3`: no
+    // reserved key is bound.
+    assert(firstRebound!(meaningOf!GalleryCommand)(galleryBindings) == size_t.max);
+    assert(firstReserved(galleryBindings) == size_t.max);
+
+    // `?` is the guide's reveal row; Tab and Shift-Tab are two keys.
+    assert(ch('?').cmd == GalleryCommand.showHelp);
+    assert(nk(Key.tab).cmd == GalleryCommand.regionToggle);
+    assert(nk(Key.tab, GalleryContext.init, Mods(shift: true)).cmd
+        == GalleryCommand.regionBack);
 }
 
 @("ui_gallery.keymap.kittyShiftedPunctuation")
@@ -573,8 +570,6 @@ unittest
     assert(resolves("[91:123;2u", GalleryCommand.profileWiden));
     assert(resolves("[93:125;2u", GalleryCommand.profileNarrow));
     assert(resolves("[47:63;2u", GalleryCommand.showHelp));
-    assert(resolves("[47:63;2u", GalleryCommand.helpClose,
-        GalleryContext(helpShown: true)));
 }
 
 @("ui_gallery.keymap.rangedRowsCarryTheirTarget")
@@ -601,11 +596,11 @@ unittest
     // `Tab`, quit and the help key must always work — a page that could
     // claim them could strand a reader inside itself. The check `Page.keys`
     // prose never had: asserted over the table, for every page scope.
-    static immutable Chord[4] lifelines =
-        [chord(Key.tab), chord(Key.escape), chord('q'), chord('?')];
+    static immutable Chord[5] lifelines = [chord(Key.tab, ShiftReq.no),
+        chord(Key.tab, ShiftReq.yes), chord(Key.escape), chord('q'), chord('?')];
     foreach (ref b; galleryBindings)
     {
-        if (b.scope_ == GalleryScope.help || b.scope_ == GalleryScope.shell)
+        if (b.scope_ == GalleryScope.shell)
             continue;
         foreach (ref life; lifelines)
             assert(!sameKey(b.path[0], life),
@@ -692,5 +687,24 @@ unittest
         check(GalleryContext(pageScope: scope_, contentRegion: true));
         check(GalleryContext(pageScope: scope_));
     }
-    check(GalleryContext(helpShown: true));
+}
+
+/// The effective key table, one row per line (`KBD6`) — what `--list-keys`
+/// prints. The gallery has no user overlay, so its table is its own.
+void writeKeys(W)(ref W w)
+{
+    import sparkles.ui.keymap_universal : writeKeyTable;
+
+    writeKeyTable!' '(w, galleryBindings);
+}
+
+@("ui_gallery.keymap.listingHasEveryRow")
+@safe unittest
+{
+    import std.algorithm.searching : count;
+    import std.array : appender;
+
+    auto w = appender!string;
+    writeKeys(w);
+    assert(w[].count('\n') == galleryBindings.length);
 }
