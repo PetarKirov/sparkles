@@ -165,6 +165,12 @@ bool showsX(AxisVisibility v) @safe pure nothrow @nogc
 bool showsY(AxisVisibility v) @safe pure nothrow @nogc
     => v == AxisVisibility.y || v == AxisVisibility.xy;
 
+/// The slots the shipped presets paint with (design-system `TOK6`). A
+/// `GridConfig` names its own slots, so a user's configuration is its own
+/// declaration; this is the presets' set, checked over every one of them.
+enum Slot[] gridBackdropSlots = [Slot.muted, Slot.border, Slot.info, Slot.warn,
+    Slot.error, Slot.annotate];
+
 /// The `RND4` / default-lines fixture.
 GridConfig gridPreset(GridPreset p) @safe pure nothrow @nogc
 {
@@ -1519,4 +1525,35 @@ unittest
         `{"slotOverrides":[{"slot":"warn","bgAlpha":51}]}`,
         cfg, pal, err), err);
     assert(pal.bgAlpha[Slot.warn] == 51);
+}
+
+@("grid_backdrop.presetsStayInsideTheirDeclaredSlots")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.traits : EnumMembers;
+    import sparkles.base.buffer : SharedBuffer;
+    import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
+
+    // `TOK6` for an op-stream component: every op a shipped preset emits
+    // names a slot from `gridBackdropSlots`.
+    const pal = defaultTwoslashPalette(ColorScheme.dark);
+    GridView view = {
+        screen: Rect(0, 0, 40, 16),
+        world: Rect(0, 0, 40, 16),
+        origin: Point(0, 0),
+    };
+    static foreach (p; EnumMembers!GridPreset)
+    {{
+        SharedBuffer!(DrawOp, 1024) ops;
+        appendGridBackdrop(ops, gridPreset(p), view, pal,
+            RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0x12, 0x12, 0x12));
+        foreach (ref op; ops[])
+        {
+            bool declared = op.slot == Slot.inherit;
+            foreach (s; gridBackdropSlots)
+                declared |= op.slot == s;
+            assert(declared, "TOK6: an undeclared slot");
+        }
+    }}
 }

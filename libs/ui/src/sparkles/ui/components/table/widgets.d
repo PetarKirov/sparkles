@@ -66,6 +66,11 @@ struct TableCutout
     bool hasFg;    /// ditto
 }
 
+/// The slots the default style paints with (design-system `TOK6`): rules on
+/// `border`, cell content inheriting. A caller that passes its own
+/// `cellSlot`/`ruleSlot` declares them itself.
+enum Slot[] tableWidgetSlots = [Slot.border];
+
 /// How the widget view styles what it emits — the theme-channel inputs the
 /// string view has no notion of.
 struct TableWidgetStyle
@@ -1470,4 +1475,21 @@ version (unittest)
     auto tree2 = b2.finish(res2.root);
     foreach (ref n; tree2.nodes)
         assert(n.hitId != 999);
+}
+
+@("table.widgets.staysInsideItsDeclaredSlots")
+@safe unittest
+{
+    import sparkles.ui.tokens : firstUndeclaredSlot;
+
+    // `TOK6`: the default style references only `tableWidgetSlots`.
+    auto cells = [
+        [SpanCell([TextSpan("a")]), SpanCell([TextSpan("bb")])],
+        [SpanCell([TextSpan("c")]), SpanCell(null)],
+    ];
+    auto b = Builder();
+    const res = buildTableWidgets(b, cells);
+    auto tree = b.finish(res.root);
+    assert(firstUndeclaredSlot(tree, tableWidgetSlots) == Slot.inherit,
+        "TOK6: an undeclared slot");
 }
