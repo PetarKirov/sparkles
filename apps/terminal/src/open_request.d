@@ -191,14 +191,31 @@ bool awaitOpen(uint id, out string message, int timeoutMs = 3000) @trusted
 // Which pane asked.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The parent of process `pid` (`/proc/<pid>/stat`), or 0.
+version (OSX)
+{
+    // libproc: `proc_pidinfo(pid, PROC_PIDTBSDINFO, …)` fills a `proc_bsdinfo`
+    // (136 bytes), whose fifth `uint32_t` is `pbi_ppid`.
+    private extern (C) int proc_pidinfo(int pid, int flavor, ulong arg, void* buffer,
+        int size) nothrow @nogc;
+    private enum PROC_PIDTBSDINFO = 3, procBsdInfoSize = 136, pbiPpidAt = 4;
+}
+
+/// The parent of process `pid` (`/proc/<pid>/stat`; libproc on macOS), or 0.
 int parentOf(int pid) @system
 {
     import std.conv : text, to;
     import std.file : readText;
     import std.string : lastIndexOf, split;
 
-    try
+    version (OSX)
+    {
+        uint[procBsdInfoSize / 4] info;
+        if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, info.ptr, procBsdInfoSize)
+            != procBsdInfoSize)
+            return 0;
+        return cast(int) info[pbiPpidAt];
+    }
+    else try
     {
         const stat = readText(text("/proc/", pid, "/stat"));
         // `pid (comm) state ppid …` — comm may hold spaces and parentheses.
@@ -260,6 +277,17 @@ int peerProcess(int fd) @system nothrow @nogc
         if (getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &c, &len) != 0)
             return 0;
         return c.pid;
+    }
+    else version (OSX)
+    {
+        import core.sys.posix.sys.socket : getsockopt, socklen_t;
+
+        enum SOL_LOCAL = 0, LOCAL_PEERPID = 2; // <sys/un.h>
+        int pid;
+        socklen_t len = pid.sizeof;
+        if (getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &len) != 0)
+            return 0;
+        return pid;
     }
     else
         return 0;
