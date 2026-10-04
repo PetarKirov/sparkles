@@ -236,6 +236,20 @@ mixin template HostState(size_t opCapacity = frameOpCapacity,
     bool quitRequested() const @safe pure nothrow @nogc => _quit;
 
     /**
+    Whether the application holds the keyboard for something that must
+    receive every key — an embedded shell (design-system `KBD3`). The
+    terminal host turns `Ctrl-C` into $(LREF quit), as an interrupt, except
+    while a grab is held: then `Ctrl-C` is delivered like any key. An
+    application sets it each frame from its own focus state.
+    */
+    void grabKeyboard(bool held) @safe pure nothrow @nogc { _keyboardGrabbed = held; }
+
+    /// ditto
+    bool keyboardGrabbed() const @safe pure nothrow @nogc => _keyboardGrabbed;
+
+    private bool _keyboardGrabbed;
+
+    /**
     Ask for one more frame after this one, even with no input.
 
     What an animation or an eased transition needs on a target that otherwise
