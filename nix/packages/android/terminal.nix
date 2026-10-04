@@ -126,6 +126,9 @@ in
       bundledFonts = [
         "FiraCodeNerdFontMono-Regular.ttf"
         "FiraCodeNerdFontMono-Bold.ttf"
+        # The interface face chrome text draws in (`GLY10`).
+        "Roboto-Regular.ttf"
+        "Roboto-Bold.ttf"
         "DejaVuSansMono.ttf"
         "DejaVuSansMono-Bold.ttf"
         "DejaVuSansMono-Oblique.ttf"

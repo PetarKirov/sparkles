@@ -94,6 +94,12 @@
       url = "github:PetarKirov/tree-sitter-sdl/v0.1.0";
       flake = false;
     };
+    # Roboto's source repository, for its licence text: nixpkgs builds the
+    # fonts from a release archive that carries none (docs/credits/parts/roboto.md).
+    roboto-src = {
+      url = "github:googlefonts/roboto-3-classic/v3.015";
+      flake = false;
+    };
     # Must stay in lockstep with nix/dub-lock.json's `dmd` entry (the frontend
     # the dmdserver-dub pin compiles against).
     dmd-src = {

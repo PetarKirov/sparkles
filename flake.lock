@@ -672,6 +672,23 @@
         "type": "github"
       }
     },
+    "roboto-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1768469897,
+        "narHash": "sha256-voyRfTEM+VDqdBMfpuaI6Sj6eU6feeUUkK7HD6je0x8=",
+        "owner": "googlefonts",
+        "repo": "roboto-3-classic",
+        "rev": "91d5d3e5b81efa04a77925cc609fdcdd7ee663d1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "googlefonts",
+        "ref": "v3.015",
+        "repo": "roboto-3-classic",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "dlang-nix": "dlang-nix",
@@ -694,6 +711,7 @@
         "nix-on-droid": "nix-on-droid",
         "nixpkgs": "nixpkgs_3",
         "phobos-src": "phobos-src",
+        "roboto-src": "roboto-src",
         "simdjson-src": "simdjson-src",
         "systems": "systems",
         "termbench-src": "termbench-src",
