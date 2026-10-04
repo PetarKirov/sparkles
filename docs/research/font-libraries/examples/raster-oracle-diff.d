@@ -14,15 +14,20 @@
  * (`FT_LOAD_NO_HINTING | FT_LOAD_RENDER`), and reports the distribution of
  * per-pixel coverage differences in 1/255 steps.
  *
- * Two configurations of the D side:
+ * Four comparisons per face and size:
  *
- *   production  adaptive flattening to 0.02 px, and 4x4 supersampling for
- *               glyphs whose `glyf` data sets OVERLAP_SIMPLE (0x40 on the first
- *               point) or OVERLAP_COMPOUND (0x0400) — the rule FreeType's
- *               smooth renderer applies (ttgload.c, ftsmooth.c);
- *   ft-flatten  the same, but curves flattened by FreeType's own ftgrays.c
- *               rules. What remains is the rasterizers' arithmetic; the
- *               difference from `production` is FreeType's flattening error.
+ *   production     the D rasterizer — adaptive flattening to 0.02 px, and 4x4
+ *                  supersampling for glyphs whose `glyf` data sets
+ *                  OVERLAP_SIMPLE (0x40 on the first point) or
+ *                  OVERLAP_COMPOUND (0x0400), FreeType's rule (ttgload.c,
+ *                  ftsmooth.c) — against FreeType;
+ *   ftFlatten      the same with curves flattened by FreeType's own ftgrays.c
+ *                  rules, against FreeType: the accumulation arithmetic alone
+ *                  (FTR3);
+ *   fineReference  production against the D rasterizer at 0.001 px: the
+ *                  flattening error alone (FTR8);
+ *   unflagged      each glyph the font does not flag, against its own 4x4
+ *                  render: overlaps the flag fails to declare (FXP34).
  *
  * FreeType is reached through hand-declared prototypes. Only the leading
  * fields of `FT_FaceRec` and `FT_GlyphSlotRec` are declared, and they are
@@ -30,7 +35,7 @@
  * compared.
  *
  * Spike S2 of docs/specs/font/PLAN.md; docs/specs/font/testing.md § Raster
- * oracle records the result.
+ * oracle records the result; FTX9 and FTX10 in decisions.md the choices.
  *
  * Run with: dub run --single raster-oracle-diff.d [-- font.ttf ...]
  *
@@ -235,6 +240,7 @@ struct Sink
     float ox, oy; // origin in raster pixels, y-down
     float k; // raster pixels per output pixel: 1, or 4 when supersampling
     bool freetypeFlattening;
+    float tolerance; // flattening tolerance in px, when not FreeType's rules
     float px, py, startX, startY;
     bool drew;
 
@@ -250,7 +256,6 @@ struct Sink
     }
 }
 
-enum tolerancePx = 0.02f; // production flattening tolerance
 
 extern (C) nothrow @nogc void onMove(hb_draw_funcs_t*, void* d, hb_draw_state_t*, float x, float y, void*)
 {
@@ -278,8 +283,8 @@ extern (C) nothrow @nogc void onQuad(hb_draw_funcs_t*, void* d, hb_draw_state_t*
         if (dev >= 0.25f)
             do { dev /= 4; n *= 2; } while (dev > 0.25f);
     }
-    else // a quadratic's chord deviates by |p0 - 2c + p2| / (8 n^2)
-        n = max(1, cast(int) ceil(sqrt(hypot(x0 - 2 * cx + x, y0 - 2 * cy + y) / 64 / 8 / tolerancePx)));
+    else // a quadratic's chord deviates by at most |p0 - 2c + p2| / (4 n^2)
+        n = max(1, cast(int) ceil(sqrt(hypot(x0 - 2 * cx + x, y0 - 2 * cy + y) / 64 / 4 / s.tolerance)));
     foreach (i; 1 .. n + 1)
     {
         const t = float(i) / n, u = 1 - t;
@@ -320,7 +325,7 @@ extern (C) nothrow @nogc void onCubic(hb_draw_funcs_t*, void* d, hb_draw_state_t
     }
     // A cubic's chord deviates by at most 3/4 of its largest second difference / n^2.
     const dd = max(hypot(x0 - 2 * c1x + c2x, y0 - 2 * c1y + c2y), hypot(c1x - 2 * c2x + x, c1y - 2 * c2y + y));
-    const n = max(1, cast(int) ceil(sqrt(dd * 0.75f / 64 / tolerancePx)));
+    const n = max(1, cast(int) ceil(sqrt(dd * 0.75f / 64 / s.tolerance)));
     foreach (i; 1 .. n + 1)
     {
         const t = float(i) / n, u = 1 - t;
@@ -395,12 +400,47 @@ bool[] overlapFlags(const(ubyte)[] d) @safe pure
 ubyte percentile(const(ubyte)[] sorted, double p) @safe pure nothrow @nogc
     => sorted.length ? sorted[min(sorted.length - 1, cast(size_t)(p / 100 * sorted.length))] : 0;
 
-/// One face at one size in one configuration: per-pixel differences over
-/// pixels either side inks, and each glyph's largest difference.
-void compare(FT_FaceRec* ft, hb_font_t* font, hb_draw_funcs_t* funcs, const(bool)[] overlap,
-    uint glyphs, int ppem, bool freetypeFlattening)
+/// What a row compares, and against what.
+enum Mode
 {
-    enum margin = 4;
+    production, /// D, 0.02 px flattening, FreeType's overlap rule — vs FreeType
+    ftFlatten, /// D with FreeType's flattening rules — vs FreeType
+    fineReference, /// D at 0.02 px — vs D at 0.001 px: the flattening error alone
+    unflagged, /// D on unflagged glyphs — vs D at 4x4: overlaps the font does not flag
+}
+
+/// A glyph rendered by the D rasterizer into a `w`×`h` frame whose pixel
+/// (`margin`, `margin`) is FreeType's bitmap origin; `ss` = 4 supersamples.
+ubyte[] renderOurs(hb_font_t* font, hb_draw_funcs_t* funcs, uint gid, uint w, uint h,
+    int left, int top, int ss, bool freetypeFlattening, float tolerance, out bool drew)
+{
+    auto r = new Rasterizer(w * ss, h * ss);
+    auto sink = Sink(r, ss * (margin - left), ss * (margin + top), ss, freetypeFlattening, tolerance);
+    hb_font_draw_glyph(font, gid, funcs, &sink);
+    drew = sink.drew;
+    const fine = r.coverage();
+    if (ss == 1)
+        return fine.dup;
+    auto out_ = new ubyte[w * h];
+    foreach (y; 0 .. h)
+        foreach (x; 0 .. w)
+        {
+            uint sum;
+            foreach (j; 0 .. ss)
+                foreach (i; 0 .. ss)
+                    sum += fine[(y * ss + j) * w * ss + x * ss + i];
+            out_[y * w + x] = cast(ubyte)((sum + ss * ss / 2) / (ss * ss));
+        }
+    return out_;
+}
+
+enum margin = 4;
+
+/// One face at one size in one mode: per-pixel differences over pixels either
+/// side inks, and each glyph's largest difference.
+void compare(FT_FaceRec* ft, hb_font_t* font, hb_draw_funcs_t* funcs, const(bool)[] overlap,
+    uint glyphs, int ppem, Mode mode)
+{
     hb_font_set_scale(font, ppem * 64, ppem * 64);
     FT_Set_Pixel_Sizes(ft, 0, ppem);
     ubyte[] pixels, glyphMax;
@@ -411,46 +451,45 @@ void compare(FT_FaceRec* ft, hb_font_t* font, hb_draw_funcs_t* funcs, const(bool
         const bm = ft.glyph.bitmap;
         if (bm.pixel_mode != FT_PIXEL_MODE_GRAY)
             continue;
-        const w = bm.width + 2 * margin, h = bm.rows + 2 * margin;
-        const ss = gid < overlap.length && overlap[gid] ? 4 : 1;
-        auto r = new Rasterizer(w * ss, h * ss);
-        auto sink = Sink(r, ss * (margin - ft.glyph.bitmap_left), ss * (margin + ft.glyph.bitmap_top),
-            ss, freetypeFlattening);
-        hb_font_draw_glyph(font, gid, funcs, &sink);
-        if (!sink.drew && bm.width == 0)
+        const flagged = gid < overlap.length && overlap[gid];
+        if (mode == Mode.unflagged && flagged)
             continue;
-        const fine = r.coverage();
-        ubyte ours(size_t x, size_t y)
+        const w = bm.width + 2 * margin, h = bm.rows + 2 * margin;
+        const left = ft.glyph.bitmap_left, top = ft.glyph.bitmap_top;
+        bool drew, unused;
+        const ours = renderOurs(font, funcs, gid, w, h, left, top, flagged ? 4 : 1,
+            mode == Mode.ftFlatten, 0.02f, drew);
+        if (!drew && bm.width == 0)
+            continue;
+        ubyte[] reference;
+        if (mode == Mode.fineReference)
+            reference = renderOurs(font, funcs, gid, w, h, left, top, flagged ? 4 : 1, false, 0.001f, unused);
+        else if (mode == Mode.unflagged)
+            reference = renderOurs(font, funcs, gid, w, h, left, top, 4, false, 0.02f, unused);
+        else
         {
-            uint sum;
-            foreach (j; 0 .. ss)
-                foreach (i; 0 .. ss)
-                    sum += fine[(y * ss + j) * w * ss + x * ss + i];
-            return cast(ubyte)((sum + ss * ss / 2) / (ss * ss));
+            reference = new ubyte[w * h];
+            foreach (fy; 0 .. bm.rows)
+                foreach (fx; 0 .. bm.width)
+                    reference[(fy + margin) * w + fx + margin] = bm.buffer[fy * bm.pitch + fx];
         }
         ubyte worst;
-        foreach (y; 0 .. h)
-            foreach (x; 0 .. w)
-            {
-                const fx = x - margin, fy = y - margin;
-                const int theirs = fx >= 0 && fy >= 0 && fx < bm.width && fy < bm.rows
-                    ? bm.buffer[fy * bm.pitch + fx] : 0;
-                const int mine = ours(x, y);
-                if (!theirs && !mine)
-                    continue;
-                const diff = cast(ubyte) abs(mine - theirs);
-                pixels ~= diff;
-                worst = max(worst, diff);
-            }
+        foreach (i; 0 .. w * h)
+        {
+            if (!ours[i] && !reference[i])
+                continue;
+            const diff = cast(ubyte) abs(int(ours[i]) - int(reference[i]));
+            pixels ~= diff;
+            worst = max(worst, diff);
+        }
         glyphMax ~= worst;
     }
     pixels.sort();
     glyphMax.sort();
-    writefln("  %-11s %2d px  %6d glyphs  pixel p50 %3d  p99 %3d  max %3d  glyph max p50 %3d  p99 %3d  ≤16: %5.1f%%",
-        freetypeFlattening ? "ft-flatten" : "production", ppem, glyphMax.length,
+    writefln("  %-14s %2d px  %6d glyphs  pixel p50 %3d  p99 %3d  max %3d  glyph max p50 %3d  p99 %3d  >32: %d",
+        mode, ppem, glyphMax.length,
         pixels.percentile(50), pixels.percentile(99), pixels.length ? pixels[$ - 1] : 0,
-        glyphMax.percentile(50), glyphMax.percentile(99),
-        100.0 * glyphMax.count!(m => m <= 16) / max(1, glyphMax.length));
+        glyphMax.percentile(50), glyphMax.percentile(99), glyphMax.count!(m => m > 32));
 }
 
 void measure(void* library, hb_draw_funcs_t* funcs, string path)
@@ -484,9 +523,9 @@ void measure(void* library, hb_draw_funcs_t* funcs, string path)
     const overlap = overlapFlags(cast(const(ubyte)[]) read(path));
     writefln("%s: %d glyphs, upem %d, %d flagged overlapping", path.baseName, glyphs,
         ft.units_per_EM, overlap.count(true));
-    foreach (freetypeFlattening; [false, true])
+    foreach (mode; [Mode.production, Mode.ftFlatten, Mode.fineReference, Mode.unflagged])
         foreach (ppem; [12, 16, 24, 48])
-            compare(ft, font, funcs, overlap, glyphs, ppem, freetypeFlattening);
+            compare(ft, font, funcs, overlap, glyphs, ppem, mode);
 }
 
 string[] resolveFonts(string[] args)

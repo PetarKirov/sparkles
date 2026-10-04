@@ -189,8 +189,10 @@ and all skip cleanly when no font can be found.
   catalog reads per face (table directory, family, weight, `cmap` coverage),
   timed over every installed font, serially and on a worker pool.
 - [`raster-oracle-diff.d`](./examples/raster-oracle-diff.d) — the
-  accumulation rasterizer against FreeType over every glyph of a face at four
-  sizes, with FreeType's overlap rule and, as a diagnostic, its flattening.
+  accumulation rasterizer over every glyph of a face at four sizes, compared
+  with FreeType (under FreeType's overlap rule, then also its flattening), with
+  a finer flattening of its own, and with a 4×4 render that finds overlaps the
+  font does not flag.
 
 ```bash
 dub run --single docs/research/font-libraries/examples/outline-sink-raster.d -- /path/to/font.ttf g

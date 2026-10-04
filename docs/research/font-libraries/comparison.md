@@ -103,8 +103,12 @@ around the core, and each item is a decision rather than a cost to absorb:
 - **Overlap and winding.** Accumulation computes nonzero coverage only when
   contours do not overlap; variable fonts routinely overlap contours. Two
   deep-dives name this defect ([stb_truetype](./stb-truetype.md),
-  [ab_glyph](./ab-glyph.md)); the fix is per-contour accumulation or a
-  FreeType-`smooth`-style cell list.
+  [ab_glyph](./ab-glyph.md)). FreeType's `smooth` cell list has it too: it
+  accumulates the same way and escapes only for glyphs whose `glyf` data sets
+  `OVERLAP_SIMPLE` or `OVERLAP_COMPOUND`, which it renders at 4×4 and averages.
+  The [raster oracle example](./examples/raster-oracle-diff.d) measures both
+  the defect and that rule, which `sparkles:font` adopts
+  ([`FTX9`](../../specs/font/decisions.md#ftx9-flatten-to-0-02-px-render-the-union-of-flagged-glyphs)).
 - **Hinting.** A TrueType bytecode interpreter is the largest piece of every
   rasterizer that has one. [Typography](./typography.md)'s C# port is ~2,100
   lines and incomplete; [fontations](./fontations.md) wrote a whole autohinter in
