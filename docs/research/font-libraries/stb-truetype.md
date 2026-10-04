@@ -231,8 +231,9 @@ codepoint, no fallback: a missing codepoint is glyph 0.
   coordinates past `short`.
 - **A signed-area scanline rasterizer is ~700 lines** — v2 is the reference
   answer to RQ2's CPU-feasibility question, and its overlapping-contour
-  overestimate is the defect a from-scratch design must solve (per-contour
-  accumulation, or FreeType-`smooth`-style exact nonzero coverage).
+  overestimate is the defect a from-scratch design must solve. FreeType's
+  `smooth` renderer shares it and solves it by supersampling glyphs the font
+  flags as overlapping ([`comparison.md`](./comparison.md#a-cpu-rasterizer-in-d-go)).
 - **Oversampling + bilinear is the cheap sub-pixel answer for a static atlas**,
   and the atlas being one-shot is why `FontSet` reloads whole fonts on growth.
 - **Every raylib text limit in `sparkles` is an stb limit.** `.ttc` collections
