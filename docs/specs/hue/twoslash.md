@@ -40,12 +40,12 @@ see the [overview](./index.md).
 Twoslash copies the reference stack's clean layer separation — this is the single
 most important design property:
 
-| Layer                | Reference package             | Responsibility                                                 | sparkles equivalent                                                    |
-| -------------------- | ----------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| **Protocol**         | `twoslash-protocol`           | Backend-agnostic positional node model — no backend dependency | `sparkles:twoslash` `protocol.d` (`Node`/`TwoslashReturn`)             |
-| **Analyzer**         | `twoslash`                    | Parse notations → drive a semantic backend → emit nodes        | notation parser + `sparkles:dmd-lsp` (see `DMD`)                       |
-| **Renderer**         | `@shikijs/twoslash`           | Overlay nodes onto highlighted code (HTML/ANSI/GPU)            | overlay over `sparkles:syntax` (`render_html`/`render_ansi`) + hue GUI |
-| **Host integration** | `@shikijs/vitepress-twoslash` | Build-time fenced-block transform + client tooltips            | markdown lib (#45) + VitePress (see `RS1`)                             |
+| Layer                | Reference package             | Responsibility                                                 | sparkles equivalent                                                           |
+| -------------------- | ----------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Protocol**         | `twoslash-protocol`           | Backend-agnostic positional node model — no backend dependency | `sparkles:twoslash-protocol` `protocol.d` (`Node`/`TwoslashReturn`)           |
+| **Analyzer**         | `twoslash`                    | Parse notations → drive a semantic backend → emit nodes        | `sparkles:twoslash-d` over `sparkles:dmd-lsp` (see `DMD`)                     |
+| **Renderer**         | `@shikijs/twoslash`           | Overlay nodes onto highlighted code (HTML/ANSI/GPU)            | overlay over `sparkles:syntax` (`render_html`/`render_ansi`/`render_widgets`) |
+| **Host integration** | `@shikijs/vitepress-twoslash` | Build-time fenced-block transform + client tooltips            | markdown lib (#45) + VitePress (see `RS1`)                                    |
 
 Because the analyzer is decoupled from any one backend, **any backend that answers
 four queries over a buffer plugs into the same node model** — the seam
@@ -60,16 +60,18 @@ removals, then resolve `line`/`character` against the post-cut text.
 
 ## Twoslash CLI modes in hue (`TWM`)
 
-`apps/hue/src/app.d` (branch `feat/syntax-twoslash`) — `runTwoslashMode` /
-`runMarkdownMode`.
+`apps/hue/src/app.d` — `resolveOverlayTarget` makes a `--twoslash` payload the
+document, `DocumentPipeline.load` loads it as the twoslash kind, and the
+backend's sink (`runAnsiSink`, `runHtmlSink`, the TUI or `runGui`) renders it;
+`--html` on a markdown document goes through `emitMarkdownHtml`.
 
-| ID   | Requirement                                                                                                                                                                  | Status                                        | Traces to                                    |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------- |
-| TWM1 | `--twoslash <nodes.json>` must load the node model, highlight its `code` as TypeScript, and render the overlay; **ANSI is the default** backend.                             | planned/branch-only (`168c9cf8`)              | `app.runTwoslashMode`                        |
-| TWM2 | `hue --twoslash --html` must emit a self-contained `<style>` + `<pre class="syn-root twoslash">` page (the Shiki `.twoslash-*` contract, pure CSS `:hover`).                 | planned/branch-only (`168c9cf8`)              | HTML branch → `libs/twoslash` `render_html`  |
-| TWM3 | `hue --gui --twoslash` must open the raylib window and route to the GPU overlay (see `TWO`).                                                                                 | planned/branch-only (`1d29b675`)              | `app.d` → `gui.runGuiTwoslash`               |
-| TWM4 | `--markdown <file.md>` must render any Markdown to HTML via the shared `sparkles:syntax` `MdDoc → HTML` emitter (no twoslash/theme) — a standalone exercise of that emitter. | planned/branch-only (`app.d runMarkdownMode`) | `app.runMarkdownMode`                        |
-| TWM5 | The twoslash driver must live **only in `apps/hue`**; the reusable overlay logic stays in `libs/twoslash` (no standalone demo app).                                          | planned/branch-only (design)                  | decision (memory `twoslash-render-side-123`) |
+| ID   | Requirement                                                                                                                                                                           | Status                                                                                                                                                | Traces to                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| TWM1 | `--twoslash <nodes.json>` must load the node model, highlight its `code` in the payload's language (TypeScript when absent), and render the overlay; **ANSI is the default** backend. | partial — renders on every backend, but the backend is auto-detected: ANSI only when not on a terminal or with `--ansi`                               | `resolveOverlayTarget` → `DocumentPipeline.load` → `runAnsiSink` |
+| TWM2 | `hue --twoslash --html` must emit a self-contained `<style>` + `<pre class="syn-root twoslash">` page (the Shiki `.twoslash-*` contract, pure CSS `:hover`).                          | planned/branch-only (`168c9cf8`)                                                                                                                      | HTML branch → `libs/twoslash` `render_html`                      |
+| TWM3 | `hue --gui --twoslash` must open the raylib window and route to the GPU overlay (see `TWO`).                                                                                          | full                                                                                                                                                  | `app.resolveOverlayTarget` → `DocumentPipeline.load` → `runGui`  |
+| TWM4 | `--markdown <file.md>` must render any Markdown to HTML via the shared `sparkles:syntax` `MdDoc → HTML` emitter (no twoslash/theme) — a standalone exercise of that emitter.          | superseded — `--markdown` forces the markdown kind; `--html` renders it through the emitter with the theme stylesheet and highlighted fences (`HTM5`) | `runHtmlSink` → `emitMarkdownHtml`                               |
+| TWM5 | The twoslash driver must live **only in `apps/hue`**; the reusable overlay logic stays in `libs/twoslash` (no standalone demo app).                                                   | planned/branch-only (design)                                                                                                                          | decision (memory `twoslash-render-side-123`)                     |
 
 ## Live D types in the viewer (`LIV`)
 
@@ -97,27 +99,33 @@ producer half of the contract is
 
 ## Twoslash raylib overlay (`TWO`)
 
-`apps/hue/src/gui.d` (branch) — `runGuiTwoslash`, gated behind `version(HueGui)`;
-depends on the [`--gui` backend](./gui.md) (#121) having landed.
+hue's GUI draws the overlay through the shared widget view
+(`sparkles:twoslash` `render_widgets.d`, [library spec §5](../twoslash/SPEC.md)):
+`sparkles:doc-view`'s `ViewerModel` builds the document with
+`viewTwoslashDocumentInto`, the raylib canvas paints it, and `gui.drawPopup`
+paints the hover popup from `viewHoverPopup`. It is gated behind
+`version(HueGui)` and depends on the [`--gui` backend](./gui.md) (#121).
 
-| ID   | Requirement                                                                                                                                                                                                                                         | Status                           | Traces to                                                                       |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------- |
-| TWO1 | The overlay must draw on the monospace grid: inline decorations at `x = pad + character·cellW`; annotation rows accumulate `y` (interleaved with code lines), not `line·cellH`.                                                                     | planned/branch-only (`1d29b675`) | `gui.runGuiTwoslash`                                                            |
-| TWO2 | Visual mapping: highlight → translucent tint rect; error → red wavy underline + below-line message; query/completion/tag → annotation rows; hover → floating mouse-hover popup (GPU analogue of CSS `:hover`) with a re-highlighted type signature. | planned/branch-only (`1d29b675`) | `runGuiTwoslash` (uses `sparkles:twoslash` `planTwoslash`/`highlightSignature`) |
-| TWO3 | The overlay must reuse `gui.d`'s `drawText`/`rl`/`mapStyle`/`cstrOf` + `sparkles:raylib-text`; no new render primitives.                                                                                                                            | planned/branch-only (`1d29b675`) | `runGuiTwoslash`                                                                |
+| ID   | Requirement                                                                                                                                                                                                                                                                                                             | Status | Traces to                                                              |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------- |
+| TWO1 | The overlay must draw on the monospace grid: inline decorations at the token's column, and each below-line block as its own row directly under its code line (interleaved with the code), not at `line·cellH`.                                                                                                          | full   | `viewTwoslashDocumentInto`, `decorateCodeRow`                          |
+| TWO2 | Visual mapping: highlight → tint box under the text; hover → permanent dotted underline; error → wavy underline (warn color for non-fatal levels) + below-line message; query/completion/tag → below-line rows; hover → floating mouse-hover popup (GPU analogue of CSS `:hover`) with a syntax-colored type signature. | full   | `decorateCodeRow`; `viewHoverPopup`, `signatureSpans`; `gui.drawPopup` |
+| TWO3 | The overlay must be built from `sparkles:ui` widgets and painted by the raylib canvas; hue adds no twoslash-specific render primitives.                                                                                                                                                                                 | full   | `ViewerModel.rebuildTree`; `gui.drawPopup`                             |
 
 ## Library requirements hue drives (summary)
 
-The full library contract is `docs/specs/twoslash/SPEC.md` (branch `feat/syntax-twoslash`).
-hue drives these entry points (all **planned/branch-only**):
+The full library contract is [`docs/specs/twoslash/SPEC.md`](../twoslash/SPEC.md);
+the node model and its ingest live in `sparkles:twoslash-protocol`. hue drives
+these entry points:
 
-| Area                  | Requirement (hue-relevant)                                                                                                                                                                    | Traces to (`libs/twoslash`)           |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
-| Node model / protocol | Flat `Node` POD (not `SumType`) with `NodeType` discriminant + `@WireOptional` payloads; `TwoslashReturn{code,nodes}`.                                                                        | `protocol.d`                          |
-| Ingest                | Decode the JSON via `sparkles:wired`; **UTF-16 → UTF-8** offset remap (renderers index `code` as UTF-8 bytes).                                                                                | `ingest.d`                            |
-| Overlay planner       | `planTwoslash` partitions nodes into inline decorations + below-line blocks; suppress hover when a query covers the token; `highlightSignature` re-highlights popup signatures as TypeScript. | `overlay.d`                           |
-| HTML backend          | `.twoslash-*` class contract, 100% CSS `:hover`, completion/tag icons (`svg`/`glyph`/`none`), popup arrows, JSDoc `@tag` chips, `docs` rendered as markdown via the `MdDoc→HTML` emitter.     | `render_html.d`, `style.d`, `icons.d` |
-| ANSI backend          | Terminal twoslash: per-line-valid SGR, caret meta-lines (`^^^`/`^?`) below code, error underline, hovers silent unless `opts.hovers`.                                                         | `render_ansi.d`                       |
+| Area                  | Requirement (hue-relevant)                                                                                                                                                                                                      | Traces to                             |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| Node model / protocol | Flat `Node` POD (not `SumType`) with `NodeType` discriminant + `@WireOptional` payloads; `TwoslashReturn{code,nodes}` plus optional `language` and `offsetEncoding`.                                                            | `libs/twoslash-protocol` `protocol.d` |
+| Ingest                | Decode the JSON via `sparkles:wired`; **UTF-16 → UTF-8** offset remap (renderers index `code` as UTF-8 bytes), skipped when the payload declares `offsetEncoding: "utf-8"`.                                                     | `libs/twoslash-protocol` `ingest.d`   |
+| Overlay planner       | `planTwoslash` partitions nodes into inline decorations + below-line blocks; suppress hover when a query covers the token; `highlightSignature` re-highlights popup signatures in the payload's language (`effectiveLanguage`). | `overlay.d`                           |
+| HTML backend          | `.twoslash-*` class contract, 100% CSS `:hover`, completion/tag icons (`svg`/`glyph`/`none`), popup arrows, JSDoc `@tag` chips, `docs` rendered as markdown via the `MdDoc→HTML` emitter.                                       | `render_html.d`, `style.d`, `icons.d` |
+| ANSI backend          | Terminal twoslash: per-line-valid SGR, caret meta-lines (`^^^`/`^?`) below code, error underline, hovers silent unless `opts.hovers`.                                                                                           | `render_ansi.d`                       |
+| Widget view           | The document, inline decorations, below-line blocks and hover popup as `sparkles:ui` widgets, shared by the GUI and the interactive terminal (see `TWO`).                                                                       | `render_widgets.d`                    |
 
 ## Hover signature layout (`SIG`)
 
@@ -235,11 +243,11 @@ The render-side substrate (independent of any D backend) that twoslash builds on
 
 ## Backend: DMD-as-a-library (`DMD`, researched)
 
-The current modes consume a **pre-parsed** node model (produced by the reference
-TS `twoslash` at fixture-generation time). The D-native backend
-([issue #124](https://github.com/PetarKirov/sparkles/issues/124),
-`sparkles:dmd-lsp`) produces that node model from D source directly, swapping
-in **behind the proven node-model seam** (no renderer change).
+The overlay consumes a **pre-parsed** node model: the reference TS `twoslash`
+produces it for the committed fixtures, and the D-native backend
+([issue #124](https://github.com/PetarKirov/sparkles/issues/124)) produces it
+from D source — `sparkles:twoslash-d` over `sparkles:dmd-lsp`, run as
+`twoslash-extract` — **behind the proven node-model seam** (no renderer change).
 
 > [!NOTE]
 > The backend now has its own spec —
@@ -307,14 +315,14 @@ type oracle (`findTip`/`findDefinition`) · D3 completions + semantic tokens + r
 
 ## Module coverage (twoslash surface)
 
-| Source (branch `feat/syntax-twoslash`)                                                                                          | Requirements                                                                               |
-| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `apps/hue/src/app.d` (`runTwoslashMode`, `runMarkdownMode`)                                                                     | `TWM1`–`TWM5`                                                                              |
-| `apps/hue/src/gui.d` (`runGuiTwoslash`)                                                                                         | `TWO1`–`TWO3`                                                                              |
-| `apps/hue/src/live_types.d` + the `startLive`/`pollLive` seams in `gui.d`, `workspace.d`, `tui.d`                               | `LIV1`–`LIV7` (producer half: `PRJ12`–`PRJ16`, `EXT7`)                                     |
-| `libs/twoslash/src/sparkles/twoslash/signature_layout.d`, `render_widgets.d`; `gui.drawPopup`, `tui.paintHoverPopup`            | `SIG1`–`SIG6` (producer half: `TIP5`)                                                      |
-| `libs/twoslash/src/sparkles/twoslash/*.d` (`render_html.d`, `style.d`/`views/twoslash.css`, `icons.d`, `ingest.d`, `overlay.d`) | `TWH1`–`TWH8`; library summary (→ `docs/specs/twoslash/SPEC.md` on `feat/syntax-twoslash`) |
-| `libs/twoslash/examples/` (`compare-shiki.mjs`, `visual-check.mjs`)                                                             | verification tooling (the preview gallery moved to `sparkles.docs.page_shell`, `TWD3`)     |
-| `sparkles:dmd-lsp` (proposed)                                                                                                   | `DMD1`–`DMD3`                                                                              |
+| Source                                                                                                                                                                   | Requirements                                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------- |
+| `apps/hue/src/app.d` (`resolveOverlayTarget`, `runAnsiSink`, `runHtmlSink`, `emitMarkdownHtml`)                                                                          | `TWM1`–`TWM5`                                                                          |
+| `render_widgets.d` (`viewTwoslashDocumentInto`, `decorateCodeRow`, `viewHoverPopup`); `doc_view.viewer_model`; `gui.drawPopup`                                           | `TWO1`–`TWO3`                                                                          |
+| `apps/hue/src/live_types.d` + the `startLive`/`pollLive` seams in `gui.d`, `workspace.d`, `tui.d`                                                                        | `LIV1`–`LIV7` (producer half: `PRJ12`–`PRJ16`, `EXT7`)                                 |
+| `libs/twoslash/src/sparkles/twoslash/signature_layout.d`, `render_widgets.d`; `gui.drawPopup`, `tui.paintHoverPopup`                                                     | `SIG1`–`SIG6` (producer half: `TIP5`)                                                  |
+| `libs/twoslash/src/sparkles/twoslash/*.d` (`render_html.d`, `style.d`/`views/twoslash.css`, `icons.d`, `overlay.d`); `libs/twoslash-protocol` (`protocol.d`, `ingest.d`) | `TWH1`–`TWH8`; library summary (→ `docs/specs/twoslash/SPEC.md`)                       |
+| `libs/twoslash/examples/` (`compare-shiki.mjs`, `visual-check.mjs`)                                                                                                      | verification tooling (the preview gallery moved to `sparkles.docs.page_shell`, `TWD3`) |
+| `sparkles:dmd-lsp`, `sparkles:twoslash-d` (requirements in `docs/specs/dmd-lsp/`)                                                                                        | `DMD1`–`DMD3`                                                                          |
 
 → [General requirements](./feature-requirements.md) · [GUI requirements](./gui.md) · [Overview](./index.md)
