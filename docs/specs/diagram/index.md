@@ -84,12 +84,12 @@ right-click context menu. `f` fits all content; `q`/Esc quits.
 
 ## How it sits on the stack
 
-| Layer             | What diagram uses it for                                                                                                                    |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sparkles:ui-app` | `runApp` (`HST10`) — one call; backend pick, window/font/theme CLI (`GuiCliFields`), the frame loop, the recording target for every test    |
-| `sparkles:ui`     | `DrawOp` as the board's render vocabulary; `Slot`/theme for color; `CaptureState`/`PressState`/`HoverState`/`LineEditState` for interaction |
-| `sparkles:input`  | the event vocabulary — pointer, wheel, key press/release levels, capability-gated bindings (`INP16`)                                        |
-| `sparkles:base`   | `SharedBuffer` world columns and frame ops — the steady-state `@nogc` path                                                                  |
+| Layer             | What diagram uses it for                                                                                                                        |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sparkles:ui-app` | `runApp` (`HST10`) — one call; backend pick, window/font/theme CLI (`GuiCliFields`), the frame loop, the recording target for every test        |
+| `sparkles:ui`     | `DrawOp` as the board's render vocabulary; `Slot`/theme for color; `CaptureState` for drag capture; the grid backdrop, keymap and property tree |
+| `sparkles:input`  | the event vocabulary — pointer, wheel, key press/release levels, capability-gated bindings (`INP16`)                                            |
+| `sparkles:base`   | buffers and `@nogc` text writing for the steady-state frame                                                                                     |
 
 The board is a **display-list application**, not a widget tree: freeform
 world-space content has no box-flow expression, so the render systems emit
@@ -146,11 +146,11 @@ read instead of once per notch.
 
 ## Documentation map
 
-| Page                                              | What it covers                                                                                                    |
-| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **Overview** (this page)                          | what the app is · why it exists · how it sits on the stack                                                        |
-| [Feature requirements](./feature-requirements.md) | the requirement tree: architecture (`DIA`), camera (`CAM`), world (`WLD`), interaction (`IXN`), rendering (`RND`) |
-| [Delivery plan](./PLAN.md)                        | the two commit series, their order, and the acceptance gates                                                      |
+| Page                                              | What it covers                                                                                                                                    |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Overview** (this page)                          | what the app is · why it exists · how it sits on the stack                                                                                        |
+| [Feature requirements](./feature-requirements.md) | the requirement tree: architecture (`DIA`), camera (`CAM`), world (`WLD`), interaction (`IXN`), rendering (`RND`), grid (`GRD`), settings (`SET`) |
+| [Delivery plan](./PLAN.md)                        | the three commit series, their order, and the acceptance gates                                                                                    |
 
 ## ID scheme
 
