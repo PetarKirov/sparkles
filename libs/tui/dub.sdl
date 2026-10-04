@@ -1,5 +1,5 @@
 name "tui"
-description "Full-screen interactive terminal-UI library (scaffolding — the rendering core is pending the render-cost benchmark; see docs/specs/tui/)"
+description "Full-screen interactive terminal-UI library: a packed cell grid, a diffing renderer, input decoding and terminal control (see docs/specs/tui/)"
 authors "Petar Kirov"
 copyright "Copyright © 2026, Petar Kirov"
 license "BSL-1.0"
