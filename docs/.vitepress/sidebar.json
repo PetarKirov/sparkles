@@ -1125,6 +1125,10 @@
           {
             "text": "Components (flow-mode)",
             "link": "/specs/docs/components"
+          },
+          {
+            "text": "Glossary data",
+            "link": "/specs/docs/glossary"
           }
         ]
       },

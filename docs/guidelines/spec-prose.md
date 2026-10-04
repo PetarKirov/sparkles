@@ -174,7 +174,9 @@ restating it.
 
 That one place is the [glossary](../glossary.md). Its entries live in
 `docs/.vitepress/glossary.json`, which renders the glossary page and is
-checked by `ci --check-glossary`. An entry has these fields:
+checked by `ci --check-glossary`; [its
+specification](../specs/docs/glossary.md) states the format and every rule
+the check enforces. An entry has these fields:
 
 | Field        | Holds                                                                                                                                                         |
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
