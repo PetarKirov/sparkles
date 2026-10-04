@@ -7,9 +7,9 @@ calibration optional) ·
 
 The evidence for choosing the `sparkles:tui` rendering core by measurement. Numbers
 from the harness at `libs/tui/bench/render` (see its `README.md`); the raw snapshot
-is under `libs/tui/bench/render/results/`. This is the D-internal comparison
-(M1–M2); cross-language calibration (M3) is the remaining step before the decision
-is final — see [What's next](#whats-next).
+is under `libs/tui/bench/render/results/`. The D-internal comparison (M1–M2)
+comes first; the same-algorithm C calibration below completes the decision, and
+framework calibration stays optional — see [What's next](#whats-next).
 
 ## Environment
 
@@ -141,8 +141,7 @@ build inherits.
 - **Sensitivity** — a scroll-region (`DECSTBM`) `cell_grid` variant; wider profile
   and terminal-size coverage; the `unicode` (wide-cell) profile once the PoCs'
   wide-cell handling is oracle-verified.
-- On M3 completion, flip spec [§3.1 / the R1 decision](./index.md#decision-ledger)
-  to the chosen core and unblock the follow-up library-build plan.
+- The chosen core is recorded in spec [§3.1 / the R1 decision](./index.md#decision-ledger).
 
 ## Reproduce
 
