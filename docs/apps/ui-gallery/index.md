@@ -58,15 +58,15 @@ reporting must still be fully navigable.
 | ----------------------- | -------------------------------------------------------------- |
 | `↑` `↓` / `j` `k`       | move within the focused region                                 |
 | `←` `→`                 | previous / next page                                           |
-| `Tab`                   | switch between the page list and the page                      |
+| `Tab` / `Shift+Tab`     | switch between the page list and the page                      |
 | `Enter` / `Space`       | move to the page                                               |
 | `1`…`9`, `0`            | jump to a page                                                 |
 | `PgUp` / `PgDn`         | scroll the page; `Home` / `End` for its ends                   |
 | `[` / `]`               | previous / next theme                                          |
 | `\`                     | show the page list on a narrow terminal                        |
 | `\|`                    | toggle the inspector panel                                     |
-| `?`                     | every binding, including the showing page's own                |
-| `q` / `Esc`             | quit                                                           |
+| `?`                     | the key guide: every binding, the showing page's own included  |
+| `q` / `Esc`             | close the guide, else quit; `Ctrl+C` quits                     |
 | `Ctrl+]` / `` Ctrl+` `` | give the keyboard back to the gallery, from a focused terminal |
 
 With the keyboard in the page (`Tab`), the page gets first refusal on each key —
