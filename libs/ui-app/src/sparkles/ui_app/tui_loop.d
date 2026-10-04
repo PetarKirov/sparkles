@@ -459,7 +459,10 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
                             // the one the host has. `HST17`: a tty has no
                             // modifier poll, so the stream is the level.
                             host.noteModifiers(modsOf(e, host.modifiers));
-                            handle(host, withRealSize(e, host.size));
+                            if (interrupts(e, host.keyboardGrabbed))
+                                host.quit();
+                            else
+                                handle(host, withRealSize(e, host.size));
                         }
                     }
                     frame();
@@ -498,10 +501,45 @@ bool runTui(alias present, alias handle, alias draw = noDraw,
         // `HST7`: the size an application reads is the one the host has.
         // `HST17`: a tty has no modifier poll, so the stream is the level.
         host.noteModifiers(modsOf(e, host.modifiers));
-        handle(host, withRealSize(e, host.size));
+        if (interrupts(e, host.keyboardGrabbed))
+            host.quit();
+        else
+            handle(host, withRealSize(e, host.size));
         frame();
     }
     return true;
+}
+
+/**
+Whether `e` is the interrupt the host answers itself (design-system `KBD3`):
+`Ctrl-C`, which raw mode delivers as a key rather than a signal, quits — unless
+the application holds the keyboard for an embedded shell
+(`HostState.grabKeyboard`), which must receive it. No application binds it.
+*/
+bool interrupts(in Event e, bool grabbed) @safe
+{
+    import sparkles.input : KeyAction, KeyEvent, match;
+
+    if (grabbed)
+        return false;
+    return e.match!(
+        (in KeyEvent k) => k.action != KeyAction.release && k.mods.ctrl
+            && (k.ch == 'c' || k.unshifted == 'c'),
+        (_) => false);
+}
+
+@("ui_app.tui_loop.ctrlCInterruptsUnlessGrabbed")
+@safe unittest
+{
+    import sparkles.input : charEvent, Mods;
+
+    const ctrlC = charEvent('c', Mods(ctrl: true));
+    assert(interrupts(ctrlC, false));
+    assert(!interrupts(charEvent('c'), false), "a plain c is a key");
+    assert(!interrupts(ctrlC, true), "an embedded shell receives it");
+    TuiHost h;
+    h.grabKeyboard(true);
+    assert(h.keyboardGrabbed);
 }
 
 // A template arm is only analysed where it is instantiated, so a broken one
