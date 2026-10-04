@@ -57,7 +57,7 @@ import sparkles.input.events : Event, Key, KeyEvent, Point, PointerEvent,
     WheelEvent;
 import std.sumtype : match;
 
-import sparkles.ui.components.property_view : propertyView,
+import sparkles.ui.components.property_view : propertyView, propertyViewSlots,
     PropertyViewOptions;
 import sparkles.ui.components.tree_view : treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep, TreeViewState;
@@ -317,6 +317,11 @@ private enum uint hitBase = 1;
 private enum size_t settingsTreeKey = 0x5e77_ba55;
 /// ditto
 private enum size_t captureBase = 0x5e77_ba00;
+
+/// The slots the pane paints with (design-system `TOK6`): the property rows
+/// it embeds, plus its own panel, title, footer and editor marks.
+enum Slot[] settingsPaneSlots = propertyViewSlots ~ [Slot.surface,
+    Slot.highlightBorder, Slot.info, Slot.warn, Slot.caret];
 
 /**
 The pane over a subject `T`, with keys resolved by `resolveKey(KeyEvent,
@@ -1603,6 +1608,12 @@ version (UiSettingsFixtures)
     foreach (ref const n; view.nodes)
         sawBar |= n.kind == WidgetKind.scrollbar;
     assert(sawBar);
+    {
+        // `TOK6`: the whole pane, rows and chrome, inside its declaration.
+        import sparkles.ui.tokens : firstUndeclaredSlot;
+        assert(firstUndeclaredSlot(view, settingsPaneSlots) == Slot.inherit,
+            "TOK6: an undeclared slot");
+    }
 
     p.tv.selHome();
     p.tv.clamp();
