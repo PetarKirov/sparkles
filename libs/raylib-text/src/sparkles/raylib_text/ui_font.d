@@ -16,6 +16,7 @@ import raylib;
 
 import sparkles.raylib_text.font : fontHasGlyph, glyphIndexFor, loadVariantFile,
     LoadedFont;
+import sparkles.raylib_text.font_discovery : FontSources;
 import sparkles.raylib_text.font_set : FontSet;
 
 /// The number of steps on the type scale (`sparkles:ui`'s `TypeStep`).
@@ -85,6 +86,61 @@ unittest
     foreach (cp; [cast(int) 'A', 'z', 0xE9 /* é */, 0x161 /* š */, 0x2014 /* — */,
             0x2022 /* • */, 0x2026 /* … */])
         assert(uiCodepoints.canFind(cp));
+}
+
+/**
+Resolves the interface family `family` to its regular and bold files, the way
+`FontSet` resolves the cell font: through the system font database when
+`sources` uses one (fontconfig, or CoreText on macOS, so `"sans-serif"` names
+the desktop's own interface face), otherwise from `sources.dirs` (the bundled
+fonts on Android). `bold` is `""` when the family has no bold file. Returns
+whether a regular face was found.
+*/
+bool resolveUiFace(string family, in FontSources sources, out string regular,
+    out string bold) @trusted
+{
+    import std.file : exists;
+    import std.string : strip;
+    import sparkles.raylib_text.font_discovery : fontVariantPaths, resolveFontInDirs;
+
+    if (sources.useSystemFontDb)
+    {
+        version (OSX)
+        {
+            import sparkles.raylib_text.font_coretext : resolveFamilyList;
+
+            regular = resolveFamilyList(family);
+            bold = resolveFamilyList(family ~ " Bold");
+        }
+        else
+        {
+            import sparkles.raylib_text.font_fontconfig : fcRun;
+
+            auto r = fcRun(["fc-match", "-f", "%{file}", family]);
+            if (r.status == 0)
+                regular = r.output.strip.idup;
+            auto b = fcRun(["fc-match", "-f", "%{file}", family ~ ":bold"]);
+            if (b.status == 0)
+                bold = b.output.strip.idup;
+        }
+        if (bold == regular)
+            bold = "";
+    }
+    else
+    {
+        regular = resolveFontInDirs(family, sources.dirs);
+        if (regular.length)
+        {
+            string italic, boldItalic;
+            fontVariantPaths(regular, bold, italic, boldItalic);
+        }
+    }
+    if (regular.length == 0 || !regular.exists)
+    {
+        regular = bold = "";
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -209,4 +265,24 @@ struct UiFonts
             visit(*lf, cp, face.size, adv);
         }
     }
+}
+
+version (RaylibTextTests)
+@("raylib_text.ui_font.resolveUiFace.bundledFamily")
+@system unittest
+{
+    import std.path : baseName;
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    auto tmp = TmpFS.create("sparkles-ui-face-test");
+    foreach (f; ["Roboto-Regular.ttf", "Roboto-Bold.ttf", "FiraCodeNerdFontMono-Regular.ttf"])
+        tmp.writeFileAt(f, "x");
+    const sources = FontSources([tmp.dir], useSystemFontDb: false);
+
+    string regular, bold;
+    assert(resolveUiFace("Roboto", sources, regular, bold));
+    assert(regular.baseName == "Roboto-Regular.ttf" && bold.baseName == "Roboto-Bold.ttf");
+
+    assert(!resolveUiFace("Inter", sources, regular, bold), "a family the dirs lack");
+    assert(regular == "" && bold == "");
 }

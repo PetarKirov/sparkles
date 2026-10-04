@@ -42,7 +42,7 @@ import sparkles.input : Event;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayListInto;
 import sparkles.ui.geometry : Constraints, Rect;
-import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.layout : CellMeasure, Frame, layout;
 import sparkles.ui.style : Palette, Slot, Visual;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.widget : WidgetTree;
@@ -204,9 +204,15 @@ void presentApp(A, Host)(ref A app, ref Host h, in AppTheme th, ref FrameSnapsho
     if (snap.tree.nodes.length == 0)
         return;
 
-    snap.frames = layout(snap.tree, Constraints(sz.width, sz.height));
+    // A host that draws faces of its own measures text in them (`GLY10`);
+    // every other host lays out in its cells.
+    static if (__traits(hasMember, Host, "textMeasure"))
+        auto tm = h.textMeasure();
+    else
+        CellMeasure tm;
+    snap.frames = layout(snap.tree, Constraints(sz.width, sz.height), tm);
     buildDisplayListInto(snap.tree, snap.frames, frame.palette, frame.pageFg,
-        frame.pageBg, h.ops());
+        frame.pageBg, h.ops(), tm);
 }
 
 /**
