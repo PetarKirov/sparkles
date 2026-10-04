@@ -15,19 +15,20 @@ decision is `proposed` until the specification is accepted.
 Each capability below is outside the specification. An entry condition says
 what evidence would bring it back; without one, the item is not planned.
 
-| Excluded                                | Why                                                                                | Entry condition                                                                                                     |
-| --------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Line breaking, bidi, paragraph layout   | A layout layer above the library owns them.                                        | None in this library.                                                                                               |
-| Hinting, bytecode or automatic          | The largest single part of every rasterizer that has it.                           | A measured legibility gap at terminal sizes on a low-DPI panel that gamma-corrected unhinted coverage cannot close. |
-| LCD subpixel anti-aliasing              | Colour fringes off RGB-stripe panels; cannot composite over arbitrary backgrounds. | None.                                                                                                               |
-| `COLR` version 1 rendering              | A paint graph with gradients and compositing, a small renderer of its own.         | After `COLR` version 0 ships, when a consumer needs it.                                                             |
-| `SVG ` glyphs                           | Needs an SVG renderer.                                                             | None.                                                                                                               |
-| WOFF and WOFF2                          | Web containers; WOFF2 needs a Brotli decoder and table reconstruction.             | A consumer that must open web fonts.                                                                                |
-| Type 1 and `dfont`                      | Legacy formats.                                                                    | None.                                                                                                               |
-| Writing, subsetting or instancing files | No consumer writes fonts.                                                          | None.                                                                                                               |
-| A D OpenType shaping engine             | See `FTX1`.                                                                        | A target that must shape and cannot link HarfBuzz.                                                                  |
-| GPU rasterization                       | Bitmap specimens and cell glyphs do not need it.                                   | A consumer drawing transformed or continuously zoomed text.                                                         |
-| Font activation, network catalogs       | Application features, not library features.                                        | None in this library.                                                                                               |
+| Excluded                                | Why                                                                                            | Entry condition                                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Line breaking, bidi, paragraph layout   | Base owns analysis/opportunities and generic solving; text-layout owns contextual composition. | None in this library; link their owning contracts.                                                                  |
+| Hinting, bytecode or automatic          | The largest single part of every rasterizer that has it.                                       | A measured legibility gap at terminal sizes on a low-DPI panel that gamma-corrected unhinted coverage cannot close. |
+| LCD subpixel anti-aliasing              | Colour fringes off RGB-stripe panels; cannot composite over arbitrary backgrounds.             | None.                                                                                                               |
+| `COLR` version 1 rendering              | A paint graph with gradients and compositing, a small renderer of its own.                     | After `COLR` version 0 ships, when a consumer needs it.                                                             |
+| `SVG ` glyphs                           | Needs an SVG renderer.                                                                         | None.                                                                                                               |
+| WOFF and WOFF2                          | Web containers; WOFF2 needs a Brotli decoder and table reconstruction.                         | A consumer that must open web fonts.                                                                                |
+| Type 1 and `dfont`                      | Legacy formats.                                                                                | None.                                                                                                               |
+| Writing, subsetting or instancing files | No consumer writes fonts.                                                                      | None.                                                                                                               |
+| A D OpenType shaping engine             | See `FTX1`.                                                                                    | A target that must shape and cannot link HarfBuzz.                                                                  |
+| GPU rasterization                       | Bitmap specimens and cell glyphs do not need it.                                               | A consumer drawing transformed or continuously zoomed text.                                                         |
+| Font activation, network catalogs       | Application features, not library features.                                                    | None in this library.                                                                                               |
+| Math composition, pagination and export | Font supplies `MATH`/baseline/justification resources, not formula or page policy.             | None in this library; composition and frontends remain above font.                                                  |
 
 ---
 
@@ -52,7 +53,7 @@ being decided by it:
 
 ## FTX1: HarfBuzz is the shaper
 
-**State:** proposed · **Affects:** `FTS1`–`FTS6`, the `engine` configuration
+**State:** proposed · **Affects:** `FTS1`–`FTS11`, the `engine` configuration
 
 **Question.** Write an OpenType shaping engine in D, or use HarfBuzz?
 
@@ -164,8 +165,8 @@ open questions. None was in use under `docs/specs/` on 2026-10-03.
 
 ## FTX7: Ligatures keep one glyph per cell; their ink crosses cells
 
-**State:** proposed · **Affects:** `FTR1`, `FTS4`, milestone M8 ·
-**Resolves:** `FTQ3`
+**State:** proposed · **Affects:** `FTR1`, `FTS4`, `FTA16`, milestone M8 ·
+**Resolves:** `FTQ3` for the measured corpus, not arbitrary OpenType text
 
 **Question.** Does any common programming font's `calt` or `liga` merge
 characters into fewer glyphs, so that a terminal would need multi-cell glyph
@@ -187,20 +188,27 @@ extends outside the cell its advance occupies.
 | Maple Mono 7.9                      | 124                | 0                   | 0                | 117                  | 6.00 (`[ERROR]`) |
 | Maple Mono NF CN 7.9                | 126                | 0                   | 0                | 119                  | 6.00 (`[ERROR]`) |
 
-Every face keeps one glyph per character at the cell advance: a ligature is
-drawn by spacer glyphs, the last of which carries the whole shape and reaches
-back over the cells before it.
+In those measured samples every face keeps one glyph per character at the cell
+advance: a ligature is drawn by spacer glyphs, the last of which carries the whole
+shape and reaches back over the cells before it.
 
-**Choice.** The library adds no multi-cell glyph placement. A cell-grid
-consumer places glyph _i_ of a run in cell _i_, **does not clip** a glyph's ink
-to its own cell, and redraws every cell a glyph's ink reaches when any of them
-changes. The ink bounds `FTR1` reports are enough for both.
+**Choice.** Glyph _i_ in cell _i_ is an audited fast path, not the library's
+general placement contract. A run may take it only when its selected face,
+instance, features, input and cluster mapping establish one glyph per source
+cell with cell-grid advances. The measured 160 sequences establish feasibility
+for those eight face builds, not all strings or future versions of those fonts.
+A failed or unavailable audit routes through general shaped positions and
+source-cluster spans; it does not misalign or reject an otherwise valid shape.
+Both paths **do not clip** ink to a glyph's nominal cell, and redraw every cell
+the ink reaches when any of them changes. `FTR1` ink bounds determine damage,
+not advance or source coverage.
 
-**Trade-off.** One glyph per cell is a property of these fonts, not of
-OpenType: a face whose ligature does merge characters shapes correctly but
-misaligns in a terminal. The explorer's
-[cell-grid audit](../../glossary.md#cell-grid-audit) reports such a face.
-**Revisit when** the audit finds one in a font users ask for.
+**Trade-off.** General placement must handle ligature merges, spacer glyphs,
+multiple marks, RTL traversal and multi-cell source spans. The explorer's
+[cell-grid audit](../../glossary.md#cell-grid-audit) reports which inputs satisfy
+the fast path; it is not a condition for correct general shaping. This narrowing
+retains the measured evidence while removing the inference that OpenType permits
+a universal glyph-index-to-cell-index mapping.
 
 ## FTX8: The catalog builds synchronously over a worker pool
 
@@ -307,6 +315,71 @@ measures the flattening. testing.md § Raster oracle records both tolerances.
 compatibility. It is a few dozen lines and is also useful to a consumer that
 must match FreeType's rendering.
 
+## FTX11: One owner for Unicode and paragraph semantics
+
+**State:** proposed 2026-10-04 · **Affects:** `FTA15`, `FTS7`–`FTS9`, `FTD7`
+
+**Question.** Should font continue exposing shaping as an isolated UTF-8 string
+operation, with independently guessed Unicode properties and paragraph context?
+
+**Choice.** Font depends on [base's owned text foundation](../base/text/SPEC.md),
+never on [text-layout](../text-layout/SPEC.md). Base owns UTF/Unicode analysis and
+[generic wrapping](../base/text/wrapping.md); layout owns paragraph context,
+candidate composition and visual mappings. Font consumes explicit segment
+properties and supplies real contextual measurements, safety flags and whole-span
+fallback evidence. Standalone property guessing remains a named convenience,
+not a parallel owning paragraph-analysis path.
+
+**Trade-off.** Callers must preserve source context and distinguish actual text
+boundaries from style/script/fallback boundaries. The font-to-layout cutover
+updates every caller and removes competing decoding/segmentation/placement
+helpers. A layout candidate cannot be measured by summing nominal advances or
+reusing unsafe shaped fragments.
+
+**Evidence state.** This is a draft boundary contract, not a font implementation
+result. The 2026-10-04 text-foundation scope instruction does not settle the
+independent font Stage 0 acceptance or establish adversarial reviewer signoff.
+
+## FTX12: Unicode callbacks do not replace an engine compatibility profile
+
+**State:** proposed 2026-10-04 · **Affects:** `FTS8`, milestone M4
+
+**Question.** Is installing base-backed HarfBuzz Unicode callbacks enough to
+ensure all shaping uses the selected Unicode release?
+
+**Choice.** Install all supported callbacks from the pinned base data, and pin
+the exact engine release/revision with an audited compatibility manifest for
+internal tables and algorithms that callbacks cannot replace. A callback-only
+claim is insufficient; an uncovered mismatch blocks coordinated shaping.
+No runtime font path fetches data or inherits the compiler's Unicode version.
+
+**Trade-off.** Updating HarfBuzz or base's Unicode release is an explicit
+compatibility-profile update and real-font acceptance run. The ABI layout test
+does not prove Unicode compatibility, and the engine's own goldens are not an
+independent shaping oracle. An unsupported system engine is reported rather than
+used under a misleading profile.
+
+## FTX13: Scalable resources below publication composition
+
+**State:** proposed 2026-10-04 · **Affects:** `FTP13`, `FTM4`–`FTM7`,
+`FTS10`–`FTS11`, milestones M2/M4
+
+**Question.** Can pixel-only measurements and feature names serve contextual
+paragraphs, vertical writing and mathematical publication?
+
+**Choice.** Add design-unit and base-owned physical-unit measurements while
+retaining fractional pixel convenience and whole-device-pixel cell metrics.
+Expose `MATH`, `BASE`, vertical metrics, GDEF carets and justification capability
+records with explicit absence/provenance and actual candidate shaping.
+Ink and advance remain different quantities. Font supplies data; math composition,
+justification policy, pages and export do not move into font.
+
+**Trade-off.** Real math, vertical and caret/justification corpus evidence is a
+delivery prerequisite, not optional demonstration. Missing tables are legal
+font inputs, but testing only their absence cannot accept a supported capability.
+The acceptance manifest records the pinned faces and measured values; no such
+measurement is claimed by this decision.
+
 ---
 
 ## Open questions
@@ -347,3 +420,18 @@ Answered on review of spike S2; see
 [stb]: ../../research/font-libraries/stb-truetype.md
 [vello]: ../../research/font-libraries/vello.md
 [fontations]: ../../research/font-libraries/fontations.md
+
+## Text-foundation extension review
+
+The 2026-10-04 coordinated text-foundation extension received a separate read-only
+adversarial review of contextual shaping, units, source-cluster coverage, safety
+flags, caret data, publication font capabilities and fallback. The reviewer found
+that FTD5 coverage-only admission contradicted FTD7 whole-span shaping trials.
+FTD5 now retains shaping candidates with identical/subset character coverage and
+keeps scalar coverage pruning separate; the real-sequence acceptance scenario in
+testing.md checks chosen face, glyphs and source outcome. A final scoped recheck
+found that blocker resolved.
+
+This review covers the text-foundation extensions, not independent acceptance of
+the entire font Stage 0 or an absent font implementation. Existing raster-spike
+evidence remains scoped to its measured fonts, sizes and revisions.

@@ -887,6 +887,26 @@
             "collapsed": true,
             "items": [
               {
+                "text": "Owned UTF/Unicode specification",
+                "link": "/specs/base/text/SPEC"
+              },
+              {
+                "text": "Foundation delivery plan",
+                "link": "/specs/base/text/PLAN"
+              },
+              {
+                "text": "Foundation testing & evidence",
+                "link": "/specs/base/text/testing"
+              },
+              {
+                "text": "Foundation decisions",
+                "link": "/specs/base/text/decisions"
+              },
+              {
+                "text": "Wrapping & measurement",
+                "link": "/specs/base/text/wrapping"
+              },
+              {
                 "text": "Cell-splitting & width spec",
                 "link": "/specs/base/text/"
               },
@@ -1213,6 +1233,28 @@
           {
             "text": "Decisions",
             "link": "/specs/font/decisions"
+          }
+        ]
+      },
+      {
+        "text": "Text Layout",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/text-layout/SPEC"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/text-layout/PLAN"
+          },
+          {
+            "text": "Testing & Evidence",
+            "link": "/specs/text-layout/testing"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/text-layout/decisions"
           }
         ]
       },

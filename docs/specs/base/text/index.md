@@ -1,14 +1,17 @@
 # `sparkles.base.text` — cell-splitting & width specification
 
-_Audience: developers and coding agents building against `sparkles:base`. This
-document is normative and self-contained — it states how the library decodes,
-segments, measures, and wraps styled UTF-8 in terminal cells. It is **based on
-[kitty's Text Sizing Protocol](https://sw.kovidgoyal.net/kitty/text-sizing-protocol/)**,
-whose normative "algorithm for splitting text into cells" is the clearest written
-reference for the modern-terminal width consensus; relevant passages are quoted with
-credit below. The conformance ledger — every case the implementation must satisfy,
-including currently-failing ones — lives in [test cases](./test-cases.md). For the
-library overview see [`sparkles:base`](../../../libs/base/index.md)._
+This page records the delivered terminal cell policy and its conformance
+baseline. The [owned UTF/Unicode specification](./SPEC.md) defines the replacement
+foundation, and [wrapping and measurement](./wrapping.md) defines the shared
+line-selection and source-preserving plan contracts. Their delivery status and
+cutover gates are tracked in [the delivery plan](./PLAN.md); a target requirement
+is not evidence that its implementation has shipped.
+
+The terminal width policy below is based on
+[kitty's Text Sizing Protocol](https://sw.kovidgoyal.net/kitty/text-sizing-protocol/).
+The curated baseline lives in [test cases](./test-cases.md), independent-oracle
+execution in [the conformance harness](./conformance-harness.md), and public usage
+in [`sparkles:base`](../../../libs/base/index.md).
 
 ## 1. Scope & credits
 
