@@ -84,6 +84,13 @@ Changing arrival order does not change that result. Setting orders equal uses
 stable source identity and source-local identity as the tie break; the fixture
 states those identities explicitly.
 
+Ordering fixtures hold priority equal and exercise orders `-10`, `0`, and `10`,
+then equal orders with source identities `a`, `aa`, and `b`. Expected ordering is
+ascending signed order, then `a` before `aa` before `b`. Repeat with equal source
+identity and different source-local identities, and with raw identity bytes
+`0x7f`, `0x80`, and `0xff`; unsigned-byte ordering puts them in that order. These
+fixtures distinguish descending order, locale comparison, and signed-char bugs.
+
 For `lines`, manually derive `"a" + "\n" + "" + "\n" + "b\n"` as
 `"a\n\nb\n"`. Verify empty definitions, embedded newline preservation, and no
 extra trailing newline. Lists preserve duplicate elements; they are not sets.
@@ -217,3 +224,14 @@ C0 review/publication evidence only, not implementation acceptance.
   sidebar targets, and followed the definition glossary link to its existing
   anchor. Generated resolver heading IDs matched the glossary authority links.
   This verifies published document navigation, not the proposed config commands.
+
+### Follow-up clarification review
+
+- **R3 — supplied prose/precision review: fixed in this branch.** Timeless
+  resolver wording replaces implementation-phase wording; C1 scope remains in
+  the delivery plan. WCFG10's local-policy explanation is a labeled rationale,
+  WCFG11 explicitly defines ascending signed/unsigned-byte comparison and prefix
+  ordering, and WCFG22/WCFG23 are classified as integration-owned obligations
+  without renumbering them. Identity representation is resolved with C1 readiness;
+  selected-map spelling-collision timing remains a C2 refinement, not an editorial
+  change or a claim of NixOS interoperability.

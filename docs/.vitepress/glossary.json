@@ -1046,8 +1046,8 @@
   {
     "id": "config-option",
     "term": "configuration option",
-    "summary": "An independently resolved setting with a typed value, a canonical address, and declared composition semantics.",
-    "definition": "An addressable setting declared by a configuration schema. Its explicit definitions compete by numerical priority and combine according to its declared policy; a section groups child options, while a collection element is not automatically an independent option.",
+    "summary": "A named setting with a type, a built-in default value, and rules for resolving supplied definitions.",
+    "definition": "A setting declared by a configuration schema and identified by its schema path, with a type, built-in default value, and rules for resolving supplied definitions. Sections group options; a collection element is not automatically a separate option.",
     "authority": [
       {
         "text": "wired configuration resolution",
@@ -1060,8 +1060,8 @@
   {
     "id": "config-source",
     "term": "configuration source",
-    "summary": "An identified origin that supplies configuration definitions, such as compiled defaults, a file, an environment variable, or a command-line argument.",
-    "definition": "A caller-identified origin with a category and diagnostic detail. Its definitions carry their own priorities and ordering metadata; source kind is not itself a precedence rule.",
+    "summary": "An origin of configuration settings, such as built-in defaults, a file, an environment variable, or a command-line argument.",
+    "definition": "An origin identified by the application that can supply definitions for configuration options. A source's kind describes where values come from; each definition's priority determines precedence.",
     "authority": [
       {
         "text": "wired configuration sources",
@@ -1074,8 +1074,8 @@
   {
     "id": "config-definition",
     "term": "configuration definition",
-    "summary": "One explicit supplied value for a configuration option, retained with its source, priority, and ordering information.",
-    "definition": "One source's explicit statement of an option value, including a value equal to the compiled default. Absence supplies no definition; resolution retains overridden and conflicting definitions as well as contributors.",
+    "summary": "A value supplied by one source for a particular configuration option, along with its priority and ordering information.",
+    "definition": "One value supplied by a source for a particular configuration option, together with its priority and ordering information. Explicitly setting an option creates a definition even when its value equals the built-in default; leaving it out creates none.",
     "authority": [
       {
         "text": "wired configuration definitions",
@@ -1088,8 +1088,8 @@
   {
     "id": "config-priority",
     "term": "definition priority",
-    "summary": "A numerical preference attached to a configuration definition, where the smallest number selects the definitions eligible to contribute.",
-    "definition": "The resolver selects the minimum priority present for an option before applying its composition policy. Equal-priority definitions merge or conflict according to that policy; ordering within noncommutative merges is separate metadata.",
+    "summary": "A number attached to a configuration definition, with smaller numbers taking precedence over larger ones.",
+    "definition": "A number used to select definitions for an option: only definitions with the smallest number participate in resolution. Those selected definitions merge or conflict under the option's rules; their merge order is specified separately.",
     "authority": [
       {
         "text": "wired configuration selection",
@@ -1102,8 +1102,8 @@
   {
     "id": "config-snapshot",
     "term": "resolution snapshot",
-    "summary": "An inspection-stable result containing retained configuration definitions, resolved values, contributors, and failures.",
-    "definition": "A caller-owned result whose exposed interface cannot mutate the retained definitions or their resolution dispositions. Successfully resolved options and unresolved conflicts remain inspectable together, but a complete configuration is unavailable while any option is unresolved.",
+    "summary": "A read-only result containing accepted definitions, resolved option values, contributing definitions, and failures.",
+    "definition": "A result that keeps all accepted definitions together with each option's resolved value or failure and the definitions that contributed or were overridden. Failed and successful options can be inspected together, but a complete configuration is available only when every option resolves successfully.",
     "authority": [
       {
         "text": "wired resolution snapshots",

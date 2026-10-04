@@ -60,8 +60,8 @@ owns consequential choices and explicitly blocked work.
 
 ## 1. Contract at a glance
 
-1. One schema declares option values and defaults; UDAs select composition.
-2. Absence supplies no definition; an explicitly supplied default-valued value does.
+1. One schema declares option names, types, and built-in default values; UDAs select how definitions compose.
+2. Leaving an option out supplies no definition; explicitly setting it supplies a definition even when its value equals the built-in default.
 3. Lower numerical priority wins before equal-priority merging begins.
 4. Source arrival order is not an implicit conflict resolver or list order.
 5. All accepted definitions survive resolution, including overridden definitions.
@@ -75,12 +75,12 @@ implementation evidence is recorded separately in [testing.md](./testing.md).
 
 ## 2. Scope, vocabulary, and ownership
 
-The first delivery target is synchronous resolution of finite D struct schemas,
+The resolver target is synchronous resolution of finite D struct schemas,
 scalars, strings, dynamic lists, associative maps, and nested sections, consumed
 by hue, terminal, and diagram. Strings are scalar unless a UDA selects `lines`.
 Arrays are atomic option values unless their option selects list composition.
 Pointers, classes, cyclic subjects, arbitrary ranges, sum-variant merging, and
-lazy evaluation are excluded from the first resolver target. Unsupported schema
+lazy evaluation are excluded from the resolver target. Unsupported schema
 shapes fail at compilation rather than becoming opaque successful merges.
 
 The shared vocabulary is defined once in the
@@ -115,8 +115,8 @@ Ordinary malformed external values **must not** be treated as programmer asserti
 
 The resolver reuses wired's schema and sparse-presence mechanisms. This contract
 does not require an unverified reified-schema feature from the
-[expressiveness specification](../expressiveness/SPEC.md); the first implementation
-uses facilities verified in the tree, with one shared walk per concrete type.
+[expressiveness specification](../expressiveness/SPEC.md); the resolver uses
+facilities verified in the tree, with one shared walk per concrete type.
 
 ## 3. Sources and definitions
 
@@ -138,7 +138,7 @@ collections, null-capable values, and values equal to compiled defaults **must**
 remain distinguishable from absence where the declared codec supports them.
 
 The sparse envelope and a nullable option payload are separate concepts. The
-first implementation **must not** assume one `Nullable` can represent both an
+resolver **must not** assume one `Nullable` can represent both an
 absent definition and an explicitly supplied null. Supporting nullable payloads
 requires the presence oracle in [testing.md](./testing.md#presence-and-ownership).
 
@@ -196,12 +196,17 @@ The following policy names are illustrative vocabulary, not shipped symbols:
 **WCFG10: Atomic conflicts.** Two or more selected definitions of an atomic option
 **must** produce a conflict containing all selected definitions, even when the
 values compare equal. Equality **must not** silently deduplicate independently
-submitted intent. This is a deliberate local policy, not a claim of exact NixOS
-compatibility.
+submitted intent.
+
+_Rationale:_ Equal-priority definitions from distinct sources retain distinct
+intent. Treating them as conflicting exposes overlaps rather than silently
+collapsing them. This is a local policy, not a claim of exact NixOS compatibility.
 
 **WCFG11: Ordered lists and lines.** Selected list or `lines` definitions **must**
-be ordered by `(order, source identity, source-local identity)`, using numerical
-order followed by bytewise identity comparison, independent of submission order.
+be ordered by `(order, source identity, source-local identity)`, using ascending
+signed numerical order followed by ascending lexicographical unsigned-byte
+comparison of source identity and source-local identity, independent of submission
+order. A byte prefix sorts before its longer extension.
 Lists **must** preserve each definition's internal element order. `lines`
 **must** preserve each supplied string verbatim and insert exactly one newline
 between definitions, including empty strings; it **must not** normalize existing
@@ -279,7 +284,7 @@ custom typed validation policy **must** return a located failure rather than
 throwing for malformed external input; conflict accumulation **must not** conceal
 exhaustion as a complete conflict set.
 
-The first public resolver surface is synchronous and uses explicit result values.
+The public resolver surface is synchronous and uses explicit result values.
 No allocation-free or `@nogc` promise is inferred from that choice. Templates infer
 attributes; non-template functions follow the repository's explicit safety rules.
 
@@ -292,10 +297,16 @@ once, and excludes allocator/container overhead; it is not an RSS guarantee.
 
 Exact default limits and storage accounting for custom values are blocked by
 [Q1](./decisions.md#q1-storage-and-default-limits). No library-completion claim is
-permitted until those are specified and verified. The first slice is restricted
-to scalar/string schemas with explicit test limits.
+permitted until those are specified and verified.
 
 ## 6. Integration and compatibility
+
+WCFG22 and WCFG23 are integration obligations owned by the shared configuration
+integration contract, not requirements that the resolver can satisfy alone.
+Application maintainers enforce them at cutover; app specifications own source
+profiles, malformed-source policy, and persistence details and link here rather
+than duplicating these obligations. The existing IDs and section anchor remain
+stable.
 
 **WCFG22: Shared startup resolution.** Each migrated app's normal startup and
 `config show` **must** obtain configuration from the same host-independent loader
@@ -305,7 +316,7 @@ CLI input.
 
 Existing [hue CFG2/CFG10](../../hue/config.md) and
 [terminal TCF2/TCF5](../../terminal/config.md) define app discovery and inspection.
-The new resolver does not add a system or project layer to an app merely because
+The resolver does not add a system or project layer to an app merely because
 its source vocabulary supports that category. The existing
 [property-tree contract](../../ui/property-tree.md) owns tree addressing,
 disclosure, metadata, and edit safety; this effort owns only the additional
@@ -313,7 +324,7 @@ read-only inspection profile specified in [inspection.md](./inspection.md).
 
 **WCFG23: Clean configuration cutover.** App migrations **must** remove the
 obsolete configuration-specific last-writer and composition paths once startup,
-inspection, and settings persistence consume the new model. Generic
+inspection, and settings persistence consume this definition-resolution model. Generic
 `wired.overlay` users outside that cutover **must not** be silently changed.
 Sparse persistence **must** retain only deliberate user edits and **must not**
 write an effective snapshot containing environment or CLI definitions.
