@@ -61,8 +61,8 @@ The tool decides, tags, and publishes releases of this repository from its
 own history. It does not version packages separately or keep a changelog
 file. It does not build the app either: CI builds and caches the artifacts,
 and the tool signs and publishes them, as the last stage or later through a
-subcommand. Agents are external command-line programs, such as Claude Code
-or Codex, run once per prompt; the tool contains no model client. Split mode
+subcommand. Agents are external command-line programs, run once per prompt;
+the tool contains no model client. Split mode
 requires a GitHub origin and the `gh` command-line client. Version parsing
 and ordering come from [`sparkles:versions`](../versions/SPEC.md). Why the
 policy is what it is belongs to the guideline: this document states only
