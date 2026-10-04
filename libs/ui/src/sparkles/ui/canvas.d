@@ -53,7 +53,7 @@ import sparkles.ui.effect : EffectId;
 import sparkles.ui.image : ImageFit, ImageHandle;
 import sparkles.ui.state : scrollbarThumb;
 import sparkles.base.term_style : UnderlineStyle;
-import sparkles.ui.style : BoxBorder, FontRole, Shadow, Slot, Visual;
+import sparkles.ui.style : BoxBorder, FontRole, Shadow, Slot, TypeStep, Visual;
 
 /// How a $(LREF Line)'s stroke is drawn.
 enum LineStyle : ubyte
@@ -122,6 +122,7 @@ struct Ink
     UnderlineStyle underline; /// text-decoration underline
     ubyte underlineAlpha = 0xFF; /// underline opacity (hover-fade)
     FontRole fontRole;        /// which font family the run wants
+    TypeStep typeStep;        /// a `FontRole.ui` run's step on the type scale
     ushort styleBits;         /// packed `TextAttr` flags (bold/italic/…)
     ushort fontScale = 100;   /// font size as a percentage of 1em
     /// The OSC 8 hyperlink this run belongs to — an index into the frame's URI
@@ -592,7 +593,8 @@ Ink inkOf(in Visual v) @safe pure nothrow @nogc
     => Ink(fg: v.fg, fgAlpha: v.fgAlpha, bg: v.bg, bgAlpha: v.bgAlpha,
         hasBg: v.hasBg, underline: v.underline,
         underlineAlpha: v.underlineAlpha, fontRole: v.fontRole,
-        styleBits: v.styleBits, fontScale: v.fontScale, linkId: v.linkId);
+        typeStep: v.typeStep, styleBits: v.styleBits, fontScale: v.fontScale,
+        linkId: v.linkId);
 
 /// The box half of `v`.
 BoxChrome boxChromeOf(in Visual v) @safe pure nothrow @nogc
@@ -611,6 +613,7 @@ Visual visualOf(in Ink ink) @safe pure nothrow @nogc
     v.underline = ink.underline;
     v.underlineAlpha = ink.underlineAlpha;
     v.fontRole = ink.fontRole;
+    v.typeStep = ink.typeStep;
     v.styleBits = ink.styleBits;
     v.fontScale = ink.fontScale;
     v.linkId = ink.linkId;

@@ -12,8 +12,9 @@ module sparkles.ui.display_list;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.layout : childClipOf, clipsX, clipsY, Frame, unclipped;
-import sparkles.ui.style : Palette, resolveVisual, Slot, StateSet, Visual;
+import sparkles.ui.layout : CellMeasure, childClipOf, clipsX, clipsY, Frame,
+    measureWidth, unclipped;
+import sparkles.ui.style : Palette, resolveVisual, Slot, StateSet, TextStyle, Visual;
 import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
 
@@ -27,11 +28,11 @@ background (when `paintBackground`) before recursing, so children draw on top.
 Allocates the returned array. For a per-frame rebuild that must not, see
 $(LREF buildDisplayListInto).
 */
-DrawOp[] buildDisplayList(in WidgetTree tree, in Frame[] frames, in Palette pal,
-    in RgbColor pageFg, in RgbColor pageBg)
+DrawOp[] buildDisplayList(TM = CellMeasure)(in WidgetTree tree, in Frame[] frames,
+    in Palette pal, in RgbColor pageFg, in RgbColor pageBg, TM tm = TM.init)
 {
     GcCmdBuffer buf;
-    buildDisplayListInto(tree, frames, pal, pageFg, pageBg, buf);
+    buildDisplayListInto(tree, frames, pal, pageFg, pageBg, buf, tm);
     return buf.ops.dup;
 }
 
@@ -52,8 +53,9 @@ therefore stores the $(I sink), not a
 slice of it. This is the ownership question
 [`UI-O4`](../../../../docs/specs/ui/open-issues.md#ui-o4) records.
 */
-void buildDisplayListInto(Sink)(in WidgetTree tree, in Frame[] frames,
-    in Palette pal, in RgbColor pageFg, in RgbColor pageBg, ref Sink ops)
+void buildDisplayListInto(Sink, TM = CellMeasure)(in WidgetTree tree, in Frame[] frames,
+    in Palette pal, in RgbColor pageFg, in RgbColor pageBg, ref Sink ops,
+    TM tm = TM.init)
 if (__traits(compiles, (ref Sink s) {
     s.fillRect(Rect.init);
     s.textRun(Rect.init, "x");
@@ -61,7 +63,36 @@ if (__traits(compiles, (ref Sink s) {
     s.popClip();
 }))
 {
-    emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), false, ops);
+    emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), false, ops, tm);
+}
+
+/+
+`text` cut to fit `cells` columns as `tm` measures it in `style`. On a cell
+measurer that is `takeCells`; on a styled one (a proportional interface face,
+design-system `GLY10`) whole code points come off the end until it fits, so a
+run of narrow letters is not cut at the character count.
++/
+private const(char)[] fitCells(TM)(ref TM tm, return scope const(char)[] text,
+    int cells, in TextStyle style)
+{
+    import sparkles.ui.geometry : takeCells;
+    import sparkles.ui.layout : isStyledTextMeasure;
+
+    static if (isStyledTextMeasure!TM)
+    {
+        if (cells <= 0)
+            return text[0 .. 0];
+        size_t end = text.length;
+        while (end > 0 && measureWidth(tm, text[0 .. end], style) > cells)
+        {
+            --end;
+            while (end > 0 && (text[end] & 0xC0) == 0x80) // a continuation byte
+                --end;
+        }
+        return text[0 .. end];
+    }
+    else
+        return takeCells(text, cells);
 }
 
 /+
@@ -70,9 +101,9 @@ something on the way down contains it on x: an ancestor that clips on that
 axis (a viewport, or a bordered box — `LAY15`), or one whose host does
 (`scrollsX`). Otherwise it is cut like a plain run (`LAY16`).
 +/
-private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pal,
-    in RgbColor pageFg, in RgbColor pageBg, in Rect clip, bool overflowX,
-    ref Sink ops)
+private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
+    in Palette pal, in RgbColor pageFg, in RgbColor pageBg, in Rect clip,
+    bool overflowX, ref Sink ops, ref TM tm)
 {
     const node = tree.nodes[idx];
     const rect = frames[idx].rect;
@@ -134,21 +165,21 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             // lies beside it — a border, a scrollbar, the next cell of a row.
             // Layout shrinks an overfull row's text below its natural width;
             // the cut to that width happens here, once, for every backend.
-            import sparkles.ui.geometry : takeCells;
-
             const lines = frames[idx].lines;
             if (lines.length == 0)
             {
-                ops.textRun(rect, takeCells(node.text, rect.width), node.slot,
-                    vis);
+                ops.textRun(rect, fitCells(tm, node.text, rect.width, node.textStyle),
+                    node.slot, vis);
                 break;
             }
             // A wrapped run: one op per broken line, stacked down the frame.
             const inner = rect.deflate(node.padding);
+            // A line in a face taller than the cell takes `lineRows` rows.
+            const pitch = frames[idx].lineRows;
             foreach (li, ln; lines)
                 ops.textRun(
-                    Rect(inner.x, inner.y + cast(int) li, inner.width, 1),
-                    takeCells(ln, inner.width), node.slot, vis);
+                    Rect(inner.x, inner.y + cast(int) li * pitch, inner.width, pitch),
+                    fitCells(tm, ln, inner.width, node.textStyle), node.slot, vis);
             break;
         case rich:
             // One op per styled span, advancing along the row (one row per
@@ -163,11 +194,10 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
             // this overflow) its spans keep their full width. Anywhere else
             // nothing would stop them painting over the row's neighbours, and
             // they are cut to the frame like a plain run (`LAY16`).
-            import sparkles.ui.geometry : cellsOf, takeCells;
-            import sparkles.ui.style : TextStyle;
             import sparkles.ui.widget : TextSpan;
 
             const inner = rect.deflate(node.padding);
+            const pitch = frames[idx].lineRows;
             const cut = !overflowX && !node.scrollsX;
             const right = inner.x + inner.width;
 
@@ -178,13 +208,13 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                 {
                     if (cut && x >= right)
                         break;
-                    const(char)[] text = span.text;
-                    if (cut && x + cast(long) cellsOf(text) > right)
-                        text = takeCells(text, right - x);
-                    const slot = span.slot == Slot.inherit ? node.slot : span.slot;
                     const style = span.textStyle == TextStyle.init
                         ? node.textStyle : span.textStyle;
-                    const w = cast(int) cellsOf(text);
+                    const(char)[] text = span.text;
+                    if (cut && x + cast(long) measureWidth(tm, text, style) > right)
+                        text = fitCells(tm, text, right - x, style);
+                    const slot = span.slot == Slot.inherit ? node.slot : span.slot;
+                    const w = measureWidth(tm, text, style);
                     // A span that inherits the node's slot inherits its states
                     // too; one that names its own slot is its own role, at rest
                     // — a selected row's `gutter` guides are not a selected tab
@@ -201,7 +231,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                         vis.hasBg = true;
                     }
                     vis.linkId = span.linkId; // the terminal hyperlink channel
-                    const r = Rect(x, y, w, 1);
+                    const r = Rect(x, y, w, pitch);
                     if (vis.hasBg)
                         ops.fillRect(r, slot, vis);
                     ops.textRun(r, text, slot, vis);
@@ -211,7 +241,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
 
             if (frames[idx].spanLines.length)
                 foreach (li, line; frames[idx].spanLines)
-                    emitSpanRow(line, inner.y + cast(int) li,
+                    emitSpanRow(line, inner.y + cast(int) li * pitch,
                         li ? node.hangIndent : 0);
             else
                 emitSpanRow(node.spans, inner.y);
@@ -280,7 +310,7 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                 ops.pushClip(childClip);
             foreach (child; node.children)
                 emit(tree, child, frames, pal, pageFg, pageBg, childClip,
-                    overflowX || node.scrollsX || clipsX(node), ops);
+                    overflowX || node.scrollsX || clipsX(node), ops, tm);
             if (clips)
                 ops.popClip();
             break;
@@ -381,6 +411,60 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
     assert(ops[0].visual.fg == RgbColor(0xd4, 0x56, 0x56));
     assert(ops[0].to == Point(5, 0)); // origin (0,0) + lineTo (5,0)
     assert(ops[1].kind == OpKind.textRun && ops[1].visual.fg == RgbColor(0xd4, 0x56, 0x56));
+}
+
+@("ui.display_list.styledMeasure.uiRunsStepAndAdvanceByTheirFace")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.layout : layout, StyledMeasure;
+    import sparkles.ui.style : defaultTwoslashPalette, FontRole, TypeStep;
+    import sparkles.ui.wrap : TextSpan, TextWrap;
+
+    // `GLY10`: on a target with an interface face, a title's lines step by
+    // its rows, and a rich line's spans advance by their measured width.
+    const title = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.title);
+    auto b = Builder();
+    const t = b.add(Widget(kind: WidgetKind.text, text: "aa bb", textStyle: title,
+        wrap: TextWrap.greedy));
+    const r = b.add(Widget(kind: WidgetKind.rich, spans: [
+        TextSpan(text: "a", textStyle: TextStyle(fontRole: FontRole.ui)),
+        TextSpan(text: "cd")]));
+    const col = b.container(WidgetKind.column, [t, r]);
+    auto tree = b.finish(col);
+
+    StyledMeasure m;
+    const frames = layout(tree, Constraints(maxW: 4), m);
+    auto ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255), m);
+
+    assert(ops.length == 4);
+    assert(ops[0].rect == Rect(0, 0, 4, 2) && ops[0].text == "aa");
+    assert(ops[1].rect == Rect(0, 2, 4, 2) && ops[1].text == "bb", "a title line is two rows");
+    assert(ops[2].rect == Rect(0, 4, 2, 1) && ops[2].text == "a", "a ui span is twice as wide");
+    assert(ops[3].rect == Rect(2, 4, 2, 1) && ops[3].text == "cd");
+}
+
+@("ui.display_list.styledMeasure.cutKeepsWholeCodePoints")
+@safe unittest
+{
+    import sparkles.ui.geometry : Constraints, SizeSpec;
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.layout : layout, StyledMeasure;
+    import sparkles.ui.style : defaultTwoslashPalette, FontRole;
+
+    // Three letters at two cells each in three cells: one letter fits, and
+    // the cut never splits a multi-byte code point.
+    auto b = Builder();
+    const t = b.add(Widget(kind: WidgetKind.text, text: "éab",
+        textStyle: TextStyle(fontRole: FontRole.ui), width: SizeSpec.fixed(3)));
+    auto tree = b.finish(t);
+
+    StyledMeasure m;
+    auto ops = buildDisplayList(tree, layout(tree, Constraints.init, m),
+        defaultTwoslashPalette(), RgbColor(0, 0, 0), RgbColor(255, 255, 255), m);
+    assert(ops.length == 1 && ops[0].text == "é");
 }
 
 @("ui.display_list.decoratedBoxAndStyledText")

@@ -281,14 +281,44 @@ enum FontRole : ubyte
     inherit, /// the surrounding text font (monospace code)
     code,    /// the code/monospace face
     docs,    /// the documentation/sans face
+    /// The interface face: an application's own chrome (headers, rows,
+    /// chips, buttons) in a proportional sans at its $(LREF TypeStep)'s size,
+    /// where the target has one (design-system `GLY10`); monospace elsewhere.
+    ui,
 }
 
-/// A resolved box border: per-side widths in device px, one stroke style, and
-/// the already-resolved edge color+alpha. A zero-width side draws nothing; the
-/// `alpha` channel drives the `.twoslash-hover` underline's 0.3s fade-in.
+/**
+The chrome type scale (design-system `GLY10`): the size a `FontRole.ui` run is
+drawn at, in density-independent px. Steps, not sizes, so a backend that cannot
+size text keeps the hierarchy in weight and colour and the layout unchanged.
+*/
+enum TypeStep : ubyte
+{
+    body,    /// 14 dp — rows, values, buttons
+    caption, /// 12 dp — descriptions, secondary lines
+    label,   /// 13 dp — chips, section labels, compact buttons
+    title,   /// 17 dp — page titles
+}
+
+/// The size of `step` in density-independent px.
+int typeStepDp(TypeStep step) @safe pure nothrow @nogc
+{
+    final switch (step) with (TypeStep)
+    {
+        case body: return 14;
+        case caption: return 12;
+        case label: return 13;
+        case title: return 17;
+    }
+}
+
+/// A resolved box border: per-side widths in CSS (density-independent) px, one
+/// stroke style, and the already-resolved edge color+alpha. A zero-width side
+/// draws nothing; the `alpha` channel drives the `.twoslash-hover` underline's
+/// 0.3s fade-in.
 struct BoxBorder
 {
-    Insets width;       /// per-side widths in px (top / right / bottom / left)
+    Insets width;       /// per-side widths in CSS px (top / right / bottom / left)
     BorderStyle style;  /// how present edges are stroked
     RgbColor color;     /// resolved edge color
     ubyte alpha = 0xFF; /// edge opacity
@@ -329,13 +359,14 @@ struct Visual
 
     // --- box chrome (resolved from a widget's Decoration) ---
     BoxBorder border;     /// resolved box border (default: none)
-    int borderRadius;     /// corner radius in px (0 = square corners)
+    int borderRadius;     /// corner radius in CSS px (0 = square corners)
     Shadow shadow;        /// resolved drop shadow (default: none)
     bool arrow;           /// draw a popup arrow/tail off this box's top edge?
     int arrowOffset;      /// arrow horizontal offset from the left, in cells
 
     // --- text chrome (resolved from a widget's TextStyle) ---
     FontRole fontRole;      /// which font family the run wants
+    TypeStep typeStep;      /// a `FontRole.ui` run's size on the type scale
     ushort fontScale = 100; /// font size as a percentage of 1em (100 = 1em)
     UnderlineStyle underline; /// text-decoration underline (default: none)
     ubyte underlineAlpha = 0xFF; /// underline opacity (hover-fade)
@@ -348,7 +379,9 @@ struct Visual
 /// A widget's declared box decoration — slot-referencing and presentation-free
 /// (the palette resolves the border/shadow colors). Widths, radius, and offsets
 /// are the literal CSS px values, so a reviewer can read them against
-/// `views/twoslash.css`. $(LREF resolveVisual) folds it into a $(LREF Visual).
+/// `views/twoslash.css`. CSS px are density-independent: a pixel target scales
+/// them by its density (design-system `TOK7`). $(LREF resolveVisual) folds it
+/// into a $(LREF Visual).
 struct Decoration
 {
     Insets borderWidth;             /// per-side border widths in px
@@ -365,7 +398,8 @@ struct Decoration
 /// boolean flags into $(LREF Visual)'s `styleBits`.
 struct TextStyle
 {
-    FontRole fontRole;          /// code (mono) / docs (sans) / inherit
+    FontRole fontRole;          /// code (mono) / docs (sans) / ui (chrome) / inherit
+    TypeStep typeStep;          /// a `FontRole.ui` run's step on the type scale
     ushort fontScale = 100;     /// percent of 1em
     bool bold;
     bool italic;
@@ -811,6 +845,7 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
 
     // Text chrome.
     v.fontRole = text.fontRole;
+    v.typeStep = text.typeStep;
     v.fontScale = text.fontScale;
     v.underline = text.underline;
     TextAttr attrs;
