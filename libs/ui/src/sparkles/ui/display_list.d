@@ -13,7 +13,7 @@ import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, clipsX, clipsY, Frame, unclipped;
-import sparkles.ui.style : Palette, resolveVisual, Slot, Visual;
+import sparkles.ui.style : Palette, resolveVisual, Slot, StateSet, Visual;
 import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
 
@@ -185,8 +185,13 @@ private void emit(Sink)(in WidgetTree tree, uint idx, in Frame[] frames, in Pale
                     const style = span.textStyle == TextStyle.init
                         ? node.textStyle : span.textStyle;
                     const w = cast(int) cellsOf(text);
+                    // A span that inherits the node's slot inherits its states
+                    // too; one that names its own slot is its own role, at rest
+                    // — a selected row's `gutter` guides are not a selected tab
+                    // label (D46).
                     auto vis = resolveVisual(pal, slot, node.decoration, style,
-                        pageFg, pageBg, node.states);
+                        pageFg, pageBg,
+                        span.slot == Slot.inherit ? node.states : StateSet.init);
                     if (span.hasFg) // the syntax channel: a resolved color
                         vis.fg = span.fg;
                     vis.hasBg = span.paintBackground && vis.hasBg;

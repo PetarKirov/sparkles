@@ -379,13 +379,27 @@ constants shared by the backends. `fg`/`bg` are $(REF Color, sparkles,base,term_
 an $(I unset) `fg` means "inherit the page foreground", an $(I unset) `bg` means
 "no background". Alpha is stored separately because `Color` carries none.
 */
-/// A sparse per-state color overlay — see `Palette.states`.
+/**
+A sparse per-state overlay — see `Palette.states`. Per slot and channel, a
+state may set a literal colour, or $(I alias) another slot: "in this state, take
+that slot's rest colour" (D46). An alias keeps a theme single-sourced — the
+active tab follows whatever the theme makes `chrome.accent` — and is the
+theme file's `{chrome.accent}`. Aliases resolve against the target's $(I rest)
+colours only, so they cannot chain or cycle (`TOK1`).
+*/
 struct StateColors
 {
     Color[slotCount] fg;             /// set ⇒ replaces the rest fg in this state
     ubyte[slotCount] fgAlpha = 0xFF; /// the fg's opacity when `fg` is set
     Color[slotCount] bg;             /// set ⇒ replaces the rest bg in this state
     ubyte[slotCount] bgAlpha = 0xFF; /// the bg's opacity when `bg` is set
+    bool[slotCount] fgAliased;       /// the fg (and its alpha) is `fgFrom`'s rest fg
+    Slot[slotCount] fgFrom;          /// ditto
+    bool[slotCount] bgAliased;       /// the bg (its alpha, and whether there is one) is `bgFrom`'s
+    Slot[slotCount] bgFrom;          /// ditto
+    /// Text attributes this state adds (packed `TextAttr` bits; `0` ⇒ none),
+    /// on top of the widget's own text style.
+    ushort[slotCount] attrs;
 }
 
 struct Palette
@@ -403,9 +417,10 @@ struct Palette
     The interaction-state dimension (`TOK4`/`TOK5`): one sparse overlay per
     state but `rest`, indexed by `state - 1`. A set `fg`/`bg` replaces the
     rest value for that state; an unset one falls through, so a theme that
-    sets none resolves every state exactly as `rest`. Attributes and metrics
-    per state are not carried yet (design-system D22 admits them; they land
-    with their first consumer).
+    sets none resolves every state exactly as `rest`. A channel may alias
+    another slot instead of naming a colour, and a state may add text
+    attributes (D46). Metrics per state are admitted (D22) and not carried
+    yet: they land with their first consumer.
     */
     StateColors[InteractionState.max] states;
 
@@ -414,6 +429,23 @@ struct Palette
         pure nothrow @nogc
     in (s != InteractionState.rest, "rest has no overlay; set fg/bg directly")
         => states[s - 1];
+
+    /// In state `s`, `slot` takes `fgFrom`'s rest foreground and `bgFrom`'s
+    /// rest background (D46).
+    void stateAlias(InteractionState s, Slot slot, Slot fgFrom, Slot bgFrom)
+        pure nothrow @nogc
+    {
+        auto o = &overlay(s);
+        o.fgAliased[slot] = true;
+        o.fgFrom[slot] = fgFrom;
+        o.bgAliased[slot] = true;
+        o.bgFrom[slot] = bgFrom;
+    }
+
+    /// ditto, both channels from one slot: in state `s`, `slot` resolves as
+    /// `to` does at rest.
+    void stateAlias(InteractionState s, Slot slot, Slot to) pure nothrow @nogc
+        => stateAlias(s, slot, to, to);
 
     // --- scalar chrome (shared across GUI/HTML/TUI) ---
     // Metrics are named by ROLE, not by the feature that first needed them
@@ -635,7 +667,40 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.bg[covPartial] = Color.fromRgb(0xc3, 0x7d, 0x0d);
         p.bgAlpha[covPartial] = 0x24;
     }
+    addComponentStates(p);
     return p;
+}
+
+/**
+The states the shipped components report, as aliases (D46): what a component
+used to do by swapping its slot, said once as data. Every alias reads its
+target's rest colours at resolve time, so a theme that derives `chrome.accent`
+or `chrome.focused` from its own page colours (`Theme.effectivePalette`) moves
+these with it.
+
+$(LIST
+    * a focused pane's bar (`chrome` + `focused`) is the focused band;
+    * a pressed action-bar segment (`chrome` + `pressed`) is the focused band,
+        its label in the accent;
+    * the selected tab of an uncapped strip (`chrome` + `selected`) is the
+        focused band — a capped strip's tab bodies are `chrome.accent` and are
+        filled only when selected;
+    * a tab's label (`gutter`) is the accent and bold when selected, and the
+        focused band's colours while pressed;
+    * a selected tree or property row (`inherit` + `selected`) is the
+        selection tint.
+)
+*/
+void addComponentStates(ref Palette p) pure nothrow @nogc
+{
+    alias S = InteractionState;
+    p.stateAlias(S.focused, Slot.chrome, Slot.chromeFocused);
+    p.stateAlias(S.pressed, Slot.chrome, Slot.chromeAccent, Slot.chromeFocused);
+    p.stateAlias(S.selected, Slot.chrome, Slot.chromeFocused);
+    p.stateAlias(S.selected, Slot.gutter, Slot.chromeAccent);
+    p.overlay(S.selected).attrs[Slot.gutter] = TextAttr.bold.bits;
+    p.stateAlias(S.pressed, Slot.gutter, Slot.chromeFocused);
+    p.stateAlias(S.selected, Slot.inherit, Slot.selection);
 }
 
 /**
@@ -656,25 +721,46 @@ Visual resolveSlot(in Palette pal, Slot slot, in RgbColor pageFg, in RgbColor pa
 
     // TOK5: per channel, the highest-precedence ACTIVE state that sets the
     // channel wins; a state that sets only `fg` leaves `bg` to fall through.
-    // Walked highest → lowest so the first hit is the answer.
-    bool fgDone, bgDone;
+    // Walked highest → lowest so the first hit is the answer. An alias (D46)
+    // sets its channel as surely as a literal does, from the target's rest.
+    bool fgDone, bgDone, attrsDone;
     static foreach_reverse (s; EnumMembers!InteractionState)
         static if (s != InteractionState.rest)
             if (states.has(s))
             {
                 const ref o = pal.states[s - 1];
-                if (!fgDone && o.fg[i].isSet)
+                if (!fgDone && o.fgAliased[i])
+                {
+                    const j = cast(size_t) o.fgFrom[i];
+                    v.fg = toRgb(pal.fg[j], pageFg);
+                    v.fgAlpha = pal.fgAlpha[j];
+                    fgDone = true;
+                }
+                else if (!fgDone && o.fg[i].isSet)
                 {
                     v.fg = toRgb(o.fg[i], pageFg);
                     v.fgAlpha = o.fgAlpha[i];
                     fgDone = true;
                 }
-                if (!bgDone && o.bg[i].isSet)
+                if (!bgDone && o.bgAliased[i])
+                {
+                    const j = cast(size_t) o.bgFrom[i];
+                    v.hasBg = pal.bg[j].isSet;
+                    v.bg = toRgb(pal.bg[j], pageBg);
+                    v.bgAlpha = pal.bgAlpha[j];
+                    bgDone = true;
+                }
+                else if (!bgDone && o.bg[i].isSet)
                 {
                     v.bg = toRgb(o.bg[i], pageBg);
                     v.bgAlpha = o.bgAlpha[i];
                     v.hasBg = true;
                     bgDone = true;
+                }
+                if (!attrsDone && o.attrs[i] != 0)
+                {
+                    v.styleBits = o.attrs[i];
+                    attrsDone = true;
                 }
             }
     return v;
@@ -734,7 +820,8 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
         attrs = attrs | TextAttr.italic;
     if (text.strikethrough)
         attrs = attrs | TextAttr.strikethrough;
-    v.styleBits = attrs.bits;
+    // The widget's own style, plus whatever its state adds (D46).
+    v.styleBits = cast(ushort)(v.styleBits | attrs.bits);
 
     return v;
 }
@@ -894,6 +981,42 @@ unittest
     pal.overlay(InteractionState.disabled).fg[Slot.thumb] = Color.fromRgb(0x77, 0x77, 0x77);
     const dis = resolveSlot(pal, Slot.thumb, fg, bg, all);
     assert(dis.fg == RgbColor(0x77, 0x77, 0x77) && dis.bg == RgbColor(0xaa, 0x00, 0x00));
+}
+
+@("ui.style.resolveSlot.stateAliasesAndAttributes")
+@safe pure nothrow @nogc
+unittest
+{
+    // D46: a state may alias another slot per channel, and add attributes.
+    // The alias reads the target's rest colours at resolve time, so it
+    // follows whatever the palette makes that slot.
+    auto pal = defaultTwoslashPalette();
+    const fg = RgbColor(200, 200, 200), bg = RgbColor(20, 20, 20);
+    pal.stateAlias(InteractionState.selected, Slot.gutter, Slot.chromeAccent);
+    pal.overlay(InteractionState.selected).attrs[Slot.gutter] = TextAttr.bold.bits;
+    const sel = StateSet.of(InteractionState.selected);
+
+    const accent = resolveSlot(pal, Slot.chromeAccent, fg, bg);
+    const v = resolveSlot(pal, Slot.gutter, fg, bg, sel);
+    assert(v.fg == accent.fg && v.hasBg == accent.hasBg && v.bg == accent.bg);
+    assert(v.styleBits == TextAttr.bold.bits);
+    // Change the target: the alias follows it.
+    pal.fg[Slot.chromeAccent] = Color.fromRgb(1, 2, 3);
+    assert(resolveSlot(pal, Slot.gutter, fg, bg, sel).fg == RgbColor(1, 2, 3));
+    // At rest nothing changes.
+    assert(resolveSlot(pal, Slot.gutter, fg, bg).styleBits == 0);
+
+    // Per channel: fg from one slot, bg from another.
+    pal.stateAlias(InteractionState.pressed, Slot.chrome, Slot.chromeAccent, Slot.chromeFocused);
+    const p = resolveSlot(pal, Slot.chrome, fg, bg, StateSet.of(InteractionState.pressed));
+    assert(p.fg == resolveSlot(pal, Slot.chromeAccent, fg, bg).fg);
+    assert(p.bg == resolveSlot(pal, Slot.chromeFocused, fg, bg).bg && p.hasBg);
+
+    // The attribute adds to the widget's own style in the full resolution.
+    TextStyle italic;
+    italic.italic = true;
+    const full = resolveVisual(pal, Slot.gutter, Decoration.init, italic, fg, bg, sel);
+    assert(full.styleBits == (TextAttr.bold | TextAttr.italic).bits);
 }
 
 @("ui.style.resolveSlot.inheritAndTint")
