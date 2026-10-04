@@ -1237,6 +1237,28 @@
         ]
       },
       {
+        "text": "Shaders (proposal)",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/shaders/SPEC"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/shaders/PLAN"
+          },
+          {
+            "text": "Testing & Evidence",
+            "link": "/specs/shaders/testing"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/shaders/decisions"
+          }
+        ]
+      },
+      {
         "text": "Text Layout",
         "collapsed": true,
         "items": [
