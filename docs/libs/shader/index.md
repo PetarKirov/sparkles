@@ -5,8 +5,8 @@ target, per fragment on the GPU. This library is the vocabulary such a function
 is written against; the effects that use it live in `sparkles:ui`
 (`sparkles.ui.effect_shaders`), and the pipeline that turns them into GLSL is
 `apps/shader-compile`. The design and its contracts are in the
-[effects spec](../../specs/ui/effects.md#one-source-two-targets-efx20) (`EFX20`,
-`EFX25`–`EFX27`).
+[`sparkles:shaders` specification](../../specs/shaders/SPEC.md); how
+`sparkles:ui` uses it is in the [effects spec](../../specs/ui/effects.md#one-source-two-targets-efx20).
 
 ## The vocabulary
 
