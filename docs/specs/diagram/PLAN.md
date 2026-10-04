@@ -4,9 +4,10 @@ _Audience: contributors. Execution-only; IDs refer to the
 [feature requirements](./feature-requirements.md). Parent phase:
 [ui-app PLAN, phase 3](../ui-app/PLAN.md#phase-3)._
 
-Two commit series, stacked (`gh stack`), each commit green on its own.
+Three commit series, stacked (`gh stack`), each commit green on its own.
 
-Progress: Series 1–3 delivered (D1.1–D3.3); per-requirement status lives in the
+Progress: Series 1–3 delivered (D1.1–D3.3), and the grid backdrop (`GRD`)
+with them; per-requirement status lives in the
 [feature requirements](./feature-requirements.md).
 
 ## Series 1 — the MVP board
@@ -43,7 +44,7 @@ dub test :diagram
 dub build :diagram && dub build :diagram -c no-gui
 dub run :diagram -- --tui
 dub run :diagram -- --gui --window-width 120 --window-height 40
-rg -n "ui_tui|ui_raylib|sparkles\.tui|import raylib" apps/diagram/   # no matches
+rg -n "ui_tui|ui_raylib|sparkles\.tui|import raylib" apps/diagram/   # only dub.sdl's comment quoting it
 ```
 
 ## Series 3 — the settings pane
