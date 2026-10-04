@@ -10,8 +10,8 @@
 [0m [0m  Effects[0m           [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
 [0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mnone - one line, clipped by whatever contains it[0m                    [0m|[0m [0m#[0m
 [0m [0m  Components[0m        [0m|[0m [0m|[0m A widget names a semantic slot, ne                                  [0m|[0m [0m#[0m
-[0m [0m  Tree[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
-[0m [0m  Property tree[0m     [0m|[0m                                                                         [0m#[0m
+[0m [0m  Tree[0m              [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
+[0m [0m  Property tree[0m     [0m|[0m                                                                         [0m|[0m
 [0m [0m  Table[0m             [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m [0m  Scrolling[0m         [0m|[0m [0m|[0m [0;1mgreedy - break as late as possible[0m                                  [0m|[0m [0m|[0m
 [0m [0m  State[0m             [0m|[0m [0m|[0m A widget names a semantic slot,                                     [0m|[0m [0m|[0m

@@ -17,7 +17,7 @@ import std.conv : text;
 
 import sparkles.input : Key, KeyEvent;
 import sparkles.ui.geometry : cellsOf, SizeSpec;
-import sparkles.ui.style : Slot;
+import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 import sparkles.ui.wrap : TextWrap;
 
@@ -75,6 +75,22 @@ uint view(ref Builder b, in GalleryState s)
     ]);
     body_ ~= spacer(b);
 
+    body_ ~= section(b, "type scale — the interface face (GLY10)", [
+        typed(b, "Settings", TypeStep.title, bold: true),
+        typed(b, "Follow system light/dark", TypeStep.body),
+        typed(b, "Switch colours with the system scheme", TypeStep.caption),
+        typed(b, "✓ info · ⌕ source ▾ · ⚙ Settings", TypeStep.label),
+    ]);
+    body_ ~= spacer(b);
+    body_ ~= para(b,
+        "In a window these draw in the interface face — the system's sans, or "
+        ~ "the bundled Roboto — at 17, 14, 12 and 13 density-independent "
+        ~ "pixels; a title takes as many rows as its line needs. Icons the "
+        ~ "face lacks come from the cell font at the same size. A terminal "
+        ~ "keeps the cell font in the same rows and columns and reports "
+        ~ "monospace-ui.", w);
+    body_ ~= spacer(b);
+
     body_ ~= section(b, "cellsOf — the one width authority", [
         measured(b, "ascii"),
         measured(b, "a — b"),
@@ -103,6 +119,11 @@ uint view(ref Builder b, in GalleryState s)
 
     return column(b, body_);
 }
+
+/// One line in the interface face at `step`.
+private uint typed(ref Builder b, string text_, TypeStep step, bool bold = false)
+    => b.add(Widget(kind: WidgetKind.text, text: text_,
+        textStyle: TextStyle(fontRole: FontRole.ui, typeStep: step, bold: bold)));
 
 /// The sample, wrapped one way.
 private uint wrapped(ref Builder b, TextWrap mode, int col, int hang,
