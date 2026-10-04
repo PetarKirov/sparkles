@@ -842,7 +842,9 @@ both satisfy the same concept.
 
 A canvas $(B may) additionally implement the optional clipping pair
 `void pushClip(Rect)` / `void popClip()` (nested clips intersect), a sub-cell
-`rule`, and a semantic `scrollbar`. The painter forwards those by
+`rule`, a semantic `scrollbar`, and `void textRunIn(Rect, const(char)[], Visual)`
+— a text run with its whole cell rect, for a canvas that draws a face at its
+own size and centres and clips it there (design-system `GLY10`). The painter forwards those by
 introspection; a canvas without them gets the cell-aligned degradation.
 */
 enum bool isCanvas(T) = __traits(compiles, (ref T c) {
