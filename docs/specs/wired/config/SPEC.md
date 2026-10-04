@@ -46,17 +46,19 @@ explain the result; an execution trace of intermediate merge steps is not requir
 
 This contract owns the typed, synchronous, I/O-free configuration resolver in
 `sparkles:wired`; `sparkles.wired.config` is a proposed module family, not a new
-package. Applications discover and decode sources, report conversion failures,
-and submit typed definitions with explicit priorities. They own startup decisions;
-the UI library owns property-tree and table presentation.
+package. Applications discover sources, choose decoding policy, use library input
+adapters or submit typed definitions, and report conversion failures. They own
+priority assignment and startup decisions; the UI library owns presentation.
 File writing, reactive evaluation, arbitrary executable configuration, Nix
 expression evaluation, and a lazy module evaluator are outside this scope.
 
 Sections 1–7 define the resolver contract, failure model, and compatibility
-seams. [Inspection](./inspection.md) owns the shared report contract in
-`sparkles:ui`. [PLAN.md](./PLAN.md) owns delivery order and progress.
-[testing.md](./testing.md) owns oracles and evidence; [decisions.md](./decisions.md)
-owns consequential choices and explicitly blocked work.
+seams. [Scalar resolution](./scalar-resolution.md) specifies the concrete
+scalar/string interface, identity, ownership, and budgets.
+[Inspection](./inspection.md) owns the shared report contract in `sparkles:ui`.
+[PLAN.md](./PLAN.md) owns delivery order and progress; [testing.md](./testing.md)
+owns oracles and evidence; [decisions.md](./decisions.md) owns consequential
+choices and explicitly blocked work.
 
 ## 1. Contract at a glance
 
@@ -137,10 +139,13 @@ present option and none for an absent option. Explicit `false`, zero, empty
 collections, null-capable values, and values equal to compiled defaults **must**
 remain distinguishable from absence where the declared codec supports them.
 
-The sparse envelope and a nullable option payload are separate concepts. The
-resolver **must not** assume one `Nullable` can represent both an
-absent definition and an explicitly supplied null. Supporting nullable payloads
-requires the presence oracle in [testing.md](./testing.md#presence-and-ownership).
+The sparse envelope and a nullable option payload are separate concepts.
+[Scalar resolution](./scalar-resolution.md#_3-input-and-operation-interface)
+requires a presence slot outside the original payload and original-policy leaf
+decoding. Nested `Nullable` overlays are rejected by wired, and the existing
+`Mapped` transform loses field rename metadata; it is not the JSON input decoder
+for this contract. [Presence evidence](./testing.md#scalar-readiness-feasibility)
+records both failures and the separate-slot proof.
 
 **WCFG5: Defaults.** Every independently resolved option, including composed
 lists, maps, and `lines`, **must** receive a built-in definition from its field
@@ -161,6 +166,10 @@ source-local identity)`. Priority values need no arithmetic transformation;
 comparison uses their full range. An ordinary host default priority of 1000 is
 an example, not a rule binding every app. Per-definition overrides are typed
 host inputs, not reserved keys inserted into existing JSON documents.
+
+The scalar interface fixes the identity representation, reserved built-in ID,
+length bounds, canonical member addresses, and owner-bound handle rules in
+[WCFG26](./scalar-resolution.md#addresses-and-identities).
 
 **WCFG7: Submission ownership.** A successful submission **must** transfer owned
 payload storage or take an independent snapshot of borrowed payloads. Mutating or
@@ -291,13 +300,16 @@ attributes; non-template functions follow the repository's explicit safety rules
 **WCFG21: Limits.** The caller **must** be able to set positive limits for retained
 definition count, retained payload bytes, recursion depth, and generated option
 records. Exceeding a limit **must** return exhaustion with the limit named and
-**must not** publish a truncated snapshot as complete. Payload accounting includes
-owned value content and retained diagnostic strings, counts shared owned content
-once, and excludes allocator/container overhead; it is not an RSS guarantee.
+**must not** publish a truncated snapshot as complete. The scalar interface
+**must** follow [WCFG33–WCFG34](./scalar-resolution.md#_6-limits-and-accounting):
+shared retained metadata is charged once, definition payloads are charged per
+definition independently of physical sharing, and allocator/container overhead is
+excluded. These are logical-content limits, not an RSS guarantee.
 
-Exact default limits and storage accounting for custom values are blocked by
-[Q1](./decisions.md#q1-storage-and-default-limits). No library-completion claim is
-permitted until those are specified and verified.
+Scalar defaults and accounting are specified; collection/custom-value accounting
+remains gated by [Q1](./decisions.md#q1-storage-and-default-limits). No
+collection-completion claim is permitted until those additional rules are specified
+and verified.
 
 ## 6. Integration and compatibility
 

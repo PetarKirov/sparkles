@@ -1,7 +1,7 @@
 ---
 status: draft
 owner: sparkles:wired
-reviewed: 2026-10-04
+reviewed: 2026-10-05
 ---
 
 # `sparkles.wired.config` — Delivery plan
@@ -29,14 +29,14 @@ starting, rather than implementing around confident-looking interface sketches.
 
 ## Milestones
 
-| Slice | Obligations                            | Status      | Required result                                                                           |
-| ----- | -------------------------------------- | ----------- | ----------------------------------------------------------------------------------------- |
-| C0    | Scope, decisions, oracles, publication | in progress | Independently reviewed draft with explicit blocking questions                             |
-| C1    | WCFG1–10, WCFG14, WCFG17–21            | not started | Finite scalar/string definition resolver, complete conflict snapshot, explicit limits     |
-| C2    | WCFG11–16, WCFG20–21                   | not started | UDA-directed lists, lines, maps, nested sections, contributor traces                      |
-| C3    | WCI1–15, WCFG24                        | not started | Host-free property/source/value report, all-definitions mode, capability-gated docs links |
-| C4    | WCFG22–24, WCI1–15                     | not started | Hue and terminal startup/report/persistence use one definition model                      |
-| C5    | WCFG22–24, WCI1–15                     | not started | Diagram preserves its grid wire contract and shares resolution with startup               |
+| Slice | Obligations                               | Status      | Required result                                                                           |
+| ----- | ----------------------------------------- | ----------- | ----------------------------------------------------------------------------------------- |
+| C0    | Scope, decisions, oracles, publication    | in progress | Independently reviewed draft with explicit blocking questions                             |
+| C1    | WCFG1–10, WCFG13–14, WCFG17–21, WCFG25–37 | not started | Scalar definition interface, original-policy presence, ownership, conflicts, exact limits |
+| C2    | WCFG11–16, WCFG20–21                      | not started | UDA-directed lists, lines, maps, nested sections, contributor traces                      |
+| C3    | WCI1–15, WCFG24                           | not started | Host-free property/source/value report, all-definitions mode, capability-gated docs links |
+| C4    | WCFG22–24, WCI1–15                        | not started | Hue and terminal startup/report/persistence use one definition model                      |
+| C5    | WCFG22–24, WCI1–15                        | not started | Diagram preserves its grid wire contract and shares resolution with startup               |
 
 The obligations listed for C1 apply to its scalar/string subset; C2 closes their
 collection and recursion cases. Lazy evaluation and executable configuration are
@@ -44,7 +44,7 @@ excluded rather than implied by a distant milestone.
 
 ## C0 — Specification and review
 
-Deliverables are the five pages in this directory, glossary terms, and navigation.
+Deliverables are this specification tree, glossary terms, and navigation.
 The gate requires a cold read of both openings and a semantic review of worked
 priority, conflict, recursive-map, ordering, and hyperlink traces. Findings have
 explicit dispositions in the evidence ledger. Contract acceptance requires owner
@@ -67,23 +67,28 @@ C1's scalar/string definition driver and independent table oracle.
 
 ## C1 — Scalar definitions and conflicts
 
-**Prerequisites:** accepted first-slice contracts; Q1 resolved for scalar/string
-ownership and default limits. Nullable payload support is not accepted until its
-presence probe passes; it cannot be silently approximated.
+**Prerequisites:** owner review of the concrete
+[scalar interface](./scalar-resolution.md); Q1 is specified for this subset.
+Collection/custom-value accounting remains gated for C2. Nullable presence,
+field-policy retention, move primitives, and scoped visitor parameters have
+bounded feasibility evidence; they have not passed resolver-conformance tests.
 
-C1 is restricted to scalar/string schemas with explicit test limits. Collection
-and recursive composition acceptance belongs to C2, not this slice.
-
-Deliver a typed source submission interface, schema-derived built-in definitions,
-per-definition priority/order metadata, immutable inspection snapshot, structured
-conflicts, and non-mutating resolution. Use `Sparse!T` where it faithfully retains
-presence; repair or wrap its presence channel where it does not.
+C1 supports exactly the scalar/section matrix in WCFG25, with no silent filtering
+of collection fields. Implement the move-only builder/input/snapshot interface,
+original-policy JSON presence adapter, byte identities, explicit budget updates,
+and structured admission/semantic/operational outcomes. The JSON adapter must not
+decode `Sparse!T` for nullable or renamed fields. Use the exact defaults and
+accounting in WCFG33–34; all built-in definitions consume the same budgets.
 
 Acceptance stimuli are the hand-derived scalar/default/conflict traces in
-[testing.md](./testing.md#first-slice-oracle), with all permutations of three
-sources, explicit-at-default definitions, enclosing section initializers, boundary
-priorities, duplicate identities, input-lifetime mutation, and count/byte exhaustion.
-Tests must fail against an ordered last-writer model for the intended reason.
+[testing.md](./testing.md#first-slice-oracle), plus its operation, exact accounting,
+identity, lifetime, and failure-injection cases. Exercise all source permutations,
+section/leaf priority inheritance, explicit-at-default/null values, enclosing
+initializers and their primitive domains, failed owned transfer, saved source
+handles across owner transfers, independent config-copy lifetime, mixed semantic
+outcomes, scope escape rejection, copied-owner rejection, and budget recovery.
+Known-bad last-writer, validate-all, partial-commit, or shallow-copy implementations
+must fail for the intended behavior, not incidental diagnostic wording.
 
 ```bash
 dub test :wired -- -i 'wired.config' -v
@@ -95,8 +100,10 @@ submits three sources, reports all retained definitions, and checks a conflict
 without mutating the caller's running value. Delete the driver after its evidence
 is recorded; keep consumer-visible regression tests in feature modules.
 
-Exclude collection composition, file discovery, persistence, and graphical hosts.
-Do not publish a complete-config value when any scalar conflicts.
+Exclude collection composition, custom-value ownership, file discovery, persistence,
+and graphical hosts. Do not publish a complete-config value when any option is
+unresolved. Keep C1 implementation status `not started` until actual code and
+acceptance evidence exist; specification readiness is not implementation delivery.
 
 ## C2 — Composition and contributor provenance
 
@@ -159,5 +166,6 @@ unless an explicit accepted migration changes it. Resolve Q4 for diagram options
 - Implementation: no resolver/report migration delivered by C0.
 - Evidence and review findings: [testing.md](./testing.md#evidence-ledger).
 - Blocking questions: [decisions.md](./decisions.md#open-questions).
-- Next action: resolve C1's Q1 scalar ownership/limits, then establish its
-  failing-before/passing-after acceptance scenarios against a real implementation.
+- Next action: owner review of WCFG25–37, then implement C1 against its exact
+  operation/ownership/budget oracles. Q1 no longer leaves scalar design policy
+  unspecified; C2's collection/custom-value accounting remains blocked.
