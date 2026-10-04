@@ -83,7 +83,9 @@ supersededBy: # a link, only when status is superseded
 not implementation progress. Which milestones have landed belongs to
 `PLAN.md`, the [one milestone tracker](./spec-docs.md#decisions-and-change-control),
 and nowhere in the specification's prose. `reviewed` changes only when the
-named scope was actually reviewed.
+named scope was actually reviewed. A specification written through rounds of
+discussion between its owner and its authors records a review, so its date of
+writing is a valid first `reviewed` date.
 
 ### Abstract
 
