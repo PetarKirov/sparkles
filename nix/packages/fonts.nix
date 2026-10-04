@@ -34,7 +34,7 @@
           {
             nativeBuildInputs = [ pkgs.fontconfig ];
             meta = {
-              description = "Bundled monospace, Noto Sans Unicode fallback and Noto Color Emoji fonts with .charset sidecars";
+              description = "Bundled monospace, Roboto interface, Noto Sans Unicode fallback and Noto Color Emoji fonts with .charset sidecars";
               platforms = lib.platforms.all;
             };
           }
@@ -63,6 +63,13 @@
             for f in DejaVuSansMono.ttf DejaVuSansMono-Bold.ttf \
                 DejaVuSansMono-Oblique.ttf DejaVuSansMono-BoldOblique.ttf; do
               cp ${pkgs.dejavu_fonts}/share/fonts/truetype/$f $out/fonts/
+            done
+
+            # The interface face (design-system `GLY10`): chrome text in
+            # `FontRole.ui`, bundled for Android, whose system faces are variable
+            # fonts a raylib atlas cannot weight, and as the desktop's fallback.
+            for f in Roboto-Regular.ttf Roboto-Bold.ttf; do
+              cp ${pkgs.roboto}/share/fonts/truetype/$f $out/fonts/
             done
 
             # Uiua's glyph planes, reached through hue's --font-codepoint-map.
@@ -94,6 +101,7 @@
             cat > $out/NOTICE <<'EOF'
             Maple Mono NF CN and FiraCode Nerd Font Mono: OFL-1.1.
             DejaVu Sans Mono: Bitstream Vera + Arev.
+            Roboto: OFL-1.1, https://github.com/googlefonts/roboto-3-classic.
             Uiua386: MIT.
             Noto Sans Unicode fallback fonts: OFL-1.1, https://notofonts.github.io.
             Noto Color Emoji: OFL-1.1, https://github.com/googlefonts/noto-emoji.
