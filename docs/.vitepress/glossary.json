@@ -1128,5 +1128,96 @@
     ],
     "owner": "sparkles:hue",
     "seeAlso": []
+  },
+  {
+    "id": "single-source-shader",
+    "term": "single-source shader",
+    "aliases": ["single-source effect"],
+    "summary": "An effect written once as a D function that runs on the CPU as ordinary D and is compiled, from the same source, into a GPU fragment shader.",
+    "definition": "In `sparkles:shaders`, a per-pixel effect whose only definition is one D function over the [shader vocabulary](/glossary#shader-vocabulary). The host compilation calls it directly, for example once per terminal cell; the device compilation wraps it in a [fragment entry point](/glossary#fragment-entry-point) and emits GLSL. Neither side is written separately.",
+    "authority": [
+      {
+        "text": "sparkles:shaders specification §1",
+        "link": "/specs/shaders/SPEC#_1-introduction"
+      }
+    ],
+    "owner": "sparkles:shaders",
+    "seeAlso": ["shader-vocabulary", "fragment-entry-point"]
+  },
+  {
+    "id": "shader-vocabulary",
+    "term": "shader vocabulary",
+    "summary": "The GLSL-shaped vector types, constructors and built-in functions a single-source shader is written against, with the same results on CPU and GPU.",
+    "definition": "In `sparkles:shaders`, the types `vec2`, `vec3` and `vec4`, their constructors and component access, and GLSL's built-in functions with GLSL's definitions. It is plain D on the host and SPIR-V on the device; a `vec3`'s layout differs between the two, which is why one never crosses a shader interface.",
+    "authority": [
+      {
+        "text": "sparkles:shaders specification §4",
+        "link": "/specs/shaders/SPEC#_4-the-vocabulary"
+      },
+      {
+        "text": "GLSL 4.60 §8, built-in functions",
+        "link": "https://registry.khronos.org/OpenGL/specs/gl/GLSLangSpec.4.60.html#built-in-functions"
+      }
+    ],
+    "owner": "sparkles:shaders",
+    "seeAlso": ["single-source-shader"]
+  },
+  {
+    "id": "fragment-entry-point",
+    "term": "fragment entry point",
+    "aliases": ["@fragment function"],
+    "summary": "A D function marked @fragment in a device module, whose parameters become a fragment shader's inputs, textures and uniforms and whose return value becomes its colour output.",
+    "definition": "In `sparkles:shaders`, a function marked `@fragment` in a `@compute` module. The compiler synthesises the shader interface from its signature: `@input` parameters become located varyings, `@uniform` parameters named uniforms, `Sampler2D` parameters bound images, and the return value the `finalColor` output. The fragment stage is an extension of LDC's dcompute, which upstream compiles only compute kernels.",
+    "authority": [
+      {
+        "text": "sparkles:shaders specification §6",
+        "link": "/specs/shaders/SPEC#_6-fragment-entry-points"
+      }
+    ],
+    "owner": "sparkles:shaders",
+    "seeAlso": ["single-source-shader", "shader-unit"]
+  },
+  {
+    "id": "device-configuration",
+    "term": "device configuration",
+    "summary": "The dub configuration of a package that describes how its shader code compiles for the GPU, recognised by a dcompute target among its flags.",
+    "definition": "In `sparkles:shaders`, a [dub](https://dub.pm/) configuration whose `dflags` contain `-mdcompute-targets=`; `shaders` is the conventional name. The build step and editor analysis both read a package's device compilation from it, so it is declared once and never restated per shader.",
+    "authority": [
+      {
+        "text": "sparkles:shaders specification §7",
+        "link": "/specs/shaders/SPEC#_7-the-build-step"
+      }
+    ],
+    "owner": "sparkles:shaders",
+    "seeAlso": ["shader-unit"]
+  },
+  {
+    "id": "shader-unit",
+    "term": "shader unit",
+    "summary": "All device modules of a package and its dependencies, compiled together into one self-contained SPIR-V module.",
+    "definition": "In `sparkles:shaders`, the set of modules marked `@compute` among the source files of a package's [device configuration](/glossary#device-configuration) and all its dependencies. It is discovered from the modules' own declarations, never listed, and compiled in one invocation because a SPIR-V module has no linker.",
+    "authority": [
+      {
+        "text": "sparkles:shaders specification §7",
+        "link": "/specs/shaders/SPEC#_7-the-build-step"
+      }
+    ],
+    "owner": "sparkles:shaders",
+    "seeAlso": ["device-configuration", "freshness-stamp"]
+  },
+  {
+    "id": "freshness-stamp",
+    "term": "freshness stamp",
+    "aliases": ["stamp"],
+    "summary": "The record, kept beside generated shaders, of the hash of every input they were built from, which lets a build skip regeneration while nothing changed.",
+    "definition": "In `sparkles:shaders`, the `.stamp` file in a build step's output directory: the SHA-256 of each module of the [shader unit](/glossary#shader-unit) and each contributing build recipe, and the files produced. While it still matches, a build needs neither dub nor the device compiler; a stamp reading `prebuilt` marks output a packager supplied.",
+    "authority": [
+      {
+        "text": "sparkles:shaders specification §8",
+        "link": "/specs/shaders/SPEC#_8-build-integration"
+      }
+    ],
+    "owner": "sparkles:shaders",
+    "seeAlso": ["shader-unit"]
   }
 ]
