@@ -41,6 +41,7 @@ module keymap;
 
 import sparkles.input.events : Key, KeyEvent;
 import ui_keymap = sparkles.ui.keymap;
+import sparkles.ui.keymap_universal : means, UniversalCommand;
 public import sparkles.ui.keymap : Chord, chord, chordRange, hidesLaterScopes,
     maxPathLength, ModeReq, ResolveKind, ShiftReq, terminalScope;
 
@@ -64,9 +65,9 @@ enum DiagramCommand : ubyte
     none,
 
     // The shell.
-    quit,        /// `q` — bypasses the dismissal chain
-    dismiss,     /// Esc / Back — walks the chain (`IXN6`)
-    showGuide,   /// `?` — the key guide (`LTN`); the guide consumes it
+    @means(UniversalCommand.close) quit,        /// `q` — bypasses the dismissal chain
+    @means(UniversalCommand.close) dismiss,     /// Esc / Back — walks the chain (`IXN6`)
+    @means(UniversalCommand.guide) showGuide,   /// `?` — the key guide (`LTN`); the guide consumes it
 
     // Tools (`IXN2`).
     toolSelect, toolRect, toolConnect,
@@ -82,20 +83,23 @@ enum DiagramCommand : ubyte
     deleteSelection,
 
     // The label edit (`IXN5`).
-    editCommit, editCancel, editErase,
+    @means(UniversalCommand.activate) editCommit,
+    @means(UniversalCommand.close) editCancel,
+    editErase,
 
     // The settings pane (`SET`). Navigation and editing are the property
     // tree's own named verbs (`PRT23`): the component supplies them, this
     // table decides which keys reach them.
     settingsOpen,      /// `,` on the board
-    settingsClose,
+    @means(UniversalCommand.close) settingsClose,
     settingsUp, settingsDown, settingsPageUp, settingsPageDown,
     settingsHome, settingsEnd,
-    settingsCollapse, settingsExpand, settingsActivate,
+    settingsCollapse, settingsExpand,
+    @means(UniversalCommand.activate) settingsActivate,
     settingsDec, settingsInc,
     settingsPreview,   /// `v` — one history entry per drag (`PRT19`)
     settingsUndo, settingsRedo, settingsReset,
-    settingsFilter, settingsMatchNext, settingsMatchPrev, settingsReveal,
+    @means(UniversalCommand.search) settingsFilter, settingsMatchNext, settingsMatchPrev, settingsReveal,
     settingsSave,
     gridPreset,        /// `1`–`3` — the ranged arg names the fixture
 }
@@ -426,4 +430,35 @@ unittest
             assert(bound, "unbound command: " ~ name);
         }
     }}
+}
+
+@("diagram.keymap.universalRowsAndReservedKeys")
+@safe unittest
+{
+    import sparkles.ui.keymap_universal : firstRebound, firstReserved, meaningOf;
+
+    // `KBD1`: no fixed universal key means anything else here; `KBD3`: no
+    // reserved key is bound. Space is a focus row, free on the board (pan).
+    assert(firstRebound!(meaningOf!DiagramCommand)(diagramBindings) == size_t.max);
+    assert(firstReserved(diagramBindings) == size_t.max);
+}
+
+/// The effective key table, one row per line (`KBD6`) — what `--list-keys`
+/// prints. diagram has no user overlay, so its table is its own.
+void writeKeys(W)(ref W w)
+{
+    import sparkles.ui.keymap_universal : writeKeyTable;
+
+    writeKeyTable!' '(w, diagramBindings);
+}
+
+@("diagram.keymap.listingHasEveryRow")
+@safe unittest
+{
+    import std.algorithm.searching : count;
+    import std.array : appender;
+
+    auto w = appender!string;
+    writeKeys(w);
+    assert(w[].count('\n') == diagramBindings.length);
 }
