@@ -234,15 +234,16 @@ enum Command : ubyte
     viewPageDown, viewPageUp,
 
     // Available in normal mode regardless of which pane has focus.
+    focusNext, focusPrev,  /// `Tab` / `Shift-Tab` — the other pane (`KBD1`)
     toggleExplorer,        /// `e`
     toggleInspector,       /// `<leader>vi` — the tree-sitter inspector pane
-    themeNext, themePrev,  /// `→` / `←`
+    themeNext, themePrev,  /// `<leader>ut` / `<leader>uT`
     fontBigger, fontSmaller, /// `Ctrl-=` / `Ctrl--`
     matchNext, matchPrev,  /// `n` / `Shift-N`
     setNext, setPrev,      /// `]` / `[` over a document set
     setIndex,              /// `i` — back to the set's index view
-    toggleView,            /// `Tab`
-    copySelection,         /// `Ctrl-C`
+    toggleView,            /// `v`
+    copySelection,         /// `y` / `Cmd-C`
     toggleLineNumbers,     /// `l`
     toggleGutterIcons,     /// `<leader>vg` — the shared icon strip (folds today)
     toggleCodeLineNumbers, /// `c`
@@ -261,7 +262,7 @@ enum Command : ubyte
     dsvPalToggle,          /// Space / Enter — show/hide the selected column
     dsvPalMoveUp, dsvPalMoveDown, /// `Shift-K` / `Shift-J` — reorder
     dsvPalClose,           /// Escape / `q` / `Shift-C` — close the palette
-    lanternAll,            /// `<leader>?` — list every binding live here
+    lanternAll,            /// `?` / `<leader>?` — list every binding live here
     pickerFiles,           /// `<leader>ff` — the fuzzy file picker
     pickerGrep,            /// `<leader>/` — the content-search picker (`PKS2`)
     pickerCycleMode,       /// `<S-Tab>` in grep — plain / regex / fuzzy (`PKL5`)
@@ -661,9 +662,18 @@ immutable Binding[] hueBindings = [
     // ── shared ───────────────────────────────────────────────────────────
     bind(Scope_.shared_, chord(Key.pageDown), Command.viewPageDown, "page down"),
     bind(Scope_.shared_, chord(Key.pageUp), Command.viewPageUp, "page up"),
-    bind(Scope_.shared_, chord(Key.right), Command.themeNext, "next theme"),
-    bind(Scope_.shared_, chord(Key.left), Command.themePrev, "prev theme"),
-    bind(Scope_.shared_, chord(Key.tab), Command.toggleView, "plain / syntax / preview"),
+    // The design system's fixed rows (`KBD1`): Tab moves focus, `?` opens
+    // the guide. The view toggle moved to `v`; the themes cycle under
+    // `<leader>u`.
+    bind(Scope_.shared_, chord(Key.tab, ShiftReq.no), Command.focusNext,
+        "next pane"),
+    bind(Scope_.shared_, chord(Key.tab, ShiftReq.yes), Command.focusPrev,
+        "previous pane"),
+    // `reveal` is what opens the panel: the guide consumes the row itself
+    // (`LTN11`), so `lanternAll`'s dispatch arms stay empty in both hosts.
+    bind(Scope_.shared_, chord('?'), Command.lanternAll, "key guide",
+        reveal: true),
+    bind(Scope_.shared_, chord('v'), Command.toggleView, "plain / syntax / preview"),
     bind(Scope_.shared_, chord('e'), Command.toggleExplorer, "toggle explorer"),
     bind(Scope_.shared_, chord('y'), Command.copySelection, "copy selection"),
     bind(Scope_.shared_, chord('q'), Command.quit, "quit"),
@@ -688,8 +698,6 @@ immutable Binding[] hueBindings = [
     group(Scope_.shared_, chord(leader), "leader"),
     bind(Scope_.shared_, chord(leader), chord('e'), Command.toggleExplorer,
         "toggle explorer"),
-    // `reveal` is what opens the panel: the guide consumes the row itself
-    // (`LTN11`), so `lanternAll`'s dispatch arms stay empty in both hosts.
     bind(Scope_.shared_, chord(leader), chord('?'), Command.lanternAll,
         "all bindings", reveal: true),
 
@@ -1113,6 +1121,8 @@ unittest
     assert(nk(Key.escape, search).cmd == Command.inputCancel);
     assert(ch('e', search).cmd == Command.none, "a letter is text while typing");
     assert(ch('y', search).cmd == Command.none);
+    assert(ch('?', search).cmd == Command.none, "the guide key is text too");
+    assert(ch('v', search).cmd == Command.none);
 
     // In NORMAL mode both run the dismiss chain — Escape closes the
     // innermost thing, as Back always has (`KBD1`, `isDismiss`).
@@ -1368,7 +1378,10 @@ unittest
     // that is preserved here.
     foreach (ctx; [KeyContext.init, tree])
     {
-        assert(nk(Key.tab, ctx).cmd == Command.toggleView);
+        assert(nk(Key.tab, ctx).cmd == Command.focusNext);
+        assert(nk(Key.tab, ctx, Mods(shift: true)).cmd == Command.focusPrev);
+        assert(ch('v', ctx).cmd == Command.toggleView);
+        assert(ch('?', ctx).cmd == Command.lanternAll);
         assert(ch('y', ctx).cmd == Command.copySelection);
         assert(ch('t', ctx).cmd == Command.toggleTableCopy);
         assert(ch('e', ctx).cmd == Command.toggleExplorer);
@@ -1377,10 +1390,10 @@ unittest
     // The arrows ARE pane-scoped, and this is a deliberate change: a focused
     // tree navigates with ←/→ (open a row, collapse it) the way every tree
     // does, which the terminal explorer already did and the window did not.
-    // Theme cycling loses the arrows while the tree has focus and keeps them
-    // in the viewer, plus `<leader>ut`/`<leader>uT` from anywhere.
-    assert(nk(Key.right, KeyContext.init).cmd == Command.themeNext);
-    assert(nk(Key.left, KeyContext.init).cmd == Command.themePrev);
+    // Theme cycling is `<leader>ut`/`<leader>uT` from anywhere; the
+    // viewer's plain arrows are free.
+    assert(nk(Key.right, KeyContext.init).cmd == Command.none);
+    assert(nk(Key.left, KeyContext.init).cmd == Command.none);
     assert(nk(Key.right, tree).cmd == Command.treeActivate);
     assert(nk(Key.left, tree).cmd == Command.treeCollapseOrUp);
 
@@ -1478,13 +1491,10 @@ unittest
         == Command.viewScrollLeft, "a diff scrolls sideways too — its tables "
         ~ "are the widest content hue renders");
 
-    // The shifted arrows, for a reader who has not learned the prefix. Plain
-    // arrows still cycle themes, which is what the modifier distinguishes.
+    // The shifted arrows, for a reader who has not learned the prefix.
     const shift = Mods(shift: true);
     assert(nk(Key.left, view, shift).cmd == Command.viewScrollLeft);
     assert(nk(Key.right, view, shift).cmd == Command.viewScrollRight);
-    assert(nk(Key.left, view).cmd == Command.themePrev);
-    assert(nk(Key.right, view).cmd == Command.themeNext);
 
     // `Home` was matching with or without Shift, so the shifted spelling had
     // to be taken off it before it could mean anything else.

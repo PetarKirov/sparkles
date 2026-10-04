@@ -61,7 +61,7 @@ raylib's Android input into every existing binding.
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Scroll (wheel / j k / PgUp…)         | touch drag + fling; keyboard works                                                                                                              |
 | Theme cycling (← →)                  | toolbar `◀ thm` / `thm ▶`                                                                                                                       |
-| Raw ↔ preview (Tab)                  | toolbar `view`                                                                                                                                  |
+| Raw ↔ preview (`v`)                  | toolbar `view`                                                                                                                                  |
 | Explorer (e)                         | toolbar `tree`; back button closes                                                                                                              |
 | Line numbers (l)                     | toolbar `ln №`                                                                                                                                  |
 | Font size (Ctrl-±)                   | pinch zoom                                                                                                                                      |

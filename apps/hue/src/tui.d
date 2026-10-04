@@ -175,6 +175,10 @@ struct PreviewTui
     /// which the interception never saw because the leader lives in the
     /// pane's own lantern.
     bool explorerToggleRequested;
+    /// ditto — `Tab`/`Shift-Tab` (`KBD1`): which pane holds focus is
+    /// the workspace's. Standalone, nothing drains it: one pane, nothing to
+    /// cycle.
+    bool focusCycleRequested;
 
     /// The source byte at pane-local `p`, else `-1` — the inspector's
     /// hover-sync feed. Char-precise through the identity channel where the
@@ -1555,6 +1559,10 @@ struct PreviewTui
                 // `pickerRequested` shape. Standalone (no workspace), nothing
                 // drains it, and there is no explorer to toggle anyway.
                 explorerToggleRequested = true;
+                break;
+            case Command.focusNext:
+            case Command.focusPrev:
+                focusCycleRequested = true;
                 break;
 
             case Command.toggleInspector:

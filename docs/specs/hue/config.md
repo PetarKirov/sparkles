@@ -9,12 +9,12 @@ relates to the ~28 CLI options and the runtime toggles that exist today._
 
 hue's configuration surface is real and entirely **ephemeral**. Today it is:
 
-| Surface                                                                  | Count    | Lifetime         |
-| ------------------------------------------------------------------------ | -------- | ---------------- |
-| CLI options (`@CliOption`)                                               | ~28      | one invocation   |
-| Runtime toggles (`l`, `c`, `y`, `t`, `Tab`, `e`, `Ctrl-±`, theme arrows) | ~10      | until exit       |
-| Keybindings (`keymap.hueBindings`)                                       | ~60 rows | hardcoded table  |
-| Environment variables (`HUE_GUI_*`)                                      | 13       | test/debug hooks |
+| Surface                                                                | Count    | Lifetime         |
+| ---------------------------------------------------------------------- | -------- | ---------------- |
+| CLI options (`@CliOption`)                                             | ~28      | one invocation   |
+| Runtime toggles (`l`, `c`, `y`, `t`, `v`, `e`, `Ctrl-±`, `<leader>ut`) | ~10      | until exit       |
+| Keybindings (`keymap.hueBindings`)                                     | ~60 rows | hardcoded table  |
+| Environment variables (`HUE_GUI_*`)                                    | 13       | test/debug hooks |
 
 Three consequences, each observed rather than hypothetical:
 
@@ -22,7 +22,7 @@ Three consequences, each observed rather than hypothetical:
    32-cell tree and line numbers off passes four flags on every launch. On
    Android there is no command line at all, so those preferences are
    **unreachable** — the APK ships whatever the defaults are.
-2. **Runtime toggles evaporate.** `y`, `t`, `l`, `c` and the theme arrows all
+2. **Runtime toggles evaporate.** `y`, `t`, `l`, `c` and the theme keys all
    change state the user then loses on exit, which makes them feel like
    experiments rather than settings.
 3. **Keybindings cannot be changed.** `keymap.d` made the policy pure and

@@ -1651,6 +1651,12 @@ struct WorkspaceTui
                 toggleExplorerPane();
                 return true;
             }
+            if (tree.focusCycleRequested) // `Tab` / `Shift-Tab`
+            {
+                tree.focusCycleRequested = false;
+                treeFocused = false;
+                return true;
+            }
             if (tree.pickedSession >= 0) // `TVU6`: a changed-file row
             {
                 const idx = cast(size_t) tree.pickedSession;
@@ -1699,6 +1705,13 @@ struct WorkspaceTui
         {
             viewer.explorerToggleRequested = false;
             toggleExplorerPane();
+        }
+        if (viewer.focusCycleRequested) // `Tab` / `Shift-Tab`
+        {
+            viewer.focusCycleRequested = false;
+            // Two panes, so next and previous are the same move.
+            if (treeVisible)
+                treeFocused = true;
         }
         // INS6 source→tree, the picker half (DevTools' semantics): while the
         // `⌕` chip is armed, hovering the document walks the tree live, and a

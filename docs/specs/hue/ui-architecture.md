@@ -341,7 +341,7 @@ becomes. "Copies" counts the independent implementations being collapsed.
 | Text-input bar (search / goto)        | 2      | [`WGT14`](../ui/widgets.md)                                        | partial — TUI status-bar input is a widget bar; the GUI input line is still drawn directly                              |
 | Toast                                 | 1      | [`WGT16`](../ui/widgets.md)                                        | partial — `Timeline`-driven, still painted directly in the GUI                                                          |
 | Document index view                   | 2      | the [explorer](./tree-view.md) — [`WGT12`](../ui/widgets.md)       | partial (`c99c72ca`) — the TUI explorer; the GUI keeps its list                                                         |
-| Theme picker list                     | 1      | [`WGT13`](../ui/widgets.md)                                        | full — live ←/→ theme cycling in both interactive backends (previewer.d deleted)                                        |
+| Theme picker list                     | 1      | [`WGT13`](../ui/widgets.md)                                        | full — live `<leader>ut` theme cycling in both interactive backends (previewer.d deleted)                               |
 | Box / frame drawing                   | 3      | panel decoration, per-backend degradation                          | full — panel decorations through each canvas                                                                            |
 
 > [!NOTE]
