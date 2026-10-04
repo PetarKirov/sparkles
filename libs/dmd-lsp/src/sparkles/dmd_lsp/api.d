@@ -6,13 +6,14 @@ core, ported from VisualD's `dmdserver` (Boost-1.0). See
 This module is the only one dependents should import. One `Analyzer` performs
 $(B one) full semantic pass over one in-memory module and answers queries from
 it; it is deliberately single-use (spec `COR2`) — batch isolation comes from
-one-analysis-per-process, so there is no global-state reset machinery here.
+one-analysis-per-process, so there is no `dmdReinit`-style reset table here
+(teardown is the frontend's own `deinitializeDMD`; see `Analyzer`).
 
-The type-oracle queries (`tipAt`, `identifierSpans`, `definitionAt` — spec
-`TIP*`/`DOC1`) are thin, position-typed wrappers over
+The type-oracle queries (`tipAt`, `identifierSpans`, `definitionAt`,
+`completionsAt` — spec `TIP*`/`DOC1`) are thin, position-typed wrappers over
 $(MREF sparkles,dmd_lsp,visitor), the `semvisitor` port; reach for that module
-directly for the queries this facade does not surface (completion expansions,
-references, the module outline).
+directly for the queries this facade does not surface (references, the module
+outline).
 */
 module sparkles.dmd_lsp.api;
 

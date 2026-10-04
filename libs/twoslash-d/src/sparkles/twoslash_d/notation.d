@@ -8,6 +8,9 @@ An annotated sample contains ordinary D plus `//` notation lines:
 $(LIST
     * `// ^?` — query the inferred type of the identifier the `^` points at
         on the $(B previous kept line) (caret-column aligned).
+    * `// ^|` — list the completions at the caret on the previous kept line.
+    * `// ^^^ <text>` — highlight the caret run on the previous kept line,
+        with an optional annotation.
     * `// ---cut---` / `---cut-before---` / `---cut-after---` /
         `---cut-start---` + `---cut-end---` — code that is $(B compiled but
         not shown).
@@ -15,6 +18,8 @@ $(LIST
         diagnostics contract (verification metadata for `--verify`/ci;
         extraction always emits every diagnostic as a node).
     * `// @dflags: <flags>` / `// @import: <path>` — analysis configuration.
+    * `// @filename: <name>.d` — opens a virtual file of a multi-file
+        sample; the last one is the entry module.
     * `// @annotate: …` / `@log:` / `@warn:` / `@error:` — custom tag lines
         rendered as below-line blocks.
 )
@@ -26,8 +31,8 @@ attributes, not a directive), so an unknown `@word` stays ordinary code.
 Two coordinate spaces (spec `NTN2`): notation lines are stripped and cut
 regions retained to form `fullSource` (what the compiler analyzes); applying
 the `removals` then yields `displayCode` (what the reader sees). Nodes are
-built in `fullSource` bytes and remapped via `mapToDisplay`; deferred markers
-(`^|`, `^^^`, `@filename:`, `@dub:`) are listed in the spec's non-goals.
+built in `fullSource` bytes and remapped via `mapToDisplay`. The `@dub:`
+marker is deferred (the spec's non-goals).
 */
 module sparkles.twoslash_d.notation;
 
