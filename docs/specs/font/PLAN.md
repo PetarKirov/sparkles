@@ -61,7 +61,8 @@ Operation signatures in the additions are proposed, not delivered symbols.
 ## M1 Parse
 
 **Obligations.** `FTB1`–`FTB5` for the tables in scope, `FTA1`, `FTA2`,
-`FTA6`, `FTA7`, `FTA9`–`FTA11`, `FTA15`, `FTP1`–`FTP12`, `FTI1`, `FTI5`.
+`FTA6`, `FTA7`, `FTA9`–`FTA11`, `FTA15`, `FTP1`–`FTP12`, `FTP14`–`FTP33`, `FTI1`,
+`FTI5`. The operation contracts are in [`parsing.md`](./parsing.md).
 
 **Prerequisites.** Stage 0 accepted. `$SPARKLES_FONTS_PATH` exported by the dev
 shell and the CI shell. Owned base UTF codecs for name decoding; no Phobos
@@ -210,6 +211,8 @@ or permit text-layout to substitute fake fonts. Progress states above remain the
 delivery authority.
 
 **Handoff.** Not started. The three Stage 0 spikes ran on 2026-10-03. Next
-executable action: the rest of the Stage 0 gate, which is M1's contracts at
-operation level and the adversarial review of `SPEC.md` § 2–4; then the owner's
-acceptance. All four Stage 0 questions are answered (`FTX7`–`FTX10`).
+executable action: an adversarial review of [`parsing.md`](./parsing.md), M1's
+operation-level contracts drafted on 2026-10-05, and of `SPEC.md` § 2–4; then
+the owner's acceptance. All four Stage 0 questions are answered
+(`FTX7`–`FTX10`). M1 also waits for base's owned UTF codecs (base M1a), which
+name decoding uses.
