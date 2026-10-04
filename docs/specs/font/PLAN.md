@@ -31,7 +31,7 @@ plan lives in [`../font-explorer/PLAN.md`](../font-explorer/PLAN.md).
 ## Stage 0: specification and spikes
 
 **Deliverable.** This specification tree accepted, and the three spikes run
-(done 2026-10-03: `FTX7`, `FTX8`, `FTX9`).
+(done 2026-10-03: `FTX7`–`FTX10`).
 
 **Gate.** Per the [spec guideline's Stage 0 gate](../../guidelines/spec-docs.md#stage-0-gate):
 scope, ownership, non-goals and invariants agreed; first-slice (M1) contracts
@@ -42,11 +42,11 @@ implied by merging.
 
 ### Stage 0 spikes
 
-| Spike | Question                                                                                          | Experiment                                                                                                                                                                                                                                                                                                               | Decision criterion                                                                                                   |
-| ----- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| S1    | Is a synchronous first-launch scan of a large font directory acceptable? (`FTQ2`)                 | Time reading the table directory, `name`, `OS/2` and `cmap` coverage of every font file on a Linux desktop and in the bundle, cold and warm cache. **Done, 2026-10-03:** 2,222 desktop files in 44 ms warm (20 ms on 4 workers), 1.6 s on first touch; the bundle in 1.9 ms (`FTX8`).                                    | Under 1 s warm for the machine's full font set → synchronous with a cache; otherwise a background builder.           |
-| S2    | What tolerance does an overlap-correct accumulation rasterizer achieve against FreeType? (`FTQ1`) | Extend the research example with per-contour accumulation; diff every glyph of three bundled faces at four sizes against FreeType unhinted. **Measured, 2026-10-03:** four faces, 48,330 glyphs; overlaps handled by FreeType's flag rule (`FTX9`); tolerance proposed in `testing.md`, pending review (`FTQ1`, `FTQ4`). | Record the distribution; propose the `FTR3` tolerance at a percentile that a reviewer accepts as visually identical. |
-| S3    | Does any common programming font's `liga`/`calt` change glyph count? (`FTQ3`)                     | Shape 160 ligature sequences in Fira Code, JetBrains Mono, Cascadia Code and Maple Mono with `calt` and `liga` on and off. **Done, 2026-10-03:** no glyph-count change and no off-cell advance in eight faces; ink reaches up to 6 cells past its own cell (`FTX7`).                                                     | Record per font; decides whether the terminal migration needs multi-cell glyph placement.                            |
+| Spike | Question                                                                                          | Experiment                                                                                                                                                                                                                                                                                                 | Decision criterion                                                                                                   |
+| ----- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| S1    | Is a synchronous first-launch scan of a large font directory acceptable? (`FTQ2`)                 | Time reading the table directory, `name`, `OS/2` and `cmap` coverage of every font file on a Linux desktop and in the bundle, cold and warm cache. **Done, 2026-10-03:** 2,222 desktop files in 44 ms warm (20 ms on 4 workers), 1.6 s on first touch; the bundle in 1.9 ms (`FTX8`).                      | Under 1 s warm for the machine's full font set → synchronous with a cache; otherwise a background builder.           |
+| S2    | What tolerance does an overlap-correct accumulation rasterizer achieve against FreeType? (`FTQ1`) | Extend the research example with per-contour accumulation; diff every glyph of three bundled faces at four sizes against FreeType unhinted. **Done, 2026-10-03; accepted 2026-10-04:** four faces, 48,330 glyphs; FreeType's overlap rule (`FTX9`); two raster oracles with recorded tolerances (`FTX10`). | Record the distribution; propose the `FTR3` tolerance at a percentile that a reviewer accepts as visually identical. |
+| S3    | Does any common programming font's `liga`/`calt` change glyph count? (`FTQ3`)                     | Shape 160 ligature sequences in Fira Code, JetBrains Mono, Cascadia Code and Maple Mono with `calt` and `liga` on and off. **Done, 2026-10-03:** no glyph-count change and no off-cell advance in eight faces; ink reaches up to 6 cells past its own cell (`FTX7`).                                       | Record per font; decides whether the terminal migration needs multi-cell glyph placement.                            |
 
 ## M1 Parse
 
@@ -79,7 +79,7 @@ over the corpus; hand-derived traces pass.
 
 ## M3 Outlines
 
-**Obligations.** `FTO1`–`FTO5`; `FTB3`/`FTB5` for composites and `CFF`
+**Obligations.** `FTO1`–`FTO5`, `FTI6`; `FTB3`/`FTB5` for composites and `CFF`
 subroutines.
 
 **Acceptance.** Outline differentials against `hb_font_draw_glyph`; the `FTO4`
@@ -96,11 +96,12 @@ check.
 
 ## M5 Grayscale raster
 
-**Obligations.** `FTA5`, `FTR1`–`FTR4`, `FTR6`.
+**Obligations.** `FTA5`, `FTR1`–`FTR4`, `FTR6`, `FTR8`.
 
-**Prerequisites.** Spike S2's tolerance accepted in `testing.md` (`FTQ1`), and `FTQ4` answered.
+**Prerequisites.** The tolerances of `FTX10`, recorded in `testing.md`.
 
-**Acceptance.** The FreeType raster differential at the recorded tolerance; the
+**Acceptance.** The FreeType raster differential (`FTR3`) and the flattening
+differential (`FTR8`) at the recorded tolerances; the
 overlap fixtures; cache-key determinism (equal keys, identical bytes).
 
 ## M6 Colour glyphs
@@ -149,5 +150,4 @@ stale ink when one of its cells changes (`FTX7`).
 **Handoff.** Not started. The three Stage 0 spikes ran on 2026-10-03. Next
 executable action: the rest of the Stage 0 gate, which is M1's contracts at
 operation level and the adversarial review of `SPEC.md` § 2–4; then the owner's
-acceptance. Before M5, the proposed `FTR3` tolerance needs review and `FTQ4`
-an answer.
+acceptance. All four Stage 0 questions are answered (`FTX7`–`FTX10`).

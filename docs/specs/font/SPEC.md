@@ -369,15 +369,31 @@ instance **must** include the `gvar` phantom-point deltas.
 8-bit [coverage](../../glossary.md#coverage) into a caller-owned region with its own row stride and report
 the glyph's bounding box and bearing. It **must not** allocate.
 
-**FTR2: Nonzero winding.** Coverage **must** follow the nonzero rule,
-including for glyphs whose contours overlap, as variable-font glyphs often
-do.
+**FTR2: Nonzero winding.** Coverage **must** follow the nonzero rule. A glyph
+whose `glyf` data sets `OVERLAP_SIMPLE` or `OVERLAP_COMPOUND` **must** render
+as the union of its contours, so that overlapping contours do not double the
+coverage of their edges. Any other glyph **may** double it where its contours
+overlap, as FreeType does. The caller **may** request the union for every
+glyph.
 
-**FTR3: Accuracy against an independent renderer.** For every glyph of the
-test corpus at 12, 16, 24 and 48 pixels per em, unhinted coverage **must** be
-within the tolerance recorded in [`testing.md`](./testing.md#raster-oracle)
-of FreeType's unhinted rendering. The tolerance is fixed before the
-requirement is accepted and is not adjusted to make a run pass.
+_Rationale:_ The union costs 6–10 times a plain render, and the flag is how
+fonts and renderers agree on when to pay for it: FreeType supersamples flagged
+glyphs, and Fontations reports the flag to its renderer as `has_overlaps`
+([`FTX9`](./decisions.md#ftx9-flatten-to-0-02-px-render-the-union-of-flagged-glyphs)).
+
+**FTR3: Arithmetic against an independent renderer.** The rasterizer **must**
+offer a flattening policy that reproduces the subdivision rules of FreeType's
+`ftgrays.c`. Under that policy, coverage for every glyph of the test corpus at
+12, 16, 24 and 48 pixels per em **must** be within the tolerance recorded in
+[`testing.md`](./testing.md#raster-oracle) of FreeType's unhinted rendering.
+The tolerance is fixed before the requirement is accepted and is not adjusted
+to make a run pass.
+
+_Rationale:_ Compared with default flattening, most of the difference from
+FreeType is FreeType's own coarser flattening, which would hide errors in the
+accumulation arithmetic. Reproducing an existing engine's outline behaviour is
+a feature in its own right, as Fontations' `PathStyle::FreeType` shows
+([`FTX10`](./decisions.md#ftx10-two-raster-oracles)).
 
 **FTR4: Explicit gamma.** Coverage **must** be linear. A separate,
 documented transfer function maps it for display, chosen by the consumer.
@@ -397,6 +413,11 @@ the largest, scaled to the requested size.
 
 _Rationale:_ The emoji font Sparkles bundles is a `CBDT` font with no
 outlines, so this is the only way emoji render without FreeType.
+
+**FTR8: Flattening accuracy.** With the default flattening, coverage for every
+glyph of the test corpus at 12, 16, 24 and 48 pixels per em **must** be within
+the tolerance recorded in [`testing.md`](./testing.md#raster-oracle) of the
+same glyph rendered by the same rasterizer with curves flattened to 0.001 px.
 
 ## 12. Shaping
 
@@ -486,6 +507,10 @@ contains, independent of which it renders.
 **FTI5: Table directory.** The table directory **must** be enumerable with
 each record's tag, offset, length, stored checksum and computed checksum,
 including records `FTP3` declared unreadable.
+
+**FTI6: Overlap flags.** For each glyph, the library **must** report whether
+its outline data flags overlapping contours (`OVERLAP_SIMPLE` or
+`OVERLAP_COMPOUND`), and report none for a face without `glyf`.
 
 ## 15. Consumers
 

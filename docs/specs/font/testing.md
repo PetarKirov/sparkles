@@ -91,39 +91,42 @@ coverage is compared per pixel with FreeType's `FT_LOAD_NO_HINTING` normal-mode
 render, over the pixels either renderer inks. The faces are Fira Code Nerd Font
 Mono, Noto Sans Arabic, Maple Mono NF CN (TrueType outlines) and Noto Sans
 Anatolian Hieroglyphs (CFF outlines). Hand-built overlap fixtures, two
-identical overlapping squares and a glyph whose contours cross, must render
-the nonzero union, not a doubled coverage.
+identical overlapping squares and a glyph whose contours cross, flagged or with
+the union requested, must render the nonzero union, not a doubled coverage.
 
-**Measured distribution.** Spike S2 ran
-[`raster-oracle-diff.d`][ex-oracle] on 2026-10-03 against FreeType 2.14.3 and HarfBuzz
-13.2.1, flattening to 0.02 px and supersampling flagged overlapping glyphs 4×4
-(`FTX9`). Differences are in 1/255 steps; each cell is the largest value over
-the four sizes.
+**Measured distribution.** [`raster-oracle-diff.d`][ex-oracle] ran on
+2026-10-04 against FreeType 2.14.3 and HarfBuzz 13.2.1. Flagged overlapping
+glyphs render at 4×4 (`FTX9`). Differences are in 1/255 steps; each cell is the
+largest value over the four sizes.
 
-| Face                      | Pixel p99 | Pixel max | Glyph max, p50 | Glyph max, p99 |
-| ------------------------- | --------- | --------- | -------------- | -------------- |
-| Fira Code Nerd Font Mono  | 10        | 28        | 9              | 18             |
-| Noto Sans Arabic          | 12        | 21        | 11             | 19             |
-| Maple Mono NF CN          | 6         | 33        | 8              | 16             |
-| Noto Sans Anatolian (CFF) | 24        | 53        | 28             | 42             |
+| Face                      | `FTR3`: FreeType flattening vs FreeType, p99 / max | `FTR8`: 0.02 px vs 0.001 px, p99 / max | Default flattening vs FreeType, p99 / max |
+| ------------------------- | -------------------------------------------------- | -------------------------------------- | ----------------------------------------- |
+| Fira Code Nerd Font Mono  | 4 / 23                                             | 4 / 10                                 | 10 / 33                                   |
+| Noto Sans Arabic          | 4 / 20                                             | 4 / 7                                  | 12 / 22                                   |
+| Maple Mono NF CN          | 3 / 24                                             | 3 / 13                                 | 6 / 33                                    |
+| Noto Sans Anatolian (CFF) | 4 / 40                                             | 3 / 7                                  | 24 / 53                                   |
 
-The same run with FreeType's own flattening rules reproduced in the D sink
-lowers the median glyph maximum to 3 or 4 on every face, and the CFF face's
-from 16–28 to 3. Most of the difference is therefore FreeType's flattening,
-which bisects a cubic until each control point is within about 1/6 px of a
-trisection point of its chord, not the accumulation arithmetic.
+The last column is not a gate. It shows why `FTR3` reproduces FreeType's
+flattening (`FTX10`): with default flattening, FreeType's coarser cubic
+subdivision dominates the difference, most visibly on the CFF face. The
+`FTR8` reference has converged: 0.005 px and 0.00125 px renders differ by at
+most 3 steps.
 
-**Proposed tolerance**, pending review (`FTQ1`). Per face and size, against
-FreeType:
+**Tolerance**, accepted 2026-10-04 (`FTX10`). Per face and size; each maximum
+is the next multiple of 16 above the largest value measured, and each 99th
+percentile the next multiple of 4.
 
-| Outlines        | Every pixel within | 99th percentile within |
-| --------------- | ------------------ | ---------------------- |
-| TrueType `glyf` | 48                 | 16                     |
-| CFF and CFF2    | 64                 | 32                     |
+| Requirement | Outlines        | Every pixel within | 99th percentile within |
+| ----------- | --------------- | ------------------ | ---------------------- |
+| `FTR3`      | TrueType `glyf` | 32                 | 8                      |
+| `FTR3`      | CFF and CFF2    | 48                 | 8                      |
+| `FTR8`      | all             | 16                 | 8                      |
 
-Each bound is the next multiple of 16 above the largest value measured. The CFF
-bounds are looser only because FreeType's cubic flattening is coarser than its
-quadratic flattening.
+**Unflagged overlaps.** The same program compares each unflagged glyph with its
+4×4 render. At 24 px, 192 glyphs of Fira Code Nerd Font Mono, 428 of Noto Sans
+Arabic and 82 of Maple Mono NF CN differ by more than 32 steps; the CFF face
+has none. These are the glyphs `FTR2` lets render with doubled edges, and the
+font explorer's overlap check lists them.
 
 ### Hostile input
 

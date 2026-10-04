@@ -234,35 +234,78 @@ for over a second, measured here at 1.6 s single-threaded. **Revisit when** a
 warm build exceeds 1 s on a supported platform; Android's `/system/fonts` and
 macOS are not yet measured.
 
-## FTX9: Flatten to 0.02 px; supersample flagged overlaps 4×4
+## FTX9: Flatten to 0.02 px; render the union of flagged glyphs
 
-**State:** proposed · **Affects:** `FTR1`–`FTR3`, milestone M5
+**State:** accepted 2026-10-04 · **Affects:** `FTR1`–`FTR3`, `FTR8`, `FTI6`,
+milestone M5 · **Resolves:** `FTQ4`
 
 **Question.** How does the accumulation rasterizer flatten curves, and how
 does it keep overlapping contours from doubling edge coverage (`FTR2`)?
 
-**Evidence.** Spike S2 ran [`raster-oracle-diff.d`][ex-oracle] on 2026-10-03
-over the 48,330 glyphs of four bundled faces at four sizes (testing.md §
-Raster oracle). Plain accumulation adds the coverage of every edge that
-crosses a pixel, so a pixel half-covered by the edges of two overlapping
-contours reads as fully covered. Maple Mono NF CN builds its CJK glyphs from
-overlapping strokes; there, 59% of glyphs differed from FreeType by more than
-32 steps, the worst by 123. FreeType avoids this only for glyphs whose `glyf`
-data sets `OVERLAP_SIMPLE` or `OVERLAP_COMPOUND`, 22,931 of that face's 33,637:
-it renders them at 4×4 and averages ([`ttgload.c`][ft-ttgload],
+**Evidence.** Spike S2 ran [`raster-oracle-diff.d`][ex-oracle] over the
+48,330 glyphs of four bundled faces at four sizes (testing.md § Raster
+oracle). Plain accumulation adds the coverage of every edge that crosses a
+pixel, so a pixel half-covered by the edges of two overlapping contours reads
+as fully covered. Maple Mono NF CN builds its CJK glyphs from overlapping
+strokes; there, 59% of glyphs differed from FreeType by more than 32 steps,
+the worst by 123. FreeType avoids this only for glyphs whose `glyf` data sets
+`OVERLAP_SIMPLE` or `OVERLAP_COMPOUND`, 22,931 of that face's 33,637: it
+renders them at 4×4 and averages ([`ttgload.c`][ft-ttgload],
 [`ftsmooth.c`][ft-smooth]). Doing the same brought every glyph of the face
 within 33 steps. Supersampling every glyph costs 6–10× a plain render: 11–33
 µs rise to 64–327 µs per glyph from 12 to 48 px on Fira Code Nerd Font Mono.
-Eight uniform steps per curve, the research example's choice, raised that
-face's largest difference from 28 to 37 against adaptive flattening.
+
+No surveyed library computes the union exactly and cheaply. fontdue,
+[ab_glyph][ab-glyph], [stb_truetype][stb] and Go's `x/image/vector` all
+accumulate signed area and over-cover overlaps; [Vello][vello]'s exact-area
+mode documents the same "conflation artifacts" and escapes only through
+multisampling. [Fontations][fontations] reports the flag to its renderer as
+`has_overlaps`.
+
+Overlaps without the flag are common. Comparing each unflagged glyph with its
+4×4 render at 24 px, 192 glyphs of Fira Code Nerd Font Mono and 428 of the
+1,392 in Noto Sans Arabic differ by more than 32 steps. Noto Sans Arabic is a
+variable font that overlaps its contours and sets no flag; FreeType renders it
+the same way, which the matching FreeType comparison confirms.
 
 **Choice.** Curves are flattened adaptively to 0.02 px. A glyph flagged
 `OVERLAP_SIMPLE` or `OVERLAP_COMPOUND` renders at 4×4 and is averaged; every
-other glyph renders by plain accumulation. This is FreeType's rule.
+other glyph renders by plain accumulation, which is FreeType's rule. The
+caller may request the 4×4 union for every glyph, and the library reports each
+glyph's flag (`FTI6`), so the font explorer can find unflagged overlaps.
 
-**Trade-off.** An overlap the font does not flag still doubles edge coverage,
-in FreeType as here. [`FTQ4`](#ftq4-overlaps-the-font-does-not-flag) asks
-whether `FTR2` requires more.
+**Trade-off.** Unflagged overlaps, including Noto Sans Arabic's joins, render
+with darker edges where contours overlap, exactly as under FreeType.
+**Revisit when** a side-by-side capture at a terminal size shows that
+darkening in a face users rely on; the remedy then is the union for that face,
+not for every glyph.
+
+## FTX10: Two raster oracles
+
+**State:** accepted 2026-10-04 · **Affects:** `FTR3`, `FTR8`, milestone M5 ·
+**Resolves:** `FTQ1`
+
+**Question.** What tolerance against FreeType makes `FTR3` falsifiable,
+when the two rasterizers flatten curves differently?
+
+**Evidence.** Against FreeType with default flattening, the largest per-pixel
+difference was 33 steps on TrueType faces and 53 on the CFF face. Reproducing
+FreeType's flattening rules in the D sink lowered the median glyph maximum to
+3 or 4 on every face: most of that difference is FreeType's flattening, which
+bisects a cubic only until each control point is within about 1/6 px of a
+trisection point of its chord. A tolerance wide enough for it would hide errors
+in the accumulation arithmetic. Fontations' `PathStyle::FreeType` and
+`PathStyle::HarfBuzz` reproduce each engine's outline quirks bit for bit, which
+is the precedent for a compatibility policy.
+
+**Choice.** Two checks, each tight. `FTR3` compares with FreeType under a
+flattening policy that reproduces `ftgrays.c`, so it measures the arithmetic.
+`FTR8` compares default flattening with the same rasterizer at 0.001 px, so it
+measures the flattening. testing.md § Raster oracle records both tolerances.
+
+**Trade-off.** The library carries a flattening policy whose only purpose is
+compatibility. It is a few dozen lines and is also useful to a consumer that
+must match FreeType's rendering.
 
 ---
 
@@ -270,16 +313,7 @@ whether `FTR2` requires more.
 
 ### FTQ1: Raster tolerance for `FTR3`
 
-**Blocks:** `FTR3` acceptance, milestone M5. **Resolver:** spike S2.
-
-What per-pixel difference from FreeType's unhinted render is acceptable? Two
-correct rasterizers differ in curve flattening and in how they treat pixels
-crossed by several edges. The tolerance must be chosen from the spike's
-measured distribution on the corpus before the milestone starts, then frozen.
-
-**Status.** Spike S2 measured the distribution and proposes a tolerance in
-[`testing.md`](./testing.md#raster-oracle). It is accepted or changed in
-review, then frozen.
+Answered by spike S2; see [`FTX10`](#ftx10-two-raster-oracles).
 
 ### FTQ2: Background or synchronous scanning
 
@@ -291,15 +325,8 @@ Answered by spike S3; see [`FTX7`](#ftx7-ligatures-keep-one-glyph-per-cell-their
 
 ### FTQ4: Overlaps the font does not flag
 
-**Blocks:** `FTR2` acceptance, milestone M5. **Resolver:** review of `FTX9`.
-
-Unflagged overlapping contours exist. Supersampling every glyph of Fira Code
-Nerd Font Mono moved 1.5% of them more than 32 steps away from FreeType, up to
-195, because plain accumulation, FreeType's included, darkens their
-overlaps. CFF and CFF2 outlines carry no flag at all. The options are to
-restrict `FTR2` to flagged glyphs, matching FreeType; to supersample every
-glyph with more than one contour, at 6–10× the raster cost of each first
-render; or to compute exact nonzero coverage, which is not yet researched.
+Answered on review of spike S2; see
+[`FTX9`](#ftx9-flatten-to-0-02-px-render-the-union-of-flagged-glyphs).
 
 <!-- References -->
 
@@ -316,3 +343,7 @@ render; or to compute exact nonzero coverage, which is not yet researched.
 [ex-oracle]: ../../research/font-libraries/examples/raster-oracle-diff.d
 [ft-ttgload]: https://github.com/freetype/freetype/blob/aff94e1306400217dfd14a35009418d142871f87/src/truetype/ttgload.c#L461
 [ft-smooth]: https://github.com/freetype/freetype/blob/aff94e1306400217dfd14a35009418d142871f87/src/smooth/ftsmooth.c#L628
+[ab-glyph]: ../../research/font-libraries/ab-glyph.md
+[stb]: ../../research/font-libraries/stb-truetype.md
+[vello]: ../../research/font-libraries/vello.md
+[fontations]: ../../research/font-libraries/fontations.md
