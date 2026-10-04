@@ -1044,6 +1044,76 @@
     "seeAlso": ["pane"]
   },
   {
+    "id": "config-option",
+    "term": "configuration option",
+    "summary": "An independently resolved setting with a typed value, a canonical address, and declared composition semantics.",
+    "definition": "An addressable setting declared by a configuration schema. Its explicit definitions compete by numerical priority and combine according to its declared policy; a section groups child options, while a collection element is not automatically an independent option.",
+    "authority": [
+      {
+        "text": "wired configuration resolution",
+        "link": "/specs/wired/config/SPEC"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": ["config-definition", "config-priority"]
+  },
+  {
+    "id": "config-source",
+    "term": "configuration source",
+    "summary": "An identified origin that supplies configuration definitions, such as compiled defaults, a file, an environment variable, or a command-line argument.",
+    "definition": "A caller-identified origin with a category and diagnostic detail. Its definitions carry their own priorities and ordering metadata; source kind is not itself a precedence rule.",
+    "authority": [
+      {
+        "text": "wired configuration sources",
+        "link": "/specs/wired/config/SPEC#_3-sources-and-definitions"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": ["config-definition", "config-priority"]
+  },
+  {
+    "id": "config-definition",
+    "term": "configuration definition",
+    "summary": "One explicit supplied value for a configuration option, retained with its source, priority, and ordering information.",
+    "definition": "One source's explicit statement of an option value, including a value equal to the compiled default. Absence supplies no definition; resolution retains overridden and conflicting definitions as well as contributors.",
+    "authority": [
+      {
+        "text": "wired configuration definitions",
+        "link": "/specs/wired/config/SPEC#_3-sources-and-definitions"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": ["config-option", "config-source", "config-snapshot"]
+  },
+  {
+    "id": "config-priority",
+    "term": "definition priority",
+    "summary": "A numerical preference attached to a configuration definition, where the smallest number selects the definitions eligible to contribute.",
+    "definition": "The resolver selects the minimum priority present for an option before applying its composition policy. Equal-priority definitions merge or conflict according to that policy; ordering within noncommutative merges is separate metadata.",
+    "authority": [
+      {
+        "text": "wired configuration selection",
+        "link": "/specs/wired/config/SPEC#_4-selection-and-uda-directed-composition"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": ["config-definition", "config-option"]
+  },
+  {
+    "id": "config-snapshot",
+    "term": "resolution snapshot",
+    "summary": "An inspection-stable result containing retained configuration definitions, resolved values, contributors, and failures.",
+    "definition": "A caller-owned result whose exposed interface cannot mutate the retained definitions or their resolution dispositions. Successfully resolved options and unresolved conflicts remain inspectable together, but a complete configuration is unavailable while any option is unresolved.",
+    "authority": [
+      {
+        "text": "wired resolution snapshots",
+        "link": "/specs/wired/config/SPEC#_5-resolution-snapshots-and-failures"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": ["config-definition", "config-source"]
+  },
+  {
     "id": "sparse-overlay",
     "term": "sparse overlay",
     "aliases": ["layer"],
