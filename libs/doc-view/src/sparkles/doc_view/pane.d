@@ -330,10 +330,6 @@ struct DocViewPane
                 return k.mods.shift ? sideways(-vm.hScrollStep) : PaneKey.ignored;
             case Key.right:
                 return k.mods.shift ? sideways(vm.hScrollStep) : PaneKey.ignored;
-            case Key.tab:
-                vm.cycleView();
-                relayoutNow();
-                return PaneKey.handled;
             case Key.char_:
                 break;
             default:
@@ -355,6 +351,11 @@ struct DocViewPane
             case 'g':
             case 'z':
                 pending = c;
+                return PaneKey.handled;
+            // `v`, as in hue: Tab is focus (design-system `KBD1`).
+            case 'v':
+                vm.cycleView();
+                relayoutNow();
                 return PaneKey.handled;
             case 'l':
                 vm.lineNumbers = !vm.lineNumbers;

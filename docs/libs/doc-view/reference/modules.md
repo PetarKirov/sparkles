@@ -38,7 +38,7 @@ second is what embedding needed.
 | `Space` / `PgDn`, `PgUp`                                        | one page                                   |
 | `Ctrl+D`, `Ctrl+U`                                              | half a page                                |
 | `g g` / `Home`, `G` / `End`                                     | top, bottom                                |
-| `Tab`                                                           | preview → highlighted → plain              |
+| `v`                                                             | preview → highlighted → plain              |
 | `l`, `c`                                                        | file line numbers, fence line numbers      |
 | `/`, `n`, `N`                                                   | search, next match, previous match         |
 | `z a` `z z` `z c` `z o`                                         | fold at the top row: toggle, close, open   |
