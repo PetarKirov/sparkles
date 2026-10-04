@@ -14,9 +14,9 @@ vocabulary. A press that starts a create / marquee / move / pan / minimap scrub
 captures, every subsequent motion and the release go to that owner wherever the
 pointer strays, and the release frees both (`IXN1`).
 
-$(B Grid settings) sits above the context menu (`GRD9` / `IXN1`): **Grid…**
-opens it, 1/2/3 and arrows pick a fixture, Esc closes it — first step of the
-dismissal chain (`IXN6`).
+$(B Settings) sits above the context menu (`GRD9` / `IXN1`): **Settings…**
+opens the settings pane, Esc closes it — first step of the dismissal chain
+(`IXN6`).
 
 $(B Context menu) sits above every other layer (`IXN1` / `IXN5`): RMB opens it,
 a click on an item runs it, a click outside or Esc closes it — first step of
@@ -208,7 +208,7 @@ bool systemInput(ref World w, ref Camera cam, ref CaptureState cap, in Event e,
 Dispatches one key through the board's table (`IXN2`–`IXN4`, dismissal).
 
 The policy is $(MREF keymap); this is only the effects. What used to be the
-chain's shape — a label edit claiming the keyboard, grid settings taking first
+chain's shape — a label edit claiming the keyboard, settings taking first
 refusal, the tools and camera below them — is now scope order in the table,
 and what used to be `'v' || 'V'` at every row is normalisation done once.
 */
