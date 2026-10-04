@@ -226,13 +226,18 @@ struct UiFonts
     {
         import sparkles.raylib_text.draw : drawGrapheme;
 
+        // Each glyph starts on a whole pixel: the pen accumulates the exact
+        // advances, but a glyph sampled at a fractional offset is filtered
+        // across two pixel columns and reads as blurred, unevenly spaced text.
         const fake = bold && !steps[step].bold.present;
+        const top = cast(float) cast(int)(y + 0.5f);
         float pen = x;
         eachGlyph(step, bold, text, (ref LoadedFont lf, int cp, int size, float adv) {
             const uint[1] one = [cast(uint) cp];
-            drawGrapheme(lf, one[], pen, y, size, fg);
+            const left = cast(float) cast(int)(pen + 0.5f);
+            drawGrapheme(lf, one[], left, top, size, fg);
             if (fake)
-                drawGrapheme(lf, one[], pen + 1, y, size, fg);
+                drawGrapheme(lf, one[], left + 1, top, size, fg);
             pen += adv;
         });
     }
