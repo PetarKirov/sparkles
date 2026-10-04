@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:terminal
 reviewed: 2026-10-03
 ---
