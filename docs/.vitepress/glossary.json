@@ -235,8 +235,8 @@
   {
     "id": "cell-grid-audit",
     "term": "cell-grid audit",
-    "summary": "A check that lists every glyph whose width differs from a terminal cell and every ligature that changes the number of glyphs.",
-    "definition": "In the font explorer, the check that tells whether a programming font keeps a terminal's character grid: glyphs whose advance differs from the face's [cell metrics](/glossary#cell-metrics), and ligatures that change the glyph count, each with the characters involved.",
+    "summary": "A check that lists every glyph whose width differs from a terminal cell and every ligature that changes the number of glyphs, so a user sees which text takes the one-glyph-per-cell fast path.",
+    "definition": "In the font explorer, the check that tells which text in a programming font a terminal may place one glyph per cell: glyphs whose advance differs from the face's [cell metrics](/glossary#cell-metrics), and ligatures that change the glyph count, each with the characters involved. Text that fails it is still drawn correctly, from its shaped positions.",
     "authority": [
       {
         "text": "font-explorer specification §7",
