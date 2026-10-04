@@ -35,4 +35,5 @@ public import sparkles.raylib_text.font_discovery;
 public import sparkles.raylib_text.font_coretext;
 public import sparkles.raylib_text.font_set;
 public import sparkles.raylib_text.draw;
+public import sparkles.raylib_text.ui_font;
 public import sparkles.raylib_text.box;
