@@ -118,7 +118,7 @@ remains inspectable (`FTP8`, `FTA11`, `FTA15`).
 ### Parsing (`FTP1`–`FTP12`)
 
 - For every bundled face: open succeeds; `upem`, glyph count, every `name`
-  record, coverage ranges, and `glyphIndex` for every covered codepoint equal
+  record, coverage ranges, and `charMap.glyph` for every covered codepoint equal
   HarfBuzz's answers.
 - For each collection in the corpus and a committed two-face collection: the
   face count, and each face's `name` ID 4, equal HarfBuzz's; index =

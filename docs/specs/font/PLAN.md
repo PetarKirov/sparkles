@@ -211,9 +211,10 @@ spikes establish only their recorded configurations; they do not satisfy M2/M4/M
 or permit text-layout to substitute fake fonts. Progress states above remain the
 delivery authority.
 
-**Handoff.** Not started. The three Stage 0 spikes ran on 2026-10-03. Next
-executable action: an adversarial review of [`parsing.md`](./parsing.md), M1's
-operation-level contracts drafted on 2026-10-05, and of `SPEC.md` § 2–4; then
-the owner's acceptance. All four Stage 0 questions are answered
-(`FTX7`–`FTX10`). M1 also waits for base's owned UTF codecs (base M1a), which
-name decoding uses.
+**Handoff.** Not started. The three Stage 0 spikes ran on 2026-10-03, and all
+four Stage 0 questions are answered (`FTX7`–`FTX10`). M1's operation-level
+contracts ([`parsing.md`](./parsing.md)) and `SPEC.md` § 2–7 passed an
+adversarial review and a scoped recheck on 2026-10-05, dispositioned in
+[`decisions.md`](./decisions.md#m1-operation-contract-review). Next action:
+the owner's acceptance of the specification. M1 also waits for base's owned
+UTF codecs (base M1a), which name decoding uses.
