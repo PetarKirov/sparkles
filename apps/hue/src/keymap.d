@@ -117,8 +117,7 @@ struct KeyContext
     /// pane — while set, only `always` and the `dsvPalette` scope resolve.
     bool dsvPaletteActive;
     /// The picker's active source is **grep** (`PKC9`). Gates the rows that
-    /// only make sense there — `<S-Tab>` cycles the search mode instead of
-    /// reversing pane focus (`PKL5`).
+    /// only make sense there — `Ctrl-R` cycles the search mode (`PKL5`).
     ///
     /// Unlike `dsvPaletteActive`, which gates whole SCOPES through
     /// `reachable`, this one gates individual rows, so it needs a
@@ -265,7 +264,7 @@ enum Command : ubyte
     lanternAll,            /// `?` / `<leader>?` — list every binding live here
     pickerFiles,           /// `<leader>ff` — the fuzzy file picker
     pickerGrep,            /// `<leader>/` — the content-search picker (`PKS2`)
-    pickerCycleMode,       /// `<S-Tab>` in grep — plain / regex / fuzzy (`PKL5`)
+    pickerCycleMode,       /// `Ctrl-R` in grep — plain / regex / fuzzy (`PKL5`)
     pickerScrollLeft, pickerScrollRight, /// `←`/`→` — the list sideways (`PKL8`)
     quit,                  /// `q` — leave the viewer
     viewTop, viewBottom,   /// `gg` / `G`
@@ -403,8 +402,8 @@ enum CtxFlag : ushort
     hasDsvGrid     = 1 << 5,
     pickerActive   = 1 << 6,
     settingsActive = 1 << 7,
-    /// The grep source owns the picker (`PKC9`): `<S-Tab>` cycles the search
-    /// mode here, where it reverses pane focus everywhere else (`PKL5`).
+    /// The grep source owns the picker (`PKC9`): `Ctrl-R` cycles the search
+    /// mode here and nowhere else (`PKL5`).
     /// This is the flag the widening to `ushort` was reserved for — eight
     /// more remain before the next one is needed.
     grepActive     = 1 << 8,
@@ -798,14 +797,14 @@ immutable Binding[] hueBindings = [
     bind(Scope_.picker, chord(Key.backspace), Command.pickerErase, "erase"),
     bind(Scope_.picker, chord(Key.tab, ShiftReq.no), Command.pickerFocusNext,
         "next pane"),
-    // `PKL5`: in the grep source `<S-Tab>` cycles the search mode; anywhere
-    // else it reverses the pane focus. Two rows on one chord, separated by
-    // context rather than by a branch inside an arm — which is what makes
-    // the guide list the right one in each state.
     bind(Scope_.picker, chord(Key.tab, ShiftReq.yes), Command.pickerFocusPrev,
-        "prev pane", forbid: CtxFlag.grepActive),
-    bind(Scope_.picker, chord(Key.tab, ShiftReq.yes), Command.pickerCycleMode,
-        "search mode", require: CtxFlag.grepActive),
+        "prev pane"),
+    // `PKL5`: in the grep source `Ctrl-R` cycles the search mode. It was
+    // `<S-Tab>` until the design system fixed that key to reverse focus
+    // everywhere (`KBD1`); the row is still gated on context, so the guide
+    // lists it only where it does something.
+    bind(Scope_.picker, Chord(key: Key.char_, ch: 'r', ctrl: true),
+        Command.pickerCycleMode, "search mode", require: CtxFlag.grepActive),
     // `PKL8`: a deep path or a long source line runs past the panel, and
     // the arrows are the only keys the list had spare. They are the list's,
     // not the prompt's — a caret in a query does not move sideways here,
@@ -1526,4 +1525,12 @@ unittest
 
     const plain = KeyContext(pickerActive: true);
     assert((plain.bits() & CtxFlag.grepActive) == 0);
+
+    // `PKL5`: `Ctrl-R` cycles the mode only under grep; `Shift-Tab` reverses
+    // focus in both (`KBD1`).
+    const ctrl = Mods(ctrl: true), shift = Mods(shift: true);
+    assert(ch('r', grep, ctrl).cmd == Command.pickerCycleMode);
+    assert(ch('r', plain, ctrl).cmd == Command.none);
+    assert(nk(Key.tab, grep, shift).cmd == Command.pickerFocusPrev);
+    assert(nk(Key.tab, plain, shift).cmd == Command.pickerFocusPrev);
 }

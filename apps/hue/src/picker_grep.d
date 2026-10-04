@@ -805,7 +805,7 @@ size_t scanText(scope const(char)[] text, scope const(char)[] needle,
         return scanFuzzy(text, doc, hits, contexts, engine);
     case GrepMode.regex:
         // `PKC16`'s bounded engine is unwritten. `modeImplemented` keeps
-        // `<S-Tab>` from stopping here, so this arm is the belt to that
+        // `Ctrl-R` from stopping here, so this arm is the belt to that
         // brace rather than a reachable path.
         return 0;
     }
@@ -1997,13 +1997,13 @@ struct GrepFinder
     /// result list nobody can explain.
     bool fellBack() const @safe pure nothrow @nogc => fellBack_;
 
-    /// Whether `<S-Tab>` has claimed the mode. Classification is a default,
+    /// Whether `Ctrl-R` has claimed the mode. Classification is a default,
     /// not an override: once a reader has said which question they are
     /// asking, nothing re-decides it under them.
     bool modePinned() const @safe pure nothrow @nogc => modePinned_;
 
     /**
-    Advance to the next mode (`<S-Tab>`).
+    Advance to the next mode (`Ctrl-R`).
 
     Cycles rather than toggles because there are three, and it wraps because
     a reader who overshoots should not have to know which direction is
@@ -2055,7 +2055,7 @@ struct GrepFinder
 
         root_ = root;
         paths_ = null;
-        // A fresh picker open classifies again (`PKC9`): the `<S-Tab>` pin
+        // A fresh picker open classifies again (`PKC9`): the `Ctrl-R` pin
         // is a session, not a setting. A mode chosen for one search should
         // not silently govern the next one a reader opens.
         modePinned_ = false;
@@ -2353,7 +2353,7 @@ unittest
 @system
 unittest
 {
-    // `<S-Tab>` is a reader saying which question they are asking. Neither
+    // `Ctrl-R` is a reader saying which question they are asking. Neither
     // classification nor the fallback rung may answer a different one.
     import sparkles.test_utils.tmpfs : TmpFS;
 
