@@ -4,11 +4,11 @@ _Audience: contributors. Execution-only — deliverables, milestones, dependenci
 verification. For the feature inventory, per-item status, and design rationale
 read the [spec](./index.md); item numbers (R1…G1) refer to its §2._
 
-The library's runtime/widget modules are **blocked on the rendering-core decision**
-(spec §3.1). This plan therefore front-loads the two things that unblock and scope
-that work: the [feature spec](#deliverable-1) (the [`index.md`](./index.md) this
-sits beside) and the [render-cost benchmark](#deliverable-2) that picks the core.
-Building `libs/tui/src/` is a **follow-up plan**, not part of this one.
+The library's runtime and widget modules depended on the rendering-core
+decision (spec §3.1). This plan front-loads the two things that unblock and
+scope that work: the [feature spec](#deliverable-1) (the [`index.md`](./index.md)
+this sits beside) and the [render-cost benchmark](#deliverable-2) that picks the
+core. Building `libs/tui/src/` is a **follow-up**, not part of this plan.
 
 Library build-out, tracked outside this plan: the render core, terminal
 backend, input decoder, event loop and kitty/sixel images are landed in
@@ -16,18 +16,20 @@ backend, input decoder, event loop and kitty/sixel images are landed in
 
 ## Milestone overview
 
-| #      | Deliverable                                                                                                         | Depends on | Status      |
-| ------ | ------------------------------------------------------------------------------------------------------------------- | ---------- | ----------- |
-| **D1** | Feature-requirements / delta spec ([`index.md`](./index.md) + this plan)                                            | —          | landed      |
-| **M0** | Bench scaffolding + VT-oracle correctness harness (`libs/tui/bench/render/`)                                        | D1         | landed      |
-| **M1** | Two D PoCs (`line_diff`, `cell_grid`) benched across profiles — **answers the core question**                       | M0         | landed      |
-| **M2** | Sensitivity: `line_diff_lazy` (scroll-region `cell_grid`, `immediate_flat` remain optional)                         | M1         | landed      |
-| **M3** | Systems-language calibration shims: Ratatui (Rust) → Notcurses (C) → libvaxis (Zig, if cheap)                       | M1         | open        |
-| **M4** | Runtime-language calibration (subprocess): Bubble Tea (Go); Textual/Ink optional                                    | M1         | open        |
-| **M5** | Decision record [`render-bench-baseline.md`](./render-bench-baseline.md); flip the core in [`index.md`](./index.md) | M1 (+M3)   | preliminary |
+| #      | Deliverable                                                                                                         | Depends on | Status |
+| ------ | ------------------------------------------------------------------------------------------------------------------- | ---------- | ------ |
+| **D1** | Feature-requirements / delta spec ([`index.md`](./index.md) + this plan)                                            | —          | landed |
+| **M0** | Bench scaffolding + VT-oracle correctness harness (`libs/tui/bench/render/`)                                        | D1         | landed |
+| **M1** | Two D PoCs (`line_diff`, `cell_grid`) benched across profiles — **answers the core question**                       | M0         | landed |
+| **M2** | Sensitivity: `line_diff_lazy` (scroll-region `cell_grid`, `immediate_flat` remain optional)                         | M1         | landed |
+| **M3** | Systems-language calibration shims: Ratatui (Rust) → Notcurses (C) → libvaxis (Zig, if cheap)                       | M1         | open   |
+| **M4** | Runtime-language calibration (subprocess): Bubble Tea (Go); Textual/Ink optional                                    | M1         | open   |
+| **M5** | Decision record [`render-bench-baseline.md`](./render-bench-baseline.md); flip the core in [`index.md`](./index.md) | M1 (+M3)   | landed |
 
 **Realistic MVP that already answers the architecture question:** M0 + M1 +
-(M3: Ratatui + Notcurses).
+(M3: Ratatui + Notcurses). M5 rests instead on a byte-identical C port of
+`cell_grid` (`shim_c.c`) as calibration; the framework shims of M3 stay
+optional context.
 
 ## Deliverable 1
 
@@ -130,7 +132,8 @@ full-repaint reference. A mismatch is an isolated error row that fails the run.
 ## Deferred / explicitly out of scope
 
 - Building `libs/tui/src/` proper (runtime, backend, input, color, style, layout,
-  widgets, images) — a follow-up plan, gated on M5.
+  widgets, images) — built after M5, outside this plan; layout and widgets in
+  `sparkles:ui`.
 - FTXUI (C++) as a bench engine (redundant with Ratatui + Notcurses for the core
   question — spec §3.1).
 - The non-goals in [spec §4](./index.md#_4-non-goals) (terminfo, accessibility,
