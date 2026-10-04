@@ -20,7 +20,7 @@ import sparkles.ui.components.dock : DockDrag, dockHintRect;
 import sparkles.ui.components.scroll_view : ScrollLayout, ScrollView;
 import sparkles.ui.state : PressState, ScrollAxis, ScrollbarState, ScrollState,
     scrollbarThumb;
-import sparkles.ui.style : Slot, TextStyle;
+import sparkles.ui.style : InteractionState, Slot, StateSet, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Visibility, Widget, WidgetKind;
 
 @safe:
@@ -320,8 +320,10 @@ uint headerBar(ref Builder b, uint[] leading, uint[] center = null,
         kind: WidgetKind.row,
         children: leading ~ s1 ~ center ~ s2 ~ trailing,
         // A focused pane's bar renders on the accented band, so the pane
-        // holding the input focus is visible at a glance.
-        slot: focused ? Slot.chromeFocused : Slot.chrome,
+        // holding the input focus is visible at a glance — the palette's
+        // `chrome` + `focused` (D46).
+        slot: Slot.chrome,
+        states: focused ? StateSet.of(InteractionState.focused) : StateSet.init,
         paintBackground: true,
         stretch: true, // span the parent column edge-to-edge
         padding: Insets.symmetric(0, 1),
@@ -392,7 +394,8 @@ uint actionBar(ref Builder b, scope const(string)[] labels, size_t hitBase,
             // GUI host, and taking immutable labels keeps that path free of a
             // per-segment `idup`.
             text: label,
-            slot: press.isArmed(id) ? Slot.chromeAccent : Slot.chrome,
+            slot: Slot.chrome, // pressed: the accent, on the focused band (D46)
+            states: press.isArmed(id) ? StateSet.of(InteractionState.pressed) : StateSet.init,
         ));
         segs[i] = b.add(Widget(
             kind: WidgetKind.column,
@@ -406,7 +409,8 @@ uint actionBar(ref Builder b, scope const(string)[] labels, size_t hitBase,
             // The whole segment is the target, not just the glyphs: a fingertip
             // lands between labels as often as on one.
             hitId: id,
-            slot: press.isArmed(id) ? Slot.chromeFocused : Slot.chrome,
+            slot: Slot.chrome,
+            states: press.isArmed(id) ? StateSet.of(InteractionState.pressed) : StateSet.init,
             paintBackground: true,
         ));
     }
@@ -471,6 +475,19 @@ struct TabCaps
     bool hasBandBg; /// ditto
 }
 
+/// A tab's states: `selected` when it is the one showing, `pressed` while the
+/// pointer is down on it — both at once on a press of the active tab, where
+/// `pressed` wins (`TOK5`).
+private StateSet tabStates(bool active, bool armed)
+{
+    StateSet s;
+    if (active)
+        s = s.with_(InteractionState.selected);
+    if (armed)
+        s = s.with_(InteractionState.pressed);
+    return s;
+}
+
 /// A border cap / top-border cell: `Slot.border` line work, over the caps'
 /// band background when one is pinned.
 private Widget bandedGlyph(string g, in TabCaps caps)
@@ -524,10 +541,11 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
             kind: WidgetKind.text,
             text: label,
             // Three distinct states, because they mean three things: this
-            // one is showing, this one is being pressed, this one is idle.
-            slot: isActive ? Slot.chromeAccent
-                : armed ? Slot.chromeFocused : Slot.gutter,
-            textStyle: TextStyle(bold: isActive),
+            // one is showing (`selected`: the accent, bold), this one is
+            // being pressed (`pressed`: the focused band), this one is idle —
+            // the palette's `gutter` overrides (D46).
+            slot: Slot.gutter,
+            states: tabStates(isActive, armed),
         ));
         const body = b.add(Widget(
             kind: WidgetKind.column,
@@ -543,9 +561,12 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
             // A CAPPED strip is line-drawn: solid bands under hairline
             // walls read as floating blocks (the GUI especially), so only
             // the active tab keeps a fill inside its walls — the ACCENT
-            // tint, distinct from the panel surface below it.
-            slot: isActive ? (capped ? Slot.chromeAccent : Slot.chromeFocused)
-                : Slot.chrome,
+            // tint, distinct from the panel surface below it. The variant
+            // picks the base slot (D46): a capped body is `chrome.accent`,
+            // filled only when selected; an uncapped one is the `chrome`
+            // band, whose `selected` override is the focused band.
+            slot: capped ? Slot.chromeAccent : Slot.chrome,
+            states: isActive ? StateSet.of(InteractionState.selected) : StateSet.init,
             paintBackground: !capped || isActive,
         ));
         if (caps.left.length)
@@ -741,17 +762,39 @@ version (unittest)
 @("ui.components.chrome.actionBarArmedSegmentPaintsPressed")
 @safe unittest
 {
-    // Arming is visible: the armed segment takes the focused chrome slot, so
-    // a press has feedback without the host tracking which one it pressed.
+    // Arming is visible: the armed segment is `pressed`, which the palette
+    // resolves to the focused band (D46), so a press has feedback without the
+    // host tracking which one it pressed.
     auto b = Builder();
     const press = PressState.init.pressed(21);
     const bar = actionBar(b, ["x", "y", "z"], 20, press);
     auto tree = b.finish(bar);
 
     const segs = tree.nodes[bar].children;
-    assert(tree.nodes[segs[0]].slot == Slot.chrome);
-    assert(tree.nodes[segs[1]].slot == Slot.chromeFocused); // id 21
-    assert(tree.nodes[segs[2]].slot == Slot.chrome);
+    assert(tree.nodes[segs[0]].states.empty && tree.nodes[segs[2]].states.empty);
+    assert(tree.nodes[segs[1]].states.has(InteractionState.pressed)); // id 21
+    assert(seen(tree.nodes[segs[1]]).bg == seen(Widget(slot: Slot.chromeFocused)).bg);
+    assert(seen(tree.nodes[segs[0]]).bg == seen(Widget(slot: Slot.chrome)).bg);
+}
+
+version (unittest)
+{
+    import sparkles.base.term_style : TextAttr;
+    import sparkles.ui.style : Visual;
+}
+
+version (unittest)
+{
+    // What a node resolves to against the shipped palette — the test's view
+    // of a state, now that states, not swapped slots, carry the meaning.
+    private Visual seen(in Widget w)
+    {
+        import sparkles.ui.style : defaultTwoslashPalette, resolveVisual;
+
+        const fg = RgbColor(200, 200, 200), bg = RgbColor(20, 20, 20);
+        return resolveVisual(defaultTwoslashPalette(), w.slot, w.decoration,
+            w.textStyle, fg, bg, w.states);
+    }
 }
 
 @("ui.components.chrome.headerBarDistributesSegments")
@@ -877,11 +920,15 @@ version (unittest)
         PressState.init.pressed(11));
     auto tree = b.finish(strip);
     const tabs = tree.nodes[strip].children;
-    assert(tree.nodes[tabs[0]].slot == Slot.chromeFocused, "active tab");
-    assert(tree.nodes[tree.nodes[tabs[0]].children[0]].textStyle.bold);
-    assert(tree.nodes[tabs[1]].slot == Slot.chrome, "armed is not active");
-    assert(tree.nodes[tree.nodes[tabs[1]].children[0]].slot
-        == Slot.chromeFocused, "…but the armed label is lit");
+    const focusedBand = seen(Widget(slot: Slot.chromeFocused));
+    assert(seen(tree.nodes[tabs[0]]).bg == focusedBand.bg, "active tab");
+    const label0 = seen(tree.nodes[tree.nodes[tabs[0]].children[0]]);
+    assert((label0.styleBits & TextAttr.bold.bits) != 0);
+    assert(label0.fg == seen(Widget(slot: Slot.chromeAccent)).fg);
+    assert(seen(tree.nodes[tabs[1]]).bg == seen(Widget(slot: Slot.chrome)).bg,
+        "armed is not active");
+    assert(seen(tree.nodes[tree.nodes[tabs[1]].children[0]]).fg == focusedBand.fg,
+        "…but the armed label is lit");
 
     // `fitLabels: false` grows instead: every segment takes its label plus
     // the SAME share of the leftover, so the strip tiles exactly (the

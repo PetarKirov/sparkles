@@ -21,7 +21,7 @@ import sparkles.ui.components.tree_widget : FlatTreeRow, Guide, nodeExpandable,
 import sparkles.ui.geometry : cellsOf, SizeSpec;
 import sparkles.ui.property_tree : ByteSpan, LeafKind, MatchedField,
     PropertyEditState, PropertyNode, Refusal, RefusalKind, SearchRole;
-import sparkles.ui.style : Slot, TextStyle;
+import sparkles.ui.style : InteractionState, Slot, StateSet, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
 
 @safe:
@@ -249,7 +249,8 @@ uint propertyView(ref Builder b, in TreeData!PropertyNode data,
         rowIds ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
             hitId: n.synthetic ? 0 : hitBase + row.node,
             paintBackground: selected, stretch: selected,
-            slot: selected ? Slot.selection : Slot.inherit));
+            // The selection tint is the palette's `inherit` + `selected` (D46).
+            states: selected ? StateSet.of(InteractionState.selected) : StateSet.init));
 
         // The refusal, inline at the addressed row (`PRT21`).
         const r = edits.refusalFor(n.path);

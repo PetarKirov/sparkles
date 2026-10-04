@@ -26,7 +26,7 @@ module sparkles.ui.components.tree_widget;
 
 import sparkles.ui.state : DisclosureState;
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.style : Slot;
+import sparkles.ui.style : InteractionState, Slot, StateSet;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
 
 @safe:
@@ -297,7 +297,8 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
         Widget w = Widget(kind: WidgetKind.rich, spans: spans,
             hitId: hitBase + node, // hit identity (0 = none; default base 1)
             paintBackground: node == selected, stretch: node == selected,
-            slot: node == selected ? Slot.selection : Slot.inherit);
+            // The selection tint is the palette's `inherit` + `selected` (D46).
+            states: node == selected ? StateSet.of(InteractionState.selected) : StateSet.init);
         // A resolved (theme-derived) selection tint overrides the palette slot.
         if (node == selected && hasSelectionBg)
         {
@@ -467,10 +468,10 @@ version (unittest)
 @safe unittest
 {
     import sparkles.base.term_color : RgbColor;
-    import sparkles.ui.canvas : OpKind;
+    import sparkles.ui.canvas : FillRect, match, OpKind;
     import sparkles.ui.display_list : buildDisplayList;
     import sparkles.ui.layout : layout;
-    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.style : defaultTwoslashPalette, resolveSlot;
 
     auto t = sample();
     auto rows = flatten(t, (uint) => true);
@@ -486,14 +487,19 @@ version (unittest)
         RgbColor(0xff, 0xff, 0xff), RgbColor(0, 0, 0));
 
     bool sawOpenMarker, sawEndGuide, sawSelection;
+    const selectionTint = resolveSlot(defaultTwoslashPalette(), Slot.selection,
+        RgbColor(0xff, 0xff, 0xff), RgbColor(0, 0, 0)).bg;
     foreach (ref op; ops)
     {
         if (op.kind == OpKind.textRun && op.text == "▾ ")
             sawOpenMarker = true;
         if (op.kind == OpKind.textRun && op.text == "└─ ")
             sawEndGuide = true;
-        if (op.kind == OpKind.fillRect && op.slot == Slot.selection)
-            sawSelection = true;
+        // The selected row's fill is the selection tint, through the
+        // palette's `inherit` + `selected` (D46).
+        op.match!(
+            (in FillRect f) { sawSelection |= f.hasBg && f.bg == selectionTint; },
+            (_) {});
     }
     assert(sawOpenMarker && sawEndGuide && sawSelection);
 

@@ -842,12 +842,13 @@ version (unittest)
     }
     assert(wt.nodes[col].children.length == 3, "exactly the viewport's rows");
 
-    // The selected row is inside the slice and carries the selection slot.
-    import sparkles.ui.style : Slot;
+    // The selected row is inside the slice and is `selected` (the palette
+    // tints it, D46).
+    import sparkles.ui.style : InteractionState, Slot;
 
     bool sawSelection;
     foreach (c; wt.nodes[col].children)
-        sawSelection |= wt.nodes[c].slot == Slot.selection;
+        sawSelection |= wt.nodes[c].states.has(InteractionState.selected);
     assert(sawSelection);
 }
 
