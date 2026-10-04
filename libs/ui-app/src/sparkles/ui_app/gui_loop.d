@@ -42,7 +42,7 @@ import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.image : ImageRegistry;
 import sparkles.ui_raylib.effect_gpu : EffectGpu;
 import sparkles.ui_raylib.image_textures : ImageTextures;
-import sparkles.ui_raylib.raylib_canvas : raylibCapabilities, RaylibCanvas;
+import sparkles.ui_raylib.raylib_canvas : GuiMeasure, raylibCapabilities, RaylibCanvas;
 import sparkles.ui_raylib.events : RaylibEvents;
 import sparkles.ui_raylib.window : Window;
 
@@ -173,6 +173,15 @@ struct GuiHost
     /// ditto
     void toggleFullscreen() @system => session.window.toggleFullscreen();
 
+    /**
+    The text measurer layout and the display list use on this target
+    (`GLY10`): interface runs in their face while the target draws it, cell
+    metrics otherwise — so a narrowed preview lays out as the terminal would.
+    */
+    GuiMeasure textMeasure() @system
+        => GuiMeasure(target.proportionalText ? &session.uiFonts : null,
+            session.cellW, session.cellH);
+
     /// The canvas, for an application with a renderer of its own (`HST3`) —
     /// `apps/terminal` paints a VT screen cell by cell and would not survive
     /// being routed through a display list.
@@ -180,6 +189,8 @@ struct GuiHost
     {
         auto c = RaylibCanvas(&session.fonts, &drawScratch,
             session.cellW, session.cellH, capabilities: target);
+        c.uiFonts = &session.uiFonts;
+        c.density = session.uiScale;
         c.images = &imageTextures;
         c.fx = &effectGpu;
         return c;
@@ -227,7 +238,10 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
 
     GuiHost host;
     host.session = &session;
-    host.declareTarget(raylibCapabilities);
+    // The window's constants, plus the interface face when it loaded (`GLY10`).
+    auto declared = raylibCapabilities;
+    declared.proportionalText = session.uiFonts.present;
+    host.declareTarget(declared);
     host.capabilities = mousePointer;
     version (Android)
         if (cfg.touchGestures)

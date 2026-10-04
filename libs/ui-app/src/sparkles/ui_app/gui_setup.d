@@ -25,9 +25,16 @@ module sparkles.ui_app.gui_setup;
 
 version (UiAppGui):
 
-import sparkles.raylib_text : displayMetrics, FontSet, pixelsForPoints;
+import sparkles.raylib_text : displayMetrics, FontSet, pixelsForPoints, resolveUiFace,
+    UiFonts, uiTypeSteps;
 import sparkles.ui_raylib.window : TraceLogSink, Window, WindowRequest;
 import sparkles.ui_app.gui_options : FontRequest, WindowCells;
+
+/// The interface family a request names unless it says otherwise.
+version (Android)
+    enum string defaultUiFontFamily = "Roboto";
+else
+    enum string defaultUiFontFamily = "sans-serif";
 
 /// What the caller wants of a window and its fonts.
 struct GuiRequest
@@ -57,6 +64,15 @@ struct GuiRequest
     /// creation is what failed.
     TraceLogSink traceSink;
 
+    /**
+    The interface face (design-system `GLY10`): the family chrome text in
+    `FontRole.ui` draws in, resolved like the cell font — the desktop's own
+    sans through the system font database, the bundled Roboto on Android
+    (whose system faces are variable fonts a raylib atlas cannot weight). An
+    empty family, or one that does not resolve, leaves chrome in the cell font.
+    */
+    string uiFontFamily = defaultUiFontFamily;
+
     int targetFps = 60; ///
 }
 
@@ -70,11 +86,18 @@ struct GuiSession
     /// Device pixels per coordinate unit — what the atlas is oversampled by.
     /// Kept so `setFontSize` can reload without re-probing the display.
     float atlasScale = 1.0f;
+    /// The interface faces, one per type step; `uiFonts.present` is false
+    /// when the family did not resolve.
+    UiFonts uiFonts;
+    /// Drawing units per density-independent pixel: the panel's content
+    /// scale, which sizes the interface steps and the CSS-px box chrome.
+    float uiScale = 1.0f;
 
     @disable this(this);
 
     ~this() @system
     {
+        uiFonts.unload();
         fonts.unload();
     }
 
@@ -174,6 +197,11 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
             maps, faces, sources, session.atlasScale))
         return false;
 
+    // 3b. The interface faces, one per type step, each at its size in drawing
+    //     units: dp times the panel scale (1 for a pinned capture, as above).
+    session.uiScale = req.fontSizePxOverride > 0 ? 1.0f : metrics.scale;
+    loadUiFaces(session, req.uiFontFamily, sources);
+
     // 4. The size, now that a cell has a width. Skipped on Android, where the
     //    surface is the screen and there is nothing to size.
     version (Android) {}
@@ -199,4 +227,42 @@ unittest
     assert(r.fontSizePxOverride == 0, "off unless a capture asks for it");
     assert(r.targetFps == 60);
     assert(r.traceSink is null);
+}
+
+/**
+Loads `family` into `session.uiFonts` at every type step, scaled by
+`session.uiScale` and oversampled like the cell font, with the cell font set
+as the fallback for code points the family lacks. A family that does not
+resolve leaves `uiFonts.present` false; chrome then draws in the cell font.
+*/
+void loadUiFaces(ref GuiSession session, string family,
+    in FontSet.FontSources sources) @system
+{
+    import sparkles.ui.style : TypeStep, typeStepDp;
+
+    if (family.length == 0)
+        return;
+    string regular, bold;
+    if (!resolveUiFace(family, sources, regular, bold))
+        return;
+    int[uiTypeSteps] sizes;
+    foreach (i, ref s; sizes)
+        s = uiStepPx(typeStepDp(cast(TypeStep) i), session.uiScale);
+    session.uiFonts.load(regular, bold, sizes, &session.fonts, session.atlasScale);
+}
+
+/// A type step of `dp` density-independent px at `scale`, in whole drawing units.
+int uiStepPx(int dp, float scale) @safe pure nothrow @nogc
+{
+    const px = cast(int)(dp * scale + 0.5f);
+    return px < 1 ? 1 : px;
+}
+
+@("ui_app.gui_setup.uiStepPx")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(uiStepPx(14, 1) == 14);
+    assert(uiStepPx(17, 2.75f) == 47, "a 440 dpi phone");
+    assert(uiStepPx(12, 0) == 1);
 }
