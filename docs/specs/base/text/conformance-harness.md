@@ -11,6 +11,13 @@ It is the executable companion to the normative
 [conformance test cases](./test-cases.md). The tool itself lives at
 [`libs/base/tools/text-conformance/`](../../../../libs/base/tools/text-conformance/).
 
+This page describes the delivered harness and its two-version baseline. The
+[owned Unicode contract](./SPEC.md) and [acceptance strategy](./testing.md)
+require a single content-pinned release and zero divergences from its normative
+corpora after cutover. A documented disagreement between terminal width policies
+is separate from a failed Unicode boundary or normalization rule; the latter
+must not be hidden by the historical differential allowlist.
+
 ## The eleven layers
 
 | Layer  | Checks                                                         | Oracle                                                                  |

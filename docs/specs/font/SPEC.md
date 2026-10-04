@@ -50,11 +50,18 @@ builds a [font catalog](../../glossary.md#font-catalog) from the files each plat
 library's own parser. Platforms differ in which files they list, but the
 matching and fallback rules applied to them are the same everywhere.
 
-Several things are deliberately left to others. Line breaking, bidirectional
-reordering and paragraph layout belong to a layout layer above this library.
+Several things are deliberately left to others. Owned UTF decoding, Unicode
+properties, segmentation, line-break opportunities and bidi analysis belong to
+[`sparkles:base`](../base/text/SPEC.md). Its [wrapping contract](../base/text/wrapping.md)
+owns generic solvers and physical layout units. Contextual paragraph composition,
+visual ordering and source-to-visual mappings belong to
+[`sparkles:text-layout`](../text-layout/SPEC.md), which depends on base and font;
+font never depends on layout. Math composition, page layout and export sit above
+font as well. Font supplies their measured resources, not their composition policy.
 Drawing rasterized pixels on a screen belongs to the consumer: a GPU backend
-uploads them, a terminal backend sends them as an image. HarfBuzz parses the
-same hostile bytes when it shapes; its robustness is HarfBuzz's own, and this
+uploads them, a terminal backend sends them as an image.
+HarfBuzz parses the same hostile bytes when it shapes; its robustness is
+HarfBuzz's own, and this
 library's trust guarantees cover only its own reads. Font hinting, LCD subpixel
 rendering, web-font containers (WOFF and WOFF2), writing or subsetting font
 files, and installing fonts system-wide are out of scope. `COLR` version 1
@@ -104,6 +111,11 @@ page][concepts] explains these and other font internals for newcomers.
    GPU API, raylib or `sparkles:ui`.
 8. **The same behaviour everywhere.** Matching and fallback use this
    library's own face records on every platform.
+9. **One Unicode owner.** UTF and Unicode semantics come from base's pinned
+   release, not Phobos or an uncoordinated shaping-engine data set.
+10. **Measured resources, not composition.** Font exposes scalable metrics,
+    contextual shaping, baseline and math data; layout chooses breaks and places
+    runs. Ink bounds never substitute for advances.
 
 ## 4. Trust boundary
 
@@ -153,9 +165,9 @@ open. Concurrent calls to its `const` operations from several threads
 **must** be safe without synchronization.
 
 **FTA3: Instance as a value.** An instance **must** be a copyable value
-holding a face, a size, a normalized coordinate vector and a [synthesis](../../glossary.md#synthesis) value,
-with no mutable state. It is the only place variation coordinates are
-stored.
+holding a face, an explicitly unit-tagged size (physical or pixel), a normalized
+coordinate vector and a [synthesis](../../glossary.md#synthesis) value,
+with no mutable state. It is the only place variation coordinates are stored.
 
 **FTA4: Caller-owned scratch.** Shaping, outline decoding into arrays and
 rasterization **must** take their working storage from the caller and
@@ -190,8 +202,16 @@ of ImportC, at the risk of drifting from the headers. This test turns drift
 into a failure instead of memory corruption.
 
 Packages depend on the library, never the reverse: the font explorer,
-`sparkles:raylib-text` and `sparkles:terminal-view` use `sparkles:font`,
-which uses `sparkles:base`.
+`sparkles:raylib-text`, `sparkles:terminal-view` and `sparkles:text-layout` use
+`sparkles:font`, which uses `sparkles:base`. These are dependency directions,
+not claims that the proposed packages or APIs have been delivered.
+
+**FTA15: Base owns text semantics.** Font **must** use base's owned UTF codecs
+and Unicode contract, including name decoding and shaping inputs; production
+modules **must not** import `std.utf` or `std.uni`, use implicit auto-decoding, or
+derive Unicode tables from the compiler. Font **must not** depend on
+`sparkles:text-layout` or own competing segmentation, bidi, line-breaking or
+wrapping helpers. Shaping-engine integration **must** satisfy `FTS8`.
 
 ## 6. Errors
 
@@ -199,8 +219,10 @@ which uses `sparkles:base`.
 `Expected!(T, FontError)`. A `FontError` carries a kind, the table tag
 involved if any, and the byte offset where the problem was found. The kinds
 include at least `notAFont`, `truncated`, `badOffset`, `badValue`,
-`unsupportedVersion`, `missingTable`, `limitExceeded`, `cycle` and
-`indexOutOfRange`.
+`unsupportedVersion`, `missingTable`, `limitExceeded`, `cycle`,
+`indexOutOfRange`, `invalidEncoding`, `invalidRange`, `invalidFeatureRange`, `splitScalar`,
+`unsupportedUnicodeVersion`, `unsupportedEngine`, `unsupportedCapability` and
+`arithmeticExhausted`.
 
 **FTA10: Absent is not malformed.** A table the font lacks **must** yield
 `missingTable`, never `badOffset`. A field that the table's version predates
@@ -263,8 +285,11 @@ documented defaults.
 platform, encoding, language, name ID and text. Text in UTF-16BE **must**
 decode, which covers platform 0 and platform 3 encodings 0, 1 and 10; so
 **must** Mac Roman, platform 1 encoding 0. Other encodings are reported with
-their raw bytes. Version 1 language-tag records **must** decode. Decoding
-writes into caller storage.
+their raw bytes. Version 1 language-tag records **must** decode. UTF-16BE
+decoding **must** use base's strict codec: malformed surrogate pairs or an odd
+byte count return `invalidEncoding` for that record, with table-relative byte
+offset and no partial decoded string. Other well-formed records remain readable.
+Decoding writes into caller storage; raw record bytes remain accessible.
 
 **FTP9: Character mapping.** Mapping a codepoint to a glyph **must** choose a
 `cmap` subtable in this order: platform 3 encoding 10; platform 0 encoding 4
@@ -285,6 +310,23 @@ or the `CFF` charset. A font with neither yields no name, not an error.
 `dual` means exactly two advances, the larger twice the smaller, as in CJK
 monospace fonts. `post.isFixedPitch` is reported separately and **must not**
 decide the classification.
+
+**FTP13: Math data, not math composition.** The library **must** provide bounded
+borrowed views and instance-aware queries for OpenType `MATH` version 1.0:
+all math constants; per-glyph italic corrections, top-accent attachments,
+extended-shape coverage and the four math-kern tables; horizontal and vertical
+variants; and assembly parts with glyph IDs, start/end connector lengths, full
+advances, extender flags and minimum connector overlap. Math-kern lookup **must**
+select the value for the requested correction height according to the table's
+step rule. Dimensional values with device/variation adjustments **must** retain
+their design value and expose the resolved value under `FTM6`. Percentages,
+counts and flags retain their native dimensionless units; they **must not** be
+scaled as lengths. Missing `MATH`, missing glyph
+records, unsupported versions and malformed offsets **must** be distinguishable;
+absence **must not** silently supply invented math constants. Caller storage
+exhaustion **must** return `limitExceeded` without publishing a partial result.
+Font supplies data to math composition above font; it does not choose fractions,
+scripts, stretching assemblies, formula breaks or math-page placement.
 
 ## 8. Variation
 
@@ -329,14 +371,51 @@ the Windows set with the descent negated. The result names the set it used.
 thickness, and strikeout position and size are optional. A value the font
 does not provide **must** be reported as absent.
 
-**FTM4: Fractional values.** Advances and metrics at an instance **must** be
-fractional pixels, including `HVAR` and `MVAR` deltas. The library **must
-not** round them.
+**FTM4: Fractional values.** The pixel convenience path **must** report advances
+and metrics at an instance in fractional pixels, including `HVAR` and `MVAR`
+deltas. The library **must not** round them to whole pixels. `FTM6` generalizes
+this path without removing it; only the cell API of `FTM5` performs its explicit
+whole-pixel rounding.
 
 **FTM5: Cell metrics.** For an instance, the library **must** compute [cell
 metrics](../../glossary.md#cell-metrics) in whole device pixels. The cell width is the rounded advance of
 U+0030 DIGIT ZERO, or `OS/2.xAvgCharWidth` when the face does not map it. The
 rounding rule is documented on the operation and is part of the contract.
+
+**FTM6: Device-independent scalable measurements.** At an instance, advances,
+offsets, line metrics, baselines and dimensional math values **must** be available in
+fractional design units and in base's
+[physical `LayoutUnit`](../base/text/wrapping.md), with the instance's physical
+em size supplied explicitly. Pixel conversion **must** require an explicit
+device scale; changing that scale **must not** change physical measurements.
+Hinting, pixel snapping and bitmap-strike selection **must not** influence
+physical advances. Conversion to `LayoutUnit` **must** round once, nearest with
+ties to even, with error at most half a unit; intermediate arithmetic overflow or
+an unrepresentable result **must** return a structured arithmetic-exhaustion error,
+never saturate or wrap. The shared unit and arithmetic contract is owned by base,
+not redefined here. Design values with pixel-device deltas **must** keep those
+deltas separate until an explicit ppem is provided; instance variation deltas
+apply to design/physical measurements. Ink extents (which may be negative,
+overhang or be empty) and pen advances **must** be distinct results. A space
+may advance without ink, and a mark may have ink without advance.
+The design-position path **must** preserve the engine's integer position scale
+and the face's units-per-em so a consumer can accumulate design advances/origins
+before physical conversion. A run-total measurement **must** convert the accumulated
+design advance once; it **must not** sum per-glyph rounded physical advances.
+Layout owns accumulation across runs and candidate lines; font supplies the
+scale/provenance needed to avoid a second lossy conversion.
+
+**FTM7: Baselines and vertical metrics.** The library **must** expose `BASE`
+version 1.0/1.1 horizontal and vertical axes, baseline tags, script/default and
+language-system records, min/max extents and all BaseCoord formats, including
+reference-glyph/point coordinates and device/variation adjustments. It **must**
+report `vhea`, `vmtx`, `VORG` and `VVAR` metrics when present, and resolve vertical
+advance/origin and baseline queries at the same instance coordinates as shaping.
+Missing tables and missing records **must** be distinguishable from malformed
+records and from a valid zero coordinate. A selected fallback vertical origin or
+baseline **must** report its provenance; it **must not** be presented as a `BASE`
+record. Reading these tables follows `FTB1`–`FTB5` and `FTA10`–`FTA11`; requested
+indices and scratch limits have the same structured errors as other table queries.
 
 ## 10. Outlines
 
@@ -424,19 +503,38 @@ same glyph rendered by the same rasterizer with curves flattened to 0.001 px.
 These requirements apply to the `engine` configuration.
 
 **FTS1: Shaped runs.** Shaping text with an instance **must** return glyph
-IDs, clusters as UTF-8 byte offsets into the text, and fractional advances
-and offsets, using the instance's coordinates.
+IDs, source clusters as UTF-8 byte offsets into the borrowed source, and advances
+and offsets in the unit selected under `FTM4`/`FTM6`, using the instance's
+coordinates. Glyph order is pen traversal order for the reported direction;
+offsets are relative to each glyph's pen position, not accumulated origins.
+Measurement **must** use the actual substitutions and positioning of that run,
+not nominal `cmap` advances or ink bounds.
 
 **FTS2: Typed options.** Features **must** be values carrying a tag, a value
-and an optional byte range. Script, language and direction **may** be given or
-guessed, and the result **must** report the ones used.
+and an optional absolute source-byte range. Direction, script and language
+**may** be guessed for a standalone convenience call, and the result **must**
+report those used and whether each was explicit or guessed. A coordinated call
+under `FTS8` **must not** guess or overwrite explicit properties.
 
 **FTS3: Coordinates passed unchanged.** HarfBuzz **must** receive exactly the
 instance's normalized coordinates. Shaping **must not** normalize again.
 
-**FTS4: Cluster integrity.** For a left-to-right run, cluster offsets **must**
-be non-decreasing, and every byte of the text **must** belong to exactly one
-cluster.
+**FTS4: Cluster integrity.** Glyph clusters **must not** be described as Unicode
+graphemes or assumed to contain one codepoint or one glyph. The coordinated path
+**must** use monotone-character clustering: cluster starts in pen order are
+non-decreasing for LTR/TTB and non-increasing for RTL/BTT. Repeated starts are
+permitted. The result **must** separately partition the shaped source interval
+into ordered, nonempty, half-open byte spans, associating each span with all its
+glyphs. Sort distinct emitted cluster starts in source order and include the run
+start; each span ends at the next start or at the run end. A leading span with
+no emitted start has an empty glyph range; a glyphless nonempty run has one empty
+glyph-range span. Absorbed characters and removed default ignorables retain byte
+coverage in this partition, which does not claim that every covered scalar
+emitted a glyph.
+Span boundaries **must** be scalar boundaries; every byte in the shaped interval
+belongs to exactly one span, and no context-only byte belongs to one. These spans
+do not grant line-break or grapheme boundaries. Consumers **must not** infer
+source coverage from adjacent glyph indices, especially in RTL runs.
 
 **FTS5: Deterministic release.** HarfBuzz objects created for a face or
 instance **must** be released when their owner is destroyed, and none **may**
@@ -446,6 +544,79 @@ outlive the bytes it borrows.
 `hb_glyph_position_t`, `hb_feature_t`, `hb_variation_t` and
 `hb_ot_var_axis_info_t` **must** match the installed headers in size and in
 every field's offset. This is the test `FTA8` requires.
+
+**FTS7: Contextual range shaping.** The proposed contextual operation takes
+borrowed strict UTF-8 source, a half-open run range at scalar boundaries, an
+instance, explicit segment properties, feature ranges and buffer flags. It
+**must** make the surrounding source available as pre/post context while emitting
+only the run. Returned byte offsets **must** remain absolute source offsets.
+Beginning/end-of-text flags describe genuine shaping text boundaries, including
+deliberate line boundaries, not every style, script or fallback run. The caller
+**must** select these flags explicitly and the result **must** report them.
+Invalid UTF-8, inverted/out-of-source ranges, split scalar boundaries and invalid
+feature ranges **must** produce distinct structured errors before publishing any
+output. UTF-8 decoding **must** use base and submit scalars with their source
+offsets, not a second decoder hidden in the engine. An empty valid range succeeds
+with no glyphs. Output and workspace capacities and engine allocation/work bounds
+**must** be documented in terms of run/context sizes and configured glyph limits;
+exhaustion **must** return `limitExceeded` with caller outputs uncommitted.
+Results borrow source and face bytes for their lifetime; scratch is not retained.
+
+**FTS8: Coordinated properties and engine data.** The paragraph integration path
+**must** accept direction, script and language resolved by the caller from base
+analysis and paragraph policy, without re-running bidi or inventing run boundaries.
+The adapter **must** supply every supported HarfBuzz Unicode callback (category,
+combining class, mirroring, script, canonical compose/decompose) from base's
+single pinned release. This is not sufficient to guarantee engine compatibility:
+the integration manifest **must** pin the HarfBuzz release and source revision,
+identify internal script/category/normalization tables or algorithm behavior not
+replaceable by callbacks, and demonstrate compatibility with base's release and
+algorithm revisions. Uncovered mismatches **must** block coordinated shaping with
+`unsupportedUnicodeVersion`, not silently mix data versions. Engine ABI/version
+capability checks **must** distinguish an unsupported engine from malformed font
+data; a system upgrade **must not** silently alter the accepted shaping profile.
+
+**FTS9: Break and concatenation safety.** With the relevant HarfBuzz production
+flags enabled, shaping **must** return unsafe-to-break, unsafe-to-concat and
+safe-to-insert-tatweel glyph flags and a source-boundary view. For each source
+cluster start, the unsafe bits **must** be the union of the flags on that
+cluster's glyphs, irrespective of RTL pen order. A positive tatweel capability
+**must** identify the source boundary to which the engine assigns it; contradictory
+or unmappable information is unknown, not safe. Glyphless spans, cluster interiors
+and run edges without an explicit engine/context guarantee **must** be unknown
+for reuse. Raw glyph flags remain available with their engine meaning.
+An unsafe break means that accepting a
+break requires reshaping the affected fragments with their actual boundary context;
+an unsafe concatenation means separately shaped fragments cannot be assumed to
+equal a single shaping call. Absence of a warning **must** have the documented
+meaning of the pinned engine, not a promise of Unicode break legality. A boundary
+inside a merged source cluster is not a reusable cut. These flags constrain reuse
+in layout; they neither select legal break opportunities nor justify estimating
+contextual candidate widths from a previous paragraph run.
+
+**FTS10: Caret data with provenance.** Font **must** expose GDEF ligature-caret
+records in glyph pen coordinates, including coordinate, contour-point and
+device/variation formats, resolved at the instance and direction used to shape.
+Returned carets **must** identify the glyph and source cluster, retain the source
+record order and label whether a value is explicit or derived from a referenced
+outline point. Missing records, unsupported representations and malformed data
+**must** be distinct. Font **must not** invent grapheme positions or equal-spaced
+carets when data is absent; layout owns any synthesized caret policy and visual
+mapping. Caret capacity exhaustion follows `FTS7`'s uncommitted-output rule.
+
+**FTS11: Justification capabilities, not paragraph justification.** Font **must**
+enumerate relevant GSUB/GPOS features and validated `JSTF` script/language,
+extender-glyph and priority records when present, reporting absence and unsupported
+records separately. A proposed candidate-measurement interface **must** accept
+explicit feature settings/ranges and return the exact contextual shaped run under
+`FTS7`, with its measured advances, coverage and safety flags. If a caller requests
+a substitution/extension mode the pinned engine cannot execute, it **must** report
+unsupported capability, never manufacture an advance or silently ignore the mode.
+Font **must not** choose stretch/shrink budgets, distribute paragraph adjustments,
+insert kashidas, select extender repetitions or mutate source text. Those choices
+belong to layout; every accepted candidate is measured by real shaping. A
+safe-to-insert-tatweel flag is an engine capability hint, not authorization to alter
+source or a guarantee of the width of an insertion.
 
 ## 13. Discovery, matching and fallback
 
@@ -472,10 +643,15 @@ Level 4][css-match] font-matching algorithm over family, width, style and
 weight. The result carries the chosen record, a comparable score, and the
 synthesis needed to approximate the request.
 
-**FTD5: Fallback chains.** A [fallback chain](../../glossary.md#fallback-chain) **must** begin with the match and
-contain only records that add coverage, in order. A record's face opens on
-first use, and lookups of a character and presentation **must** be memoized
-per chain.
+**FTD5: Fallback chains.** A [fallback chain](../../glossary.md#fallback-chain)
+**must** begin with the match and retain the ordered candidate records, including
+faces with identical or subset `cmap` coverage that may add shaping capability.
+A separate character-lookup index **may** prune redundant coverage, but that
+index **must not** restrict `FTD7` whole-span trials. Coverage pruning may reject
+a trial only when it proves that candidate cannot satisfy the requested span,
+not merely because an earlier face covers the same scalars. A record's face opens
+on first use; character/presentation and whole-span decisions have distinct,
+context-complete memoization keys.
 
 **FTD6: Explicit routes.** Codepoint-range routes chosen by the user and a
 procedural face for box-drawing and block characters **must** take part in
@@ -484,6 +660,16 @@ the chain as ordinary entries.
 _Rationale:_ Treating procedural glyphs as a face lets them share shaping,
 caching and fallback with real fonts, instead of being a renderer special
 case.
+
+**FTD7: Whole-span fallback evidence.** For a caller-selected source span and
+context under `FTS7`, the chain **must** expose ordered candidate faces and a
+shaped trial result, including missing-glyph/source coverage, chosen instance and
+selection provenance. `cmap` coverage is only a pruning mechanism, not proof that
+an emoji sequence, mark sequence or contextual form shapes successfully. Font
+**must not** silently split the requested span into per-codepoint fallback.
+Layout owns span boundaries and any retry after examining base grapheme boundaries
+and shaping safety. No usable face **must** be an explicit outcome with the
+unresolved source span, not a fabricated successful shape.
 
 ## 14. Inspection
 
@@ -526,6 +712,14 @@ with this library and render the bundled fonts without fontconfig.
 consumer onto this library **must** be either byte-identical in that
 consumer's screenshot goldens or listed with before-and-after captures in the
 evidence ledger.
+
+**FTA16: No universal glyph-per-cell assumption.** A cell consumer **may** use
+glyph-index-to-cell-index placement only for a run whose font, features and input
+have passed the audited fast-path conditions of `FTX7`. General consumers **must**
+honor the returned glyph positions and source-cluster coverage, including ligature
+merges, multiple glyphs per scalar, marks, RTL and fallback. Layout's placement
+and hit-testing contracts are owned by [`text-layout`](../text-layout/SPEC.md);
+font supplies the measurements and provenance needed to satisfy them.
 
 <!-- References -->
 
