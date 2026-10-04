@@ -439,17 +439,11 @@ immutable Binding[] hueBindings = [
     // ── always ───────────────────────────────────────────────────────────
     // F11 outranks every mode — you can always leave fullscreen.
     bind(Scope_.always, chord(Key.f11), Command.toggleFullscreen, "toggle fullscreen"),
-    // Escape and Back both cancel an open input mode. In NORMAL mode they
-    // differ, and the difference is deliberate rather than an oversight to
-    // tidy up here: Android's Back runs the dismiss chain (close the
-    // explorer, else leave), while desktop Escape does nothing today.
-    //
-    // `sparkles.input.isDismiss` already declares the two the same platform
-    // spelling, so unifying them is probably right — but this module is the
-    // oracle a mechanical conversion is checked against, and an oracle that
-    // quietly disagrees with the code it describes is worse than none. The
-    // unification belongs in its own commit, where it can be reviewed as the
-    // behaviour change it is.
+    // Escape and Back both cancel an open input mode. In NORMAL mode both run
+    // the dismiss chain (close the innermost thing, else leave) — Back here,
+    // Escape in the shared scope below, after any overlay's own Escape
+    // (design-system `KBD1`; `sparkles.input.isDismiss` calls them the same
+    // platform spelling).
     bind(Scope_.always, chord(Key.escape), Command.inputCancel, "cancel",
         mode: ModeReq.editing),
     bind(Scope_.always, chord(Key.back), Command.inputCancel, "cancel",
@@ -673,6 +667,11 @@ immutable Binding[] hueBindings = [
     bind(Scope_.shared_, chord('e'), Command.toggleExplorer, "toggle explorer"),
     bind(Scope_.shared_, chord('y'), Command.copySelection, "copy selection"),
     bind(Scope_.shared_, chord('q'), Command.quit, "quit"),
+    // Escape closes the innermost thing, as Back does (design-system
+    // `KBD1`). Here, last: an overlay's own scope (the picker, the settings
+    // pane, the DSV palette) answers its Escape first.
+    bind(Scope_.shared_, chord(Key.escape), Command.dismiss, "close",
+        mode: ModeReq.normal),
     bind(Scope_.shared_, chord('t'), Command.toggleTableCopy, "table copy mode"),
     bind(Scope_.shared_, chord('n', ShiftReq.no), Command.matchNext, "next match",
         require: CtxFlag.hasMatches),
@@ -1113,13 +1112,10 @@ unittest
     assert(ch('e', search).cmd == Command.none, "a letter is text while typing");
     assert(ch('y', search).cmd == Command.none);
 
-    // In NORMAL mode the two diverge, and this pins today's behaviour rather
-    // than the behaviour that would be nicer: Android's Back runs the dismiss
-    // chain, desktop Escape is unbound. `isDismiss` says they should agree;
-    // making them agree is a behaviour change and belongs in its own commit,
-    // not smuggled into the oracle a conversion is checked against.
+    // In NORMAL mode both run the dismiss chain — Escape closes the
+    // innermost thing, as Back always has (`KBD1`, `isDismiss`).
     assert(nk(Key.back).cmd == Command.dismiss);
-    assert(nk(Key.escape).cmd == Command.none);
+    assert(nk(Key.escape).cmd == Command.dismiss);
     assert(nk(Key.back, search).cmd == Command.inputCancel);
 
     // F11 outranks everything — you can always leave fullscreen. That it also
