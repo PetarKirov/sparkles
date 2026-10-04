@@ -381,6 +381,10 @@ struct Gallery
     /// Remembers the host's coordinate mapping without advancing a frame.
     private void noteHost(H)(ref H h)
     {
+        // `KBD3`: Ctrl-C is the host's interrupt — except while a shell owns
+        // the keyboard, which must receive it as the shell's own.
+        static if (__traits(hasMember, H, "grabKeyboard"))
+            h.grabKeyboard(terminalCaptures);
         // `IMG3`: register once, then hand the registry to whichever host we
         // got. A terminal or recording host accepts it and draws `IMG4`'s
         // placeholder; a window resolves the handle and draws pixels. The
