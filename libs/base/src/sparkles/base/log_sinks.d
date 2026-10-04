@@ -427,10 +427,12 @@ final class RotatingFileCoreLogger : ForwardingCoreLogger
 
     private void renameToRotated() @trusted nothrow @nogc
     {
-        import core.stdc.stdio : rename;
+        import core.stdc.stdio : remove, rename;
 
         // A missing file has nothing to rotate; any other failure leaves the
         // old content in place, to be appended to — still a log.
+        version (Windows)
+            remove(rotatedz.ptr); // the CRT's rename never replaces a file
         rename(pathz.ptr, rotatedz.ptr);
     }
 }
