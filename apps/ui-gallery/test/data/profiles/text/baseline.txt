@@ -10,8 +10,8 @@
    Effects           | +---------------------------------------------------------------------+ #
    Grid              | | none - one line, clipped by whatever contains it                    | #
    Components        | | A widget names a semantic slot, ne                                  | #
-   Tree              | +---------------------------------------------------------------------+ #
-   Property tree     |                                                                         #
+   Tree              | +---------------------------------------------------------------------+ |
+   Property tree     |                                                                         |
    Table             | +---------------------------------------------------------------------+ |
    Scrolling         | | greedy - break as late as possible                                  | |
    State             | | A widget names a semantic slot,                                     | |
