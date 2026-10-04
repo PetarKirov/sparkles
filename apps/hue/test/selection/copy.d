@@ -1,8 +1,8 @@
 /**
 BDD integration tests for selection copy (`SEL4` / `TSL2`).
 
-Tests that `Ctrl+C` (and its various producer encodings) reliably copies the
-selected source text across both TUI and GUI modes via a shared test body.
+Tests that the copy keys (`y`, and Cmd+C in its producer encodings) reliably copy
+the selected source text across both TUI and GUI modes via a shared test body.
 */
 module test.selection.copy;
 
@@ -135,19 +135,14 @@ void testSelectionCopyAcrossProducers(Mode)()
 {
     static immutable string sample = "Hello, world! Selection copy test line.";
 
-    // The different spellings Ctrl+C and Cmd+C arrive in across backends and producers:
-    KeyEvent[6] copySpellings = [
-        // 1. Synthesized / standard normalized KeyEvent (Ctrl+C)
-        KeyEvent(Key.char_, 'c', Mods(ctrl: true)),
-        // 2. POSIX terminal raw control byte (0x03)
-        KeyEvent(Key.char_, '\x03'),
-        // 3. Physical key layout with unshifted codepoint (raylib full keyboard)
-        KeyEvent(Key.char_, 0, Mods(ctrl: true), KeyAction.press, 'c'),
-        // 4. Uppercase unshifted codepoint
-        KeyEvent(Key.char_, 0, Mods(ctrl: true), KeyAction.press, 'C'),
-        // 5. macOS Cmd+C (super_ modifier, e.g. from CSI u over SSH)
+    // The copy keys, in the spellings they arrive in across backends and
+    // producers. Ctrl+C is not one: it is the host's interrupt (`KBD3`).
+    KeyEvent[3] copySpellings = [
+        // 1. `y`, the universal copy (`TKB2`)
+        KeyEvent(Key.char_, 'y'),
+        // 2. macOS Cmd+C (super_ modifier, e.g. from CSI u over SSH)
         KeyEvent(Key.char_, 'c', Mods(super_: true)),
-        // 6. macOS Cmd+C with unshifted codepoint
+        // 3. macOS Cmd+C with unshifted codepoint
         KeyEvent(Key.char_, 0, Mods(super_: true), KeyAction.press, 'c'),
     ];
 
@@ -184,7 +179,7 @@ unittest
     TuiModeAdapter adapter;
     adapter.open("Hello notification test!");
     adapter.select(0, 5);
-    adapter.sendKey(KeyEvent(Key.char_, 'c', Mods(ctrl: true)));
+    adapter.sendKey(KeyEvent(Key.char_, 'y'));
 
     assert(adapter.clipReady);
     assert(adapter.t.toastVisible, "toast should be visible after copying");

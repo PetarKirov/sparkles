@@ -109,7 +109,7 @@ assumed exists now does. Configuration overlays it:
 {
   "keys": {
     "viewer": { "j": "viewDown", "k": "viewUp" },
-    "ctrl": { "ctrl+c": "copySelection" },
+    "ctrl": { "ctrl+y": "copySelection" },
     "tree": { "l": "treeActivate", "shift+r": "treeReroot" },
     "shared": { "z 1-9": "foldLevel" }
   }
@@ -126,7 +126,7 @@ assumed exists now does. Configuration overlays it:
   vocabulary rather than inventing a second one. (The `normal`/`foldArmed`
   names an earlier draft used predate the scope enum; the fold family is a
   `z`-prefixed path now, not a mode.)
-- **Chords parse to the keymap's `Chord[]`** (`ctrl+c`, `shift+r`,
+- **Chords parse to the keymap's `Chord[]`** (`ctrl+y`, `shift+r`,
   `"z 1-9"` for a ranged row, `"leader u s"` for a leader path) through a
   type-level `@WireConvert` on the AA key, so the wire form stays
   human-writable, the in-memory form stays the keymap vocabulary, and a typo
