@@ -244,6 +244,13 @@ options of a section can have different winning priorities. An empty section
 supplies no child definitions; an explicitly empty atomic map or list supplies
 one definition. See the worked traces in [testing.md](./testing.md).
 
+Terminal's draft [profile contract](../../terminal/profiles.md#_2-values-and-configuration)
+requires dynamic per-ID, per-field resolution that preserves weaker contributions
+to unrelated objects. Direct whole-map selection under `WCFG12` does not meet that
+consumer requirement. A separately specified generic distribution policy is a
+delivery prerequisite; this paragraph does not change `attrsOf` semantics or claim
+that policy exists.
+
 ### 4.2 Algebra and provenance
 
 **WCFG14: Permutation invariance.** Reordering submission of the same identified

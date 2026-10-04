@@ -1,5 +1,33 @@
 [
   {
+    "id": "terminal-environment",
+    "term": "development environment",
+    "summary": "An execution context with identified storage, prerequisites and resource ownership in which terminal panes run.",
+    "definition": "A terminal execution context with a stable identity, storage namespace, readiness checks and lifecycle authority. Multiple profiles and panes can use the same environment; externally provisioned resources retain their external owner.",
+    "authority": [
+      {
+        "text": "Android environment contract",
+        "link": "/specs/android-dev-env/SPEC"
+      }
+    ],
+    "owner": "sparkles:terminal",
+    "seeAlso": ["terminal-profile"]
+  },
+  {
+    "id": "terminal-profile",
+    "term": "terminal profile",
+    "summary": "A named launch recipe that selects an environment and explicit command arguments, variables and starting directory for a terminal pane.",
+    "definition": "A configuration object with a stable identity and an environment reference that supplies a pane's launch recipe. A running pane captures resolved settings; restoration resolves the saved profile identity against loaded configuration.",
+    "authority": [
+      {
+        "text": "Terminal profile contract",
+        "link": "/specs/terminal/profiles"
+      }
+    ],
+    "owner": "sparkles:terminal",
+    "seeAlso": ["terminal-environment"]
+  },
+  {
     "id": "regular-type",
     "term": "Regular type",
     "aliases": ["Regular"],

@@ -1541,6 +1541,10 @@
             "link": "/specs/terminal/config"
           },
           {
+            "text": "Terminal profiles (draft)",
+            "link": "/specs/terminal/profiles"
+          },
+          {
             "text": "Keymap and key guide",
             "link": "/specs/terminal/keymap"
           },
@@ -1579,6 +1583,25 @@
           {
             "text": "Testing and evidence",
             "link": "/specs/terminal/testing"
+          }
+        ]
+      },
+      {
+        "text": "Android Nix development environments",
+        "collapsed": true,
+        "items": [
+          { "text": "Specification", "link": "/specs/android-dev-env/SPEC" },
+          {
+            "text": "Project milestones",
+            "link": "/specs/android-dev-env/PLAN"
+          },
+          {
+            "text": "Acceptance and evidence",
+            "link": "/specs/android-dev-env/testing"
+          },
+          {
+            "text": "Decisions and design gates",
+            "link": "/specs/android-dev-env/decisions"
           }
         ]
       },
