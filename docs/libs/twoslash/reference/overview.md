@@ -1,5 +1,10 @@
 # Reference: the overlay API
 
+> [!NOTE]
+> The ingest and protocol modules live in `sparkles:twoslash-protocol`
+> (`libs/twoslash-protocol`), which depends only on `sparkles:wired`;
+> `sparkles.twoslash` re-exports both.
+
 ## Ingest (`sparkles.twoslash.ingest`)
 
 | Symbol             | Signature                                                           | Notes                        |
@@ -16,10 +21,14 @@ Errors are returned (never thrown). Not `@nogc` (`std.json` + wired allocate).
   lowercase members map the wire `type` verbatim.
 - `struct Node` — flat POD: `type`, `start`, `length`, `line`, `character`, plus the
   `@WireOptional` payload fields (`text`, `docs`, `tags`, `level`, `code`, `id`,
-  `completions`, `completionsPrefix`, `name`). `tags` is `string[][]` (each inner
-  `[name, text?]` — hover/query JSDoc tags). `end() => start + length`.
+  `completions`, `completionsPrefix`, `name`, `signature`). `tags` is
+  `string[][]` (each inner `[name, text?]` — hover/query JSDoc tags); `signature` is a `SignatureLayout`
+  (break points, collapsible runs, effects, contracts). `end() => start + length`.
 - `struct Completion { string name; string kind; }`
-- `struct TwoslashReturn { string code; Node[] nodes; }`
+- `struct TwoslashReturn { string code; Node[] nodes; string language;
+string offsetEncoding; }` — `effectiveLanguage()` is `language`, or
+  `"typescript"` when it is empty. `offsetEncoding: "utf-8"` marks byte offsets
+  (D producers); anything else is converted from UTF-16 on ingest.
 
 ## Overlay planner (`sparkles.twoslash.overlay`)
 
@@ -27,7 +36,7 @@ Errors are returned (never thrown). Not `@nogc` (`std.json` + wired allocate).
   `inlineDecorations` (sorted outer-first) and `belowBlocks` (sorted by line). Drops
   the inline `hover` on a token that also has a `query` (the query supersedes it).
 - `hasInlineDecoration(NodeType)` / `hasBelowBlock(NodeType)` — classification.
-- `highlightSignature(ref TsConfigCache, sig, ref sink)` — reentrant popup
+- `highlightSignature(ref TsConfigCache, language, sig, ref sink)` — reentrant popup
   re-highlight (degrades to plain text on a missing grammar). `@system`.
 - `withoutQuickinfoPrefix(sig)` — strips a leading TS quickinfo kind prefix
   (`(property) `, …); a real leading paren (`(a: number) => void`) is preserved.
@@ -78,7 +87,20 @@ Both take the snippet already highlighted into `events` (over `tw.code`) and the
   the `.twoslash-*` chrome; syntax token colors come from
   `writeThemeStylesheet` (`.syn-*`).
 
-## GUI
+## Widget view (`sparkles.twoslash.render_widgets`)
 
-`hue --gui --twoslash <nodes.json>` — the raylib overlay (`apps/hue`,
-`runGuiTwoslash`, `version(HueGui)`).
+The overlay as `sparkles:ui` widgets, which hue's GUI and interactive terminal
+lay out and paint:
+
+- `viewTwoslashDocument` / `viewTwoslashDocumentInto` — the whole document:
+  code rows, fused inline decorations, and interleaved below-line blocks.
+- `decorateCodeRow` — layers one line's inline decorations onto a row the
+  caller built (hue's diff view uses it per side).
+- `viewTwoslash` / `viewBelowBlock` — the below-line blocks alone.
+- `viewHoverPopup` — the hover/query popup; the overload taking a
+  `GrammarRegistry` renders `docs` as markdown. `HoverViewOptions` carries the
+  width, the syntax-colored `signatureSpans`, and the expanded signature runs.
+
+`hue --gui --twoslash <nodes.json>` opens the payload as a document:
+`sparkles:doc-view` builds it with `viewTwoslashDocumentInto`, and
+`gui.drawPopup` paints `viewHoverPopup` on mouse-over (`version(HueGui)`).

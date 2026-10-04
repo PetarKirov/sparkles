@@ -12,11 +12,11 @@ highlighted source code: hover signatures, queried types, completion lists,
 compiler errors, highlighted spans, and annotation lines, each placed at the
 characters it describes. It renders one annotated snippet three ways from a
 single shared plan of what sits inside each line and what goes beneath it:
-as static HTML whose popups need no script, as colored terminal text, and in
-a GPU-drawn window. It takes the annotations as data from any
-Twoslash-compatible producer and never runs a compiler itself, so analysis
-and rendering evolve separately, and a build that only renders needs none of
-the analyzer's toolchain.
+as static HTML whose popups need no script, as colored terminal text, and as
+a widget tree that a GPU window or an interactive terminal paints. It takes
+the annotations as data from any Twoslash-compatible producer and never runs
+a compiler itself, so analysis and rendering evolve separately, and a build
+that only renders needs none of the analyzer's toolchain.
 
 ## Introduction
 
@@ -68,33 +68,51 @@ documentation site is out of scope here; the [Deferred](#deferred) section
 records it.
 
 §1 defines the node model and the fields the renderers read, and §2 the
-overlay planner they share. §3, §4, and §5 specify the HTML, terminal, and
-GUI backends. §6 covers the example corpus, its generator, and the
-developer-only checks of fidelity and geometry against the reference
-renderer. The usage guide and API overview live in the
+overlay planner they share. §3 and §4 specify the HTML and terminal
+backends, and §5 the widget view that hue's GUI paints. §6 covers the
+example corpus, its generator, and the developer-only checks of fidelity and
+geometry against the reference renderer. The usage guide and API overview live in the
 [library documentation](../../libs/twoslash/index.md).
 
 ## 1. Node model (consumed as data)
 
-Ported from the reference `twoslash-protocol`. A `TwoslashReturn` is the trimmed
-display `code` plus a flat `nodes[]`. Each node has `type`, byte `start`/`length`,
-and 0-based `line`/`character`, with a per-`type` payload:
+The model is not part of this package. It lives in
+`sparkles:twoslash-protocol` (`libs/twoslash-protocol`), whose modules
+`sparkles.twoslash.protocol` (the types) and `sparkles.twoslash.ingest` (JSON
+decoding) depend only on `sparkles:wired`; `sparkles.twoslash` re-exports both.
+It is ported from the reference `twoslash-protocol`. A `TwoslashReturn` is the
+trimmed display `code` plus a flat `nodes[]`, with an optional `language` (the
+highlighting language of `code`; absent means TypeScript) and an optional
+`offsetEncoding`. Each node has `type`, `start`/`length`, and 0-based
+`line`/`character`, with a per-`type` payload:
 
 | `type`       | payload we use                                    | rendering                                  |
 | ------------ | ------------------------------------------------- | ------------------------------------------ |
-| `hover`      | `text` (type sig), `docs?`                        | inline dotted-underline token + popup      |
-| `query`      | `text`, `docs?`                                   | below-line popup at the `^?` column        |
+| `hover`      | `text` (type sig), `docs?`, `tags?`, `signature?` | inline dotted-underline token + popup      |
+| `query`      | `text`, `docs?`, `tags?`, `signature?`            | below-line popup at the `^?` column        |
 | `completion` | `completions[] {name,kind?}`, `completionsPrefix` | below-line list                            |
 | `error`      | `text`, `level?`, `code?`, `id?`                  | inline wavy underline + below-line message |
 | `highlight`  | —                                                 | inline highlighted box                     |
 | `tag`        | `name`, `text?`                                   | below-line `// @name` annotation           |
+
+`tags` holds a popup's JSDoc tags as `[name, text]` pairs, and `signature` a
+structured `SignatureLayout` (break points, collapsible runs, effects,
+contracts) that a backend may use to wrap or abbreviate the signature; a
+backend that ignores it prints `text` unchanged. A hover whose `text`, `docs`
+and `tags` are all empty is a _lazy_ span: renderers mark it but show no
+popup until a live producer fills it in.
+
+The renderers read `start`/`length` as UTF-8 byte offsets into `code`. The
+reference tool emits UTF-16 offsets, so `fromTwoslashJson` converts them on
+ingest unless the payload declares `offsetEncoding: "utf-8"`, as a D producer
+does.
 
 **Modeling choice:** one flat `Node` POD with a `NodeType` discriminant, _not_ a
 `SumType`. `sparkles:wired` decodes a sum by probing every variant, and twoslash
 nodes overlap too much (shared `start`/`length`/`line`/`character`) to disambiguate
 that way. A flat struct decodes uniformly (present fields fill, absent ones default
 — every non-universal field is `@WireOptional`), wired ignores unknown JSON keys
-(`target`, `tags`, `filename`, `meta`, `flags`, …), and the lowercase enum members
+(`target`, `filename`, `meta`, `flags`, …), and the lowercase enum members
 map the `type` strings verbatim under wired's default `CaseStyle.original`.
 
 ## 2. Overlay planner (`overlay.d`)
@@ -107,8 +125,10 @@ backends:
 - **below-line blocks** (`error`/`query`/`completion`/`tag`) — sorted by line.
 
 An `error` is _both_. `highlightSignature` re-highlights a popup type signature by
-re-entering `sparkles:syntax` as TypeScript; on a missing grammar it degrades to
-plain text, so the overlay never fails.
+re-entering `sparkles:syntax` in the payload's language
+(`TwoslashReturn.effectiveLanguage`: `language`, or TypeScript when it is
+absent); on a missing grammar it degrades to plain text, so the overlay never
+fails.
 
 ## 3. HTML overlay (`render_html.d`)
 
@@ -179,14 +199,43 @@ column plus the error message (red/yellow by level), the re-highlighted query ty
 the completion candidates, or the `// @tag` text. Hovers are silent by default and
 expand to a dim `↳ type` line under `--verbose`-style `hovers`.
 
-## 5. raylib GUI overlay (`apps/hue`, `runGuiTwoslash`)
+## 5. Widget view and GUI overlay (`render_widgets.d`)
 
-The GPU counterpart, on the monospace grid: `x = pad + character·cellW`, `y`
-accumulates (code line + interleaved annotation rows). Highlights → translucent tint
-boxes; errors → red wavy underline + below-line message; query/completion/tag →
-annotation rows; hovers → floating popup on mouse-over (the GPU analogue of CSS
-`:hover`), with the re-highlighted signature. Reuses `gui.d`'s
-`drawText`/`rl`/`mapStyle`/`cstrOf` and `sparkles:raylib-text`.
+The GUI rendering of the plan is not a byte stream but a
+[`sparkles:ui`](../ui/index.md) `WidgetTree`, which every canvas backend lays
+out and paints the same way. hue's GUI window and its interactive terminal
+both draw twoslash through it.
+
+- `viewTwoslashDocument` (and `viewTwoslashDocumentInto`, which appends to an
+  existing `Builder`) builds the whole document: each code line is a rich row
+  of theme-colored spans that keep their source byte offsets, and each
+  below-line block sits directly under its line.
+- `decorateCodeRow` layers one line's inline decorations onto a code row the
+  caller built: a highlight is a tinted box beneath the text, a hover a
+  permanent dotted underline beneath it, and an error a wavy line over it,
+  colored as a warning for the non-fatal levels (`errIsWarning`). Because the
+  caller names the line, the same seam decorates the rows of a diff.
+- `viewBelowBlock` and `viewTwoslash` build one below-line block, or all of
+  them as a column: an error message, a `^?` query signature, a completion
+  list with per-kind icon glyphs, or a `// @tag` line, each indented to its
+  source column.
+- `viewHoverPopup` builds the floating hover/query popup: a bordered surface
+  with the signature over its docs and `@tag` chips. Given a
+  `GrammarRegistry`, it renders the docs as markdown; without one, as plain
+  lines. A lazy hover, whose text, docs and tags are all empty, yields an
+  empty tree. `HoverViewOptions` carries what only the backend knows: the
+  width available at the anchor, the syntax-colored signature spans
+  (`signatureSpans`), and which collapsible runs of a structured signature
+  are expanded.
+
+Widgets name semantic `Slot`s and leave colors to the twoslash palette, so
+every backend resolves them from one source. A widget derived from node `i`
+carries `hitId == i + 1`, which lets a backend map a pointer back to its node.
+
+In hue's GUI, `sparkles:doc-view`'s `ViewerModel` builds the document with
+`viewTwoslashDocumentInto` and the raylib canvas paints it on the monospace
+grid. Hovering a marked token opens the popup from `viewHoverPopup`, which
+`gui.drawPopup` paints at the token — the GPU analogue of CSS `:hover`.
 
 ## 6. Data source & hermeticity
 
@@ -201,12 +250,13 @@ fenced block, a link, and tags — so the docs/tags markdown path (§3) renders
 something visibly non-trivial — and the
 committed `fixtures/*.twoslash.json` overlays generated from them (the trimmed
 `{code, nodes}` slice the renderer reads). `examples/regen.sh` is a real,
-developer-only generator: it `npm install`s the reference TypeScript `twoslash`
-(+ `typescript`) and runs `regen.mjs` over every source. It is the **only** place
-node is invoked — the sparkles build and `dub test` are **node-free** and consume
-the committed JSON, so nothing downstream needs node. Because `nodes` is opaque
-input, the same `{code, nodes}` shape comes from any twoslash-compatible source
-(twoslash today, `sparkles:dmd-lsp` later).
+developer-only generator: it installs the reference TypeScript `twoslash` (+
+`typescript`) with Yarn and runs `regen.mjs` over every source. It and the two
+checks below are the only places node runs — the sparkles build and `dub test`
+are **node-free** and consume the committed JSON, so nothing downstream needs
+node. Because `nodes` is opaque input, the same `{code, nodes}` shape comes
+from any twoslash-compatible source: the TypeScript `twoslash` for this
+corpus, and `twoslash-extract` (over `sparkles:twoslash-d`) for D.
 
 Two dev-only checks live in the same node corner (never run at build time; run
 them after touching the HTML renderer or the stylesheet):
@@ -222,7 +272,14 @@ them after touching the HTML renderer or the stylesheet):
 
 ## Deferred
 
-- **Live VitePress swap** — depends on #122's VitePress highlighter seam (not built;
-  the site still uses stock VitePress→Shiki with no `markdown.config` hook).
-- **Analyzer / D-native backend** — #124 (`sparkles:dmd-lsp`); this issue treats
-  nodes as opaque input.
+- **Live VitePress swap** — depends on #122's VitePress highlighter seam, which
+  is not built: the site's `markdown.config` hook adds plugins but leaves code
+  fences to stock VitePress→Shiki. The site shows the overlay only as a static
+  gallery of `hue --twoslash --html` pages, generated at docs build time by
+  `docs/scripts/build-twoslash-showcase.sh`.
+- **Analyzer / D-native backend** — the D producer exists outside this library
+  (#124): `sparkles:twoslash-d` parses the notation and assembles nodes from one
+  `sparkles:dmd-lsp` analysis, `twoslash-extract` writes the payloads, and hue
+  requests lazy payloads from it live. Its contract is specified with
+  [`sparkles:dmd-lsp`](../dmd-lsp/index.md); this library still treats nodes as
+  opaque input and gains no analyzer dependency.
