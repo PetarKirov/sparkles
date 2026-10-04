@@ -7,7 +7,7 @@ emit a `TwoslashReturn` as JSON: a top-level `code` string, a `nodes` array,
 and assorted metadata (`meta`, `flags`, `compilerOptions`, …) this overlay
 does not consume. Decoding runs through `sparkles:wired`, which walks the
 struct fields and $(B ignores unknown JSON keys) — so the extra top-level
-metadata and per-node fields we do not model (`target`, `tags`, `filename`,
+metadata and per-node fields we do not model (`target`, `filename`,
 `kindModifiers`, …) are dropped harmlessly, and a $(D hover) node missing the
 $(D level)/$(D completions)/… fields decodes fine because every non-universal
 $(REF Node, sparkles,twoslash,protocol) field is `@WireOptional`.
