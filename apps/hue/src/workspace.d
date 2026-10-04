@@ -4285,9 +4285,9 @@ unittest
     }
     assert(all.canFind("[plain]"), "the active mode is shown (`PKL5`)");
 
-    // `<S-Tab>` cycles the MODE here, where it reverses the pane focus
-    // everywhere else — the `CtxFlag.grepActive` gate, on screen.
-    assert(w.handle(Event(KeyEvent(key: Key.tab, mods: Mods(shift: true)))));
+    // `Ctrl-R` cycles the MODE, under grep only — the `CtxFlag.grepActive`
+    // gate, on screen.
+    assert(w.handle(Event(KeyEvent(key: Key.char_, ch: 'r', mods: Mods(ctrl: true)))));
     settle(w);
     assert(w.picker.get.grep.grepMode == GrepMode.fuzzy,
         "regex is skipped while its engine is unwritten (`PKC16`)");
@@ -4315,7 +4315,7 @@ unittest
         "fuzzy admits the subsequence in both files — with the mode unread, "
         ~ "the literal scan runs and finds neither");
 
-    assert(w.handle(Event(KeyEvent(key: Key.tab, mods: Mods(shift: true)))));
+    assert(w.handle(Event(KeyEvent(key: Key.char_, ch: 'r', mods: Mods(ctrl: true)))));
     settle(w);
     assert(w.picker.get.grep.grepMode == GrepMode.plain, "cycled back round");
     assert(w.picker.get.state.rowCount == 0,
