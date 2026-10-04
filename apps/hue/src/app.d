@@ -1256,7 +1256,10 @@ int main(string[] args)
         loadDebugEnv();
     }
 
-    return runCli!HueCli(args, (ref parsed) {
+    // `--list-keys` prints from `beforeRun`, once the overlay is in, and must
+    // then skip the subcommand — which only a non-zero return does.
+    bool listedKeys;
+    const rc = runCli!HueCli(args, (ref parsed) {
         version (Android)
         {
             import android_glue : extractAssetsIfNeeded, installLogcatSink;
@@ -1286,8 +1289,20 @@ int main(string[] args)
                 (string w) @safe { warning(i"$(w)"); }));
         }
         trace(i"config");
+
+        if (parsed.listKeys) // `KBD6`: the effective table, overlay included
+        {
+            import std.stdio : stdout;
+            import keymap : writeKeys;
+
+            auto w = stdout.lockingTextWriter;
+            writeKeys(w);
+            listedKeys = true;
+            return 1;
+        }
         return 0;
     });
+    return listedKeys ? 0 : rc;
 }
 
 // ── The four sinks — each a `final switch` over the document's kind ─────────

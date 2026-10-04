@@ -581,6 +581,9 @@ struct HueCli
     @(Option("config", description: "Configuration file to read instead of the platform default (the CFG2 user layer)."))
     string configFile;
 
+    @(Option("list-keys", description: "Print the effective key table — the user's keys overlay included — and exit (KBD6)."))
+    bool listKeys;
+
     @(Option("theme", description: "Colour theme, by name (see sparkles.ui.themes for the built-in set)."))
     string theme = defaultTheme;
 
