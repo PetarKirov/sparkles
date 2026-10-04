@@ -85,6 +85,13 @@ exclude_path = [
     '^libs/source-view/test/data/',
 ]
 
+# URLs that exist but answer an anonymous request with an error. claude.ai
+# artifacts (the terminal's mockups, docs/specs/terminal/design.md) are private
+# pages: 403 to anyone not signed in, so a checker cannot tell live from gone.
+exclude = [
+    '^https://claude\.ai/artifact/',
+]
+
 # Don't check URLs inside code blocks (they're often illustrative, not real)
 include_verbatim = false
 
