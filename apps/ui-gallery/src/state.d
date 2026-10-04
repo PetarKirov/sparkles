@@ -21,6 +21,7 @@ import sparkles.wired.policy : AnyFormat, CaseStyle, resolveCaseStyle, WireCase,
 import sparkles.ui.image : ImageHandle;
 import sparkles.input : InputCapabilities;
 import sparkles.ui.geometry : Size;
+import sparkles.ui.lantern : LanternState;
 import sparkles.ui.components.scroll_view : ScrollbarAnim, ScrollView;
 import sparkles.ui.components.dock : DockContainer;
 import sparkles.ui.components.tree_view : TreeViewState;
@@ -380,7 +381,8 @@ struct GalleryState
     // ── navigation ──────────────────────────────────────────────────────────
     size_t page;      /// index into `registry.pages`
     Region region = Region.nav; /// which half the keyboard drives
-    bool helpOpen;    /// the `?` overlay
+    /// The key guide (`?`, the lantern): its panel and any sequence in flight.
+    LanternState lantern;
     bool inspectorOpen; /// the `|` side panel — the showing page, inspected
     /// The inspector panel's tree state: disclosure (default: everything
     /// open — the dump-it-all spirit) + the click-selected row, keyed by

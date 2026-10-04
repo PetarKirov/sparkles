@@ -34,8 +34,11 @@ import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.run_app : AppTheme;
 import inspector : inspectorActivate, inspectorBody, inspectorInnerWidth;
 import keymap : acceptsTyped, bindingsAt, Binding, Chord, commandFor,
-    GalleryCommand, GalleryContext, GalleryScope, normaliseGrabKey, ShiftReq,
-    terminalGrabPolicy;
+    galleryBindings, GalleryCommand, GalleryContext, GalleryScope,
+    normaliseGrabKey, ShiftReq, terminalGrabPolicy;
+import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, LanternStyle,
+    Placement, viewLantern;
+import sparkles.ui.lantern : ltnStep = step, StepKind;
 import kit;
 import pages.split_page : splitMax = maxPane, splitMin = minPane;
 import pages.terminal_page : hitPane, paneHeight, terminalOwns = ownsId;
@@ -166,6 +169,10 @@ struct Gallery
     /// Registered on the first frame, because that is when a host exists.
     private ImageRegistry images;
     private ubyte[] imagePixels;
+
+    /// The key guide's label storage (`LTN5`): the panel's widgets borrow
+    /// their text from it, so it lives as long as the frame they paint in.
+    private LabelArena guideLabels;
 
     /// The effect registry (`EFX13`) and its built-in ids, registered on the
     /// first frame beside the image one and bound to the host the same way.
@@ -333,10 +340,10 @@ struct Gallery
             height: SizeSpec.grow(),
         ));
 
-        if (s.helpOpen)
+        if (s.lantern.shown)
             root = b.add(Widget(
                 kind: WidgetKind.stack,
-                children: [root, helpOverlay(b)],
+                children: [root, guideOverlay(b, h.size.width)],
                 width: SizeSpec.grow(),
                 height: SizeSpec.grow(),
             ));
@@ -595,11 +602,28 @@ struct Gallery
                 return;
         }
 
-        // The ONE table: the help overlay is a modal scope, the showing
-        // page's scope gets first refusal in the content region (which is
-        // what lets a tree own the arrow keys without the page list losing
-        // them), and the shell's rows sit last.
-        const r = commandFor(k, keyContext());
+        // Escape closes the key guide before it means anything else —
+        // otherwise dismissing the panel would quit the gallery (`LTN9`).
+        if (s.lantern.shown && !s.lantern.active && isDismiss(k))
+        {
+            s.lantern.reset();
+            return;
+        }
+
+        // The ONE table, through the key guide (`LTN`): the showing page's
+        // scope gets first refusal in the content region (which is what lets
+        // a tree own the arrow keys without the page list losing them), and
+        // the shell's rows sit last. The guide answers its own reveal row and
+        // a prefix in flight; anything it leaves unbound falls to the page.
+        const st = ltnStep(s.lantern, galleryBindings, k, keyContext());
+        if (st.kind == StepKind.unbound)
+        {
+            cast(void) pageDeclinedFromNav(k);
+            return;
+        }
+        if (st.kind != StepKind.execute)
+            return;
+        const r = st.cmd;
         if (pages[s.page].onCommand !is null
             && pages[s.page].onCommand(s, r.cmd, r.arg))
             return;
@@ -609,9 +633,10 @@ struct Gallery
                 cast(void) pageDeclinedFromNav(k);
                 return;
             case GalleryCommand.quit: return h.quit();
-            case GalleryCommand.showHelp: s.helpOpen = true; return;
-            case GalleryCommand.helpClose: s.helpOpen = false; return;
-            case GalleryCommand.regionToggle:
+            // A `reveal` row never reaches here — the guide consumes it and
+            // opens its panel — but the switch stays `final`.
+            case GalleryCommand.showHelp: return;
+            case GalleryCommand.regionToggle, GalleryCommand.regionBack:
                 s.region = s.region == Region.nav ? Region.content : Region.nav;
                 return;
             case GalleryCommand.enterContent:
@@ -713,18 +738,16 @@ struct Gallery
         if (s.region != Region.nav || pages[s.page].onCommand is null)
             return false;
         const inPage = commandFor(k, GalleryContext(
-            pageScope: pages[s.page].scope_, contentRegion: true,
-            helpShown: s.helpOpen));
+            pageScope: pages[s.page].scope_, contentRegion: true));
         return inPage.cmd != GalleryCommand.none
             && pages[s.page].onCommand(s, inPage.cmd, inPage.arg);
     }
 
-    /// The resolution context: the showing page's scope, the focused region,
-    /// and the help modal.
+    /// The resolution context: the showing page's scope and the focused
+    /// region.
     private GalleryContext keyContext() const @safe
         => GalleryContext(pageScope: pages[s.page].scope_,
-            contentRegion: s.region == Region.content,
-            helpShown: s.helpOpen);
+            contentRegion: s.region == Region.content);
 
     /// Whether the keyboard belongs to the shell inside the pane.
     private bool terminalCaptures() const @safe
@@ -1630,59 +1653,45 @@ struct Gallery
         return extra;
     }
 
-    private uint helpOverlay(ref Builder b) @safe
-    {
-        uint[] lines;
-        lines ~= b.add(Widget(
-            kind: WidgetKind.text,
-            text: "bindings",
-            slot: Slot.chromeAccent,
-            textStyle: TextStyle(bold: true),
-        ));
-        lines ~= hrule(b);
-        // The listing IS the table (`KEY3`): whatever is reachable right
-        // here — the showing page's rows first, then the shell's — in
-        // resolution order, so the overlay cannot describe a key the shell
-        // would resolve differently.
-        foreach (ref bnd; listedBindings(s.region == Region.content))
-            lines ~= keyHint(b, chordText(bnd.path[0]), bnd.desc);
-        // From the page list, the showing page's unshadowed keys still fire
-        // (the fallback rung) — so the overlay lists them too, after the
-        // shell's, which is their resolution order there.
-        foreach (ref bnd; navFallbackRows())
-            lines ~= keyHint(b, chordText(bnd.path[0]), bnd.desc);
-        // …plus the terminal grab's policy, which routes before the table.
-        lines ~= keyHint(b,
-            chordText(terminalGrabPolicy.release[0]) ~ " / "
-                ~ chordText(terminalGrabPolicy.release[1]),
-            "give the keyboard back to the gallery");
-        lines ~= keyHint(b,
-            chordText(terminalGrabPolicy.passthrough[0]) ~ " / "
-                ~ chordText(terminalGrabPolicy.passthrough[1]),
-            "a focused terminal's scrollback");
+    /**
+    The key guide's panel along the bottom edge (`LTN5`, `KBD1`): the
+    lantern every Sparkles application opens on `?`, listing what is
+    reachable right here.
 
-        const popup = b.add(Widget(
-            kind: WidgetKind.popup,
-            children: [b.add(Widget(kind: WidgetKind.column, children: lines))],
-            slot: Slot.surface,
-            padding: Insets.symmetric(1, 2),
-            paintBackground: true,
-            decoration: Decoration(
-                borderWidth: Insets.all(1),
-                borderStyle: BorderStyle.solid,
-                borderSlot: Slot.border,
-                shadow: true,
-            ),
-        ));
-        // Centred by the layout engine's own alignment over a full-surface
-        // column, so nothing here measures a label or divides a width.
+    The listing IS the table (`KEY3`): the showing page's rows first, then
+    the shell's, in resolution order; from the page list, the showing page's
+    unshadowed keys that still fire (the fallback rung), after the shell's;
+    and the terminal grab's keys, which route before the table — as rows the
+    panel shows and nothing resolves.
+    */
+    private uint guideOverlay(ref Builder b, int width) @safe
+    {
+        Binding[] items = listedBindings(s.region == Region.content);
+        items ~= navFallbackRows();
+        Binding shown(Chord c, string desc)
+        {
+            Binding row;
+            row.path[0] = c;
+            row.scope_ = GalleryScope.shell;
+            row.desc = desc;
+            return row;
+        }
+        foreach (c; terminalGrabPolicy.release)
+            items ~= shown(c, "give the keyboard back to the gallery");
+        foreach (c; terminalGrabPolicy.passthrough)
+            items ~= shown(c, "a focused terminal's scrollback");
+
+        BoxLayout box;
+        const panel = viewLantern(b, guideLabels, items, s.lantern.pending.length,
+            width, box, Placement.classic, LanternStyle.init, 0, s.lantern.scroll);
+        // Bottom-aligned by the layout engine over a full-surface column, so
+        // nothing here measures a label or a height.
         return b.add(Widget(
             kind: WidgetKind.column,
-            children: [popup],
+            children: [panel],
             width: SizeSpec.grow(),
             height: SizeSpec.grow(),
-            alignX: Alignment.center,
-            alignY: Alignment.center,
+            alignY: Alignment.end,
         ));
     }
 
@@ -1866,31 +1875,31 @@ version (unittest)
     assert(g.s.themeIndex == 0);
 }
 
-@("ui_gallery.gallery.helpOverlayIsModal")
+@("ui_gallery.gallery.questionMarkOpensTheKeyGuide")
 @safe unittest
 {
-    // The defect this rules out: an overlay that paints over the page while the
-    // page still consumes the keys behind it.
+    // `?` opens the lantern (`KBD1`) without running anything, and the next
+    // command closes it and runs — the guide is a hint, not a modal (`LTN`).
     Gallery g;
     const page = g.s.page;
-    drive(g, [charEvent('?'), keyEvent(Key.right), keyEvent(Key.down)]);
+    drive(g, [charEvent('?')]);
+    assert(g.s.lantern.shown);
+    assert(g.s.page == page, "the reveal row runs nothing");
 
-    assert(g.s.helpOpen);
-    assert(g.s.page == page, "keys under a modal do not reach the page");
-
-    drive(g, [keyEvent(Key.escape)]);
-    assert(!g.s.helpOpen, "dismiss closes the overlay");
+    drive(g, [keyEvent(Key.right)]);
+    assert(!g.s.lantern.shown, "a command closes the guide…");
+    assert(g.s.page != page, "…and runs");
 }
 
-@("ui_gallery.gallery.escapeClosesTheOverlayRatherThanQuitting")
+@("ui_gallery.gallery.escapeClosesTheGuideRatherThanQuitting")
 @safe unittest
 {
-    // Dismiss is a chain, and the overlay is the innermost link: the first
+    // Dismiss is a chain, and the guide is the innermost link: the first
     // Escape closes it, the second quits.
     Gallery g;
     auto rec = drive(g, [charEvent('?'), keyEvent(Key.escape)]);
-    assert(!g.s.helpOpen);
-    assert(!rec.quitRequested, "the overlay consumed the dismissal");
+    assert(!g.s.lantern.shown);
+    assert(!rec.quitRequested, "the guide consumed the dismissal");
 }
 
 @("ui_gallery.gallery.theInspectorPanelSitsBesideThePageItDumps")
