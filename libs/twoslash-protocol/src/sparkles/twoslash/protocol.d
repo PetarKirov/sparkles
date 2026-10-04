@@ -9,7 +9,7 @@ popup, a persisted `^?` $(B query), a $(B completion) list, a compiler
 $(B error), a $(B highlight) span, or a `// @tag` annotation line.
 
 This module treats the node array as $(B opaque input): how it was produced (the
-real TypeScript `twoslash`, or a future D-native `sparkles:dmd-lsp` backend) is
+real TypeScript `twoslash`, or the D-native `sparkles:twoslash-d` producer) is
 someone else's problem — see issue #120. Only the render side lives here.
 
 $(B Modeling choice — one flat POD, not a tagged union.) The reference models
