@@ -71,6 +71,9 @@ C1's scalar/string definition driver and independent table oracle.
 ownership and default limits. Nullable payload support is not accepted until its
 presence probe passes; it cannot be silently approximated.
 
+C1 is restricted to scalar/string schemas with explicit test limits. Collection
+and recursive composition acceptance belongs to C2, not this slice.
+
 Deliver a typed source submission interface, schema-derived built-in definitions,
 per-definition priority/order metadata, immutable inspection snapshot, structured
 conflicts, and non-mutating resolution. Use `Sparse!T` where it faithfully retains
