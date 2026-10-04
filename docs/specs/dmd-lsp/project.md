@@ -2,10 +2,10 @@
 
 _**Status:** in progress · **Date:** 2026-07-30 · **Scope:** analyzing files
 that belong to a real project — `sparkles.dmd_lsp.project`, the
-`twoslash-extract --dub` surface, and the hue viewer path that will consume
+`twoslash-extract --dub` surface, and the hue viewer path that consumes
 them._
 
-Everything the backend shipped so far analyzes a **sample**: a self-contained
+Without project context the backend analyzes a **sample**: a self-contained
 buffer whose only context is `$SPARKLES_DMD_IMPORT_PATH` plus whatever
 `// @import:`/`// @dflags:` it declares. A file from a real project is not
 self-contained. It imports its siblings, it is compiled behind version
@@ -14,9 +14,10 @@ project's build recipe. Without them the analysis is not merely less precise,
 it is **wrong in a way that looks like a source defect**: every sibling import
 becomes an `unable to read module` error node in the payload.
 
-The recipe is not parsed here. `dub describe` is asked, because dub owns
-dependency resolution, sub-packages, path dependencies, platform blocks and
-configuration inheritance, and any second implementation of that would drift.
+Build settings are never read from the recipe (`PRJ2` lists the few facts
+that are). `dub describe` is asked, because dub owns dependency resolution,
+sub-packages, path dependencies, platform blocks and configuration
+inheritance, and any second implementation of that would drift.
 
 Status legend and ID conventions: [hue spec](../hue/index.md#status-scheme).
 
@@ -60,7 +61,7 @@ knows.
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------- | ------------------------------------------------------ |
 | PRJ7                           | A dub that fails (no dub on `PATH`, unresolvable dependencies, an unknown configuration) leaves a **reason** on the result, and a consumer that asked for project context surfaces it instead of analyzing without: a payload full of `unable to read module` nodes reads as a defect in the user's code. A root package that has **no describable target** — `targetType "none"` (dub itself asserts, e.g. dlang/dmd) or a sourceless monorepo umbrella — falls back to the recipe's subpackages: each candidate is described as `--root=… :name` (never `name:sub`, which hits dub's global registry) and the one whose described `sourceFiles` contain the file wins; no owner leaves the candidate list on `.error`. | full (`95a85f51` + P1) | `describeOwningSubpackage`; tests `project.fallback.*` |
 | PRJ8                           | Results are **memoized per recipe, resolved subpackage, and query** (every `PRJ3` field) — the subpackage dimension keeps one file's none-target fallback from poisoning its siblings — so a batch or a viewer pays discovery once per (project, subpackage) rather than once per file; `clearDubProjectCache` drops it when a recipe changes.                                                                                                                                                                                                                                                                                                                                                                           | full (`95a85f51`)      | `dubProjectFor`                                        |
-| PRJ9 (see also the note below) | Discovery must never stall an interactive frame. Today the call is **synchronous** (0.04 s for a plain package, 0.5 s with a git dependency) with no timeout; an interactive consumer needs it off the render path, with a deadline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | partial                | the async/deadline half is unbuilt                     |
+| PRJ9 (see also the note below) | Discovery must never stall an interactive frame. The call is **synchronous** (0.04 s for a plain package, 0.5 s with a git dependency) with no timeout; an interactive consumer needs it off the render path, with a deadline.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | partial                | the async/deadline half is unbuilt                     |
 
 ## Extractor surface (`PRJ10`-`PRJ11`)
 
@@ -130,9 +131,9 @@ requirements are `LIV1`-`LIV5` in
 | ------------------------------------------------ | ------------------------------------------- |
 | Parse + full semantic (whole `dmd.*` closure)    | 0.74 s                                      |
 | One positional `tipAt`                           | 3.9 ms (cold) / 0.6 ms (serve, warm caches) |
-| Eager pipeline, per-occurrence `tipAt` (pre-L22) | 175.8 s                                     |
-| Eager pipeline, single-walk collector (L22)      | **5.8 s**, 37,297 nodes, 275 MB peak        |
-| Eager payload (L25 slim encoding)                | 10.1 MB raw / 767 KB gzipped                |
+| Eager pipeline, per-occurrence `tipAt` (pre-L21) | 175.8 s                                     |
+| Eager pipeline, single-walk collector (L21)      | **5.8 s**, 37,297 nodes, 275 MB peak        |
+| Eager payload (L24 slim encoding)                | 10.1 MB raw / 767 KB gzipped                |
 | Lazy payload                                     | 6.7 MB raw / 465 KB gzipped                 |
 
 CDN/static guidance: static pages always bundle **eager** payloads (the

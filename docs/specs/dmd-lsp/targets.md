@@ -4,15 +4,15 @@ _**Status:** implemented · **Date:** 2026-09-25 · **Scope:** analyzing code
 as a compiler other than DMD sees it — LDC, and the dcompute LDC's device
 compile of `@compute` shader modules; overview in the [index](./index.md)._
 
-The analysis core is DMD's frontend, so until now every file was analyzed as
-DMD compiles it for the host. That is wrong for one class of code the
+The analysis core is DMD's frontend, so by default a file is analyzed as DMD
+compiles it for the host. That is wrong for one class of code the
 repository ships: single-source shaders ([`EFX20`](../ui/effects.md)). A
 `@compute(CompileFor.deviceOnly)` module such as `libs/ui/shaders/effects.d`
 is only ever compiled by the dcompute LDC, for a GPU, with
-`-mdcompute-targets=vulkan-130` (so `LDC_DCompute`) and LDC's own druntime — and analyzed as
-DMD host code, every one of its `texture0.sample(uv)` calls was an error. A
-`@compute(CompileFor.hostAndDevice)` module is compiled both ways, and an
-error can exist on either side alone.
+`-mdcompute-targets=vulkan-130` (so `LDC_DCompute`) and LDC's own druntime.
+Analyzed as DMD host code, every one of its `texture0.sample(uv)` calls is an
+error. A `@compute(CompileFor.hostAndDevice)` module is compiled both ways,
+and an error can exist on either side alone.
 
 ## What the frontend is told (`TGT1`-`TGT4`)
 
@@ -23,9 +23,9 @@ error can exist on either side alone.
 | TGT3 | An LDC profile reads `object`, `ldc.*` and Phobos from **LDC's runtime sources**, `$SPARKLES_LDC_IMPORT_PATH` — the dcompute LDC's own tree (`nix/packages/ldc-import-paths.nix`, a fetch of `ldc-vulkan`'s source that builds nothing). Unset (any non-Linux host), LDC-profile tests skip and the analysis reports which variable. | full   | `runtimeImportVariable`; `runtimeSourcesProblem`; devshell + `twoslash-extract` wrapper |
 | TGT4 | An LDC profile predefines the `LDC_LLVM_<major>` identifier `ldc.intrinsics` requires, read off the runtime it analyzes against (the newest major `ldc/intrinsics.di` accepts).                                                                                                                                                      | full   | `ldcLlvmVersionIdent`; test `init_.ldcLlvmVersionIdent`                                 |
 
-`-betterC` also reaches the frontend before it derives its predefined set
-now, so `D_BetterC` is predefined and `D_ModuleInfo` is not — the fork's
-`initDMD(configureParams)` hook, which the profiles needed anyway.
+`-betterC` also reaches the frontend before it derives its predefined set, so
+`D_BetterC` is predefined and `D_ModuleInfo` is not — through the fork's
+`initDMD(configureParams)` hook, which the profiles use as well.
 
 ## Which side, and how it is compiled (`TGT5`-`TGT6`)
 
