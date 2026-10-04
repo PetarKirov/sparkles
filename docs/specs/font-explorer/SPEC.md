@@ -38,7 +38,8 @@ runs in a terminal at all, where a programmer choosing a terminal font
 already works.
 
 This application is built on `sparkles:font`, which parses fonts, shapes and
-rasterizes text, and builds a catalog of fonts, and on the `sparkles:ui` toolkit,
+rasterizes text, and builds a catalog of fonts; on `sparkles:text-layout`,
+which composes specimen text into lines; and on the `sparkles:ui` toolkit,
 whose single view description runs both as a window and in a terminal. Every
 rendered [specimen](../../glossary.md#specimen) is a bitmap the font library produces in the font being
 examined, and the toolkit shows it as an image. In a terminal, specimens
@@ -53,9 +54,12 @@ the `inspect` command and the library agree by construction.
 The explorer does not manage fonts: it does not install, activate, tag, sync
 or download them, and it reads no online catalog. It suggests no pairings. It
 does not edit or convert fonts. Windows and Android are outside this
-specification. Everything about how text is parsed, shaped and rasterized
-belongs to [`sparkles:font`](../font/SPEC.md); this document states only what
-the application requires of it.
+specification. Font parsing, shaping and rasterization belong to
+[`sparkles:font`](../font/SPEC.md); Unicode analysis belongs to
+[`sparkles:base`](../base/text/SPEC.md); composing specimen text into lines,
+with its bidirectional order, script runs and wrapping, belongs to
+[`sparkles:text-layout`](../text-layout/SPEC.md). This document states only
+what the application requires of them.
 
 Section 2 states the contract at a glance, section 3 its invariants as
 requirements, and section 4 the command line. Section 5 covers sources,
@@ -105,6 +109,9 @@ instance, belong to [`sparkles:font`](../font/SPEC.md).
    affects other fonts or the application.
 5. **A testable frame loop.** All behaviour is reachable through the
    toolkit's recording host, without a window or a terminal.
+6. **Text is composed by text-layout.** Specimen text is laid out by
+   `sparkles:text-layout` over the examined face alone; the explorer has no
+   text-composition logic of its own.
 
 ## 3. Invariants
 
@@ -199,6 +206,19 @@ by eye; one shared sample keeps the rows comparable.
 
 ## 6. Specimens
 
+**FXP35: Specimen composition.** Every text specimen **must** be composed into
+lines by `sparkles:text-layout` in physical mode, over a fallback chain that
+holds only the face under examination, with the policy that reports a missing
+glyph as that face's `.notdef`. The explorer **must not** itemize, reorder,
+wrap or shape text itself. The glyph map (`FXP18`) draws glyphs by ID and is
+not a text specimen.
+
+_Rationale:_ Text-layout owns bidirectional order, script runs and contextual
+line composition, so a right-to-left or mixed-script specimen is correct only
+through it, and an explorer-local path would be a second owner to remove later
+([`TL-016`](../text-layout/SPEC.md#_5-contextual-composition)). Fallback to
+another face would hide exactly the gaps in coverage a specimen exists to show.
+
 **FXP14: Preview.** Custom text **must** render at a chosen pixel size, line
 height and colour pair, shaped with the selected features and instance.
 
@@ -235,9 +255,12 @@ directions; only an overlay shows how individual glyphs differ.
 advance differs from the face's cell advance, and every ligature that changes
 the number of glyphs, with the characters involved.
 
-_Rationale:_ A terminal places one glyph per cell. A font whose ligatures keep
-the glyph count, as both bundled programming fonts do, works in a terminal
-unchanged; one that does not needs special placement.
+_Rationale:_ A terminal may place glyph _i_ of a run in cell _i_ only on an
+audited fast path; every other run uses the shaped positions and source spans
+([`FTA16`](../font/SPEC.md#_15-consumers)). The audit tells a user which text
+in a face takes that path. Both bundled programming fonts keep one glyph per
+character on the 160 measured ligature sequences
+([`FTX7`](../font/decisions.md#ftx7-ligatures-keep-one-glyph-per-cell-their-ink-crosses-cells)).
 
 **FXP21: Nerd Font coverage.** The explorer **must** report coverage of the
 Powerline, Powerline Extra, Devicons, Font Awesome, Material Design,

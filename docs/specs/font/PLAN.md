@@ -25,8 +25,9 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | [M8 Consumer migration](#m8-consumer-migration)                           | not started |
 
 The font explorer's own plan interleaves with this one: its `inspect`
-subcommand needs M1–M2, its specimens M4–M5, its library pane M7. The explorer
-plan lives in [`../font-explorer/PLAN.md`](../font-explorer/PLAN.md).
+subcommand needs M1–M2, its glyph map M3 and M5, and its text specimens
+text-layout's TL-M3, which itself needs M2, M4 and M7. The explorer plan lives
+in [`../font-explorer/PLAN.md`](../font-explorer/PLAN.md).
 The [base text foundation](../base/text/PLAN.md) and
 [text-layout plan](../text-layout/PLAN.md) are separate delivery plans. Base
 does not wait for font. Text-layout's real-font composition waits for delivered
