@@ -1737,6 +1737,32 @@
             "link": "/specs/wired/PLAN"
           },
           {
+            "text": "Configuration resolution (draft)",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Definition resolution",
+                "link": "/specs/wired/config/SPEC"
+              },
+              {
+                "text": "Property, source, value",
+                "link": "/specs/wired/config/inspection"
+              },
+              {
+                "text": "Delivery plan",
+                "link": "/specs/wired/config/PLAN"
+              },
+              {
+                "text": "Oracles and evidence",
+                "link": "/specs/wired/config/testing"
+              },
+              {
+                "text": "Decisions and open questions",
+                "link": "/specs/wired/config/decisions"
+              }
+            ]
+          },
+          {
             "text": "Expressiveness Upgrade",
             "collapsed": true,
             "items": [
