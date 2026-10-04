@@ -130,6 +130,12 @@ except where a row names a platform.
 
 ## Pages
 
+The draft [profile extension](./profiles.md) and
+[Android development environment contract](../android-dev-env/SPEC.md) specify
+cross-platform launch recipes and backend ownership. Their compatibility map
+identifies proposed amendments to this accepted baseline; publication does not
+claim implementation or acceptance of those amendments.
+
 | Page                         | Owns                                                                                    |
 | ---------------------------- | --------------------------------------------------------------------------------------- |
 | [Android](./android.md)      | the Android app: packaging, session modes, the bootstrap, Android integration (`NOD`)   |
