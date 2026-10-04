@@ -242,6 +242,8 @@ struct ExplorerTui
     /// ditto — the `toggleExplorer` arm (`e`, `<leader>e`): the pane split
     /// is the workspace's, so the pane reports the intent.
     bool explorerToggleRequested;
+    /// ditto — `Tab`/`Shift-Tab` (`KBD1`): focus is the workspace's.
+    bool focusCycleRequested;
     /// `TVU6`: the session index of the chosen row, or `-1` when the pick was
     /// an ordinary filesystem row (so the host loads it as a document).
     int pickedSession = -1;
@@ -931,6 +933,10 @@ struct ExplorerTui
                 // The pane split is the workspace's; report the intent — the
                 // `pickerRequested` shape.
                 explorerToggleRequested = true;
+                break;
+            case Command.focusNext:
+            case Command.focusPrev:
+                focusCycleRequested = true;
                 break;
 
             // The workspace owns the pane split and the viewer owns its own

@@ -3182,6 +3182,12 @@ int runGui(GuiArgs guiArgs) @system
                     if (set.move(1))
                         loadSelected();
                     break;
+                // Two panes, so next and previous are the same move.
+                case Command.focusNext:
+                case Command.focusPrev:
+                    if (pn.treeVisible)
+                        pn.treeFocused = !pn.treeFocused;
+                    break;
                 case Command.setIndex:
                     pn.treeVisible = true;
                     pn.treeFocused = true;
