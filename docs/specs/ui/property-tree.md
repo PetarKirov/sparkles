@@ -243,7 +243,8 @@ vocabulary but is deferred until its semantics are defined — see Deferred.)
 type and emit a compatible `EditValue`; it is not a registry key and cannot
 make an arbitrary opaque value assignable.
 `@ShowIf("kind == FillKind.gradient")` is compiled into a typed `@safe`
-[`sparkles:dql`](../dql/SPEC.md) predicate over the enclosing value and
+predicate over the enclosing value: its condition is mixed in as a D
+expression, resolved in the scope of the enclosing type's module, and
 evaluated on every rebuild. Bad member names or incompatible custom editors
 are build errors, shown by the spike's negative-compile probes (C27). The
 complete dispatch, including the opaque escape and value-dependent predicate,

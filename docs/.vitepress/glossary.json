@@ -551,8 +551,8 @@
     "id": "dql-path",
     "term": "DQL path",
     "aliases": ["query path"],
-    "summary": "A dotted address, such as key.action, that names one field reachable from a queried D type in a DQL query.",
-    "definition": "A dotted address that names one field, getter or index reachable from a queried D type, such as `pointer.logicalPosition.x`. The alternatives of a `SumType` field are transparent: their fields join the path of the field that holds the union, so `key.action` reads the keyboard alternative's action.",
+    "summary": "A dotted address, such as keyboard.action, that names one field reachable from a queried D type in a DQL query.",
+    "definition": "A dotted address that names one field, getter or index reachable from a queried D type, such as `pointer.logicalPosition.x`. The alternatives of a `SumType` field are transparent: their fields join the path of the field that holds the union, so `keyboard.action` reads the keyboard alternative's action.",
     "authority": [
       {
         "text": "DQL specification §2.1",
