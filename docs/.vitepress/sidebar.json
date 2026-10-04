@@ -1787,6 +1787,10 @@
                 "link": "/specs/wired/config/SPEC"
               },
               {
+                "text": "Scalar resolution interface",
+                "link": "/specs/wired/config/scalar-resolution"
+              },
+              {
                 "text": "Property, source, value",
                 "link": "/specs/wired/config/inspection"
               },

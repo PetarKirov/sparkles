@@ -1,7 +1,7 @@
 ---
 status: draft
 owner: sparkles:wired
-reviewed: 2026-10-04
+reviewed: 2026-10-05
 ---
 
 # `sparkles.wired.config` — Decisions and open questions
@@ -115,6 +115,78 @@ Missing docs cannot be disguised by a plausible URL. Q4 gates each integration.
 **Revisit when:** another report target needs a different link protocol; keep the
 same documentation identity and change only the target adapter.
 
+## D5 — Separate presence and explicit ownership transfers
+
+**State:** proposed. **Affected:** WCFG4, WCFG7, WCFG13, WCFG17, WCFG25–32, WCFG35–37.
+
+**Question:** Can `Sparse!T` decoding and ordinary struct copies provide the scalar
+input and snapshot interface?
+
+**Alternatives:** decode the derived nullable overlay; deep-copy the entire
+accumulated builder at resolution; separate presence from payload and capture or
+transfer owned storage explicitly.
+
+**Evidence:** The scalar probe preserved false/zero/empty values, but wired rejected
+`Sparse` over a nullable payload as a nested null-aware wrapper. The mapped overlay
+also lost a field's `@WireName`, while decoding the original type honored it.
+Separate slots reused leaf null/value decoding. A move-only capsule transferred
+its captured string with the same payload pointer; `-preview=dip1000` compile
+probes rejected copying an owner and leaking scoped text/nullable-text views.
+These are feasibility results, not proof of a configuration implementation.
+
+**Choice:** [scalar-resolution.md](./scalar-resolution.md) owns the exact proposed
+interface. Input slots retain presence outside original typed payloads and decoding
+carries the original field policy. Borrowed input captures once; an owned capsule
+transfers on successful submission. Resolution transfers a builder into a
+read-only snapshot, including conflicts, while operational failure retains the
+builder. Independent mutable configuration materialization is an explicit copy.
+Section metadata supplies priority inheritance without manufacturing absent leaf
+definitions. Source handles identify retained storage across builder/snapshot moves,
+not the wrapper object's address.
+
+**Trade-off:** Ownership forms must not manufacture ownership from mutable aliases.
+The codec needs an original-field-policy seam rather than a sparse-wrapper shortcut.
+Move-only owners are not Regular values; read-only borrowed records are not
+independently owned copies. Implementation lifetime and failure-injection gates
+remain necessary even though the language primitives work.
+
+**Revisit when:** an actual scalar implementation cannot enforce the scoped visitor
+interface or allocation-failure rollback; resolve that evidence before broadening
+the public interface or introducing collection ownership.
+
+## D6 — Logical scalar budgets and byte identities
+
+**State:** proposed. **Affected:** WCFG6, WCFG11, WCFG21, WCFG26, WCFG33–35.
+
+**Question:** Should admission depend on locale/Unicode identity processing,
+allocator capacity, or whether equal immutable values happen to share storage?
+
+**Alternatives:** textual normalized IDs and physical allocation accounting;
+opaque byte IDs and deterministic logical-content accounting.
+
+**Evidence:** The unsigned-byte probe sorted prefix IDs and `0x7f/0x80/0xff`
+without locale or signed-char dependence. A reflective census measured hue's
+108 leaf-shaped fields (98 scalar), terminal's 43 (35 scalar), and diagram's 23
+(19 scalar), at depths 3/4/3. Their scalar defaults used 607/195/37 value bytes.
+The subtraction-based budget model admitted exact limits and rejected overflow.
+It does not measure peak memory or validate production rollback.
+
+**Choice:** Nonempty byte IDs of at most 1024 bytes have byte equality and
+ascending unsigned lexicographic ordering. Scalar defaults are 1024 sources,
+65,536 definitions, 16 MiB logical payload, 4096 options, and depth 32.
+Metadata identities are interned and charged once; definition values are charged
+per definition regardless of physical sharing. This explicitly refines WCFG21's
+original shared-content wording so alias/interner choices cannot change admission.
+
+**Trade-off:** Logical content is not RSS. Record limits bound count, not allocator
+overhead; transient decoding/capture storage has no RSS claim. These defaults give
+headroom above the measured scalar subjects without promising arbitrary document
+sizes. Collections/custom values require separate accounting before C2 acceptance.
+
+**Revisit when:** measured valid application workloads exceed the policy or expose
+unacceptable overhead. Preserve exact boundary semantics and update the oracle
+with any accepted default/accounting change.
+
 ## Open questions
 
 Questions name the work they block. They do not block publication of a draft or
@@ -122,16 +194,17 @@ permit an implementation completion claim with missing prerequisites.
 
 ### Q1 — Storage and default limits
 
-**Owner:** wired implementer and reviewer. **Blocks:** C1 public ownership/limits;
-C2 collection accounting. **Affected:** WCFG7, WCFG17, WCFG21.
+**Owner:** wired implementer and reviewer. **State:** scalar contract specified;
+collection accounting open. **Blocks:** C2 collection/custom-value accounting,
+not C1 scalar interface design. **Affected:** WCFG7, WCFG17, WCFG21, WCFG25–37.
 
-Choose transfer-versus-independent-snapshot submission forms, deep ownership for
-slice/map payloads, reference stability, exact default definition/payload/option
-limits, and accounting hooks for custom typed values. Experiment with scalar and
-nested list/map schemas, mutate/free source storage, and exercise limits at
-`N-1`, `N`, `N+1`. Accept only an interface whose snapshot cannot change with
-caller input and whose rejection preserves both parties' state. No avoidable
-copying or per-node delegate is justified by the ownership requirement.
+[D5](#d5-separate-presence-and-explicit-ownership-transfers) and
+[D6](#d6-logical-scalar-budgets-and-byte-identities) select the scalar ownership,
+identity, default-limit, and logical-accounting rules, with feasibility evidence
+in [testing.md](./testing.md#scalar-readiness-feasibility). Owner acceptance and
+implementation conformance remain separate gates. C2 must specify map/list/custom
+payload accounting, recursion, and ownership before those shapes are accepted.
+No scalar code may silently approximate nullable presence or ignore wire policies.
 
 ### Q2 — Keybinding composition
 
