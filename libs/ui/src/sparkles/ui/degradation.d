@@ -68,6 +68,8 @@ enum Substitution : ubyte
     @needs("extendedUnderline") plainUnderline,
     @needs("textSizing") textSizeIgnored,    /// a scaled run painted at 1em
     @needs("proportionalText") monospaceDocs, /// a docs run painted in the monospace face
+    /// an interface (`FontRole.ui`) run painted in the monospace face at 1em
+    @needs("proportionalText") monospaceUi,
     @needs("images") imageRastered,          /// an image drawn in cells: a block or braille raster (`GLY9`)
     @needs("images") imageAsAlt,             /// an image shown as its alt text (`IMG4`)
     /// a grapheme cluster the target would lay out wider or narrower than
@@ -177,6 +179,8 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
             r.note(Substitution.textSizeIgnored);
         if (!caps.proportionalText && k.fontRole == FontRole.docs)
             r.note(Substitution.monospaceDocs);
+        if (!caps.proportionalText && k.fontRole == FontRole.ui)
+            r.note(Substitution.monospaceUi);
     }
 
     // The glyphs of one operation the target cannot show, each noted once
@@ -420,6 +424,26 @@ unittest
     auto window = capabilitiesOf(Profile.full);
     window.radius = window.shadow = window.alpha = true;
     assert(degradationsOf(ops[], window).empty);
+}
+
+@("ui.degradation.uiRunOnACellTarget")
+@safe pure nothrow @nogc
+unittest
+{
+    // `GLY10`: an interface run keeps its rows and columns on a terminal, in
+    // the one face, and the report says so; a window draws it as asked.
+    import sparkles.ui.style : TypeStep;
+
+    TextRun t;
+    t.text = "Settings";
+    t.ink.fontRole = FontRole.ui;
+    t.ink.typeStep = TypeStep.title;
+    const DrawOp[1] ops = [DrawOp(t)];
+
+    assert(degradationsOf(ops[], capabilitiesOf(Profile.full))[Substitution.monospaceUi] == 1);
+    TargetCapabilities window;
+    window.proportionalText = true;
+    assert(degradationsOf(ops[], window)[Substitution.monospaceUi] == 0);
 }
 
 @("ui.degradation.inkRows")

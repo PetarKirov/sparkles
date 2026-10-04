@@ -32,7 +32,7 @@ module sparkles.ui.layout;
 import sparkles.ui.canvas : RuleEdge;
 import sparkles.ui.geometry : cellsOf, Constraints, Insets, Point, Rect, Size, SizeSpec;
 import sparkles.ui.image : cellPixelsOf, imageCells;
-import sparkles.ui.style : BorderStyle;
+import sparkles.ui.style : BorderStyle, TextStyle;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans;
 
@@ -51,6 +51,11 @@ struct Frame
 
     /// For a wrapping `rich` node: the broken lines of styled span slices.
     TextSpan[][] spanLines;
+
+    /// For a text or rich node: the rows one of its lines occupies. A run in a
+    /// face taller than the cell (a `FontRole.ui` title, design-system
+    /// `GLY10`) takes more than one; the display list steps its lines by this.
+    int lineRows = 1;
 }
 
 /// The default text measurer: one column per codepoint
@@ -72,6 +77,46 @@ enum bool isTextMeasure(T) = __traits(compiles, (ref T m) {
 });
 
 static assert(isTextMeasure!CellMeasure);
+
+/**
+The styled-measurer capability, optional on top of $(LREF isTextMeasure): `T`
+also measures a run in its own style, and reports how many rows one line of
+that style occupies. A target that draws faces other than the cell font — a
+proportional interface face at its type step (design-system `GLY7`, `GLY10`) —
+provides it; the layout then measures every text and rich node through it.
+Widths stay whole cells: the measurer rounds a run's pixel extent up.
+*/
+enum bool isStyledTextMeasure(T) = isTextMeasure!T
+    && __traits(compiles, (ref T m) {
+        int w = m.width("x", TextStyle.init);
+        int r = m.rows(TextStyle.init);
+    });
+
+/// A run's width through `tm`, in `style` where the measurer reads styles.
+int measureWidth(TM)(ref TM tm, scope const(char)[] s, in TextStyle style)
+{
+    static if (isStyledTextMeasure!TM)
+        return tm.width(s, style);
+    else
+        return tm.width(s);
+}
+
+/// The rows one line in `style` occupies through `tm` (one on a cell measurer).
+int measureRows(TM)(ref TM tm, in TextStyle style)
+{
+    static if (isStyledTextMeasure!TM)
+    {
+        const r = tm.rows(style);
+        return r < 1 ? 1 : r;
+    }
+    else
+        return 1;
+}
+
+/// The style a rich node's `span` is measured and drawn in: its own, or the
+/// node's when the span declares none (the display list's rule).
+TextStyle spanStyle(in TextSpan span, in TextStyle nodeStyle) @safe pure nothrow @nogc
+    => span.textStyle == TextStyle.init ? nodeStyle : span.textStyle;
 
 /// Lays `tree` out within `c`, returning a `Frame` per node. An unbounded axis
 /// (`int.max`, the default) sizes the root to its content; a bounded one is the
@@ -272,11 +317,12 @@ if (isTextMeasure!TM)
         final switch (node.kind) with (WidgetKind)
         {
             case text:
-                content = tm.width(node.text);
+                content = measureWidth(tm, node.text, node.textStyle);
                 break;
             case rich:
                 foreach (ref span; node.spans)
-                    content += tm.width(span.text);
+                    content += measureWidth(tm, span.text,
+                        spanStyle(span, node.textStyle));
                 break;
             case glyph:
                 content = 1;
@@ -376,13 +422,16 @@ if (isTextMeasure!TM)
                     if (avail < 1)
                         avail = 1;
                     frames[idx].lines = wrapLines(node.text, avail,
-                        (scope const(char)[] s) => tm.width(s), node.wrap);
+                        (scope const(char)[] s) => measureWidth(tm, s, node.textStyle),
+                        node.wrap);
                     content = cast(int) frames[idx].lines.length;
                     if (content < 1)
                         content = 1;
                 }
                 else
                     content = 1;
+                frames[idx].lineRows = measureRows(tm, node.textStyle);
+                content *= frames[idx].lineRows;
                 break;
             case rich:
                 if (node.wrap != TextWrap.none)
@@ -391,13 +440,28 @@ if (isTextMeasure!TM)
                     if (avail < 1)
                         avail = 1;
                     frames[idx].spanLines = wrapSpans(node.spans, avail,
-                        (scope const(char)[] s) => tm.width(s), node.hangIndent);
+                        (scope const(char)[] s, in TextStyle st)
+                            => measureWidth(tm, s,
+                                st == TextStyle.init ? node.textStyle : st),
+                        node.hangIndent);
                     content = cast(int) frames[idx].spanLines.length;
                     if (content < 1)
                         content = 1;
                 }
                 else
                     content = 1;
+                {
+                    // A line is as tall as its tallest span.
+                    int rows = 1;
+                    foreach (ref span; node.spans)
+                    {
+                        const r = measureRows(tm, spanStyle(span, node.textStyle));
+                        if (r > rows)
+                            rows = r;
+                    }
+                    frames[idx].lineRows = rows;
+                    content *= rows;
+                }
                 break;
             case glyph:
                 content = 1;
@@ -718,6 +782,74 @@ string dumpTree(in WidgetTree tree, in Frame[] frames)
     auto w = appender!string;
     dumpTree(w, tree, frames);
     return w[];
+}
+
+version (unittest)
+{
+    import sparkles.ui.style : FontRole, TypeStep;
+
+    // A measurer for a target with an interface face (design-system `GLY10`):
+    // a `ui` run is twice as wide as the cell measure, and a title takes two
+    // rows. Everything else measures as cells.
+    struct StyledMeasure
+    {
+        int width(scope const(char)[] s) const pure nothrow @nogc
+            => cast(int) cellsOf(s);
+
+        int width(scope const(char)[] s, in TextStyle st) const pure nothrow @nogc
+            => st.fontRole == FontRole.ui ? 2 * cast(int) cellsOf(s) : cast(int) cellsOf(s);
+
+        int rows(in TextStyle st) const pure nothrow @nogc
+            => st.fontRole == FontRole.ui && st.typeStep == TypeStep.title ? 2 : 1;
+    }
+}
+
+@("ui.layout.styledMeasure.uiRunsTakeTheirWidthAndRows")
+@safe unittest
+{
+    import sparkles.ui.style : FontRole, TypeStep;
+    import sparkles.ui.widget : Builder;
+
+    static assert(isStyledTextMeasure!StyledMeasure);
+    static assert(!isStyledTextMeasure!CellMeasure);
+
+    auto b = Builder();
+    const title = b.add(Widget(kind: WidgetKind.text, text: "Logs",
+        textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.title)));
+    const mono = b.add(Widget(kind: WidgetKind.text, text: "ab"));
+    const col = b.container(WidgetKind.column, [title, mono]);
+    auto tree = b.finish(col);
+
+    auto frames = layout(tree, Constraints.init, StyledMeasure());
+    assert(frames[title].rect == Rect(0, 0, 8, 2), "4 letters at 2 cells, 2 rows");
+    assert(frames[title].lineRows == 2);
+    assert(frames[mono].rect == Rect(0, 2, 2, 1));
+    assert(frames[mono].lineRows == 1);
+
+    // On a cell target the same tree keeps one row a line, one cell a letter.
+    auto cells = layout(tree);
+    assert(cells[title].rect == Rect(0, 0, 4, 1) && cells[title].lineRows == 1);
+}
+
+@("ui.layout.styledMeasure.richLineIsItsTallestSpan")
+@safe unittest
+{
+    import sparkles.ui.style : FontRole, TypeStep;
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.wrap : TextSpan;
+
+    auto b = Builder();
+    auto spans = [
+        TextSpan(text: "Font", textStyle: TextStyle(fontRole: FontRole.ui,
+            typeStep: TypeStep.title)),
+        TextSpan(text: " ●"),
+    ];
+    const r = b.add(Widget(kind: WidgetKind.rich, spans: spans));
+    auto tree = b.finish(r);
+
+    auto frames = layout(tree, Constraints.init, StyledMeasure());
+    assert(frames[r].rect == Rect(0, 0, 8 + 2, 2));
+    assert(frames[r].lineRows == 2);
 }
 
 @("ui.layout.rowFlowWithGap")

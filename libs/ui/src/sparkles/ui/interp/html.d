@@ -445,6 +445,14 @@ private void textStyle(Writer)(ref Writer w, in Visual vis)
         case docs:
             put(w, ";font-family:sans-serif");
             break;
+        case ui:
+            // The interface face at its type step (design-system `GLY10`).
+            import sparkles.ui.style : typeStepDp;
+
+            put(w, ";font-family:system-ui,sans-serif;font-size:");
+            num(w, typeStepDp(vis.typeStep));
+            put(w, "px");
+            break;
     }
     if (vis.fontScale != 100)
     {

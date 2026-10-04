@@ -382,8 +382,18 @@ ragged-right by design).
 */
 TextSpan[][] wrapSpans(F)(
     const(TextSpan)[] spans, int width, scope F measure, int hangIndent = 0)
-if (is(typeof(measure("")) : int))
+if (is(typeof(measure("")) : int) || is(typeof(measure("", TextStyle.init)) : int))
 {
+    // A measurer that reads styles gets each span's own (design-system
+    // `GLY10`: a proportional run's width depends on its face and size).
+    int widthOf(size_t si, scope const(char)[] text)
+    {
+        static if (is(typeof(measure("", TextStyle.init)) : int))
+            return measure(text, spans[si].textStyle);
+        else
+            return measure(text);
+    }
+
     // A hang indent narrows every line after the first (the painter offsets
     // them right by the same amount — a leader's continuation alignment).
     const contWidth = hangIndent < width ? width - hangIndent : 1;
@@ -434,7 +444,7 @@ if (is(typeof(measure("")) : int))
     void append(size_t fi)
     {
         const f = frags[fi];
-        const w = measure(f.text);
+        const w = widthOf(f.span, f.text);
         // Merge into the previous slice only when it continues the $(I same)
         // span. Contiguity alone is not enough: a highlighted code line is
         // adjacent same-slot spans slicing one buffer, and merging across
@@ -501,11 +511,11 @@ if (is(typeof(measure("")) : int))
         size_t j = i;
         while (j < frags.length && !frags[j].glue && !frags[j].newline)
         {
-            tokenW += measure(frags[j].text);
+            tokenW += widthOf(frags[j].span, frags[j].text);
             ++j;
         }
         const glueW = pendingGlue != size_t.max
-            ? measure(frags[pendingGlue].text) : 0;
+            ? widthOf(frags[pendingGlue].span, frags[pendingGlue].text) : 0;
         const limit = lines.length == 0 ? width : contWidth;
         if (cur.length && curW + glueW + tokenW > limit)
             flush(); // the pending glue is consumed by the break
