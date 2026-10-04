@@ -3,13 +3,13 @@
 **Status:** decided — 2-D cell-grid with a compact packed cell (framework
 calibration optional) ·
 **Date:** 2026-07-12 · **Scope:** the rendering-core decision, spec
-[§3.1](./index.md#31-rendering-core-line-diff-vs-2-d-cell-grid).
+[§3.1](./index.md#_3-1-rendering-core-line-diff-vs-2-d-cell-grid).
 
 The evidence for choosing the `sparkles:tui` rendering core by measurement. Numbers
 from the harness at `libs/tui/bench/render` (see its `README.md`); the raw snapshot
 is under `libs/tui/bench/render/results/`. The D-internal comparison (M1–M2)
 comes first; the same-algorithm C calibration below completes the decision, and
-framework calibration stays optional — see [What's next](#whats-next).
+framework calibration stays optional — see [What's next](#what-s-next).
 
 ## Environment
 
