@@ -56,7 +56,7 @@ the terminal arm; `FXP1`'s grep check; the `FXP3` frame-with-no-change check.
 
 ## A4 Programming-font checks
 
-**Obligations.** `FXP17` (code), `FXP20`–`FXP23`, `FXP31`.
+**Obligations.** `FXP17` (code), `FXP20`–`FXP23`, `FXP31`, `FXP34`.
 
 ## A5 Library pane
 

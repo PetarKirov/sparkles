@@ -252,7 +252,19 @@ Codicons, Octicons and Weather ranges, as counts and as a glyph strip.
 **FXP24: Live terminal.** A shell **must** run in a `sparkles:terminal-view`
 pane painted in the selected face at the chosen size.
 
-**FXP31: Checks as a dock.** The checks of `FXP17` and `FXP20`–`FXP24`
+**FXP34: Unflagged overlaps.** The explorer **must** list the glyphs whose
+outline data does not flag overlapping contours but whose coverage at 24 pixels
+per em changes by more than 32 of 255 when rendered as the union of their
+contours, each with the size of that change.
+
+_Rationale:_ Such glyphs render with darker edges where their contours overlap,
+here and in FreeType-based renderers, because the library unions only flagged
+glyphs ([`FTX9`](../font/decisions.md#ftx9-flatten-to-0-02-px-render-the-union-of-flagged-glyphs)).
+The fix belongs in the font: set the flag or remove the overlaps. Noto Sans
+Arabic, a bundled fallback face, had 428 such glyphs when measured on
+2026-10-04.
+
+**FXP31: Checks as a dock.** The checks of `FXP17`, `FXP20`–`FXP24` and `FXP34`
 **must** be panes of a `sparkles:ui` dock container. The user **may** split,
 stack, resize, close and re-add them. The arrangement **must** persist and be
 restored on the next launch, and a reset **must** restore the default
