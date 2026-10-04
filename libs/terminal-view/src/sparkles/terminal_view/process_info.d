@@ -219,7 +219,7 @@ string iconForProcess(scope const(char)[] process, bool nerdFont) @safe pure not
 {
     import core.sys.posix.signal : kill, SIGKILL;
     import core.sys.posix.sys.wait : waitpid;
-    import core.sys.posix.unistd : _exit, close, execvp, setsid;
+    import core.sys.posix.unistd : _exit, close, execv, setsid;
     import core.sys.posix.sys.ioctl : ioctl, TIOCSCTTY;
     import core.sys.posix.fcntl : O_RDWR, open;
     import core.thread : Thread;
@@ -234,6 +234,24 @@ string iconForProcess(scope const(char)[] process, bool nerdFont) @safe pure not
 
     static immutable(char)*[3] argv = ["sleep", "5", null];
     import core.sys.posix.unistd : fork;
+    import std.algorithm.iteration : splitter;
+    import std.file : exists;
+    import std.path : buildPath;
+    import std.process : environment;
+    import std.string : toStringz;
+
+    // The system's own `sleep` where there is one: Nix's coreutils on macOS
+    // links `sleep` to the multi-call `coreutils`, whose process name is that.
+    string sleepPath = "/bin/sleep".exists ? "/bin/sleep" : null;
+    if (!sleepPath.length)
+        foreach (dir; environment.get("PATH", "/usr/bin").splitter(':'))
+            if (dir.length && buildPath(dir, "sleep").exists)
+            {
+                sleepPath = buildPath(dir, "sleep");
+                break;
+            }
+    assert(sleepPath.length, "sleep on PATH");
+    const sleepz = sleepPath.toStringz;
 
     const child = fork();
     assert(child >= 0);
@@ -242,7 +260,7 @@ string iconForProcess(scope const(char)[] process, bool nerdFont) @safe pure not
         setsid();
         const slave = open(slaveName.ptr, O_RDWR);
         ioctl(slave, TIOCSCTTY, 0);
-        execvp("sleep", cast(char**) argv.ptr);
+        execv(sleepz, cast(char**) argv.ptr);
         _exit(127);
     }
     scope (exit)
