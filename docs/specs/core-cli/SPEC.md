@@ -29,27 +29,27 @@ help text cannot drift from the parser. The subcommand hierarchy has to be
 described too, and the way it is described shapes every program that uses
 the library.
 
-The direct description gives each command with subcommands a field that
-holds whichever child the user selected, typed as a tagged union of the
-child command types. It works, but it repeats the hierarchy in fields that
-exist only for the parser to fill, and it keeps a command's children apart
-from the struct nesting D already offers. Dropping the field raises
-questions of its own: where the parsed child lives when no field holds it,
-in which order children appear in help and take precedence in dispatch,
-what happens when the user names a group but none of its children, and how
-a handler deep in the tree reads options given to its ancestors.
+The direct description gives each command with subcommands a field whose
+type, a tagged union of the child command types, lists its children. It
+works, but it repeats the hierarchy in fields that exist only to name types
+for the parser, and it keeps a command's children apart from the struct
+nesting D already offers. Describing children any other way raises
+questions of its own: where the parsed child lives, in which order children
+appear in help and take precedence in dispatch, what happens when the user
+names a group but none of its children, and how a handler deep in the tree
+reads options given to its ancestors.
 
 The library answers them with a [command
 graph](../../glossary.md#command-graph) that it builds at compile time from
 the root command type. A command's children are the command structs nested
 inside it and the command types registered into it with a mixin,
 interleaved in the order the compiler lists its members. A command that
-keeps the explicit field takes its children from that field instead. When
-no field stores the selection, the parser synthesizes a parse tree whose
-nodes each hold one command's parsed fields and, for a [command
+keeps the explicit field takes its children from that field instead. In
+both models the parser stores the selection in a synthesized parse tree,
+whose nodes each hold one command's parsed fields and, for a [command
 group](../../glossary.md#command-group), the selected child's node.
 Parsing returns one public result type whichever model the program uses,
-so callers do not depend on where the selection is stored. A handler may
+so callers do not depend on how the children were declared. A handler may
 take the whole tree as a template parameter and read any level of it.
 
 This page specifies command declaration, child discovery, the parse tree,
@@ -64,7 +64,7 @@ argument vector, and sharing naming and conversion rules with
 page](../dman/command-schema.md) of `sparkles:dman` describes that design.
 
 [Explicit subcommand fields](#explicit-subcommand-fields) describes the
-field-based model and [Motivation](#motivation) its drawbacks. [The command
+field-based model and [Motivation](#motivation) its costs. [The command
 graph](#the-command-graph) and [Command child
 discovery](#command-child-discovery) define the two ways to register
 children and the order they take. [Synthesized parse
@@ -76,14 +76,17 @@ requirements](#compatibility-requirements) what both models share.
 
 ## Explicit subcommand fields
 
-`libs/core-cli/src/sparkles/core_cli/args/` describes CLIs with D structs and UDAs:
+The `sparkles.core_cli.args` package
+(`libs/core-cli/src/sparkles/core_cli/args/`) describes a CLI with D
+structs and UDAs:
 
 - `@(Command(...))` on a struct declares a command.
 - `@(Option(...))` on a field declares a named option.
 - `@(Argument(...))` on a field declares a positional argument.
-- `@Subcommands` on a field declares the selected subcommand storage.
+- `@Subcommands` on a `SumType` field declares the command's children: the
+  field's variants, in variant order.
 
-In this model, subcommands are named explicitly by a `SumType` field:
+In this model a command names its subcommands in one field:
 
 ```d
 @(Command("git"))
@@ -94,35 +97,38 @@ struct Git
 }
 ```
 
-Nested command trees are supported by placing another `@Subcommands SumType!(...)` field on
-intermediate command structs. Parsing walks this explicit tree, stores the selected command
-instance in the matching `SumType`, and `runParsedCli` recursively unwraps the selected
-variant until it reaches a leaf command.
-
-Help formatting and string-imported help text also use this explicit subcommand tree to
-compute command paths such as `git/worktree/list`.
+A deeper tree places another `@Subcommands SumType!(...)` field on an
+intermediate command struct. The field only lists the children: the parser
+never assigns it, and stores the selected command in the parse tree's
+`command` member instead, as for the graph-based model
+([Synthesized parse tree](#synthesized-parse-tree)). A command that has a
+`@Subcommands` field takes its children from that field alone; command
+structs nested in it are not children.
 
 ## Motivation
 
-The explicit `@Subcommands SumType!(...)` field works, but it has two drawbacks:
+The explicit `@Subcommands SumType!(...)` field has two costs:
 
-- It requires boilerplate storage fields that repeat the command hierarchy.
-- It separates the structural command hierarchy from natural D nesting.
+- Its storage field repeats the command hierarchy and holds nothing at run
+  time.
+- It separates the command hierarchy from D's own struct nesting.
 
-The new design should allow command hierarchy to be described by nested structs and by
-mixins that register externally defined command structs.
+The command graph removes both: nesting a command struct, or registering an
+external one with a mixin, declares a child without any storage field.
 
 ## The command graph
 
-The parser builds a compile-time command graph for a root command type. The graph is
-derived from command metadata rather than only from a physical `@Subcommands` field.
+For a root command type, the parser builds a compile-time command graph
+from command metadata. A command's children come from one of two sources:
+its `@Subcommands` field when it has one, and otherwise the command graph
+members described here.
 
-There are two ways to register child commands.
+There are two ways to register a graph child.
 
 ### Nested command structs
 
-Direct nested member types with `@(Command(...))` are subcommands of their containing
-command:
+A member type of a command that carries `@(Command(...))` is a subcommand of
+that command:
 
 ```d
 @(Command("git"))
@@ -143,12 +149,13 @@ struct Git
 }
 ```
 
-In this example, `git worktree list` is discovered without an explicit
-`@Subcommands SumType!(Worktree)` field.
+Here `git worktree list` is discovered without a `@Subcommands` field.
 
 ### External command registration
 
-Commands defined outside the parent can be registered with a mixin inside the parent:
+A command defined outside its parent is registered with a mixin inside the
+parent, optionally together with a handler
+([Dispatch and handlers](#dispatch-and-handlers)):
 
 ```d
 @(Command("git"))
@@ -159,63 +166,60 @@ struct Git
 }
 ```
 
-This replaces the previously considered UDA builder form:
-
-```d
-@(Command("git")
-    .addSubcommand!Worktree()
-    .addSubcommand!(Status, statusHandler)())
-struct Git {}
-```
-
-The mixin form keeps nested commands and external commands in the same discovery pass:
-both are members of the parent command type.
+Each `addSubCommand` mixin declares a private marker field of type
+`SubCommandRegistration!T` or `SubCommandRegistrationWithHandler!(T,
+handler)`. Registration is a member rather than an attribute on the parent
+so that nested and registered children are found by one discovery pass
+over the parent's members, and so take one order.
 
 ## Command child discovery
 
-`args.d` should expose or internally define one unified trait:
+The `sparkles.core_cli.args` package exposes the graph children of a command
+as the template `commandChildren`. For a `Git` that nests `Worktree` and
+then registers `Status`, `commandChildren!Git` is
+`AliasSeq!(Git.Worktree, Status)`.
 
-```d
-alias commandChildren!Git = AliasSeq!(Git.Worktree, Status);
-```
+The graph children of a command are:
 
-The children of a command are:
+- member types that carry a `Command` UDA;
+- command types registered by `mixin addSubCommand!T` or
+  `mixin addSubCommand!(T, handler)`;
 
-- direct nested member types with a `Command` UDA;
-- command types registered by `mixin addSubCommand!T`;
-- optionally both, concatenated in compiler-provided member discovery order.
+interleaved in the order `__traits(allMembers, T)` lists their members.
 
-The compiler-provided order should be used for help output and dispatch precedence. This
-lets users customize `--help` ordering by arranging or naming members in command structs
-according to the compiler's member ordering rules.
+Children, whether from the graph or from a `@Subcommands` field, appear in
+help in this order, and a command whose children carry more than one default
+marker uses the first one ([Default handlers for command
+groups](#default-handlers-for-command-groups)). Arranging the members of a
+command struct therefore arranges its `--help` listing.
 
-Duplicate child registrations should be rejected at compile time. At minimum, duplicate
-types and duplicate primary command names should fail clearly.
-
-The existing explicit `@Subcommands SumType!(...)` model remains supported for
-compatibility. The new graph-based model is an alternative, not an immediate replacement.
+**CLI1: Duplicate graph children.** `commandChildren!T` **must** fail
+compilation when two graph children of `T` are the same type, or when two of
+them share a primary command name.
 
 ## Synthesized parse tree
 
-Nested structs do not create storage fields. Therefore, when a command graph is discovered
-without an explicit `@Subcommands` storage field, parsing must synthesize a parse tree type.
-
-Conceptually:
+Nested structs and registration markers do not store a selected child, and
+a `@Subcommands` field is not written either. For every command with
+children, parsing fills a `CommandNode` instead:
 
 ```d
-struct CommandNode(Command)
+struct CommandNode(Command_)
 {
+    alias Command = Command_;
+
     Command value;
+    alias value this;
+
+    bool[string] seenOptions;
 
     // Present only when Command has children.
-    SumType!(
-        CommandNode!(Child1),
-        CommandNode!(Child2),
-    ) command;
+    SumType!(staticMap!(CommandNode, allChildren!Command)) command;
+    bool commandSelected;
 }
 ```
 
-For `git worktree list`, the parsed value is conceptually:
+For `git worktree list`, the parsed value has this shape:
 
 ```d
 CommandNode!Git {
@@ -229,39 +233,59 @@ CommandNode!Git {
 }
 ```
 
-The public alias should make this type name stable:
+The node of a command without children is still a `CommandNode`; only the
+root of a program without any subcommands is not wrapped. The public alias
+`ParsedCommand` names the result type:
 
 ```d
-alias ParsedCommand!T = CommandNode!T;
+template ParsedCommand(Command)
+{
+    static if (allChildren!Command.length > 0)
+        alias ParsedCommand = CommandNode!Command;
+    else
+        alias ParsedCommand = Command;
+}
 ```
 
-`parseCli!Root` should always return `CliExpected!(ParsedCommand!Root)`. For command
-trees that already use explicit `@Subcommands SumType!(...)` storage, `ParsedCommand!Root`
-may alias `Root` as a compatibility detail, but callers should write against
-`ParsedCommand!Root` as the public parsed result type.
-
-This keeps the parser API stable as command storage moves from user-declared fields to
-synthesized command nodes.
+`parseCli!Root` and `parseKnownCli!Root` return
+`CliExpected!(ParsedCommand!Root)`, and `runCli!Root` passes a
+`ref ParsedCommand!Root` to its `beforeRun` callback. Both the explicit and
+the graph-based model produce this type, so a program can move from one to
+the other without changing its callers. `alias value this` keeps direct
+reads of a command's own options, such as `parsed.value.logLevel`, compiling
+on the node.
 
 ## Dispatch and handlers
 
-Leaf dispatch should support both command-owned `run` methods and externally registered
-handlers.
+`runParsedCli` walks the parse tree from the root, following `command`
+through every node whose `commandSelected` is set, and calls the handler of
+the command where the walk stops. A handler is either a `run` member of the
+command or an external handler registered with
+`mixin addSubCommand!(T, handler)`.
 
 Dispatch priority:
 
-1. external handler registered by `mixin addSubCommand!(T, handler)`;
-2. `static int run(Program)(in Program program)`;
-3. `static void run(Program)(in Program program)`;
-4. `int run()`;
-5. `void run()`;
-6. compile-time error.
+1. the external handler registered by `mixin addSubCommand!(T, handler)`,
+   called as `handler!Program(program)`, `handler(program)` or `handler()`,
+   the first form that compiles;
+2. `run!Program(program)`, a template taking the whole parse tree;
+3. `run(program)`, a non-template taking the parse tree;
+4. `run()`.
 
-External handlers registered through `mixin addSubCommand!(T, handler)` should support the
-same signatures as `run` member functions.
+A `run` member may be `static` or an instance method; an instance method
+reads both its own parsed fields and the program. A handler returns `int`,
+`void`, or an `Expected`. An `int` or a successful `Expected!int` is the exit
+code, and `void` or another successful `Expected` exits with 0; an error is reported and mapped to an exit code
+(`CliError` through `reportCliError`, an `int` error as itself, anything
+else as 1).
 
-The generic `Program` form lets a command inspect the entire synthesized parse tree even
-though the exact tree type is generated by `args.d`:
+**CLI2: Missing handler.** Dispatch **must** fail compilation when the
+command it reaches has neither a registered handler nor a `run` member
+callable in one of the forms above.
+
+`Program` is `ParsedCommand!Root`, so a command can inspect the entire
+synthesized parse tree even though the tree type is generated by the
+library:
 
 ```d
 @(Command("list"))
@@ -277,18 +301,41 @@ struct List
 
 ### Default handlers for command groups
 
-Commands with children should normally require a subcommand. If no subcommand is selected
-and the command has no default handler, parsing should treat the input as an incorrect CLI
-call and print help for that command group. For example, `git worktree` should behave like
-`git worktree --help` when `worktree` has subcommands but no default handler.
+A command group requires a subcommand unless default handling applies.
 
-A command group opts into default handling with command metadata, using a
-`Command.makeDefault()` method or a similarly named builder:
+**CLI3: Missing subcommand.** When parsing ends at a command group without
+selecting a child, and neither of the defaults below applies, `parseCli`
+**must** fail with a parse error whose message is `Missing subcommand` and
+whose help text is that group's help. `runCli` prints `Error: Missing
+subcommand` followed by the help and exits with 1; unlike `--help`, the call
+is reported as incorrect.
+
+Default handling is declared on a child, not on the group: `makeDefault()`
+on a command's `Command` metadata, or `isDefault: true` in its constructor,
+marks that command as its parent's _default child_. The marker has two
+effects.
+
+First, the parent hands its remaining arguments to the default child,
+parsing them as though the child's name had been typed, when it meets:
+
+- a non-option token that names none of its children;
+- an option that neither it nor any ancestor recognizes;
+- the end of the arguments with no child selected, in which case the
+  default child parses an empty argument list.
+
+Second, a marked command that is itself a group, and whose parse selects
+none of its children, succeeds without a child, and dispatch calls the
+group's own handler under the same priority rules as any other command. A
+group consults its own default child before falling back to its own
+handler.
 
 ```d
 @(Command("worktree").makeDefault())
 struct Worktree
 {
+    @(Option("verbose"))
+    bool verbose;
+
     static int run(Program)(in Program program)
     {
         return 0;
@@ -297,40 +344,46 @@ struct Worktree
     @(Command("list"))
     struct List
     {
+        int run() => 7;
     }
 }
 ```
 
-The default handler is called when the command itself is selected and none of its available
-subcommands is selected. It should use the same handler signature rules as any other
-command handler.
+With `Worktree` nested in `git`, `git worktree list` runs `List`, while
+`git worktree`, `git worktree --verbose` and `git` alone run `Worktree`'s
+own handler. Without the marker, `git worktree` fails with `Missing
+subcommand`.
 
 ## Program tree access
 
-Generated command nodes should expose predictable member names:
+A `CommandNode` exposes these members:
 
-- `value`: parsed fields for the current command node;
-- `command`: selected child node, present only for non-leaf nodes.
+- `value`: the parsed fields of the current command, also reachable through
+  `alias value this`;
+- `seenOptions`: the dotted field paths (`"treeWidth"`, `"sink.backend"` for
+  a `@Flatten`ed group) that an argument explicitly set at this level, named
+  options and positionals alike, so a caller can layer the command line
+  over configuration and override only what the user typed;
+- `command`: the selected child node, present only for a command group;
+- `commandSelected`: whether `command` holds a parsed child, present only
+  for a command group.
 
-Additional helper APIs may be added later, such as:
-
-- selected leaf lookup;
-- command path lookup;
-- visitors over the selected command chain.
-
-These helpers should be layered on top of the stable node shape rather than replacing it.
+The library provides no helper for selected-leaf lookup, command-path
+lookup or visiting the selected chain; a handler matches on `command` level
+by level.
 
 ## Compatibility requirements
 
-The implementation should preserve current behavior for existing callers:
+The explicit and the graph-based models share one implementation. The only
+point where they differ is the source of a command's children, so both
+models parse, format help, resolve string-imported help paths such as
+`git/worktree/list`, and dispatch identically:
 
-- explicit `@Subcommands SumType!(...)` fields continue to parse and run;
-- existing `run()` leaf methods continue to work;
-- existing help generation and string-import path resolution continue to work.
-
-The new graph-based model should share the same parsing, help formatting, and dispatch
-semantics as the explicit model wherever possible.
+- explicit `@Subcommands SumType!(...)` fields parse and run;
+- `run()` leaf methods dispatch alongside the program-taking forms;
+- help generation and string-import path resolution walk the children of
+  either model.
 
 ## Open questions
 
-- None currently.
+- None.
