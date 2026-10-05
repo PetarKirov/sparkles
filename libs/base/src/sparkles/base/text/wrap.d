@@ -910,6 +910,13 @@ private struct CellMeasureContext
             if (options.overflow == CellOverflowPolicy.reject && (wholeUnit || oneCluster))
             { sawOverflow = true; overflowStart = start < clusters.length ? clusters[start].start : 0;
                 overflowEnd = end > start ? clusters[end - 1].end : overflowStart; }
+            // Extending this fixed-start projection cannot remove retained
+            // body-cluster boundaries (SHY streams are uncertified). Past the
+            // first content unit, later candidates can be neither one cluster
+            // nor that whole unit. Keep the whole-unit endpoint itself when it
+            // may overflow: the certificate also excludes the current candidate.
+            m.noOverfullTail = monotoneContent && projection.bodyClusters > 1
+                && end >= contentUnitEnd && !m.allowOverfull;
         }
         output = m;
         return WrapResult.init;
