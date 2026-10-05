@@ -403,9 +403,20 @@ _Rationale:_ A packager that builds the output once, elsewhere, can hand it
 to every build without the device compiler. Builds that place it trust the
 packager, not the stamp.
 
-**SHB4: Unit membership.** The stamp **must** record the set of device
-modules the unit was built from, and freshness **must** fail when a device
-module enters or leaves the unit, even if no recorded input changed.
+**SHB4: Unit membership.** Freshness **must** fail when a device module
+enters or leaves the unit, even if no recorded input changed. To decide it
+without dub or the compiler, the stamp **must** record a deterministic
+content digest of the files the unit can be drawn from: the source
+directories of the device configuration and of every dependency, and their
+build recipes. The digest is computed over a
+[fileset](../build-primitives/filesets/SPEC.md) resolution of those files and
+**must** depend only on their relative paths and contents, never on
+timestamps, enumeration order, the host or the checkout's location.
+
+_Rationale:_ A list of the files a unit was built from cannot notice a file
+that was not on it. A digest of every file that could belong to the unit
+does, and depending on content alone keeps it reproducible across machines
+and clones.
 
 **SHB5: Opt-in configuration.** A package whose code uses generated shaders
 **must** provide them in a dub configuration of its own, separate from its

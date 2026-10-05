@@ -99,7 +99,7 @@ modules' own `@compute` declarations (`SHP3`, `SHM5`).
 flags and the dependencies, and the modules already say they are shader code.
 A hand-kept manifest drifted from both. The cost is that membership is known
 only by reading the sources, which is why the stamp must record it
-(`SHB4`).
+(`SHB4`, `D11`).
 
 ### D6: Generated at build time, never committed
 
@@ -166,6 +166,27 @@ both sides use the native vector.
 **Why.** It runs inside the build of the packages that use it. A dependency
 on a package that itself uses generated shaders would make the tool a
 prerequisite of its own build.
+
+### D11: Unit membership is a fileset digest
+
+**Question.** How does the stamp notice a device module that was not part of
+the last build, without running dub?
+
+**Alternatives.** A directory listing taken at generation and compared at
+the next build; or a deterministic content digest of the unit's candidate
+files, resolved as a fileset.
+
+**Choice.** The digest (`SHB4`), once `sparkles:build-primitives` provides
+filesets and a content-digest scheme.
+
+**Why.** A bespoke listing would be a second, private file walker with its
+own ignore and ordering rules, which the filesets library exists to replace.
+A digest over paths and contents is also reproducible: it does not change
+with timestamps, enumeration order or the checkout's location, so a stamp
+made on one machine is valid on another.
+
+**Trade-offs.** `SHB4` waits for two prerequisites that are not delivered;
+until then a new device module is seen only when another input changes.
 
 ## Open questions
 
