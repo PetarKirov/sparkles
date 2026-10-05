@@ -13,7 +13,7 @@ it, never over it) and L2 as a sheet, by `ui.overlayStyle` (`TCF10`).
 module links;
 
 import sparkles.ui.geometry : Rect;
-import sparkles.ui.style : Slot;
+import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 import sparkles.input.events : KeyEvent;
@@ -135,7 +135,8 @@ final class LinkConfirm : Surface, Anchored
         {
             // L1: what kind of link, the whole URI, the actions.
             lines ~= label(b, (hyperlink ? "OSC 8 link · " : "link · ") ~ scheme, Slot.muted);
-            lines ~= prose(b, uri, Slot.link);
+            lines ~= b.add(Widget(kind: WidgetKind.text, text: uri, slot: Slot.link,
+                wrap: TextWrap.greedy));
         }
         else
         {
@@ -197,7 +198,8 @@ final class LinkConfirm : Surface, Anchored
     bool key(in KeyEvent k) @system => false;
 
     private static uint prose(ref Builder b, const(char)[] text, Slot slot) @safe
-        => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot, wrap: TextWrap.greedy));
+        => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot, wrap: TextWrap.greedy,
+            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body)));
 }
 
 /// The part after the scheme's `//` (or `:`).
@@ -253,14 +255,16 @@ private string hostOf(string uri) @safe pure
     const(char)[][] texts;
     foreach (ref n; place(l.build(card, 60), 60, 10, 0, 0, 1, 1, Place.top).tree.nodes)
         texts ~= n.text;
-    assert(texts.canFind("OSC 8 link · https") && texts.canFind("⧉ Copy") && texts.canFind("↗ Open"));
+    // A button's icon and caption are separate runs: the caption is in the interface face.
+    assert(texts.canFind("OSC 8 link · https") && texts.canFind("⧉") && texts.canFind("Copy")
+        && texts.canFind("↗") && texts.canFind("Open"));
 
     SurfaceContext sheet = {style: OverlayStyle.sheet};
     texts = null;
     foreach (ref n; place(l.build(sheet, 60), 60, 10, 0, 0, 1, 1, Place.top).tree.nodes)
         texts ~= n.text;
     assert(texts.canFind("Open this link?") && texts.canFind("sparkles.petar-kirov.dev")
-        && texts.canFind("/docs") && texts.canFind("↗ Open in browser"));
+        && texts.canFind("/docs") && texts.canFind("Open in browser"));
 
     // A disallowed scheme has no Open (`TPR6`).
     auto js = new LinkConfirm("javascript:alert(1)", true, false, false, null, Rect.init, null);

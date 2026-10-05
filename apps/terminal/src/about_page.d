@@ -27,11 +27,11 @@ import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
 import sparkles.ui.property_tree : PropertyEditState, PropertyTree, PropertyTreePolicy;
 import sparkles.ui.state : DisclosureState;
-import sparkles.ui.style : Decoration, Slot, TextStyle;
+import sparkles.ui.style : Decoration, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
-import chrome : button, column, label, row;
-import page_kit : bodyRowsFor, finishPage, firstOwnHit, header, Page, PageServices, prose;
+import chrome : button, column, label, row, uiLabel;
+import page_kit : bodyRowsFor, finishPage, firstOwnHit, header, Page, PageServices, codeText, prose;
 import surfaces : SurfaceContext;
 
 /// The process's document. Startup sets it once; about pages borrow it.
@@ -269,10 +269,11 @@ final class AboutPage : Page
         const mark = b.add(Widget(kind: WidgetKind.panel,
             children: [label(b, ">_", Slot.accentPrimary, bold: true)],
             padding: Insets(0, 1, 0, 1), alignX: Alignment.center, alignY: Alignment.center,
-            height: SizeSpec.fixed(ctx.targetRows > 2 ? ctx.targetRows : 2),
+            width: SizeSpec.rigid_, height: SizeSpec.fixed(ctx.targetRows > 2 ? ctx.targetRows : 2),
             slot: Slot.surfaceRaised, paintBackground: true,
             decoration: Decoration(borderRadius: 10)));
-        const who = column(b, [label(b, facts.name, Slot.textPrimary, bold: true),
+        const who = column(b, [uiLabel(b, facts.name, Slot.textPrimary, bold: true,
+                step: TypeStep.title),
             prose(b, facts.summary, Slot.muted)]);
         items ~= row(b, [mark, who], 2);
         items ~= blank(b);
@@ -289,11 +290,11 @@ final class AboutPage : Page
             items ~= blank(b);
         }
 
-        items ~= label(b, "Build", Slot.textPrimary, bold: true);
+        items ~= uiLabel(b, "Build", Slot.textPrimary, bold: true);
         addRows(b, items, facts.identityRows);
         items ~= blank(b);
 
-        items ~= label(b, "Components", Slot.textPrimary, bold: true);
+        items ~= uiLabel(b, "Components", Slot.textPrimary, bold: true);
         if (fillComponents(cols))
         {
             PropertyEditState edits;
@@ -337,16 +338,17 @@ final class AboutPage : Page
 
     private static void addRows(ref Builder b, ref uint[] items, string[2][] rows) @safe
     {
-        size_t keyWidth;
+        int keyWidth;
         foreach (kv; rows)
-            if (kv[0].length > keyWidth)
-                keyWidth = kv[0].length;
+            if (cast(int) kv[0].length > keyWidth)
+                keyWidth = cast(int) kv[0].length;
         foreach (kv; rows)
         {
-            string k = kv[0];
-            while (k.length < keyWidth + 2)
-                k ~= ' ';
-            items ~= row(b, [label(b, k, Slot.muted), prose(b, kv[1], Slot.code)], 0);
+            // The names in the interface face, in a column of whole cells so
+            // the values line up.
+            auto key = b.nodes[uiLabel(b, kv[0], Slot.muted)];
+            key.width = SizeSpec.fixed(keyWidth + 2);
+            items ~= row(b, [b.add(key), codeText(b, kv[1])], 0);
         }
     }
 
@@ -581,7 +583,7 @@ private string linkCaption(string key) @safe pure nothrow
     foreach (ref n; l.tree.nodes)
     {
         sawVersion |= n.text == "0.1.0";
-        sawSource |= n.text == "⌥ Source";
+        sawSource |= n.text == "Source";
     }
     assert(sawVersion && sawSource);
     size_t hits;
