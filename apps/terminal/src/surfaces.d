@@ -229,8 +229,9 @@ struct Surfaces
         if (top.contains(x, y))
         {
             const id = top.hitAt(x, y);
-            if (id && stack[$ - 1].activate(id))
-                pop();
+            auto hit = stack[$ - 1];
+            if (id && hit.activate(id))
+                remove(hit);
             return true;
         }
         stack[$ - 1].cancel();
@@ -241,8 +242,11 @@ struct Surfaces
     /// Enter on the top surface.
     void confirm() @system
     {
-        if (stack.length && stack[$ - 1].confirm())
-            pop();
+        if (!stack.length)
+            return;
+        auto top = stack[$ - 1];
+        if (top.confirm())
+            remove(top);
     }
 
     /// A key nothing bound, to the top surface; true when it used it.
@@ -281,6 +285,22 @@ struct Surfaces
             return;
         stack[$ - 1].cancel();
         pop();
+    }
+
+    // Removes `s`, wherever it now is: an action may push a surface of its
+    // own (Paste raises the paste guard) before the one it ran on closes, and
+    // popping the top would close the new one instead.
+    private void remove(Surface s) @safe pure nothrow
+    {
+        foreach_reverse (i, t; stack)
+            if (t is s)
+            {
+                stack = stack[0 .. i] ~ stack[i + 1 .. $];
+                if (layers.length > i)
+                    layers = layers[0 .. i] ~ layers[i + 1 .. $];
+                changed = true;
+                return;
+            }
     }
 
     private void pop() @safe pure nothrow
@@ -382,6 +402,8 @@ version (unittest)
         bool cancelled, confirmed;
         size_t activated;
         int builtCols; // the width `build` was given
+        Surfaces* host;     // where `activate` pushes `next`
+        Surface next;
 
         this(Placement where, int lines) @safe pure nothrow
         {
@@ -404,7 +426,13 @@ version (unittest)
         }
 
         Placement placement() const @safe => where;
-        bool activate(size_t id) @system { activated = id; return true; }
+        bool activate(size_t id) @system
+        {
+            activated = id;
+            if (next !is null)
+                host.push(next);
+            return true;
+        }
         bool confirm() @system { confirmed = true; return true; }
         void cancel() @system { cancelled = true; }
         bool key(in KeyEvent k) @system { return false; }
@@ -466,6 +494,24 @@ version (unittest)
     s.push(c);
     s.confirm();
     assert(c.confirmed && !s.modal);
+}
+
+@("surfaces.Surfaces.anActionThatPushesKeepsWhatItPushed")
+@system unittest
+{
+    // Paste in the selection menu raises the paste guard before the menu
+    // closes: closing the menu must not close the guard.
+    SurfaceContext ctx = {area: Rect(0, 0, 800, 480), cellW: 10, cellH: 20};
+    Surfaces s;
+    auto menu = new Probe(Placement.sheet, 2);
+    auto guard = new Probe(Placement.sheet, 2);
+    menu.host = &s;
+    menu.next = guard;
+    s.push(menu);
+    s.place(ctx);
+    assert(s.tap(15, 470));
+    assert(menu.activated == 42);
+    assert(s.stack.length == 1 && s.stack[0] is guard, "the guard is up, the menu gone");
 }
 
 @("surfaces.Surfaces.toastsExpire")
