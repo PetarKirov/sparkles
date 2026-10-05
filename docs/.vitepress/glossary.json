@@ -291,7 +291,94 @@
       }
     ],
     "owner": "sparkles:event-horizon",
-    "seeAlso": ["sans-io"]
+    "seeAlso": ["sans-io", "directory-capability"]
+  },
+  {
+    "id": "directory-capability",
+    "term": "directory capability",
+    "summary": "An open directory handle that carries a fixed set of rights and a fixed path policy, through which a program reaches only what lies beneath that directory.",
+    "definition": "In the capability VFS, a `Dir` value: an open directory handle together with the operations its rights permit and the policy its walks follow for symbolic links, `..` and mount points. Every file the program reaches through it is named relative to the handle, so holding the capability is what grants access. Unlike a [capability row](/glossary#capability-row), it is an enforcement boundary.",
+    "authority": [
+      {
+        "text": "Capability VFS specification §5",
+        "link": "/specs/base/vfs/SPEC#_5-handles-and-rights-vfh"
+      },
+      {
+        "text": "Safe path traversal research: the fix",
+        "link": "/research/safe-path-traversal/concepts#the-fix"
+      }
+    ],
+    "owner": "sparkles:event-horizon",
+    "seeAlso": ["beneath", "attenuation", "ambient-authority"]
+  },
+  {
+    "id": "beneath",
+    "term": "beneath",
+    "summary": "An object is beneath a root if a chain of single-entry opens from the root's handle reached it without following a forbidden link or climbing above the root.",
+    "definition": "The containment property the capability VFS guarantees. It is defined by the handles a program held, never by a path string, so a directory moved away after it was opened stays beneath its root for operations through the handle already held.",
+    "authority": [
+      {
+        "text": "Capability VFS specification §3",
+        "link": "/specs/base/vfs/SPEC#_3-threat-model"
+      },
+      {
+        "text": "Safe path traversal research: beneath versus no-symlinks",
+        "link": "/research/safe-path-traversal/concepts#beneath-versus-no-symlinks"
+      }
+    ],
+    "owner": "sparkles:event-horizon",
+    "seeAlso": ["directory-capability", "component-walk"]
+  },
+  {
+    "id": "ambient-authority",
+    "term": "ambient authority",
+    "summary": "Authority a program exercises merely by naming a resource, such as opening any path from the process root, rather than by holding a capability for it.",
+    "definition": "In the capability VFS, the one function that resolves a path from the process root or current directory requires an `AmbientAuthority` token obtained from `ambientAuthority()`, so every place that exercises ambient authority can be found by searching for that name.",
+    "authority": [
+      {
+        "text": "Capability VFS specification, VFH7",
+        "link": "/specs/base/vfs/SPEC#vfh7-the-ambient-constructor"
+      },
+      {
+        "text": "cap-std: design philosophy",
+        "link": "/research/safe-path-traversal/cap-std#design-philosophy"
+      }
+    ],
+    "owner": "sparkles:event-horizon",
+    "seeAlso": ["directory-capability"]
+  },
+  {
+    "id": "attenuation",
+    "term": "attenuation",
+    "aliases": ["attenuate"],
+    "summary": "Deriving a capability that permits a subset of what its source permits; never more.",
+    "definition": "In the capability VFS, `attenuate!(R)` yields a borrowed directory handle whose rights are `R`, and compiles only when `R` is a subset of the source's rights. A program hands a helper an attenuated handle so the helper can do only what it needs.",
+    "authority": [
+      {
+        "text": "Capability VFS specification, VFH5",
+        "link": "/specs/base/vfs/SPEC#vfh5-attenuation-only"
+      }
+    ],
+    "owner": "sparkles:event-horizon",
+    "seeAlso": ["directory-capability"]
+  },
+  {
+    "id": "component-walk",
+    "term": "component walk",
+    "summary": "Resolving a path by opening one entry at a time, each relative to the handle the previous step returned, without following symbolic links unless the policy allows.",
+    "definition": "The portable resolver of the capability VFS, used wherever the kernel has no resolver that gives the same answer. It never opens `..` through the file system; an in-scope `..` returns to a handle the walk still holds.",
+    "authority": [
+      {
+        "text": "Capability VFS specification §8",
+        "link": "/specs/base/vfs/SPEC#_8-resolution-vfr"
+      },
+      {
+        "text": "Safe path traversal research: component walk",
+        "link": "/research/safe-path-traversal/concepts#component-walk"
+      }
+    ],
+    "owner": "sparkles:event-horizon",
+    "seeAlso": ["beneath"]
   },
   {
     "id": "version-scheme",
