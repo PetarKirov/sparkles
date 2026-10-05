@@ -619,6 +619,58 @@ private NRes!T decodeNative(T, Root = T, size_t nodeIndex = 0)(
         static assert(false, "wired: unsupported type for fromJSON: " ~ T.stringof);
 }
 
+/**
+Internal scalar input assembly at an original root/schema site.
+The caller owns `owner`; its capture function copies string bytes directly
+into that owner's storage. Ordinary `fromJSON` keeps its existing owned
+string decoder and does not use this seam.
+*/
+package(sparkles.wired) bool decodeOwnedScalarAt(
+    T, Root, size_t nodeIndex, Owner, CaptureError, alias captureString)(
+    scope JsonValue view, ref T value, ref JsonError failure,
+    ref Owner owner, ref CaptureError captureFailure)
+{
+    alias walk = WireWalk!(Json, Root);
+    enum node = walk.node!nodeIndex;
+    static assert(node.kind != NodeKind.converted,
+        "wired.config: WireConvert is unsupported at " ~ Root.stringof
+            ~ " schema site " ~ nodeIndex.stringof);
+
+    static if (is(T == string))
+    {
+        if (view.kind != JsonKind.string_)
+        {
+            failure = decodeError!T(view, "expected a JSON string");
+            return false;
+        }
+        captureFailure = captureString(owner, view.str, value);
+        return captureFailure.kind == typeof(captureFailure.kind).none;
+    }
+    else static if (is(T == Nullable!V, V))
+    {
+        if (view.kind == JsonKind.null_)
+        {
+            value = T.init;
+            return true;
+        }
+        V contained;
+        if (!decodeOwnedScalarAt!(V, Root, walk.child!(nodeIndex, 0),
+                Owner, CaptureError, captureString)(
+                view, contained, failure, owner, captureFailure))
+            return false;
+        value = T(contained);
+        return true;
+    }
+    else
+    {
+        auto decoded = decodeNative!(T, Root, nodeIndex)(view, failure);
+        if (decoded.failed)
+            return false;
+        value = decoded.value;
+        return true;
+    }
+}
+
 private NRes!T decodeIntegralNative(T)(scope JsonValue v, ref JsonError failure)
 {
     // The reader classifies exactly: integer fits long, uinteger only ulong.

@@ -213,15 +213,27 @@ only for the duration of the call; ownership moves only at the success point.
 | `visitSource`                                        | Snapshot and its source handle; borrows source record                                                                                                                       | Wrong owner, invalid handle/state; does not call sink                                                                        |
 | `copyConfig`                                         | Fully resolved snapshot; returns independent `T` preserving field values, with owning copies of non-static string data                                                      | Semantic failures or allocation failure; snapshot unchanged                                                                  |
 
-`OptionView!V` exposes the canonical path, atomic policy, option status, selected
-priority, definition/contributor handles, and a borrowed `const(V)*` effective
-payload only when resolved. `DefinitionView!V` exposes its full identity, source,
-priority/order/location, disposition, and borrowed original payload. `SourceView`
-exposes ID, kind, detail, and materialized default priority/order. These are scoped
-read-only records, not independently owning objects. Sources enumerate by ascending
-source-ID bytes, options by schema declaration order, and each option's definitions
-by ascending `(priority, order, SourceId, LocalId)`; selected contributor handles
-retain that order. Diagnostic option ordering remains canonical-address byte order.
+`OptionView!V` retains the original schema type identity and exposes the canonical
+path, atomic policy, status, priority, and definition/contributor handles.
+Its effective payload and `DefinitionView!V.value` use opaque inline
+`ConfigValueView!V` records with `hasValue` and a scoped `get` accessor, not public
+pointers to slice headers. Strings read as `const(char)[]`; nullable payloads use
+`ConfigNullableValueView!N` with `isNull` and scoped `get`. Other supported scalars
+retain their original value type. Private storage and `copyConfig` retain `V`.
+
+This read projection is required for lifetime safety: an immutable string header
+can escape D's `scope` checks, and a public pointer-to-slice indirection can lose
+the nested borrow relation even with const bytes. Scoped direct accessors preserve
+that relation without claiming independent immutable/GC lifetime. Source detail,
+validation code/detail, and byte identities follow the same borrow discipline;
+diagnostics use an inline `ConfigDiagnosticView` with `hasValue`/scoped `get`.
+No string bytes are cloned to construct any of these views.
+
+`DefinitionView!V` exposes identity/source, priority/order/location, disposition,
+and original supplied value through that borrowed projection. Sources enumerate
+by ascending source-ID bytes, options by schema declaration order, and each option's
+definitions by `(priority, order, SourceId, LocalId)`; selected contributor handles
+retain that order. Failed-address ordering remains canonical-address byte order.
 
 An invalid selected option additionally exposes a scoped `ValidationFailureView`
 through `OptionView.diagnostic`: canonical option, selected definition/source
@@ -301,9 +313,11 @@ and **must not** permit mutable interior aliases. Moving or destroying a snapsho
 with the storage so saved handles can be used with the moved-to snapshot.
 
 Views do not become independently owned because a struct or slice header was
-copied. Visitor payload/record parameters are `scope ref const V`, return `void`,
-and must not be stored outside the call. The safe DIP1000 interface and negative
-compile probes must reject escaping views. Callers must not move or destroy an
+copied. Visitor records are `scope ref const` values with the borrowed payload
+projection above and return `void`; they must not be stored outside the call.
+Safe DIP1000 negative controls must reject const-slice escapes, not merely fail
+because a const slice cannot be assigned to an immutable string. Callers must not
+move or destroy an
 owner during its active visitor; this is a programmer precondition, not an
 external-input failure. Callers needing independent configuration use `copyConfig`;
 callers needing provenance keep the snapshot alive. Copying immutable static data

@@ -15,3 +15,4 @@ public import sparkles.wired.overlay;
 public import sparkles.wired.walk;
 public import sparkles.wired.json;
 public import sparkles.wired.sdl;
+public import sparkles.wired.config;

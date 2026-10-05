@@ -856,7 +856,17 @@
       },
       {
         "text": "wired",
-        "link": "/libs/wired/"
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Serialization",
+            "link": "/libs/wired/"
+          },
+          {
+            "text": "Resolve scalar configuration",
+            "link": "/libs/wired/how-to/resolve-scalar-config"
+          }
+        ]
       }
     ]
   },

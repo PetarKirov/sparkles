@@ -69,6 +69,56 @@ text parsing/formatting, terminal styling, styled IES rendering, and the
 `CoreLogger` logging interface. See the [base documentation](docs/libs/base/index.md)
 for the tutorial, how-to guides, and API index.
 
+### Scalar Configuration
+
+`sparkles:wired` retains every scalar setting definition and its source. Smaller
+numerical priorities win; equally preferred scalar definitions conflict instead
+of depending on load order. Input absence is separate from an explicit value.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_scalar_config"
+    dependency "sparkles:wired" version="*"
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
++/
+import std.stdio : writeln;
+import sparkles.wired.config : ConfigBuilder, ConfigErrorKind, ConfigInput,
+    ConfigSourceKind, SourceId;
+
+struct Settings { int tabWidth = 4; }
+
+void main() @safe
+{
+    auto created = ConfigBuilder!Settings.create();
+    assert(created.hasValue);
+    auto builder = created.takeValue();
+    auto user = builder.registerSource(SourceId("user"),
+        ConfigSourceKind.userFile, "settings.json", 1000);
+    assert(user.hasValue);
+    ConfigInput!Settings input;
+    input.tabWidth.supplied = true;
+    input.tabWidth.value = 8;
+    auto submitted = builder.submitBorrowed(user.value, input);
+    assert(submitted.kind == ConfigErrorKind.none);
+    auto resolved = builder.resolve();
+    assert(resolved.hasValue);
+    auto snapshot = resolved.takeValue();
+    auto copied = snapshot.copyConfig();
+    assert(copied.hasValue);
+    writeln(copied.value.tabWidth);
+}
+```
+
+```ansi
+8
+```
+
+See [scalar configuration](docs/libs/wired/how-to/resolve-scalar-config.md) for
+original-policy JSON decoding, scoped inspection, ownership, and limits.
+
 ### Versions
 
 `sparkles:versions` is an ecosystem-aware version library: it parses,

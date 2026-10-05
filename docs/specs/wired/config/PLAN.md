@@ -32,7 +32,7 @@ starting, rather than implementing around confident-looking interface sketches.
 | Slice | Obligations                               | Status      | Required result                                                                           |
 | ----- | ----------------------------------------- | ----------- | ----------------------------------------------------------------------------------------- |
 | C0    | Scope, decisions, oracles, publication    | in progress | Independently reviewed draft with explicit blocking questions                             |
-| C1    | WCFG1–10, WCFG13–14, WCFG17–21, WCFG25–37 | not started | Scalar definition interface, original-policy presence, ownership, conflicts, exact limits |
+| C1    | WCFG1–10, WCFG13–14, WCFG17–21, WCFG25–37 | implemented | Scalar core and original-policy JSON adapter; local conformance and checked driver passed |
 | C2    | WCFG11–16, WCFG20–21, WCFG38–51           | not started | Typed collection/submodule presence, projections, normalized graphs, exact budgets        |
 | C3    | WCI1–24, WCFG24                           | not started | Typed bounded report, checked table floors/guides, actual docs targets and OSC isolation  |
 | C4    | WCFG22–24, WCI1–24                        | not started | Hue and terminal startup/report/persistence use one definition model                      |
@@ -69,9 +69,9 @@ C1's scalar/string definition driver and independent table oracle.
 
 **Prerequisites:** owner review of the concrete
 [scalar interface](./scalar-resolution.md); Q1 is specified for this subset.
-Collection/custom-value accounting remains gated for C2. Nullable presence,
-field-policy retention, move primitives, and scoped visitor parameters have
-bounded feasibility evidence; they have not passed resolver-conformance tests.
+Collection/custom-value accounting remains gated for C2. The scalar implementation
+and its conformance evidence are recorded in
+[testing.md](./testing.md#c1-scalar-implementation).
 
 C1 supports exactly the scalar/section matrix in WCFG25, with no silent filtering
 of collection fields. Implement the move-only builder/input/snapshot interface,
@@ -94,16 +94,16 @@ must fail for the intended behavior, not incidental diagnostic wording.
 dub test :wired -- -i 'wired.config' -v
 ```
 
-That command is a future acceptance command, not evidence that those tests exist.
-Verify nonzero discovery counts. Run a throwaway `dub run --single` driver that
-submits three sources, reports all retained definitions, and checks a conflict
-without mutating the caller's running value. Delete the driver after its evidence
-is recorded; keep consumer-visible regression tests in feature modules.
+Both LDC and DMD discover and pass the scalar acceptance cases; the full wired
+suite passes 243 tests on each compiler. The runnable
+`libs/wired/examples/scalar-config.d` driver submits three sources, reports all
+retained definitions, rejects a conflicting full-config copy, and checks that
+the caller's running value remains unchanged.
 
 Exclude collection composition, custom-value ownership, file discovery, persistence,
 and graphical hosts. Do not publish a complete-config value when any option is
-unresolved. Keep C1 implementation status `not started` until actual code and
-acceptance evidence exist; specification readiness is not implementation delivery.
+unresolved. Local implementation evidence is distinct from publication and CI;
+neither implies delivery of the deferred collection or application slices.
 
 ## C2 — Composition and contributor provenance
 
@@ -178,11 +178,10 @@ unless an explicit accepted migration changes it. Resolve Q4 for diagram options
 ## Handoff
 
 - Contract: draft; owner acceptance remains a PR review gate.
-- Implementation: no resolver/report migration delivered by C0.
+- Implementation: C1 scalar core and JSON presence adapter are implemented;
+  collection composition, reporting, and application migration remain deferred.
 - Evidence and review findings: [testing.md](./testing.md#evidence-ledger).
 - Blocking questions: [decisions.md](./decisions.md#open-questions).
-- Next action: owner review of the stacked C1/C2/C3 contracts, then implement C1's
-  exact operation/ownership/budget oracles and Q6's original-site input seam.
-  Follow with C2 composition and Q7/C3 shared table/formatter seams. Custom
-  ownership, keybindings, diagram's adapter, and actual app documentation gates
-  remain explicitly blocked; no runtime slice is marked delivered.
+- Next action: publish and validate C1, then implement C2 composition and Q7/C3
+  shared table/formatter seams. Custom ownership, keybindings, diagram's adapter,
+  and actual app documentation gates remain explicitly blocked.
