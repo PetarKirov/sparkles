@@ -19,7 +19,7 @@ import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
-import chrome : label;
+import chrome : label, uiLabel;
 import settings : TabsOpener;
 import tab_tree : TreeTab;
 
@@ -37,6 +37,14 @@ enum OpenerHit : size_t
 /// portrait and a rail otherwise (`TCF12`).
 bool usesPill(TabsOpener setting, bool phonePortrait) @safe pure nothrow @nogc
     => setting == TabsOpener.pill || (setting == TabsOpener.automatic && phonePortrait);
+
+// `id` filling its parent and centred in it.
+private uint centred_(ref Builder b, uint id) @safe
+{
+    b.nodes[id].alignX = Alignment.center;
+    b.nodes[id].width = SizeSpec.grow();
+    return id;
+}
 
 /**
 The pill band, `rows` tall: `❯ title  2/4  ●1 ▾` centred on a phone, at the
@@ -56,9 +64,12 @@ WidgetTree pillBand(in TreeTab[] tabs, int rows, bool centred, string hint,
             current = i;
         unread += t.unread;
     }
-    const title = tabs.length ? tabs[current].icon ~ " " ~ tabs[current].title : "";
-    uint[] parts = [label(b, title, Slot.textPrimary, bold: true),
-        label(b, text(current + 1, "/", tabs.length), Slot.muted)];
+    // The icon and the count are data, the tab's name is words (D50).
+    uint[] parts;
+    if (tabs.length)
+        parts ~= [label(b, tabs[current].icon, Slot.textPrimary),
+            uiLabel(b, tabs[current].title, Slot.textPrimary, bold: true)];
+    parts ~= label(b, text(current + 1, "/", tabs.length), Slot.muted);
     if (unread)
         parts ~= label(b, text("●", unread), Slot.warn);
     parts ~= label(b, "▾", Slot.muted);
@@ -73,15 +84,19 @@ WidgetTree pillBand(in TreeTab[] tabs, int rows, bool centred, string hint,
     // On touch, the guide's button beside the pill (`TSS16`, D46): the way
     // to every command while a keyboard cover hides the extra keys.
     if (guide)
-        band ~= b.add(Widget(kind: WidgetKind.row, children: [label(b, "⋯", Slot.textPrimary)],
+        band ~= b.add(Widget(kind: WidgetKind.row, children: [centred_(b, label(b, "⋯", Slot.textPrimary))],
             padding: Insets(0, 2, 0, 2), alignX: Alignment.center, alignY: Alignment.center,
             height: SizeSpec.fixed(rows > 1 ? rows - 1 : 1),
             slot: Slot.surfaceRaised, paintBackground: true,
             decoration: Decoration(borderRadius: 16), hitId: OpenerHit.guide));
+    // An opaque band with a rule under it, so the pill and ⋯ stand apart from
+    // the terminal output below them (the E mockups' band).
     return b.finish(b.add(Widget(kind: WidgetKind.row, children: band, gap: 2,
         padding: Insets(0, 1, 0, 1), width: SizeSpec.grow(), height: SizeSpec.fixed(rows),
         alignX: centred ? Alignment.center : Alignment.start, alignY: Alignment.center,
-        slot: Slot.chrome, paintBackground: true)));
+        slot: Slot.surfaceSunken, paintBackground: true,
+        decoration: Decoration(borderStyle: BorderStyle.solid, borderWidth: Insets(0, 0, 1, 0),
+            borderSlot: Slot.border))));
 }
 
 /// The rail, `cols` wide and `rows` tall, each button `buttonRows` tall;
@@ -152,7 +167,7 @@ version (unittest)
     const(char)[][] texts;
     foreach (ref n; l.tree.nodes)
         texts ~= n.text;
-    assert(texts.canFind("❯ ~/sparkles") && texts.canFind("1/2") && texts.canFind("●2"));
+    assert(texts.canFind("❯") && texts.canFind("~/sparkles") && texts.canFind("1/2") && texts.canFind("●2"));
     assert(l.hitAt(20, 0) == OpenerHit.tree, "the pill is the target");
 }
 
