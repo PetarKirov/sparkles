@@ -97,10 +97,15 @@ error, so `head` can turn successful toolchain setup into a failed CI check.
 
 ### GitHub test-job budgets
 
-The test matrix declares the whole-job timeout per leg: 55 minutes for x86-64
+The test matrix declares the whole-job timeout per leg: 75 minutes for x86-64
 Linux LDC, 40 for Linux DMD and Windows LDC, 90 for macOS LDC, and 120 for native
 ARM Linux LDC. These are cold-build allowances, not expected runtimes. They
 include Nix setup, both test-runner modes, the enabled example sweeps, and cleanup.
+
+In run `37375104839`, x86-64 Linux LDC passed the full test sweep in about
+45 minutes and the example sweep in about ten minutes, then exceeded the
+55-minute job cap during the X11/Wayland demos. Its 75-minute allowance
+also covers setup and the remaining demos.
 
 The 40-minute cap cancelled macOS twice after tests passed, during examples.
 In cold run `37332583414`, macOS reached package 28/55 near 40 minutes;
@@ -111,6 +116,12 @@ toolchain, before tests started. An unfinished Nix derivation cannot be publishe
 to the binary cache, so retrying the same capped build does not warm that artifact.
 No test or example is skipped to fit these budgets; a completed job still needs
 every enabled step to pass.
+
+The aggregate Nix build job allows 60 minutes on Linux and 90 on macOS.
+The macOS leg of run `37375104839` hit its previous 40-minute cap while
+still compiling desktop applications after cold dependency builds.
+`with-cachix.sh` publishes completed paths throughout the build, but the
+job must finish the full closure and runnable examples in one attempt.
 
 ## `prepare-cloud-env.sh` — ephemeral agent containers
 
