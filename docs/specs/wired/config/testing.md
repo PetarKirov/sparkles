@@ -693,3 +693,40 @@ runtime conformance milestone is passed by these primitive experiments.
   `widthTooSmall`, and select 120 only for unknown width. Re-review confirmed the
   code fence, checked conversion, style owner, and table cell/frame exclusions
   agree with WRAP-UNIT3/WRAP-STYLE1. No runtime repair or conformance is claimed.
+
+### C1 scalar implementation
+
+On `feat/wired-config-scalar`, Linux x86-64, both
+`dub test :wired --compiler=ldc2 -- -v` and
+`dub test :wired --compiler=dmd -- -v` passed **243 tests, zero failures**.
+The implementation lives in `sparkles.wired.config.core` and
+`sparkles.wired.config.json`; consumer acceptance cases live in
+`sparkles.wired.config.acceptance`.
+
+The cases exercise minimum-priority permutations, equal-value conflicts,
+section priorities and enclosing initializers, scalar representation boundaries,
+explicit null/empty values, overridden enum-domain rejection, selected checks,
+mixed semantic outcomes, byte identities, stale handles and owner transfers,
+exact capsule/builder accounting, and real allocation-failure rollback during
+capture, registration, both submission forms, resolution, and independent copy.
+Positive immediate-read controls and negative escaping-slice controls enforce
+borrowed string, nullable-string, identity, source-detail, and diagnostic lifetimes
+under DIP1000. Opaque scoped value accessors replace payload pointers: immutable
+string aliases through pointer indirection did not enforce the required lifetime.
+
+JSON cases retain original renaming/section/unknown-member policy, distinguish
+absence from explicit default/null, reject unsupported policies at compile time,
+and check duplicate ordering and error locations. Locating an error after 65,536
+nested ignored arrays runs with bounded locator storage rather than recursion
+through arbitrary input.
+
+`dub run --single libs/wired/examples/scalar-config.d --compiler=ldc2 -b checked`
+printed `tabWidth=8`, then reported a priority-1000 conflict with definitions
+16 and 8 conflicting and the priority-1500 definition 4 overridden. The driver
+also asserts failed full-config copying and unchanged caller input.
+`dub add-local .` followed by `dub run :ci -- --verify --files README.md` passed
+all 19 examples, including the scalar example's output `8`.
+
+Independent storage/lifetime and decoder reviews found no remaining
+evidence-backed defect after repairing scoped access and bounded error location.
+These are local implementation results, not CI or C2–C5 delivery claims.

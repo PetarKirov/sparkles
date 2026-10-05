@@ -1,15 +1,15 @@
-# `sparkles:wired` — JSON serialization
+# `sparkles:wired` — Serialization and scalar configuration
 
-`sparkles:wired` maps D values to and from JSON by **structural introspection** —
-the mapping is derived from each type at compile time, with no schemas or code
-generation, and optional `@Wire*` attributes to tune wire names, casing, and
-representation.
+`sparkles:wired` maps D values to and from serialized text by structural
+introspection. The same declarations supply wire names, casing, representation,
+and the typed schema; there is no parallel handwritten field declaration.
 
-Both directions are [`Expected`](../../guidelines/idioms/expected/index.md)-based and
-**never throw**: `toJSON` returns an `Expected!(JsonString, JsonError)` and
-`fromJSON!T` returns an `Expected!(T, JsonError)`, so a failure is a value you branch on rather
-than an exception you catch. The library builds on `std.json` for parsing and
-printing.
+JSON serialization uses wired's native parser and writer, with
+[`Expected`](../../guidelines/idioms/expected/index.md)-based results:
+`toJSON` returns `Expected!(JsonString, JsonError)` and `fromJSON!T` returns
+`Expected!(T, JsonError)`. Scalar configuration resolution additionally retains
+definitions, priorities, and provenance in move-only owners; see
+[Resolve scalar configuration](./how-to/resolve-scalar-config.md).
 
 ## Installation
 
