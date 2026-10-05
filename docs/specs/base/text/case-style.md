@@ -1,11 +1,37 @@
+---
+status: accepted
+owner: sparkles:base
+reviewed: 2026-10-05
+---
+
 # `sparkles.base.text.case_style` — Specification
 
-_Audience: developers and coding agents building against `sparkles:base`. This
-document is normative and self-contained — it states how the module splits an
-identifier into words and rejoins it in a chosen case style. It is a
-format-agnostic text primitive with no serialization or UDA concerns; the
-[`sparkles:wired`](../../wired/SPEC.md) policy layer is one consumer. For the
-library overview see [`sparkles:base`](../../../libs/base/index.md)._
+## Abstract
+
+`sparkles:base` renames a single identifier from one naming convention into
+another — camel, Pascal, snake, kebab or screaming-snake case. It treats a run
+of capitals as one word (`parsedJSON` → `ParsedJson`), and a digit stays with
+the word it follows. The conversion runs at compile time as well as at run
+time, and it can write into a caller's buffer without allocating.
+
+## Introduction
+
+Code that maps D identifiers onto an external format meets the same chore
+everywhere: a field named `parsedJSON` is spelled `parsed_json` in one format
+and `ParsedJson` in another. Done by hand, every serializer grows its own
+word splitter, and the splitters disagree on acronyms and digits.
+
+This module owns that one transformation. It splits an identifier into words by
+case transitions and explicit separators, then rejoins the words in the chosen
+style. A letter followed by a digit does not split, so the digit joins the word
+before it, while an uppercase letter after a digit starts the next word
+(`html5Parser` → `html5_parser`). It is a format-agnostic text primitive: it has no serialization, UDA or
+per-member override concerns, which belong to policy layers such as
+[`sparkles:wired`](../../wired/SPEC.md).
+
+Section 2 lists the API, §3 and §4 define splitting and rejoining, §5 the
+compile-time contract, and §6 and §7 give runnable examples. The library
+overview is [`sparkles:base`](../../../libs/base/index.md).
 
 ## 1. Overview
 
@@ -85,12 +111,15 @@ acronym folds to title case: `JSON` → `Json`, `XML` → `Xml`. `camelCase` and
 
 ## 5. Compile-time evaluation
 
-`convertCase` must be usable during CTFE so that consumers can derive names at
-compile time without requiring the identifier itself to be a template argument
-(for example, deriving an enum member's wire name from `__traits(identifier, …)`
-inside a `static foreach`). The implementation must include `static assert`
-coverage for every `CaseStyle`, including acronym, digit, and explicit-separator
-cases.
+**RECASE1: CTFE usability.** `convertCase` **must** be usable during CTFE without
+requiring the identifier itself to be a template argument.
+
+_Rationale:_ Consumers derive names at compile time, for example an enum
+member's wire name from `__traits(identifier, …)` inside a `static foreach`.
+
+**RECASE2: Compile-time coverage.** The implementation **must** include
+`static assert` coverage for every `CaseStyle`, including acronym, digit, and
+explicit-separator cases.
 
 ## 6. Examples
 

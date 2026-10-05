@@ -1,19 +1,36 @@
+---
+status: accepted
+owner: sparkles:base
+reviewed: 2026-10-05
+---
+
 # `sparkles.base.text` — conformance test cases
 
-_This is the tracked conformance ledger for the
-[cell-splitting & width specification](./index.md). Each row is a normative case:
-its `want` width is what kitty's algorithm prescribes. The executable report below
-measures the implementation via `visibleWidth` and prints `PASS` / `FAIL` per case,
-then a tally; it is verified by `apps/ci` against its `[Output]` block. **All cases
-currently pass.** The same assertions also live as library `unittest`s in `width.d`
-and `grapheme.d`._
+## Abstract
 
-_This is the curated, always-green ledger. For **exhaustive** differential testing
-(every code point, the official `GraphemeBreakTest.txt` / `emoji-test.txt` corpora,
-and cross-checks against the kitty and ghostty terminals), see the
-[conformance harness](./conformance-harness.md)._
+This page is the curated conformance case table of `sparkles:base`'s terminal
+width measurement: normative inputs, each with the width in
+[grid cells](../../../glossary.md#grid-cell) that kitty's algorithm prescribes,
+and a runnable report that measures every one and prints the tally.
 
-## Ledger
+## Introduction
+
+The [cell-splitting & width specification](./index.md) states the
+`terminalKitty` [width profile](../../../glossary.md#width-profile) in rules.
+This case table turns those rules into cases a reader can check at a glance,
+weighted towards the inputs where terminals and width libraries disagree. Each
+row is normative: its `want` width is what kitty's algorithm prescribes.
+
+The executable report measures the implementation via `visibleWidth` and prints
+`PASS` / `FAIL` per case, then a tally. `apps/ci` verifies it against its
+recorded output, so the curated cases stay green or the build fails. The same
+assertions live as library `unittest`s in `width.d` and `grapheme.d`.
+
+The case table is curated, not exhaustive. Every code point, the official
+`GraphemeBreakTest.txt` / `emoji-test.txt` corpora, and cross-checks against
+real terminals belong to the [conformance harness](./conformance-harness.md).
+
+## Case table
 
 `want` = kitty-normative width (in cells).
 
@@ -40,9 +57,9 @@ and cross-checks against the kitty and ghostty terminals), see the
 
 ### Notes on the trickier rows
 
-Several rows were brought into conformance by the width-class fixes in `width.d`:
+Several rows pin width classes where a naive per-code-point measure goes wrong:
 
-- **Spacing marks (`Mc`)** are now zero width (all Marks `M*` join `Cf` in the
+- **Spacing marks (`Mc`)** are zero width (all Marks `M*` join `Cf` in the
   zero-width set), so a Brahmic syllable such as `U+0915 U+093E` is one 1-cell
   cluster — not two cells.
 - **A lone regional indicator** is width 2 (`EastAsianWidth.txt` marks `U+1F1E6`..`U+1F1FF`
