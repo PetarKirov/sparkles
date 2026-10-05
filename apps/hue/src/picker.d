@@ -357,7 +357,8 @@ private struct GenerationSlot(Caps, size_t ResultCapacity)
     CandidateSnapshot snapshot;
     SearchAccumulator!ResultCapacity accumulator;
     SearchCursor cursor;
-    Unique!(MatcherWorkspace!Caps) matcher;
+    MatcherWorkspace!Caps* matcher;
+    size_t matcherLease = size_t.max;
     ConstraintWorkspace!Caps constraints;
     FuzzyLimits fuzzyLimits;
     MatchConfig matchConfig;
@@ -373,16 +374,25 @@ private struct GenerationSlot(Caps, size_t ResultCapacity)
     GenerationState state;
 }
 
+private struct MatcherArena(Caps)
+{
+    Unique!(MatcherWorkspace!Caps) workspace;
+    bool leased;
+}
+
 /**
 Closure-free picker scheduler over `RawCpuPool` with synchronous degradation.
 
 Query bytes and result sinks live inside address-stable generation slots. New
 requests publish their generation with release ordering and never overwrite a
-running slot; workers acquire-load before each candidate-sized chunk. Each slot
-owns exclusive pointer-free matcher scratch outside the GC-scanned scheduler.
-Constraint checks lend that slot's same Unicode arena before matching; no result
-or prepared query unit borrows it. When all slots are busy, the latest prompt is
-coalesced in a separate fixed buffer.
+running slot; workers acquire-load before each candidate-sized chunk. At open,
+the scheduler allocates at most `workers + 1` pointer-free matcher arenas, capped
+by `SlotCount`; the extra arena permits synchronous fallback alongside workers.
+A slot leases an arena before parsing and keeps it until its completion retires,
+including queued and cancelled jobs. Only the UI thread changes leases.
+Constraint checks lend the same Unicode arena before matching; queries borrow
+only pinned slot prompts and own their compiled globs. When no slot or arena is
+free, the latest prompt is coalesced in a separate fixed buffer.
 */
 struct PickerScheduler(Caps = DefaultFuzzyCaps, size_t ResultCapacity = 64,
     size_t SlotCount = 4, size_t QueueCapacity = 32,
@@ -393,6 +403,8 @@ if (ResultCapacity > 0 && SlotCount > 1)
 
     alias Pool = RawCpuPool!(QueueCapacity, CompletionCapacity);
     private GenerationSlot!(Caps, ResultCapacity)[SlotCount] slots;
+    private MatcherArena!Caps[SlotCount] arenas;
+    private size_t arenaCount;
     private Pool* pool;
     private shared ulong publishedGeneration;
     private char[Caps.maxQueryBytes] pendingPrompt = void;
@@ -404,20 +416,24 @@ if (ResultCapacity > 0 && SlotCount > 1)
     private MatchConfig matchConfig = MatchConfig.init;
     private Scoring scoring = Scoring.init;
 
-    /// Allocate exclusive slot scratch at picker open, never on a prompt edit.
+    /// Allocate scratch for execution capacity at open, never on a prompt edit.
     void initialize() @safe pure nothrow @nogc
     {
-        foreach (ref slot; slots)
+        const workers = pool is null ? 0 : pool.workerCount;
+        const required = workers < SlotCount ? workers + 1 : SlotCount;
+        while (arenaCount < required)
         {
-            if (slot.matcher.empty)
-                slot.matcher = makeUnique!(MatcherWorkspace!Caps)();
-            assert(!slot.matcher.empty, "PickerScheduler: workspace allocation failed");
+            arenas[arenaCount].workspace = makeUnique!(MatcherWorkspace!Caps)();
+            assert(!arenas[arenaCount].workspace.empty, "PickerScheduler: workspace allocation failed");
+            ++arenaCount;
         }
     }
 
-    /// Attach a started pool. Null/unstarted/saturated pools degrade safely.
+    /// Attach at open, then initialize execution-capacity scratch before edits.
     void attach(ref Pool value) @safe nothrow @nogc
     {
+        assert(pool is null || pool is &value || !hasInFlight,
+            "PickerScheduler: retire jobs before replacing their pool");
         pool = &value;
     }
 
@@ -467,7 +483,7 @@ if (ResultCapacity > 0 && SlotCount > 1)
             slot.ready = false;
             if (slot.generation != newest || slot.cancelled)
             {
-                slot.state = GenerationState.idle;
+                retire(slot);
                 continue;
             }
             if (slot.error.code != FuzzyErrorCode.none)
@@ -475,7 +491,7 @@ if (ResultCapacity > 0 && SlotCount > 1)
                 state.error = slot.error;
                 state.searching = false;
                 state.generation = slot.generation;
-                slot.state = GenerationState.idle;
+                retire(slot);
                 continue;
             }
 
@@ -485,7 +501,7 @@ if (ResultCapacity > 0 && SlotCount > 1)
             {
                 state.error = pageResult.error;
                 state.searching = false;
-                slot.state = GenerationState.idle;
+                retire(slot);
                 continue;
             }
             state.publish(page[0 .. pageResult.value], slot.generation,
@@ -493,7 +509,7 @@ if (ResultCapacity > 0 && SlotCount > 1)
             state.matchedTotal = slot.admittedTotal;
             state.corpusTotal = slot.snapshot.candidates.length;
             if (slot.finished)
-                slot.state = GenerationState.idle;
+                retire(slot);
             else
                 submit(slot);
         }
@@ -519,14 +535,44 @@ if (ResultCapacity > 0 && SlotCount > 1)
     }
 
 private:
+    bool lease(ref GenerationSlot!(Caps, ResultCapacity) slot)
+        @trusted pure nothrow @nogc
+    {
+        foreach (i; 0 .. arenaCount)
+        {
+            ref arena = arenas[i];
+            if (arena.leased)
+                continue;
+            arena.leased = true;
+            slot.matcher = arena.workspace.ptr;
+            slot.matcherLease = i;
+            return true;
+        }
+        return false;
+    }
+
+    void retire(ref GenerationSlot!(Caps, ResultCapacity) slot)
+        @safe pure nothrow @nogc
+    {
+        assert(slot.state == GenerationState.running);
+        assert(slot.matcherLease < arenaCount);
+        arenas[slot.matcherLease].leased = false;
+        slot.matcher = null;
+        slot.matcherLease = size_t.max;
+        slot.state = GenerationState.idle;
+    }
+
     void launchPending(ulong generation) @trusted nothrow @nogc
     {
         if (!pending)
             return;
+        assert(arenaCount != 0, "PickerScheduler: initialize before requesting");
         foreach (ref slot; slots)
         {
             if (slot.state != GenerationState.idle)
                 continue;
+            if (!lease(slot))
+                return;
             slot.promptLength = pendingLength;
             foreach (i; 0 .. pendingLength)
                 slot.prompt[i] = pendingPrompt[i];
@@ -547,7 +593,7 @@ private:
             QueryParseOptions options;
             options.limits = fuzzyLimits;
             auto parsed = parseQuery!Caps(slot.prompt[0 .. slot.promptLength],
-                slot.matcher.get.textWorkspace, options);
+                slot.matcher.textWorkspace, options);
             if (parsed.hasError)
             {
                 slot.error = parsed.error;
@@ -613,7 +659,7 @@ private void runGeneration(Caps, size_t ResultCapacity)(void* raw)
         limits.maxAnalyzedUnits = slot.fuzzyLimits.maxCandidateUnits;
         auto status = searchChunk(slot.query, slot.snapshot, slot.cursor,
             limits, slot.matchConfig, slot.scoring, slot.fuzzyLimits,
-            slot.accumulator, slot.matcher.get, slot.constraints);
+            slot.accumulator, *slot.matcher, slot.constraints);
         if (status.hasError)
         {
             slot.error = status.error;
@@ -746,8 +792,8 @@ unittest
     // Off the collected heap, as above.
     auto owner = makeUnique!(PickerScheduler!(DefaultFuzzyCaps, 4))();
     auto scheduler = &owner.get();
-    scheduler.initialize();
     scheduler.attach(pool);
+    scheduler.initialize();
     auto generation = scheduler.request("alpha", snapshot, 1.msecs);
     assert(generation.hasValue);
     PickerState!4 state;
@@ -762,6 +808,187 @@ unittest
     assert(state.error.code == FuzzyErrorCode.none);
     assert(state.generation == generation.value);
     assert(state.rowCount == 2);
+    assert(!scheduler.hasInFlight);
+}
+
+@("picker.scheduler.concurrentGenerationsRetainQueriesUntilCompletion")
+@system unittest
+{
+    import core.atomic : atomicOp;
+    import core.thread : Thread;
+    import core.time : msecs, seconds;
+
+    static struct Gate
+    {
+        shared uint entered;
+        shared bool release;
+    }
+    static void block(void* raw) @trusted nothrow @nogc
+    {
+        auto gate = cast(Gate*) raw;
+        atomicOp!"+="(gate.entered, 1);
+        while (!atomicLoad(gate.release))
+            Thread.yield();
+    }
+
+    CandidateView[3] candidates;
+    static immutable paths = ["src/café.d", "docs/café.md", "src/zebra.d"];
+    foreach (i; 0 .. candidates.length)
+    {
+        candidates[i].id.low = i + 1;
+        candidates[i].path = paths[i];
+        candidates[i].filenameOffset = i == 1 ? 5 : 4;
+    }
+    CandidateSnapshot snapshot;
+    snapshot.id.low = 11;
+    snapshot.candidates = candidates[];
+    static immutable queries = ["alpha glob:src/*.d",
+        "beta glob:docs/*.md", "gamma glob:other/*.txt"];
+
+    foreach (uint workers; 1 .. 3)
+    {
+        alias Scheduler = PickerScheduler!(DefaultFuzzyCaps, 4, 4, 8, 8);
+        Scheduler.Pool pool;
+        Gate gate;
+        auto owner = makeUnique!Scheduler();
+        auto scheduler = &owner.get();
+        assert(Scheduler.Pool.start(pool, workers) == RawPoolResult.accepted);
+        scope (exit)
+        {
+            atomicStore(gate.release, true);
+            cast(void) pool.shutdown(true);
+        }
+        scheduler.attach(pool);
+        scheduler.initialize();
+        foreach (_; 0 .. workers)
+            assert(pool.submit(RawJob(&block, null, &gate))
+                == RawPoolResult.accepted);
+        const deadline = MonoTime.currTime + 5.seconds;
+        while (atomicLoad(gate.entered) != workers && MonoTime.currTime < deadline)
+            Thread.yield();
+        assert(atomicLoad(gate.entered) == workers);
+
+        // All executions are gated. Submitted jobs retain immutable queries,
+        // even when spare generation metadata could hold another prompt.
+        foreach (i; 0 .. workers + 1)
+            assert(scheduler.request(queries[i], snapshot, 1.msecs).hasValue);
+        assert(scheduler.request("discard glob:missing/*", snapshot, 1.msecs).hasValue);
+        assert(scheduler.pending, "requests beyond execution capacity coalesce");
+        scheduler.cancel();
+        assert(!scheduler.pending);
+        auto newest = scheduler.request("glob:src/café.d", snapshot, 1.msecs);
+        assert(newest.hasValue && scheduler.pending);
+        foreach (i; 0 .. workers + 1)
+            assert(scheduler.slots[i].query.source == queries[i],
+                "editing and cancellation must not overwrite queued query borrows");
+
+        PickerState!4 state;
+        state.open();
+        scheduler.poll(state);
+        assert(state.rowCount == 0 && state.generation == 0);
+        atomicStore(gate.release, true);
+        assert(pool.shutdown(true) == RawPoolResult.accepted);
+        assert(scheduler.hasInFlight,
+            "shutdown does not release contexts before completion dispatch");
+        auto last = scheduler.request("glob:docs/café.md", snapshot, 1.msecs);
+        assert(last.hasValue && last.value > newest.value && scheduler.pending);
+        foreach (i; 0 .. workers + 1)
+            assert(scheduler.slots[i].query.source == queries[i],
+                "undispatched completions still pin their generation");
+        foreach (_; 0 .. 16)
+        {
+            scheduler.poll(state);
+            if (state.generation == last.value && !state.searching)
+                break;
+        }
+        assert(state.error.code == FuzzyErrorCode.none);
+        assert(state.generation == last.value && !state.searching);
+        assert(state.rowCount == 1 && state.rows[0].corpusIndex == 1);
+        assert(!scheduler.hasInFlight);
+    }
+}
+
+@("picker.scheduler.saturatedPoolFallbackKeepsNewestGeneration")
+@system unittest
+{
+    import core.thread : Thread;
+    import core.time : msecs, seconds;
+
+    static struct Gate
+    {
+        shared bool entered;
+        shared bool release;
+    }
+    static void block(void* raw) @trusted nothrow @nogc
+    {
+        auto gate = cast(Gate*) raw;
+        atomicStore(gate.entered, true);
+        while (!atomicLoad(gate.release))
+            Thread.yield();
+    }
+
+    CandidateView[2] candidates;
+    candidates[0].id.low = 1;
+    candidates[0].path = "src/alpha.d";
+    candidates[0].filenameOffset = 4;
+    candidates[1].id.low = 2;
+    candidates[1].path = "docs/beta.md";
+    candidates[1].filenameOffset = 5;
+    CandidateSnapshot snapshot;
+    snapshot.id.low = 12;
+    snapshot.candidates = candidates[];
+    alias Scheduler = PickerScheduler!(DefaultFuzzyCaps, 4, 4, 1, 2);
+    Scheduler.Pool pool;
+    Gate gate;
+    auto owner = makeUnique!Scheduler();
+    auto scheduler = &owner.get();
+    assert(Scheduler.Pool.start(pool, 1) == RawPoolResult.accepted);
+    scope (exit)
+    {
+        atomicStore(gate.release, true);
+        cast(void) pool.shutdown(true);
+    }
+    scheduler.attach(pool);
+    scheduler.initialize();
+    assert(pool.submit(RawJob(&block, null, &gate)) == RawPoolResult.accepted);
+    const deadline = MonoTime.currTime + 5.seconds;
+    while (!atomicLoad(gate.entered) && MonoTime.currTime < deadline)
+        Thread.yield();
+    assert(atomicLoad(gate.entered));
+
+    assert(scheduler.request("alpha glob:src/*.d", snapshot, 1.msecs).hasValue);
+    auto fallback = scheduler.request("glob:docs/beta.md", snapshot, 1.msecs);
+    assert(fallback.hasValue);
+    PickerState!4 state;
+    state.open();
+    foreach (_; 0 .. 16)
+    {
+        scheduler.poll(state);
+        if (state.generation == fallback.value && !state.searching)
+            break;
+    }
+    assert(state.generation == fallback.value && !state.searching);
+    assert(state.rowCount == 1 && state.rows[0].corpusIndex == 1);
+    assert(scheduler.hasInFlight, "fallback progresses while a worker job is outstanding");
+
+    assert(scheduler.request("glob:src/alpha.d", snapshot, 1.msecs).hasValue);
+    scheduler.cancel();
+    auto newest = scheduler.request("glob:docs/beta.md", snapshot, 1.msecs);
+    assert(newest.hasValue && scheduler.pending);
+    foreach (_; 0 .. 16)
+    {
+        scheduler.poll(state);
+        if (state.generation == newest.value && !state.searching)
+            break;
+    }
+    assert(state.error.code == FuzzyErrorCode.none);
+    assert(state.generation == newest.value && !state.searching);
+    assert(state.rowCount == 1 && state.rows[0].corpusIndex == 1);
+    atomicStore(gate.release, true);
+    assert(pool.shutdown(true) == RawPoolResult.accepted);
+    scheduler.poll(state);
+    assert(state.generation == newest.value && state.rowCount == 1
+        && state.rows[0].corpusIndex == 1);
     assert(!scheduler.hasInFlight);
 }
 
