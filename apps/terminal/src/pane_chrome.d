@@ -23,7 +23,7 @@ import sparkles.ui.geometry : Insets, Rect, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
-import chrome : button, label, row;
+import chrome : button, label, row, uiLabel;
 import settings : ButtonLabels, PaneChrome;
 
 /// One pane's place on screen, in pixels: all of it, and its content.
@@ -98,7 +98,7 @@ WidgetTree paneHeader(string title, string detail, bool focused, int cols) @safe
 {
     Builder b;
     uint[] parts = [label(b, focused ? "▍" : "│", Slot.accentPrimary),
-        keepTitle(b, label(b, title, focused ? Slot.textPrimary : Slot.muted, bold: focused))];
+        keepTitle(b, uiLabel(b, title, focused ? Slot.textPrimary : Slot.muted, bold: focused))];
     if (detail.length)
         parts ~= label(b, detail, Slot.muted);
     return b.finish(b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
@@ -118,7 +118,7 @@ WidgetTree paneFrame(string title, bool focused, int cols, int rows) @safe
             borderWidth: focused ? Insets(2, 2, 2, 2) : Insets(1, 1, 1, 1),
             borderSlot: focused ? Slot.accentPrimary : Slot.border, borderRadius: 6)));
     const name = b.add(Widget(kind: WidgetKind.row,
-        children: [label(b, " " ~ title ~ " ", focused ? Slot.accentPrimary : Slot.muted,
+        children: [uiLabel(b, " " ~ title ~ " ", focused ? Slot.accentPrimary : Slot.muted,
             bold: focused)],
         padding: Insets(0, 0, 0, 1), slot: Slot.surfaceBase, paintBackground: true));
     const nameRow = b.add(Widget(kind: WidgetKind.row, children: [name],
@@ -150,7 +150,7 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     // phone) shows their icons, so Close stays on screen.
     if (labels != ButtonLabels.icon && cols < 40)
         labels = ButtonLabels.icon;
-    uint[] name = [keepTitle(b, label(b, title, Slot.textPrimary, bold: true))];
+    uint[] name = [keepTitle(b, uiLabel(b, title, Slot.textPrimary, bold: true))];
     if (detail.length)
         name ~= label(b, detail, Slot.muted);
     const titleRow = b.add(Widget(kind: WidgetKind.row, children: name, gap: 1,
