@@ -78,6 +78,13 @@ pixel backends, which own the cells→device mapping (`LAY3`).
 > backend passes its grapheme-aware measurer yet, and `canvas.measure` still has
 > no caller. Until M7 wires it, wide characters overflow their boxes on the TUI.
 
+The grapheme-correct measurement `LAY5` requires is base's: a backend's
+measurer measures under a base/text width profile
+([cell text](../base/text/SPEC.md#_6-cell-text-and-coordinates)), which is the
+only source of grid-cell advances ([`WRAP-CELL4`](../base/text/wrapping.md)). `LAY5`'s
+evidence stands for the delivered seam and is pending base's cutover of the
+toolkit's callers ([base/text PLAN](../base/text/PLAN.md#_6-m5-concrete-clean-cutovers)).
+
 ## Sizing (`LAY6`)
 
 | ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                         | Status            | Traces to                                            |
@@ -98,6 +105,13 @@ pixel backends, which own the cells→device mapping (`LAY3`).
 | LAY15 | A container that draws a **border** side must keep its content inside it: its children paint and hit-test under a clip of its padded box, on each axis where it has a bordered side, exactly as if it set `clipX`/`clipY`. A rich row may overflow the frame layout gave it (`LAY14`), and without this a tree row in a bordered panel ran through the panel's edge. The clip is the padded box, not the box inside the border, so a pane with no padding on its bordered side keeps what it deliberately puts in that column. | full              | `layout.clipsX`/`clipsY`, used by `childClipOf` and `display_list.emit`; `ui.display_list.decoratedBoxAndStyledText`                                                                    |
 | LAY16 | A `rich` row may paint **past its frame only where something contains it** on x: an ancestor that clips on x (a viewport, `LAY7`, or a bordered box, `LAY15`), or one marked `scrollsX`, whose host scrolls and clips it and sizes a horizontal bar from the overflow (hue's document and diff views). Anywhere else its spans are cut to the frame, as a plain run is (`LAY14`), since nothing would stop the rest painting over the row's neighbours.                                                                        | full              | `Widget.scrollsX`; the `overflowX` walk in `display_list.emit`; `ui.display_list.aRichRowStaysInItsFrameUnlessSomethingContainsIt`, `viewer_model.aDiffWiderThanThePaneScrollsSideways` |
 
+Cutting a run to a width (`takeCells`, `LAY14`) is whole-cluster fitting, which
+base owns ([`fitPrefix`](../base/text/wrapping.md), under
+[`WRAP-BOUND1`](../base/text/wrapping.md)); the toolkit keeps the policy of
+cutting at the frame's width under the target's width profile. `LAY14`'s
+evidence stands for the delivered code and is pending base's cutover of
+`takeCells` ([base/text PLAN](../base/text/PLAN.md#_6-m5-concrete-clean-cutovers)).
+
 ## Alignment (`LAY8`)
 
 | ID   | Requirement                                                                                                                                                                                                                                                                            | Status            | Traces to                                                                             |
@@ -115,6 +129,15 @@ pixel backends, which own the cells→device mapping (`LAY3`).
 | ID    | Requirement                                                                                                                                                                                                                                                                                        | Status            | Traces to                                                                                                                                                                                                                                                             |
 | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | LAY10 | Line breaking must sit behind a **strategy seam** — greedy by default, with a balanced (rigid-glue Knuth–Plass) variant selectable — invoked from the cross-axis measure with the allocated width. Hang indent is expressed as a first-line width delta. No wrap width may be hardcoded in a view. | full (`407bce58`) | `sparkles.ui.wrap` (`TextWrap` greedy/balanced + `wrapSpans` for styled runs, hang indent), invoked from the height-for-width pass. The twoslash docs packer is deleted — its 56 columns survive only as a `Widget.width.max` style metric the _engine_ wraps against |
+
+Base owns the pure line-breaking solvers and cell wrapping
+([`WRAP-BOUND1`](../base/text/wrapping.md)); `sparkles.ui.wrap` keeps only the
+policy — whether to wrap or cut, the width, and which width profile — and calls
+base, whose grid-cell advances come from that width profile
+([`WRAP-CELL4`](../base/text/wrapping.md)). `LAY10`'s evidence stands for the delivered code and is pending base's
+cutover of the toolkit's wrapping
+([base/text PLAN](../base/text/PLAN.md#_6-m5-concrete-clean-cutovers);
+[design-system D51](../design-system/decisions.md)).
 
 > [!NOTE]
 > Knuth–Plass is deliberately _not_ architecture. The catalog notes it degenerates
@@ -161,23 +184,24 @@ revisited:
 
 ## Module coverage
 
-| Source file                              | Requirements                                                                                                                                                           |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `libs/ui/src/sparkles/ui/layout.d`       | `LAY1`, `LAY2`, `LAY4`–`LAY8`, `LAY11`, `LAY12`, `LAY13`                                                                                                               |
-| `libs/ui/src/sparkles/ui/geometry.d`     | `LAY3`, `LAY6` (`SizeSpec`); `Rect.intersection` behind `LAY7`                                                                                                         |
-| `libs/ui/src/sparkles/ui/wrap.d`         | `LAY10` (`TextWrap`, greedy + balanced; landed here rather than the once-proposed `base.text.wrap` — the measurer is caller-supplied, so the breaker is the toolkit's) |
-| `libs/ui/src/sparkles/ui/tracks.d`       | `LAY9` (`TrackSpec`, `resolveTracks`, `applySpans`, `writeGridTemplate`)                                                                                               |
-| `libs/ui/src/sparkles/ui/canvas.d`       | `LAY5` (the `measure` primitive); `pushClip`/`popClip` ops (`LAY7`)                                                                                                    |
-| `libs/ui/src/sparkles/ui/display_list.d` | `LAY7` (scissor emission + culling)                                                                                                                                    |
+| Source file                              | Requirements                                                                                                                                                     |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `libs/ui/src/sparkles/ui/layout.d`       | `LAY1`, `LAY2`, `LAY4`–`LAY8`, `LAY11`, `LAY12`, `LAY13`                                                                                                         |
+| `libs/ui/src/sparkles/ui/geometry.d`     | `LAY3`, `LAY6` (`SizeSpec`); `Rect.intersection` behind `LAY7`                                                                                                   |
+| `libs/ui/src/sparkles/ui/wrap.d`         | `LAY10` (`TextWrap`, greedy + balanced): the toolkit's wrapping policy; the solvers and cell wrapping belong to base ([`WRAP-BOUND1`](../base/text/wrapping.md)) |
+| `libs/ui/src/sparkles/ui/tracks.d`       | `LAY9` (`TrackSpec`, `resolveTracks`, `applySpans`, `writeGridTemplate`)                                                                                         |
+| `libs/ui/src/sparkles/ui/canvas.d`       | `LAY5` (the `measure` primitive); `pushClip`/`popClip` ops (`LAY7`)                                                                                              |
+| `libs/ui/src/sparkles/ui/display_list.d` | `LAY7` (scissor emission + culling)                                                                                                                              |
 
 ## Relationship to existing specs
 
-| Piece                                                  | Role in layout                                                           |
-| ------------------------------------------------------ | ------------------------------------------------------------------------ |
-| [UI-layout catalog](../../research/ui-layout/index.md) | the evidence base this page decides from (`LAY2`)                        |
-| [backends.md](./backends.md) `TGT`                     | the cells→device mapping (`LAY3`) and the `measure` primitive (`LAY5`)   |
-| [widgets.md](./widgets.md) `WGT`                       | the tree layout consumes; the table/scroll widgets driving `LAY7`/`LAY9` |
-| [state-machines.md](./state-machines.md) `STM`         | scroll offset, which `LAY7` reads but does not own                       |
-| `sparkles.base.text` (`wrap`, `grapheme`)              | the wrapping and width primitives behind `LAY5`/`LAY10`                  |
+| Piece                                                  | Role in layout                                                                                                           |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| [UI-layout catalog](../../research/ui-layout/index.md) | the evidence base this page decides from (`LAY2`)                                                                        |
+| [backends.md](./backends.md) `TGT`                     | the cells→device mapping (`LAY3`) and the `measure` primitive (`LAY5`)                                                   |
+| [widgets.md](./widgets.md) `WGT`                       | the tree layout consumes; the table/scroll widgets driving `LAY7`/`LAY9`                                                 |
+| [state-machines.md](./state-machines.md) `STM`         | scroll offset, which `LAY7` reads but does not own                                                                       |
+| `sparkles.base.text` (`wrap`, `grapheme`)              | the wrapping and width primitives behind `LAY5`/`LAY10`/`LAY14`                                                          |
+| [base/text wrapping](../base/text/wrapping.md)         | owns the pure solvers and cell wrapping (`WRAP-BOUND1`) and whole-cluster fitting (`fitPrefix`); layout keeps the policy |
 
 → [Overview](./index.md) · [Widgets](./widgets.md) · [Backends](./backends.md) · [Principles](./principles.md)
