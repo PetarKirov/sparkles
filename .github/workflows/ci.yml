@@ -60,7 +60,7 @@ jobs:
           - runner: ubuntu-latest
             system: x86_64-linux
             DC: ldc2
-            timeout: 55
+            timeout: 75
           - runner: ubuntu-latest
             system: x86_64-linux
             DC: dmd
@@ -96,7 +96,9 @@ jobs:
     # ARM Linux twice spent the whole 40m cap bootstrapping the SPIR-V LLVM
     # toolchain; cancelled builds do not publish that unfinished derivation,
     # so an unchanged rerun repeats the cold build instead of warming its cache.
-    # x86_64 LDC also includes the complete X11/Wayland demo sweep.
+    # x86_64 LDC also includes the complete X11/Wayland demo sweep. Run
+    # 37375104839 spent ~45m on tests and ~10m on examples before that sweep;
+    # its 55m cap cancelled the otherwise passing job during the demos.
     timeout-minutes: ${{ matrix.timeout }}
     steps:
       - name: Checkout
@@ -403,7 +405,9 @@ jobs:
     # of that compiles the LDC fork from source — far more than 20 minutes.
     # `with-cachix.sh` pushes each path as it completes, so even a run that
     # hits this cap leaves progress in the cache for the next one.
-    timeout-minutes: ${{ matrix.runner == 'ubuntu-latest' && 60 || 40 }}
+    # The macOS cold aggregate in run 37375104839 was still compiling desktop
+    # applications at its 40m cap; allow the remaining closure and example run.
+    timeout-minutes: ${{ matrix.runner == 'ubuntu-latest' && 60 || 90 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
