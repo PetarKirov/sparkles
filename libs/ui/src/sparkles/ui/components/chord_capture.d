@@ -30,7 +30,7 @@ import sparkles.input.events : altModifierName, isModifierKey, Key, KeyAction,
 import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.keymap : acceptsTyped, Chord, maxPathLength, normalise,
     ShiftReq;
-import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
+import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind;
 import sparkles.ui.wrap : TextWrap;
 
@@ -315,13 +315,15 @@ uint chordCaptureView(ref Builder b, ref const ChordCapture cap, in Chord leader
                 caps ~= b.add(Widget(kind: WidgetKind.text, text: " ", slot: Slot.muted));
             caps ~= b.add(Widget(kind: WidgetKind.panel,
                 children: [b.add(Widget(kind: WidgetKind.text, text: chordLabel(c, leader),
-                    slot: Slot.textPrimary, textStyle: TextStyle(bold: true)))],
+                    slot: Slot.textPrimary, alignX: Alignment.center,
+                    textStyle: TextStyle(bold: true, fontRole: FontRole.uiMono, typeStep: TypeStep.body)))],
                 padding: Insets(0, 1, 0, 1), slot: Slot.surfaceRaised, paintBackground: true,
                 decoration: Decoration(borderRadius: 4)));
         }
         if (cap.listening)
             caps ~= b.add(Widget(kind: WidgetKind.text,
-                text: cap.depth ? " …" : "Press the new key", slot: Slot.muted));
+                text: cap.depth ? " …" : "Press the new key", slot: Slot.muted,
+                textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body)));
         body_ ~= b.add(Widget(kind: WidgetKind.row, children: caps,
             width: SizeSpec.grow(),
             height: targetRows > 1 ? SizeSpec.fixed(targetRows) : SizeSpec.fit_,
@@ -333,24 +335,29 @@ uint chordCaptureView(ref Builder b, ref const ChordCapture cap, in Chord leader
 
     uint button(string icon, string text, size_t part, bool primary)
     {
-        const t = b.add(Widget(kind: WidgetKind.text, text: icon ~ " " ~ text,
-            slot: primary ? Slot.chromeAccent : Slot.textPrimary,
-            textStyle: TextStyle(bold: primary)));
-        return b.add(Widget(kind: WidgetKind.panel, children: [t],
+        // The icon is data, the caption words (D50).
+        const slot = primary ? Slot.chromeAccent : Slot.textPrimary;
+        const t = b.add(Widget(kind: WidgetKind.row, gap: 1, alignY: Alignment.center, children: [
+            b.add(Widget(kind: WidgetKind.text, text: icon, slot: slot,
+                textStyle: TextStyle(bold: primary, fontRole: FontRole.uiMono, typeStep: TypeStep.label))),
+            b.add(Widget(kind: WidgetKind.text, text: text, slot: slot,
+                textStyle: TextStyle(bold: primary, fontRole: FontRole.ui, typeStep: TypeStep.label)))]));
+        return b.add(Widget(kind: WidgetKind.panel, children: [t], alignX: Alignment.center,
             padding: Insets(0, 1, 0, 1),
             height: targetRows > 1 ? SizeSpec.fixed(targetRows) : SizeSpec.fit_,
             alignY: Alignment.center, hitId: hitBase + part,
             slot: primary ? Slot.chromeAccent : Slot.surfaceRaised, paintBackground: true,
-            decoration: Decoration(borderRadius: 6)));
+            decoration: Decoration(borderRadius: 8, drawHeight: 36)));
     }
 
     if (cap.phase == CapturePhase.conflict)
     {
         const warn = b.add(Widget(kind: WidgetKind.rich, spans: [
             TextSpan(text: "⚠ Already bound", slot: Slot.warn,
-                textStyle: TextStyle(bold: true)),
+                textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.body)),
             TextSpan(text: " — " ~ pathLabel(cap.path, leader) ~ ": "
-                ~ cap.conflict ~ ".", slot: Slot.textPrimary),
+                ~ cap.conflict ~ ".", slot: Slot.textPrimary,
+                textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body)),
         ]));
         const buttons = b.add(Widget(kind: WidgetKind.row, children: [
             button("✕", "Cancel", CaptureHit.cancel, false),
@@ -366,7 +373,8 @@ uint chordCaptureView(ref Builder b, ref const ChordCapture cap, in Chord leader
     {
         if (cap.refusal.length)
             body_ ~= b.add(Widget(kind: WidgetKind.text, text: "✗ " ~ cap.refusal,
-                slot: Slot.error, wrap: TextWrap.greedy));
+                slot: Slot.error, wrap: TextWrap.greedy,
+                textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption)));
         uint[] actions;
         if (touch && cap.depth)
             actions ~= button("✓", "Done", CaptureHit.done, true);
@@ -378,7 +386,8 @@ uint chordCaptureView(ref Builder b, ref const ChordCapture cap, in Chord leader
         text: cap.want > 1
             ? "Press each key of the sequence in turn · Esc cancels"
             : "Press the new key · Esc cancels",
-        slot: Slot.muted, wrap: TextWrap.greedy));
+        slot: Slot.muted, wrap: TextWrap.greedy,
+        textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption)));
     return b.add(Widget(kind: WidgetKind.column, children: body_, gap: targetRows > 1 ? 1 : 0,
         width: SizeSpec.grow()));
 }

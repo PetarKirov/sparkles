@@ -191,7 +191,7 @@ struct Surfaces
         {
             import chrome : band;
             import sparkles.ui.geometry : SizeSpec;
-            import sparkles.ui.style : Slot;
+            import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
             import sparkles.ui.widget : Builder, Widget, WidgetKind;
             import sparkles.ui.wrap : TextWrap;
 
@@ -204,7 +204,8 @@ struct Surfaces
             uint[] lines;
             foreach (ref t; toasts)
                 lines ~= b.add(Widget(kind: WidgetKind.text, text: t.text,
-                    slot: Slot.textPrimary, wrap: TextWrap.greedy, width: width));
+                    slot: Slot.textPrimary, wrap: TextWrap.greedy, width: width,
+                    textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body)));
             toastLayer = .place(b.finish(band(b, lines, fullWidth: false)), cols,
                 ctx.area.height / ctx.cellH, ctx.area.x + ctx.cellW, ctx.area.y,
                 ctx.cellW, ctx.cellH, Place.top);

@@ -29,7 +29,7 @@ import sparkles.input.events : Key, KeyEvent;
 import sparkles.terminal_view.notification_log : NotificationLog, NotificationRecord,
     NotificationRoute;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
-import sparkles.ui.style : Decoration, Slot, TextStyle;
+import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
 import chrome : button, column, label, row, uiLabel;
@@ -369,9 +369,11 @@ final class NotificationPage : Page
         auto head = new TextSpan[0];
         head ~= TextSpan(text: isSelected ? "▶ " : fresh ? "● " : "  ",
             slot: fresh || isSelected ? Slot.accentPrimary : Slot.muted);
-        head ~= TextSpan(text: r.title.length ? r.title : "Notification",
-            slot: Slot.textPrimary, textStyle: TextStyle(bold: fresh));
-        head ~= TextSpan(text: " · " ~ agoText(r.time, now), slot: Slot.muted);
+        // The title and its age are words (D50).
+        head ~= TextSpan(text: r.title.length ? r.title : "Notification", slot: Slot.textPrimary,
+            textStyle: TextStyle(bold: fresh, fontRole: FontRole.ui, typeStep: TypeStep.body));
+        head ~= TextSpan(text: " · " ~ agoText(r.time, now), slot: Slot.muted,
+            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption));
         uint[] lines = [b.add(Widget(kind: WidgetKind.rich, spans: head))];
         if (r.body.length)
             lines ~= prose(b, "  " ~ r.body, Slot.textPrimary);
