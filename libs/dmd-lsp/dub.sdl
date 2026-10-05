@@ -15,7 +15,7 @@ importPaths "src"
 // package (and its dependents) compile the dmd.* module interfaces with the
 // same declarations the library was built with.
 dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
-    version="6bae6e58e6110933db4e92649fe32521dfb47e1a"
+    version="e0be436ba491e506552e529a6a10983a436898e5"
 
 // `computeModeOf` (which side of a shader module to analyze, `TGT5`) is shared
 // with `shader-compile`. The vocabulary is dependency-free, so the edge costs

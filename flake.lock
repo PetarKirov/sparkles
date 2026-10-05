@@ -33,11 +33,11 @@
     "dmd-src": {
       "flake": false,
       "locked": {
-        "lastModified": 1790322769,
-        "narHash": "sha256-DdnTM0EPXxwnudmcXVwplTjMjucsDmNTGrTfHSpjST8=",
+        "lastModified": 1791232312,
+        "narHash": "sha256-5D0CzxIUJ5YZRXhu8XSpISOf3ICIgBLxcAUphBew/I8=",
         "owner": "PetarKirov",
         "repo": "dmd",
-        "rev": "6bae6e58e6110933db4e92649fe32521dfb47e1a",
+        "rev": "e0be436ba491e506552e529a6a10983a436898e5",
         "type": "github"
       },
       "original": {
