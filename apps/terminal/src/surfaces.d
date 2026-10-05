@@ -48,6 +48,9 @@ struct SurfaceContext
     /// The panel takes all of `panelArea`'s height — the tree slid out beside
     /// the rail (mockup E) — rather than floating below the pill.
     bool panelFull;
+    /// Where a `page` goes: the whole workspace, the tab pill or rail included
+    /// — a page is full screen, as the page mockups draw it (D49). Empty: `area`.
+    Rect pageArea;
 }
 
 /// Where a surface goes.
@@ -127,6 +130,9 @@ struct Surfaces
 
     /// Whether a surface owns the keyboard.
     bool modal() const @safe pure nothrow @nogc => stack.length != 0;
+
+    /// Whether the top surface is a full-screen page (D49).
+    bool pageShown() const @safe => stack.length && stack[$ - 1].placement == Placement.page;
 
     /// Shows `s` on top.
     void push(Surface s) @safe pure nothrow
@@ -336,11 +342,17 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
     final switch (s.placement)
     {
         case Placement.page:
-            auto page = place(s.build(ctx, capped), capped, rows, x, ctx.area.y,
-                ctx.cellW, ctx.cellH, Place.top);
-            page.opaque = true; // the panes under it do not show through
-            page.backdrop = ctx.area;
+        {
+            // Full screen: the pill or the rail is covered too (D49).
+            const pa = ctx.pageArea.width > 0 ? ctx.pageArea : ctx.area;
+            const pcols = pa.width / ctx.cellW, prows = pa.height / ctx.cellH;
+            const pcap = pcols > maxSurfaceCols ? maxSurfaceCols : pcols;
+            auto page = place(s.build(ctx, pcap), pcap, prows,
+                pa.x + (pcols - pcap) / 2 * ctx.cellW, pa.y, ctx.cellW, ctx.cellH, Place.top);
+            page.opaque = true; // the panes and the opener do not show through
+            page.backdrop = pa;
             return page;
+        }
         case Placement.panel:
             const pc = ctx.panelArea.width / ctx.cellW, pr = ctx.panelArea.height / ctx.cellH;
             return place(s.build(ctx, pc), pc, pr, ctx.panelArea.x, ctx.panelArea.y, ctx.cellW,
@@ -494,6 +506,19 @@ version (unittest)
     s.push(c);
     s.confirm();
     assert(c.confirmed && !s.modal);
+}
+
+@("surfaces.placeOne.aPageIsFullScreen")
+@safe unittest
+{
+    // The panes sit under a 3-row pill band; a page takes the band too, a
+    // sheet stays in the panes' area (D49).
+    SurfaceContext ctx = {area: Rect(0, 60, 400, 600), pageArea: Rect(0, 0, 400, 660),
+        cellW: 10, cellH: 20};
+    const page = placeOne(new Probe(Placement.page, 3), ctx);
+    assert(page.y == 0 && page.backdrop == Rect(0, 0, 400, 660));
+    const sheet = placeOne(new Probe(Placement.sheet, 2), ctx);
+    assert(sheet.y + sheet.bounds.height * 20 == 660 && sheet.y > 60);
 }
 
 @("surfaces.Surfaces.anActionThatPushesKeepsWhatItPushed")
