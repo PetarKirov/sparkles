@@ -167,6 +167,8 @@ struct PreviewTui
     bool pickerRequested;
     /// ditto — the `pickerGrep` arm (`<leader>/`, `PKS2`).
     bool grepRequested;
+    /// ditto — the `pickDubConfiguration` arm (`<leader>cc`, `LIV10`).
+    bool dubConfigRequested;
 
     /// ditto — the `toggleExplorer` arm (`e`, `<leader>e`): the pane split is
     /// the workspace's, so the pane reports the intent. This is what retired
@@ -1576,6 +1578,9 @@ struct PreviewTui
                 break;
             case Command.pickerGrep:
                 grepRequested = true;
+                break;
+            case Command.pickDubConfiguration:
+                dubConfigRequested = true;
                 break;
             case Command.pickerCycleMode:
                 // Only reachable while the grep picker is up, which is a

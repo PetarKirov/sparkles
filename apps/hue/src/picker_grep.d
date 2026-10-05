@@ -1985,6 +1985,9 @@ const(char)[] readCapped(string path, scope return char[] buf) @trusted
 enum PickerSource : ubyte
 {
     files,
+    /// A host-built list of values to pick one from (`PKS11`), e.g. a dub
+    /// recipe's configurations.
+    choices,
     grep,
 }
 

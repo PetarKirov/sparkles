@@ -98,6 +98,91 @@ struct FilesFinder
 
 static assert(isFinder!FilesFinder);
 
+/// One row of a $(LREF ChoiceFinder): what the list shows and matches, the
+/// value accepting it picks, and where the preview looks meanwhile.
+struct Choice
+{
+    string label;        ///
+    string value;        ///
+    PickerTarget target; /// the declaration the preview shows
+}
+
+/**
+A fixed list of values to pick one from (`PKS11`) — a short corpus a host
+builds itself, such as the configurations a dub recipe declares. Rows keep
+the order they are given in under the empty query.
+*/
+struct ChoiceFinder
+{
+    private Choice[] rows;
+    private CandidateView[] candidates;
+    private RankContext[] ranks;
+    private CorpusId corpus;
+
+    CandidateSnapshot snapshot() const @trusted pure nothrow @nogc
+    {
+        CandidateSnapshot result;
+        result.id = corpus;
+        result.candidates = candidates;
+        result.rankContexts = ranks;
+        return result;
+    }
+
+    /// Where the row at `index` points: its declaration, for the preview.
+    PickerTarget resolve(size_t index) const @safe pure
+        => index < rows.length ? rows[index].target : PickerTarget.init;
+
+    /// The value the row at `index` picks; `null` past the end.
+    string value(size_t index) const @safe pure nothrow @nogc
+        => index < rows.length ? rows[index].value : null;
+
+    size_t length() const @safe pure nothrow @nogc => candidates.length;
+}
+
+static assert(isFinder!ChoiceFinder);
+
+/// Freezes `rows` into a $(LREF ChoiceFinder).
+ChoiceFinder choiceFinder(Choice[] rows) @safe pure nothrow
+{
+    ChoiceFinder result;
+    result.rows = rows;
+    ulong corpusHigh = 0xcbf29ce484222325UL;
+    ulong corpusLow = 0x84222325cbf29ce4UL;
+    foreach (i, ref row; rows)
+    {
+        CandidateView candidate;
+        candidate.id = stablePathId(row.label);
+        candidate.path = row.label;
+        candidate.pathFlavor = PathFlavor.unix;
+        candidate.filenameOffset = 0;
+        // The given order is the ranking under an empty query: the most
+        // recent ranks first, so the first row is the most recent.
+        candidate.recencyKey = cast(long) (rows.length - i);
+        result.candidates ~= candidate;
+        result.ranks ~= RankContext.init;
+        corpusHigh = fnv1a(row.label, corpusHigh);
+        corpusLow = fnv1a(row.value, corpusLow);
+    }
+    result.corpus = CorpusId(corpusHigh, corpusLow);
+    return result;
+}
+
+@("picker.sources.choicesKeepTheirOrderAndValues")
+@safe unittest
+{
+    auto f = choiceFinder([
+        Choice("default", null, PickerTarget(path: "/r/dub.sdl")),
+        Choice("gpu-effects", "gpu-effects", PickerTarget(path: "/r/dub.sdl", line: 40)),
+    ]);
+    assert(f.length == 2);
+    const s = f.snapshot();
+    assert(s.candidates[0].path == "default" && s.candidates[1].path == "gpu-effects");
+    assert(s.candidates[0].recencyKey > s.candidates[1].recencyKey);
+    assert(f.value(0) is null && f.value(1) == "gpu-effects");
+    assert(f.resolve(1).line == 40);
+    assert(!f.resolve(2).valid && f.value(2) is null);
+}
+
 /**
 Walk `root` with nested `.gitignore` rules and freeze a files snapshot.
 
