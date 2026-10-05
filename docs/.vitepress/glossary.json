@@ -499,7 +499,7 @@
       }
     ],
     "owner": "sparkles:ui",
-    "seeAlso": ["slot", "display-list"]
+    "seeAlso": ["slot", "display-list", "grid-cell"]
   },
   {
     "id": "display-list",
@@ -1412,5 +1412,119 @@
     ],
     "owner": "sparkles:shaders",
     "seeAlso": ["shader-unit"]
+  },
+  {
+    "id": "capability-profile",
+    "term": "capability profile",
+    "aliases": ["capability profiles"],
+    "summary": "A documented set of target capabilities (baseline, enhanced or full) that an application may paint for instead of what its terminal or window declares.",
+    "definition": "A named bundle of the design system's capability flags. A profile narrows what the toolkit uses, so a preview shows what a less capable target would draw; it never widens beyond what the target declares.",
+    "authority": [
+      {
+        "text": "Capability profiles",
+        "link": "/specs/design-system/capabilities#profiles"
+      }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["glyph-channel", "width-profile"]
+  },
+  {
+    "id": "width-profile",
+    "term": "width profile",
+    "aliases": ["width profiles"],
+    "summary": "A named, versioned rule set that decides how many terminal grid cells each grapheme occupies.",
+    "definition": "`sparkles:base` measures, fits, wraps and hit-tests cell text under exactly one width profile. `terminalKitty` gives each grapheme cluster its leading scalar's width; `terminalUnclustered` measures the same and differs only in what it emits, so a terminal without grapheme clustering still moves its cursor as layout assumed.",
+    "authority": [
+      {
+        "text": "Owned UTF, Unicode, and cell text",
+        "link": "/specs/base/text/SPEC#_6-cell-text-and-coordinates"
+      }
+    ],
+    "owner": "sparkles:base",
+    "seeAlso": ["grid-cell", "grapheme-cluster", "capability-profile"]
+  },
+  {
+    "id": "typography-profile",
+    "term": "typography profile",
+    "aliases": ["typography profiles"],
+    "summary": "A named set of publication typography choices, such as justification and spacing adjustments, that a paragraph is composed under.",
+    "definition": "Text-layout's bounded choices for microtypography, script-aware justification and related publication features. A profile is requested explicitly; the paragraph engine never infers one.",
+    "authority": [
+      {
+        "text": "Publication interfaces",
+        "link": "/specs/text-layout/SPEC#_7-publication-interfaces"
+      }
+    ],
+    "owner": "sparkles:text-layout",
+    "seeAlso": ["shaped-flow"]
+  },
+  {
+    "id": "grid-cell",
+    "term": "grid cell",
+    "aliases": ["grid cells"],
+    "summary": "One character position of a terminal's grid: the advance a terminal moves its cursor by, not a pixel size.",
+    "definition": "The unit of terminal cell text. A grapheme occupies a whole number of grid cells under the active width profile, and cells never become pixels implicitly. The UI toolkit's own layout unit is the [cell](/glossary#cell).",
+    "authority": [
+      {
+        "text": "Cell text and coordinates",
+        "link": "/specs/base/text/SPEC#_6-cell-text-and-coordinates"
+      }
+    ],
+    "owner": "sparkles:base",
+    "seeAlso": ["cell", "width-profile"]
+  },
+  {
+    "id": "grapheme-cluster",
+    "term": "grapheme cluster",
+    "aliases": ["grapheme", "graphemes", "grapheme clusters"],
+    "summary": "What a reader perceives as one character, such as a letter with its accents or an emoji sequence, possibly made of several Unicode scalars.",
+    "definition": "The extended grapheme cluster of Unicode Standard Annex #29. It is not a shaping cluster and not a glyph: one grapheme can shape into several glyphs, and one ligature can cover several graphemes.",
+    "authority": [
+      {
+        "text": "UAX #29: Unicode Text Segmentation",
+        "link": "https://www.unicode.org/reports/tr29/"
+      }
+    ],
+    "owner": "global",
+    "seeAlso": ["width-profile", "grid-cell"]
+  },
+  {
+    "id": "glyph-channel",
+    "term": "glyph channel",
+    "summary": "The design system's non-text glyphs (borders, rules, status marks, sub-cell blocks and icons), each drawn and measured as one cell.",
+    "definition": "The part of a theme that chooses chrome glyphs per capability, separate from the text a widget shows. Its glyphs occupy one cell under every width profile, including one that makes ambiguous-width characters wide.",
+    "authority": [
+      { "text": "Glyphs and typography", "link": "/specs/design-system/glyphs" }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["capability-profile", "width-profile"]
+  },
+  {
+    "id": "font-role",
+    "term": "font role",
+    "aliases": ["font roles"],
+    "summary": "A design-system name for where a face is used, such as monospace code or docs prose, whose value is a font request with its fallbacks.",
+    "definition": "A theme token whose value is a font request, a fallback chain and code-point routes, in the font library's terms. The design system owns the roles; the font library resolves requests and has no notion of a role.",
+    "authority": [
+      {
+        "text": "Fonts and icons",
+        "link": "/specs/design-system/glyphs#fonts-and-icons"
+      },
+      { "text": "Font matching and fallback", "link": "/specs/font/SPEC" }
+    ],
+    "owner": "sparkles:ui",
+    "seeAlso": ["glyph-channel"]
+  },
+  {
+    "id": "shaped-flow",
+    "term": "shaped flow",
+    "aliases": ["shapedFlow"],
+    "summary": "A paragraph composed in physical units with real font shaping, as opposed to placement on a terminal grid.",
+    "definition": "One of text-layout's two placement modes. A shaped-flow paragraph is measured in layout units with contextual shaping, and painting, hit-testing and selection all use its one cluster result; the other mode places text on grid cells.",
+    "authority": [
+      { "text": "Text-layout specification", "link": "/specs/text-layout/SPEC" }
+    ],
+    "owner": "sparkles:text-layout",
+    "seeAlso": ["typography-profile", "grid-cell"]
   }
 ]
