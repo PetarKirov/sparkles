@@ -20,7 +20,8 @@ import std.range.primitives : put;
 import sparkles.ui.canvas : isCanvas, LineStyle;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 import sparkles.ui.style : BorderStyle, BoxBorder;
-import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Insets, Point, Rect, Size;
 import sparkles.ui.tokens : BoxGlyphs, boxGlyphs, projectBorder, TargetCapabilities;
 import sparkles.ui.style : Visual;
 
@@ -35,6 +36,10 @@ import sparkles.base.text.writers : writeInteger;
 struct Cell
 {
     dchar glyph = ' ';
+    /// Owned complete grapheme bytes; null for scalar chrome.
+    const(char)[] cluster;
+    bool continuation;
+    bool zeroPrefix;
     RgbColor fg;
     RgbColor bg;
     bool hasBg;
@@ -298,6 +303,7 @@ struct CellGrid
                     if (!inBounds(x, y))
                         return;
                     auto c = &at(x, y);
+                    if (!eraseCluster(x, y)) return;
                     c.glyph = g;
                     c.fg = v.border.color;
                 }
@@ -325,6 +331,7 @@ struct CellGrid
                     if (inBounds(r.x, y))
                     {
                         auto c = &at(r.x, y);
+                        if (!eraseCluster(r.x, y)) continue;
                         c.glyph = bw.left >= 2 ? '┃' : '│';
                         c.fg = v.border.color;
                     }
@@ -336,6 +343,7 @@ struct CellGrid
                     if (inBounds(x, r.y))
                     {
                         auto c = &at(x, r.y);
+                        if (!eraseCluster(x, r.y)) continue;
                         c.glyph = '─';
                         c.fg = v.border.color;
                     }
@@ -367,6 +375,7 @@ struct CellGrid
                     if (inBounds(x, y))
                     {
                         auto c = &at(x, y);
+                        if (!eraseCluster(x, y)) continue;
                         c.glyph = g;
                         c.fg = v.border.color;
                     }
@@ -387,6 +396,7 @@ struct CellGrid
                     if (!inBounds(x, y))
                         return;
                     auto c = &at(x, y);
+                    if (!eraseCluster(x, y)) return;
                     c.glyph = g;
                     c.fg = v.border.color;
                 }
@@ -415,40 +425,92 @@ struct CellGrid
         }
     }
 
-    /// Writes `text` (one column per codepoint) at `at` in `v.fg`.
+    /// Paints whole owned graphemes with the shared terminalKitty advance.
     void textRun(in Point at, scope const(char)[] text, in Visual v)
     {
-        import std.utf : decode;
-
+        import sparkles.base.text.grapheme : byGraphemeCluster;
+        import sparkles.base.text.utf : decodeToken, UtfMode;
         int x = at.x;
-        size_t i = 0;
-        while (i < text.length)
+        foreach (cluster; byGraphemeCluster(text))
         {
-            dchar g;
-            try
-                g = decode(text, i);
-            catch (Exception)
+            if (cluster.isEscape) continue;
+            const scalar = decodeToken(cluster.slice, UtfMode.replacement);
+            // A cell painter cannot execute raw source controls as terminal
+            // commands. Their owned profile advance is zero.
+            if (scalar.token.scalar < 0x20 || scalar.token.scalar == 0x7f) continue;
+            const advance = cast(int) cluster.width;
+            bool complete = inBounds(x, at.y);
+            foreach (dx; 1 .. advance)
+                complete = complete && inBounds(x + dx, at.y);
+            foreach (dx; 0 .. (advance > 0 ? advance : 1))
+                complete = complete && replaceableCluster(x + dx, at.y);
+            if (complete)
             {
-                ++i;
-                g = '�';
+                auto cell = &this.at(x, at.y);
+                const prefix = cell.zeroPrefix ? cell.cluster : null;
+                foreach (dx; 0 .. (advance > 0 ? advance : 1))
+                    eraseCluster(x + dx, at.y);
+                putGlyph(x, at.y, scalar.token.scalar, v);
+                if (prefix.length || scalar.result.consumed != cluster.slice.length || advance == 0)
+                    cell.cluster = prefix.length ? prefix ~ cluster.slice : cluster.slice.idup;
+                cell.zeroPrefix = advance == 0;
+                foreach (dx; 1 .. advance)
+                {
+                    putGlyph(x + dx, at.y, ' ', v);
+                    this.at(x + dx, at.y).continuation = true;
+                }
             }
-            // Control codepoints (a tab in source) write as spaces: a raw
-            // control byte in the serialized stream would move the cursor.
-            putGlyph(x, at.y, g < 0x20 || g == 0x7f ? ' ' : g, v);
-            ++x;
+            x += advance;
         }
     }
 
     /// Writes a single glyph `g` at `at` in `v.fg`.
     void glyph(in Point at, dchar g, in Visual v)
     {
-        putGlyph(at.x, at.y, g, v);
+        import sparkles.base.text.utf : encodeScalar, UtfStatus;
+        char[4] bytes;
+        const encoded = encodeScalar(g, bytes[]);
+        if (encoded.status != UtfStatus.ok)
+            throw new Exception("Invalid Unicode cell glyph");
+        textRun(at, bytes[0 .. encoded.written], v);
+    }
+
+    private bool replaceableCluster(int x, int y) const
+    {
+        if (!inBounds(x, y)) return false;
+        int start = x;
+        while (start > 0 && cells[y * width + start].continuation) --start;
+        int end = start + 1;
+        while (end < width && cells[y * width + end].continuation) ++end;
+        foreach (column; start .. end)
+            if (!inBounds(column, y)) return false;
+        return true;
+    }
+
+    /// Replacing any covered cell retires its complete previous grapheme.
+    private bool eraseCluster(int x, int y)
+    {
+        if (!replaceableCluster(x, y)) return false;
+        int start = x;
+        while (start > 0 && at(start, y).continuation) --start;
+        int end = start + 1;
+        while (end < width && at(end, y).continuation) ++end;
+        foreach (column; start .. end)
+        {
+            auto c = &at(column, y);
+            c.glyph = ' ';
+            c.cluster = null;
+            c.continuation = false;
+            c.zeroPrefix = false;
+        }
+        return true;
     }
 
     private void putGlyph(int x, int y, dchar g, in Visual v)
     {
         if (!inBounds(x, y))
             return;
+        if (!eraseCluster(x, y)) return;
         auto c = &at(x, y);
         c.glyph = g;
         c.fg = v.fg;
@@ -498,14 +560,15 @@ struct CellGrid
             if (inBounds(x, y))
             {
                 auto c = &at(x, y);
+                if (!eraseCluster(x, y)) continue;
                 c.glyph = g;
                 c.fg = v.fg;
             }
     }
 
-    /// The cell extent of a text run (height 1); the width authority is `cellsOf`.
+    /// The cell extent of a text run (height 1); the width authority is `visibleWidth`.
     Size measure(scope const(char)[] text) const
-        => Size(cast(int) cellsOf(text), 1);
+        => Size(cast(int) visibleWidth(text), 1);
 
     // --- serialization ---
 
@@ -526,7 +589,8 @@ struct CellGrid
             ushort curLink;
             foreach (x; 0 .. width)
             {
-                const c = cells[y * width + x];
+                ref const c = cells[y * width + x];
+                if (c.continuation) continue;
                 if (links.length)
                     writeLink(w, c.linkId, curLink, links);
                 writeCell(w, c, depth, bg);
@@ -542,7 +606,7 @@ struct CellGrid
     private void writeCell(Writer)(ref Writer w, in Cell c, ColorDepth depth,
         BgEmit bg = BgEmit.spans) const
     {
-        import std.utf : encode;
+        import sparkles.base.text.utf : encodeScalar, UtfStatus;
 
         // A fresh SGR per cell keeps this simple and correct; the diff path is
         // where run-coalescing matters.
@@ -560,8 +624,17 @@ struct CellGrid
         if (c.strikethrough)
             put(w, ";9");
         put(w, 'm');
+        if (c.cluster.length)
+        {
+            put(w, c.cluster);
+            if (c.zeroPrefix) put(w, ' '); // the unpainted cell still occupies its column
+            return;
+        }
         char[4] enc;
-        const n = encode(enc, c.glyph);
+        const encoded = encodeScalar(c.glyph, enc[]);
+        if (encoded.status != UtfStatus.ok)
+            throw new Exception("Invalid Unicode cell glyph");
+        const n = encoded.written;
         put(w, enc[0 .. n]);
     }
 
@@ -578,7 +651,7 @@ struct CellGrid
             foreach (x; 0 .. width)
             {
                 const idx = y * width + x;
-                if (cells[idx] == prev.cells[idx])
+                if (cells[idx].continuation || cells[idx] == prev.cells[idx])
                     continue;
                 put(w, "\x1b[");
                 writeInteger(w, y + 1);
@@ -853,4 +926,39 @@ static assert(isCanvas!CellGrid);
     assert(asciiStroke('█') == '#' && asciiStroke('━') == '-');
     // Text is not chrome: ASCII and non-chrome glyphs pass through.
     assert(asciiStroke('a') == 'a' && asciiStroke('✓') == '✓');
+}
+
+@("ui.cells.completeClusterReplacementRespectsClip")
+unittest
+{
+    import std.array : appender;
+    import std.algorithm.searching : canFind;
+    import sparkles.base.text.grapheme : visibleWidth;
+    auto grid = CellGrid(3, 1, RgbColor(255, 255, 255), RgbColor(0, 0, 0));
+    grid.textRun(Point(0, 0), "界z", Visual.init);
+    grid.pushClip(Rect(1, 0, 2, 1));
+    grid.textRun(Point(1, 0), "x", Visual.init);
+    grid.popClip();
+    auto ansi = appender!string();
+    grid.writeAnsi(ansi);
+    assert(ansi.data.canFind("界") && !ansi.data.canFind("x"));
+    grid.textRun(Point(1, 0), "x", Visual.init);
+    ansi = appender!string();
+    grid.writeAnsi(ansi);
+    assert(!ansi.data.canFind("界") && ansi.data.canFind("x"));
+    assert(visibleWidth(ansi.data) == 3);
+}
+
+@("ui.cells.zeroWidthPrefixSurvivesSeparateRuns")
+unittest
+{
+    import std.array : appender;
+    import std.algorithm.searching : canFind;
+    import sparkles.base.text.grapheme : visibleWidth;
+    auto grid = CellGrid(1, 1, RgbColor(255, 255, 255), RgbColor(0, 0, 0));
+    grid.textRun(Point(0, 0), "\u0301", Visual.init);
+    grid.textRun(Point(0, 0), "x", Visual.init);
+    auto ansi = appender!string();
+    grid.writeAnsi(ansi);
+    assert(ansi.data.canFind("\u0301x") && visibleWidth(ansi.data) == 1);
 }

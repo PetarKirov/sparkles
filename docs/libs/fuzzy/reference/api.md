@@ -2,15 +2,15 @@
 
 Import `sparkles.fuzzy` for the complete surface or one feature module.
 
-| Module    | Main symbols                                                                                             |
-| --------- | -------------------------------------------------------------------------------------------------------- |
-| `common`  | `DefaultFuzzyCaps`, `FuzzyLimits`, stable IDs, `CandidateView`, `FuzzyError`                             |
-| `query`   | `QueryStorage`, `QueryText`, `parseQuery`, `refines`, constraints and locations                          |
-| `glob`    | `GlobProgram`, `GlobProgramView`, `GlobMatchWorkspace`, `compileGlob`, `compileGlobDecoded`, `globMatch` |
-| `match`   | `Scoring`, `MatchConfig`, `MatcherWorkspace`, `MatchOutcome`, `match`, `positions`                       |
-| `rank`    | `RankContext`, `ScoreBreakdown`, `RankedResult`, `directoryDistance`, `rank`, `TopK`                     |
-| `history` | `accessScore`, `modificationScore`, `FrecencyTable`, `ComboTable`                                        |
-| `search`  | `CandidateSnapshot`, `SearchCursor`, `SearchAccumulator`, `searchChunk`                                  |
+| Module    | Main symbols                                                                                                               |
+| --------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `common`  | `DefaultFuzzyCaps`, `FuzzyLimits`, stable IDs, `CandidateView`, `FuzzyError`                                               |
+| `query`   | `QueryStorage`, `QueryText`, `parseQuery`, `refines`, constraints and locations                                            |
+| `glob`    | `GlobProgram`, `GlobProgramView`, `GlobMatchState`, `GlobMatchWorkspace`, `compileGlob`, `compileGlobDecoded`, `globMatch` |
+| `match`   | `Scoring`, `MatchConfig`, `MatcherWorkspace`, `MatchOutcome`, `match`, `positions`                                         |
+| `rank`    | `RankContext`, `ScoreBreakdown`, `RankedResult`, `directoryDistance`, `rank`, `TopK`                                       |
+| `history` | `accessScore`, `modificationScore`, `FrecencyTable`, `ComboTable`                                                          |
+| `search`  | `CandidateSnapshot`, `SearchCursor`, `SearchAccumulator`, `searchChunk`                                                    |
 
 Default hard capacities are 256 analyzed query units, 4,096 analyzed candidate
 units/source bytes, 1,024 score-DP candidate units, eight fuzzy parts, sixteen
@@ -22,19 +22,41 @@ and never truncates input.
 Hot entry points are `@safe pure nothrow @nogc`. Storage is embedded in caller
 workspaces. Narrow private/package `@trusted` DIP1000 lifetime bridges back the
 public `@safe` slice accessors; no query or result owns an input string.
+`MatcherWorkspace` and its Unicode arena contain no indirections: a `Unique`
+owner does not register their large allocations as collector-scanned ranges.
+`parseQuery` requires exclusive caller-owned `FuzzyTextWorkspace!Caps` scratch.
+Reuse `MatcherWorkspace!Caps.textWorkspace` before candidate matching, or
+heap-own a standalone arena once. It holds whole-input intermediate Unicode
+stages independently of the final query/candidate unit limits. Constraint
+evaluation borrows that same arena and retains only small decoded/NFA state;
+`searchChunk` sequences constraint evaluation before matching. Prepared query
+units are copied into their cache and survive this reuse. Concurrent jobs must
+not lend one another their arena.
+Glob compilation also takes explicit analysis scratch;
+`GlobCompileWorkspace!(instructions, ranges)` provides a bounded standalone
+owner type. Standalone execution uses `GlobMatchWorkspace`, or `GlobMatchState`
+plus exclusive `AnalysisWorkspace` scratch when analysis is already owned.
 On Linux, `dub test :fuzzy --config=allocation-audit` calibrates linker wraps
 for `malloc`, `calloc`, and `realloc`, then verifies zero libc and GC allocation
 calls across one complete parse/search/rank/page/history path.
 
+The large matching and constraint arenas are pointer-free, so they do not
+generate the precise-GC bitmap template names that previously exceeded PDB
+public-symbol limits. The package no longer passes MSVC's
+`/DEBUG:LongSymbolTruncate`: `lld-link` rejects that option. Program symbols,
+debug information, and workspace capacities remain unchanged.
+
 The principal call shapes are:
 
 ```d
-FuzzyExpected!(QueryStorage!Caps) parseQuery(Caps)(
-    return scope const(char)[] source, QueryParseOptions options);
+FuzzyExpected!(QueryStorage!Caps) parseQuery(Caps, Workspace)(
+    return scope const(char)[] source, ref Workspace workspace,
+    QueryParseOptions options); // Workspace == FuzzyTextWorkspace!Caps
 
-FuzzyExpected!bool evaluateConstraints(Caps)(
+FuzzyExpected!bool evaluateConstraints(Caps, Workspace)(
     in QueryStorage!Caps query, in CandidateView candidate,
-    ref ConstraintWorkspace!Caps workspace, FuzzyLimits limits);
+    ref ConstraintWorkspace!Caps workspace,
+    ref Workspace analysis, FuzzyLimits limits); // Workspace == FuzzyTextWorkspace!Caps
 
 FuzzyExpected!MatchOutcome match(Caps)(
     in QueryStorage!Caps query, in CandidateView candidate,

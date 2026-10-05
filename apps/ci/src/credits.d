@@ -49,7 +49,8 @@ import std.array : array, join, split;
 import std.json : JSONType, parseJSON;
 import std.path : baseName, buildNormalizedPath, dirName, globMatch, stripExtension;
 import std.regex : ctRegex, matchAll, matchFirst, replaceAll;
-import std.string : indexOf, lineSplitter, strip, toLower;
+import std.string : indexOf, lineSplitter, strip;
+import sparkles.base.text.case_text : asciiLower;
 
 /// An application with its own credits page, and where its inputs are named.
 struct CreditedApp
@@ -156,7 +157,7 @@ CreditPart parsePart(string id, string text) @safe
         if (cells.length != 4)
             continue;
         const value = cells[2];
-        switch (cells[1].toLower)
+        switch (cells[1].asciiLower)
         {
             case "version source": part.versionSource = value; break;
             case "licence": part.licence = value; break;

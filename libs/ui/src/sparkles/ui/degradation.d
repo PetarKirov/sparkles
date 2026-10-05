@@ -187,11 +187,13 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
     // under the capability that stopped it (`GLY1`).
     void glyphs(Text)(scope Text text)
     {
-        import std.utf : byDchar;
+        import sparkles.base.text.tokens : byUtfToken;
+        import sparkles.base.text.utf : UtfMode;
 
         bool[Substitution.max + 1] seen;
-        foreach (dchar g; text.byDchar)
+        foreach (token; byUtfToken(text, UtfMode.replacement))
         {
+            const g = token.scalar;
             const n = needOf(g);
             if (admits(caps, n))
                 continue;

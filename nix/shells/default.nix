@@ -323,8 +323,8 @@
         # Independent oracle libraries for the text-conformance harness
         # (bindings under libs/base/tools/text-conformance/bindings). utf8proc
         # is single-output (headers + .pc in `out`); icu/notcurses carry their
-        # pkg-config in the `.dev` output. Not a root sub-package, so no CI
-        # job builds it.
+        # pkg-config in the `.dev` output. Only the opt-in `oracles.sdl`
+        # recipe needs these; CI gates official corpora offline.
         pkgs.utf8proc
         pkgs.icu
         pkgs.icu.dev

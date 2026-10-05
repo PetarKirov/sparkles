@@ -148,13 +148,13 @@ on the header row (row 0 of the component's column).
 */
 int actionAt(string title, in InspectorAction[] actions, int x)
 {
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
-    int at = cast(int) cellsOf(title);
+    int at = cast(int) visibleWidth(title);
     foreach (i, ref const a; actions)
     {
         const lo = at + 1; // the separating space belongs to nobody
-        const hi = lo + 2 + cast(int) cellsOf(a.label); // "[" label "]"
+        const hi = lo + 2 + cast(int) visibleWidth(a.label); // "[" label "]"
         if (x >= lo && x < hi)
             return cast(int) i;
         at = hi;

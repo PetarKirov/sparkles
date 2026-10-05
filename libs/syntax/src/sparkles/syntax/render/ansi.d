@@ -73,7 +73,6 @@ if (isHighlightEventRange!Events)
 {
     import std.algorithm.comparison : min;
     import std.algorithm.searching : countUntil;
-    import std.utf : byCodeUnit;
 
     if (options.depth == ColorDepth.none)
     {
@@ -131,7 +130,7 @@ if (isHighlightEventRange!Events)
 
         while (text.length)
         {
-            const nlPos = text.byCodeUnit.countUntil('\n');
+            const nlPos = (cast(const(ubyte)[]) text).countUntil(cast(ubyte) '\n');
             if (nlPos < 0)
             {
                 transitionTo(spec);

@@ -1138,7 +1138,7 @@ struct ViewerModel
             alias b = arena_;
             const docRoot = viewCodeDocumentInto(b, source, evs,
                 thisCurrent(), pageFg,
-                CodeViewOptions(foldedRegions: closed,
+                CodeViewOptions(wrap: TextWrap.none, foldedRegions: closed,
                     foldHitBase: foldHitBase, tabWidth: tabWidth,
                     listWhitespace: listWhitespace,
                     whitespaceFg: gutterFg, hasWhitespaceFg: true,
@@ -1838,7 +1838,7 @@ struct ViewerModel
     /// were not derived.
     FenceExtent fenceExtent(size_t bodyStart) const @safe
     {
-        import sparkles.ui.geometry : cellsOf;
+        import sparkles.base.text.grapheme : visibleWidth;
 
         FenceExtent e;
         foreach (ref const f; fences)
@@ -1852,7 +1852,7 @@ struct ViewerModel
             size_t at = 0;
             void measure(size_t end)
             {
-                const w = cast(int) cellsOf(f.text[at .. end]);
+                const w = cast(int) visibleWidth(f.text[at .. end]);
                 if (w > e.widest)
                     e.widest = w;
             }
@@ -3160,9 +3160,9 @@ terminal gets the destinations it needs to make the text clickable.
 
 version (unittest)
 {
-    /// A raw-view model over `src`, laid out at `width` — the fixture the
-    /// anchor tests reflow.
-    private ViewerModel anchorFixture(string src, int width)
+    /// Raw code stays horizontally scrollable; preview paragraphs exercise
+    /// anchoring across actual wrapping without depending on code-view defaults.
+    private ViewerModel anchorFixture(string src, int width, bool preview = false) @system
     {
 
         ViewerModel vm;
@@ -3171,9 +3171,29 @@ version (unittest)
         vm.labels = LabelSet.standard();
         vm.widthCols = width;
         vm.applyTheme(0);
-        vm.setDocument("t.d", "", src,
-            [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
-            TwoslashReturn.init, "d");
+        if (preview)
+        {
+            import sparkles.syntax : extractMarkdown, GrammarRegistry;
+            import std.string : replace;
+            import std.process : environment;
+            import sparkles.test_runner.skip : skipTest;
+
+            if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+                skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+            // Separate real Markdown paragraphs rather than joining source lines
+            // into one paragraph, so each numbered line keeps its own identity.
+            src = src.replace("\n", "\n\n");
+            auto registry = GrammarRegistry.fromEnvironment();
+            vm.setDocument("t.md", "", src,
+                [HighlightEvent.sourceSpan(0, src.length)],
+                PreviewModel(present: true, doc: extractMarkdown(registry, src)),
+                TwoslashReturn.init, "markdown");
+        }
+        else
+            vm.setDocument("t.d", "", src,
+                [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
+                TwoslashReturn.init, "d");
         return vm;
     }
 
@@ -3203,14 +3223,15 @@ version (unittest)
     // Issue #299: a width change re-wraps the document, so the visual row
     // index the scroll offset used to be stops meaning the same place. The
     // anchor is the SOURCE byte at the top of the pane.
-    auto vm = anchorFixture(anchorSource(), 100);
-    vm.top = vm.visualOfSrc(7);
+    auto vm = anchorFixture(anchorSource(), 100, preview: true);
+    vm.anchorMode = ScrollAnchorMode.segment;
+    vm.top = vm.visualOfSrc(14); // numbered paragraph 7, after its blank separators
+    const topWide = vm.top;
     const anchor = vm.rows[cast(size_t) vm.top].srcStart;
     assert(anchor != size_t.max);
-    const rowsWide = vm.rows.length;
 
     vm.relayout(30); // narrower: every long line now wraps
-    assert(vm.rows.length > rowsWide, "the fixture must actually re-wrap");
+    assert(vm.top != topWide, "reflow must move the anchor's visual row");
     assert(vm.rows[cast(size_t) vm.top].srcStart == anchor,
         "the first visible source byte survived the reflow");
 
@@ -3221,15 +3242,15 @@ version (unittest)
 @("viewer_model.scrollAnchor.segmentModeKeepsThePlaceInsideAWrappedLine")
 @system unittest
 {
-    // The default mode pins the wrap segment, not the line: a reader parked
-    // in the middle of a long line stays in the middle of it.
-    auto vm = anchorFixture(anchorSource(), 40);
-    assert(vm.anchorMode == ScrollAnchorMode.segment);
+    // Segment mode pins the wrap segment, not the line: a reader parked
+    // in the middle of a long paragraph stays in the middle of it.
+    auto vm = anchorFixture(anchorSource(), 40, preview: true);
+    vm.anchorMode = ScrollAnchorMode.segment;
 
     // Find a CONTINUATION row — one whose source start is past its line's.
     long cont = -1;
     foreach (idx, ref const r; vm.rows)
-        if (r.srcStart != size_t.max && idx > 0
+        if (r.srcStart != size_t.max && r.srcStart > 0 && idx > 0
             && vm.rows[idx - 1].srcStart != size_t.max
             && vm.source[r.srcStart - 1] != '\n')
         {
@@ -3249,12 +3270,12 @@ version (unittest)
 @("viewer_model.scrollAnchor.lineModeSnapsToTheLineStart")
 @system unittest
 {
-    auto vm = anchorFixture(anchorSource(), 40);
+    auto vm = anchorFixture(anchorSource(), 40, preview: true);
     vm.anchorMode = ScrollAnchorMode.line;
 
     long cont = -1;
     foreach (idx, ref const r; vm.rows)
-        if (r.srcStart != size_t.max && idx > 0
+        if (r.srcStart != size_t.max && r.srcStart > 0 && idx > 0
             && vm.rows[idx - 1].srcStart != size_t.max
             && vm.source[r.srcStart - 1] != '\n')
         {

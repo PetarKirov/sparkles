@@ -107,6 +107,18 @@ real 325k-entry tree, 4.26× on dense ones, 55 futex calls against
 `std.parallelism`'s 10 632). Reusing it means the picker inherits a walker that
 has already been measured against the best in the field.
 
+Picker open allocates pointer-free matcher arenas through `Unique`, separately
+from the GC-scanned host and generation metadata. Each slot retains its own
+arena: several workers can execute at once, and synchronous submission fallback
+can overlap a worker even when the normal pool has only one thread. Slot scratch
+is not shared across these jobs. Constraint evaluation instead reuses its
+slot's matcher arena sequentially, with only decoded bytes and NFA state in the
+constraint workspace. Prompt bytes, retained corpus snapshots, query borrows and
+published result metadata remain collector roots in the small owners.
+Render-time positions and grep likewise own separate unscanned matcher arenas;
+grep constructs its engine at corpus open rather than on the first keystroke.
+No query/candidate or provenance capacity is lowered by this ownership split.
+
 > [!WARNING]
 > Pool start or job submission can fail explicitly. Queue saturation runs the
 > same bounded step synchronously; an unavailable platform uses a fully

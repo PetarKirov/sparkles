@@ -271,8 +271,7 @@ struct RaylibEvents
     */
     private void pollFullKeyboard(Sink)(scope Sink sink, Mods mods) @system
     {
-        import std.typecons : Yes;
-        import std.utf : encode;
+        import sparkles.base.text.utf : encodeScalar, UtfMode;
 
         // This frame's typed text, in arrival order — as code points (the
         // unclaimed fallback), and as UTF-8 to pair onto a keystroke. As many
@@ -295,7 +294,7 @@ struct RaylibEvents
         foreach (cp; imeKeys ? null : cps[0 .. cpCount])
         {
             char[4] u8;
-            const n = encode!(Yes.useReplacementDchar)(u8, cp);
+            const n = encodeScalar(cp, u8[], UtfMode.replacement).written;
             if (textLen + n > textBuf.length)
             {
                 overflow = true;

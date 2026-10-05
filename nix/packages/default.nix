@@ -176,6 +176,45 @@
         };
       });
 
+      # Reuse the existing harness, with no foreign-oracle libraries or curl.
+      # Foreign dependencies live in a separate opt-in recipe so DUB never
+      # resolves them here; the shared builder provisions root manifests.
+      packages.text-conformance = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "text-conformance";
+        version = "0.1.0";
+        sourceDirs = [
+          "libs/base/tools/text-conformance/src"
+        ] ++ config.legacyPackages.sparklesSources.libsClosure [ "base" "core-cli" ];
+        sourceRoot = "${finalAttrs.src.name}/libs/base/tools/text-conformance";
+        dubBuildFlags = [ "--config=offline" ];
+        meta = {
+          description = "Offline manifest-authenticated owned Unicode conformance harness";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
+      # Complete upstream inputs, including the reviewed manifest and license.
+      # This is local source provisioning, not a runtime download/cache lookup.
+      packages.unicode-conformance-data = pkgs.applyPatches {
+        name = "unicode-conformance-data";
+        src = lib.fileset.toSource {
+          root = ../../libs/base/tools/unicode;
+          fileset = ../../libs/base/tools/unicode;
+        };
+      };
+
+      # Ordinary sandboxed derivation: test execution has no network access,
+      # and the offline executable has no downloader compiled in. D verifies
+      # the manifest identity against the generated tables and each input hash.
+      checks.text-conformance = pkgs.runCommand "text-conformance-official" { } ''
+        set -o pipefail
+        ${lib.getExe config.packages.text-conformance} \
+          --layers 0,11,12,13,14,15,16 --no-network \
+          --manifest ${config.packages.unicode-conformance-data}/manifest.json \
+          --ucd-dir ${config.packages.unicode-conformance-data}/18.0.0 \
+          | tee "$out"
+      '';
+
       # `buildSparklesApp` derives the source closure from apps/terminal/dub.sdl
       # (transitively: base, core-cli, ghostty, math, and the test-runner
       # shim+impl) and supplies the shared dub plumbing, so only the raylib +

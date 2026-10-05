@@ -8,6 +8,7 @@ import sparkles.fuzzy.common : DefaultFuzzyCaps, FuzzyError, FuzzyErrorCode,
     FuzzyExpected, PathFlavor, fuzzyErr, fuzzyOk;
 
 import sparkles.test_runner.attributes : benchmark;
+version (unittest) import sparkles.base.unique : makeUnique;
 
 /// NFA instruction kind.
 enum GlobOp : ubyte
@@ -98,16 +99,33 @@ private GlobProgramView globProgramView(size_t MaxInstructions,
         program.pathFlavor_, program.caseSensitive_);
 }
 
+/** Caller-owned syntax analysis for standalone glob compilation.
+Syntax bytes precede instruction/range counting; NFC may consume four original
+scalars for one normalized scalar. This storage is reusable and never retained.
+*/
+alias GlobCompileWorkspace(size_t MaxInstructions, size_t MaxRanges,
+    size_t MaxSegmentUnits = 64) = AnalysisWorkspace!(
+        2 * MaxInstructions + 5 * MaxRanges, MaxSegmentUnits,
+        4 * (2 * MaxInstructions + 5 * MaxRanges) + MaxSegmentUnits);
+
+/** Pointer-free NFA state; analysis may be borrowed from an exclusive arena. */
+struct GlobMatchState(size_t MaxInstructions = DefaultFuzzyCaps.maxGlobInstructions)
+if (MaxInstructions > 0)
+{
+    private bool[MaxInstructions] current = void;
+    private bool[MaxInstructions] next = void;
+    private size_t[MaxInstructions] queue = void;
+}
+
 /// Caller-owned NFA state and path-analysis storage.
 struct GlobMatchWorkspace(size_t MaxInstructions = DefaultFuzzyCaps.maxGlobInstructions,
     size_t MaxPathUnits = DefaultFuzzyCaps.maxCandidateUnits,
     size_t MaxSegmentUnits = DefaultFuzzyCaps.maxNormalizationSegment)
 if (MaxInstructions > 0 && MaxPathUnits > 0 && MaxSegmentUnits > 0)
 {
-    private bool[MaxInstructions] current = void;
-    private bool[MaxInstructions] next = void;
-    private size_t[MaxInstructions] queue = void;
-    private AnalysisWorkspace!(MaxPathUnits, MaxSegmentUnits) analysis;
+    private GlobMatchState!MaxInstructions state;
+    private AnalysisWorkspace!(MaxPathUnits, MaxSegmentUnits,
+        4 * MaxPathUnits + MaxSegmentUnits) analysis;
 }
 
 private struct GlobCompiler(size_t MaxInstructions, size_t MaxRanges)
@@ -366,27 +384,33 @@ private struct GlobCompiler(size_t MaxInstructions, size_t MaxRanges)
 }
 
 /** Compile a glob containing backslash escapes. */
-FuzzyExpected!void compileGlob(size_t MaxInstructions, size_t MaxRanges)(
+FuzzyExpected!void compileGlob(size_t MaxInstructions, size_t MaxRanges,
+    size_t N, size_t S, size_t W, size_t P)(
     scope const(char)[] pattern, PathFlavor pathFlavor, bool caseSensitive,
-    ref GlobProgram!(MaxInstructions, MaxRanges) program)
+    ref GlobProgram!(MaxInstructions, MaxRanges) program,
+    ref AnalysisWorkspace!(N, S, W, P) analysis)
     @safe pure nothrow @nogc
 {
-    return compileGlobImpl(pattern, pathFlavor, caseSensitive, true, program);
+    return compileGlobImpl(pattern, pathFlavor, caseSensitive, true, program, analysis);
 }
 
 /** Compile an already-unescaped glob; every byte is grammar-significant. */
-FuzzyExpected!void compileGlobDecoded(size_t MaxInstructions, size_t MaxRanges)(
+FuzzyExpected!void compileGlobDecoded(size_t MaxInstructions, size_t MaxRanges,
+    size_t N, size_t S, size_t W, size_t P)(
     scope const(char)[] pattern, PathFlavor pathFlavor, bool caseSensitive,
-    ref GlobProgram!(MaxInstructions, MaxRanges) program)
+    ref GlobProgram!(MaxInstructions, MaxRanges) program,
+    ref AnalysisWorkspace!(N, S, W, P) analysis)
     @safe pure nothrow @nogc
 {
-    return compileGlobImpl(pattern, pathFlavor, caseSensitive, false, program);
+    return compileGlobImpl(pattern, pathFlavor, caseSensitive, false, program, analysis);
 }
 
 private FuzzyExpected!void compileGlobImpl(size_t MaxInstructions,
-    size_t MaxRanges)(scope const(char)[] pattern, PathFlavor pathFlavor,
+    size_t MaxRanges, size_t N, size_t S, size_t W, size_t P)(
+    scope const(char)[] pattern, PathFlavor pathFlavor,
     bool caseSensitive, bool interpretEscapes,
-    ref GlobProgram!(MaxInstructions, MaxRanges) program)
+    ref GlobProgram!(MaxInstructions, MaxRanges) program,
+    ref AnalysisWorkspace!(N, S, W, P) analysis)
     @safe pure nothrow @nogc
 {
     if (pathFlavor != PathFlavor.unix && pathFlavor != PathFlavor.windows)
@@ -396,14 +420,15 @@ private FuzzyExpected!void compileGlobImpl(size_t MaxInstructions,
     program.pathFlavor_ = pathFlavor;
     program.caseSensitive_ = caseSensitive;
 
-    AnalysisWorkspace!(MaxInstructions, 64) analysis;
     const options = AnalysisOptions.codePath(caseSensitive
         ? AnalysisCase.sensitive : AnalysisCase.simpleFold);
     const analyzed = analyzeText(pattern, options, analysis);
     if (analyzed.error == AnalysisError.outputFull
-        || analyzed.error == AnalysisError.sourceTooLong)
+        || analyzed.error == AnalysisError.sourceTooLong
+        || analyzed.error == AnalysisError.workspaceFull)
         return fuzzyErr!void(FuzzyErrorCode.globTooComplex, analyzed.sourceOffset);
-    if (analyzed.error == AnalysisError.invalidOptions)
+    if (analyzed.error == AnalysisError.invalidOptions
+        || analyzed.error == AnalysisError.unsupportedLocale)
         return fuzzyErr!void(FuzzyErrorCode.invalidConfiguration,
             analyzed.sourceOffset);
     if (analyzed.error == AnalysisError.segmentTooLong)
@@ -446,32 +471,51 @@ FuzzyExpected!bool globMatch(size_t MaxInstructions, size_t MaxPathUnits,
     ref GlobMatchWorkspace!(MaxInstructions, MaxPathUnits,
         MaxSegmentUnits) workspace) @safe pure nothrow @nogc
 {
-    if (program.instructions_.length == 0
+    return globMatch(program, path, workspace.state, workspace.analysis);
+}
+
+/** Match with separate NFA state and exclusive caller-owned Unicode scratch.
+The analysis borrow ends before return; callers may immediately reuse the arena.
+`maxPathUnits` retains the candidate boundary when the shared arena is larger.
+*/
+FuzzyExpected!bool globMatch(size_t MaxInstructions,
+    size_t N, size_t S, size_t W, size_t P)(in GlobProgramView program,
+    scope const(char)[] path, ref GlobMatchState!MaxInstructions workspace,
+    ref AnalysisWorkspace!(N, S, W, P) analysis, size_t maxPathUnits = N)
+    @safe pure nothrow @nogc
+{
+    if (maxPathUnits == 0 || maxPathUnits > N
+        || program.instructions_.length == 0
         || program.instructions_.length > MaxInstructions)
         return fuzzyErr!bool(FuzzyErrorCode.invalidConfiguration,
             program.instructions_.length);
     const options = AnalysisOptions.codePath(program.caseSensitive_
         ? AnalysisCase.sensitive : AnalysisCase.simpleFold);
-    const analyzed = analyzeText(path, options, workspace.analysis);
-    if (analyzed.error == AnalysisError.outputFull)
+    const analyzed = analyzeText(path, options, analysis);
+    if (analyzed.error == AnalysisError.outputFull
+        || analyzed.error == AnalysisError.workspaceFull)
         return fuzzyErr!bool(FuzzyErrorCode.candidateTooComplex,
             analyzed.sourceOffset);
     if (analyzed.error == AnalysisError.sourceTooLong)
         return fuzzyErr!bool(FuzzyErrorCode.candidateTooLong,
             analyzed.sourceOffset);
-    if (analyzed.error == AnalysisError.invalidOptions)
+    if (analyzed.error == AnalysisError.invalidOptions
+        || analyzed.error == AnalysisError.unsupportedLocale)
         return fuzzyErr!bool(FuzzyErrorCode.invalidConfiguration,
             analyzed.sourceOffset);
     if (analyzed.error == AnalysisError.segmentTooLong)
         return fuzzyErr!bool(FuzzyErrorCode.normalizationSegmentTooLong,
             analyzed.sourceOffset);
+    if (analysis.output.length > maxPathUnits)
+        return fuzzyErr!bool(FuzzyErrorCode.candidateTooComplex,
+            analysis.output.length);
 
     foreach (i; 0 .. MaxInstructions)
         workspace.current[i] = false;
     workspace.current[0] = true;
     epsilonClosure(program, workspace.current, workspace.queue);
 
-    foreach (unit; workspace.analysis.output)
+    foreach (unit; analysis.output)
     {
         foreach (i; 0 .. MaxInstructions)
             workspace.next[i] = false;
@@ -576,24 +620,25 @@ private bool isUnitSeparator(uint value, PathFlavor flavor)
 @safe pure nothrow @nogc
 unittest
 {
+    auto compileOwner = makeUnique!(GlobCompileWorkspace!(64, 16))();
     GlobProgram!(64, 16) program;
     GlobMatchWorkspace!(64, 64, 16) workspace;
-    assert(!compileGlob("**/*.{rs,md}", PathFlavor.unix, false, program).hasError);
+    assert(!compileGlob("**/*.{rs,md}", PathFlavor.unix, false, program, compileOwner.get()).hasError);
     assert(globMatch(program, "src/main.rs", workspace).value);
     assert(globMatch(program, "docs/readme.MD", workspace).value);
     assert(!globMatch(program, "src/main.d", workspace).value);
 
-    assert(!compileGlob(`literal/\*.d`, PathFlavor.unix, true, program).hasError);
+    assert(!compileGlob(`literal/\*.d`, PathFlavor.unix, true, program, compileOwner.get()).hasError);
     assert(globMatch(program, "literal/*.d", workspace).value);
     assert(!globMatch(program, "literal/main.d", workspace).value);
 
-    assert(!compileGlob("src/*.d", PathFlavor.windows, true, program).hasError);
+    assert(!compileGlob("src/*.d", PathFlavor.windows, true, program, compileOwner.get()).hasError);
     assert(globMatch(program, `src\main.d`, workspace).value);
-    assert(!compileGlob("src/[!a].d", PathFlavor.windows, true, program).hasError);
+    assert(!compileGlob("src/[!a].d", PathFlavor.windows, true, program, compileOwner.get()).hasError);
     assert(!globMatch(program, `src\.d`, workspace).value,
         "a character class must not cross a path separator");
 
-    assert(!compileGlob("src/[!a-c]?.d", PathFlavor.unix, true, program).hasError);
+    assert(!compileGlob("src/[!a-c]?.d", PathFlavor.unix, true, program, compileOwner.get()).hasError);
     assert(globMatch(program, "src/z1.d", workspace).value);
     assert(!globMatch(program, "src/a1.d", workspace).value);
 }
@@ -602,14 +647,15 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    auto compileOwner = makeUnique!(GlobCompileWorkspace!(8, 2))();
     GlobProgram!(8, 2) program;
-    assert(compileGlob("{a,}", PathFlavor.unix, true, program).error.code
+    assert(compileGlob("{a,}", PathFlavor.unix, true, program, compileOwner.get()).error.code
         == FuzzyErrorCode.malformedGlob);
-    assert(compileGlob("[z-a]", PathFlavor.unix, true, program).error.code
+    assert(compileGlob("[z-a]", PathFlavor.unix, true, program, compileOwner.get()).error.code
         == FuzzyErrorCode.malformedGlob);
-    assert(compileGlob("abcdefghijk", PathFlavor.unix, true, program).error.code
+    assert(compileGlob("abcdefghijk", PathFlavor.unix, true, program, compileOwner.get()).error.code
         == FuzzyErrorCode.globTooComplex);
-    assert(compileGlob("a", cast(PathFlavor) ubyte.max, true, program).error.code
+    assert(compileGlob("a", cast(PathFlavor) ubyte.max, true, program, compileOwner.get()).error.code
         == FuzzyErrorCode.invalidConfiguration);
 }
 
@@ -617,6 +663,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    auto compileOwner = makeUnique!(GlobCompileWorkspace!(32, 8))();
     static immutable char[] patternAlphabet = ['a', 'b', '?', '*'];
     static immutable char[] pathAlphabet = ['a', 'b', '/'];
     GlobProgram!(32, 8) program;
@@ -630,7 +677,7 @@ unittest
         decodeWord(patternCode, patternAlphabet,
             pattern[0 .. patternLength]);
         auto compiled = compileGlob(pattern[0 .. patternLength],
-            PathFlavor.unix, true, program);
+            PathFlavor.unix, true, program, compileOwner.get());
         assert(!compiled.hasError);
         foreach (pathLength; 0 .. path.length + 1)
         foreach (pathCode; 0 .. integerPower(pathAlphabet.length, pathLength))
@@ -693,8 +740,9 @@ unittest
     import sparkles.test_runner.bench : benchIter, blackBox;
 
     GlobProgram!(64, 16) program;
+    auto compileOwner = makeUnique!(GlobCompileWorkspace!(64, 16))();
     assert(!compileGlob("**/{src,libs}/**/[a-z]*.{d,md}",
-        PathFlavor.unix, false, program).hasError);
+        PathFlavor.unix, false, program, compileOwner.get()).hasError);
     class Context
     {
         bool alternate;

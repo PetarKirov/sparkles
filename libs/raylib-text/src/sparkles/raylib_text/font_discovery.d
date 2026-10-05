@@ -23,8 +23,8 @@ module sparkles.raylib_text.font_discovery;
 
 import std.algorithm.iteration : filter, map;
 import std.algorithm.searching : canFind, endsWith;
-import std.string : indexOf, strip, split, toLower;
-import std.uni : icmp;
+import std.string : indexOf, strip, split;
+import sparkles.base.text.case_text : asciiLower;
 
 import sparkles.base.buffer : UniqueBuffer;
 
@@ -73,10 +73,15 @@ static assert(FontSources.init.useSystemFontDb && FontSources.init.dirs is null,
 private string normalizeFontName(scope const(char)[] s) @safe pure
 {
     import std.ascii : toLower;
-    import std.array : array;
-    import std.utf : byChar;
 
-    return s.byChar.filter!(c => c != ' ' && c != '-').map!(c => c.toLower).array.idup;
+    size_t count;
+    foreach (i; 0 .. s.length)
+        if (s[i] != ' ' && s[i] != '-') ++count;
+    auto result = new char[count];
+    size_t offset;
+    foreach (i; 0 .. s.length)
+        if (s[i] != ' ' && s[i] != '-') result[offset++] = toLower(s[i]);
+    return (() @trusted pure nothrow => cast(string) result)();
 }
 
 /// The `.ttf`/`.otf` files under `dirs` (shallow, sorted per dir for
@@ -105,7 +110,7 @@ package string[] fontFilesInDirs(const(string)[] dirs) @safe
             auto files = dirEntries(dir, SpanMode.shallow)
                 .map!(e => e.name)
                 .filter!((string p) {
-                    const ext = p.extension.toLower;
+                    const ext = p.extension.asciiLower;
                     return ext == ".ttf" || ext == ".otf";
                 })
                 .array;
@@ -324,13 +329,17 @@ package void fontVariantPaths(string primaryPath,
     const dir = primaryPath.dirName;
     const ext = primaryPath.extension;
     string stem = primaryPath.baseName.stripExtension;
-    // Compared in place rather than `stem.toLower.endsWith(...)`: that would
-    // slice the ORIGINAL by the lowered string's length, and std.uni.toLower
-    // is not length-preserving in general (U+0130 expands). Unreachable for
-    // ASCII font names, but the assumption is free to remove.
+    // The filename convention is ASCII; compare bytes without slicing into
+    // a possible multibyte scalar at the suffix's candidate start.
+    import std.ascii : toLower;
+
     enum regularSuffix = "-Regular";
-    if (stem.length >= regularSuffix.length
-        && icmp(stem[$ - regularSuffix.length .. $], regularSuffix) == 0)
+    bool regular = stem.length >= regularSuffix.length;
+    if (regular)
+        foreach (i; 0 .. regularSuffix.length)
+            if (toLower(stem[stem.length - regularSuffix.length + i])
+                != toLower(regularSuffix[i])) { regular = false; break; }
+    if (regular)
         stem = stem[0 .. $ - regularSuffix.length];
 
     string pick(scope string[] suffixes...) @safe

@@ -147,10 +147,9 @@ private void writeSdlString(Writer)(ref Writer writer, scope const(char)[] value
 private SdlExpected!void writeSdlCharacter(Writer)(dchar value,
     ref Writer writer)
 {
-    import sparkles.base.text.utf : encodeUtf8;
-    import std.utf : isValidDchar;
+    import sparkles.base.text.utf : encodeScalar, isUnicodeScalar;
 
-    if (!isValidDchar(value) || value == 0x2028 || value == 0x2029)
+    if (!isUnicodeScalar(value) || value == 0x2028 || value == 0x2029)
         return sdlErr!void(encodeError(SdlErrorCode.valueOutOfRange, "dchar",
             "character is not representable in a canonical SDL literal"));
 
@@ -174,7 +173,7 @@ private SdlExpected!void writeSdlCharacter(Writer)(dchar value,
         break;
     default:
         char[4] encoded = void;
-        const length = encodeUtf8(value, encoded);
+        const length = encodeScalar(value, encoded[]).written;
         put(writer, encoded[0 .. length]);
         break;
     }

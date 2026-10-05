@@ -471,7 +471,7 @@ version (unittest)
 @("inspector_pane.headerChipsAreClickable")
 @system unittest
 {
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     // UAT: the picker needs a button, not just a key. The header's chips are
     // hit-tested through the component's own layout rule.
@@ -485,7 +485,7 @@ version (unittest)
     PointerEvent chip(int i) @safe
     {
         // "inspector" + " [⌕]" + " [anon]" — the first cell of chip `i`.
-        int x = cast(int) cellsOf("inspector") + 1;
+        int x = cast(int) visibleWidth("inspector") + 1;
         if (i == 1)
             x += 3 + 1;
         return PointerEvent(action: PointerAction.press,

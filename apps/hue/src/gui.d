@@ -912,7 +912,8 @@ int runGui(GuiArgs guiArgs) @system
         // a query against it, not a re-derivation of it.
         dsvModel = modelFor(dsvModel, st.rawText, "", flagsOf(st.info));
         auto proj = dsvBrowser.projection(st.info.columns);
-        proj.rowMask = rowMaskFor(dsvModel, dsvBrowser.fuzzyParts);
+        proj.rowMask = rowMaskFor(dsvModel, dsvBrowser.fuzzyParts,
+            dsvBrowser.fuzzyWorkspace);
         // `DSN4`: re-materialize the window the grid is looking at.
         const gridTop = firstRow != uint.max ? firstRow
             : ((0 in vm.tableScrollAt) ? cast(uint) (*(0 in vm.tableScrollAt)).y : 0);
@@ -1235,7 +1236,7 @@ int runGui(GuiArgs guiArgs) @system
     // a whole number of cells (the tree's width, the one-cell pad, the
     // header rows); one that is not must not be silently rounded into the
     // wrong place, so it is refused loudly instead.
-    static int cellsOf(long px, int cell) pure nothrow @nogc
+    static int pixelCellOffset(long px, int cell) pure nothrow @nogc
     {
         assert(px % cell == 0, "a widget origin that is not a whole cell");
         return cast(int)(px / cell);
@@ -1284,7 +1285,7 @@ int runGui(GuiArgs guiArgs) @system
     {
         import sparkles.base.term_style : TextAttr, UnderlineStyle;
         import sparkles.base.buffer : UniqueBuffer;
-        import std.utf : stride;
+        import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
 
         alias TColor = typeof(Cell.init.style.fg());
         static RgbColor cellColor(in TColor value, RgbColor fallback)
@@ -1364,7 +1365,14 @@ int runGui(GuiArgs guiArgs) @system
                         flushRun();
                     continue;
                 }
-                if (cell.width != 1 || g.length != stride(g))
+                bool singleScalar;
+                if (cell.width == 1)
+                {
+                    const decoded = decodeToken(g, UtfMode.strict);
+                    singleScalar = decoded.result.status == UtfStatus.ok
+                        && decoded.result.consumed == g.length;
+                }
+                if (!singleScalar)
                 {
                     flushRun();
                     chromeOps.textRun(Rect(x, y, cell.width, 1), g,
@@ -1525,7 +1533,7 @@ int runGui(GuiArgs guiArgs) @system
         auto ops = buildDisplayList(wt, layout(wt),
             themes[vm.themeIdx].effectivePalette, vm.pageFg, vm.pageBg);
         auto c = uiCanvas();
-        frameList.emit(c, ops, cellsOf(x, fonts.cellW()), cellsOf(y, fonts.cellH()));
+        frameList.emit(c, ops, pixelCellOffset(x, fonts.cellW()), pixelCellOffset(y, fonts.cellH()));
     }
 
 
@@ -1716,8 +1724,8 @@ int runGui(GuiArgs guiArgs) @system
         // horizontal scroll `pinned` is 0 and this is the single pass it was.
         void paintOps(int originPx, in Rect clip)
         {
-            const dx = cellsOf(originPx, cellW);
-            const dy = cellsOf(docY0, cellH) - cast(int) vm.top;
+            const dx = pixelCellOffset(originPx, cellW);
+            const dy = pixelCellOffset(docY0, cellH) - cast(int) vm.top;
             frameList.emit(ui, pushClipOp(clip), dx, dy);
             // The culling and the in-document bars' animation are the
             // library's, shared with every embedded pane (`UIA14`).
@@ -4310,8 +4318,15 @@ int runGui(GuiArgs guiArgs) @system
         {
             pn.treeFocused = true;
             pn.tree.filterStart();
-            foreach (dchar ch; capture.treeFilter)
-                pn.tree.filterInput(ch);
+            import sparkles.base.text.utf : decodeToken, UtfMode;
+
+            for (size_t at; at < capture.treeFilter.length;)
+            {
+                const decoded = decodeToken(capture.treeFilter[at .. $],
+                    UtfMode.replacement, true, at);
+                pn.tree.filterInput(decoded.token.scalar);
+                at += decoded.result.consumed;
+            }
         }
 
         // Debug/CI: the prompts and notices that otherwise only exist

@@ -88,7 +88,8 @@ character).
 */
 void utf16ToUtf8Offsets(ref TwoslashReturn tw) @safe
 {
-    import std.utf : decode;
+    import sparkles.base.text.tokens : byUtfToken;
+    import sparkles.base.text.utf : UtfStatus;
 
     const code = tw.code;
     // byteOf[u] = the UTF-8 byte offset of UTF-16 code unit `u`; the trailing
@@ -96,15 +97,16 @@ void utf16ToUtf8Offsets(ref TwoslashReturn tw) @safe
     // anchored to its start byte (a node boundary never splits a surrogate pair).
     size_t[] byteOf;
     byteOf.reserve(code.length + 1);
-    size_t idx = 0;
-    while (idx < code.length)
+    auto tokens = byUtfToken(code);
+    for (; !tokens.empty; tokens.popFront())
     {
-        const at = idx;
-        const c = decode(code, idx); // advances idx past the whole UTF-8 sequence
-        byteOf ~= at;
-        if (c > 0xFFFF)
-            byteOf ~= at;
+        const token = tokens.front;
+        byteOf ~= token.start;
+        if (token.scalar > 0xFFFF)
+            byteOf ~= token.start;
     }
+    if (tokens.result.status != UtfStatus.end)
+        throw new Exception("twoslash: code is not valid UTF-8");
     byteOf ~= code.length;
 
     size_t toByte(size_t u16) => byteOf[u16 < byteOf.length ? u16 : byteOf.length - 1];

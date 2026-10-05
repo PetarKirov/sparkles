@@ -22,7 +22,7 @@ struct Token
 }
 
 /// Tokenize a row: identifier runs (`[A-Za-z0-9_]+`), whitespace runs, and
-/// single other bytes (a multi-byte UTF-8 sequence stays one token).
+/// single other ASCII bytes, Unicode scalars, or explicit opaque malformed bytes.
 SharedBuffer!Token tokenize(scope const(char)[] text) @safe pure nothrow @nogc
 {
     static bool isWordByte(char c) @safe pure nothrow @nogc
@@ -50,10 +50,11 @@ SharedBuffer!Token tokenize(scope const(char)[] text) @safe pure nothrow @nogc
             i++;
         else
         {
-            // One UTF-8 sequence.
-            i++;
-            while (i < text.length && (text[i] & 0xC0) == 0x80)
-                i++;
+            import sparkles.base.text.utf : decodeToken, UtfMode;
+
+            // Lexical classes remain ASCII; the owner supplies all other spans.
+            const decoded = decodeToken(text[i .. $], UtfMode.opaque, true, i);
+            i += decoded.result.consumed;
         }
         tokens ~= Token(start, i - start);
     }
@@ -313,6 +314,19 @@ unittest
     auto t = tokenize("a→b");
     assert(t.length == 3);
     assert(t[1].length == 3); // the 3-byte arrow stays one token
+}
+
+@("refine.tokenize.opaqueMalformedByteBoundaries")
+@safe pure nothrow @nogc unittest
+{
+    const text = "a\xFF\x80→b";
+    auto tokens = tokenize(text);
+    static immutable expected = [Token(0, 1), Token(1, 1), Token(2, 1),
+        Token(3, 3), Token(6, 1)];
+    assert(tokens[] == expected);
+    auto truncated = tokenize("\xE1\x80x");
+    static immutable truncatedExpected = [Token(0, 1), Token(1, 1), Token(2, 1)];
+    assert(truncated[] == truncatedExpected);
 }
 
 @("refine.refinePair.single-token-change")

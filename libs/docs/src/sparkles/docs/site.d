@@ -199,9 +199,9 @@ bool extensionAllowed(scope const(char)[] relPath, scope const(string)[] extensi
     import std.algorithm.searching : canFind;
     import std.path : baseName, extension;
     import std.string : chompPrefix;
-    import std.uni : toLower;
+    import sparkles.base.text.case_text : asciiLower;
 
-    const ext = relPath.baseName.extension.chompPrefix(".").toLower;
+    const ext = relPath.baseName.extension.chompPrefix(".").asciiLower;
     return ext.length != 0 && extensions.canFind(ext);
 }
 

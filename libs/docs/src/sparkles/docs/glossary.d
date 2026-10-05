@@ -24,8 +24,8 @@ import std.algorithm.searching : canFind, startsWith;
 import std.array : Appender, appender;
 import std.conv : text;
 import std.regex : ctRegex, matchAll;
-import std.uni : toLower;
 
+import sparkles.base.text.case_text : unicodeLower;
 import sparkles.wired.json : readJSONFile;
 import sparkles.wired.policy : WireOptional;
 
@@ -322,7 +322,7 @@ GlossaryReport checkGlossary(
         {
             if (name.length == 0)
                 continue;
-            const key = name.toLower;
+            const key = name.unicodeLower;
             if (auto other = key in termOwner)
             {
                 if (*other != e.id)

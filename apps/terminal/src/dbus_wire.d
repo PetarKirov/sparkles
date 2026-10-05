@@ -673,39 +673,23 @@ program in the pane.
 */
 string scrubUtf8(in char[] s) @safe pure nothrow
 {
-    // Decoded by hand: Phobos' replacing `decode` swallows the bytes after
-    // an invalid lead byte along with it.
+    import sparkles.base.text.utf : decodeToken, UtfMode, UtfTokenKind;
+
     static immutable replacement = "\uFFFD";
     char[] o;
     o.reserve(s.length);
     for (size_t i; i < s.length;)
     {
-        const b = s[i];
-        size_t n;
-        uint c, min;
-        if (b < 0x80)
-            (n = 1, c = b);
-        else if (b >= 0xC2 && b <= 0xDF)
-            (n = 2, c = b & 0x1F, min = 0x80);
-        else if (b >= 0xE0 && b <= 0xEF)
-            (n = 3, c = b & 0x0F, min = 0x800);
-        else if (b >= 0xF0 && b <= 0xF4)
-            (n = 4, c = b & 0x07, min = 0x10000);
-        bool ok = n > 0 && i + n <= s.length;
-        for (size_t k = 1; ok && k < n; k++)
-        {
-            ok = (s[i + k] & 0xC0) == 0x80;
-            c = c << 6 | (s[i + k] & 0x3F);
-        }
-        ok = ok && c >= min && c <= 0x10FFFF && !(c >= 0xD800 && c <= 0xDFFF);
-        const allowed = ok && c != 0 && !(c >= 0xFDD0 && c <= 0xFDEF)
+        const decoded = decodeToken(s[i .. $], UtfMode.replacement, true, i);
+        const c = decoded.token.scalar;
+        // These are D-Bus policy restrictions, not Unicode validity rules.
+        const allowed = c != 0 && !(c >= 0xFDD0 && c <= 0xFDEF)
             && (c & 0xFFFE) != 0xFFFE;
-        if (allowed)
-            o ~= s[i .. i + n];
+        if (allowed && decoded.token.kind == UtfTokenKind.scalar)
+            o ~= s[decoded.token.start .. decoded.token.end];
         else
             o ~= replacement;
-        // An ill-formed sequence costs one byte, so the next starts afresh.
-        i += ok ? n : 1;
+        i += decoded.result.consumed;
     }
     return (() @trusted => cast(string) o)();
 }
@@ -719,6 +703,10 @@ string scrubUtf8(in char[] s) @safe pure nothrow
     assert(scrubUtf8("a\0b") == "a\uFFFDb");
     assert(scrubUtf8("\uFFFE") == "\uFFFD");
     assert(scrubUtf8("\xed\xa0\x80") != "\xed\xa0\x80"); // a UTF-16 surrogate
+    // Replacement mode consumes a maximal malformed prefix without losing ASCII.
+    assert(scrubUtf8("\xE1\x80Z") == "\uFFFDZ");
+    assert(scrubUtf8("x\xF0\x9F") == "x\uFFFD");
+    assert(scrubUtf8("\uFDD0x\U0001FFFE") == "\uFFFDx\uFFFD");
 }
 
 /**

@@ -25,9 +25,13 @@ public import sparkles.base.term_color : Color, ColorDepth;
 public import sparkles.base.term_style : CompactTermStyle, TextAttr, TermStyle,
     UnderlineStyle, writeStyle;
 
-import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
-import sparkles.base.text.utf : encodeUtf8, decodeFirstUtf8;
-import sparkles.base.text.width : codepointWidth;
+import core.lifetime : emplace, move, moveEmplace;
+import core.memory : pureMalloc, pureFree;
+import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.text.grapheme : byGraphemeCluster;
+import sparkles.base.text.utf : encodeScalar, decodeToken, encodeToken,
+    utfStorageOverlaps, UtfMode, UtfStatus;
+import sparkles.base.text.utf16 : measureConversion;
 
 /// The cell's style: the shaped `TermStyle` (3 packed words, 12 bytes) so a cell
 /// can hold an SGR-58 underline color — the twoslash error undercurl and other
@@ -37,14 +41,13 @@ import sparkles.base.text.width : codepointWidth;
 /// size-sensitive consumer flips back.
 alias CellStyle = TermStyle;
 
-/// One display cell: a grapheme cluster (inline UTF-8, up to `MaxBytes`), its
-/// display width in columns (0/1/2), and its style. `MaxBytes` (default 16) bounds
-/// the inline cluster — enough for CJK, most emoji, and short ZWJ sequences; longer
-/// clusters are truncated (an edge case, not a correctness concern for the common
-/// scenes). The default cell is a single styled space.
+/// One display cell: a complete UTF-8 grapheme, its display width and its style.
+/// Short clusters stay inline; long clusters use owned, copy-on-write storage.
+/// The inline capacity is not a Unicode boundary or rendering limit.
 struct CellT(uint MaxBytes = 16)
 {
-    char[MaxBytes] bytes = ' ';
+    static assert(MaxBytes >= 4 && MaxBytes < ubyte.max);
+    private enum ubyte overflowLength = cast(ubyte)(MaxBytes + 1);
     ubyte len = 1;
     ubyte width = 1;
     /// The OSC 8 hyperlink this cell belongs to: an index into the URI table
@@ -56,14 +59,23 @@ struct CellT(uint MaxBytes = 16)
     /// attribute while pointing at different URLs. It participates in
     /// `opEquals` so the retained diff repaints a cell whose link changed.
     ///
-    /// `ushort`, and placed here, so the cell stays tightly packed: a `uint`
-    /// would raise the whole struct's alignment from 1 to 4 and cost six bytes
-    /// per cell rather than two. No frame has 65535 distinct hyperlinks.
+    /// A `ushort` keeps this metadata compact alongside the owned payload.
+    /// No frame has 65535 distinct hyperlinks.
     ushort linkId;
     CellStyle style;
+    private SharedBuffer!(char, MaxBytes) _glyph;
 
     /// The grapheme cluster's bytes.
-    const(char)[] grapheme() const @safe pure nothrow @nogc return => bytes[0 .. len];
+    const(char)[] grapheme() scope return const @safe pure nothrow @nogc
+    {
+        if (len == 0)
+            return null;
+        if (_glyph.empty)
+            return " ";
+        // The buffer's inline and heap views both borrow this owning cell.
+        // DIP1000 cannot express both return-ref-this and return-scope-this.
+        return (() @trusted { return _glyph[]; })();
+    }
 
     /// Set this cell to a single code point (encoded to UTF-8) with `width`.
     /// `link` defaults to "no hyperlink", so a cell repainted by a writer that
@@ -72,54 +84,101 @@ struct CellT(uint MaxBytes = 16)
         @safe pure nothrow @nogc
     {
         char[4] buf = void;
-        const n = encodeUtf8(cp, buf);
-        bytes[0 .. n] = buf[0 .. n];
-        len = cast(ubyte) n;
+        const n = encodeScalar(cp, buf[], UtfMode.replacement).written;
+        setBytes(buf[0 .. n], w, st, link);
+    }
+
+    /// Store a complete already-encoded cluster. `malformed` explicitly requests
+    /// owned maximal-subpart replacement before publishing rendered UTF-8.
+    void setBytes(scope const(char)[] cluster, ubyte w, in CellStyle st,
+        ushort link = 0, bool malformed = false) @safe pure nothrow @nogc
+    {
+        size_t required = cluster.length;
+        if (malformed)
+        {
+            const measured = measureConversion!char(cluster, UtfMode.replacement);
+            assert(measured.hasValue, "Rendered cluster length overflow");
+            required = measured.value.required;
+        }
+        const samePayload = !malformed && cluster.length == _glyph.length
+            && (cluster.ptr is _glyph[].ptr || (required > MaxBytes && cluster == _glyph[]));
+        if (!samePayload)
+        {
+            if (utfStorageOverlaps(cluster, _glyph[]))
+            {
+                // A subview of our own payload must survive replacement of its owner.
+                SharedBuffer!(char, MaxBytes) staged;
+                staged.reserve(required);
+                appendCluster(staged, cluster, malformed);
+                _glyph = move(staged);
+            }
+            else
+            {
+                // Short writes use inline storage instead of cloning an old shared
+                // heap block. Long writes reuse capacity whenever uniquely owned.
+                _glyph.clear(releaseStorage: required <= MaxBytes);
+                _glyph.reserve(required);
+                appendCluster(_glyph, cluster, malformed);
+            }
+        }
+        len = required <= MaxBytes ? cast(ubyte) required : overflowLength;
         width = w;
         style = st;
         linkId = link;
     }
 
-    /// Set this cell to an already-encoded cluster slice (truncated to fit).
-    /// ditto
-    void setBytes(scope const(char)[] cluster, ubyte w, in CellStyle st,
-        ushort link = 0) @safe pure nothrow @nogc
+    private static void appendCluster(scope ref SharedBuffer!(char, MaxBytes) target,
+        scope const(char)[] source, bool malformed) @safe pure nothrow @nogc
     {
-        const n = cluster.length > MaxBytes ? MaxBytes : cluster.length;
-        bytes[0 .. n] = cluster[0 .. n];
-        len = cast(ubyte) n;
-        width = w;
-        style = st;
-        linkId = link;
+        if (!malformed)
+        {
+            target.put(source);
+            return;
+        }
+        size_t offset;
+        while (offset < source.length)
+        {
+            const decoded = decodeToken(source[offset .. $], UtfMode.replacement);
+            char[4] encoded;
+            const result = encodeToken(decoded.token, encoded[]);
+            assert(result.status == UtfStatus.ok);
+            target.put(encoded[0 .. result.written]);
+            offset += decoded.result.consumed;
+        }
     }
 
     /// The first code point of this cell's grapheme (0x20 for a blank cell).
-    uint codepoint() const scope @safe pure nothrow @nogc => decodeFirstUtf8(grapheme);
+    uint codepoint() const scope @safe pure nothrow @nogc
+        => len == 0 ? 0x20 : decodeToken(grapheme, UtfMode.replacement).token.scalar;
 
     bool opEquals(in CellT o) const @safe pure nothrow @nogc
         => len == o.len && width == o.width && style == o.style
             && linkId == o.linkId
-            && bytes[0 .. len] == o.bytes[0 .. o.len];
+            && grapheme == o.grapheme;
 }
 
-/// The cell type used across the library — a `CellT` with the default 16-byte
-/// inline cluster.
+/// The default cell has 16 inline bytes plus owned storage for longer clusters.
 alias Cell = CellT!16;
 
 /// A rectangular grid of cells, indexed `[x, y]` with `[0, 0]` top-left.
 ///
-/// Move-only: its `SharedBuffer` backing is a sole-owner, GC-free heap block reused
-/// across resizes, so a steady render loop allocates nothing. Copy explicitly via
-/// the copy-constructor (`auto b = a;`) or capacity-reusing assignment (`b = a;`).
+/// Owns initialized cells, including their nontrivial cluster owners. Copy
+/// construction/assignment retain shared long payloads; mutations copy on write.
 struct GridT(uint MaxBytes = 16)
 {
     private
     {
         alias C = CellT!MaxBytes;
-        // `unique` ⇒ sole-owner, move-only, GC-free; mutable access never clones.
-        UniqueBuffer!(C, 1) _cells;
+        C[] _cells;
         ushort _cols;
         ushort _rows;
+    }
+
+    ~this() @safe pure nothrow @nogc
+    {
+        foreach (ref cell; _cells)
+            destroy(cell);
+        (() @trusted { pureFree(_cells.ptr); })();
     }
 
     /// Deep-copy constructor (the storage is otherwise move-only).
@@ -152,7 +211,7 @@ struct GridT(uint MaxBytes = 16)
     /// Reset every live cell to a blank styled space.
     void clear() @safe nothrow
     {
-        _cells[][0 .. count] = C.init;
+        _cells[] = C.init;
     }
 
     /// Fill every live cell with a blank cell in `st` (e.g. a page background).
@@ -160,7 +219,7 @@ struct GridT(uint MaxBytes = 16)
     {
         C blank;
         blank.style = st;
-        _cells[][0 .. count] = blank;
+        _cells[] = blank;
     }
 
     /// The cell at `[x, y]` (bounds-checked in `-debug`/unittest via the contract).
@@ -183,31 +242,21 @@ struct GridT(uint MaxBytes = 16)
     in (y < _rows)
         => _cells[cast(size_t) y * _cols .. cast(size_t)(y + 1) * _cols];
 
-    /// Write a styled string starting at `(x, y)`, advancing by each code point's
-    /// display width; stops at the right edge. Returns the next free x.
-    ushort putText(ushort x, ushort y, scope const(char)[] text, in CellStyle st) @safe pure nothrow @nogc
+    /// Write whole owned graphemes, stopping before a cluster that does not fit
+    /// the right edge. Zero-advance controls/escapes have no grid occupancy.
+    ushort putText(ushort x, ushort y, scope const(char)[] text, in CellStyle st)
+        @safe pure nothrow @nogc
     {
-        import std.utf : byDchar;
-
-        foreach (dchar cp0; text.byDchar)
+        foreach (cluster; byGraphemeCluster(text))
         {
-            if (x >= _cols)
+            if (cluster.isEscape || cluster.width == 0)
+                continue;
+            if (x >= _cols || cluster.width > _cols - x)
                 break;
-            // A control codepoint (a tab in source, a stray C0) writes as a
-            // styled space — a raw control byte on the wire would move the
-            // terminal's cursor and desync the diff (one column, the v1
-            // tab-counts-as-one metric).
-            const dchar cp = cp0 < 0x20 || cp0 == 0x7f ? ' ' : cp0;
-            const int w = codepointWidth(cp);
-            if (w == 0)
-                continue; // combining mark — cluster merge is out of scope here
-            this[x, y].setCodepoint(cp, cast(ubyte) w, st);
-            // A wide glyph occupies the next column with a zero-width continuation.
-            if (w == 2 && x + 1 < _cols)
-            {
+            const w = cast(ubyte) cluster.width;
+            this[x, y].setBytes(cluster.slice, w, st, 0, cluster.hasMalformed);
+            if (w == 2)
                 this[cast(ushort)(x + 1), y].setCodepoint(' ', 0, st);
-                this[cast(ushort)(x + 1), y].width = 0;
-            }
             x = cast(ushort)(x + w);
         }
         return x;
@@ -269,17 +318,29 @@ struct GridT(uint MaxBytes = 16)
 
     private:
 
-    // Live cell count (cols*rows); the SharedBuffer may hold spare capacity beyond it.
+    // Live cells are distinct from initialized, reusable storage capacity.
     size_t count() const scope @safe pure nothrow @nogc => cast(size_t) _cols * _rows;
 
-    // Ensure the buffer holds at least `n` cells (append blanks; capacity reused).
+    // Buffer intentionally excludes nontrivial element lifetimes. Allocate an
+    // initialized cell array here; move owners when its capacity must grow.
     void grow(size_t n) @safe nothrow
     {
         if (_cells.length >= n)
             return;
-        _cells.reserve(n);
-        foreach (_; _cells.length .. n)
-            _cells.put(C.init);
+        const doubled = _cells.length <= size_t.max / 2 ? _cells.length * 2 : size_t.max;
+        const capacity = n > doubled ? n : doubled;
+        assert(capacity <= size_t.max / C.sizeof, "Cell storage size overflow");
+        auto replacement = ((size_t size) @trusted {
+            auto ptr = cast(C*) pureMalloc(size * C.sizeof);
+            assert(ptr !is null, "Cell storage allocation failed");
+            return ptr[0 .. size];
+        })(capacity);
+        foreach (i; 0 .. _cells.length)
+            ((ref C from, ref C to) @trusted { moveEmplace(from, to); })(_cells[i], replacement[i]);
+        foreach (i; _cells.length .. capacity)
+            ((C* slot) @trusted { emplace!C(slot); })(&replacement[i]);
+        (() @trusted { pureFree(_cells.ptr); })();
+        _cells = replacement;
     }
 
     // Deep-copy `other`'s dimensions + live cells into this (reusing capacity).
@@ -323,11 +384,7 @@ unittest
     assert(g[0, 0].grapheme == "h");
     assert(g[1, 0].style.attrs == TextAttr.bold);
     assert(g[2, 0].grapheme == " "); // untouched blank
-    // 16 grapheme bytes + len + width + the OSC 8 link id + the shaped
-    // 3-word (12 B) style. The id is a `ushort` rather than a `uint` to keep
-    // the struct's alignment at 1: a `uint` would cost six bytes here, not two.
-    static assert(CellStyle.sizeof == 12);
-    static assert(Cell.sizeof == 32);
+    // Long cluster storage is owned independently of the inline capacity.
 }
 
 @("cell.grid.wideGlyphContinuation")
@@ -389,4 +446,55 @@ unittest
     const st = CellStyle(fg: Color.fromRgb(1, 2, 3));
     g.fillRect(0, 0, 4, 5, st);
     assert(g[2, 2].grapheme == " " && g[2, 2].style.fg == Color.fromRgb(1, 2, 3));
+}
+
+@("cell.grid.longClustersAndOwnedCopies")
+@safe nothrow
+unittest
+{
+    char[1025] cluster;
+    cluster[0] = 'A';
+    foreach (i; 0 .. 512)
+        cluster[1 + i * 2 .. 3 + i * 2] = "\u0301";
+    Grid grid;
+    grid.resize(4, 1);
+    assert(grid.putText(0, 0, cluster[], CellStyle.init) == 1);
+    assert(grid[0, 0].grapheme == cluster[]);
+    auto previous = grid;
+    grid.putText(0, 0, "B", CellStyle.init);
+    assert(grid[0, 0].grapheme == "B");
+    assert(previous[0, 0].grapheme == cluster[]);
+    Cell detached;
+    {
+        Grid temporary;
+        temporary.resize(2, 1);
+        temporary.putText(0, 0, cluster[], CellStyle.init);
+        detached = temporary[0, 0];
+    }
+    assert(detached.grapheme == cluster[]);
+    previous.resize(64, 4);
+    previous.putText(0, 0, cluster[], CellStyle.init);
+    assert(previous[0, 0].grapheme == cluster[]);
+}
+
+@("cell.grid.wholeClusterFitAndMalformedRendering")
+@safe nothrow
+unittest
+{
+    Grid grid;
+    grid.resize(3, 2);
+    assert(grid.putText(0, 0, "👩‍👩‍👧‍👦x", CellStyle.init) == 3);
+    assert(grid[0, 0].grapheme == "👩‍👩‍👧‍👦");
+    assert(grid[0, 0].width == 2 && grid[1, 0].width == 0);
+    assert(grid[2, 0].grapheme == "x");
+    assert(grid.putText(2, 0, "界", CellStyle.init) == 2);
+    assert(grid[2, 0].grapheme == "x");
+    char[33] malformed;
+    malformed[0] = '\xFF';
+    foreach (i; 0 .. 16)
+        malformed[1 + i * 2 .. 3 + i * 2] = "\u0301";
+    assert(grid.putText(0, 1, malformed[], CellStyle.init) == 1);
+    const rendered = grid[0, 1].grapheme;
+    assert(rendered.length == 35 && rendered[0 .. 3] == "\uFFFD");
+    assert(rendered[3 .. $] == malformed[1 .. $]);
 }

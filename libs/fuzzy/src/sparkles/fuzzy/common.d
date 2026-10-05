@@ -3,8 +3,9 @@ module sparkles.fuzzy.common;
 
 import expected : Expected, err, ok;
 
-import sparkles.base.text.analysis : StopwordLexicon;
+import sparkles.base.text.analysis : AnalysisWorkspace, StopwordLexicon;
 import sparkles.base.text.errors : NoGcHook;
+import std.algorithm.comparison : max;
 
 /// Default compile-time capacities. Callers may provide a compatible type.
 struct DefaultFuzzyCaps
@@ -22,6 +23,20 @@ struct DefaultFuzzyCaps
     enum size_t maxNormalizationSegment = 64;
     enum size_t maxTypos = 6;
 }
+
+/** Reusable Unicode storage shared by query compilation and candidate analysis.
+Root-profile stages expand by at most six units per original UTF-8 byte (Unicode
+18's FDFA compatibility mapping attains 18/3). Final query/candidate limits remain
+separate; lexical glob syntax also needs room before it becomes instructions.
+Heap-own this workspace and reuse it. Hot operations never allocate.
+*/
+alias FuzzyTextWorkspace(Caps = DefaultFuzzyCaps) = AnalysisWorkspace!(
+    max(Caps.maxQueryUnits, Caps.maxCandidateUnits,
+        2 * Caps.maxGlobInstructions + 5 * Caps.maxGlobRanges),
+    Caps.maxNormalizationSegment,
+    max(max(Caps.maxQueryUnits, Caps.maxCandidateUnits,
+        2 * Caps.maxGlobInstructions + 5 * Caps.maxGlobRanges),
+        6 * max(Caps.maxQueryBytes, Caps.maxCandidateBytes)));
 
 /// Runtime limits validated against a compile-time capacity type.
 struct FuzzyLimits

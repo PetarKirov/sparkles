@@ -15,6 +15,10 @@ import core.attribute : selector;
 import sparkles.base.buffer : InlineBuffer;
 import sparkles.base.text.cstring : toTempStringz;
 import sparkles.base.text.utf8 : validateUtf8;
+import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus, scalarUnits;
+import sparkles.base.text.utf16 : measureConversion;
+import sparkles.base.text.source_map : SourceByteOffset, Utf16Offset,
+    MapAffinity, MapResult, MapStatus;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
 import core.time : Duration;
@@ -1006,7 +1010,7 @@ struct AppKitWsi
             onUnmarkText(view);
             return;
         }
-        slot.markedUnits16 = utf16Length(bytes);
+        slot.markedUnits16 = measureConversion!wchar(bytes).value.payload;
         emit(id, appKitComposition(bytes, selectedRange.location,
             selectedRange.length));
     }
@@ -1074,40 +1078,9 @@ struct AppKitWsi
     package static dchar firstScalar(scope const(char)[] text)
         @safe pure nothrow @nogc
     {
-        if (text.length == 0)
-            return dchar.init;
-        const first = text[0];
-        if (first < 0x80)
-            return first;
-        uint continuations;
-        uint value;
-        if ((first & 0xE0) == 0xC0)
-        {
-            continuations = 1;
-            value = first & 0x1F;
-        }
-        else if ((first & 0xF0) == 0xE0)
-        {
-            continuations = 2;
-            value = first & 0x0F;
-        }
-        else if ((first & 0xF8) == 0xF0)
-        {
-            continuations = 3;
-            value = first & 0x07;
-        }
-        else
-            return dchar.init;
-        if (text.length < 1 + continuations)
-            return dchar.init;
-        foreach (i; 0 .. continuations)
-        {
-            const unit = text[1 + i];
-            if ((unit & 0xC0) != 0x80)
-                return dchar.init;
-            value = (value << 6) | (unit & 0x3F);
-        }
-        return cast(dchar) value;
+        const decoded = decodeToken(text, UtfMode.strict);
+        return decoded.result.status == UtfStatus.ok
+            ? decoded.token.scalar : dchar.init;
     }
 
     private bool cursorHidden_;
@@ -1491,37 +1464,45 @@ private extern (D) void adoptTextInputProtocol(SparklesWsiView view)
         class_addProtocol(cls, protocol);
 }
 
-/// UTF-16 code units of a valid UTF-8 string (astral scalars count two).
-package extern (D) ulong utf16Length(scope const(char)[] text)
+/**
+Maps native UTF-16 coordinates onto the event's UTF-8 source bytes without
+allocating a dense map. The caller MUST validate the complete UTF-8 source first.
+Out-of-range native positions clamp to the end; an interior surrogate-pair
+position requires an explicit affinity.
+*/
+private extern (D) MapResult!SourceByteOffset mapValidatedUtf16Offset(
+    scope const(char)[] text, Utf16Offset units, MapAffinity affinity)
     @safe pure nothrow @nogc
 {
-    ulong units;
-    size_t i;
-    while (i < text.length)
+    size_t at, seen;
+    while (at < text.length)
     {
-        const lead = text[i];
-        const step = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
-        units += step == 4 ? 2 : 1;
-        i += step;
+        if (units.value == seen)
+        {
+            const boundary = SourceByteOffset(at);
+            return MapResult!SourceByteOffset(value: boundary,
+                lower: boundary, upper: boundary, exact: true);
+        }
+        const decoded = decodeToken(text[at .. $], UtfMode.strict, true, at);
+        assert(decoded.result.status == UtfStatus.ok);
+        const next = seen + scalarUnits!wchar(decoded.token.scalar);
+        if (units.value < next)
+        {
+            const lower = SourceByteOffset(at);
+            const upper = SourceByteOffset(decoded.token.end);
+            if (affinity == MapAffinity.exact)
+                return MapResult!SourceByteOffset(status: MapStatus.notBoundary,
+                    lower: lower, upper: upper);
+            return MapResult!SourceByteOffset(
+                value: affinity == MapAffinity.before ? lower : upper,
+                lower: lower, upper: upper, snapped: true);
+        }
+        seen = next;
+        at = decoded.token.end;
     }
-    return units;
-}
-
-/// Byte offset of a UTF-16 code-unit index into a valid UTF-8 string,
-/// clamped to the end.
-package extern (D) size_t utf16UnitsToByteOffset(scope const(char)[] text,
-    ulong units) @safe pure nothrow @nogc
-{
-    size_t i;
-    ulong seen;
-    while (i < text.length && seen < units)
-    {
-        const lead = text[i];
-        const step = lead < 0x80 ? 1 : lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
-        seen += step == 4 ? 2 : 1;
-        i += step;
-    }
-    return i;
+    const boundary = SourceByteOffset(text.length);
+    return MapResult!SourceByteOffset(value: boundary, lower: boundary, upper: boundary,
+        exact: units.value == seen, snapped: units.value != seen);
 }
 
 /**
@@ -1535,16 +1516,22 @@ extern (D) CompositionEvent appKitComposition(scope const(char)[] preedit,
     ulong selLocation16, ulong selLength16) @safe pure nothrow @nogc
 {
     CompositionEvent event;
-    if (!event.preedit.assign(preedit))
+    // A strict map must never certify a prefix while ignoring a malformed suffix.
+    if (measureConversion!wchar(preedit).hasError || !event.preedit.assign(preedit))
         return event;
     if (preedit.length == 0)
         return event;
     const selStart = selLocation16 == nsNotFound
         ? preedit.length
-        : utf16UnitsToByteOffset(preedit, selLocation16);
+        : mapValidatedUtf16Offset(preedit, Utf16Offset(cast(size_t) selLocation16),
+            MapAffinity.before).value.value;
+    // Saturating native addition prevents a hostile range from wrapping backwards.
+    const endUnits = selLength16 > ulong.max - selLocation16
+        ? ulong.max : selLocation16 + selLength16;
     const selEnd = selLocation16 == nsNotFound
         ? preedit.length
-        : utf16UnitsToByteOffset(preedit, selLocation16 + selLength16);
+        : mapValidatedUtf16Offset(preedit, Utf16Offset(cast(size_t) endUnits),
+            selLength16 ? MapAffinity.after : MapAffinity.before).value.value;
     event.cursor = cast(ushort) selStart;
     event.segments[0] = CompositionSegment(0, cast(ushort) preedit.length,
         CompositionSegmentStyle.underline);
@@ -1585,7 +1572,20 @@ unittest
     const parked = appKitComposition("ab", nsNotFound, 0);
     assert(parked.cursor == 2 && parked.selectionLength == 0);
 
-    assert(utf16Length("a😀b") == 4);
+    assert(measureConversion!wchar("a😀b").value.payload == 4);
+
+    // Pair interiors expand selected text, but a caret must stay a caret.
+    const interiorSelection = appKitComposition("a😀b", 2, 1);
+    assert(interiorSelection.cursor == 1 && interiorSelection.selectionLength == 4);
+    const interiorCaret = appKitComposition("a😀b", 2, 0);
+    assert(interiorCaret.cursor == 1 && interiorCaret.selectionLength == 0);
+    assert(mapValidatedUtf16Offset("a😀b", Utf16Offset(2),
+        MapAffinity.exact).status == MapStatus.notBoundary);
+    // The caller cannot accept a valid-prefix coordinate with an invalid suffix.
+    const invalidSuffix = appKitComposition("a\xFF", 0, 0);
+    assert(invalidSuffix.preedit.empty && invalidSuffix.segmentCount == 0);
+    const overflow = appKitComposition("a😀b", ulong.max - 1, 8);
+    assert(overflow.cursor == 6 && overflow.selectionLength == 0);
 }
 
 private WsiResult!T appKitFailure(T)(WsiOperation operation, long nativeCode,
@@ -1635,4 +1635,7 @@ unittest
     assert(AppKitWsi.firstScalar("") == dchar.init);
     assert(AppKitWsi.firstScalar("\xC3") == dchar.init);
     assert(AppKitWsi.firstScalar("\xFF") == dchar.init);
+    assert(AppKitWsi.firstScalar("\xC0\xAF") == dchar.init);
+    assert(AppKitWsi.firstScalar("\xED\xA0\x80") == dchar.init);
+    assert(AppKitWsi.firstScalar("\xF4\x90\x80\x80") == dchar.init);
 }

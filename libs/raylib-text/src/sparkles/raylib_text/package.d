@@ -18,9 +18,15 @@ queues cache misses; call `FontSet.flushPending` after `EndDrawing` and repaint
 when it returns true. Reloading or unloading the FontSet releases its shaped
 textures and native faces together with the raylib atlases.
 
-The pure logic (fallback selection, atlas ranges, cell-metric math,
-`TextStyle` → draw-op mapping, grapheme encoding, column widths) is unit-tested
-directly; the GL-backed rendering is validated by the apps' screenshot goldens.
+The pure logic (fallback selection, atlas ranges, cell-metric math and
+`TextStyle` → draw-op mapping) is unit-tested directly. Styled runs and terminal
+clusters share the owned base grapheme/cell policy, with no scalar-count cap;
+GL-backed rendering is validated by the apps' screenshot goldens. Native
+shaping is limited by HarfBuzz's signed-int input count and available memory.
+Rasterization rejects oversized bitmaps rather than drawing a clipped prefix.
+When no installed face can shape a cluster, the atlas fallback overlays its
+members at the cluster origin; it cannot synthesize ligatures, contextual
+placement, color emoji, or font coverage.
 */
 module sparkles.raylib_text;
 

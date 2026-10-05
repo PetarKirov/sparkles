@@ -80,13 +80,11 @@ enum size_t pickerTopK = 128;
 /**
 A host's picker, owned off the collected heap.
 
-A `PickerHost` is a few megabytes — four generation slots of matcher
-workspace plus one for render-time positions — and asking the collector for a
-block that size crashes inside its stack scan on macOS when the requesting
-thread is not the main one (a test runs on a `std.parallelism` worker, whose
-stack is 512 KiB there). `Unique` allocates it with `malloc` instead, and
-registers the block as a root range so the paths the finder owns stay
-reachable.
+`Unique` keeps the host address-stable and registers its pointer-bearing
+metadata as a collector root so retained corpus snapshots and finder paths stay
+reachable. The four generation-slot matchers and render-time positions matcher
+are separately owned pointer-free allocations: their large arenas are never
+part of the host's scanned root range.
 */
 alias OwnedPicker = Unique!PickerHost;
 
@@ -109,9 +107,9 @@ struct PickerHost
     The content-search corpus, live when `source == PickerSource.grep`.
 
     Held BESIDE the files finder rather than selected by templating
-    `PickerHost` on its source: the scheduler's generation slots are
-    megabytes of workspace, and a template would duplicate them once per
-    source. Dispatch is a `final switch`, so the compiler proves every arm
+    `PickerHost` on its source: each scheduler slot owns exclusive matcher
+    scratch, and a template would duplicate it once per source. Dispatch is
+    a `final switch`, so the compiler proves every arm
     is answered.
     */
     GrepFinder grep;
@@ -198,7 +196,7 @@ struct PickerHost
     // ranges per visible row (the positions-on-demand doctrine — never
     // stored on results), and the resolved selected path the hosts feed
     // their preview document pane with.
-    private MatcherWorkspace!DefaultFuzzyCaps positionsWorkspace;
+    private Unique!(MatcherWorkspace!DefaultFuzzyCaps) positionsWorkspace;
     // Indexed by PAINTED row, not by ranked row: highlights are only worth
     // deriving for what the reader can see, and with the kept top-K deeper
     // than the viewport, deriving all of them would run the positions tier
@@ -224,6 +222,8 @@ struct PickerHost
         const(string)[] excludeGlobs = null) @system
     {
         source = PickerSource.files;
+        initializeWorkspaces();
+        scheduler.initialize();
         if (!poolTried)
         {
             // One worker: the search is chunked and cancellable, and the UI
@@ -259,6 +259,7 @@ struct PickerHost
         const(string)[] excludeGlobs = null) @system
     {
         source = PickerSource.grep;
+        initializeWorkspaces();
         scheduler.cancel(); // the fuzzy scheduler owns nothing here
         grep.openCorpus(root, includeGlobs, excludeGlobs);
         state.viewRows = pickerVisibleRows;
@@ -444,7 +445,8 @@ struct PickerHost
     /// keystroke, where the search path already parses the query.
     private Location promptLocation() @system
     {
-        auto parsed = parseQuery(state.prompt.text);
+        auto parsed = parseQuery(state.prompt.text,
+            positionsWorkspace.get.textWorkspace);
         return parsed.hasError ? Location.init : parsed.value.location;
     }
 
@@ -670,6 +672,15 @@ struct PickerHost
     }
 
 private:
+    // The owner contains the actual slices/pool roots; the large pointer-free
+    // render arena has its own unscanned allocation and never joins a worker.
+    void initializeWorkspaces() @safe pure nothrow @nogc
+    {
+        if (positionsWorkspace.empty)
+            positionsWorkspace = makeUnique!(MatcherWorkspace!DefaultFuzzyCaps)();
+        assert(!positionsWorkspace.empty, "PickerHost: workspace allocation failed");
+    }
+
     /**
     Derive each visible row's fuzzy-match byte ranges by re-running the
     positions tier against the same defaults the search admitted with — the
@@ -681,7 +692,8 @@ private:
         if (!state.active || state.rowCount == 0
             || state.prompt.length == 0)
             return;
-        auto parsed = parseQuery(state.prompt.text);
+        auto parsed = parseQuery(state.prompt.text,
+            positionsWorkspace.get.textWorkspace);
         if (parsed.hasError)
             return;
         auto snap = finder.snapshot();
@@ -692,7 +704,7 @@ private:
                 continue;
             TextRange[64] buffer = void;
             auto found = positions(parsed.value, snap.candidates[index],
-                MatchConfig.init, FuzzyLimits.init, positionsWorkspace,
+                MatchConfig.init, FuzzyLimits.init, positionsWorkspace.get,
                 buffer);
             if (found.hasError)
                 continue; // an over-long range set simply shows unhighlighted

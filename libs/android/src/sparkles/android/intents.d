@@ -136,12 +136,13 @@ string shareText(string text, string subject = null) @trusted nothrow
 /// A `java.lang.String` from UTF-8 text (`null` on failure).
 jstring utf8String(ref JniFrame f, string s) @system nothrow
 {
-    import std.utf : toUTF16;
+    import sparkles.base.text.utf16 : measureConversion, utf8ToUtf16;
 
-    wstring w;
-    try
-        w = s.toUTF16;
-    catch (Exception)
+    const measured = measureConversion!wchar(s);
+    if (measured.hasError)
+        return null;
+    auto w = new wchar[measured.value.required];
+    if (utf8ToUtf16(s, w).hasError)
         return null;
     return f.newString(w);
 }

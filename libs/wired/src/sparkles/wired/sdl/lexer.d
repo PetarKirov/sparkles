@@ -6,6 +6,8 @@ import std.datetime.date : Date;
 
 import sparkles.base.buffer : SharedBuffer, Storage;
 import sparkles.base.text.errors : valueOf;
+import sparkles.base.text.unicode_tables : generalCategory, GeneralCategory,
+    unicodeProperty, UnicodeProperty;
 import sparkles.wired.sdl.config;
 import sparkles.wired.sdl.document;
 import sparkles.wired.sdl.error;
@@ -130,9 +132,9 @@ private size_t utf8Length(scope const(char)[] source, size_t at)
 private dchar codePointAt(scope const(char)[] source, size_t at)
     @safe pure nothrow @nogc
 {
-    import sparkles.base.text.utf : decodeFirstUtf8;
+    import sparkles.base.text.utf : decodeToken, UtfMode;
 
-    return decodeFirstUtf8(source[at .. $]);
+    return decodeToken(source[at .. $], UtfMode.replacement).token.scalar;
 }
 
 private bool isAsciiSpace(char c) @safe pure nothrow @nogc
@@ -727,11 +729,9 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                 advance(width ? width : 1);
             else if (cast(ubyte) c >= 0x80)
             {
-                import std.uni : isWhite;
-
                 width = utf8Length(_source, _at);
                 if (width && config.syntax.unicodeWhitespace
-                    && isWhite(codePointAt(_source, _at)))
+                    && unicodeProperty(codePointAt(_source, _at), UnicodeProperty.WSpace))
                     advance(width);
                 else
                 {
@@ -774,10 +774,8 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
             }
             if (cast(ubyte) c >= 0x80)
             {
-                import std.uni : isWhite;
-
                 width = utf8Length(_source, payloadAt);
-                if (width && isWhite(codePointAt(_source, payloadAt)))
+                if (width && unicodeProperty(codePointAt(_source, payloadAt), UnicodeProperty.WSpace))
                 {
                     payloadAt += width;
                     continue;
@@ -886,20 +884,27 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
 
     private bool identifierStart(dchar cp) scope
     {
-        import std.uni : isAlpha;
-
-        return cp == '_' || cp < 0x80 && ((cp >= 'A' && cp <= 'Z')
-            || (cp >= 'a' && cp <= 'z'))
-            || config.syntax.unicodeIdentifiers && cp >= 0x80 && isAlpha(cp);
+        if (cp == '_' || cp < 0x80 && ((cp >= 'A' && cp <= 'Z')
+            || (cp >= 'a' && cp <= 'z')))
+            return true;
+        if (!config.syntax.unicodeIdentifiers || cp < 0x80)
+            return false;
+        const category = generalCategory(cp);
+        return category == GeneralCategory.Lu || category == GeneralCategory.Ll
+            || category == GeneralCategory.Lt || category == GeneralCategory.Lm
+            || category == GeneralCategory.Lo;
     }
 
     private bool identifierContinue(dchar cp) scope
     {
-        import std.uni : isAlpha, isNumber;
-
-        return identifierStart(cp) || (cp >= '0' && cp <= '9') || cp == '-'
-            || cp == '.' || cp == '$'
-            || config.syntax.unicodeIdentifiers && cp >= 0x80 && isNumber(cp);
+        if (identifierStart(cp) || (cp >= '0' && cp <= '9') || cp == '-'
+            || cp == '.' || cp == '$')
+            return true;
+        if (!config.syntax.unicodeIdentifiers || cp < 0x80)
+            return false;
+        const category = generalCategory(cp);
+        return category == GeneralCategory.Nd || category == GeneralCategory.Nl
+            || category == GeneralCategory.No;
     }
 
     private void scanIdentifier() scope
@@ -986,8 +991,6 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
             }
             if (cast(ubyte) _source[_at] >= 0x80)
             {
-                import std.uni : isWhite;
-
                 const width = utf8Length(_source, _at);
                 if (width == 0)
                 {
@@ -1017,7 +1020,7 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
                     }
                     return;
                 }
-                if (isWhite(cp))
+                if (unicodeProperty(cp, UnicodeProperty.WSpace))
                 {
                     const start = _position;
                     advance(width);
@@ -1631,10 +1634,8 @@ package SdlExpected!SdlScalar decodeSdlScalarInto(
                 }
                 if (cast(ubyte) token.raw[at] >= 0x80)
                 {
-                    import std.uni : isWhite;
-
                     width = utf8Length(token.raw, at);
-                    if (width && isWhite(codePointAt(token.raw, at)))
+                    if (width && unicodeProperty(codePointAt(token.raw, at), UnicodeProperty.WSpace))
                     {
                         at += width;
                         continue;

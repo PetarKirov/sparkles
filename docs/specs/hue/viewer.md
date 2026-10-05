@@ -124,6 +124,12 @@ remaining ones, since it changes how a whole pane selects.
 | NAV6 | **A resize must only change how much of the file follows the first line.** A pane that grew must not scroll the content up to keep the tail flush with the bottom; the offset may legally sit past the last full screen, downward travel is then refused rather than snapped, and scrolling back inside the clamp restores ordinary behaviour. Every scroll container the offset round-trips through must be published the same extent (`scrollExtent`). | interactive | full (`52610621`) | `TSF2`     | `scrollVertical`/`scrollTo`/`scrollExtent`     |
 | NAV7 | The rule must hold for **every scroller keyed to content**: the document view in both backends, the explorer and inspector trees (`TreeViewState.resize` — row lists, so only the growth case applies), and the DSV browser (which scrolls through the document pipeline). Fence and table inner viewports are anchored by construction — their offsets are keyed by source span and their bodies do not re-wrap.                                        | interactive | full (`d658bada`) | —          | `tree_view.resize`; `fenceScrollAt`            |
 
+The width-reflow regressions exercise parsed Markdown preview paragraphs, which
+actually wrap at the bounded content width, and select `segment` or `line`
+explicitly. Raw source-code views use `TextWrap.none` and horizontal scrolling;
+their anchor regressions preserve unchanged source rows rather than assume that
+a narrower pane wraps code.
+
 ## Scrollbar (`SCB`)
 
 | ID   | Requirement                                                                                                                               | Tier                  | Status | Supersedes | Traces to                                                  |

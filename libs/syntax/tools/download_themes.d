@@ -15,6 +15,7 @@ import std.net.curl;
 import std.path;
 import std.stdio;
 import std.string;
+import sparkles.base.text.case_text : asciiLower, unicodeLower;
 
 import sparkles.syntax.label : standardLabels;
 
@@ -298,7 +299,7 @@ string colorExpr(string cleanHex)
 string parseTextAttr(string styleStr)
 {
     if (styleStr.length == 0) return "TextAttr.none";
-    auto parts = styleStr.toLower().split();
+    auto parts = styleStr.asciiLower().split();
     string[] flags;
     foreach (p; parts)
     {
@@ -319,7 +320,7 @@ bool hasUnderlineStyle(string styleStr)
 {
     import std.algorithm.searching : canFind;
 
-    return styleStr.toLower().split().canFind("underline");
+    return styleStr.asciiLower().split().canFind("underline");
 }
 
 string getJsonStringOpt(ref JSONValue json, string[] path)
@@ -665,7 +666,7 @@ EOF";
     bool[string] keysSeen;
     foreach (theme; results)
     {
-        const simplified = theme.name.toLower().replace(" ", "").replace("-", "");
+        const simplified = theme.name.unicodeLower().replace(" ", "").replace("-", "");
         foreach (key; [theme.name, simplified])
         {
             if (key in keysSeen)

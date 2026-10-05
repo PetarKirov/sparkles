@@ -133,7 +133,8 @@ import std.process : environment, execute;
 import std.range : iota;
 import std.regex : ctRegex, matchFirst;
 import std.stdio : stderr, stdout, writeln;
-import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight, toLower;
+import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight;
+import sparkles.base.text.case_text : asciiLower, unicodeLower;
 
 // sparkles packages
 import sparkles.core_cli.args : Argument, HelpInfo, Option, parseCli, reportCliError;
@@ -983,7 +984,7 @@ private int runCheckCommitScope(string msgSource)
     import std.process : execute;
     import std.regex : ctRegex, matchFirst;
     import std.stdio : stderr;
-    import std.string : lineSplitter, strip, toLower;
+    import std.string : lineSplitter, strip;
 
     static immutable badScopes = [
         "wip", "todo", "tmp", "temp", "misc", "various", "update", "updates",
@@ -1043,7 +1044,7 @@ private int runCheckCommitScope(string msgSource)
         return 0; // no scope present — allowed
 
     // Check useless scopes
-    auto lowered = scopeText.toLower;
+    auto lowered = scopeText.asciiLower;
     if (badScopes.canFind(lowered))
     {
         stderr.writeln("✗ Useless commit scope detected.\n");
@@ -4275,7 +4276,7 @@ private bool containsKeyword(string label)
         "proposal",
     ];
 
-    const lower = label.toLower;
+    const lower = label.unicodeLower;
     return keywords.any!(kw => lower.canFind(kw));
 }
 
@@ -5142,7 +5143,7 @@ private StandaloneExampleSpec parseStandaloneExampleSpec(const(char[])[] lines)
             // lowercased; arguments are the author's, case included.
             const value = stripped[metadataPrefix.length .. $].strip;
             const spaceIdx = value.indexOf(' ');
-            const modeWord = (spaceIdx < 0 ? value : value[0 .. spaceIdx]).toLower;
+            const modeWord = (spaceIdx < 0 ? value : value[0 .. spaceIdx]).asciiLower;
             const argsPart = spaceIdx < 0 ? "" : value[spaceIdx + 1 .. $].strip;
 
             if (modeWord == "build-only")

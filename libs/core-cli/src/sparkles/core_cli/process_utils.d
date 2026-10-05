@@ -727,34 +727,17 @@ private:
 
     static string sanitizeLine(const(ubyte)[] bytes)
     {
-        import std.utf : validate, UTFException;
+        import sparkles.base.text.utf : UtfMode;
+        import sparkles.base.text.utf16 : measureConversion, utf8ToUtf8;
+        import std.exception : assumeUnique;
 
-        auto s = cast(const(char)[]) bytes;
-        try
-        {
-            validate(s);
-            return s.idup;
-        }
-        catch (UTFException)
-        {
-            import std.array : appender;
-
-            auto app = appender!string();
-            app.reserve(bytes.length);
-            size_t i = 0;
-            while (i < bytes.length)
-            {
-                import std.utf : decode, UseReplacementDchar;
-                size_t nextI = i;
-                dchar d = decode!(UseReplacementDchar.yes)(s, nextI);
-                import std.utf : encode;
-                char[4] buf;
-                const len = encode(buf, d);
-                app.put(buf[0 .. len]);
-                i = nextI;
-            }
-            return app.data;
-        }
+        const s = cast(const(char)[]) bytes;
+        const measured = measureConversion!char(s, UtfMode.replacement);
+        assert(measured.hasValue);
+        auto repaired = new char[measured.value.required];
+        const converted = utf8ToUtf8(s, repaired, UtfMode.replacement);
+        assert(converted.hasValue);
+        return assumeUnique(repaired);
     }
 
     void ingest()

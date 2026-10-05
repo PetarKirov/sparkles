@@ -17,6 +17,7 @@ module dsv_browser;
 import sparkles.doc_view.dsv_view : DsvInfo, DsvModel, DsvProjection, flagsOf;
 import sparkles.dsv : ColumnType, Constraint, ConstraintOp, decodeCell,
     Dialect, DsvDoc, parseDsv, ProjectionSpec, SortKey;
+import sparkles.fuzzy : MatcherWorkspace;
 
 import sparkles.base.buffer : SharedBuffer;
 
@@ -34,6 +35,16 @@ struct DsvBrowser
     /// so `pristine` stays a length check.
     uint[] colOrder;
     string filterError;    /// `DSF5`: non-empty = the last apply failed
+
+    private MatcherWorkspace!()* fuzzyWorkspace_;
+
+    /// Persistent heap scratch, kept across filter changes and reset.
+    ref MatcherWorkspace!() fuzzyWorkspace() @safe
+    {
+        if (fuzzyWorkspace_ is null)
+            fuzzyWorkspace_ = new MatcherWorkspace!();
+        return *fuzzyWorkspace_;
+    }
 
     bool pristine() const @safe pure nothrow @nogc
         => sortKeys.length == 0 && constraints.length == 0
@@ -440,16 +451,18 @@ private bool asciiEqNoCase(scope const(char)[] a, scope const(char)[] b)
 /// `sparkles:fuzzy`'s canonical bounded-deletion witness). Returns null when
 /// there are no parts (no masking). A cell the matcher cannot take (over its
 /// byte cap) falls back to a plain case-insensitive substring test.
-bool[] fuzzyRowMask(string dsvText, in DsvInfo info, const(string)[] parts) @safe
-    => fuzzyRowMask(DsvModel.of(dsvText, "", flagsOf(info)), parts);
+bool[] fuzzyRowMask(string dsvText, in DsvInfo info, const(string)[] parts,
+    ref MatcherWorkspace!() workspace) @safe
+    => fuzzyRowMask(DsvModel.of(dsvText, "", flagsOf(info)), parts, workspace);
 
 /// ditto, over a retained model (`DSN7`) — the form every host uses, so a
 /// keystroke in the filter bar does not re-parse the file the model already
 /// holds.
-bool[] fuzzyRowMask(DsvModel model, const(string)[] parts) @safe
+bool[] fuzzyRowMask(DsvModel model, const(string)[] parts,
+    ref MatcherWorkspace!() workspace) @safe
 {
-    import sparkles.fuzzy : CandidateView, DefaultFuzzyCaps, MatcherWorkspace,
-        MatchKind, match, parseQuery;
+    import sparkles.fuzzy : CandidateView,
+        MatchKind, match, parseQuery, QueryStorage;
 
     if (!parts.length || model is null || !model.usable)
         return null;
@@ -457,18 +470,17 @@ bool[] fuzzyRowMask(DsvModel model, const(string)[] parts) @safe
     ref const(DsvDoc) doc() @safe pure nothrow @nogc => model.document;
 
     // One parsed query per part (a part is one fuzzy term by construction).
-    alias Query = typeof(parseQuery("").value);
+    alias Query = QueryStorage!();
     auto queries = new Query[](0);
     foreach (p; parts)
     {
-        auto q = parseQuery(p);
+        auto q = parseQuery(p, workspace.textWorkspace);
         if (!q.hasError)
             queries ~= q.value;
     }
     if (!queries.length)
         return null;
 
-    auto ws = new MatcherWorkspace!DefaultFuzzyCaps;
     SharedBuffer!(char, 256) cellBuf;
     const first = doc.hasHeader ? 1 : 0;
     const total = doc.records.length - (doc.records.length ? first : 0);
@@ -487,7 +499,7 @@ bool[] fuzzyRowMask(DsvModel model, const(string)[] parts) @safe
                     cellBuf);
                 if (cell.length == 0)
                     continue;
-                auto m = match(q, CandidateView(path: cell), *ws);
+                auto m = match(q, CandidateView(path: cell), workspace);
                 if (m.hasError)
                 {
                     // Over-cap or exotic cell: degrade to substring.
@@ -515,13 +527,14 @@ bool[] fuzzyRowMask(DsvModel model, const(string)[] parts) @safe
 /// filtered grid re-ran a fuzzy match over every cell of the file. The memo
 /// also gives the projection memo a stable slice to key on: an unchanged
 /// filter hands back the identical mask.
-const(bool)[] rowMaskFor(DsvModel model, const(string)[] parts) @safe
+const(bool)[] rowMaskFor(DsvModel model, const(string)[] parts,
+    ref MatcherWorkspace!() workspace) @safe
 {
     if (model is null || !parts.length)
         return null;
     if (model.hasCachedRowMask(parts))
         return model.cachedRowMask(parts);
-    return model.cacheRowMask(parts, fuzzyRowMask(model, parts));
+    return model.cacheRowMask(parts, fuzzyRowMask(model, parts, workspace));
 }
 
 private bool containsNoCase(scope const(char)[] hay, scope const(char)[] needle)
@@ -682,14 +695,17 @@ private bool containsNoCase(scope const(char)[] hay, scope const(char)[] needle)
 @("dsv_browser.fuzzyRowMask.typoTolerantAnyCell")
 @safe unittest
 {
+    import sparkles.base.unique : makeUnique;
+
+    auto workspace = makeUnique!(MatcherWorkspace!())();
     const src = "name,tag\nalice,blue\nbob,green\ncarol,cyan\n";
     DsvInfo info = {
         present: true, dialect: Dialect(','), hasHeader: true,
     };
     // "gren" admits "green" (one deletion); parts AND across cells.
-    const m = fuzzyRowMask(src, info, ["gren"]);
+    const m = fuzzyRowMask(src, info, ["gren"], workspace.get);
     assert(m == [false, true, false]);
-    const both = fuzzyRowMask(src, info, ["carol", "cyan"]);
+    const both = fuzzyRowMask(src, info, ["carol", "cyan"], workspace.get);
     assert(both == [false, false, true]);
-    assert(fuzzyRowMask(src, info, null) is null);
+    assert(fuzzyRowMask(src, info, null, workspace.get) is null);
 }

@@ -196,16 +196,21 @@ static int st_requires_nominal_glyph(hb_unicode_funcs_t *unicode, uint32_t cp)
             category <= HB_UNICODE_GENERAL_CATEGORY_OTHER_SYMBOL);
 }
 
-STBitmap st_shape(STFace *face, const uint32_t *cps, unsigned count)
+STBitmap st_shape(STFace *face, const uint32_t *cps, size_t count)
 {
     STBitmap result = {0};
+    // HarfBuzz's bulk input length is signed-int-sized. Reject an unsupported
+    // full span before narrowing: never shape a silently truncated prefix.
     if (!face || (!cps && count) || count > INT_MAX) return result;
     hb_unicode_funcs_t *unicode = hb_unicode_funcs_get_default();
     if (count == 1 && st_requires_nominal_glyph(unicode, cps[0]) &&
         !st_maps_scalar(face, unicode, cps[0])) return result;
     hb_buffer_t *buffer = face->buffer;
     hb_buffer_reset(buffer);
-    hb_buffer_set_flags(buffer, HB_BUFFER_FLAG_REMOVE_DEFAULT_IGNORABLES);
+    // Keep HarfBuzz's zero-advance invisible placeholders.
+    // Removing default ignorables can change following mark offsets: a mark
+    // after repeated CGJs drifts left by one font advance per removed glyph.
+    hb_buffer_set_flags(buffer, HB_BUFFER_FLAG_DEFAULT);
     hb_buffer_add_codepoints(buffer, cps, (int)count, 0, (int)count);
     hb_buffer_guess_segment_properties(buffer);
     hb_shape(face->font, buffer, NULL, 0);

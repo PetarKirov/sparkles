@@ -14,11 +14,9 @@ cases — a rowspan cell's bands, and its content lines flowing $(I across) an
 interior rule line that vanishes inside the cell — so the view places what the
 core already solved rather than re-deriving it with `row`/`column` nesting.
 
-Measurement is the toolkit's `cellsOf` and wrapping is `sparkles.ui.wrap` —
-$(B not) the string view's grapheme-aware pair — because the display list and
-the selection geometry hard-wire `cellsOf`; a table measured any other way
-would misalign with its own painted spans. The two views therefore diverge on
-CJK/emoji widths, by design.
+String and widget views consume the same base terminalKitty cell plans.
+Styled span boundaries do not introduce grapheme boundaries or a second width
+authority; committed advances and exact source relationships survive projection.
 +/
 module sparkles.ui.components.table.widgets;
 
@@ -26,14 +24,16 @@ import std.conv : to;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.text.width : Align;
+import sparkles.base.text.wrap : WhitespaceMode;
 
 import sparkles.ui.canvas : RuleEdge;
 import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs, ScrollbarSpec;
-import sparkles.ui.geometry : Insets, Point, SizeSpec, cellsOf;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.state : ScrollAxis;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind;
-import sparkles.ui.wrap : TextSpan, TextWrap, wrapSpans;
+import sparkles.ui.wrap : TextSpan, TextWrap, wrapSpans, clipSpanLines;
 
 import sparkles.ui.components.table.grid;
 import sparkles.ui.components.table.layout;
@@ -61,7 +61,7 @@ struct TableCutout
 {
     bool present;
     size_t hitId;  /// the icon widget's `Widget.hitId`
-    TextSpan icon; /// e.g. `" ⧉ "` — its `cellsOf` width is the cutout width
+    TextSpan icon; /// e.g. `" ⧉ "` — its `visibleWidth` width is the cutout width
     RgbColor fg;   /// resolved icon color (the theme channel), gated by `hasFg`
     bool hasFg;    /// ditto
 }
@@ -196,8 +196,6 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     if (g.numRows == 0 || g.numCols == 0)
         return TableWidgetResult(b.container(WidgetKind.column, null), 0, 0);
 
-    static int measure(scope const(char)[] s) @safe pure nothrow @nogc
-        => cast(int) cellsOf(s);
 
     // Unwrapped lines (breaks only at embedded '\n') give the naturals.
     auto lines = new TextSpan[][][](g.anchors.length);
@@ -206,7 +204,7 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     {
         if (i >= authored || !spansOf[i].length)
             continue;
-        lines[i] = wrapSpans(spansOf[i], int.max, &measure);
+        lines[i] = wrapSpans(spansOf[i], int.max, 0, TextWrap.none, WhitespaceMode.preserve);
         foreach (line; lines[i])
             naturals[i] = maxOf(naturals[i], lineWidth(line));
     }
@@ -214,17 +212,21 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     auto decimalPads = anchorDecimalPads(g, props, lines);
     const widths = resolveColumnWidths(g, props, naturals, decimalPads);
 
-    // Re-wrap what no longer fits its resolved field (never when wrapping is
-    // off — a long line then just defines the column width, so nothing can
-    // overflow anyway).
+    // Re-wrap against each field's actual content capacity. Regardless of soft
+    // wrapping policy, commit whole-grapheme visible fitting once per anchor.
     auto lineCounts = new size_t[](g.anchors.length);
     foreach (i, ref a; g.anchors)
     {
         if (!lines[i].length)
             continue;
-        const f = contentField(a, widths, props, g.numCols);
+        const fullField = contentField(a, widths, props, g.numCols);
+        const decimalPad = decimalPads.length ? decimalPads[i] : 0;
+        const f = decimalPad > 0 && decimalPad < fullField
+            ? fullField - decimalPad : fullField;
         if (style.wrapCells && naturals[i] > f)
-            lines[i] = wrapSpans(spansOf[i], f > 1 ? cast(int) f : 1, &measure);
+            lines[i] = wrapSpans(spansOf[i], cast(int) f, 0,
+                TextWrap.greedy, WhitespaceMode.trimAroundBreak);
+        lines[i] = clipSpanLines(lines[i], f);
         lineCounts[i] = lines[i].length;
     }
     const rowHeights = resolveRowHeights(g, lineCounts);
@@ -368,7 +370,7 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
     if (sy < 0)
         sy = 0;
 
-    const iconW = cast(int) cellsOf(style.cutout.icon.text);
+    const iconW = cast(int) visibleWidth(style.cutout.icon.text);
     const cutout = style.cutout.present && props.border && iconW > 0
         && widths[g.numCols - 1] + 2 >= iconW;
 
@@ -801,7 +803,7 @@ private string repeatGlyph(dchar g, int n) @safe pure
 }
 
 /// The widget view's decimal tails: cells of one wrapped line after its last
-/// `'.'`, measured with `cellsOf` (span metadata carries the styling, so the
+/// `'.'`, measured with `visibleWidth` (span metadata carries the styling, so the
 /// text itself is escape-free — no stripping needed).
 private size_t[] anchorDecimalPads(in SlotGrid g, in TableProps p,
     in TextSpan[][][] lines) @safe pure
@@ -822,19 +824,24 @@ private size_t[] anchorDecimalPads(in SlotGrid g, in TableProps p,
 /// ditto
 private size_t decimalTailCells(in TextSpan[] line) @safe pure nothrow @nogc
 {
-    size_t dotSpan = size_t.max, dotOff;
-    foreach (si, ref s; line)
-        foreach (i, char ch; s.text)
-            if (ch == '.')
-            {
-                dotSpan = si;
-                dotOff = i;
-            }
-    if (dotSpan == size_t.max)
-        return size_t.max;
-    size_t w = cellsOf(line[dotSpan].text[dotOff + 1 .. $]);
-    foreach (ref s; line[dotSpan + 1 .. $])
-        w += cellsOf(s.text);
+    bool seen;
+    size_t w;
+    foreach (ref const span; line)
+    {
+        if (span.formatting) continue;
+        // Each projected piece retains its cluster's complete committed advance.
+        // A decimal separator establishes the following cell boundary, even if
+        // combining/style pieces continue its grapheme.
+        foreach (char ch; span.text)
+            if (ch == '.') { seen = true; w = 0; }
+        if (seen)
+        {
+            bool dot;
+            foreach (char ch; span.text) dot = dot || ch == '.';
+            if (!dot) w += cast(size_t) span.cellAdvance;
+        }
+    }
+    if (!seen) return size_t.max;
     return w;
 }
 
@@ -842,7 +849,7 @@ private size_t lineWidth(in TextSpan[] line) @safe pure nothrow @nogc
 {
     size_t w;
     foreach (ref s; line)
-        w += cellsOf(s.text);
+        w += cast(size_t) s.cellAdvance;
     return w;
 }
 
@@ -876,39 +883,32 @@ version (unittest)
         return out_;
     }
 
-    /// Render the widget table headlessly and dump the glyphs, per-row
-    /// right-trimmed — directly comparable with `drawTable`'s lines.
+    /// Serialize the actual cell painter and remove only ANSI controls, per-row
+    /// right-trimmed — complete grapheme bytes remain directly comparable.
     private string renderWidgetTable(in SpanCell[][] cells,
         TableProps props = TableProps.init,
-        TableWidgetStyle style = TableWidgetStyle.init) @safe
+        TableWidgetStyle style = TableWidgetStyle.init,
+        TableViewportSpec viewport = TableViewportSpec.init) @safe
     {
         auto b = Builder();
-        const res = buildTableWidgets(b, cells, props, style);
+        const res = buildTableWidgets(b, cells, props, style, viewport);
         auto tree = b.finish(res.root);
-        auto frames = layout(tree, Constraints(maxW: res.width));
+        auto frames = layout(tree, Constraints(maxW: res.viewWidth));
         const fg = RgbColor(0xcc, 0xcc, 0xcc), bg = RgbColor(0x1e, 0x1e, 0x1e);
-        auto grid = CellGrid(res.width, res.height, fg, bg);
+        auto grid = CellGrid(res.viewWidth, res.viewHeight, fg, bg);
         paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
             fg, bg));
 
-        import std.utf : encode;
-
-        string text;
-        foreach (y; 0 .. grid.height)
-        {
-            size_t lineEnd = text.length;
-            foreach (x; 0 .. grid.width)
-            {
-                char[4] buf;
-                const n = encode(buf, grid.cells[y * grid.width + x].glyph);
-                text ~= buf[0 .. n];
-                if (grid.cells[y * grid.width + x].glyph != ' ')
-                    lineEnd = text.length;
-            }
-            text = text[0 .. lineEnd];
-            text ~= '\n';
-        }
-        return text;
+        import std.array : appender, join;
+        import std.algorithm : map;
+        import std.string : splitLines, stripRight;
+        import sparkles.base.text.ansi : byAnsiToken;
+        auto ansi = appender!string();
+        grid.writeAnsi(ansi);
+        auto visible = appender!string();
+        foreach (token; byAnsiToken(ansi.data))
+            if (!token.isEscape) visible.put(token.slice);
+        return visible.data.splitLines.map!(line => line.stripRight ~ "\n").join;
     }
 
     /// `drawTable` with each line right-trimmed, for glyph-dump comparison.
@@ -1172,83 +1172,6 @@ version (unittest)
     assert(sawClip && sawIcon);
 }
 
-@("table.widgets.viewport.freezePanes")
-@safe unittest
-{
-    // Freeze one row top and bottom and the first column, with both
-    // viewports engaged and offsets: the 3x3 pane grid — corners static,
-    // frozen rows scrolling only horizontally, frozen columns only
-    // vertically, the center both ways; the h-bar spans the scrolling
-    // center segment only.
-    auto rows = new string[][](8);
-    rows[0] = ["id", "alpha column head", "beta column head", "gamma column"];
-    foreach (r; 1 .. 7)
-        rows[r] = ["r" ~ cast(char)('0' + r), "aaaaaaaaaaaa", "bbbbbbbbbbbb",
-            "cccccccccccc"];
-    rows[7] = ["Σ", "totals-a", "totals-b", "totals-c"];
-    auto b = Builder();
-    const res = buildTableWidgets(b, plainCells(rows),
-        TableProps(headerRows: 1), TableWidgetStyle(),
-        TableViewportSpec(availWidth: 30, maxLines: 6, x: 4, y: 1,
-            freezeTopRows: 1, freezeBottomRows: 1, freezeLeftColumns: 1));
-    assert(res.hBar && res.vBar);
-    assert(res.viewWidth == 30 && res.viewHeight == 8);
-
-    auto tree = b.finish(res.root);
-    auto frames = layout(tree, Constraints(maxW: 30));
-    assert(frames[res.root].rect.width == 30);
-    assert(frames[res.root].rect.height == 8);
-
-    bool sawCenter, sawHeadPane, sawGutterPane, sawTotalsText, sawGutterText;
-    int clipXOnly, clipYOnly;
-    foreach (i, ref n; tree.nodes)
-    {
-        if (n.clipX && n.clipY)
-        {
-            sawCenter = true;
-            assert(n.childOffset == Point(4, 1));
-        }
-        else if (n.clipX && n.childOffset.x == 4)
-            clipXOnly++; // top border seg + top/bottom center panes
-        else if (n.clipY && n.childOffset.y == 1)
-            clipYOnly++; // middle caps + middle left pane
-        foreach (ref sp; n.spans)
-        {
-            if (sp.text == "id")
-                sawHeadPane = true;
-            if (sp.text == "r3")
-                sawGutterText = true;
-            if (sp.text == "totals-a")
-                sawTotalsText = true;
-        }
-    }
-    assert(sawCenter && sawHeadPane && sawGutterText && sawTotalsText);
-    assert(clipXOnly == 3 && clipYOnly == 2);
-
-    // The frozen corner cell ("id") lays out statically under the border.
-    foreach (i, ref n; tree.nodes)
-        foreach (ref sp; n.spans)
-            if (sp.text == "id")
-                assert(frames[i].rect.y == 1 && frames[i].rect.x <= 2);
-
-    // A rowspan crossing the top freeze boundary disengages that band:
-    // identical emission shape to the unfrozen run.
-    auto spanCells = new SpanCell[][](4);
-    spanCells[0] = [SpanCell([TextSpan("tall", Slot.inherit)], rowSpan: 2),
-        SpanCell([TextSpan("b", Slot.inherit)])];
-    spanCells[1] = [SpanCell([TextSpan("c", Slot.inherit)])];
-    foreach (r; 2 .. 4)
-        spanCells[r] = [SpanCell([TextSpan("x", Slot.inherit)]),
-            SpanCell([TextSpan("y", Slot.inherit)])];
-    auto b4 = Builder();
-    const frozen = buildTableWidgets(b4, spanCells, TableProps(),
-        TableWidgetStyle(), TableViewportSpec(maxLines: 3, freezeTopRows: 1));
-    auto b5 = Builder();
-    const plain = buildTableWidgets(b5, spanCells, TableProps(),
-        TableWidgetStyle(), TableViewportSpec(maxLines: 3));
-    assert(b4.finish(frozen.root).nodes.length
-        == b5.finish(plain.root).nodes.length);
-}
 
 @("table.widgets.viewport.virtualBarDescribesTheWholeView")
 @safe unittest
@@ -1288,60 +1211,6 @@ version (unittest)
             || n.barEdge != RuleEdge.centerX);
 }
 
-@("table.widgets.viewport.pinnedHeaderBand")
-@safe unittest
-{
-    // headerRows:1 + pinHeader: the header row and its heavy rule split into
-    // a non-vertically-scrolling band (interior lines 0–1 → pinLines 2); the
-    // body scrolls below it in a shortened viewport, same total box height.
-    auto rows = new string[][](9);
-    rows[0] = ["colA", "colB"];
-    foreach (r; 1 .. 9)
-        rows[r] = ["a", "b"];
-    auto b = Builder();
-    const res = buildTableWidgets(b, plainCells(rows),
-        TableProps(headerRows: 1), TableWidgetStyle(),
-        TableViewportSpec(maxLines: 4, y: 2, vBarHitId: 800, pinHeader: true));
-    assert(res.vBar && !res.hBar);
-    assert(res.viewHeight == 6); // 4 interior lines + both borders
-
-    auto tree = b.finish(res.root);
-    auto frames = layout(tree, Constraints(maxW: 40));
-    assert(frames[res.root].rect.height == 6);
-
-    bool sawHeaderText, sawBodyClip, sawPinClip;
-    foreach (i, ref n; tree.nodes)
-    {
-        foreach (ref sp; n.spans)
-            if (sp.text == "colA")
-            {
-                sawHeaderText = true;
-                // The header band sits directly under the top border and
-                // does NOT carry the vertical offset.
-                assert(frames[i].rect.y == 1);
-            }
-        if (n.clipY && n.childOffset.y == 2)
-        {
-            sawBodyClip = true;
-            // bodyShown = shownLines(4) − pinLines(2).
-            assert(frames[i].rect.height == 2);
-        }
-        if (!n.clipY && n.clipX)
-            sawPinClip = true; // never engages here (no hOver): stays false
-    }
-    assert(sawHeaderText && sawBodyClip);
-    assert(!sawPinClip);
-
-    // pinHeader without headerRows is inert: identical emission shape.
-    auto b2 = Builder();
-    const plainRes = buildTableWidgets(b2, plainCells(rows), TableProps(),
-        TableWidgetStyle(), TableViewportSpec(maxLines: 4, y: 2));
-    auto b3 = Builder();
-    const pinnedRes = buildTableWidgets(b3, plainCells(rows), TableProps(),
-        TableWidgetStyle(), TableViewportSpec(maxLines: 4, y: 2, pinHeader: true));
-    assert(b2.finish(plainRes.root).nodes.length
-        == b3.finish(pinnedRes.root).nodes.length);
-}
 
 @("table.widgets.viewport.barsAreSemanticLeaves")
 @safe unittest
@@ -1492,4 +1361,79 @@ version (unittest)
     auto tree = b.finish(res.root);
     assert(firstUndeclaredSlot(tree, tableWidgetSlots) == Slot.inherit,
         "TOK6: an undeclared slot");
+}
+
+@("table.widgets.sharedUnicodeProfileAndStyledClusterParity")
+unittest
+{
+    string longCluster = "a";
+    foreach (_; 0 .. 48) longCluster ~= "\u0301";
+    const source = "界e\u0301🇺🇸👩‍💻" ~ longCluster;
+    const cells = [[SpanCell([
+        TextSpan("界e", Slot.code),
+        TextSpan("\u0301🇺", Slot.error),
+        TextSpan("🇸👩", Slot.docs),
+        TextSpan("\u200D💻" ~ longCluster, Slot.warn),
+    ])]];
+    foreach (props; [TableProps.init, TableProps(maxWidth: 5)])
+        assert(renderWidgetTable(cells, props) ==
+            trimmedDrawTable([[Cell(source)]], props));
+}
+
+@("table.widgets.contextualTabsAndDecimalParity")
+unittest
+{
+    import sparkles.base.text.wrap_plan : WrapAffinity;
+    import sparkles.ui.components.table.render : drawTableMapped;
+    auto rows = [["1.\t2"], ["3.45"]];
+    auto props = TableProps(columnAligns: [Align.decimal]);
+    checkGlyphParity(rows, props);
+    const mapped = drawTableMapped(rows, props);
+    const field = mapped.map.cellSpans(0, 0)[0];
+    const before = mapped.map.hit(field.line, field.xStart + 3, WrapAffinity.before);
+    const after = mapped.map.hit(field.line, field.xStart + 3, WrapAffinity.after);
+    assert(before.get.charInCell == 2 && after.get.charInCell == 3);
+    assert(mapped.map.cellText(0, 0)[before.get.charInCell .. after.get.charInCell] == "\t");
+}
+
+@("table.widgets.viewport.frozenBandsStayPaintedWhileCenterScrolls")
+unittest
+{
+    import std.string : splitLines;
+    import std.algorithm.searching : canFind;
+    auto rows = new string[][](8);
+    rows[0] = ["ID", "0123456789ABCDEF", "abcdefghijklmnop"];
+    foreach (r; 1 .. 7)
+        rows[r] = ["r" ~ cast(char)('0' + r), "0123456789ABCDEF", "abcdefghijklmnop"];
+    rows[7] = ["FT", "0123456789ABCDEF", "abcdefghijklmnop"];
+    auto cells = plainCells(rows);
+    auto props = TableProps(headerRows: 1);
+    auto viewport = TableViewportSpec(availWidth: 30, maxLines: 6,
+        freezeTopRows: 1, freezeBottomRows: 1, freezeLeftColumns: 1);
+    const before = renderWidgetTable(cells, props, TableWidgetStyle.init, viewport).splitLines;
+    viewport.x = 4;
+    viewport.y = 1;
+    const after = renderWidgetTable(cells, props, TableWidgetStyle.init, viewport).splitLines;
+    assert(before[1].canFind("ID") && after[1].canFind("ID"));
+    assert(before[6].canFind("FT") && after[6].canFind("FT"));
+    assert(before[3].canFind("r1") && after[3].canFind("r2"));
+    assert(before[1] != after[1]); // header center scrolls horizontally, not vertically
+}
+
+@("table.widgets.viewport.pinnedHeaderRemainsOnScreenWhileBodyScrolls")
+unittest
+{
+    import std.string : splitLines;
+    import std.algorithm.searching : canFind;
+    auto rows = new string[][](9);
+    rows[0] = ["HEAD", "COL"];
+    foreach (r; 1 .. 9) rows[r] = ["r" ~ cast(char)('0' + r), "v"];
+    auto cells = plainCells(rows);
+    auto props = TableProps(headerRows: 1);
+    auto viewport = TableViewportSpec(maxLines: 4, pinHeader: true);
+    const before = renderWidgetTable(cells, props, TableWidgetStyle.init, viewport).splitLines;
+    viewport.y = 2;
+    const after = renderWidgetTable(cells, props, TableWidgetStyle.init, viewport).splitLines;
+    assert(before[1] == after[1] && after[1].canFind("HEAD"));
+    assert(before[3].canFind("r1") && after[3].canFind("r3"));
 }

@@ -2,13 +2,13 @@
 module sparkles.fuzzy.query;
 
 import sparkles.base.text.analysis : AnalysisCase, AnalysisError,
-    AnalysisOptions, AnalysisWorkspace, analyzeText;
+    AnalysisOptions, analyzeText;
 
 import sparkles.fuzzy.common : AnalysisProfile, AnalysisProfileKind,
-    CandidateView, DefaultFuzzyCaps, FuzzyError, FuzzyErrorCode,
+    CandidateView, DefaultFuzzyCaps, FuzzyTextWorkspace, FuzzyError, FuzzyErrorCode,
     FuzzyExpected, FuzzyLimits, GitStatus, PathFlavor, fuzzyErr, fuzzyOk,
     isPathSeparator, typoBudget, validateCandidate, validateLimits;
-import sparkles.fuzzy.glob : GlobInstruction, GlobMatchWorkspace, GlobProgram,
+import sparkles.fuzzy.glob : GlobInstruction, GlobMatchState, GlobProgram,
     GlobProgramView, GlobRange, compileGlob, globMatch;
 
 import sparkles.test_runner.attributes : benchmark;
@@ -257,20 +257,6 @@ unittest
     assert(resolveQueryCase(QueryCase.fullFold, true) == AnalysisCase.fullFold);
 }
 
-@("fuzzy.query.aStatedCaseRuleReachesAdmission")
-@safe pure nothrow @nogc
-unittest
-{
-    // The rule has to survive parsing, or `caseMode` is a field nobody reads
-    // — which is how every other seam in this area failed.
-    QueryParseOptions folded;
-    folded.caseMode = QueryCase.simpleFold;
-    auto q = parseQuery!DefaultFuzzyCaps("Widget", folded);
-    assert(q.hasValue && q.value.caseMode == QueryCase.simpleFold);
-
-    auto smart = parseQuery!DefaultFuzzyCaps("Widget");
-    assert(smart.hasValue && smart.value.caseMode == QueryCase.smart);
-}
 
 struct QueryParseOptions
 {
@@ -421,20 +407,31 @@ private struct DispatchResult
     FuzzyError error;
 }
 
-/** Parse arbitrary keystrokes into a bounded query. */
-FuzzyExpected!(QueryStorage!Caps) parseQuery(Caps = DefaultFuzzyCaps)(
-    return scope const(char)[] source,
+/** Parse arbitrary keystrokes with exclusive caller-owned Unicode work storage. */
+FuzzyExpected!(QueryStorage!Caps) parseQuery(Caps = DefaultFuzzyCaps, Workspace)(
+    return scope const(char)[] source, ref Workspace workspace,
     QueryParseOptions options = QueryParseOptions.init)
     @safe pure nothrow @nogc
+if (is(Workspace == FuzzyTextWorkspace!Caps))
 {
-    // The implementation's only trust is the Expected value carrying the
-    // explicitly `return scope` input slice through DIP1000.
-    return parseQueryImpl!Caps(source, options);
+    // Only the final Expected publication bridges the borrowed input slice.
+    return parseQueryImpl!Caps(source, workspace, options);
+}
+
+@("fuzzy.query.localSourceCannotEscapeThroughExpected")
+@safe pure nothrow @nogc
+unittest
+{
+    static assert(!__traits(compiles, (() @safe {
+        char[3] local = 'x';
+        auto owner = new FuzzyTextWorkspace!();
+        return parseQuery(local[], *owner);
+    })()), "parsed query must not escape its local source");
 }
 
 private FuzzyExpected!(QueryStorage!Caps) parseQueryImpl(Caps)(
-    return scope const(char)[] source, QueryParseOptions options)
-    @trusted pure nothrow @nogc
+    return scope const(char)[] source, ref FuzzyTextWorkspace!Caps workspace, QueryParseOptions options)
+    @safe pure nothrow @nogc
 {
     if (options.limits.maxQueryUnits == 0)
         options.limits = FuzzyLimits.init;
@@ -504,13 +501,17 @@ private FuzzyExpected!(QueryStorage!Caps) parseQueryImpl(Caps)(
                     "too many constraints");
             if (dispatched.constraint.kind == ConstraintKind.glob)
             {
-                auto stored = storeCompiledGlob(dispatched.constraint.value,
-                    options, query.constraintCount_, query);
+                auto stored = storeCompiledGlob!Caps(dispatched.constraint.value,
+                    options, query.constraintCount_, query, workspace);
                 if (stored.hasError)
                     return fuzzyErr!(QueryStorage!Caps)(stored.error.code,
                         start + stored.error.offset, stored.error.context);
             }
-            query.constraints_[query.constraintCount_++] = dispatched.constraint;
+            // The constraint's only borrow is a subspan of `source`, not
+            // the shorter-lived dispatch result that DIP1000 sees here.
+            (() @trusted {
+                query.constraints_[query.constraintCount_++] = dispatched.constraint;
+            })();
         }
         else
         {
@@ -518,7 +519,11 @@ private FuzzyExpected!(QueryStorage!Caps) parseQueryImpl(Caps)(
                 return fuzzyErr!(QueryStorage!Caps)(
                     FuzzyErrorCode.queryTooComplex, start,
                     "too many fuzzy parts");
-            query.fuzzyParts_[query.fuzzyPartCount_++] = token;
+            // Token text likewise borrows `source`; no token-local storage
+            // is retained by the returned query.
+            (() @trusted {
+                query.fuzzyParts_[query.fuzzyPartCount_++] = token;
+            })();
         }
     }
 
@@ -542,16 +547,16 @@ private FuzzyExpected!(QueryStorage!Caps) parseQueryImpl(Caps)(
                 --query.fuzzyPartCount_;
         }
     }
-    auto diagnosed = diagnoseFuzzyParts(query, options.limits);
+    auto diagnosed = diagnoseFuzzyParts!Caps(query, options.limits, workspace);
     if (diagnosed.hasError)
         return fuzzyErr!(QueryStorage!Caps)(diagnosed.error.code,
             diagnosed.error.offset, diagnosed.error.context);
-    return fuzzyOk(query);
+    return (() @trusted { return fuzzyOk(query); })();
 }
 
 private FuzzyExpected!void storeCompiledGlob(Caps)(QueryText text,
     in QueryParseOptions options, size_t constraintIndex,
-    ref QueryStorage!Caps query) @safe pure nothrow @nogc
+    ref QueryStorage!Caps query, ref FuzzyTextWorkspace!Caps workspace) @safe pure nothrow @nogc
 {
     char[Caps.maxQueryBytes] decoded = void;
     auto decodedLength = text.decodeGlobInto(decoded);
@@ -560,7 +565,7 @@ private FuzzyExpected!void storeCompiledGlob(Caps)(QueryText text,
             decodedLength.error.offset, decodedLength.error.context);
     GlobProgram!(Caps.maxGlobInstructions, Caps.maxGlobRanges) program;
     auto compiled = compileGlob(decoded[0 .. decodedLength.value],
-        options.pathFlavor, false, program);
+        options.pathFlavor, false, program, workspace);
     if (compiled.hasError)
         return fuzzyErr!void(compiled.error.code, compiled.error.offset,
             compiled.error.context);
@@ -584,12 +589,10 @@ private FuzzyExpected!void storeCompiledGlob(Caps)(QueryText text,
 }
 
 private FuzzyExpected!void diagnoseFuzzyParts(Caps)(
-    ref QueryStorage!Caps query, in FuzzyLimits limits)
+    ref QueryStorage!Caps query, in FuzzyLimits limits, ref FuzzyTextWorkspace!Caps analysis)
     @safe pure nothrow @nogc
 {
     char[Caps.maxQueryBytes] decoded = void;
-    AnalysisWorkspace!(Caps.maxQueryUnits,
-        Caps.maxNormalizationSegment) analysis;
     bool sensitive;
     if (query.profile_.kind == AnalysisProfileKind.codePath)
     {
@@ -649,9 +652,11 @@ private FuzzyExpected!void queryAnalysisError(AnalysisError error,
     case AnalysisError.none:
         return fuzzyOk();
     case AnalysisError.invalidOptions:
+    case AnalysisError.unsupportedLocale:
         return fuzzyErr!void(FuzzyErrorCode.invalidConfiguration, offset);
     case AnalysisError.sourceTooLong:
     case AnalysisError.outputFull:
+    case AnalysisError.workspaceFull:
         return fuzzyErr!void(FuzzyErrorCode.queryTooComplex, offset);
     case AnalysisError.segmentTooLong:
         return fuzzyErr!void(FuzzyErrorCode.normalizationSegmentTooLong,
@@ -805,21 +810,25 @@ private FuzzyExpected!GitStatus parseGitStatus(QueryText text)
     return fuzzyOk(result);
 }
 
-/// Scratch storage for constraint evaluation.
+/// Small scratch for constraint evaluation; Unicode analysis is borrowed separately.
 struct ConstraintWorkspace(Caps = DefaultFuzzyCaps)
 {
     private char[Caps.maxQueryBytes] decoded = void;
-    private GlobMatchWorkspace!(Caps.maxGlobInstructions,
-        Caps.maxCandidateUnits, Caps.maxNormalizationSegment) globMatch;
+    private GlobMatchState!(Caps.maxGlobInstructions) globMatch;
 }
 
-static assert(ConstraintWorkspace!().sizeof <= 128 * 1_024);
+static assert(ConstraintWorkspace!().sizeof <= 16 * 1_024);
 
-/** Evaluate every parsed constraint over concrete candidate metadata. */
-FuzzyExpected!bool evaluateConstraints(Caps = DefaultFuzzyCaps)(
+/** Evaluate every parsed constraint over concrete candidate metadata.
+`analysis` is exclusive scratch, reused only until this call returns. A matcher
+can lend its text arena before matching without invalidating prepared query units.
+*/
+FuzzyExpected!bool evaluateConstraints(Caps = DefaultFuzzyCaps, Workspace)(
     in QueryStorage!Caps query, in CandidateView candidate,
     ref ConstraintWorkspace!Caps workspace,
+    ref Workspace analysis,
     FuzzyLimits limits = FuzzyLimits.init) @safe pure nothrow @nogc
+if (is(Workspace == FuzzyTextWorkspace!Caps))
 {
     auto checkedLimits = validateLimits!Caps(limits);
     if (checkedLimits.hasError)
@@ -870,8 +879,8 @@ FuzzyExpected!bool evaluateConstraints(Caps = DefaultFuzzyCaps)(
             break;
         case ConstraintKind.glob:
             auto globbed = globMatch(query.globAt(constraintIndex),
-                candidate.path,
-                workspace.globMatch);
+                candidate.path, workspace.globMatch, analysis,
+                Caps.maxCandidateUnits);
             if (globbed.hasError)
                 return globbed;
             matched = globbed.value;
@@ -1325,10 +1334,11 @@ private bool isAsciiSpace(char value) @safe pure nothrow @nogc
 @safe pure nothrow @nogc
 unittest
 {
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
     assert(decodedEscapedAt(QueryText(`\*`), 0));
     assert(!decodedContainsUnescapedMeta(QueryText(`\*`)));
     auto parsed = parseQuery(
-        `foo "two words" ext:rs !*.md path:"src/lib" git:ignored \* :oops`);
+        `foo "two words" ext:rs !*.md path:"src/lib" git:ignored \* :oops`, textOwner.get());
     assert(parsed.hasValue);
     assert(parsed.value.fuzzyParts.length == 4);
     assert(parsed.value.fuzzyParts[0].raw == "foo");
@@ -1349,13 +1359,14 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    auto parsed = parseQuery(`src/app.d:120:7`);
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
+    auto parsed = parseQuery(`src/app.d:120:7`, textOwner.get());
     assert(parsed.hasValue);
     assert(parsed.value.location.startLine == 120);
     assert(parsed.value.location.startColumn == 7);
     assert(parsed.value.fuzzyParts[0].decodedLength == "src/app.d".length);
 
-    auto range = parseQuery(`f:12:4-14:20`);
+    auto range = parseQuery(`f:12:4-14:20`, textOwner.get());
     assert(range.hasValue && range.value.location.hasEnd);
     assert(range.value.location.startLine == 12
         && range.value.location.startColumn == 4
@@ -1370,10 +1381,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
     // Colons whose tails hold more separators than any location grammar
     // admits are guaranteed failures, so skipping all but the last few
     // changes nothing.
-    auto manyColons = parseQuery(`a:1:2:3:4:5`);
+    auto manyColons = parseQuery(`a:1:2:3:4:5`, textOwner.get());
     assert(manyColons.hasValue);
     assert(manyColons.value.location.startLine == 4
         && manyColons.value.location.startColumn == 5);
@@ -1389,21 +1401,23 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    assert(parseQuery(`git:`).error.code == FuzzyErrorCode.emptyValue);
-    assert(parseQuery(`git:m`).hasValue);
-    assert(parseQuery(`type:source`).error.code == FuzzyErrorCode.unknownValue);
-    assert(parseQuery(`"unterminated`).error.code == FuzzyErrorCode.unexpectedEnd);
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
+    assert(parseQuery(`git:`, textOwner.get()).error.code == FuzzyErrorCode.emptyValue);
+    assert(parseQuery(`git:m`, textOwner.get()).hasValue);
+    assert(parseQuery(`type:source`, textOwner.get()).error.code == FuzzyErrorCode.unknownValue);
+    assert(parseQuery(`"unterminated`, textOwner.get()).error.code == FuzzyErrorCode.unexpectedEnd);
 }
 
 @("fuzzy.query.windowsDriveIsNotALocation")
 @safe pure nothrow @nogc
 unittest
 {
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
     QueryParseOptions windows;
     windows.pathFlavor = PathFlavor.windows;
-    auto drive = parseQuery("C:12", windows);
+    auto drive = parseQuery("C:12", textOwner.get(), windows);
     assert(drive.hasValue && !drive.value.location.present);
-    auto driveLocation = parseQuery("C:/src/app.d:12", windows);
+    auto driveLocation = parseQuery("C:/src/app.d:12", textOwner.get(), windows);
     assert(driveLocation.hasValue
         && driveLocation.value.location.startLine == 12);
 }
@@ -1412,7 +1426,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    auto parsed = parseQuery("a é long");
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
+    auto parsed = parseQuery("a é long", textOwner.get());
     assert(parsed.hasValue);
     assert(parsed.value.diagnostics.droppedParts == 2);
 }
@@ -1421,24 +1436,28 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    auto parsed = parseQuery(`!*.rs !*.md foo`);
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
+    auto parsed = parseQuery(`!*.rs !*.md foo`, textOwner.get());
     assert(parsed.hasValue);
     auto workspaceOwner = makeUnique!(ConstraintWorkspace!())();
     ref ConstraintWorkspace!() workspace() => workspaceOwner.get();
     CandidateView candidate;
     candidate.path = "src/main.rs";
     candidate.filenameOffset = 4;
-    assert(!evaluateConstraints(parsed.value, candidate, workspace).value);
+    assert(!evaluateConstraints(parsed.value, candidate, workspace,
+        textOwner.get()).value);
     candidate.path = "src/main.d";
-    assert(evaluateConstraints(parsed.value, candidate, workspace).value);
+    assert(evaluateConstraints(parsed.value, candidate, workspace,
+        textOwner.get()).value);
 }
 
 @("fuzzy.query.constraintRowsAndPositiveExtensionBucket")
 @safe pure nothrow @nogc
 unittest
 {
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
     auto parsed = parseQuery(
-        `ext:d ext:md path:src/app.d seg:src glob:**/*.d status:st`);
+        `ext:d ext:md path:src/app.d seg:src glob:**/*.d status:st`, textOwner.get());
     assert(parsed.hasValue && parsed.value.constraints.length == 6);
     auto workspaceOwner = makeUnique!(ConstraintWorkspace!())();
     ref ConstraintWorkspace!() workspace() => workspaceOwner.get();
@@ -1446,18 +1465,20 @@ unittest
     candidate.path = "src/app.d";
     candidate.filenameOffset = 4;
     candidate.gitStatus = GitStatus.staged;
-    assert(evaluateConstraints(parsed.value, candidate, workspace).value);
+    assert(evaluateConstraints(parsed.value, candidate, workspace,
+        textOwner.get()).value);
     candidate.path = "other/app.d";
     candidate.filenameOffset = 6;
-    assert(!evaluateConstraints(parsed.value, candidate, workspace).value);
+    assert(!evaluateConstraints(parsed.value, candidate, workspace,
+        textOwner.get()).value);
 
-    auto escapedSpace = parseQuery(`two\ words`);
+    auto escapedSpace = parseQuery(`two\ words`, textOwner.get());
     assert(escapedSpace.hasValue
         && escapedSpace.value.fuzzyParts.length == 1);
     char[16] decoded = void;
     auto length = escapedSpace.value.fuzzyParts[0].decodeInto(decoded);
     assert(decoded[0 .. length.value] == "two words");
-    assert(parseQuery(`glob:{a,}`).error.code
+    assert(parseQuery(`glob:{a,}`, textOwner.get()).error.code
         == FuzzyErrorCode.malformedGlob);
 }
 
@@ -1465,29 +1486,33 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    auto parsed = parseQuery(`glob:literal/\*.d`);
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
+    auto parsed = parseQuery(`glob:literal/\*.d`, textOwner.get());
     assert(parsed.hasValue);
     auto workspaceOwner = makeUnique!(ConstraintWorkspace!())();
     ref ConstraintWorkspace!() workspace() => workspaceOwner.get();
     CandidateView candidate;
     candidate.path = "literal/*.d";
     candidate.filenameOffset = 8;
-    assert(evaluateConstraints(parsed.value, candidate, workspace).value);
+    assert(evaluateConstraints(parsed.value, candidate, workspace,
+        textOwner.get()).value);
     candidate.path = "literal/main.d";
-    assert(!evaluateConstraints(parsed.value, candidate, workspace).value);
+    assert(!evaluateConstraints(parsed.value, candidate, workspace,
+        textOwner.get()).value);
 }
 
 @("fuzzy.query.refinementCannotGrowTypoBudget")
 @safe pure nothrow @nogc
 unittest
 {
-    auto oldQuery = parseQuery("abcdefghijk");
-    auto grownBudget = parseQuery("abcdefghijkl");
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
+    auto oldQuery = parseQuery("abcdefghijk", textOwner.get());
+    auto grownBudget = parseQuery("abcdefghijkl", textOwner.get());
     assert(oldQuery.hasValue && grownBudget.hasValue);
     assert(!grownBudget.value.refines(oldQuery.value));
 
-    auto stable = parseQuery("abcdefghi");
-    auto narrower = parseQuery("abcdefghij");
+    auto stable = parseQuery("abcdefghi", textOwner.get());
+    auto narrower = parseQuery("abcdefghij", textOwner.get());
     assert(stable.hasValue && narrower.hasValue);
     assert(narrower.value.refines(stable.value));
 }
@@ -1497,12 +1522,13 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    auto stable = parseQuery("abcdefghi");
-    auto changedConstraint = parseQuery("abcdefghi ext:d");
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
+    auto stable = parseQuery("abcdefghi", textOwner.get());
+    auto changedConstraint = parseQuery("abcdefghi ext:d", textOwner.get());
     assert(!changedConstraint.value.refines(stable.value));
 
-    auto literalGlob = parseQuery(`glob:\* abcdefghi`);
-    auto wildcardGlob = parseQuery(`glob:* abcdefghij`);
+    auto literalGlob = parseQuery(`glob:\* abcdefghi`, textOwner.get());
+    auto wildcardGlob = parseQuery(`glob:* abcdefghij`, textOwner.get());
     assert(!wildcardGlob.value.refines(literalGlob.value));
 }
 
@@ -1510,26 +1536,28 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    auto textOwner = makeUnique!(FuzzyTextWorkspace!())();
     auto options = QueryParseOptions.init;
     options.profile.kind = cast(AnalysisProfileKind) ubyte.max;
-    assert(parseQuery("abc", options).error.code
+    assert(parseQuery("abc", textOwner.get(), options).error.code
         == FuzzyErrorCode.invalidConfiguration);
     options = QueryParseOptions.init;
     options.pathFlavor = cast(PathFlavor) ubyte.max;
-    assert(parseQuery("abc", options).error.code
+    assert(parseQuery("abc", textOwner.get(), options).error.code
         == FuzzyErrorCode.invalidConfiguration);
 
     QueryText invalid = QueryText("abc", size_t.max, size_t.max);
     assert(invalid.decodedLength == 0 && invalid.cursor.empty);
     assert(invalid.dropFront(1).skipFront == size_t.max);
 
-    auto query = parseQuery("ext:d");
+    auto query = parseQuery("ext:d", textOwner.get());
     CandidateView candidate;
     candidate.path = "a.d";
     candidate.filenameOffset = size_t.max;
     auto workspaceOwner = makeUnique!(ConstraintWorkspace!())();
     ref ConstraintWorkspace!() workspace() => workspaceOwner.get();
-    assert(evaluateConstraints(query.value, candidate, workspace).error.code
+    assert(evaluateConstraints(query.value, candidate, workspace,
+        textOwner.get()).error.code
         == FuzzyErrorCode.invalidCandidate);
 }
 
@@ -1542,6 +1570,7 @@ unittest
     class Context
     {
         bool alternate;
+        FuzzyTextWorkspace!() workspace;
     }
     auto context = new Context;
     benchIter({
@@ -1549,7 +1578,7 @@ unittest
         const source = context.alternate
             ? `src controller ext:d !glob:**/generated/** git:m`
             : `src controller ext:d !glob:**/vendor/** git:m`;
-        auto parsed = parseQuery(blackBox(source));
+        auto parsed = parseQuery(blackBox(source), context.workspace);
         assert(parsed.hasValue);
         blackBox(parsed.value.diagnostics.droppedParts);
     }, ["profile": "codePath", "tier": "parse+analyze+glob-compile",

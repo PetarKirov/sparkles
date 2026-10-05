@@ -42,7 +42,7 @@ import sparkles.raylib_text : FontSet;
 import sparkles.terminal_view.child_env : sanitizeChildEnv;
 import sparkles.terminal_view.core;
 import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyButtonOf,
-    ghosttyKeyOf, ghosttyModsOf, isDetachedText, utf8Of, withKeyIdentity;
+    ghosttyKeyOf, ghosttyModsOf, isDetachedText, withKeyIdentity;
 import sparkles.terminal_view.input : ExitBehavior, handle_mouse,
     mouse_encode_and_write, pty_write;
 import sparkles.terminal_view.notification_log : NotificationLog,
@@ -1304,15 +1304,18 @@ struct TerminalView
         size_t cps;
         if (k.text.length)
         {
-            // Count code points (lead bytes); a multi-point text has no key.
-            foreach (b; k.text)
-                cps += (b & 0xC0) != 0x80;
-            if (cps == 1 && c == 0)
-            {
-                import sparkles.base.text.utf : decodeFirstUtf8;
+            import sparkles.base.text.utf : decodeToken, UtfMode;
 
-                c = decodeFirstUtf8(k.text);
+            dchar firstScalar;
+            for (size_t at; at < k.text.length;)
+            {
+                const decoded = decodeToken(k.text[at .. $], UtfMode.replacement, true, at);
+                if (cps++ == 0)
+                    firstScalar = decoded.token.scalar;
+                at += decoded.result.consumed;
             }
+            if (cps == 1 && c == 0)
+                c = firstScalar;
         }
         else
             cps = 1;
@@ -1336,8 +1339,9 @@ struct TerminalView
             return true;
         }
 
+        import sparkles.base.text.utf : encodeScalar;
         char[4] ub = void;
-        const text = k.text.length ? k.text : ub[0 .. utf8Of(ub, c)];
+        const text = k.text.length ? k.text : ub[0 .. encodeScalar(c, ub[]).written];
         if (text.length == 0)
             return false;
         ubyte flags;
@@ -2500,7 +2504,7 @@ nothing for a key-less event, hence this.
 const(char)[] kittyTextEvent(scope const(char)[] text, ubyte flags, return scope char[] buf)
     @safe pure nothrow @nogc
 {
-    import sparkles.base.text.utf8 : utf8SequenceLength;
+    import sparkles.base.text.utf : decodeToken, UtfMode;
 
     if (!(flags & 8))
     {
@@ -2535,21 +2539,9 @@ const(char)[] kittyTextEvent(scope const(char)[] text, ubyte flags, return scope
         bool first = true;
         for (size_t i = 0; i < text.length;)
         {
-            uint cp = text[i];
-            size_t n = 1;
-            if (cp >= 0x80)
-            {
-                n = utf8SequenceLength(text, i);
-                if (n == 0)
-                {
-                    ++i;
-                    continue;
-                }
-                cp &= n == 2 ? 0x1F : n == 3 ? 0x0F : 0x07;
-                foreach (b; text[i + 1 .. i + n])
-                    cp = (cp << 6) | (b & 0x3F);
-            }
-            i += n;
+            const decoded = decodeToken(text[i .. $], UtfMode.replacement, true, i);
+            const cp = decoded.token.scalar;
+            i += decoded.result.consumed;
             if (cp < 0x20 || (cp >= 0x7F && cp <= 0x9F))
                 continue; // "must not contain control codes"
             if (!first)
@@ -2572,6 +2564,8 @@ const(char)[] kittyTextEvent(scope const(char)[] text, ubyte flags, return scope
     assert(kittyTextEvent("👍🏽", 8 | 16, b) == "\x1b[0;;128077:127997u");
     assert(kittyTextEvent("©", 8, b) == "\x1b[0u");
     assert(kittyTextEvent("©", 1 | 2, b) == "©");
+    assert(kittyTextEvent("\xE1\x80Z", 8 | 16, b) == "\x1b[0;;65533:90u");
+    assert(kittyTextEvent("x\xF0\x9F", 8 | 16, b) == "\x1b[0;;120:65533u");
 }
 
 /// `text` without the C0 controls a paste may not carry (`TPR18`): all but

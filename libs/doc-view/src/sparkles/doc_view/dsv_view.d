@@ -501,10 +501,10 @@ view can show — known exactly from the row count, so it never shifts.
 private const(size_t)[] sampledColumnWidths(in DsvDoc doc,
     in uint[] visCols, in DsvInfo info) @safe
 {
-    // The table measures with `cellsOf` — the one width authority — so the
+    // The table measures with `visibleWidth` — the one width authority — so the
     // floors must be measured with it too, or a pinned column would disagree
     // with the content it is pinning.
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     auto widths = new size_t[](visCols.length + 1);
     SharedBuffer!(char, 256) cellBuf;
@@ -521,12 +521,12 @@ private const(size_t)[] sampledColumnWidths(in DsvDoc doc,
         const rec = doc.records[0];
         foreach (vi, c; visCols)
             if (c < rec.cellCount)
-                widths[vi + 1] = cellsOf(
+                widths[vi + 1] = visibleWidth(
                     decodeCell(doc, doc.cells[rec.cellsStart + c], cellBuf));
     }
     else
         foreach (vi, c; visCols)
-            widths[vi + 1] = cellsOf(columnName(c));
+            widths[vi + 1] = visibleWidth(columnName(c));
 
     // The sample is taken in SOURCE order, deliberately — not through the
     // projection. Sampling the projected order would make the widths a
@@ -544,7 +544,7 @@ private const(size_t)[] sampledColumnWidths(in DsvDoc doc,
         {
             if (c >= rec.cellCount)
                 continue;
-            const w = cellsOf(
+            const w = visibleWidth(
                 decodeCell(doc, doc.cells[rec.cellsStart + c], cellBuf));
             if (w > widths[vi + 1])
                 widths[vi + 1] = w;
@@ -614,7 +614,7 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
 
     // The badge's width is RESERVED by `sampledColumnWidths`, so it
     // appearing and disappearing never moves a column.
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     // `DSS1`'s rank chrome: ` ▲`/` ▼` for a single key, `1▲`-style with
     // the rank when several sort. View-column indexed (gutter at 0).
@@ -645,7 +645,7 @@ private void buildTable(ref DsvAdapted a, in DsvDoc doc,
                     const ranked = text(ki + 1, arrow);
                     badges[vi + 1] = sortKeys.length == 1
                         ? (k.descending ? " ▼" : " ▲")
-                        : (cellsOf(ranked) <= dsvSortBadgeCells
+                        : (visibleWidth(ranked) <= dsvSortBadgeCells
                             ? ranked : " " ~ arrow);
                     break;
                 }

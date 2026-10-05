@@ -15,7 +15,8 @@ import std.conv : text;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.canvas : RuleEdge;
-import sparkles.ui.geometry : cellsOf, Insets, Point, SizeSpec;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.components.dock : DockDrag, dockHintRect;
 import sparkles.ui.components.scroll_view : ScrollLayout, ScrollView;
 import sparkles.ui.state : PressState, ScrollAxis, ScrollbarState, ScrollState,
@@ -371,7 +372,7 @@ $(LIST
         topmost-wins, instead of two affordances both consuming one press
         because one block happened to run first.
     * $(B mis-centred labels) cannot occur — the layout engine centres via
-        `LAY8` alignment over `cellsOf`, so no host measures a UTF-8 label
+        `LAY8` alignment over `visibleWidth`, so no host measures a UTF-8 label
         with `.length` and pushes it off-centre.
 )
 
@@ -440,7 +441,7 @@ Tabs are as wide as what they say (`fitLabels`, the usual look — a file name
 should not be padded to a fifth of the window); with `fitLabels: false` each
 tab instead takes its label plus an equal share of the leftover width, the
 $(LREF actionBar) behaviour, for callers that want a segmented control.
-Either way the widths come from `cellsOf`, so a UTF-8 label is measured in
+Either way the widths come from `visibleWidth`, so a UTF-8 label is measured in
 cells and never by `.length`.
 
 Consumers are deliberately unrelated: an application selecting one of several
@@ -511,7 +512,7 @@ uint tabStripTopBorder(ref Builder b, scope const(string)[] labels,
     string line = "╭";
     foreach (i, label; labels)
     {
-        foreach (_; 0 .. cellsOf(label) + 2)
+        foreach (_; 0 .. visibleWidth(label) + 2)
             line ~= "─";
         line ~= i + 1 < labels.length ? "┬" : "╮";
     }
@@ -553,7 +554,7 @@ uint tabStrip(ref Builder b, scope const(string)[] labels, size_t active,
             // A tab is its label plus one cell of breathing room either
             // side; growing shares the leftover instead.
             width: fitLabels
-                ? SizeSpec.fixed(cast(int) cellsOf(label) + 2)
+                ? SizeSpec.fixed(cast(int) visibleWidth(label) + 2)
                 : SizeSpec.grow(),
             alignX: Alignment.center,
             // The whole tab is the target, not just the glyphs.

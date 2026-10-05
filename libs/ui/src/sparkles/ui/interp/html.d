@@ -206,9 +206,12 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             visibilityCss(w, node);
             put(w, "\">");
             char[4] enc;
-            import std.utf : encode;
+            import sparkles.base.text.utf : encodeScalar, UtfStatus;
 
-            const n = encode(enc, node.glyph);
+            const encoded = encodeScalar(node.glyph, enc[]);
+            if (encoded.status != UtfStatus.ok)
+                throw new Exception("Invalid Unicode widget glyph");
+            const n = encoded.written;
             escape(w, enc[0 .. n]);
             put(w, "</span>");
             break;

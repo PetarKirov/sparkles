@@ -1,20 +1,16 @@
 /**
  * `text-conformance` — differential-testing harness for `sparkles.base.text`.
  *
- * Cross-checks the library's terminal cell-width and UAX#29 grapheme
- * segmentation against independent Unicode oracles, in four selectable layers:
+ * Cross-checks owned Unicode 18 boundaries, bidi, normalization and casing
+ * against authenticated official corpora and independent raw-data oracles.
+ * Width interoperability additionally compares real foreign libraries and
+ * terminals. Seventeen selectable layers share one manifest identity.
  *
- *   0  segmentation vs the official `GraphemeBreakTest.txt`
- *   1  per-code-point width: a clean-room raw-UCD oracle vs `codepointWidth`
- *   2  cluster width over the official `emoji-test.txt`
- *   3  vs kitty's reference `wcswidth` (same Text Sizing Protocol spec)
+ * Normative layers (0 and 11..16) require zero divergences. Only foreign-policy
+ * differences can use the checked-in known-divergences allowlist.
  *
- * Only *new* divergences fail; known ones live in a checked-in allowlist
- * (`known-divergences.md`), so the harness is a ratchet robust to Unicode
- * version drift between the pinned width tables (17.0) and Phobos's `std.uni`
- * grapheme tables.
- *
- * Run:  dub run --root=libs/base/tools/text-conformance -- --layers all
+ * Run: dub run --root=libs/base/tools/text-conformance
+ *          --recipe=libs/base/tools/text-conformance/oracles.sdl -- --layers all
  */
 module sparkles.text_conformance.app;
 
@@ -28,8 +24,7 @@ import sparkles.base.styled_template : styledText;
 import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 
 import sparkles.text_conformance.allowlist : Allowlist, loadAllowlist, renderAllowlist;
-import sparkles.text_conformance.config : Config, pinnedUnicodeVersion,
-    phobosGraphemeUnicodeVersion;
+import sparkles.text_conformance.config : Config, layerCount;
 import sparkles.text_conformance.layer0_segmentation : runLayer0;
 import sparkles.text_conformance.layer1_width : runLayer1;
 import sparkles.text_conformance.layer2_emoji : runLayer2;
@@ -41,6 +36,12 @@ import sparkles.text_conformance.layer7_icu_seg : runLayer7;
 import sparkles.text_conformance.layer8_notcurses : runLayer8;
 import sparkles.text_conformance.layer9_rust_uwidth : runLayer9;
 import sparkles.text_conformance.layer10_python_wcwidth : runLayer10;
+import sparkles.text_conformance.layer11_word : runLayer11;
+import sparkles.text_conformance.layer12_sentence : runLayer12;
+import sparkles.text_conformance.layer13_line : runLayer13;
+import sparkles.text_conformance.layer14_bidi : runLayer14;
+import sparkles.text_conformance.layer15_normalization : runLayer15;
+import sparkles.text_conformance.layer16_casing : runLayer16;
 import sparkles.text_conformance.report : Divergence, LayerOutcome, LayerResult,
     anyNewFailures, renderSummary;
 
@@ -51,20 +52,14 @@ enum string defaultAllowlistPath = __FILE_FULL_PATH__
 
 struct CliParams
 {
-    @(Option(`l|layers`, description: "Comma-separated layers to run: any of 0..10, or 'all' (default)."))
+    @(Option(`l|layers`, description: "Comma-separated layers to run: any of 0..16, or 'all' (default)."))
     string layers = "all";
 
     @(Option(`u|ucd-dir`, description: "Read Unicode data from this directory instead of downloading (offline)."))
     string ucdDir;
 
-    @(Option(`V|unicode-version`, description: "Set both --width-unicode-version and --segmentation-unicode-version."))
-    string unicodeVersion;
-
-    @(Option(`width-unicode-version`, description: "Unicode version for the Layer-1 width oracle's UCD files (matches the pinned width tables)."))
-    string widthVersion = pinnedUnicodeVersion;
-
-    @(Option(`segmentation-unicode-version`, description: "Unicode version for the Layer-0/2 grapheme corpora (should match Phobos's std.uni tables)."))
-    string segVersion = phobosGraphemeUnicodeVersion;
+    @(Option(`manifest`, description: "Reviewed manifest used to generate the implementation under test."))
+    string manifestPath = "libs/base/tools/unicode/manifest.json";
 
     @(Option(`require-kitty`, description: "Fail (instead of skip) Layer 3 when the kitty width oracle is unavailable."))
     bool requireKitty;
@@ -93,14 +88,13 @@ int main(string[] args)
     cfg.layers = parseLayers(cli.layers);
     cfg.ucdDir = cli.ucdDir;
     cfg.noNetwork = cli.noNetwork;
-    cfg.widthVersion = cli.unicodeVersion.length ? cli.unicodeVersion : cli.widthVersion;
-    cfg.segVersion = cli.unicodeVersion.length ? cli.unicodeVersion : cli.segVersion;
+    cfg.manifestPath = cli.manifestPath;
     cfg.requireKitty = cli.requireKitty;
     cfg.updateAllowlist = cli.updateAllowlist;
     cfg.allowlistPath = defaultAllowlistPath;
 
     LayerResult[] results;
-    if (cfg.layers[0]) results ~= run("Layer 0", () => runLayer0(cfg));
+    if (cfg.layers[0]) results ~= run("Layer 0", () => runLayer0(cfg), true);
     if (cfg.layers[1]) results ~= run("Layer 1", () => runLayer1(cfg));
     if (cfg.layers[2]) results ~= run("Layer 2", () => runLayer2(cfg));
     if (cfg.layers[3]) results ~= run("Layer 3", () => runLayer3(cfg));
@@ -111,12 +105,18 @@ int main(string[] args)
     if (cfg.layers[8]) results ~= run("Layer 8", () => runLayer8(cfg));
     if (cfg.layers[9]) results ~= run("Layer 9", () => runLayer9(cfg));
     if (cfg.layers[10]) results ~= run("Layer 10", () => runLayer10(cfg));
+    if (cfg.layers[11]) results ~= run("Layer 11", () => runLayer11(cfg), true);
+    if (cfg.layers[12]) results ~= run("Layer 12", () => runLayer12(cfg), true);
+    if (cfg.layers[13]) results ~= run("Layer 13", () => runLayer13(cfg), true);
+    if (cfg.layers[14]) results ~= run("Layer 14", () => runLayer14(cfg), true);
+    if (cfg.layers[15]) results ~= run("Layer 15", () => runLayer15(cfg), true);
+    if (cfg.layers[16]) results ~= run("Layer 16", () => runLayer16(cfg), true);
 
     if (cfg.updateAllowlist)
     {
         Divergence[] all;
         foreach (r; results)
-            all ~= r.divergences;
+            all ~= r.divergences.filter!(d => !isNormativeLayer(d.layer)).array;
         import std.file : write;
         write(cfg.allowlistPath, renderAllowlist(all));
         stderr.writeln("wrote ", cfg.allowlistPath, " (", all.length, " divergence(s))");
@@ -135,10 +135,17 @@ int main(string[] args)
 /// broken layer fails the run rather than passing silently) without aborting
 /// the other layers. A layer that means to *skip* (e.g. an optional oracle is
 /// absent) returns `skipped` itself instead of throwing.
-private LayerResult run(string label, LayerResult delegate() body_)
+private LayerResult run(string label, LayerResult delegate() body_, bool normative = false)
 {
     try
-        return body_();
+    {
+        auto result = body_();
+        // Official layers cannot pass by skipping or parsing no checks.
+        if (normative && (result.skipped
+                || (result.passed == 0 && result.divergences.length == 0)))
+            throw new Exception("required normative layer ran no checks: " ~ label);
+        return result;
+    }
     catch (Exception e)
     {
         LayerResult r;
@@ -149,6 +156,9 @@ private LayerResult run(string label, LayerResult delegate() body_)
         return r;
     }
 }
+
+private bool isNormativeLayer(int layer) @safe pure nothrow @nogc
+    => layer == 0 || layer >= 11;
 
 /// Classify a layer's raw divergences against the allowlist into known/new.
 private LayerOutcome classify(in LayerResult r, in Allowlist allow)
@@ -161,7 +171,7 @@ private LayerOutcome classify(in LayerResult r, in Allowlist allow)
     o.passed = r.passed;
     foreach (d; r.divergences)
     {
-        if (allow.isKnown(d))
+        if (!isNormativeLayer(d.layer) && allow.isKnown(d))
             o.known++;
         else
             o.newFail++;
@@ -182,7 +192,8 @@ private void printDivergences(in LayerResult[] results, in Allowlist allow)
             foreach (n; r.notes)
                 writeln("  ", n);
         }
-        auto news = r.divergences.filter!(d => !allow.isKnown(d)).array;
+        auto news = r.divergences
+            .filter!(d => isNormativeLayer(d.layer) || !allow.isKnown(d)).array;
         if (news.length == 0)
             continue;
         writeln();
@@ -200,12 +211,14 @@ private void printDivergences(in LayerResult[] results, in Allowlist allow)
 }
 
 /// Parse the `--layers` selector into a run mask.
-private bool[11] parseLayers(string spec)
+private bool[layerCount] parseLayers(string spec)
 {
+    bool[layerCount] mask;
     if (spec == "all" || spec.length == 0)
-        return [true, true, true, true, true, true, true, true, true, true, true];
-
-    bool[11] mask;
+    {
+        mask[] = true;
+        return mask;
+    }
     foreach (tok; spec.splitter(','))
     {
         switch (tok.strip)
@@ -221,6 +234,12 @@ private bool[11] parseLayers(string spec)
             case "8": mask[8] = true; break;
             case "9": mask[9] = true; break;
             case "10": mask[10] = true; break;
+            case "11": mask[11] = true; break;
+            case "12": mask[12] = true; break;
+            case "13": mask[13] = true; break;
+            case "14": mask[14] = true; break;
+            case "15": mask[15] = true; break;
+            case "16": mask[16] = true; break;
             default: throw new Exception("unknown layer in --layers: " ~ tok);
         }
     }

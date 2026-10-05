@@ -932,7 +932,6 @@ package ParseExpected!void validateIdentifierList(
 {
     import std.algorithm.searching : all;
     import std.ascii : isAlphaNum, isDigit;
-    import std.utf : byCodeUnit;
 
     if (list.length == 0)
         return parseErr!(void)(
@@ -962,7 +961,7 @@ package ParseExpected!void validateIdentifierList(
         if (kind == IdentifierKind.prerelease
             && seg.length > 1
             && seg[0] == '0'
-            && seg.byCodeUnit.all!isDigit)
+            && (cast(const(ubyte)[]) seg).all!isDigit)
             return parseErr!(void)(
                 ParseError(ParseErrorCode.leadingZero, segOff));
 
@@ -1044,9 +1043,8 @@ private bool isNumericIdentifier(in string value) @safe pure nothrow @nogc
 {
     import std.algorithm.searching : all;
     import std.ascii : isDigit;
-    import std.utf : byCodeUnit;
 
-    return value.length > 0 && value.byCodeUnit.all!isDigit;
+    return value.length > 0 && (cast(const(ubyte)[]) value).all!isDigit;
 }
 
 // ---------------------------------------------------------------------------

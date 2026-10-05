@@ -242,7 +242,7 @@ private int clampScroll(int n) pure nothrow @nogc
 @("ui_gallery.pages.tableTwoViewsAgreeOnGeometry")
 @safe unittest
 {
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     // The page's whole claim: the widget table and the drawTable output of
     // the same cells + props occupy identical geometry — every emitted line
@@ -260,7 +260,7 @@ private int clampScroll(int n) pure nothrow @nogc
                     => drawTable(showcaseStringCells(), props))().splitLines;
                 assert(cast(int) lines.length == res.height);
                 foreach (line; lines)
-                    assert(cast(int) cellsOf(line) == res.width,
+                    assert(cast(int) visibleWidth(line) == res.width,
                         "the two views disagree on a line's width");
             }
 }

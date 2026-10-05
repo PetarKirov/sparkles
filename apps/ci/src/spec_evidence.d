@@ -373,7 +373,8 @@ only where the spec is making a traceability claim.
 +/
 Citation[] citationsIn(string file, scope const(char)[] text) @safe pure
 {
-    import std.string : splitLines, toLower;
+    import std.string : splitLines;
+    import sparkles.base.text.case_text : asciiLower;
 
     Citation[] found;
     ptrdiff_t evidenceCol = -1;
@@ -425,7 +426,7 @@ Citation[] citationsIn(string file, scope const(char)[] text) @safe pure
             // Header row: look for the evidence column.
             foreach (i, c; cells)
             {
-                const h = c.strip.toLower;
+                const h = c.strip.asciiLower;
                 foreach (want; evidenceHeaders)
                     if (h == want)
                     {

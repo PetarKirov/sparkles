@@ -16,7 +16,7 @@ import sparkles.dql.engine : DqlEngine, DqlParseError;
 import sparkles.dql.schema : isDqlCategory, isDqlPath;
 import sparkles.fuzzy.common : PathFlavor;
 import sparkles.fuzzy.glob : compileGlob, GlobProgram;
-import sparkles.fuzzy.query : parseQuery, QueryStorage;
+import sparkles.fuzzy.query : parseQuery;
 
 @safe:
 
@@ -531,7 +531,6 @@ struct DqlParser
             return err!uint(DqlParseError("expected pattern/query argument in function call", currentToken.span.startOffset, currentToken.span.length));
 
         const pattern = currentToken.text;
-        const patSlice = engine.textOf(pattern);
 
         // Closing paren
         auto closeT = lexer.nextToken(*engine);
@@ -545,6 +544,9 @@ struct DqlParser
         auto advanceT = lexer.nextToken(*engine);
         if (!advanceT.hasValue) return err!uint(advanceT.error);
         currentToken = advanceT.value;
+
+        // Token advancement interns into the pool and may relocate it.
+        const patSlice = engine.textOf(pattern);
 
         filter.hasFineGrainedPredicates = true;
         const span = TextSpan.of(fnSpan.startOffset, endSpan.endOffset);
@@ -566,7 +568,8 @@ struct DqlParser
         else if (fnKind == DqlTokenKind.fnGlobMatch)
         {
             GlobProgram!() prog;
-            auto compileRes = compileGlob(patSlice, PathFlavor.unix, false, prog);
+            auto compileRes = compileGlob(patSlice, PathFlavor.unix, false, prog,
+                engine.matcherWorkspace().textWorkspace());
             if (compileRes.hasError)
                 return err!uint(DqlParseError("invalid glob pattern: " ~ compileRes.error.context, fnSpan.startOffset, fnSpan.length));
             const uint gIdx = engine.registerGlob(prog);
@@ -574,7 +577,8 @@ struct DqlParser
         }
         else if (fnKind == DqlTokenKind.fnFuzzyMatch)
         {
-            auto qRes = parseQuery(patSlice);
+            auto qRes = parseQuery(patSlice,
+                engine.matcherWorkspace().textWorkspace());
             if (!qRes.hasValue)
                 return err!uint(DqlParseError("invalid fuzzy query", fnSpan.startOffset, fnSpan.length));
             const uint fIdx = engine.registerFuzzy(qRes.value);
@@ -705,6 +709,36 @@ unittest
     // Test commas inside quoted regex / glob
     auto res8 = parseDql(engine, `regexMatch(text.text, "^[a,b]+$")`);
     assert(!res8.hasError);
+}
+
+@("dql.parser: stored fuzzy query text survives later string pool growth")
+@safe
+unittest
+{
+    import sparkles.dql.eval : evalDql;
+    import sparkles.dql.schema : DqlSchema;
+
+    struct TitleEvent { string title; }
+    alias Schema = DqlSchema!(SumType!TitleEvent);
+    DqlEngine engine;
+    auto first = parseDql!Schema(engine, "fuzzyMatch(title.title, `needle`)");
+    assert(first.hasValue);
+
+    char[4096] filler;
+    filler[] = 'x';
+    cast(void) engine.intern(filler[]);
+    auto second = parseDql!Schema(engine, "fuzzyMatch(title.title, `second`)");
+    assert(second.hasValue);
+    foreach (_; 0 .. 16)
+        cast(void) engine.intern(filler[]);
+
+    assert(engine.fuzzyQueries[0].source == "needle");
+    assert(engine.fuzzyQueries[1].source == "second");
+    SumType!TitleEvent event = TitleEvent("needle");
+    assert(evalDql!Schema(engine, first.value, event));
+    event = TitleEvent("second");
+    assert(evalDql!Schema(engine, second.value, event));
+    assert(!evalDql!Schema(engine, first.value, event));
 }
 
 @("dql.parser: integer literals retain exact signedness and value")

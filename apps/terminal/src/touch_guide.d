@@ -200,7 +200,8 @@ final class TouchGuide : Surface, Scrollable
 
     bool key(in KeyEvent k) @system
     {
-        import std.utf : encode, strideBack;
+        import sparkles.base.text.utf : encodeScalar, UtfStatus;
+        import page_kit : queryPrefixWithoutLastGrapheme;
 
         if (k.mods.ctrl || k.mods.alt || k.mods.super_)
             return false;
@@ -222,13 +223,16 @@ final class TouchGuide : Surface, Scrollable
                 return false;
             case Key.backspace:
                 if (query.length)
-                    query.length -= strideBack(query, query.length);
+                    query.length = queryPrefixWithoutLastGrapheme(query);
                 return true;
             case Key.char_:
                 if (k.ch < 0x20)
                     return false;
                 char[4] buf;
-                query ~= buf[0 .. encode(buf, k.ch)];
+                const encoded = encodeScalar(k.ch, buf[]);
+                if (encoded.status != UtfStatus.ok)
+                    return false;
+                query ~= buf[0 .. encoded.written];
                 return true;
             default:
                 return false;
@@ -539,6 +543,19 @@ version (unittest)
     const shown = texts(g.build(SurfaceContext.init, 60));
     assert(shown.canFind("zoom") && shown.canFind("␣ p z"), "the full key path");
     assert(g.confirm() && ran[0].cmd == TermCommand.zoomPane);
+}
+
+@("touch_guide.clusterBackspaceAndInvalidScalar")
+@system unittest
+{
+    auto g = guide();
+    assert(g.key(KeyEvent(Key.char_, '\U0001F469')));
+    assert(g.key(KeyEvent(Key.char_, '\u200D')));
+    assert(g.key(KeyEvent(Key.char_, '\U0001F4BB')));
+    assert(!g.key(KeyEvent(Key.char_, cast(dchar) 0x110000)));
+    assert(g.query == "\U0001F469\u200D\U0001F4BB");
+    assert(g.key(KeyEvent(Key.backspace)));
+    assert(g.query == "");
 }
 
 @("touch_guide.searchIsFuzzyAndRanked")

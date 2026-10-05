@@ -65,7 +65,7 @@ private Case parseLine(string line) @safe
 
 LayerResult runLayer0(in Config cfg)
 {
-    const text = ucdText(cfg.segVersion, "auxiliary/GraphemeBreakTest.txt", cfg);
+    const text = ucdText(cfg.versionIdentity, "auxiliary/GraphemeBreakTest.txt", cfg);
 
     LayerResult r;
     r.name = "0: segmentation";

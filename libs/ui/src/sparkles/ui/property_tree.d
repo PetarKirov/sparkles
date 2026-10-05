@@ -565,6 +565,7 @@ struct PropertyTree(T)
     private long _anchorRow;
     private bool _hasAnchor;
     private string _bestMatchPath;
+    // Heap-owned once; parsing and discovery share its Unicode analysis arena.
     private MatcherWorkspace!()* _ws;
     private TopK!searchHeapCapacity* _heap;
 
@@ -732,12 +733,13 @@ struct PropertyTree(T)
     private bool buildSearch(ref T subject, ref TreeViewState!string tv,
         string q, string pinnedPath) @safe
     {
+        if (_ws is null)
+            _ws = new MatcherWorkspace!();
+
         PartMatcher!()[] parts;
         if (!parseParts(q, parts))
             return false;
 
-        if (_ws is null)
-            _ws = new MatcherWorkspace!();
         if (_heap is null)
             _heap = new TopK!searchHeapCapacity;
 
@@ -888,7 +890,7 @@ struct PropertyTree(T)
             pm.text = t.idup;
             foreach (c; pm.text)
                 pm.caseSensitive |= c >= 'A' && c <= 'Z';
-            auto r = parseQuery(pm.text);
+            auto r = parseQuery(pm.text, _ws.textWorkspace());
             if (r.hasError)
             {
                 // A malformed or over-capacity query keeps the last complete

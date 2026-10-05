@@ -3,11 +3,11 @@
    Primitives        |                                                                         #
    Layout            |                                                                         #
    Tracks            | The span-capable table: an HTML-style slot grid (colspan, rowspan,      #
-   Text              | sparse placement), header rows and stub columns with heavy rules,       #
-   Themes            | per-column and per-cell alignment including decimal, VAlign, wrapping   #
-   Slots             | under width caps, and pluggable glyph presets. One layout core decides  #
-   Decoration        | every width, height and junction; the widget view below and the string  #
-   Effects           | view beside it both materialize its answer.                             #
+   Text              | sparse placement), header rows and stub columns with heavy rules, per-  #
+   Themes            | column and per-cell alignment including decimal, VAlign, wrapping under #
+   Slots             | width caps, and pluggable glyph presets. One layout core decides every  #
+   Decoration        | width, height and junction; the widget view below and the string view   #
+   Effects           | beside it both materialize its answer.                                  #
    Grid              |                                                                         #
    Components        | +---------------------------------------------------------------------+ #
    Tree              | | widget view - buildTableWidgets                                     | #

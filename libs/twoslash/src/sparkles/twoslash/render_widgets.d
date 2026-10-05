@@ -43,7 +43,8 @@ import sparkles.twoslash.protocol : Completion, Effects, Node, NodeType,
     SignatureLayout, TwoslashReturn;
 import sparkles.twoslash.signature_layout : ExpandedRegions;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
-import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
@@ -174,7 +175,7 @@ uint decorateCodeRow(ref Builder b, uint code, const TwoslashReturn tw,
     {
         if (d.line != line)
             continue;
-        const cols = cast(int) cellsOf(tw.code[d.start .. d.end]);
+        const cols = cast(int) visibleWidth(tw.code[d.start .. d.end]);
         const at = Insets(0, 0, 0, cast(int) d.character);
         if (d.kind == NodeType.highlight)
         {
@@ -701,13 +702,13 @@ private uint[] signatureRows(ref Builder b, const Node node, size_t hit,
 {
     import sparkles.twoslash.signature_layout : effectFreeRange, layoutSignature,
         SigRow;
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     const text = withoutQuickinfoPrefix(node.text);
     // The effect words are drawn as chips, so the rows stop at the body.
     const body_ = effectFreeRange(text, node.signature);
     const laid = layoutSignature(text, node.signature, opts.maxWidth,
-        M.signatureIndent, (scope const(char)[] s) => cast(int) cellsOf(s), body_,
+        M.signatureIndent, (scope const(char)[] s) => cast(int) visibleWidth(s), body_,
         opts.expanded);
 
     uint[] rows;

@@ -28,7 +28,6 @@ dub run --single tools/preview.d -- --page themes --keys "]]]" --width 100
 */
 module ui_gallery_preview;
 
-import std.conv : to;
 import std.stdio : write, writeln;
 
 import sparkles.base.buffer : SharedBuffer;
@@ -71,8 +70,14 @@ int main(string[] args)
     auto app = Gallery(GalleryState(page: pageIndexOf(cli.page)));
 
     Event[] script;
-    foreach (dchar c; cli.keys)
-        script ~= charEvent(c);
+    import sparkles.base.text.utf : decodeToken, encodeScalar, UtfMode;
+
+    for (size_t at; at < cli.keys.length;)
+    {
+        const decoded = decodeToken(cli.keys[at .. $], UtfMode.replacement, true, at);
+        script ~= charEvent(decoded.token.scalar);
+        at += decoded.result.consumed;
+    }
 
     auto rec = runAppRecorded(app, RunConfig.init, script,
         (ref RecordingHost h) { h.size = Size(cli.width, cli.height); });
@@ -92,7 +97,10 @@ int main(string[] args)
             foreach (x; 0 .. cli.width)
             {
                 const g = grid[x, y].glyph;
-                line ~= g == dchar.init || g == '\0' ? ' ' : g.to!string;
+                char[4] encoded;
+                const scalar = g == dchar.init || g == '\0' ? ' ' : g;
+                const result = encodeScalar(scalar, encoded[], UtfMode.replacement);
+                line ~= encoded[0 .. result.written];
             }
             writeln(line);
         }

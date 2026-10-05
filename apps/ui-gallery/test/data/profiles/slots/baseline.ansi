@@ -4,8 +4,8 @@
 [0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
 [0m [0m  Tracks[0m            [0m|[0m [0mThirty-four roles. A widget names one; the palette turns it into a[0m      [0m#[0m
 [0m [0m  Text[0m              [0m|[0m [0mconcrete foreground, background and alpha while the display list is[0m     [0m#[0m
-[0m [0m  Themes[0m            [0m|[0m [0mbuilt. Nothing below hardcodes a colour - press ] and every swatch[0m      [0m#[0m
-[0m [0m> [0;1mSlots[0m            [0m [0m|[0m [0mre-resolves.[0m                                                            [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m [0mbuilt. Nothing below hardcodes a colour - press ] and every swatch re-[0m  [0m#[0m
+[0m [0m> [0;1mSlots[0m            [0m [0m|[0m [0mresolves.[0m                                                               [0m#[0m
 [0m [0m  Decoration[0m        [0m|[0m                                                                         [0m|[0m
 [0m [0m  Effects[0m           [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m|[0m
 [0m [0m  Grid[0m              [0m|[0m [0m|[0m [0;1mtext[0m                                                                [0m|[0m [0m|[0m

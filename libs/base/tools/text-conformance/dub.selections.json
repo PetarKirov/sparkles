@@ -4,11 +4,7 @@
 		"bolts": "1.3.1",
 		"optional": "1.3.1",
 		"expected": "0.4.1",
-		"icu": {"path":"bindings/icu"},
-		"notcurses": {"path":"bindings/notcurses"},
-		"pyd": {"version":"bdba4ca50d0329780c5317c1a06f8afd4032535b","repository":"git+https://github.com/ariovistus/pyd.git"},
 		"silly": "1.1.1",
-		"sparkles": {"path":"../../../../"},
-		"utf8proc": {"path":"bindings/utf8proc"}
+		"sparkles": {"path":"../../../../"}
 	}
 }

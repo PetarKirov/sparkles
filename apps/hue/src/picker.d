@@ -4,7 +4,7 @@ module picker;
 import core.atomic : MemoryOrder, atomicLoad, atomicStore;
 import core.time : Duration, MonoTime;
 
-import sparkles.base.unique : makeUnique;
+import sparkles.base.unique : makeUnique, Unique;
 // The module, never the package: `sparkles.event_horizon`'s package module
 // publicly imports the Linux fs/pty surface, and Android — Linux without
 // those — cannot compile it, so a package import here breaks the APK build.
@@ -38,8 +38,12 @@ if (Capacity > 0)
 
     bool type(dchar value) @safe pure nothrow @nogc
     {
+        import sparkles.base.text.utf : encodeScalar;
+
+        if (value < 0x20 || value == 0x7F)
+            return false;
         char[4] encoded = void;
-        const count = encodeUtf8(value, encoded);
+        const count = encodeScalar(value, encoded[]).written;
         if (count == 0 || count > Capacity - length_)
             return false;
         foreach (i; 0 .. count)
@@ -51,10 +55,18 @@ if (Capacity > 0)
     {
         if (length_ == 0)
             return false;
-        --length_;
-        while (length_ != 0
-            && (cast(ubyte) bytes[length_] & 0xC0) == 0x80)
-            --length_;
+        import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
+
+        // type() is the sole writer: this buffer always contains valid scalars.
+        size_t at, last;
+        while (at < length_)
+        {
+            last = at;
+            const decoded = decodeToken(bytes[at .. length_], UtfMode.strict, true, at);
+            assert(decoded.result.status == UtfStatus.ok);
+            at += decoded.result.consumed;
+        }
+        length_ = last;
         return true;
     }
 
@@ -345,7 +357,7 @@ private struct GenerationSlot(Caps, size_t ResultCapacity)
     CandidateSnapshot snapshot;
     SearchAccumulator!ResultCapacity accumulator;
     SearchCursor cursor;
-    MatcherWorkspace!Caps matcher;
+    Unique!(MatcherWorkspace!Caps) matcher;
     ConstraintWorkspace!Caps constraints;
     FuzzyLimits fuzzyLimits;
     MatchConfig matchConfig;
@@ -366,8 +378,11 @@ Closure-free picker scheduler over `RawCpuPool` with synchronous degradation.
 
 Query bytes and result sinks live inside address-stable generation slots. New
 requests publish their generation with release ordering and never overwrite a
-running slot; workers acquire-load before each candidate-sized chunk. When all
-slots are busy, the latest prompt is coalesced in a separate fixed buffer.
+running slot; workers acquire-load before each candidate-sized chunk. Each slot
+owns exclusive pointer-free matcher scratch outside the GC-scanned scheduler.
+Constraint checks lend that slot's same Unicode arena before matching; no result
+or prepared query unit borrows it. When all slots are busy, the latest prompt is
+coalesced in a separate fixed buffer.
 */
 struct PickerScheduler(Caps = DefaultFuzzyCaps, size_t ResultCapacity = 64,
     size_t SlotCount = 4, size_t QueueCapacity = 32,
@@ -388,6 +403,17 @@ if (ResultCapacity > 0 && SlotCount > 1)
     private FuzzyLimits fuzzyLimits = FuzzyLimits.init;
     private MatchConfig matchConfig = MatchConfig.init;
     private Scoring scoring = Scoring.init;
+
+    /// Allocate exclusive slot scratch at picker open, never on a prompt edit.
+    void initialize() @safe pure nothrow @nogc
+    {
+        foreach (ref slot; slots)
+        {
+            if (slot.matcher.empty)
+                slot.matcher = makeUnique!(MatcherWorkspace!Caps)();
+            assert(!slot.matcher.empty, "PickerScheduler: workspace allocation failed");
+        }
+    }
 
     /// Attach a started pool. Null/unstarted/saturated pools degrade safely.
     void attach(ref Pool value) @safe nothrow @nogc
@@ -521,7 +547,7 @@ private:
             QueryParseOptions options;
             options.limits = fuzzyLimits;
             auto parsed = parseQuery!Caps(slot.prompt[0 .. slot.promptLength],
-                options);
+                slot.matcher.get.textWorkspace, options);
             if (parsed.hasError)
             {
                 slot.error = parsed.error;
@@ -587,7 +613,7 @@ private void runGeneration(Caps, size_t ResultCapacity)(void* raw)
         limits.maxAnalyzedUnits = slot.fuzzyLimits.maxCandidateUnits;
         auto status = searchChunk(slot.query, slot.snapshot, slot.cursor,
             limits, slot.matchConfig, slot.scoring, slot.fuzzyLimits,
-            slot.accumulator, slot.matcher, slot.constraints);
+            slot.accumulator, slot.matcher.get, slot.constraints);
         if (status.hasError)
         {
             slot.error = status.error;
@@ -613,36 +639,6 @@ private void completeGeneration(Caps, size_t ResultCapacity)(void* raw,
     slot.ready = true;
 }
 
-private size_t encodeUtf8(dchar value, ref char[4] output)
-    @safe pure nothrow @nogc
-{
-    if (value < 0x20 || value == 0x7F || value > 0x10FFFF
-        || (value >= 0xD800 && value <= 0xDFFF))
-        return 0;
-    if (value <= 0x7F)
-    {
-        output[0] = cast(char) value;
-        return 1;
-    }
-    if (value <= 0x7FF)
-    {
-        output[0] = cast(char)(0xC0 | value >> 6);
-        output[1] = cast(char)(0x80 | (value & 0x3F));
-        return 2;
-    }
-    if (value <= 0xFFFF)
-    {
-        output[0] = cast(char)(0xE0 | value >> 12);
-        output[1] = cast(char)(0x80 | (value >> 6 & 0x3F));
-        output[2] = cast(char)(0x80 | (value & 0x3F));
-        return 3;
-    }
-    output[0] = cast(char)(0xF0 | value >> 18);
-    output[1] = cast(char)(0x80 | (value >> 12 & 0x3F));
-    output[2] = cast(char)(0x80 | (value >> 6 & 0x3F));
-    output[3] = cast(char)(0x80 | (value & 0x3F));
-    return 4;
-}
 
 @("picker.state.fixedPromptSelectionAndDebug")
 @safe pure nothrow @nogc
@@ -666,6 +662,21 @@ unittest
         && state.debugScore.result.score.total == 9);
 }
 
+@("picker.prompt.scalarEraseAndAtomicCapacity")
+@safe pure nothrow @nogc unittest
+{
+    PickerPrompt!8 prompt;
+    prompt.start();
+    assert(prompt.type('e') && prompt.type('\u0301') && prompt.type('😀'));
+    assert(prompt.text == "e\u0301😀");
+    assert(!prompt.type('é') && prompt.text == "e\u0301😀");
+    assert(prompt.erase() && prompt.text == "e\u0301");
+    assert(prompt.erase() && prompt.text == "e");
+    assert(!prompt.type(cast(dchar) 0xD800) && prompt.text == "e");
+    assert(prompt.erase() && prompt.text == "");
+    assert(!prompt.erase());
+}
+
 @("picker.scheduler.syncFallbackAndStaleRejection")
 @system
 unittest
@@ -685,12 +696,11 @@ unittest
     snapshot.id.low = 9;
     snapshot.candidates = candidates[];
 
-    // Neither the stack nor the collected heap: a scheduler is four
-    // generation slots of matcher workspace (~3 MiB), a test runs on a
-    // worker thread (512 KiB of stack on macOS), and a GC block that size
-    // crashes the collector there.
+    // Heap-own address-stable slot metadata; its large pointer-free matcher
+    // arenas are separately owned and not registered as collector ranges.
     auto owner = makeUnique!(PickerScheduler!(DefaultFuzzyCaps, 4))();
     auto scheduler = &owner.get();
+    scheduler.initialize();
     auto oldGeneration = scheduler.request("docs", snapshot, 1.msecs);
     auto newest = scheduler.request("src/", snapshot, 1.msecs);
     assert(oldGeneration.hasValue && newest.hasValue
@@ -736,6 +746,7 @@ unittest
     // Off the collected heap, as above.
     auto owner = makeUnique!(PickerScheduler!(DefaultFuzzyCaps, 4))();
     auto scheduler = &owner.get();
+    scheduler.initialize();
     scheduler.attach(pool);
     auto generation = scheduler.request("alpha", snapshot, 1.msecs);
     assert(generation.hasValue);

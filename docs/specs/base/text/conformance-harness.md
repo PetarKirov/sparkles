@@ -9,15 +9,18 @@ reviewed: 2026-10-05
 ## Abstract
 
 `text-conformance` is the `sparkles:base` tool that cross-checks terminal
-[grid-cell](../../../glossary.md#grid-cell) **width** and UAX #29 **grapheme
-segmentation** against independent oracles. They are the official
-Unicode test files, an oracle written independently from raw Unicode data, the
-kitty, ghostty and notcurses terminal engines, the utf8proc, Rust
-`unicode-width` and Python `wcwidth` width libraries, and the utf8proc and ICU
-segmenters. The terminal engines and width libraries are other width policies,
-not Unicode authorities, so a disagreement with them is classified rather than
-assumed to be ours. Disagreements between implementations that are understood are
-recorded in a ledger, so a run fails only on a new one.
+[grid-cell](../../../glossary.md#grid-cell) **width**, default **boundaries**,
+**bidi**, **normalization**, and **casing** against independent Unicode oracles.
+Official corpora and clean-room raw-data oracles provide reproducible checks
+without a font-dependent visual oracle. The oracles include the official Unicode
+test files, an oracle written independently from raw Unicode data, the kitty,
+ghostty and notcurses terminal engines, the utf8proc, Rust `unicode-width` and
+Python `wcwidth` width libraries, and the utf8proc and ICU segmenters. The terminal
+engines and width libraries are other width policies, not Unicode authorities, so
+a disagreement with them is classified rather than assumed to be ours.
+Disagreements between implementations that are understood are recorded in a
+ledger, so a foreign-policy run fails only on a new one; normative failures
+cannot be waived.
 
 ## Introduction
 
@@ -33,59 +36,68 @@ implementations disagree among themselves. Anything else is a regression. The
 tool lives at
 [`libs/base/tools/text-conformance/`](../../../../libs/base/tools/text-conformance/).
 
-The delivered library takes Unicode data from two places, so the harness pins
-two versions. The width tables are generated for one release, and grapheme
-segmentation comes from the toolchain's tables, which follow an older one. The
-harness checks each axis against its own pinned version (see
-[The two Unicode versions](#the-two-unicode-versions)). A single content-pinned
-release with zero divergences from its normative corpora is the target of the
-[owned Unicode contract](./SPEC.md) and its
-[acceptance strategy](./testing.md), reached at the gate tracked in
-[the delivery plan](./PLAN.md). _Owned_ there means that sparkles implements
-the Unicode data and algorithms itself
+The owned implementation and normative layers use one authenticated Unicode
+18.0.0 manifest. The [owned Unicode contract](./SPEC.md) and
+[acceptance strategy](./testing.md) require zero normative divergences, reached
+at the gate tracked in [the delivery plan](./PLAN.md). _Owned_ there means that
+sparkles implements the Unicode data and algorithms itself
 ([ownership](./SPEC.md#_1-scope-vocabulary-and-ownership)).
 
-The ledger records disagreements between oracles. Most are contested width
-classes and version skew; one is a boundary on which the two live segmenters
-disagree. A failure against the official Unicode test files (Layer 0) is never
-added to it. A documented disagreement between terminal width policies is
-separate from a failed Unicode boundary or normalization rule, and the ledger
-**must not** hide the latter.
+The compiler-derived baseline previously took Unicode data from two places:
+generated width tables for one release and toolchain grapheme tables for an older
+one. Its two version axes and compiler comparison are historical observations,
+not the owned implementation's release selection.
 
-The sections below describe the layers, how to run them, the two Unicode
-versions, the ratchet ledger, the limitation of the clean-room oracle (the one
-derived from raw Unicode data, independently of `std.uni` and the generated
-tables),
-and the compiler comparison.
+The ledger records disagreements between oracles. Most historical entries are
+contested width classes and version skew; one is a boundary on which the two live
+segmenters disagreed. A failure against the official Unicode test files (Layer 0)
+is never added to it. Terminal-width interoperability remains a separate
+differential policy: an allowlist may document foreign model differences, never
+waive an official boundary, bidi, normalization, or casing failure.
 
-## The eleven layers
+The sections below describe the layers, how to run them, the single manifest
+identity, the ratchet ledger, the limitation of the clean-room oracle (derived
+from raw Unicode data, independently of `std.uni` and the generated tables), and
+the historical compiler comparison. Executed evidence covers the prior contract
+subset; it does not establish the newly added width-profile, glyph-channel,
+overflow-storage, or scaled-footprint requirements. Their implementation and
+independent-review gates remain open as recorded in
+[the acceptance strategy](./testing.md#_9-independent-contract-review).
 
-| Layer  | Checks                                                         | Oracle                                                                  |
-| ------ | -------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| **0**  | segmentation: `byGraphemeCluster` boundaries                   | the official `GraphemeBreakTest.txt` (`÷`/`×` ground truth)             |
-| **1**  | per-code-point width over **all** of `0..0x10FFFF`             | a clean-room oracle re-derived from raw UCD (`oracle.d`)                |
-| **2**  | cluster width + single-cluster segmentation of every RGI emoji | `emoji-test.txt` + the clean-room oracle                                |
-| **3**  | `visibleWidth` over an emoji + segmentation corpus             | **kitty** `wcswidth` (CLI binary, `+runpy`)                             |
-| **4**  | `visibleWidth` over the same corpus                            | **ghostty** VT engine as a **library** (`libghostty-vt` cursor advance) |
-| **5**  | `codepointWidth` over assigned code points                     | **utf8proc** `utf8proc_charwidth` (library)                             |
-| **6**  | `byGraphemeCluster` boundaries (live)                          | **utf8proc** `utf8proc_grapheme_break` (library, Unicode 17.0)          |
-| **7**  | `byGraphemeCluster` boundaries (live)                          | **ICU** `ubrk_*` (library, the UAX #29 reference)                       |
-| **8**  | `visibleWidth` over the corpus                                 | **notcurses** `ncstrwidth` (library)                                    |
-| **9**  | `codepointWidth` (assigned) + `visibleWidth` (corpus)          | **Rust** `unicode-width` crate (helper binary)                          |
-| **10** | `codepointWidth` (assigned) + `visibleWidth` (corpus)          | **Python** jquast `wcwidth`, **embedded in-process via PyD**            |
+## The seventeen layers
+
+| Layer  | Checks                                                               | Oracle                                                                              |
+| ------ | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **0**  | segmentation: `byGraphemeCluster` boundaries                         | the official `GraphemeBreakTest.txt` (`÷`/`×` ground truth)                         |
+| **1**  | per-code-point width over **all** of `0..0x10FFFF`                   | a clean-room oracle re-derived from raw UCD (`oracle.d`)                            |
+| **2**  | cluster width + single-cluster segmentation of every RGI emoji       | `emoji-test.txt` + the clean-room oracle                                            |
+| **3**  | `visibleWidth` over an emoji + segmentation corpus                   | **kitty** `wcswidth` (CLI binary, `+runpy`)                                         |
+| **4**  | `visibleWidth` over the same corpus                                  | **ghostty** VT engine as a **library** (`libghostty-vt` cursor advance)             |
+| **5**  | `codepointWidth` over assigned code points                           | **utf8proc** `utf8proc_charwidth` (library)                                         |
+| **6**  | `byGraphemeCluster` boundaries (live)                                | **utf8proc** `utf8proc_grapheme_break` (library, Unicode 17.0)                      |
+| **7**  | `byGraphemeCluster` boundaries (live)                                | **ICU** `ubrk_*` (library, the UAX #29 reference)                                   |
+| **8**  | `visibleWidth` over the corpus                                       | **notcurses** `ncstrwidth` (library)                                                |
+| **9**  | `codepointWidth` (assigned) + `visibleWidth` (corpus)                | **Rust** `unicode-width` crate (helper binary)                                      |
+| **10** | `codepointWidth` (assigned) + `visibleWidth` (corpus)                | **Python** jquast `wcwidth`, **embedded in-process via PyD**                        |
+| **11** | default word boundaries in UTF-32 and UTF-8                          | official `WordBreakTest.txt`                                                        |
+| **12** | default sentence boundaries in UTF-32 and UTF-8                      | official `SentenceBreakTest.txt`                                                    |
+| **13** | default line opportunities and mandatory breaks                      | official `LineBreakTest.txt`                                                        |
+| **14** | bidi levels, order, maps, paragraph and line behavior                | official `BidiTest.txt` and `BidiCharacterTest.txt`                                 |
+| **15** | all normalization forms, omitted-scalar identities, exact provenance | official `NormalizationTest.txt`                                                    |
+| **16** | exhaustive simple/full casing and root/tr/az/lt contexts             | clean-room `UnicodeData`, `SpecialCasing`, `CaseFolding` and raw context properties |
 
 The layers fall into four families that triangulate the library from different
 angles:
 
-- **Ground truth & clean-room** (0, 1, 2) — the official UCD test files and a
+- **Ground truth & clean-room** (0, 1, 2, 11–16) — the official UCD test files and a
   raw-UCD oracle re-derived independently of `std.uni` and the generated tables.
   The oracle deliberately mirrors `width.d`'s _model_, so a shared simplification
   is invisible to it (see "Shared constants").
 - **Live segmenters** (6 utf8proc, 7 ICU) — independent UAX #29 implementations
-  at Unicode 17.0 (utf8proc) and ICU 16's data, cross-checking
-  `byGraphemeCluster`, whose `std.uni` tables segment like Unicode 15.0 (see
-  [The two Unicode versions](#the-two-unicode-versions)). Layer 0 is the
-  static-file version of the same check.
+  cross-checking the owned Unicode 18 `byGraphemeCluster`. Installed foreign
+  versions (Unicode 17.0 for utf8proc and ICU 16's data in the historical run)
+  are comparison evidence, not the implementation's data source or normative
+  release selection. Layer 0 is the static-file version of the same check.
 - **Terminal width models** (3 kitty, 4 ghostty, 8 notcurses) — three real
   terminal emulators measuring whole strings (grapheme-aware).
 - **Library width models** (5 utf8proc, 9 Rust, 10 Python) — the dominant
@@ -124,22 +136,56 @@ column count reflects real placement); kitty's pure `wcswidth` covers the rest.
 ## Running
 
 ```bash
-# all layers (downloads UCD on first run, caches under $XDG_CACHE_HOME)
-dub run --root=libs/base/tools/text-conformance -- --layers all
+# all layers, explicitly opting into foreign-library dependencies
+# (downloads UCD on first run, caches under $XDG_CACHE_HOME)
+dub run --root=libs/base/tools/text-conformance \
+    --recipe=libs/base/tools/text-conformance/oracles.sdl -- --layers all
 
-# a single layer, or a comma list
-dub run --root=libs/base/tools/text-conformance -- --layers 1,6,7
+# a single foreign layer, or a comma list
+dub run --root=libs/base/tools/text-conformance \
+    --recipe=libs/base/tools/text-conformance/oracles.sdl -- --layers 1,6,7
 
-# offline: the `offline` config drops every native dep (libcurl + all the
-# binding/helper oracles), so only the pure layers run.
-dub run --root=libs/base/tools/text-conformance --config=offline -- \
-    --layers 0,1,2 --ucd-dir ~/.cache/sparkles-text-conformance --no-network
+# offline is the default recipe/configuration; no native or downloader deps
+dub run :text-conformance --config=offline -- \
+    --layers 0,11,12,13,14,15,16 \
+    --manifest libs/base/tools/unicode/manifest.json \
+    --ucd-dir libs/base/tools/unicode/18.0.0 --no-network
 
 # unit tests for the oracle
 dub test --root=libs/base/tools/text-conformance
 ```
 
-Oracle requirements (all provided by the dev shell):
+### Required CI gate
+
+```bash
+nix build -L .#checks.x86_64-linux.text-conformance
+```
+
+The unconditional **Owned Unicode conformance** job runs this derivation on every
+CI trigger and participates in the required `CI` fan-in. `nix flake check` also
+includes it. The derivation builds the existing executable through the shared
+Sparkles DUB builder, then runs complete layers **0, 11, 12, 13, 14, 15, 16** in
+the Nix build sandbox with `--no-network`, an explicit manifest, and an immutable
+input directory. The summary and per-corpus totals are retained as the check's
+output file; `nix log` exposes the execution log even when a cached result is used.
+
+All 35 reviewed manifest artifacts, including every official boundary, bidi and
+normalization corpus, the raw casing/context inputs, and the license, are tracked
+under `libs/base/tools/unicode/18.0.0`. Their checked bytes match the pinned
+SHA-256 values. `unicode-conformance-data` provisions those bytes directly from
+the tree; execution does not download, consult a user cache, or sample the corpora.
+Each consumed input is authenticated by the D harness against manifest identity
+`df3659783f974cb439f4f6436dc4e72f0d06313a45b865c04921dba1d938abcc`,
+which must also match the generated implementation.
+
+Default/root and unittest builds do not resolve or link the foreign oracles.
+DUB resolves dependencies in inactive configurations too, so those declarations
+live in the opt-in `oracles.sdl` recipe rather than an inactive block of the default
+recipe. Both recipes build the same harness sources and executable. Required
+normative layers fail on errors, skipped/zero-check execution, or any divergence;
+the foreign-policy allowlist cannot waive their failures.
+
+Foreign-oracle requirements (all provided by the default development shell):
 
 - **Layer 3 (kitty)** needs the `kitty` binary on `PATH` — optional, skips when
   absent; `--require-kitty` makes it a hard error.
@@ -153,28 +199,46 @@ Oracle requirements (all provided by the dev shell):
   shell sets. The dev shell pins `wcwidth` 0.8.2; PyD is pinned to an untagged
   upstream commit (see the layer source).
 
-All binding/helper layers are gated behind `version(...)` flags, so the
-`offline`/`unittest` builds compile and run without any native dependency.
+All binding/helper implementations are gated behind `version(...)` flags.
+The default `offline`/`unittest` recipe needs no native dependency; `oracles.sdl`
+enables the foreign-library versions.
 
 Exit code is `0` unless a layer has a **new** (non-allowlisted) divergence or a
 hard error (a download failure, or required-but-missing kitty).
 
-## The two Unicode versions
+## One manifest identity
 
-The harness pins **two** versions because the library itself does:
+The generator and harness authenticate the same Unicode 18.0.0 inputs, including
+the license and official test corpora. `--manifest` selects the checked manifest
+and `--ucd-dir` supplies its `ucd/`, `emoji/`, and license artifacts. Cache entries
+are namespaced by manifest identity. Compiler upgrades cannot select a different
+segmentation or width release; the former version-axis CLI options are removed.
 
-- **Width** (`--width-unicode-version`, default `17.0.0`) — matches the EAW /
+The integrated CLI run of layers 11–16 passed 16,974 word endpoint checks
+(1,944 records), 4,734 sentence endpoint checks (512 records), 80,131 line checks
+(19,346 cases), 861,948 bidi direction cases, 4,783,064 normalization checks,
+and 11,120,810 casing checks. Normalization includes 99,999-nonstarter exact
+provenance stress; casing includes 5,560,490 full transforms and 5,560,320
+simple-map comparisons with root/tr/az/lt contexts. These are scoped algorithm
+results, not whole-package, font, platform, or final M6 signoff, and not evidence
+for the newly added width-profile, glyph-channel, or scaled-footprint obligations.
+
+### Historical compiler-derived baseline
+
+The former CLI pinned two axes:
+
+- **Width** (`--width-unicode-version`, default `17.0.0`) matched the EAW /
   emoji-VS tables generated by
   [`gen_unicode_tables.d`](../../../../libs/base/tools/gen_unicode_tables.d).
-- **Segmentation** (`--segmentation-unicode-version`, default `15.0.0`) **must**
-  match the toolchain's Phobos `std.uni` grapheme tables, which segment like an
-  older release than the width pin. Under LDC 1.41, Layer 0 has zero
-  divergences at 15.0.0 and a cluster of Indic-conjunct/emoji-ZWJ divergences
-  at 15.1 and later; the live segmenters (6, 7) confirm the version gap.
+- **Segmentation** (`--segmentation-unicode-version`, default `15.0.0`) had to
+  match the toolchain's Phobos `std.uni` grapheme tables. Under LDC 1.41, Layer 0
+  had zero divergences at 15.0.0 and a cluster of Indic-conjunct/emoji-ZWJ
+  divergences at 15.1 and later; the live segmenters (6, 7) confirmed the gap.
 
-`--unicode-version` sets both. **After a compiler upgrade**, re-run `--layers 0`
-across a few versions to find the matching segmentation version and set
-`phobosGraphemeUnicodeVersion` in `config.d` to it.
+The former `--unicode-version` set both axes. Compiler upgrades previously
+required probing Layer 0 across versions and updating
+`phobosGraphemeUnicodeVersion` in `config.d`; neither that selector nor the
+compiler-derived release-selection procedure applies to the owned implementation.
 
 Under LDC 1.42.0, the offline run passes all 1,112,064 scalar width cases and
 all 3,655 RGI emoji cases, and Layer 0 passes 601 of 602 Unicode 15 cases:
@@ -187,20 +251,23 @@ boundary. See the [performance report](../../../research/simd-unicode/performanc
 
 ## The ratchet: `known-divergences.md`
 
-Only divergences **absent** from
+Foreign-policy divergences absent from
 [`known-divergences.md`](../../../../libs/base/tools/text-conformance/known-divergences.md)
-fail the run; listed ones are reported as "known" (yellow count) and do not fail.
-This makes the harness a ratchet: a new regression turns the run red, while
-already-understood divergences stay documented and green.
+fail the run; listed ones are reported as known. Official normative layers 0 and
+11–16 always fail on any divergence, even if a matching allowlist row exists.
+`--update-allowlist` excludes their failures. Missing or malformed required data
+is a hard error, not an oracle skip.
 
 Regenerate after reviewing changes (with all oracles present):
 
 ```bash
 nix shell nixpkgs#kitty --command \
-    dub run --root=libs/base/tools/text-conformance -- --layers all --update-allowlist
+    dub run --root=libs/base/tools/text-conformance \
+    --recipe=libs/base/tools/text-conformance/oracles.sdl -- --layers all --update-allowlist
 ```
 
-Each row carries a `reason`. The ledger's classes, by layer:
+The recorded historical ledger rows carry a `reason`. Their classes, by layer
+(these counts are not a post-cutover foreign-oracle acceptance run):
 
 - **Version skew (Layer 1, 42).** Combining marks `U+1ACF..U+1AE4` are width 0 in
   UCD 17.0 but width 1 from the Unicode 15.0 categories of `std.uni`. A
@@ -224,10 +291,11 @@ Each row carries a `reason`. The ledger's classes, by layer:
 - **notcurses (Layer 8, 417).** Its own model: it keeps emoji + VS16 at width 1
   (sparkles/kitty promote to 2), plus ZWJ / jamo differences.
 
-The headline holds across all eleven: the contested width classes are
-**implementation-dependent**, `sparkles` consistently follows the kitty Text
-Sizing Protocol, and the independent oracles corroborate the version skew between
-the width and segmentation axes from multiple angles.
+The historical headline across all eleven layers was that contested width
+classes were **implementation-dependent**, `sparkles` followed the kitty Text
+Sizing Protocol, and independent oracles corroborated the version skew between
+the width and segmentation axes from multiple angles. It does not establish the
+new width-profile or scaled-footprint requirements.
 
 ## Shared constants (Layer 1's honest limitation)
 
@@ -240,23 +308,21 @@ cover that blind spot.
 
 ## Comparing compilers (LDC vs DMD)
 
-Segmentation rides Phobos `std.uni`, so it can differ between compilers. The
-`offline` config drops all native deps and reads everything from `--ucd-dir`:
+The owned algorithms use the same authenticated Unicode 18 manifest with either
+compiler; switching compilers does not select a Phobos Unicode release:
 
 ```bash
-for c in ldc2 dmd; do for v in 15.0.0 17.0.0; do
-  dub run --root=libs/base/tools/text-conformance --config=offline --compiler=$c -- \
-    --layers 0 --segmentation-unicode-version $v \
-    --ucd-dir ~/.cache/sparkles-text-conformance --no-network
-done; done
+for c in ldc2 dmd; do
+  dub run :text-conformance --config=offline --compiler=$c -- \
+    --layers 0,11,12,13,14,15,16 --no-network \
+    --manifest libs/base/tools/unicode/manifest.json \
+    --ucd-dir libs/base/tools/unicode/18.0.0
+done
 ```
 
-Result (LDC 1.41 / Phobos 2.111 vs DMD 2.112.1): **both** segment Indic conjuncts
-(InCB) like Unicode **15.0** — the Phobos "Update to Unicode 17.0.0" (v2.112.0)
-bumped property _data_ but not grapheme-break behavior — and disagree on exactly
-**one** boundary, `U+2701 U+200D U+2701`, where DMD's `Extended_Pictographic`
-data flips the GB11 result. So `phobosGraphemeUnicodeVersion = 15.0.0` is right
-for both.
+The compiler-derived results above are historical baselines, not current owned
+conformance expectations. The former segmentation-version selector no longer
+exists.
 
 ## Layout
 

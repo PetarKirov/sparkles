@@ -953,8 +953,7 @@ unittest
 @safe unittest
 {
     import std.algorithm.searching : canFind, endsWith;
-    import std.uni : byGrapheme;
-    import std.range : walkLength;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     // The pane hides the key guide, so this line is where its keys live. It
     // was clipped at the widest panel the geometry allows, which cut exactly
@@ -966,7 +965,7 @@ unittest
         const g = paneGeometryFor(Size(viewportW, 30));
         pane.ensure(s, g);
         const hint = pane.hintText();
-        const cols = hint.byGrapheme.walkLength;
+        const cols = visibleWidth(hint);
         assert(cols <= g.cols - 8,
             "the hint overflows the panel at viewport width "
             ~ (viewportW < 100 ? "small" : "large"));

@@ -16,17 +16,17 @@ bool applyGridConfigText(const(char)[] text, ref GridConfig cfg, ref Palette pal
 /**
 Read `path` and apply it. A missing file is an error, not a silent skip.
 
-$(B Every way this can fail returns `false`), including the ones `std.file`
-reports by throwing: a path that exists but cannot be read, or whose bytes are
-not valid UTF-8. Those used to escape as an exception — so a config file with
-the wrong permissions printed a stack trace from `main` instead of the reason
+$(B Every way this can fail returns `false`), including file I/O errors and
+invalid UTF-8. Bytes are read without implicit decoding and validated by the
+owned UTF implementation. Previously an unreadable file escaped as an
+exception and printed a stack trace from `main` instead of the reason
 this function promises to write into `error`.
 */
 bool loadGridConfigFile(string path, ref GridConfig cfg, ref Palette pal,
     ref string error)
 {
-    import std.file : exists, FileException, readText;
-    import std.utf : UTFException;
+    import std.file : exists, FileException, read;
+    import sparkles.base.text.utf8 : indexOfInvalidUtf8;
 
     if (!exists(path))
     {
@@ -36,13 +36,13 @@ bool loadGridConfigFile(string path, ref GridConfig cfg, ref Palette pal,
 
     string text;
     try
-        text = readText(path);
+        text = cast(string) read(path);
     catch (FileException ex)
     {
         error = "diagram: cannot read config file: " ~ ex.msg;
         return false;
     }
-    catch (UTFException ex)
+    if (indexOfInvalidUtf8(text) != text.length)
     {
         error = "diagram: config file is not valid UTF-8: " ~ path;
         return false;
@@ -103,7 +103,7 @@ bool saveGridConfigFile(string path, in GridConfig cfg, ref string error) @safe
     import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
 
     // A directory is the portable stand-in for "exists, cannot be read as
-    // text": `readText` throws, and the caller in `app.d` prints `error` — so
+    // text": `read` throws, and the caller in `app.d` prints `error` — so
     // a throw here reaches the user as a stack trace instead of a sentence.
     // The scratch directory itself is that stand-in.
     auto tmp = TmpFS.create();
@@ -114,6 +114,27 @@ bool saveGridConfigFile(string path, in GridConfig cfg, ref string error) @safe
     string err;
     assert(!loadGridConfigFile(dir, cfg, pal, err));
     assert(err.length > 0);
+}
+
+@("diagram.grid_file.invalidUtf8LeavesConfigAndPaletteUntouched")
+@system unittest
+{
+    import std.file : write;
+    import std.path : buildPath;
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui.style : ColorScheme, defaultTwoslashPalette;
+
+    auto tmp = TmpFS.create();
+    const path = buildPath(tmp.dir(), "grid.json");
+    write(path, `{"preset":"dotPaper","label":"` ~ "\xED\xA0\x80" ~ `"}`);
+    GridConfig cfg;
+    auto pal = defaultTwoslashPalette(ColorScheme.dark);
+    const beforeConfig = cfg;
+    const beforePalette = pal;
+    string err;
+    assert(!loadGridConfigFile(path, cfg, pal, err));
+    assert(err == "diagram: config file is not valid UTF-8: " ~ path);
+    assert(cfg == beforeConfig && pal == beforePalette);
 }
 
 @("diagram.grid_file.presetApplies")

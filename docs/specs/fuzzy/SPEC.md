@@ -154,12 +154,51 @@ analyzed units than a limit returns `queryTooComplex` or
 `candidateTooLong`. The default values are tuning parameters: changing them
 requires a benchmark record and a specification change.
 
-Default `QueryStorage` and `ConstraintWorkspace` values each carry a
-compile-time 128 KiB ceiling; `MatcherWorkspace` carries a one-MiB ceiling.
-Static assertions make a capacity/layout change that crosses those budgets a
-build failure. Value construction itself allocates nothing and therefore has
-no hidden allocation-failure outcome; callers choose where those regular
-values live.
+Default `QueryStorage` retains its compile-time 128 KiB ceiling.
+`ConstraintWorkspace` has a sixteen-KiB ceiling: it retains decoded constraint
+bytes and NFA state, borrowing the matcher's Unicode arena during `searchChunk`.
+`MatcherWorkspace` retains its sixteen-MiB ceiling and contains no indirections;
+heap-owning it with `Unique` does not register its large allocation as a
+collector-scanned range. The reusable `FuzzyTextWorkspace` occupies 12,935,768
+bytes in the recorded x86-64 layout and is shared sequentially between query
+preparation, constraint evaluation, and candidate analysis, never duplicated
+inside the matcher. Prepared query units are copied out before reuse.
+These arenas include complete whole-input transformation scratch and exact
+contributor/deletion storage, rather than source envelopes. Intermediate stages
+are bounded separately from final analyzed units: 107 U+0390 scalars need 321
+canonical decomposition units, and 256 decomposed A-grave units need 512 decoded
+scalars, while both queries remain within the advertised final-unit limits.
+Static assertions reject layouts above the ceilings.
+Workspace values allocate nothing; callers must heap-own large workspaces
+rather than place them on the test runner's 512 KiB worker stack. The default
+query, candidate, intermediate-unit and exact-provenance capacities are
+unchanged. A query's 256 final units do not justify a smaller arena: supported
+queries may still consume 4,096 source bytes before normalization, mark removal
+or syntax compilation. No smaller provenance bound has been established for
+the supported transformation pipeline.
+
+The 2026-10-05 x86-64 comparison used LDC (D frontend 2.112) on an AMD
+Ryzen 9 7940HX, `-O3 -mcpu=native`, assertions live, 32 samples and a 10 ms
+minimum sample window. The same five benchmark cases ran against the committed
+pre-runtime-cutover tree (`0d53a3af2`) and the owned implementation. The baseline
+benchmark recipe received only the same assertion-preserving build-option
+repair: a call inside `assert` must execute during setup.
+
+| Existing benchmark                             | Baseline median | Owned median |
+| ---------------------------------------------- | --------------: | -----------: |
+| compiled glob execution                        |            3 µs |        10 µs |
+| reused matcher score + positions               |            3 µs |        10 µs |
+| query parse + analysis + glob compile          |            3 µs |         8 µs |
+| 64-result top-K generation                     |            1 µs |         1 µs |
+| one-candidate parse/search/rank/page keystroke |            6 µs |        19 µs |
+
+These rounded observations include exact Unicode contributor storage, but no
+workspace construction in the timed hot path. Baseline matcher/constraint/query
+layouts were 791,840 / 76,048 / 27,120 bytes; owned layouts are
+13,721,976 / 8,710,296 / 27,128 bytes. The complete allocation-audit path passed
+with zero GC and wrapped libc allocator calls. Retain the existing input/final
+capacity contracts rather than hide insufficient intermediate scratch behind
+`queryTooComplex`; callers must account for the increased per-worker memory.
 
 ## 3. Query language
 

@@ -48,7 +48,8 @@ import std.stdio : writefln, writeln;
 
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.input.events : Key, KeyAction, KeyEvent, isDismiss;
-import sparkles.ui.geometry : cellsOf, Point, Rect;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Point, Rect;
 
 // ---------------------------------------------------------------------------
 // The policy value
@@ -491,12 +492,12 @@ string pt(in Point p) @safe
     return format!"(%d,%d)"(p.x, p.y);
 }
 
-/// Pad a table cell to `width` display columns. `cellsOf` is the toolkit's one
+/// Pad a table cell to `width` display columns. `visibleWidth` is the toolkit's one
 /// width authority — `%-7s` would pad by BYTES and skew every column holding a
 /// multi-byte `·`.
 void writeCell(Writer)(ref Writer w, scope const(char)[] s, size_t width, bool leftAlign = false)
 {
-    const used = cellsOf(s);
+    const used = visibleWidth(s);
     const pad = width > used ? width - used : 0;
     if (leftAlign)
         w ~= s;

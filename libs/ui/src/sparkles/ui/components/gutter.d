@@ -89,7 +89,7 @@ GutterCell cellOf(scope const(char)[] content, int width,
     bool paintBackground = false, size_t hitId = 0)
     @safe pure nothrow @nogc
 {
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     GutterCell cell = {slot: slot, paintBackground: paintBackground, hitId: hitId};
     if (width <= 0)
@@ -97,7 +97,7 @@ GutterCell cellOf(scope const(char)[] content, int width,
 
     // Measured in cells, not bytes: a fold arrow is three bytes of UTF-8 and
     // one column, and padding it by its length would push the code over.
-    const shown = cast(int) cellsOf(content);
+    const shown = cast(int) visibleWidth(content);
     const pad = shown >= width ? 0 : width - shown;
     if (alignEnd)
         foreach (_; 0 .. pad)

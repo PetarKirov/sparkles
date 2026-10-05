@@ -369,10 +369,10 @@ under their owning application's storage contract.
 
 A single manifest-driven pipeline **may** emit several cohesive modules; nothing
 requires every property to live in one source file. Compiler-probed grapheme data has
-no place in the pipeline. The [Unicode generator](../../../../libs/base/tools/gen_unicode_tables.d),
-[grapheme generator](../../../../libs/base/tools/gen_grapheme_tables.d), and
-[analysis module](../../../../libs/base/src/sparkles/base/text/analysis.d) are the
-code seams the pipeline replaces; [the plan](./PLAN.md) tracks their migration.
+no place in the pipeline. The [Unicode generator](../../../../libs/base/tools/gen_unicode_tables.d)
+and [analysis module](../../../../libs/base/src/sparkles/base/text/analysis.d) are the
+implementation seams. The cutover removed the separate compiler-probed grapheme
+generator and its singleton data; [the plan](./PLAN.md) tracks implementation scope.
 
 ## 4. Segmentation and Unicode algorithms
 

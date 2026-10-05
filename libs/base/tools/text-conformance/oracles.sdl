@@ -1,0 +1,35 @@
+name "text-conformance"
+description "Differential-testing harness with optional foreign Unicode oracles"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetName "text-conformance"
+targetPath "build"
+mainSourceFile "src/app.d"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:base" path="../../../.."
+dependency "sparkles:core-cli" path="../../../.."
+
+// Same executable and source set as dub.sdl, with opt-in foreign libraries.
+// A separate recipe is necessary: DUB resolves dependencies from inactive
+// configurations too. Keeping these here makes root/offline builds independent
+// of their recipes, native libraries and PyD source provisioning.
+configuration "application" {
+    targetType "executable"
+    libs "curl"
+
+    dependency "sparkles:ghostty" path="../../../.."
+    dependency "utf8proc" path="bindings/utf8proc"
+    dependency "icu" path="bindings/icu"
+    dependency "notcurses" path="bindings/notcurses"
+    // Layer 10 needs the untagged D-2.111 compatibility fix (PyD PR #172).
+    dependency "pyd" repository="git+https://github.com/ariovistus/pyd.git" version="bdba4ca50d0329780c5317c1a06f8afd4032535b"
+    subConfiguration "pyd" "python311"
+    versions "TextConformanceGhostty" "TextConformanceUtf8proc" "TextConformanceIcu" "TextConformanceNotcurses" "TextConformancePython"
+
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+}

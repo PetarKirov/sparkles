@@ -267,7 +267,8 @@ bool parseKey(string name, out Key key) @safe pure nothrow
 bool parseChord(string text, out Chord chord, out string err, dchar leader = ' ') @safe pure
 {
     import std.string : indexOf;
-    import std.utf : byDchar, count;
+    import sparkles.base.text.tokens : byUtfToken;
+    import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
 
     Chord c;
     string rest = text;
@@ -308,9 +309,11 @@ bool parseChord(string text, out Chord chord, out string err, dchar leader = ' '
     // 2. Process leading Unicode modifier symbols without '+' (e.g. ⌃⌥⇧⌘Q)
     while (rest.length > 0)
     {
-        import std.utf : decode;
-        size_t idx = 0;
-        const dchar cp = rest.decode(idx);
+        const decoded = decodeToken(rest);
+        if (decoded.result.status != UtfStatus.ok)
+            throw new Exception("Malformed UTF-8 chord");
+        const idx = decoded.result.consumed;
+        const cp = decoded.token.scalar;
         if (cp == '⌃' || cp == '⎈')
         {
             c.ctrl = true;
@@ -358,13 +361,16 @@ bool parseChord(string text, out Chord chord, out string err, dchar leader = ' '
     }
 
     // 4. Contiguous range (e.g. 1-9 or a-z)
-    const units = rest.count;
+    size_t units;
+    dchar[3] cp;
+    foreach (token; byUtfToken(rest, UtfMode.replacement))
+    {
+        if (units < cp.length)
+            cp[units] = token.scalar;
+        ++units;
+    }
     if (units == 3)
     {
-        dchar[3] cp;
-        size_t ci;
-        foreach (d; rest.byDchar)
-            cp[ci++] = d;
         if (cp[1] == '-')
         {
             if (cp[0] >= cp[2])
@@ -397,9 +403,7 @@ bool parseChord(string text, out Chord chord, out string err, dchar leader = ' '
     // 6. Single character
     if (units == 1)
     {
-        dchar d;
-        foreach (u; rest.byDchar)
-            d = u;
+        dchar d = cp[0];
         if (d >= 'A' && d <= 'Z')
         {
             d = d - 'A' + 'a';
@@ -893,14 +897,20 @@ points, the final one `last` — one empty chunk for an empty paste.
 void pasteChunks(Sink)(scope const(char)[] text, scope Sink sink)
 {
     import std.range.primitives : put;
+    import sparkles.base.text.utf : decodeToken, UtfMode;
 
     size_t at;
     do
     {
-        size_t end = at + pasteChunkBytes < text.length ? at + pasteChunkBytes : text.length;
-        // Back off to a code point boundary: never split a UTF-8 sequence.
-        while (end < text.length && end > at && (text[end] & 0xC0) == 0x80)
-            --end;
+        size_t end = at;
+        while (end < text.length)
+        {
+            const decoded = decodeToken(text[end .. $], UtfMode.opaque);
+            const n = decoded.result.consumed;
+            if (n > pasteChunkBytes - (end - at))
+                break;
+            end += n;
+        }
         PasteEvent chunk;
         const piece = text[at .. end];
         cast(void) chunk.text.tryWrite((ref s) { put(s, piece); });
@@ -1241,6 +1251,26 @@ unittest
         ++empties;
     });
     assert(empties == 1);
+}
+
+@("input.events.pasteChunksMalformedProgress")
+@safe pure nothrow @nogc
+unittest
+{
+    // No leading byte exists to back up to: still preserve every pasted byte.
+    char[85] malformed = cast(char) 0x80;
+    char[85] joined;
+    size_t n, chunks;
+    bool last;
+    pasteChunks(malformed[], (Event e) {
+        const p = e.match!((in PasteEvent p) => p, _ => PasteEvent.init);
+        assert(!last && p.text.length == (chunks < 2 ? 40 : 5));
+        joined[n .. n + p.text.length] = p.text[];
+        n += p.text.length;
+        last = p.last;
+        ++chunks;
+    });
+    assert(last && chunks == 3 && joined[] == malformed[]);
 }
 
 @("input.events.pasteEventIsRegular")

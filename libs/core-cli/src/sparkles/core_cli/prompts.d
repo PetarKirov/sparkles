@@ -231,7 +231,8 @@ Expected!(bool, string) confirm(
     const Theme theme = Theme.init,
 )
 {
-    import std.string : strip, toLower;
+    import std.string : strip;
+    import sparkles.base.text.case_text : asciiLower;
 
     final switch (policy)
     {
@@ -250,7 +251,7 @@ Expected!(bool, string) confirm(
         const answer = io.readLine();
         if (answer is null)
             return err!bool(question ~ ": end of input");
-        switch (answer.strip.toLower)
+        switch (answer.strip.asciiLower)
         {
             case "":            return ok!string(defaultYes);
             case "y", "yes":    return ok!string(true);

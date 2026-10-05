@@ -54,8 +54,8 @@ private string causeOf(dchar cp, int got, int want, in WidthData d) @safe nothro
         return "conjoining Hangul jamo: sparkles forces width 0 (composes onto the "
             ~ "lead); utf8proc gives 1 — the same class ghostty (Layer 4) flags";
     if ((d.mn[cp] || d.mc[cp] || d.me[cp]) && got == 1 && want == 0)
-        return "Mark version skew: sparkles' std.uni (15.0) does not yet class it a "
-            ~ "Mark; utf8proc (17.0) does (width 0)";
+        return "Mark width difference: the manifest classifies it as a Mark; "
+            ~ "the external utf8proc release or policy differs";
     if (d.cf[cp])
         return "format char (Cf): sparkles treats it zero-width (0); utf8proc gives 1";
     if (d.mc[cp] && want == 2)

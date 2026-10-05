@@ -462,9 +462,13 @@ struct DocViewPane
             case Key.backspace:
                 if (query.length)
                 {
-                    import std.utf : strideBack;
+                    import sparkles.base.text.tokens : byUtfToken;
+                    import sparkles.base.text.utf : UtfMode;
 
-                    query = query[0 .. $ - strideBack(query, query.length)];
+                    size_t last;
+                    foreach (token; byUtfToken(query, UtfMode.opaque))
+                        last = token.start;
+                    query = query[0 .. last];
                 }
                 break;
             default:
@@ -775,14 +779,16 @@ version (unittest)
     private KeyEvent ch(dchar c, bool ctrl = false)
     {
         import sparkles.input.events : Mods;
-        import std.utf : encode;
+        import sparkles.base.text.utf : encodeScalar, UtfStatus;
 
         KeyEvent k;
         k.key = Key.char_;
         k.ch = c;
         k.mods = Mods(ctrl: ctrl);
         char[4] b;
-        k.text = b[0 .. encode(b, c)];
+        const encoded = encodeScalar(c, b[]);
+        assert(encoded.status == UtfStatus.ok);
+        k.text = b[0 .. encoded.written];
         return k;
     }
 

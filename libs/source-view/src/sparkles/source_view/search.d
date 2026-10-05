@@ -29,8 +29,7 @@ import sparkles.base.text.analysis : AnalysisCase;
 @safe:
 
 /**
-The monospace column width of a UTF-8 run: the number of codepoints, since each
-non-continuation byte begins one.
+The monospace column width of a UTF-8 run: the number of decoded codepoints.
 
 Combining marks, wide characters and tabs each count as one column — hue's
 `FNT6` rule, deliberately, and the reason this is not
@@ -40,10 +39,12 @@ search change.
 */
 size_t columnWidth(scope const(char)[] run) pure nothrow @nogc
 {
+    import sparkles.base.text.tokens : byUtfToken;
+    import sparkles.base.text.utf : UtfMode;
+
     size_t cols;
-    foreach (ubyte c; run)
-        if ((c & 0xC0) != 0x80) // not a UTF-8 continuation byte
-            ++cols;
+    foreach (_; byUtfToken(run, UtfMode.replacement))
+        ++cols;
     return cols;
 }
 
@@ -76,19 +77,14 @@ twice is exactly how the two searches came to disagree.
 */
 AnalysisCase smartCase(scope const(char)[] query) pure nothrow
 {
-    import std.uni : isUpper, isLower;
-    import std.utf : byDchar;
+    import sparkles.base.text.unicode_tables : unicodeProperty, UnicodeProperty;
+    import sparkles.base.text.tokens : byUtfToken;
+    import sparkles.base.text.utf : UtfMode;
 
-    try
-    {
-        foreach (dchar c; query.byDchar)
-            if (c.isUpper && !c.isLower)
-                return AnalysisCase.sensitive;
-    }
-    catch (Exception)
-    {
-        // Invalid UTF-8 in a query is not a reason to change the case rule.
-    }
+    foreach (token; byUtfToken(query, UtfMode.replacement))
+        if (unicodeProperty(token.scalar, UnicodeProperty.Upper)
+                && !unicodeProperty(token.scalar, UnicodeProperty.Lower))
+            return AnalysisCase.sensitive;
     return AnalysisCase.simpleFold;
 }
 

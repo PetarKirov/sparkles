@@ -6,13 +6,10 @@ the junction-glyph logic, and the output-line ordering (`lineDescs`).
 
 Nothing in this module measures cell $(I content) — the solvers take
 precomputed per-anchor natural widths, wrapped-line counts, and decimal tail
-widths, so each view brings its own measure and wrap engine: the string view
-(`sparkles.ui.components.table.render`) measures with the grapheme-aware
-`visibleWidth` and wraps with `sparkles.base.text.wrap`, while the widget view
-measures with the toolkit's `cellsOf` and wraps with `sparkles.ui.wrap` (the
-display list and selection geometry hard-wire `cellsOf`, so the two views
-$(I deliberately) diverge on CJK/emoji widths). Both are re-exported through
-the `sparkles.ui.components.table` package module.
+widths. Both string and widget views supply the owned base terminalKitty
+profile and shared cell wrapping plans; styling is a projection, never a
+separate width or grapheme authority. Both are re-exported through the
+`sparkles.ui.components.table` package module.
 +/
 module sparkles.ui.components.table.layout;
 

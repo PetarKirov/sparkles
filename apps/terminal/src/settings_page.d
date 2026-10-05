@@ -571,14 +571,14 @@ final class SettingsPage : Surface, Scrollable
     private Item[] keysItems() @safe
     {
         import std.algorithm.searching : canFind;
-        import std.uni : toLower;
+        import sparkles.base.text.case_text : unicodeLower;
 
         Item[] r;
-        const q = pane.tv.filterQuery.idup.toLower;
+        const q = pane.tv.filterQuery.unicodeLower;
         size_t[] shown;
         foreach (i, ref row; bindings)
-            if (!q.length || row.label.toLower.canFind(q)
-                || pathLabel(row.path, leader).toLower.canFind(q))
+            if (!q.length || row.label.unicodeLower.canFind(q)
+                || pathLabel(row.path, leader).unicodeLower.canFind(q))
                 shown ~= i;
         if (q.length && !shown.length)
             return r;

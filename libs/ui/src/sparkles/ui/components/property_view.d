@@ -18,7 +18,8 @@ import std.conv : text;
 import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.components.tree_widget : FlatTreeRow, Guide, nodeExpandable,
     TreeData, TreeGlyphs;
-import sparkles.ui.geometry : cellsOf, SizeSpec;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.property_tree : ByteSpan, LeafKind, MatchedField,
     PropertyEditState, PropertyNode, Refusal, RefusalKind, SearchRole;
 import sparkles.ui.style : InteractionState, Slot, StateSet, TextStyle;
@@ -180,7 +181,7 @@ uint propertyView(ref Builder b, in TreeData!PropertyNode data,
                 ? opt.glyphs.open : opt.glyphs.closed)
             : opt.glyphs.leaf;
         spans ~= TextSpan(marker, Slot.gutter);
-        used += cast(int) cellsOf(marker);
+        used += cast(int) visibleWidth(marker);
 
         const rm = roleMarker(n.role);
         if (rm.length)
@@ -188,7 +189,7 @@ uint propertyView(ref Builder b, in TreeData!PropertyNode data,
             auto ms = TextSpan(rm,
                 n.role == SearchRole.direct ? Slot.matched : Slot.muted);
             spans ~= ms;
-            used += cast(int) cellsOf(rm);
+            used += cast(int) visibleWidth(rm);
         }
 
         // The label, with witness emphasis on a search projection.
@@ -204,7 +205,7 @@ uint propertyView(ref Builder b, in TreeData!PropertyNode data,
                 ls.textStyle = TextStyle(italic: true);
             spans ~= ls;
         }
-        used += cast(int) cellsOf(n.label);
+        used += cast(int) visibleWidth(n.label);
 
         // Read-only / pending affordances precede the value column.
         if (!n.synthetic && !n.composite && !n.editable)
@@ -333,12 +334,12 @@ void writePropertyText(Writer)(ref Writer w, in TreeData!PropertyNode data,
                 ? opt.glyphs.open : opt.glyphs.closed)
             : opt.glyphs.leaf;
         w.put(marker);
-        used += cast(int) cellsOf(marker);
+        used += cast(int) visibleWidth(marker);
         const rm = roleMarker(n.role);
         w.put(rm);
-        used += cast(int) cellsOf(rm);
+        used += cast(int) visibleWidth(rm);
         w.put(n.label);
-        used += cast(int) cellsOf(n.label);
+        used += cast(int) visibleWidth(n.label);
         if (!n.synthetic && !n.composite && !n.editable)
         {
             w.put(" ⊘");

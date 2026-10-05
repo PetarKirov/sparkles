@@ -234,10 +234,10 @@ bool parseExtraKeysSpec(const(char)[] spec, out ExtraKey[][] rows) @safe pure
 /// The button a Termux key name (or literal) stands for.
 ExtraKey extraKey(string name, string display = null) @safe pure
 {
-    import std.uni : toUpper;
+    import sparkles.base.text.case_text : asciiUpper;
 
     const label = display.length ? display : name;
-    const upper = name.toUpper;
+    const upper = name.asciiUpper;
     Key k;
     switch (upper)
     {

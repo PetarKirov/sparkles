@@ -23,18 +23,21 @@ iteration. Every extent is an integer cell; leftover space is distributed with
 `divmod` plus explicit remainder assignment so the parts always sum exactly to
 the whole (see `docs/specs/ui/layout.md`, `LAY4`/`LAY6`).
 
-Text is measured through an injected measurer ($(LREF isTextMeasure)); the
-default $(LREF CellMeasure) counts one column per codepoint, and a backend passes
-its canvas's grapheme-aware measurer instead.
+Text uses the owned terminalKitty cell profile and retained rich cell plans.
+Styled interface faces supply target widths and line heights without changing
+the owned Unicode segmentation, source ledgers or terminal cell advances.
 */
 module sparkles.ui.layout;
 
 import sparkles.ui.canvas : RuleEdge;
-import sparkles.ui.geometry : cellsOf, Constraints, Insets, Point, Rect, Size, SizeSpec;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.base.text.width : codepointWidth;
+import sparkles.ui.geometry : Constraints, Insets, Point, Rect, Size, SizeSpec;
 import sparkles.ui.image : cellPixelsOf, imageCells;
 import sparkles.ui.style : BorderStyle, TextStyle;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
-import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans;
+import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans, spanLineWidth,
+    clipSpanLines, sameSpanBrush, spanPaintAdvance, resolvedSpanStyle;
 
 @safe:
 
@@ -44,29 +47,31 @@ struct Frame
 {
     Rect rect;
 
-    /// For a wrapping text node: the broken lines, as slices of the widget's
-    /// `text` — the display list emits one run per line. Empty means the run
-    /// is the single unbroken `text` (every non-text node, and `TextWrap.none`).
+    /// Broken content lines, including mandatory breaks with `TextWrap.none`.
+    /// Each line is a committed base projection; the display list fits its
+    /// original slice without splitting graphemes.
     const(char)[][] lines;
 
-    /// For a wrapping `rich` node: the broken lines of styled span slices.
+    /// Every `rich` node's selected styled projection, including mandatory
+    /// breaks with `TextWrap.none`, retained independently of visible clipping.
     TextSpan[][] spanLines;
 
     /// For a text or rich node: the rows one of its lines occupies. A run in a
     /// face taller than the cell (a `FontRole.ui` title, design-system
     /// `GLY10`) takes more than one; the display list steps its lines by this.
     int lineRows = 1;
+    /// Committed visible projection after frame fitting. Painting and hits
+    /// share these spans; `spanLines` retains logical selection/source metadata.
+    TextSpan[][] paintSpanLines;
 }
 
-/// The default text measurer: one column per codepoint
-/// ($(REF cellsOf, sparkles,ui,geometry)) — the same advance the GUI painter
-/// and the HTML `ch` unit use. Cell-grid backends pass their grapheme-aware
-/// measurer instead (`LAY5`).
+/// Default cell-profile measurement. Backend cell-to-pixel metrics do not
+/// override the owned terminalKitty text advance.
 struct CellMeasure
 {
     /// The display-column width of `s`.
     int width(scope const(char)[] s) const pure nothrow @nogc
-        => cast(int) cellsOf(s);
+        => cast(int) visibleWidth(s);
 }
 
 /// The text-measurer capability: `true` iff `T` reports a run's column width.
@@ -92,13 +97,34 @@ enum bool isStyledTextMeasure(T) = isTextMeasure!T
         int r = m.rows(TextStyle.init);
     });
 
+/**
+Optional complete-brush cursor. `brushMetrics(style).append(chunk)` returns
+the cumulative whole-cell extent of a run after each whole-grapheme chunk,
+without restarting measurement or rounding the chunks independently.
+*/
+enum bool isIncrementalTextMeasure(T) = isStyledTextMeasure!T
+    && __traits(compiles, (ref T m) @system {
+        auto run = m.brushMetrics(TextStyle.init);
+        int width = run.append("x");
+    });
+
+/// Explicit certificate for pure whole-grapheme prefix measurements. Missing
+/// certificates remain false: neither styling nor a cursor implies one.
+template monotoneMeasurePrefixes(T)
+{
+    static if (__traits(compiles, { enum bool certified = T.monotonePrefixes; }))
+        enum bool monotoneMeasurePrefixes = T.monotonePrefixes;
+    else
+        enum bool monotoneMeasurePrefixes = false;
+}
+
 /// A run's width through `tm`, in `style` where the measurer reads styles.
 int measureWidth(TM)(ref TM tm, scope const(char)[] s, in TextStyle style)
 {
     static if (isStyledTextMeasure!TM)
         return tm.width(s, style);
     else
-        return tm.width(s);
+        return cast(int) visibleWidth(s);
 }
 
 /// The rows one line in `style` occupies through `tm` (one on a cell measurer).
@@ -116,12 +142,169 @@ int measureRows(TM)(ref TM tm, in TextStyle style)
 /// The style a rich node's `span` is measured and drawn in: its own, or the
 /// node's when the span declares none (the display list's rule).
 TextStyle spanStyle(in TextSpan span, in TextStyle nodeStyle) @safe pure nothrow @nogc
-    => span.textStyle == TextStyle.init ? nodeStyle : span.textStyle;
+    => resolvedSpanStyle(span, nodeStyle);
+
+// Printable ASCII is already a complete, single-line owned projection: no
+// formatting, hard breaks, tabs, malformed bytes or cross-scalar graphemes.
+// Borrow it for measurement rather than allocating an unbounded wrap graph.
+private bool printableAsciiLine(scope const(char)[] text) pure nothrow @nogc
+{
+    foreach (ubyte c; cast(const(ubyte)[]) text)
+        if (c < 0x20 || c > 0x7E) return false;
+    return true;
+}
+
+private bool retainedSpanRow(scope const(TextSpan)[] spans) pure nothrow @nogc
+{
+    if (!spans.length || spans[0].wrapPlan is null) return false;
+    foreach (ref const span; spans)
+        if (span.wrapPlan !is spans[0].wrapPlan || span.wrapLine != spans[0].wrapLine)
+            return false;
+    return true;
+}
+
+private size_t spanGroupEnd(scope const(TextSpan)[] spans, size_t start)
+    pure nothrow @nogc
+{
+    size_t end = start + 1;
+    while (end < spans.length && spans[start].logicalGroup != ulong.max
+        && spans[end].wrapPlan is spans[start].wrapPlan
+        && spans[end].wrapLine == spans[start].wrapLine
+        && spans[end].logicalGroup == spans[start].logicalGroup)
+        ++end;
+    return end;
+}
+
+// A target rounds a complete brush run once, not each isolated glyph. Prefix
+// differences assign that exact extent to whole clusters for paint and hits.
+private int commitSpanMetrics(TM)(ref TM tm, TextSpan[] spans, in TextStyle nodeStyle)
+{
+    import std.exception : enforce;
+    static if (!isStyledTextMeasure!TM)
+        return spanLineWidth(spans);
+    else
+    {
+        foreach (ref span; spans) span.paintAdvance = 0;
+        long width;
+        size_t i;
+        while (i < spans.length)
+        {
+            if (spans[i].formatting || !spans[i].clusterText.length)
+            { ++i; continue; }
+            const start = i;
+            size_t runEnd = spanGroupEnd(spans, i);
+            size_t logicalEnd = spans[i].logicalEnd;
+            while (runEnd < spans.length && spans[start].clusterTextBorrowed
+                && spans[runEnd].clusterTextBorrowed
+                && spans[runEnd].wrapPlan is spans[start].wrapPlan
+                && spans[runEnd].wrapLine == spans[start].wrapLine
+                && spans[runEnd].logicalStart == logicalEnd
+                && sameSpanBrush(spans[start], spans[runEnd]))
+            {
+                logicalEnd = spans[runEnd].logicalEnd;
+                runEnd = spanGroupEnd(spans, runEnd);
+            }
+            const style = spanStyle(spans[start], nodeStyle);
+            static if (isIncrementalTextMeasure!TM)
+                auto metrics = tm.brushMetrics(style);
+            size_t chunkStart = spans[start].logicalStart;
+            int previous;
+            while (i < runEnd)
+            {
+                const end = spanGroupEnd(spans, i);
+                static if (isIncrementalTextMeasure!TM)
+                {
+                    const chunk = spans[start].clusterTextBorrowed
+                        ? spans[start].wrapPlan.source.bytes[chunkStart .. spans[i].logicalEnd]
+                        : spans[i].clusterText;
+                    previous = metrics.append(chunk);
+                }
+                else
+                {
+                    const text = spans[start].clusterTextBorrowed
+                        ? spans[start].wrapPlan.source.bytes[spans[start].logicalStart .. spans[i].logicalEnd]
+                        : spans[i].clusterText;
+                    previous = measureWidth(tm, text, style);
+                }
+                enforce(previous >= 0, "negative UI brush extent");
+                chunkStart = spans[i].logicalEnd;
+                spans[i].paintAdvance = previous;
+                foreach (ref continuation; spans[i + 1 .. end])
+                    continuation.paintAdvance = -1;
+                i = end;
+            }
+            // A callback need not certify monotonicity. A backwards-moving
+            // prefix cannot be a hit boundary; use the suffix-min envelope to
+            // distribute that movement backwards, preserving the exact final
+            // run extent rather than throwing or inflating it to a prefix max.
+            long next = previous;
+            foreach_reverse (ref span; spans[start .. runEnd])
+            {
+                if (span.paintAdvance < 0) continue;
+                if (span.paintAdvance < next) next = span.paintAdvance;
+                span.paintAdvance = next;
+            }
+            long boundary;
+            foreach (ref span; spans[start .. runEnd])
+            {
+                if (span.paintAdvance < 0)
+                { span.paintAdvance = 0; continue; }
+                const cumulative = span.paintAdvance;
+                span.paintAdvance = cumulative - boundary;
+                boundary = cumulative;
+            }
+            width += previous;
+            enforce(width <= int.max, "UI target extent exhausted");
+        }
+        return cast(int) width;
+    }
+}
+
+private TextSpan[][] fitSpanMetrics(TM)(ref TM tm, TextSpan[][] lines,
+    size_t maximum, int hangIndent, in TextStyle nodeStyle, bool clip)
+{
+    import sparkles.base.text.wrap_plan : ProvenanceKind;
+    auto output = new TextSpan[][](lines.length);
+    foreach (li, line; lines)
+    {
+        auto row = line.dup;
+        commitSpanMetrics(tm, row, nodeStyle);
+        if (clip)
+        {
+            static if (isStyledTextMeasure!TM)
+            {
+                const capacity = li ? (maximum > hangIndent ? maximum - hangIndent : 0) : maximum;
+                long target, cells;
+                size_t i;
+                while (i < row.length)
+                {
+                    const end = spanGroupEnd(row, i);
+                    long advance, cellAdvance;
+                    foreach (ref const span; row[i .. end])
+                    { advance += spanPaintAdvance(span); cellAdvance += span.cellAdvance; }
+                    if (advance > cast(long) capacity - target) break;
+                    target += advance;
+                    cells += cellAdvance;
+                    i = end;
+                }
+                row = clipSpanLines([row], cast(size_t) cells)[0];
+                foreach (ref span; row)
+                    if (span.projectionRelation == ProvenanceKind.omission)
+                        span.paintAdvance = 0;
+            }
+            else
+                row = clipSpanLines([row],
+                    li ? (maximum > hangIndent ? maximum - hangIndent : 0) : maximum)[0];
+        }
+        output[li] = row;
+    }
+    return output;
+}
 
 /// Lays `tree` out within `c`, returning a `Frame` per node. An unbounded axis
 /// (`int.max`, the default) sizes the root to its content; a bounded one is the
 /// viewport the root resolves against (`fit` clamps, `grow` fills, `percent`
-/// takes its share). Text runs are measured through `tm`.
+/// takes its share). `tm` supplies backend styled text and image metrics.
 Frame[] layout(TM = CellMeasure)(
     in WidgetTree tree, in Constraints c = Constraints.init, TM tm = TM.init)
 if (isTextMeasure!TM)
@@ -312,20 +495,40 @@ if (isTextMeasure!TM)
 
     int naturalWidth(uint idx)
     {
-        const node = tree.nodes[idx];
+        ref const node = tree.nodes[idx];
         int content;
         final switch (node.kind) with (WidgetKind)
         {
             case text:
-                content = measureWidth(tm, node.text, node.textStyle);
+                if (printableAsciiLine(node.text))
+                    frames[idx].lines = [node.text];
+                else
+                    frames[idx].lines = wrapLines(node.text, int.max, TextWrap.none);
+                foreach (line; frames[idx].lines)
+                {
+                    const width = measureWidth(tm, line, node.textStyle);
+                    if (width > content) content = width;
+                }
                 break;
             case rich:
-                foreach (ref span; node.spans)
-                    content += measureWidth(tm, span.text,
-                        spanStyle(span, node.textStyle));
+                bool retained = node.spans.length > 0 && node.spans[0].wrapPlan !is null;
+                foreach (ref const span; node.spans)
+                    retained = retained && span.wrapPlan is node.spans[0].wrapPlan
+                        && span.wrapLine == node.spans[0].wrapLine;
+                // Tables/source views already committed these projections.
+                // Replanning their emitted bytes would destroy source relations.
+                frames[idx].spanLines = retained ? [node.spans.dup]
+                    : wrapSpans(node.spans, int.max, 0, TextWrap.none);
+                foreach (li, line; frames[idx].spanLines)
+                {
+                    const width = commitSpanMetrics(tm, line, node.textStyle)
+                        + (li ? node.hangIndent : 0);
+                    if (width > content)
+                        content = width;
+                }
                 break;
             case glyph:
-                content = 1;
+                content = codepointWidth(node.glyph);
                 break;
             case scrollbar:
                 content = node.barEdge == RuleEdge.left
@@ -368,7 +571,7 @@ if (isTextMeasure!TM)
     void allocWidth(uint idx, int allocated)
     {
         alloW[idx] = allocated;
-        const node = tree.nodes[idx];
+        ref const node = tree.nodes[idx];
         if (node.children.length == 0)
             return;
         auto content = allocated - node.padding.horizontal;
@@ -409,7 +612,7 @@ if (isTextMeasure!TM)
 
     int naturalHeight(uint idx)
     {
-        const node = tree.nodes[idx];
+        ref const node = tree.nodes[idx];
         int content;
         final switch (node.kind) with (WidgetKind)
         {
@@ -419,37 +622,43 @@ if (isTextMeasure!TM)
                     // The cross-axis measure: break against the width this
                     // node was *allocated* (LAY4's forSize), not a guess.
                     auto avail = alloW[idx] - node.padding.horizontal;
-                    if (avail < 1)
-                        avail = 1;
-                    frames[idx].lines = wrapLines(node.text, avail,
-                        (scope const(char)[] s) => measureWidth(tm, s, node.textStyle),
-                        node.wrap);
-                    content = cast(int) frames[idx].lines.length;
-                    if (content < 1)
-                        content = 1;
+                    if (avail < 0)
+                        avail = 0;
+                    static if (isStyledTextMeasure!TM)
+                        frames[idx].lines = wrapLines(node.text, avail, node.wrap, -1,
+                            (scope const(char)[] s, in TextStyle st)
+                                => measureWidth(tm, s, node.textStyle), monotoneMeasurePrefixes!TM);
+                    else
+                        frames[idx].lines = wrapLines(node.text, avail, node.wrap);
                 }
-                else
+                content = cast(int) frames[idx].lines.length;
+                if (content < 1)
                     content = 1;
                 frames[idx].lineRows = measureRows(tm, node.textStyle);
                 content *= frames[idx].lineRows;
                 break;
             case rich:
-                if (node.wrap != TextWrap.none)
                 {
                     auto avail = alloW[idx] - node.padding.horizontal;
-                    if (avail < 1)
-                        avail = 1;
-                    frames[idx].spanLines = wrapSpans(node.spans, avail,
-                        (scope const(char)[] s, in TextStyle st)
-                            => measureWidth(tm, s,
-                                st == TextStyle.init ? node.textStyle : st),
-                        node.hangIndent);
+                    if (avail < 0)
+                        avail = 0;
+                    if (node.wrap != TextWrap.none && !retainedSpanRow(node.spans))
+                    {
+                        static if (isStyledTextMeasure!TM)
+                        {
+                            frames[idx].spanLines = wrapSpans(node.spans, avail,
+                                node.hangIndent, node.wrap, node.whitespace, false,
+                                (scope const(char)[] s, in TextStyle st)
+                                    => measureWidth(tm, s, st), node.textStyle, monotoneMeasurePrefixes!TM);
+                        }
+                        else
+                            frames[idx].spanLines = wrapSpans(node.spans, avail,
+                                node.hangIndent, node.wrap, node.whitespace);
+                    }
                     content = cast(int) frames[idx].spanLines.length;
                     if (content < 1)
                         content = 1;
                 }
-                else
-                    content = 1;
                 {
                     // A line is as tall as its tallest span.
                     int rows = 1;
@@ -508,7 +717,7 @@ if (isTextMeasure!TM)
     void place(uint idx, in Point origin, int allocatedH)
     {
         frames[idx].rect = Rect(origin, Size(alloW[idx], allocatedH));
-        const node = tree.nodes[idx];
+        ref const node = tree.nodes[idx];
         if (node.children.length == 0)
             return;
 
@@ -628,6 +837,24 @@ if (isTextMeasure!TM)
 
     place(tree.root, Point(0, 0),
         resolveRoot(tree.rootNode.height, natH[tree.root], c.maxH));
+    // Commit once, outside the no-allocation paint/hit paths. A viewport keeps
+    // the complete logical width for scrolling; uncontained rows fit the frame
+    // through the same base projection used by string/widget table fields.
+    void commitPaint(uint idx, bool overflowX)
+    {
+        ref const node = tree.nodes[idx];
+        if (node.kind == WidgetKind.rich)
+        {
+            const inner = frames[idx].rect.deflate(node.padding);
+            frames[idx].paintSpanLines = fitSpanMetrics(tm, frames[idx].spanLines,
+                cast(size_t)(inner.width > 0 ? inner.width : 0), node.hangIndent,
+                node.textStyle, !(overflowX || node.scrollsX));
+        }
+        foreach (child; node.children)
+            commitPaint(child, overflowX || node.scrollsX || clipsX(node));
+    }
+    commitPaint(tree.root, false);
+
 
     return frames;
 }
@@ -794,10 +1021,10 @@ version (unittest)
     struct StyledMeasure
     {
         int width(scope const(char)[] s) const pure nothrow @nogc
-            => cast(int) cellsOf(s);
+            => cast(int) visibleWidth(s);
 
         int width(scope const(char)[] s, in TextStyle st) const pure nothrow @nogc
-            => st.fontRole == FontRole.ui ? 2 * cast(int) cellsOf(s) : cast(int) cellsOf(s);
+            => st.fontRole == FontRole.ui ? 2 * cast(int) visibleWidth(s) : cast(int) visibleWidth(s);
 
         int rows(in TextStyle st) const pure nothrow @nogc
             => st.fontRole == FontRole.ui && st.typeStep == TypeStep.title ? 2 : 1;
@@ -850,6 +1077,108 @@ version (unittest)
     auto frames = layout(tree, Constraints.init, StyledMeasure());
     assert(frames[r].rect == Rect(0, 0, 8 + 2, 2));
     assert(frames[r].lineRows == 2);
+}
+
+@("ui.layout.styledMeasure.commitFitsWholeClustersWithFullRunRounding")
+@safe unittest
+{
+    import sparkles.ui.style : FontRole, TypeStep;
+    import sparkles.ui.widget : Builder;
+    import sparkles.base.text.wrap_plan : ProvenanceKind;
+
+    struct FractionalMeasure
+    {
+        int width(scope const(char)[] s) const pure nothrow @nogc
+            => cast(int) visibleWidth(s);
+        int width(scope const(char)[] s, in TextStyle st) const pure nothrow @nogc
+            => st.fontRole == FontRole.ui
+                ? (cast(int) visibleWidth(s) + 1) / 2 : cast(int) visibleWidth(s);
+        int rows(in TextStyle st) const pure nothrow @nogc
+            => st.typeStep == TypeStep.title ? 2 : 1;
+        Cursor brushMetrics(in TextStyle st) const pure nothrow @nogc
+            => Cursor(st.fontRole == FontRole.ui);
+        struct Cursor
+        {
+            bool ui;
+            int cells;
+            int append(scope const(char)[] s) pure nothrow @nogc
+            {
+                cells += cast(int) visibleWidth(s);
+                return ui ? (cells + 1) / 2 : cells;
+            }
+        }
+    }
+    auto b = Builder();
+    const rich = b.add(Widget(kind: WidgetKind.rich,
+        spans: [TextSpan("e", srcStart: 0, srcEnd: 1),
+            TextSpan("\u0301abcd", srcStart: 1, srcEnd: 7)],
+        textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.title),
+        width: SizeSpec.fixed(2)));
+    const frames = layout(b.finish(rich), Constraints.init, FractionalMeasure());
+    assert(frames[rich].rect == Rect(0, 0, 2, 2));
+    assert(spanLineWidth(frames[rich].spanLines[0]) == 5,
+        "logical terminal advances remain independent of the target face");
+    long advance;
+    string visible;
+    bool omitted;
+    foreach (ref const span; frames[rich].paintSpanLines[0])
+    {
+        advance += spanPaintAdvance(span);
+        visible ~= span.clusterText;
+        omitted |= span.projectionRelation == ProvenanceKind.omission;
+    }
+    assert(advance == 2 && visible == "e\u0301abc" && omitted,
+        "fit uses full-run rounding and never splits a cross-span grapheme");
+}
+
+@("ui.layout.styledMeasure.decreasingPrefixesKeepFinalExtentAndWholeClusterFit")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    struct NonmonotoneMeasure
+    {
+        int width(scope const(char)[] s) const pure nothrow @nogc
+            => cast(int) visibleWidth(s);
+        int width(scope const(char)[] s, in TextStyle st) const pure nothrow @nogc
+            => s.length == 1 ? 4 : s.length == 2 ? 1 : cast(int) s.length;
+        int rows(in TextStyle st) const pure nothrow @nogc => 1;
+    }
+    auto b = Builder();
+    const full = b.add(Widget(kind: WidgetKind.rich, spans: [TextSpan("abc")]));
+    const fitted = b.add(Widget(kind: WidgetKind.rich, spans: [TextSpan("abc")],
+        width: SizeSpec.fixed(1)));
+    const root = b.container(WidgetKind.column, [full, fitted]);
+    const frames = layout(b.finish(root), Constraints.init, NonmonotoneMeasure());
+    assert(frames[full].rect.width == 3,
+        "a wider intermediate prefix must not inflate the complete run extent");
+    long fullAdvance, fittedAdvance;
+    foreach (ref const span; frames[full].paintSpanLines[0])
+        fullAdvance += spanPaintAdvance(span);
+    string visible;
+    foreach (ref const span; frames[fitted].paintSpanLines[0])
+    {
+        fittedAdvance += spanPaintAdvance(span);
+        visible ~= span.clusterText;
+    }
+    assert(fullAdvance == 3 && fittedAdvance == 1 && visible == "ab",
+        "backwards movement is distributed without crashing or cutting a cluster");
+}
+
+@("ui.layout.styledMeasure.rejectsNegativeExtent")
+@safe unittest
+{
+    import std.exception : assertThrown;
+    import sparkles.ui.widget : Builder;
+    struct InvalidMeasure
+    {
+        int width(scope const(char)[] s) const pure nothrow @nogc => 1;
+        int width(scope const(char)[] s, in TextStyle st) const pure nothrow @nogc => -1;
+        int rows(in TextStyle st) const pure nothrow @nogc => 1;
+    }
+    auto b = Builder();
+    const rich = b.add(Widget(kind: WidgetKind.rich, spans: [TextSpan("x")]));
+    assertThrown!Exception(layout(b.finish(rich), Constraints.init, InvalidMeasure()));
 }
 
 @("ui.layout.rowFlowWithGap")
@@ -1193,28 +1522,4 @@ version (unittest)
     auto frames = layout(tree);
     assert(frames[t].rect.height == 2);
     assert(frames[t].spanLines.length == 2);
-    assert(frames[t].spanLines[1][0].text == "helper today");
-}
-
-@("ui.layout.injectedTextMeasure")
-@safe unittest
-{
-    import sparkles.ui.widget : Builder;
-
-    // A measurer that counts every codepoint double-wide: the engine sizes
-    // text with it, proving measurement is injected rather than hardcoded.
-    static struct DoubleWide
-    {
-        int width(scope const(char)[] s) const pure nothrow @nogc
-            => cast(int)(cellsOf(s) * 2);
-    }
-
-    auto b = Builder();
-    const t = b.add(Widget(kind: WidgetKind.text, text: "abc"));
-    const row = b.container(WidgetKind.row, [t]);
-    auto tree = b.finish(row);
-
-    auto frames = layout(tree, Constraints.init, DoubleWide());
-    assert(frames[t].rect.width == 6);
-    assert(frames[row].rect.width == 6);
 }

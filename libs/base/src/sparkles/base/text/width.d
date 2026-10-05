@@ -1,42 +1,26 @@
 /**
- * Display (terminal cell) width of code points and grapheme clusters.
- *
- * Width follows the [kitty Text Sizing Protocol](https://sw.kovidgoyal.net/kitty/text-sizing-protocol/)
- * (the modern terminal consensus; see `docs/specs/base/text/`), not legacy
- * `wcwidth`. `codepointWidth` assigns, in decreasing priority: regional
- * indicators 2 (EAW marks them neutral, but a flag half is 2); noncharacters and
- * controls 0; all Marks (`Mn | Mc | Me`) and `Cf` 0; East-Asian Wide/Fullwidth
- * (UAX #11) 2 (this also covers emoji-presentation bases and skin-tone
- * modifiers); everything else (incl. ambiguous) 1.
- *
- * The crucial rule: `codepointWidth` is the width of a code point *in isolation*
- * and must NOT be summed across a cluster. A grapheme cluster occupies one cell
- * whose width is that of its **leading** code point, adjusted only by the UTS #51
- * variation selectors (VS16 promotes an emoji base to 2, VS15 demotes it to 1);
- * combining members never add width. So a flag (two regional indicators), a ZWJ
- * sequence, or base+VS16 each occupy one cell. Use `graphemeClusterWidth` (or
- * `visibleWidth`, in `sparkles.base.text.grapheme`) for strings.
- *
- * The East-Asian-Width and emoji-VS-base tables live in the generated
- * `sparkles.base.text.unicode_tables`; the zero-width set is built from
- * `std.uni`'s `Mn | Mc | Me | Cf` plus the few conjoining ranges Phobos's
- * categories miss. Pinned to Unicode 17.0 (see the generator).
- */
+Terminal-cell measurements under the named `terminalKitty` revision-1 profile.
+
+The profile assigns the leading scalar's width to an extended grapheme and
+applies its last eligible VS15/VS16 presentation selector. Unicode properties
+come exclusively from the manifest-identified generated tables. This is a local
+measurement policy, not a claim about every terminal or a replacement for a
+VT engine's actual grid. Cells are not typographic lengths.
+*/
 module sparkles.base.text.width;
 
-import std.uni : CodepointSet, codepointSetTrie, graphemeStride, isControl, unicode;
+import sparkles.base.text.unicode_tables : GeneralCategory, generalCategory,
+    isEastAsianWide, isEmojiVsBase;
 
-import sparkles.base.text.unicode_tables : isEastAsianWide, isEmojiVsBase;
-import sparkles.base.text.grapheme_tables : singletonBoundaryRuns,
-    singletonCacheLimit, singletonCompilerVersion;
+/// Named cached cell geometry. `none` deliberately has no cell coordinates.
+enum CellPolicy : ubyte { none, terminalKitty }
+
+/// Revision of the only implemented terminal-cell policy.
+enum uint terminalKittyRevision = 1;
 
 /// Variation selectors that switch emoji vs text presentation (UTS #51).
 private enum dchar vs15 = '\uFE0E'; // text presentation
 private enum dchar vs16 = '\uFE0F'; // emoji presentation
-
-/// Line / paragraph separators (general category Zl / Zp).
-private enum dchar lineSeparator = '\u2028';
-private enum dchar paragraphSeparator = '\u2029';
 
 /// Regional indicators (flag halves): `U+1F1E6`..`U+1F1FF`. EAW marks them
 /// neutral, but kitty's algorithm gives each width 2.
@@ -51,140 +35,6 @@ private bool isRegionalIndicator(dchar cp) @safe pure nothrow @nogc
 private bool isNoncharacter(dchar cp) @safe pure nothrow @nogc
     => (cp >= 0xFDD0 && cp <= 0xFDEF) || (cp & 0xFFFE) == 0xFFFE;
 
-/// Zero-width code points: all Marks `Mn | Mc | Me` plus `Cf`, and conjoining /
-/// format ranges that fall outside those general categories. Built once at
-/// compile time; `[cp]` membership is `@safe pure nothrow @nogc`.
-private immutable CodepointSet zeroWidthSet = makeZeroWidthSet();
-
-private CodepointSet makeZeroWidthSet() @safe pure
-{
-    auto s = unicode.Mn | unicode.Mc | unicode.Me | unicode.Cf;
-    s.add(0x1160, 0x1200);   // Hangul Jamo medial + final (compose onto the lead)
-    s.add(0x1BCA0, 0x1BCA4); // Shorthand Format Controls
-    s.add(0x13430, 0x13440); // Egyptian Hieroglyph Format Controls
-    s.add(0xE0000, 0xE0080); // Tags
-    return s;
-}
-
-// Pack width and singleton-boundary traits into one byte for the BMP and
-// first supplementary plane. Public Phobos probes run in the offline generator,
-// not in every consumer's CTFE heap. Unsupported frontend versions keep the
-// public grapheme engine; the runtime parity test catches stale cached policy.
-private enum size_t directWidthLimit = singletonCacheLimit;
-private immutable ubyte[directWidthLimit] directTraits = makeDirectTraits();
-private immutable zeroWidthTrie = codepointSetTrie!(8, 5, 8)(makeZeroWidthSet());
-
-private ubyte[directWidthLimit] makeDirectTraits() @safe pure
-{
-    ubyte[directWidthLimit] result = void;
-    foreach (cp; 0 .. directWidthLimit)
-        result[cp] = isEastAsianWide(cast(dchar) cp) ? 2 : 1;
-    auto zeros = makeZeroWidthSet();
-    foreach (interval; zeros.byInterval)
-    {
-        const end = interval.b < directWidthLimit ? interval.b : directWidthLimit;
-        if (interval.a < end)
-            result[interval.a .. end] = 0;
-    }
-    result[0 .. 0x20] = 0;
-    result[0x7F .. 0xA0] = 0;
-    result[lineSeparator] = result[paragraphSeparator] = 0;
-    result[0xFDD0 .. 0xFDF0] = 0;
-    result[0xFFFE .. 0x10000] = 0;
-    result[0x1FFFE .. 0x20000] = 0;
-    result[regionalIndicatorFirst .. regionalIndicatorLast + 1] = 2;
-    static if (__VERSION__ == singletonCompilerVersion)
-    {
-        foreach (span; singletonBoundaryRuns)
-            foreach (cp; span.begin .. span.end)
-                result[cp] |= span.traits;
-        foreach (cp; 0 .. directWidthLimit)
-            result[cp] |= cast(ubyte)(singletonKind(cast(dchar) cp) << 3);
-    }
-    return result;
-}
-
-@("width.singletonCache.matchesPhobos")
-@safe pure nothrow @nogc
-unittest
-{
-    dchar[2] probe;
-    foreach (cp; 0 .. directWidthLimit)
-    {
-        static if (__VERSION__ == singletonCompilerVersion)
-        {
-            probe[0] = 'a';
-            probe[1] = cast(dchar) cp;
-            ubyte expected = graphemeStride(probe[], 0) != 1 ? 4 : 0;
-            probe[0] = cast(dchar) cp;
-            probe[1] = 'a';
-            if (graphemeStride(probe[], 0) == 1)
-                expected |= 64;
-            assert((codepointTraits(cast(dchar) cp) & 68) == expected);
-        }
-        else
-            assert((codepointTraits(cast(dchar) cp) & 68) == 0);
-    }
-}
-
-private enum SingletonKind : ubyte { other, l, v, t, lv, lvt, ri, cr }
-
-private SingletonKind singletonKind(dchar cp) @safe pure nothrow @nogc
-{
-    if (cp == '\r')
-        return SingletonKind.cr;
-    if (isRegionalIndicator(cp))
-        return SingletonKind.ri;
-    if ((cp >= 0x1100 && cp <= 0x115F) || (cp >= 0xA960 && cp <= 0xA97C))
-        return SingletonKind.l;
-    if ((cp >= 0x1160 && cp <= 0x11A7) || (cp >= 0xD7B0 && cp <= 0xD7C6))
-        return SingletonKind.v;
-    if ((cp >= 0x11A8 && cp <= 0x11FF) || (cp >= 0xD7CB && cp <= 0xD7FB))
-        return SingletonKind.t;
-    if (cp >= 0xAC00 && cp <= 0xD7A3)
-        return (cp - 0xAC00) % 28 == 0 ? SingletonKind.lv : SingletonKind.lvt;
-    return SingletonKind.other;
-}
-
-// Width in bits 0..1; incoming attachment in bit 2; Hangul/RI/CR kind in
-// bits 3..5; ordinary outgoing break in bit 6. Uncovered/CTFE points force
-// the public grapheme engine rather than assuming a property classification.
-package ubyte codepointTraits()(dchar cp) @safe pure nothrow @nogc
-{
-    pragma(inline, true);
-    if (!__ctfe && cp < directWidthLimit)
-        return directTraits[cp];
-    return cast(ubyte) codepointWidth(cp);
-}
-
-package bool singletonBreak()(ubyte first, ubyte next, dchar nextCp)
-    @safe pure nothrow @nogc
-{
-    pragma(inline, true);
-    if ((first & 64) == 0 || (next & 4) != 0)
-        return false;
-    // An uncovered next code point has no outgoing trait bit either.
-    if ((next & 64) == 0)
-        return false;
-    const a = cast(SingletonKind)((first >> 3) & 7);
-    const b = cast(SingletonKind)((next >> 3) & 7);
-    switch (a)
-    {
-        case SingletonKind.l:
-            return b != SingletonKind.l && b != SingletonKind.v
-                && b != SingletonKind.lv && b != SingletonKind.lvt;
-        case SingletonKind.v, SingletonKind.lv:
-            return b != SingletonKind.v && b != SingletonKind.t;
-        case SingletonKind.t, SingletonKind.lvt:
-            return b != SingletonKind.t;
-        case SingletonKind.ri:
-            return b != SingletonKind.ri;
-        case SingletonKind.cr:
-            return nextCp != '\n';
-        default:
-            return true;
-    }
-}
 
 /// Display width of one code point **in isolation**, by the kitty width classes
 /// in decreasing priority: 2 for a regional indicator (flag half); 0 for a
@@ -194,67 +44,27 @@ package bool singletonBreak()(ubyte first, ubyte next, dchar nextCp)
 /// otherwise 1 (ambiguous defaults to narrow). Not valid to sum across a grapheme
 /// cluster -- see `graphemeClusterWidth`.
 int codepointWidth(dchar cp) @safe pure nothrow @nogc
+in (cp <= 0x10FFFF && (cp < 0xD800 || cp > 0xDFFF),
+    "Cell width requires a Unicode scalar")
 {
-    if (!__ctfe)
-    {
-        if (cp < directWidthLimit)
-            return directTraits[cp] & 3;
-        if (isNoncharacter(cp))
-            return 0;
-        if (cp < 0x110000 && zeroWidthTrie[cp])
-            return 0;
-        return isEastAsianWide(cp) ? 2 : 1;
-    }
-    if (cp >= 0x20 && cp <= 0x7E)
-        return 1;
-    if (cp == 0)
-        return 0;
-    if (isControl(cp))               // C0/C1 controls (incl. tab, newline)
-        return 0;
-    if (cp == lineSeparator || cp == paragraphSeparator)
-        return 0;
-    if (isNoncharacter(cp))          // U+FDD0..FDEF and U+xxFFFE/xxFFFF: discarded
-        return 0;
-    if (isRegionalIndicator(cp))     // flag half: EAW-neutral but width 2
+    if (cp < 0x80)
+        return cp >= 0x20 && cp < 0x7F ? 1 : 0;
+    if (isRegionalIndicator(cp))
         return 2;
-    if (zeroWidthSet[cp])            // Mn | Mc | Me | Cf + conjoining/format ranges
+    if (isNoncharacter(cp) || (cp >= 0x1160 && cp < 0x1200)
+        || (cp >= 0x1BCA0 && cp < 0x1BCA4)
+        || (cp >= 0x13430 && cp < 0x13440)
+        || (cp >= 0xE0000 && cp < 0xE0080))
         return 0;
-    if (isEastAsianWide(cp))         // UAX #11 Wide/Fullwidth (incl. emoji modifiers)
-        return 2;
-    return 1;
+    const category = generalCategory(cp);
+    if (category == GeneralCategory.Cc || category == GeneralCategory.Zl
+        || category == GeneralCategory.Zp || category == GeneralCategory.Mn
+        || category == GeneralCategory.Mc || category == GeneralCategory.Me
+        || category == GeneralCategory.Cf)
+        return 0;
+    return isEastAsianWide(cp) ? 2 : 1;
 }
 
-@("width.codepointWidth.categoryAndPlaneBoundaries")
-@safe pure nothrow @nogc unittest
-{
-    // Independent scalar policy: exercise every direct-table code point and
-    // supplementary-plane transitions against the same public Unicode sets
-    // that defined the original implementation.
-    int reference(dchar cp) @safe pure nothrow @nogc
-    {
-        if (isControl(cp) || cp == lineSeparator || cp == paragraphSeparator
-            || isNoncharacter(cp))
-            return 0;
-        if (isRegionalIndicator(cp))
-            return 2;
-        if (zeroWidthSet[cp])
-            return 0;
-        return isEastAsianWide(cp) ? 2 : 1;
-    }
-    foreach (cp; 0 .. directWidthLimit)
-        assert(codepointWidth(cast(dchar) cp) == reference(cast(dchar) cp));
-    foreach (plane; 2 .. 17)
-        foreach (offset; [0, 1, 0xFFFD, 0xFFFE, 0xFFFF])
-        {
-            const cp = cast(dchar) (plane * 0x10000 + offset);
-            assert(codepointWidth(cp) == reference(cp));
-        }
-    foreach (cp; [cast(dchar) 0xE0000, 0xE0001, 0xE007F, 0xE0080,
-        0xE0100, 0xE01EF, 0xE01F0, 0x110000, 0xFFFFFFFF])
-        assert(codepointWidth(cp) == reference(cp));
-    static assert(codepointWidth('\U0001F1E6') == 2);
-    static assert(codepointWidth('\U000E0100') == 0);
-}
 
 @("width.codepointWidth.basics")
 @safe pure nothrow @nogc unittest
@@ -274,6 +84,35 @@ int codepointWidth(dchar cp) @safe pure nothrow @nogc
     assert(codepointWidth('\uFFFF') == 0);   // plane-0 noncharacter
 }
 
+// Shared by scalar-array measurement and the borrowed UTF-8 scanner. Only
+// presentation state is retained; a long cluster never needs a copied array.
+package(sparkles) struct ClusterWidthState
+{
+    dchar first = 0;
+    int width;
+    size_t unclustered;
+    size_t codepoints;
+    private bool _emojiBase;
+
+    void push(dchar scalar, bool metadata = true) scope @safe pure nothrow @nogc
+    {
+        const standalone = codepoints == 0 || metadata ? codepointWidth(scalar) : 0;
+        if (codepoints == 0)
+        {
+            first = scalar;
+            width = standalone;
+            _emojiBase = isEmojiVsBase(scalar);
+        }
+        else if (_emojiBase && scalar == vs16)
+            width = 2;
+        else if (_emojiBase && scalar == vs15)
+            width = 1;
+        if (metadata)
+            unclustered += isRegionalIndicator(scalar) ? 1 : standalone;
+        ++codepoints;
+    }
+}
+
 /// Display width of a whole grapheme cluster (a single UAX #29 cluster as a slice
 /// of code points). The cluster occupies one cell whose width is that of its
 /// **leading** code point, adjusted only by the variation selectors: VS16
@@ -282,24 +121,10 @@ int codepointWidth(dchar cp) @safe pure nothrow @nogc
 /// combining marks all leave the leading width unchanged).
 int graphemeClusterWidth(in dchar[] cluster) @safe pure nothrow @nogc
 {
-    if (cluster.length == 0)
-        return 0;
-
-    int w = codepointWidth(cluster[0]);
-    foreach (cp; cluster[1 .. $])
-    {
-        if (cp == vs16)
-        {
-            if (isEmojiVsBase(cluster[0]))
-                w = 2;
-        }
-        else if (cp == vs15)
-        {
-            if (isEmojiVsBase(cluster[0]))
-                w = 1;
-        }
-    }
-    return w; // codepointWidth and the VS rules only ever yield 0, 1, or 2
+    ClusterWidthState state;
+    foreach (scalar; cluster)
+        state.push(scalar, false);
+    return state.width;
 }
 
 @("width.graphemeClusterWidth.combining")
@@ -342,12 +167,12 @@ narrower than the cell the grid gave it, and every later cell on the row
 moves: XTerm lays a ZWJ family out in 6 cells, not 2, and a heart with VS16
 in 1 (measured by cursor report, as the capability probe does).
 */
-int unclusteredWidth(in dchar[] cluster) @safe pure nothrow @nogc
+size_t unclusteredWidth(in dchar[] cluster) @safe pure nothrow @nogc
 {
-    int w;
-    foreach (cp; cluster)
-        w += isRegionalIndicator(cp) ? 1 : codepointWidth(cp);
-    return w;
+    size_t width;
+    foreach (scalar; cluster)
+        width += isRegionalIndicator(scalar) ? 1 : codepointWidth(scalar);
+    return width;
 }
 
 @("width.unclusteredWidth.measured")
@@ -504,7 +329,7 @@ ref Writer truncateField(Writer)(
     scope const(char)[] ellipsis = "…")
 {
     import std.range.primitives : put;
-    import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
+    import sparkles.base.text.grapheme : fitCells, visibleWidth;
 
     if (visibleWidth(content) <= width)
     {
@@ -516,17 +341,16 @@ ref Writer truncateField(Writer)(
     const withEllipsis = width >= ellipsisWidth;
     const budget = withEllipsis ? width - ellipsisWidth : width;
 
-    size_t used = 0;
-    bool sawEscape = false;
-    foreach (c; content.byGraphemeCluster)
-    {
-        if (!c.isEscape && used + c.width > budget)
-            break;
-        if (c.isEscape)
+    const fitted = fitCells(content, budget);
+    const prefix = content[0 .. fitted.bytes];
+    put(w, prefix);
+    bool sawEscape;
+    foreach (i; 0 .. prefix.length)
+        if (prefix[i] == '\x1b')
+        {
             sawEscape = true;
-        used += c.width;
-        put(w, c.slice);
-    }
+            break;
+        }
     if (sawEscape)
         put(w, "\x1b[0m"); // reset before the ellipsis: no style bleed past the cut
     if (withEllipsis)
@@ -544,6 +368,15 @@ string truncateField(scope const(char)[] content, size_t width,
     auto w = appender!string;
     truncateField(w, content, width, ellipsis);
     return w[];
+}
+
+@("width.truncateField.stylesCannotSplitClusterBudget")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.buffer : checkWriter;
+    checkWriter!((ref w) => truncateField(w, "\u2764\x1b[31m\uFE0FX", 2))("…");
+    checkWriter!((ref w) => truncateField(w, "\U0001F1FA\x1b[31m\U0001F1F8X", 2))("…");
+    checkWriter!((ref w) => truncateField(w, "1\x1b[31m\uFE0F\u20E3X", 2))("…");
 }
 
 @("width.truncateField.basic")

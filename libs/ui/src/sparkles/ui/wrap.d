@@ -1,638 +1,783 @@
-/**
-Line breaking for $(MREF sparkles,ui) — the `LAY10` strategy seam. A text run
-opts into wrapping with $(LREF TextWrap); the engine invokes $(LREF wrapLines)
-from the cross-axis measure with the width the node was $(I actually allocated).
-
-Two strategies, one contract:
-
-$(LIST
-    * $(B greedy) — first-fit, break as late as possible. The natural default on
-        a monospace grid (there is no stretchable glue to justify with).
-    * $(B balanced) — minimum-raggedness dynamic programming (the rigid-glue
-        Knuth–Plass variant): minimizes the sum of squared trailing slack over
-        all lines but the last. A quality upgrade for full-width prose; it
-        degenerates to greedy at narrow widths.
-)
-
-Lines are $(B slices of the input) — no copying, no allocation beyond the line
-list. Breaks happen at spaces (which the break consumes); a `'\n'` forces a
-break; a word wider than the limit overflows its own line rather than being
-split mid-word. Width is measured through a caller-supplied function, so the
-breaker is as grapheme-correct as its measurer (`LAY5`).
-*/
+/** UI span projection over the single owned base cell-plan authority. */
 module sparkles.ui.wrap;
 
-import sparkles.base.term_color : RgbColor;
+import sparkles.base.term_color : RgbColor, xterm256ToRgb;
 import sparkles.ui.style : Slot, TextStyle;
+import sparkles.base.term_style : TextAttr, UnderlineStyle;
+import sparkles.base.text.wrap : CellWidth, CellGeometry, CellExtent, CellNoBreakSpan,
+    WrapOptions, WhitespaceMode, TabPolicy, cellWrapPlan, projectWrapCells;
+import sparkles.base.text.wrap_plan : WrapPlan, WrapLine, WrapFragment, WrapSolver,
+    WrapEmissionOptions, WrapResult, WrapStatus, FragmentKind, ProvenanceKind, SyntheticReason, CellStyleSnapshot, tryMaterializeWrap;
 
 @safe:
 
-/// One styled span of a rich text run (`WGT6`): a slice of text with its own
-/// semantic slot and text chrome, so syntax-highlighted or inline-styled
-/// content is one node — not a backend overpainting the toolkit's output to
-/// re-colour it, and not a row of per-token widgets fighting the line breaker.
+/// Styled bytes remain UI-owned; all wrapping geometry/provenance comes from base.
 struct TextSpan
 {
-    const(char)[] text;      /// borrowed — must outlive the tree
+    const(char)[] text;
     Slot slot = Slot.inherit;
-    TextStyle textStyle;     /// per-span bold/italic/underline etc.
-    /// Fill the span's slot background (an inline-`code` pill).
+    TextStyle textStyle;
     bool paintBackground;
-    /// Never break inside this span — it wraps as one token (a pill's name
-    /// stays whole; hugging punctuation in a neighbouring span still joins it).
     bool noBreak;
-    /// A $(B resolved) foreground override, gated by `hasFg` — the theme's
-    /// syntax channel: highlight rules resolve outside the slot vocabulary
-    /// (`THM1`), so a syntax-colored token carries its color directly.
     RgbColor fg;
-    /// ditto
     bool hasFg;
-    /// A resolved background override, gated by `hasBg` — pre-styled content
-    /// (a decoded ANSI fence) carries its own cell background the same way.
     RgbColor bg;
-    /// ditto
     bool hasBg;
-    /// The source byte range this span's text came from (`size_t.max` start =
-    /// synthetic — an icon, bullet, or gutter). The $(B identity channel):
-    /// selection, search jumps and copy map screen content back to the source
-    /// through it, the same discipline as the old model's per-run `srcStart`.
-    /// Normalized prose keeps its original span, so offsets are span-granular
-    /// there and byte-exact for source-sliced content (code).
     size_t srcStart = size_t.max;
-    /// ditto
     size_t srcEnd;
-    /// The hyperlink this run belongs to: an index into the frame's URI table,
-    /// `0` meaning "not a hyperlink" (the same not-addressable convention as
-    /// `hitId`). Purely a $(B terminal) channel — a cell backend turns a run of
-    /// equal ids into one OSC 8 hyperlink, so the terminal itself makes the
-    /// text clickable; a GPU backend ignores it, because there the pointer
-    /// shape is the affordance. The id, not the URI, travels through the
-    /// pipeline so a `TextSpan` stays cheap to copy and slice.
     ushort linkId;
+    // Rich projections retain their immutable cell plan for hit/selection/copy.
+    const(WrapPlan)* wrapPlan;
+    size_t wrapLine, logicalStart, logicalEnd;
+    ProvenanceKind sourceRelation = ProvenanceKind.original;
+    long cellAdvance;
+    /// Committed target advance; -1 keeps the owned terminal cell geometry.
+    long paintAdvance = -1;
+    ProvenanceKind projectionRelation = ProvenanceKind.original;
+    const(char)[] clusterText;
+    bool clusterTextBorrowed, formatting;
+    ushort ansiAttributes;
+    UnderlineStyle ansiUnderline;
+    size_t ansiSnapshot = size_t.max;
+    const(char)[] ansiUri;
+    ulong logicalGroup = ulong.max;
+    size_t consumedStart, consumedEnd;
+    SyntheticReason syntheticReason;
+}
+enum TextWrap : ubyte { none, greedy, balanced }
+
+/// Painting, hits and selection share committed target geometry.
+long spanPaintAdvance(scope const ref TextSpan span) pure nothrow @nogc
+    => span.paintAdvance < 0 ? span.cellAdvance : span.paintAdvance;
+
+/// The leading brush of adjacent whole clusters may share a measured run.
+bool sameSpanBrush(scope const ref TextSpan a, scope const ref TextSpan b)
+    pure nothrow @nogc
+    => a.slot == b.slot && a.textStyle == b.textStyle
+        && a.paintBackground == b.paintBackground && a.fg == b.fg
+        && a.bg == b.bg && a.hasFg == b.hasFg && a.hasBg == b.hasBg
+        && a.linkId == b.linkId && a.ansiAttributes == b.ansiAttributes
+        && a.ansiUnderline == b.ansiUnderline && a.ansiSnapshot == b.ansiSnapshot;
+
+/// Resolve authored inheritance before applying the ANSI brush overlay.
+TextStyle resolvedSpanStyle(scope const ref TextSpan span, in TextStyle inherited)
+    pure nothrow @nogc
+{
+    TextStyle style = span.textStyle == TextStyle.init ? inherited : span.textStyle;
+    style.bold |= (span.ansiAttributes & TextAttr.bold.bits) != 0;
+    style.italic |= (span.ansiAttributes & TextAttr.italic.bits) != 0;
+    if (span.ansiUnderline != UnderlineStyle.none) style.underline = span.ansiUnderline;
+    return style;
 }
 
-/// How a text widget breaks into lines (the `LAY10` strategy seam). `none`
-/// (the default) keeps the run a single line regardless of allocated width.
-enum TextWrap : ubyte
+private const(char)[] renderedLine(scope const ref WrapPlan plan, size_t index)
 {
-    none,     /// a single line (the default)
-    greedy,   /// first-fit: break as late as possible (ragged right)
-    balanced, /// minimum squared-slack over all lines but the last
+    import std.exception : enforce;
+    WrapPlan one = plan;
+    one.lines = plan.lines[index .. index + 1];
+    size_t extent;
+    auto result = tryMaterializeWrap(one, WrapEmissionOptions(sourceRevision: plan.source.revision,
+        resourceRevision: plan.resourceRevision), null, extent);
+    enforce(result.succeeded || result.status == WrapStatus.needOutput, "invalid UI line projection");
+    char[] output = new char[](result.required);
+    result = tryMaterializeWrap(one, WrapEmissionOptions(sourceRevision: plan.source.revision,
+        resourceRevision: plan.resourceRevision), output, extent);
+    enforce(result.succeeded, "UI line projection failed");
+    return output;
 }
 
-/**
-Breaks `text` into lines no wider than `width` columns, measuring through
-`measure` (any callable `const(char)[] → int`). `firstLineWidth` expresses hang
-indent as a first-line width delta: when non-negative, the first line of each
-paragraph wraps to it instead of `width`.
-
-Returns the lines as slices of `text`. Inter-word spacing inside a line is
-preserved verbatim; the spaces $(I at) a break are consumed. An empty paragraph
-(text between two `'\n'`) is one empty line, so blank lines survive.
-*/
-const(char)[][] wrapLines(F)(
-    const(char)[] text, int width, scope F measure,
-    TextWrap algo = TextWrap.greedy, int firstLineWidth = -1)
-if (is(typeof(measure(text)) : int))
+/// Allocating UI adapter over owned candidates. Optional target measurement
+/// selects lines through the same base solver; it never overrides cell advances.
+/// Width zero stays bounded zero. `none` is the explicit unbounded choice.
+const(char)[][] wrapLines(F = typeof(null))(const(char)[] text, int width,
+    TextWrap algorithm = TextWrap.greedy, int firstLineWidth = -1,
+    scope F measure = null, bool measureMonotone = false)
 {
-    const(char)[][] lines;
-
-    size_t paraStart = 0;
-    foreach (i, char c; text)
-        if (c == '\n')
-        {
-            wrapParagraph(text[paraStart .. i], width, measure, algo,
-                firstLineWidth, lines);
-            paraStart = i + 1;
-        }
-    wrapParagraph(text[paraStart .. $], width, measure, algo,
-        firstLineWidth, lines);
-
-    return lines;
-}
-
-// A word's byte span within its paragraph.
-private struct Span
-{
-    size_t start, end;
-}
-
-private void wrapParagraph(F)(
-    const(char)[] para, int width, scope F measure, TextWrap algo,
-    int firstLineWidth, ref const(char)[][] lines)
-{
-    // Tokenize into space-separated words (any other byte is word content).
-    Span[] words;
-    size_t i = 0;
-    while (i < para.length)
+    import std.exception : enforce;
+    enforce(width >= 0 && firstLineWidth >= -1, "negative UI wrap capacity");
+    WrapOptions options;
+    options.width = algorithm == TextWrap.none ? CellWidth.unbounded : CellWidth.bounded(cast(ulong) width);
+    options.solver = algorithm == TextWrap.balanced ? WrapSolver.balanced : WrapSolver.greedy;
+    options.whitespace = algorithm == TextWrap.none ? WhitespaceMode.preserve : WhitespaceMode.collapse;
+    options.tabs = TabPolicy.expand;
+    if (firstLineWidth >= 0 && algorithm != TextWrap.none)
     {
-        while (i < para.length && para[i] == ' ')
-            i++;
-        const start = i;
-        while (i < para.length && para[i] != ' ')
-            i++;
-        if (i > start)
-            words ~= Span(start, i);
+        auto geometry = new CellGeometry[](2);
+        geometry[0] = CellGeometry(CellWidth.bounded(cast(ulong) firstLineWidth));
+        geometry[1] = CellGeometry(options.width);
+        options.geometry = geometry[];
+        options.repeatLastGeometry = true;
     }
-
-    if (words.length == 0)
-    {
-        lines ~= para[0 .. 0]; // a blank line survives
-        return;
-    }
-
-    const firstW = firstLineWidth >= 0 ? firstLineWidth : width;
-
-    if (algo == TextWrap.balanced)
-        wrapBalanced(para, words, width, firstW, measure, lines);
+    static if (is(F == typeof(null)))
+        const plan = cellWrapPlan(text, options);
     else
-        wrapGreedy(para, words, width, firstW, measure, lines);
-}
-
-private void wrapGreedy(F)(
-    const(char)[] para, in Span[] words, int width, int firstW,
-    scope F measure, ref const(char)[][] lines)
-{
-    size_t lineStart = words[0].start;
-    size_t lineEnd = words[0].end;
-    int lineW = measure(para[lineStart .. lineEnd]);
-    int limit = firstW;
-
-    foreach (word; words[1 .. $])
-    {
-        // The candidate joint: the inter-word gap plus the word itself.
-        const jointW = measure(para[lineEnd .. word.end]);
-        if (lineW + jointW <= limit)
-        {
-            lineW += jointW;
-            lineEnd = word.end;
-        }
-        else
-        {
-            lines ~= para[lineStart .. lineEnd];
-            lineStart = word.start;
-            lineEnd = word.end;
-            lineW = measure(para[lineStart .. lineEnd]);
-            limit = width;
-        }
-    }
-    lines ~= para[lineStart .. lineEnd];
-}
-
-private void wrapBalanced(F)(
-    const(char)[] para, in Span[] words, int width, int firstW,
-    scope F measure, ref const(char)[][] lines)
-{
-    const n = words.length;
-
-    // acc[j] = width of words[0..j] joined with their source gaps, so
-    // lineWidth(i..j) = acc[j] - acc[i] + wordW(i).
-    auto wordW = new int[](n);
-    auto acc = new int[](n);
-    foreach (k, word; words)
-    {
-        wordW[k] = measure(para[word.start .. word.end]);
-        acc[k] = k == 0 ? wordW[0]
-            : acc[k - 1] + measure(para[words[k - 1].end .. word.end]);
-    }
-    int lineWidth(size_t i, size_t j) => acc[j] - acc[i] + wordW[i];
-
-    // cost[j] = minimal penalty for words[0..j+1]; the last line is free.
-    enum long infinity = long.max / 2;
-    // An overflowing single word costs a large *finite* constant (plus its
-    // overflow), so it never displaces a feasible break — but a text full of
-    // overwide words still sums nowhere near `infinity` (a fractional-infinity
-    // penalty saturates after a few and collapses the DP to one line).
-    enum long overwidePenalty = 1L << 40;
-    auto cost = new long[](n);
-    auto breakBefore = new size_t[](n); // the line holding j starts at this word
-    foreach (j; 0 .. n)
-    {
-        cost[j] = infinity;
-        // Try every line start i for the line ending at j.
-        foreach_reverse (i; 0 .. j + 1)
-        {
-            const limit = i == 0 ? firstW : width;
-            const lw = lineWidth(i, j);
-            // An overwide line is admissible only as a single overflowing word.
-            if (lw > limit && i != j)
-                break; // widening the line further only overflows more
-            const prev = i == 0 ? 0 : cost[i - 1];
-            if (prev >= infinity)
-                continue;
-            const slack = limit - lw;
-            // The last line's raggedness is free; an overflowing word is
-            // heavily penalized so it never displaces a feasible break.
-            const long penalty = slack < 0 ? overwidePenalty + cast(long)(-slack)
-                : j == n - 1 ? 0
-                : cast(long) slack * slack;
-            if (prev + penalty < cost[j])
-            {
-                cost[j] = prev + penalty;
-                breakBefore[j] = i;
-            }
-        }
-    }
-
-    // Reconstruct the line starts back-to-front, then emit in order.
-    auto starts = new size_t[](0);
-    size_t j = n - 1;
-    while (true)
-    {
-        starts ~= breakBefore[j];
-        if (breakBefore[j] == 0)
-            break;
-        j = breakBefore[j] - 1;
-    }
-    foreach_reverse (k, start; starts)
-    {
-        const end = k == 0 ? n - 1 : starts[k - 1] - 1;
-        lines ~= para[words[start].start .. words[end].end];
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
-version (unittest)
-{
-    import sparkles.ui.geometry : cellsOf;
-
-    private int cols(scope const(char)[] s) @safe pure nothrow @nogc
-        => cast(int) cellsOf(s);
-}
-
-@("ui.wrap.greedy.basics")
-@safe pure nothrow unittest
-{
-    // First-fit at width 10: break as late as possible.
-    assert(wrapLines("the quick brown fox", 10, &cols)
-        == ["the quick", "brown fox"]);
-    // Everything fits: one line, spacing preserved verbatim.
-    assert(wrapLines("a  b", 10, &cols) == ["a  b"]);
-    // Empty text is one empty line.
-    assert(wrapLines("", 10, &cols) == [""]);
-}
-
-@("ui.wrap.newlineForcesBreak")
-@safe pure nothrow unittest
-{
-    assert(wrapLines("one\ntwo", 80, &cols) == ["one", "two"]);
-    // A blank line survives as an empty line.
-    assert(wrapLines("one\n\ntwo", 80, &cols) == ["one", "", "two"]);
-}
-
-@("ui.wrap.overwideWordOverflowsItsOwnLine")
-@safe pure nothrow unittest
-{
-    foreach (algo; [TextWrap.greedy, TextWrap.balanced])
-    {
-        const lines = wrapLines("a incomprehensibility z", 8, &cols, algo);
-        assert(lines == ["a", "incomprehensibility", "z"]);
-    }
-}
-
-@("ui.wrap.linesAreSlicesOfTheInput")
-@safe pure nothrow unittest
-{
-    const text = "alpha beta gamma";
-    const lines = wrapLines(text, 10, &cols);
-    foreach (ln; lines)
-    {
-        // No copying: every line points into the original buffer.
-        assert(() @trusted {
-            return ln.ptr >= text.ptr && ln.ptr + ln.length <= text.ptr + text.length;
-        }());
-    }
-}
-
-@("ui.wrap.balanced.minimizesRaggedness")
-@safe pure nothrow unittest
-{
-    // The classic case: greedy leaves a lone word on the last line; balanced
-    // moves a word down for even lines. Both respect the width.
-    const text = "aaa bb cc ddddd";
-    assert(wrapLines(text, 6, &cols, TextWrap.greedy)
-        == ["aaa bb", "cc", "ddddd"]);
-    assert(wrapLines(text, 6, &cols, TextWrap.balanced)
-        == ["aaa", "bb cc", "ddddd"]);
-    // Every balanced line still fits.
-    foreach (ln; wrapLines(text, 6, &cols, TextWrap.balanced))
-        assert(cols(ln) <= 6);
-}
-
-@("ui.wrap.propertyEveryLineFitsAndEveryWordSurvives")
-@safe pure nothrow unittest
-{
-    // Property: at any width, both strategies emit lines within the limit
-    // (an overwide line must be a single unbreakable word) and no word is
-    // ever dropped or duplicated.
-    static bool hasSpace(scope const(char)[] s) @safe pure nothrow @nogc
-    {
-        foreach (char c; s)
-            if (c == ' ')
-                return true;
-        return false;
-    }
-
-    const text = "the quick brown fox jumps over the lazy dog";
-    foreach (w; 3 .. 20)
-        foreach (algo; [TextWrap.greedy, TextWrap.balanced])
-        {
-            size_t wordBytes;
-            foreach (ln; wrapLines(text, w, &cols, algo))
-            {
-                assert(cols(ln) <= w || !hasSpace(ln));
-                foreach (char c; ln)
-                    wordBytes += c != ' ';
-            }
-            size_t expected;
-            foreach (char c; text)
-                expected += c != ' ';
-            assert(wordBytes == expected);
-        }
-}
-
-@("ui.wrap.hangIndentViaFirstLineWidth")
-@safe pure nothrow unittest
-{
-    // A 4-column-narrower first line models a hang indent.
-    const lines = wrapLines("one two three four five", 12, &cols,
-        TextWrap.greedy, 8);
-    assert(lines == ["one two", "three four", "five"]);
-}
-
-// ── Styled-run breaking ─────────────────────────────────────────────────────
-
-/**
-Breaks a rich run — a sequence of styled $(LREF TextSpan)s — into lines no
-wider than `width`, measuring through `measure`. The other half of `WGT6`:
-prose with inline pills and styled words wraps as $(B text), not as a row of
-word widgets fighting the box layout.
-
-Break opportunities are the spaces inside breakable spans (a break consumes
-them); a `noBreak` span wraps as one token, and adjacent non-space content in
-neighbouring spans $(B joins) its token — so a pill followed by `", and"`
-carries its comma to the next line with it. A `'\n'` anywhere forces a break.
-Lines are lists of span $(I slices) — no text is copied.
-
-Greedy only (the balanced strategy applies to plain runs; styled prose is
-ragged-right by design).
-*/
-TextSpan[][] wrapSpans(F)(
-    const(TextSpan)[] spans, int width, scope F measure, int hangIndent = 0)
-if (is(typeof(measure("")) : int) || is(typeof(measure("", TextStyle.init)) : int))
-{
-    // A measurer that reads styles gets each span's own (design-system
-    // `GLY10`: a proportional run's width depends on its face and size).
-    int widthOf(size_t si, scope const(char)[] text)
-    {
-        static if (is(typeof(measure("", TextStyle.init)) : int))
-            return measure(text, spans[si].textStyle);
-        else
-            return measure(text);
-    }
-
-    // A hang indent narrows every line after the first (the painter offsets
-    // them right by the same amount — a leader's continuation alignment).
-    const contWidth = hangIndent < width ? width - hangIndent : 1;
-    // A fragment is a maximal unbreakable piece of one span: either a word
-    // fragment / whole noBreak span (glue = false), a run of spaces
-    // (glue = true), or a forced break (newline = true).
-    static struct Fragment
-    {
-        size_t span;
-        const(char)[] text;
-        bool glue;
-        bool newline;
-    }
-
-    Fragment[] frags;
-    foreach (si, ref span; spans)
-    {
-        const t = span.text;
-        if (span.noBreak)
-        {
-            if (t.length)
-                frags ~= Fragment(si, t);
-            continue;
-        }
-        size_t i = 0;
-        while (i < t.length)
-        {
-            if (t[i] == '\n')
-            {
-                frags ~= Fragment(si, t[i .. i + 1], glue: false, newline: true);
-                ++i;
-                continue;
-            }
-            const start = i;
-            const isGlue = t[i] == ' ';
-            while (i < t.length && (t[i] == ' ') == isGlue && t[i] != '\n')
-                ++i;
-            frags ~= Fragment(si, t[start .. i], glue: isGlue);
-        }
-    }
-
-    TextSpan[][] lines;
-    TextSpan[] cur;
-    int curW;
-    size_t lastSpan = size_t.max; // the span cur's last slice came from
-    size_t pendingGlue = size_t.max; // index into frags of glue awaiting content
-
-    void append(size_t fi)
-    {
-        const f = frags[fi];
-        const w = widthOf(f.span, f.text);
-        // Merge into the previous slice only when it continues the $(I same)
-        // span. Contiguity alone is not enough: a highlighted code line is
-        // adjacent same-slot spans slicing one buffer, and merging across
-        // the span boundary would paint the whole run in the first span's
-        // colors (each span carries its own resolved fg/bg/attrs).
-        if (cur.length && lastSpan == f.span && cur[$ - 1].text.length
-            && isContiguous(cur[$ - 1].text, f.text))
-        {
-            cur[$ - 1].text = joinSlices(cur[$ - 1].text, f.text);
-            // The joined slice covers more source: extend the identity too
-            // (contiguous slices ⇒ end = start + length).
-            if (cur[$ - 1].srcStart != size_t.max)
-                cur[$ - 1].srcEnd = cur[$ - 1].srcStart
-                    + cur[$ - 1].text.length;
-        }
-        else
-        {
-            auto s = cast() spans[f.span];
-            // A sliced fragment keeps its source identity: shift srcStart by
-            // the fragment's offset within the span (approximate for
-            // normalized prose, exact for source-sliced code).
-            if (s.srcStart != size_t.max)
-            {
-                const off = sliceOffset(spans[f.span].text, f.text);
-                s.srcStart += off;
-                if (s.srcEnd > s.srcStart + f.text.length)
-                    s.srcEnd = s.srcStart + f.text.length;
-            }
-            s.text = f.text;
-            cur ~= s;
-        }
-        lastSpan = f.span;
-        curW += w;
-    }
-
-    void flush()
-    {
-        lines ~= cur;
-        cur = null;
-        curW = 0;
-        lastSpan = size_t.max;
-        pendingGlue = size_t.max;
-    }
-
-    size_t i = 0;
-    while (i < frags.length)
-    {
-        const f = frags[i];
-        if (f.newline)
-        {
-            flush();
-            ++i;
-            continue;
-        }
-        if (f.glue)
-        {
-            pendingGlue = cur.length ? i : size_t.max; // leading glue drops
-            ++i;
-            continue;
-        }
-        // A token: this fragment plus every directly-adjacent non-glue
-        // fragment (spanning pills and hugging punctuation).
-        int tokenW = 0;
-        size_t j = i;
-        while (j < frags.length && !frags[j].glue && !frags[j].newline)
-        {
-            tokenW += widthOf(frags[j].span, frags[j].text);
-            ++j;
-        }
-        const glueW = pendingGlue != size_t.max
-            ? widthOf(frags[pendingGlue].span, frags[pendingGlue].text) : 0;
-        const limit = lines.length == 0 ? width : contWidth;
-        if (cur.length && curW + glueW + tokenW > limit)
-            flush(); // the pending glue is consumed by the break
-        else if (pendingGlue != size_t.max && cur.length)
-            append(pendingGlue);
-        foreach (k; i .. j)
-            append(k);
-        pendingGlue = size_t.max;
-        i = j;
-    }
-    flush();
+        const plan = uiCellPlan(text, options, [TextSpan(text)], [size_t(0), text.length], measure, true,
+            TextStyle.init, measureMonotone);
+    auto lines = new const(char)[][](plan.lines.length);
+    foreach (i; 0 .. lines.length) lines[i] = renderedLine(plan, i);
     return lines;
 }
 
-// Byte offset of slice `b` within its parent slice `a` (same buffer).
-private size_t sliceOffset(scope const(char)[] a, scope const(char)[] b)
-    @trusted pure nothrow @nogc
-    => b.ptr >= a.ptr ? cast(size_t)(b.ptr - a.ptr) : 0;
-
-// `b` starts exactly where `a` ends (slices of one buffer).
-private bool isContiguous(scope const(char)[] a, scope const(char)[] b)
-    @trusted pure nothrow @nogc
-    => a.length && b.length && a.ptr + a.length is b.ptr;
-
-// The single slice covering contiguous `a` then `b`.
-private const(char)[] joinSlices(return scope const(char)[] a,
-    scope const(char)[] b) @trusted pure nothrow @nogc
-    => a.ptr[0 .. a.length + b.length];
-
-@("ui.wrap.spans.greedyAcrossStyles")
-@safe pure nothrow unittest
+/// Complete text is gathered once because UI spans are formatting boundaries,
+/// not grapheme/Unicode-opportunity boundaries. The returned span lists borrow
+/// their authored spans or the owned gathered snapshot and retain the base plan.
+TextSpan[][] wrapSpans(F = typeof(null))(const(TextSpan)[] spans, int width, int hangIndent = 0,
+    TextWrap algorithm = TextWrap.greedy, WhitespaceMode whitespace = WhitespaceMode.collapse,
+    bool clipToWidth = false, scope F measure = null, TextStyle inheritedStyle = TextStyle.init,
+    bool measureMonotone = false)
 {
-    import sparkles.ui.geometry : cellsOf;
-
-    static int cols2(scope const(char)[] s) @safe pure nothrow @nogc
-        => cast(int) cellsOf(s);
-
-    // "use the |run| helper today" with |run| a pill, width 14:
-    const spans = [
-        TextSpan("use the "),
-        TextSpan("run", Slot.chip, TextStyle.init, paintBackground: true, noBreak: true),
-        TextSpan(" helper today"),
-    ];
-    const lines = wrapSpans(spans, 14, &cols2);
-    assert(lines.length == 2);
-    // "use the " + pill(3) = 11 fits; " helper" would make 18 > 14 → wraps.
-    // The inter-word gap before the pill is preserved (painters draw it).
-    assert(lines[0].length == 2);
-    assert(lines[0][0].text == "use the " && lines[0][1].text == "run");
-    assert(lines[0][1].paintBackground);          // the pill's style survives
-    assert(lines[1][0].text == "helper today");   // merged back into one slice
+    import std.exception : enforce;
+    if (algorithm == TextWrap.none && spans.length && spans[0].wrapPlan !is null)
+    {
+        const plan = spans[0].wrapPlan;
+        const line = spans[0].wrapLine;
+        enforce(line < plan.lines.length, "stale committed rich row");
+        long advance;
+        auto row = new TextSpan[](spans.length);
+        foreach (i, ref const span; spans)
+        {
+            enforce(span.wrapPlan == plan && span.wrapLine == line && span.cellAdvance >= 0
+                && span.cellAdvance <= long.max - advance, "inconsistent committed rich row");
+            advance += span.cellAdvance;
+            row[i] = span;
+        }
+        enforce(advance == plan.lines[line].endColumn - plan.lines[line].startColumn,
+            "committed rich row advance mismatch");
+        TextSpan[][] retained = [row];
+        return clipToWidth ? clipSpanLines(retained, cast(size_t) width, hangIndent) : retained;
+    }
+    enforce(width >= 0 && hangIndent >= 0, "negative rich wrap geometry");
+    size_t length;
+    foreach (ref const span; spans)
+    {
+        enforce(span.text.length <= size_t.max - length, "rich wrap size exhausted");
+        length += span.text.length;
+    }
+    char[] logical = new char[](length);
+    auto starts = new size_t[](spans.length + 1);
+    CellNoBreakSpan[] protectedSpans;
+    size_t offset;
+    foreach (i, ref const span; spans)
+    {
+        starts[i] = offset;
+        logical[offset .. offset + span.text.length] = span.text[];
+        if (span.noBreak && span.text.length)
+        {
+            if (protectedSpans.length && protectedSpans[$ - 1].end == offset)
+                protectedSpans[$ - 1].end = offset + span.text.length;
+            else protectedSpans ~= CellNoBreakSpan(offset, offset + span.text.length);
+        }
+        offset += span.text.length;
+    }
+    starts[$ - 1] = offset;
+    WrapOptions options;
+    options.width = algorithm == TextWrap.none ? CellWidth.unbounded : CellWidth.bounded(cast(ulong) width);
+    options.whitespace = algorithm == TextWrap.none ? WhitespaceMode.preserve : whitespace;
+    options.solver = algorithm == TextWrap.balanced ? WrapSolver.balanced : WrapSolver.greedy;
+    options.noBreak = protectedSpans;
+    options.tabs = TabPolicy.expand;
+    CellGeometry[] geometry = [CellGeometry(options.width),
+        CellGeometry(algorithm == TextWrap.none ? CellWidth.unbounded
+            : CellWidth.bounded(cast(ulong)(width > hangIndent ? width - hangIndent : 0)))];
+    options.geometry = geometry[];
+    options.repeatLastGeometry = true;
+    auto plan = uiCellPlan(logical, options, spans, starts, measure, false, inheritedStyle, measureMonotone);
+    if (clipToWidth) plan = projectWrapCells(plan, CellExtent(cast(ulong) width)).visible;
+    return projectSpanMetadata(plan, spans, starts);
 }
 
-@("ui.wrap.spans.adjacentSpansKeepTheirColors")
-@safe pure nothrow unittest
+// Candidate bytes live in preallocated storage. The callback groups exactly
+// the complete borrowed brush runs the display list can paint without copying.
+private struct UiSelectionMeasure(F)
 {
-    import sparkles.base.term_color : RgbColor;
-    import sparkles.ui.geometry : cellsOf;
+    F measure;
+    const(TextSpan)[] authored;
+    const(size_t)[] starts;
+    TextStyle inheritedStyle;
+    char[] buffer;
+    WrapFragment[] pending;
+    CellStyleSnapshot[] pendingStyles;
+    size_t pendingStyleCount;
+    size_t pendingCount;
+    bool coalesceAll;
+    struct Cached
+    {
+        const(WrapFragment)[] fragments;
+        const(CellStyleSnapshot)[] brushes;
+        long extent;
+    }
+    Cached[][size_t] cache;
 
-    static int cols2(scope const(char)[] s) @safe pure nothrow @nogc
-        => cast(int) cellsOf(s);
+    // Hash stable scalar identity, not a struct's padding or slice addresses.
+    // The complete value comparison below remains the authority.
+    static size_t cacheKey(scope const(WrapFragment)[] fragments) @safe pure nothrow @nogc
+    {
+        size_t key = fragments.length;
+        foreach (ref const fragment; fragments)
+        {
+            key = key * 16_777_619 ^ fragment.consumedStart;
+            key = key * 16_777_619 ^ fragment.consumedEnd;
+            key = key * 16_777_619 ^ cast(size_t) fragment.kind;
+            key = key * 16_777_619 ^ cast(size_t) fragment.repeat;
+            key = key * 16_777_619 ^ cast(size_t) fragment.clusterOrdinal;
+            key = key * 16_777_619 ^ cast(size_t) fragment.styleBefore;
+        }
+        return key;
+    }
 
-    // A highlighted code line: same-slot spans slicing one contiguous
-    // buffer, each with its own resolved color. They must survive wrapping
-    // as separate slices — merging would repaint the run in the first
-    // span's color (the raw-view "syntax highlighting lost" regression).
-    static immutable src = "return true;";
-    const spans = [
-        TextSpan(src[0 .. 6], Slot.code, fg: RgbColor(0xff, 0, 0),
-            hasFg: true, srcStart: 0, srcEnd: 6),
-        TextSpan(src[6 .. 7], Slot.code, srcStart: 6, srcEnd: 7),
-        TextSpan(src[7 .. 11], Slot.code, fg: RgbColor(0, 0xff, 0),
-            hasFg: true, srcStart: 7, srcEnd: 11),
-        TextSpan(src[11 .. 12], Slot.code, srcStart: 11, srcEnd: 12),
-    ];
-    const lines = wrapSpans(spans, 80, &cols2);
-    assert(lines.length == 1);
-    assert(lines[0].length == 4);
-    assert(lines[0][0].text == "return" && lines[0][0].fg == RgbColor(0xff, 0, 0));
-    assert(lines[0][2].text == "true" && lines[0][2].fg == RgbColor(0, 0xff, 0));
-    assert(lines[0][3].text == ";" && !lines[0][3].hasFg);
-    // The identity channel survives per slice.
-    assert(lines[0][2].srcStart == 7 && lines[0][2].srcEnd == 11);
+    TextSpan brushAt(size_t offset) const pure nothrow @nogc
+    {
+        size_t i;
+        while (i + 1 < authored.length && starts[i + 1] <= offset) ++i;
+        return authored.length ? authored[i] : TextSpan.init;
+    }
+
+    WrapResult extent(scope const(WrapFragment)[] fragments,
+        scope const(CellStyleSnapshot)[] styles, ref long result)
+    {
+        size_t used, cursor, previousEnd;
+        bool have, previousBorrowed;
+        TextSpan brush;
+        result = 0;
+        WrapResult flush()
+        {
+            if (!have) return WrapResult.init;
+            const width = measure(buffer[0 .. used], brush.textStyle);
+            if (width < 0 || width > long.max - result)
+                return WrapResult(status: WrapStatus.arithmeticExhausted);
+            result += width;
+            used = 0;
+            have = false;
+            return WrapResult.init;
+        }
+        while (cursor < fragments.length)
+        {
+            const start = cursor;
+            const first = fragments[start];
+            ++cursor;
+            while (cursor < fragments.length && first.clusterOrdinal != ulong.max
+                && fragments[cursor].clusterOrdinal == first.clusterOrdinal) ++cursor;
+            size_t leader = start;
+            while (leader < cursor && (fragments[leader].formatting
+                || fragments[leader].omitted || fragments[leader].kind == FragmentKind.anchor)) ++leader;
+            if (leader == cursor)
+            {
+                if (coalesceAll) continue;
+                auto r = flush(); if (!r.succeeded) return r;
+                previousBorrowed = false;
+                continue;
+            }
+            auto nextBrush = fragments[leader].provenance == ProvenanceKind.synthetic
+                ? TextSpan.init : brushAt(fragments[leader].consumedStart);
+            const snapshot = cast(size_t) fragments[leader].styleBefore;
+            if (snapshot < styles.length && !applySnapshotState(nextBrush, styles[snapshot]))
+                return WrapResult(status: WrapStatus.invalidFormatting);
+            nextBrush.ansiSnapshot = snapshot;
+            nextBrush.textStyle = resolvedSpanStyle(nextBrush, inheritedStyle);
+            size_t expected = first.clusterSourceStart;
+            bool borrowed = true;
+            foreach (ref const fragment; fragments[start .. cursor])
+            {
+                if (fragment.formatting || fragment.omitted || fragment.kind == FragmentKind.anchor) continue;
+                borrowed &= fragment.kind == FragmentKind.bytes
+                    && fragment.provenance == ProvenanceKind.original
+                    && fragment.consumedStart == expected
+                    && fragment.bytes.length == fragment.consumedEnd - fragment.consumedStart;
+                expected = fragment.consumedEnd;
+            }
+            borrowed &= expected == first.clusterSourceEnd;
+            if (have && !(coalesceAll || (previousBorrowed && borrowed
+                && first.clusterSourceStart == previousEnd && sameSpanBrush(brush, nextBrush))))
+            { auto r = flush(); if (!r.succeeded) return r; }
+            if (!have) { brush = nextBrush; have = true; }
+            foreach (ref const fragment; fragments[start .. cursor])
+            {
+                if (fragment.formatting || fragment.omitted || fragment.kind == FragmentKind.anchor) continue;
+                const count = fragment.kind == FragmentKind.bytes ? fragment.bytes.length : fragment.repeat;
+                if (count > buffer.length - used) return WrapResult(status: WrapStatus.needScratch);
+                const end = used + cast(size_t) count;
+                if (fragment.kind == FragmentKind.bytes) buffer[used .. end] = fragment.bytes[];
+                else buffer[used .. end] = ' ';
+                used = end;
+            }
+            previousBorrowed = borrowed;
+            previousEnd = first.clusterSourceEnd;
+        }
+        return flush();
+    }
+
+    WrapResult request(scope const(WrapFragment)[] fragments,
+        scope const(CellStyleSnapshot)[] styles, ref long result)
+        nothrow @nogc
+    {
+        static if (__traits(compiles, {
+            WrapResult delegate(scope const(WrapFragment)[], scope const(CellStyleSnapshot)[], ref long)
+                @safe nothrow @nogc direct = &extent;
+        }))
+            return extent(fragments, styles, result);
+        else
+        {
+            // Hashes select a bucket, never prove identity: compare complete
+            // fragment and brush values so collisions cannot change selection.
+            const bucket = cacheKey(fragments) in cache;
+            if (bucket !is null) foreach (ref const entry; *bucket)
+            {
+                if (entry.fragments != fragments) continue;
+                bool equal = true;
+                foreach (i, ref const fragment; fragments)
+                {
+                    const snapshot = cast(size_t) fragment.styleBefore;
+                    const brush = snapshot < styles.length ? styles[snapshot] : CellStyleSnapshot.init;
+                    if (entry.brushes[i] != brush) { equal = false; break; }
+                }
+                if (equal) { result = entry.extent; return WrapResult.init; }
+            }
+            if (fragments.length > pending.length || styles.length > pendingStyles.length)
+                return WrapResult(status: WrapStatus.needScratch);
+            pendingCount = fragments.length;
+            pending[0 .. pendingCount] = fragments[];
+            pendingStyleCount = styles.length;
+            pendingStyles[0 .. pendingStyleCount] = styles[];
+            return WrapResult(status: WrapStatus.needResults);
+        }
+    }
+
+    void measurePending()
+    {
+        import std.exception : enforce;
+        long value;
+        const r = extent(pending[0 .. pendingCount], pendingStyles[0 .. pendingStyleCount], value);
+        enforce(r.succeeded, "UI candidate measurement failed");
+        auto brushes = new CellStyleSnapshot[](pendingCount);
+        foreach (i, ref const fragment; pending[0 .. pendingCount])
+            if (fragment.styleBefore < pendingStyleCount)
+                brushes[i] = pendingStyles[cast(size_t) fragment.styleBefore];
+        cache[cacheKey(pending[0 .. pendingCount])] ~=
+            Cached(pending[0 .. pendingCount].dup, brushes, value);
+    }
 }
 
-@("ui.wrap.spans.punctuationHugsThePill")
-@safe pure nothrow unittest
+private WrapPlan uiCellPlan(F)(const(char)[] text, WrapOptions options,
+    const(TextSpan)[] spans, const(size_t)[] starts, scope F measure, bool coalesceAll = false,
+    TextStyle inheritedStyle = TextStyle.init, bool measureMonotone = false)
 {
-    import sparkles.ui.geometry : cellsOf;
-
-    static int cols2(scope const(char)[] s) @safe pure nothrow @nogc
-        => cast(int) cellsOf(s);
-
-    // A pill followed by ", x" in the next span: the comma joins the pill's
-    // token, so a break never strands it at a line start.
-    const spans = [
-        TextSpan("aaaa bbbb "),
-        TextSpan("pill", Slot.chip, TextStyle.init, true, true),
-        TextSpan(", x"),
-    ];
-    const lines = wrapSpans(spans, 9, &cols2);
-    // "aaaa bbbb" fills line 1; "pill," + " x" go to line 2 together.
-    assert(lines.length == 2);
-    assert(lines[0].length == 1 && lines[0][0].text == "aaaa bbbb");
-    assert(lines[1][0].text == "pill" && lines[1][1].text == ", x");
+    static if (is(F == typeof(null)))
+        return cellWrapPlan(text, options);
+    else
+    {
+        import std.exception : enforce;
+        enforce(text.length <= (size_t.max - 8) / 8, "UI measurement storage exhausted");
+        auto context = UiSelectionMeasure!F(measure, spans, starts);
+        context.coalesceAll = coalesceAll;
+        context.inheritedStyle = inheritedStyle;
+        options.selectionMeasureMonotone = measureMonotone;
+        context.buffer = new char[](text.length * 8 + 8);
+        static if (!__traits(compiles, {
+            WrapResult delegate(scope const(WrapFragment)[], scope const(CellStyleSnapshot)[], ref long)
+                @safe nothrow @nogc direct = &context.extent;
+        }))
+        {
+            context.pending = new WrapFragment[](text.length * 8 + 8);
+            context.pendingStyles = new CellStyleSnapshot[](text.length * 8 + 8);
+        }
+        // WrapOptions also owns returnable indentation borrows, so its callback
+        // cannot express a separate scope lifetime. Only this synchronous call
+        // sees the stack delegate; WrapPlan retains no callback or context.
+        scope void delegate() @safe pending;
+        (() @trusted {
+            options.selectionMeasure = &context.request;
+            pending = &context.measurePending;
+        })();
+        return cellWrapPlan(text, options, pending);
+    }
 }
 
-@("ui.wrap.spans.forcedBreakAndWhitespaceCollapse")
-@safe pure nothrow unittest
+private struct ClusterPayload { const(char)[] bytes; bool borrowed; }
+private size_t groupEnd(scope const ref WrapPlan plan, size_t start, size_t limit)
 {
-    import sparkles.ui.geometry : cellsOf;
+    const first = plan.fragments[start];
+    if (first.clusterOrdinal == ulong.max) return start + 1;
+    size_t end = start + 1;
+    while (end < limit && plan.fragments[end].clusterOrdinal == first.clusterOrdinal) ++end;
+    return end;
+}
+private ClusterPayload clusterPayload(const ref WrapPlan plan, size_t start, size_t end)
+{
+    import std.exception : enforce, assumeUnique;
+    size_t count, expected, originalStart;
+    bool have, borrowed = true;
+    foreach (ref const fragment; plan.fragments[start .. end])
+    {
+        if (fragment.formatting || fragment.omitted || fragment.kind == FragmentKind.anchor) continue;
+        const n = fragment.kind == FragmentKind.bytes ? fragment.bytes.length : fragment.repeat;
+        enforce(n <= size_t.max - count, "cluster output exhausted");
+        count += cast(size_t) n;
+        if (!have) { originalStart = fragment.consumedStart; expected = originalStart; }
+        borrowed &= fragment.kind == FragmentKind.bytes && fragment.provenance == ProvenanceKind.original
+            && fragment.consumedStart == expected && fragment.bytes.length == fragment.consumedEnd - fragment.consumedStart;
+        expected = fragment.consumedEnd; have = true;
+    }
+    if (have && borrowed && expected <= plan.source.bytes.length)
+        return ClusterPayload(plan.source.bytes[originalStart .. expected],
+            originalStart == plan.fragments[start].clusterSourceStart
+                && expected == plan.fragments[start].clusterSourceEnd);
+    char[] output = new char[](count);
+    size_t offset;
+    foreach (ref const fragment; plan.fragments[start .. end])
+    {
+        if (fragment.formatting || fragment.omitted || fragment.kind == FragmentKind.anchor) continue;
+        if (fragment.kind == FragmentKind.bytes)
+        { output[offset .. offset + fragment.bytes.length] = fragment.bytes[]; offset += fragment.bytes.length; }
+        else
+        { const n = cast(size_t) fragment.repeat; output[offset .. offset + n] = ' '; offset += n; }
+    }
+    // The generated payload is uniquely owned; no mutable view escapes.
+    return ClusterPayload((() @trusted { return assumeUnique(output); })(), false);
+}
+private bool snapshotColor(scope const(char)[] parameters, ref RgbColor color) @safe pure nothrow @nogc
+{
+    uint[7] values;
+    size_t count, position;
+    while (position < parameters.length && count < values.length)
+    {
+        uint value;
+        while (position < parameters.length && parameters[position] >= '0' && parameters[position] <= '9')
+        {
+            if (value > 6553) return false;
+            value = value * 10 + parameters[position++] - '0';
+        }
+        values[count++] = value;
+        if (position < parameters.length)
+        { if (parameters[position] != ';' && parameters[position] != ':') return false; ++position; }
+    }
+    if (!count || position != parameters.length) return false;
+    const code = values[0];
+    if (count == 1)
+    {
+        uint index;
+        if (code >= 30 && code <= 37) index = code - 30;
+        else if (code >= 40 && code <= 47) index = code - 40;
+        else if (code >= 90 && code <= 97) index = code - 90 + 8;
+        else if (code >= 100 && code <= 107) index = code - 100 + 8;
+        else return false;
+        color = xterm256ToRgb(cast(ubyte) index); return true;
+    }
+    if (count >= 3 && values[1] == 5 && values[count - 1] <= 255)
+    { color = xterm256ToRgb(cast(ubyte) values[count - 1]); return true; }
+    if (count >= 5 && values[1] == 2 && values[count - 3] <= 255 && values[count - 2] <= 255 && values[count - 1] <= 255)
+    { color = RgbColor(cast(ubyte) values[count - 3], cast(ubyte) values[count - 2], cast(ubyte) values[count - 1]); return true; }
+    return false;
+}
+private bool applySnapshotState(ref TextSpan span, const ref CellStyleSnapshot state)
+    pure nothrow @nogc
+{
+    const flags = state.attributes;
+    span.ansiAttributes = cast(ushort)(
+        ((flags & 1) ? TextAttr.bold.bits : 0)
+        | ((flags & 2) ? TextAttr.dim.bits : 0)
+        | ((flags & 4) ? TextAttr.italic.bits : 0)
+        | ((flags & (1 << 6)) ? TextAttr.inverse.bits : 0)
+        | ((flags & (1 << 7)) ? TextAttr.hidden.bits : 0)
+        | ((flags & (1 << 8)) ? TextAttr.strikethrough.bits : 0));
+    span.ansiUnderline = cast(UnderlineStyle) state.underline;
+    if (state.foreground.length)
+    {
+        if (!snapshotColor(state.foreground, span.fg)) return false;
+        span.hasFg = true;
+    }
+    if (state.background.length)
+    {
+        if (!snapshotColor(state.background, span.bg)) return false;
+        span.hasBg = true;
+        span.paintBackground = true;
+    }
+    if (state.linkOpen.length)
+    {
+        size_t start = 4;
+        while (start < state.linkOpen.length && state.linkOpen[start] != ';') ++start;
+        if (start < state.linkOpen.length)
+        {
+            const end = state.linkOpen[$ - 1] == '\x07' ? state.linkOpen.length - 1 : state.linkOpen.length - 2;
+            if (start + 1 <= end) span.ansiUri = state.linkOpen[start + 1 .. end];
+        }
+    }
+    return true;
+}
+private void applySnapshot(ref TextSpan span, scope const ref WrapPlan plan, size_t snapshot)
+{
+    import std.exception : enforce;
+    if (snapshot >= plan.styles.length) return;
+    span.ansiSnapshot = snapshot;
+    enforce(applySnapshotState(span, plan.styles[snapshot]), "unsupported ANSI color snapshot");
+}
+private TextSpan[][] projectSpanMetadata(WrapPlan plan, const(TextSpan)[] authored, const(size_t)[] starts)
+{
+    import std.exception : enforce;
+    auto retained = new WrapPlan;
+    *retained = plan;
+    auto lines = new TextSpan[][](plan.lines.length);
+    foreach (li, ref const line; plan.lines)
+    {
+        size_t cursor = line.fragmentsStart;
+        while (cursor < line.fragmentsEnd)
+        {
+            const end = groupEnd(plan, cursor, line.fragmentsEnd);
+            const payload = clusterPayload(plan, cursor, end);
+            bool leader;
+            foreach (fi; cursor .. end)
+            {
+                const fragment = plan.fragments[fi];
+                if (fragment.kind == FragmentKind.anchor) continue;
+                const text = fragment.kind == FragmentKind.bytes ? fragment.bytes : renderedSpaces(fragment.repeat);
+                const first = fragment.consumedStart, last = fragment.consumedEnd;
+                size_t si;
+                while (si < authored.length && starts[si + 1] <= first) ++si;
+                bool emitted;
+                do
+                {
+                    TextSpan span;
+                    size_t begin = first, finish = last;
+                    if (fragment.provenance != ProvenanceKind.synthetic && si < authored.length)
+                    {
+                        span = authored[si];
+                        begin = first > starts[si] ? first : starts[si];
+                        finish = last < starts[si + 1] ? last : starts[si + 1];
+                        if (begin >= finish) break;
+                        span.text = fragment.provenance == ProvenanceKind.original
+                            ? authored[si].text[begin - starts[si] .. finish - starts[si]] : text;
+                        span.sourceRelation = authored[si].srcStart == size_t.max ? ProvenanceKind.synthetic
+                            : authored[si].sourceRelation == ProvenanceKind.original ? fragment.provenance : authored[si].sourceRelation;
+                        if (span.srcStart != size_t.max && authored[si].sourceRelation == ProvenanceKind.original
+                            && authored[si].srcEnd >= authored[si].srcStart
+                            && authored[si].srcEnd - authored[si].srcStart == authored[si].text.length
+                            && fragment.provenance == ProvenanceKind.original)
+                        { span.srcStart = authored[si].srcStart + begin - starts[si]; span.srcEnd = authored[si].srcStart + finish - starts[si]; }
+                        else if (span.srcStart != size_t.max && span.sourceRelation == ProvenanceKind.original)
+                            span.sourceRelation = ProvenanceKind.replacement;
+                    }
+                    else
+                    { span.text = text; span.sourceRelation = ProvenanceKind.synthetic; }
+                    span.wrapPlan = retained; span.wrapLine = li;
+                    span.logicalGroup = fragment.clusterOrdinal;
+                    span.logicalStart = fragment.clusterOrdinal == ulong.max ? fragment.sourceStart : fragment.clusterSourceStart;
+                    span.logicalEnd = fragment.clusterOrdinal == ulong.max ? fragment.sourceEnd : fragment.clusterSourceEnd;
+                    span.consumedStart = begin; span.consumedEnd = finish;
+                    span.cellAdvance = emitted ? 0 : fragment.advance;
+                    span.formatting = fragment.formatting;
+                    span.projectionRelation = fragment.provenance;
+                    span.syntheticReason = fragment.reason;
+                    if (!leader && !fragment.formatting)
+                    { span.clusterText = payload.bytes; span.clusterTextBorrowed = payload.borrowed; leader = true; }
+                    applySnapshot(span, plan, cast(size_t) fragment.styleBefore);
+                    lines[li] ~= span;
+                    emitted = true;
+                    if (fragment.provenance != ProvenanceKind.original || fragment.provenance == ProvenanceKind.synthetic) break;
+                    ++si;
+                } while (si < authored.length && starts[si] < last);
+            }
+            cursor = end;
+        }
+    }
+    return lines;
+}
 
-    static int cols2(scope const(char)[] s) @safe pure nothrow @nogc
-        => cast(int) cellsOf(s);
+/// Allocation occurs only at layout's commit boundary. Existing immutable plans
+/// are projected, never concatenated, segmented, selected, or measured again.
+TextSpan[][] clipSpanLines(TextSpan[][] lines, size_t maximum, int hangIndent = 0)
+{
+    import std.exception : enforce;
+    enforce(hangIndent >= 0, "negative hanging indent");
+    auto output = new TextSpan[][](lines.length);
+    const(WrapPlan)*[const(WrapPlan)*][size_t] cache;
+    foreach (li, row; lines)
+    {
+        size_t capacity = li && cast(size_t) hangIndent < maximum ? maximum - hangIndent
+            : li && hangIndent ? 0 : maximum;
+        if (!row.length) { output[li] = row; continue; }
+        const source = row[0].wrapPlan;
+        enforce(source !is null && row[0].wrapLine < source.lines.length, "rich row lacks committed plan");
+        const lineIndex = row[0].wrapLine;
+        foreach (ref const span; row) enforce(span.wrapPlan == source && span.wrapLine == lineIndex, "mixed rich row plans");
+        const line = source.lines[lineIndex];
+        if (line.endColumn - line.startColumn <= capacity)
+        { output[li] = row; continue; }
+        const(WrapPlan)* visible;
+        auto byCapacity = capacity in cache;
+        if (byCapacity !is null)
+        {
+            auto found = source in *byCapacity;
+            if (found !is null) visible = *found;
+        }
+        if (visible is null)
+        {
+            auto projection = projectWrapCells(*source, CellExtent(capacity));
+            auto projectedPlan = new WrapPlan;
+            *projectedPlan = projection.visible;
+            visible = projectedPlan;
+            cache[capacity][source] = visible;
+        }
+        auto projected = new TextSpan[](row.length);
+        foreach (i, ref const original; row)
+        {
+            TextSpan span = original;
+            span.wrapPlan = visible;
+            span.cellAdvance = 0;
+            bool retained = original.formatting;
+            ClusterPayload payload;
+            const visibleLine = visible.lines[lineIndex];
+            size_t cursor = visibleLine.fragmentsStart;
+            while (cursor < visibleLine.fragmentsEnd)
+            {
+                const end = groupEnd(*visible, cursor, visibleLine.fragmentsEnd);
+                const f = visible.fragments[cursor];
+                const matches = original.logicalGroup != ulong.max && f.clusterOrdinal == original.logicalGroup;
+                if (matches)
+                {
+                    span.projectionRelation = f.clusterProvenance;
+                    bool any;
+                    foreach (ref const fragment; visible.fragments[cursor .. end])
+                    {
+                        any |= !fragment.omitted && !fragment.formatting && fragment.kind != FragmentKind.anchor;
+                        if (fragment.consumedStart == original.consumedStart && fragment.consumedEnd == original.consumedEnd
+                            && !fragment.formatting && !fragment.omitted) span.cellAdvance = original.cellAdvance ? fragment.advance : 0;
+                    }
+                    retained |= any;
+                    if (original.clusterText.length) payload = clusterPayload(*visible, cursor, end);
+                    break;
+                }
+                cursor = end;
+            }
+            if (!retained)
+            { span.text = null; span.clusterText = null; span.clusterTextBorrowed = false; span.projectionRelation = ProvenanceKind.omission; }
+            else if (original.clusterText.length)
+            {
+                span.clusterText = payload.bytes; span.clusterTextBorrowed = payload.borrowed;
+                if (original.projectionRelation != ProvenanceKind.original) span.text = payload.bytes;
+            }
+            projected[i] = span;
+        }
+        output[li] = projected;
+    }
+    return output;
+}
+/// Complete retained line advance, never the sum of independently measured spans.
+int spanLineWidth(scope const(TextSpan)[] spans)
+{
+    import std.exception : enforce;
+    long width;
+    if (spans.length && spans[0].wrapPlan !is null)
+    {
+        const plan = spans[0].wrapPlan;
+        enforce(spans[0].wrapLine < plan.lines.length, "stale rich line");
+        foreach (ref const span; spans)
+            enforce(span.wrapPlan == plan && span.wrapLine == spans[0].wrapLine, "mixed rich line plans");
+        const line = plan.lines[spans[0].wrapLine];
+        width = line.endColumn - line.startColumn;
+    }
+    else
+    {
+        char[] logical;
+        foreach (ref const span; spans) logical ~= span.text;
+        const plan = cellWrapPlan(logical, WrapOptions(width: CellWidth.unbounded));
+        foreach (ref const line; plan.lines)
+            if (line.endColumn - line.startColumn > width) width = line.endColumn - line.startColumn;
+    }
+    enforce(width >= 0 && width <= int.max, "UI line extent exhausted");
+    return cast(int) width;
+}
 
-    const spans = [TextSpan("one\ntwo three")];
-    const lines = wrapSpans(spans, 80, &cols2);
-    assert(lines.length == 2);
-    assert(lines[0][0].text == "one" && lines[1][0].text == "two three");
+private const(char)[] renderedSpaces(ulong count)
+{
+    import std.exception : enforce;
+    enforce(count <= size_t.max, "rich tab expansion exhausted");
+    char[] spaces = new char[](cast(size_t) count);
+    spaces[] = ' ';
+    return spaces;
+}
+private size_t borrowedOffset(scope const(char)[] parent, scope const(char)[] child) @trusted pure nothrow @nogc
+{
+    const p = cast(size_t) parent.ptr, c = cast(size_t) child.ptr;
+    return c >= p && c - p <= parent.length && child.length <= parent.length - (c - p) ? c - p : size_t.max;
+}
+
+@("ui.wrap.ownedClustersAndTransformedIdentity") unittest
+{
+    assert(wrapLines("e\u0301x", 1) == ["e\u0301", "x"]);
+    assert(wrapLines("a\n\n", 8) == ["a", "", ""]);
+    TextSpan[] spans = [TextSpan("e", srcStart: 10, srcEnd: 11),
+        TextSpan("\u0301x", srcStart: 11, srcEnd: 14)];
+    const lines = wrapSpans(spans, 1);
+    assert(lines.length == 2 && lines[1].length == 1);
+    assert(lines[1][0].text == "x" && lines[1][0].srcStart == 13 && lines[1][0].srcEnd == 14);
+    assert(lines[1][0].wrapPlan !is null && lines[1][0].logicalStart == 3);
+    const prose = wrapSpans([TextSpan("a  b", srcStart: 100, srcEnd: 120)], 8);
+    assert(prose[0][1].text == " " && prose[0][1].srcStart == 100 && prose[0][1].srcEnd == 120
+        && prose[0][1].sourceRelation == ProvenanceKind.replacement);
+}
+
+@("ui.wrap.measuredSelection.fullRenderedRunRounding") unittest
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+    static int direct(scope const(char)[] s, in TextStyle st)
+        pure nothrow @nogc => (cast(int) visibleWidth(s) + 1) / 2;
+    static int allocating(scope const(char)[] s, in TextStyle st)
+    {
+        const copy = s.idup;
+        return (cast(int) visibleWidth(copy) + 1) / 2;
+    }
+    foreach (algorithm; [TextWrap.greedy, TextWrap.balanced])
+    {
+        // Rounding isolated glyphs would reject this fitting complete run.
+        assert(wrapLines("a a", 2, algorithm, -1, &direct) == ["a a"]);
+        assert(wrapLines("a a", 2, algorithm, -1, &allocating) == ["a a"],
+            "measurers outside the solver's attributes keep exact selection");
+    }
+}
+
+@("ui.wrap.measuredSelection.nonmonotoneRemainsExact")
+@safe
+unittest
+{
+    // A fitting short candidate, an over-capacity middle candidate, and a
+    // fitting longer candidate forbid the monotone-tail shortcut.
+    static int width(scope const(char)[] text, in TextStyle style)
+        pure nothrow @nogc => text.length == 3 ? 3 : 1;
+    assert(wrapLines("a b c", 1, TextWrap.greedy, -1, &width) == ["a b c"]);
+}
+
+@("ui.wrap.measuredSelection.ansiBrushPreservesInheritedTypography")
+@safe
+unittest
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+    import sparkles.ui.style : FontRole, TypeStep;
+    static int width(scope const(char)[] text, in TextStyle style)
+        pure nothrow @nogc
+    {
+        assert(style.fontRole == FontRole.ui && style.typeStep == TypeStep.title);
+        return cast(int) visibleWidth(text) * (style.bold ? 2 : 1);
+    }
+    const inherited = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.title);
+    foreach (algorithm; [TextWrap.greedy, TextWrap.balanced])
+    {
+        auto lines = wrapSpans([TextSpan("\x1b[1;4:3mab\x1b[22mcd")], 4, 0,
+            algorithm, WhitespaceMode.preserve, false, &width, inherited);
+        assert(lines.length == 2);
+        string[] visible;
+        foreach (line; lines)
+        {
+            string text;
+            foreach (ref const span; line)
+            {
+                if (span.formatting || !span.clusterText.length) continue;
+                text ~= span.clusterText;
+                const style = resolvedSpanStyle(span, inherited);
+                assert(style.fontRole == FontRole.ui && style.typeStep == TypeStep.title);
+                assert(style.underline == UnderlineStyle.curly);
+                assert(style.bold == (span.clusterText == "a" || span.clusterText == "b"));
+            }
+            visible ~= text;
+        }
+        assert(visible == ["ab", "cd"]);
+    }
 }

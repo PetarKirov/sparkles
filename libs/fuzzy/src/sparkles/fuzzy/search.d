@@ -192,7 +192,7 @@ FuzzyExpected!SearchStatus searchChunk(Caps = DefaultFuzzyCaps,
         status.chargedUnits += workBound;
 
         auto acceptedConstraints = evaluateConstraints(query, candidate,
-            constraints, checkedLimits.value);
+            constraints, matcher.textWorkspace, checkedLimits.value);
         if (acceptedConstraints.hasError)
             return fuzzyErr!SearchStatus(acceptedConstraints.error.code,
                 acceptedConstraints.error.offset,
@@ -282,7 +282,11 @@ unittest
 {
     import sparkles.fuzzy.query : parseQuery;
 
-    auto query = parseQuery("src");
+    auto matcherOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() matcher() => matcherOwner.get();
+    // Glob filtering reuses the matcher's Unicode arena between successive
+    // matches, including across a rejected candidate and a chunk boundary.
+    auto query = parseQuery("src glob:src/*.d", matcher.textWorkspace);
     CandidateView[5] candidates;
     static immutable names = ["src/a.d", "other.d", "src/b.d",
         "xsrc.d", "none.d"];
@@ -298,9 +302,8 @@ unittest
 
     SearchAccumulator!5 chunked;
     auto cursor = chunked.begin(snapshot.id, 7, 3, 0, 5).value;
-    auto matcherOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() matcher() => matcherOwner.get();
-    ConstraintWorkspace!() constraints;
+    auto constraintsOwner = makeUnique!(ConstraintWorkspace!())();
+    ref ConstraintWorkspace!() constraints() => constraintsOwner.get();
     SearchLimits limits;
     limits.maxCandidates = 2;
     limits.maxAnalyzedUnits = 1_000;
@@ -325,7 +328,9 @@ unittest
     RankedResult[5] wholePage;
     const chunkedCount = chunked.page(chunkedPage).value;
     const wholeCount = whole.page(wholePage).value;
-    assert(chunkedCount == wholeCount);
+    assert(chunkedCount == 2 && chunkedCount == wholeCount);
+    assert((chunkedPage[0].id.low == 1 && chunkedPage[1].id.low == 3)
+        || (chunkedPage[0].id.low == 3 && chunkedPage[1].id.low == 1));
     foreach (i; 0 .. chunkedCount)
         assert(chunkedPage[i].id == wholePage[i].id);
 }
@@ -336,7 +341,9 @@ unittest
 {
     import sparkles.fuzzy.query : parseQuery;
 
-    auto query = parseQuery("src");
+    auto matcherOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() matcher() => matcherOwner.get();
+    auto query = parseQuery("src", matcher.textWorkspace);
     CandidateView[2] candidates;
     candidates[0].id.low = 1;
     candidates[0].path = "src/a.d";
@@ -345,9 +352,8 @@ unittest
     CandidateSnapshot snapshot;
     snapshot.id.low = 9;
     snapshot.candidates = candidates[];
-    auto matcherOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() matcher() => matcherOwner.get();
-    ConstraintWorkspace!() constraints;
+    auto constraintsOwner = makeUnique!(ConstraintWorkspace!())();
+    ref ConstraintWorkspace!() constraints() => constraintsOwner.get();
 
     // A budget below the very first candidate's work bound is unsatisfiable:
     // an error, not a zero-progress `workLimit`.
@@ -385,15 +391,16 @@ unittest
 {
     import sparkles.fuzzy.query : parseQuery;
 
-    auto query = parseQuery("ab");
+    auto matcherOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() matcher() => matcherOwner.get();
+    auto query = parseQuery("ab", matcher.textWorkspace);
     CandidateSnapshot snapshot;
     snapshot.id.low = 1;
     SearchAccumulator!2 accumulator;
     auto cursor = accumulator.begin(snapshot.id, 1, 1, 0, 2).value;
     ++cursor.accumulatorRevision;
-    auto matcherOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() matcher() => matcherOwner.get();
-    ConstraintWorkspace!() constraints;
+    auto constraintsOwner = makeUnique!(ConstraintWorkspace!())();
+    ref ConstraintWorkspace!() constraints() => constraintsOwner.get();
     auto result = searchChunk(query.value, snapshot, cursor,
         SearchLimits.init, accumulator, matcher, constraints);
     assert(result.hasError
@@ -430,7 +437,7 @@ unittest
         context.alternate = !context.alternate;
         ++context.generation;
         const prompt = context.alternate ? "unicode table" : "unicode tables";
-        auto query = parseQuery(blackBox(prompt));
+        auto query = parseQuery(blackBox(prompt), context.matcher.textWorkspace);
         assert(query.hasValue);
         auto cursor = context.accumulator.begin(context.snapshot.id,
             context.generation, context.generation, 0,

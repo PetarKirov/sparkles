@@ -1004,7 +1004,9 @@ private size_t scanString(JsonReadOptions opts)(
                 *err = ScanError(ParseErrorCode.invalidSurrogate, escAt);
                 return 0;
             }
-            dst += encodeUtf8(pool, dst, cp);
+            import sparkles.base.text.utf : encodeScalar;
+
+            dst += encodeScalar(cast(dchar) cp, pool[dst .. $]).written;
             break;
         default:
             *err = ScanError(ParseErrorCode.invalidEscape, escAt);
@@ -1013,7 +1015,7 @@ private size_t scanString(JsonReadOptions opts)(
     }
     // No trailing validation pass: every byte of the result came either
     // from a clean run (checked inside `scanStringBody` above) or from
-    // `encodeUtf8`, which emits well-formed UTF-8 by construction — lone
+    // `encodeScalar`, which emits well-formed UTF-8 by construction — lone
     // surrogates are rejected in the `\u` case before they reach it.
     pool[dst] = '\0';
     cell.set(JsonKind.string_, dst - start, cast(ulong)(pool.ptr + start));
@@ -1734,35 +1736,6 @@ private bool readHex4(scope const(char)[] pool, size_t n, ref size_t src,
     return true;
 }
 
-/// Encodes `cp` (a valid scalar value) as UTF-8 at `pool[dst]`; returns
-/// the byte count.
-private size_t encodeUtf8(scope char[] pool, size_t dst, uint cp)
-    @safe pure nothrow @nogc
-{
-    if (cp < 0x80)
-    {
-        pool[dst] = cast(char) cp;
-        return 1;
-    }
-    if (cp < 0x800)
-    {
-        pool[dst] = cast(char)(0xC0 | (cp >> 6));
-        pool[dst + 1] = cast(char)(0x80 | (cp & 0x3F));
-        return 2;
-    }
-    if (cp < 0x10000)
-    {
-        pool[dst] = cast(char)(0xE0 | (cp >> 12));
-        pool[dst + 1] = cast(char)(0x80 | ((cp >> 6) & 0x3F));
-        pool[dst + 2] = cast(char)(0x80 | (cp & 0x3F));
-        return 3;
-    }
-    pool[dst] = cast(char)(0xF0 | (cp >> 18));
-    pool[dst + 1] = cast(char)(0x80 | ((cp >> 12) & 0x3F));
-    pool[dst + 2] = cast(char)(0x80 | ((cp >> 6) & 0x3F));
-    pool[dst + 3] = cast(char)(0x80 | (cp & 0x3F));
-    return 4;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests

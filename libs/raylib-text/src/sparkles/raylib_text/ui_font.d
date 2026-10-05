@@ -208,13 +208,21 @@ struct UiFonts
         => steps[step].lineHeight;
 
     /// The width of `text` drawn in `step`, in drawing units.
-    float width(size_t step, bool bold, scope const(char)[] text) @system
+    float width(size_t step, bool bold, scope const(char)[] text) @system nothrow @nogc
     {
         float w = 0;
-        eachGlyph(step, bold, text, (ref LoadedFont lf, int cp, int size, float adv) {
-            w += adv;
-        });
+        appendWidth(step, bold, text, w);
         return w;
+    }
+
+    /// Adds a whole-cluster chunk to a run's unrounded pixel extent. Keep the
+    /// accumulator across chunks: rounding each chunk would change the run.
+    void appendWidth(size_t step, bool bold, scope const(char)[] text,
+        ref float width) @system nothrow @nogc
+    {
+        eachGlyph(step, bold, text, (ref LoadedFont lf, int cp, int size, float adv) {
+            width += adv;
+        });
     }
 
     /**
@@ -244,30 +252,34 @@ struct UiFonts
 
     // Each code point of `text` with the face it draws in, the size to draw it
     // at, and its advance in drawing units.
-    private void eachGlyph(size_t step, bool bold, scope const(char)[] text,
-        scope void delegate(ref LoadedFont, int, int, float) @system visit) @system
+    private void eachGlyph(Visit)(size_t step, bool bold, scope const(char)[] text,
+        scope Visit visit)
     {
-        import std.typecons : Yes;
-        import std.utf : decode;
+        import sparkles.base.text.ansi : byAnsiToken;
+        import sparkles.base.text.tokens : byUtfToken;
+        import sparkles.base.text.utf : UtfMode;
 
         auto face = &steps[step];
         LoadedFont* own = bold && face.bold.present ? &face.bold : &face.regular;
-        size_t i;
-        while (i < text.length)
+        foreach (part; byAnsiToken(text))
         {
-            const cp = cast(int) decode!(Yes.useReplacementDchar)(text, i);
-            if (cp < 0x20 || cp == 0x7F)
-                continue;
-            LoadedFont* lf = own;
-            if (!fontHasGlyph(*own, cp) && fallback !is null)
+            if (part.isEscape) continue;
+            foreach (token; byUtfToken(part.slice, UtfMode.replacement))
             {
-                bool fakeBold, fakeItalic;
-                lf = fallback.resolveFace(cp, bold, false, fakeBold, fakeItalic);
+                const cp = cast(int) token.scalar;
+                if (cp < 0x20 || cp == 0x7F)
+                    continue;
+                LoadedFont* lf = own;
+                if (!fontHasGlyph(*own, cp) && fallback !is null)
+                {
+                    bool fakeBold, fakeItalic;
+                    lf = fallback.resolveFace(cp, bold, false, fakeBold, fakeItalic);
+                }
+                const idx = glyphIndexFor(*lf, cp);
+                const base = lf.font.baseSize > 0 ? lf.font.baseSize : face.size;
+                const adv = lf.font.glyphs[idx].advanceX * cast(float) face.size / base;
+                visit(*lf, cp, face.size, adv);
             }
-            const idx = glyphIndexFor(*lf, cp);
-            const base = lf.font.baseSize > 0 ? lf.font.baseSize : face.size;
-            const adv = lf.font.glyphs[idx].advanceX * cast(float) face.size / base;
-            visit(*lf, cp, face.size, adv);
         }
     }
 }

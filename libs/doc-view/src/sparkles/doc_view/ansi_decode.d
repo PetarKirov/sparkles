@@ -172,14 +172,14 @@ AnsiLine[] decodeAnsi(scope const(char)[] block) @system
 /// UTF-8 for a grapheme cluster's codepoints (invalid ones become U+FFFD).
 private string encodeCell(scope const(uint)[] cps) @system
 {
-    import std.utf : encode, isValidDchar;
+    import sparkles.base.text.utf : encodeScalar, UtfMode;
 
     char[] out_;
     foreach (cp; cps)
     {
         char[4] e;
-        const d = isValidDchar(cp) ? cast(dchar) cp : '�';
-        out_ ~= e[0 .. encode(e, d)];
+        const encoded = encodeScalar(cast(dchar) cp, e[], UtfMode.replacement);
+        out_ ~= e[0 .. encoded.written];
     }
     return cast(string) out_;
 }

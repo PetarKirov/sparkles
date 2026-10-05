@@ -77,6 +77,10 @@ hue view file.d --find "struct Foo"      # jump to search match
 - **Markdown**: `--markdown` (force markdown rendering) or `--raw` (force raw source view).
 - **Directory Explorer**: `--tree-width <cols>`, `--tree-depth <n>`, `--tree-hidden`, `--tree-exclude <glob>`.
 
+The interactive raw source view preserves each source line's full cell width.
+Wide lines scroll horizontally rather than reflowing; the gutter stays pinned,
+and character selections use the same retained geometry as painting.
+
 ---
 
 ### `hue diff`

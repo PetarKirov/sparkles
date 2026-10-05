@@ -232,7 +232,7 @@ string chordLabel(in Chord c, in Chord leader = Chord.init, string leaderGlyph =
     @safe pure
 {
     import std.conv : text;
-    import std.uni : toUpper;
+    import sparkles.base.text.case_text : unicodeUpper;
 
     if (leader.key != Key.none && acceptsTyped(leader, c))
         return leaderGlyph;
@@ -252,7 +252,7 @@ string chordLabel(in Chord c, in Chord leader = Chord.init, string leaderGlyph =
     if (c.chEnd)
         return s ~ text(c.ch, "–", c.chEnd);
     // A modified letter reads as the key cap (`Ctrl+W`); a bare one as typed.
-    return s ~ (s.length ? text(c.ch).toUpper : text(c.ch));
+    return s ~ (s.length ? text(c.ch).unicodeUpper : text(c.ch));
 }
 
 /// A path's chords, space-separated.

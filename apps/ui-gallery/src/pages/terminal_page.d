@@ -327,15 +327,18 @@ string positionGlyph(in GalleryState s, size_t n)
 {
     if (s.termTabGlyphs.length)
     {
-        import std.utf : stride;
+        import sparkles.base.text.tokens : byUtfToken;
+        import sparkles.base.text.utf : UtfMode, UtfTokenKind;
 
-        size_t i = 0, pos = 1;
-        while (i < s.termTabGlyphs.length)
+        size_t pos = 1;
+        foreach (token; byUtfToken(s.termTabGlyphs, UtfMode.replacement))
         {
-            const len = stride(s.termTabGlyphs, i);
             if (pos == n)
-                return s.termTabGlyphs[i .. i + len].idup; // dip1000: `s` is scope
-            i += len;
+            {
+                if (token.kind == UtfTokenKind.replacement)
+                    return "\uFFFD";
+                return s.termTabGlyphs[token.start .. token.end].idup;
+            }
             pos++;
         }
         // An override shorter than the tab count falls through to the default.
@@ -567,7 +570,7 @@ bool handleActivate(ref GalleryState s, size_t id)
 @("ui_gallery.pages.terminalLabelsTruncateByCellsNotBytes")
 @safe unittest
 {
-    import std.utf : validate;
+    import sparkles.base.text.utf8 : indexOfInvalidUtf8;
     import sparkles.base.text.grapheme : visibleWidth;
     import sparkles.ui.geometry : Constraints, Size;
     import sparkles.ui.layout : layout;
@@ -589,7 +592,7 @@ bool handleActivate(ref GalleryState s, size_t id)
         if (n.kind == WidgetKind.text && n.text.length > 4
             && n.text[$ - 3 .. $] == "…")
         {
-            validate(n.text);
+            assert(indexOfInvalidUtf8(n.text) == n.text.length);
             assert(visibleWidth(n.text) <= labelCells,
                 "a caption wider than its column");
             found = true;
@@ -678,6 +681,16 @@ bool handleActivate(ref GalleryState s, size_t id)
     assert(circledNumber(36) == '㊱');
     assert(circledNumber(50) == '㊿');
     assert(circledNumber(51) == '#');
+}
+
+@("ui_gallery.pages.terminalOverrideMalformedBytesHaveReplacementPositions")
+@safe unittest
+{
+    GalleryState s;
+    s.termTabGlyphs = "①\xE1\x80②";
+    assert(positionGlyph(s, 1) == "①");
+    assert(positionGlyph(s, 2) == "\uFFFD");
+    assert(positionGlyph(s, 3) == "②");
 }
 
 @("ui_gallery.pages.terminalPaneFollowsTheSurfaceWidth")

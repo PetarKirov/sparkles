@@ -117,10 +117,10 @@ struct StatusGlyphs
 // to allocate.
 private string markText(Mark m, bool unicode) pure nothrow
 {
-    import sparkles.base.text.utf : encodeUtf8;
+    import sparkles.base.text.utf : encodeScalar;
 
     char[4] buf;
-    const n = encodeUtf8(unicode ? markTable[m].unicode : markTable[m].ascii, buf);
+    const n = encodeScalar(unicode ? markTable[m].unicode : markTable[m].ascii, buf[]).written;
     string s = "";
     foreach (c; buf[0 .. n])
         s ~= c;

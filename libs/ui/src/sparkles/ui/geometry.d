@@ -6,11 +6,9 @@ grid), or maps them to `ch`/`em` (HTML). Nothing here knows about a specific
 backend.
 
 Also the sizing vocabulary ($(LREF SizeSpec): fit / grow / fixed / percent with
-min/max) the layout pass ($(MREF sparkles,ui,layout)) resolves, and
-$(LREF cellsOf) — the $(B one) width authority: the display-column width of a
-string, counting one column per codepoint to match the grid advance the GUI
-painter (`drawText`) and the terminal both use. (Proper wide/combining width is
-the deferred grapheme-width upgrade; see the hue `FNT6`/`DEF7` roadmap item.)
+min/max) the layout pass ($(MREF sparkles,ui,layout)) resolves. Text cell widths
+and whole-grapheme fitting belong to `sparkles.base.text.grapheme`'s
+`visibleWidth` and `fitCells`, using the shared terminalKitty profile.
 
 The 2-D types specialize $(MREF sparkles,math,vector)'s numeric `Vector`, the same
 way $(REF TermSize, sparkles,core_cli,term_caps)/`TermPosition` do for the
@@ -189,67 +187,6 @@ struct Constraints
     int maxH = int.max;
 }
 
-/**
-The display-column width of `s` — the $(B one) width authority for the whole
-library, so the GUI painter, the TUI cell grid, and the layout pass never drift
-sub-cell.
-
-Counts one column per codepoint (a UTF-8 lead byte, i.e. every byte whose top
-two bits are not `10`), matching the grid advance `drawText` and the terminal
-use today. `@safe pure nothrow @nogc`; invalid UTF-8 degrades to a lead-byte
-count rather than throwing.
-*/
-size_t cellsOf(scope const(char)[] s) @safe pure nothrow @nogc
-{
-    size_t cols;
-    foreach (char c; s)
-        if ((c & 0xC0) != 0x80) // not a UTF-8 continuation byte → a new codepoint
-            ++cols;
-    return cols;
-}
-
-/**
-The longest prefix of `s` that spans at most `cols` display columns, by the
-same count as $(LREF cellsOf) — so a run cut here measures exactly what the
-layout gave it. Never splits a codepoint; `cols <= 0` yields the empty slice.
-*/
-inout(char)[] takeCells(return scope inout(char)[] s, long cols)
-    @safe pure nothrow @nogc
-{
-    if (cols <= 0)
-        return s[0 .. 0];
-    long seen;
-    foreach (i, char c; s)
-        if ((c & 0xC0) != 0x80 && seen++ == cols)
-            return s[0 .. i];
-    return s;
-}
-
-@("ui.geometry.takeCells")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(takeCells("abc", 2) == "ab");
-    assert(takeCells("abc", 3) == "abc");
-    assert(takeCells("abc", 9) == "abc");
-    assert(takeCells("abc", 0) == "" && takeCells("abc", -4) == "");
-    // A multi-byte codepoint is kept whole or dropped whole.
-    assert(takeCells("a — b", 2) == "a ");
-    assert(takeCells("a — b", 3) == "a —");
-    assert(cellsOf(takeCells("a — b", 3)) == 3);
-}
-
-@("ui.geometry.cellsOf")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(cellsOf("") == 0);
-    assert(cellsOf("abc") == 3);
-    assert(cellsOf("(property) title: string") == 24);
-    // Multi-byte codepoints still count one column each (em dash, arrow).
-    assert(cellsOf("a — b") == 5);
-    assert(cellsOf("→") == 1);
-}
 
 @("ui.geometry.rect.containsAndDeflate")
 @safe pure nothrow @nogc
