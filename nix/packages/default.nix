@@ -184,7 +184,11 @@
         version = "0.1.0";
         sourceDirs = [
           "libs/base/tools/text-conformance/src"
-        ] ++ config.legacyPackages.sparklesSources.libsClosure [ "base" "core-cli" ];
+        ]
+        ++ config.legacyPackages.sparklesSources.libsClosure [
+          "base"
+          "core-cli"
+        ];
         sourceRoot = "${finalAttrs.src.name}/libs/base/tools/text-conformance";
         dubBuildFlags = [ "--config=offline" ];
         meta = {
@@ -193,15 +197,28 @@
         };
       });
 
-      # Complete upstream inputs, including the reviewed manifest and license.
-      # This is local source provisioning, not a runtime download/cache lookup.
-      packages.unicode-conformance-data = pkgs.applyPatches {
-        name = "unicode-conformance-data";
-        src = lib.fileset.toSource {
-          root = ../../libs/base/tools/unicode;
-          fileset = ../../libs/base/tools/unicode;
-        };
-      };
+      # Provision every authenticated input before the sandboxed offline gate.
+      # Only the reviewed manifest belongs to the source tree; fetchurl checks
+      # each upstream file's exact SHA-256 before linkFarm preserves its path.
+      packages.unicode-conformance-data =
+        let
+          manifestPath = ../../libs/base/tools/unicode/manifest.json;
+          manifest = builtins.fromJSON (builtins.readFile manifestPath);
+        in
+        pkgs.linkFarm "unicode-conformance-data" (
+          [
+            {
+              name = "manifest.json";
+              path = manifestPath;
+            }
+          ]
+          ++ map (artifact: {
+            name = "${manifest.release}/${artifact.path}";
+            path = pkgs.fetchurl {
+              inherit (artifact) url sha256;
+            };
+          }) manifest.artifacts
+        );
 
       # Ordinary sandboxed derivation: test execution has no network access,
       # and the offline executable has no downloader compiled in. D verifies

@@ -340,8 +340,11 @@ before replacing any generated output. Generator semantics **must not** depend o
 **TXT-DATA3: Reproducibility and atomic output.** With the same manifest and inputs,
 generation **must** produce byte-identical artifacts across supported compilers and
 host locales, without timestamp, absolute-path, or iteration-order differences.
-Offline generation **must** perform no network request. Download/update is an explicit
-build-tool operation; failure **must** leave checked-in generated output unchanged.
+Offline generation (`--no-network`) **must** perform no network request and **must**
+fail if the inventory root is absent. Default generation may acquire an absent
+root as a build-tool operation; an existing inventory **must** authenticate without
+silent repair. Acquisition-only `--acquire` **must not** combine with `--no-network`.
+Failure **must** leave checked-in generated output unchanged.
 Runtime and consumer compilation **must** read checked-in tables and **must not**
 contact the network or regenerate properties.
 
