@@ -350,6 +350,7 @@ private uint itemCell(ref Builder b, const(char)[] key, const(char)[] desc,
         kind: WidgetKind.text,
         text: key,
         slot: Slot.chromeAccent,
+        textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body),
         width: SizeSpec.fixed(keyWidth),
         alignX: Alignment.end,
     ));

@@ -32,9 +32,9 @@ struct ControlSize
 enum Slot[] controlSlots = [Slot.surfaceRaised, Slot.surfaceSunken, Slot.chromeAccent, Slot.controlOn,
     Slot.textPrimary, Slot.textSecondary, Slot.border, Slot.code];
 
-/// A value: the cell font, bold when it is the selected one.
+/// A value: the cell font at the body step (`uiMono`), bold when selected.
 private TextStyle valueStyle(bool bold = false) pure nothrow @nogc
-    => TextStyle(bold: bold);
+    => TextStyle(bold: bold, fontRole: FontRole.uiMono, typeStep: TypeStep.body);
 
 /// A box `rows` tall drawn `drawDp` tall: the shared shape of every control.
 private Widget controlBox(uint[] children, ControlSize sz, size_t hitId, Slot slot,
@@ -108,6 +108,7 @@ uint stepper(ref Builder b, string value, size_t decHit, size_t incHit,
     const round = ControlSize(sz.rows, 36);
     const dec = chip(b, "−", decHit, false, round);
     const val = b.add(Widget(kind: WidgetKind.text, text: value, slot: Slot.code,
+        textStyle: valueStyle(),
         width: SizeSpec.fixed(cast(int) cellsOf(value) + 1), alignX: Alignment.center));
     const inc = chip(b, "+", incHit, false, round);
     return b.add(Widget(kind: WidgetKind.row, children: [dec, val, inc], gap: 1,
@@ -135,7 +136,7 @@ uint dropdownChip(ref Builder b, string value, bool open, size_t hitId,
         "drawn as a 32 dp pill");
     assert(w.slot == Slot.chromeAccent, "selected: tinted");
     const t = b.nodes[w.children[0]];
-    assert(t.textStyle.fontRole == FontRole.inherit && t.textStyle.bold, "a value: the cell font");
+    assert(t.textStyle.fontRole == FontRole.uiMono && t.textStyle.bold, "a value: the cell font");
 }
 
 @("ui.controls.toggleKnobFollowsTheState")
