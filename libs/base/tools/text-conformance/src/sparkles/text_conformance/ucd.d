@@ -142,7 +142,7 @@ struct CodepointRanges
     private struct Interval { uint begin, end; }
     private Interval[] intervals;
 
-    void add(uint begin, uint end)
+    void add(uint begin, uint end) @safe
     {
         if (begin >= end || end > 0x110000) throw new Exception("invalid codepoint interval");
         size_t lo;

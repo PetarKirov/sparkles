@@ -138,6 +138,15 @@ dub run --root libs/base/tools/text-conformance --config=offline -- \
   --ucd-dir libs/base/tools/unicode/18.0.0
 ```
 
+The harness's width oracle owns sorted, half-open `CodepointRanges`; interval
+insertion is `@safe` and merges overlapping or adjacent ranges. Its oracle
+unittests are exercised separately from the executable corpus sweep:
+
+```sh
+dub test :text-conformance --compiler=ldc2 -- -t 1
+dub test :text-conformance --compiler=dmd -- -t 1
+```
+
 A release, algorithm, schema, or reviewed-byte change requires a newly reviewed
 manifest and generator revision update. The generator rejects unreviewed
 manifest identities. Regenerate the complete module in one change; never mix
