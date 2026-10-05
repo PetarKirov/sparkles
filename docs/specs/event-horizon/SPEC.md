@@ -218,37 +218,38 @@ modules never import ring, loop, or scheduler modules (nor `during`), so a
 future extraction into a standalone `sparkles:effects` package is mechanical.
 _Loop-side_ modules may import anything.
 
-| Module                   | Stratum      | Contents                                                                                                                                                                |
-| ------------------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `errors`                 | effects-side | `OpKind`, `IoError`, `IoErrorStage`, `NoGcHook`, `IoResult`, `ioOk`/`ioErr`, `fromRes` (§9.1) — leaf                                                                    |
-| `cause`                  | effects-side | `Cause`, `Interrupt`, `Outcome`, `widen`; `FiberContext`, `CancelContext`, `CancelFn`, `cancelTree` (§8, §9.2)                                                          |
-| `capability`             | effects-side | `isCapability`, `Ctx`, `hasCaps`, `CtxOf`; the `isWaker` and `isFiberExecutor` seams (§10)                                                                              |
-| `scope_`                 | effects-side | `Scope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle` (§8)                                                                                 |
-| `schedule`               | effects-side | `Schedule` values + `retry`/`repeat`/`timeout`/`race` drivers (§10.4)                                                                                                   |
-| `clock`                  | effects-side | `isClock` + `TestClock` (§10.3)                                                                                                                                         |
-| `net`                    | effects-side | `SockAddr` + helpers (`ipv4`, …), `isNet`, `isByteStream` + `SimNet` (§10.3)                                                                                            |
-| `testing`                | effects-side | `TestSched` (deterministic executor) + `advanceAndSettle` (§10.3)                                                                                                       |
-| `buffer`                 | loop-side    | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf` (§6)                                                                             |
-| `op`                     | loop-side    | op descriptors, `KernelTimespec`, `OpToken`, `OpClass`, `OpSlot`/`OpSlab`, `Completion`, `OpCallback` (§4); re-exports `SockAddr`                                       |
-| `handle`                 | loop-side    | `LoopHandle` — opt-in type-erased loop access for loop-side plumbing and `-betterC` users (§5.5)                                                                        |
-| `backend.concept`        | loop-side    | `isCompletionBackend` + optional-capability traits, `RawCompletion`, `BackendConfig`, `Waker` (§3.1)                                                                    |
-| `backend.probe`          | loop-side    | `BackendCaps`, `LoopMode`, `ModePolicy`, `probeSystem` (§3.2–3.4)                                                                                                       |
-| `backend.uring`          | loop-side    | `UringBackend` over `during` (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                                                                |
-| `loop`                   | loop-side    | `EventLoop!Backend`, `LoopConfig`, `DefaultLoop` — tier A (§5)                                                                                                          |
-| `sched`                  | loop-side    | `Sched`, `SchedOptions`, `FiberTask`, `currentTask`, `RootScope` — tier B scheduler (§7)                                                                                |
-| `io`                     | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`FileHandle` handles (§7.3)                                    |
-| `live`                   | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, `RingProc`), the process spawn machinery (§13), and the `Env` row                                       |
-| `proc`                   | effects-side | process vocabulary (`StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`), `isProc`, `SimProc` (§13)                                                                 |
-| `channel`                | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                                                                  |
-| `fs`, `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): file verbs, `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                                                               |
-| `group`                  | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                                                        |
-| `raw_pool`               | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                                                   |
-| `blocking_pool`          | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8): public lane + termination-critical lane, shared pool                                         |
-| `cgroup`                 | loop-side    | Linux cgroup v2 containment for supervised runs (§13.7): tier probe (`none`/`owned`/`accounted`), lane-assigned create / migrate / kill / cleanup, `populated` evidence |
-| `sampling`               | loop-side    | the bounded, tiered, transactional tree sampler (§13.8): fail-closed root anchor, bounded CPU ledger, per-sample work budget; the Darwin stub                           |
-| `supervise`              | loop-side    | supervised runs (§13.5–§13.8): the shielded workers, the one-shot clocks, the sampler handshake, the tree-state machine and the terminal sequence                       |
-| `effect`                 | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                                                               |
-| `package`                | —            | public re-exports                                                                                                                                                       |
+| Module             | Stratum      | Contents                                                                                                                                                                |
+| ------------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `errors`           | effects-side | re-exports `sparkles.base.io.errors` (`IoError`, `ErrorKind`, `OpKind`, `IoErrorStage`, `NoGcHook`, `IoResult`, `ioOk`/`ioErr`) and adds `fromRes` (§9.1) — leaf        |
+| `cause`            | effects-side | `Cause`, `Interrupt`, `Outcome`, `widen`; `FiberContext`, `CancelContext`, `CancelFn`, `cancelTree` (§8, §9.2)                                                          |
+| `capability`       | effects-side | `isCapability`, `Ctx`, `hasCaps`, `CtxOf`; the `isWaker` and `isFiberExecutor` seams (§10)                                                                              |
+| `scope_`           | effects-side | `Scope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle` (§8)                                                                                 |
+| `schedule`         | effects-side | `Schedule` values + `retry`/`repeat`/`timeout`/`race` drivers (§10.4)                                                                                                   |
+| `clock`            | effects-side | `isClock` + `TestClock` (§10.3)                                                                                                                                         |
+| `net`              | effects-side | `SockAddr` + helpers (`ipv4`, …), `isNet`, `isByteStream` + `SimNet` (§10.3)                                                                                            |
+| `testing`          | effects-side | `TestSched` (deterministic executor) + `advanceAndSettle` (§10.3)                                                                                                       |
+| `buffer`           | loop-side    | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf` (§6)                                                                             |
+| `op`               | loop-side    | op descriptors, `KernelTimespec`, `OpToken`, `OpClass`, `OpSlot`/`OpSlab`, `Completion`, `OpCallback` (§4); re-exports `SockAddr`                                       |
+| `handle`           | loop-side    | `LoopHandle` — opt-in type-erased loop access for loop-side plumbing and `-betterC` users (§5.5)                                                                        |
+| `backend.concept`  | loop-side    | `isCompletionBackend` + optional-capability traits, `RawCompletion`, `BackendConfig`, `Waker` (§3.1)                                                                    |
+| `backend.probe`    | loop-side    | `BackendCaps`, `LoopMode`, `ModePolicy`, `probeSystem` (§3.2–3.4)                                                                                                       |
+| `backend.uring`    | loop-side    | `UringBackend` over `during` (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                                                                |
+| `loop`             | loop-side    | `EventLoop!Backend`, `LoopConfig`, `DefaultLoop` — tier A (§5)                                                                                                          |
+| `sched`            | loop-side    | `Sched`, `SchedOptions`, `FiberTask`, `currentTask`, `RootScope` — tier B scheduler (§7)                                                                                |
+| `io`               | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`FileHandle` handles (§7.3)                                    |
+| `live`             | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, `RingProc`), the process spawn machinery (§13), and the `Env` row                                       |
+| `proc`             | effects-side | process vocabulary (`StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`), `isProc`, `SimProc` (§13)                                                                 |
+| `channel`          | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                                                                  |
+| `fs`               | loop-side    | `RingVfs`, the capability VFS backend over the loop, and the `fs` member of the row (§10.5)                                                                             |
+| `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                                                                           |
+| `group`            | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                                                        |
+| `raw_pool`         | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                                                   |
+| `blocking_pool`    | loop-side    | scheduler-integrated pool for blocking host calls (`BlockingPool`, §13.8): public lane + termination-critical lane, shared pool                                         |
+| `cgroup`           | loop-side    | Linux cgroup v2 containment for supervised runs (§13.7): tier probe (`none`/`owned`/`accounted`), lane-assigned create / migrate / kill / cleanup, `populated` evidence |
+| `sampling`         | loop-side    | the bounded, tiered, transactional tree sampler (§13.8): fail-closed root anchor, bounded CPU ledger, per-sample work budget; the Darwin stub                           |
+| `supervise`        | loop-side    | supervised runs (§13.5–§13.8): the shielded workers, the one-shot clocks, the sampler handshake, the tree-state machine and the terminal sequence                       |
+| `effect`           | effects-side | the `Effect!T` veneer (§12); lands in M12                                                                                                                               |
+| `package`          | —            | public re-exports                                                                                                                                                       |
 
 **Foundation:** `sparkles:base` supplies the `Buffer` family (staging buffers,
 test helpers) and `recycledErrorInstance`; the `expected` package (`~>0.4.1`)
@@ -1144,16 +1145,22 @@ requires `inFlight == 0` — the scope discipline guarantees it).
 
 ### 9.1 `IoError` and `IoResult`
 
-Module `errors` is a leaf (imports only `expected`) and mirrors
-`sparkles.base.text.errors` exactly — struct error, hook, alias, helper
-constructors:
+Every operation of this library reports failure with the I/O error
+vocabulary of `sparkles.base.io.errors`, which the
+[capability VFS](../base/vfs/SPEC.md#vfe1-one-error-type) defines and shares
+with every other I/O path in Sparkles. Module `errors` is a leaf: it
+re-exports that vocabulary, adds `fromRes`, and **must not** declare an error
+type of its own. The vocabulary mirrors `sparkles.base.text.errors`: a struct
+error, a hook, an alias and helper constructors.
 
 ```d
+// Defined in sparkles.base.io.errors; re-exported here.
 enum OpKind : ubyte
 {
     none, nop, read, write, recv, recvSelect, send, sendTo, recvFrom,
     accept, acceptMultishot, connect, shutdown,
-    openAt, close, statx, fsync,
+    openAt, mkdirAt, statAt, readlinkAt, symlinkAt, unlinkAt, rmdirAt,
+    renameAt, readDir, resolve, close, fsync,
     timeout, linkTimeout, cancel,
     futexWait, futexWake, msgRing, waitid, pollAdd,
 }
@@ -1162,7 +1169,8 @@ enum IoErrorStage : ubyte { setup, probe, registration, submit, completion, canc
 
 struct IoError
 {
-    int errnoValue;                           /// positive errno; 0 = not an OS error
+    ErrorKind kind;                           /// portable classification; what callers match on
+    int code;                                 /// raw errno or NTSTATUS; 0 = not an OS error
     OpKind op = OpKind.none;
     IoErrorStage stage = IoErrorStage.completion;
     string context = null;                    /// borrowed CTFE-literal detail
@@ -1184,11 +1192,21 @@ IoResult!void ioOk() @safe pure nothrow @nogc;
 IoResult!T ioErr(T)(IoError error) @safe pure nothrow @nogc;
 IoResult!T ioErr(T)(int errnoValue, OpKind op,
     IoErrorStage stage = IoErrorStage.completion, string context = null)
-    @safe pure nothrow @nogc;
+    @safe pure nothrow @nogc;   // classifies errnoValue into kind
 
+// Added by this library:
 /// The single point where a raw CQE res becomes typed.
 IoResult!uint fromRes(int res, OpKind op) @safe pure nothrow @nogc;
 ```
+
+A failure's `kind` **must** be set where the raw result first becomes typed,
+in `fromRes` or `ioErr`, and never recomputed by a caller. File-system kinds
+and their mapping belong to the capability VFS
+([VFE2](../base/vfs/SPEC.md#vfe2-error-kinds),
+[VFN2](../base/vfs/backends.md#vfn2-ambiguous-native-results)). The network
+and process kinds, and the errno mapping `fromRes` applies to them, are open
+question [O32](./open-issues.md#o32-network-and-process-error-kinds); an errno
+with no dedicated kind maps to `other`, with the errno in `code`.
 
 Move-only payloads (an `expected` 0.4.x constraint): the hook's
 `onAccessEmptyValue` makes `IoResult!T` _instantiable_ for non-copyable `T`
@@ -1304,18 +1322,19 @@ Capability modules are effects-side and ship the concept plus a deterministic
 test double; live ring-backed implementations live loop-side (module `live`)
 and are constructed by `LoopGroup` into the root row:
 
-| Concept                        | Test double                                                   | Live implementation     |
-| ------------------------------ | ------------------------------------------------------------- | ----------------------- |
-| `isClock`                      | `TestClock` (virtual time)                                    | `RingClock` (`TIMEOUT`) |
-| `isNet`                        | `SimNet` (in-memory, fault-injectable, latency via any Clock) | `RingNet`               |
-| `isProc`                       | `SimProc` (scripted stdio + exit statuses; §13.4)             | `RingProc` (§13.4)      |
-| `isFs`, `isWatch`, `isSignals` | M7 shipped the concrete Linux modules; concepts follow demand | (concrete modules)      |
+| Concept                | Test double                                                   | Live implementation     |
+| ---------------------- | ------------------------------------------------------------- | ----------------------- |
+| `isClock`              | `TestClock` (virtual time)                                    | `RingClock` (`TIMEOUT`) |
+| `isNet`                | `SimNet` (in-memory, fault-injectable, latency via any Clock) | `RingNet`               |
+| `isProc`               | `SimProc` (scripted stdio + exit statuses; §13.4)             | `RingProc` (§13.4)      |
+| `isVfs` (§10.5)        | `MemVfs` (in memory, from `sparkles:base`)                    | `RingVfs`               |
+| `isWatch`, `isSignals` | M7 shipped the concrete Linux modules; concepts follow demand | (concrete modules)      |
 
-The `isProc` concept shape is specified in §13.4. `isFs`/`isWatch`/
-`isSignals` follow the `isClock` pattern when a consumer needs to swap
-them; M7 shipped their concrete ring-driven implementations
-(`fs`/`watch`/`signals`) without concept seams, which no current consumer
-misses. `isNet` requires `capName == "net"`, member types `Stream`/`Listener`,
+The `isProc` concept shape is specified in §13.4, and the file-system
+capability in §10.5. `isWatch`/`isSignals` follow the `isClock` pattern when
+a consumer needs to swap them; M7 shipped their concrete ring-driven
+implementations (`watch`/`signals`) without concept seams, which no current
+consumer misses. `isNet` requires `capName == "net"`, member types `Stream`/`Listener`,
 and `listen(SockAddr)`/`connect(SockAddr)` returning `IoResult`s of them;
 `isByteStream` requires the owned-buffer `recv`/`send` shapes of §7.3 plus
 `shutdown()` — both as exact-expression traits, `isClock`-style.
@@ -1380,6 +1399,41 @@ Outcome!(T, E) race(Sc, T, E)(ref Sc sc,
 `TestClock` virtualizes backoff. `timeout` is `withDeadline` with a result
 type. `race` cancels losers on the first terminal contender (both-can-win
 races drop the straggler's result; `raceWith` reconciles when that matters).
+
+### 10.5 The file system
+
+File-system access goes through the
+[capability VFS](../base/vfs/SPEC.md): a program reaches files through
+[directory capabilities](../../glossary.md#directory-capability), never
+through path strings. This library owns that contract; its vocabulary,
+algorithms and in-memory backend live in `sparkles:base`, and its blocking
+backend in `sparkles:event-horizon-sys`, so that code which must not depend on
+the loop can use them ([VFS §4](../base/vfs/SPEC.md#_4-packages)). Here this
+library states what it adds:
+
+- **The `fs` member.** The `fs` member of the root row **must** be a
+  `RingVfs` on every loop backend, including the backends without ring file
+  operations, where `RingVfs` runs each operation on the blocking pool
+  ([VFB5](../base/vfs/backends.md#vfb5-the-asynchronous-backend)).
+- **Effect forms.** The `Dir` and `File` operations **must** have `Effect!T`
+  forms (§12), generated from the direct-style operations rather than written
+  separately; each produces the result of its direct form.
+- **The library's own file access.** The library's own reads of the file
+  system, such as the cgroup and `/proc` access of §13.7 and §13.8, **must**
+  go through handles obtained from `openRoot`, and the library **must not**
+  declare a path-based `openat` or `mkdirat` of its own.
+- **Watching.** `inotify_add_watch` has no handle-relative form, so
+  `Watcher.addWatch` **must** take a path together with an `AmbientAuthority`,
+  which makes it a visible exercise of
+  [ambient authority](../../glossary.md#ambient-authority).
+- **Created entries.** Files and directories the library creates **must** use
+  the sharing rules of the capability VFS
+  ([VFO5](../base/vfs/SPEC.md#vfo5-sharing-of-created-entries)), whose
+  default is the platform's ordinary sharing less the umask.
+
+How the `io` verbs of §7.3 reach a capability VFS `File`, and whether
+`FileHandle` survives as a borrowed view of one, is part of open question
+[O32](./open-issues.md#o32-network-and-process-error-kinds).
 
 ## 11. Scheduler topologies
 
@@ -2416,7 +2470,7 @@ Re-exported from `sparkles.event_horizon` (`package.d`):
 
 | Area              | Symbols                                                                                                                                                                                                                                                                                                                         |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Errors            | `IoError`, `IoErrorStage`, `OpKind`, `NoGcHook`, `IoResult`, `ioOk`, `ioErr`, `fromRes`                                                                                                                                                                                                                                         |
+| Errors            | `IoError`, `ErrorKind`, `IoErrorStage`, `OpKind`, `NoGcHook`, `IoResult`, `ioOk`, `ioErr`, `fromRes`                                                                                                                                                                                                                            |
 | Causes            | `Cause`, `Interrupt`, `InterruptKind`, `Outcome`, `widen`                                                                                                                                                                                                                                                                       |
 | Tier A            | `EventLoop` (`runOnce`, conditional `runHostedOnce`), `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle`                                                                      |
 | Buffers           | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                                                                                                                                          |
@@ -2426,7 +2480,7 @@ Re-exported from `sparkles.event_horizon` (`package.d`):
 | Supervision (M19) | `EnvironmentChange`, `ProcessStream`, `ProcessLine`, `ProcessEventKind`, `ProcessEvent`, `ProcessEnd`, `ProcessResourceUsage`, `SampleSource`, `MetricSource`, `MetricQuality`, `ResidualPolicy`, `ReapOutcome`, `KillOutcome`, `KillResult`, `SupervisedProcessConfig`, `SupervisedProcessResult`, `supervise`, `BlockingPool` |
 | Channels          | `Channel`                                                                                                                                                                                                                                                                                                                       |
 | Scopes            | `Scope`, `isScope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle`, `ScopeOptions`, `OnChildFailure`                                                                                                                                                                                                 |
-| Capabilities      | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `Env`                                                                                                                 |
+| Capabilities      | `isCapability`, `Ctx`, `ctx`, `CtxOf`, `hasCaps`, `isWaker`, `isFiberExecutor`, `isClock`, `TestClock`, `isNet`, `isByteStream`, `SimNet`, `TestSched`, `advanceAndSettle`, `ipv4`, `ipv6`, `unixSocket`, `isVfs`, `RingVfs`, `Env`                                                                                             |
 | Schedules         | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                                                                                                                                     |
 | Topology          | `LoopGroup`, `LoopGroupConfig`, `Topology`, `RawJob`, `RawCompletion`, `RawPoolResult`, `RawCpuPool`                                                                                                                                                                                                                            |
 | Veneer (M12)      | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                                                                                                                              |
@@ -2499,8 +2553,8 @@ repeated application code without changing the raw completion ownership model:
 | `sendAll`, `writeAll`, `readExactly`      | Operate on `buf[]`, not spare capacity. Return ownership and the completed prefix count on every path. Premature EOF/zero progress is EIO; positioned-range overflow fails before submission. Empty requests do not submit.                                                                  |
 | `readToEnd`, `readText`                   | Require an explicit byte bound. Read-to-end allocates owned storage; text additionally allocates a GC string, with no Unicode validation. Errors discard accumulated data; detecting an oversized input consumes one byte beyond the bound.                                                  |
 | `localAddress`, `port`                    | POSIX socket query and IPv4/IPv6 port extraction; usable without a scheduler. Invalid/truncated families fail explicitly.                                                                                                                                                                    |
-| `env.fs` / `RingFs`                       | Present only where the backend implements the ring file operations. Typed modes preserve the raw flags API. Opens are close-on-exec; created files request mode 0600.                                                                                                                        |
-| `RingFs.withFile`                         | Lexical owner lends a handle to a body returning an I/O result. Body must join users before return and must not retain or close a copy. Normal close runs under protection; exceptional unwind has a synchronous fallback. Body error wins over close error.                                 |
+| `env.fs` / `RingVfs`                      | Present on every loop backend (§10.5). Opens are close-on-exec; created entries follow the capability VFS sharing rules, by default the platform's ordinary sharing less the umask.                                                                                                          |
+| `withFile`                                | Superseded by the capability VFS's owning `File`, which closes exactly once (§10.5).                                                                                                                                                                                                         |
 | `withSocket`                              | Linux lexical socket owner with checked, non-retried close; same borrowed-body discipline. No cleanup slot or asynchronous destructor.                                                                                                                                                       |
 | Typed `submit`, `submitAfter`, `submitAt` | Generate a function-pointer trampoline for `(ref State, ref Completion)`. Handler remains nothrow/@nogc. Context remains caller-owned and pinned through terminal completion or detach; cancel submission alone does not discharge its lifetime.                                             |
 | `scope.join(handle)`                      | Uses the scope's executor and rejects handles belonging to another scope. The handle remains caller-owned and pinned.                                                                                                                                                                        |
