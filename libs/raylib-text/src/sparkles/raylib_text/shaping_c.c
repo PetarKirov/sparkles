@@ -328,3 +328,33 @@ STBitmap st_shape(STFace *face, const uint32_t *cps, unsigned count)
     return result;
 }
 #pragma attribute(pop)
+
+// Pen advances for a run of code points with the face's kerning applied
+// (GPOS `kern`, or a legacy `kern` table), in pixels. Ligatures and contextual
+// alternates stay off, so each code point keeps its own glyph and the caller
+// can draw it from a per-code-point atlas. Returns 0, writing nothing, when the
+// run does not shape one glyph per code point.
+int st_kern_advances(STFace *face, const uint32_t *cps, unsigned count, float *advances)
+{
+    if (!face || !cps || !advances || !count) return 0;
+    static const hb_feature_t features[] = {
+        { HB_TAG('l','i','g','a'), 0, HB_FEATURE_GLOBAL_START, HB_FEATURE_GLOBAL_END },
+        { HB_TAG('c','l','i','g'), 0, HB_FEATURE_GLOBAL_START, HB_FEATURE_GLOBAL_END },
+        { HB_TAG('c','a','l','t'), 0, HB_FEATURE_GLOBAL_START, HB_FEATURE_GLOBAL_END },
+        { HB_TAG('k','e','r','n'), 1, HB_FEATURE_GLOBAL_START, HB_FEATURE_GLOBAL_END },
+    };
+    hb_buffer_clear_contents(face->buffer);
+    hb_buffer_add_utf32(face->buffer, cps, (int)count, 0, (int)count);
+    hb_buffer_set_direction(face->buffer, HB_DIRECTION_LTR);
+    hb_buffer_guess_segment_properties(face->buffer);
+    hb_shape(face->font, face->buffer, features, sizeof features / sizeof features[0]);
+    unsigned n = 0;
+    hb_glyph_info_t *info = hb_buffer_get_glyph_infos(face->buffer, &n);
+    hb_glyph_position_t *pos = hb_buffer_get_glyph_positions(face->buffer, &n);
+    if (n != count) return 0;
+    for (unsigned i = 0; i < n; ++i)
+        if (info[i].cluster != i) return 0;
+    for (unsigned i = 0; i < n; ++i)
+        advances[i] = (float)pos[i].x_advance / 64.0f * face->scale;
+    return 1;
+}

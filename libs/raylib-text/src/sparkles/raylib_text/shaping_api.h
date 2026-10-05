@@ -22,5 +22,6 @@ int st_face_is_color(STFace *face);
 float st_face_ascent(STFace *face);
 void st_bitmap_free(STBitmap *bitmap);
 STBitmap st_shape(STFace *face, const uint32_t *cps, unsigned count);
+int st_kern_advances(STFace *face, const uint32_t *cps, unsigned count, float *advances);
 #pragma attribute(pop)
 #endif
