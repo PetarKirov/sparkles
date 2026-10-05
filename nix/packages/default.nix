@@ -226,7 +226,7 @@
       checks.text-conformance = pkgs.runCommand "text-conformance-official" { } ''
         set -o pipefail
         ${lib.getExe config.packages.text-conformance} \
-          --layers 0,11,12,13,14,15,16 --no-network \
+          --layers 0,1,2,11,12,13,14,15,16 --no-network \
           --manifest ${config.packages.unicode-conformance-data}/manifest.json \
           --ucd-dir ${config.packages.unicode-conformance-data}/18.0.0 \
           | tee "$out"

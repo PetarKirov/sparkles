@@ -164,10 +164,15 @@ nix build -L .#checks.x86_64-linux.text-conformance
 The unconditional **Owned Unicode conformance** job runs this derivation on every
 CI trigger and participates in the required `CI` fan-in. `nix flake check` also
 includes it. The derivation builds the existing executable through the shared
-Sparkles DUB builder, then runs complete layers **0, 11, 12, 13, 14, 15, 16** in
+Sparkles DUB builder, then runs complete layers **0, 1, 2, 11, 12, 13, 14, 15, 16** in
 the Nix build sandbox with `--no-network`, an explicit manifest, and an immutable
 input directory. The summary and per-corpus totals are retained as the check's
 output file; `nix log` exposes the execution log even when a cached result is used.
+
+Layers 1 and 2 independently check every Unicode scalar's width against raw UCD
+and every fully-qualified emoji's cluster width and segmentation. The expanded
+sandboxed gate passed 1,112,064 scalar checks and 3,963 emoji checks with zero
+known or new failures, in addition to the complete normative algorithm corpora.
 
 Only `libs/base/tools/unicode/manifest.json` is tracked as raw-input metadata.
 All 35 reviewed artifacts, including the official boundary, bidi and normalization
