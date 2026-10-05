@@ -347,3 +347,8 @@ the same solver/renderer. Retain the ordinary/506-byte failing fixture and rejec
 507-byte targets separately in metadata preflight. Visible-text parity alone
 misses the leak. Base prettyprint needs its typed value/member/limit policy
 experiments before nullable/presence/byte-cut behavior can be accepted.
+The [base wrapping contract](../../base/text/wrapping.md#ansi-and-styling-state)
+owns style snapshots and source-preserving materialization; table integration
+adds cell/frame exclusion and checked geometry over those shared plans. Report
+widths use the base-owned cell extent under WRAP-UNIT3, with unknown width separate
+from known zero. No report-owned font/physical-unit solver is introduced.

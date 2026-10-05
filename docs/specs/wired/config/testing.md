@@ -352,6 +352,9 @@ checked layout returns `widthTooSmall` before any stdout byte. Repeat a nested
 row with its computed guide width and a taller adjacent source cell. Guides
 remain outside links, continue on blank physical lines, and emit the branch
 marker once per logical row.
+Known widths 46 and zero refuse before stdout for redirected sinks too; a host
+marking width unknown selects 120. Geometry uses the base-owned cell extent and
+shared style/source plans, not physical units or a report-owned wrapping solver.
 
 Direct/nested/map-key enums must print original wire spelling `"turbo"`, not
 `Mode.fastPath`, in inline and multiline paths. Nullable wrapper null prints
@@ -681,3 +684,12 @@ runtime conformance milestone is passed by these primitive experiments.
   and opened the actual collection/inspection evidence anchor. This is document
   publication evidence only; the known native table OSC failure and every
   proposed runtime seam remain unverified for conformance.
+- **R10 — fresh-main wrapping ownership: fixed.** After C1 merged, the follow-up
+  rebased onto `463008dd6`, whose base wrapping contract owns cell dimensions,
+  source/style plans, and checked materialization. Report geometry now uses that
+  base-owned cell extent with unknown width separate from known zero. Review found
+  WCI10 still implied all redirected output used 120 while WCI18 honored explicit
+  widths; both clauses and the oracle now honor known redirected 0/46 as
+  `widthTooSmall`, and select 120 only for unknown width. Re-review confirmed the
+  code fence, checked conversion, style owner, and table cell/frame exclusions
+  agree with WRAP-UNIT3/WRAP-STYLE1. No runtime repair or conformance is claimed.

@@ -151,9 +151,10 @@ require the typed projection specified by [resolver Q2](./decisions.md#q2-keybin
 solve column widths and wrap complete cell contents. The report adapter **must
 not** pre-wrap cells or implement a second display-width calculator. Cells
 **must** be top-aligned, with one header row and no rule between every property.
-TTY output uses the probed positive column width; redirected/unknown-width output
-uses a deterministic 120-column budget. ASCII and Unicode guide selection follows
-the output's declared capabilities.
+Known widths **must** be honored regardless of TTY or redirected sink, including
+known zero, which cannot fit this report and returns `widthTooSmall`. Only unknown
+width uses the deterministic 120-cell budget. ASCII and Unicode guide selection
+follows the output's declared capabilities.
 
 If the table cannot represent three readable columns at the supplied width, the
 writer **must** return a `widthTooSmall` outcome rather than silently overflowing
@@ -242,7 +243,8 @@ struct ConfigReportLimits
 struct ConfigReportOutput
 {
     OutputCapabilities caps;   // existing value, supplied by host for this sink
-    size_t columns;            // 0 means unknown; otherwise positive cells
+    bool widthKnown;
+    CellExtent columns;        // base-owned cell unit; ignored when !widthKnown
 }
 
 enum ReportIssue
@@ -282,6 +284,19 @@ The output uses the existing `sparkles.base.term_caps.OutputCapabilities`:
 `colorDepth` selects the color tier, its `colors` getter indicates whether colors
 are enabled, `unicode` selects guides, and `hyperlinks` independently enables
 label links. The report introduces no parallel capability vocabulary.
+
+`CellExtent` denotes the proposed base-owned nonnegative integral cell extent
+required by [WRAP-UNIT3](../../base/text/wrapping.md#layoutunit), not a report-owned
+physical length or a shipped type name. A host marks an undetermined probe width
+as `widthKnown = false`; a known zero remains a real zero capacity and cannot fit
+this report. A report adapter converts to the shipped table's integer width only
+through an explicit checked cell-count conversion.
+
+Base owns line opportunities, source-preserving plans, and style snapshots under
+the [wrapping contract](../../base/text/wrapping.md#ansi-and-styling-state).
+The table owns its cell geometry and exclusion of generated guides/padding/
+borders from label links. C3 follows that shared cutover rather than establishing
+a competing wrapper or interpreting physical font units as terminal cells.
 
 `Writer` accepts complete UTF-8 chunks through `put`; a host adapter translates an
 output error into `writeFailure`. The input snapshot pointer is non-null and
@@ -468,8 +483,9 @@ The proposed table extension accepts hard floors distinct from
 existing width solver and reuses it; the report must not duplicate shrinking,
 measurement, or wrapping. A wide grapheme that cannot fit the label remainder
 also produces `widthTooSmall`, not a line wider than the selected width. Known
-positive widths are honored even for redirected sinks; zero selects the fixed
-120-cell budget. Capabilities alone select guides, colors, and links.
+widths are honored even for redirected sinks; known zero returns `widthTooSmall`.
+Unknown width selects the fixed 120-cell budget. Capabilities alone select guides,
+colors, and links.
 
 **WCI19: Continuation guides.** The shared table text renderer **must** reserve
 the property prefix before wrapping its label and **must** emit the ancestor
