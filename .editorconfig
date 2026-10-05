@@ -46,6 +46,15 @@ indent_size = unset
 insert_final_newline = unset
 trim_trailing_whitespace = unset
 
+# Authenticated Unicode inputs and the byte-hashed manifest are immutable.
+[libs/base/tools/unicode/**]
+charset = unset
+end_of_line = unset
+indent_style = unset
+indent_size = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+
 # ui-gallery's per-profile render goldens: byte-exact frames (ANSI fences
 # carry escape sequences; golden columns are layout; a report can be empty).
 [apps/ui-gallery/test/data/profiles/**]
