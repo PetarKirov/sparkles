@@ -138,6 +138,13 @@ source position back to a resolved symbol: it lacks the
 of these behind `version (LanguageServer)` (+1684/−656 over 65 files) and sits
 at the **same frontend VERSION as mainline** (`v2.113.0-beta.1`).
 
+**Frontend-only source closure.** `NoBackend` excludes native assembler
+implementations and the compiler driver's C preprocessor from the library
+recipe, not merely from dispatch. Coverage registration must not retain
+references into the excluded native backend or linker. ImportC continues through
+`global.preprocess`, installed by the real preprocessor in `sparkles:dmd-lsp`;
+the full compiler package retains its native implementations.
+
 **Coordinate contract.** DMD reports **1-based line / 1-based UTF-8-code-unit
 column**; the notation parser, `sparkles:syntax`, and the node model use **byte
 offsets** into the display code. `sparkles:twoslash-d` converts at the seam via
