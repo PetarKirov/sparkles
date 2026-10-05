@@ -1114,6 +1114,70 @@
     "seeAlso": ["config-definition", "config-source"]
   },
   {
+    "id": "config-projection",
+    "term": "definition projection",
+    "summary": "A borrowed view of one retained configuration definition at its original source branch, used to explain composition without copying or inventing intent.",
+    "definition": "A view identified by its parent definition and original branch locator. It carries supplied-member presence, inherited metadata, and branch disposition; its identity is independent of where that branch lands in an effective concatenated list.",
+    "authority": [
+      {
+        "text": "wired composition projections",
+        "link": "/specs/wired/config/composition#_4-resolution-and-provenance"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": [
+      "config-definition",
+      "config-branch-locator",
+      "config-option-pattern"
+    ]
+  },
+  {
+    "id": "config-option-pattern",
+    "term": "option pattern",
+    "summary": "A schema-declared configuration option address with typed repeated segments for list or map submodule instances.",
+    "definition": "A pattern made from original schema member names and repeated list/map segments, distinct from a runtime property address. Its canonical text uses `[<index>]` and `[<key>]`; actual instances use indices or quoted keys, and ordinary collection data is not automatically a declared option.",
+    "authority": [
+      {
+        "text": "wired patterns and branch locators",
+        "link": "/specs/wired/config/composition#patterns-and-branch-locators"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": ["config-option", "config-projection"]
+  },
+  {
+    "id": "config-branch-locator",
+    "term": "source branch locator",
+    "summary": "A typed member, key, or index route into an original supplied definition, before effective composition reorders or filters its values.",
+    "definition": "An original-source route used with a parent definition identity to locate a supplied payload and presence. It is not an effective list index, a source file path, or a documentation anchor; projections keep it while reports separately use canonical active addresses.",
+    "authority": [
+      {
+        "text": "wired branch identity",
+        "link": "/specs/wired/config/composition#patterns-and-branch-locators"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": [
+      "config-definition",
+      "config-projection",
+      "config-option-pattern"
+    ]
+  },
+  {
+    "id": "config-submodule",
+    "term": "configuration submodule",
+    "summary": "A schema-declared struct section whose supplied member options resolve independently instead of replacing the whole object.",
+    "definition": "A typed configuration section using submodule policy to distribute supplied-member presence and inherited metadata to child options. It can be a direct section or a repeated list/map value; container eligibility is settled before child resolution in a repeated instance.",
+    "authority": [
+      {
+        "text": "wired submodule composition",
+        "link": "/specs/wired/config/composition#_2-typed-policies-and-supported-payloads"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": ["config-option", "config-option-pattern", "config-projection"]
+  },
+  {
     "id": "sparse-overlay",
     "term": "sparse overlay",
     "aliases": ["layer"],

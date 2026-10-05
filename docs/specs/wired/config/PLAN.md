@@ -33,10 +33,10 @@ starting, rather than implementing around confident-looking interface sketches.
 | ----- | ----------------------------------------- | ----------- | ----------------------------------------------------------------------------------------- |
 | C0    | Scope, decisions, oracles, publication    | in progress | Independently reviewed draft with explicit blocking questions                             |
 | C1    | WCFG1–10, WCFG13–14, WCFG17–21, WCFG25–37 | not started | Scalar definition interface, original-policy presence, ownership, conflicts, exact limits |
-| C2    | WCFG11–16, WCFG20–21                      | not started | UDA-directed lists, lines, maps, nested sections, contributor traces                      |
-| C3    | WCI1–15, WCFG24                           | not started | Host-free property/source/value report, all-definitions mode, capability-gated docs links |
-| C4    | WCFG22–24, WCI1–15                        | not started | Hue and terminal startup/report/persistence use one definition model                      |
-| C5    | WCFG22–24, WCI1–15                        | not started | Diagram preserves its grid wire contract and shares resolution with startup               |
+| C2    | WCFG11–16, WCFG20–21, WCFG38–51           | not started | Typed collection/submodule presence, projections, normalized graphs, exact budgets        |
+| C3    | WCI1–24, WCFG24                           | not started | Typed bounded report, checked table floors/guides, actual docs targets and OSC isolation  |
+| C4    | WCFG22–24, WCI1–24                        | not started | Hue and terminal startup/report/persistence use one definition model                      |
+| C5    | WCFG22–24, WCI1–24                        | not started | Diagram preserves its grid wire contract and shares resolution with startup               |
 
 The obligations listed for C1 apply to its scalar/string subset; C2 closes their
 collection and recursion cases. Lazy evaluation and executable configuration are
@@ -107,30 +107,45 @@ acceptance evidence exist; specification readiness is not implementation deliver
 
 ## C2 — Composition and contributor provenance
 
-Resolve Q1 for collection accounting and Q2's generic/app-semantic distinction.
-Implement compatible composition UDAs, explicit order, option-level map selection,
-recursive section selection, stable contributor references, and canonical errors.
-Run the map/list/lines traces and small exhaustive permutation/grouping oracle.
-Probe canonical map-key spelling collisions and supported enum-key conversions.
+Prerequisites are owner review of [composition.md](./composition.md), the shared
+original-site decoder/presence experiment in Q6, and C1's retained-owner interface.
+Q1 specifies finite collection accounting; custom conversion/ownership remains
+excluded. Q2 blocks keybinding-specific integration, not the generic core policies.
 
-Gate: focused wired tests plus a real driver reproducing the losing-key-map and
-mixed-source section examples without using the production engine as its oracle.
-Review the implementation's work/memory bounds before selecting default limits.
-No lazy policy or native-order map enumeration may masquerade as this contract.
+Implement WCFG38–51 using root definitions plus typed presence and branch
+projections, not a second merge engine. The native AA/struct decoder overwrites
+duplicates and a root-subtree decoder loses containing-field policy, so neither
+is a faithful source-admission shortcut. Preserve typed null/non-null-empty
+containers explicitly: `.dup` alone loses that state. Source/node, generated
+default, normalized candidate, contribution and canonical metadata charges have
+independent boundary/fault cases.
+
+Gate: focused wired tests, original-site full/sparse decoding and duplicate
+admission, permutation/grouping and mixed-child-failure oracles, exact collection
+accounting, and a real conflict/projection driver. Production allocator failure
+must preserve all owners and builder state. A finite hand-written clone or
+`Unique` move establishes only primitive feasibility, not this gate. No lazy or
+custom-value policy can silently enter the supported matrix.
 
 ## C3 — Shared inspection and links
 
-Use the existing property-tree walk with the explicit inspection profile,
-`prettyprint`'s typed formatting seam, and `ui.components.table` for layout.
-Add only the seams needed for wire enum spelling, wrapped guide continuation,
-redaction, and documentation label links; preserve editor mutation policy.
+Use the concrete [inspection interface](./inspection.md#_5-proposed-report-interface)
+with snapshot typed/presence visits, the property kernel's inspection profile,
+generic prettyprint value/member/limit policies, and the existing table solver/
+wrapper. Resolve its §9 bounded experiments before relying on those seams.
 
-Gate: focused UI/base tests covering all WCI obligations and a real host-free
-report driver at narrow, normal, and redirected widths. Capture terminal bytes
-for OSC containment, and view the report in an actual terminal-capable surface.
-All-definitions inspection of conflicts must remain available before startup.
-Q4 must be resolved for the fixture's page/anchor metadata. Whole-app startup
-behavior is not certified by this fixture.
+The real baseline exposed table width overflow below the hard floor and OSC
+link leakage across mandatory cell breaks, including source/value leakage for a
+513-byte opening. Q7 gates the shared table repair; a 506-byte URI bound alone is
+not label isolation. Do not hide the failure by disabling links or adding an
+app-local wrapper. Use the existing `OutputCapabilities` vocabulary.
+
+Gate: focused UI/base tests for WCI1–24, the independent ANSI-byte/width oracle,
+bounded source/value/label work and balanced cuts, full/sparse definition formatting,
+checked 47-cell flat fit versus 46-cell refusal, and an actual host-free report
+driver plus terminal-capable visual smoke. Verify page/anchor manifests against
+real built pages; Q4 remains a separate per-app acceptance gate. No app startup
+or resolver conformance is certified by a table/prettyprint baseline probe.
 
 ## C4 — Hue and terminal integration
 
@@ -166,6 +181,8 @@ unless an explicit accepted migration changes it. Resolve Q4 for diagram options
 - Implementation: no resolver/report migration delivered by C0.
 - Evidence and review findings: [testing.md](./testing.md#evidence-ledger).
 - Blocking questions: [decisions.md](./decisions.md#open-questions).
-- Next action: owner review of WCFG25–37, then implement C1 against its exact
-  operation/ownership/budget oracles. Q1 no longer leaves scalar design policy
-  unspecified; C2's collection/custom-value accounting remains blocked.
+- Next action: owner review of the stacked C1/C2/C3 contracts, then implement C1's
+  exact operation/ownership/budget oracles and Q6's original-site input seam.
+  Follow with C2 composition and Q7/C3 shared table/formatter seams. Custom
+  ownership, keybindings, diagram's adapter, and actual app documentation gates
+  remain explicitly blocked; no runtime slice is marked delivered.

@@ -244,6 +244,138 @@ Recursively test only policies claiming commutativity/associativity; list and
 `lines` order is checked against the explicit ordering tuple, not against a
 false commutativity promise.
 
+### Nested presence, scope, and default oracle
+
+Use `Entry { int width = 4; bool enabled = true; }` as an `AttrsOf!Submodule`
+value. The root built-in map is empty at priority 1500. Source `u` at 1000
+supplies `{"k":{"width":8}}`; source `p` at 1000 supplies
+`{"k":{"enabled":false}}`. Expected effective `k` is width 8 from `u` and enabled
+false from `p`. Generated type-initializer definitions remain overridden.
+Root definition rendering must preserve each original sparse body; it must not
+claim `u` supplied enabled or `p` supplied width.
+
+Raise `p`'s enclosing map priority to 1100 while giving its enabled child override 0. Expected enabled is built-in true: the losing parent cannot re-enter through
+the stronger child. Equal winning parents with different width definitions
+conflict at `tools["k"].width`, while a sole enabled definition resolves. The
+entry/root expose `unresolvedChildren`, no native effective parent, and every
+successful child and conflicting projection remains inspectable. A root check
+that would reject a fabricated parent must not replace or hide the child failure.
+
+For a selected built-in map initialized with `k.width = 8`, do not synthesize a
+second equal-priority width 4 definition. For a stronger sparse external `k`
+definition omitting width, derive width 4 from `Entry.init`, not the excluded
+built-in entry's width 8. Repeat direct-section field initialization (width 8)
+to distinguish its enclosing-root default rule from introduced dynamic instances.
+
+For a null-initialized `Nullable!Entry` with `NullOr!Submodule`, a stronger supplied
+non-null `{}` creates an instance whose width defaults to 4 from underlying
+`Entry.init`; it does not read the null wrapper's payload. Repeat as a value of
+`AttrsOf!(NullOr!Submodule)`. A selected null wrapper creates no children or fallback
+records. A selected non-null built-in wrapper holding width 8 suppresses a duplicate
+width 4 initializer; if that wrapper loses to a stronger sparse non-null `{}`,
+width 4 applies, not the discarded 8.
+
+For distinct enum keys `A` and `B` whose original key policy maps both to `k`,
+two prospective singleton maps `{A:1}` and `{B:2}` cannot bypass key injectivity.
+The schema fails compilation before builder creation at equal priorities and
+when one prospective map would lose. Enum aliases equal as typed keys are not
+distinct keys; duplicate occurrences within one document still fail before
+AA assignment, while equal typed keys across separate accepted definitions are
+the intended merge target.
+
+List elements from different root definitions remain separate occurrences; a
+source original index 0 can become effective index 2 without changing its parent
+definition/original locator. Pattern `plugins[<index>].enabled` resolves actual
+member instances, while a plain atomic element `paths[0]` is not an independent
+declared option. Literal key `<key>` must never be mistaken for a map pattern.
+
+### Container state, nullable policy, and ownership oracle
+
+Atomic sole null-backed, non-null-empty, and nonempty containers preserve their
+typed state through capture, ownership moves and independent copying. A merge of
+two empty lists/maps produces the specified non-null normalized empty state;
+it must not depend on `.dup` or AA iteration. `NullOr` distinguishes missing input,
+selected null wrapper, present wrapper with null backing, and supplied non-null
+empty payload. Two selected definitions containing any wrapper null conflict;
+two selected non-null lists merge through `ListOf`.
+
+Mutate nested caller array elements, map values, mutable struct fields, and map
+membership after borrowed capture. Destroy caller/document/capsule owners and
+inspect retained source payload/presence, then copy the successful config and
+destroy its snapshot. Copied values stay exact and mutable independently of both
+snapshot and another copy. Include non-null-empty arrays/maps; an outer `.dup`
+model must fail the ownership and state cases. Generated fallback/default storage
+must obey the same independence as ordinary source payloads.
+
+### Collection accounting oracle
+
+For one `paths: ListOf!Atomic` field initialized to a null-backed empty array,
+creation charges `$builtin` 8, `initializer` 11, path 5, and container tag 1:
+25 bytes. Register `u` with detail `file`: total 30. Submit `["a","bb"]` at
+priority 1000/order 0: graph 4 plus first local ID `value` 5, total 39.
+Register `p` with detail `repo`: total 44. Submit `["ccc"]` at 1000/order 10:
+graph 4, with `value` already interned, total 48.
+
+Resolution produces `["a","bb","ccc"]`. Its normalized graph adds tag 1 plus six
+string bytes, total 55; three new active paths `paths[0]`, `paths[1]`, `paths[2]`
+add eight bytes each, total 79. Counts are three sources, three root definitions,
+one declared option pattern, ten value nodes (six source plus four normalized),
+four resolved records (root plus three elements), and five contribution
+relationships (two at root, one at each element). Limits 78/79 and count limits
+one below/equal/one above must distinguish unchanged operational failure from a
+complete snapshot. The detached first input charges path 5 plus source graph 4,
+not built-ins, normalized values or runtime paths.
+
+For `tools: AttrsOf!Submodule` with `Entry { int width = 4; }`, declared paths
+are `tools` (5) and `tools[<key>].width` (18). Empty built-in root charges tag 1
+plus both paths and built-in identities: 43 bytes. Register `u/file`: 48.
+Supply `{"k":{}}`: map tag 1/key 1, first `value` identity 5 and canonical key
+spelling 1, total 56. Resolution adds fallback int 4 and active paths
+`tools["k"]` (10), `tools["k"].width` (16): 86. Normalized map/key/struct/width
+graph adds 6: 92. Empty child presence must not charge a supplied width 4.
+There are two sources, three definitions including the generated fallback, two
+declared patterns, nine source/default/normalized value nodes, three resolved
+records, and three contribution relationships. Nested views do not double-charge
+the normalized parent graph.
+
+Exercise `Lines` newline-byte charges, fixed arrays without a container-state tag,
+nullable wrapper tags, ignored submodule fields with large unowned payloads,
+shared source-key/identity/path text roles, failed merged checks, and multiple
+independently failing branches. Inject allocation failure at generated defaults,
+canonical paths/spellings, projections, normalized graphs and diagnostic storage.
+Operational failure must not consume any owner or publish partial records.
+
+### Report seam and privacy oracle
+
+At flat hard floor 47, all content widths meet `[12,13,12]`; at 46 the proposed
+checked layout returns `widthTooSmall` before any stdout byte. Repeat a nested
+row with its computed guide width and a taller adjacent source cell. Guides
+remain outside links, continue on blank physical lines, and emit the branch
+marker once per logical row.
+
+Direct/nested/map-key enums must print original wire spelling `"turbo"`, not
+`Mode.fastPath`, in inline and multiline paths. Nullable wrapper null prints
+`null`, present-null backing prints `value(null)`, and non-null empty containers
+remain empty. Supplied-member presence includes explicit-at-default fields and
+excludes absent fields. Literal text `...` is not a structured cut.
+
+Exercise exact item/depth/value-byte/source-byte/label-byte boundaries with quote,
+UTF-8 and control escaping; no whole omitted suffix is scanned or escaped before
+returning a cut. A 16 MiB borrowed source detail must not be copied per row before
+its report text cap. Every cut is visible/incomplete; redacted values incur no
+formatting walk. A root map not itself sensitive but containing a sensitive
+declared child must not leak that child through its parent effective/definition
+cell, validator detail, or conflict snippet; non-sensitive child rows remain
+independently inspectable.
+
+For the linked label `alpha beta 世界 é` followed by an explicit newline and
+`next label`, expected generated table guides/padding/frame/source/value/newline
+bytes are all unlinked. Compare visible text as a separate observation, not the
+sole oracle. Test accepted URI lengths 506 and rejected 507, actual missing
+fragment IDs independently of URI syntax, and output capabilities with hyperlinks
+on/color off and hyperlinks off/color on. Snapshot failure remains unfiltered;
+mixed incomplete/diagnostic/load/write outcomes obey WCI21's precedence.
+
 ## 3. Risk-driven acceptance matrix
 
 | Obligations          | Falsifying scenario / independent observation                                                                                               | Evidence class                                |
@@ -265,6 +397,11 @@ false commutativity promise.
 | WCFG28–32            | Operation/state and 28/33/42/50/51-byte traces, failed owned submission, complete semantic failure versus operational rollback              | Actual resolver + fault injection             |
 | WCFG33–36            | Default limits, widened/overflow arithmetic, scope/copy rejection, allocator-failure seam, transfer without cloning                         | Boundary + compiler + runtime driver          |
 | WCFG37               | Nearest section priority, explicit leaf precedence, absent/empty section, metadata member-name collision, all input forms                   | Metadata + actual resolver                    |
+| WCFG38–42            | Policy/type errors, source presence through nullable/list/map, original-site decoding and duplicate keys, exact patterns/locators           | Compiler + codec + actual resolver            |
+| WCFG43–46            | Excluded-parent child override, dynamic defaults, selected-built-in suppression, mixed child failures and original root definition views    | Independent model + typed visits              |
+| WCFG47–51            | Deep capture/copy, null/empty reconstruction, 25/48/79 and 43/56/92-byte traces, widened counters and allocation-failure rollback           | Ownership + boundary + real storage           |
+| WCI16–20             | Supplied/nullable/enum formatting, hard floors/guides, bounded escaped cells, precise structured cuts and nested redaction                  | Typed fixture + width/byte oracle             |
+| WCI21–24             | Mixed exit precedence, canonical pattern targets, real missing HTML ID, URI506/507 and mandatory-break link containment                     | CLI + built-docs + ANSI state                 |
 
 The width oracle strips escape spans and independently measures the chosen Unicode
 fixtures' known cell widths; it does not calculate expected layout with the table
@@ -467,3 +604,80 @@ negative codec result, not suppressed. No production behavior or test gate chang
   highlighting fallback/bundle-size warnings remain visible; no policy exclusions
   changed. Historical feasibility probes were not rerun; resolver conformance
   remains unverified.
+
+### Collection and inspection feasibility
+
+**Scope:** production-source tree at C1 tip `776389a12`, plus throwaway D drivers;
+Linux x86-64, LDC 1.42.0, debug/assertions-live single-file runs. No configuration
+resolver, generated capture, or report seam is implemented by these experiments.
+
+| Experiment                                                                                                         | Observed result                                                                                   | Decision / evidence limit                                                                             |
+| ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Original nested list/map/struct decode; mutate source text, destroy parsed document, force GC, move `Unique` owner | Exact nested content remained; enclosing/array/tag addresses stayed identical across move         | Native codec/owner primitives are feasible; `Unique` alone is not deep borrowed capture               |
+| Finite hand-written recursive capture; mutate caller inner list, tags, AA entry and membership                     | Captured values stayed exact and new caller key did not appear                                    | Demonstrates finite language construction, not generated schema/capture or allocator rollback         |
+| Duplicate-preserving arena versus typed map                                                                        | `objectGet("k")` decoded first 1; native typed AA retained later 2                                | Detect canonical duplicates before AA materialization; parser has no duplicate-key policy knob        |
+| Field-targeted enum key/value case in enclosing schema versus public subtree root                                  | Whole original schema decoded; public subtree entry failed after losing site policy               | Internal original-site decoder seam is required; no field-policy shortcut claimed                     |
+| Empty array/AA native `.dup`                                                                                       | Non-null-empty source became null-backed; null AA `.rehash` remained null                         | Plain clone is insufficient to preserve typed backing state                                           |
+| Explicit empty-array storage and finite empty-AA reconstruction                                                    | Null and non-null-empty captures remained distinct                                                | Positive representation primitive only; no config definitions created or production strategy accepted |
+| Struct field map initializer with entry width 8                                                                    | Initialized root and `T.init` both retained width 8                                               | The enclosing-map/default-versus-type-default oracle is representable in D                            |
+| Existing enum prettyprint versus wired names                                                                       | `Mode.fastPath` versus `turbo`                                                                    | Generic recursive enum policy extension remains required                                              |
+| Real table budgets 12, 46, 47, 60                                                                                  | Widest lines 14, 46, 47, 52 respectively                                                          | Shipped soft floors do not prove checked report hard floors; small-width overflow observed            |
+| Ordinary and 506-byte OSC URI with soft and mandatory label breaks                                                 | Visible parity true; one linked newline, four linked frame bytes, source/value token flags false  | Label isolation fails despite fitting saved-link state                                                |
+| 507-byte URI (513-byte opening)                                                                                    | Saved state inactive; two linked newlines/eight linked frame bytes; source/value token flags true | URI bound and shared mandatory-break repair are distinct requirements                                 |
+
+The collection commands were `dub run --single .c2-probes/collection-ownership.d
+--compiler=ldc2`, with separate `empty-storage.d` and `map-default.d` runs under
+the same flags. The standalone inspection seam driver used the real
+`drawTable`/`TableProps`, `prettyPrint`, `wireNames`, `visibleWidth`, and
+`OscLinkState` through ordinary base/UI/wired dependencies, without `-unittest`.
+It ran as `dub run --single <inspection-seam-probe.d> --compiler=ldc2`; the driver
+path is an experiment artifact, not a shipped repository example.
+
+The independent OSC scanner recorded active state per visible byte. The observed
+normal-URI output reopened before `世界 é`, then kept the link open across its
+hard newline, padding/borders, and the next line's leading frame, finally closing
+after `next label`. The 506-byte URI behaved the same. For URI507, the opening
+length 513 exceeded `OscLinkState`'s 512-byte saved buffer, and adjacent source/value
+tokens also became linked. Legitimate label spaces and generated padding require
+recorded-byte inspection; token/visible-text parity alone is not proof of isolation.
+
+Reproduction criteria and blocked shared seams are in
+[inspection §9](./inspection.md#_9-evidence-and-bounded-feasibility-questions)
+and Q6/Q7. Probe sources are throwaway and removed after recording evidence.
+Historical scalar nested-nullable/Mapped-policy failures were not rerun. No
+baseline failure was suppressed, no validation exclusion was expanded, and no
+runtime conformance milestone is passed by these primitive experiments.
+
+### Composition and inspection contract review
+
+- **R7 — opening cold read: fixed.** An independent opening-only reader requested
+  clarity on private capture/borrow duration, submodules and original routes,
+  repeated option patterns, logical byte versus record budgets, finite schemas,
+  and the D declaration's role. The openings now state those concepts or link
+  their defining glossary entries; a second restricted read reported no remaining
+  comprehension discrepancy. Interface details stay in the body.
+- **R8 — composition semantics/accounting: fixed.** A separate reviewer found
+  missing defaults beneath non-null nullable submodules and a cross-definition
+  key-spelling ambiguity. WCFG44 now derives underlying struct prototypes by type,
+  instantiates no children for selected nulls, and suppresses duplicate selected
+  built-in defaults. WCFG41 rejects a noninjective key schema before builder
+  creation, distinguishing equal typed-key merge targets from distinct colliding
+  keys regardless of prospective priorities. Worked nullable and singleton-map
+  oracles cover both. Re-review found both fixes sound; the two accounting traces
+  and stated node/record/contribution counts were independently consistent.
+- **R9 — inspection/privacy/layout: reviewed.** Another read-only reviewer checked
+  WCI1–24, typed presence/null/enum formatting, bounded cells, hard floors/guides,
+  nested metadata-only redaction, diagnostics, exit precedence, pattern manifests,
+  and known OSC baseline failures. It found no actionable contradiction in its
+  assigned scope. Unimplemented shared seams and actual app-page gates remain
+  explicitly blocked, not passed; no production probes/tests were rerun by reviewers.
+- **P6 — composition/inspection publication: passed.** On the documentation
+  snapshot based on `776389a12`, Prettier/editorconfig passed; separate in-tree CI
+  checks validated 1620 sidebar pages, 74 glossary entries/117 links, and 2867
+  evidence citations across 194 spec files. The full 16 GiB-heap docs build
+  completed source/example generation, bundle compilation and page rendering.
+  Chromium visually checked the composition opening and inspection width/
+  continuation section, verified the new pattern/glossary links and section IDs,
+  and opened the actual collection/inspection evidence anchor. This is document
+  publication evidence only; the known native table OSC failure and every
+  proposed runtime seam remain unverified for conformance.

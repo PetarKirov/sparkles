@@ -1817,6 +1817,10 @@
                 "link": "/specs/wired/config/scalar-resolution"
               },
               {
+                "text": "Collection and submodule composition",
+                "link": "/specs/wired/config/composition"
+              },
+              {
                 "text": "Property, source, value",
                 "link": "/specs/wired/config/inspection"
               },
