@@ -134,6 +134,7 @@ The reviewable source of truth for what hue binds. Non-leader prefixes: `z`
 | `LMP8`  | `<leader>s` +search and `<leader>g` +git are likewise reserved for the picker's search and git sources.                                                                                                       | not started        | [picker.md](./picker.md) `PKS`            |
 | `LMP9`  | `<leader>o` +overlay is reserved for the [overlay](./overlays.md) kinds (`OVL4`).                                                                                                                             | not started        | [overlays.md](./overlays.md)              |
 | `LMP10` | `<leader>vf` toggles the [format preview](./format-preview.md) and `<leader>vF` cycles its formatter; `<`/`>` nudge the ruler while the preview is active (context-gated — `[`/`]` stay set/diff navigation). | full (`ca124bea5`) | [format-preview.md](./format-preview.md)  |
+| `LMP11` | `<leader>c` +code holds `<leader>cc`, the dub configuration live types describe ([`LIV10`](./twoslash.md)).                                                                                                   | full               | `hueBindings` leader rows                 |
 
 ## Milestones
 
