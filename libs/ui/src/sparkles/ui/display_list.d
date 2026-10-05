@@ -165,6 +165,9 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             // lies beside it — a border, a scrollbar, the next cell of a row.
             // Layout shrinks an overfull row's text below its natural width;
             // the cut to that width happens here, once, for every backend.
+            // A proportional run narrower than its cells sits where the
+            // widget aligns its text (a button's caption: centred).
+            vis.textAlign = cast(ubyte) node.alignX;
             const lines = frames[idx].lines;
             if (lines.length == 0)
             {
@@ -974,4 +977,27 @@ unittest
     }
     assert(outsideAt > popAt, "a sibling must not inherit the bracket");
     assert(panelRect.width > 0);
+}
+
+@("ui.displayList.textCarriesItsAlignment")
+@safe unittest
+{
+    import std.algorithm : filter;
+    import std.array : array;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.widget : Alignment, Builder;
+
+    // A proportional face draws a caption narrower than its whole cells; the
+    // canvas places it across them as the widget aligns its text.
+    auto b = Builder();
+    const caption = b.add(Widget(kind: WidgetKind.text, text: "OK", alignX: Alignment.center));
+    const plain = b.add(Widget(kind: WidgetKind.text, text: "name"));
+    auto tree = b.finish(b.container(WidgetKind.column, [caption, plain]));
+    const ops = buildDisplayList(tree, layout(tree), defaultTwoslashPalette(),
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+    const runs = ops.filter!(o => o.kind == OpKind.textRun).array;
+    assert(runs.length == 2);
+    assert(runs[0].visual.textAlign == Alignment.center);
+    assert(runs[1].visual.textAlign == Alignment.start);
 }

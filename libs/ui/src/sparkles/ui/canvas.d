@@ -123,6 +123,7 @@ struct Ink
     ubyte underlineAlpha = 0xFF; /// underline opacity (hover-fade)
     FontRole fontRole;        /// which font family the run wants
     TypeStep typeStep;        /// a `FontRole.ui` run's step on the type scale
+    ubyte textAlign;          /// `Visual.textAlign`: the run's place across its rect
     ushort styleBits;         /// packed `TextAttr` flags (bold/italic/…)
     ushort fontScale = 100;   /// font size as a percentage of 1em
     /// The OSC 8 hyperlink this run belongs to — an index into the frame's URI
@@ -594,8 +595,8 @@ Ink inkOf(in Visual v) @safe pure nothrow @nogc
     => Ink(fg: v.fg, fgAlpha: v.fgAlpha, bg: v.bg, bgAlpha: v.bgAlpha,
         hasBg: v.hasBg, underline: v.underline,
         underlineAlpha: v.underlineAlpha, fontRole: v.fontRole,
-        typeStep: v.typeStep, styleBits: v.styleBits, fontScale: v.fontScale,
-        linkId: v.linkId);
+        typeStep: v.typeStep, textAlign: v.textAlign, styleBits: v.styleBits,
+        fontScale: v.fontScale, linkId: v.linkId);
 
 /// The box half of `v`.
 BoxChrome boxChromeOf(in Visual v) @safe pure nothrow @nogc
@@ -616,6 +617,7 @@ Visual visualOf(in Ink ink) @safe pure nothrow @nogc
     v.underlineAlpha = ink.underlineAlpha;
     v.fontRole = ink.fontRole;
     v.typeStep = ink.typeStep;
+    v.textAlign = ink.textAlign;
     v.styleBits = ink.styleBits;
     v.fontScale = ink.fontScale;
     v.linkId = ink.linkId;

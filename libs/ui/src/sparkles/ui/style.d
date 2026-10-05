@@ -378,6 +378,10 @@ struct Visual
     // --- text chrome (resolved from a widget's TextStyle) ---
     FontRole fontRole;      /// which font family the run wants
     TypeStep typeStep;      /// a `FontRole.ui` run's size on the type scale
+    /// Where a run sits across its rect when the face draws it narrower than
+    /// the whole cells layout gave it: 0 start, 1 centre, 2 end (a text
+    /// widget's `alignX`). A cell target fills its cells and ignores it.
+    ubyte textAlign;
     ushort fontScale = 100; /// font size as a percentage of 1em (100 = 1em)
     UnderlineStyle underline; /// text-decoration underline (default: none)
     ubyte underlineAlpha = 0xFF; /// underline opacity (hover-fade)
