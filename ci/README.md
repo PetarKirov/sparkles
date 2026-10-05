@@ -72,6 +72,10 @@ PR — which gets no secrets — still run the pipeline.
 
 Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
 
+Cloud setup verification prints the complete `ldc2 --version` output. Do not
+pipe it into an early-exiting reader: LLVM treats a closed stdout pipe as an
+error, so `head` can turn successful toolchain setup into a failed CI check.
+
 ## Job mapping
 
 | GitHub Actions job                  | CircleCI job                         | Notes                                                                    |
