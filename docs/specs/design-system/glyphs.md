@@ -190,7 +190,11 @@ proportional sans at that size: the run is measured in px and rounded up to
 whole cells, a line takes as many rows as the step's line height needs, and the
 run is centred in those rows. A code point the face lacks is drawn from the
 cell font at the same size. A cell target draws the run in the cell font, one
-row a line, and reports `monospace-ui`. The face choice is D49. Violation: an
+row a line, and reports `monospace-ui`. The face choice is D49. What a run
+holds decides its face (D64): what is read as words (a title, a name, a
+description, a sentence, a button's caption) takes the role; what is compared
+character by character (a value, a path, a key chord, a URI, a log line, an
+icon) stays in the cell font at the same step. Violation: an
 interface run whose painted extent leaves its layout rect, or two runs on one
 line drawn at different baselines.
 
