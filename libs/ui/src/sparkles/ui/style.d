@@ -167,6 +167,11 @@ enum Slot : ubyte
     @WireName("coverage.uncovered") covUncovered,
     /// a line that ran, but not every branch out of it
     @WireName("coverage.partial") covPartial,
+
+    // Control slots (ui `WGT26`).
+    /// a control that is on — a switch's track: the accent filled, with the
+    /// page background's tone over it
+    @WireName("control.on") controlOn,
 }
 
 private enum slotCount = Slot.max + 1;
@@ -654,6 +659,8 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.bg[chromeFocused] = Color.fromRgb(0x37, 0x72, 0xcf);
         p.bgAlpha[chromeFocused] = 0x48;
         p.fg[chromeAccent] = Color.fromRgb(0x37, 0x72, 0xcf);
+        p.fg[controlOn] = Color.fromRgb(0xff, 0xff, 0xff);
+        p.bg[controlOn] = Color.fromRgb(0x37, 0x72, 0xcf);
         p.fg[gutter] = Color.fromRgb(0x88, 0x88, 0x88);
         // The number-gutter strip: the muted number fg over a faint neutral
         // wash that reads on any page — a personalized theme overrides both
