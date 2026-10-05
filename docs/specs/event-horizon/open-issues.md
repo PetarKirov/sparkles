@@ -819,3 +819,31 @@ arrives is dispatched and slots come free. Pinned by
 `pool.workStealing.fullSlabWaitsOnTheRing` (`maxFibers = 12`, 64 sleeping
 tasks): the budget is exhausted on the first pass, so the old loop spun on
 every run and the new one completes.
+
+<a id="o32-network-and-process-error-kinds"></a>
+
+## O32 — Network and process error kinds, and the `io` verbs over a VFS `File`
+
+**Where:** SPEC §9.1, §10.5 and §7.3; the capability VFS's
+[VFE2](../base/vfs/SPEC.md#vfe2-error-kinds).
+
+The error vocabulary moves to `sparkles.base.io.errors`, and every `IoError`
+carries a portable `kind` computed where the raw result first becomes typed.
+The capability VFS defines the file-system kinds. This library owns the rest,
+and they are not yet chosen.
+
+**Kinds.** The errnos the library's code matches on or produces today are the
+evidence: `ECANCELED`, `EAGAIN`, `ENOBUFS`, `EPIPE`, `ECONNRESET`,
+`ECONNREFUSED`, `EINVAL`, `EIO`, `EOPNOTSUPP`, `EAFNOSUPPORT`, `ECHILD`,
+`ENOEXEC`, `EINTR`, `EFBIG`, `EMSGSIZE`, `EOVERFLOW` and `ESRCH`. Each needs
+either a dedicated kind or an explicit decision that it stays `other`, and the
+Windows (`WSAE…`) and kqueue paths need the same mapping.
+
+**Files and the `io` verbs.** The `io` verbs of §7.3 take a copyable
+`FileHandle`; the capability VFS's `File` is move-only and closes exactly
+once. Either `FileHandle` survives as a borrowed, non-closing view of a `File`,
+in line with §16's decision to retain copyable low-level handle views, or the
+verbs take a `FileRef`.
+
+**Decide by:** the capability VFS's asynchronous-backend milestone
+([VFS PLAN M3](../base/vfs/PLAN.md#m3-the-asynchronous-backend-and-event-horizon-s-migration)).
