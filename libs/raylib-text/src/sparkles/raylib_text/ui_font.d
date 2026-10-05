@@ -25,6 +25,9 @@ import sparkles.raylib_text.shaping_api : st_face_close, st_face_open, st_kern_a
 /// The number of steps on the type scale (`sparkles:ui`'s `TypeStep`).
 enum uiTypeSteps = 4;
 
+// `TypeStep.body`'s index: the step the cell font's x-height is matched at.
+private enum TypeStepBody = 0;
+
 /// One step's faces and metrics, in the backend's drawing units.
 struct UiFace
 {
@@ -161,6 +164,9 @@ struct UiFonts
     private FontSet* fallback;
     private float atlasScale = 1.0f;
     private STLibrary* kernLibrary;
+    // The cell font's size relative to a step's: what makes its x-height the
+    // interface face's, so a monospace value reads at the size of its label.
+    private float monoScale = 1.0f;
 
     /// `true` once a regular face loaded for every step.
     bool present;
@@ -190,6 +196,28 @@ struct UiFonts
                 face.kernBold = openKern(boldPath, px);
             present = present && face.regular.present;
         }
+        monoScale = present ? xHeightRatio() : 1.0f;
+    }
+
+    // The interface face's x-height over the cell font's, each per unit of size.
+    private float xHeightRatio() @system
+    {
+        if (fallback is null)
+            return 1.0f;
+        bool fakeBold, fakeItalic;
+        auto mono = fallback.resolveFace('x', false, false, fakeBold, fakeItalic);
+        const ui = xHeight(steps[TypeStepBody].regular), cell = mono is null ? 0 : xHeight(*mono);
+        if (ui <= 0 || cell <= 0)
+            return 1.0f;
+        const r = ui / cell;
+        return r < 0.7f ? 0.7f : r > 1.2f ? 1.2f : r;
+    }
+
+    private static float xHeight(ref LoadedFont lf) @system
+    {
+        if (!lf.present || lf.font.baseSize <= 0 || !fontHasGlyph(lf, 'x'))
+            return 0;
+        return lf.font.recs[glyphIndexFor(lf, 'x')].height / cast(float) lf.font.baseSize;
     }
 
     // The face at `path` opened for kerning at `px`, or null (kerning is then
@@ -229,34 +257,73 @@ struct UiFonts
         unload();
     }
 
+    /// The size `step` is drawn at — its glyph box, ascender to descender —
+    /// in drawing units.
+    int size(size_t step) const @safe pure nothrow @nogc
+        => steps[step].size;
+
     /// The height one line of `step` occupies, in drawing units.
     int lineHeight(size_t step) const @safe pure nothrow @nogc
         => steps[step].lineHeight;
 
+    /**
+    Whether every code point of `text` has a glyph in the faces this draws
+    from — the interface face (unless `mono`) or the `FontSet`'s loaded faces.
+    A symbol only the cell font's system fallback has (an icon from another
+    font) does not, and the caller draws such a run through the cell font.
+    */
+    bool covers(scope const(char)[] text, bool mono) @system nothrow @nogc
+    {
+        import sparkles.base.text.ansi : byAnsiToken;
+        import sparkles.base.text.tokens : byUtfToken;
+        import sparkles.base.text.utf : UtfMode;
+
+        foreach (part; byAnsiToken(text))
+        {
+            if (part.isEscape) continue;
+            foreach (token; byUtfToken(part.slice, UtfMode.replacement))
+            {
+                const cp = cast(int) token.scalar;
+                if (cp < 0x20 || cp == 0x7F || (!mono && fontHasGlyph(steps[0].regular, cp)))
+                    continue;
+                if (fallback is null)
+                    return false;
+                bool fakeBold, fakeItalic;
+                auto lf = fallback.resolveFace(cp, false, false, fakeBold, fakeItalic);
+                if (lf is null || !fontHasGlyph(*lf, cp))
+                    return false;
+            }
+        }
+        return true;
+    }
+
     /// The width of `text` drawn in `step`, in drawing units.
-    float width(size_t step, bool bold, scope const(char)[] text) @system nothrow @nogc
+    float width(size_t step, bool bold, scope const(char)[] text, bool mono = false)
+        @system nothrow @nogc
     {
         float w = 0;
-        appendWidth(step, bold, text, w);
+        appendWidth(step, bold, text, w, mono);
         return w;
     }
 
     /// Adds a whole-cluster chunk to a run's unrounded pixel extent. Keep the
     /// accumulator across chunks: rounding each chunk would change the run.
     void appendWidth(size_t step, bool bold, scope const(char)[] text,
-        ref float width) @system nothrow @nogc
+        ref float width, bool mono = false) @system nothrow @nogc
     {
-        eachGlyph(step, bold, text, (ref LoadedFont lf, int cp, int size, float adv) {
+        eachGlyph(step, bold, mono, text, (ref LoadedFont lf, int cp, int size, float adv) {
             width += adv;
         });
     }
 
     /**
     Draws `text` in `step` with its top-left at `(x, y)`, in `fg`. Code points
-    the face lacks come from the `FontSet` at the same size.
+    the face lacks come from the `FontSet` at the same size. `mono` draws the
+    whole run in the cell font at the step's size, its x-height matched to the
+    interface face's, so a value sits beside its label at one size.
     */
     void draw(size_t step, bool bold, scope const(char)[] text, float x, float y,
-        Color fg) @system
+        Color fg, bool mono = false) @system
     {
         import sparkles.raylib_text.draw : drawGrapheme;
 
@@ -266,19 +333,22 @@ struct UiFonts
         const fake = bold && !steps[step].bold.present;
         const top = cast(float) cast(int)(y + 0.5f);
         float pen = x;
-        eachGlyph(step, bold, text, (ref LoadedFont lf, int cp, int size, float adv) {
+        const box = steps[step].size;
+        eachGlyph(step, bold, mono, text, (ref LoadedFont lf, int cp, int size, float adv) {
             const uint[1] one = [cast(uint) cp];
             const left = cast(float) cast(int)(pen + 0.5f);
-            drawGrapheme(lf, one[], left, top, size, fg);
+            // A smaller glyph box (a monospace run) is centred in the step's.
+            const t = top + (box - size) / 2;
+            drawGrapheme(lf, one[], left, t, size, fg);
             if (fake)
-                drawGrapheme(lf, one[], left + 1, top, size, fg);
+                drawGrapheme(lf, one[], left + 1, t, size, fg);
             pen += adv;
         });
     }
 
     // Each code point of `text` with the face it draws in, the size to draw it
     // at, and its advance in drawing units.
-    private void eachGlyph(Visit)(size_t step, bool bold, scope const(char)[] text,
+    private void eachGlyph(Visit)(size_t step, bool bold, bool mono, scope const(char)[] text,
         scope Visit visit)
     {
         import sparkles.base.text.ansi : byAnsiToken;
@@ -286,6 +356,26 @@ struct UiFonts
         import sparkles.base.text.utf : UtfMode;
 
         auto face = &steps[step];
+        if (mono && fallback !is null)
+        {
+            const size = cast(int)(face.size * monoScale + 0.5f);
+            foreach (part; byAnsiToken(text))
+            {
+                if (part.isEscape) continue;
+                foreach (token; byUtfToken(part.slice, UtfMode.replacement))
+                {
+                    const cp = cast(int) token.scalar;
+                    if (cp < 0x20 || cp == 0x7F)
+                        continue;
+                    bool fakeBold, fakeItalic;
+                    auto lf = fallback.resolveFace(cp, bold, false, fakeBold, fakeItalic);
+                    const idx = glyphIndexFor(*lf, cp);
+                    const base = lf.font.baseSize > 0 ? lf.font.baseSize : size;
+                    visit(*lf, cp, size, lf.font.glyphs[idx].advanceX * cast(float) size / base);
+                }
+            }
+            return;
+        }
         const useBold = bold && face.bold.present;
         LoadedFont* own = useBold ? &face.bold : &face.regular;
 
