@@ -252,6 +252,13 @@ uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t 
     if (mode != ButtonLabels.icon && label.length)
         parts ~= b.add(Widget(kind: WidgetKind.text, text: label, slot: slot,
             textStyle: TextStyle(bold: primary, fontRole: FontRole.ui, typeStep: TypeStep.label)));
+    // A lone icon or caption fills the button and centres in it (the canvas
+    // places a narrower proportional run by its alignment).
+    if (parts.length == 1)
+    {
+        b.nodes[parts[0]].alignX = Alignment.center;
+        b.nodes[parts[0]].width = SizeSpec.grow();
+    }
     const content = parts.length == 1 ? parts[0]
         : b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1, alignY: Alignment.center));
     return b.add(Widget(

@@ -414,9 +414,14 @@ final class TouchGuide : Surface, Scrollable
             parts ~= label(b, icon, slot, bold: current);
         if (text.length)
             parts ~= uiLabel(b, text, slot, bold: current);
-        return parts.length == 1 ? parts[0]
-            : b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
-                alignY: Alignment.center));
+        if (parts.length == 1)
+        {
+            b.nodes[parts[0]].alignX = Alignment.center;
+            b.nodes[parts[0]].width = SizeSpec.grow();
+            return parts[0];
+        }
+        return b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
+            alignY: Alignment.center));
     }
 }
 
