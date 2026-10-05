@@ -453,6 +453,15 @@ private void textStyle(Writer)(ref Writer w, in Visual vis)
             num(w, typeStepDp(vis.typeStep));
             put(w, "px");
             break;
+        case uiMono:
+        {
+            import sparkles.ui.style : typeStepDp;
+
+            put(w, ";font-family:ui-monospace,monospace;font-size:");
+            num(w, typeStepDp(vis.typeStep));
+            put(w, "px");
+            break;
+        }
     }
     if (vis.fontScale != 100)
     {

@@ -557,13 +557,16 @@ struct RaylibCanvas
     */
     void textRunIn(in Rect r, scope const(char)[] text, in Visual visual) @system
     {
-        if (!drawsUiFace(visual))
+        if (!drawsUiFace(visual) || !uiFonts.covers(projected(text),
+                mono: visual.fontRole == FontRole.uiMono))
             return textRun(r.origin, text, visual);
         const v = narrowed(visual);
         const step = cast(size_t) uiStepOf(v.fontRole, v.typeStep, v.fontScale);
         const bold = (v.styleBits & TextAttr.bold.bits) != 0;
-        const dy = uiCentreOffset(uiFonts.lineHeight(step), r.height, cellH);
-        uiFonts.draw(step, bold, projected(text), px(r.x), py(r.y) + dy, rlFg(v));
+        // The glyph box centred in the rows the run was given.
+        const dy = uiCentreOffset(uiFonts.size(step), r.height, cellH);
+        uiFonts.draw(step, bold, projected(text), px(r.x), py(r.y) + dy, rlFg(v),
+            mono: v.fontRole == FontRole.uiMono);
     }
 
     /// `v` with its corner radius and shadow in device pixels: they are CSS px
@@ -864,18 +867,28 @@ struct GuiMeasure
     {
         if (!usesUiFace(style))
             return cast(int) cellsOf(s);
+        // A run the faces cannot cover draws through the cell font, so it is
+        // as wide as its cells (`RaylibCanvas.textRunIn`).
+        const covered = () @trusted {
+            return uiFonts.covers(s, mono: style.fontRole == FontRole.uiMono);
+        }();
+        if (!covered)
+            return cast(int) cellsOf(s);
         const step = uiStepOf(style.fontRole, style.typeStep, style.fontScale);
         // The faces' advances live in raylib's glyph tables, which `UiFonts`
         // indexes through raw pointers; reading them changes nothing.
         const px = () @trusted {
-            return uiFonts.width(cast(size_t) step, style.bold, s);
+            return uiFonts.width(cast(size_t) step, style.bold, s,
+                mono: style.fontRole == FontRole.uiMono);
         }();
         return cellsCeil(px, cellW);
     }
 
-    /// The rows one line in `style` occupies.
+    /// The rows one line in `style` occupies: as many as its glyph box needs.
+    /// Leading is the rows' own, so a 14 px line on a 17 px cell takes one row,
+    /// as the cell font beside it does.
     int rows(in UiTextStyle style) const @safe pure nothrow @nogc
-        => usesUiFace(style) ? cellsCeil(uiFonts.lineHeight(cast(size_t)
+        => usesUiFace(style) ? cellsCeil(uiFonts.size(cast(size_t)
                 uiStepOf(style.fontRole, style.typeStep, style.fontScale)), cellH) : 1;
 
     /// The image cell size, so `IMG2` images lay out as on the canvas.
@@ -896,6 +909,7 @@ int uiStepOf(FontRole role, TypeStep step, ushort fontScale) @safe pure nothrow 
     switch (role)
     {
         case FontRole.ui:
+        case FontRole.uiMono:
             return step;
         case FontRole.docs:
             return fontScale < 90 ? TypeStep.caption : TypeStep.body;
@@ -909,6 +923,8 @@ int uiStepOf(FontRole role, TypeStep step, ushort fontScale) @safe pure nothrow 
 unittest
 {
     assert(uiStepOf(FontRole.ui, TypeStep.title, 100) == TypeStep.title);
+    assert(uiStepOf(FontRole.uiMono, TypeStep.caption, 100) == TypeStep.caption,
+        "interface data: the cell font at a step");
     assert(uiStepOf(FontRole.docs, TypeStep.body, 80) == TypeStep.caption);
     assert(uiStepOf(FontRole.docs, TypeStep.body, 100) == TypeStep.body);
     assert(uiStepOf(FontRole.code, TypeStep.title, 100) == -1);

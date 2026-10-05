@@ -290,6 +290,11 @@ enum FontRole : ubyte
     /// chips, buttons) in a proportional sans at its $(LREF TypeStep)'s size,
     /// where the target has one (design-system `GLY10`); monospace elsewhere.
     ui,
+    /// Interface data: a value, a path or a key chord in an application's
+    /// chrome — the cell font's family at its $(LREF TypeStep)'s size, its
+    /// x-height matched to the interface face's, so it reads at the size of
+    /// the label beside it (`GLY10`, D50). The cell font on a cell target.
+    uiMono,
 }
 
 /**
