@@ -94,11 +94,14 @@ Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
 ### GitHub test-job budgets
 
 The test matrix declares the whole-job timeout per leg: 55 minutes for x86-64
-Linux LDC, 40 for Linux DMD and Windows LDC, 60 for macOS LDC, and 120 for native
+Linux LDC, 40 for Linux DMD and Windows LDC, 90 for macOS LDC, and 120 for native
 ARM Linux LDC. These are cold-build allowances, not expected runtimes. They
 include Nix setup, both test-runner modes, the enabled example sweeps, and cleanup.
 
 The 40-minute cap cancelled macOS twice after tests passed, during examples.
+In cold run `37332583414`, macOS reached package 28/55 near 40 minutes;
+the roughly 36-minute test prefix plus five-minute setup projects to about
+78 minutes before examples.
 Native ARM Linux twice exhausted it while building the uncached SPIR-V LLVM
 toolchain, before tests started. An unfinished Nix derivation cannot be published
 to the binary cache, so retrying the same capped build does not warm that artifact.
