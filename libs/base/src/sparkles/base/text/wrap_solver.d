@@ -92,10 +92,14 @@ struct WrapMeasurement
     long natural, stretch, shrink;
     bool safeBreak = true;
     bool allowOverfull;
-    /// Exact certificate: for this start, no later endpoint can fit its geometry.
-    /// Used only after greedy has a non-overfull choice; overfull alternatives
-    /// then cannot outrank it. Arbitrary providers default to no certificate.
+    /// Exact certificate: for this start, neither this nor a later endpoint can
+    /// fit its geometry. Alone it prunes only after a non-overfull greedy choice.
+    /// Arbitrary providers default to no certificate.
     bool noFollowingFit;
+    /// Exact certificate: neither this nor a later endpoint can be a legal
+    /// overfull choice. Together with noFollowingFit it excludes the whole tail,
+    /// even when greedy has only an overfull choice or no choice yet.
+    bool noOverfullTail;
     size_t work;
     ulong nextProviderState, visualMap;
     ulong materializationId;
@@ -1002,7 +1006,8 @@ private WrapResult search(const ref MeasurableInput input,
                 if (!r.succeeded) return r;
             }
             if (options.solver == WrapSolver.greedy && m.noFollowingFit
-                && greedyChoice != size_t.max && !greedyState.overfull) break;
+                && (m.noOverfullTail
+                    || greedyChoice != size_t.max && !greedyState.overfull)) break;
             if (!m.safeBreak) continue;
             long totalStretch, totalShrink;
             foreach (g, ref const glue; m.glues)

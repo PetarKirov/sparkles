@@ -164,13 +164,18 @@ state, fitness, flagged-break state, and geometry alternative. Equal costs use
 the same full-prefix tie order as final ranking. Ranked-alternative operations
 retain distinct prefixes and their exhaustive/more status.
 
-Default greedy cell wrapping skips a remaining endpoint tail only when the owned
-provider proves it cannot contain another fitting candidate, and a fitting choice
-already exists. Owned-cell streams admit this monotone bound for preserving,
-collapsed and break-trimmed whitespace, including contextual tabs and fixed
-indentation. Soft-hyphen streams remain uncertified because replacing a
-discretionary hyphen can reduce a later extent. Arbitrary `selectionMeasure`
-callbacks remain exhaustive; a deterministic target can explicitly declare
+Default greedy cell wrapping skips a remaining endpoint tail when the owned
+provider proves it cannot contain another fitting candidate and a fitting choice
+already exists. It can also stop with only an overfull choice, or no choice yet,
+when the provider additionally proves that neither the current nor any later
+endpoint can legally overflow. That stronger certificate requires more than one
+retained body cluster and exhaustion of the first content unit's overflow
+opportunity; the legal whole-unit endpoint and farthest single-cluster endpoint
+remain eligible. Owned-cell streams admit these bounds for preserving, collapsed
+and break-trimmed whitespace, including contextual tabs and fixed indentation.
+Soft-hyphen streams remain uncertified because replacing a discretionary hyphen
+can reduce a later extent. Arbitrary `selectionMeasure` callbacks remain
+exhaustive; a deterministic target can explicitly declare
 `selectionMeasureMonotone` for non-decreasing realized prefixes. Balanced and
 ranked-alternative searches retain exact enumeration. The solver caches forced
 bounds once and binary-searches each start; byte-work bounds use cluster prefixes,

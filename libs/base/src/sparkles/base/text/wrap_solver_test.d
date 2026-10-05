@@ -699,6 +699,61 @@ version (unittest)
         size_t written;
         assert(tryCopyOriginal(plan, original, written).succeeded && original[0 .. written] == source);
     }
+
+    @("text.wrap.greedyOverfullTailFitsCallerWorkBudget") unittest
+    {
+        import std.array : replicate;
+        enum words = 32;
+        const source = replicate("界a ", words);
+        auto limits = grants();
+        limits.providerWork = source.length * 128;
+        auto scratch = cellScratch(source.length + 2, source.length + 2);
+        WrapPlan plan;
+        const result = tryWrapCells(SourceSnapshot(source),
+            WrapOptions(width: CellWidth.bounded(0), whitespace: WhitespaceMode.collapse),
+            limits, scratch, planStorage(source.length + 2), plan);
+        assert(result.succeeded, "overfull rows exhausted the linear caller work grant");
+        assert(plan.lines.length == words * 2);
+        assert(render(plan) == replicate("界\na\n", words - 1) ~ "界\na");
+        foreach (i, ref const line; plan.lines)
+        {
+            assert(line.overfull && line.contentAdvance == (i % 2 ? 1 : 2));
+            assert(line.visibleAdvance == line.contentAdvance);
+            assert(line.sourceStart == (i / 2) * 5 + (i % 2 ? 3 : 0));
+            assert(line.sourceEnd == (i / 2) * 5 + (i % 2 ? 5 : 3));
+        }
+        char[] original = new char[](source.length);
+        size_t written;
+        assert(tryCopyOriginal(plan, original, written).succeeded);
+        assert(written == source.length && original[] == source);
+    }
+
+    @("text.wrap.greedyOverfullTailPreservesPriorityAndEmission") unittest
+    {
+        WrapOptions options = WrapOptions(width: CellWidth.bounded(0),
+            whitespace: WhitespaceMode.collapse);
+        foreach (capacity; [0, 1])
+        {
+            options.width = CellWidth.bounded(capacity);
+            const emoji = cellWrapPlan("🙂a b", options);
+            assert(render(emoji) == "🙂\na\nb" && emoji.lines.length == 3);
+            assert(emoji.lines[0].overfull && emoji.lines[0].contentAdvance == 2);
+            assert(emoji.lines[1].contentAdvance == 1 && emoji.lines[2].contentAdvance == 1);
+        }
+        options.width = CellWidth.bounded(0);
+        const protectedPlan = cellWrapPlan("a\u00A0b c", options);
+        assert(render(protectedPlan) == "a\u00A0b\nc" && protectedPlan.lines.length == 2);
+        assert(protectedPlan.lines[0].overfull && !protectedPlan.lines[0].emergency
+            && protectedPlan.lines[0].contentAdvance == 3);
+
+        // Omitted spaces and formatting can extend a legal single-cluster
+        // overfull choice. Keep its farthest endpoint and its emitted styles.
+        const styled = cellWrapPlan("界  \x1b[31ma\x1b[0m b", options);
+        assert(render(styled) == "界\n\x1b[31ma\x1b[0m\nb" && styled.lines.length == 3);
+        assert(styled.lines[0].sourceEnd == 5 && styled.lines[1].sourceEnd == 16);
+        assert(styled.lines[0].contentAdvance == 2
+            && styled.lines[1].contentAdvance == 1 && styled.lines[2].contentAdvance == 1);
+    }
 }
 version (OwnedWrapSmoke)
 {
