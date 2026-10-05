@@ -55,10 +55,12 @@ import explorer : ExplorerTui;
 import inspector_pane : InspectorPane;
 
 import picker_host : OwnedPicker, PickerAction, PickerHost;
-import picker_sources : PickerTarget;
+import dub_config_picker : dubConfigurationPick;
+import picker_grep : PickerSource;
+import picker_sources : ChoiceFinder, PickerTarget;
 import picker_preview : PickerDocPane;
 import picker_view : PickerGeometry;
-import project_state : dubBuildFor, mutableCopy;
+import project_state : dubBuildFor, mutableCopy, PackageSlot, selectDubConfiguration;
 import settings : DubBuildSettings, HueConfig, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
@@ -108,6 +110,10 @@ struct WorkspaceTui
     /// answer for both; everything else about them is the `live` machinery.
     private LiveTypesSession*[2] diffLive;
     private string liveNotice; // shown once, after the terminal is restored
+    // What the last `startLive` was asked for, so a changed dub build can
+    // restart the same oracle (`LIV10`).
+    private string livePath;
+    private bool livePathHasPayload;
     private int width, height;
     private RgbColor pageFg, pageBg;
     private size_t lastThemeIdx = size_t.max;
@@ -950,6 +956,8 @@ struct WorkspaceTui
         import std.algorithm.searching : endsWith;
 
         stopLive();
+        livePath = path;
+        livePathHasPayload = alreadyHasPayload;
         if (!liveTypes || alreadyHasPayload || !path.endsWith(".d"))
             return;
         string reason;
@@ -1327,10 +1335,62 @@ struct WorkspaceTui
     /// the entry point differ.
     package void openGrepPicker() @system
     {
-        openPicker(grep: true);
+        openPicker(PickerSource.grep);
     }
 
-    package void openPicker(bool grep = false) @system
+    /// Where an accepted dub configuration is recorded; set while the
+    /// choices picker is open for one (`LIV10`).
+    private PackageSlot dubPickSlot;
+
+    /**
+    `<leader>cc` — the dub configuration picker (`LIV10`): the focused
+    document's recipe configurations through the picker's choices source,
+    each previewed at its declaration. A document in no package, or a
+    recipe with no configurations, is a toast instead of an empty list.
+    */
+    package void openDubConfigPicker() @system
+    {
+        auto pick = dubConfigurationPick(viewer.vm.docPath, globalDub);
+        if (pick.hasError)
+        {
+            viewer.showToast(pick.error);
+            dirty = true;
+            return;
+        }
+        dubPickSlot = pick.value.slot;
+        openPicker(PickerSource.choices, pick.value.rows);
+    }
+
+    /// Records the accepted configuration and restarts the oracles that
+    /// describe the focused document with it.
+    private void applyDubConfiguration(string config) @system
+    {
+        const slot = dubPickSlot;
+        dubPickSlot = PackageSlot.init;
+        auto wrote = selectDubConfiguration(slot, config);
+        if (wrote.hasError)
+        {
+            viewer.showToast("dub configuration not saved: " ~ wrote.error);
+            return;
+        }
+        viewer.showToast("dub configuration: " ~ (config.length ? config : "default"));
+        restartLive();
+    }
+
+    /// Restarts the focused document's oracle and a diff's, so they describe
+    /// the build as it is now configured.
+    private void restartLive() @system
+    {
+        if (!livePath.length)
+            return;
+        const hadDiff = diffLive[0] !is null || diffLive[1] !is null;
+        startLive(livePath, livePathHasPayload);
+        if (hadDiff)
+            startDiffTypes();
+    }
+
+    package void openPicker(PickerSource source = PickerSource.files,
+        ChoiceFinder choices = ChoiceFinder.init) @system
     {
         if (picker.empty)
             picker = makeUnique!PickerHost();
@@ -1357,10 +1417,18 @@ struct WorkspaceTui
         // and a silent one.
         syncConfigDerived(); // the picker knobs exist only once it does
         const root = tree.root.length ? tree.root : ".";
-        if (grep)
-            picker.get.openGrep(root, tree.includeGlobs, tree.excludeGlobs);
-        else
+        final switch (source)
+        {
+        case PickerSource.files:
             picker.get.open(root, tree.includeGlobs, tree.excludeGlobs);
+            break;
+        case PickerSource.grep:
+            picker.get.openGrep(root, tree.includeGlobs, tree.excludeGlobs);
+            break;
+        case PickerSource.choices:
+            picker.get.openChoices(choices);
+            break;
+        }
         dirty = true;
     }
 
@@ -1487,7 +1555,11 @@ struct WorkspaceTui
                 case PickerAction.accepted:
                     if (pickerDoc !is null)
                         pickerDoc.close();
-                    openTarget(picker.get.acceptedTarget);
+                    // A choice picks a value; it opens nothing (`PKS11`).
+                    if (picker.get.source == PickerSource.choices)
+                        applyDubConfiguration(picker.get.acceptedChoice);
+                    else
+                        openTarget(picker.get.acceptedTarget);
                     break;
                 }
             }
@@ -1661,6 +1733,12 @@ struct WorkspaceTui
                 openGrepPicker();
                 return true;
             }
+            if (tree.dubConfigRequested) // `<leader>cc` with the tree focused
+            {
+                tree.dubConfigRequested = false;
+                openDubConfigPicker();
+                return true;
+            }
             if (tree.explorerToggleRequested) // `e` / `<leader>e`
             {
                 tree.explorerToggleRequested = false;
@@ -1716,6 +1794,11 @@ struct WorkspaceTui
         {
             viewer.grepRequested = false;
             openGrepPicker();
+        }
+        if (viewer.dubConfigRequested) // `<leader>cc` from the document pane
+        {
+            viewer.dubConfigRequested = false;
+            openDubConfigPicker();
         }
         if (viewer.explorerToggleRequested) // `e` / `<leader>e`
         {
@@ -4337,6 +4420,75 @@ unittest
     assert(w.picker.get.state.rowCount == 0,
         "and plain refuses the same query — the two modes disagree, which is "
         ~ "the whole of what a mode is");
+}
+
+@("workspace.leaderCcPicksTheDubConfiguration")
+@system
+unittest
+{
+    // `<leader>cc` end to end (`LIV10`): the focused document's recipe
+    // configurations as picker rows, and accepting one records it for that
+    // package in the project state.
+    import core.thread : Thread;
+    import std.file : exists, readText;
+    import std.path : buildPath;
+
+    import picker_grep : PickerSource;
+
+    WorkspaceTui w;
+    auto tmp = fixtureWorkspace(w, "hue-ws-dub-config-test");
+    scope (exit) if (!w.picker.empty) w.picker.get.shutdown();
+    tmp.writeFileAt(".git/HEAD", "ref: refs/heads/main\n");
+
+    static void press(ref WorkspaceTui w, string keys) @system
+    {
+        foreach (ch; keys)
+            assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ch))));
+    }
+
+    static void settle(ref WorkspaceTui w) @system
+    {
+        foreach (_; 0 .. 100_000)
+        {
+            cast(void) w.pollAll();
+            if (!w.picker.get.busy)
+                return;
+            Thread.yield();
+        }
+    }
+
+    // A package without configurations has nothing to pick: a toast, and
+    // no empty picker.
+    tmp.writeFileAt("dub.sdl", "name \"p\"\n");
+    press(w, " cc");
+    assert(w.picker.empty || !w.picker.get.state.active);
+    assert(w.viewer.toastVisible, "the reason is shown");
+
+    tmp.writeFileAt("dub.sdl", "name \"p\"\nconfiguration \"library\" {\n}\n"
+        ~ "configuration \"gpu-effects\" {\n}\n");
+    press(w, " cc");
+    assert(!w.picker.empty && w.picker.get.state.active, "the picker opened");
+    assert(w.picker.get.source == PickerSource.choices);
+    w.pickerDoc.loadDelay = Duration.zero;
+    w.pickerDoc.liveOverlays = false;
+    settle(w);
+    assert(w.picker.get.state.rowCount == 3, "default and both configurations");
+
+    press(w, "gpu");
+    settle(w);
+    assert(w.picker.get.state.rowCount == 1);
+    // The preview follows the row to its declaration in the recipe.
+    assert(w.picker.get.selectedTarget.path == buildPath(tmp.dir, "dub.sdl"));
+    assert(w.picker.get.selectedTarget.line == 4);
+
+    assert(w.handle(Event(KeyEvent(key: Key.enter))));
+    assert(!w.picker.get.state.active, "accepting closes the picker");
+    const state = buildPath(tmp.dir, ".sparkles", "hue", "project.json");
+    assert(state.exists, "the choice is recorded");
+    assert(state.readText == "{\n  \"dubPackages\": {\n    \".\": {\n"
+        ~ "      \"config\": \"gpu-effects\"\n    }\n  }\n}\n", state.readText);
+    assert(w.viewer.vm.docPath == buildPath(tmp.dir, "alpha.d"),
+        "a choice opens nothing — the document stays");
 }
 
 @("workspace.pickerListScrollsSidewaysToRevealADeepPath")

@@ -33,7 +33,8 @@ import picker : PickerScheduler, PickerState;
 import sparkles.source_view.search : SearchPolicy;
 
 import picker_grep : GrepFinder, modeLabel, PickerSource, ScanStep;
-import picker_sources : collectFilesFinder, FilesFinder, PickerTarget;
+import picker_sources : ChoiceFinder, collectFilesFinder, FilesFinder,
+    PickerTarget;
 import sparkles.ui.components.scroll_view : ScrollArea, ScrollAreaAxis,
     scrollLayout;
 import sparkles.ui.state : CaptureState;
@@ -113,8 +114,14 @@ struct PickerHost
     is answered.
     */
     GrepFinder grep;
+    /// The host-built value list, live when `source == PickerSource.choices`
+    /// (`PKS11`). Ranked by the same scheduler as the files corpus.
+    ChoiceFinder choices;
     /// Which corpus the open picker is showing.
     PickerSource source;
+    /// Set with `acceptedTarget` when the accepted row is a choice: the value
+    /// it picks (`null` for a row that picks "none").
+    string acceptedChoice;
     /// Set by `handleKey` when it returns `PickerAction.accepted`.
     /// Where the accepted row goes (`PKC3`): a path when the source is
     /// file-backed, plus a line/column when the source has a position to
@@ -222,6 +229,21 @@ struct PickerHost
         const(string)[] excludeGlobs = null) @system
     {
         source = PickerSource.files;
+        startPool();
+        scheduler.cancel(); // running generations retire against the old corpus
+        finder = collectFilesFinder(root, includeGlobs, excludeGlobs);
+        state.viewRows = pickerVisibleRows; // paint 16, keep `pickerTopK`
+        state.open();
+        focus = ScopeFocus!Scope_(Scope_.pickerInput);
+        selectedIndex_ = size_t.max;
+        selectedPath_ = null;
+        refreshHighlights();
+        request();
+    }
+
+    // The scheduler's setup, shared by every source the fuzzy scheduler ranks.
+    private void startPool() @system
+    {
         initializeWorkspaces();
         if (!poolTried)
         {
@@ -235,15 +257,6 @@ struct PickerHost
                 scheduler.attach(pool);
         }
         scheduler.initialize();
-        scheduler.cancel(); // running generations retire against the old corpus
-        finder = collectFilesFinder(root, includeGlobs, excludeGlobs);
-        state.viewRows = pickerVisibleRows; // paint 16, keep `pickerTopK`
-        state.open();
-        focus = ScopeFocus!Scope_(Scope_.pickerInput);
-        selectedIndex_ = size_t.max;
-        selectedPath_ = null;
-        refreshHighlights();
-        request();
     }
 
     /**
@@ -268,6 +281,26 @@ struct PickerHost
         selectedIndex_ = size_t.max;
         selectedPath_ = null;
         rowRangeCounts[] = 0;
+        request();
+    }
+
+    /**
+    Open the **choices** source over `rows` (`PKS11`): a short list the host
+    built, ranked like the files corpus. The preview follows each row's
+    target, and accepting one sets `acceptedChoice`.
+    */
+    void openChoices(ChoiceFinder rows) @system
+    {
+        source = PickerSource.choices;
+        startPool();
+        scheduler.cancel();
+        choices = rows;
+        state.viewRows = pickerVisibleRows;
+        state.open();
+        focus = ScopeFocus!Scope_(Scope_.pickerInput);
+        selectedIndex_ = size_t.max;
+        selectedPath_ = null;
+        refreshHighlights();
         request();
     }
 
@@ -300,6 +333,7 @@ struct PickerHost
         final switch (source)
         {
         case PickerSource.files: return finder.snapshot();
+        case PickerSource.choices: return choices.snapshot();
         case PickerSource.grep: return CandidateSnapshot.init;
         }
     }
@@ -330,6 +364,7 @@ struct PickerHost
         final switch (source)
         {
         case PickerSource.files:
+        case PickerSource.choices:
             scheduler.poll(state);
             break;
         case PickerSource.grep:
@@ -360,6 +395,9 @@ struct PickerHost
             {
             case PickerSource.files:
                 selectedPath_ = finder.resolve(index).path;
+                break;
+            case PickerSource.choices:
+                selectedPath_ = choices.resolve(index).path;
                 break;
             case PickerSource.grep:
                 selectedPath_ = grep.resolve(index).path;
@@ -392,6 +430,7 @@ struct PickerHost
         final switch (source)
         {
         case PickerSource.files:
+        case PickerSource.choices:
             break;
         case PickerSource.grep:
             foreach (i, ranked; state.visible)
@@ -497,6 +536,7 @@ struct PickerHost
                 }
             }
             acceptedTarget = target;
+            acceptedChoice = source == PickerSource.choices ? choices.value(index) : null;
             close();
             return PickerAction.accepted;
         case Command.pickerScrollLeft:
@@ -727,8 +767,9 @@ private:
         final switch (source)
         {
         case PickerSource.files:
+        case PickerSource.choices:
             auto requested = scheduler.request(state.prompt.text,
-                finder.snapshot(), stepBudget);
+                snapshot(), stepBudget);
             if (requested.hasError)
             {
                 state.error = requested.error;
@@ -848,6 +889,7 @@ public:
         final switch (source)
         {
         case PickerSource.files: return PickerTarget.init;
+        case PickerSource.choices: return choices.resolve(state.selectedCorpusIndex);
         case PickerSource.grep: return grep.resolve(state.selectedCorpusIndex);
         }
     }
@@ -860,6 +902,7 @@ public:
         final switch (source)
         {
         case PickerSource.files: return null;
+        case PickerSource.choices: return null;
         case PickerSource.grep: return state.prompt.text;
         }
     }
@@ -871,6 +914,7 @@ private:
         final switch (source)
         {
         case PickerSource.files: return finder.resolve(index);
+        case PickerSource.choices: return choices.resolve(index);
         case PickerSource.grep: return grep.resolve(index);
         }
     }

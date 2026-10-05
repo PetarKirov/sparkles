@@ -38,7 +38,10 @@ import sparkles.input.frame : InputFrame, foldFrame;
 import sparkles.input.gesture : PointF;
 import keymap : Binding, bindingsAt, Chord, Command, commandFor, InputMode,
     KeyContext;
+import dub_config_picker : dubConfigurationPick;
+import picker_grep : PickerSource;
 import picker_host : OwnedPicker, PickerAction, PickerHost;
+import picker_sources : ChoiceFinder;
 import picker_preview : PickerDocPane;
 import picker_view : pickerGeometryFor, pickerOriginCol, pickerOriginRow,
     pickerPreviewRect;
@@ -145,7 +148,7 @@ import live_types : applyTip, LiveTypesSession;
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 import gui_state;
 import crt_config : applyCrtCapture, applyCrtConfig;
-import project_state : dubBuildFor, mutableCopy;
+import project_state : dubBuildFor, mutableCopy, PackageSlot, selectDubConfiguration;
 import settings : DubBuildSettings, HueConfig, PointerMode, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
@@ -852,12 +855,19 @@ int runGui(GuiArgs guiArgs) @system
         }
     }
 
+    // What the last `startLive` was asked for, so a changed dub build can
+    // restart the same oracle (`LIV10`).
+    string livePath;
+    bool livePathHasPayload;
+
     // `PRJ12`: triggered by the document open, never from the render path.
     void startLive(string path, bool alreadyHasPayload)
     {
         import std.algorithm.searching : endsWith;
 
         stopLive();
+        livePath = path;
+        livePathHasPayload = alreadyHasPayload;
         if (!liveTypes || alreadyHasPayload || !path.endsWith(".d"))
             return;
         string reason;
@@ -1118,7 +1128,8 @@ int runGui(GuiArgs guiArgs) @system
     }
 
 
-    void openFilePicker(bool grep = false)
+    void openFilePicker(PickerSource source = PickerSource.files,
+        ChoiceFinder choices = ChoiceFinder.init)
     {
         if (filePicker.empty)
             filePicker = makeUnique!PickerHost();
@@ -1134,16 +1145,24 @@ int runGui(GuiArgs guiArgs) @system
         filePickerDoc.syncTheme(vm.themeIdx);
         syncConfigDerived(); // the picker knobs exist only once it does
         const pickRoot = pn.tree.root.length ? pn.tree.root : ".";
-        if (grep)
-            filePicker.get.openGrep(pickRoot,
-                pn.tree.includeGlobs, pn.tree.excludeGlobs);
-        else
+        final switch (source)
+        {
+        case PickerSource.files:
             filePicker.get.open(pickRoot,
                 pn.tree.includeGlobs, pn.tree.excludeGlobs);
+            break;
+        case PickerSource.grep:
+            filePicker.get.openGrep(pickRoot,
+                pn.tree.includeGlobs, pn.tree.excludeGlobs);
+            break;
+        case PickerSource.choices:
+            filePicker.get.openChoices(choices);
+            break;
+        }
     }
 
     /// `<leader>/` — the same picker over the content-search corpus (`PKS2`).
-    void openGrepPicker() { openFilePicker(grep: true); }
+    void openGrepPicker() { openFilePicker(PickerSource.grep); }
 
     scope (exit) if (!filePicker.empty) filePicker.get.shutdown();
     scope (exit) if (filePickerDoc !is null) filePickerDoc.shutdown();
@@ -1461,6 +1480,45 @@ int runGui(GuiArgs guiArgs) @system
         flash.copyModeMsg = msg;
         flash.toastSuccess = success;
         flash.toast = Timeline.triggered(toastCfg);
+    }
+
+    // Where an accepted dub configuration is recorded; set while the choices
+    // picker is open for one (`LIV10`).
+    PackageSlot dubPickSlot;
+
+    // `<leader>cc` — the dub configuration picker (`LIV10`); see the TUI
+    // host's `openDubConfigPicker`, which this mirrors.
+    void openDubConfigPicker()
+    {
+        auto pick = dubConfigurationPick(vm.docPath, globalDub);
+        if (pick.hasError)
+        {
+            showToast(pick.error);
+            return;
+        }
+        dubPickSlot = pick.value.slot;
+        openFilePicker(PickerSource.choices, pick.value.rows);
+    }
+
+    // Records the accepted configuration and restarts the oracles that
+    // describe the focused document with it.
+    void applyDubConfiguration(string config)
+    {
+        const slot = dubPickSlot;
+        dubPickSlot = PackageSlot.init;
+        auto wrote = selectDubConfiguration(slot, config);
+        if (wrote.hasError)
+        {
+            showToast("dub configuration not saved: " ~ wrote.error);
+            return;
+        }
+        showToast("dub configuration: " ~ (config.length ? config : "default"), success: true);
+        if (!livePath.length)
+            return;
+        const hadDiff = diffLive[0] !is null || diffLive[1] !is null;
+        startLive(livePath, livePathHasPayload);
+        if (hadDiff)
+            startDiffTypes();
     }
 
     // Copy the current selection: a text range → `vm.source[min..max]`
@@ -2803,8 +2861,12 @@ int runGui(GuiArgs guiArgs) @system
                 break;
             case PickerAction.accepted:
                 filePickerDoc.close();
-                cast(void) openPath(filePicker.get.acceptedPath,
-                    baseName(filePicker.get.acceptedPath), "");
+                // A choice picks a value; it opens nothing (`PKS11`).
+                if (filePicker.get.source == PickerSource.choices)
+                    applyDubConfiguration(filePicker.get.acceptedChoice);
+                else
+                    cast(void) openPath(filePicker.get.acceptedPath,
+                        baseName(filePicker.get.acceptedPath), "");
                 break;
             }
         }
@@ -3433,6 +3495,9 @@ int runGui(GuiArgs guiArgs) @system
                     break;
                 case Command.pickerGrep:
                     openGrepPicker();
+                    break;
+                case Command.pickDubConfiguration:
+                    openDubConfigPicker();
                     break;
                 case Command.pickerCycleMode:
                 case Command.pickerScrollLeft:

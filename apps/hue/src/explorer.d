@@ -239,6 +239,8 @@ struct ExplorerTui
     bool pickerRequested;
     /// ditto — `<leader>/`, the content-search picker (`PKS2`).
     bool grepRequested;
+    /// ditto — `<leader>cc`, the dub configuration picker (`LIV10`).
+    bool dubConfigRequested;
     /// ditto — the `toggleExplorer` arm (`e`, `<leader>e`): the pane split
     /// is the workspace's, so the pane reports the intent.
     bool explorerToggleRequested;
@@ -945,6 +947,9 @@ struct ExplorerTui
             // error here until someone decides whether the tree answers it.
             case Command.pickerGrep:
                 grepRequested = true;
+                break;
+            case Command.pickDubConfiguration:
+                dubConfigRequested = true;
                 break;
 
             case Command.pickerCycleMode:

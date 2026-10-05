@@ -266,6 +266,7 @@ enum Command : ubyte
     @means(UniversalCommand.guide) lanternAll, /// `?` / `<leader>?` — list every binding live here
     pickerFiles,           /// `<leader>ff` — the fuzzy file picker
     pickerGrep,            /// `<leader>/` — the content-search picker (`PKS2`)
+    pickDubConfiguration,  /// `<leader>cc` — the dub configuration live types use (`LIV10`)
     pickerCycleMode,       /// `Ctrl-R` in grep — plain / regex / fuzzy (`PKL5`)
     pickerScrollLeft, pickerScrollRight, /// `←`/`→` — the list sideways (`PKL8`)
     @means(UniversalCommand.close) quit, /// `q` — leave the viewer
@@ -713,6 +714,12 @@ immutable Binding[] hueBindings = [
     // source's key and it did not. Grep claims its own as it lands.
     bind(Scope_.shared_, chord(leader), chord('/'),
         Command.pickerGrep, "grep"),
+
+    // `LMP11`: the code branch. `cc` picks the dub configuration live types
+    // describe the focused document's package with (`LIV10`).
+    group(Scope_.shared_, chord(leader), chord('c'), "code"),
+    bind(Scope_.shared_, chord(leader), chord('c'), chord('c'),
+        Command.pickDubConfiguration, "dub configuration"),
 
     group(Scope_.shared_, chord(leader), chord('v'), "view"),
     bind(Scope_.shared_, chord(leader), chord('v'), chord('r'),
