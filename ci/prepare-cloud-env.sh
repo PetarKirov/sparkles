@@ -431,7 +431,7 @@ esac
 
 ci_group 'Verification'
 dub --version
-ldc2 --version | head -n1
+ldc2 --version
 ci_endgroup
 
 printf '\nReady (devShell .#%s, wrappers in %s). Try: dub test :base\n' \
