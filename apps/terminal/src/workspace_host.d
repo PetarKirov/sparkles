@@ -131,6 +131,9 @@ struct WorkspaceHost
     bool phonePortrait;
     /// ditto
     bool touch;
+    /// `viewer.lineNumbers` and `viewer.codeLineNumbers`: a new viewer pane
+    /// starts with them; `l` and `c` still toggle them in the pane.
+    bool viewerLineNumbers, viewerCodeLineNumbers;
     /// The space between a pane's text and its edges, in pixels: across, and
     /// at the top (`TSS12`). The embedder sets them in dp.
     int padX = 8, padTop = 4;
@@ -407,6 +410,8 @@ struct WorkspaceHost
         }
         auto p = new DocViewPane;
         cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
+        p.vm.lineNumbers = viewerLineNumbers;
+        p.vm.codeLineNumbers = viewerCodeLineNumbers;
         viewers[id] = p;
         dirty = true;
         return true;

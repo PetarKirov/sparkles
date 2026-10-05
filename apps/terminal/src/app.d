@@ -118,6 +118,8 @@ int launchDesktop(ref CommandNode!TerminalCli node)
     app.host.notificationsConfig = lc.effective.notifications;
     app.host.tabsOpener = lc.effective.ui.tabsOpener;
     app.host.paneChrome = lc.effective.ui.paneChrome;
+    app.host.viewerLineNumbers = lc.effective.viewer.lineNumbers;
+    app.host.viewerCodeLineNumbers = lc.effective.viewer.codeLineNumbers;
     app.host.linkTap = lc.effective.links.tap;
     app.host.linkLongPress = lc.effective.links.longPress;
     app.host.linkSchemes = lc.effective.links.schemes.dup;
