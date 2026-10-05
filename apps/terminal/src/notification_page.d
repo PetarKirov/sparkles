@@ -32,7 +32,7 @@ import sparkles.ui.geometry : Insets, Rect, SizeSpec;
 import sparkles.ui.style : Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
-import chrome : button, column, label, row;
+import chrome : button, column, label, row, uiLabel;
 import page_kit : bodyRowsFor, chip, finishPage, firstOwnHit, header, Page, PageServices, prose;
 import settings : ButtonLabels, NotificationGroupRule, NotificationsConfig;
 import surfaces : SurfaceContext;
@@ -286,7 +286,7 @@ final class NotificationPage : Page
         if (narrow)
             top ~= [chipRow(b, chips[0 .. 3]), chipRow(b, chips[3 .. $])];
         else
-            top ~= chipRow(b, label(b, "Group", Slot.muted) ~ chips);
+            top ~= chipRow(b, uiLabel(b, "Group", Slot.muted) ~ chips);
         if (grouping == Grouping.rules)
             top ~= rulesBand(b);
 
@@ -298,7 +298,7 @@ final class NotificationPage : Page
             uint[] lines;
             if (grouping != Grouping.time)
                 lines ~= b.add(Widget(kind: WidgetKind.row, gap: 1, width: SizeSpec.grow(),
-                    children: [label(b, g.title, Slot.textPrimary, bold: true),
+                    children: [uiLabel(b, g.title, Slot.textPrimary, bold: true),
                         b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow())),
                         label(b, countText(g.entries.length), Slot.muted)]));
             foreach (i; g.entries)
@@ -336,7 +336,7 @@ final class NotificationPage : Page
     /// The rules in effect, first match first (N2's band under the chips).
     private uint rulesBand(ref Builder b) @safe
     {
-        uint[] lines = [label(b, "Rules, first match wins · notifications.groups in the config",
+        uint[] lines = [uiLabel(b, "Rules, first match wins · notifications.groups in the config",
             Slot.muted)];
         foreach (ref r; context.rules)
         {
@@ -350,7 +350,7 @@ final class NotificationPage : Page
             lines ~= label(b, s ~ "→ " ~ (r.group.length ? r.group : "Other"), Slot.code);
         }
         if (!context.rules.length)
-            lines ~= label(b, "No rules yet: every entry is in Other.", Slot.textSecondary);
+            lines ~= uiLabel(b, "No rules yet: every entry is in Other.", Slot.textSecondary);
         return b.add(Widget(kind: WidgetKind.panel, children: [column(b, lines)],
             width: SizeSpec.grow(), padding: Insets(0, 1, 0, 1), slot: Slot.surfaceSunken,
             paintBackground: true));

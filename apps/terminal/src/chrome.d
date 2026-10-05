@@ -15,7 +15,8 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : cellsOf, Constraints, Insets, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : HoverTarget, hoverTargets;
-import sparkles.ui.style : BorderStyle, Decoration, Palette, Slot, TextStyle;
+import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle,
+    TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import settings : ButtonLabels;
@@ -177,39 +178,34 @@ touch target (`TOK7`): the embedder asks for as many rows as 48 dp takes.
 uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t hitId,
     bool primary = false, int minRows = 1) @safe
 {
-    string caption;
-    final switch (mode)
-    {
-        case ButtonLabels.iconText:
-            caption = icon ~ " " ~ label;
-            break;
-        case ButtonLabels.text:
-            caption = label;
-            break;
-        case ButtonLabels.icon:
-            caption = icon;
-            break;
-    }
-    const text = b.add(Widget(kind: WidgetKind.text, text: caption,
-        slot: primary ? Slot.accentPrimary : Slot.textPrimary,
-        textStyle: TextStyle(bold: primary)));
-    // A row too narrow for everything cuts its other content, never a
-    // button's caption: an action must say what it does.
-    SizeSpec width;
-    width.min = cast(int) cellsOf(caption) + 2;
+    // The icon is a symbol, drawn by the cell font, which carries every icon;
+    // the caption names an action, in the interface face (`GLY10`).
+    const slot = primary ? Slot.accentPrimary : Slot.textPrimary;
+    uint[] parts;
+    if (mode != ButtonLabels.text && icon.length)
+        parts ~= b.add(Widget(kind: WidgetKind.text, text: icon, slot: slot,
+            textStyle: TextStyle(bold: primary)));
+    if (mode != ButtonLabels.icon && label.length)
+        parts ~= b.add(Widget(kind: WidgetKind.text, text: label, slot: slot,
+            textStyle: TextStyle(bold: primary, fontRole: FontRole.ui, typeStep: TypeStep.label)));
+    const content = parts.length == 1 ? parts[0]
+        : b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1, alignY: Alignment.center));
     return b.add(Widget(
         kind: WidgetKind.panel,
-        children: [text],
+        children: [content],
         padding: Insets(0, 1, 0, 1),
-        width: width,
-        // A touch target at least `minRows` tall (`TOK7`: 48 dp on a phone).
+        // A row too narrow for everything cuts its other content, never a
+        // button's caption: an action must say what it does.
+        width: SizeSpec.rigid_,
+        // A touch target at least `minRows` tall (`TOK7`: 48 dp on a phone),
+        // the button drawn 36 dp tall in it (`TOK11`).
         height: minRows > 1 ? SizeSpec.fixed(minRows) : SizeSpec.fit_,
         alignX: Alignment.center,
         alignY: Alignment.center,
         hitId: hitId,
         slot: Slot.surfaceRaised,
         paintBackground: true,
-        decoration: Decoration(borderRadius: 6),
+        decoration: Decoration(borderRadius: 8, drawHeight: 36),
     ));
 }
 
@@ -218,6 +214,16 @@ uint label(ref Builder b, const(char)[] text, Slot slot = Slot.textPrimary,
     bool bold = false) @safe
     => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot,
         textStyle: TextStyle(bold: bold)));
+
+/**
+`text` in the interface face (design-system `GLY10`): a name, a description, a
+sentence — what is read as words. A value, a key chord or a log line stays a
+$(LREF label), in the cell font, where it is compared character by character.
+*/
+uint uiLabel(ref Builder b, const(char)[] text, Slot slot = Slot.textPrimary,
+    bool bold = false, TypeStep step = TypeStep.body) @safe
+    => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot,
+        textStyle: TextStyle(bold: bold, fontRole: FontRole.ui, typeStep: step)));
 
 /// A row of `children`, `gap` cells apart.
 uint row(ref Builder b, uint[] children, int gap = 1) @safe

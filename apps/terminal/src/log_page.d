@@ -31,7 +31,7 @@ import sparkles.ui.layout : Frame;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
-import chrome : button, column, label, row;
+import chrome : button, column, label, row, uiLabel;
 import settings : ButtonLabels;
 import page_kit : bodyRowsFor, chip, finishPage, firstOwnHit, header, Page, PageServices,
     searchField;
@@ -534,7 +534,7 @@ final class LogPage : Page
             foreach (k; first .. first + count)
                 items ~= entryRow(bb, lines[shown[k]], !narrow);
             if (!shown.length)
-                items ~= label(bb, lines.length ? "No entry matches." : "The log is empty.",
+                items ~= uiLabel(bb, lines.length ? "No entry matches." : "The log is empty.",
                     Slot.muted);
             return bb.add(Widget(kind: WidgetKind.column, children: items,
                 width: SizeSpec.grow()));

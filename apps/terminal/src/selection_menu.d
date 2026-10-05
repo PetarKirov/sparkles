@@ -1714,7 +1714,7 @@ version (unittest)
         hitBase + MenuAction.run, hitBase + MenuAction.more]);
     assert(!m.activate(hitBase + MenuAction.more) && m.listing, "More opens its list");
     const more = m.placeIn(ctx);
-    assert(shows(more, "⧉ Copy") && shows(more, "▣ Select all") && !shows(more, "↗ Share"),
+    assert(shows(more, "Copy") && shows(more, "Select all") && !shows(more, "Share"),
         "the items swiped out of view");
 
     // An action runs and closes the menu.

@@ -22,7 +22,7 @@ module page_kit;
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
-import sparkles.ui.style : Decoration, Slot, TextStyle;
+import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
@@ -239,7 +239,7 @@ uint header(ref Builder b, string title, in SurfaceContext ctx, uint[] actions =
     const back = button(b, "←", "Back", ButtonLabels.icon, PageHit.back,
         minRows: ctx.targetRows);
     const name = b.add(Widget(kind: WidgetKind.text, text: title, slot: Slot.textPrimary,
-        textStyle: TextStyle(bold: true)));
+        textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.title)));
     const spacer = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
     return b.add(Widget(
         kind: WidgetKind.row,
@@ -255,14 +255,17 @@ uint header(ref Builder b, string title, in SurfaceContext ctx, uint[] actions =
 
 /**
 A toggle chip: `✓ label` on, `○ label` off — the mark, not the colour alone,
-says which (`ACC3`). `hitId` makes it a target; `rows` its height (`TOK7`).
+says which (`ACC3`). `hitId` makes it a target; `rows` its height (`TOK7`),
+while the chip is drawn 32 dp tall in it (`TOK11`). The label is a name, in the
+interface face.
 */
 uint chip(ref Builder b, string label, bool on, size_t hitId, int rows = 1) @safe
 {
     // On: the selection's fill under primary text — accent-coloured text on
     // a grey mix read poorly on the tablet.
     const text = b.add(Widget(kind: WidgetKind.text, text: (on ? "✓ " : "○ ") ~ label,
-        slot: Slot.textPrimary, textStyle: TextStyle(bold: on)));
+        slot: Slot.textPrimary,
+        textStyle: TextStyle(bold: on, fontRole: FontRole.ui, typeStep: TypeStep.label)));
     return b.add(Widget(
         kind: WidgetKind.panel,
         children: [text],
@@ -272,7 +275,7 @@ uint chip(ref Builder b, string label, bool on, size_t hitId, int rows = 1) @saf
         hitId: hitId,
         slot: on ? Slot.selection : Slot.surfaceRaised,
         paintBackground: true,
-        decoration: Decoration(borderRadius: 8),
+        decoration: Decoration(borderRadius: 16, drawHeight: 32),
     ));
 }
 
@@ -285,8 +288,12 @@ uint searchField(ref Builder b, string query, bool focused, string placeholder,
 {
     const shown = query.length ? "⌕ " ~ query ~ (focused ? "▏" : "")
         : focused ? "⌕ ▏" : "⌕ " ~ placeholder;
+    // The placeholder is a sentence; what the user types stays in the cell
+    // font, as any typed value does.
+    const typed = query.length || focused;
     const text = b.add(Widget(kind: WidgetKind.text, text: shown,
-        slot: query.length || focused ? Slot.textPrimary : Slot.muted));
+        slot: typed ? Slot.textPrimary : Slot.muted,
+        textStyle: typed ? TextStyle.init : TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body)));
     return b.add(Widget(
         kind: WidgetKind.panel,
         children: [text],
@@ -301,11 +308,21 @@ uint searchField(ref Builder b, string query, bool focused, string placeholder,
     ));
 }
 
-/// A text run that wraps to the room it is given.
+/**
+A sentence or a paragraph, in the interface face (design-system `GLY10`),
+wrapping to the room it is given. A value, a path or a log line is a
+$(LREF codeText) instead.
+*/
 uint prose(ref Builder b, const(char)[] text, Slot slot = Slot.textPrimary,
     bool bold = false) @safe
     => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot,
-        textStyle: TextStyle(bold: bold), wrap: TextWrap.greedy));
+        textStyle: TextStyle(bold: bold, fontRole: FontRole.ui, typeStep: TypeStep.body),
+        wrap: TextWrap.greedy));
+
+/// A value, a path or a log line, in the cell font, wrapping to the room it
+/// is given.
+uint codeText(ref Builder b, const(char)[] text, Slot slot = Slot.code) @safe
+    => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot, wrap: TextWrap.greedy));
 
 /// A column of `children` (the page: header, controls, body, footer) filling
 /// the area.

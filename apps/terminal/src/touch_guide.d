@@ -18,9 +18,9 @@ module touch_guide;
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : Slot;
-import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
-import chrome : band, label, row;
+import chrome : band, label, row, uiLabel;
 import keymap : Binding, Chord, KeyCommand, TermCommand, TermContext;
 import surfaces : Placement, Scrollable, Surface, SurfaceContext;
 
@@ -91,14 +91,15 @@ final class TouchGuide : Surface, Scrollable
             lines ~= windowed(b, levelRows(b, sctx), room, per);
             if (showRecent)
             {
-                uint[] chips = [label(b, "Recent", Slot.muted)];
+                uint[] chips = [uiLabel(b, "Recent", Slot.muted)];
                 foreach (i, c; recent)
-                    chips ~= chip(b, sctx, iconOf(c.cmd) ~ " " ~ descOf(c), recentHit + i);
-                lines ~= row(b, chips);
+                    chips ~= chip(b, sctx, iconOf(c.cmd), descOf(c), recentHit + i);
+                lines ~= b.add(Widget(kind: WidgetKind.row, children: chips, gap: 1,
+                    alignY: Alignment.center));
             }
         }
         lines ~= b.add(Widget(kind: WidgetKind.panel,
-            children: [label(b, query.length ? "⌕ " ~ query.idup : "⌕ Search all commands",
+            children: [uiLabel(b, query.length ? "⌕ " ~ query.idup : "⌕ Search all commands",
                 query.length ? Slot.textPrimary : Slot.muted)],
             width: SizeSpec.grow(), slot: Slot.surfaceSunken, paintBackground: true,
             hitId: searchHit));
@@ -148,7 +149,7 @@ final class TouchGuide : Surface, Scrollable
     }
 
     private static uint mark(ref Builder b, string text, size_t hit) @safe
-        => b.add(Widget(kind: WidgetKind.row, children: [label(b, text, Slot.muted)],
+        => b.add(Widget(kind: WidgetKind.row, children: [uiLabel(b, text, Slot.muted)],
             width: SizeSpec.grow(), hitId: hit));
 
     bool activate(size_t id) @system
@@ -281,15 +282,16 @@ final class TouchGuide : Surface, Scrollable
 
     private uint crumbs(ref Builder b, in SurfaceContext sctx) @safe
     {
-        uint[] parts = [chip(b, sctx, "←", backHit)];
+        uint[] parts = [chip(b, sctx, "←", null, backHit)];
         foreach (i, c; path)
         {
             if (i)
                 parts ~= label(b, "›", Slot.muted);
-            string name = i == 0 ? "␣ leader" : groupName(i);
-            parts ~= chip(b, sctx, name, crumbHit + i, current: i + 1 == path.length);
+            parts ~= chip(b, sctx, i == 0 ? "␣" : null, i == 0 ? "leader" : groupName(i),
+                crumbHit + i, current: i + 1 == path.length);
         }
-        return row(b, parts);
+        return b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
+            alignY: Alignment.center));
     }
 
     private uint[] levelRows(ref Builder b, in SurfaceContext sctx) @safe
@@ -310,7 +312,7 @@ final class TouchGuide : Surface, Scrollable
             shown ~= r;
         }
         if (!lines.length)
-            lines ~= label(b, "Nothing here.", Slot.muted);
+            lines ~= uiLabel(b, "Nothing here.", Slot.muted);
         return lines;
     }
 
@@ -353,7 +355,7 @@ final class TouchGuide : Surface, Scrollable
             found ~= KeyCommand(r.cmd, r.arg);
         }
         if (!lines.length)
-            lines ~= label(b, "No command matches.", Slot.muted);
+            lines ~= uiLabel(b, "No command matches.", Slot.muted);
         return lines;
     }
 
@@ -378,7 +380,7 @@ final class TouchGuide : Surface, Scrollable
         if (key.length)
             parts ~= label(b, key, Slot.accentPrimary, bold: true);
         parts ~= label(b, icon, Slot.muted);
-        parts ~= label(b, name, Slot.textPrimary);
+        parts ~= uiLabel(b, name, Slot.textPrimary);
         if (where.length)
             parts ~= label(b, where, Slot.muted);
         return b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
@@ -387,19 +389,34 @@ final class TouchGuide : Surface, Scrollable
             hitId: hit));
     }
 
-    private uint chip(ref Builder b, in SurfaceContext sctx, string text, size_t hit,
-        bool current = false) @safe
+    // A chip: `icon` in the cell font, which carries every icon, and `text` in
+    // the interface face; either may be empty.
+    private uint chip(ref Builder b, in SurfaceContext sctx, string icon, string text,
+        size_t hit, bool current = false) @safe
     {
         import sparkles.ui.geometry : Insets;
         import sparkles.ui.style : BorderStyle, Decoration;
 
         return b.add(Widget(kind: WidgetKind.panel,
-            children: [label(b, text, current ? Slot.accentPrimary : Slot.textPrimary,
-                bold: current)],
+            children: [chipContent(b, icon, text, current)],
             padding: Insets(0, 1, 0, 1),
             height: sctx.targetRows > 1 ? SizeSpec.fixed(sctx.targetRows) : SizeSpec.fit_,
             hitId: hit, slot: Slot.surfaceRaised, paintBackground: true,
-            decoration: Decoration(borderRadius: 12)));
+            alignY: Alignment.center,
+            decoration: Decoration(borderRadius: 16, drawHeight: 32)));
+    }
+
+    private static uint chipContent(ref Builder b, string icon, string text, bool current) @safe
+    {
+        const slot = current ? Slot.accentPrimary : Slot.textPrimary;
+        uint[] parts;
+        if (icon.length)
+            parts ~= label(b, icon, slot, bold: current);
+        if (text.length)
+            parts ~= uiLabel(b, text, slot, bold: current);
+        return parts.length == 1 ? parts[0]
+            : b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
+                alignY: Alignment.center));
     }
 }
 
@@ -519,7 +536,8 @@ version (unittest)
     // Tap `split right`: it runs and the guide closes.
     assert(g.activate(hitOf(g, "split right")));
     assert(ran.length == 1 && ran[0].cmd == TermCommand.splitRight);
-    assert(texts(g.build(SurfaceContext.init, 60)).canFind("◫ split right"),
+    const recentShown = texts(g.build(SurfaceContext.init, 60));
+    assert(recentShown.canFind("◫") && recentShown.canFind("split right"),
         "a Recent chip, described");
 
     // Back pops a level; at the root it declines (the overlay row closes).

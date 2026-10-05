@@ -16,11 +16,11 @@ module about_page;
 
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
-import sparkles.ui.style : Decoration, Slot, TextStyle;
+import sparkles.ui.style : Decoration, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
-import chrome : button, column, label, row;
-import page_kit : bodyRowsFor, finishPage, firstOwnHit, header, Page, PageServices, prose;
+import chrome : button, column, label, row, uiLabel;
+import page_kit : bodyRowsFor, finishPage, firstOwnHit, header, Page, PageServices, codeText, prose;
 import surfaces : SurfaceContext;
 
 /// Where the about page's links lead.
@@ -218,10 +218,11 @@ final class AboutPage : Page
         const mark = b.add(Widget(kind: WidgetKind.panel,
             children: [label(b, ">_", Slot.accentPrimary, bold: true)],
             padding: Insets(0, 1, 0, 1), alignX: Alignment.center, alignY: Alignment.center,
-            height: SizeSpec.fixed(ctx.targetRows > 2 ? ctx.targetRows : 2),
+            width: SizeSpec.rigid_, height: SizeSpec.fixed(ctx.targetRows > 2 ? ctx.targetRows : 2),
             slot: Slot.surfaceRaised, paintBackground: true,
             decoration: Decoration(borderRadius: 10)));
-        const who = column(b, [label(b, facts.name, Slot.textPrimary, bold: true),
+        const who = column(b, [uiLabel(b, facts.name, Slot.textPrimary, bold: true,
+                step: TypeStep.title),
             prose(b, facts.summary, Slot.muted)]);
         items ~= row(b, [mark, who], 2);
         items ~= blank(b);
@@ -236,17 +237,18 @@ final class AboutPage : Page
         items ~= blank(b);
 
         // The facts, as a two-column list (`TPG1`).
-        items ~= label(b, "Build", Slot.textPrimary, bold: true);
-        size_t keyWidth;
+        items ~= uiLabel(b, "Build", Slot.textPrimary, bold: true);
+        int keyWidth;
         foreach (kv; facts.rows)
-            if (kv[0].length > keyWidth)
-                keyWidth = kv[0].length;
+            if (cast(int) kv[0].length > keyWidth)
+                keyWidth = cast(int) kv[0].length;
         foreach (kv; facts.rows)
         {
-            string k = kv[0];
-            while (k.length < keyWidth + 2)
-                k ~= ' ';
-            items ~= row(b, [label(b, k, Slot.muted), prose(b, kv[1], Slot.code)], 0);
+            // The names in the interface face, in a column of whole cells so
+            // the values line up.
+            auto key = b.nodes[uiLabel(b, kv[0], Slot.muted)];
+            key.width = SizeSpec.fixed(keyWidth + 2);
+            items ~= row(b, [b.add(key), codeText(b, kv[1])], 0);
         }
         items ~= blank(b);
         items ~= prose(b, "Credits list every component the terminal ships and how it uses "
@@ -360,7 +362,7 @@ final class AboutPage : Page
     foreach (ref n; l.tree.nodes)
     {
         sawVersion |= n.text == "0.1.0";
-        sawSource |= n.text == "⌥ Source";
+        sawSource |= n.text == "Source";
     }
     assert(sawVersion && sawSource);
     size_t hits;
