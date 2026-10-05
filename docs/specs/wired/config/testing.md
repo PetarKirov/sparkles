@@ -703,10 +703,28 @@ copy. Compile-reject recursive/custom-ownership shapes. This fixture deliberatel
 does not establish composition-aware descent, branch metadata, logical charges,
 owned-input transfer without cloning, or operational rollback.
 
-Q6 remains open for production projection/input and original-site enum schema
-admission. Owner acceptance of the composition contract and the full WCFG38–51
-gate are unchanged. Probe sources are throwaway and removed after recording
-these observations; no resolver conformance is inferred from their success.
+Q6 remains open for production projection/input and canonical key-domain admission.
+Owner acceptance of the composition contract and the full WCFG38–51 gate are
+unchanged. Probe sources are throwaway and removed after recording these
+observations; no resolver conformance is inferred from their success.
+
+### Original-site enum admission repair
+
+The native regression `wired.json.schemaWalk.enumAdmissionAtOriginalSite`
+failed compilation before the repair for `fastPath = 1, fast_path = 2` under
+the valid original name policy. Enum label derivation is now shared by the schema
+and native name table, with only the resolved case style evaluated. Name
+representation validates unique member labels; value representation retains
+labels as metadata without treating their collisions as wire ambiguity.
+
+The two codec regressions assert exact original-name and numeric-key decoding
+and encoding, compile-time rejection of selected snake-case/name-label
+collisions, field overrides of a colliding enum type policy, and equivalent
+numeric aliases. Both DMD and LDC passed all 245 wired tests. A separate checked
+runtime driver decoded the original keys to 7/9 and retained rejection of the
+selected snake-case collision under both compilers, with deprecations rejected.
+This repairs native policy admission, not collection capture/composition,
+canonical class admission, or the full WCFG41 gate.
 
 ### Composition and inspection contract review
 

@@ -132,9 +132,11 @@ preflight, generated full/sparse presence, nested independent capture/copy, and
 typed null/non-null-empty preservation passed bounded checked-build probes under
 DMD and LDC. The native key parser is now package-visible; no collection resolver
 is implemented. [The recorded fixtures](./testing.md#c2-original-site-and-generated-presence-readiness)
-also expose native enum schema validation against unused case styles. Q6 remains
-open for that schema-site admission mismatch and the production projection/input
-implementation; owner contract acceptance and the full C2 gate remain pending.
+exposed native enum validation against unused case styles. That native defect is
+repaired: schema reification uses the resolved case/representation, and the codec
+regressions cover original spellings, selected collisions, field overrides, and
+numeric aliases. Q6 remains open for production projection/input and canonical
+key-domain admission; owner acceptance and the full C2 gate remain pending.
 
 ## C3 — Shared inspection and links
 

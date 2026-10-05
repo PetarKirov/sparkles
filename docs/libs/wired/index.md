@@ -296,7 +296,15 @@ Ternary      null                         round-trips=true
 By default an enum member maps to its source name. Annotate it with `@WireName` to
 decouple the JSON spelling from the D identifier — useful for kebab-case or
 otherwise non-identifier wire names. (For a whole-enum recasing rule, reach for
-`@WireCase` instead.) Both directions honour the override:
+`@WireCase` instead.)
+
+Schema admission checks the resolved original field/type/key/value policy, not
+unused case styles. For `Repr.name`, resolved member names must be unique,
+including alias declarations. For `Repr.value`, member labels are schema metadata
+and do not constrain the underlying wire values. A field-targeted case override
+takes precedence over its enum type's case policy.
+
+Both directions honour the override:
 
 ```d
 #!/usr/bin/env dub

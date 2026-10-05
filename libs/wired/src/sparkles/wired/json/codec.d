@@ -1775,6 +1775,75 @@ version (unittest)
     assert(fromJSON!Shape(jsonText(value)).value == value);
 }
 
+/// Only the resolved enum name policy can reject a spelling collision.
+@("wired.json.schemaWalk.enumAdmissionAtOriginalSite")
+@safe unittest
+{
+    enum Key { fastPath = 1, fast_path = 2 }
+    static struct Original { int[Key] entries; }
+    static struct Colliding
+    {
+        @WireCase!Json(CaseStyle.snakeCase, WireTarget.key)
+        int[Key] entries;
+    }
+    static struct Numeric
+    {
+        @WireCase!Json(CaseStyle.snakeCase, WireTarget.key)
+        @WireRepr!Json(Repr.value, WireTarget.key)
+        int[Key] entries;
+    }
+    static assert(__traits(compiles, WireWalk!(Json, Original).schema));
+    static assert(!__traits(compiles, WireWalk!(Json, Colliding).schema));
+    static assert(__traits(compiles, WireWalk!(Json, Numeric).schema));
+
+    auto original = fromJSON!Original(`{"entries":{"fastPath":7,"fast_path":9}}`);
+    assert(original.hasValue);
+    assert(original.value.entries[Key.fastPath] == 7);
+    assert(original.value.entries[Key.fast_path] == 9);
+    assert(jsonText(original.value) == `{"entries":{"fastPath":7,"fast_path":9}}`);
+    auto numeric = fromJSON!Numeric(`{"entries":{"1":11,"2":13}}`);
+    assert(numeric.hasValue);
+    assert(numeric.value.entries[Key.fastPath] == 11);
+    assert(numeric.value.entries[Key.fast_path] == 13);
+    assert(jsonText(numeric.value) == `{"entries":{"1":11,"2":13}}`);
+}
+
+/// Field-site overrides and numeric enum aliases retain their original domain.
+@("wired.json.schemaWalk.enumOverrideAndAliases")
+@safe unittest
+{
+    @WireCase!Json(CaseStyle.snakeCase)
+    enum Key { fastPath = 1, fast_path = 2 }
+    static struct Override
+    {
+        @WireCase!Json(CaseStyle.original, WireTarget.key)
+        int[Key] entries;
+    }
+    auto overridden = fromJSON!Override(`{"entries":{"fastPath":3,"fast_path":5}}`);
+    assert(overridden.hasValue);
+    assert(overridden.value.entries[Key.fastPath] == 3);
+    assert(overridden.value.entries[Key.fast_path] == 5);
+
+    enum Aliased
+    {
+        @WireName!Json("same") first = 1,
+        @WireName!Json("same") alsoFirst = 1,
+        second = 2
+    }
+    static struct Named { int[Aliased] entries; }
+    static struct Numeric
+    {
+        @WireRepr!Json(Repr.value, WireTarget.key)
+        int[Aliased] entries;
+    }
+    static assert(!__traits(compiles, WireWalk!(Json, Named).schema));
+    auto numeric = fromJSON!Numeric(`{"entries":{"1":17,"2":19}}`);
+    assert(numeric.hasValue);
+    assert(numeric.value.entries[Aliased.alsoFirst] == 17);
+    assert(numeric.value.entries[Aliased.second] == 19);
+    assert(jsonText(numeric.value) == `{"entries":{"1":17,"2":19}}`);
+}
+
 @("wired.json.schemaWalk.aggregatePolicyThroughWrappers")
 @safe unittest
 {

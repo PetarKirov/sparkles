@@ -324,9 +324,10 @@ do not infer approval from absence of PR comments.
 
 ### Q6 — Original-site decoding and generated collection presence
 
-**Owner:** wired implementer. **State:** scalar seam implemented; collection
-prerequisites partially verified. **Blocks:** C2 presence/projection implementation
-and original-site enum schema admission. **Affected:** WCFG39–42, WCFG46.
+**Owner:** wired implementer. **State:** original-site scalar/key seams and native
+enum spelling admission implemented; collection prerequisites partially verified.
+**Blocks:** C2 presence/projection and canonical key-domain admission.
+**Affected:** WCFG39–42, WCFG46.
 
 The bounded original-site and generated-presence probes now pass under DMD and
 LDC with assertions live; [testing](./testing.md#c2-original-site-and-generated-presence-readiness)
@@ -338,12 +339,13 @@ decoding remains insufficient.
 
 Generated structural presence/capture is feasible, but production collection
 input, composition-aware projection/metadata, checked accounting, and rollback
-remain unimplemented. Native enum schema admission additionally rejects some
-names that collide only under an unused case style, and repeated wire names even
-for equal-key aliases. Resolve the schema-site validation mismatch before
-claiming WCFG41 coverage; do not weaken canonical injectivity or silently narrow
-the supported enum domain. These observations do not record owner acceptance of
-the composition contract.
+remain unimplemented. Native enum reification now derives labels only at the
+resolved original case/representation site. Unused-case collisions cannot reject
+that site, and `Repr.value` labels do not constrain its value domain. `Repr.name`
+retains the native unique-member-name rule, including alias declarations.
+C2 must still establish canonical typed-key injectivity and duplicate preflight
+in its own admission interface; the native repair does not implement WCFG41.
+These observations do not record owner acceptance of the composition contract.
 
 ### Q7 — Shared table mandatory-break and checked-layout repair
 

@@ -163,20 +163,6 @@ private string annotationValue(alias uda)()
     return uda.stringof;
 }
 
-private string[] resolvedWireNames(F, E)(CaseStyle style)
-if (is(E == enum))
-{
-    final switch (style)
-    {
-        static foreach (candidate; __traits(allMembers, CaseStyle))
-        {
-            case __traits(getMember, CaseStyle, candidate):
-                return wireNames!(F, E,
-                    __traits(getMember, CaseStyle, candidate)).dup;
-        }
-    }
-}
-
 private string enumValueText(T)(T value)
 {
     import std.conv : to;
@@ -308,8 +294,8 @@ private WireSchema buildWireSchema(F, T)()
                     schema.nodes[index].scalarKind = ScalarKind.string;
                     schema.nodes[index].scalarBits = 8;
                 }
-                const memberNames = resolvedWireNames!(F, V)(
-                    schema.nodes[index].policy.caseStyle);
+                const memberNames = enumWireNames!(F, V)(
+                    schema.nodes[index].policy.caseStyle, schema.nodes[index].policy.repr);
                 const first = reserveEdges(index, memberNames.length);
                 static foreach (i, member; __traits(allMembers, V))
                 {{
