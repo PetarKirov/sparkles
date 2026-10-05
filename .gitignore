@@ -47,6 +47,10 @@ libs/dql/bench/dql_compile_time_bench
 docs.json
 __dummy.html
 
+# Manifest-authenticated Unicode inputs, fetched by the table generator.
+/libs/base/tools/unicode/18.0.0/
+/libs/base/tools/unicode/18.0.0.acquiring/
+
 # Code coverage
 *.lst
 

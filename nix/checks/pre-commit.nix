@@ -136,6 +136,10 @@ in
             # `twoslash-extract` (regenerate + `--verify` own the shape).
             "^libs/twoslash-d/examples/src/"
             "^libs/twoslash-d/examples/fixtures/"
+            # Authenticated Unicode upstream bytes and their manifest identity
+            # must survive unchanged, including whitespace, BOMs and EOFs.
+            # gen_unicode_tables authenticates every input before parsing.
+            "^libs/base/tools/unicode/"
           ];
 
           hooks =
@@ -462,7 +466,9 @@ in
                   # The cell-explorer wasm (real sparkles.base.text + Phobos, built
                   # by `nix build .#text-wasm`) is ~2.5 MB; it is an intentional,
                   # reproducible docs asset. Regenerate with that command.
-                  exclude = "^docs/public/spk-text\\.wasm$";
+                  # Unicode tables are generated from the authenticated manifest;
+                  # their fused property pages intentionally exceed the size cap.
+                  exclude = "^(docs/public/spk-text\\.wasm|libs/base/src/sparkles/base/text/unicode_tables\\.d)$";
                 }
                 { id = "check-case-conflict"; }
                 { id = "check-illegal-windows-names"; }
