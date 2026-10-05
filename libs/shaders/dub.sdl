@@ -1,4 +1,4 @@
-name "shader"
+name "shaders"
 description "Single-source shader vocabulary: GLSL-shaped vector types and built-ins that run on the CPU and compile to SPIR-V through LDC's Vulkan target"
 authors "Petar Kirov"
 copyright "Copyright © 2026, Petar Kirov"
@@ -10,7 +10,7 @@ targetPath "../../build"
 // Cycle-safe runner integration (the recipe `sparkles:input` documents):
 // `sparkles:ui` depends on this package and sits in the test-runner-impl's
 // closure, so a `dependency "sparkles:test-runner"` here would close
-// `ui -> shader -> test-runner -> impl -> ui`. Source-include the shim and
+// `ui -> shaders -> test-runner -> impl -> ui`. Source-include the shim and
 // the impl instead; only the shim is on the top-level import paths.
 importPaths "src" "../test-runner/src"
 sourcePaths "src"

@@ -562,7 +562,7 @@ Unresolved[] unresolvedCitations(in Citation[] cites, in string[string] sources,
         else if (name.startsWith("sparkles:")
             && isPackageName(name["sparkles:".length .. $]))
         {
-            // A dub sub-package (`sparkles:shader`) is a directory with a
+            // A dub sub-package (`sparkles:shaders`) is a directory with a
             // recipe, not a word in a D source.
             const pkg = name["sparkles:".length .. $];
             foreach (path; paths)
@@ -611,11 +611,11 @@ unittest
 @safe pure
 unittest
 {
-    // `sparkles:shader` names no D symbol; it is `libs/shader/dub.sdl`.
+    // `sparkles:shaders` names no D symbol; it is `libs/shaders/dub.sdl`.
     string[string] sources = ["apps/a/src/app.d": "void main() {}\n"];
-    const paths = ["libs/shader/dub.sdl", "apps/a/dub.sdl", "apps/a/src/app.d"];
+    const paths = ["libs/shaders/dub.sdl", "apps/a/dub.sdl", "apps/a/src/app.d"];
     const cites = [
-        Citation("sparkles:shader", "A1", "s.md", 1),
+        Citation("sparkles:shaders", "A1", "s.md", 1),
         Citation("sparkles:a", "A2", "s.md", 2),
         Citation("sparkles:vcs", "A3", "s.md", 3), // planned, never built
     ];

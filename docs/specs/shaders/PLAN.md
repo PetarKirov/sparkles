@@ -16,7 +16,7 @@ evidence ledger live in [`testing.md`](./testing.md).
 | --------------------------------------------------------------------------- | ----------- |
 | [Stage 0](#stage-0-specification)                                           | in progress |
 | [M0 Baseline](#m0-baseline)                                                 | done        |
-| [M1 Rename](#m1-rename-to-sparkles-shaders)                                 | not started |
+| [M1 Rename](#m1-rename-to-sparkles-shaders)                                 | done        |
 | [M2 Unit membership](#m2-unit-membership)                                   | deferred    |
 | [M3 Interface and agreement evidence](#m3-interface-and-agreement-evidence) | not started |
 | [M4 Multi-pass effects](#m4-multi-pass-effects-in-single-source-d)          | not started |

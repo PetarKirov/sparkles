@@ -19,9 +19,9 @@ A `__vector` has no members, so these are functions, and they work on both
 representations.
 */
 @compute(CompileFor.hostAndDevice)
-module sparkles.shader.types;
+module sparkles.shaders.types;
 
-import sparkles.shader.attributes : compute, CompileFor;
+import sparkles.shaders.attributes : compute, CompileFor;
 
 version (LDC)
 {

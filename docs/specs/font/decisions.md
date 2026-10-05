@@ -44,7 +44,7 @@ being decided by it:
 - **One library** with configurations, not several packages. Discovery and DPI
   arithmetic move out of `raylib-text` into it.
 - **D wherever possible**; a C shim is to be minimized. GPU compute through
-  `sparkles:shader` is available if needed.
+  `sparkles:shaders` is available if needed.
 - The Android `hue` APK building is a **hard gate** for the migration.
 - Formats in: TrueType, CFF-flavoured OpenType, collections. Bitmap emoji and
   `COLR` v0 in. WOFF, WOFF2, Type 1 and `dfont` out.

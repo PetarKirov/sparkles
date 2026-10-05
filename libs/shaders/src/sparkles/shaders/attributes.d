@@ -9,7 +9,7 @@ compiler synthesises around it. Without the version they are inert stand-ins
 with the same names and shapes, so the same source compiles as ordinary D on
 any compiler.
 */
-module sparkles.shader.attributes;
+module sparkles.shaders.attributes;
 
 version (LDC_DCompute)
 {

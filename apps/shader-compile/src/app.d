@@ -30,7 +30,7 @@ $(B The compiler) is `ldc2-vulkan` on `PATH` — dlang.nix's `ldc-vulkan` (LDC's
 `@fragment`), which the dev shell and `nix run .#shader-compile` both provide
 under that name — or whatever `--ldc` names.
 
-$(B Dependency-free on purpose.) It uses Phobos and `sparkles:shader` alone:
+$(B Dependency-free on purpose.) It uses Phobos and `sparkles:shaders` alone:
 `sparkles:core-cli` depends on `sparkles:ui`, whose build runs this tool, so
 depending on it would make the tool a prerequisite of itself.
 */
@@ -49,7 +49,7 @@ import std.regex : ctRegex, matchAll, replaceAll;
 import std.stdio : stderr, writefln, writeln;
 import std.string : indexOf, lineSplitter, strip, stripRight;
 
-import sparkles.shader.compute_mode : ComputeMode, computeModeOf;
+import sparkles.shaders.compute_mode : ComputeMode, computeModeOf;
 
 /// A package's device build, as `dub describe` reports its device
 /// configuration.
@@ -71,7 +71,7 @@ Reads a `dub describe` JSON document into a `DeviceBuild`.
 Settings come from the root target, which dub reports with its dependencies'
 import paths and flags merged in (so flags repeat — they are deduplicated here,
 first occurrence kept). Sources come from every target: a `@compute` module of
-a dependency (`sparkles:shader`'s vocabulary) belongs to the unit as much as
+a dependency (`sparkles:shaders`'s vocabulary) belongs to the unit as much as
 one of the package's own, because a SPIR-V module has no linker to find it.
 */
 DeviceBuild parseDescribe(string json)
@@ -141,27 +141,27 @@ private string[] dedup(string[] items)
     const json = `resolution chatter
     {"rootPackage": "sparkles:ui",
         "packages": [{"name": "sparkles:ui", "path": "/r/libs/ui/"},
-            {"name": "sparkles:shader", "path": "/r/libs/shader/"}],
+            {"name": "sparkles:shaders", "path": "/r/libs/shaders/"}],
         "targets": [
         {"rootPackage": "sparkles:ui", "buildSettings": {
-            "importPaths": ["/r/libs/ui/src/", "/r/libs/shader/src/", "/r/libs/ui/src/"],
+            "importPaths": ["/r/libs/ui/src/", "/r/libs/shaders/src/", "/r/libs/ui/src/"],
             "versions": ["Have_sparkles_ui"],
             "dflags": ["-preview=in", "-mdcompute-targets=vulkan-130", "-preview=in"],
             "sourceFiles": ["/r/libs/ui/shaders/effects.d", "/r/libs/ui/src/a.d"]}},
-        {"rootPackage": "sparkles:shader", "buildSettings": {
+        {"rootPackage": "sparkles:shaders", "buildSettings": {
             "dflags": ["-something-else"],
-            "sourceFiles": ["/r/libs/shader/src/types.d"]}}]}`;
+            "sourceFiles": ["/r/libs/shaders/src/types.d"]}}]}`;
 
     const b = parseDescribe(json);
     assert(b.packageName == "sparkles:ui");
     assert(b.packageDir == "/r/libs/ui");
-    assert(b.packageDirs == ["/r/libs/ui", "/r/libs/shader"]);
+    assert(b.packageDirs == ["/r/libs/ui", "/r/libs/shaders"]);
     assert(b.target == "vulkan-130");
-    assert(b.importPaths == ["/r/libs/ui/src/", "/r/libs/shader/src/"]);
+    assert(b.importPaths == ["/r/libs/ui/src/", "/r/libs/shaders/src/"]);
     assert(b.versions == ["Have_sparkles_ui"]);
     assert(b.dflags == ["-preview=in"]); // the root's, deduplicated, target split off
     assert(b.sources == ["/r/libs/ui/shaders/effects.d", "/r/libs/ui/src/a.d",
-        "/r/libs/shader/src/types.d"]);
+        "/r/libs/shaders/src/types.d"]);
 }
 
 /// The `@compute` modules among `sources`, and which of them are
@@ -698,15 +698,15 @@ private bool isStockLdc(in Run r)
     const build = DeviceBuild(packageName: "sparkles:ui", packageDir: p("libs/ui"),
         sources: [p("libs/ui/shaders/effects.d"), p("libs/ui/src/sparkles/ui/effect.d"),
             p("libs/ui/src/sparkles/ui/effect_shaders.d"),
-            p("libs/shader/src/sparkles/shader/attributes.d"),
-            p("libs/shader/src/sparkles/shader/compute_mode.d"),
-            p("libs/shader/src/sparkles/shader/math.d"),
-            p("libs/shader/src/sparkles/shader/testing.d"),
-            p("libs/shader/src/sparkles/shader/types.d")]);
+            p("libs/shaders/src/sparkles/shaders/attributes.d"),
+            p("libs/shaders/src/sparkles/shaders/compute_mode.d"),
+            p("libs/shaders/src/sparkles/shaders/math.d"),
+            p("libs/shaders/src/sparkles/shaders/testing.d"),
+            p("libs/shaders/src/sparkles/shaders/types.d")]);
     const unit = unitOf(build);
     assert(unit.deviceOnly == [p("libs/ui/shaders/effects.d")], unit.deviceOnly.text);
     assert(unit.sources == [p("libs/ui/shaders/effects.d"),
         p("libs/ui/src/sparkles/ui/effect_shaders.d"),
-        p("libs/shader/src/sparkles/shader/math.d"),
-        p("libs/shader/src/sparkles/shader/types.d")], unit.sources.text);
+        p("libs/shaders/src/sparkles/shaders/math.d"),
+        p("libs/shaders/src/sparkles/shaders/types.d")], unit.sources.text);
 }

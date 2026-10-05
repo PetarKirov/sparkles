@@ -1,4 +1,4 @@
-# `sparkles:shader`
+# `sparkles:shaders`
 
 One D function that runs per cell on the CPU and, compiled by LDC's Vulkan
 target, per fragment on the GPU. This library is the vocabulary such a function
@@ -11,7 +11,7 @@ is written against; the effects that use it live in `sparkles:ui`
 ## The vocabulary
 
 ```d
-import sparkles.shader;
+import sparkles.shaders;
 
 vec3 phosphor(in vec2 at, in vec2 extent, in vec3 color) @safe pure nothrow @nogc
 {
@@ -51,7 +51,7 @@ configuration passes the flag.
 @compute(CompileFor.deviceOnly)
 module effects;
 
-import sparkles.shader;
+import sparkles.shaders;
 static import sparkles.ui.effect_shaders;
 
 @fragment vec4 phosphor(@input vec2 fragTexCoord, @input vec4 fragColor,

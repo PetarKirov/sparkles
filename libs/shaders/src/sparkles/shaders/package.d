@@ -21,8 +21,8 @@ device rules, no SPIR-V, no LDC dependency.
 The pipeline that turns a `@fragment` function into the GLSL `sparkles:ui-raylib`
 loads is `apps/shader-compile`; the spec is `docs/specs/ui/effects.md` (`EFX20`).
 */
-module sparkles.shader;
+module sparkles.shaders;
 
-public import sparkles.shader.attributes;
-public import sparkles.shader.math;
-public import sparkles.shader.types;
+public import sparkles.shaders.attributes;
+public import sparkles.shaders.math;
+public import sparkles.shaders.types;

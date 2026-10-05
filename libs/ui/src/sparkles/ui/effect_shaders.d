@@ -22,7 +22,7 @@ $(MREF sparkles,ui,effect).
 @compute(CompileFor.hostAndDevice)
 module sparkles.ui.effect_shaders;
 
-import sparkles.shader;
+import sparkles.shaders;
 
 /// Every other row darkened — the raster a CRT's beam skips.
 vec3 scanlines(in vec2 at, in vec2 extent, in vec3 color) @safe pure nothrow @nogc

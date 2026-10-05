@@ -11,10 +11,10 @@ specification defines them — so a value computed on the CPU is the value
 the GPU computes, up to the usual floating-point ulp.
 */
 @compute(CompileFor.hostAndDevice)
-module sparkles.shader.math;
+module sparkles.shaders.math;
 
-import sparkles.shader.attributes : compute, CompileFor;
-import sparkles.shader.types;
+import sparkles.shaders.attributes : compute, CompileFor;
+import sparkles.shaders.types;
 
 version (LDC)
     import ldc.intrinsics : llvm_cos, llvm_fabs, llvm_floor, llvm_pow, llvm_sin,

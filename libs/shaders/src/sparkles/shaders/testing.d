@@ -6,12 +6,12 @@ LDC's device rules — no string literals, among others — and a test name is a
 string literal. So the modules a shader is written against carry no tests of
 their own, and this host-only module carries them instead.
 */
-module sparkles.shader.testing;
+module sparkles.shaders.testing;
 
-import sparkles.shader.math;
-import sparkles.shader.types;
+import sparkles.shaders.math;
+import sparkles.shaders.types;
 
-@("shader.types.constructAndRead")
+@("shaders.types.constructAndRead")
 @safe pure nothrow @nogc unittest
 {
     const p = v2(3, 4);
@@ -24,7 +24,7 @@ import sparkles.shader.types;
     assert(v4(1).array == [1, 1, 1, 1]);
 }
 
-@("shader.types.arithmeticIsComponentWiseAndBroadcasts")
+@("shaders.types.arithmeticIsComponentWiseAndBroadcasts")
 @safe pure nothrow @nogc unittest
 {
     const a = v3(1, 2, 3);
@@ -42,7 +42,7 @@ import sparkles.shader.types;
     assert(dim.array == [0.5f, 1, 1.5f]);
 }
 
-@("shader.math.builtinsMatchGlslDefinitions")
+@("shaders.math.builtinsMatchGlslDefinitions")
 @safe pure nothrow @nogc unittest
 {
     assert(floor(2.7f) == 2 && floor(-0.5f) == -1);

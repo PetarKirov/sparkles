@@ -11,7 +11,7 @@ decides which side (or sides) to analyze a file on (`TGT5`).
 Host-only, like $(MREF sparkles,shader,testing): it is not `@compute` itself,
 so a device build never compiles it.
 */
-module sparkles.shader.compute_mode;
+module sparkles.shaders.compute_mode;
 
 /// Where a module's code runs, from its `@compute` attribute (`TGT5`).
 enum ComputeMode
@@ -71,7 +71,7 @@ ComputeMode computeModeOf(const(char)[] source) @safe pure nothrow @nogc
     }
 }
 
-@("shader.compute_mode.computeModeOf")
+@("shaders.compute_mode.computeModeOf")
 @safe pure nothrow @nogc unittest
 {
     assert(computeModeOf("module a;") == ComputeMode.none);

@@ -22,7 +22,7 @@ dependency "sparkles:base" path="../.."
 dependency "sparkles:input" path="../.."
 // The single-source effect transforms (`effect_shaders.d`) are written
 // against the shader vocabulary, and run on the CPU through it.
-dependency "sparkles:shader" path="../.."
+dependency "sparkles:shaders" path="../.."
 dependency "sparkles:metadata" path="../.."
 // The property tree's leaf classification dispatches on the shared
 // reflection kernel, so "is this a leaf" has one answer across the toolkit,
@@ -107,7 +107,7 @@ configuration "unittest" {
 }
 // The device build: what LDC's dcompute target compiles for the GPU. Never
 // built by dub — `shader-compile` asks `dub describe` for it and compiles the
-// `@compute` modules among its sources (with `sparkles:shader`'s), and
+// `@compute` modules among its sources (with `sparkles:shaders`'s), and
 // `sparkles:dmd-lsp` analyzes those modules under it (`TGT6`). It adds
 // `shaders/`, the device-only entry points: `@compute(CompileFor.deviceOnly)`
 // modules no host build may see, since they sample through SPIR-V intrinsics.

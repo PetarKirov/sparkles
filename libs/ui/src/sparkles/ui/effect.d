@@ -30,7 +30,7 @@ module sparkles.ui.effect;
 import std.algorithm : canFind;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.shader : clamp, v2, v3, vec3, x, y, z;
+import sparkles.shaders : clamp, v2, v3, vec3, x, y, z;
 import sparkles.ui.geometry : Point, Size;
 import sparkles.ui.glsl_dialect : activePrologue;
 static import sparkles.ui.effect_shaders;
