@@ -48,6 +48,7 @@ import sparkles.ui.property_tree : EditValue, LeafKind, PropertyNode;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
+import chrome : chromeLayout, squareCols;
 import keymap : Binding, isReserved, KeysConfig, leaderChord, leaderMark, TermCommand,
     TermScope, terminalBindings;
 import settings : TerminalConfig;
@@ -295,7 +296,7 @@ final class SettingsPage : Surface, Scrollable
         auto tree = b.finish(root);
 
         // Measure unscrolled, keep the focused row in view, then scroll.
-        auto frames = layout(tree, Constraints(maxW: cols, maxH: rows));
+        auto frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
         const view = frames[body_].rect;
         bodyRows = view.height;
         int contentBottom = view.y;
@@ -700,8 +701,10 @@ final class SettingsPage : Surface, Scrollable
         const back = b.add(Widget(kind: WidgetKind.panel, children: [b.add(Widget(
             kind: WidgetKind.text, text: "←", slot: Slot.textPrimary))],
             padding: Insets(0, 1, 0, 1), hitId: hitBack,
+            // A square target, as tall as the bar: the arrow's whole corner.
+            width: SizeSpec(SizeSpec.Kind.fit, 0, squareCols(ctx.targetRows, ctx.cellW, ctx.cellH)),
             height: ctx.targetRows > 1 ? SizeSpec.fixed(ctx.targetRows) : SizeSpec.fit_,
-            alignY: Alignment.center));
+            alignX: Alignment.center, alignY: Alignment.center));
         const name = b.add(Widget(kind: WidgetKind.text, text: title, slot: Slot.textPrimary,
             textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.title),
             width: SizeSpec.grow()));

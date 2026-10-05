@@ -143,6 +143,19 @@ struct DesktopTerminal
     /// The panes, then the guide over the window's bottom rows.
     void paint(H)(ref H h, in WidgetTree, in Frame[])
     {
+        // Surfaces lay out in the faces that draw them (`GLY10`).
+        static if (__traits(hasMember, H, "textMeasure"))
+        {
+            import std.functional : toDelegate;
+            import chrome : ChromeMeasure, useChromeMeasure;
+            import sparkles.ui.style : TextStyle;
+
+            static typeof(h.textMeasure()) gm;
+            static int width(scope const(char)[] s, in TextStyle st) @safe => gm.width(s, st);
+            static int rows(in TextStyle st) @safe => gm.rows(st);
+            gm = h.textMeasure();
+            useChromeMeasure(ChromeMeasure(toDelegate(&width), toDelegate(&rows)));
+        }
         import raylib : GetScreenHeight, GetScreenWidth;
 
         host.paint(h, Rect(0, 0, GetScreenWidth(), GetScreenHeight()), divider, accent);

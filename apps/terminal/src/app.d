@@ -76,6 +76,12 @@ int launchDesktop(ref CommandNode!TerminalCli node)
     import std.path : buildPath;
     import std.stdio : stderr;
     import std.string : toStringz;
+    {
+        import std.process : environment;
+        import chrome : debugHitBoxes;
+
+        debugHitBoxes = environment.get("SPARKLES_DEBUG_HITS", "").length > 0;
+    }
 
     import sparkles.base.logger : warning;
 
