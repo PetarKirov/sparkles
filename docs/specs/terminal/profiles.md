@@ -39,10 +39,13 @@ This page owns cross-platform profile composition, selection, execution, and
 restoration. [Environment integration](../android-dev-env/SPEC.md) owns readiness,
 provisioning and resource lifecycle; [sessions](./sessions.md) owns workspace
 presentation. [Wired configuration](../wired/config/SPEC.md) owns generic resolution.
-File discovery and reference validation belong to the terminal application.
+File discovery policy belongs to [configuration sources](./profile-config.md);
+profile/environment reference validation belongs to the terminal application.
 Arbitrary executable configuration and automatic project-folder imports are excluded.
 
-Sections 1–4 define the contract and compatibility amendment. The project
+Sections 1–4 define the contract and compatibility amendment.
+[Configuration sources and persistence](./profile-config.md) owns explicit imports,
+read-only managed roots, local settings, source selection and migration policy. The project
 [delivery plan](../android-dev-env/PLAN.md) and
 [testing strategy](../android-dev-env/testing.md) own progress and evidence for this
 extension; [decisions](../android-dev-env/decisions.md) records its design gates.
@@ -54,16 +57,18 @@ extension; [decisions](../android-dev-env/decisions.md) records its design gates
 3. Contributions resolve per ID and per field; an override replaces the complete argument array.
 4. Readiness failure never launches the command in a different environment.
 5. Live panes capture launch settings; restore resolves saved references.
-6. Restored one-off commands show an inactive pane with an explicit execute action; the existing exit-prompt UI presents that state.
+6. Restored [one-off commands](../../glossary.md#terminal-one-off) show an inactive pane with an explicit execute action; the existing exit-prompt UI presents that state.
 
 Normative obligations use bold **must**, **must not**, and **may**.
 
 ## 2. Values and configuration
 
-**TPF1: Identity and references.** A profile **must** have a stable ID, display
+**TPF1: Identity and references.** An enabled profile **must** have a stable ID, display
 name, enabled state, environment reference, nonempty argv, environment-variable
 overrides, and starting directory. Environment records **must** have separate
-stable IDs. Renaming a display name **must not** break references. Missing references,
+stable IDs. A disabled profile **may** omit required launch fields; supplied values
+still require valid decoding/types. Enabling it requires complete launch validation.
+Renaming a display name **must not** break references. Missing enabled-profile references,
 duplicate IDs within one source, or duplicate definition identities **must** yield
 located errors, not select the first matching name. Repeated object IDs across
 modules are valid contributions under `TPF3`. IDs are opaque application identifiers,
@@ -100,9 +105,9 @@ explicitly. Relative import paths resolve against the importing file. Project
 folders **must not** automatically contribute launch commands. The terminal owns
 file discovery, cycle detection, decoding and source metadata; wired owns typed
 resolution. Import failure **must** identify its source and prevent publication
-of an incomplete launch configuration. Import depth, byte/count limits, priority
-assignment and repeated-import handling require the configuration gate in
-[decisions](../android-dev-env/decisions.md#open-design-gates).
+of an incomplete launch configuration. [TPC1–TPC9](./profile-config.md) owns source
+selection, traversal and compatibility-import policy; generic priority representation
+is deferred to the wired owner's specification PR.
 
 **TPF5: Deliberate settings writes.** Settings edits **must** persist deliberate
 local overrides, not flatten imported or effective values. Imported human-owned
@@ -113,7 +118,23 @@ a complete launch snapshot before publication; failure **must** retain the last
 valid live snapshot and expose rejection, without using it to silently replace an
 explicitly requested invalid target. Initial startup without a valid snapshot
 **must** expose configuration recovery instead of launching.
-The writable layer and precedence cutover are blocked compatibility decisions.
+[TPC10–TPC15](./profile-config.md) owns local persistence, reload and migration policy.
+
+**TPF12: Launch environment variables.** Profile `env` **must** distinguish omitted
+contributions (inherit), strings including `""` (set the exact value), and selected
+explicit null (remove that variable from the launched process). Reset removes a
+local contribution; it **must not** create an unset. Backend-documented runtime
+setup supplies the base environment; adapters **must not** automatically forward
+host variables across guest boundaries. Configuration-environment inputs under
+`TPC4` are separate from these launch values. Missing and explicit null must retain
+distinct provenance through the wired-owned input/selection policy.
+
+**TPF13: Partial declarations.** An explicitly empty profile object **must**
+declare that identity and schema defaults without erasing weaker contributions.
+Defaults **must not** create undeclared profile IDs. Modules **may** supply incomplete
+profiles for other modules to complete; enabled/requested profiles require a valid
+complete launch recipe. A disabled template **must** remain inspectable without a
+required-launch-field error, while supplied decode/type errors are still failures.
 
 ## 3. Launch selection and restoration
 
@@ -175,9 +196,9 @@ is accepted. The following are intentional amendments, not delivered behavior:
 | `TSS5`, last-pane closure quits the app              | With a running managed AVF environment, closure leaves an empty workspace and owner alive; explicit quit remains separate |
 | `TSS8`, new-pane directory inheritance               | Profile-aware same-environment inheritance follows `TPF6`                                                                 |
 | `TSS14`, fresh-shell restore and one-off suppression | Identity-aware restore follows `TPF8`; its non-replay guarantee remains                                                   |
-| `TCF2`, defaults → Termux → file → CLI               | Preserve precedence for existing options; profile imports and writable overrides require the explicit cutover gate        |
+| `TCF2`, defaults → Termux → file → CLI               | `TPC3` intentionally makes local UI state strongest, including over invocation inputs                                     |
 | `TCF4`, tolerant invalid-setting handling            | An invalid requested launch target produces recovery, never a substitute execution context                                |
-| `TSP3`, deliberate edits to `config.json`            | Preserve deliberate sparse edits; avoid rewriting imported human-owned files under `TPF5`                                 |
+| `TSP3`, deliberate edits to `config.json`            | `TPC10` preserves deliberate sparse edits in separate root-scoped app state                                               |
 | `NOD3`, Android SDK policy for PRoot                 | AVF compatibility must be proved without silently raising the PRoot flavor's target SDK                                   |
 | Session detach/sharing exclusion                     | Unchanged; VM ownership across pane closure does not imply process reattachment                                           |
 

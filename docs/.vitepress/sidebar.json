@@ -1545,6 +1545,10 @@
             "link": "/specs/terminal/profiles"
           },
           {
+            "text": "Profile configuration and persistence (draft)",
+            "link": "/specs/terminal/profile-config"
+          },
+          {
             "text": "Keymap and key guide",
             "link": "/specs/terminal/keymap"
           },
