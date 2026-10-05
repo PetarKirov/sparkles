@@ -31,6 +31,10 @@ extractor) pays no analysis cost for it.
 module sparkles.dmd_lsp.project;
 
 import sparkles.dmd_lsp.options : AnalyzerConfig, runtimeImportPaths;
+/// The recipe locators live beside the recipe reader in sparkles:build-primitives,
+/// which a viewer may link where it may not link this library (`PRJ13`).
+public import sparkles.build_primitives.dub_recipe : dubRecipeFor, findDubRecipe,
+    isSingleFileDubPackage;
 
 /**
 Which build of the project to describe: everything that, on a `dub build`
@@ -201,102 +205,6 @@ struct DubProject
             debugIds: analyzer.debugIds.dup,
             dflags: analyzer.dflags.dup,
             profile: analyzer.profile);
-}
-
-/**
-The nearest enclosing dub recipe, or null.
-
-`startPath` may be a file or a directory and may be relative; the walk starts
-at the containing directory and climbs to the filesystem root, so the
-$(I innermost) project wins — in a monorepo a file under `libs/base/src`
-belongs to `libs/base`, not to the root package (`PRJ1`).
-*/
-string findDubRecipe(string startPath) @safe
-{
-    import std.file : exists, isDir;
-    import std.path : absolutePath, buildNormalizedPath, buildPath, dirName;
-
-    if (!startPath.length)
-        return null;
-
-    auto dir = startPath.absolutePath.buildNormalizedPath;
-    if (!(dir.exists && dir.isDir))
-        dir = dir.dirName;
-
-    for (;;)
-    {
-        static immutable recipes = ["dub.sdl", "dub.json"];
-        foreach (name; recipes)
-        {
-            const candidate = dir.buildPath(name);
-            if (candidate.exists)
-                return candidate;
-        }
-        const parent = dir.dirName;
-        if (parent == dir)
-            return null;
-        dir = parent;
-    }
-}
-
-/**
-Whether `path` is a dub $(B single-file package): a `.d` program whose recipe
-rides along in a leading `/+ dub.sdl: … +/` (or `dub.json`) comment (`PRJ17`).
-
-Such a file $(I is) its own project, and the distinction is not academic — a
-`libs/x/examples/*.d` sample routinely depends on several sibling packages that
-`libs/x/dub.sdl` never mentions. Climbing past it (`PRJ1`) would describe the
-enclosing library instead, and every symbol the sample imports from a
-dependency the library does not share would report as `unable to read module`.
-
-Only the head of the file is read: dub requires the comment before any code,
-after an optional shebang.
-*/
-bool isSingleFileDubPackage(string path) @safe
-{
-    import std.algorithm.iteration : splitter;
-    import std.algorithm.searching : endsWith, startsWith;
-    import std.stdio : File;
-    import std.string : strip, stripLeft;
-
-    if (!path.endsWith(".d"))
-        return false;
-
-    char[4096] buffer = void;
-    char[] head;
-    try
-    {
-        auto f = File(path, "rb");
-        head = (() @trusted => f.rawRead(buffer[]))();
-    }
-    catch (Exception)
-        return false;
-
-    // The recipe opens the file, so the first line that is neither blank nor
-    // the shebang decides — scanning further would match an unrelated `/+ +/`
-    // comment somewhere down the file.
-    foreach (rawLine; head.splitter('\n'))
-    {
-        const line = rawLine.strip;
-        if (!line.length || line.startsWith("#!"))
-            continue;
-        if (!line.startsWith("/+"))
-            return false;
-        const rest = line[2 .. $].stripLeft;
-        return rest.startsWith("dub.sdl:") || rest.startsWith("dub.json:");
-    }
-    return false;
-}
-
-/// The recipe governing `startPath`: its own, when it is a single-file package
-/// (`PRJ17`), otherwise the nearest enclosing one (`PRJ1`).
-string dubRecipeFor(string startPath) @safe
-{
-    import std.path : absolutePath, buildNormalizedPath;
-
-    return isSingleFileDubPackage(startPath)
-        ? startPath.absolutePath.buildNormalizedPath
-        : findDubRecipe(startPath);
 }
 
 /**
@@ -660,14 +568,14 @@ private ptrdiff_t pathAffinity(const SubpackageRef cand, string wanted) @safe
 The subpackage $(B names) a recipe declares — the one piece `dub describe`
 cannot report (there is no subpackage listing in its `--data` vocabulary, and
 `dub list` only covers globally registered checkouts). Read by
-$(MREF sparkles,dmd_lsp,recipe): inline `subPackage { name "x" … }` blocks by
+$(MREF sparkles,build_primitives,dub_recipe): inline `subPackage { name "x" … }` blocks by
 their name, path references `subPackage "libs/x"` by the referenced
 directory's own recipe `name`. Settings never come from here (`PRJ2`).
 */
 private SubpackageRef[] subpackageNames(string recipePath) @safe
 {
     import std.path : dirName;
-    import sparkles.dmd_lsp.recipe : readDubRecipe;
+    import sparkles.build_primitives.dub_recipe : readDubRecipe;
 
     SubpackageRef[] refs;
     const dir = recipePath.dirName;
@@ -682,7 +590,7 @@ private SubpackageRef pathSubpackage(string rootDir, string refPath) @safe
 {
     import std.file : exists;
     import std.path : baseName, buildNormalizedPath, buildPath;
-    import sparkles.dmd_lsp.recipe : readDubRecipe;
+    import sparkles.build_primitives.dub_recipe : readDubRecipe;
 
     const dir = rootDir.buildPath(refPath).buildNormalizedPath;
     string name = dir.baseName;
@@ -883,60 +791,6 @@ private string[] splitArgs(scope const(char)[] line) @safe pure
     assert(cfg.importPaths == ["/two words/src/", "/eq/src/"], cfg.importPaths.toDebug);
     assert(parseDubBuildSettings("").importPaths.length == 0);
     assert(parseDubBuildSettings("   \n  ").dflags.length == 0);
-}
-
-@("dmd_lsp.project.findDubRecipe.walksUpToTheInnermostPackage")
-@safe unittest
-{
-    import std.file : exists;
-    import std.path : baseName, dirName, buildPath;
-
-    // This module is itself inside a dub package, three directories below its
-    // recipe — the exact shape the walk exists for.
-    enum here = __FILE_FULL_PATH__;
-    if (!here.exists)
-        skipOrThrow("the source tree is not present at " ~ here);
-
-    const recipe = findDubRecipe(here);
-    assert(recipe.baseName == "dub.sdl", recipe);
-    assert(recipe.dirName.baseName == "dmd-lsp", recipe);
-
-    // A directory start behaves like a file start in the same directory.
-    assert(findDubRecipe(here.dirName) == recipe);
-
-    // The walk terminates at the filesystem root instead of spinning, and an
-    // empty start is simply "no project".
-    assert(findDubRecipe("/nonexistent/deep/path/file.d") is null);
-    assert(findDubRecipe("") is null);
-}
-
-@("dmd_lsp.project.isSingleFileDubPackage.recipeForms")
-@system unittest
-{
-    import std.path : buildPath;
-
-    auto t = tempProject("single-file");
-
-    t.writeFileAt("shebang.d",
-        "#!/usr/bin/env dub\n/+ dub.sdl:\n    name \"x\"\n+/\nvoid main() {}\n");
-    t.writeFileAt("bare.d", "/+dub.json: {\"name\":\"x\"} +/\nvoid main() {}\n");
-    t.writeFileAt("plain.d", "module plain;\nvoid main() {}\n");
-    // A `/+ +/` comment further down is not a recipe: only the file's opening
-    // comment counts, or an ordinary module with documentation would qualify.
-    t.writeFileAt("late.d", "module late;\n/+ dub.sdl: no +/\nvoid main() {}\n");
-    t.writeFileAt("dub.sdl", "name \"not-a-d-file\"\n");
-
-    assert(isSingleFileDubPackage(t.dir.buildPath("shebang.d")));
-    assert(isSingleFileDubPackage(t.dir.buildPath("bare.d")));
-    assert(!isSingleFileDubPackage(t.dir.buildPath("plain.d")));
-    assert(!isSingleFileDubPackage(t.dir.buildPath("late.d")));
-    assert(!isSingleFileDubPackage(t.dir.buildPath("dub.sdl")));
-    assert(!isSingleFileDubPackage(t.dir.buildPath("absent.d")));
-
-    // The recipe of a single-file package is the file; anything else walks up
-    // to the enclosing directory recipe (PRJ1).
-    assert(dubRecipeFor(t.dir.buildPath("shebang.d")) == t.dir.buildPath("shebang.d"));
-    assert(dubRecipeFor(t.dir.buildPath("plain.d")) == t.dir.buildPath("dub.sdl"));
 }
 
 @("project.singleFile.ownRecipeBeatsTheEnclosingOne")

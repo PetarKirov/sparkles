@@ -40,7 +40,7 @@ enum defaultDcomputeTarget = "vulkan-130";
 /**
 The names of the device configurations `recipePath` declares — those whose
 `dflags` carry `-mdcompute-targets=` — in declaration order. Every recipe
-form is read ($(MREF sparkles,dmd_lsp,recipe)); an unreadable recipe declares
+form is read ($(MREF sparkles,build_primitives,dub_recipe)); an unreadable recipe declares
 none.
 
 The recipe is read, not described: finding the configuration is what decides
@@ -52,7 +52,7 @@ string[] deviceConfigurations(string recipePath) @safe
     import std.algorithm.iteration : filter, map;
     import std.algorithm.searching : any, startsWith;
     import std.array : array;
-    import sparkles.dmd_lsp.recipe : readDubRecipe;
+    import sparkles.build_primitives.dub_recipe : readDubRecipe;
 
     return readDubRecipe(recipePath).configurations
         .filter!(c => c.dflags.any!(f => f.startsWith(dcomputeTargetFlag)))

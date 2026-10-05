@@ -10,6 +10,10 @@ importPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
+// `dub_recipe` reads `dub.sdl` through wired's SDLang reader. wired depends
+// only on `sparkles:base`, so this closes no dependency cycle.
+dependency "sparkles:wired" path="../.."
+
 configuration "library" {
     targetType "library"
     // `testing.d` hosts the git-repository fixtures and is the only module
