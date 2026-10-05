@@ -181,10 +181,7 @@ abstract class Page : Surface
             case Key.backspace:
                 if (query.length)
                 {
-                    size_t n = query.length - 1;
-                    while (n > 0 && (query[n] & 0xC0) == 0x80)
-                        n--;
-                    query = query[0 .. n];
+                    query = query[0 .. queryPrefixWithoutLastGrapheme(query)];
                     queryChanged();
                 }
                 return true;
@@ -212,18 +209,37 @@ abstract class Page : Surface
 /// `c` as UTF-8; empty for a control character or an invalid code point.
 private string encodeChar(dchar c) @safe pure nothrow
 {
-    import std.utf : encode, isValidDchar;
+    import sparkles.base.text.utf : encodeScalar, isUnicodeScalar;
 
-    if (c < 0x20 || c == 0x7F || !isValidDchar(c))
+    if (c < 0x20 || c == 0x7F || !isUnicodeScalar(c))
         return null;
     char[4] buf;
-    const n = (() @trusted {
-        try
-            return encode(buf, c);
-        catch (Exception)
-            return 0;
-    })();
-    return buf[0 .. n].idup;
+    const encoded = encodeScalar(c, buf[]);
+    return buf[0 .. encoded.written].idup;
+}
+
+/// Byte prefix before the final owned grapheme. Malformed bytes are individual
+/// editing units and hard boundaries, so a backspace always makes progress.
+size_t queryPrefixWithoutLastGrapheme(scope const(char)[] query)
+    @safe pure nothrow @nogc
+{
+    import sparkles.base.text.grapheme : GraphemeBreakState;
+    import sparkles.base.text.tokens : byUtfToken;
+    import sparkles.base.text.utf : UtfMode, UtfTokenKind;
+
+    GraphemeBreakState breaks;
+    size_t last;
+    foreach (token; byUtfToken(query, UtfMode.opaque))
+    {
+        if (token.kind == UtfTokenKind.opaqueByte)
+        {
+            last = token.start;
+            breaks.reset();
+        }
+        else if (breaks.push(token.scalar))
+            last = token.start;
+    }
+    return last;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -445,6 +461,30 @@ version (unittest)
     assert(p.key(KeyEvent(Key.escape)));
     assert(!p.searching && p.query == "q", "leaving the field keeps the query");
     assert(!p.key(KeyEvent(Key.escape)), "a second Esc closes the page");
+}
+
+@("page_kit.Page.backspaceRemovesCompleteGraphemesAndMalformedBytes")
+@system unittest
+{
+    auto p = new Lines(1);
+    assert(p.key(KeyEvent(Key.char_, '/')));
+    foreach (q; ["qa\u0301", "q\U0001F469\u200D\U0001F4BB",
+        "q\U0001F1FA\U0001F1F8", "q\u0915\u094D\u0937"])
+    {
+        p.setQuery(q);
+        assert(p.key(KeyEvent(Key.backspace)));
+        assert(p.query == "q", "backspace leaves no trailing cluster fragment");
+    }
+    p.setQuery("q\xE1\x80");
+    assert(p.key(KeyEvent(Key.backspace)));
+    assert(p.query == "q\xE1", "one malformed byte is one editing unit");
+    assert(p.key(KeyEvent(Key.backspace)));
+    assert(p.query == "q");
+    p.setQuery("q\x80\u0301");
+    assert(p.key(KeyEvent(Key.backspace)));
+    assert(p.query == "q\x80", "a malformed byte cannot acquire a combining mark");
+    assert(p.key(KeyEvent(Key.backspace)));
+    assert(p.query == "q");
 }
 
 @("page_kit.Page.scrollIsClamped")

@@ -1,8 +1,8 @@
 /// The GL draw primitives: `drawGrapheme` (one cluster from the atlas, the
 /// terminal's per-cell primitive), `drawSolid` (a fill routed through the atlas
 /// white texel so the grid batches), and `drawText` (a whole styled run with
-/// per-codepoint font routing, the hue per-run primitive). Need an active GL
-/// context, so this module has no unittests; validated by the apps' goldens.
+/// grapheme font routing, the hue per-run primitive). Need an active GL
+/// context; rendering is validated by the apps' goldens.
 module sparkles.raylib_text.draw;
 
 import raylib;
@@ -14,10 +14,11 @@ import sparkles.raylib_text.box : drawBox;
 import sparkles.base.term_color : RgbColor;
 
 /**
-Draw already-resolved atlas glyphs at `(x, y)` with O(log n) glyph lookup.
-This is the single-glyph fast path, not a shaper: terminal callers first use
-`FontSet.drawCluster` for complete clusters, emoji and uncached fallback glyphs.
-The caller owns layout and backgrounds.
+Draw atlas glyphs belonging to one complete grapheme at `(x, y)`.
+This is a fallback, not a shaper: callers first use `FontSet.drawCluster` for
+complete clusters, emoji and uncached glyphs. Atlas members share the cluster
+origin and never manufacture a per-scalar advance. The caller owns cell layout
+and backgrounds; complex placement requires the native shaping path.
 */
 void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
     float x, float y, int fontSize, Color tint) @system nothrow @nogc
@@ -25,13 +26,12 @@ void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
     const font = lf.font;
     const float scale = font.baseSize > 0 ? cast(float) fontSize / font.baseSize : 1.0f;
 
-    float ox = x;
     foreach (cp; cps)
     {
         const idx = glyphIndexFor(lf, cast(int) cp);
         const Rectangle rec = font.recs[idx];
 
-        // Whitespace and other zero-area glyphs draw nothing; just advance.
+        // Whitespace and other zero-area glyphs draw nothing.
         if (rec.width > 0 && rec.height > 0)
         {
             // Sample the glyph's EXACT atlas rectangle. raylib's own
@@ -48,15 +48,12 @@ void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
             // glyph lives outside its own rect).
             const Rectangle src = Rectangle(rec.x, rec.y, rec.width, rec.height);
             const Rectangle dst = Rectangle(
-                ox + font.glyphs[idx].offsetX * scale,
+                x + font.glyphs[idx].offsetX * scale,
                 y + font.glyphs[idx].offsetY * scale,
                 rec.width * scale,
                 rec.height * scale);
             DrawTexturePro(font.texture, src, dst, Vector2(0, 0), 0.0f, tint);
         }
-
-        const adv = font.glyphs[idx].advanceX;
-        ox += adv == 0 ? rec.width * scale : adv * scale;
     }
 }
 
@@ -78,14 +75,14 @@ void drawSolid(ref LoadedFont white, int x, int y, int w, int h, Color c) @syste
 }
 
 /**
-Draw a whole styled run at `(x, y)` on a fixed monospace grid: each codepoint is
-routed to its own face (`FontSet.resolveFace` — codepoint-map / real bold-italic
-face / fallback / on-demand), so a run mixing ASCII, icons, and CJK renders each
-in the right font, and SGR italic uses a real cursive face rather than a slant.
-Codepoints are placed one grid column apart (`FontSet.cellW`), matching
-`columnWidth`; underline/strikethrough span the whole run. Draws no background.
+Draw a whole styled run at `(x, y)` on a fixed monospace grid. Owned grapheme
+segmentation and terminal-cell geometry determine each complete source span and
+its occupied columns. Each cluster is routed to its preferred face and shaped
+as a unit; single atlas glyphs retain codepoint-map / styled-face / fallback
+routing. Underline and strikethrough span the occupied cells, not scalar count.
+ANSI escapes and zero-cell clusters do not draw or advance. Draws no background.
 The caller flushes on-demand requests with `FontSet.flushPending` after
-`EndDrawing`.
+`EndDrawing`, then repaints when it returns true.
 */
 /**
 Draws `str` in the toolkit's colour type, opaque.
@@ -102,8 +99,10 @@ void drawText(ref FontSet fonts, scope const(char)[] str, float x, float y,
 void drawText(ref FontSet fonts, scope const(char)[] str, float x, float y,
     TextStyle style, Color fg) @system
 {
-    import std.utf : decode;
-    import std.typecons : Yes;
+    import sparkles.base.buffer : UniqueBuffer;
+    import sparkles.base.text.grapheme : byGraphemeCluster;
+    import sparkles.base.text.tokens : byUtfToken;
+    import sparkles.base.text.utf : UtfMode;
 
     if (str.length == 0)
         return;
@@ -114,52 +113,54 @@ void drawText(ref FontSet fonts, scope const(char)[] str, float x, float y,
     const cellW = fonts.cellW();
     const cellH = fonts.cellH();
 
-    int col;
-    size_t i = 0;
-    while (i < str.length)
+    size_t col;
+    UniqueBuffer!(uint, 32) decoded;
+    foreach (cluster; byGraphemeCluster(str))
     {
-        const cp = cast(int) decode!(Yes.useReplacementDchar)(str, i);
-        // A control codepoint (a tab in source, a stray C0) is a blank
-        // cell, not the font's missing-glyph box — one column, matching the
-        // v1 width metric (tab counts as one).
-        if (cp < 0x20 || cp == 0x7f)
-        {
-            ++col;
+        if (cluster.isEscape || cluster.width == 0)
             continue;
-        }
         const gxCol = x + col * cellW;
-        // Box-drawing glyphs are rendered procedurally so their arms fill the cell
-        // and connect across neighbouring cells (fonts leave gaps); anything the
-        // box table doesn't cover falls through to the font glyph.
-        if (drawBox(fonts.whiteFace, cast(uint) cp, gxCol, y, cellW, cellH, fg))
-        {
-            ++col;
+        const spanPixels = cluster.width * cellW;
+        col += cluster.width;
+
+        // Procedural box glyphs fill their cell and connect across neighbours.
+        // A cluster with marks must reach the shaper intact, not lose its tail.
+        if (cluster.codepoints == 1
+            && drawBox(fonts.whiteFace, cast(uint) cluster.first,
+                gxCol, y, spanPixels, cellH, fg))
             continue;
-        }
-        // A missing italic face renders the upright regular — never a
-        // synthetic slant or shift, which breaks the grid (tokens italic in
-        // one theme but not another appeared to move between themes). Use
-        // --font-italic / --font-bold-italic to supply real faces.
-        const uint[1] one = [cast(uint) cp];
-        if (fonts.drawCluster(one[], bold, italic, gxCol, y, cellW, cellH, fg))
+
+        const uint[1] one = [cast(uint) cluster.first];
+        const(uint)[] cps = one[];
+        if (cluster.codepoints != 1)
         {
-            ++col;
-            continue;
+            decoded.clear(releaseStorage: false);
+            decoded.reserve(cluster.codepoints);
+            foreach (token; byUtfToken(cluster.slice, UtfMode.replacement))
+                decoded ~= cast(uint) token.scalar;
+            cps = decoded[];
         }
+        if (fonts.drawCluster(cps, bold, italic, gxCol, y, spanPixels, cellH, fg))
+            continue;
+
+        // A missing italic face renders upright; no synthetic slant or shift.
+        // Shaping failure retains the complete cluster in the atlas fallback.
         bool fakeBold, fakeItalic;
-        auto face = fonts.resolveFace(cp, bold, italic, fakeBold, fakeItalic);
-        drawGrapheme(*face, one[], gxCol, y, size, fg);
+        auto face = fonts.resolveFace(cast(int) cluster.first,
+            bold, italic, fakeBold, fakeItalic);
+        drawGrapheme(*face, cps, gxCol, y, size, fg);
         if (fakeBold)
-            drawGrapheme(*face, one[], gxCol + 1, y, size, fg);
-        ++col;
+            drawGrapheme(*face, cps, gxCol + 1, y, size, fg);
     }
 
     if (style.has(TextStyle.underline) || style.has(TextStyle.strikethrough))
     {
         const wpx = col * cellW;
         if (style.has(TextStyle.underline))
-            drawSolid(fonts.whiteFace, cast(int) x, cast(int)(y + fonts.cellH() - 2), wpx, 1, fg);
+            drawSolid(fonts.whiteFace, cast(int) x, cast(int)(y + fonts.cellH() - 2),
+                cast(int) wpx, 1, fg);
         if (style.has(TextStyle.strikethrough))
-            drawSolid(fonts.whiteFace, cast(int) x, cast(int)(y + fonts.cellH() / 2), wpx, 1, fg);
+            drawSolid(fonts.whiteFace, cast(int) x, cast(int)(y + fonts.cellH() / 2),
+                cast(int) wpx, 1, fg);
     }
 }

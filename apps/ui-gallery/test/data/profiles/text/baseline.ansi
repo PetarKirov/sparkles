@@ -2,8 +2,8 @@
 [0m [0m  Welcome[0m           [0m|[0m [0;1mText * wrapping and measurement[0m                                         [0m#[0m
 [0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
 [0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
-[0m [0m  Tracks[0m            [0m|[0m [0mWrapped lines are slices of the input, never copies - the layout pass[0m   [0m#[0m
-[0m [0m> [0;1mText[0m             [0m [0m|[0m [0mreports where the breaks go and the painter draws the same bytes.[0m       [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mWrapping retains a source ledger and selected projection. Painting,[0m     [0m#[0m
+[0m [0m> [0;1mText[0m             [0m [0m|[0m [0mcell hits and copy consume that same plan; source bytes stay available.[0m [0m#[0m
 [0m [0m  Themes[0m            [0m|[0m                                                                         [0m#[0m
 [0m [0m  Slots[0m             [0m|[0m [0mcolumn[0m [0m34 cells[0m [0mhang[0m [0m2[0m                                                  [0m#[0m
 [0m [0m  Decoration[0m        [0m|[0m                                                                         [0m#[0m

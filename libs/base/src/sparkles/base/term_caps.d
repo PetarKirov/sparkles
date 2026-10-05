@@ -370,14 +370,14 @@ private bool localeIsUtf8() @safe
 {
     import std.algorithm.searching : canFind;
     import std.process : environment;
-    import std.uni : toLower;
+    import sparkles.base.text.case_text : asciiLower;
 
     foreach (name; ["LC_ALL", "LC_CTYPE", "LANG"])
     {
         const v = environment.get(name, "");
         if (v.length == 0)
             continue;
-        const lower = v.toLower;
+        const lower = v.asciiLower;
         return lower.canFind("utf-8") || lower.canFind("utf8");
     }
     return true;

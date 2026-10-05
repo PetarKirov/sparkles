@@ -48,7 +48,7 @@ string[] emojiStrings(in Config cfg)
 string[] graphemeBreakStrings(in Config cfg)
 {
     string[] result;
-    foreach (raw; ucdText(cfg.segVersion, "auxiliary/GraphemeBreakTest.txt", cfg).lineSplitter)
+    foreach (raw; ucdText(cfg.versionIdentity, "auxiliary/GraphemeBreakTest.txt", cfg).lineSplitter)
     {
         const line = raw.findSplit("#")[0].strip;
         if (line.length == 0)

@@ -21,6 +21,21 @@ second is what embedding needed.
 | `coverage_discovery`, `coverage_rebase`                             | finding a coverage artifact and re-anchoring it onto the current file                                                                            |
 | `document_session`                                                  | `DocumentSession`, the interface a host's per-document session (hue's format preview) attaches through                                           |
 
+### V8 coverage snapshots
+
+`DocumentPipeline.attachCoverage` projects a multi-script V8 artifact to the
+document's path (or its title for an embedded source) before resolving sources.
+Only the selected script is mapped, against the immutable UTF-8 `Document.source`
+snapshot already loaded; attachment does not reread the source file from disk
+or use this snapshot for unrelated scripts. Native UTF-16 producer boundaries
+become exact original UTF-8 inline spans and source line numbers. An unavailable
+unrelated script does not prevent the selected document's overlay.
+
+Invalid selected-script offsets, including surrogate interiors and offsets past
+the snapshot, warn and leave an undecorated document, rather than silently
+clamping or skipping ranges. See the coverage library's
+[snapshot and selection contract](../../code-instrumentation/reference/api.md#v8-source-snapshots-and-script-selection).
+
 ## Embedding
 
 | Module     | What it holds                                                                                                 |

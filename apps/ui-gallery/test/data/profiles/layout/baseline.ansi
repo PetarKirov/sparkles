@@ -2,9 +2,9 @@
 [0m [0m  Welcome[0m           [0m|[0m [0;1mLayout * sizing, spacing, alignment[0m                                     [0m#[0m
 [0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
 [0m [0m> [0;1mLayout[0m           [0m [0m|[0m                                                                         [0m#[0m
-[0m [0m  Tracks[0m            [0m|[0m [0mFour passes, each O(n): natural width up, allocation down,[0m              [0m#[0m
-[0m [0m  Text[0m              [0m|[0m [0mheight-for-width up, placement down. Nothing iterates to a fixed point[0m  [0m#[0m
-[0m [0m  Themes[0m            [0m|[0m [0m- the width/height cycle is broken by ordering.[0m                         [0m#[0m
+[0m [0m  Tracks[0m            [0m|[0m [0mFour passes, each O(n): natural width up, allocation down, height-for-[0m  [0m#[0m
+[0m [0m  Text[0m              [0m|[0m [0mwidth up, placement down. Nothing iterates to a fixed point - the[0m       [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m [0mwidth/height cycle is broken by ordering.[0m                               [0m#[0m
 [0m [0m  Slots[0m             [0m|[0m                                                                         [0m#[0m
 [0m [0m  Decoration[0m        [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
 [0m [0m  Effects[0m           [0m|[0m [0m|[0m [0;1mthe knobs[0m                                                           [0m|[0m [0m#[0m

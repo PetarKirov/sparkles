@@ -248,7 +248,8 @@ struct Sdl3Events
     private void onText(Sink)(in SDL_TextInputEvent t, scope Sink sink) @system
     {
         import std.string : fromStringz;
-        import std.utf : byDchar;
+        import sparkles.base.text.tokens : byUtfToken;
+        import sparkles.base.text.utf : UtfMode;
 
         const text = t.text is null ? "" : t.text.fromStringz.idup;
         if (text.length == 0)
@@ -276,8 +277,8 @@ struct Sdl3Events
             // brings its own `size_t` alongside `object`'s — glibc collapses
             // the two, darwin does not — so the name is ambiguous there and
             // nowhere else. See the note in `sparkles.ui_sdl3`.
-            auto rest = text.byDchar;
-            const first = rest.front;
+            auto rest = byUtfToken(text, UtfMode.replacement);
+            const first = rest.front.scalar;
             rest.popFront();
             if (rest.empty)
                 _pending.ch = first;
@@ -287,8 +288,8 @@ struct Sdl3Events
         }
 
         flush(sink);
-        foreach (c; text.byDchar)
-            sink(Event(KeyEvent(key: Key.char_, ch: c, mods: _mods)));
+        foreach (token; byUtfToken(text, UtfMode.replacement))
+            sink(Event(KeyEvent(key: Key.char_, ch: token.scalar, mods: _mods)));
     }
 
     private void onWheel(Sink)(in SDL_MouseWheelEvent w, scope Sink sink,

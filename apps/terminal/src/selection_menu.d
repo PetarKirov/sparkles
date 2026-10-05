@@ -254,14 +254,11 @@ string singleLink(scope const string[] hyperlinks, size_t hyperlinkCount, string
 
 private dchar decodeOne(scope const(char)[] s, ref size_t i) @safe pure nothrow @nogc
 {
-    import sparkles.base.text.utf : decodeFirstUtf8;
+    import sparkles.base.text.utf : decodeToken, UtfMode;
 
-    size_t n = 1;
-    while (i + n < s.length && (s[i + n] & 0xC0) == 0x80)
-        n++;
-    const c = decodeFirstUtf8(s[i .. i + n]);
-    i += n;
-    return c;
+    const decoded = decodeToken(s[i .. $], UtfMode.replacement);
+    i += decoded.result.consumed;
+    return decoded.token.scalar;
 }
 
 ///
@@ -1608,16 +1605,16 @@ string[MenuAction.max + 1] shortcutsFrom(scope const Binding[] table) @safe
 string keyLabel(string canonical) @safe pure
 {
     import std.algorithm.searching : startsWith;
-    import std.uni : toUpper;
+    import std.ascii : toUpper;
 
     string s = canonical, out_;
     foreach (mod; ["ctrl+", "alt+", "shift+", "super+"])
         if (s.startsWith(mod) && s.length > mod.length)
         {
-            out_ ~= mod[0 .. 1].toUpper ~ mod[1 .. $];
+            out_ ~= toUpper(mod[0]) ~ mod[1 .. $];
             s = s[mod.length .. $];
         }
-    return out_ ~ (s.length == 1 ? s.toUpper : s.length ? s[0 .. 1].toUpper ~ s[1 .. $] : s);
+    return out_ ~ (s.length ? toUpper(s[0]) ~ s[1 .. $] : s);
 }
 
 ///

@@ -4,16 +4,17 @@ module sparkles.fuzzy.match;
 version (unittest) import sparkles.base.unique : makeUnique;
 
 import sparkles.base.text.analysis : AnalysisCase, AnalysisError,
-    AnalysisOptions, AnalysisWorkspace, TextUnit, analyzeText;
+    AnalysisOptions, TextUnit, analyzeText;
 
-import sparkles.fuzzy.common : AnalysisProfileKind, CandidateView,
-    DefaultFuzzyCaps, FuzzyErrorCode, FuzzyExpected, FuzzyLimits, TextRange,
+import sparkles.fuzzy.common : AnalysisProfile, AnalysisProfileKind, CandidateView,
+    DefaultFuzzyCaps, FuzzyTextWorkspace, FuzzyErrorCode, FuzzyExpected, FuzzyLimits, TextRange,
     fuzzyErr, fuzzyOk, isPathSeparator, typoBudget, validateCandidate,
     validateLimits;
 import sparkles.fuzzy.query : QueryCase, QueryParseOptions, QueryStorage,
     parseQuery, resolveQueryCase;
 
 import sparkles.test_runner.attributes : benchmark;
+import std.traits : hasIndirections;
 
 /// Admission/ranking tier selected for one candidate.
 enum MatchKind : ubyte
@@ -110,10 +111,7 @@ match matrix. Score quality uses three rolling rows bounded by `maxDpUnits`.
 */
 struct MatcherWorkspace(Caps = DefaultFuzzyCaps)
 {
-    private AnalysisWorkspace!(Caps.maxQueryUnits,
-        Caps.maxNormalizationSegment) queryAnalysis;
-    private AnalysisWorkspace!(Caps.maxCandidateUnits,
-        Caps.maxNormalizationSegment) candidateAnalysis;
+    private FuzzyTextWorkspace!Caps candidateAnalysis;
     private char[Caps.maxQueryBytes] decodedQuery = void;
     private TextUnit[Caps.maxQueryUnits] queryUnits = void;
     private PartSpan[Caps.maxFuzzyParts] parts = void;
@@ -138,7 +136,12 @@ struct MatcherWorkspace(Caps = DefaultFuzzyCaps)
     private uint[Caps.maxDpUnits + 1] scoreCurrent = void;
     private uint[Caps.maxDpUnits + 1] scoreVertical = void;
 
-    private TextRange[Caps.maxQueryUnits] ranges = void;
+    // Deleted marks can separate multiple contributors to one final unit.
+    // Every retained nonempty source interval consumes at least one byte.
+    private enum rangeCapacity = Caps.maxCandidateBytes >
+        Caps.maxCandidateUnits + Caps.maxNormalizationSegment
+        ? Caps.maxCandidateBytes : Caps.maxCandidateUnits + Caps.maxNormalizationSegment;
+    private TextRange[rangeCapacity] ranges = void;
     private size_t rangeCount;
 
     // The prepared-query cache: the raw fuzzy-part texts (content, not
@@ -156,17 +159,24 @@ struct MatcherWorkspace(Caps = DefaultFuzzyCaps)
     private size_t cachedLimitFuzzyParts;
     private size_t cachedLimitQueryUnits;
     private QueryCase cachedCaseMode;
-    private AnalysisOptions candidateOptions;
+    private AnalysisCase candidateCase;
     private bool queryPrepared_;
 
     /// Canonical merged ranges from the last successful `match` call.
     const(TextRange)[] lastRanges() const return scope
         @safe pure nothrow @nogc
         => matcherRanges(this);
+
+    /** Exclusive scratch for parsing before matching. Query units are copied into
+    their cache before candidate analysis reuses this same arena.
+    */
+    ref FuzzyTextWorkspace!Caps textWorkspace() scope return @safe pure nothrow @nogc
+        => candidateAnalysis;
 }
 
-// One exclusive workspace per worker stays below the declared one-MiB budget.
-static assert(MatcherWorkspace!().sizeof <= 1 * 1_024 * 1_024);
+// Exact provenance and all intermediate Unicode arenas are caller-owned.
+static assert(MatcherWorkspace!().sizeof <= 16 * 1_024 * 1_024);
+static assert(!hasIndirections!(MatcherWorkspace!()));
 
 private const(TextRange)[] matcherRanges(Caps)(
     return scope ref const MatcherWorkspace!Caps workspace)
@@ -313,7 +323,6 @@ FuzzyExpected!MatchOutcome matchText(Caps = DefaultFuzzyCaps)(
         collectWitness(outcome, workspace);
     }
 
-    sortAndMergeRanges(workspace);
     outcome.score = cast(uint)(scoreSum / workspace.partCount);
     if (outcome.score == 0)
         outcome.score = 1;
@@ -375,11 +384,11 @@ private FuzzyExpected!void prepareText(Caps)(in QueryStorage!Caps query,
             return prepared;
     }
 
-    // The stored options never carry borrowed slices; the general-language
-    // stopword lexicon is re-attached from the query per call.
-    AnalysisOptions options = workspace.candidateOptions;
-    if (query.profile.kind == AnalysisProfileKind.generalLanguage)
-        options.stopwords = query.profile.stopwords;
+    // Only the resolved case rule is cached. Reconstruct profile options from
+    // the query so the large workspace contains no GC-visible indirections.
+    const options = query.profile.kind == AnalysisProfileKind.generalLanguage
+        ? AnalysisOptions.generalLanguage(query.profile.stopwords)
+        : AnalysisOptions.codePath(workspace.candidateCase);
     auto candidateResult = analyzeText(text, options,
         workspace.candidateAnalysis);
     if (!candidateResult.succeeded)
@@ -409,7 +418,7 @@ private FuzzyExpected!void prepareQuery(Caps)(in QueryStorage!Caps query,
                 return fuzzyErr!void(decoded.error.code, decoded.error.offset);
             auto probe = analyzeText(workspace.decodedQuery[0 .. decoded.value],
                 AnalysisOptions.codePath(AnalysisCase.sensitive),
-                workspace.queryAnalysis);
+                workspace.candidateAnalysis);
             if (!probe.succeeded)
                 return analysisFailure(true, probe.error, probe.sourceOffset);
             sensitive |= probe.containsUppercase;
@@ -437,28 +446,25 @@ private FuzzyExpected!void prepareQuery(Caps)(in QueryStorage!Caps query,
         if (decoded.hasError)
             return fuzzyErr!void(decoded.error.code, decoded.error.offset);
         auto analyzed = analyzeText(workspace.decodedQuery[0 .. decoded.value],
-            options, workspace.queryAnalysis);
+            options, workspace.candidateAnalysis);
         if (!analyzed.succeeded)
             return analysisFailure(true, analyzed.error, analyzed.sourceOffset);
-        if (workspace.queryAnalysis.output.length < 2)
+        if (workspace.candidateAnalysis.output.length < 2)
             continue;
         if (workspace.partCount == limits.maxFuzzyParts
-            || workspace.queryUnitCount + workspace.queryAnalysis.output.length
+            || workspace.queryUnitCount + workspace.candidateAnalysis.output.length
                 > limits.maxQueryUnits)
             return fuzzyErr!void(FuzzyErrorCode.queryTooComplex,
                 workspace.queryUnitCount);
         const start = workspace.queryUnitCount;
-        foreach (unit; workspace.queryAnalysis.output)
+        foreach (unit; workspace.candidateAnalysis.output)
             workspace.queryUnits[workspace.queryUnitCount++] = unit;
         workspace.parts[workspace.partCount++] = PartSpan(start,
-            workspace.queryAnalysis.output.length);
+            workspace.candidateAnalysis.output.length);
     }
 
-    // Store a slice-free copy of the resolved options (`prepareText`
-    // re-attaches the borrowed stopword lexicon). Only the code-path profile
-    // is remembered by the cache: general-language options depend on lexicon
-    // contents this cache cannot cheaply fingerprint, so that profile
-    // re-prepares per call.
+    // General-language options depend on lexicon contents this cache cannot
+    // cheaply fingerprint, so that profile re-prepares per call.
     final switch (query.profile.kind)
     {
     case AnalysisProfileKind.codePath:
@@ -467,12 +473,10 @@ private FuzzyExpected!void prepareQuery(Caps)(in QueryStorage!Caps query,
         // came apart: a stated `sensitive` rule left the query preserving
         // case while the candidate folded, so `widget` matched `WIDGET_MAX`
         // and admission was asymmetric in a way no single-sided test sees.
-        workspace.candidateOptions = AnalysisOptions.codePath(
-            resolveQueryCase(query.caseMode, sensitive));
+        workspace.candidateCase = resolveQueryCase(query.caseMode, sensitive);
         rememberPreparedQuery(query, limits, workspace);
         break;
     case AnalysisProfileKind.generalLanguage:
-        workspace.candidateOptions = AnalysisOptions.generalLanguage();
         break;
     }
     return fuzzyOk();
@@ -538,11 +542,13 @@ private FuzzyExpected!void analysisFailure(bool query, AnalysisError error,
     case AnalysisError.none:
         return fuzzyOk();
     case AnalysisError.invalidOptions:
+    case AnalysisError.unsupportedLocale:
         return fuzzyErr!void(FuzzyErrorCode.invalidConfiguration, offset);
     case AnalysisError.sourceTooLong:
         return fuzzyErr!void(query ? FuzzyErrorCode.queryTooComplex
             : FuzzyErrorCode.candidateTooLong, offset);
     case AnalysisError.outputFull:
+    case AnalysisError.workspaceFull:
         return fuzzyErr!void(query ? FuzzyErrorCode.queryTooComplex
             : FuzzyErrorCode.candidateTooComplex, offset);
     case AnalysisError.segmentTooLong:
@@ -802,44 +808,50 @@ private void collectWitness(Caps)(ref MatchOutcome outcome,
     {
         const unit = workspace.candidateAnalysis.output[
             workspace.witnessCandidate[i]];
-        if (unit.sourceStart < outcome.firstByte)
-            outcome.firstByte = unit.sourceStart;
-        if (unit.sourceEnd > outcome.endByte)
-            outcome.endByte = unit.sourceEnd;
-        workspace.ranges[workspace.rangeCount++] = TextRange(
-            unit.sourceStart, unit.sourceEnd);
+        foreach (source; workspace.candidateAnalysis.contributingSourceSpans(unit))
+        {
+            if (source.start < outcome.firstByte) outcome.firstByte = source.start;
+            if (source.end > outcome.endByte) outcome.endByte = source.end;
+            insertWitnessRange(TextRange(cast(uint) source.start, cast(uint) source.end), workspace);
+        }
     }
 }
 
-private void sortAndMergeRanges(Caps)(ref MatcherWorkspace!Caps workspace)
-    @safe pure nothrow @nogc
+// Merge exact contributors as they arrive. Repeated expansion witnesses do not
+// require duplicate storage, and canonical reordering does not highlight gaps.
+// Distinct ranges cannot outnumber the original decoded units in the analysis.
+private void insertWitnessRange(Caps)(TextRange value,
+    ref MatcherWorkspace!Caps workspace) @safe pure nothrow @nogc
 {
-    foreach (i; 1 .. workspace.rangeCount)
+    size_t first;
+    size_t high = workspace.rangeCount;
+    while (first < high)
     {
-        const value = workspace.ranges[i];
-        size_t at = i;
-        while (at != 0 && (workspace.ranges[at - 1].start > value.start
-                || (workspace.ranges[at - 1].start == value.start
-                    && workspace.ranges[at - 1].end > value.end)))
-        {
-            workspace.ranges[at] = workspace.ranges[at - 1];
-            --at;
-        }
-        workspace.ranges[at] = value;
+        const mid = first + (high - first) / 2;
+        if (workspace.ranges[mid].end < value.start) first = mid + 1;
+        else high = mid;
     }
-    size_t write;
-    foreach (read; 0 .. workspace.rangeCount)
+    size_t end = first;
+    while (end < workspace.rangeCount && workspace.ranges[end].start <= value.end)
     {
-        const value = workspace.ranges[read];
-        if (write != 0 && value.start <= workspace.ranges[write - 1].end)
-        {
-            if (value.end > workspace.ranges[write - 1].end)
-                workspace.ranges[write - 1].end = value.end;
-        }
-        else
-            workspace.ranges[write++] = value;
+        if (workspace.ranges[end].start < value.start) value.start = workspace.ranges[end].start;
+        if (workspace.ranges[end].end > value.end) value.end = workspace.ranges[end].end;
+        ++end;
     }
-    workspace.rangeCount = write;
+    if (end == first)
+    {
+        assert(workspace.rangeCount < workspace.ranges.length);
+        foreach_reverse (i; first .. workspace.rangeCount)
+            workspace.ranges[i + 1] = workspace.ranges[i];
+        ++workspace.rangeCount;
+    }
+    else
+    {
+        foreach (i; end .. workspace.rangeCount)
+            workspace.ranges[first + 1 + i - end] = workspace.ranges[i];
+        workspace.rangeCount -= end - first - 1;
+    }
+    workspace.ranges[first] = value;
 }
 
 private bool exactFilename(Caps)(ref MatcherWorkspace!Caps workspace,
@@ -870,13 +882,13 @@ private bool queryHasSeparator(Caps)(ref MatcherWorkspace!Caps workspace)
 @safe pure nothrow @nogc
 unittest
 {
-    auto query = parseQuery("abcd");
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
+    auto query = parseQuery("abcd", workspace.textWorkspace);
     assert(query.hasValue);
     CandidateView candidate;
     candidate.path = "xxabdyy";
     candidate.filenameOffset = 0;
-    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     auto result = match(query.value, candidate, workspace);
     assert(result.hasValue);
     assert(result.value.kind == MatchKind.matched);
@@ -900,6 +912,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     // The whole point of the entry point: one admission rule. If these two
     // can disagree on any text, a caller without a path has to write its own
     // matcher — which is exactly what hue's grep source did, and how its
@@ -907,10 +921,8 @@ unittest
     static immutable string[7] texts = [
         "xxabdyy", "xxabyy", "abxd", "abdc", "abcd", "", "aaaabbbbccccdddd",
     ];
-    auto query = parseQuery("abcd");
+    auto query = parseQuery("abcd", workspace.textWorkspace);
     assert(query.hasValue);
-    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
 
     foreach (text; texts)
     {
@@ -935,6 +947,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     // A LOWERCASE query is the discriminator. An uppercase one is already
     // sensitive under smart case, so a test using `WIDGET` passes whether
     // the stated rule reaches the engine or not — which is how a half-wired
@@ -942,12 +956,10 @@ unittest
     // folded, and `widget` matched `WIDGET_MAX` in "case-sensitive" mode.
     QueryParseOptions strictOpts;
     strictOpts.caseMode = QueryCase.sensitive;
-    auto strictQuery = parseQuery!DefaultFuzzyCaps("widget", strictOpts);
-    auto smartQuery = parseQuery!DefaultFuzzyCaps("widget");
+    auto strictQuery = parseQuery!DefaultFuzzyCaps("widget", workspace.textWorkspace, strictOpts);
+    auto smartQuery = parseQuery!DefaultFuzzyCaps("widget", workspace.textWorkspace);
     assert(strictQuery.hasValue && smartQuery.hasValue);
 
-    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
 
     auto strict = matchText(strictQuery.value, "WIDGET_MAX", MatchConfig.init,
         Scoring.init, FuzzyLimits.init, workspace);
@@ -965,6 +977,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     // The preparation cache holds ANALYZED units, and the case rule decided
     // how they were folded. Keyed on content alone, the same bytes under a
     // second rule silently reuse the first rule's units — and the second
@@ -975,12 +989,10 @@ unittest
     QueryParseOptions foldedOpts;
     foldedOpts.caseMode = QueryCase.simpleFold;
 
-    auto sensitiveQuery = parseQuery!DefaultFuzzyCaps("WIDGET", sensitiveOpts);
-    auto foldedQuery = parseQuery!DefaultFuzzyCaps("WIDGET", foldedOpts);
+    auto sensitiveQuery = parseQuery!DefaultFuzzyCaps("WIDGET", workspace.textWorkspace, sensitiveOpts);
+    auto foldedQuery = parseQuery!DefaultFuzzyCaps("WIDGET", workspace.textWorkspace, foldedOpts);
     assert(sensitiveQuery.hasValue && foldedQuery.hasValue);
 
-    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
 
     auto strict = matchText(sensitiveQuery.value, "struct Widget",
         MatchConfig.init, Scoring.init, FuzzyLimits.init, workspace);
@@ -1004,14 +1016,14 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     // `PKC1`'s objection, answered by construction. Through `match` a text
     // with `filenameOffset == 0` reports `allInFilename`, which `rank` pays
     // a bonus for — the reason a content line may not be ranked as a
     // candidate. Through `matchText` the question cannot be asked.
-    auto query = parseQuery("abcd");
+    auto query = parseQuery("abcd", workspace.textWorkspace);
     assert(query.hasValue);
-    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
 
     CandidateView candidate;
     candidate.path = "xxabdyy";
@@ -1031,13 +1043,13 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     // The canonical witness supplies the highlight, merged and sorted
     // (§4.3). A caller needing to paint a match reads these rather than
     // deriving a span of its own.
-    auto query = parseQuery("abcd");
+    auto query = parseQuery("abcd", workspace.textWorkspace);
     assert(query.hasValue);
-    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
 
     auto result = matchText(query.value, "xxabdyy", MatchConfig.init,
         Scoring.init, FuzzyLimits.init, workspace);
@@ -1048,17 +1060,91 @@ unittest
     assert(ranges[$ - 1].end == result.value.endByte);
 }
 
+@("fuzzy.matchText.reorderedContributorsExcludeUnrelatedMark")
+@safe pure nothrow @nogc
+unittest
+{
+    auto owner = makeUnique!(MatcherWorkspace!())();
+    auto query = parseQuery("ÀZ", owner.get().textWorkspace, QueryParseOptions(caseMode: QueryCase.simpleFold));
+    assert(query.hasValue);
+    auto result = matchText(query.value, "A\u0315\u0300Z", MatchConfig(maxTypos: 0),
+        Scoring.init, FuzzyLimits.init, owner.get());
+    assert(result.hasValue && result.value.admitted);
+    const ranges = matcherRanges(owner.get());
+    assert(ranges.length == 2);
+    assert(ranges[0] == TextRange(0, 1));
+    assert(ranges[1] == TextRange(3, 6));
+}
+
+@("fuzzy.matchText.finalUnitCapacityDoesNotLimitIntermediateUnicodeStages")
+@safe pure nothrow @nogc
+unittest
+{
+    auto owner = makeUnique!(MatcherWorkspace!())();
+    char[768] source = void;
+    static immutable tokens = ["\u0390", "A\u0300"];
+    static immutable counts = [107, 256];
+    foreach (sample; 0 .. tokens.length)
+    {
+        const token = tokens[sample];
+        const count = counts[sample];
+        foreach (i; 0 .. count)
+            source[i * token.length .. (i + 1) * token.length] = token;
+        const text = source[0 .. count * token.length];
+        auto query = parseQuery(text, owner.get().textWorkspace);
+        assert(query.hasValue);
+        auto result = matchText(query.value, text, MatchConfig(maxTypos: 0),
+            Scoring.init, FuzzyLimits.init, owner.get());
+        assert(result.hasValue && result.value.admitted);
+        TextRange[1] expected = TextRange(0, text.length);
+        assert(matcherRanges(owner.get()) == expected[]);
+    }
+}
+
+@("fuzzy.matchText.deletedMarksDoNotLimitExactWitnessRangeCapacity")
+@safe pure nothrow @nogc unittest
+{
+    struct TinyCaps
+    {
+        enum size_t maxQueryBytes = 64, maxQueryUnits = 8;
+        enum size_t maxCandidateBytes = 64, maxCandidateUnits = 8;
+        enum size_t maxDpUnits = 8, maxFuzzyParts = 4, maxConstraints = 4;
+        enum size_t maxGlobInstructions = 32, maxGlobRanges = 16;
+        enum size_t maxPositionRanges = 32, maxNormalizationSegment = 4, maxTypos = 2;
+    }
+    auto owner = makeUnique!(MatcherWorkspace!TinyCaps)();
+    auto limits = FuzzyLimits(maxQueryBytes: 64, maxQueryUnits: 8,
+        maxCandidateBytes: 64, maxCandidateUnits: 8, maxDpUnits: 8,
+        maxFuzzyParts: 4, maxConstraints: 4, maxGlobInstructions: 32,
+        maxGlobRanges: 16, maxPositionRanges: 32);
+    auto options = QueryParseOptions(profile: AnalysisProfile.generalLanguage(), limits: limits);
+    auto query = parseQuery!TinyCaps("aaaaaaaa", owner.get().textWorkspace, options);
+    assert(query.hasValue);
+    char[56] text = void;
+    foreach (i; 0 .. 8)
+        text[i * 7 .. (i + 1) * 7] = "A\u0315\u0300\u0315";
+    TextRange[32] ranges;
+    const result = positions(query.value, CandidateView(path: text[]),
+        MatchConfig(maxTypos: 0), limits, owner.get(), ranges);
+    assert(result.hasValue && result.value == 16);
+    foreach (i; 0 .. 8)
+    {
+        assert(ranges[i * 2] == TextRange(i * 7, i * 7 + 1));
+        assert(ranges[i * 2 + 1] == TextRange(i * 7 + 3, i * 7 + 5));
+    }
+}
+
 @("fuzzy.matchText.refusesTextLongerThanItsCapacity")
 @safe pure nothrow @nogc
 unittest
 {
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     // `match` got this from `validateCandidate`, which `matchText` does not
     // run. The bound has to be re-stated here or an oversize text reaches
     // the analyzer instead of an error value.
-    auto query = parseQuery("abcd");
+    auto query = parseQuery("abcd", workspace.textWorkspace);
     assert(query.hasValue);
-    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
 
     char[DefaultFuzzyCaps.maxCandidateBytes + 1] huge = 'a';
     auto result = matchText(query.value, huge[], MatchConfig.init,
@@ -1067,17 +1153,45 @@ unittest
     assert(result.error.code == FuzzyErrorCode.candidateTooLong);
 }
 
+@("fuzzy.matchText.statedFullFoldAdmitsExpansionAndPreservesWitness")
+@safe pure nothrow @nogc
+unittest
+{
+    auto owner = makeUnique!(MatcherWorkspace!())();
+    auto simple = parseQuery("STRASSE", owner.get.textWorkspace,
+        QueryParseOptions(caseMode: QueryCase.simpleFold));
+    auto full = parseQuery("STRASSE", owner.get.textWorkspace,
+        QueryParseOptions(caseMode: QueryCase.fullFold));
+    assert(simple.hasValue && full.hasValue);
+
+    auto rejected = matchText(simple.value, "Straße", MatchConfig(0),
+        Scoring.init, FuzzyLimits.init, owner.get);
+    assert(rejected.hasValue && !rejected.value.admitted);
+    auto admitted = matchText(full.value, "Straße", MatchConfig(0),
+        Scoring.init, FuzzyLimits.init, owner.get);
+    assert(admitted.hasValue && admitted.value.admitted
+        && admitted.value.typos == 0);
+    assert(admitted.value.firstByte == 0 && admitted.value.endByte == "Straße".length);
+    TextRange[1] expected = [TextRange(0, "Straße".length)];
+    assert(owner.get.lastRanges == expected[]);
+
+    // Switching back must not reuse the full-fold query or candidate policy.
+    auto again = matchText(simple.value, "Straße", MatchConfig(0),
+        Scoring.init, FuzzyLimits.init, owner.get);
+    assert(again.hasValue && !again.value.admitted);
+}
+
 @("fuzzy.match.smartCaseUnicodeAndPositions")
 @safe pure nothrow @nogc
 unittest
 {
-    auto insensitive = parseQuery("äff");
-    auto sensitive = parseQuery("Äff");
+    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
+    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
+    auto insensitive = parseQuery("äff", workspace.textWorkspace);
+    auto sensitive = parseQuery("Äff", workspace.textWorkspace);
     CandidateView candidate;
     candidate.path = "src/Äffin.d";
     candidate.filenameOffset = 4;
-    auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
-    ref MatcherWorkspace!() workspace() => workspaceOwner.get();
     assert(match(insensitive.value, candidate, workspace).value.admitted);
     candidate.path = "src/äffin.d";
     auto caseResult = match(sensitive.value, candidate, MatchConfig(0),
@@ -1096,10 +1210,10 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    auto query = parseQuery("fb");
-    assert(query.hasValue);
     auto workspaceOwner = makeUnique!(MatcherWorkspace!())();
     ref MatcherWorkspace!() workspace() => workspaceOwner.get();
+    auto query = parseQuery("fb", workspace.textWorkspace);
+    assert(query.hasValue);
     CandidateView candidate;
 
     candidate.path = "foobar";
@@ -1134,22 +1248,22 @@ unittest
     auto shared_Owner = makeUnique!(MatcherWorkspace!())();
     ref MatcherWorkspace!() shared_() => shared_Owner.get();
     char[3] prompt = "abc";
-    auto query = parseQuery(prompt[]);
+    auto query = parseQuery(prompt[], shared_.textWorkspace);
     const first = match(query.value, candidate, shared_).value;
     prompt = "Abc"; // smart-case flips to sensitive
-    query = parseQuery(prompt[]);
+    query = parseQuery(prompt[], shared_.textWorkspace);
     const second = match(query.value, candidate, shared_).value;
     prompt = "abc";
-    query = parseQuery(prompt[]);
+    query = parseQuery(prompt[], shared_.textWorkspace);
     const third = match(query.value, candidate, shared_).value;
 
     auto freshLowerOwner = makeUnique!(MatcherWorkspace!())();
     ref MatcherWorkspace!() freshLower() => freshLowerOwner.get();
-    auto lower = parseQuery("abc");
+    auto lower = parseQuery("abc", freshLower.textWorkspace);
     const expectedLower = match(lower.value, candidate, freshLower).value;
     auto freshUpperOwner = makeUnique!(MatcherWorkspace!())();
     ref MatcherWorkspace!() freshUpper() => freshUpperOwner.get();
-    auto upper = parseQuery("Abc");
+    auto upper = parseQuery("Abc", freshUpper.textWorkspace);
     const expectedUpper = match(upper.value, candidate, freshUpper).value;
 
     assert(first.kind == expectedLower.kind
@@ -1364,7 +1478,7 @@ unittest
     limits.maxPositionRanges = TinyCaps.maxPositionRanges;
     QueryParseOptions options;
     options.limits = limits;
-    auto query = parseQuery!TinyCaps("needle", options);
+    auto query = parseQuery!TinyCaps("needle", workspace.textWorkspace, options);
     assert(query.hasValue);
     auto result = match(query.value, candidate, MatchConfig(2),
         Scoring.init, limits, workspace);
@@ -1379,7 +1493,6 @@ unittest
 {
     import sparkles.test_runner.bench : benchIter, blackBox;
 
-    auto query = parseQuery("unicode table").value;
     class Context
     {
         bool upper;
@@ -1387,6 +1500,7 @@ unittest
         MatcherWorkspace!() workspace;
     }
     auto context = new Context;
+    auto query = parseQuery("unicode table", context.workspace.textWorkspace).value;
     context.candidate.path
         = "libs/base/src/sparkles/base/text/unicode_tables.d";
     context.candidate.filenameOffset = 33;

@@ -1135,7 +1135,8 @@ struct WorkspaceTui
         // `modelFor` re-resolves only when the bytes or the flags changed.
         dsvModel = modelFor(dsvModel, st.rawText, "", flagsOf(st.info));
         auto proj = dsvBrowser.projection(st.info.columns);
-        proj.rowMask = rowMaskFor(dsvModel, dsvBrowser.fuzzyParts);
+        proj.rowMask = rowMaskFor(dsvModel, dsvBrowser.fuzzyParts,
+            dsvBrowser.fuzzyWorkspace);
         // `DSN4`: re-materialize the window the grid is looking at. A
         // projection edit (sort, filter, columns) reads the current scroll;
         // a scroll passes the row it just moved to.

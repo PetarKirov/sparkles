@@ -567,42 +567,57 @@ extern (C) private pure nothrow @nogc @system
     assert(slab.get.bytes[0] == 9);
 }
 
+version (unittest)
+private void copyBorrowedOwner(T)(ref T owner)
+{
+    T copy = owner;
+}
+
 @("unique.move.transfersSoleOwnership")
 @safe unittest
 {
     import core.lifetime : move;
 
     static int liveCount;
+    static int destructionCount;
     static struct Counted
     {
         int value;
-        ~this() @safe nothrow @nogc { if (value) --liveCount; }
+        this(int value) @safe nothrow @nogc
+        {
+            this.value = value;
+            ++liveCount;
+        }
+        ~this() @safe nothrow @nogc
+        {
+            --liveCount;
+            ++destructionCount;
+        }
     }
 
-    auto first = makeUnique!Counted(5);
-    ++liveCount;
-    auto second = first.move();
-    assert(first.empty, "a moved-from owner destroys nothing");
-    assert(second.get.value == 5 && liveCount == 1);
+    Unique!(Counted, Mallocator, false) borrowed;
+    static assert(!__traits(compiles, copyBorrowedOwner(borrowed)));
 
-    // `core.lifetime.move` is the same transfer through the druntime API.
-    auto third = move(second);
-    assert(second.empty && third.get.value == 5 && liveCount == 1);
+    {
+        auto first = makeUnique!Counted(5);
+        auto second = first.move();
+        assert(first.empty, "a moved-from owner destroys nothing");
+        assert(second.get.value == 5 && liveCount == 1);
 
-    // Move-assignment onto a live owner destroys what it replaces.
-    third = makeUnique!Counted(6);
-    ++liveCount;
-    assert(third.get.value == 6 && liveCount == 1);
+        // `core.lifetime.move` is the same transfer through the druntime API.
+        auto third = move(second);
+        assert(second.empty && third.get.value == 5 && liveCount == 1);
+        first.reset();
+        second.reset();
+        assert(liveCount == 1 && destructionCount == 0);
 
-    // Copying is not merely discouraged, it does not compile — and the type
-    // reports as move-only rather than as a postblit type.
-    static assert(!__traits(compiles, (() {
-        auto owner = makeUnique!Counted(1);
-        auto copy = owner;
-        owner.reset();
-    })()));
-    static assert(!__traits(hasPostblit, Unique!Counted));
-    static assert(!__traits(isCopyable, Unique!Counted));
+        // Move-assignment onto a live owner destroys what it replaces.
+        third = makeUnique!Counted(6);
+        assert(third.get.value == 6 && liveCount == 1);
+        assert(destructionCount == 1, "assignment destroyed the replaced value");
+    }
+    assert(liveCount == 0 && destructionCount == 2,
+        "each value was destroyed exactly once across every ownership transfer");
 }
 
 @("unique.release.handsOverTheBlockAndItsRoot")

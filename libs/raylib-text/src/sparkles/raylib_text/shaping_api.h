@@ -1,6 +1,7 @@
 #ifndef SPARKLES_SHAPING_API_H
 #define SPARKLES_SHAPING_API_H
 #include <stdint.h>
+#include <stddef.h>
 #pragma attribute(push, nogc, nothrow)
 
 typedef struct STLibrary STLibrary;
@@ -21,6 +22,6 @@ int st_face_has(STFace *face, uint32_t cp);
 int st_face_is_color(STFace *face);
 float st_face_ascent(STFace *face);
 void st_bitmap_free(STBitmap *bitmap);
-STBitmap st_shape(STFace *face, const uint32_t *cps, unsigned count);
+STBitmap st_shape(STFace *face, const uint32_t *cps, size_t count);
 #pragma attribute(pop)
 #endif

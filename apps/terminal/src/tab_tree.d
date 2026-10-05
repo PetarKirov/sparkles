@@ -157,7 +157,8 @@ final class TabTree : Surface
 
     bool key(in KeyEvent k) @system
     {
-        import std.utf : encode;
+        import sparkles.base.text.utf : encodeScalar, UtfStatus;
+        import page_kit : queryPrefixWithoutLastGrapheme;
 
         switch (k.key)
         {
@@ -172,9 +173,7 @@ final class TabTree : Surface
             case Key.backspace:
                 if (query.length)
                 {
-                    import std.utf : strideBack;
-
-                    query.length -= strideBack(query, query.length);
+                    query.length = queryPrefixWithoutLastGrapheme(query);
                     selected = 0;
                 }
                 return true;
@@ -182,7 +181,10 @@ final class TabTree : Surface
                 if (k.ch < 0x20 || k.mods.ctrl || k.mods.alt)
                     return false;
                 char[4] buf;
-                query ~= buf[0 .. encode(buf, k.ch)];
+                const encoded = encodeScalar(k.ch, buf[]);
+                if (encoded.status != UtfStatus.ok)
+                    return false;
+                query ~= buf[0 .. encoded.written];
                 selected = 0;
                 return true;
             default:
@@ -352,6 +354,18 @@ version (unittest)
     assert(t.search == "");
 }
 
+@("tab_tree.key.clusterBackspaceAndInvalidScalar")
+@system unittest
+{
+    auto t = tree();
+    assert(t.key(KeyEvent(Key.char_, 'a')));
+    assert(t.key(KeyEvent(Key.char_, '\u0301')));
+    assert(!t.key(KeyEvent(Key.char_, cast(dchar) 0xD800)));
+    assert(t.search == "a\u0301");
+    assert(t.key(KeyEvent(Key.backspace)));
+    assert(t.search == "");
+}
+
 /**
 `sparkles:fuzzy`'s score for `text` against `query`, plus one; 0 when the
 query does not admit it (or does not parse). Shared by the searches that rank
@@ -367,7 +381,7 @@ long fuzzyScore(scope const(char)[] query, scope const(char)[] text) @trusted
     static MatcherWorkspace!()* workspace;
     if (workspace is null)
         workspace = new MatcherWorkspace!();
-    auto q = parseQuery(query);
+    auto q = parseQuery(query, workspace.textWorkspace);
     if (!q.hasValue)
         return 0;
     CandidateView c;

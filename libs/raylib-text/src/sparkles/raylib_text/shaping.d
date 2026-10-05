@@ -1,5 +1,7 @@
 /// Cached HarfBuzz clusters and FreeType color/outline glyphs. File discovery is
 /// startup-only; misses are queued during drawing and realized after EndDrawing.
+/// Complete spans retain HarfBuzz's zero-advance default-ignorable placeholders
+/// so subsequent combining marks keep their shaped positions even in long clusters.
 module sparkles.raylib_text.shaping;
 
 import raylib;
@@ -81,7 +83,8 @@ package struct ClusterCache
     /// sequence coverage and ligatures cannot be inferred from scalar coverage.
     void initialize(scope const(char)*[] preferred, FontSources sources, int px) @system
     {
-        import std.string : toStringz, splitLines, strip, toLower;
+        import std.string : toStringz, splitLines, strip;
+        import sparkles.base.text.case_text : asciiLower, unicodeLower;
         import std.algorithm.searching : canFind;
         import std.file : dirEntries, SpanMode;
         import std.path : extension;
@@ -119,7 +122,7 @@ package struct ClusterCache
             try
                 foreach (entry; dirEntries(dir, SpanMode.breadth))
                 {
-                    const ext = entry.name.extension.toLower;
+                    const ext = entry.name.extension.asciiLower;
                     if (ext == ".ttf" || ext == ".otf" || ext == ".ttc"
                         || ext == ".otc" || ext == ".dfont") append(entry.name);
                 }
@@ -128,12 +131,12 @@ package struct ClusterCache
         foreach (path; paths)
         {
             const z = path.toStringz;
-            const ext = path.extension.toLower;
+            const ext = path.extension.asciiLower;
             const count = ext == ".ttc" || ext == ".otc" || ext == ".dfont"
                 ? st_face_count(library, z) : 1;
             foreach (index; 0 .. count)
                 candidates ~= Candidate(z, index, null, false,
-                    path.toLower.canFind("emoji"));
+                    path.unicodeLower.canFind("emoji"));
         }
         buckets.length = 256;
         auto slots = buckets[];
@@ -216,7 +219,7 @@ package struct ClusterCache
     {
         auto f = face(candidate);
         if (f is null) return false;
-        auto bitmap = st_shape(f, cps.ptr, cast(uint) cps.length);
+        auto bitmap = st_shape(f, cps.ptr, cps.length);
         scope (exit) st_bitmap_free(&bitmap);
         if (!bitmap.valid) return false;
         if (bitmap.rgba !is null && bitmap.width > 0 && bitmap.height > 0)

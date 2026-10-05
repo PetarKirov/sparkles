@@ -538,12 +538,9 @@ struct GridCanvas
     private ref auto cell(int x, int y) scope
         => (*grid)[cast(ushort)(originX + x), cast(ushort)(originY + y)];
 
-    /// Display width of `cp` in cells (control chars clamp to 1; combining = 0).
-    private static int cellCols(dchar cp)
-    {
-        const w = codepointWidth(cp);
-        return w < 0 ? 1 : w;
-    }
+    /// Owned scalar width: controls and standalone combining marks do not advance.
+    private static int cellCols(dchar cp) @safe pure nothrow @nogc
+        => codepointWidth(cp);
 
     private RgbColor cellBg(in CellStyle st) const scope pure nothrow @nogc
         => toRgb(st.bg, pageBg);
@@ -576,9 +573,7 @@ struct GridCanvas
                         c.style.bg = Color.fromRgb(blend(cellBg(c.style), v.bg, v.bgAlpha));
                         if (opaque)
                         {
-                            c.bytes[0] = ' ';
-                            c.len = 1;
-                            c.width = 1;
+                            c.setCodepoint(' ', 1, c.style, c.linkId);
                             // …and its DECORATION goes too. An underline is
                             // an attribute of the cell, not of the character
                             // in it, so blanking the glyph alone leaves the
@@ -778,7 +773,8 @@ struct GridCanvas
     */
     void textRun(in Point at, scope const(char)[] text, in Visual v) scope
     {
-        import std.utf : byDchar;
+        import sparkles.base.text.tokens : byUtfToken;
+        import sparkles.base.text.utf : UtfMode;
 
         // `DVG5`: an off-screen run costs one comparison, not a UTF-8 decode
         // and a width lookup per character. Scroll cost then tracks what is
@@ -790,8 +786,9 @@ struct GridCanvas
         {
             if (c.isEscape || c.codepoints <= 1)
             {
-                foreach (dchar cp; c.slice.byDchar)
+                foreach (token; byUtfToken(c.slice, UtfMode.replacement))
                 {
+                    const cp = token.scalar;
                     const w = cellCols(cp);
                     if (w == 0)
                         continue; // a lone combining mark, or a control — no advance
@@ -815,14 +812,13 @@ struct GridCanvas
     {
         const w = cast(ubyte) c.width;
         const whole = (capabilities.graphemeClusters || c.unclustered == c.width)
-            && c.slice.length <= Cell.init.bytes.length
             && projectGlyph(c.first, capabilities) == c.first;
         if (whole)
         {
             auto cell_ = &cell(x, y);
             const st = inked(cell_.style, v);
             const link = capabilities.hyperlinks ? v.linkId : 0;
-            cell_.setBytes(c.slice, w, st, link);
+            cell_.setBytes(c.slice, w, st, link, c.hasMalformed);
             if (w == 2 && inBounds(x + 1, y))
                 cell(x + 1, y).setCodepoint(' ', 0, st, link);
             return;
@@ -926,11 +922,12 @@ struct GridCanvas
     /// authority, so measure and paint agree.
     Size measure(scope const(char)[] text) const scope
     {
-        import std.utf : byDchar;
+        import sparkles.base.text.tokens : byUtfToken;
+        import sparkles.base.text.utf : UtfMode;
 
         int cols;
-        foreach (dchar cp; text.byDchar)
-            cols += cellCols(cp);
+        foreach (token; byUtfToken(text, UtfMode.replacement))
+            cols += cellCols(token.scalar);
         return Size(cols, 1);
     }
 }
@@ -1587,15 +1584,29 @@ static assert(isCanvas!GridCanvas);
     assert(f[7, 0].grapheme == "z");
     assert(degradationsOf(ops[], xterm)[Substitution.graphemeFolded] == 1);
 
-    // A cluster longer than a cell holds (a family of three, 18 bytes) folds
-    // on every target rather than being cut mid-code-point.
-    const DrawOp[1] family = [
-        textRunOp(Rect(0, 0, 4, 1), "\U0001F468\u200D\U0001F469\u200D\U0001F467z"),
-    ];
-    Grid l;
-    l.resize(4, 1);
-    paintGrid(l, RgbColor(0, 0, 0), family[]);
-    assert(l[0, 0].grapheme == "\U0001F468" && l[2, 0].grapheme == "z");
+}
+
+/// Whole clusters outlive the old inline-cell bound; folding is a target policy.
+@("tui_canvas.capabilities.longGraphemeStorage")
+@safe unittest
+{
+    import sparkles.ui.tokens : capabilitiesOf, Profile;
+
+    enum familyCluster = "\U0001F468\u200D\U0001F469\u200D\U0001F467";
+    const DrawOp[1] ops = [textRunOp(Rect(0, 0, 4, 1), familyCluster ~ "z")];
+    Grid clustered;
+    clustered.resize(4, 1);
+    paintGrid(clustered, RgbColor(0, 0, 0), ops[], caps: capabilitiesOf(Profile.full));
+    assert(clustered[0, 0].grapheme == familyCluster);
+    assert(clustered[0, 0].width == 2 && clustered[1, 0].width == 0);
+    assert(clustered[2, 0].grapheme == "z");
+
+    Grid folded;
+    folded.resize(4, 1);
+    paintGrid(folded, RgbColor(0, 0, 0), ops[], caps: capabilitiesOf(Profile.enhanced));
+    assert(folded[0, 0].grapheme == "\U0001F468");
+    assert(folded[0, 0].width == 2 && folded[1, 0].width == 0);
+    assert(folded[2, 0].grapheme == "z");
 }
 
 @("ui_tui.grid_canvas.tier0EffectLandsInTheTerminal")

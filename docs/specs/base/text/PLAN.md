@@ -34,30 +34,84 @@ delivers them.
 | Milestone                                       | State                                                                                      | Acceptance boundary                                                                                                                                                                                                                                                                                                  |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Stage 0 (incl. wrapping W0): contract and scope | scope approved; review recorded for the contracts committed in `9db961a35`; re-review open | testing.md §9 records independent review and repaired-trace rechecks of the base and wrapping contracts as committed in `9db961a35`. Requirements added or split since (TXT-CELL4–13, TXT-SIZE1–5, TXT-MIG3, and the restructured wrapping requirements) await re-review; publication validation is a separate gate. |
-| M1a: owned encoding                             | not started                                                                                | TXT-OWN1/3 and TXT-UTF1–17, through real prefix/stream/whole operations.                                                                                                                                                                                                                                             |
-| M1b: reproducible Unicode 18 data               | not started                                                                                | TXT-DATA1–6, offline regeneration, license retention, upgrade invalidation, and raw-data independent checks.                                                                                                                                                                                                         |
-| M1c: unbounded graphemes                        | not started                                                                                | TXT-SEG1–4, including chunk partitions and source-span behavior.                                                                                                                                                                                                                                                     |
-| M2: complete Unicode algorithms                 | not started                                                                                | TXT-SEG5/6, TXT-BIDI1/2, TXT-ALG1, TXT-NORM1–4, TXT-CASE1, TXT-PROV1/2.                                                                                                                                                                                                                                              |
-| M3: width profiles and maps                     | not started                                                                                | TXT-CELL1–13, TXT-MAP1–7, TXT-CACHE1–3; both `terminalKitty` and `terminalUnclustered` with its folded emission, and the glyph-channel set.                                                                                                                                                                          |
+| M1a: owned encoding                             | in progress; core smoke verified for TXT-UTF1–12                                           | TXT-OWN1/3 and TXT-UTF1–17, through real prefix/stream/whole operations.                                                                                                                                                                                                                                             |
+| M1b: reproducible Unicode 18 data               | in progress; offline generation verified                                                   | TXT-DATA1–6, offline regeneration, license retention, upgrade invalidation, and raw-data independent checks.                                                                                                                                                                                                         |
+| M1c: unbounded graphemes                        | in progress; corpus and chunk spans verified                                               | TXT-SEG1–4, including chunk partitions and source-span behavior.                                                                                                                                                                                                                                                     |
+| M2: complete Unicode algorithms                 | in progress; independent corpora verified for the prior contract subset                    | TXT-SEG5/6, TXT-BIDI1/2, TXT-ALG1, TXT-NORM1–4, TXT-CASE1, TXT-PROV1/2.                                                                                                                                                                                                                                              |
+| M3: width profiles and maps                     | in progress; typed map smoke verified, expanded profile acceptance pending                 | TXT-CELL1–13, TXT-MAP1–7, TXT-CACHE1–3; both `terminalKitty` and `terminalUnclustered` with its folded emission, and the glyph-channel set.                                                                                                                                                                          |
 | M3s: scaled footprints                          | not started                                                                                | TXT-SIZE1–5 as pure operations; the design system's `textSizing` consumer is gated on its own text-sizing entry condition (GLY5).                                                                                                                                                                                    |
-| M4/W1: cell wrapping end to end                 | not started                                                                                | WRAP-OPP1–4, WRAP-POL1–6, plans, cell geometry and tabs, greedy, bounded emission, ANSI/style; §5.1.                                                                                                                                                                                                                 |
-| M4/W2: exact balanced                           | not started                                                                                | Whole-candidate provider, variable geometry, exact budgets, squared objective and ties; §5.1.                                                                                                                                                                                                                        |
-| M4/W3: exact measurable solver                  | not started                                                                                | Primitive algebra, Knuth–Plass ratio/demerits/glue realization, full path state, alternatives; §5.1.                                                                                                                                                                                                                 |
-| M4/W5: hyphenation resources                    | not started                                                                                | Bounded parser/matcher and provenance over licensed resources supplied above base; §5.1.                                                                                                                                                                                                                             |
-| M5 (incl. W4): caller cutover and removal       | not started                                                                                | TXT-MIG1–3, WRAP-MIG1–2, and real consumer integration; no competing owning helpers; §6.                                                                                                                                                                                                                             |
+| M4/W1: cell wrapping end to end                 | in progress; runtime acceptance pending                                                    | WRAP-OPP1–4, WRAP-POL1–6, plans, cell geometry and tabs, greedy, bounded emission, ANSI/style; §5.1.                                                                                                                                                                                                                 |
+| M4/W2: exact balanced                           | in progress; runtime acceptance pending                                                    | Whole-candidate provider, variable geometry, exact budgets, squared objective and ties; §5.1.                                                                                                                                                                                                                        |
+| M4/W3: exact measurable solver                  | in progress; runtime acceptance pending                                                    | Primitive algebra, Knuth–Plass ratio/demerits/glue realization, full path state, alternatives; §5.1.                                                                                                                                                                                                                 |
+| M4/W5: hyphenation resources                    | in progress; runtime acceptance pending                                                    | Bounded parser/matcher and provenance over licensed resources supplied above base; §5.1.                                                                                                                                                                                                                             |
+| M5 (incl. W4): caller cutover and removal       | in progress; expanded public-surface acceptance pending                                    | TXT-MIG1–3, WRAP-MIG1–2, and real consumer integration; no competing owning helpers; §6.                                                                                                                                                                                                                             |
 | W6: contextual provider acceptance              | not started; owned by text-layout                                                          | Real shaped provider above base, after font M4/M7; §5.1.                                                                                                                                                                                                                                                             |
-| M6: independent acceptance                      | not started                                                                                | Complete promised suite, review, publication, and bounded-cost evidence.                                                                                                                                                                                                                                             |
+| M6: independent acceptance                      | in progress; complete acceptance pending                                                   | Complete promised suite, review, publication, and bounded-cost evidence.                                                                                                                                                                                                                                             |
 
-A milestone's state refers to this target. The validators, transactional UTF-16
-converters, SIMD paths, generated Unicode 17 analysis tables, `unclusteredWidth`, and
-conformance/benchmark infrastructure in `libs/base` are assets to migrate; they do
-not satisfy an owned Unicode 18 claim by naming similarity, and no milestone above
-counts them as delivered.
+A milestone's state refers to this target. The initial baseline included
+compiler-derived segmentation and Unicode 17 analysis data; current runtime paths
+have moved to owned Unicode 18 cores. Historical assets and passing isolated drivers
+alone do not certify integrated consumers. The scoped implementation evidence below
+does not sign off a complete milestone or newly added requirements.
 
 Stage 0 publication and independent semantic review are separate gates. The owner's
 scope decision (D-TXT-01) implies no reviewer identity, implementation signoff, or
 verified evidence. Review walks the malformed stream, long-cluster, provenance,
 stale-cache, and public selection scenarios in [testing](./testing.md).
+
+### Initial implementation evidence
+
+- Owned codec runtime smoke: maximal-subpart replacement, opaque-byte reconstruction,
+  retained UTF-8 carry, UTF-16 output backpressure and final intent, and bounded
+  replacement UTF-16z publication passed.
+- The five affected UTF/grapheme/width feature modules passed their isolated
+  unittests under LDC. The historical `unique.move.transfersSoleOwnership`
+  copy-assertion blocker was subsequently fixed; the full published pre-rebase
+  `b11d4eaf6` LDC base run passed 685 runtime tests and one CTFE test. Rebased-tree
+  verification remains separate.
+- The Unicode 18 official grapheme corpus passed all 853 records in the real
+  conformance CLI. A separate smoke also checked finite break state, borrowed
+  ranges, and absolute streaming spans over all 6,163 single-byte split positions.
+- Offline LDC and DMD generation produced identical artifacts, SHA-256
+  `9d05e431a3fd34e0b87c6eaaca3fd1bb467ecb2c2d26322aa1c37357dc2fba51`.
+  A corrupted authenticated input was rejected without replacing an existing
+  output or leaving a staging artifact. A failing Turkic-fold inheritance fixture
+  passed after repairing C/F inheritance beneath T overrides.
+- Independent raw Unicode 18 corpus drivers passed 1,944 word-break and 512
+  sentence-break records, checking both UTF-32 and UTF-8 boundary coordinates.
+  The line-opportunity driver passed 19,346 records and 80,131 boundaries.
+- The bidi driver passed all 490,846 BidiTest and 91,707 BidiCharacterTest
+  records: 861,948 resolved-direction cases, with no allowlist.
+- The normalization driver passed 4,783,064 checks: the complete 20,171-record
+  normalization corpus, omitted-scalar identities in all four forms, and exact
+  provenance through 99,999 nonstarters. The casing driver passed 5,560,490
+  complete transformations plus all-scalar simple mappings and locale contexts.
+- A real bounded analyzer smoke passed composition/reordering contributor sets,
+  full folding, accent and stopword deletions, opaque barriers, final-capacity and
+  segment exhaustion, and empty publication after failure. A real fuzzy matcher
+  smoke highlighted `[0,1)` and `[3,6)` for `ÀZ` against `A\u0315\u0300Z`,
+  excluding the unrelated reordered mark rather than highlighting its envelope.
+  The integrated fuzzy allocation audit subsequently passed 45 tests, including
+  zero allocation calls for a complete keystroke. Workspace cost is recorded in
+  the fuzzy specification; this is not a performance-improvement claim.
+- Typed source-map smoke passed UTF-16 surrogate and UTF-8 interior positions,
+  wide/zero/control geometry, affinity, stale keys/views, workspace reuse and
+  exhaustion, and exact transformed contributor relationships. Caller snapshots
+  borrow arenas and are invalidated on rebuild, including failed rebuilds.
+- Analysis now declares separate final, segment, intermediate and provenance
+  capacities; capacity exhaustion is an error, not successful truncation. The
+  fuzzy intermediate-capacity and deleted-mark witness regressions pass in the
+  integrated allocation-audit configuration.
+- Standalone TUI smoke passed 40-byte cells with 2,048 combining marks,
+  copy-on-write/detach/grow/diff and malformed input, plus whole-cell fitting,
+  styled flags and keycaps. The expanded isolated foundation/wrapping suite
+  passed all 18 discovered feature modules. The UI suite passed 616 tests.
+  Real raylib/Mesa rendering passed paired long-cluster and late-accent bitmap
+  checks; this does not certify the unfinished text-layout paragraph consumer.
+- The real offline conformance CLI passed layers 0 and 11–16 together:
+  853 grapheme records, 16,974 word-boundary checks, 4,734 sentence-boundary
+  checks, 80,131 line opportunities, 861,948 bidi cases, 4,783,064 normalization
+  checks, and 11,120,810 casing comparisons, with zero known or new failures.
 
 ## 2. M1a: owned codecs, operation by operation
 
@@ -126,7 +180,7 @@ into the owner rather than introducing an unrelated generator convention.
    compare bytes, and query the full scalar domain against raw-source interpretation.
    Hash mismatch, missing input, and malformed source must leave installed output
    unchanged. Run entirely offline after initial fetch.
-5. Retire [gen_grapheme_tables.d](../../../../libs/base/tools/gen_grapheme_tables.d)'s
+5. Retire the former `gen_grapheme_tables.d`
    compiler-probe pipeline and compiler-version cache gates when its consumers
    move to owned tables. Remove unused generated constants/modules, not aliases.
    Update conformance configuration to one manifest identity rather than two
@@ -207,8 +261,9 @@ W6, contextual and font integration, is accepted by the text-layout owner after 
 real font prerequisites. W0, the wrapping contract review, is part of Stage 0. The
 first implementation gate for every wrapping slice is the owned Unicode, grapheme,
 and grid-cell foundation (M1–M3), not another dependency on Phobos decoding or
-tables. wrapping.md's operation and scenario requirements govern acceptance, and this
-tracker records executed slice results.
+tables. Mechanism implementation is in progress; wrapping.md's operation and
+scenario requirements govern acceptance, and this tracker records executed slice
+results, not a second milestone-progress tracker elsewhere.
 
 ### 5.1 Wrapping slices
 
@@ -332,14 +387,12 @@ policy explanations during each completed cutover.
   profile, glyph-channel, overflow-storage, and scaled-footprint requirements
   (TXT-CELL4–13, TXT-SIZE1–5, TXT-MIG3) await the same review. Publication checks
   and PR review are separate from implementation acceptance.
-- Implementation target: every milestone is not started; the observations in
-  testing.md §8 are baselines only.
-- Checked material: the codec, generator, analysis, grapheme, width, conformance,
-  benchmark, UI/table, relocated doc-view, and TUI sources at `9db961a35` were read
-  for contract seams; no implementation validation is recorded against them.
-- Next executable action after specification review: write C01/C02 strict and
-  maximal-subpart regressions in the test runner, confirm intended failure of
-  the owned replacement requirement, then implement M1a without production Phobos.
+- Implementation target: M1–M6 are in progress for the prior contract subset;
+  M3s is not started. The operation-level runtime observations above are evidence
+  only for their named paths, not whole-target signoff.
+- Remaining gates: integrated maps/wrapping, complete consumer/platform surfaces,
+  acceptance of expanded contracts, independent implementation review, bounded-cost
+  comparison, and implementation publication.
 - External dependencies: none for M1a/M1b/M1c, pure M3, or pure M3s. Terminal
   interoperability evidence requires pinned real engines; shaped integration above
   base requires actual font M4/M7. Missing review or evidence is an unmet gate, not

@@ -464,64 +464,6 @@ version (unittest)
     assert(rows[4].guides == [Guide.continueBar, Guide.space, Guide.end]);
 }
 
-@("ui.tree_widget.viewRendersGuidesMarkersAndSelection")
-@safe unittest
-{
-    import sparkles.base.term_color : RgbColor;
-    import sparkles.ui.canvas : FillRect, match, OpKind;
-    import sparkles.ui.display_list : buildDisplayList;
-    import sparkles.ui.layout : layout;
-    import sparkles.ui.style : defaultTwoslashPalette, resolveSlot;
-
-    auto t = sample();
-    auto rows = flatten(t, (uint) => true);
-    auto b = Builder();
-    const tree = treeView(b, t, rows, (uint) => true, selected: 2);
-    auto wt = b.finish(tree);
-    {
-        import sparkles.ui.tokens : firstUndeclaredSlot;
-        assert(firstUndeclaredSlot(wt, treeWidgetSlots) == Slot.inherit, "TOK6: an undeclared slot");
-    }
-
-    auto ops = buildDisplayList(wt, layout(wt), defaultTwoslashPalette(),
-        RgbColor(0xff, 0xff, 0xff), RgbColor(0, 0, 0));
-
-    bool sawOpenMarker, sawEndGuide, sawSelection;
-    const selectionTint = resolveSlot(defaultTwoslashPalette(), Slot.selection,
-        RgbColor(0xff, 0xff, 0xff), RgbColor(0, 0, 0)).bg;
-    foreach (ref op; ops)
-    {
-        if (op.kind == OpKind.textRun && op.text == "▾ ")
-            sawOpenMarker = true;
-        if (op.kind == OpKind.textRun && op.text == "└─ ")
-            sawEndGuide = true;
-        // The selected row's fill is the selection tint, through the
-        // palette's `inherit` + `selected` (D46).
-        op.match!(
-            (in FillRect f) { sawSelection |= f.hasBg && f.bg == selectionTint; },
-            (_) {});
-    }
-    assert(sawOpenMarker && sawEndGuide && sawSelection);
-
-    // A theme-derived selection tint overrides the palette slot; empty marker
-    // strings suppress the disclosure column (icon-as-disclosure adapters).
-    auto b2 = Builder();
-    const t2 = treeView(b2, t, rows, (uint) => true, selected: 2,
-        TreeGlyphs(closed: "", open: "", leaf: ""),
-        RgbColor(0x20, 0x30, 0x40), hasSelectionBg: true);
-    auto wt2 = b2.finish(t2);
-    auto ops2 = buildDisplayList(wt2, layout(wt2), defaultTwoslashPalette(),
-        RgbColor(0xff, 0xff, 0xff), RgbColor(0, 0, 0));
-    bool sawThemedSel, sawMarker2;
-    foreach (ref op; ops2)
-    {
-        if (op.kind == OpKind.fillRect && op.visual.bg == RgbColor(0x20, 0x30, 0x40))
-            sawThemedSel = true;
-        if (op.kind == OpKind.textRun && (op.text == "▾ " || op.text == "▸ "))
-            sawMarker2 = true;
-    }
-    assert(sawThemedSel && !sawMarker2);
-}
 
 @("ui.tree_widget.capabilitiesByIntrospection")
 @safe unittest
@@ -582,4 +524,48 @@ version (unittest)
         "a closed lazy composite must not paint as a leaf");
     const leafSpans = wt.nodes[wt.nodes[tree].children[1]].spans;
     assert(leafSpans[$ - 2].text == "");
+}
+
+
+@("ui.tree_widget.selectionOpacityAndOverrideReachActualRaster")
+unittest
+{
+    import sparkles.base.term_color : Color, RgbColor;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    const fg = RgbColor(255, 255, 255), paper = RgbColor(0, 32, 64);
+    auto palette = defaultTwoslashPalette();
+    palette.bg[Slot.selection] = Color.fromRgb(128, 64, 32);
+    palette.bgAlpha[Slot.selection] = 128;
+    auto t = sample();
+    auto rows = flatten(t, (uint) => true);
+    auto b = Builder();
+    const root = treeView(b, t, rows, (uint) => true, selected: 2);
+    const tree = b.finish(root);
+    const frames = layout(tree);
+    auto grid = CellGrid(frames[root].rect.width, frames[root].rect.height, fg, paper);
+    paint(grid, buildDisplayList(tree, frames, palette, fg, paper));
+    assert(grid.cells[3].glyph == '▾'); // root's guide occupies the first three cells
+    assert(grid.cells[4 * grid.width + 6].glyph == '└');
+    // Independent integer-composite oracle: tint*128 + paper*127, divided by 255.
+    assert(grid.cells[2 * grid.width].hasBg
+        && grid.cells[2 * grid.width].bg == RgbColor(64, 48, 47));
+    assert(!grid.cells[0].hasBg && grid.cells[0].bg == paper);
+
+    auto themed = Builder();
+    const themedRoot = treeView(themed, t, rows, (uint) => true, selected: 2,
+        TreeGlyphs(closed: "", open: "", leaf: ""),
+        RgbColor(192, 128, 64), hasSelectionBg: true);
+    const themedTree = themed.finish(themedRoot);
+    const themedFrames = layout(themedTree);
+    auto raster = CellGrid(themedFrames[themedRoot].rect.width,
+        themedFrames[themedRoot].rect.height, fg, paper);
+    paint(raster, buildDisplayList(themedTree, themedFrames, palette, fg, paper));
+    assert(raster.cells[3].glyph == 's'); // absent disclosure consumes no cells
+    // The theme RGB overrides the role RGB, while the authored role opacity remains.
+    assert(raster.cells[2 * raster.width].hasBg
+        && raster.cells[2 * raster.width].bg == RgbColor(96, 80, 64));
 }

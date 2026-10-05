@@ -887,7 +887,7 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
     MdViewOptions opt, int boxW)
 {
     import sparkles.ui.components.chrome : tabStrip;
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
     import sparkles.ui.state : PressState;
 
     const hit = opt.fenceHitBase != 0
@@ -940,7 +940,7 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
         kids ~= strip;
         used = 2 + cast(int) opt.groupTabs.titles.length - 1; // walls
         foreach (t; opt.groupTabs.titles)
-            used += cast(int) cellsOf(t) + 2;
+            used += cast(int) visibleWidth(t) + 2;
         const hasCopy0 = opt.fenceHitBase != 0;
         const tailW0 = hasCopy0 ? 5 : 1;
         int fill0 = boxW - used - tailW0;
@@ -976,7 +976,7 @@ private uint fenceTopBorder(ref Builder b, ref const MdBlock blk,
                 fg: opt.theme.codeFg, hasFg: opt.theme.present,
                 srcStart: blk.span.start, srcEnd: blk.codeBody.start),
             ruleSpan(opt, " ")]);
-        used = 4 + cast(int) cellsOf(lbl);
+        used = 4 + cast(int) visibleWidth(lbl);
     }
 
     const hasCopy = opt.fenceHitBase != 0;
@@ -1357,7 +1357,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     line(code[start .. $], start);
             }
 
-            import sparkles.ui.geometry : cellsOf;
+            import sparkles.base.text.grapheme : visibleWidth;
 
             // Group height stability (`MDP22`): the showing fence pads its
             // body to the tallest sibling with blank rows — the number
@@ -1388,15 +1388,13 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             {
                 import sparkles.ui.wrap : wrapSpans;
 
-                static int measureCells(scope const(char)[] s) @safe pure nothrow @nogc
-                    => cast(int) cellsOf(s);
                 const wrapW = wrapAtW - 4 - gutterW > 1
                     ? wrapAtW - 4 - gutterW : 1;
                 TextSpan[][] visual;
                 Slot[] visualSlots;
                 foreach (li, spans; lineSpans)
                 {
-                    auto wl = wrapSpans(spans, wrapW, &measureCells);
+                    auto wl = wrapSpans(spans, wrapW);
                     if (!wl.length)
                         wl = [spans];
                     foreach (k, line; wl)
@@ -1415,7 +1413,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             {
                 int w;
                 foreach (ref const s; spans)
-                    w += cast(int) cellsOf(s.text);
+                    w += cast(int) visibleWidth(s.text);
                 if (w > widest)
                     widest = w;
             }
@@ -1900,9 +1898,9 @@ private void fillDiffTints(TextSpan[] spans) @safe
 // The hang for a leader span: its own column width.
 private int leaderHang(in TextSpan leader) @safe
 {
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
-    return cast(int) cellsOf(leader.text);
+    return cast(int) visibleWidth(leader.text);
 }
 
 private TextStyle codeStyle(MdViewOptions opt)
@@ -2126,6 +2124,7 @@ void pushProse(const(char)[] text, TextStyle style, Slot slot,
     ref TextSpan[] spans, size_t srcStart = size_t.max,
     scope const(MdEmphasis)* em = null)
 {
+    import sparkles.base.text.wrap_plan : ProvenanceKind;
     if (!text.length)
         return;
     char[] norm;
@@ -2146,7 +2145,8 @@ void pushProse(const(char)[] text, TextStyle style, Slot slot,
             return;
         spans ~= TextSpan(norm, emphasized ? em.slot : slot, style,
             srcStart: runStart,
-            srcEnd: at);
+            srcEnd: at, sourceRelation: norm == text[runStart - srcStart .. at - srcStart]
+                ? ProvenanceKind.original : ProvenanceKind.replacement);
         norm = null;
     }
 
@@ -2191,7 +2191,8 @@ void pushProse(const(char)[] text, TextStyle style, Slot slot,
     if (norm.length)
         spans ~= TextSpan(norm, slot, style, // freshly allocated, never mutated
             srcStart: srcStart,
-            srcEnd: srcStart != size_t.max ? srcStart + text.length : 0);
+            srcEnd: srcStart != size_t.max ? srcStart + text.length : 0,
+            sourceRelation: norm == text ? ProvenanceKind.original : ProvenanceKind.replacement);
 }
 
 /// Is `offset` inside any of the (sorted, non-overlapping) ranges?
@@ -2921,19 +2922,20 @@ version (unittest)
     assert(lines[1][0].text == "two");
 }
 
-@("md.render_widgets.themedDecorations")
+@("md.render_widgets.themedDecorationCells")
 @safe unittest
 {
     import sparkles.syntax.label : LabelSet;
     import sparkles.syntax.theme : resolveTheme;
     import sparkles.syntax.themes : builtinDark;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.interp.cells : CellGrid;
 
     const labels = LabelSet.standard();
     const rt = resolveTheme(builtinDark, labels);
     const pageFg = RgbColor(0xcc, 0xcc, 0xcc);
     const pageBg = RgbColor(0x1e, 0x1e, 0x1e);
     const vt = MdViewTheme.derive(rt, pageFg, pageBg);
-    assert(vt.present && vt.headingAccents[0] == vt.headingFg);
 
     // "# Title" + "- [x] done" + a d fence: band, icon, checkbox, header.
     const src = "Title done let x = 1";
@@ -2948,36 +2950,61 @@ version (unittest)
             codeBody: Span(11, src.length)),
     ]), src);
 
-    MdViewOptions opt = {theme: vt};
-    auto c = renderDoc(doc, opt);
+    MdViewOptions opt = {theme: vt, maxWidth: 24};
+    auto tree = viewMarkdown(doc, opt);
+    auto frames = layout(tree, Constraints(maxW: 24));
+    const r = frames[tree.root].rect;
+    auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
+    paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        pageFg, pageBg));
 
-    bool sawIcon, sawBand, sawCheck, sawHeader, sawHeaderBand;
-    const glyphs = MdViewGlyphs.init;
-    foreach (ref op; c.ops)
-    {
-        if (op.kind == OpKind.textRun
-            && op.text == glyphs.headingIcons[1] ~ " "
-            && op.visual.fg == vt.headingAccents[1])
-            sawIcon = true;
-        if (op.kind == OpKind.fillRect
-            && op.visual.bg == mixBand(vt, vt.headingAccents[1]))
-            sawBand = true;
-        if (op.kind == OpKind.textRun && op.text == glyphs.checkedBox
-            && op.visual.fg == vt.accentGreen)
-            sawCheck = true;
-        // The header is the fence's TOP BORDER row (COD1/COD2): the devicon
-        // replaces the language name on the border line, and the whole
-        // chrome fills in the panel tint (there is no separate header band).
-        if (op.kind == OpKind.textRun && op.text == langIcon("d"))
-            sawHeader = true;
-        if (op.kind == OpKind.fillRect && op.visual.bg == vt.codePanelBg)
-            sawHeaderBand = true;
-    }
-    assert(sawIcon && sawBand && sawCheck && sawHeader && sawHeaderBand);
+    // Consumer-visible cells, not textRun tokenization: the icon's separator
+    // can be realized separately without changing any glyph or column.
+    assert(grid.cells[0].glyph == '\U000F0CA3');
+    assert(grid.cells[0].fg == vt.headingAccents[1]);
+    assert(grid.cells[1].glyph == ' ' && grid.cells[2].glyph == 'T');
+    assert(grid.cells[2].fg == vt.headingAccents[1]);
+    const band = mix(pageBg, vt.headingAccents[1], 0.12);
+    foreach (x; 0 .. 24)
+        assert(grid.cells[x].hasBg && grid.cells[x].bg == band);
+
+    assert(grid.cells[2 * grid.width].glyph == '\U000F0C52');
+    assert(grid.cells[2 * grid.width].fg == vt.accentGreen);
+    assert(grid.cells[2 * grid.width + 1].glyph == ' '
+        && grid.cells[2 * grid.width + 2].glyph == 'd');
+
+    // The devicon sits inside the top border; the same panel tint reaches
+    // the chrome and body, with the body inset clear of the two side walls.
+    assert(grid.cells[4 * grid.width].glyph == '╭'
+        && grid.cells[4 * grid.width + 23].glyph == '╮');
+    assert(grid.cells[4 * grid.width + 3].glyph == '\uE7AF');
+    assert(grid.cells[4 * grid.width + 3].fg == vt.codeFg);
+    assert(grid.cells[4 * grid.width + 3].hasBg
+        && grid.cells[4 * grid.width + 3].bg == vt.codePanelBg);
+    assert(grid.cells[5 * grid.width].glyph == '│'
+        && grid.cells[5 * grid.width + 23].glyph == '│');
+    assert(grid.cells[5 * grid.width + 2].glyph == 'l');
+    assert(grid.cells[5 * grid.width + 2].hasBg
+        && grid.cells[5 * grid.width + 2].bg == vt.codePanelBg);
+    assert(grid.cells[6 * grid.width].glyph == '╰'
+        && grid.cells[6 * grid.width + 23].glyph == '╯');
+
+    // Level one must actually paint the theme's heading role, not merely
+    // reproduce an intermediate theme record's field assignment.
+    const firstHeading = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.heading, level: 1, inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(0, 5))]),
+    ]), src);
+    auto firstTree = viewMarkdown(firstHeading, opt);
+    const firstFrames = layout(firstTree, Constraints(maxW: 24));
+    const firstRect = firstFrames[firstTree.root].rect;
+    auto firstGrid = CellGrid(firstRect.width, firstRect.height, pageFg, pageBg);
+    paint(firstGrid, buildDisplayList(firstTree, firstFrames, defaultTwoslashPalette(),
+        pageFg, pageBg));
+    const headingRole = toRgb(rt[labels.resolve("markup.heading")].fg, pageFg);
+    assert(firstGrid.cells[0].fg == headingRole
+        && firstGrid.cells[2].glyph == 'T' && firstGrid.cells[2].fg == headingRole);
 }
-
-private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
-    => mix(vt.pageBg, accent, 0.12);
 
 @("md.render_widgets.identityChannel.srcOffsetsAndFenceHit")
 @safe unittest
@@ -3688,4 +3715,22 @@ came to emit no hyperlinks at all while every unit test passed.
     assert(tinted.canFind("new") && tinted.canFind("two"),
         "the added row's cells carry the row's verdict");
     assert(!tinted.canFind("old"), "the row that survived is untouched");
+}
+
+@("markdown.prose.sameLengthTransformKeepsRawSourceRelationship")
+unittest
+{
+    import sparkles.base.text.wrap_plan : WrapAffinity;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : sourceOffsetAt;
+    import sparkles.ui.geometry : Point;
+    TextSpan[] spans;
+    pushProse("a\nb", TextStyle.init, Slot.code, spans, 40);
+    auto b = Builder();
+    const tree = b.finish(b.add(Widget(kind: WidgetKind.rich, spans: spans)));
+    const frames = layout(tree);
+    // The normalized space is not the original newline, despite equal byte
+    // lengths. Its hit retains the whole declared replacement relation.
+    assert(sourceOffsetAt(tree, frames, Point(1, 0), WrapAffinity.before) == 40);
+    assert(sourceOffsetAt(tree, frames, Point(1, 0), WrapAffinity.after) == 43);
 }

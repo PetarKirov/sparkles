@@ -1,30 +1,20 @@
 /**
- * Grapheme-cluster iteration over ANSI-styled UTF-8 text, and the visible width
- * of such text.
- *
- * `byGraphemeCluster` walks a byte stream as alternating escape sequences and
- * UAX #29 grapheme clusters, reporting each cluster's byte slice and display
- * width. `visibleWidth` sums those widths -- the @nogc replacement for the old
- * regex-based `unstyledLength`, correct for CJK (wide), combining marks (zero),
- * emoji and flags (one 2-cell cluster).
- *
- * The @nogc linchpin: grapheme segmentation runs on a reusable decoded `dchar`
- * window via `std.uni.graphemeStride` (which infers `@nogc nothrow` for
- * `dchar[]`). Successive cluster scans reuse decoded code points rather than
- * rebuilding the window.
- * UTF-8 uses `Yes.useReplacementDchar`, preserving Phobos's malformed-byte
- * consumption and yielding U+FFFD instead of throwing.
- */
+Owned Unicode 18 extended-grapheme scanning and terminal-cell measurement.
+
+Segmentation retains finite UAX #29 state and at most one decoded lookahead;
+clusters have no scalar-count limit and their text remains borrowed. Malformed
+UTF-8 follows the explicit owned maximal-subpart replacement policy.
+*/
 module sparkles.base.text.grapheme;
 
-import std.typecons : Yes;
-import std.uni : graphemeStride;
-import std.utf : decode;
 
 import sparkles.base.text.ansi : escapeLength;
-import sparkles.base.text.width : codepointTraits, singletonBreak,
-    graphemeClusterWidth, unclusteredWidth;
-import sparkles.base.text.utf8 : decodeReplacement, decodeValidated;
+import sparkles.base.text.width : ClusterWidthState;
+import sparkles.base.text.utf8 : decodeValidated;
+import sparkles.base.text.utf : UtfMode, UtfStatus, UtfResult, UtfToken,
+    UtfTokenKind, UtfStream, UtfStreamPhase, decodeToken, decodeStreamToken, utfStorageOverlaps;
+import sparkles.base.text.unicode_tables : GraphemeBreakClass,
+    IndicConjunctBreakClass, unicodeCoreProperties;
 
 version (LDC)
     version (X86_64)
@@ -43,9 +33,367 @@ version (graphemeSimdX86)
 
 @safe pure nothrow @nogc:
 
-/// Largest grapheme cluster (in code points) the scanner will coalesce. Real
-/// clusters are far shorter; the cap only bounds pathological combining/ZWJ runs.
-private enum size_t maxClusterCps = 32;
+/**
+Finite-state Unicode 18 default extended-grapheme boundary detector.
+
+`push` reports the boundary before its scalar, including the initial boundary.
+The state never stores a cluster or imposes a limit on its length. Encoding
+validation and source retention belong to the scanner feeding it.
+*/
+struct GraphemeBreakState
+{
+    private GraphemeBreakClass _previous;
+    private bool _started;
+    private bool _regionalOdd;
+    private bool _pictographicExtend;
+    private bool _pictographicZwj;
+    private bool _linkerExtend;
+
+    /// Discard all preceding context.
+    void reset() scope @safe pure nothrow @nogc { this = GraphemeBreakState.init; }
+
+    /** Exact bounded key for future break behavior under this Unicode manifest.
+    Equal keys imply equal decisions for every identical following scalar stream.
+    The key is below 8192; reset has key zero. It is not a cross-version encoding.
+    */
+    ulong identity() const @safe pure nothrow @nogc
+        => cast(ulong) _previous | (cast(ulong) _started << 8)
+            | (cast(ulong) _regionalOdd << 9)
+            | (cast(ulong) _pictographicExtend << 10)
+            | (cast(ulong) _pictographicZwj << 11)
+            | (cast(ulong) _linkerExtend << 12);
+
+    /** Restore an owned key without a state registry. Invalid keys do not mutate
+    the receiver. Only internal consumers of the same manifest may restore keys.
+    */
+    package(sparkles) bool tryRestoreIdentity(ulong key) scope @safe pure nothrow @nogc
+    {
+        if (key >= 8192 || (key & 255) > cast(ulong) GraphemeBreakClass.max)
+            return false;
+        _previous = cast(GraphemeBreakClass)(key & 255);
+        _started = (key & (1UL << 8)) != 0;
+        _regionalOdd = (key & (1UL << 9)) != 0;
+        _pictographicExtend = (key & (1UL << 10)) != 0;
+        _pictographicZwj = (key & (1UL << 11)) != 0;
+        _linkerExtend = (key & (1UL << 12)) != 0;
+        return true;
+    }
+
+    /// Consume one Unicode scalar and report whether it starts a cluster.
+    bool push(dchar scalar) scope @safe pure nothrow @nogc
+    in (scalar <= 0x10FFFF && (scalar < 0xD800 || scalar > 0xDFFF),
+        "Grapheme state requires a Unicode scalar")
+    {
+        alias G = GraphemeBreakClass;
+        alias I = IndicConjunctBreakClass;
+        const properties = unicodeCoreProperties(scalar);
+        const current = properties.grapheme;
+        const indic = properties.indic;
+        const pictographic = properties.extendedPictographic;
+        bool boundary = true;
+        if (_started)
+        {
+            if (_previous == G.cr && current == G.lf)
+                boundary = false; // GB3
+            else if (_previous == G.control || _previous == G.cr || _previous == G.lf
+                || current == G.control || current == G.cr || current == G.lf)
+                boundary = true; // GB4–GB5
+            else if (_previous == G.l && (current == G.l || current == G.v
+                || current == G.lv || current == G.lvt))
+                boundary = false; // GB6
+            else if ((_previous == G.lv || _previous == G.v)
+                && (current == G.v || current == G.t))
+                boundary = false; // GB7
+            else if ((_previous == G.lvt || _previous == G.t) && current == G.t)
+                boundary = false; // GB8
+            else if (current == G.extend || current == G.zwj
+                || current == G.spacingMark || _previous == G.prepend)
+                boundary = false; // GB9–GB9b
+            else if (_linkerExtend && indic == I.consonant)
+                boundary = false; // Unicode 18 GB9c
+            else if (_pictographicZwj && pictographic)
+                boundary = false; // GB11
+            else if (_previous == G.regionalIndicator && current == G.regionalIndicator
+                && _regionalOdd)
+                boundary = false; // GB12–GB13
+        }
+
+        _regionalOdd = current == G.regionalIndicator && !_regionalOdd;
+        _pictographicZwj = current == G.zwj && _pictographicExtend;
+        _pictographicExtend = pictographic || (current == G.extend && _pictographicExtend);
+        _linkerExtend = indic == I.linker || (indic == I.extend && _linkerExtend);
+        _previous = current;
+        _started = true;
+        return boundary;
+    }
+}
+
+/// Default boundaries include CRLF, Hangul, emoji, RI parity, and Unicode 18 GB9c.
+@("grapheme.ownedState.defaultBoundaries")
+@safe pure nothrow @nogc
+unittest
+{
+    size_t clusters(scope const(dchar)[] scalars) @safe pure nothrow @nogc
+    {
+        GraphemeBreakState state;
+        size_t count;
+        foreach (scalar; scalars)
+            count += state.push(scalar);
+        return count;
+    }
+    assert(clusters("\r\n"d) == 1);
+    assert(clusters("\r\u0301"d) == 2);
+    assert(clusters("\u1100\u1161\u11A8"d) == 1);
+    assert(clusters("\u0600A\u0301"d) == 1);
+    assert(clusters("\u0915\u093E"d) == 1);
+    assert(clusters("\u094D\u0301\u0915"d) == 1);
+    assert(clusters("\u094D A\u0915"d) == 4);
+    assert(clusters("\U0001F469\u0301\u200D\U0001F4BB"d) == 1);
+    assert(clusters("\U0001F469\u200D\u0301\U0001F4BB"d) == 2);
+    assert(clusters("\U0001F1FA\U0001F1F8\U0001F1E6"d) == 2);
+    assert(clusters("\U0001F1FA\u0301\U0001F1F8"d) == 2);
+}
+
+/// Absolute UTF-8 source span of one completed cluster. Opaque byte units
+/// are hard barriers, explicitly distinguished from Unicode scalar clusters.
+struct GraphemeSpan
+{
+    size_t start;
+    size_t end;
+    size_t scalars;
+    bool opaque;
+}
+
+/**
+Caller-owned streaming grapheme state. Events borrow no bytes; callers retain
+source storage if they need to recover text spanning several chunks. A chunk end
+is not a boundary. Event backpressure never consumes the token proving a boundary
+that cannot be delivered.
+*/
+struct GraphemeStream
+{
+    private UtfStream!char _decoder;
+    private GraphemeBreakState _breaks;
+    private GraphemeSpan _cluster;
+    private bool _haveCluster;
+    private bool _previousOpaque;
+    private bool _sourceEnded;
+    private bool _finalIntent;
+    private UtfStreamPhase _phase;
+    private UtfResult _failure;
+
+    /// Discard carry, context, pending events and offsets, selecting the mode.
+    void reset(UtfMode mode = UtfMode.strict) scope @safe pure nothrow @nogc
+    {
+        this = GraphemeStream.init;
+        _decoder.reset(mode);
+    }
+
+    /// Stream lifecycle and global source offset.
+    UtfStreamPhase phase() const scope @safe pure nothrow @nogc => _phase;
+    /// ditto
+    size_t offset() const scope @safe pure nothrow @nogc => _decoder.offset;
+    /// Whether accepted final intent still awaits a completed stream.
+    bool pendingFinal() const scope @safe pure nothrow @nogc => _finalIntent;
+    /// Structured failure retained until reset.
+    UtfResult failure() const scope @safe pure nothrow @nogc => _failure;
+    /// The bounded incomplete encoding suffix; invalidated by the next feed.
+    const(char)[] carry() scope return const @safe pure nothrow @nogc => _decoder.carry;
+
+    private bool boundary(UtfToken token) scope @safe pure nothrow @nogc
+    {
+        if (token.kind == UtfTokenKind.opaqueByte)
+        {
+            _breaks.reset();
+            _previousOpaque = true;
+            return true;
+        }
+        if (_previousOpaque)
+            _breaks.reset();
+        _previousOpaque = false;
+        return _breaks.push(token.scalar);
+    }
+
+    private void begin(UtfToken token) scope @safe pure nothrow @nogc
+    {
+        _cluster = GraphemeSpan(start: token.start, end: token.end,
+            scalars: token.kind == UtfTokenKind.opaqueByte ? 0 : 1,
+            opaque: token.kind == UtfTokenKind.opaqueByte);
+        _haveCluster = true;
+    }
+}
+
+/**
+Feed a UTF-8 chunk and emit completed cluster spans into caller storage.
+
+`consumed` counts bytes accepted from this call, including encoding carry.
+`written` counts delivered events. Final intent must remain true on retries.
+Opaque mode is an address-preserving extension, not scalar UAX #29 conformance.
+*/
+UtfResult scanGraphemeStream(ref GraphemeStream state, scope const(char)[] source,
+    scope GraphemeSpan[] destination, bool isFinal = false) @safe pure nothrow @nogc
+{
+    if (state._phase != UtfStreamPhase.active || (state._finalIntent && !isFinal)
+        || (state._sourceEnded && source.length != 0))
+        return UtfResult(status: UtfStatus.invalidState, offset: state.offset);
+    if (utfStorageOverlaps(source, destination))
+        return UtfResult(status: UtfStatus.overlap, offset: state.offset);
+
+    size_t consumed;
+    size_t written;
+    while (true)
+    {
+        if (state._sourceEnded)
+        {
+            if (state._haveCluster)
+            {
+                if (written == destination.length)
+                    return UtfResult(status: UtfStatus.outputFull, consumed: consumed,
+                        written: written, offset: state._cluster.end, required: 1);
+                destination[written++] = state._cluster;
+                state._haveCluster = false;
+            }
+            state._phase = UtfStreamPhase.finalized;
+            state._finalIntent = false;
+            return UtfResult(status: UtfStatus.end, consumed: consumed,
+                written: written, offset: state.offset);
+        }
+
+        // Rollback is needed only with no event capacity. Normal scans neither
+        // copy decoder state per scalar nor decode lookahead twice.
+        const checkpoint = state._haveCluster && written == destination.length;
+        UtfStream!char decoderBefore;
+        GraphemeBreakState breaksBefore;
+        bool opaqueBefore;
+        if (checkpoint)
+        {
+            decoderBefore = state._decoder;
+            breaksBefore = state._breaks;
+            opaqueBefore = state._previousOpaque;
+        }
+        UtfToken token = void;
+        const decoded = decodeStreamToken(state._decoder, source[consumed .. $],
+            token, isFinal);
+        if (decoded.status != UtfStatus.invalidOptions && decoded.status != UtfStatus.overlap
+            && decoded.status != UtfStatus.invalidState)
+            state._finalIntent |= isFinal;
+        if (decoded.written != 0)
+        {
+            const boundary = state.boundary(token);
+            if (boundary && state._haveCluster)
+            {
+                if (written == destination.length)
+                {
+                    state._decoder = decoderBefore;
+                    state._breaks = breaksBefore;
+                    state._previousOpaque = opaqueBefore;
+                    return UtfResult(status: UtfStatus.outputFull, consumed: consumed,
+                        written: written, offset: state._cluster.end, required: 1);
+                }
+                destination[written++] = state._cluster;
+                state.begin(token);
+            }
+            else if (!state._haveCluster)
+                state.begin(token);
+            else
+            {
+                state._cluster.end = token.end;
+                ++state._cluster.scalars;
+            }
+            consumed += decoded.consumed;
+            continue;
+        }
+
+        consumed += decoded.consumed;
+        if (decoded.status == UtfStatus.end)
+        {
+            state._sourceEnded = true;
+            continue;
+        }
+        UtfResult result = decoded;
+        result.consumed = consumed;
+        result.written = written;
+        if (decoded.status == UtfStatus.invalid || decoded.status == UtfStatus.overflow)
+        {
+            state._phase = UtfStreamPhase.failed;
+            state._failure = result;
+        }
+        return result;
+    }
+}
+
+/// Every byte partition produces the same absolute spans, including carry.
+@("grapheme.stream.everyBytePartition")
+@safe pure nothrow @nogc
+unittest
+{
+    enum text = "\r\nA\u0301\U0001F1FA\U0001F1F8\u094D\u0915";
+    static immutable GraphemeSpan[3] expected = [
+        GraphemeSpan(start: 0, end: 2, scalars: 2),
+        GraphemeSpan(start: 2, end: 5, scalars: 2),
+        GraphemeSpan(start: 5, end: 19, scalars: 4),
+    ];
+    foreach (split; 0 .. text.length + 1)
+    {
+        GraphemeStream state;
+        GraphemeSpan[expected.length] events;
+        const first = scanGraphemeStream(state, text[0 .. split], events[]);
+        assert(first.status == UtfStatus.needInput && first.consumed == split);
+        const last = scanGraphemeStream(state, text[split .. $],
+            events[first.written .. $], true);
+        assert(last.status == UtfStatus.end && last.consumed == text.length - split);
+        assert(first.written + last.written == expected.length);
+        assert(events[] == expected[]);
+    }
+}
+
+@("grapheme.stream.boundaryBackpressureAndFinalIntent")
+@safe pure nothrow @nogc
+unittest
+{
+    GraphemeStream state;
+    GraphemeSpan[1] events = [GraphemeSpan(start: 99, end: 100, scalars: 1)];
+    const sentinel = events[0];
+    const blocked = scanGraphemeStream(state, "A\u0301B", events[0 .. 0], true);
+    assert(blocked.status == UtfStatus.outputFull && blocked.consumed == 3
+        && blocked.written == 0 && blocked.offset == 3 && blocked.required == 1);
+    assert(state.offset == 3 && state.pendingFinal && events[0] == sentinel);
+    const retracted = scanGraphemeStream(state, "B", events[], false);
+    assert(retracted.status == UtfStatus.invalidState && retracted.consumed == 0);
+    assert(state.offset == 3 && events[0] == sentinel);
+    const resumed = scanGraphemeStream(state, "B", events[], true);
+    assert(resumed.status == UtfStatus.outputFull && resumed.consumed == 1
+        && resumed.written == 1 && resumed.offset == 4);
+    assert(events[0] == GraphemeSpan(start: 0, end: 3, scalars: 2));
+    const ended = scanGraphemeStream(state, "", events[], true);
+    assert(ended.status == UtfStatus.end && ended.written == 1);
+    assert(events[0] == GraphemeSpan(start: 3, end: 4, scalars: 1));
+    assert(state.phase == UtfStreamPhase.finalized && !state.pendingFinal);
+    assert(scanGraphemeStream(state, "", events[], true).status == UtfStatus.invalidState);
+}
+
+@("grapheme.stream.opaqueBarriersAndFailureReset")
+@safe pure nothrow @nogc
+unittest
+{
+    GraphemeStream state;
+    GraphemeSpan[3] events;
+    const failed = scanGraphemeStream(state, "\xC0\u0301A", events[], true);
+    assert(failed.status == UtfStatus.invalid && failed.consumed == 0 && failed.written == 0);
+    assert(state.phase == UtfStreamPhase.failed && state.failure.offset == 0);
+    assert(scanGraphemeStream(state, "", events[], true).status == UtfStatus.invalidState);
+    state.reset(UtfMode.opaque);
+    const opaque = scanGraphemeStream(state, "\xC0\u0301A", events[], true);
+    assert(opaque.status == UtfStatus.end && opaque.written == 3);
+    assert(events[0] == GraphemeSpan(start: 0, end: 1, opaque: true));
+    assert(events[1] == GraphemeSpan(start: 1, end: 3, scalars: 1));
+    assert(events[2] == GraphemeSpan(start: 3, end: 4, scalars: 1));
+    state.reset(UtfMode.replacement);
+    const replacement = scanGraphemeStream(state, "\xC0\u0301A", events[], true);
+    assert(replacement.status == UtfStatus.end && replacement.written == 2);
+    assert(events[0] == GraphemeSpan(start: 0, end: 3, scalars: 2));
+    assert(events[1] == GraphemeSpan(start: 3, end: 4, scalars: 1));
+}
 
 /// One unit from `byGraphemeCluster`: a single escape sequence, or one grapheme
 /// cluster of visible text.
@@ -58,9 +406,11 @@ struct ClusterMeasure
     /// The cells a terminal that does not cluster advances for it: `width`
     /// where it keeps its cell (see $(REF unclusteredWidth,
     /// sparkles,base,text,width)).
-    int unclustered;
-    /// Code points in the cluster (capped at the scanner's window).
-    ubyte codepoints;
+    size_t unclustered;
+    /// Exact number of Unicode scalars; no decoded-window cap.
+    size_t codepoints;
+    /// Replacement decoding occurred; raw slice bytes are not valid rendered UTF-8.
+    bool hasMalformed;
 }
 
 private struct ClusterScan
@@ -68,129 +418,88 @@ private struct ClusterScan
     size_t bytes;
     int width;
     dchar first;
-    int unclustered;
-    ubyte codepoints;
+    size_t unclustered;
+    size_t codepoints;
+    bool hasMalformed;
 }
 
-// A bounded decoded queue shared by successive clusters of one escape-free
-// run. Keep two cap-sized windows so compaction happens at most once per
-// window, not once per cluster. Offsets stay relative to the original run:
-// consuming a cluster does not rewrite all the queued byte offsets.
+// One lookahead token avoids decoding each boundary scalar twice. The validated
+// byte count is an acceleration cache only, never a segmentation window.
 private struct ClusterScanner
 {
-    dchar[maxClusterCps * 2] window = void;
-    size_t[maxClusterCps * 2] ends = void;
-    size_t begin;
-    size_t end;
-    size_t decodedBytes;
-    size_t consumedBytes;
-    bool aggregateSingletons = true;
+    private GraphemeBreakState _state;
+    private dchar _pending;
+    private size_t _pendingBytes;
+    private size_t _validatedRemaining;
+    private bool _pendingMalformed;
 
-    void reset() scope @safe pure nothrow @nogc
-    {
-        begin = end = decodedBytes = consumedBytes = 0;
-        aggregateSingletons = true;
-    }
-
-    void skipBytes(size_t bytes) scope @safe pure nothrow @nogc
-    {
-        consumedBytes += bytes;
-        while (begin < end && ends[begin] <= consumedBytes)
-            ++begin;
-        if (decodedBytes < consumedBytes)
-            decodedBytes = consumedBytes;
-    }
+    void reset() scope @safe pure nothrow @nogc { this = ClusterScanner.init; }
 
     ClusterScan scan(bool fullMetadata = true)(scope const(char)[] run) scope
     in (run.length > 0)
     {
         pragma(inline, true);
-        // Plain ASCII boundaries need no segmentation, even when an earlier
-        // Unicode cluster has already decoded this byte into the queue.
         if (run[0] >= 0x20 && run[0] <= 0x7E
             && (run.length == 1 || run[1] < 0x80))
         {
-            if (begin == end)
-                ++decodedBytes;
-            else
-                ++begin;
-            ++consumedBytes;
-            return ClusterScan(1, 1, run[0], 1, 1);
+            reset();
+            return ClusterScan(1, 1, run[0], fullMetadata ? 1 : 0, 1);
         }
 
-        if (end - begin < maxClusterCps)
-            refill(run);
-
-        const available = end - begin;
-        const count = available < maxClusterCps ? available : maxClusterCps;
-        const first = window[begin];
-        const traits = codepointTraits(first);
-        if (count == 1 || singletonBreak(traits, codepointTraits(window[begin + 1]),
-                window[begin + 1]))
+        ClusterWidthState measure;
+        size_t position;
+        bool hasMalformed;
+        if (_pendingBytes != 0)
         {
-            const nextBytes = ends[begin++];
-            const width = traits & 3;
-            const unclustered = fullMetadata
-                ? (first >= 0x1F1E6 && first <= 0x1F1FF ? 1 : width) : 0;
-            const result = ClusterScan(nextBytes - consumedBytes, width,
-                first, unclustered, 1);
-            consumedBytes = nextBytes;
-            return result;
+            measure.push(_pending, fullMetadata);
+            position = _pendingBytes;
+            hasMalformed = _pendingMalformed;
+            _pendingBytes = 0;
         }
-        return scanComplex!fullMetadata(count);
+        while (position < run.length)
+        {
+            const start = position;
+            bool malformed;
+            const scalar = next(run, position, malformed);
+            const boundary = _state.push(scalar);
+            if (boundary && measure.codepoints != 0)
+            {
+                _pending = scalar;
+                _pendingBytes = position - start;
+                _pendingMalformed = malformed;
+                position = start;
+                break;
+            }
+            measure.push(scalar, fullMetadata);
+            hasMalformed |= malformed;
+        }
+        return ClusterScan(position, measure.width, measure.first,
+            measure.unclustered, measure.codepoints, hasMalformed);
     }
 
-    private void refill(scope const(char)[] run) scope @safe pure nothrow @nogc
+    private dchar next(scope const(char)[] run, ref size_t position, ref bool malformed) scope
+        @safe pure nothrow @nogc
+    in (position < run.length)
     {
-        if (begin != 0)
-        {
-            const remaining = end - begin;
-            // The ranges may overlap: copy forwards, towards lower indices.
-            foreach (i; 0 .. remaining)
-            {
-                window[i] = window[begin + i];
-                ends[i] = ends[begin + i];
-            }
-            begin = 0;
-            end = remaining;
-        }
-        const base = consumedBytes;
-        size_t pos = decodedBytes - base;
-        size_t filled = end;
-        size_t validEnd = pos;
         version (graphemeSimdX86)
         {
-            if (!__ctfe)
+            if (!__ctfe && _validatedRemaining == 0 && run.length - position >= 16)
             {
-                const bound = (window.length - filled) * 4;
-                const bytes = run.length - pos < bound ? run.length - pos : bound;
-                validEnd += validatedUtf8Prefix(run[pos .. pos + bytes]);
+                const count = run.length - position < 256 ? run.length - position : 256;
+                _validatedRemaining = validatedUtf8Prefix(run[position .. position + count]);
             }
         }
-        while (pos < run.length && filled < window.length)
+        const start = position;
+        if (_validatedRemaining != 0)
         {
-            window[filled] = pos < validEnd
-                ? decodeValidated(run, pos) : decodeReplacement(run, pos);
-            ends[filled++] = base + pos;
+            const scalar = decodeValidated(run, position);
+            _validatedRemaining -= position - start;
+            return scalar;
         }
-        end = filled;
-        decodedBytes = base + pos;
-        // Retry aggregation only when a refill discovers a promising head,
-        // not after every cluster in a combining/ZWJ-heavy run.
-        aggregateSingletons = end != 0 && (codepointTraits(window[0]) & 0xFC) == 64
-            && (end == 1 || (codepointTraits(window[1]) & 0xFC) == 64);
-    }
-
-    private ClusterScan scanComplex(bool fullMetadata)(size_t count) scope
-    {
-        const cluster = window[begin .. begin + graphemeStride(window[begin .. begin + count], 0)];
-        const nextBytes = ends[begin + cluster.length - 1];
-        const result = ClusterScan(nextBytes - consumedBytes,
-            graphemeClusterWidth(cluster), cluster[0],
-            fullMetadata ? unclusteredWidth(cluster) : 0, cast(ubyte) cluster.length);
-        begin += cluster.length;
-        consumedBytes = nextBytes;
-        return result;
+        const decoded = decodeToken(run[position .. $], UtfMode.replacement);
+        position += decoded.result.consumed;
+        malformed = decoded.token.kind == UtfTokenKind.replacement;
+        return decoded.token.scalar;
     }
 }
 
@@ -241,7 +550,7 @@ struct GraphemeClusterRange
         }
         const scan = _scanner.scan(_rest[0 .. _runLen]);
         _front = ClusterMeasure(_rest[0 .. scan.bytes], scan.width, false, scan.first,
-            scan.unclustered, scan.codepoints);
+            scan.unclustered, scan.codepoints, scan.hasMalformed);
         _rest = _rest[scan.bytes .. $];
         _runLen -= scan.bytes;
     }
@@ -333,34 +642,6 @@ private size_t printableAsciiPrefix(scope const(char)[] s)
     return i;
 }
 
-version (graphemeSimdX86)
-private size_t singletonWidthPrefix(scope const(char)[] run, ref size_t total)
-{
-    // Only ordinary singleton traits participate. Retain the final starter
-    // until its following scalar is known: Extend/VS/ZWJ can still attach.
-    const bytes = run.length < 256 ? run.length : 256;
-    const validEnd = validatedUtf8Prefix(run[0 .. bytes]);
-    size_t pos, accepted, width, pendingEnd, pendingWidth;
-    while (pos < validEnd)
-    {
-        const cp = decodeValidated(run, pos);
-        const traits = codepointTraits(cp);
-        if ((traits & 0xFC) != 64)
-            break;
-        width += pendingWidth;
-        accepted = pendingEnd;
-        pendingEnd = pos;
-        pendingWidth = traits & 3;
-    }
-    if (pos == run.length && pendingEnd == pos)
-    {
-        width += pendingWidth;
-        accepted = pendingEnd;
-    }
-    total += width;
-    return accepted;
-}
-
 /// Visible width of UTF-8 text in terminal cells: ANSI escapes count 0, each
 /// grapheme cluster counts its display width (wide CJK 2, combining 0, emoji /
 /// flags one 2-cell cluster). The @nogc replacement for `unstyledLength`.
@@ -369,65 +650,97 @@ size_t visibleWidth(in char[] s)
     auto plain = printableAsciiPrefix(s);
     if (plain == s.length)
         return plain;
-    return visibleWidthMixed(s, plain);
+    return fitCellsMixed(s, size_t.max, plain).cells;
 }
 
-private size_t visibleWidthMixed(in char[] s, size_t plain)
+/// A whole-cluster prefix; byte and cell counts have deliberately distinct names.
+struct CellFitResult
 {
-    // Keep the ASCII-only call free of scanner initialization and its frame.
-    if (plain != 0 && s[plain] >= 0x80)
-        --plain;
-    size_t total = plain;
-    size_t pos = plain;
-    size_t runEnd;
-    ClusterScanner scanner;
-    scanner.skipBytes(plain);
-    while (pos < s.length)
+    size_t bytes;
+    size_t cells;
+    bool complete;
+}
+
+/**
+Fit the longest source prefix under the terminalKitty revision-1 cell budget.
+Replacement decoding is explicit; ANSI formatting runs have zero advance and
+do not reset Unicode break or presentation state. Zero-width clusters fit even
+at a zero-cell budget. This is not a cursor-motion/VT-screen interpreter.
+*/
+CellFitResult fitCells(scope const(char)[] source, size_t maximum)
+    @safe pure nothrow @nogc
+{
+    const plain = printableAsciiPrefix(source);
+    if (plain == source.length)
     {
-        plain = printableAsciiPrefix(s[pos .. $]);
-        // The last ASCII starter can acquire combining marks or a presentation
-        // selector, including keycaps. Leave it and its continuation together.
-        if (plain != 0 && plain < s.length - pos && s[pos + plain] >= 0x80)
-            --plain;
-        if (plain != 0)
-        {
-            total += plain;
-            pos += plain;
-            scanner.skipBytes(plain);
-            continue;
-        }
-        if (s[pos] == '\x1b')
-        {
-            pos += escapeLength(s[pos .. $]);
-            runEnd = 0;
-            scanner.reset();
-            continue;
-        }
-        // Cache the escape-free run end, as the iterator does. Unicode clusters
-        // never rescan the full remaining run: discovery is once per text run.
-        if (pos >= runEnd)
-        {
-            runEnd = pos + escapeFreePrefix(s[pos .. $]);
-        }
-        version (graphemeSimdX86)
-        {
-            if (!__ctfe && scanner.aggregateSingletons)
-            {
-                const bytes = singletonWidthPrefix(s[pos .. runEnd], total);
-                if (bytes != 0)
-                {
-                    pos += bytes;
-                    scanner.skipBytes(bytes);
-                    continue;
-                }
-                scanner.aggregateSingletons = false;
-            }
-        }
-        const scan = scanner.scan!false(s[pos .. runEnd]);
-        total += scan.width;
-        pos += scan.bytes;
+        const count = source.length < maximum ? source.length : maximum;
+        return CellFitResult(bytes: count, cells: count, complete: count == source.length);
     }
-    return total;
+    return fitCellsMixed(source, maximum, plain);
+}
+
+private CellFitResult fitCellsMixed(scope const(char)[] source, size_t maximum, size_t plain)
+    @safe pure nothrow @nogc
+{
+    // Every initial ASCII cluster except the last is already final. Formatting
+    // can precede that last starter's combining/presentation continuation.
+    const committed = plain ? plain - 1 : 0;
+    if (committed > maximum)
+        return CellFitResult(bytes: maximum, cells: maximum);
+    CellFitResult result = CellFitResult(bytes: committed, cells: committed);
+    size_t position = committed;
+    GraphemeBreakState breaks;
+    ClusterWidthState width;
+    bool pending;
+    while (position < source.length)
+    {
+        if (source[position] == '\x1b')
+        {
+            position += escapeLength(source[position .. $]);
+            if (!pending)
+                result.bytes = position;
+            continue;
+        }
+        const start = position;
+        const decoded = decodeToken(source[position .. $], UtfMode.replacement);
+        assert(decoded.result.status == UtfStatus.ok && decoded.result.consumed != 0);
+        position += decoded.result.consumed;
+        if (breaks.push(decoded.token.scalar) && pending)
+        {
+            if (cast(size_t) width.width > maximum - result.cells)
+                return result;
+            result.cells += width.width;
+            result.bytes = start;
+            width = ClusterWidthState.init;
+        }
+        width.push(decoded.token.scalar, false);
+        pending = true;
+    }
+    if (pending)
+    {
+        if (cast(size_t) width.width > maximum - result.cells)
+            return result;
+        result.cells += width.width;
+    }
+    result.bytes = source.length;
+    result.complete = true;
+    return result;
+}
+
+/// Styled controls do not split a logical cluster or its cell presentation.
+@("grapheme.fitCells.styledWholeClustersAndZeroBudget")
+@safe pure nothrow @nogc
+unittest
+{
+    const keycap = "#\x1b[31m\uFE0F\u20E3";
+    assert(visibleWidth(keycap) == 2);
+    assert(fitCells(keycap, 1).bytes == 0);
+    const flag = "\U0001F1FA\x1b[31m\U0001F1F8";
+    assert(visibleWidth(flag) == 2 && fitCells(flag, 2).complete);
+    const zero = fitCells("\u0301\t界", 0);
+    assert(zero.bytes == 3 && zero.cells == 0 && !zero.complete);
+    const wide = fitCells("e\u0301界x", 2);
+    assert(wide.bytes == 3 && wide.cells == 1 && !wide.complete);
 }
 
 @("grapheme.visibleWidth.plainAndStyled")
@@ -516,7 +829,6 @@ unittest
 {
     enum prefix = "xxxxxxxxxxxxxxxx";
     assert(visibleWidth(prefix ~ "\x1b[31mA\u0301\x1b[0m") == 17);
-    assert(visibleWidth(prefix ~ "#\x1b[31m\uFE0F\u20E3") == 17);
     assert(visibleWidth(prefix ~ "\x1b]8;;https://x\x07hi\x1b]8;;\x07") == 18);
     assert(visibleWidth(prefix ~ "\x1b]unfinished") == 16);
     assert(visibleWidth(prefix ~ "\r\n\t\0\x7FY") == 17);
@@ -535,196 +847,64 @@ unittest
     assert(clusters.empty);
 }
 
-@("grapheme.scanCluster.capBoundedWindow")
-unittest
-{
-    char[67] text;
-    text[0] = 'A';
-    foreach (i; 0 .. 33)
-        text[1 + i * 2 .. 3 + i * 2] = "\u0301";
-    auto clusters = text[].byGraphemeCluster;
-    assert(clusters.front == ClusterMeasure(text[0 .. 63], 1, false, 'A', 1, 32));
-    clusters.popFront();
-    assert(clusters.front == ClusterMeasure(text[63 .. $], 0, false, '\u0301', 0, 2));
-    clusters.popFront();
-    assert(clusters.empty);
-    assert(visibleWidth(text[]) == 1);
-}
 
-@("grapheme.visibleWidth.exceptionalBytesAcrossBulkBlocks")
-unittest
-{
-    foreach (position; [0, 15, 16, 31, 32, 63, 64, 95, 127, 128, 129, 191, 255])
-    {
-        char[256] text = 'x';
-        foreach (value; 0 .. 256)
-        {
-            text[position] = cast(char) value;
-            size_t expected;
-            foreach (cluster; byGraphemeCluster(text[]))
-                expected += cluster.width;
-            assert(visibleWidth(text[]) == expected);
-        }
-    }
-}
-
-version (unittest)
-private ClusterScan referenceScan(scope const(char)[] run)
-{
-    // The original growing-window algorithm is deliberately test-only. It
-    // checks queue boundaries against Phobos independently of the new scanner.
-    dchar[maxClusterCps] window = void;
-    size_t[maxClusterCps] ends = void;
-    size_t count;
-    size_t pos;
-    while (pos < run.length && count < maxClusterCps)
-    {
-        window[count] = decode!(Yes.useReplacementDchar)(run, pos);
-        ends[count++] = pos;
-        const stride = graphemeStride(window[0 .. count], 0);
-        if (stride < count)
-            return ClusterScan(ends[stride - 1],
-                graphemeClusterWidth(window[0 .. stride]), window[0],
-                unclusteredWidth(window[0 .. stride]), cast(ubyte) stride);
-    }
-    const stride = graphemeStride(window[0 .. count], 0);
-    return ClusterScan(ends[stride - 1], graphemeClusterWidth(window[0 .. stride]),
-        window[0], unclusteredWidth(window[0 .. stride]), cast(ubyte) stride);
-}
-
-version (unittest)
-private void checkReference(scope const(char)[] text)
-{
-    const original = text;
-    auto actual = byGraphemeCluster(text);
-    size_t total;
-    while (text.length != 0)
-    {
-        if (text[0] == '\x1b')
-        {
-            const bytes = escapeLength(text);
-            assert(actual.front == ClusterMeasure(text[0 .. bytes], 0, true, '\x1b'));
-            text = text[bytes .. $];
-        }
-        else
-        {
-            size_t runEnd;
-            while (runEnd < text.length && text[runEnd] != '\x1b')
-                ++runEnd;
-            const expected = referenceScan(text[0 .. runEnd]);
-            assert(actual.front == ClusterMeasure(text[0 .. expected.bytes], expected.width,
-                false, expected.first, expected.unclustered, expected.codepoints));
-            total += expected.width;
-            text = text[expected.bytes .. $];
-        }
-        actual.popFront();
-    }
-    assert(actual.empty);
-    // The width-only loop skips ASCII separately and must share the same
-    // semantics even when a decoded window straddles that skip.
-    assert(visibleWidth(original) == total);
-}
-
-@("grapheme.decodedQueue.phobosStateAndMetadata")
-unittest
-{
-    import std.utf : encode;
-    static immutable dchar[] representatives = [
-        'A', '\0', '\r', '\n', '\t', '\x7F', '\u0085', '\u0301',
-        '\u0903', '\u093E', '\u0600', '\u0D4E', '\u1100', '\u1161',
-        '\u11A8', '\uAC00', '\uAC01', '\uA960', '\uD7B0', '\uD7CB',
-        '\u200B', '\u200D', '\u2028', '\uFE0E', '\uFE0F', '\u20E3',
-        '\u2701', '\u2764', '\u4E16', '\U00020000', '\U0001F1E6',
-        '\U0001F1E7', '\U0001F1E8', '\U0001F469', '\U0001F467',
-        '\U0001F3FE', '\U000110BD', '\U000E0020', '\U000E007F', '\uFFFD'
-    ];
-    char[2048] storage = void;
-    uint seed = 0xCAFE0123;
-    foreach (trial; 0 .. 64)
-    {
-        size_t bytes;
-        foreach (i; 0 .. 192)
-        {
-            seed = seed * 1664525U + 1013904223U;
-            const cp = representatives[(seed >> 16) % representatives.length];
-            char[4] encoded = void;
-            const n = encode!(Yes.useReplacementDchar)(encoded, cp);
-            storage[bytes .. bytes + n] = encoded[0 .. n];
-            bytes += n;
-        }
-        const text = storage[0 .. bytes];
-        checkReference(text);
-    }
-    foreach (a; representatives)
-        foreach (b; representatives)
-            foreach (c; [cast(dchar) 'A', '\u0301', '\u200D', '\U0001F469'])
-            {
-                size_t bytes;
-                foreach (cp; [a, b, c])
-                {
-                    char[4] encoded = void;
-                    const n = encode!(Yes.useReplacementDchar)(encoded, cp);
-                    storage[bytes .. bytes + n] = encoded[0 .. n];
-                    bytes += n;
-                }
-                checkReference(storage[0 .. bytes]);
-            }
-}
-
-@("grapheme.singletonRuns.deferTrailingAttachments")
+/// A long cluster remains one borrowed span, including its exact scalar count.
+@("grapheme.ownedScanner.unboundedCombiningSpan")
 @safe pure nothrow @nogc
 unittest
 {
-    char[512] storage = void;
-    foreach (starter; ["A", "\u00E9", "\u4E16", "\U0001F469"])
-        foreach (count; 0 .. 97)
-        {
-            const prefixBytes = count * starter.length;
-            foreach (i; 0 .. count)
-                storage[i * starter.length .. (i + 1) * starter.length] = starter[];
-            foreach (suffix; ["\u0301", "\uFE0F", "\uFE0E",
-                "\u200D\U0001F469", "\u0600A", "\r\n",
-                "\U0001F1E6\U0001F1E7", "\xFF\u0301"])
-            {
-                storage[prefixBytes .. prefixBytes + suffix.length] = suffix[];
-                checkReference(storage[0 .. prefixBytes + suffix.length]);
-            }
-        }
+    char[4099] text = void;
+    text[0] = 'A';
+    foreach (i; 0 .. 2048)
+        text[1 + i * 2 .. 3 + i * 2] = "\u0301";
+    text[4097 .. $] = "BC";
+    auto clusters = text[].byGraphemeCluster;
+    assert(clusters.front == ClusterMeasure(text[0 .. 4097], 1, false, 'A', 1, 2049));
+    clusters.popFront();
+    assert(clusters.front == ClusterMeasure(text[4097 .. 4098], 1, false, 'B', 1, 1));
+    clusters.popFront();
+    assert(clusters.front == ClusterMeasure(text[4098 .. $], 1, false, 'C', 1, 1));
+    clusters.popFront();
+    assert(clusters.empty);
+    assert(visibleWidth(text[]) == 3);
 }
 
-@("grapheme.decodedQueue.capMalformedAndEscapeTransitions")
+@("grapheme.ownedScanner.longEmojiContext")
+@safe pure nothrow @nogc
 unittest
 {
-    enum malformed = ["\x80", "\xC0\xAF", "\xE2\x82", "\xED\xA0\x80",
-        "\xF0\x80\x80\xAF", "\xF4\x90\x80\x80", "\xE2A\x80", "\xFF\xFF"];
-    foreach (bad; malformed)
+    char[2060] text = void;
+    text[0 .. 4] = "\U0001F469";
+    foreach (i; 0 .. 1024)
+        text[4 + i * 2 .. 6 + i * 2] = "\u0301";
+    text[2052 .. $] = "\u200D\U0001F4BBx";
+    auto clusters = text[].byGraphemeCluster;
+    assert(clusters.front == ClusterMeasure(text[0 .. 2059], 2, false,
+        '\U0001F469', 4, 1027));
+    clusters.popFront();
+    assert(clusters.front.slice == "x" && clusters.front.width == 1);
+    clusters.popFront();
+    assert(clusters.empty);
+    assert(visibleWidth(text[]) == 3);
+}
+
+@("grapheme.ownedScanner.riParityAcrossClusters")
+@safe pure nothrow @nogc
+unittest
+{
+    char[516] text = void;
+    foreach (i; 0 .. 129)
+        text[i * 4 .. (i + 1) * 4] = "\U0001F1E6";
+    auto clusters = text[].byGraphemeCluster;
+    foreach (i; 0 .. 64)
     {
-        char[256] storage = void;
-        size_t length;
-        string[5] parts = ["\u0600A\u0301", bad, "\x1b[31m\u2764\uFE0F",
-            bad, "\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u0301"];
-        foreach (part; parts)
-        {
-            storage[length .. length + part.length] = part[];
-            length += part.length;
-        }
-        checkReference(storage[0 .. length]);
+        assert(clusters.front.slice == text[i * 8 .. (i + 1) * 8]);
+        assert(clusters.front.width == 2 && clusters.front.codepoints == 2);
+        clusters.popFront();
     }
-    char[1024] text = void;
-    size_t bytes;
-    foreach (i; 0 .. 256)
-    {
-        text[bytes++] = 'A';
-        foreach (_; 0 .. i % 40)
-        {
-            if (bytes + 2 > text.length)
-                break;
-            text[bytes .. bytes + 2] = "\u0301";
-            bytes += 2;
-        }
-        if (bytes + 81 > text.length)
-            break;
-    }
-    checkReference(text[0 .. bytes]);
-    static assert(visibleWidth("\u0600\u2764\uFE0F\x1b[31mA\u0301\r\n") == 1);
+    assert(clusters.front.slice == text[512 .. $]);
+    assert(clusters.front.width == 2 && clusters.front.codepoints == 1);
+    clusters.popFront();
+    assert(clusters.empty);
+    assert(visibleWidth(text[]) == 130);
 }

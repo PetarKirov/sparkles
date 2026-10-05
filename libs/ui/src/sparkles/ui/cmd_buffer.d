@@ -33,7 +33,8 @@ import sparkles.ui.canvas : boxChromeOf, DrawOp, FillRect, Glyph, ImageDraw,
     inkOf, Line, LineStyle, PopClip, PopEffect, PushClip, PushEffect, Rule,
     RuleEdge, Scrollbar, TextRun;
 import sparkles.ui.effect : EffectId;
-import sparkles.ui.geometry : cellsOf, Point, Rect, Size;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.image : ImageFit, ImageHandle;
 import sparkles.ui.style : Slot, Visual;
 
@@ -135,7 +136,7 @@ if (isArena!Arena)
     paragraph is one operation rather than a truncated one.
 
     `rect.width` should be the display-cell advance (use
-    $(REF cellsOf, sparkles,ui,geometry) or grapheme `visibleWidth`).
+    $(REF visibleWidth, sparkles,base,text,grapheme)).
     */
     void textRun(in Rect rect, scope const(char)[] text,
         Slot slot = Slot.inherit, in Visual visual = Visual.init)
@@ -152,7 +153,7 @@ if (isArena!Arena)
     void textRun(in Point at, scope const(char)[] text,
         in Visual visual = Visual.init)
     {
-        textRun(Rect(at.x, at.y, cast(int) cellsOf(text), 1), text,
+        textRun(Rect(at.x, at.y, cast(int) visibleWidth(text), 1), text,
             Slot.inherit, visual);
     }
 
@@ -238,7 +239,7 @@ if (isArena!Arena)
     /// The cell extent of `text` — the `isCanvas` primitive, so a buffer can
     /// stand in for a canvas that records.
     Size measure(scope const(char)[] text) const @safe pure nothrow @nogc
-        => Size(cast(int) cellsOf(text), 1);
+        => Size(cast(int) visibleWidth(text), 1);
 }
 
 /// The frame loop's buffer: malloc-backed, `@nogc`, reset every frame.

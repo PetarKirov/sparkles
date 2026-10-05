@@ -7,7 +7,7 @@ import std.traits : isBoolean, isFloatingPoint, isIntegral, isSomeString,
     isUnsigned;
 
 import sparkles.base.text.span : TextSpan;
-import sparkles.base.text.utf : decodeFirstUtf8;
+import sparkles.base.text.utf : decodeToken, UtfStatus;
 import sparkles.reflection.kind : TypeKind, typeKindOf;
 import sparkles.dql.ast;
 import sparkles.dql.engine : DqlEngine;
@@ -417,12 +417,11 @@ private enum bool isTextLeaf(V) = typeKindOf!V == TypeKind.text
 private bool singleCodePoint(scope const(char)[] s, out dchar cp)
     @safe pure nothrow @nogc
 {
-    if (!s.length)
+    const decoded = decodeToken(s);
+    if (decoded.result.status != UtfStatus.ok || decoded.result.consumed != s.length)
         return false;
-    cp = decodeFirstUtf8(s);
-    const c0 = cast(ubyte) s[0];
-    const len = c0 < 0x80 ? 1 : c0 < 0xE0 ? 2 : c0 < 0xF0 ? 3 : 4;
-    return s.length == len;
+    cp = decoded.token.scalar;
+    return true;
 }
 
 private bool compareReflected(V)(ref DqlEngine engine, in V actual,

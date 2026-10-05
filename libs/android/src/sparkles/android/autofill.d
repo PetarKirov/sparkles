@@ -210,7 +210,7 @@ private void requestJob(JNIEnv* env, void*) nothrow @nogc
 
 private void watchJob(JNIEnv* env, void*) nothrow @nogc
 {
-    import sparkles.android.ime_diff : toUtf8;
+    import sparkles.base.text.utf : convertPrefix, UtfMode;
     import sparkles.android.ime : field;
 
     scope (exit) atomicStore(watchPending, false);
@@ -225,7 +225,9 @@ private void watchJob(JNIEnv* env, void*) nothrow @nogc
     auto units = (*env).GetStringChars(env, text, null);
     if (units is null)
         return;
-    valueLength = toUtf8((cast(const(wchar)*) units)[0 .. len], value[]);
+    // GetStringChars is ordinary UTF-16; preserve whole-scalar truncation.
+    valueLength = convertPrefix((cast(const(wchar)*) units)[0 .. len],
+        value[], UtfMode.replacement).written;
     (*env).ReleaseStringChars(env, text, units);
     restore(env);
     atomicStore(state, cast(int) State.filled);

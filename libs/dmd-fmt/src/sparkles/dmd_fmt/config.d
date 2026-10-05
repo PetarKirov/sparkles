@@ -190,12 +190,12 @@ private const(char)[][2] splitKeyValue(const(char)[] line) @safe
 {
     import std.algorithm.searching : countUntil;
     import std.string : strip;
-    import std.uni : toLower;
+    import sparkles.base.text.case_text : asciiLower;
 
     const eq = line.countUntil('=');
     if (eq < 0)
         return [cast(const(char)[]) "", ""];
-    return [line[0 .. eq].strip.toLower, line[eq + 1 .. $].strip.toLower];
+    return [line[0 .. eq].strip.asciiLower, line[eq + 1 .. $].strip.asciiLower];
 }
 
 /**

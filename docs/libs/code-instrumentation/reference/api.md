@@ -34,11 +34,14 @@ branch untaken (LCOV, gcov) or a nested block that never executed (V8).
 
 ```d
 ParseExpected!CoverageReport loadCoverage(
-    const(char)[] path, const(char)[] contents, const(char)[] sourceText = null);
+    const(char)[] path, const(char)[] contents,
+    scope V8SourceResolver resolveSource = null,
+    scope V8ScriptSelector selectScript = null) @safe;
 ```
 
-Detects the format and dispatches. `sourceText` is used only by V8, which
-records byte offsets rather than line numbers.
+Detects the format and dispatches. The resolver and selector are used only by
+V8; other formats do not need source snapshots. Import their types from
+`sparkles.code_instrumentation.coverage.formats.v8`.
 
 ```d
 CoverageFormat detectFormat(const(char)[] path, const(char)[] contents);
@@ -53,13 +56,78 @@ it, where a content match is a guess about a file someone asked to view.
 
 Each parser is also callable directly.
 
-| Format       | Entry point           | Notes                                      |
-| ------------ | --------------------- | ------------------------------------------ |
-| DMD `-cov`   | `parseDmdCoverage`    | one file per listing; trailer names it     |
-| gcov         | `parseGcovCoverage`   | `-b` branch annotations attach by position |
-| LCOV `.info` | `parseLcovCoverage`   | many files; records joined by line number  |
-| V8 / Vitest  | `parseV8Coverage`     | needs `sourceText` for line mapping        |
-| `llvm-cov`   | `parseLlvmExportJson` | honours `hasCount` and gap-region flags    |
+| Format       | Entry point           | Notes                                          |
+| ------------ | --------------------- | ---------------------------------------------- |
+| DMD `-cov`   | `parseDmdCoverage`    | one file per listing; trailer names it         |
+| gcov         | `parseGcovCoverage`   | `-b` branch annotations attach by position     |
+| LCOV `.info` | `parseLcovCoverage`   | many files; records joined by line number      |
+| V8 / Vitest  | `parseV8Coverage`     | resolves each selected original UTF-8 snapshot |
+| `llvm-cov`   | `parseLlvmExportJson` | honours `hasCount` and gap-region flags        |
+
+### V8 source snapshots and script selection
+
+`sparkles.code_instrumentation.coverage.formats.v8`
+
+```d
+alias V8SourceResolver = ParseExpected!(const(char)[]) delegate(
+    const(char)[] scriptPath) @safe;
+alias V8ScriptSelector = bool delegate(const(char)[] scriptPath) @safe;
+
+ParseExpected!CoverageReport parseV8Coverage(
+    const(char)[] jsonText, scope V8SourceResolver resolveSource,
+    scope V8ScriptSelector selectScript = null) @safe;
+```
+
+The resolver receives a normalized script path (`file://` URLs become file
+paths) once per selected script. It returns a **borrowed original UTF-8
+snapshot**, which the caller must keep alive and unchanged throughout the
+parse. The slice type is `const(char)[]`; it does not freeze other mutable
+aliases. The parser does not fetch sources or substitute the displayed file
+for every script. A missing snapshot must return a parse error; a successful
+empty slice means a genuinely empty source.
+
+The optional selector runs **before source resolution**. Null selects every
+script; false excludes that script from both resolution and the returned
+report. For example, an artifact with `/src/a.js` and `/src/b.js` can resolve
+two distinct snapshots, or explicitly project only `/src/a.js`:
+
+```d
+import sparkles.base.text.errors : ParseErrorCode, parseErr, parseOk;
+import sparkles.code_instrumentation.coverage.formats.v8 :
+    parseV8Coverage, V8SourceResolver, V8ScriptSelector;
+
+immutable string sourceA = "A😀\n界B\n";
+immutable string sourceB = "let b = 1;\n";
+V8SourceResolver resolve = (const(char)[] scriptPath) @safe {
+    if (scriptPath == "/src/a.js")
+        return parseOk(cast(const(char)[]) sourceA);
+    if (scriptPath == "/src/b.js")
+        return parseOk(cast(const(char)[]) sourceB);
+    return parseErr!(const(char)[])(ParseErrorCode.unknownValue, 0,
+        "original source snapshot unavailable");
+};
+auto allScripts = parseV8Coverage(jsonText, resolve);
+V8ScriptSelector onlyA = (const(char)[] scriptPath) @safe {
+    return scriptPath == "/src/a.js";
+};
+auto selected = parseV8Coverage(jsonText, resolve, onlyA);
+// Universal ingestion accepts the same resolver and selector:
+// auto selected = loadCoverage("coverage.json", jsonText, resolve, onlyA);
+```
+
+`jsonText` is the producer's artifact, not reconstructed source. Its
+`startOffset` and `endOffset` are native **UTF-16 code-unit coordinates**.
+For `sourceA`, `[4, 6)` maps exactly to original UTF-8 bytes `[6, 10)`
+(`界B` on line 2); the supplementary `😀` occupies two UTF-16 units but four
+UTF-8 bytes. Returned `SpanCoverage.span` values are always UTF-8 byte ranges.
+
+Each selected snapshot is strictly validated in full, including suffixes
+outside covered ranges, then mapped once for all its ranges. Malformed
+UTF-8, surrogate-interior boundaries, inverted or out-of-range offsets, and
+byte spans exceeding `TextSpan` capacity reject the parse with structured
+errors. No invalid ranges are silently skipped, clamped, or mapped through
+replacement text. See [Handle parse failures](../how-to/handle-parse-failures.md)
+for error-coordinate details.
 
 ## Overlay planning
 

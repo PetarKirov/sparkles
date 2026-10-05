@@ -423,22 +423,21 @@ struct DroidPlatform
     /// fire a binding (`TSE8`).
     private static void typeSecret(ref TerminalView tv, scope const(char)[] secret) nothrow
     {
-        import std.utf : decode;
+        import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
         import sparkles.input : Key, KeyEvent;
 
         size_t i;
         while (i < secret.length)
         {
             const start = i;
-            dchar c;
-            try
-                c = decode(secret, i);
-            catch (Exception)
+            const decoded = decodeToken(secret[i .. $], UtfMode.strict);
+            if (decoded.result.status != UtfStatus.ok)
                 return;
+            i += decoded.result.consumed;
             KeyEvent k;
             k.key = Key.char_;
             k.text = secret[start .. i];
-            k.unshifted = c;
+            k.unshifted = decoded.token.scalar;
             (() @trusted => cast(void) tv.sendKey(k))();
         }
     }

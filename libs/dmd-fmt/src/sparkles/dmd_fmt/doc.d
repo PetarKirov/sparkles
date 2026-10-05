@@ -27,6 +27,7 @@ $(LIST
 module sparkles.dmd_fmt.doc;
 
 import std.array : appender;
+import sparkles.base.text.grapheme : visibleWidth;
 
 /// The node kinds of the layout IR. See the module doc for provenance.
 enum DocKind : ubyte
@@ -113,64 +114,22 @@ struct RenderOptions
 }
 
 /**
-Display-column width: East-Asian wide characters count 2, combining marks 0,
-everything else 1. A compact approximation of `wcwidth` — the ranges cover
-CJK, Hangul, full-width forms and the common combining blocks; callers with
-stricter needs inject their own measure.
+Owned grapheme/cell measurement with the formatter's literal tab/line policy:
+tabs, CR and LF each count one here; emitted newlines reset the layout column
+and indentation tabs use `RenderOptions.tabWidth`. Malformed UTF-8 is measured
+with the base's explicit replacement policy and forward progress.
 */
 size_t displayWidth(const(char)[] s) @safe pure nothrow @nogc
 {
-    size_t cols;
-    for (size_t i = 0; i < s.length;)
+    size_t cols, start;
+    foreach (i, byte_; s)
     {
-        dchar c;
-        const b = s[i];
-        if (b < 0x80)
-        {
-            c = b;
-            i += 1;
-        }
-        else if ((b & 0xE0) == 0xC0 && i + 1 < s.length)
-        {
-            c = ((b & 0x1F) << 6) | (s[i + 1] & 0x3F);
-            i += 2;
-        }
-        else if ((b & 0xF0) == 0xE0 && i + 2 < s.length)
-        {
-            c = ((b & 0x0F) << 12) | ((s[i + 1] & 0x3F) << 6) | (s[i + 2] & 0x3F);
-            i += 3;
-        }
-        else if ((b & 0xF8) == 0xF0 && i + 3 < s.length)
-        {
-            c = ((b & 0x07) << 18) | ((s[i + 1] & 0x3F) << 12)
-                | ((s[i + 2] & 0x3F) << 6) | (s[i + 3] & 0x3F);
-            i += 4;
-        }
-        else
-        {
-            i += 1; // invalid byte: count 1, resync
-            cols += 1;
+        if (byte_ != '\t' && byte_ != '\r' && byte_ != '\n')
             continue;
-        }
-        cols += columnWidth(c);
+        cols += visibleWidth(s[start .. i]) + 1;
+        start = i + 1;
     }
-    return cols;
-}
-
-private size_t columnWidth(dchar c) @safe pure nothrow @nogc
-{
-    // Combining marks: zero columns.
-    if ((c >= 0x0300 && c <= 0x036F) || (c >= 0x1AB0 && c <= 0x1AFF)
-        || (c >= 0x20D0 && c <= 0x20FF) || (c >= 0xFE00 && c <= 0xFE0F))
-        return 0;
-    // East-Asian wide / full-width: two columns.
-    if ((c >= 0x1100 && c <= 0x115F) || (c >= 0x2E80 && c <= 0xA4CF)
-        || (c >= 0xAC00 && c <= 0xD7A3) || (c >= 0xF900 && c <= 0xFAFF)
-        || (c >= 0xFE30 && c <= 0xFE4F) || (c >= 0xFF00 && c <= 0xFF60)
-        || (c >= 0xFFE0 && c <= 0xFFE6) || (c >= 0x1F300 && c <= 0x1F64F)
-        || (c >= 0x20000 && c <= 0x3FFFD))
-        return 2;
-    return 1;
+    return cols + visibleWidth(s[start .. $]);
 }
 
 private enum Mode : ubyte
@@ -668,6 +627,19 @@ private struct Engine
     assert(displayWidth("日本語") == 6);
     assert(displayWidth("é") == 1); // e + combining acute
     assert(displayWidth("ｆｕｌｌ") == 8); // full-width forms
+    assert(displayWidth("\U0001F468\u200D\U0001F469\u200D\U0001F467") == 2);
+    assert(displayWidth("\U0001F1FA\U0001F1F8") == 2);
+    assert(displayWidth("x\xFFy") == 3); // replacement decoding keeps progress
+    assert(displayWidth("x\t\r\n") == 4); // literal tab/line policy
+}
+
+@("doc.layout.emojiClusterFitsAtItsOwnedCellWidth")
+@safe unittest
+{
+    auto d = group(text("\U0001F468\u200D\U0001F469\u200D\U0001F467"),
+        line, text("x"));
+    RenderOptions opt = {width: 4};
+    assert(layout(d, opt) == "\U0001F468\u200D\U0001F469\u200D\U0001F467 x");
 }
 
 @("doc.fill.breaks-only-at-line-ends")

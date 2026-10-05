@@ -343,7 +343,8 @@ struct JniFrame
     /// A D string from a `java.lang.String`; `null` for a null reference.
     string toDString(jstring s) @trusted nothrow
     {
-        import std.utf : toUTF8;
+        import sparkles.base.text.utf16 : measureConversion, utf16ToUtf8;
+        import std.exception : assumeUnique;
 
         if (s is null)
             return null;
@@ -352,9 +353,13 @@ struct JniFrame
         if (chars is null)
             return null;
         scope (exit) (*env).ReleaseStringChars(env, s, chars);
-        try
-            return (cast(const(wchar)*) chars)[0 .. len].toUTF8;
-        catch (Exception)
+        const source = (cast(const(wchar)*) chars)[0 .. len];
+        const measured = measureConversion!char(source);
+        if (measured.hasError)
             return null; // unpaired surrogate
+        auto bytes = new char[measured.value.required];
+        if (utf16ToUtf8(source, bytes).hasError)
+            return null;
+        return assumeUnique(bytes);
     }
 }

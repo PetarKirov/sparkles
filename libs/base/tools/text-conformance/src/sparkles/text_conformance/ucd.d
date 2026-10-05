@@ -1,25 +1,17 @@
-/**
- * Unicode Character Database access: download (with an XDG cache), an offline
- * `--ucd-dir` override, and the generic `code[..code] ; VALUE # comment` parser.
- *
- * The download/parse machinery mirrors `libs/base/tools/gen_unicode_tables.d`
- * deliberately — it is the established pattern in this repo. The crucial
- * difference for the conformance harness is that the Layer-1 oracle reads
- * *general categories* straight from `DerivedGeneralCategory.txt` rather than
- * from Phobos `std.uni`, so a bug or version skew shared with the library under
- * test cannot hide.
+/** Manifest-authenticated raw Unicode access for independent conformance
+ * interpretation. Property membership uses owned ASCII parsing and intervals,
+ * not the generated tables or compiler Unicode sets.
  */
 module sparkles.text_conformance.ucd;
 
-import std.algorithm : canFind, map, filter, splitter, startsWith, findSplit;
-import std.array : array;
+import std.algorithm : startsWith;
 import std.file : exists, mkdirRecurse, readText;
-import std.format : format, formattedRead;
+import std.digest.sha : sha256Of;
+import std.json : parseJSON;
+import std.format : format;
 version (TextConformanceNoCurl) {} // offline build: no libcurl linkage
 else import std.net.curl : HTTP, CurlException, CurlOption;
-import std.path : buildPath, buildNormalizedPath, dirName;
-import std.string : strip, lineSplitter;
-import std.uni : CodepointSet, isWhite;
+import std.path : buildPath, dirName;
 
 import sparkles.core_cli.common_dirs : cacheDir;
 
@@ -31,36 +23,47 @@ enum ucdBaseUrl = "https://www.unicode.org/Public";
 /// Raw-UCD inputs the Layer-1 width oracle classifies code points from.
 struct WidthData
 {
-    CodepointSet wide;        /// East-Asian Wide/Fullwidth (`W`, `F`).
-    CodepointSet zeroCat;     /// Marks + format: `Mn | Mc | Me | Cf`.
-    CodepointSet controls;    /// General category `Cc`.
-    CodepointSet emojiVsBase; /// Bases with an `emoji style` (FE0F) sequence.
-    // Individual mark categories, kept for diagnostic bucketing in Layer 1.
-    CodepointSet mn, mc, me, cf;
+    CodepointRanges wide;        /// East-Asian Wide/Fullwidth (`W`, `F`).
+    CodepointRanges zeroCat;     /// Marks + format: `Mn | Mc | Me | Cf`.
+    CodepointRanges controls;    /// General category `Cc`.
+    CodepointRanges emojiVsBase; /// Bases with an `emoji style` (FE0F) sequence.
+    CodepointRanges mn, mc, me, cf;
 }
 
-/// Read a UCD file's text for `ver`. Resolution order: `--ucd-dir` (offline,
-/// reading `<dir>/<remoteRelPath>` so a mirrored UCD tree works) → XDG cache →
-/// download (unless `--no-network`). Downloads are cached under a
-/// version-scoped subdir so the width and segmentation versions never collide.
+/// All raw artifacts are authenticated against the implementation's manifest.
 string ucdText(string ver, string remoteRelPath, in Config cfg)
-    => cachedFetch(ver ~ "/ucd/" ~ remoteRelPath, buildPath(ver, remoteRelPath), cfg);
+{
+    if (ver != cfg.versionIdentity)
+        throw new Exception("Unicode release differs from generated manifest");
+    return authenticatedFetch("ucd/" ~ remoteRelPath, cfg);
+}
 
-/// Read `emoji-test.txt` for the segmentation version. Unicode publishes it
-/// under `/Public/emoji/<major.minor>/`, not the UCD tree — hence the separate
-/// URL/cache layout. (`15.0.0` → emoji `15.0`.)
 string emojiTestText(in Config cfg)
 {
-    const emojiVer = emojiVersionOf(cfg.segVersion);
-    return cachedFetch("emoji/" ~ emojiVer ~ "/emoji-test.txt",
-        buildPath("emoji-" ~ emojiVer, "emoji-test.txt"), cfg);
+    return authenticatedFetch("emoji/emoji-test.txt", cfg);
 }
 
-/// Map a UCD version (`major.minor.patch`) to its emoji `major.minor` line.
-private string emojiVersionOf(string ucdVersion)
+private string authenticatedFetch(string relativePath, in Config cfg)
 {
-    auto parts = ucdVersion.splitter('.').array;
-    return parts.length >= 2 ? parts[0] ~ "." ~ parts[1] : ucdVersion;
+    const manifestText = readText(cfg.manifestPath);
+    auto manifestHash = sha256Of(cast(const(ubyte)[]) manifestText);
+    string identity;
+    foreach (byteValue; manifestHash) identity ~= format("%02x", byteValue);
+    if (identity != cfg.manifestIdentity)
+        throw new Exception("conformance manifest differs from generated implementation");
+    auto manifest = parseJSON(manifestText);
+    foreach (artifact; manifest["artifacts"].array)
+    {
+        if (artifact["path"].str != relativePath) continue;
+        const text = cachedFetch(cfg.versionIdentity ~ "/" ~ relativePath, relativePath, cfg);
+        auto hash = sha256Of(cast(const(ubyte)[]) text);
+        string actual;
+        foreach (byteValue; hash) actual ~= format("%02x", byteValue);
+        if (actual != artifact["sha256"].str)
+            throw new Exception("conformance artifact SHA-256 mismatch: " ~ relativePath);
+        return text;
+    }
+    throw new Exception("conformance artifact absent from manifest: " ~ relativePath);
 }
 
 /// Resolve a Unicode file by `urlSuffix` (appended to the Public base) with an
@@ -79,7 +82,7 @@ private string cachedFetch(string urlSuffix, string cacheRelPath, in Config cfg)
     const cache = cacheDir();
     if (!cache.length)
         throw new Exception("cannot determine cache dir; pass --ucd-dir");
-    const dest = buildPath(cache, "sparkles-text-conformance", cacheRelPath);
+    const dest = buildPath(cache, "sparkles-text-conformance", cfg.manifestIdentity, cacheRelPath);
     if (dest.exists)
         return dest.readText;
 
@@ -114,12 +117,12 @@ private void download(string url, string dest)
     }
 }
 
-/// Load the three raw-UCD inputs the width oracle needs, for `cfg.widthVersion`.
+/// Load independently interpreted raw width inputs from the single manifest.
 WidthData loadWidthData(in Config cfg)
 {
-    const eaw = ucdText(cfg.widthVersion, "EastAsianWidth.txt", cfg);
-    const gc = ucdText(cfg.widthVersion, "extracted/DerivedGeneralCategory.txt", cfg);
-    const emojiVs = ucdText(cfg.widthVersion, "emoji/emoji-variation-sequences.txt", cfg);
+    const eaw = ucdText(cfg.versionIdentity, "EastAsianWidth.txt", cfg);
+    const gc = ucdText(cfg.versionIdentity, "extracted/DerivedGeneralCategory.txt", cfg);
+    const emojiVs = ucdText(cfg.versionIdentity, "emoji/emoji-variation-sequences.txt", cfg);
 
     WidthData d;
     d.wide = eaw.ucdCodepoints!(v => v == "W" || v == "F");
@@ -133,25 +136,134 @@ WidthData loadWidthData(in Config cfg)
     return d;
 }
 
-/// Collect the leading code-point column of every data record whose value
-/// field (after the first `;`) satisfies `valueMatches`, as a `CodepointSet`.
-/// Handles bare `AAAA`, ranges `AAAA..BBBB`, and the `BASE VS` form.
-CodepointSet ucdCodepoints(alias valueMatches)(string text)
+/// Owned sorted half-open intervals for the independently interpreted oracle.
+struct CodepointRanges
 {
-    CodepointSet set;
-    foreach (fields; text
-        .lineSplitter
-        .map!stripComment
-        .map!(line => line.splitter(';').map!strip.array)
-        .filter!(rec => rec.length >= 2 && valueMatches(rec[1])))
+    private struct Interval { uint begin, end; }
+    private Interval[] intervals;
+
+    void add(uint begin, uint end)
     {
-        auto code = fields[0].splitter!isWhite.front;
-        uint[] cps;
-        code.formattedRead!"%(%x%|..%)"(cps);
-        set.add(cps[0], cps[$ - 1] + 1);
+        if (begin >= end || end > 0x110000) throw new Exception("invalid codepoint interval");
+        size_t lo;
+        while (lo < intervals.length && intervals[lo].end < begin) ++lo;
+        size_t hi = lo;
+        while (hi < intervals.length && intervals[hi].begin <= end)
+        {
+            if (intervals[hi].begin < begin) begin = intervals[hi].begin;
+            if (intervals[hi].end > end) end = intervals[hi].end;
+            ++hi;
+        }
+        const oldLength = intervals.length;
+        if (hi == lo)
+        {
+            intervals.length = oldLength + 1;
+            for (size_t i = oldLength; i > lo; --i) intervals[i] = intervals[i - 1];
+        }
+        else if (hi > lo + 1)
+        {
+            foreach (i; hi .. oldLength) intervals[lo + 1 + i - hi] = intervals[i];
+            intervals.length = oldLength - (hi - lo - 1);
+        }
+        intervals[lo] = Interval(begin, end);
+    }
+    bool opIndex(dchar cp) const scope @safe pure nothrow @nogc
+    {
+        size_t lo, hi = intervals.length;
+        while (lo < hi)
+        {
+            const mid = lo + (hi - lo) / 2;
+            if (intervals[mid].end <= cp) lo = mid + 1; else hi = mid;
+        }
+        return lo < intervals.length && intervals[lo].begin <= cp;
+    }
+    CodepointRanges opBinary(string op)(scope const CodepointRanges rhs) const
+        if (op == "|")
+    {
+        CodepointRanges result;
+        result.intervals = intervals.dup;
+        foreach (interval; rhs.intervals) result.add(interval.begin, interval.end);
+        return result;
+    }
+}
+private bool asciiWhite(char c) @safe pure nothrow @nogc
+{
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+private string asciiTrim(string text) @safe pure nothrow @nogc
+{
+    size_t a, b = text.length;
+    while (a < b && asciiWhite(text[a])) ++a;
+    while (b > a && asciiWhite(text[b-1])) --b;
+    return text[a .. b];
+}
+private uint rawHex(string text)
+{
+    if (!text.length) throw new Exception("empty codepoint field");
+    uint n;
+    foreach (char c; text)
+    {
+        const d = c >= '0' && c <= '9' ? c - '0' :
+            c >= 'A' && c <= 'F' ? c - 'A' + 10 :
+            c >= 'a' && c <= 'f' ? c - 'a' + 10 : uint.max;
+        if (d >= 16 || n > (0x10FFFF - d) / 16) throw new Exception("invalid codepoint field");
+        n = n * 16 + d;
+    }
+    return n;
+}
+/// Parse membership independently of the production generator. Comment bytes
+/// never participate in field decoding, and only ASCII separates data fields.
+CodepointRanges ucdCodepoints(alias valueMatches)(string text)
+{
+    CodepointRanges set;
+    size_t start;
+    while (start < text.length)
+    {
+        size_t end = start;
+        while (end < text.length && text[end] != '\n') ++end;
+        auto line = text[start .. end]; start = end + 1;
+        size_t comment;
+        while (comment < line.length && line[comment] != '#') ++comment;
+        line = asciiTrim(line[0 .. comment]);
+        if (!line.length) continue;
+        size_t semicolon;
+        while (semicolon < line.length && line[semicolon] != ';') ++semicolon;
+        if (semicolon == line.length) throw new Exception("property row missing value");
+        auto code = asciiTrim(line[0 .. semicolon]);
+        auto rest = line[semicolon + 1 .. $];
+        size_t next;
+        while (next < rest.length && rest[next] != ';') ++next;
+        const value = asciiTrim(rest[0 .. next]);
+        if (!valueMatches(value)) continue;
+        size_t tokenEnd;
+        while (tokenEnd < code.length && !asciiWhite(code[tokenEnd])) ++tokenEnd;
+        code = code[0 .. tokenEnd];
+        size_t dot;
+        while (dot < code.length && code[dot] != '.') ++dot;
+        uint first, last;
+        if (dot == code.length) first = last = rawHex(code);
+        else
+        {
+            if (dot + 2 >= code.length || code[dot + 1] != '.')
+                throw new Exception("malformed property range");
+            first = rawHex(code[0 .. dot]); last = rawHex(code[dot + 2 .. $]);
+        }
+        if (first > last) throw new Exception("reversed property range");
+        set.add(first, last + 1);
     }
     return set;
 }
 
-/// Strip a trailing `# comment` and surrounding whitespace from a UCD line.
-private string stripComment(string line) => line.findSplit("#")[0].strip;
+unittest
+{
+    import std.exception : assertThrown;
+    auto set = ucdCodepoints!(v => v == "W")(
+        "# Unicode comment\n10000..10002; W # supplementary\n0041; W\n0042; N\n10FFFF; W\n");
+    assert(set[0x41] && !set[0x42] && set[0x10000] && set[0x10002]);
+    assert(!set[0xFFFF] && !set[0x10003] && set[0x10FFFF]);
+    set.add(0x42, 0x45);
+    assert(set[0x44] && !set[0x45]);
+    assertThrown!Exception(ucdCodepoints!(v => true)("0042..0041; W\n"));
+    assertThrown!Exception(ucdCodepoints!(v => true)("110000; W\n"));
+    assertThrown!Exception(ucdCodepoints!(v => true)("0041.0042; W\n"));
+}

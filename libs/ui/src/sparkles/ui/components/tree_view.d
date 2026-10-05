@@ -474,7 +474,7 @@ column (3), the label, and a badge's two cells when one is present.
 */
 void measureContent(Key, T)(ref TreeViewState!Key s, in TreeData!T data)
 {
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     s.contentCols = 0;
     foreach (ref const r; s.rows)
@@ -484,7 +484,7 @@ void measureContent(Key, T)(ref TreeViewState!Key s, in TreeData!T data)
             const(char)[] label = v.label;
         else
             const(char)[] label = v;
-        int w = r.depth * 3 + 3 + cast(int) cellsOf(label);
+        int w = r.depth * 3 + 3 + cast(int) visibleWidth(label);
         static if (__traits(compiles, { const(char)[] bt = v.badge; }))
             w += v.badge.length ? 2 : 0;
         if (w > s.contentCols)

@@ -6,10 +6,11 @@ import std.conv : to;
 import std.format : format;
 import std.getopt : Option;
 import std.range : chain, choose;
-import std.string : join, toUpper;
+import std.string : join;
+import sparkles.base.text.case_text : unicodeUpper;
 
 import sparkles.base.term_style : sty = stylizedTextBuilder;
-import sparkles.base.text.wrap : wrapText, WrapOptions, WhitespaceMode;
+import sparkles.base.text.wrap : wrapText, WrapOptions, WhitespaceMode, CellWidth;
 
 /// Wrap help prose to `cols` visible columns with `indent` on every line. Like
 /// the Phobos `wrap` it replaces (trailing newline, tab-aware indent), but ANSI-
@@ -17,7 +18,7 @@ import sparkles.base.text.wrap : wrapText, WrapOptions, WhitespaceMode;
 private string wrapHelp(string text, uint cols, string indent) @safe
 {
     return text.wrapText(WrapOptions(
-        width: cols,
+        width: CellWidth.bounded(cols),
         indent: indent,
         firstIndent: indent,
         whitespace: WhitespaceMode.collapse,
@@ -90,7 +91,7 @@ string formatSection(
 {
     if (!text)
         return null;
-    return name.toUpper.sty.bold ~ "\n"
+    return name.unicodeUpper.sty.bold ~ "\n"
         ~ text.map!(t => formatParagraph(t, wrapColumn, indent)).join(paragraphSeparator);
 }
 

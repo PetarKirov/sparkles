@@ -15,6 +15,9 @@ import expected : Expected, err, ok;
 
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.base.text.utf8 : utf8SequenceLength;
+import sparkles.base.text.utf : UtfMode, UtfStatus, UtfReason, UtfResult, UtfTokenKind,
+    decodeToken, convertPrefix, isUtfUnit, scalarUnits, addUtfCount,
+    utfStorageOverlaps;
 
 version (LDC)
     version (X86_64)
@@ -28,8 +31,6 @@ version (textSimdX86)
     import sparkles.base.text.utf8_simd : validatedUtf8Prefix;
 }
 
-@safe pure nothrow @nogc:
-
 /// Machine-readable failure from a UTF conversion.
 enum UtfConversionErrorCode
 {
@@ -37,6 +38,11 @@ enum UtfConversionErrorCode
     invalidUtf16,      /// lone or mispaired surrogate; `offset` is a code-unit offset
     embeddedNul,       /// a `z` conversion found an embedded U+0000
     insufficientSpace,/// destination needs `required` code units/bytes
+    invalidUtf32,      /// invalid scalar in UTF-32 input
+    opaqueNotEncodable,/// opaque source byte cannot be converted to Unicode
+    invalidOptions,   /// unsupported mode/input combination
+    overflow,         /// exact required capacity cannot be represented
+    overlap,          /// source and destination share storage
 }
 
 /// Structured UTF conversion failure.
@@ -46,10 +52,163 @@ struct UtfConversionError
     size_t offset;
     /// Required destination capacity, including the terminator for `z` conversions.
     size_t required;
+    UtfReason reason;
 }
 
 /// `Expected` result used by the bounded conversion functions.
 alias UtfConversionResult(T) = Expected!(T, UtfConversionError, NoGcHook);
+
+/// Exact payload and capacity, including an optional zero terminator.
+struct UtfConversionMeasure
+{
+    size_t payload;
+    size_t required;
+}
+
+/// Measure conversion to destination element type D, without retaining buffers.
+UtfConversionResult!UtfConversionMeasure measureConversion(D, S)(
+    scope const(S)[] source, UtfMode mode = UtfMode.strict, bool terminate = false)
+    if (isUtfUnit!S && isUtfUnit!D)
+{
+    if (!conversionMode!S(mode))
+        return utfErr!UtfConversionMeasure(UtfConversionError(
+            UtfConversionErrorCode.invalidOptions));
+    size_t payload;
+    bool overflowed;
+    static if ((is(S == char) && is(D == wchar))
+        || (is(S == wchar) && is(D == char)))
+    {
+        if (mode == UtfMode.strict)
+        {
+            static if (is(S == char))
+                auto measured = measureUtf8(source, terminate);
+            else
+                auto measured = measureUtf16(source, terminate);
+            if (measured.hasError)
+                return utfErr!UtfConversionMeasure(measured.error);
+            payload = measured.value;
+            size_t required = payload;
+            if (!addUtfCount(required, cast(size_t) terminate))
+                return utfErr!UtfConversionMeasure(UtfConversionError(
+                    UtfConversionErrorCode.overflow));
+            return utfOk(UtfConversionMeasure(payload, required));
+        }
+    }
+    size_t offset;
+    while (offset < source.length)
+    {
+        const decoded = decodeToken(source[offset .. $], mode, true, offset);
+        if (decoded.result.status != UtfStatus.ok)
+            return utfErr!UtfConversionMeasure(conversionFailure!S(decoded.result));
+        if (decoded.token.kind == UtfTokenKind.opaqueByte)
+            return utfErr!UtfConversionMeasure(UtfConversionError(
+                UtfConversionErrorCode.opaqueNotEncodable, offset, 0,
+                UtfReason.opaqueNotEncodable));
+        if (terminate && decoded.token.scalar == 0)
+            return utfErr!UtfConversionMeasure(UtfConversionError(
+                UtfConversionErrorCode.embeddedNul, offset));
+        if (!addUtfCount(payload, scalarUnits!D(decoded.token.scalar)))
+            overflowed = true;
+        offset += decoded.result.consumed;
+    }
+    size_t required = payload;
+    if (!addUtfCount(required, cast(size_t) terminate)) overflowed = true;
+    if (overflowed)
+        return utfErr!UtfConversionMeasure(UtfConversionError(
+            UtfConversionErrorCode.overflow));
+    return utfOk(UtfConversionMeasure(payload, required));
+}
+
+private bool conversionMode(S)(UtfMode mode)
+{
+    return mode == UtfMode.strict || mode == UtfMode.replacement
+        || (is(S == char) && mode == UtfMode.opaque);
+}
+
+private UtfConversionError conversionFailure(S)(UtfResult result)
+{
+    auto code = UtfConversionErrorCode.invalidUtf32;
+    if (result.status == UtfStatus.overflow)
+        code = UtfConversionErrorCode.overflow;
+    else if (result.reason == UtfReason.opaqueNotEncodable)
+        code = UtfConversionErrorCode.opaqueNotEncodable;
+    else
+    {
+        static if (is(S == char)) code = UtfConversionErrorCode.invalidUtf8;
+        else static if (is(S == wchar)) code = UtfConversionErrorCode.invalidUtf16;
+    }
+    return UtfConversionError(code, result.offset, result.required, result.reason);
+}
+
+private UtfConversionResult!size_t convertWhole(S, D)(scope const(S)[] source,
+    scope D[] destination, UtfMode mode, bool terminate)
+{
+    // Options and aliasing precede even source validation, and never write.
+    if (!conversionMode!S(mode))
+        return utfErr!size_t(UtfConversionError(UtfConversionErrorCode.invalidOptions));
+    if (utfStorageOverlaps(source, destination))
+        return utfErr!size_t(UtfConversionError(UtfConversionErrorCode.overlap));
+    static if (is(S == char) && is(D == wchar))
+        if (mode == UtfMode.strict) return utf8ToUtf16Impl(source, destination, terminate);
+    static if (is(S == wchar) && is(D == char))
+        if (mode == UtfMode.strict) return utf16ToUtf8Impl(source, destination, terminate);
+    const measured = measureConversion!D(source, mode, terminate);
+    if (measured.hasError)
+        return utfErr!size_t(measured.error);
+    const counts = measured.value;
+    if (destination.length < counts.required)
+        return utfErr!size_t(UtfConversionError(UtfConversionErrorCode.insufficientSpace,
+            source.length, counts.required));
+    // The stable borrowed source has been fully validated and measured.
+    const emitted = convertPrefix(source, destination[0 .. counts.payload], mode, true);
+    assert(emitted.status == UtfStatus.end && emitted.written == counts.payload);
+    if (terminate) destination[counts.payload] = 0;
+    return utfOk!size_t(counts.payload);
+}
+
+/// Same-encoding conversion validates or repairs; opaque bytes require reconstruction.
+UtfConversionResult!size_t utf8ToUtf8(scope const(char)[] source,
+    scope char[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, false); }
+UtfConversionResult!size_t utf8ToUtf8z(scope const(char)[] source,
+    scope char[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, true); }
+UtfConversionResult!size_t utf16ToUtf16(scope const(wchar)[] source,
+    scope wchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, false); }
+UtfConversionResult!size_t utf16ToUtf16z(scope const(wchar)[] source,
+    scope wchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, true); }
+UtfConversionResult!size_t utf32ToUtf32(scope const(dchar)[] source,
+    scope dchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, false); }
+UtfConversionResult!size_t utf32ToUtf32z(scope const(dchar)[] source,
+    scope dchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, true); }
+UtfConversionResult!size_t utf8ToUtf32(scope const(char)[] source,
+    scope dchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, false); }
+UtfConversionResult!size_t utf8ToUtf32z(scope const(char)[] source,
+    scope dchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, true); }
+UtfConversionResult!size_t utf16ToUtf32(scope const(wchar)[] source,
+    scope dchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, false); }
+UtfConversionResult!size_t utf16ToUtf32z(scope const(wchar)[] source,
+    scope dchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, true); }
+UtfConversionResult!size_t utf32ToUtf8(scope const(dchar)[] source,
+    scope char[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, false); }
+UtfConversionResult!size_t utf32ToUtf8z(scope const(dchar)[] source,
+    scope char[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, true); }
+UtfConversionResult!size_t utf32ToUtf16(scope const(dchar)[] source,
+    scope wchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, false); }
+UtfConversionResult!size_t utf32ToUtf16z(scope const(dchar)[] source,
+    scope wchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
+    { return convertWhole(source, destination, mode, true); }
 
 /**
 Converts well-formed UTF-8 into UTF-16. Embedded NUL is preserved.
@@ -57,9 +216,9 @@ Converts well-formed UTF-8 into UTF-16. Embedded NUL is preserved.
 The returned count is the number of UTF-16 code units written.
 */
 UtfConversionResult!size_t utf8ToUtf16(scope const(char)[] source,
-    return scope wchar[] destination)
+    scope wchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
 {
-    return utf8ToUtf16Impl(source, destination, false);
+    return convertWhole(source, destination, mode, false);
 }
 
 /**
@@ -68,9 +227,9 @@ Converts UTF-8 into a NUL-terminated UTF-16 string.
 Embedded NUL is rejected and the returned count excludes the terminator.
 */
 UtfConversionResult!size_t utf8ToUtf16z(scope const(char)[] source,
-    return scope wchar[] destination)
+    scope wchar[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
 {
-    return utf8ToUtf16Impl(source, destination, true);
+    return convertWhole(source, destination, mode, true);
 }
 
 /**
@@ -79,10 +238,46 @@ Converts well-formed UTF-16 into UTF-8. Embedded NUL is preserved.
 The returned count is the number of UTF-8 bytes written.
 */
 UtfConversionResult!size_t utf16ToUtf8(scope const(wchar)[] source,
-    return scope char[] destination)
+    scope char[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
 {
-    return utf16ToUtf8Impl(source, destination, false);
+    return convertWhole(source, destination, mode, false);
 }
+/// Strict conversion preserves precise reasons even when no output can fit.
+@("text.utf16.structuredMalformedReasons")
+@safe pure nothrow @nogc
+unittest
+{
+    char[8] bytes = 'x';
+    wchar[8] units = 'x';
+    const string[3] malformed8 = ["A\xC0", "A\xE1\x80", "A\xE1\x80B"];
+    const UtfReason[3] reasons8 = [UtfReason.invalidLead, UtfReason.truncated,
+        UtfReason.invalidContinuation];
+    foreach (index, source; malformed8)
+    {
+        const identity = utf8ToUtf8(source, bytes[]);
+        const converted = utf8ToUtf16(source, units[0 .. 0]);
+        assert(identity.hasError && converted.hasError);
+        assert(identity.error.reason == reasons8[index]
+            && converted.error.reason == reasons8[index]);
+        assert(identity.error.offset == 1 && converted.error.offset == 1);
+    }
+    wchar[3] malformed16 = ['A', 0xD800, 'B'];
+    foreach (length; 2 .. 4)
+    {
+        const reason = length == 2 ? UtfReason.truncated : UtfReason.unpairedSurrogate;
+        const identity = utf16ToUtf16(malformed16[0 .. length], units[]);
+        const converted = utf16ToUtf8(malformed16[0 .. length], bytes[0 .. 0]);
+        assert(identity.hasError && converted.hasError);
+        assert(identity.error.reason == reason && converted.error.reason == reason);
+        assert(identity.error.offset == 1 && converted.error.offset == 1);
+    }
+    malformed16[1] = 0xDC00;
+    const loneLow = utf16ToUtf8(malformed16[], bytes[]);
+    assert(loneLow.hasError && loneLow.error.reason == UtfReason.unpairedSurrogate);
+    foreach (unit; bytes) assert(unit == 'x');
+    foreach (unit; units) assert(unit == 'x');
+}
+
 
 /**
 Converts UTF-16 into a NUL-terminated UTF-8 string.
@@ -90,20 +285,23 @@ Converts UTF-16 into a NUL-terminated UTF-8 string.
 Embedded NUL is rejected and the returned count excludes the terminator.
 */
 UtfConversionResult!size_t utf16ToUtf8z(scope const(wchar)[] source,
-    return scope char[] destination)
+    scope char[] destination, UtfMode mode = UtfMode.strict) @safe pure nothrow @nogc
 {
-    return utf16ToUtf8Impl(source, destination, true);
+    return convertWhole(source, destination, mode, true);
 }
 
 private UtfConversionResult!size_t utf8ToUtf16Impl(
-    scope const(char)[] source, return scope wchar[] destination, bool terminate)
+    scope const(char)[] source, scope wchar[] destination, bool terminate)
+    @safe pure nothrow @nogc
 {
     auto measured = measureUtf8(source, terminate);
     if (measured.hasError)
         return utfErr!size_t(measured.error);
 
     const payloadUnits = measured.value;
-    const required = payloadUnits + cast(size_t) terminate;
+    size_t required = payloadUnits;
+    if (!addUtfCount(required, cast(size_t) terminate))
+        return utfErr!size_t(UtfConversionError(UtfConversionErrorCode.overflow));
     if (destination.length < required)
         return utfErr!size_t(UtfConversionError(
             UtfConversionErrorCode.insufficientSpace, source.length, required));
@@ -159,14 +357,17 @@ private UtfConversionResult!size_t utf8ToUtf16Impl(
 }
 
 private UtfConversionResult!size_t utf16ToUtf8Impl(
-    scope const(wchar)[] source, return scope char[] destination, bool terminate)
+    scope const(wchar)[] source, scope char[] destination, bool terminate)
+    @safe pure nothrow @nogc
 {
     auto measured = measureUtf16(source, terminate);
     if (measured.hasError)
         return utfErr!size_t(measured.error);
 
     const payloadBytes = measured.value;
-    const required = payloadBytes + cast(size_t) terminate;
+    size_t required = payloadBytes;
+    if (!addUtfCount(required, cast(size_t) terminate))
+        return utfErr!size_t(UtfConversionError(UtfConversionErrorCode.overflow));
     if (destination.length < required)
         return utfErr!size_t(UtfConversionError(
             UtfConversionErrorCode.insufficientSpace, source.length, required));
@@ -235,8 +436,10 @@ private UtfConversionResult!size_t utf16ToUtf8Impl(
 }
 
 private UtfConversionResult!size_t measureUtf8(
-    scope const(char)[] source, bool rejectNul)
+    scope const(char)[] source, bool rejectNul) @safe pure nothrow @nogc
 {
+    // Each well-formed UTF-8 token produces no more UTF-16 units than source
+    // bytes consumed, so every partial sum is bounded by source.length.
     size_t units;
     size_t i;
     version (textSimdX86)
@@ -269,7 +472,8 @@ private UtfConversionResult!size_t measureUtf8(
         const len = utf8SequenceLength(source, i);
         if (len == 0)
             return utfErr!size_t(UtfConversionError(
-                UtfConversionErrorCode.invalidUtf8, i, 0));
+                UtfConversionErrorCode.invalidUtf8, i, 0,
+                decodeToken(source[i .. $], UtfMode.strict, true, i).result.reason));
         units += len == 4 ? 2 : 1;
         i += len;
     }
@@ -277,19 +481,24 @@ private UtfConversionResult!size_t measureUtf8(
 }
 
 private UtfConversionResult!size_t measureUtf16(
-    scope const(wchar)[] source, bool rejectNul)
+    scope const(wchar)[] source, bool rejectNul) @safe pure nothrow @nogc
 {
     size_t bytes;
     size_t i;
+    bool overflowed;
     version (textSimdX86)
     {
         if (!__ctfe && source.length >= 16)
         {
             if (source[0] < 0x80)
                 i = bytes = asciiUtf16Prefix(source, rejectNul);
-            const measured = measureUtf16Prefix(source[i .. $], rejectNul);
+            // Bound the kernel's unchecked local sum; combine it with checked
+            // arithmetic and still scan later source defects before overflow.
+            const remaining = source.length - i;
+            const bounded = remaining < size_t.max / 3 ? remaining : size_t.max / 3;
+            const measured = measureUtf16Prefix(source[i .. i + bounded], rejectNul);
             i += measured.consumed;
-            bytes += measured.required;
+            if (!addUtfCount(bytes, measured.required)) overflowed = true;
         }
     }
     while (i < source.length)
@@ -301,7 +510,7 @@ private UtfConversionResult!size_t measureUtf16(
                 return utfErr!size_t(UtfConversionError(
                     UtfConversionErrorCode.embeddedNul, i, 0));
             ++i;
-            ++bytes;
+            if (!addUtfCount(bytes, 1)) overflowed = true;
             continue;
         }
 
@@ -310,22 +519,26 @@ private UtfConversionResult!size_t measureUtf16(
             if (i + 1 == source.length
                 || source[i + 1] < 0xDC00 || source[i + 1] > 0xDFFF)
                 return utfErr!size_t(UtfConversionError(
-                    UtfConversionErrorCode.invalidUtf16, i, 0));
-            bytes += 4;
+                    UtfConversionErrorCode.invalidUtf16, i, 0,
+                    decodeToken(source[i .. $], UtfMode.strict, true, i).result.reason));
+            if (!addUtfCount(bytes, 4)) overflowed = true;
             i += 2;
             continue;
         }
         if (unit >= 0xDC00 && unit <= 0xDFFF)
             return utfErr!size_t(UtfConversionError(
-                UtfConversionErrorCode.invalidUtf16, i, 0));
+                UtfConversionErrorCode.invalidUtf16, i, 0, UtfReason.unpairedSurrogate));
 
-        bytes += unit < 0x800 ? 2 : 3;
+        if (!addUtfCount(bytes, unit < 0x800 ? 2 : 3)) overflowed = true;
         ++i;
     }
+    if (overflowed)
+        return utfErr!size_t(UtfConversionError(UtfConversionErrorCode.overflow));
     return utfOk(bytes);
 }
 
 private dchar decodeScalar(scope const(char)[] source, size_t at, size_t len)
+    @safe pure nothrow @nogc
 in (len >= 1 && len <= 4)
 {
     const b0 = cast(ubyte) source[at];
@@ -353,6 +566,8 @@ private UtfConversionResult!T utfOk(T)(T value)
 
 private UtfConversionResult!T utfErr(T)(UtfConversionError error)
     => err!(T, NoGcHook)(error);
+
+@safe pure nothrow @nogc:
 
 @("text.utf16.roundTripAllUtf8Widths")
 unittest
@@ -752,4 +967,114 @@ unittest
     assert(nul16.hasError && nul16.error.code == UtfConversionErrorCode.embeddedNul);
     assert(nul8.error.offset == prefix8.length && wide == beforeWide);
     assert(nul16.error.offset == prefix16.length && bytes == beforeBytes);
+}
+
+@("text.utf16.allEncodingPairsTransactionalModes")
+unittest
+{
+    import std.meta : AliasSeq;
+    static foreach (S; AliasSeq!(char, wchar, dchar))
+    static foreach (D; AliasSeq!(char, wchar, dchar))
+    {{
+        static if (is(S == char)) enum source = "A\U00010000\0";
+        else static if (is(S == wchar)) enum source = "A\U00010000\0"w;
+        else enum source = "A\U00010000\0"d;
+        static if (is(D == char)) enum expected = "A\U00010000\0";
+        else static if (is(D == wchar)) enum expected = "A\U00010000\0"w;
+        else enum expected = "A\U00010000\0"d;
+        D[12] output = cast(D) 0x5A;
+        const before = output;
+        const shortResult = convertWhole(source, output[0 .. expected.length - 1],
+            UtfMode.strict, false);
+        assert(shortResult.hasError && shortResult.error.code == UtfConversionErrorCode.insufficientSpace);
+        assert(shortResult.error.required == expected.length && output == before);
+        auto result = convertWhole(source, output[], UtfMode.strict, false);
+        assert(result.hasValue && result.value == expected.length);
+        assert(output[0 .. result.value] == expected && output[result.value] == 0x5A);
+        output[] = cast(D) 0x5A;
+        result = convertWhole(source, output[0 .. 0], UtfMode.strict, true);
+        assert(result.hasError && result.error.code == UtfConversionErrorCode.embeddedNul);
+        assert(result.error.offset == source.length - 1 && output == before);
+        S[8] malformed;
+        malformed[0 .. source.length - 1] = source[0 .. $ - 1];
+        static if (is(S == char)) malformed[source.length - 1] = cast(S) 0xFF;
+        else static if (is(S == wchar)) malformed[source.length - 1] = cast(S) 0xDC00;
+        else malformed[source.length - 1] = cast(S) 0x110000;
+        result = convertWhole(malformed[0 .. source.length], output[0 .. 0], UtfMode.strict, false);
+        assert(result.hasError && result.error.offset == source.length - 1 && output == before);
+        static if (is(S == char)) assert(result.error.code == UtfConversionErrorCode.invalidUtf8);
+        else static if (is(S == wchar)) assert(result.error.code == UtfConversionErrorCode.invalidUtf16);
+        else assert(result.error.code == UtfConversionErrorCode.invalidUtf32);
+        static if (is(D == char)) enum repaired = "A\U00010000\uFFFD";
+        else static if (is(D == wchar)) enum repaired = "A\U00010000\uFFFD"w;
+        else enum repaired = "A\U00010000\uFFFD"d;
+        result = convertWhole(malformed[0 .. source.length], output[], UtfMode.replacement, true);
+        assert(result.hasValue && result.value == repaired.length);
+        assert(output[0 .. result.value] == repaired && output[result.value] == 0);
+        assert(output[result.value + 1] == 0x5A);
+        const measured = measureConversion!D(malformed[0 .. source.length], UtfMode.replacement, true);
+        assert(measured.hasValue && measured.value.payload == repaired.length);
+        assert(measured.value.required == repaired.length + 1);
+    }}
+}
+
+@("text.utf16.overlapOptionsAndSourcePrecedence")
+@system pure nothrow @nogc unittest
+{
+    uint[16] arena = 0x5A5A5A5A;
+    auto bytes = (cast(char*) arena.ptr)[0 .. arena.sizeof];
+    auto wide = (cast(wchar*) arena.ptr)[0 .. arena.sizeof / wchar.sizeof];
+    bytes[0 .. 3] = "A\xC0\0";
+    const before = arena;
+    auto result = utf8ToUtf16(bytes[0 .. 3], wide[0 .. 3]);
+    assert(result.hasError && result.error.code == UtfConversionErrorCode.overlap && arena == before);
+    result = utf8ToUtf16(bytes[0 .. 3], wide[0 .. 3], cast(UtfMode) 0xFF);
+    assert(result.hasError && result.error.code == UtfConversionErrorCode.invalidOptions && arena == before);
+    result = utf8ToUtf16(bytes[0 .. 1], wide[2 .. 3]);
+    assert(result.hasValue && result.value == 1 && wide[2] == 'A');
+    result = utf8ToUtf8(bytes[0 .. 3], bytes[0 .. 3]);
+    assert(result.hasError && result.error.code == UtfConversionErrorCode.overlap);
+    result = utf8ToUtf8(bytes[0 .. 1], bytes[1 .. 2]);
+    assert(result.hasValue && result.value == 1 && bytes[1] == 'A');
+    result = utf8ToUtf16(bytes[0 .. 0], wide[0 .. 0]);
+    assert(result.hasValue && result.value == 0);
+    result = utf8ToUtf16z(bytes[0 .. 0], wide[0 .. 1]);
+    assert(result.hasValue && result.value == 0 && wide[0] == 0);
+    wchar[4] destination = 0xA5A5;
+    const untouched = destination;
+    result = utf8ToUtf16z("A\xC0\0", destination[0 .. 0]);
+    assert(result.hasError && result.error.code == UtfConversionErrorCode.invalidUtf8
+        && result.error.offset == 1 && destination == untouched);
+    result = utf8ToUtf16z("A\0\xC0", destination[0 .. 0]);
+    assert(result.hasError && result.error.code == UtfConversionErrorCode.embeddedNul
+        && result.error.offset == 1 && destination == untouched);
+    result = utf8ToUtf16("A\xC0", destination[0 .. 0], UtfMode.opaque);
+    assert(result.hasError && result.error.code == UtfConversionErrorCode.opaqueNotEncodable
+        && result.error.offset == 1 && destination == untouched);
+    const wchar[1] emptyWide = [0];
+    char[1] output = '!';
+    const invalidMode = utf16ToUtf8(emptyWide[], output[], UtfMode.opaque);
+    assert(invalidMode.hasError && invalidMode.error.code == UtfConversionErrorCode.invalidOptions);
+    assert(output[0] == '!');
+}
+
+@("text.utf16.streamOverlapDoesNotFailState")
+@system pure nothrow @nogc unittest
+{
+    import sparkles.base.text.utf : UtfStream, convertStream, UtfStreamPhase;
+    uint[4] arena = 0x5A5A5A5A;
+    auto bytes = (cast(char*) arena.ptr)[0 .. arena.sizeof];
+    auto wide = (cast(wchar*) arena.ptr)[0 .. arena.sizeof / wchar.sizeof];
+    bytes[0 .. 4] = "\xF0\x90\x80\x80";
+    UtfStream!char state;
+    const before = arena;
+    auto result = convertStream(state, bytes[0 .. 1], wide[4 .. $]);
+    assert(result.status == UtfStatus.needInput && result.consumed == 1);
+    result = convertStream(state, bytes[1 .. 4], wide[0 .. 2], true);
+    assert(result.status == UtfStatus.overlap && result.consumed == 0 && result.written == 0);
+    assert(state.phase == UtfStreamPhase.active && !state.pendingFinal && state.carry.length == 1);
+    assert(arena == before);
+    result = convertStream(state, bytes[1 .. 4], wide[4 .. 6], true);
+    assert(result.status == UtfStatus.end && result.consumed == 3 && result.written == 2);
+    assert(wide[4] == 0xD800 && wide[5] == 0xDC00);
 }

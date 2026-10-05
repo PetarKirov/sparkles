@@ -9,17 +9,17 @@ CandidateSnapshot corpus;
 corpus.id.low = 7;
 corpus.candidates = candidates[];
 
-auto query = parseQuery("controller").value;
+auto matcher = new MatcherWorkspace!();
+auto constraints = new ConstraintWorkspace!();
+auto query = parseQuery("controller", matcher.textWorkspace).value;
 SearchAccumulator!32 results;
 auto cursor = results.begin(corpus.id, 1, 1, 10, 20).value;
-MatcherWorkspace!() matcher;
-ConstraintWorkspace!() constraints;
 
 SearchLimits work = SearchLimits(64, 16_384);
 for (;;)
 {
     auto step = searchChunk(query, corpus, cursor, work,
-        results, matcher, constraints);
+        results, *matcher, *constraints);
     assert(step.hasValue);
     cursor = step.value.cursor;
     if (step.value.stop == SearchStop.exhausted)

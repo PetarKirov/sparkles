@@ -222,11 +222,11 @@ private string drawBanner(string title, HeaderProps props)
 /// boxes beneath them break identically.
 private string[] wrapTitle(string title, size_t width)
 {
-    import sparkles.base.text.wrap : wrapText, WrapOptions, WhitespaceMode;
+    import sparkles.base.text.wrap : wrapText, WrapOptions, WhitespaceMode, CellWidth;
     import std.array : array;
 
     return title
-        .wrapText(WrapOptions(width: width, whitespace: WhitespaceMode.collapse))
+        .wrapText(WrapOptions(width: CellWidth.bounded(width), whitespace: WhitespaceMode.collapse))
         .lineSplitter
         .map!(to!string)
         .array;

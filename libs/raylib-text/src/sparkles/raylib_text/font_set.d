@@ -25,8 +25,8 @@ import raylib;
 
 import std.algorithm.iteration : filter, map;
 import std.algorithm.searching : canFind, endsWith;
-import std.string : indexOf, strip, split, toLower;
-import std.uni : icmp;
+import std.string : indexOf, strip, split;
+import sparkles.base.text.case_text : unicodeLower;
 
 import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 
@@ -771,7 +771,7 @@ struct FontSet
                     // `strip`/`split` return slices of it, so this already has
                     // process lifetime. (`toStringz` below copies again anyway.)
                     path = fields[0];
-                    if (!fields[1].toLower.canFind(family.toLower))
+                    if (!fields[1].unicodeLower.canFind(family.unicodeLower))
                         continue; // fontconfig substituted a different family → not installed
                 }
             }

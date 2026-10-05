@@ -119,6 +119,55 @@ void main() @safe
 See [scalar configuration](docs/libs/wired/how-to/resolve-scalar-config.md) for
 original-policy JSON decoding, scoped inspection, ownership, and limits.
 
+### Owned UTF and Unicode
+
+Base owns strict/replacement/opaque UTF decoding, caller-buffer conversion, and
+Unicode 18 boundary, normalization, casing, and bidi data. Malformed-input spans
+and source coordinates remain explicit; the runtime never selects a compiler's
+Unicode version.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_owned_utf"
+    dependency "sparkles:base" version="*"
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
++/
+
+import sparkles.base.text.utf : UtfMode, UtfStatus, UtfToken, decodePrefix;
+import sparkles.base.text.utf16 : utf8ToUtf16z;
+import std.stdio : writefln;
+
+void main() @safe
+{
+    UtfToken[4] tokens;
+    const decoded = decodePrefix("A\xE1\x80B", tokens[], UtfMode.replacement);
+    assert(decoded.status == UtfStatus.end);
+    foreach (token; tokens[0 .. decoded.written])
+        writefln("U+%04X source [%s,%s)", cast(uint) token.scalar,
+            token.start, token.end);
+
+    wchar[4] units;
+    const converted = utf8ToUtf16z("A😀", units[]);
+    assert(converted.hasValue && converted.value == 3);
+    writefln("UTF-16 payload=%s units=%04X,%04X,%04X,%04X", converted.value,
+        cast(uint) units[0], cast(uint) units[1], cast(uint) units[2],
+        cast(uint) units[3]);
+}
+```
+
+```ansi
+U+0041 source [0,1)
+U+FFFD source [1,3)
+U+0042 source [3,4)
+UTF-16 payload=3 units=0041,D83D,DE00,0000
+```
+
+See [Unicode analysis](docs/libs/base/reference/unicode-analysis.md) for borrowed
+transform workspaces, provenance, epochs, and authenticated table generation.
+
 ### Versions
 
 `sparkles:versions` is an ecosystem-aware version library: it parses,

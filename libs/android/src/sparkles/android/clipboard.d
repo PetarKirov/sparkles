@@ -25,13 +25,14 @@ unchecked NUL-termination precondition, and the bridge wants a length anyway.
 */
 bool setClipboardText(scope const(char)[] text, string label = "text") @safe nothrow
 {
-    import std.utf : toUTF16;
+    import sparkles.base.text.utf16 : measureConversion, utf8ToUtf16;
 
-    wstring utf16;
-    try
-        utf16 = text.toUTF16;
-    catch (Exception)
+    const measured = measureConversion!wchar(text);
+    if (measured.hasError)
         return false; // invalid UTF in the selection → report the failure
+    auto utf16 = new wchar[measured.value.required];
+    if (utf8ToUtf16(text, utf16).hasError)
+        return false;
     return (() @trusted => setUtf16(utf16, label))();
 }
 
@@ -42,7 +43,7 @@ private bool setUtf16(scope const(wchar)[] text, string label) @system nothrow
 
 private bool setOnWorker(ref JniFrame f, scope const(wchar)[] text, string label) @system nothrow
 {
-    import std.utf : toUTF16;
+    import sparkles.base.text.utf16 : measureConversion, utf8ToUtf16;
 
     auto env = f.env;
 
@@ -59,10 +60,11 @@ private bool setOnWorker(ref JniFrame f, scope const(wchar)[] text, string label
     if (newPlainText is null)
         return false;
 
-    wstring label16;
-    try
-        label16 = label.toUTF16;
-    catch (Exception)
+    const measured = measureConversion!wchar(label);
+    if (measured.hasError)
+        return false;
+    auto label16 = new wchar[measured.value.required];
+    if (utf8ToUtf16(label, label16).hasError)
         return false;
     auto jlabel = f.newString(label16);
     if (jlabel is null)

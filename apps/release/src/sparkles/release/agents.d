@@ -133,7 +133,7 @@ immutable AgentSpec[] agentRegistry = [
 /// True when `name` is a known LLM-agent git author from $(LREF agentRegistry).
 bool isAgentCommitAuthor(scope const(char)[] name) @safe pure nothrow @nogc
 {
-    import std.uni : sicmp;
+    import sparkles.base.text.case_text : asciiCaselessCompare;
 
     if (name.length == 0)
         return false;
@@ -148,11 +148,11 @@ bool isAgentCommitAuthor(scope const(char)[] name) @safe pure nothrow @nogc
             {
                 if (name.length > agentName.length
                     && name[$ - agentName.length - 1] == ' '
-                    && sicmp(name[$ - agentName.length .. $], agentName) == 0)
+                    && asciiCaselessCompare(name[$ - agentName.length .. $], agentName) == 0)
                     return true;
                 continue;
             }
-            if (sicmp(name, agentName) == 0)
+            if (asciiCaselessCompare(name, agentName) == 0)
                 return true;
         }
     return false;
@@ -580,6 +580,8 @@ unittest
     assert(!isAgentCommitAuthor("aider"));           // bare suffix token is not a full name
     assert(!isAgentCommitAuthor(""));
     assert(!isAgentCommitAuthor("(aider)"));         // the pattern itself is not an author
+    assert(isAgentCommitAuthor("\xFF (AIDER)"));      // arbitrary Git author bytes
+    assert(!isAgentCommitAuthor("Claud\xFF"));
 }
 
 @("agents.withoutAgentAuthors")

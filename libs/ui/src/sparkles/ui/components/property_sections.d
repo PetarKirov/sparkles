@@ -30,7 +30,8 @@ import std.conv : text;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.components.tree_widget : TreeData;
-import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.property_tree : LeafKind, PropertyNode, SearchRole;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind;
@@ -92,7 +93,7 @@ int segmentsWidth(in PropertyNode n) pure
 {
     int w;
     foreach (i; 0 .. n.choices.length)
-        w += cast(int) cellsOf(choiceLabel(n, i)) + 2;
+        w += cast(int) visibleWidth(choiceLabel(n, i)) + 2;
     return w;
 }
 
@@ -356,10 +357,10 @@ summary. The whole row is `hitId`.
 uint sectionHeader(ref Builder b, string heading, string detail, bool collapsed,
     size_t hitId, in SectionsOptions opt)
 {
-    import std.uni : toUpper;
+    import sparkles.base.text.case_text : unicodeUpper;
 
     const title = b.add(Widget(kind: WidgetKind.text,
-        text: (collapsed ? "▸ " : "▾ ") ~ heading.toUpper, slot: Slot.chromeAccent,
+        text: (collapsed ? "▸ " : "▾ ") ~ heading.unicodeUpper, slot: Slot.chromeAccent,
         textStyle: TextStyle(bold: true), width: SizeSpec.grow()));
     const right = b.add(Widget(kind: WidgetKind.text, text: detail, slot: Slot.muted));
     return b.add(Widget(kind: WidgetKind.row, children: [title, right], gap: 1,
@@ -489,7 +490,7 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
         {
             string v = unquoted(n.badge);
             const room = opt.width / 3 > 8 ? opt.width / 3 : 8;
-            if (cellsOf(v) > room)
+            if (visibleWidth(v) > room)
                 v = clipCells(v, room - 1) ~ "…";
             parts ~= pill(b, (v.length ? v : "—") ~ " ✎", Slot.code, hit(SectionPart.open),
                 false, false, 1);
@@ -570,11 +571,19 @@ int naturalCells(ref Builder b, uint id) pure
     switch (w.kind) with (WidgetKind)
     {
         case text:
-            inner = cast(int) cellsOf(w.text);
+            inner = cast(int) visibleWidth(w.text);
             break;
         case rich:
-            foreach (ref s; w.spans)
-                inner += cast(int) cellsOf(s.text);
+            size_t length;
+            foreach (ref const span; w.spans) length += span.text.length;
+            auto logical = new char[](length);
+            size_t offset;
+            foreach (ref const span; w.spans)
+            {
+                logical[offset .. offset + span.text.length] = span.text[];
+                offset += span.text.length;
+            }
+            inner = cast(int) visibleWidth(logical);
             break;
         case row:
             foreach (i, c; w.children)
@@ -631,7 +640,7 @@ private uint drillPreview(ref Builder b, ref const TreeData!PropertyNode data, u
     visit(node);
     enum room = 28;
     if (!swatches && firsts.length)
-        spans ~= TextSpan(text: cellsOf(firsts) > room ? clipCells(firsts, room - 1) ~ "…" : firsts,
+        spans ~= TextSpan(text: visibleWidth(firsts) > room ? clipCells(firsts, room - 1) ~ "…" : firsts,
             slot: Slot.muted);
     const sep = !spans.length ? "" : swatches ? " " : " · ";
     // An empty list ("Schemes") says so, not "0 settings".

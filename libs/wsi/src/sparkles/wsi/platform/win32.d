@@ -18,6 +18,9 @@ import core.sys.windows.imm : ATTR_CONVERTED, ATTR_FIXEDCONVERTED,
     WM_IME_ENDCOMPOSITION, WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION;
 
 import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16z;
+import sparkles.base.text.utf : decodeToken, encodeScalar, UtfMode, UtfStatus, scalarUnits;
+import sparkles.base.text.source_map : SourceByteOffset, Utf16Offset,
+    MapAffinity, MapResult, MapStatus;
 import core.time : Duration;
 
 import sparkles.event_horizon.loop : DefaultLoop;
@@ -502,7 +505,9 @@ struct Win32Wsi
                 WsiErrorKind.capacity);
             return;
         }
-        composition.cursor = cast(ushort) utf8Offset(wide, cursorUnits);
+        // utf16ToUtf8 above validated the complete source, not just this prefix.
+        composition.cursor = cast(ushort) mapValidatedUtf16Offset(wide,
+            Utf16Offset(cursorUnits), MapAffinity.before).value.value;
 
         const attributeCount = attributes.length < wide.length
             ? attributes.length : wide.length;
@@ -518,8 +523,10 @@ struct Win32Wsi
                 && compositionStyle(attributes[end]) == style)
                 ++end;
 
-            const startByte = utf8Offset(wide, at);
-            const endByte = utf8Offset(wide, end);
+            const startByte = mapValidatedUtf16Offset(wide,
+                Utf16Offset(at), MapAffinity.before).value.value;
+            const endByte = mapValidatedUtf16Offset(wide,
+                Utf16Offset(end), MapAffinity.after).value.value;
             composition.segments[composition.segmentCount++] =
                 CompositionSegment(cast(ushort) startByte,
                     cast(ushort)(endByte - startByte), style);
@@ -634,32 +641,45 @@ struct Win32Wsi
         return true;
     }
 
-    private static size_t utf8Offset(scope const(wchar)[] wide,
-        size_t units) pure nothrow @nogc
+    /**
+    Maps an IMM UTF-16 index onto the event's converted UTF-8 byte identity.
+    The complete wide source MUST already have passed utf16ToUtf8 strict validation.
+    Interior pair boundaries require affinity; out-of-range native indices clamp.
+    */
+    private static MapResult!SourceByteOffset mapValidatedUtf16Offset(
+        scope const(wchar)[] wide, Utf16Offset units, MapAffinity affinity)
+        @safe pure nothrow @nogc
     {
-        if (units > wide.length)
-            units = wide.length;
-        size_t bytes;
-        size_t at;
-        while (at < units)
+        size_t bytes, at;
+        while (at < wide.length)
         {
-            const unit = wide[at];
-            if (unit >= 0xD800 && unit <= 0xDBFF)
+            if (units.value == at)
             {
-                // An IMM attribute may put a boundary between surrogate code
-                // units. Both sides map to the scalar's UTF-8 start/end.
-                if (at + 1 >= units)
-                    break;
-                bytes += 4;
-                at += 2;
+                const boundary = SourceByteOffset(bytes);
+                return MapResult!SourceByteOffset(value: boundary,
+                    lower: boundary, upper: boundary, exact: true);
             }
-            else
+            const decoded = decodeToken(wide[at .. $], UtfMode.strict, true, at);
+            assert(decoded.result.status == UtfStatus.ok);
+            const nextBytes = bytes + scalarUnits!char(decoded.token.scalar);
+            if (units.value < decoded.token.end)
             {
-                bytes += unit < 0x80 ? 1 : unit < 0x800 ? 2 : 3;
-                ++at;
+                const lower = SourceByteOffset(bytes);
+                const upper = SourceByteOffset(nextBytes);
+                if (affinity == MapAffinity.exact)
+                    return MapResult!SourceByteOffset(status: MapStatus.notBoundary,
+                        lower: lower, upper: upper);
+                return MapResult!SourceByteOffset(
+                    value: affinity == MapAffinity.before ? lower : upper,
+                    lower: lower, upper: upper, snapped: true);
             }
+            bytes = nextBytes;
+            at = decoded.token.end;
         }
-        return bytes;
+        const boundary = SourceByteOffset(bytes);
+        return MapResult!SourceByteOffset(value: boundary,
+            lower: boundary, upper: boundary,
+            exact: units.value == at, snapped: units.value != at);
     }
 
     private static CompositionSegmentStyle compositionStyle(
@@ -681,23 +701,27 @@ struct Win32Wsi
     private void handleUtf16Unit(ref Slot slot, WindowId id,
         wchar unit) nothrow
     {
-        if (unit >= 0xD800 && unit <= 0xDBFF)
+        const wchar[1] single = [unit];
+        const decoded = decodeToken(single[], UtfMode.strict, false);
+        if (decoded.result.status == UtfStatus.needInput)
         {
+            // A new high surrogate replaces any uncommitted previous one.
             slot.pendingHighSurrogate = unit;
             return;
         }
-        if (unit >= 0xDC00 && unit <= 0xDFFF)
+        if (slot.pendingHighSurrogate != 0)
         {
-            if (slot.pendingHighSurrogate == 0)
-                return;
             const wchar[2] pair = [slot.pendingHighSurrogate, unit];
             slot.pendingHighSurrogate = 0;
-            emitCommittedText(id, pair[]);
-            return;
+            if (decodeToken(pair[], UtfMode.strict).result.status == UtfStatus.ok)
+            {
+                emitCommittedText(id, pair[]);
+                return;
+            }
         }
-        slot.pendingHighSurrogate = 0;
-        const wchar[1] scalar = [unit];
-        emitCommittedText(id, scalar[]);
+        // Malformed standalone units are rejected; the next unit still progresses.
+        if (decoded.result.status == UtfStatus.ok)
+            emitCommittedText(id, single[]);
     }
 
     /**
@@ -1097,15 +1121,14 @@ struct Win32Wsi
             case WM_UNICHAR:
                 if (wParam == UNICODE_NOCHAR)
                     return TRUE;
-                if (wParam <= 0xFFFF)
-                    owner.handleUtf16Unit(*slot, id, cast(wchar) wParam);
-                else if (wParam <= 0x10FFFF)
+                if (wParam > dchar.max)
+                    return 0;
+                wchar[2] encoded;
+                const converted = encodeScalar(cast(dchar) wParam, encoded[]);
+                if (converted.status == UtfStatus.ok)
                 {
-                    const scalar = cast(uint) wParam - 0x1_0000;
-                    owner.handleUtf16Unit(*slot, id,
-                        cast(wchar)(0xD800 + (scalar >> 10)));
-                    owner.handleUtf16Unit(*slot, id,
-                        cast(wchar)(0xDC00 + (scalar & 0x3FF)));
+                    slot.pendingHighSurrogate = 0;
+                    owner.emitCommittedText(id, encoded[0 .. converted.written]);
                 }
                 return 0;
             case WM_IME_STARTCOMPOSITION:
@@ -1271,4 +1294,23 @@ private WsiResult!T win32Failure(T)(WsiOperation operation, long nativeCode,
 {
     return wsiErr!T(wsiError(kind, operation, BackendKind.win32,
         nativeCode, diagnostic));
+}
+
+@("wsi.win32.utf16CompositionBoundaryAffinity")
+@safe pure nothrow @nogc unittest
+{
+    const wide = "a😀b"w;
+    const before = Win32Wsi.mapValidatedUtf16Offset(wide, Utf16Offset(2),
+        MapAffinity.before);
+    const after = Win32Wsi.mapValidatedUtf16Offset(wide, Utf16Offset(2),
+        MapAffinity.after);
+    assert(before.value.value == 1 && before.snapped);
+    assert(after.value.value == 5 && after.snapped);
+    assert(Win32Wsi.mapValidatedUtf16Offset(wide, Utf16Offset(2),
+        MapAffinity.exact).status == MapStatus.notBoundary);
+    const exact = Win32Wsi.mapValidatedUtf16Offset(wide, Utf16Offset(3),
+        MapAffinity.exact);
+    assert(exact.value.value == 5 && exact.exact);
+    assert(Win32Wsi.mapValidatedUtf16Offset(wide, Utf16Offset(size_t.max),
+        MapAffinity.before).value.value == 6);
 }

@@ -25,6 +25,7 @@ module log_page;
 
 import sparkles.base.log_sinks : RingCoreLogger, RingLogRecord;
 import sparkles.base.logger : LogLevel;
+import sparkles.fuzzy.match : MatcherWorkspace;
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.geometry : Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame;
@@ -188,14 +189,14 @@ by `sparkles:fuzzy`, best first, a tie to the newer entry. `regexError` says
 why a regex was ignored.
 */
 size_t[] filterLog(in LogLine[] lines, in bool[4] levels, string source, const LogQuery q,
-    out string regexError) @safe
+    out string regexError, ref MatcherWorkspace!() workspace) @safe
 {
     import std.algorithm.searching : startsWith;
     import std.algorithm.sorting : sort;
     import std.regex : Regex, matchFirst, regex;
 
     import sparkles.fuzzy.common : CandidateView, DefaultFuzzyCaps, FuzzyLimits;
-    import sparkles.fuzzy.match : match, MatchConfig, MatcherWorkspace, MatchKind, Scoring;
+    import sparkles.fuzzy.match : match, MatchConfig, MatchKind, Scoring;
     import sparkles.fuzzy.query : parseQuery, QueryStorage;
 
     Regex!char re;
@@ -214,14 +215,13 @@ size_t[] filterLog(in LogLine[] lines, in bool[4] levels, string source, const L
     QueryStorage!()* fuzzy;
     if (q.text.length)
     {
-        auto parsed = parseQuery(q.text);
+        auto parsed = parseQuery(q.text, workspace.textWorkspace);
         if (!parsed.hasError && parsed.value.hasFuzzyParts)
         {
             fuzzy = new QueryStorage!();
             *fuzzy = parsed.value;
         }
     }
-    auto ws = fuzzy !is null ? new MatcherWorkspace!() : null;
 
     static struct Ranked
     {
@@ -260,7 +260,7 @@ size_t[] filterLog(in LogLine[] lines, in bool[4] levels, string source, const L
             if (fuzzy !is null)
             {
                 CandidateView cand = {path: utf8Prefix(l.message, DefaultFuzzyCaps.maxCandidateBytes)};
-                auto r = match(*fuzzy, cand, MatchConfig.init, Scoring.init, FuzzyLimits.init, *ws);
+                auto r = match(*fuzzy, cand, MatchConfig.init, Scoring.init, FuzzyLimits.init, workspace);
                 if (r.hasError || !r.value.admitted)
                     continue;
                 score = r.value.score;
@@ -307,6 +307,9 @@ private bool containsFolded(scope const(char)[] hay, scope const(char)[] needle)
 @("log_page.filterLog.levelsSourcesRegexAndRank")
 @safe unittest
 {
+    import sparkles.base.unique : makeUnique;
+
+    auto workspace = makeUnique!(MatcherWorkspace!())();
     LogLine[] ls = [
         LogLine(0, LogLevel.info, "am", "09:00:00", "server on am.sock"),
         LogLine(1, LogLevel.trace, "session", "09:00:01", "login pid 4211"),
@@ -318,15 +321,15 @@ private bool containsFolded(scope const(char)[] hay, scope const(char)[] needle)
     string err;
 
     // Debug is off by default; every other entry, oldest first.
-    assert(filterLog(ls, std, null, LogQuery.init, err) == [0, 2, 3, 4]);
+    assert(filterLog(ls, std, null, LogQuery.init, err, workspace.get) == [0, 2, 3, 4]);
     // The source chip and `source:`.
-    assert(filterLog(ls, std, "notify", LogQuery.init, err) == [3, 4]);
-    assert(filterLog(ls, std, null, parseLogQuery("source:se"), err) == [2]);
+    assert(filterLog(ls, std, "notify", LogQuery.init, err, workspace.get) == [3, 4]);
+    assert(filterLog(ls, std, null, parseLogQuery("source:se"), err, workspace.get) == [2]);
     // A regex keeps what it matches; a broken one is reported and ignored.
-    assert(filterLog(ls, std, null, parseLogQuery("/refused|posted/"), err) == [3, 4]);
-    assert(filterLog(ls, std, null, parseLogQuery("/(/"), err).length == 4 && err.length);
+    assert(filterLog(ls, std, null, parseLogQuery("/refused|posted/"), err, workspace.get) == [3, 4]);
+    assert(filterLog(ls, std, null, parseLogQuery("/(/"), err, workspace.get).length == 4 && err.length);
     // Free text through sparkles:fuzzy: a typo still finds it, ranked.
-    const hits = filterLog(ls, std, null, parseLogQuery("notifcation"), err);
+    const hits = filterLog(ls, std, null, parseLogQuery("notifcation"), err, workspace.get);
     assert(hits.length && hits[0] == 4);
 }
 
@@ -360,6 +363,8 @@ final class LogPage : Page
     private ulong topSeq;     // the anchored first entry, when not following
     private size_t rankTop;   // the first ranked entry shown, while searching
     private string regexError;
+    // Heap-owned once for the page; reused across query edits and log updates.
+    private MatcherWorkspace!()* fuzzyWorkspace;
 
     /// `ring` is the log (`logging.terminalLog`); `previousPath` the previous
     /// run's file (`logging.previousLogPath`), empty for none.
@@ -450,7 +455,10 @@ final class LogPage : Page
     {
         if (!stale)
             return;
-        shown = filterLog(lines, levels, source, parseLogQuery(query), regexError);
+        if (fuzzyWorkspace is null)
+            fuzzyWorkspace = new MatcherWorkspace!();
+        shown = filterLog(lines, levels, source, parseLogQuery(query), regexError,
+            *fuzzyWorkspace);
         stale = false;
     }
 

@@ -12,7 +12,8 @@ module sparkles.doc_view.kind;
 
 import std.algorithm.searching : canFind, endsWith;
 import std.path : extension;
-import std.string : chompPrefix, toLower;
+import std.string : chompPrefix;
+import sparkles.base.text.case_text : asciiLower;
 
 /// The viewer's content kinds.
 enum ViewKind : ubyte
@@ -36,7 +37,7 @@ ViewKind viewKindOfName(string path) @safe
 {
     import sparkles.syntax : canonicalLanguageOfPath;
 
-    const ext = path.extension.chompPrefix(".").toLower;
+    const ext = path.extension.chompPrefix(".").asciiLower;
     if (ext == "txt" || ext == "text" || ext == "log")
         return ViewKind.text;
     if (imageExtensions.canFind(ext))

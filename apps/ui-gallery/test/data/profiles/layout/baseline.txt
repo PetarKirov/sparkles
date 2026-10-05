@@ -2,9 +2,9 @@
    Welcome           | Layout * sizing, spacing, alignment                                     #
    Primitives        |                                                                         #
  > Layout            |                                                                         #
-   Tracks            | Four passes, each O(n): natural width up, allocation down,              #
-   Text              | height-for-width up, placement down. Nothing iterates to a fixed point  #
-   Themes            | - the width/height cycle is broken by ordering.                         #
+   Tracks            | Four passes, each O(n): natural width up, allocation down, height-for-  #
+   Text              | width up, placement down. Nothing iterates to a fixed point - the       #
+   Themes            | width/height cycle is broken by ordering.                               #
    Slots             |                                                                         #
    Decoration        | +---------------------------------------------------------------------+ #
    Effects           | | the knobs                                                           | #

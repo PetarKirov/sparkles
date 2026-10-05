@@ -61,7 +61,7 @@ private string downloadWith(ref JniFrame f, string url, string dest,
     scope DownloadProgress progress) @system nothrow
 {
     import std.stdio : File;
-    import std.utf : toUTF16;
+    import sparkles.base.text.utf16 : measureConversion, utf8ToUtf16;
 
     auto env = f.env;
 
@@ -70,10 +70,11 @@ private string downloadWith(ref JniFrame f, string url, string dest,
     if (urlClass is null)
         return "java.net.URL unavailable";
     auto urlCtor = (*env).GetMethodID(env, urlClass, "<init>", "(Ljava/lang/String;)V");
-    wstring url16;
-    try
-        url16 = url.toUTF16;
-    catch (Exception)
+    const measured = measureConversion!wchar(url);
+    if (measured.hasError)
+        return "the URL is not valid UTF-8";
+    auto url16 = new wchar[measured.value.required];
+    if (utf8ToUtf16(url, url16).hasError)
         return "the URL is not valid UTF-8";
     auto jurl = f.newString(url16);
     if (urlCtor is null || jurl is null)

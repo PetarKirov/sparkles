@@ -83,10 +83,12 @@ version (linux)
         SearchAccumulator!8 accumulator;
         auto matcherOwner = makeUnique!(MatcherWorkspace!())();
         ref MatcherWorkspace!() matcher() => matcherOwner.get();
-        ConstraintWorkspace!() constraints;
+        auto constraintsOwner = makeUnique!(ConstraintWorkspace!())();
+        ref ConstraintWorkspace!() constraints() => constraintsOwner.get();
         RankedResult[8] page;
         GlobProgram!() glob;
-        GlobMatchWorkspace!() globWorkspace;
+        auto globOwner = makeUnique!(GlobMatchWorkspace!())();
+        ref GlobMatchWorkspace!() globWorkspace() => globOwner.get();
         FrecencyTable!(4, 4) frecency;
         ComboTable!4 combo;
         ProjectId project = ProjectId(0, 2);
@@ -97,9 +99,10 @@ version (linux)
         const gcBefore = GC.allocatedInCurrentThread();
         allocationCalls = 0;
         auditActive = true;
-        auto query = parseQuery("unicode tables");
+        auto query = parseQuery("unicode tables", matcher.textWorkspace);
         assert(query.hasValue);
-        auto compiled = compileGlob("**/*.d", PathFlavor.unix, false, glob);
+        auto compiled = compileGlob("**/*.d", PathFlavor.unix, false, glob,
+            matcher.textWorkspace);
         assert(!compiled.hasError);
         auto globbed = globMatch(glob, candidates[0].path, globWorkspace);
         assert(globbed.hasValue && globbed.value);

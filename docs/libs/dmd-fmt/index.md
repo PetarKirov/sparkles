@@ -43,6 +43,31 @@ keeps working:
 Unrecognised keys — including the `dfmt_*` style options not implemented yet — are ignored, which
 is the documented migration posture rather than an oversight.
 
+### Display width
+
+Wrapping measures display cells, not UTF-8 bytes or Unicode scalar counts.
+The default `sparkles.dmd_fmt.doc.displayWidth` uses the owned base
+grapheme/width policy: `e` plus a combining acute accent is one cell,
+`日本語` is six, and a family ZWJ emoji (`👨‍👩‍👧`) or a regional-indicator
+flag (`🇬🇧`) is two. These are deterministic cell widths, not font shaping
+or pixel measurements.
+
+For the document-layout API, a group containing `👨‍👩‍👧`, a breakable
+space, and `x` fits flat at width four:
+
+```d
+import sparkles.dmd_fmt.doc : group, text, line, layout, RenderOptions;
+
+auto doc = group(text("👨‍👩‍👧"), line, text("x"));
+assert(layout(doc, RenderOptions(width: 4)) == "👨‍👩‍👧 x");
+```
+
+`RenderOptions.measure` can supply an alternative measurement function.
+Literal tab, CR and LF bytes each count as one in `displayWidth`; emitted
+newlines reset the layout column, while indentation tabs use
+`RenderOptions.tabWidth`. Malformed UTF-8 uses the base replacement policy
+with forward progress rather than an independent formatter decoder.
+
 ## Escape hatches
 
 `// dfmt off` … `// dfmt on` ranges are emitted byte-for-byte, and so are `asm { … }` bodies,

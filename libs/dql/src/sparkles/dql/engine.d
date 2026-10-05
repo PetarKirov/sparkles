@@ -1,7 +1,8 @@
 module sparkles.dql.engine;
 
+import core.lifetime : move;
 import expected : Expected, err, ok;
-import sparkles.base.buffer : HeapBuffer, Storage, UniqueBuffer;
+import sparkles.base.buffer : HeapBuffer, Storage;
 import sparkles.base.text.span : TextSpan;
 import sparkles.base.unique : Unique, makeUnique;
 import sparkles.dql.ast;
@@ -22,18 +23,24 @@ struct DqlParseError
 /**
 Execution engine: interned strings, compiled matchers, and reusable scratch.
 
-Large glob/fuzzy workspaces (~1 MiB together) are heap-owned (`Unique`) and
-allocated on first use; compiled programs live in heap-only buffers so a
-25 KiB `GlobProgram` is never inlined here. The engine struct itself stays
-small enough for a worker-thread stack (512 KiB on macOS).
+Large glob/fuzzy workspaces are heap-owned (`Unique`) and allocated on first
+use; the fuzzy matcher (~13.7 MiB) also supplies Unicode analysis scratch for
+query parsing and glob compilation. Compiled programs live in heap-only
+buffers so a 25 KiB `GlobProgram` is never inlined here. The engine struct
+itself stays small enough for a worker-thread stack (512 KiB on macOS).
 
 Every `DqlFilter` parsed through this engine contains handles into these
 buffers. The engine must therefore outlive its filters and must not be moved
 while one is evaluated.
+
+Fuzzy queries borrow the heap-only string pool. Once a query is registered,
+pool growth retains the old allocation until engine destruction, so later
+interning cannot invalidate stored query text. Retained pools grow
+geometrically with the current pool; no source arena is allocated per query.
 */
 struct DqlEngine
 {
-    UniqueBuffer!(char, 64) stringPool;
+    HeapBuffer!(char, Storage.unique) stringPool;
     HeapBuffer!(GlobProgram!(), Storage.unique) globPrograms;
     HeapBuffer!(QueryStorage!(), Storage.unique) fuzzyQueries;
     HeapBuffer!(RegexHolder, Storage.unique) regexHolders;
@@ -45,6 +52,17 @@ struct DqlEngine
             return TextSpan.of(0, 0);
 
         const uint start = cast(uint) stringPool.length;
+        if (fuzzyQueries.length && str.length > stringPool.capacity - stringPool.length)
+        {
+            // Do not realloc storage borrowed by an already-compiled query.
+            HeapBuffer!(char, Storage.unique) replacement;
+            replacement.reserve(stringPool.length + str.length);
+            replacement ~= stringPool[];
+            // Retired pools are genuine copyable owners; toShared transfers
+            // the old block without allocation, leaving the hot pool unique.
+            _retiredStringPools ~= stringPool.toShared();
+            move(replacement, stringPool);
+        }
         stringPool ~= str;
         return TextSpan.of(start, cast(uint)(start + str.length));
     }
@@ -91,7 +109,7 @@ struct DqlEngine
         return _globWorkspace.get;
     }
 
-    /// Fuzzy matcher scratch, allocated on first use.
+    /// Fuzzy parsing, glob compilation, and matching scratch, allocated once.
     ref MatcherWorkspace!() matcherWorkspace() return @safe pure nothrow @nogc
     {
         ensureMatcherWorkspace();
@@ -99,6 +117,7 @@ struct DqlEngine
     }
 
 private:
+    HeapBuffer!(HeapBuffer!char, Storage.unique) _retiredStringPools;
     Unique!(GlobMatchWorkspace!()) _globWorkspace;
     Unique!(MatcherWorkspace!()) _matcherWorkspace;
 

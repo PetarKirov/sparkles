@@ -8,8 +8,10 @@ and compared as a plain glyph grid.
 Fixtures and goldens live side by side under `libs/source-view/test/data/md/goldens/`
 (`<name>.md` + `<name>.txt`). The glyph grid ignores color on purpose: it is the
 $(B layout) oracle — indentation, borders, wrapping, panel geometry — and reads
-well in a diff; color/style assertions stay with the `RecordingCanvas` tests in
-$(MREF sparkles,source_view,markdown).
+well in a diff; color/style assertions stay with the rendered-cell and
+`RecordingCanvas` tests in $(MREF sparkles,source_view,markdown). Wide-cell
+continuations are not extra spaces, and owned graphemes are emitted intact,
+matching the terminal surface rather than the grid's storage slots.
 
 To regenerate after an intended rendering change:
 
@@ -96,6 +98,12 @@ private string renderGridText(ref GrammarRegistry registry,
     paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
         pageFg, pageBg));
 
+    return plainGridText(grid);
+}
+
+/// The same glyph emission as CellGrid.writeAnsi, without styles or escapes.
+private string plainGridText(ref const CellGrid grid) @safe pure
+{
     // Plain glyph dump, trailing blanks trimmed per row (stable, diff-friendly).
     import std.utf : encode;
 
@@ -105,16 +113,50 @@ private string renderGridText(ref GrammarRegistry registry,
         size_t lineEnd = text.length;
         foreach (x; 0 .. grid.width)
         {
-            char[4] buf;
-            const n = encode(buf, grid.cells[y * grid.width + x].glyph);
-            text ~= buf[0 .. n];
-            if (grid.cells[y * grid.width + x].glyph != ' ')
+            ref const cell = grid.cells[y * grid.width + x];
+            if (cell.continuation)
+                continue;
+            if (cell.cluster.length)
+            {
+                text ~= cell.cluster;
+                if (cell.zeroPrefix)
+                    text ~= ' '; // an isolated zero-width prefix still owns a cell
+            }
+            else
+            {
+                char[4] buf;
+                const n = encode(buf, cell.glyph);
+                text ~= buf[0 .. n];
+            }
+            if (cell.cluster.length || cell.glyph != ' ')
                 lineEnd = text.length;
         }
         text = text[0 .. lineEnd];
         text ~= '\n';
     }
     return text;
+}
+
+@("md.goldens.wholeGraphemeColumns")
+@safe unittest
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+    import sparkles.ui.geometry : Point;
+    import sparkles.ui.style : Visual;
+
+    auto grid = CellGrid(10, 2, RgbColor(0xcc, 0xcc, 0xcc),
+        RgbColor(0x1e, 0x1e, 0x1e));
+    grid.textRun(Point(0, 0), "漢🎉e\u0301", Visual.init);
+    grid.textRun(Point(0, 1), "👩‍💻", Visual.init);
+    grid.textRun(Point(7, 0), "│", Visual.init);
+    grid.textRun(Point(7, 1), "│", Visual.init);
+
+    // Full clusters survive the glyph dump. The gap to the rule measures
+    // actual columns, not a second emitted blank for every wide cell.
+    const first = "漢🎉e\u0301  │";
+    const second = "👩‍💻     │";
+    assert(plainGridText(grid) == first ~ "\n" ~ second ~ "\n");
+    assert(visibleWidth(first) == 8 && visibleWidth(second) == 8);
 }
 
 private void checkFixtures(in string[] names, string suffix, bool interactive)

@@ -19,7 +19,7 @@ import sparkles.base.styled_template : styledText;
 /// One observed disagreement between the library and an oracle.
 struct Divergence
 {
-    int layer;        /// Originating layer (0–3).
+    int layer;        /// Originating layer (0–16).
     string key;       /// Normalized key for allowlist matching (stable, hashable).
     string observed;  /// What the library produced.
     string expected;  /// What the oracle expected.

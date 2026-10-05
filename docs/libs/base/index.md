@@ -2,8 +2,8 @@
 
 `sparkles:base` is the shared foundation for Sparkles libraries: small
 allocation-conscious buffers, recycled `Error` storage for `@nogc` code,
-text readers/writers, terminal styling, styled Interpolated Expression
-Sequences, and the core logging interface.
+text readers/writers, owned Unicode 18 codecs and text algorithms, terminal
+styling, styled Interpolated Expression Sequences, and the core logging interface.
 
 Use it when a package needs low-level building blocks without depending on
 the higher-level `sparkles:core-cli` UI and argument-parsing modules.
@@ -16,6 +16,13 @@ UniqueBuffer!(char, 16) buf;
 writeIntegerPadded(buf, 7, 3);
 assert(buf[] == "007");
 ```
+
+Owned text APIs include unlimited whole-grapheme segmentation, explicit terminal
+cell policy, word/sentence/line boundaries, whole-paragraph bidi, normalization,
+contextual casing and typed source maps. Their `@nogc` cores use caller-owned
+arenas with explicit capacity failures and borrowed-view lifetimes; unlimited
+Unicode context does not mean unlimited caller storage. Import specialized
+modules directly as described in the [API index](./reference/api.md).
 
 ## How this documentation is organised
 

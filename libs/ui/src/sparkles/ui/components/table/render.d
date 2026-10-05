@@ -11,6 +11,10 @@ import expected : Expected, ok, err;
 
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.base.text.width : Align, alignField;
+import sparkles.base.text.wrap : cellWrapPlan, CellWidth, CellExtent, WrapOptions,
+    WhitespaceMode, TabPolicy, CellWrapProjection, projectWrapCells;
+import sparkles.base.text.wrap_plan : WrapPlan, WrapAffinity, WrapStatus,
+    WrapEmissionOptions, ProvenanceKind, tryMaterializeWrap, cellToSource;
 
 import sparkles.ui.components.table.grid;
 import sparkles.ui.components.table.layout;
@@ -31,46 +35,28 @@ import sparkles.ui.components.table.layout;
 // ---------------------------------------------------------------------------
 
 
-/// The intrinsic width of a cell's content: the widest of its own lines (content may
-/// carry embedded `\n`), so a multi-line cell is not sized by its newline-joined length.
-private size_t naturalWidth(string content) @safe pure nothrow
+
+/// Decimal tail extent from the committed natural plan, including expanded
+/// tabs and excluding paint-only formatting. Multiline cells are not decimal.
+private size_t decimalTailWidth(scope const ref WrapPlan plan) @safe pure nothrow @nogc
 {
-    import std.string : lineSplitter;
-
-    size_t m = 0;
-    foreach (seg; content.lineSplitter)
-        m = max(m, visibleWidth(seg));
-    return m;
-}
-
-/// Visible width after the last visible `.` in `s` (escapes free), or
-/// `size_t.max` when `s` has no dot — the ingredient of columnar decimal
-/// alignment.
-private size_t decimalTailWidth(string s) @safe pure
-{
-    import sparkles.base.text.grapheme : byGraphemeCluster;
-
-    size_t width = 0;
-    bool seen = false;
-    foreach (c; s.byGraphemeCluster)
+    if (plan.lines.length != 1) return size_t.max;
+    size_t width;
+    bool seen;
+    foreach (ref const fragment; plan.fragments)
     {
-        if (c.isEscape)
-            continue;
-        if (c.slice == ".")
-        {
-            seen = true;
-            width = 0;
-        }
-        else if (seen)
-            width += c.width;
+        if (fragment.formatting || fragment.omitted) continue;
+        bool dot;
+        foreach (char byte_; fragment.bytes) dot = dot || byte_ == '.';
+        if (dot) { seen = true; width = 0; }
+        else if (seen) width += cast(size_t) fragment.advance;
     }
     return seen ? width : size_t.max;
 }
 
-/// Per-anchor `Align.decimal` trailing pads for the string view: measure each
-/// anchor's decimal tail with the escape-aware `decimalTailWidth`, then let the
-/// core's `decimalPadsFor` aggregate per column. Null when no column is decimal.
-private size_t[] anchorDecimalPads(in SlotGrid g, in TableProps p) @safe pure
+/// Shared decimal-pad aggregation from each anchor's committed natural plan.
+private size_t[] anchorDecimalPads(in SlotGrid g, in TableProps p,
+    in WrapPlan[] plans) @safe pure
 {
     bool any = false;
     foreach (c; 0 .. g.numCols)
@@ -79,8 +65,8 @@ private size_t[] anchorDecimalPads(in SlotGrid g, in TableProps p) @safe pure
         return null;
 
     auto tails = new size_t[g.anchors.length];
-    foreach (i, ref a; g.anchors)
-        tails[i] = decimalTailWidth(a.content);
+    foreach (i; 0 .. g.anchors.length)
+        tails[i] = decimalTailWidth(plans[i]);
     return decimalPadsFor(g, p, tails);
 }
 
@@ -93,41 +79,43 @@ private string separatorLine(in SlotGrid g, in size_t[] w, in TableProps p, size
     return ruleGlyphs(g, p, w, i).to!string;
 }
 
-/// Wrap every anchor's content into its `contentField` width, splitting on `\n` and
-/// soft-wrapping long lines with the shared `sparkles.base.text.wrap` engine (the same
-/// one `drawBox` uses). Trailing spaces left at a wrap point are trimmed so a wrapped
-/// line never exceeds the field. Returns one line list per anchor (empty content → a
-/// single blank line), indexed like `SlotGrid.anchors`.
-private string[][] wrapCells(in SlotGrid g, in size_t[] w, in TableProps p)
+/// Commit one complete source-qualified plan per anchor. Emitted lines and hit
+/// metadata both consume these plans; no byte offsets are inferred from output.
+private string[][] wrapCells(in SlotGrid g, in size_t[] w, in TableProps p,
+    in size_t[] decimalPads, ref WrapPlan[] plans, out CellWrapProjection[] projections)
 {
-    import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions;
-    import std.string : lineSplitter, stripRight;
-
+    import std.exception : enforce;
     auto result = new string[][](g.anchors.length);
+    projections = new CellWrapProjection[](g.anchors.length);
     foreach (i, ref a; g.anchors)
     {
-        const f = contentField(a, w, p, g.numCols);
-        string[] lines;
-        foreach (seg; a.content.lineSplitter)
+        const fullField = contentField(a, w, p, g.numCols);
+        const decimalPad = decimalPads.length ? decimalPads[i] : 0;
+        const field = decimalPad > 0 && decimalPad < fullField
+            ? fullField - decimalPad : fullField;
+        bool needsWrap;
+        foreach (ref const line; plans[i].lines)
+            needsWrap = needsWrap || line.contentAdvance > field;
+        if (needsWrap)
+            plans[i] = cellWrapPlan(a.content, WrapOptions(
+                width: CellWidth.bounded(field), whitespace: WhitespaceMode.trimAroundBreak,
+                tabs: TabPolicy.expand));
+        projections[i] = projectWrapCells(plans[i], CellExtent(field));
+        foreach (li; 0 .. projections[i].visible.lines.length)
         {
-            if (f == 0)
-            {
-                lines ~= "";
-                continue;
-            }
-            bool any = false;
-            foreach (wl; seg.byWrappedLine(
-                    WrapOptions(width: f, whitespace: WhitespaceMode.preserve)))
-            {
-                any = true;
-                lines ~= wl.stripRight.idup;
-            }
-            if (!any)
-                lines ~= "";
+            WrapPlan one = projections[i].visible;
+            one.lines = one.lines[li .. li + 1];
+            size_t extent;
+            const options = WrapEmissionOptions(sourceRevision: one.source.revision,
+                resourceRevision: one.resourceRevision);
+            auto status = tryMaterializeWrap(one, options, null, extent);
+            enforce(status.succeeded || status.status == WrapStatus.needOutput,
+                "invalid committed table line");
+            auto bytes = new char[](status.required);
+            status = tryMaterializeWrap(one, options, bytes, extent);
+            enforce(status.succeeded, "table line emission failed");
+            result[i] ~= bytes.idup;
         }
-        if (lines.length == 0)
-            lines ~= ""; // empty content still occupies one blank line
-        result[i] = lines;
     }
     return result;
 }
@@ -271,6 +259,7 @@ package(sparkles.ui.components.table) struct TableLayout
     size_t[] decimalPads;   /// per-anchor `Align.decimal` trailing pads
     size_t[] widths;        /// per-column content widths
     string[][] cellLines;   /// per-anchor wrapped content lines
+    CellWrapProjection[] cellProjections; /// selected source and exact visible authority
     size_t[] rowHeights;    /// per grid-row text height
 }
 
@@ -278,17 +267,25 @@ package(sparkles.ui.components.table) struct TableLayout
 package(sparkles.ui.components.table) TableLayout computeTableLayout(
     SlotGrid g, TableProps p)
 {
-    auto decimalPads = anchorDecimalPads(g, p);
     auto naturals = new size_t[g.anchors.length];
+    auto cellPlans = new WrapPlan[](g.anchors.length);
     foreach (i, ref a; g.anchors)
-        naturals[i] = naturalWidth(a.content);
+    {
+        cellPlans[i] = cellWrapPlan(a.content,
+            WrapOptions(width: CellWidth.unbounded, whitespace: WhitespaceMode.preserve,
+                tabs: TabPolicy.expand));
+        foreach (ref const line; cellPlans[i].lines)
+            naturals[i] = max(naturals[i], cast(size_t) line.contentAdvance);
+    }
+    auto decimalPads = anchorDecimalPads(g, p, cellPlans);
     auto widths = resolveColumnWidths(g, p, naturals, decimalPads);
-    auto cellLines = wrapCells(g, widths, p);
+    CellWrapProjection[] cellProjections;
+    auto cellLines = wrapCells(g, widths, p, decimalPads, cellPlans, cellProjections);
     auto lineCounts = new size_t[g.anchors.length];
     foreach (i, lines; cellLines)
         lineCounts[i] = lines.length;
     auto rowHeights = resolveRowHeights(g, lineCounts);
-    return TableLayout(g, p, decimalPads, widths, cellLines, rowHeights);
+    return TableLayout(g, p, decimalPads, widths, cellLines, cellProjections, rowHeights);
 }
 
 
@@ -459,6 +456,7 @@ struct GridHit
     size_t row;        /// grid row of the covering cell
     size_t col;        /// grid column of the covering cell
     size_t charInCell; /// byte offset into `TableGridMap.cellText(row, col)`
+    ProvenanceKind sourceRelation = ProvenanceKind.original;
 }
 
 /// One on-screen extent `[xStart, xEnd)` (columns from the table's left edge) on
@@ -472,9 +470,8 @@ struct CellSpan
 /// of a cell, and where it maps in the cell's content.
 private struct MapField
 {
-    size_t line, row, col, xStart, width, charBase;
-    Align align_;
-    string text; // the wrapped content line shown in this field
+    size_t line, row, col, xStart, width;
+    size_t lead, contentWidth, planLine, anchor;
 }
 
 /// Screen ↔ grid-cell mapping for a rendered table (hue `TBL3`): map a click to a
@@ -487,6 +484,7 @@ struct TableGridMap
     private size_t _rows, _cols;
     private MapField[] _fields;
     private string[] _cellText; // [r*_cols + c]
+    private const(CellWrapProjection)[] _projections;
 
     /// Grid dimensions.
     size_t numRows() const @safe pure nothrow @nogc => _rows;
@@ -498,18 +496,23 @@ struct TableGridMap
 
     /// The cell (and char offset) under output line `line`, screen column `x` —
     /// null on a border / gutter / outside any cell.
-    Nullable!GridHit hit(size_t line, size_t x) const @safe
+    /// Affinity selects complete grapheme boundaries at wide interiors and
+    /// zero-width ties. Hits reuse the committed frame without allocation.
+    Nullable!GridHit hit(size_t line, size_t x,
+        WrapAffinity affinity = WrapAffinity.before) const @safe nothrow @nogc
     {
         foreach (ref f; _fields)
         {
             if (f.line != line || x < f.xStart || x >= f.xStart + f.width)
                 continue;
             const inField = x - f.xStart;
-            const lead = leadPad(f.width, visibleWidth(f.text), f.align_);
-            const w = visibleWidth(f.text);
-            const contentCol = inField < lead ? 0
-                : (inField - lead > w ? w : inField - lead);
-            return nullable(GridHit(f.row, f.col, f.charBase + columnToByte(f.text, contentCol)));
+            const contentCol = inField < f.lead ? 0
+                : (inField - f.lead > f.contentWidth ? f.contentWidth : inField - f.lead);
+            const mapped = cellToSource(_projections[f.anchor].visible,
+                f.planLine, cast(long) contentCol, affinity);
+            if (mapped.status != WrapStatus.ok)
+                return Nullable!GridHit.init;
+            return nullable(GridHit(f.row, f.col, mapped.sourceBoundary, mapped.provenance));
         }
         return Nullable!GridHit.init;
     }
@@ -533,16 +536,22 @@ struct TableGridMap
         {
             if (f.row != row || f.col != col)
                 continue;
-            const lineLo = f.charBase, lineHi = f.charBase + f.text.length;
-            const a = lo > lineLo ? lo : lineLo;
-            const b = hi < lineHi ? hi : lineHi;
-            if (a >= b)
-                continue;
-            const lead = leadPad(f.width, visibleWidth(f.text), f.align_);
-            const c0 = f.xStart + lead + byteToColumn(f.text, a - f.charBase);
-            const c1 = f.xStart + lead + byteToColumn(f.text, b - f.charBase);
-            if (c1 > c0)
-                r ~= CellSpan(f.line, c0, c1);
+            ref const plan = _projections[f.anchor].visible;
+            const ln = plan.lines[f.planLine];
+            long cursor = ln.startColumn;
+            foreach (ref const fragment; plan.fragments[ln.fragmentsStart .. ln.fragmentsEnd])
+            {
+                const end = cursor + fragment.advance;
+                if (fragment.sourceStart < hi && fragment.sourceEnd > lo && end > cursor)
+                {
+                    const start = f.xStart + f.lead + cast(size_t) cursor;
+                    const finish = f.xStart + f.lead + cast(size_t) end;
+                    if (r.length && r[$ - 1].line == f.line && r[$ - 1].xEnd == start)
+                        r[$ - 1].xEnd = finish;
+                    else r ~= CellSpan(f.line, start, finish);
+                }
+                cursor = end;
+            }
         }
         return r;
     }
@@ -561,20 +570,19 @@ struct MappedTable
 MappedTable drawTableMapped(string[][] cells, TableProps props = TableProps.init)
 in (hasRectangularShape(cells))
 {
-    return buildMappedTable(computeTableLayout(resolveGrid(toCells(cells)).grid, props), props);
+    const layout = computeTableLayout(resolveGrid(toCells(cells)).grid, props);
+    return buildMappedTable(layout, props);
 }
 
-private MappedTable buildMappedTable(in TableLayout lay, in TableProps p)
+private MappedTable buildMappedTable(const ref TableLayout lay, in TableProps p)
 {
     const g = lay.grid;
     string[] lines;
     foreach (d; lineDescs(lay.grid, lay.props, lay.rowHeights))
         lines ~= renderLine(lay, d);
 
-    // The map's fields derive from the core's one body-line walk (the same
-    // placement the widget view positions from), so the recorded `xStart`
-    // matches the emitted line byte-for-byte; only the byte-offset bookkeeping
-    // (`charBase`) is string-view business.
+    // Placement comes from the shared body-line walk; source offsets and cell
+    // affinities come exclusively from the exact retained anchor plan.
     auto lineCounts = new size_t[g.anchors.length];
     foreach (i, cellLines; lay.cellLines)
         lineCounts[i] = cellLines.length;
@@ -584,44 +592,25 @@ private MappedTable buildMappedTable(in TableLayout lay, in TableProps p)
         if (!fp.hasContent)
             continue;
         const a = g.anchors[fp.anchor];
-        size_t charBase;
-        foreach (j; 0 .. fp.lineInCell)
-            charBase += lay.cellLines[fp.anchor][j].length;
-        fields ~= MapField(fp.line, a.row, a.col, fp.x, fp.width, charBase,
-            anchorAlign(a, p), lay.cellLines[fp.anchor][fp.lineInCell]);
+        ref const plan = lay.cellProjections[fp.anchor].visible;
+        const contentWidth = cast(size_t) plan.lines[fp.lineInCell].contentAdvance;
+        const decimalPad = lay.decimalPads.length ? lay.decimalPads[fp.anchor] : 0;
+        const alignmentWidth = decimalPad > 0 && decimalPad < fp.width
+            ? fp.width - decimalPad : fp.width;
+        fields ~= MapField(fp.line, a.row, a.col, fp.x, fp.width,
+            leadPad(alignmentWidth, contentWidth, anchorAlign(a, p)), contentWidth,
+            fp.lineInCell, fp.anchor);
     }
 
     auto cellText = new string[g.numRows * g.numCols];
     foreach (r; 0 .. g.numRows)
         foreach (c; 0 .. g.numCols)
             cellText[r * g.numCols + c] = g.anchors[owner(g, r, c)].content;
-    return MappedTable(lines, TableGridMap(g.numRows, g.numCols, fields, cellText));
+    return MappedTable(lines, TableGridMap(g.numRows, g.numCols, fields,
+        cellText, lay.cellProjections));
 }
 
 
-/// Byte offset in `s` at display column `col` (clamped to `s.length`).
-private size_t columnToByte(string s, size_t col) @safe
-{
-    import std.utf : decode;
-    import std.typecons : Yes;
-
-    size_t i, w;
-    while (i < s.length && w < col)
-    {
-        const start = i;
-        decode!(Yes.useReplacementDchar)(s, i);
-        w += visibleWidth(s[start .. i]);
-    }
-    return i;
-}
-
-/// Display column at byte offset `b` in `s`.
-private size_t byteToColumn(string s, size_t b) @safe
-{
-    if (b > s.length)
-        b = s.length;
-    return visibleWidth(s[0 .. b]);
-}
 
 private ref Writer putTable(Writer)(return ref Writer w, TableLineRange lines)
 {
@@ -1787,4 +1776,60 @@ private struct TableChunkRange(bool lineBuffered)
     assert(!h1.isNull && h1.get.row == 0 && h1.get.col == 0);
     assert(h1.get.charInCell > h0.get.charInCell); // second wrapped line is later
     assert(mt.map.cellText(0, 0) == "aaa bbb ccc");
+}
+
+@("drawTableMapped.clusterAffinityAndRawSourceCopy")
+unittest
+{
+    const raw = "\x1b[31m界e\u0301🇺🇸👩‍💻\x1b[0m\nx";
+    const table = drawTableMapped([[raw]]);
+    const spans = table.map.cellSpans(0, 0);
+    assert(spans.length == 2);
+    const first = spans[0];
+    const start = first.xStart;
+    // SGR is raw source but not visible cell content. A wide interior must
+    // choose a complete grapheme boundary, never a UTF-8/scalar midpoint.
+    const before = table.map.hit(first.line, start + 1, WrapAffinity.before);
+    const after = table.map.hit(first.line, start + 1, WrapAffinity.after);
+    assert(before.get.charInCell == 5 && after.get.charInCell == 8);
+    assert(table.map.cellText(0, 0)[before.get.charInCell .. after.get.charInCell] == "界");
+    const flagBefore = table.map.hit(first.line, start + 4, WrapAffinity.before);
+    const flagAfter = table.map.hit(first.line, start + 4, WrapAffinity.after);
+    assert(table.map.cellText(0, 0)[flagBefore.get.charInCell .. flagAfter.get.charInCell] == "🇺🇸");
+    const x = table.map.hit(spans[1].line, spans[1].xStart);
+    assert(x.get.charInCell == raw.length - 1);
+    assert(table.map.cellText(0, 0) == raw);
+    // Selecting just an accent still highlights its complete grapheme.
+    assert(table.map.charSpans(0, 0, 9, 11) ==
+        [CellSpan(first.line, start + 2, start + 3)]);
+}
+
+@("drawTableMapped.zeroWidthAffinity")
+unittest
+{
+    const raw = "\u0301x";
+    const table = drawTableMapped([[raw]]);
+    const field = table.map.cellSpans(0, 0)[0];
+    assert(table.map.hit(field.line, field.xStart, WrapAffinity.before).get.charInCell == 0);
+    assert(table.map.hit(field.line, field.xStart, WrapAffinity.after).get.charInCell == 2);
+}
+
+@("drawTableMapped.clippedWideContentRetainsRawCopyAndStyles")
+unittest
+{
+    import std.algorithm.searching : canFind;
+    const raw = "\x1b[31m界\x1b[0m";
+    const table = drawTableMapped([[raw]], TableProps(maxWidth: 5));
+    foreach (line; table.lines)
+    {
+        assert(visibleWidth(line) == 5);
+        assert(!line.canFind("界"));
+    }
+    const field = table.map.cellSpans(0, 0)[0];
+    const body = table.lines[field.line];
+    assert(body.canFind("\x1b[31m") && body.canFind("\x1b[0m"));
+    assert(table.map.cellText(0, 0) == raw);
+    assert(table.map.charSpans(0, 0, 5, 8).length == 0);
+    assert(table.map.hit(field.line, field.xStart, WrapAffinity.before).get.charInCell == 0);
+    assert(table.map.hit(field.line, field.xStart, WrapAffinity.after).get.charInCell == raw.length);
 }

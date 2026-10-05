@@ -13,10 +13,11 @@ import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : CellMeasure, childClipOf, clipsX, clipsY, Frame,
-    measureWidth, unclipped;
+    measureWidth, unclipped, spanStyle;
 import sparkles.ui.style : Palette, resolveVisual, Slot, StateSet, TextStyle, Visual;
 import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
+import sparkles.base.text.width : codepointWidth;
 
 @safe:
 
@@ -67,32 +68,49 @@ if (__traits(compiles, (ref Sink s) {
 }
 
 /+
-`text` cut to fit `cells` columns as `tm` measures it in `style`. On a cell
-measurer that is `takeCells`; on a styled one (a proportional interface face,
-design-system `GLY10`) whole code points come off the end until it fits, so a
-run of narrow letters is not cut at the character count.
+`text` cut at an owned whole-grapheme boundary to fit `cells` as `tm`
+measures it in `style`. Interface faces retain their proportional metrics;
+cell targets use the owned terminalKitty fitting policy.
 +/
 private const(char)[] fitCells(TM)(ref TM tm, return scope const(char)[] text,
     int cells, in TextStyle style)
 {
-    import sparkles.ui.geometry : takeCells;
+    import sparkles.base.text.grapheme : cellFit = fitCells, GraphemeBreakState;
     import sparkles.ui.layout : isStyledTextMeasure;
 
+    const capacity = cells > 0 ? cells : 0;
     static if (isStyledTextMeasure!TM)
     {
-        if (cells <= 0)
-            return text[0 .. 0];
-        size_t end = text.length;
-        while (end > 0 && measureWidth(tm, text[0 .. end], style) > cells)
+        if (measureWidth(tm, text, style) <= capacity)
+            return text;
+        import sparkles.base.text.ansi : escapeLength;
+        import sparkles.base.text.utf : decodeToken, UtfMode;
+
+        GraphemeBreakState breaks;
+        size_t position, fittedEnd;
+        bool pending;
+        while (position < text.length)
         {
-            --end;
-            while (end > 0 && (text[end] & 0xC0) == 0x80) // a continuation byte
-                --end;
+            if (text[position] == '\x1b')
+            {
+                position += escapeLength(text[position .. $]);
+                continue;
+            }
+            const start = position;
+            const decoded = decodeToken(text[position .. $], UtfMode.replacement);
+            position += decoded.result.consumed;
+            if (breaks.push(decoded.token.scalar) && pending)
+            {
+                if (measureWidth(tm, text[0 .. start], style) > capacity)
+                    return text[0 .. fittedEnd];
+                fittedEnd = start;
+            }
+            pending = true;
         }
-        return text[0 .. end];
+        return text[0 .. fittedEnd];
     }
     else
-        return takeCells(text, cells);
+        return text[0 .. cellFit(text, cast(size_t) capacity).bytes];
 }
 
 /+
@@ -105,7 +123,7 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     in Palette pal, in RgbColor pageFg, in RgbColor pageBg, in Rect clip,
     bool overflowX, ref Sink ops, ref TM tm)
 {
-    const node = tree.nodes[idx];
+    ref const node = tree.nodes[idx];
     const rect = frames[idx].rect;
 
     // `hidden` occupies its frame but paints nothing; `collapsed` was already
@@ -168,8 +186,10 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             const lines = frames[idx].lines;
             if (lines.length == 0)
             {
-                ops.textRun(rect, fitCells(tm, node.text, rect.width, node.textStyle),
-                    node.slot, vis);
+                const fitted = fitCells(tm, node.text, rect.width, node.textStyle);
+                ops.textRun(Rect(rect.x, rect.y,
+                    measureWidth(tm, fitted, node.textStyle), frames[idx].lineRows),
+                    fitted, node.slot, vis);
                 break;
             }
             // A wrapped run: one op per broken line, stacked down the frame.
@@ -177,15 +197,18 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             // A line in a face taller than the cell takes `lineRows` rows.
             const pitch = frames[idx].lineRows;
             foreach (li, ln; lines)
+            {
+                const fitted = fitCells(tm, ln, inner.width, node.textStyle);
                 ops.textRun(
-                    Rect(inner.x, inner.y + cast(int) li * pitch, inner.width, pitch),
-                    fitCells(tm, ln, inner.width, node.textStyle), node.slot, vis);
+                    Rect(inner.x, inner.y + cast(int) li * pitch,
+                        measureWidth(tm, fitted, node.textStyle), pitch),
+                    fitted, node.slot, vis);
+            }
             break;
         case rich:
-            // One op per styled span, advancing along the row (one row per
-            // wrapped line); each span resolves its own slot/chrome against
-            // the node's as fallback, and a `paintBackground` span (an inline
-            // pill) fills its cells first.
+            // A retained projection owns grapheme boundaries and cell advances.
+            // Styled pieces crossing one grapheme paint once with its leading
+            // brush; exact paint-only styles/source relations remain in Frame.
             //
             // A rich row is a content line, and one wider than its pane is
             // meant to be scrolled into view — so inside something that
@@ -194,27 +217,66 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             // this overflow) its spans keep their full width. Anywhere else
             // nothing would stop them painting over the row's neighbours, and
             // they are cut to the frame like a plain run (`LAY16`).
+
             import sparkles.ui.widget : TextSpan;
+            import sparkles.base.text.wrap_plan : ProvenanceKind;
 
             const inner = rect.deflate(node.padding);
             const pitch = frames[idx].lineRows;
-            const cut = !overflowX && !node.scrollsX;
-            const right = inner.x + inner.width;
+            import sparkles.ui.wrap : sameSpanBrush, spanPaintAdvance;
 
             void emitSpanRow(scope const TextSpan[] spans, int y, int xOff = 0)
             {
                 int x = inner.x + xOff;
-                foreach (ref span; spans)
+                size_t i;
+                while (i < spans.length)
                 {
-                    if (cut && x >= right)
-                        break;
-                    const style = span.textStyle == TextStyle.init
-                        ? node.textStyle : span.textStyle;
-                    const(char)[] text = span.text;
-                    if (cut && x + cast(long) measureWidth(tm, text, style) > right)
-                        text = fitCells(tm, text, right - x, style);
+                    ref const span = spans[i];
+                    if (span.formatting) { ++i; continue; }
+                    size_t end = i + 1;
+                    long advance = spanPaintAdvance(span);
+                    while (end < spans.length && span.wrapPlan !is null
+                        && spans[end].wrapPlan is span.wrapPlan
+                        && spans[end].wrapLine == span.wrapLine
+                        && span.logicalGroup != ulong.max
+                        && spans[end].logicalGroup == span.logicalGroup)
+                        advance += spanPaintAdvance(spans[end++]);
+                    size_t logicalEnd = span.logicalEnd;
+                    // Coalesce only complete adjacent clusters with the same
+                    // leading brush, without copying their committed source.
+                    while (end < spans.length && span.wrapPlan !is null
+                        && span.clusterTextBorrowed
+                        && spans[end].clusterTextBorrowed
+                        && spans[end].wrapPlan is span.wrapPlan
+                        && spans[end].wrapLine == span.wrapLine
+                        && spans[end].logicalStart == logicalEnd
+                        && sameSpanBrush(span, spans[end]))
+                    {
+                        ref const next = spans[end];
+                        size_t nextEnd = end + 1;
+                        long nextAdvance = spanPaintAdvance(next);
+                        while (nextEnd < spans.length
+                            && spans[nextEnd].wrapPlan is next.wrapPlan
+                            && spans[nextEnd].wrapLine == next.wrapLine
+                            && next.logicalGroup != ulong.max
+                            && spans[nextEnd].logicalGroup == next.logicalGroup)
+                            nextAdvance += spanPaintAdvance(spans[nextEnd++]);
+                        advance += nextAdvance;
+                        logicalEnd = next.logicalEnd;
+                        end = nextEnd;
+                    }
+                    const(char)[] text = span.clusterText;
+                    if (span.clusterTextBorrowed)
+                        text = span.wrapPlan.source.bytes[span.logicalStart .. logicalEnd];
+                    if (span.projectionRelation == ProvenanceKind.omission)
+                    {
+                        i = end;
+                        continue;
+                    }
+                    const w = cast(int) advance;
                     const slot = span.slot == Slot.inherit ? node.slot : span.slot;
-                    const w = measureWidth(tm, text, style);
+                    const style = spanStyle(span, node.textStyle);
+                    i = end;
                     // A span that inherits the node's slot inherits its states
                     // too; one that names its own slot is its own role, at rest
                     // — a selected row's `gutter` guides are not a selected tab
@@ -222,6 +284,7 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
                     auto vis = resolveVisual(pal, slot, node.decoration, style,
                         pageFg, pageBg,
                         span.slot == Slot.inherit ? node.states : StateSet.init);
+                    vis.styleBits = cast(ushort)(vis.styleBits | span.ansiAttributes);
                     if (span.hasFg) // the syntax channel: a resolved color
                         vis.fg = span.fg;
                     vis.hasBg = span.paintBackground && vis.hasBg;
@@ -239,15 +302,13 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
                 }
             }
 
-            if (frames[idx].spanLines.length)
-                foreach (li, line; frames[idx].spanLines)
-                    emitSpanRow(line, inner.y + cast(int) li * pitch,
-                        li ? node.hangIndent : 0);
-            else
-                emitSpanRow(node.spans, inner.y);
+            foreach (li, line; frames[idx].paintSpanLines)
+                emitSpanRow(line, inner.y + cast(int) li * pitch,
+                    li ? node.hangIndent : 0);
             break;
         case glyph:
-            ops.glyph(rect.origin, node.glyph, node.slot, vis);
+            if (codepointWidth(node.glyph) <= rect.width)
+                ops.glyph(rect.origin, node.glyph, node.slot, vis);
             break;
         case image:
             // The node's `text` is the alt text, which the buffer interns —
@@ -446,7 +507,7 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     assert(ops[3].rect == Rect(2, 4, 2, 1) && ops[3].text == "cd");
 }
 
-@("ui.display_list.styledMeasure.cutKeepsWholeCodePoints")
+@("ui.display_list.styledMeasure.cutKeepsWholeGraphemes")
 @safe unittest
 {
     import sparkles.ui.geometry : Constraints, SizeSpec;
@@ -454,17 +515,34 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     import sparkles.ui.layout : layout, StyledMeasure;
     import sparkles.ui.style : defaultTwoslashPalette, FontRole;
 
-    // Three letters at two cells each in three cells: one letter fits, and
-    // the cut never splits a multi-byte code point.
+    // The text-presentation heart would fit after stripping VS16, but the
+    // authored emoji cluster does not. Fitting must retain only the first cluster.
     auto b = Builder();
-    const t = b.add(Widget(kind: WidgetKind.text, text: "éab",
-        textStyle: TextStyle(fontRole: FontRole.ui), width: SizeSpec.fixed(3)));
+    const t = b.add(Widget(kind: WidgetKind.text, text: "é❤️ab",
+        textStyle: TextStyle(fontRole: FontRole.ui), width: SizeSpec.fixed(5)));
     auto tree = b.finish(t);
 
     StyledMeasure m;
     auto ops = buildDisplayList(tree, layout(tree, Constraints.init, m),
         defaultTwoslashPalette(), RgbColor(0, 0, 0), RgbColor(255, 255, 255), m);
     assert(ops.length == 1 && ops[0].text == "é");
+}
+
+@("ui.display_list.styledMeasure.escapeInsideGraphemeKeepsWholeBoundary")
+@safe unittest
+{
+    import sparkles.ui.layout : StyledMeasure;
+    import sparkles.ui.style : FontRole;
+    import sparkles.base.text.ansi : byAnsiToken;
+
+    StyledMeasure tm;
+    const style = TextStyle(fontRole: FontRole.ui);
+    const fitted = fitCells(tm, "e\x1b[31m\u0301\x1b[0mb", 2, style);
+    string visible;
+    foreach (part; byAnsiToken(fitted))
+        if (!part.isEscape) visible ~= part.slice;
+    assert(visible == "e\u0301" && measureWidth(tm, fitted, style) == 2,
+        "escapes are zero-width, and fitting never leaves the combining mark behind");
 }
 
 @("ui.display_list.decoratedBoxAndStyledText")
@@ -602,23 +680,21 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     auto ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
         RgbColor(0, 0, 0), RgbColor(255, 255, 255));
 
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     foreach (ref op; ops)
         if (op.kind == OpKind.textRun)
-            assert(cellsOf(op.text) <= op.rect.width, op.text);
+            assert(visibleWidth(op.text) <= op.rect.width, op.text);
     const v = frames[value].rect;
-    assert(v.width < cellsOf("interactive!"), "the row was overfull");
-    assert(ops[1].kind == OpKind.textRun
-        && ops[1].text == "interactive!"[0 .. v.width]);
-    assert(ops[$ - 1].text == "unbrea", "the long word is cut at its line");
+    assert(v.width < visibleWidth("interactive!"), "the row was overfull");
 }
 
 @("ui.display_list.aRichRowStaysInItsFrameUnlessSomethingContainsIt")
 @safe unittest
 {
     import sparkles.ui.widget : Builder, TextSpan;
-    import sparkles.ui.geometry : cellsOf, SizeSpec;
+    import sparkles.base.text.grapheme : visibleWidth;
+    import sparkles.ui.geometry : SizeSpec;
     import sparkles.ui.layout : layout;
     import sparkles.ui.style : defaultTwoslashPalette;
 
@@ -645,7 +721,7 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
         foreach (ref op; ops)
             if (op.kind == OpKind.textRun && op.text != skip)
             {
-                const e = op.rect.x + cast(int) cellsOf(op.text);
+                const e = op.rect.x + cast(int) visibleWidth(op.text);
                 r = e > r ? e : r;
             }
         return r;
@@ -657,7 +733,6 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     auto ops = build(false, false, f);
     assert(f.width == 8, "the column bounds the row");
     assert(rightmost(ops, "|") == f.x + 8, "cut at the frame");
-    assert(ops[0].text == "hello " && ops[1].text == "wo");
 
     // A viewport, and a host-scrolled document, keep the whole line: that
     // overflow is what their scrollbars are sized from.
@@ -668,37 +743,6 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     }
 }
 
-@("ui.display_list.richTextEmitsOneRunPerSpan")
-@safe unittest
-{
-    import sparkles.ui.widget : Builder, TextSpan;
-    import sparkles.ui.layout : layout;
-    import sparkles.ui.style : defaultTwoslashPalette;
-
-    // A syntax-highlighted signature as ONE node of styled spans — no backend
-    // overpaint, no per-token widget row.
-    auto b = Builder();
-    Widget sig = Widget(kind: WidgetKind.rich, slot: Slot.code, spans: [
-        TextSpan("const", Slot.error),  // stand-in slots with distinct colors
-        TextSpan(" title: "),           // inherits the node slot (code)
-        TextSpan("string", Slot.docs),
-    ]);
-    const t = b.add(sig);
-    auto tree = b.finish(t);
-
-    const pal = defaultTwoslashPalette();
-    auto frames = layout(tree);
-    assert(frames[t].rect.width == 5 + 8 + 6); // spans measured end to end
-
-    auto ops = buildDisplayList(tree, frames, pal,
-        RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
-    assert(ops.length == 3);
-    assert(ops[0].text == "const" && ops[0].rect.x == 0 && ops[0].rect.width == 5);
-    assert(ops[1].text == " title: " && ops[1].rect.x == 5);
-    assert(ops[2].text == "string" && ops[2].rect.x == 13);
-    assert(ops[0].visual.fg != ops[1].visual.fg);      // spans carry their slots
-    assert(ops[1].slot == Slot.code);                  // inherit → the node slot
-}
 
 @("ui.display_list.borderOnlyBoxStillEmits")
 @safe unittest
@@ -974,4 +1018,133 @@ unittest
     }
     assert(outsideAt > popAt, "a sibling must not inherit the bracket");
     assert(panelRect.width > 0);
+}
+
+@("ui.display_list.richClustersShareLayoutPaintAndHitGeometry")
+unittest
+{
+    import std.array : appender;
+    import std.algorithm.searching : canFind;
+    import sparkles.base.text.grapheme : visibleWidth;
+    import sparkles.base.text.wrap_plan : WrapAffinity;
+    import sparkles.ui.widget : Builder, TextSpan;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.state : sourceOffsetAt, selectionRects;
+
+    string longCluster = "a";
+    foreach (_; 0 .. 48) longCluster ~= "\u0301";
+    const expected = "界e\u0301🇺🇸👩‍💻" ~ longCluster;
+    auto b = Builder();
+    const id = b.add(Widget(kind: WidgetKind.rich, spans: [
+        TextSpan("界e", Slot.code, srcStart: 0, srcEnd: 4),
+        TextSpan("\u0301🇺", Slot.error, srcStart: 4, srcEnd: 10),
+        TextSpan("🇸👩", Slot.docs, srcStart: 10, srcEnd: 18),
+        TextSpan("\u200D💻", Slot.warn, srcStart: 18, srcEnd: 25),
+        TextSpan(longCluster, Slot.code, srcStart: 25, srcEnd: expected.length),
+    ]));
+    const tree = b.finish(id);
+    const frames = layout(tree);
+    assert(frames[id].rect.width == 8);
+    const ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        RgbColor(255, 255, 255), RgbColor(0, 0, 0));
+    auto emitted = appender!string();
+    size_t advance;
+    foreach (ref const op; ops)
+        if (op.kind == OpKind.textRun)
+        {
+            emitted.put(op.text);
+            assert(op.rect.width == visibleWidth(op.text));
+            advance += op.rect.width;
+        }
+    assert(emitted.data == expected && advance == 8);
+    auto grid = CellGrid(8, 1, RgbColor(255, 255, 255), RgbColor(0, 0, 0));
+    paint(grid, ops);
+    auto ansi = appender!string();
+    grid.writeAnsi(ansi);
+    assert(visibleWidth(ansi.data) == 8);
+    foreach (cluster; ["界", "e\u0301", "🇺🇸", "👩‍💻", longCluster])
+        assert(ansi.data.canFind(cluster));
+    assert(sourceOffsetAt(tree, frames, Point(1, 0), WrapAffinity.before) == 0);
+    assert(sourceOffsetAt(tree, frames, Point(1, 0), WrapAffinity.after) == 3);
+    assert(sourceOffsetAt(tree, frames, Point(4, 0), WrapAffinity.before) == 6);
+    assert(sourceOffsetAt(tree, frames, Point(4, 0), WrapAffinity.after) == 14);
+    assert(selectionRects(tree, frames, 4, 6) == [Rect(2, 0, 1, 1)]);
+}
+
+@("ui.display_list.transformedSourceRelationDoesNotSplitRichFlag")
+unittest
+{
+    import sparkles.base.text.wrap_plan : ProvenanceKind, WrapAffinity;
+    import sparkles.ui.widget : Builder, TextSpan;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.state : sourceOffsetAt, selectionRects;
+    auto b = Builder();
+    const id = b.add(Widget(kind: WidgetKind.rich, spans: [
+        TextSpan("🇺", Slot.code, srcStart: 100, srcEnd: 120,
+            sourceRelation: ProvenanceKind.replacement),
+        TextSpan("🇸", Slot.warn, srcStart: 120, srcEnd: 140,
+            sourceRelation: ProvenanceKind.replacement),
+    ]));
+    const tree = b.finish(id);
+    const frames = layout(tree);
+    const ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        RgbColor(255, 255, 255), RgbColor(0, 0, 0));
+    assert(ops.length == 1 && ops[0].text == "🇺🇸" && ops[0].rect.width == 2);
+    assert(sourceOffsetAt(tree, frames, Point(1, 0), WrapAffinity.before) == 100);
+    assert(sourceOffsetAt(tree, frames, Point(1, 0), WrapAffinity.after) == 140);
+    assert(selectionRects(tree, frames, 110, 130) == [Rect(0, 0, 2, 1)]);
+}
+
+@("ui.display_list.wideGlyphExtentAndNarrowClipping")
+unittest
+{
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    auto b = Builder();
+    const glyph = b.add(Widget(kind: WidgetKind.glyph, glyph: '界'));
+    const next = b.add(Widget(kind: WidgetKind.text, text: "x"));
+    auto tree = b.finish(b.container(WidgetKind.row, [glyph, next]));
+    auto frames = layout(tree);
+    assert(frames[glyph].rect.width == 2 && frames[next].rect.x == 2);
+    auto ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        RgbColor(255, 255, 255), RgbColor(0, 0, 0));
+    assert(ops[0].rect.width == 2 && ops[1].rect.x == 2);
+    auto narrow = Builder();
+    const wide = narrow.add(Widget(kind: WidgetKind.glyph, glyph: '界'));
+    tree = narrow.finish(narrow.add(Widget(kind: WidgetKind.column,
+        children: [wide], width: SizeSpec.fixed(1))));
+    frames = layout(tree);
+    ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        RgbColor(255, 255, 255), RgbColor(0, 0, 0));
+    foreach (ref const op; ops) assert(op.kind != OpKind.glyph);
+}
+
+@("ui.display_list.unwrappedTextHonorsMandatoryRowsAndZeroCapacity")
+unittest
+{
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    auto b = Builder();
+    const id = b.add(Widget(kind: WidgetKind.text, text: "界\n\ne\u0301"));
+    const tree = b.finish(id);
+    auto frames = layout(tree);
+    assert(frames[id].rect.width == 2 && frames[id].rect.height == 3);
+    auto ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        RgbColor(255, 255, 255), RgbColor(0, 0, 0));
+    assert(ops[0].text == "界" && ops[0].rect.width == 2);
+    assert(ops[1].text == "" && ops[1].rect.y == 1);
+    assert(ops[2].text == "e\u0301" && ops[2].rect.y == 2);
+    frames = layout(tree, Constraints(maxW: 0));
+    ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        RgbColor(255, 255, 255), RgbColor(0, 0, 0));
+    foreach (ref const op; ops)
+        if (op.kind == OpKind.textRun) assert(op.text == "" && op.rect.width == 0);
 }

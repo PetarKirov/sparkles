@@ -358,20 +358,20 @@ string bindingsMarkdown() @safe pure
     static string keyName(string canonical)
     {
         import std.algorithm.searching : startsWith;
-        import std.uni : toUpper;
+        import std.ascii : toUpper;
 
         string s = canonical, out_;
         foreach (mod; ["ctrl+", "alt+", "shift+", "super+"])
             if (s.startsWith(mod) && s.length > mod.length)
             {
-                out_ ~= mod[0 .. 1].toUpper ~ mod[1 .. $];
+                out_ ~= toUpper(mod[0]) ~ mod[1 .. $];
                 s = s[mod.length .. $];
             }
         if (s.length == 1)
-            return out_ ~ (out_.length ? s.toUpper : s);
+            return out_ ~ (out_.length ? toUpper(s[0]) ~ s[1 .. $] : s);
         if (s == "pageup" || s == "pagedown")
             return out_ ~ "Page" ~ (s == "pageup" ? "Up" : "Down");
-        return out_ ~ s[0 .. 1].toUpper ~ s[1 .. $];
+        return out_ ~ toUpper(s[0]) ~ s[1 .. $];
     }
 
     string[3][] rows = [["Keys", "Action", "Where"]];

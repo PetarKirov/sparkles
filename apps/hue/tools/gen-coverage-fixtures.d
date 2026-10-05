@@ -30,20 +30,21 @@
 module gen_coverage_fixtures;
 
 import std.algorithm.iteration : map;
-import std.algorithm.searching : canFind, countUntil;
+import std.algorithm.searching : canFind;
 import std.array : appender, array, join;
 import std.conv : text;
 import std.exception : enforce;
 import std.file : mkdirRecurse, write;
 import std.path : buildPath;
 import std.stdio : stderr, writefln, writeln;
-import std.string : split, splitLines, strip;
+import std.string : indexOf, split, splitLines, strip;
 
 import sparkles.test_utils.string : outdent;
 
 import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 
 import sparkles.code_instrumentation;
+import sparkles.base.text.errors : ParseErrorCode, parseErr, parseOk;
 
 // ── The one truth every emitter encodes ─────────────────────────────────────
 
@@ -105,17 +106,18 @@ immutable LineTruth[] dTruth = [
 ];
 
 /// The same program in JavaScript, for V8 — which is a JS engine's format, and
-/// whose byte ranges only mean anything against the source they were taken
-/// from. Kept line-for-line comparable to `dSource` so the two overlays read
+/// whose native UTF-16 ranges only mean anything against the original source
+/// snapshot they were taken from. Kept line-for-line comparable to `dSource` so the two overlays read
 /// the same way side by side.
 ///
 /// A $(LINK2 https://dlang.org/spec/lex#delimited_strings, delimited string)
 /// rather than a token string: `q{}` lexes its contents as D, and this is not
 /// D. The identifier form takes the text verbatim, so what is written here is
 /// byte-for-byte what lands on disk — which matters more than usual, because
-/// V8 addresses this file by byte offset.
+/// V8 addresses this file by UTF-16 code-unit offset. The BMP and supplementary
+/// comment deliberately makes those offsets differ from the UTF-8 byte spans.
 enum jsSourceText = q"JS
-export function add(a, b) {
+export /* 界😀 */ function add(a, b) {
     return a + b;
 }
 
@@ -300,17 +302,39 @@ string emitLlvmJson(in string[] src, in LineTruth[] truth, string sourcePath)
 string emitV8Json(in string[] src, string sourcePath)
 {
     const source = src.join("\n") ~ "\n";
+    import sparkles.base.text.source_map : SourceMapKey, SourceMapWorkspace,
+        SourceMapBoundary, SourceMapEpoch, SourceByteOffset, Utf16Offset,
+        MapStatus, buildSourceMap;
+    import sparkles.base.text.width : CellPolicy;
+    SourceMapKey key;
+    key.cellPolicy = CellPolicy.none;
+    key.cellPolicyRevision = 0;
+    auto workspace = SourceMapWorkspace(epoch: new SourceMapEpoch[1]);
+    auto built = buildSourceMap(source, key, workspace);
+    enforce(built.status == MapStatus.workspaceFull, "invalid V8 fixture source");
+    workspace.boundaries = new SourceMapBoundary[built.requiredBoundaries];
+    built = buildSourceMap(source, key, workspace);
+    enforce(built.succeeded(), "cannot map V8 fixture source");
+    const map = built.view;
 
-    /// The byte range of `needle`, which must occur exactly once.
+    size_t utf16At(size_t byteOffset)
+    {
+        const offset = map.mapTo!Utf16Offset(key, SourceByteOffset(byteOffset));
+        enforce(offset.succeeded(), "fixture range is not an exact scalar boundary");
+        return offset.value.value;
+    }
+
+    /// The native UTF-16 range of `needle`, which must occur exactly once.
     string range(string needle, ulong count)
     {
-        const at = source.countUntil(needle);
+        // indexOf returns UTF-8 bytes; countUntil would count decoded scalars.
+        const at = source.indexOf(needle);
         enforce(at >= 0, "fixture text not found: " ~ needle);
-        return text(`{"startOffset":`, at, `,"endOffset":`, at + needle.length,
+        return text(`{"startOffset":`, utf16At(at), `,"endOffset":`, utf16At(at + needle.length),
             `,"count":`, count, `}`);
     }
 
-    const whole = text(`{"startOffset":0,"endOffset":`, source.length, `,"count":1}`);
+    const whole = text(`{"startOffset":0,"endOffset":`, utf16At(source.length), `,"count":1}`);
 
     return text(
         `{"result":[{"scriptId":"1","url":`, sourcePath.jsonString, `,"functions":[`,
@@ -490,7 +514,12 @@ size_t verifyAll(in Fixture[] fixtures)
             continue;
         }
 
-        auto report = loadCoverage(f.path, artifact, source);
+        auto report = loadCoverage(f.path, artifact, (const(char)[] path) @safe {
+            if (path != f.sourcePath)
+                return parseErr!(const(char)[])(ParseErrorCode.unknownValue, 0,
+                    "fixture script has no matching original source");
+            return parseOk(cast(const(char)[]) source);
+        });
         if (!report)
         {
             writefln("  ✗ %-5s parse failed at byte %s: %s", f.name,

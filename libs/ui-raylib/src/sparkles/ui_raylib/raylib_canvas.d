@@ -23,7 +23,8 @@ import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
 import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, RuleEdge, Scrollbar,
     visualOf;
-import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Insets, Point, Rect, Size;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.image : fitRect, ImageFit, ImageHandle;
 import sparkles.ui.image_raster : ImageRung, imageRungOf, paintImageRaster;
@@ -250,12 +251,13 @@ struct RaylibCanvas
     // folds fills both of its cells, as on the grid.
     private const(char)[] projected(return scope const(char)[] text) const
     {
-        import std.utf : byDchar, encode;
+        import sparkles.base.text.tokens : byUtfToken;
+        import sparkles.base.text.utf : encodeScalar, UtfMode, UtfStatus;
         import sparkles.base.text.width : codepointWidth;
 
         bool all = true;
-        foreach (dchar g; text.byDchar)
-            if (!admits(capabilities, g))
+        foreach (token; byUtfToken(text, UtfMode.replacement))
+            if (!admits(capabilities, token.scalar))
             {
                 all = false;
                 break;
@@ -263,12 +265,16 @@ struct RaylibCanvas
         if (all)
             return text;
         char[] r;
-        foreach (dchar g; text.byDchar)
+        foreach (token; byUtfToken(text, UtfMode.replacement))
         {
+            const g = token.scalar;
             const p = projectGlyph(g, capabilities);
             char[4] enc;
+            const encoded = encodeScalar(p, enc[]);
+            if (encoded.status != UtfStatus.ok)
+                throw new Exception("Invalid Unicode projected glyph");
             foreach (_; 0 .. (p != g && codepointWidth(g) == 2) ? 2 : 1)
-                r ~= enc[0 .. encode(enc, p)];
+                r ~= enc[0 .. encoded.written];
         }
         return r;
     }
@@ -588,11 +594,14 @@ struct RaylibCanvas
     /// Draws a single glyph `g` at `at` in `v.fg` (with its face).
     void glyph(in Point at, dchar glyph, in Visual visual) @system
     {
-        import std.utf : encode;
+        import sparkles.base.text.utf : encodeScalar, UtfStatus;
 
         const v = narrowed(visual);
         char[4] enc;
-        const n = encode(enc, projectGlyph(glyph, capabilities));
+        const encoded = encodeScalar(projectGlyph(glyph, capabilities), enc[]);
+        if (encoded.status != UtfStatus.ok)
+            throw new Exception("Invalid Unicode projected glyph");
+        const n = encoded.written;
         drawText(*fonts, cstr(enc[0 .. n]), px(at.x), py(at.y), rlTextStyle(v), rlFg(v));
     }
 
@@ -821,11 +830,10 @@ struct RaylibCanvas
         return m <= 0 ? 1 : cast(float) m;
     }
 
-    /// The cell extent of a text run (height 1). The width authority is
-    /// `cellsOf` — the toolkit's one width authority, the same one-column-per-
-    /// codepoint advance `drawText` uses.
+    /// The cell extent of a text run (height 1), from the owned terminalKitty
+    /// `visibleWidth` profile shared with layout and clipping.
     Size measure(scope const(char)[] text) @system
-        => Size(cast(int) cellsOf(text), 1);
+        => Size(cast(int) visibleWidth(text), 1);
 
     /// NUL-terminates `s` in the scratch buffer for a raylib string draw.
     private const(char)[] cstr(scope const(char)[] s) @system
@@ -838,7 +846,7 @@ struct RaylibCanvas
 
 /**
 The text measurer for a raylib window (`LAY5`, design-system `GLY10`): cell font
-runs measure one column a code point, and an interface run (`FontRole.ui`)
+runs measure owned whole-grapheme cell advances, and an interface run (`FontRole.ui`)
 measures in the interface face at its type step — its pixel width rounded up to
 whole cells, and as many rows as one line of that step needs. Pass it to
 `layout` and `buildDisplayList` so the layout, the display list and
@@ -849,16 +857,52 @@ struct GuiMeasure
     UiFonts* uiFonts; /// the interface faces; null or absent: cell metrics only
     int cellW = 1;    /// one cell's width, in the faces' drawing units
     int cellH = 1;    /// one cell's height, in the same units
+    /// Owned whole-cluster cell widths and additive glyph advances have
+    /// non-decreasing prefixes. Arbitrary measurers must not inherit this.
+    enum bool monotonePrefixes = true;
+
+    /// Incremental complete-brush metrics: one glyph traversal, with the same
+    /// floating-point addition order and final rounding as `width`.
+    BrushMetrics brushMetrics(in UiTextStyle style) @safe nothrow @nogc
+    {
+        return BrushMetrics(usesUiFace(style) ? uiFonts : null,
+            uiStepOf(style.fontRole, style.typeStep, style.fontScale), style.bold, cellW);
+    }
+
+    struct BrushMetrics
+    {
+        private UiFonts* fonts;
+        private int step;
+        private bool bold;
+        private int cellWidth;
+        private float pixels = 0;
+        private int cells;
+
+        /// Append exactly one or more complete owned graphemes, never a
+        /// fragment of one; the cursor belongs to a single unchanged brush.
+        int append(scope const(char)[] text) @safe nothrow @nogc
+        {
+            if (fonts is null)
+            {
+                cells += cast(int) visibleWidth(text);
+                return cells;
+            }
+            () @trusted {
+                fonts.appendWidth(cast(size_t) step, bold, text, pixels);
+            }();
+            return cellsCeil(pixels, cellWidth);
+        }
+    }
 
     /// The cell font's width of `s`.
     int width(scope const(char)[] s) const @safe pure nothrow @nogc
-        => cast(int) cellsOf(s);
+        => cast(int) visibleWidth(s);
 
     /// The width of `s` in `style`, in whole cells.
-    int width(scope const(char)[] s, in UiTextStyle style) @safe
+    int width(scope const(char)[] s, in UiTextStyle style) @safe nothrow @nogc
     {
         if (!usesUiFace(style))
-            return cast(int) cellsOf(s);
+            return cast(int) visibleWidth(s);
         const step = uiStepOf(style.fontRole, style.typeStep, style.fontScale);
         // The faces' advances live in raylib's glyph tables, which `UiFonts`
         // indexes through raw pointers; reading them changes nothing.

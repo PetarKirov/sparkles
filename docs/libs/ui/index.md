@@ -15,7 +15,7 @@ color — the `Palette` resolves it to a `Visual` during display-list constructi
 
 | Module                     | Role                                                                                                                                                                                                                                                                                                                                |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `geometry`                 | `Point`/`Size` (specializing `sparkles:math`'s `Vector`, like `TermSize`/`TermPosition`), `Rect`/`Insets` in abstract cells; `SizeSpec`; `cellsOf` — the **one** width authority                                                                                                                                                    |
+| `geometry`                 | `Point`/`Size` (specializing `sparkles:math`'s `Vector`, like `TermSize`/`TermPosition`), `Rect`/`Insets` in abstract cells and `SizeSpec`; text width/fitting comes from owned base `visibleWidth`/`fitCells`, not geometry exports                                                                                                |
 | `style`                    | `Slot`, the resolved `Visual` (color + border/radius/shadow/font), authoring `Decoration`/`TextStyle`, `Palette`, `defaultTwoslashPalette`, `resolveSlot`/`resolveVisual`                                                                                                                                                           |
 | `canvas`                   | the DbI `isCanvas!T` capability concept (not an interface), `DrawOp`, the `@safe` `RecordingCanvas`                                                                                                                                                                                                                                 |
 | `widget`                   | the flat-arena `Widget` (currently a tagged record; `WGT3` targets a closed sum) with explicit `uint[]` child-index lists + `Builder`                                                                                                                                                                                               |
@@ -31,6 +31,42 @@ color — the `Palette` resolves it to a `Visual` during display-list constructi
 
 The concrete canvases are sibling adapters that depend on `sparkles:ui`:
 `RaylibCanvas` in `sparkles:ui-raylib` and `GridCanvas` in `sparkles:ui-tui`.
+
+Text-cell authority is owned Unicode 18.0.0 **whole extended graphemes**, without
+a scalar-count/UTF-8-byte cap. Plain display-list runs use base `fitCells`; rich
+runs retain selected projection spans and advances. Font ink and backend glyph
+coverage do not redefine cell occupancy. Retained paragraph composition is specified
+separately in the [text-layout contract](../../specs/text-layout/SPEC.md).
+
+`GridCanvas` retains complete clusters on targets declaring `graphemeClusters`,
+including sequences longer than the former inline-cell storage bound. Folding
+to a leading code point is negotiated target degradation, not a byte-count limit;
+the following glyph keeps its original cell position on either target.
+
+Uncommitted rich paragraphs retain `Widget.whitespace` through width allocation.
+The default is owned `WhitespaceMode.collapse` for prose; source-view code rows
+explicitly select `preserve`, retaining authored indentation and trailing spaces
+without disabling bounded wrapping. `CodeViewOptions.tabWidth` owns contextual
+tab expansion before those rows enter layout. Already-realized rich rows keep
+their committed projection instead of applying whitespace policy again.
+
+Styled targets may supply `brushMetrics(style).append(wholeClusterChunk)` for
+incremental rich-row metrics. Raylib's `GuiMeasure` uses it for both cell and
+interface faces: each cluster is traversed once, and cumulative pixel advances
+are rounded at complete brush-run boundaries, not independently per cluster.
+Inherited styles and whole-cluster paint/hit geometry remain shared. Interface
+measurement and drawing both skip ANSI escape sequences with the base scanner.
+Only an explicit `monotonePrefixes` certificate enables the wrapping prefix
+search optimization; arbitrary callbacks remain uncertified. For a callback
+whose prefixes move backwards, rich hit boundaries use their suffix-minimum
+envelope: the movement is distributed backwards without changing the measured
+complete-run extent or introducing negative cluster advances. Negative target
+extents remain invalid; reconciliation never turns them into silent zero-width
+content. Real interface pixel accumulators explicitly start at zero, not D's
+default floating-point NaN.
+Non-`@nogc` arbitrary adapters retain exact retry enumeration with a
+collision-checked hash cache and can remain expensive; `GuiMeasure` uses the
+direct `@nogc` measurement callback rather than that adapter.
 
 ## The two-direction parity harness
 

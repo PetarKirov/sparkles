@@ -542,18 +542,15 @@ struct DroidTerminal
                 strike(h, ke);
                 return;
             case ExtraKeyKind.text:
-                import std.utf : decodeFront;
+                import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
 
                 KeyEvent ke;
                 ke.key = Key.char_;
                 ke.text = key.text;
-                string t = key.text;
-                if (t.length)
-                {
-                    const c = decodeFront(t);
-                    if (t.length == 0)
-                        ke.unshifted = c; // one character: a key of its own
-                }
+                const decoded = decodeToken(key.text, UtfMode.strict);
+                if (decoded.result.status == UtfStatus.ok
+                    && decoded.result.consumed == key.text.length)
+                    ke.unshifted = decoded.token.scalar; // exactly one scalar
                 strike(h, ke);
                 return;
         }
@@ -586,7 +583,7 @@ struct DroidTerminal
         import raylib : Color, DrawRectangle;
         import sparkles.raylib_text.draw : drawText;
         import sparkles.raylib_text.style : TextStyle;
-        import std.utf : count;
+        import sparkles.base.text.grapheme : visibleWidth;
 
         if (keys.length == 0 || g.keysHeight == 0 || fonts is null)
             return;
@@ -604,7 +601,7 @@ struct DroidTerminal
                 if (lit)
                     DrawRectangle(x0 + 2, y + 2, x1 - x0 - 4, g.keyHeight - 4,
                         Color(0x8a, 0xad, 0xf4, 255));
-                const cols = cast(int) count(key.label);
+                const cols = cast(int) visibleWidth(key.label);
                 const tx = x0 + (x1 - x0 - cols * cellW) / 2;
                 const ty = y + (g.keyHeight - cellH) / 2;
                 drawText(*fonts, key.label, tx, ty, TextStyle.init,

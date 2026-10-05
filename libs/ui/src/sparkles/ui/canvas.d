@@ -48,7 +48,9 @@ import std.sumtype : SumType;
 public import std.sumtype : match;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.geometry : Point, Rect, Size, cellsOf;
+import sparkles.base.text.width : codepointWidth;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.effect : EffectId;
 import sparkles.ui.image : ImageFit, ImageHandle;
 import sparkles.ui.state : scrollbarThumb;
@@ -447,7 +449,7 @@ struct DrawOp
         => payload.match!(
             (in FillRect f) => f.rect,
             (in TextRun t) => t.rect,
-            (in Glyph g) => Rect(g.at.x, g.at.y, 1, 1),
+            (in Glyph g) => Rect(g.at.x, g.at.y, codepointWidth(g.glyph), 1),
             (in Line l) => Rect(l.from.x, l.from.y, 0, 0),
             (in Rule r) => r.rect,
             (in Scrollbar s) => s.rect,
@@ -704,7 +706,7 @@ Anything shorter-lived goes through
 $(REF CmdBuffer.textRun, sparkles,ui,cmd_buffer), which copies.
 
 `rect.width` should be the display-cell advance (use
-$(REF cellsOf, sparkles,ui,geometry) or grapheme `visibleWidth`).
+$(REF visibleWidth, sparkles,base,text,grapheme)).
 */
 DrawOp textRunOp(in Rect rect, string text, Slot slot = Slot.inherit,
     in Visual visual = Visual.init) @safe pure nothrow @nogc
@@ -888,7 +890,7 @@ struct RecordingCanvas
     void textRun(in Point at, scope const(char)[] text, in Visual v)
     {
         ops ~= DrawOp(TextRun(
-            rect: Rect(at.x, at.y, cast(int) cellsOf(text), 1),
+            rect: Rect(at.x, at.y, cast(int) visibleWidth(text), 1),
             text: _arena.intern(text),
             ink: inkOf(v),
         ));
@@ -941,7 +943,7 @@ struct RecordingCanvas
     }
 
     Size measure(scope const(char)[] text) const
-        => Size(cast(int) cellsOf(text), 1);
+        => Size(cast(int) visibleWidth(text), 1);
 }
 
 // The recorder is the baseline conforming canvas — if this ever fails to

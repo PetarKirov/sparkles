@@ -6,7 +6,7 @@ import std.conv : to;
 import std.meta : AliasSeq, NoDuplicates, staticMap;
 import std.path : baseName;
 import std.range : empty;
-import std.string : toLower;
+import sparkles.base.text.case_text : asciiLower;
 import std.sumtype : match, SumType;
 import std.traits : FieldNameTuple, getUDAs, isDynamicArray, isIntegral, isSomeString;
 
@@ -1078,7 +1078,7 @@ private CliExpected!T parseValue(T)(string value, Option optionInfo)
 
 private CliExpected!bool parseBool(string value) @safe
 {
-    switch (value.toLower)
+    switch (value.asciiLower)
     {
         case "true":
         case "yes":

@@ -32,7 +32,7 @@ import core.atomic : atomicLoad, atomicStore, cas;
 
 import jni_c;
 import sparkles.android.autofill : autofillOwnsField;
-import sparkles.android.ime_diff : diff, eachCodePoint, FieldEdit, isSentinelRun,
+import sparkles.android.ime_diff : diff, FieldEdit, isSentinelRun,
     sentinel, sentinelLength;
 import sparkles.android.main_thread : mainThreadReady, postToMainThread;
 import sparkles.android.text_input : imeBackspace, imeEnter, pushTyped;
@@ -282,5 +282,15 @@ private void feed(FieldEdit e) nothrow @nogc
 {
     foreach (_; 0 .. e.deleted)
         pushTyped(imeBackspace);
-    eachCodePoint(e.inserted, (dchar c) { pushTyped(c == '\n' ? imeEnter : c); });
+    import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
+
+    // JNI GetStringChars supplies ordinary UTF-16, not JNI modified UTF-8.
+    for (size_t at; at < e.inserted.length;)
+    {
+        const decoded = decodeToken(e.inserted[at .. $], UtfMode.replacement, true, at);
+        assert(decoded.result.status == UtfStatus.ok);
+        const c = decoded.token.scalar;
+        pushTyped(c == '\n' ? imeEnter : c);
+        at += decoded.result.consumed;
+    }
 }

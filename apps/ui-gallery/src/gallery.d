@@ -1553,7 +1553,7 @@ struct Gallery
 
     private uint statusBar(ref Builder b) @safe
     {
-        import sparkles.ui.geometry : cellsOf;
+        import sparkles.base.text.grapheme : visibleWidth;
 
         enum string helpText = "? keys   q quit";
         const region = s.region == Region.nav ? "pages" : "page";
@@ -1562,8 +1562,8 @@ struct Gallery
         // side, the region label, and the help chip with its gap — which is
         // never dropped, because it is the way to every binding a full bar
         // had no room for.
-        long budget = cast(long) s.surface.width - 2 - cellsOf(region)
-            - 1 - cellsOf(helpText);
+        long budget = cast(long) s.surface.width - 2 - visibleWidth(region)
+            - 1 - visibleWidth(helpText);
 
         uint[] hints;
         hints ~= b.add(Widget(
@@ -1589,7 +1589,7 @@ struct Gallery
             {
                 seenCmd[bnd.cmd] = true;
                 const hint = chordText(bnd.path[0]) ~ " " ~ bnd.desc;
-                const need = 1 + cellsOf(hint); // the gap before it, then it
+                const need = 1 + visibleWidth(hint); // the gap before it, then it
                 if (need > budget)
                     break;
                 budget -= need;
@@ -2050,7 +2050,7 @@ version (unittest)
 @safe unittest
 {
     import sparkles.ui.canvas : OpKind;
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     // Dragged to its floor the sidebar is narrower than "Property tree".
     // The caption used to paint its full length anyway — over the bar's
@@ -2070,7 +2070,7 @@ version (unittest)
         if (op.kind == OpKind.textRun && op.rect.x < listRight
             && op.rect.y > 0 && op.rect.y < 39)
         {
-            assert(op.rect.x + cast(int) cellsOf(op.text) <= listRight,
+            assert(op.rect.x + cast(int) visibleWidth(op.text) <= listRight,
                 op.text);
             sawCut |= op.text == "Property";
         }

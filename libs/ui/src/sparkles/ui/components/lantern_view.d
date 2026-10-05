@@ -180,37 +180,12 @@ private void appendChar(ref LabelArena arena, dchar ch) @safe nothrow @nogc
         arena ~= "Space";
         return;
     }
-    if (ch < 0x80)
-    {
-        arena ~= cast(char) ch;
-        return;
-    }
-    // Most tables' code points are ASCII; encode anything else so a
-    // configured binding cannot render as mojibake.
+    import sparkles.base.text.utf : encodeScalar, UtfMode;
+
+    // An invalid configured binding has an explicit replacement spelling.
     char[4] buf;
-    size_t n;
-    if (ch < 0x800)
-    {
-        buf[0] = cast(char)(0xC0 | (ch >> 6));
-        buf[1] = cast(char)(0x80 | (ch & 0x3F));
-        n = 2;
-    }
-    else if (ch < 0x1_0000)
-    {
-        buf[0] = cast(char)(0xE0 | (ch >> 12));
-        buf[1] = cast(char)(0x80 | ((ch >> 6) & 0x3F));
-        buf[2] = cast(char)(0x80 | (ch & 0x3F));
-        n = 3;
-    }
-    else
-    {
-        buf[0] = cast(char)(0xF0 | (ch >> 18));
-        buf[1] = cast(char)(0x80 | ((ch >> 12) & 0x3F));
-        buf[2] = cast(char)(0x80 | ((ch >> 6) & 0x3F));
-        buf[3] = cast(char)(0x80 | (ch & 0x3F));
-        n = 4;
-    }
-    arena ~= buf[0 .. n];
+    const encoded = encodeScalar(ch, buf[], UtfMode.replacement);
+    arena ~= buf[0 .. encoded.written];
 }
 
 /// The widest key label and the widest description among `items`, which is
@@ -218,31 +193,21 @@ private void appendChar(ref LabelArena arena, dchar ch) @safe nothrow @nogc
 private void measure(B)(scope const(B)[] items, size_t depth,
     ref LabelArena arena, out int keyWidth, out int descWidth)
 {
+    import sparkles.base.text.grapheme : visibleWidth;
     const mark = arena.length;
     foreach (ref b; items)
     {
         const s = writeKeyLabel(arena, b.path[depth]);
-        const w = cast(int) displayWidth(arena[][s.start .. s.start + s.length]);
+        const w = cast(int) visibleWidth(arena[][s.start .. s.start + s.length]);
         if (w > keyWidth)
             keyWidth = w;
-        const d = cast(int) b.desc.length + (b.group.length ? 1 : 0);
+        const d = cast(int) visibleWidth(b.desc) + (b.group.length ? 1 : 0);
         if (d > descWidth)
             descWidth = d;
     }
     arena.length = mark; // measurement is not storage
 }
 
-/// Cells a UTF-8 label occupies. One per code point: the panel's own labels
-/// are ASCII plus a handful of BMP arrows; a true width table is a host
-/// concern.
-private size_t displayWidth(scope const(char)[] s) @safe pure nothrow @nogc
-{
-    size_t n;
-    foreach (c; s)
-        if ((c & 0xC0) != 0x80)
-            ++n;
-    return n;
-}
 
 /**
 Builds the panel.

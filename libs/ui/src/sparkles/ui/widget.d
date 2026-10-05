@@ -16,6 +16,7 @@ interleave in the arena.
 module sparkles.ui.widget;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.base.text.wrap : WhitespaceMode;
 import sparkles.ui.canvas : LineStyle, RuleEdge;
 import sparkles.ui.geometry : Insets, Point, Size, SizeSpec;
 import sparkles.ui.style : Decoration, Slot, StateSet, TextStyle;
@@ -95,6 +96,10 @@ struct Widget
     /// How the `text` run breaks into lines when its allocated width is
     /// narrower than its content (`none` keeps it a single line).
     TextWrap wrap;
+    /// Whitespace realization for uncommitted rich paragraphs. Prose collapses
+    /// by default; code preserves authored indentation and trailing spaces.
+    /// Already-realized rich rows retain their committed projection.
+    WhitespaceMode whitespace = WhitespaceMode.collapse;
     /// Wrapped continuation lines indent by this many cells (a leader's hang —
     /// list items align under their text, not under the bullet).
     int hangIndent;

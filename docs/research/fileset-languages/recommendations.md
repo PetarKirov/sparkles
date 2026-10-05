@@ -82,11 +82,19 @@ program below runs the current rule and the proposed one side by side:
     }
 +/
 
-import sparkles.fuzzy.common : PathFlavor;
-import sparkles.fuzzy.glob : GlobMatchWorkspace, GlobProgram, compileGlob, globMatch;
+import sparkles.fuzzy.common : DefaultFuzzyCaps, PathFlavor;
+import sparkles.fuzzy.glob : GlobCompileWorkspace, GlobMatchWorkspace,
+    GlobProgram, compileGlob, globMatch;
 
 import std.path : baseName, globMatch2 = globMatch;
 import std.stdio : writefln;
+
+class GlobScratch
+{
+    GlobCompileWorkspace!(DefaultFuzzyCaps.maxGlobInstructions,
+        DefaultFuzzyCaps.maxGlobRanges) compile;
+    GlobMatchWorkspace!() match;
+}
 
 /// Today: `glob_walk.globAny` — each glob tried against the whole relative
 /// path *and* the base name, over Phobos' path-unaware matcher.
@@ -95,22 +103,21 @@ bool today(string rel, string pattern) @safe
 
 /// Proposed: one `.gitignore`-shaped rule over the bounded NFA — a pattern
 /// with no unescaped `/` floats, otherwise it is anchored.
-bool proposed(string rel, string pattern) @safe
+bool proposed(string rel, string pattern, scope GlobScratch scratch) @safe
 {
     if (!hasUnescapedSlash(pattern))
         // Float: `**/p`, plus `p` itself, because a leading `**/` in the
         // engine consumes at least one separator (see the note below).
-        return matches(pattern, rel) || matches("**/" ~ pattern, rel);
-    return matches(pattern, rel);
+        return matches(pattern, rel, scratch) || matches("**/" ~ pattern, rel, scratch);
+    return matches(pattern, rel, scratch);
 }
 
-bool matches(string pattern, string rel) @safe
+bool matches(string pattern, string rel, scope GlobScratch scratch) @safe
 {
     GlobProgram!() program;
-    GlobMatchWorkspace!() workspace;
-    if (compileGlob(pattern, PathFlavor.unix, true, program).hasError)
+    if (compileGlob(pattern, PathFlavor.unix, true, program, scratch.compile).hasError)
         return false;
-    auto hit = globMatch(program, rel, workspace);
+    auto hit = globMatch(program, rel, scratch.match);
     return hit.hasValue && hit.value;
 }
 
@@ -129,6 +136,7 @@ bool hasUnescapedSlash(string pattern) @safe pure nothrow @nogc
 
 void main() @safe
 {
+    auto scratch = new GlobScratch;
     static immutable string[2][] cases = [
         ["src/main.d", "*.d"],
         ["src/main.d", "main.d"],
@@ -144,7 +152,7 @@ void main() @safe
     foreach (c; cases)
         writefln("%-20s %-12s %-7s %s", c[0], c[1],
             today(c[0], c[1]) ? "match" : "-",
-            proposed(c[0], c[1]) ? "match" : "-");
+            proposed(c[0], c[1], scratch) ? "match" : "-");
 }
 ```
 

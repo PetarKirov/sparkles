@@ -259,7 +259,7 @@ quotes or invalid escape sequences.
 ParseExpected!size_t readQuotedString(Writer)(ref scope const(char)[] s, ref Writer w)
 {
     import std.range.primitives : put;
-    import sparkles.base.text.utf : encodeUtf8;
+    import sparkles.base.text.utf : encodeScalar, UtfStatus;
 
     if (s.length == 0)
         return parseErr!size_t(ParseErrorCode.emptyInput, 0);
@@ -353,8 +353,10 @@ ParseExpected!size_t readQuotedString(Writer)(ref scope const(char)[] s, ref Wri
                             return parseErr!size_t(ParseErrorCode.invalidSurrogate, i);
                     }
                     char[4] buf;
-                    const len = encodeUtf8(cast(dchar) cp, buf);
-                    foreach (b; buf[0 .. len])
+                    const encoded = encodeScalar(cast(dchar) cp, buf[]);
+                    if (encoded.status != UtfStatus.ok)
+                        return parseErr!size_t(ParseErrorCode.invalidSurrogate, i - 6);
+                    foreach (b; buf[0 .. encoded.written])
                     {
                         put(w, b);
                         written++;
@@ -394,6 +396,20 @@ unittest
     assert(r2.hasValue);
     assert(buf[] == "hello\n\"world\"\t \u2713");
     assert(s2 == " extra");
+}
+
+@("text.readers.readQuotedString.rejectsLoneLowSurrogate")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.buffer : SharedBuffer;
+
+    SharedBuffer!char output;
+    const(char)[] source = `"\uDC00" tail`;
+    const result = readQuotedString(source, output);
+    assert(result.hasError && result.error.code == ParseErrorCode.invalidSurrogate);
+    assert(result.error.offset == 1 && source == `"\uDC00" tail`);
+    assert(output[].length == 0);
 }
 
 @("text.readers.readInteger.advancesOnSuccess")

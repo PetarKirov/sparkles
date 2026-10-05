@@ -11,6 +11,7 @@ with no per-backend line model.
 module sparkles.source_view.code;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.base.text.wrap : WhitespaceMode;
 import sparkles.base.term_style : TextAttr;
 import sparkles.syntax.color : toRgb;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
@@ -88,9 +89,11 @@ background when the rule sets one, bold/italic/strikethrough) and stamped
 with its source byte range. A blank line carries a zero-width identity at its
 line start, so line numbering and goto-line cover every line.
 
-Rows wrap with `wrap` (greedy by default — the raw view reflows to the pane
-width; a token wider than the pane overflows its row and clips, like a fence
-panel's). Pass `TextWrap.none` for a non-reflowing view.
+Rows preserve code whitespace, including indentation and trailing spaces, while
+wrapping with `wrap` (greedy by default — the raw view reflows to the pane width;
+a token wider than the pane overflows its row and clips, like a fence panel's).
+Tabs advance to the contextual column stops in `CodeViewOptions.tabWidth`.
+Pass `TextWrap.none` for a non-reflowing view.
 
 `foldedRegions` (source byte spans, `FSR4`) collapse line-wise to one
 placeholder row each — `▸ first-line ⋯ N lines` — carrying the whole
@@ -250,7 +253,7 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
             return w;
         }
 
-        import sparkles.ui.geometry : cellsOf;
+        import sparkles.base.text.grapheme : visibleWidth;
 
         TextSpan[] outSpans;
         int col = 0;
@@ -271,7 +274,7 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
                     piece.srcEnd = piece.srcStart + (end - seg);
                 }
                 outSpans ~= piece;
-                col += cast(int) cellsOf(piece.text);
+                col += cast(int) visibleWidth(piece.text);
             }
 
             size_t i = 0;
@@ -407,38 +410,11 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
             : expandLine(byLine[li], starts[li],
                 lineEnd(li) > starts[li] && source[lineEnd(li) - 1] == '\n'
                     ? lineEnd(li) - 1 : lineEnd(li));
-        // Indentation survives wrapping as a `noBreak` prefix span: the
-        // breaker treats leading spaces as droppable glue (prose semantics),
-        // but a noBreak span is a token that the first word joins — so the
-        // line keeps its leading whitespace, identity intact.
-        if (!blank)
-        {
-            const t = spans[0].text;
-            size_t ws;
-            while (ws < t.length && (t[ws] == ' ' || t[ws] == '\t'))
-                ++ws;
-            if (ws == t.length)
-                spans[0].noBreak = true; // an all-whitespace lead span
-            else if (ws)
-            {
-                auto head = spans[0], rest = spans[0];
-                head.text = t[0 .. ws];
-                head.noBreak = true;
-                rest.text = t[ws .. $];
-                if (head.srcStart != size_t.max)
-                {
-                    head.srcEnd = head.srcStart + ws;
-                    rest.srcStart += ws;
-                }
-                spans = [head, rest] ~ spans[1 .. $];
-            }
-        }
-        // After the indentation split, which indexes `spans[0]`.
         spans = applyTints(spans, opt.tintedRanges);
-        // A blank row never wraps: the greedy breaker consumes a lone space
-        // (a break eats its space), which would drop the row's identity.
+        // A blank source line keeps its zero-width identity on a single row.
         rows ~= b.add(Widget(kind: WidgetKind.rich, spans: spans,
-            slot: Slot.code, wrap: blank ? TextWrap.none : wrap));
+            slot: Slot.code, wrap: blank ? TextWrap.none : wrap,
+            whitespace: WhitespaceMode.preserve));
     }
     return b.container(WidgetKind.column, rows);
 }
@@ -575,21 +551,6 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
     assert(sawNested, "the nested range wins where they overlap");
 }
 
-@("render.widgets.viewCodeDocument.emptySourceIsEmptyTree")
-@safe unittest
-{
-    import sparkles.syntax.label : LabelSet;
-    import sparkles.syntax.theme : resolveTheme;
-    import sparkles.syntax.themes : builtinDark;
-
-    const labels = LabelSet.standard();
-    const rt = resolveTheme(builtinDark, labels);
-    auto tree = viewCodeDocument("", null, (() @trusted => &rt)(),
-        RgbColor(0xcc, 0xcc, 0xcc));
-    // The childless column is a well-formed empty document.
-    assert(tree.nodes.length == 1);
-}
-
 @("render.widgets.viewCodeDocument.foldPlaceholder")
 @safe unittest
 {
@@ -628,50 +589,122 @@ uint viewCodeDocumentInto(ref Builder b, const(char)[] source,
     assert(sawHit, "unfold hit id");
 }
 
-@("render.widgets.viewCodeDocument.tabStopsAndListWhitespace")
+/// Empty source contributes no selectable document row.
+@("render.widgets.viewCodeDocument.emptySourceHasNoRows")
 @safe unittest
 {
-    import std.algorithm.searching : canFind, startsWith;
-    import sparkles.syntax.label : LabelSet;
-    import sparkles.syntax.theme : resolveTheme;
-    import sparkles.syntax.themes : builtinDark;
     import sparkles.ui.layout : layout;
     import sparkles.ui.state : documentRows;
 
-    // A tab-indented line, a mid-line tab, a trailing space, an NBSP.
-    const src = "\tx\na\tb  \nn n\n";
+    auto tree = viewCodeDocument("", null, null, RgbColor(0xcc, 0xcc, 0xcc));
+    const frames = layout(tree);
+    assert(documentRows(tree, frames).length == 0);
+}
+
+@("render.widgets.viewCodeDocument.tabStopsAndListWhitespace")
+@safe unittest
+{
+    import sparkles.base.text.wrap_plan : WrapAffinity;
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.theme : resolveTheme;
+    import sparkles.syntax.themes : builtinDark;
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.geometry : Point, Rect;
+    import sparkles.ui.interp.cells : CellGrid;
+    import sparkles.ui.interp.immediate : paint;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : documentRows, selectionRects, sourceOffsetAt;
+    import sparkles.ui.style : defaultTwoslashPalette;
+
+    // Leading and contextual tabs, trailing code spaces, and an NBSP.
+    const src = "\tx\na\tb  \nn\u00a0n\n";
     const labels = LabelSet.standard();
     const rt = resolveTheme(builtinDark, labels);
     const ev = [HighlightEvent.sourceSpan(0, src.length)];
+    const fg = RgbColor(0xcc, 0xcc, 0xcc);
+    const bg = RgbColor(0, 0, 0);
+    const wsFg = RgbColor(0x60, 0x60, 0x60);
 
-    // Default: tabs expand to 4-column stops (identity = the tab's byte).
-    auto plain = viewCodeDocument(src, ev, (() @trusted => &rt)(),
-        RgbColor(0xcc, 0xcc, 0xcc));
-    auto rows = documentRows(plain, layout(plain));
+    auto plain = viewCodeDocument(src, ev, (() @trusted => &rt)(), fg,
+        CodeViewOptions(wrap: TextWrap.greedy, tabWidth: 4));
+    const frames = layout(plain);
+    const rows = documentRows(plain, frames);
+    assert(rows.length == 3);
     assert(rows[0].text == "    x", rows[0].text);
-    // Stop at col 4; the breaker consumes the trailing glue (plain mode).
-    assert(rows[1].text == "a   b", rows[1].text);
-    bool sawTabIdentity;
-    foreach (ref const w; plain.nodes)
-        foreach (ref const s2; w.spans)
-            if (s2.text == "    " && s2.srcStart == 0 && s2.srcEnd == 1)
-                sawTabIdentity = true;
-    assert(sawTabIdentity, "the fill span carries the tab's single byte");
+    assert(rows[1].text == "a   b  ", rows[1].text);
+    assert(rows[2].text == "n\u00a0n", rows[2].text);
+    assert(src[rows[0].srcStart .. rows[0].srcEnd] == "\tx");
+    assert(src[rows[1].srcStart .. rows[1].srcEnd] == "a\tb  ");
+    assert(src[rows[2].srcStart .. rows[2].srcEnd] == "n\u00a0n");
+    assert(selectionRects(plain, frames, 0, 1) == [Rect(0, 0, 4, 1)]);
+    assert(selectionRects(plain, frames, 4, 5) == [Rect(1, 1, 3, 1)]);
+    assert(selectionRects(plain, frames, 6, 8) == [Rect(5, 1, 2, 1)]);
+    assert(sourceOffsetAt(plain, frames, Point(2, 0), WrapAffinity.before) == 0);
+    assert(sourceOffsetAt(plain, frames, Point(2, 0), WrapAffinity.after) == 1);
+    assert(sourceOffsetAt(plain, frames, Point(2, 1), WrapAffinity.before) == 4);
+    assert(sourceOffsetAt(plain, frames, Point(2, 1), WrapAffinity.after) == 5);
 
-    // list mode: → for tabs, · for spaces (trailing included), ␣ for NBSP,
-    // all in the whitespace color.
-    auto listed = viewCodeDocument(src, ev, (() @trusted => &rt)(),
-        RgbColor(0xcc, 0xcc, 0xcc), CodeViewOptions(listWhitespace: true,
-            whitespaceFg: RgbColor(0x60, 0x60, 0x60), hasWhitespaceFg: true));
-    auto lrows = documentRows(listed, layout(listed));
+    auto plainGrid = CellGrid(7, 3, fg, bg);
+    paint(plainGrid, buildDisplayList(plain, frames, defaultTwoslashPalette(), fg, bg));
+    assert(plainGrid.cells[4].glyph == 'x');
+    assert(plainGrid.cells[7 + 4].glyph == 'b');
+    assert(plainGrid.cells[14 + 1].glyph == '\u00a0');
+
+    auto listed = viewCodeDocument(src, ev, (() @trusted => &rt)(), fg,
+        CodeViewOptions(wrap: TextWrap.greedy, tabWidth: 4, listWhitespace: true,
+            whitespaceFg: wsFg, hasWhitespaceFg: true));
+    const listedFrames = layout(listed);
+    const lrows = documentRows(listed, listedFrames);
     assert(lrows[0].text == "→   x", lrows[0].text);
     assert(lrows[1].text == "a→  b··", lrows[1].text);
     assert(lrows[2].text == "n␣n", lrows[2].text);
-    bool sawWsFg;
-    foreach (ref const w; listed.nodes)
-        foreach (ref const s2; w.spans)
-            if (s2.text.startsWith("→") && s2.hasFg
-                && s2.fg == RgbColor(0x60, 0x60, 0x60))
-                sawWsFg = true;
-    assert(sawWsFg, "whitespace glyphs take the whitespace color");
+    foreach (i; 0 .. rows.length)
+        assert(lrows[i].srcStart == rows[i].srcStart && lrows[i].srcEnd == rows[i].srcEnd);
+    assert(selectionRects(listed, listedFrames, 10, 12) == [Rect(1, 2, 1, 1)]);
+    assert(sourceOffsetAt(listed, listedFrames, Point(1, 2), WrapAffinity.before) == 10);
+    assert(sourceOffsetAt(listed, listedFrames, Point(1, 2), WrapAffinity.after) == 12);
+
+    auto grid = CellGrid(7, 3, fg, bg);
+    paint(grid, buildDisplayList(listed, listedFrames, defaultTwoslashPalette(), fg, bg));
+    foreach (index; [0, 8])
+        assert(grid.cells[index].glyph == '→' && grid.cells[index].fg == wsFg);
+    foreach (index; [12, 13])
+        assert(grid.cells[index].glyph == '·' && grid.cells[index].fg == wsFg);
+    assert(grid.cells[15].glyph == '␣' && grid.cells[15].fg == wsFg);
+    assert(grid.cells[4].glyph == 'x' && grid.cells[4].fg != wsFg);
+    assert(grid.cells[11].glyph == 'b' && grid.cells[11].fg != wsFg);
+}
+
+@("render.widgets.viewCodeDocument.preservingBoundedAndRawPolicies")
+@safe unittest
+{
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.theme : resolveTheme;
+    import sparkles.syntax.themes : builtinDark;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : documentRows;
+
+    const src = "  ab\tz qqq rrr\n";
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+    const ev = [HighlightEvent.sourceSpan(0, src.length)];
+    const fg = RgbColor(0xcc, 0xcc, 0xcc);
+
+    // The caller owns six-column tab stops; the pane owns continuation width.
+    auto wrapped = viewCodeDocument(src, ev, (() @trusted => &rt)(), fg,
+        CodeViewOptions(wrap: TextWrap.greedy, tabWidth: 6));
+    const rows = documentRows(wrapped, layout(wrapped, Constraints(maxW: 8)));
+    assert(rows.length == 2);
+    assert(rows[0].text == "  ab  z ", rows[0].text);
+    assert(rows[1].text == "qqq rrr", rows[1].text);
+    assert(src[rows[0].srcStart .. rows[0].srcEnd] == "  ab\tz ");
+    assert(src[rows[1].srcStart .. rows[1].srcEnd] == "qqq rrr");
+
+    auto raw = viewCodeDocument(src, ev, (() @trusted => &rt)(), fg,
+        CodeViewOptions(wrap: TextWrap.none, tabWidth: 6));
+    const rawRows = documentRows(raw, layout(raw, Constraints(maxW: 8)));
+    assert(rawRows.length == 1);
+    assert(rawRows[0].text == "  ab  z qqq rrr", rawRows[0].text);
+    assert(src[rawRows[0].srcStart .. rawRows[0].srcEnd] == src[0 .. $ - 1]);
 }

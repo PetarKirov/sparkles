@@ -39,14 +39,16 @@ private bool urlSchemeAt(scope const(char)[] s, size_t at)
 private bool isUrlBoundary(char c)
     => c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\0';
 
-/// Count cell columns spanned by UTF-8 bytes = number of code points = number
-/// of non-continuation bytes. Never throws (unlike `std.utf.count`).
+/// Count decoded cell codepoints without throwing on malformed UTF-8.
 @safe pure nothrow @nogc
 private size_t utf8Cols(scope const(char)[] s)
 {
+    import sparkles.base.text.tokens : byUtfToken;
+    import sparkles.base.text.utf : UtfMode;
+
     size_t n = 0;
-    foreach (c; s)
-        if ((c & 0xC0) != 0x80) n++;
+    foreach (_; byUtfToken(s, UtfMode.replacement))
+        ++n;
     return n;
 }
 
@@ -904,8 +906,7 @@ unittest
 @system nothrow @nogc
 void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, GhosttyTerminal terminal, ref SelectionState selState)
 {
-    import std.utf : encode;
-    import std.typecons : Yes;
+    import sparkles.base.text.utf : encodeScalar, UtfMode;
     ghostty_key_encoder_setopt_from_terminal(encoder, terminal);
 
     char[64] char_utf8;
@@ -915,7 +916,7 @@ void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, 
         char[4] u8;
         // Substitute U+FFFD for an invalid codepoint instead of throwing — a
         // bad value from GetCharPressed must not crash input handling.
-        int n = cast(int)encode!(Yes.useReplacementDchar)(u8, cast(dchar)ch);
+        int n = cast(int) encodeScalar(cast(dchar) ch, u8[], UtfMode.replacement).written;
         if (char_utf8_len + n < char_utf8.length) {
             char_utf8[char_utf8_len .. char_utf8_len + n] = u8[0 .. n];
             char_utf8_len += n;

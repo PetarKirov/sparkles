@@ -54,7 +54,7 @@ configuration "allocation-audit" {
 }
 
 buildType "bench" {
-    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    buildOptions "unittests" "optimize" "inline"
     dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
 }
 

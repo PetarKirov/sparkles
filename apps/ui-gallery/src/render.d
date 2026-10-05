@@ -305,10 +305,10 @@ private string goldenDir(string title)
 {
     import std.array : replace;
     import std.path : buildNormalizedPath, dirName;
-    import std.uni : toLower;
+    import sparkles.base.text.case_text : unicodeLower;
 
     return buildNormalizedPath(__FILE_FULL_PATH__.dirName, "..", "test", "data",
-        "profiles", title.toLower.replace(" ", "-"));
+        "profiles", title.unicodeLower.replace(" ", "-"));
 }
 
 /**

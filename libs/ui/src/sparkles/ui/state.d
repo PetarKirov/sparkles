@@ -34,6 +34,8 @@ $(LIST
 module sparkles.ui.state;
 
 import sparkles.base.term_control : PointerShape;
+import sparkles.base.text.wrap_plan : WrapAffinity, ProvenanceKind;
+import sparkles.ui.wrap : spanPaintAdvance;
 import sparkles.input : cellPointer, InputCapabilities, mousePointer,
     PointerAction, PointerEvent, touchPointer;
 import sparkles.ui.geometry : Point, Rect;
@@ -333,7 +335,7 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
             case text:
                 if (frames[idx].lines.length)
                     foreach (li, ln; frames[idx].lines)
-                        addText(inner.y + cast(int) li, ln, size_t.max, 0);
+                        addText(inner.y + cast(int) li * frames[idx].lineRows, ln, size_t.max, 0);
                 else
                     addText(inner.y, node.text, size_t.max, 0);
                 break;
@@ -342,7 +344,7 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
                 {
                     foreach (li, line; frames[idx].spanLines)
                         foreach (ref const s; line)
-                            addText(inner.y + cast(int) li, s.text,
+                            addText(inner.y + cast(int) li * frames[idx].lineRows, s.text,
                                 s.srcStart, s.srcEnd);
                 }
                 else
@@ -366,63 +368,83 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
 The char-precise inverse of the identity channel: the source byte offset of
 the content cell at document coordinate `p`, or `-1` when nothing with source
 identity is there. Mirrors the display list's span placement (padding inset,
-one row per wrapped line, hang indent on continuations, one column per
-codepoint), so a pointer hit on the painted glyph maps to the byte that
-produced it — the shared hit-test for precise selection on every backend.
+the frame's row pitch per wrapped line, hang indent on continuations, and
+committed whole-grapheme paint advances), so a pointer hit maps to an authored source boundary.
+Wide interiors and zero-width ties use explicit affinity.
 The topmost (latest-painted) content under the point wins.
 */
-long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p)
+long sourceOffsetAt(in WidgetTree tree, in Frame[] frames, Point p,
+    WrapAffinity affinity = WrapAffinity.before) nothrow @nogc
 {
     long found = -1;
 
-    void checkRow(scope const TextSpan[] spans, int x, int y)
+    void checkRow(scope const TextSpan[] spans, int x, int y, int height) nothrow @nogc
     {
-        import sparkles.ui.geometry : cellsOf;
 
-        if (y != p.y)
+        if (p.y < y || p.y - y >= height)
             return;
-        foreach (ref const s; spans)
+        size_t i;
+        while (i < spans.length)
         {
-            const w = cast(int) cellsOf(s.text);
-            if (p.x >= x && p.x < x + w && s.srcStart != size_t.max)
+            ref const s = spans[i];
+            size_t end = i + 1, sourceStart = s.srcStart, sourceEnd = s.srcEnd;
+            long width = spanPaintAdvance(s);
+            bool exact = s.sourceRelation == ProvenanceKind.original;
+            while (end < spans.length && s.wrapPlan !is null
+                && spans[end].wrapPlan is s.wrapPlan && spans[end].wrapLine == s.wrapLine
+                && s.logicalGroup != ulong.max && spans[end].logicalGroup == s.logicalGroup)
             {
-                // Column → byte: stride codepoints (the layout's own measure).
-                import std.utf : stride;
-
-                size_t o;
-                foreach (_; 0 .. p.x - x)
-                    o += stride(s.text[o .. $]);
-                found = cast(long)(s.srcStart + o);
+                ref const piece = spans[end++];
+                width += spanPaintAdvance(piece);
+                exact = exact && piece.sourceRelation == ProvenanceKind.original;
+                if (piece.srcStart != size_t.max)
+                {
+                    if (sourceStart == size_t.max || piece.srcStart < sourceStart)
+                        sourceStart = piece.srcStart;
+                    if (piece.srcEnd > sourceEnd) sourceEnd = piece.srcEnd;
+                }
             }
-            x += w;
+            if (sourceStart != size_t.max && p.x >= x && p.x <= x + width)
+            {
+                if (!exact)
+                    found = cast(long)(affinity == WrapAffinity.before ? sourceStart : sourceEnd);
+                else if (p.x == x && width > 0)
+                    found = cast(long) sourceStart;
+                else if (p.x == x + width && width > 0)
+                    found = cast(long) sourceEnd;
+                else
+                    found = cast(long)(affinity == WrapAffinity.before ? sourceStart : sourceEnd);
+                if (p.x < x + width || affinity == WrapAffinity.before)
+                    return;
+            }
+            x += cast(int) width;
+            i = end;
         }
     }
 
-    void walk(uint idx)
+    void walk(uint idx, Rect clip) nothrow @nogc
     {
-        const node = tree.nodes[idx];
+        ref const node = tree.nodes[idx];
         if (node.visibility != Visibility.visible)
             return;
         const inner = frames[idx].rect.deflate(node.padding);
-        if (node.kind == WidgetKind.rich)
+        if (node.kind == WidgetKind.rich && clip.contains(p))
         {
-            if (frames[idx].spanLines.length)
-                foreach (li, line; frames[idx].spanLines)
-                    checkRow(line, inner.x + (li ? node.hangIndent : 0),
-                        inner.y + cast(int) li);
-            else
-                checkRow(node.spans, inner.x, inner.y);
+            foreach (li, line; frames[idx].paintSpanLines)
+                checkRow(line, inner.x + (li ? node.hangIndent : 0),
+                    inner.y + cast(int) li * frames[idx].lineRows, frames[idx].lineRows);
         }
+        const childClip = childClipOf(node, frames[idx].rect, clip);
         foreach (ci; node.children)
-            walk(ci);
+            walk(ci, childClip);
     }
 
-    walk(tree.root);
+    walk(tree.root, unclipped());
     return found;
 }
 
 /**
-Char-precise selection geometry: the 1-row cell rects covering source bytes
+Char-precise selection geometry: the line-height cell rects covering source bytes
 `[lo, hi)` in a laid-out tree — the paint side of the identity channel, one
 rect per covered span segment per wrapped row (same placement rules as
 $(LREF sourceOffsetAt)). Backends tint these; none re-derives byte→column.
@@ -430,55 +452,60 @@ $(LREF sourceOffsetAt)). Backends tint these; none re-derives byte→column.
 Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
     size_t lo, size_t hi)
 {
-    import sparkles.ui.geometry : cellsOf;
-
     Rect[] result;
 
-    void checkRow(scope const TextSpan[] spans, int x, int y)
+    void checkRow(scope const TextSpan[] spans, int x, int y, int height, Rect clip)
     {
-        foreach (ref const s; spans)
+        size_t i;
+        while (i < spans.length)
         {
-            const w = cast(int) cellsOf(s.text);
-            if (s.srcStart != size_t.max && s.srcEnd > lo && s.srcStart < hi)
+            ref const s = spans[i];
+            size_t end = i + 1;
+            long width = spanPaintAdvance(s);
+            bool selected = s.srcStart != size_t.max && s.srcEnd > lo && s.srcStart < hi;
+            while (end < spans.length && s.wrapPlan !is null
+                && spans[end].wrapPlan is s.wrapPlan && spans[end].wrapLine == s.wrapLine
+                && s.logicalGroup != ulong.max && spans[end].logicalGroup == s.logicalGroup)
             {
-                size_t bStart = lo > s.srcStart ? lo - s.srcStart : 0;
-                size_t bEnd = (hi < s.srcEnd ? hi : s.srcEnd) - s.srcStart;
-                if (bStart > s.text.length)
-                    bStart = s.text.length;
-                if (bEnd > s.text.length)
-                    bEnd = s.text.length;
-                if (bEnd > bStart)
+                ref const piece = spans[end++];
+                width += spanPaintAdvance(piece);
+                selected = selected || (piece.srcStart != size_t.max
+                    && piece.srcEnd > lo && piece.srcStart < hi);
+            }
+            if (selected && width > 0)
+            {
+                const visible = Rect(x, y, cast(int) width, height).intersection(clip);
+                if (!visible.empty)
                 {
-                    const c0 = cast(int) cellsOf(s.text[0 .. bStart]);
-                    const c1 = cast(int) cellsOf(s.text[0 .. bEnd]);
-                    if (c1 > c0)
-                        result ~= Rect(x + c0, y, c1 - c0, 1);
+                    if (result.length && result[$ - 1].y == visible.y
+                        && result[$ - 1].x + result[$ - 1].width == visible.x)
+                        result[$ - 1].size.width += visible.width;
+                    else result ~= visible;
                 }
             }
-            x += w;
+            x += cast(int) width;
+            i = end;
         }
     }
 
-    void walk(uint idx)
+    void walk(uint idx, Rect clip)
     {
-        const node = tree.nodes[idx];
+        ref const node = tree.nodes[idx];
         if (node.visibility != Visibility.visible)
             return;
         const inner = frames[idx].rect.deflate(node.padding);
         if (node.kind == WidgetKind.rich)
         {
-            if (frames[idx].spanLines.length)
-                foreach (li, line; frames[idx].spanLines)
-                    checkRow(line, inner.x + (li ? node.hangIndent : 0),
-                        inner.y + cast(int) li);
-            else
-                checkRow(node.spans, inner.x, inner.y);
+            foreach (li, line; frames[idx].paintSpanLines)
+                checkRow(line, inner.x + (li ? node.hangIndent : 0),
+                    inner.y + cast(int) li * frames[idx].lineRows, frames[idx].lineRows, clip);
         }
+        const childClip = childClipOf(node, frames[idx].rect, clip);
         foreach (ci; node.children)
-            walk(ci);
+            walk(ci, childClip);
     }
 
-    walk(tree.root);
+    walk(tree.root, unclipped());
     return result;
 }
 
@@ -503,6 +530,56 @@ Rect[] selectionRects(in WidgetTree tree, in Frame[] frames,
     assert(rects.length == 2);
     assert(rects[0] == Rect(2, 0, 3, 1)); // "pha"
     assert(rects[1] == Rect(0, 1, 2, 1)); // "be"
+}
+
+@("ui.state.styledSelectionUsesPaintAdvanceAndLineHeight")
+@safe unittest
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : FontRole, TextStyle, TypeStep;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+    import sparkles.ui.wrap : TextWrap;
+
+    struct TallMeasure
+    {
+        int width(scope const(char)[] s) const @safe pure nothrow @nogc
+            => cast(int) visibleWidth(s);
+
+        int width(scope const(char)[] s, in TextStyle style) const @safe pure nothrow @nogc
+            => style.fontRole == FontRole.ui ? 2 * cast(int) visibleWidth(s) : cast(int) visibleWidth(s);
+
+        int rows(in TextStyle style) const @safe pure nothrow @nogc
+            => style.fontRole == FontRole.ui && style.typeStep == TypeStep.title ? 2 : 1;
+    }
+
+    auto b = Builder();
+    Widget para = Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy, spans: [
+        TextSpan(text: "ab cd", srcStart: 40, srcEnd: 45,
+            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.title)),
+    ]);
+    para.width.max = 4;
+    const t = b.add(para);
+    auto tree = b.finish(b.container(WidgetKind.column, [t]));
+    const frames = layout(tree, Constraints.init, TallMeasure());
+
+    // Both rows of each tall line hit the same authored cluster. The styled
+    // paint width, not its terminal cell advance, chooses the horizontal hit.
+    foreach (y; 0 .. 2)
+    {
+        assert(sourceOffsetAt(tree, frames, Point(3, y)) == 41);
+        assert(sourceOffsetAt(tree, frames, Point(3, y), WrapAffinity.after) == 42);
+    }
+    foreach (y; 2 .. 4)
+    {
+        assert(sourceOffsetAt(tree, frames, Point(1, y)) == 43);
+        assert(sourceOffsetAt(tree, frames, Point(1, y), WrapAffinity.after) == 44);
+    }
+    assert(sourceOffsetAt(tree, frames, Point(1, 4)) == -1);
+    const rects = selectionRects(tree, frames, 41, 44);
+    assert(rects == [Rect(2, 0, 2, 2), Rect(0, 2, 2, 2)]);
+    assert(documentRows(tree, frames)[2].sourceText == "cd");
 }
 
 /// A keyed node's identity + laid-out geometry (see $(LREF keyedRects)).
@@ -1164,29 +1241,27 @@ struct LineEditState
     /// `c` appended (printable codepoints only; controls are ignored).
     LineEditState typed(dchar c) const
     {
-        import std.utf : encode, isValidDchar;
+        import sparkles.base.text.utf : encodeScalar, isUnicodeScalar;
 
-        if (c < 0x20 || c == 0x7f || !isValidDchar(c))
+        if (c < 0x20 || c == 0x7f || !isUnicodeScalar(c))
             return this;
         char[4] buf;
-        size_t n;
-        try
-            n = encode(buf, c);
-        catch (Exception)
-            return this;
+        const n = encodeScalar(c, buf[]).written;
         return LineEditState(text ~ buf[0 .. n].idup, active);
     }
 
     /// Backspace: the LAST CODEPOINT removed (UTF-8-aware).
     LineEditState erased() const
     {
-        auto t = text;
-        if (!t.length)
+        import sparkles.base.text.tokens : byUtfToken;
+        import sparkles.base.text.utf : UtfMode;
+
+        if (!text.length)
             return this;
-        size_t e = t.length - 1;
-        while (e > 0 && (t[e] & 0xC0) == 0x80)
-            --e;
-        return LineEditState(t[0 .. e], active);
+        size_t last;
+        foreach (token; byUtfToken(text, UtfMode.opaque))
+            last = token.start;
+        return LineEditState(text[0 .. last], active);
     }
 
     /// Enter: the text stays, capture ends.
@@ -1194,6 +1269,17 @@ struct LineEditState
 
     /// Escape: cleared and closed.
     LineEditState cancelled() const => LineEditState("", false);
+}
+
+@("ui.state.lineEdit.erasesDecodedTokens")
+@safe pure nothrow
+unittest
+{
+    assert(LineEditState("A\U0001F600", true).erased().text == "A");
+    assert(LineEditState("Ae\u0301", true).erased().text == "Ae");
+    // Public state can contain malformed text; opaque bytes are individual tokens.
+    assert(LineEditState("A\x80\x80", true).erased().text == "A\x80");
+    assert(LineEditState("A\xF0\x9F", true).erased().text == "A\xF0");
 }
 
 @("ui.state.lineEdit.typeEraseAcceptCancel")

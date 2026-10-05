@@ -12,7 +12,8 @@ change, light or dark, with nothing else to configure.
 module chrome;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.geometry : cellsOf, Constraints, Insets, Rect, SizeSpec;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Constraints, Insets, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : HoverTarget, hoverTargets;
 import sparkles.ui.style : BorderStyle, Decoration, Palette, Slot, TextStyle;
@@ -196,7 +197,7 @@ uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t 
     // A row too narrow for everything cuts its other content, never a
     // button's caption: an action must say what it does.
     SizeSpec width;
-    width.min = cast(int) cellsOf(caption) + 2;
+    width.min = cast(int) visibleWidth(caption) + 2;
     return b.add(Widget(
         kind: WidgetKind.panel,
         children: [text],

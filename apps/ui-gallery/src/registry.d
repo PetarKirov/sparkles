@@ -199,7 +199,7 @@ size_t pageIndexOf(scope const(char)[] name)
     import std.ascii : isDigit;
     import std.algorithm : startsWith;
     import std.conv : to;
-    import std.uni : toLower;
+    import sparkles.base.text.case_text : unicodeLower;
 
     if (name.length == 0)
         return 0;
@@ -210,9 +210,9 @@ size_t pageIndexOf(scope const(char)[] name)
         return n >= 1 && n <= pages.length ? n - 1 : 0;
     }
 
-    const wanted = name.toLower;
+    const wanted = name.unicodeLower;
     foreach (i, ref p; pages)
-        if (p.title.toLower.startsWith(wanted))
+        if (p.title.unicodeLower.startsWith(wanted))
             return i;
     return 0;
 }

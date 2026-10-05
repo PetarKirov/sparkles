@@ -13,7 +13,8 @@ import sparkles.ui.canvas : DrawOp, FillRect, Glyph, ImageDraw, isCanvas, Line,
     LineStyle, match, OpKind, PopClip, PopEffect, PushClip, PushEffect, Rule,
     RuleEdge, ruleSpan, Scrollbar, scrollbarCell, scrollbarCellCount, TextRun,
     visualOf;
-import sparkles.ui.geometry : cellsOf, Point, Rect;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.style : Visual;
 
 /**
@@ -147,13 +148,11 @@ void paintImagePlaceholder(Canvas)(ref Canvas canvas, in Rect rect,
     // Centre one line of `[alt]`, clipped to the box rather than spilling out
     // of it — the surrounding layout was sized for the image, not the words.
     const y = rect.y + (rect.height - 1) / 2;
-    const(char)[] text = alt;
-    int width = cast(int) cellsOf(text) + 2; // the brackets
-    while (width > rect.width && text.length)
-    {
-        text = text[0 .. $ - 1];
-        width = cast(int) cellsOf(text) + 2;
-    }
+    import sparkles.base.text.grapheme : fitCells;
+    if (rect.width < 2) return;
+    const fit = fitCells(alt, cast(size_t)(rect.width - 2));
+    const text = alt[0 .. fit.bytes];
+    const width = cast(int) fit.cells + 2;
     if (text.length == 0)
         return;
 
@@ -348,7 +347,8 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
     {
         import sparkles.ui.canvas : DrawOp, fillRectOp, glyphOp, lineOp,
             textRunOp;
-        import sparkles.ui.geometry : cellsOf, Size;
+        import sparkles.base.text.grapheme : visibleWidth;
+        import sparkles.ui.geometry : Size;
         import sparkles.ui.style : Slot;
 
         DrawOp[] ops;
@@ -357,12 +357,12 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
         void fillRect(in Rect r, in Visual v) { ops ~= fillRectOp(r, Slot.inherit, v); }
         void textRun(in Point at, scope const(char)[] t, in Visual v)
         {
-            ops ~= textRunOp(Rect(at.x, at.y, cast(int) cellsOf(t), 1),
+            ops ~= textRunOp(Rect(at.x, at.y, cast(int) visibleWidth(t), 1),
                 t.idup, Slot.inherit, v);
         }
         void glyph(in Point at, dchar g, in Visual v) { ops ~= glyphOp(at, g, Slot.inherit, v); }
         void line(in Point a, in Point b, in Visual v, LineStyle st) { ops ~= lineOp(a, b, st, Slot.inherit, v); }
-        Size measure(scope const(char)[] t) const => Size(cast(int) cellsOf(t), 1);
+        Size measure(scope const(char)[] t) const => Size(cast(int) visibleWidth(t), 1);
     }
 
     static assert(isCanvas!NoRasters);
@@ -424,7 +424,8 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
     {
         import sparkles.ui.canvas : DrawOp, fillRectOp, glyphOp, lineOp,
             textRunOp;
-        import sparkles.ui.geometry : cellsOf, Size;
+        import sparkles.base.text.grapheme : visibleWidth;
+        import sparkles.ui.geometry : Size;
         import sparkles.ui.style : Slot;
 
         DrawOp[] ops;
@@ -433,12 +434,12 @@ private void paintScrollbarCells(Canvas)(ref Canvas canvas, in Scrollbar bar)
         void fillRect(in Rect r, in Visual v) { ops ~= fillRectOp(r, Slot.inherit, v); }
         void textRun(in Point at, scope const(char)[] t, in Visual v)
         {
-            ops ~= textRunOp(Rect(at.x, at.y, cast(int) cellsOf(t), 1),
+            ops ~= textRunOp(Rect(at.x, at.y, cast(int) visibleWidth(t), 1),
                 t.idup, Slot.inherit, v);
         }
         void glyph(in Point at, dchar g, in Visual v) { ops ~= glyphOp(at, g, Slot.inherit, v); }
         void line(in Point a, in Point b, in Visual v, LineStyle st) { ops ~= lineOp(a, b, st, Slot.inherit, v); }
-        Size measure(scope const(char)[] t) const => Size(cast(int) cellsOf(t), 1);
+        Size measure(scope const(char)[] t) const => Size(cast(int) visibleWidth(t), 1);
     }
 
     static assert(isCanvas!NoEffects);

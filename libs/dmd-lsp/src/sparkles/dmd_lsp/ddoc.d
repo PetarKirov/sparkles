@@ -133,10 +133,10 @@ package bool isDittoComment(const(char)* comment) @system
 {
     import core.stdc.string : strlen;
     import std.string : strip;
-    import std.uni : icmp;
+    import sparkles.base.text.case_text : unicodeCaselessCompare;
 
     return comment !is null
-        && icmp(comment[0 .. strlen(comment)].strip, "ditto") == 0;
+        && unicodeCaselessCompare(comment[0 .. strlen(comment)].strip, "ditto") == 0;
 }
 
 /**
@@ -408,12 +408,9 @@ string paramDocFor(in DdocRendered rendered, scope const(char)[] paramName) @saf
 
 private string sectionNameLower(scope const(char)[] name) @safe pure
 {
-    import std.ascii : toLower;
-    import std.algorithm.iteration : map;
-    import std.array : array;
-    import std.utf : byChar;
+    import sparkles.base.text.case_text : asciiLower;
 
-    return name.byChar.map!(c => cast(char) c.toLower).array;
+    return name.asciiLower;
 }
 
 /// Standard sections that become chips (lowercase JSDoc-parity names).

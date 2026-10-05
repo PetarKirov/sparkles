@@ -8,6 +8,13 @@ reviewed: 2026-10-05
 
 ## Abstract
 
+This page records the delivered terminal cell policy and its curated conformance
+baseline. The [owned UTF/Unicode specification](./SPEC.md) defines the production
+foundation and expanded target contracts, and [wrapping and measurement](./wrapping.md)
+defines the shared line-selection and source-preserving plan contracts. Their
+delivery status and remaining cutover gates are tracked in [the delivery plan](./PLAN.md);
+a target requirement alone is not evidence that its implementation has shipped.
+
 `sparkles:base` measures text the way a grapheme-clustering terminal lays it out:
 how many grid cells each user-perceived character occupies, where one character
 ends and the next begins, and how a line of styled text wraps without splitting a
@@ -15,8 +22,8 @@ wide character or bleeding colour onto the next line. This page specifies the
 delivered `terminalKitty` cell policy, the width policy kitty's text-sizing protocol defines, and
 its conformance baseline against the Unicode test corpora and independent
 terminal and library implementations. A [separate specification](./SPEC.md)
-covers the foundation that replaces it, built on Unicode data and algorithms
-that sparkles implements itself.
+covers the owned production foundation and its expanded target contracts, built
+on Unicode data and algorithms that sparkles implements itself.
 
 ## Introduction
 
@@ -43,17 +50,19 @@ policy is the `terminalKitty` [width profile](../../../glossary.md#width-profile
 ANSI escape sequences (colour and hyperlink codes, measured as zero width) and
 line wrapping are sparkles extensions layered on the same measurement.
 
-This page is the accepted contract of the delivered code, and the baseline that
-the [owned UTF, Unicode, and cell text specification](./SPEC.md) replaces. That
-specification is the replacement foundation. It keeps `terminalKitty` as a
+This page is the accepted contract of the delivered terminal cell policy. The
+[owned UTF, Unicode, and cell text specification](./SPEC.md) defines the
+production foundation and expanded target contracts. It keeps `terminalKitty` as a
 named, revisioned width profile and adds the per-scalar `terminalUnclustered`
-profile. It also derives every property from one Unicode release whose data and
-algorithms sparkles implements itself
+profile. The production foundation derives every property from one Unicode
+release whose data and algorithms sparkles implements itself
 ([owned semantics](./SPEC.md#_1-scope-vocabulary-and-ownership)), instead of
 from the toolchain's tables. Its
 [cell text contract](./SPEC.md#_6-cell-text-and-coordinates) cites this page for
-the delivered width classes. When the replacement takes over is tracked in
-[the delivery plan](./PLAN.md), and the shared line-selection contracts live in
+the delivered width classes. Delivery and review of the expanded width-profile,
+glyph-channel, and scaled-footprint requirements remain separate gates in
+[the delivery plan](./PLAN.md); this page does not mark those requirements
+implemented or reviewed. The shared line-selection contracts live in
 [wrapping and measurement](./wrapping.md). Fonts, shaping and proportional layout
 are out of scope here.
 
@@ -78,16 +87,20 @@ in [test cases](./test-cases.md), exhaustive differential testing in
 
 ## 1. Scope & credits
 
-This spec governs four modules of `sparkles.base.text`:
+The terminal policy uses the following owned modules of `sparkles.base.text`:
 
-| Module             | Role                                                                                                                   |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `width.d`          | width of a single code point (`codepointWidth`) and of a grapheme cluster (`graphemeClusterWidth`, `unclusteredWidth`) |
-| `grapheme.d`       | segmentation of styled UTF-8 into escapes + clusters (`byGraphemeCluster`) and total `visibleWidth`                    |
-| `wrap.d`           | greedy line wrapping in cells (`writeWrappedText` / `wrapText`) — a sparkles extension                                 |
-| `unicode_tables.d` | generated East-Asian-Width and emoji-VS-base tables (`isEastAsianWide`, `isEmojiVsBase`)                               |
+- `utf.d`, `utf8.d`, `utf16.d`: bounded scalar decoding, conversion, and explicit
+  malformed-input policies.
+- `unicode_tables.d`: manifest-identified categories, boundary properties, East
+  Asian width, and emoji variation bases.
+- `width.d`: the named terminal-cell profile (`codepointWidth`,
+  `graphemeClusterWidth`, `unclusteredWidth`).
+- `grapheme.d`: default extended-grapheme state and streaming spans; styled UTF-8
+  measurement (`byGraphemeCluster`, `visibleWidth`).
+- `wrap.d`, `wrap_plan.d`, `wrap_cells_project.d`: cell wrapping, source-preserving
+  plans, and validated emission.
 
-The width model follows kitty. Quoted passages in this document are taken from
+The width model is inspired by kitty. Quoted passages in this document are taken from
 kitty's documentation and source, **© Kovid Goyal, licensed GPL-3.0**:
 
 - The prose spec — `docs/text-sizing-protocol.rst`, section _"The algorithm for
@@ -97,37 +110,31 @@ kitty's documentation and source, **© Kovid Goyal, licensed GPL-3.0**:
   kitty's character-property tables).
 
 > [!NOTE]
-> kitty's algorithm document states it is based on **Unicode 16**. The delivered
-> baseline pins two Unicode versions on separate axes. The East-Asian-Width and
-> emoji **width** tables are generated for **Unicode 17.0** (`pinnedUnicodeVersion`
-> in `libs/base/tools/gen_unicode_tables.d`). **Grapheme segmentation and the
-> general categories** (the zero-width Mark set) come from the toolchain's Phobos
-> `std.uni`, whose grapheme behaviour matches **Unicode 15.0**; the harness pins
-> that axis as `phobosGraphemeUnicodeVersion` (see
-> [the two Unicode versions](./conformance-harness.md#the-two-unicode-versions)).
-> The two axes can disagree: a code point that UCD 17.0 assigns a Mark category
-> but the Unicode 15.0 categories leave unassigned measures as width 1 instead
-> of 0. Width assignments agree across these versions for the curated cases in
-> this spec, but **not in general**. The [conformance harness](./conformance-harness.md)
-> pins each axis separately and lists every such version-skew code point in its
-> divergence ledger. The [replacement foundation](./SPEC.md#_3-one-reproducible-unicode-data-pipeline)
-> removes the split by deriving every property from one Unicode release that
-> sparkles implements itself.
+> kitty's quoted algorithm document states that it is based on **Unicode 16**.
+> sparkles' production decoding, segmentation, categories, and width properties
+> use owned code and one authenticated **Unicode 18.0.0** manifest:
+> `libs/base/tools/unicode/manifest.json`. The manifest-driven generator
+> `libs/base/tools/gen_unicode_tables.d` reads authenticated local inputs from
+> `libs/base/tools/unicode/18.0.0`; ordinary generation does not download data.
+> Phobos and installed foreign Unicode versions do not select production
+> semantics. The [conformance harness](./conformance-harness.md) distinguishes
+> normative Unicode 18 checks from foreign terminal-policy comparisons.
 
 ## 2. Measurement model vs. kitty's placement model
 
 kitty's algorithm is written for a terminal that **places** decoded scalars into a
 cursor-addressed grid of cells. `sparkles.base.text` is a **measurement and layout**
-library: it does not own a grid. The correspondence is exact:
+library: it does not own a grid or interpret cursor-motion effects.
+`CellPolicy.terminalKitty`, revision 1, is its named local cell profile:
 
-- one kitty **cell** ⇔ one sparkles **grapheme cluster** (width 1 or 2);
-- kitty's "advance the cursor by the code point's width" ⇔ `visibleWidth` summing
-  each cluster's width;
-- kitty's "add the code point to the previous cell" ⇔ the cluster absorbing a
-  zero-width or combining member without changing its width.
+- one measured grapheme cluster occupies 0, 1, or 2 terminal columns;
+- `visibleWidth` sums those cluster widths, excluding escape units;
+- combining members do not add advance to the leading scalar's cell width;
+  eligible presentation selectors can adjust that width.
 
-So `visibleWidth(s)` equals the number of cells kitty would advance the cursor by
-when printing `s` (escapes excluded — see [§9](#_9-styled-text-a-sparkles-extension)).
+This models the curated kitty-inspired cases, not every terminal's actual cursor
+advance (see [§6](#_6-width-of-a-grapheme-cluster) and
+[§9](#_9-styled-text-a-sparkles-extension)).
 Walking the clusters and advancing a column counter reproduces `visibleWidth`:
 
 ```d
@@ -191,11 +198,18 @@ in your browser, not a reimplementation.
 >
 > — kitty Text Sizing Protocol
 
-`grapheme.d` decodes with `std.utf.decode!(Yes.useReplacementDchar)`, which yields
-`U+FFFD` for ill-formed input rather than throwing — keeping the scanner
-`@nogc nothrow`. `U+FFFD` is East-Asian _ambiguous_, so it measures as width 1.
-(The exact byte-grouping of a maximal ill-formed subpart is a Phobos decoding
-detail and is not pinned by this spec.)
+`grapheme.d` uses owned `decodeToken` with `UtfMode.replacement`. It emits one
+`U+FFFD` per Unicode maximal subpart, retains that token's consumed source span,
+and never absorbs a following independently valid token. For example, `E1 80 41`
+becomes one replacement for bytes `[0,2)` followed by `A`; final `ED A0 80`
+becomes three replacements. This grouping is pinned by the
+[owned UTF contract](./SPEC.md#_2-encoding-operations-and-progress),
+not by Phobos.
+
+`U+FFFD` is East-Asian _ambiguous_ and has width 1 in the named cell profile.
+The scanner remains `@safe pure nothrow @nogc`; `ClusterMeasure.hasMalformed`
+marks replacement-decoded clusters. Its `slice` still borrows the original bytes,
+so callers must not mistake malformed source bytes for rendered valid UTF-8.
 
 ```d
 #!/usr/bin/env dub
@@ -252,9 +266,9 @@ kitty specifies, for each decoded code point:
 
 > [!NOTE]
 > The thresholds `U+0032` and `U+0127 DEL` in step 1 are apparent typos in kitty's
-> prose for `U+0020` (space) and `U+007F` (DEL). sparkles classifies controls via
-> `std.uni.isControl`, which correctly covers the C0 (`U+0000`–`U+001F`), `U+007F`
-> DEL, and C1 ranges, all measured as width 0.
+> prose for `U+0020` (space) and `U+007F` (DEL). sparkles uses owned
+> `generalCategory` data (`GeneralCategory.Cc`), plus its ASCII fast path, to
+> measure the C0 (`U+0000`–`U+001F`), DEL, and C1 controls as width 0.
 
 As a diagram (one decoded code point flowing through the nine steps):
 
@@ -272,15 +286,16 @@ flowchart TD
   G -- "boundary, width > 0" --> N
 ```
 
-_The flowchart is illustrative; the quoted steps above and the runnable snippet below
-are normative._
+_The diagram illustrates the quoted kitty placement algorithm, not a VT engine
+implemented by sparkles._
 
-sparkles realizes this pipeline as: segment with `byGraphemeCluster` (steps 3, 6–9),
-where each cluster's width comes from `graphemeClusterWidth` ([§6](#_6-width-of-a-grapheme-cluster)),
-which takes the leading scalar's width and folds zero-width members (steps 7–8).
-Invalid/non-character handling (step 2) is implemented in `codepointWidth` via
-`isNoncharacter`, which measures `U+FDD0`..`U+FDEF` and any `U+xxFFFE`/`U+xxFFFF` as
-width 0.
+sparkles segments an escape-free run with owned `GraphemeBreakState`, then derives
+each cluster's width with `graphemeClusterWidth`
+([§6](#_6-width-of-a-grapheme-cluster)). `codepointWidth` assigns noncharacters,
+controls, and the profile's zero-width classes width 0; it does not remove their
+source bytes. In particular, `isNoncharacter` recognizes `U+FDD0`..`U+FDEF` and
+every `U+xxFFFE`/`U+xxFFFF`. A standalone zero-width cluster remains addressable
+even though it advances no cells.
 
 Decomposing a cluster into its scalars shows steps 4–9 at work: each scalar has an
 isolated width (step 4), zero-width members attach to the cell (steps 7–8), and the
@@ -296,7 +311,7 @@ still make one 2-cell cell, never four:
 import std.stdio : writefln;
 import std.array : appender;
 import std.format : format;
-import std.uni : graphemeStride;
+import sparkles.base.text.grapheme : GraphemeBreakState;
 import sparkles.base.text.width : codepointWidth, graphemeClusterWidth;
 
 void main()
@@ -307,17 +322,27 @@ void main()
         C("flag (RI + RI)",      "\U0001F1FA\U0001F1F8"d),
         C("Devanagari की",       "की"d),
     ];
+    void report(string label, const(dchar)[] cluster)
+    {
+        auto scalars = appender!string;
+        foreach (k, cp; cluster)
+            scalars ~= format("%sU+%04X(w%s)", k ? " " : "", cp, codepointWidth(cp));
+        writefln("%-22s %s -> cell width %s", label, scalars[],
+            graphemeClusterWidth(cluster));
+    }
     foreach (c; cs)
-        for (size_t i = 0; i < c.s.length;)
-        {
-            const n = graphemeStride(c.s, i);
-            auto scalars = appender!string;
-            foreach (k, cp; c.s[i .. i + n])
-                scalars ~= format("%sU+%04X(w%s)", k ? " " : "", cp, codepointWidth(cp));
-            writefln("%-22s %s -> cell width %s", c.label, scalars[],
-                graphemeClusterWidth(c.s[i .. i + n]));
-            i += n;
-        }
+    {
+        GraphemeBreakState state;
+        size_t start;
+        foreach (i, cp; c.s)
+            if (state.push(cp) && i != 0)
+            {
+                report(c.label, c.s[start .. i]);
+                start = i;
+            }
+        if (start < c.s.length)
+            report(c.label, c.s[start .. $]);
+    }
 }
 ```
 
@@ -381,24 +406,25 @@ flowchart TD
   RI -- yes --> TWO["width 2"]
   RI -- no --> CN{"control, line/para<br/>separator, or noncharacter?"}
   CN -- yes --> ZERO["width 0"]
-  CN -- no --> MK{"Mark Mn/Mc/Me or Cf?<br/>(zeroWidthSet)"}
+  CN -- no --> MK{"owned category Mn/Mc/Me/Cf<br/>or conjoining range?"}
   MK -- yes --> ZERO
   MK -- no --> EAW{"East-Asian W/F?<br/>(incl. wide emoji & modifiers)"}
   EAW -- yes --> TWO
   EAW -- no --> ONE["width 1<br/>(symbols, ambiguous, …)"]
 ```
 
-_Illustrative; the runnable snippet below is normative. Note the two prose-vs-impl
-points it encodes: symbols (`S*`) fall through to width 1, and an emoji modifier is
-caught by East-Asian `W` (width 2) before the Marks branch._
+_Illustrative; the runnable snippet below exercises the named profile. Symbols
+(`S*`) fall through to width 1. An isolated emoji modifier is not a zero-width
+category and is East-Asian `W`, so its standalone width is 2._
 
-sparkles' `codepointWidth(dchar)` implements rules 1, 2, 4, 5 directly: a regional
-indicator (`U+1F1E6`..`U+1F1FF`) → 2 (they are EAW-neutral, so this is an explicit
-check); noncharacters and controls/line-separators → 0; all Marks `Mn | Mc | Me`
-plus `Cf` and a few conjoining ranges (`zeroWidthSet`) → 0; East-Asian `W`/`F` (via
-`isEastAsianWide`, which also covers wide emoji and modifiers) → 2; everything else
-→ 1. Rule 3's variation-selector adjustment is applied at the **cluster** level
-([§6](#_6-width-of-a-grapheme-cluster)).
+sparkles' `codepointWidth(dchar)` requires a Unicode scalar. It checks ASCII,
+regional indicators (`U+1F1E6`..`U+1F1FF`, width 2), noncharacters and explicit
+conjoining ranges, then owned general categories (`Cc`, `Zl`, `Zp`, `Mn`, `Mc`,
+`Me`, `Cf`, width 0), then East-Asian `W`/`F` (`isEastAsianWide`, width 2).
+Everything else has width 1, including ambiguous characters and symbols not
+already classified wide. This is the named profile's priority, not a literal
+copy of every kitty generator class. Variation selectors are applied at the
+**cluster** level ([§6](#_6-width-of-a-grapheme-cluster)).
 
 > [!IMPORTANT]
 > **Partial rule 3 — RGI modifier/tag sequences.** sparkles honors the _Wide
@@ -450,12 +476,15 @@ U+0009 TAB (control)     width=0
 
 ## 6. Width of a grapheme cluster
 
-A cluster occupies one cell whose width is set by its **leading** scalar; combining
-members add nothing, and only the variation selectors ([§7](#_7-variation-selectors))
-adjust it. `graphemeClusterWidth(in dchar[])` implements exactly that. So a flag
+A cluster's width is set by its **leading** scalar; combining members add nothing.
+For an eligible emoji variation base, the last VS15/VS16 selector in the cluster
+sets width 1/2 respectively ([§7](#_7-variation-selectors)).
+`graphemeClusterWidth(in dchar[])` applies that policy to an already-segmented
+scalar slice; it does not validate that the slice is exactly one cluster. A flag
 (leading regional indicator → 2), a ZWJ family (leading wide emoji → 2), and an
 emoji + skin-tone modifier (leading wide emoji → 2) each resolve to one 2-cell
-cluster, while a base + spacing mark (`Mc`) stays one 1-cell cluster.
+cluster, while a base + spacing mark (`Mc`) stays one 1-cell cluster. Empty or
+standalone zero-width clusters have width 0.
 
 A cluster is wide only when its leading scalar is **wide**. A skin-tone
 modifier never adds width itself, so a sequence whose base is EAW-_neutral_
@@ -471,14 +500,16 @@ VS16 in 1, while a flag (two narrow halves) and a letter with a combining accent
 keep their cell. `byGraphemeCluster` reports both widths per cluster, so a
 painter can tell which clusters a non-clustering terminal would move.
 
-The replacement foundation names this per-scalar advance as the
+The owned foundation's target contract names this per-scalar advance as the
 `terminalUnclustered` [width profile](../../../glossary.md#width-profile), a
-sibling of `terminalKitty` rather than a compatibility helper. The design
-system's `grapheme-folded` substitution
-([glyphs, GLY6](../../design-system/glyphs.md#typography-and-sizing)) is
-expressed through that profile. A terminal with neither mode 2027 nor measured
-clustering is driven under `terminalUnclustered`, and the toolkit draws each
-moved cluster as its leading scalar so cursor and drawing agree.
+sibling of `terminalKitty` rather than a compatibility helper. It requires the
+design system's `grapheme-folded` substitution
+([glyphs, GLY6](../../design-system/glyphs.md#typography-and-sizing)) to be
+expressed through that profile: a terminal with neither mode 2027 nor measured
+clustering must be driven under `terminalUnclustered`, and the toolkit must draw
+each moved cluster as its leading scalar so cursor and drawing agree. This
+expanded profile and drawing contract is not delivery or review evidence; the
+implemented per-cluster widths above do not establish its acceptance.
 
 ```d
 #!/usr/bin/env dub
@@ -536,7 +567,7 @@ import std.stdio : write;
 import std.conv : to;
 import std.format : format;
 import std.array : appender;
-import std.utf : byDchar;
+import sparkles.base.text.utf : decodeToken, UtfStatus;
 import sparkles.base.text.grapheme : byGraphemeCluster;
 import sparkles.ui.components.table : drawTable;
 
@@ -555,9 +586,12 @@ void main()
         widths ~= u.width.to!string;
         auto cps = appender!string;
         size_t k;
-        foreach (cp; u.slice.byDchar)
+        for (size_t i; i < u.slice.length;)
         {
-            cps ~= format("%sU+%04X", k ? " " : "", cp);
+            const decoded = decodeToken(u.slice[i .. $]);
+            assert(decoded.result.status == UtfStatus.ok);
+            cps ~= format("%sU+%04X", k ? " " : "", decoded.token.scalar);
+            i += decoded.result.consumed;
             ++k;
         }
         scalars ~= cps[];
@@ -590,11 +624,12 @@ void main()
 >
 > — kitty Text Sizing Protocol
 
-In `width.d`, VS16 promotion is **gated** on the base being an emoji-VS base
-(`isEmojiVsBase`, generated from `emoji-variation-sequences.txt`), exactly as
-specified. VS15 demotion is gated the same way. So a non-emoji base ignores both
-selectors — `A + VS16` stays 1, and a wide `CJK + VS15` stays 2 (gating VS15 is what
-keeps an unrelated wide character from being wrongly narrowed):
+In `width.d`, presentation changes are **gated** on the leading scalar being an
+emoji variation base (`isEmojiVsBase`, from the owned
+`emoji-variation-sequences.txt` data). The last eligible VS16 sets width 2 and
+VS15 sets width 1. A non-emoji base ignores both selectors: `A + VS16` stays 1,
+and a wide `CJK + VS15` stays 2. This is the named profile's cluster policy;
+the kitty quotation records its source, not an independently executed algorithm.
 
 ```d
 #!/usr/bin/env dub
@@ -639,19 +674,19 @@ CJK + VS15 (not emoji base)    width=2
 > kitty comes with a utility to test terminal compliance with this algorithm … This
 > uses tests published by the Unicode consortium, `GraphemeBreakTest.txt`.
 
-sparkles segments via `std.uni.graphemeStride` (the toolchain's grapheme tables,
-whose behaviour matches Unicode 15.0 in the delivered baseline; see §1) inside
-`byGraphemeCluster`. This implements the parts of UAX #29 that matter
-for terminal width: **regional-indicator pairing** (a flag is one cluster) and
-**emoji ZWJ sequences** (a multi-person emoji is one cluster).
+sparkles segments with owned `GraphemeBreakState` and Unicode 18.0.0 properties.
+It implements default extended-grapheme boundaries, including CRLF, Hangul,
+Prepend, Extend/SpacingMark, regional-indicator parity, emoji ZWJ sequences, and
+Indic conjunct rule GB9c. The state retains finite context, not a decoded cluster
+window: clusters have no scalar-count limit. `GraphemeStream` exposes completed
+UTF-8 source spans across chunks, and a chunk end is not a boundary.
 
-The snippet below adapts the format of the Unicode `GraphemeBreakTest.txt` cases
-that drive kitty's `kitten __width_test__`: a `÷` marks a cluster boundary, a `×`
-marks "no boundary", and each hex token is a code point. It reads both halves of
-each line as declarative pipelines — the string the line denotes and the cluster
-lengths it prescribes — then segments with `std.uni.byGrapheme` (the same grapheme
-tables `byGraphemeCluster` uses) and checks the lengths against the spec, so
-the same boundary rules kitty validates against are checked here:
+The snippet below adapts the Unicode `GraphemeBreakTest.txt` format that also
+drives kitty's `kitten __width_test__`: `÷` marks a boundary, `×` marks no
+boundary, and hex tokens denote scalars. It parses the expected lengths and feeds
+those scalars to the production owned boundary state; it does not substitute a
+Phobos segmenter. These examples illustrate selected rules; the full official
+corpus belongs to the [conformance harness](./conformance-harness.md).
 
 ```d
 #!/usr/bin/env dub
@@ -663,7 +698,7 @@ import std.algorithm : splitter, filter, map, count, equal;
 import std.array : array;
 import std.conv : to;
 import std.stdio : writefln;
-import std.uni : byGrapheme;
+import sparkles.base.text.grapheme : GraphemeBreakState;
 
 // A GraphemeBreakTest.txt line is hex code points separated by `÷` (boundary) or
 // `×` (no boundary), e.g. "÷ 0061 × 0301 ÷". Both halves of the line read as a
@@ -682,6 +717,19 @@ auto specClusters(string spec) pure
            .map!(cluster => cluster.splitter(' ').count!(t => t.length && t != "×"))
            .filter!(n => n > 0);
 
+/// Cluster lengths from the production owned Unicode 18 boundary state.
+size_t[] segmentClusters(dstring text) pure
+{
+    GraphemeBreakState state;
+    size_t[] lengths;
+    foreach (cp; text)
+        if (state.push(cp))
+            lengths ~= 1;
+        else
+            ++lengths[$ - 1];
+    return lengths;
+}
+
 void main()
 {
     static immutable string[2][] cases = [
@@ -695,8 +743,8 @@ void main()
     ];
     foreach (c; cases)
     {
-        // Each Grapheme's length is its code-point count — the spec's cluster length.
-        auto got = c[1].specText.byGrapheme.map!(g => g.length).array;
+        // Count scalars per cluster, independently of UTF encoding length.
+        auto got = c[1].specText.segmentClusters;
         writefln("%-5s %-18s %s  clusters=%s",
             c[1].specClusters.equal(got) ? "PASS" : "FAIL", c[0], c[1], got);
     }
@@ -715,11 +763,13 @@ PASS  Devanagari KA+AA   ÷ 0915 × 093E ÷  clusters=[2]
 
 ## 9. Styled text (a sparkles extension)
 
-kitty's algorithm operates on already-decoded text; ANSI escape sequences are out of
-its scope. `grapheme.d` extends the model so callers can measure **styled** strings
-directly: `byGraphemeCluster` yields each ANSI escape (SGR, OSC 8 hyperlink) as its
-own unit with `isEscape = true` and width 0, and `visibleWidth` ignores them. Thus a
-flag is still one 2-cell cluster, and color codes never inflate a measurement.
+kitty's placement algorithm operates on decoded text; ANSI escape sequences are
+outside its scope. The styled `byGraphemeCluster` adapter yields recognized escape
+sequences (including SGR and OSC 8 hyperlinks) as separate borrowed units with
+`isEscape = true` and width 0. It segments each escape-free text run separately,
+so inserting an escape within a Unicode cluster can split the adapter's units.
+`visibleWidth` ignores escape units; it does not execute VT controls or cursor
+motion. Raw Unicode boundary checks use `GraphemeBreakState` / `GraphemeStream`.
 
 ```d
 #!/usr/bin/env dub
@@ -752,13 +802,22 @@ visibleWidth = 7
 
 ## 10. Line wrapping (a sparkles extension)
 
-kitty's protocol governs cell **width**, not line breaking. `wrap.d` adds greedy
-wrapping measured in cells: it never lets a 2-cell glyph straddle the wrap column,
-breaks at a documented **reduced subset of UAX #14** (spaces, ZWSP, between
-ideographs, after a soft hyphen; never at NBSP / word-joiner) via `classOf`, honours
-mandatory breaks, and — with `StyleContinuity` — suspends active SGR/OSC-8 state at a
-wrap newline and re-emits it on the continuation line so styling never bleeds onto a
-border.
+kitty's protocol governs cell **width**, not line selection. `wrap.d` builds
+source-preserving cell plans using owned Unicode 18 line opportunities filtered
+through grapheme boundaries. `WrapOptions.solver` selects greedy or balanced
+selection; the default is greedy. Width is explicitly `CellWidth.bounded(n)` or
+`CellWidth.unbounded`, and bounded zero is a genuine zero-cell capacity.
+
+Whitespace, opportunity, overflow, malformed-input, tab, and style policies are
+independent options. By default, overlong units may use grapheme-emergency breaks;
+an indivisible cluster can still be overfull, so a bounded width is not a promise
+to split a wide glyph or reject every overflow. `StyleContinuity.suspendResume`
+suspends active SGR/OSC-8 state at a selected newline and resumes it on the
+continuation line; `copyThrough` leaves formatting bytes alone.
+`wrapText` and `writeWrappedText` are allocating convenience adapters over the
+plan and validated emitter. The bounded caller-storage API and its failure,
+budget, provenance, and style contracts are documented in
+[wrapping and measurement](./wrapping.md).
 
 ```d
 #!/usr/bin/env dub
@@ -768,22 +827,22 @@ border.
 +/
 import std.stdio : writeln;
 import std.array : replace;
-import sparkles.base.text.wrap : wrapText, WrapOptions, WhitespaceMode, StyleContinuity;
+import sparkles.base.text.wrap : wrapText, WrapOptions, CellWidth, WhitespaceMode, StyleContinuity;
 
 void main()
 {
     // CJK breaks between ideographs (each is 2 cells; width 4 fits two).
     writeln("CJK @ width 4:");
-    writeln(wrapText("世界世", WrapOptions(width: 4)));
+    writeln(wrapText("世界世", WrapOptions(width: CellWidth.bounded(4))));
 
     // Soft hyphen: the '-' appears only at a realized break.
     writeln("soft hyphen @ width 3:");
-    writeln(wrapText("ab­cd", WrapOptions(width: 3, whitespace: WhitespaceMode.collapse)));
+    writeln(wrapText("ab­cd", WrapOptions(width: CellWidth.bounded(3), whitespace: WhitespaceMode.collapse)));
 
     // SGR suspended at the break and re-emitted on the next line (ESC shown as \e).
     writeln("styled @ width 3 (ESC as \\e):");
     const styled = wrapText("\x1b[31mfoo bar\x1b[0m",
-        WrapOptions(width: 3, continuity: StyleContinuity.sgrReset, whitespace: WhitespaceMode.collapse));
+        WrapOptions(width: CellWidth.bounded(3), continuity: StyleContinuity.suspendResume, whitespace: WhitespaceMode.collapse));
     writeln(styled.replace("\x1b", "\\e"));
 }
 ```
@@ -802,10 +861,10 @@ styled @ width 3 (ESC as \e):
 
 ## 11. Conformance
 
-The full, executable conformance case table — every normative case the implementation
-**must** satisfy, with pass status — is maintained in [test cases](./test-cases.md), and
-the same assertions are mirrored as `unittest`s in `width.d` / `grapheme.d`. All
-cases conform to kitty:
+The curated terminal-policy ledger is maintained in [test cases](./test-cases.md),
+with corresponding assertions in `width.d` / `grapheme.d`. It exercises the
+kitty-inspired local profile; it is not a claim that every external terminal,
+Unicode release, or contested width class agrees:
 
 | Rule                        | Status | Note                                           |
 | --------------------------- | ------ | ---------------------------------------------- |
@@ -814,31 +873,41 @@ cases conform to kitty:
 | symbols (`S*`) → 1          | ✓      | matches kitty's implementation, not its prose  |
 | regional indicator → 2      | ✓      | lone half and flag pair                        |
 | flags, ZWJ emoji, VS16/VS15 | ✓      | segmentation + cluster width                   |
-| lone emoji modifier → 2     | ✓      | EAW `W` outranks _Marks_ in isolation          |
-| noncharacters discarded → 0 | ✓      | `U+FDD0`..`U+FDEF`, `U+xxFFFE`, `U+xxFFFF`     |
+| lone emoji modifier → 2     | ✓      | EAW `W`; not a zero-width general category     |
+| noncharacters → width 0     | ✓      | original source spans remain retained          |
 
-Beyond these curated cases, the [conformance harness](./conformance-harness.md)
-differentially tests the implementation **exhaustively** — every code point and
-the official `GraphemeBreakTest.txt` / `emoji-test.txt` corpora — across eleven
-layers: a clean-room raw-UCD oracle, three reference terminals (kitty, ghostty
-via `libghostty-vt`, notcurses), three width libraries (utf8proc, Rust
-`unicode-width`, Python `wcwidth` embedded in-process), and two live UAX #29
-segmenters (utf8proc, ICU). It documents where these independent implementations
-genuinely _disagree_ (emoji-modifier sequences, Hangul jamo, Brahmic spacing
-marks, regional indicators, VS16) and which interpretation sparkles follows — the
-contested classes are implementation-dependent, not bugs.
+Beyond the curated ledger, the [conformance harness](./conformance-harness.md)
+has seventeen layers covering cell widths, default grapheme/word/sentence
+boundaries, line opportunities, bidi, normalization, and casing. Official Unicode
+18 corpora and independently parsed authenticated UCD data are the normative
+oracles. Foreign terminals (kitty, ghostty via `libghostty-vt`, notcurses), width
+libraries (utf8proc, Rust `unicode-width`, Python `wcwidth` embedded in-process),
+and segmenters (utf8proc, ICU) provide separate interoperability evidence at their
+own versions.
+
+Foreign disagreements can document terminal-policy differences, such as
+emoji-modifier sequences, Hangul jamo, Brahmic spacing marks, regional indicators,
+or VS16. These contested width classes are implementation-dependent, not
+necessarily bugs; they cannot waive an owned Unicode boundary, bidi,
+normalization, or casing failure. Execution results and delivery evidence belong
+to the harness and [delivery plan](./PLAN.md), not to this overview.
 
 ## 12. References
 
 - kitty Text Sizing Protocol — <https://sw.kovidgoyal.net/kitty/text-sizing-protocol/>
   (and `docs/text-sizing-protocol.rst`, `gen/wcwidth.py` in the kitty source) — © Kovid Goyal, GPL-3.0.
 - [UAX #11 East Asian Width](https://www.unicode.org/reports/tr11/)
+  ([revision 46](https://www.unicode.org/reports/tr11/tr11-46.html))
 - [UAX #14 Line Breaking](https://www.unicode.org/reports/tr14/)
+  ([revision 57](https://www.unicode.org/reports/tr14/tr14-57.html))
 - [UAX #29 Grapheme Cluster Boundaries](https://www.unicode.org/reports/tr29/#Grapheme_Cluster_Boundaries)
+  ([revision 49](https://www.unicode.org/reports/tr29/tr29-49.html#Grapheme_Cluster_Boundaries))
 - [UTS #51 Emoji](https://www.unicode.org/reports/tr51/)
-- [`EastAsianWidth.txt`](https://www.unicode.org/Public/17.0.0/ucd/EastAsianWidth.txt),
-  [`emoji-variation-sequences.txt`](https://www.unicode.org/Public/17.0.0/ucd/emoji/emoji-variation-sequences.txt)
-  (Unicode 17.0.0, the width tables' pinned release)
-- sparkles modules: `width.d`, `grapheme.d`, `wrap.d`, `unicode_tables.d` (under
-  `libs/base/src/sparkles/base/text/`); table generator
+  ([revision 31](https://www.unicode.org/reports/tr51/tr51-31.html))
+- Authenticated production inputs: `libs/base/tools/unicode/manifest.json` and
+  `libs/base/tools/unicode/18.0.0/`, including `EastAsianWidth.txt`,
+  `emoji/emoji-variation-sequences.txt`, categories, and boundary properties.
+- sparkles modules under `libs/base/src/sparkles/base/text/`: `utf.d`, `utf8.d`,
+  `utf16.d`, `unicode_tables.d`, `width.d`, `grapheme.d`, `wrap.d`, `wrap_plan.d`,
+  and `wrap_cells_project.d`; manifest-driven generator
   `libs/base/tools/gen_unicode_tables.d`.

@@ -696,6 +696,10 @@ struct GrepContext
         => bytes[0 .. length];
 }
 
+// Same factory passkey as the other Unique-owned application values: the
+// constructor is public for makeUnique, but its key stays module-private.
+private struct GrepEngineKey {}
+
 /**
 The parsed query and the matcher scratch fuzzy mode needs.
 
@@ -704,8 +708,9 @@ arm the way a keystroke does. It is a parameter rather than a global
 because `PKC15` wants this scan on a worker, and a worker needs its own
 scratch — one of these per thread, not one per process.
 
-Heap-owned by its holder: `MatcherWorkspace` is bounded at 1 MiB and a
-test worker's stack is 512 KiB.
+The owner retains query borrows separately from the pointer-free matcher arena,
+so only the small owner is registered as a collector range. Construct with
+`GrepEngine.create` before interactive scanning; a test worker has 512 KiB stacks.
 
 The query is prepared ONCE per generation, which is also what the engine
 wants: `prepareText` caches the decode, the smart-case probe and the
@@ -713,12 +718,30 @@ Unicode analysis per query rather than per candidate.
 */
 struct GrepEngine
 {
+    @disable this();
+
+    this(GrepEngineKey) @safe pure nothrow @nogc
+    {
+        workspace_ = makeUnique!(MatcherWorkspace!DefaultFuzzyCaps)();
+        assert(!workspace_.empty, "GrepEngine: workspace allocation failed");
+    }
+
     private char[DefaultFuzzyCaps.maxQueryBytes] prompt_ = void;
     private size_t promptLen_;
     private QueryStorage!DefaultFuzzyCaps query_;
-    private MatcherWorkspace!DefaultFuzzyCaps workspace_;
+    private Unique!(MatcherWorkspace!DefaultFuzzyCaps) workspace_;
     private AnalysisCase caseMode_;
     private bool ready_;
+
+    /// Allocate once at picker open or fixture setup, never during `prepare`.
+    /// Infer the owner after field completion: an explicit self-owner type
+    /// would evaluate collector metadata while this struct is still incomplete.
+    static auto create() @safe pure nothrow @nogc
+    {
+        auto engine = makeUnique!GrepEngine(GrepEngineKey.init);
+        assert(!engine.empty, "GrepEngine: owner allocation failed");
+        return engine;
+    }
 
     /// Parse `query` for the generation about to start. A query the engine
     /// refuses leaves fuzzy mode admitting nothing, which is the same
@@ -733,7 +756,6 @@ struct GrepEngine
         if (promptLen_ == 0)
             return;
         prompt_[0 .. promptLen_] = query[0 .. promptLen_];
-        caseMode_ = mode;
         caseMode_ = mode;
         // hue resolved smart case already, from `SearchSettings` — so the
         // rule is STATED rather than left to the engine's own derivation.
@@ -752,11 +774,17 @@ struct GrepEngine
         case AnalysisCase.fullFold:
             options.caseMode = QueryCase.fullFold;
             break;
+        case AnalysisCase.lower:
+        case AnalysisCase.upper:
+        case AnalysisCase.title:
+            // Search compares text; these are display transforms, not
+            // comparison profiles. Leave the prepared engine unavailable.
+            return;
         }
         // Parsed from the engine's OWN buffer, so the storage borrows a
         // lifetime it cannot outlive — it is the same object.
         auto parsed = parseQuery!DefaultFuzzyCaps(prompt_[0 .. promptLen_],
-            options);
+            workspace_.get.textWorkspace, options);
         if (parsed.hasError)
             return;
         // `-dip1000` sees a `return scope` value stored into `this` and
@@ -1007,7 +1035,7 @@ private size_t scanFuzzy(scope const(char)[] text, DocHandle doc,
         }
 
         auto outcome = matchText(engine.query_, asked, MatchConfig.init,
-            Scoring.init, FuzzyLimits.init, engine.workspace_);
+            Scoring.init, FuzzyLimits.init, engine.workspace_.get);
         if (outcome.hasValue && outcome.value.admitted)
         {
             const first = outcome.value.firstByte;
@@ -1105,7 +1133,7 @@ unittest
     static immutable text = "alpha beta\ngamma alpha\n    alpha indented\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "alpha", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[], engine);
@@ -1133,7 +1161,7 @@ unittest
     static immutable text = "\t\t    needle here\n";
     GrepHit[2] hits = void;
     GrepContext[2] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "needle", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[], engine);
@@ -1161,7 +1189,7 @@ unittest
 
     GrepHit[2] hits = void;
     GrepContext[2] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "needle", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[], engine);
@@ -1187,7 +1215,7 @@ unittest
     static immutable text = "alpha alpha\nalpha\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "alpha", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(7, 3), hits[], ctx[], engine);
@@ -1221,7 +1249,7 @@ unittest
     static immutable AnalysisCase[2] modes =
         [AnalysisCase.sensitive, AnalysisCase.simpleFold];
 
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
 
     size_t filtered;
@@ -1234,7 +1262,7 @@ unittest
                 const passes = mayAdmit(lineText, needle, mode);
                 auto outcome = matchText(engine.query_, lineText,
                     MatchConfig.init, Scoring.init, FuzzyLimits.init,
-                    engine.workspace_);
+                    engine.workspace_.get);
                 const admitted = outcome.hasValue && outcome.value.admitted;
                 assert(!admitted || passes,
                     "the prefilter rejected a line the engine admits: "
@@ -1260,7 +1288,7 @@ unittest
     static immutable text = "struct Widget\n";
     GrepHit[4] hits = void;
     GrepContext[4] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
 
     assert(scanText(text, "Wdgt", AnalysisCase.sensitive, GrepMode.plain,
@@ -1287,7 +1315,7 @@ unittest
     static immutable text = "a b a b a b\nnothing here\nab\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
 
     engine.prepare("ab", AnalysisCase.sensitive);
@@ -1305,7 +1333,7 @@ unittest
     static immutable text = "struct Widget\n";
     GrepHit[4] hits = void;
     GrepContext[4] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
 
     // `WIDGET`, not `wdgt`: the typo budget (§4.1) is 1 for a four-unit
@@ -1329,7 +1357,7 @@ unittest
     static immutable text = "struct Widget\n";
     GrepHit[4] hits = void;
     GrepContext[4] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
     assert(scanText(text, "Widget", AnalysisCase.sensitive, GrepMode.regex,
         DocHandle(1, 1), hits[], ctx[], engine) == 0, "`PKC16` is unwritten");
@@ -1348,7 +1376,7 @@ unittest
     static immutable text = "Alpha\nalpha\nALPHA\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
 
     assert(scanText(text, "alpha", AnalysisCase.simpleFold, GrepMode.plain,
@@ -1367,7 +1395,7 @@ unittest
     static immutable text = "if (foo bar)\nfoo = 1; bar = 2;\n";
     GrepHit[8] hits = void;
     GrepContext[8] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "foo bar", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[], engine);
@@ -1384,14 +1412,14 @@ unittest
     static immutable text = "x\nx\nx\nx\nx\n";
     GrepHit[2] hits = void;
     GrepContext[2] ctx = void;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
     assert(scanText(text, "x", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[], engine) == 2, "stops at the caller's room");
 
     GrepHit[8] big = void;
     GrepContext[8] bigCtx = void;
-    auto bigEngineOwner = makeUnique!GrepEngine();
+    auto bigEngineOwner = GrepEngine.create();
     ref GrepEngine bigEngine() => bigEngineOwner.get();
     assert(scanText(text, "x", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), big[], bigCtx[], bigEngine) == 5);
@@ -1693,7 +1721,7 @@ unittest
     static immutable text = "struct Widget\n{\n    Widget other;\n}\n";
     GrepHit[8] hits;
     GrepContext[8] ctx;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
     const n = scanText(text, "Widget", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[], engine);
@@ -1755,7 +1783,7 @@ unittest
 
     GrepHit[2] hits;
     GrepContext[2] ctx;
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     ref GrepEngine engine() => engineOwner.get();
     assert(scanText(text, "needle", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), hits[], ctx[], engine) == 1);
@@ -1789,7 +1817,7 @@ unittest
 
     auto found = new GrepHit[](hits);
     auto ctx = new GrepContext[](hits);
-    auto engineOwner = makeUnique!GrepEngine();
+    auto engineOwner = GrepEngine.create();
     const n = scanText(buf, "ab", AnalysisCase.sensitive, GrepMode.plain,
         DocHandle(1, 1), found, ctx, engineOwner.get);
     assert(n == hits, "every needle found");
@@ -1880,15 +1908,15 @@ version (unittest)
             this.mode = mode;
             this.hits = new GrepHit[](8192);
             this.ctx = new GrepContext[](8192);
-            this.engine = new GrepEngine;
-            this.engine.prepare(needle, AnalysisCase.sensitive);
+            this.engine = GrepEngine.create();
+            this.engine.get.prepare(needle, AnalysisCase.sensitive);
         }
 
-        GrepEngine* engine;
+        Unique!GrepEngine engine;
 
         size_t run() @safe
             => scanText(text, needle, AnalysisCase.sensitive, mode,
-                DocHandle(1, 1), hits, ctx, *engine);
+                DocHandle(1, 1), hits, ctx, engine.get);
 
         void check(ref size_t n) @safe
         {
@@ -2076,6 +2104,8 @@ struct GrepFinder
         }
         if (readBuf_.length == 0)
             readBuf_ = new char[](maxFileBytes_);
+        if (engine_.empty)
+            engine_ = GrepEngine.create();
     }
 
     /// Start a generation for `query`. An empty query scans nothing — a
@@ -2104,8 +2134,6 @@ struct GrepFinder
         // One parse per generation, which is also what the engine wants:
         // it caches the decode, the smart-case probe and the Unicode
         // analysis per query rather than per candidate.
-        if (engine_.empty)
-            engine_ = makeUnique!GrepEngine();
         engine_.get.prepare(needle_[0 .. needleLen_], mode_);
         scan_.begin(corpus_.length);
     }

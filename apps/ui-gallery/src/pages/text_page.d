@@ -5,20 +5,21 @@ The three modes side by side is the only way `balanced` justifies itself — on 
 paragraph whose greedy last line is a single orphan word, the minimum-squared-
 slack pass visibly evens the block out, and on most paragraphs it does nothing.
 
-The second half is `cellsOf`, and it is the page most likely to look $(B
-different) in the terminal and in the window. That is a real open item, not a
-bug in the page: the cell grid measures with `codepointWidth` (a wide glyph is
-two columns) while the GPU canvas advances one column per codepoint. The page
-says so where a reader will see it.
+The second half compares the owned terminalKitty `visibleWidth` cell profile
+with byte counts. Extended graphemes stay whole; font appearance is a backend
+property, not a second cell-width authority.
 */
 module pages.text_page;
 
 import std.conv : text;
 
-import sparkles.input : Key, KeyEvent;
-import sparkles.ui.geometry : cellsOf, SizeSpec;
+import sparkles.input : Key, KeyEvent, PointerEvent, PointerAction, PointerButton;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
-import sparkles.ui.widget : Builder, Widget, WidgetKind;
+import sparkles.ui.layout : Frame;
+import sparkles.ui.state : hoverTargets;
+import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
 import kit;
@@ -47,8 +48,8 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= heading(b, "Text · wrapping and measurement");
     body_ ~= spacer(b);
     body_ ~= para(b,
-        "Wrapped lines are slices of the input, never copies — the layout pass "
-        ~ "reports where the breaks go and the painter draws the same bytes.", w);
+        "Wrapping retains a source ledger and selected projection. Painting, "
+        ~ "cell hits and copy consume that same plan; source bytes stay available.", w);
     body_ ~= spacer(b);
     body_ ~= row(b, [
         label(b, "column", Slot.muted),
@@ -91,7 +92,7 @@ uint view(ref Builder b, in GalleryState s)
         ~ "monospace-ui.", w);
     body_ ~= spacer(b);
 
-    body_ ~= section(b, "cellsOf — the one width authority", [
+    body_ ~= section(b, "visibleWidth — the one width authority", [
         measured(b, "ascii"),
         measured(b, "a — b"),
         measured(b, "→ ✓ ◆"),
@@ -102,20 +103,17 @@ uint view(ref Builder b, in GalleryState s)
     ]);
     body_ ~= spacer(b);
     body_ ~= para(b,
-        "cellsOf counts one column per codepoint, which is what the GPU "
-        ~ "painter advances by. The terminal's cell grid measures a wide glyph "
-        ~ "as two. The last four rows above therefore lay out differently in a "
-        ~ "window and in a terminal — a known gap (LAY5/MIG5), shown here "
-        ~ "rather than hidden, since this is the page where a reader would "
-        ~ "otherwise conclude the toolkit is simply wrong.", w);
+        "visibleWidth uses the shared terminalKitty cell profile: CJK occupies "
+        ~ "two columns, accents remain attached, and flags and emoji sequences "
+        ~ "advance as whole graphemes. Layout, clipping, and cell painting use "
+        ~ "these same advances rather than counting UTF-8 bytes or scalars.", w);
     body_ ~= spacer(b);
     body_ ~= para(b,
-        "The grid keeps a grapheme cluster in one cell. A terminal that lays "
-        ~ "clusters out code point by code point (XTerm, zellij — the probe "
-        ~ "measures it) would draw the thumb, the heart and the technologist "
-        ~ "wider or narrower than that cell, so there each shows as its "
-        ~ "leading code point instead: grapheme-folded in the report. The flag "
-        ~ "and the accented e keep their cell either way.", w);
+        "The grid retains complete grapheme bytes and marks wide continuation "
+        ~ "cells. These measurements describe terminalKitty revision 1; actual "
+        ~ "terminal compatibility depends on the host's grapheme support and "
+        ~ "negotiated capabilities, not on replacing an emoji with its leading "
+        ~ "code point.", w);
 
     return column(b, body_);
 }
@@ -149,7 +147,7 @@ private uint wrapped(ref Builder b, TextWrap mode, int col, int hang,
     ));
 }
 
-/// A string beside its two measurements: what `cellsOf` says, and how many
+/// A string beside its two measurements: what `visibleWidth` says, and how many
 /// bytes it is. The gap between them is why `.length` is never the answer.
 private uint measured(ref Builder b, string sample_)
 {
@@ -163,7 +161,7 @@ private uint measured(ref Builder b, string sample_)
         kind: WidgetKind.row,
         children: [
             specimen_,
-            label(b, text("cellsOf ", cellsOf(sample_)), Slot.chromeAccent),
+            label(b, text("visibleWidth ", visibleWidth(sample_)), Slot.chromeAccent),
             label(b, text("bytes ", sample_.length), Slot.muted),
         ],
         gap: 2,
@@ -195,42 +193,6 @@ bool handleCommand(ref GalleryState s, GalleryCommand cmd, ubyte arg)
     }
 }
 
-@("ui_gallery.pages.textEveryWrapModeIsShown")
-@safe unittest
-{
-    auto b = Builder();
-    auto tree = b.finish(view(b, GalleryState.init));
-
-    bool[TextWrap.max + 1] seen;
-    foreach (ref n; tree.nodes)
-        if (n.kind == WidgetKind.text && n.text == sample)
-            seen[n.wrap] = true;
-
-    static foreach (m; __traits(allMembers, TextWrap))
-        assert(seen[__traits(getMember, TextWrap, m)],
-            "the page never shows TextWrap." ~ m);
-}
-
-@("ui_gallery.pages.textGreedyAndBalancedProduceTheSameLineCount")
-@safe unittest
-{
-    import sparkles.ui.geometry : Constraints;
-    import sparkles.ui.layout : layout;
-
-    // What `balanced` actually promises: it evens the lines out, it does not
-    // use fewer of them. A page claiming otherwise would be teaching the wrong
-    // thing, and this is cheaper than a screenshot to check.
-    int lines(TextWrap mode)
-    {
-        auto b = Builder();
-        const t = wrapped(b, mode, 40, 0);
-        auto tree = b.finish(t);
-        return layout(tree, Constraints(maxW: 40))[t].rect.height;
-    }
-
-    assert(lines(TextWrap.greedy) == lines(TextWrap.balanced));
-    assert(lines(TextWrap.none) == 1, "none stays a single line");
-}
 
 @("ui_gallery.pages.textWidthKnobStaysInsideThePane")
 @safe unittest

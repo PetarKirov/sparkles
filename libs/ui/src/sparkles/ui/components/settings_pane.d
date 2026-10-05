@@ -949,16 +949,29 @@ struct SettingsPane(T, alias resolveKey = defaultSettingsCommand)
             case SettingsCommand.textBackspace:
                 if (textBuf.length)
                 {
-                    // Pop one code point, not one byte.
-                    size_t cut = textBuf.length - 1;
-                    while (cut > 0 && (textBuf[cut] & 0xC0) == 0x80)
-                        cut--;
+                    import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
+
+                    // This scalar editor's buffer is valid UTF-8, not a grapheme editor.
+                    size_t at, cut;
+                    while (at < textBuf.length)
+                    {
+                        cut = at;
+                        const decoded = decodeToken(textBuf[at .. $], UtfMode.strict, true, at);
+                        assert(decoded.result.status == UtfStatus.ok);
+                        at += decoded.result.consumed;
+                    }
                     textBuf = textBuf[0 .. cut];
                 }
                 return consumed();
             default:
                 if (k.key == Key.char_ && k.ch >= ' ')
-                    textBuf ~= text(k.ch);
+                {
+                    import sparkles.base.text.utf : encodeScalar;
+
+                    char[4] encoded;
+                    const result = encodeScalar(k.ch, encoded[]);
+                    textBuf ~= encoded[0 .. result.written];
+                }
                 return consumed();
         }
     }
@@ -1367,6 +1380,12 @@ version (UiSettingsFixtures)
     foreach (c; "us")
         cast(void) p.handleKey(kch(c));
     assert(p.textBuf == "start-us", p.textBuf);
+    cast(void) p.handleKey(kch('😀'));
+    cast(void) p.handleKey(kch('\u0301'));
+    cast(void) p.handleKey(knk(Key.backspace));
+    assert(p.textBuf == "start-us😀", "backspace is scalar, not grapheme deletion");
+    cast(void) p.handleKey(knk(Key.backspace));
+    assert(p.textBuf == "start-us");
     cast(void) p.handleKey(knk(Key.enter));
     assert(!p.textEditing && cfg.name == "start-us" && p.fileDraft.name == "start-us");
 

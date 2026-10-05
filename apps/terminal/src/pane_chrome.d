@@ -125,9 +125,9 @@ WidgetTree paneFrame(string title, bool focused, int cols, int rows) @safe
 /// whole `/data/user/0/…` path).
 private uint keepTitle(ref Builder b, uint title) @safe
 {
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
-    const cells = cast(int) cellsOf(b.nodes[title].text);
+    const cells = cast(int) visibleWidth(b.nodes[title].text);
     b.nodes[title].width.min = cells < 16 ? cells : 16;
     return title;
 }
@@ -205,13 +205,13 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     // captions stay whole (they were cut to "S", "Zo", "Cl").
     const l = place(paneToolbar(1, "sh", "/tmp/a/very/long/working/directory/that/goes/on",
         ButtonLabels.iconText, 1, 40), 40, 3, 0, 0, 1, 1, Place.top);
-    import sparkles.ui.geometry : cellsOf;
+    import sparkles.base.text.grapheme : visibleWidth;
 
     // Each hit is a button: its rect holds its whole caption plus padding.
     const captions = ["◫ Split", "⤢ Zoom", "× Close"];
     assert(l.hits.length == 3);
     foreach (i, ref t; l.hits)
-        assert(t.rect.width >= cellsOf(captions[i]) + 2, captions[i]);
+        assert(t.rect.width >= visibleWidth(captions[i]) + 2, captions[i]);
 }
 
 @("pane_chrome.paneToolbar.aNarrowPaneShowsIcons")

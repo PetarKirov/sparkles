@@ -1,7 +1,7 @@
 󰲡 Tall tables
 
-A table whose interior exceeds the line clamp scrolls vertically behind a
-fixed-height viewport; its right border becomes the track (TBL8).
+A table whose interior exceeds the line clamp scrolls vertically behind a fixed-
+height viewport; its right border becomes the track (TBL8).
 
 ╭──────┬───────────────────────╮
 │ step │ action                ┃

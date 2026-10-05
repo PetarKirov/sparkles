@@ -424,6 +424,10 @@ struct DocumentPipeline
     it. That is only expressible now that the parsers report *why* they
     failed — previously an unreadable artifact and one describing nothing
     were the same empty report, so neither could be reported.
+
+    V8 artifacts are projected to this document before any source resolution.
+    Their native UTF-16 ranges are mapped against the immutable `doc.source`
+    snapshot already loaded, never a reread of the file or an unrelated script.
     */
     void attachCoverage(ref Document doc, string covPath)
     {
@@ -448,14 +452,20 @@ struct DocumentPipeline
             return;
         }
 
-        auto parsed = loadCoverage(covPath, contents, doc.source);
+        import sparkles.base.text.errors : parseOk;
+        import sparkles.code_instrumentation.coverage.model : CoverageReport, FileCoverage;
+        const target = doc.path.length ? doc.path : doc.title;
+        const snapshot = doc.source;
+        const snapshotPaths = CoverageReport([FileCoverage(sourcePath: target)]);
+        auto parsed = loadCoverage(covPath, contents,
+            (const(char)[] scriptPath) @safe => parseOk(cast(const(char)[]) snapshot),
+            (const(char)[] scriptPath) @safe => snapshotPaths.findFile(scriptPath) !is null);
         if (!parsed)
         {
             warning(i"coverage artifact $(covPath) did not parse at byte $(parsed.error.offset): $(parsed.error.context)");
             return;
         }
 
-        const target = doc.path.length ? doc.path : doc.title;
         const match = parsed.value.findFile(target);
         if (match is null)
         {
@@ -1872,4 +1882,41 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
     auto doc = pipeline.load(srcPath);
 
     assert(!doc.hasCoverage, "coverage for math.d must not land on other.d");
+}
+
+@("document.coverage.v8SelectedSnapshotSurvivesDiskReplacement")
+@system unittest
+{
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.base.text.span : TextSpan;
+    import std.file : write;
+    import std.format : format;
+    import std.json : JSONValue;
+
+    auto tmp = TmpFS.create("document-v8-snapshot");
+    enum original = "A\U0001F600\n\u754CB\n";
+    const srcPath = tmp.writeFileAt("selected.js", original);
+    // The unrelated script has no source, and its invalid range must not be
+    // interpreted using the selected document's snapshot.
+    const covPath = tmp.writeFileAt("coverage.json", format(
+        `{"result":[
+            {"url":"missing.js","functions":[{"functionName":"missing",
+            "ranges":[{"startOffset":0,"endOffset":9999,"count":1}]}]},
+            {"url":%s,"functions":[{"functionName":"selected",
+            "ranges":[{"startOffset":4,"endOffset":6,"count":3}]}]}]}`,
+        JSONValue("file://" ~ srcPath).toString));
+    DocumentPipeline pipeline;
+    pipeline.autoCoverage = false;
+    auto doc = pipeline.load(srcPath, false, "text");
+    write(srcPath, "replaced on disk\n");
+    pipeline.attachCoverage(doc, covPath);
+
+    assert(doc.source == original);
+    assert(doc.hasCoverage);
+    assert(doc.coverage.inlineSpans[0].span == TextSpan(6, 10));
+    assert(doc.coverage.gutterItems[0].state == LineState.nonCode);
+    assert(doc.coverage.gutterItems[1].lineNumber == 2);
+    assert(doc.coverage.gutterItems[1].state == LineState.covered);
+    assert(doc.coverage.gutterItems[1].executionCount == 3);
+    assert(doc.coverage.gutterItems[2].state == LineState.nonCode);
 }

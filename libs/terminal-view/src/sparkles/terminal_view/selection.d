@@ -69,15 +69,21 @@ Whether `c` belongs to a word (`TSE1`): a letter, a digit, or one of
 */
 bool isWordChar(dchar c) @safe pure nothrow @nogc
 {
-    import std.uni : isAlpha, isNumber;
+    import sparkles.base.text.unicode_tables : generalCategory, GeneralCategory;
 
     switch (c)
     {
         case '_', '-', '.', '/', '~', ':', '@', '%', '+':
             return true;
         default:
-            return c > 0x7f ? isAlpha(c) || isNumber(c)
-                : (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+            if (c <= 0x7f)
+                return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9');
+            const gc = generalCategory(c);
+            return gc == GeneralCategory.Lu || gc == GeneralCategory.Ll
+                || gc == GeneralCategory.Lt || gc == GeneralCategory.Lm
+                || gc == GeneralCategory.Lo || gc == GeneralCategory.Nd
+                || gc == GeneralCategory.Nl || gc == GeneralCategory.No;
     }
 }
 
@@ -600,9 +606,12 @@ TextHit[] findAll(scope const(char)[][] lines, scope const(char)[] needle) @safe
 
 private size_t codePoints(scope const(char)[] s) @safe pure nothrow @nogc
 {
+    import sparkles.base.text.tokens : byUtfToken;
+    import sparkles.base.text.utf : UtfMode;
+
     size_t n;
-    foreach (c; s)
-        n += (c & 0xC0) != 0x80;
+    foreach (_; byUtfToken(s, UtfMode.replacement))
+        ++n;
     return n;
 }
 

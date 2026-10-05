@@ -3,11 +3,11 @@
 [0m [0m  Primitives[0m        [0m|[0m                                                                         [0m#[0m
 [0m [0m  Layout[0m            [0m|[0m                                                                         [0m#[0m
 [0m [0m  Tracks[0m            [0m|[0m [0mThe span-capable table: an HTML-style slot grid (colspan, rowspan,[0m      [0m#[0m
-[0m [0m  Text[0m              [0m|[0m [0msparse placement), header rows and stub columns with heavy rules,[0m       [0m#[0m
-[0m [0m  Themes[0m            [0m|[0m [0mper-column and per-cell alignment including decimal, VAlign, wrapping[0m   [0m#[0m
-[0m [0m  Slots[0m             [0m|[0m [0munder width caps, and pluggable glyph presets. One layout core decides[0m  [0m#[0m
-[0m [0m  Decoration[0m        [0m|[0m [0mevery width, height and junction; the widget view below and the string[0m  [0m#[0m
-[0m [0m  Effects[0m           [0m|[0m [0mview beside it both materialize its answer.[0m                             [0m#[0m
+[0m [0m  Text[0m              [0m|[0m [0msparse placement), header rows and stub columns with heavy rules, per-[0m  [0m#[0m
+[0m [0m  Themes[0m            [0m|[0m [0mcolumn and per-cell alignment including decimal, VAlign, wrapping under[0m [0m#[0m
+[0m [0m  Slots[0m             [0m|[0m [0mwidth caps, and pluggable glyph presets. One layout core decides every[0m  [0m#[0m
+[0m [0m  Decoration[0m        [0m|[0m [0mwidth, height and junction; the widget view below and the string view[0m   [0m#[0m
+[0m [0m  Effects[0m           [0m|[0m [0mbeside it both materialize its answer.[0m                                  [0m#[0m
 [0m [0m  Grid[0m              [0m|[0m                                                                         [0m#[0m
 [0m [0m  Components[0m        [0m|[0m [0m+---------------------------------------------------------------------+[0m [0m#[0m
 [0m [0m  Tree[0m              [0m|[0m [0m|[0m [0;1mwidget view - buildTableWidgets[0m                                     [0m|[0m [0m#[0m

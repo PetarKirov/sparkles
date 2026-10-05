@@ -751,6 +751,28 @@ jobs:
             exit 1
           fi
 
+  # Complete authenticated Unicode 18 corpora, not samples. The Nix check
+  # builds the existing harness offline and executes it in the build sandbox.
+  text-conformance:
+    name: Owned Unicode conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Run complete offline official corpora
+        run: nix build -L .#checks.x86_64-linux.text-conformance
+
   # Every symbol a spec's evidence column cites must exist in the tree. The
   # pre-commit hook of the same name runs it too (and so does `lint`, through
   # `prek run --all-files`), but a hook can be skipped and a lint failure
@@ -796,6 +818,7 @@ jobs:
       - docs
       - cloud-env
       - spec-evidence
+      - text-conformance
     if: always()
     runs-on: ubuntu-latest
     steps:

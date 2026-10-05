@@ -18,7 +18,8 @@ import sparkles.code_instrumentation.coverage.formats.dmd : parseDmdCoverage;
 import sparkles.code_instrumentation.coverage.formats.gcov : parseGcovCoverage;
 import sparkles.code_instrumentation.coverage.formats.lcov : parseLcovCoverage;
 import sparkles.code_instrumentation.coverage.formats.llvm : parseLlvmExportJson;
-import sparkles.code_instrumentation.coverage.formats.v8 : parseV8Coverage;
+import sparkles.code_instrumentation.coverage.formats.v8 :
+    parseV8Coverage, V8SourceResolver, V8ScriptSelector;
 import sparkles.code_instrumentation.coverage.model : CoverageReport, FileCoverage;
 import sparkles.code_instrumentation.coverage.record : RecordScanner, splitOnce, trimmed;
 
@@ -194,8 +195,10 @@ Params:
     path = the artifact's path, used for detection and as a fallback source
         path for the single-file formats
     contents = the artifact's text
-    sourceText = the covered source, needed only by the V8 format to resolve
-        byte offsets to lines
+    resolveSource = resolves each V8 script path to its original UTF-8 snapshot;
+        required for converting native UTF-16 ranges to original byte spans
+    selectScript = explicit V8 script projection, applied before source resolution;
+        null ingests all scripts, otherwise the report contains selected scripts only
 
 Returns: the report, or a `ParseError`. An unrecognized format is
     `unknownValue` rather than an empty report — "I could not read this" and
@@ -203,7 +206,7 @@ Returns: the report, or a `ParseError`. An unrecognized format is
     tell them apart to honour the overlay degradation contract.
 */
 ParseExpected!CoverageReport loadCoverage(const(char)[] path, const(char)[] contents,
-    const(char)[] sourceText = null) @safe
+    scope V8SourceResolver resolveSource = null, scope V8ScriptSelector selectScript = null) @safe
 {
     final switch (detectFormat(path, contents))
     {
@@ -220,7 +223,7 @@ ParseExpected!CoverageReport loadCoverage(const(char)[] path, const(char)[] cont
             return parseLcovCoverage(contents);
 
         case CoverageFormat.v8Json:
-            return parseV8Coverage(contents, sourceText);
+            return parseV8Coverage(contents, resolveSource, selectScript);
 
         case CoverageFormat.llvmJson:
             return parseLlvmExportJson(contents);
@@ -318,4 +321,35 @@ unittest
     const empty = loadCoverage("empty.info", "");
     assert(empty, "a valid, empty LCOV report is not an error");
     assert(empty.value.files.length == 0);
+}
+
+@("coverage.ingest.v8SelectedDocumentUsesOnlyItsOriginalSnapshot")
+@safe unittest
+{
+    import sparkles.code_instrumentation.coverage.model : LineState;
+    enum json = `{"result":[
+        {"url":"unrelated.js","functions":[{"functionName":"other",
+            "ranges":[{"startOffset":0,"endOffset":9999,"count":1}]}]},
+        {"url":"file:///repo/selected.js","functions":[{"functionName":"selected",
+            "ranges":[{"startOffset":3,"endOffset":4,"count":2}]}]}]}`;
+    const parsed = loadCoverage("coverage.json", json,
+        (const(char)[] path) @safe {
+            if (path != "/repo/selected.js")
+                return parseErr!(const(char)[])(ParseErrorCode.unknownValue, 0,
+                    "no immutable snapshot for this script");
+            return parseOk(cast(const(char)[]) "\U0001F600\n\u754C");
+        },
+        (const(char)[] path) @safe => path == "/repo/selected.js");
+    assert(parsed);
+    const file = parsed.value.findFile("/repo/selected.js");
+    assert(file !is null);
+    assert(parsed.value.findFile("unrelated.js") is null);
+    assert(file.spans[0].span.startOffset == 5 && file.spans[0].span.endOffset == 8);
+    assert(file.functions[0].startLine == 2);
+    assert(file.lineAt(2).state == LineState.covered);
+    // Without an explicit projection the incomplete source set is an error.
+    const all = loadCoverage("coverage.json", json,
+        (const(char)[] _) @safe => parseErr!(const(char)[])(
+            ParseErrorCode.unknownValue, 0, "original source unavailable"));
+    assert(all.hasError && all.error.code == ParseErrorCode.unknownValue);
 }

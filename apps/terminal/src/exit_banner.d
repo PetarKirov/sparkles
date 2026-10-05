@@ -73,9 +73,9 @@ WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels l
         ok ? Slot.success : Slot.error, bold: true);
     // The status is the line's point: a long command gives way to it.
     {
-        import sparkles.ui.geometry : cellsOf;
+        import sparkles.base.text.grapheme : visibleWidth;
 
-        b.nodes[mark].width.min = cast(int) cellsOf(b.nodes[mark].text);
+        b.nodes[mark].width.min = cast(int) visibleWidth(b.nodes[mark].text);
     }
     const cmd = label(b, info.command.length ? "· " ~ info.command : "", Slot.muted);
     const chevron = label(b, expanded ? "▴" : "▾", Slot.muted);
@@ -111,42 +111,16 @@ WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels l
 }
 
 /**
-`command` in lines at most `width` cells: wrapped at spaces, and a word wider
-than a line — a long path or URL — split where it must be.
+`command` in lines at most `width` cells, using the allocating UI cell-plan
+adapter's owned Unicode opportunities. A path or URL wider than a line is
+split only at whole-grapheme boundaries, not at arbitrary byte positions.
 */
-string[] commandLines(string command, int width) @safe pure
+string[] commandLines(string command, int width) @safe
 {
-    import sparkles.ui.geometry : cellsOf, takeCells;
     import sparkles.ui.wrap : wrapLines;
-
-    static int cols(scope const(char)[] s) @safe pure nothrow @nogc
-        => cast(int) cellsOf(s);
-
-    if (width < 1)
-        width = 1;
     string[] lines;
-    foreach (l; wrapLines(command, width, &cols))
-    {
-        const(char)[] rest = l;
-        if (!rest.length)
-        {
-            lines ~= "";
-            continue;
-        }
-        do
-        {
-            auto head = takeCells(rest, width);
-            if (!head.length) // one character wider than the line
-            {
-                import std.utf : stride;
-
-                head = rest[0 .. stride(rest)];
-            }
-            lines ~= head.idup;
-            rest = rest[head.length .. $];
-        }
-        while (rest.length);
-    }
+    foreach (line; wrapLines(command, width > 0 ? width : 0))
+        lines ~= line.idup;
     return lines;
 }
 
@@ -239,12 +213,32 @@ private string ranText(SysTime started, SysTime ended) @safe
 }
 
 @("exit_banner.commandLines.wrapsAndSplitsLongWords")
-@safe pure unittest
+@safe unittest
 {
     assert(commandLines("make -j8 all", 80) == ["make -j8 all"]);
     assert(commandLines("make -j8 all", 8) == ["make -j8", "all"]);
-    // A path wider than the line is split, not left to overflow.
-    assert(commandLines("cat /a/very/long/path", 8) == ["cat", "/a/very/", "long/pat", "h"]);
+    import std.algorithm.searching : canFind;
+    import std.array : join;
+    import std.string : replace;
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // Unicode opportunities may change exact path breaks; neither cells nor
+    // command contents may be lost, and an extended grapheme stays on one row.
+    foreach (command; ["cat /a/very/long/path", "cat é/日本語/👩‍💻/long/path"])
+    {
+        const lines = commandLines(command, 8);
+        foreach (line; lines)
+            assert(visibleWidth(line) <= 8);
+        assert(lines.join.replace(" ", "") == command.replace(" ", ""));
+        foreach (cluster; ["é", "👩‍💻"])
+            if (command.canFind(cluster))
+            {
+                bool intact;
+                foreach (line; lines)
+                    intact |= line.canFind(cluster);
+                assert(intact, "command wrapping split an extended grapheme");
+            }
+    }
     assert(commandLines("", 8) == [""]);
 }
 

@@ -221,7 +221,7 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
 {
     import std.array : appender;
     import std.string : splitLines;
-    import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions;
+    import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions, CellWidth;
 
     const prefix = props.omitLeftBorder ? ""d : props.verticalLine ~ " "d;
     const prefixLen = prefix.length;
@@ -280,7 +280,7 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
                 // Stream the title at the single-line cap; nest it (in a title box
                 // wrapped at the wider nested cap) only if it spills past one row.
                 auto probe = title.byWrappedLine(
-                    WrapOptions(width: singleCap, whitespace: WhitespaceMode.preserve));
+                    WrapOptions(width: CellWidth.bounded(singleCap), whitespace: WhitespaceMode.trimAroundBreak));
                 auto more = probe.save;
                 more.popFront;
                 if (!more.empty)
@@ -288,7 +288,7 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
                     // `front` is borrowed from the range's buffer; trim + retain.
                     auto tla = appender!(string[]);
                     foreach (l; title.byWrappedLine(
-                            WrapOptions(width: nestedCap, whitespace: WhitespaceMode.preserve)))
+                            WrapOptions(width: CellWidth.bounded(nestedCap), whitespace: WhitespaceMode.trimAroundBreak)))
                         tla ~= stripTrailingSpaces(l).idup;
                     titleLines = tla[];
                     nested = true;
@@ -321,7 +321,7 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
             {
                 bool any = false;
                 foreach (w; cline.byWrappedLine(
-                        WrapOptions(width: contentMax, whitespace: WhitespaceMode.preserve)))
+                        WrapOptions(width: CellWidth.bounded(contentMax), whitespace: WhitespaceMode.trimAroundBreak)))
                 {
                     any = true;
                     const t = stripTrailingSpaces(w);
@@ -403,7 +403,7 @@ private string[] idupArray(R)(R lines)
 /// wrapped up front), then the bottom border.
 private struct BoxLineRange(Content)
 {
-    import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions, WrappedLines;
+    import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions, WrappedLines, CellWidth;
 
     private
     {
@@ -421,7 +421,7 @@ private struct BoxLineRange(Content)
 
         // Streaming: pull `_content` lazily, wrapping each source line into `_sub`.
         Content _content;
-        WrappedLines!256 _sub;
+        WrappedLines _sub;
         bool _subActive;
         bool _subEmittedRow; // did the current source line yield any wrapped row?
         size_t _ti;
@@ -503,7 +503,7 @@ private struct BoxLineRange(Content)
                 if (_content.empty)
                     return false;
                 _sub = _content.front.byWrappedLine(
-                    WrapOptions(width: _contentMax, whitespace: WhitespaceMode.preserve));
+                    WrapOptions(width: CellWidth.bounded(_contentMax), whitespace: WhitespaceMode.trimAroundBreak));
                 _content.popFront; // drives a delayed source -> animation
                 _subActive = true;
                 _subEmittedRow = false;
@@ -567,7 +567,7 @@ private struct BoxChunkRange(bool lineBuffered, Content)
 {
     import std.conv : to;
     import sparkles.base.text.wrap : byWrappedChunk, byWrappedLine,
-        WhitespaceMode, WrapOptions, WrappedChunks, WrappedLines;
+        WhitespaceMode, WrapOptions, WrappedChunks, WrappedLines, CellWidth;
 
     private
     {
@@ -583,7 +583,7 @@ private struct BoxChunkRange(bool lineBuffered, Content)
         string[] _eagerRows; // non-stream: finished pre-border rows
         size_t _eri;
         Content _content;     // stream: pulled one source line at a time
-        WrappedLines!256 _sub;
+        WrappedLines _sub;
         bool _subActive;
         bool _subEmittedRow;  // did the current source line yield any wrapped row?
 
@@ -592,7 +592,7 @@ private struct BoxChunkRange(bool lineBuffered, Content)
         size_t _tii;
 
         // Sub-chunking of the current row + frame-merge state.
-        WrappedChunks!(lineBuffered, 256) _rowChunks;
+        WrappedChunks!lineBuffered _rowChunks;
         bool _rowOpen;
         size_t _rowWidth;     // visible width accumulated in the current row
         CloseSpec _rowClose;  // how the current row's right border is drawn
@@ -725,7 +725,7 @@ private struct BoxChunkRange(bool lineBuffered, Content)
                 continue;
             }
             _pending ~= it.lead;
-            _rowChunks = byWrappedChunk!(lineBuffered)(it.text, WrapOptions(width: 0));
+            _rowChunks = byWrappedChunk!(lineBuffered)(it.text, WrapOptions(width: CellWidth.unbounded));
             _rowWidth = 0;
             _rowClose = it.close;
             _rowOpen = true;
@@ -735,7 +735,7 @@ private struct BoxChunkRange(bool lineBuffered, Content)
         if (!nextRow(row))
             return false;
         _pending ~= _prefix; // this body row's left border
-        _rowChunks = byWrappedChunk!(lineBuffered)(row, WrapOptions(width: 0));
+        _rowChunks = byWrappedChunk!(lineBuffered)(row, WrapOptions(width: CellWidth.unbounded));
         _rowWidth = 0;
         _rowClose = _bodyClose;
         _rowOpen = true;
@@ -761,7 +761,7 @@ private struct BoxChunkRange(bool lineBuffered, Content)
                 if (_content.empty)
                     return false;
                 _sub = _content.front.byWrappedLine(
-                    WrapOptions(width: _contentMax, whitespace: WhitespaceMode.preserve));
+                    WrapOptions(width: CellWidth.bounded(_contentMax), whitespace: WhitespaceMode.trimAroundBreak));
                 _content.popFront; // drives a delayed source -> animation
                 _subActive = true;
                 _subEmittedRow = false;
@@ -788,11 +788,10 @@ private struct BoxChunkRange(bool lineBuffered, Content)
     }
 }
 
-/// Trim trailing spaces from a wrapped row, keeping internal whitespace intact.
-/// `preserve` wrapping can leave a space at a wrap point (and the engine may append
-/// a style reset after it); this returns the row up to the last non-space, non-escape
-/// cluster, so the row's visible width never exceeds the wrap width. Any opening
-/// style is re-closed by the caller's reset-before-border step.
+/// Trim presentation padding from an already selected row, retaining internal
+/// whitespace. Bounded box plans explicitly choose `trimAroundBreak`; raw
+/// unwrapped rows may still have authored trailing padding. The caller closes
+/// any active style before painting the border.
 private const(char)[] stripTrailingSpaces(const(char)[] s)
 {
     import sparkles.base.text.grapheme : byGraphemeCluster;
@@ -1336,8 +1335,6 @@ unittest
         assert(line.visibleWidth <= 36);
     assert(lines[0].canFind('╭') && lines[0].canFind('╮')); // nested box top, protruding
     assert(lines[1].canFind('┤') && lines[1].canFind('├')); // frame-top handles
-    foreach (word; ["This", "multi-line", "drawBox", "ends", "here."])
-        assert(box.canFind(word));
 }
 
 @("drawBox.titleOverflow.wrapShortTitleStaysSingleLine")

@@ -4,8 +4,8 @@
    Layout            |                                                                         #
    Tracks            | Thirty-four roles. A widget names one; the palette turns it into a      #
    Text              | concrete foreground, background and alpha while the display list is     #
-   Themes            | built. Nothing below hardcodes a colour - press ] and every swatch      #
- > Slots             | re-resolves.                                                            #
+   Themes            | built. Nothing below hardcodes a colour - press ] and every swatch re-  #
+ > Slots             | resolves.                                                               #
    Decoration        |                                                                         |
    Effects           | +---------------------------------------------------------------------+ |
    Grid              | | text                                                                | |

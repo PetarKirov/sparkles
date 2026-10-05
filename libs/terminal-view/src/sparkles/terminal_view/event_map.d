@@ -100,7 +100,8 @@ KeyEvent withKeyIdentity(in KeyEvent k)
         && !k.mods.ctrl && !k.mods.alt && k.action != KeyAction.release)
     {
         char[4] ub = void;
-        const n = utf8Of(ub, k.ch);
+        import sparkles.base.text.utf : encodeScalar;
+        const n = encodeScalar(k.ch, ub[]).written;
         if (n > 0)
             patched.text(ub[0 .. n]);
     }
@@ -174,7 +175,8 @@ bool softKeyPress(dchar c, out KeyEvent press)
     if (key == Key.char_)
     {
         char[4] ub = void;
-        press.text(ub[0 .. utf8Of(ub, c)]);
+        import sparkles.base.text.utf : encodeScalar;
+        press.text(ub[0 .. encodeScalar(c, ub[]).written]);
     }
     return true;
 }
@@ -198,42 +200,6 @@ bool softKeyPress(dchar c, out KeyEvent press)
     assert(!softKeyPress('é', k));
 }
 
-/// Encodes `c` as UTF-8 into `buf`, returning the byte count — `0` for a
-/// surrogate or out-of-range scalar. `@nogc` by construction, unlike
-/// `std.utf.encode`, which throws.
-@safe pure nothrow @nogc
-size_t utf8Of(ref char[4] buf, dchar c)
-{
-    if (c < 0x80)
-    {
-        buf[0] = cast(char) c;
-        return 1;
-    }
-    if (c < 0x800)
-    {
-        buf[0] = cast(char)(0xC0 | (c >> 6));
-        buf[1] = cast(char)(0x80 | (c & 0x3F));
-        return 2;
-    }
-    if (c >= 0xD800 && c <= 0xDFFF)
-        return 0;
-    if (c < 0x10000)
-    {
-        buf[0] = cast(char)(0xE0 | (c >> 12));
-        buf[1] = cast(char)(0x80 | ((c >> 6) & 0x3F));
-        buf[2] = cast(char)(0x80 | (c & 0x3F));
-        return 3;
-    }
-    if (c <= 0x10FFFF)
-    {
-        buf[0] = cast(char)(0xF0 | (c >> 18));
-        buf[1] = cast(char)(0x80 | ((c >> 12) & 0x3F));
-        buf[2] = cast(char)(0x80 | ((c >> 6) & 0x3F));
-        buf[3] = cast(char)(0x80 | (c & 0x3F));
-        return 4;
-    }
-    return 0;
-}
 
 /// The pointer button, in the encoder's vocabulary (the same spellings the
 /// raylib polling map uses for the side buttons).
@@ -417,16 +383,4 @@ unittest
     // An event already carrying its identity passes through untouched.
     const gui = KeyEvent(Key.char_, 'E', Mods(shift: true), KeyAction.press, 'e');
     assert(withKeyIdentity(gui).unshifted == 'e');
-}
-
-@("terminal_view.event_map.utf8OfCoversThePlanes")
-@safe pure nothrow @nogc
-unittest
-{
-    char[4] b = void;
-    assert(utf8Of(b, 'A') == 1 && b[0] == 'A');
-    assert(utf8Of(b, 'é') == 2 && b[0 .. 2] == "é");
-    assert(utf8Of(b, '│') == 3 && b[0 .. 3] == "│");
-    assert(utf8Of(b, '🙂') == 4 && b[0 .. 4] == "🙂");
-    assert(utf8Of(b, cast(dchar) 0xD800) == 0, "a surrogate is not a scalar");
 }

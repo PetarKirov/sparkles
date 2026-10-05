@@ -32,6 +32,26 @@ enum CaseStyle
     screamingSnakeCase, /// `FROM_XML_TO_JSON` — uppercase words joined with `_`
 }
 
+// Slices must be indexed as code units instead of using Phobos's implicitly
+// decoding front/popFront primitives. Caller-provided ranges keep their contract.
+private auto codeUnits(R)(R input)
+{
+    static if (is(R == C[], C) && isSomeChar!C)
+    {
+        struct Units
+        {
+            R source;
+            bool empty() const { return source.length == 0; }
+            auto front() const { return source[0]; }
+            void popFront() { source = source[1 .. $]; }
+            auto save() { return this; }
+        }
+        return Units(input);
+    }
+    else
+        return input;
+}
+
 /**
 Recases `ident` into the output range `w` under `style`, allocating nothing of
 its own — the primitive underlying $(LREF convertCase).
@@ -49,11 +69,10 @@ void writeConvertedCase(CaseStyle style, Writer, R)(ref Writer w, R ident)
 if (isOutputRange!(Writer, char) && isForwardRange!R && isSomeChar!(ElementType!R))
 {
     import std.ascii : isDigit, isLower, isUpper, toLower, toUpper;
-    import std.utf : byCodeUnit;
 
     static if (style == CaseStyle.original)
     {
-        for (auto r = ident.byCodeUnit; !r.empty; r.popFront())
+        for (auto r = codeUnits(ident); !r.empty; r.popFront())
             put(w, r.front);
     }
     else
@@ -68,7 +87,7 @@ if (isOutputRange!(Writer, char) && isForwardRange!R && isSomeChar!(ElementType!
         bool emittedAny = false;
         char prev = 0;
 
-        for (auto r = ident.byCodeUnit; !r.empty; r.popFront())
+        for (auto r = codeUnits(ident); !r.empty; r.popFront())
         {
             const char c = r.front;
 
@@ -201,9 +220,8 @@ string convertCase(CaseStyle style)(string ident)
             // Under `-betterC` — the runner's `@betterC` extraction imports
             // modules (e.g. `sparkles.base.text.readers`) that reach this via a
             // CTFE `enum`, so the `if (__ctfe)` branch above always returns here.
-            // The runtime writer path depends on `std.utf.byCodeUnit`, which is
-            // not instantiable for a narrow `string` in a `-betterC` build, so it
-            // is elided; a runtime call would be a bug.
+            // The allocating StringSink runtime path cannot be used without
+            // the runtime; only the CTFE path is available under -betterC.
             assert(0, "convertCase has no runtime path under -betterC (CTFE only)");
         }
         else

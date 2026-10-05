@@ -4,7 +4,8 @@ import std.algorithm : map, sort, startsWith;
 import std.array : array, join, split;
 import std.format : format;
 import std.path : baseName, buildPath, stripExtension;
-import std.string : stripRight, toUpper, wrap;
+import std.string : stripRight, wrap;
+import sparkles.base.text.case_text : unicodeUpper;
 import std.traits : FieldNameTuple, getUDAs;
 
 import sparkles.core_cli.help_formatting : HelpInfo, Sections, formatSection;
@@ -541,12 +542,12 @@ package string valuePlaceholder(T)(Option optionInfo, string field)
     {
         auto placeholder = optionInfo.placeholder_.length
             ? optionInfo.placeholder_
-            : field.toUpper;
+            : field.unicodeUpper;
         return " " ~ placeholder;
     }
 }
 
 package string positionalName(string field, Argument argumentInfo) @safe
 {
-    return argumentInfo.placeholder_.length ? argumentInfo.placeholder_ : field.toUpper;
+    return argumentInfo.placeholder_.length ? argumentInfo.placeholder_ : field.unicodeUpper;
 }

@@ -80,6 +80,15 @@ a line does not make the line unexecuted — `if (c) { miss(); }` evaluates its
 condition every time. That line is `partial`; the byte-exact truth stays in
 `spans`.
 
+V8's producer coordinates are **UTF-16 code units**, not those returned UTF-8
+byte spans. The fixture CLI at `apps/hue/tools/gen-coverage-fixtures.d` includes
+both a BMP and a supplementary scalar before the first function, so native
+offsets cannot accidentally pass as byte offsets. It locates each range with
+a byte-index search, converts its exact byte boundaries to native UTF-16, and
+roundtrips the artifact through real ingestion. Counting decoded scalars while
+searching a UTF-8 string is not a byte index: it can land inside an emoji before
+the source map even receives a valid boundary.
+
 ## The listing names the file, the artifact does not
 
 A DMD `.lst` ends with a trailer:
