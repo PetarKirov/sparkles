@@ -16,7 +16,7 @@ the output. `uExtentCells` and the per-effect uniforms are what
 @compute(CompileFor.deviceOnly)
 module effects;
 
-import sparkles.shader;
+import sparkles.shaders;
 static import sparkles.ui.effect_shaders;
 
 /**

@@ -12,7 +12,7 @@ dflags "-preview=in" "-preview=dip1000"
 
 // Phobos and the dependency-free shader vocabulary alone (for `computeModeOf`):
 // sparkles:ui's build runs this tool, and `core-cli` depends on sparkles:ui.
-dependency "sparkles:shader" path="../.."
+dependency "sparkles:shaders" path="../.."
 
 // Optimised, assertions live, `debug {}` blocks out — the build every nix
 // artifact uses. Neither `debug` (which compiles those blocks in) nor

@@ -28,7 +28,7 @@ import sparkles.dmd_lsp.project : DubQuery;
 
 // The `@compute` scanner is shared with `shader-compile`, which picks a
 // package's device unit with it; it lives in the dependency-free vocabulary.
-public import sparkles.shader.compute_mode : ComputeMode, computeModeOf;
+public import sparkles.shaders.compute_mode : ComputeMode, computeModeOf;
 
 /// The flag that makes a configuration a device build.
 enum dcomputeTargetFlag = "-mdcompute-targets=";
@@ -195,7 +195,7 @@ AnalyzerConfig retargetToDevice(const AnalyzerConfig host) @safe
     }
     assert(cfg.dflags.canFind("-mdcompute-targets=vulkan-130"), cfg.dflags.toText);
     assert(!cfg.versionIds.canFind("HostOnly"));
-    assert(cfg.importPaths.any!(p => p.buildNormalizedPath.endsWith("libs/shader/src")),
+    assert(cfg.importPaths.any!(p => p.buildNormalizedPath.endsWith("libs/shaders/src")),
         cfg.importPaths.toText);
     assert(cfg.effectiveProfile == TargetProfile.ldcDevice);
 }

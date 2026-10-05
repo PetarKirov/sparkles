@@ -629,8 +629,8 @@
         ]
       },
       {
-        "text": "shader",
-        "link": "/libs/shader/"
+        "text": "shaders",
+        "link": "/libs/shaders/"
       },
       {
         "text": "syntax",
