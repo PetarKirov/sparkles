@@ -82,9 +82,9 @@ A host's picker, owned off the collected heap.
 
 `Unique` keeps the host address-stable and registers its pointer-bearing
 metadata as a collector root so retained corpus snapshots and finder paths stay
-reachable. The four generation-slot matchers and render-time positions matcher
-are separately owned pointer-free allocations: their large arenas are never
-part of the host's scanned root range.
+reachable. The worker-plus-fallback matcher arenas and render-time positions
+matcher are separately owned pointer-free allocations: their large arenas are
+never part of the host's scanned root range.
 */
 alias OwnedPicker = Unique!PickerHost;
 
@@ -107,8 +107,8 @@ struct PickerHost
     The content-search corpus, live when `source == PickerSource.grep`.
 
     Held BESIDE the files finder rather than selected by templating
-    `PickerHost` on its source: each scheduler slot owns exclusive matcher
-    scratch, and a template would duplicate it once per source. Dispatch is
+    `PickerHost` on its source: the scheduler leases exclusive matcher scratch,
+    and a template would duplicate it once per source. Dispatch is
     a `final switch`, so the compiler proves every arm
     is answered.
     */
@@ -223,18 +223,18 @@ struct PickerHost
     {
         source = PickerSource.files;
         initializeWorkspaces();
-        scheduler.initialize();
         if (!poolTried)
         {
-            // One worker: the search is chunked and cancellable, and the UI
-            // thread only ever polls. Startup failure is the documented
-            // degradation (`PIK8`) — every step then runs synchronously
-            // inside `poll`, budget-bounded.
+            // One worker plus an exclusive UI-fallback arena. The search is
+            // chunked and cancellable; startup or submission failure is the
+            // documented degradation (`PIK8`), taking the same bounded step
+            // synchronously rather than sharing a worker's active scratch.
             poolTried = true;
             poolLive = Pool.start(pool, 1) == RawPoolResult.accepted;
             if (poolLive)
                 scheduler.attach(pool);
         }
+        scheduler.initialize();
         scheduler.cancel(); // running generations retire against the old corpus
         finder = collectFilesFinder(root, includeGlobs, excludeGlobs);
         state.viewRows = pickerVisibleRows; // paint 16, keep `pickerTopK`

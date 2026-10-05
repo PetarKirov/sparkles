@@ -107,12 +107,27 @@ real 325k-entry tree, 4.26× on dense ones, 55 futex calls against
 `std.parallelism`'s 10 632). Reusing it means the picker inherits a walker that
 has already been measured against the best in the field.
 
-Picker open allocates pointer-free matcher arenas through `Unique`, separately
-from the GC-scanned host and generation metadata. Each slot retains its own
-arena: several workers can execute at once, and synchronous submission fallback
-can overlap a worker even when the normal pool has only one thread. Slot scratch
-is not shared across these jobs. Constraint evaluation instead reuses its
-slot's matcher arena sequentially, with only decoded bytes and NFA state in the
+Picker open reserves pointer-free matcher arenas through `Unique`, separately
+from the GC-scanned host and generation metadata: `min(SlotCount, workers + 1)`
+arenas for a started pool, or one for synchronous execution. The live host's one
+worker therefore reserves **two**, not one arena per generation slot. Reservations
+are retained across reopen. Setup attaches the pool, then calls `initialize` to
+reserve its execution capacity; a larger pool can grow reservations only at
+setup, never on a keystroke.
+
+A generation leases an idle arena **before parsing** and retains it until its
+completion is dispatched and the slot retires. Queued, cancelled, and completed
+but undispatched jobs still hold their leases. No worker changes lease metadata.
+The extra arena permits synchronous submission fallback to overlap worker
+execution without sharing active scratch. When no lease is free, only the latest
+prompt/corpus/budget remains pending in fixed storage; it launches after a
+completion retires. This bounds admitted generations by execution capacity even
+when more generation slots or raw queue entries exist.
+
+Query borrows refer only to the pinned slot prompt; compiled globs live in the
+slot's own query storage. Matcher caches copy query units and keys rather than
+borrowing prompt or Unicode scratch. Constraint evaluation reuses the leased
+matcher arena sequentially, with only decoded bytes and NFA state in the
 constraint workspace. Prompt bytes, retained corpus snapshots, query borrows and
 published result metadata remain collector roots in the small owners.
 Render-time positions and grep likewise own separate unscanned matcher arenas;
@@ -123,6 +138,43 @@ No query/candidate or provenance capacity is lowered by this ownership split.
 > Pool start or job submission can fail explicitly. Queue saturation runs the
 > same bounded step synchronously; an unavailable platform uses a fully
 > synchronous budget-stepped walk rather than losing the feature.
+
+### Scheduler regression and host smoke recipe
+
+From the repository root in the development shell:
+
+```bash
+dub test :hue -- -i "picker.scheduler" -v
+dub run :hue -c no-gui -- view --tui .
+```
+
+The scheduler regressions gate one and two real pool workers, queue independent
+queries, exhaust the execution-capacity leases, cancel and coalesce edits, and
+withhold completion dispatch until after shutdown. A separate saturated-queue
+scenario exercises synchronous fallback while a worker job remains outstanding.
+Their result oracle is the newest query's exact constrained corpus row, not an
+incidental ranking golden.
+
+In the live terminal, press `<leader>ff`, type and erase several prompts rapidly,
+then close with `Esc` while searching and reopen.
+The final prompt must own the displayed rows; a cancelled prompt must not
+reappear, and the reopened empty prompt must rank the current corpus. Repeat in
+the GUI with `hue --gui view .`. For allocation inspection, launch the same
+already-built executable under an allocator profiler (for example
+`heaptrack hue view --tui .`): first files-picker open should attribute two matcher
+arena allocations to `PickerScheduler.initialize`, with no further scheduler
+matcher allocations during prompt edits or reopen. Render-time positions and a
+subsequently opened grep source have separate owners and are not scheduler
+allocations.
+
+The integrated one-/two-worker cancellation and saturated-fallback regressions
+passed. An actual checked `no-gui` executable also painted file query `unicode`
+and grep query `manifest` through a readiness-gated PTY. Its whole-process RSS
+was 303,128 KiB in the viewer, 394,868 at files-picker open, 395,300 after the
+file query, 408,712 at grep open, and 410,520 after the grep query. These are
+observed live-process sizes, not an old/new same-configuration RSS comparison.
+The scheduler's two fewer 13,721,912-byte arenas save exactly 27,443,824 bytes
+of reserved matcher storage without lowering query/provenance capacity.
 
 ## The component (`PIK`)
 
