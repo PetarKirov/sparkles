@@ -23,8 +23,11 @@ dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git"
 // this package is built without `-preview=in` and would mangle them apart.
 dependency "sparkles:shaders" path="../.."
 // Device configurations are found by reading the recipe (`TGT6`), and dub.sdl
-// is SDLang.
+// is SDLang. The reader and the recipe locators live in build-primitives, which
+// a viewer may link where it may not link this package (`PRJ13`); their API
+// takes no `in` parameters either.
 dependency "sparkles:wired" path="../.."
+dependency "sparkles:build-primitives" path="../.."
 
 // (An `lflags "--undefined=_D3dmd8astenums7Edition6__initZ"` workaround for
 // linux-dmd used to live here: astenums.o sat in frontend.a while dmd:lexer
