@@ -26,7 +26,7 @@ import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
-import chrome : button;
+import chrome : button, chromeLayout, squareCols;
 import settings : ButtonLabels;
 import surfaces : Placement, Surface, SurfaceContext;
 
@@ -237,7 +237,7 @@ right — each a button made by the caller.
 uint header(ref Builder b, string title, in SurfaceContext ctx, uint[] actions = null) @safe
 {
     const back = button(b, "←", "Back", ButtonLabels.icon, PageHit.back,
-        minRows: ctx.targetRows);
+        minRows: ctx.targetRows, minCols: squareCols(ctx.targetRows, ctx.cellW, ctx.cellH));
     const name = b.add(Widget(kind: WidgetKind.text, text: title, slot: Slot.textPrimary,
         textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.title)));
     const spacer = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
@@ -322,7 +322,8 @@ uint prose(ref Builder b, const(char)[] text, Slot slot = Slot.textPrimary,
 /// A value, a path or a log line, in the cell font, wrapping to the room it
 /// is given.
 uint codeText(ref Builder b, const(char)[] text, Slot slot = Slot.code) @safe
-    => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot, wrap: TextWrap.greedy));
+    => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot, wrap: TextWrap.greedy,
+        textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body)));
 
 /// A column of `children` (the page: header, controls, body, footer) filling
 /// the area.
@@ -348,7 +349,7 @@ int bodyRowsFor(ref Builder b, uint[] top, uint[] bottom, int cols, int rows) @s
     const empty = probe.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow(),
         height: SizeSpec.grow()));
     auto tree = probe.finish(pageColumn(probe, top ~ empty ~ bottom));
-    const frames = layout(tree, Constraints(maxW: cols, maxH: rows));
+    const frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
     const h = frames[empty].rect.height;
     return h > 0 ? h : 1;
 }
@@ -373,7 +374,7 @@ WidgetTree finishPage(ref Builder b, uint[] top, uint content, uint[] bottom, in
         clipY: true,
     ));
     auto tree = b.finish(pageColumn(b, top ~ view ~ bottom));
-    const frames = layout(tree, Constraints(maxW: cols, maxH: rows));
+    const frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
     const contentTop = frames[content].rect.y;
     if (reveal != uint.max && reveal < frames.length)
     {

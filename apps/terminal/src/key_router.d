@@ -187,10 +187,9 @@ void paintGuide(H)(ref H h, ref KeyRouter router, in TermContext ctx, int cols,
     import sparkles.base.term_color : Color;
     import sparkles.ui.components.lantern_view : BoxLayout, LabelArena, LanternStyle,
         Placement, viewLantern;
-    import sparkles.ui.display_list : buildDisplayListInto;
+    import chrome : chromeDisplayList, chromeLayout;
     import sparkles.ui.interp.immediate : paint;
     import sparkles.ui.geometry : Constraints;
-    import sparkles.ui.layout : layout;
     import sparkles.ui.theme : Theme;
     import sparkles.ui.widget : Builder;
     import sparkles.ui_app.host : FrameOps;
@@ -213,14 +212,14 @@ void paintGuide(H)(ref H h, ref KeyRouter router, in TermContext ctx, int cols,
     const root = viewLantern(b, labels, listed[], router.lantern.pending.length, cols,
         box, Placement.classic, LanternStyle.init, 0, router.lantern.scroll);
     auto tree = b.finish(root);
-    auto frames = layout(tree, Constraints(maxW: cols));
+    auto frames = chromeLayout(tree, Constraints(maxW: cols));
     const dy = rows - frames[tree.root].rect.height;
 
     const palette = Theme(defaultFg: Color.fromRgb(fg), defaultBg: Color.fromRgb(bg))
         .effectivePalette();
     static FrameOps ops;
     ops.reset();
-    buildDisplayListInto(tree, frames, palette, fg, bg, ops);
+    chromeDisplayList(tree, frames, palette, fg, bg, ops);
     foreach (ref op; ops.ops[0 .. ops.length])
         op.translate(0, dy > 0 ? dy : 0);
 

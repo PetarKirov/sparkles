@@ -386,7 +386,7 @@ final class TouchGuide : Surface, Scrollable
         return b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
             width: SizeSpec.grow(),
             height: sctx.targetRows > 1 ? SizeSpec.fixed(sctx.targetRows) : SizeSpec.fit_,
-            hitId: hit));
+            alignY: Alignment.center, hitId: hit));
     }
 
     // A chip: `icon` in the cell font, which carries every icon, and `text` in

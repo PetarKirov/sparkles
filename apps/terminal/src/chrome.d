@@ -42,6 +42,54 @@ struct ChromeTheme
     }
 }
 
+/**
+The host's text measurer (`GLY10`), published once a frame by a GUI host so
+every surface lays out and paints its interface runs in the faces that draw
+them. Without one — a test, a cell target — runs measure in cells.
+*/
+private ChromeMeasure chromeMeasure;
+private bool haveChromeMeasure;
+
+/// ditto
+void useChromeMeasure(ChromeMeasure m) @safe nothrow @nogc
+{
+    chromeMeasure = m;
+    haveChromeMeasure = true;
+}
+
+/**
+The host's measurer behind two delegates, so this module names no backend: a
+run in the cell font is as wide as its cells; a styled run asks the host.
+*/
+struct ChromeMeasure
+{
+    int delegate(scope const(char)[], in TextStyle) @safe styledWidth; /// a run's cells in its style
+    int delegate(in TextStyle) @safe styledRows; /// the rows one line of a style takes
+
+    /// The cell font's width of `s`.
+    int width(scope const(char)[] s) const @safe pure nothrow @nogc => cast(int) cellsOf(s);
+    /// The width of `s` in `style`, in whole cells.
+    int width(scope const(char)[] s, in TextStyle style) @safe => styledWidth(s, style);
+    /// The rows one line in `style` occupies.
+    int rows(in TextStyle style) @safe => styledRows(style);
+}
+
+/// Lays `tree` out within `c` in the host's faces where it published them.
+Frame[] chromeLayout(in WidgetTree tree, in Constraints c) @safe
+    => haveChromeMeasure ? layout(tree, c, chromeMeasure) : layout(tree, c);
+
+/// Builds `tree`'s display list into `ops`, measuring as $(LREF chromeLayout) did.
+void chromeDisplayList(Ops)(in WidgetTree tree, in Frame[] frames, in Palette palette,
+    RgbColor fg, RgbColor bg, ref Ops ops)
+{
+    import sparkles.ui.display_list : buildDisplayListInto;
+
+    if (haveChromeMeasure)
+        buildDisplayListInto(tree, frames, palette, fg, bg, ops, chromeMeasure);
+    else
+        buildDisplayListInto(tree, frames, palette, fg, bg, ops);
+}
+
 /// A surface laid out and placed: what paints it and what hit-tests it.
 struct Layer
 {
@@ -117,7 +165,7 @@ Layer place(WidgetTree tree, int cols, int rows, int x, int y, int cellW, int ce
     l.tree = tree;
     if (!tree.nodes.length || cols <= 0 || rows <= 0)
         return l;
-    l.frames = layout(tree, Constraints(maxW: cols, maxH: rows));
+    l.frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
     l.hits = hoverTargets(tree, l.frames);
     l.cellW = cellW > 0 ? cellW : 1;
     l.cellH = cellH > 0 ? cellH : 1;
@@ -140,6 +188,14 @@ Layer place(WidgetTree tree, int cols, int rows, int x, int y, int cellW, int ce
     return l;
 }
 
+/**
+Outline every hit rect in red over the surfaces it belongs to: a debugging
+aid that shows where a tap lands next to what is drawn. Set at start-up from
+`SPARKLES_DEBUG_HITS` on the desktop or a `debug-hits` file in the app's
+files directory on Android.
+*/
+bool debugHitBoxes;
+
 /// Paints a placed surface through the host's canvas.
 void paintLayer(H)(ref H h, in Layer l, in ChromeTheme t) @system
 {
@@ -158,11 +214,19 @@ void paintLayer(H)(ref H h, in Layer l, in ChromeTheme t) @system
     }
     static FrameOps ops;
     ops.reset();
-    buildDisplayListInto(l.tree, l.frames, t.palette, t.fg, t.bg, ops);
+    chromeDisplayList(l.tree, l.frames, t.palette, t.fg, t.bg, ops);
     auto c = h.canvas;
     c.originX = l.x;
     c.originY = l.y;
     paint(c, ops[]);
+    if (debugHitBoxes)
+    {
+        import raylib : Color, DrawRectangleLines;
+
+        foreach (ref hit; l.hits)
+            DrawRectangleLines(l.x + hit.rect.x * l.cellW, l.y + hit.rect.y * l.cellH,
+                hit.rect.width * l.cellW, hit.rect.height * l.cellH, Color(255, 40, 40, 255));
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,7 +240,7 @@ makes the whole button a target; `primary` accents it. `minRows` makes it a
 touch target (`TOK7`): the embedder asks for as many rows as 48 dp takes.
 */
 uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t hitId,
-    bool primary = false, int minRows = 1) @safe
+    bool primary = false, int minRows = 1, int minCols = 0) @safe
 {
     // The icon is a symbol, drawn by the cell font, which carries every icon;
     // the caption names an action, in the interface face (`GLY10`).
@@ -184,7 +248,7 @@ uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t 
     uint[] parts;
     if (mode != ButtonLabels.text && icon.length)
         parts ~= b.add(Widget(kind: WidgetKind.text, text: icon, slot: slot,
-            textStyle: TextStyle(bold: primary)));
+            textStyle: TextStyle(bold: primary, fontRole: FontRole.uiMono, typeStep: TypeStep.label)));
     if (mode != ButtonLabels.icon && label.length)
         parts ~= b.add(Widget(kind: WidgetKind.text, text: label, slot: slot,
             textStyle: TextStyle(bold: primary, fontRole: FontRole.ui, typeStep: TypeStep.label)));
@@ -196,7 +260,7 @@ uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t 
         padding: Insets(0, 1, 0, 1),
         // A row too narrow for everything cuts its other content, never a
         // button's caption: an action must say what it does.
-        width: SizeSpec.rigid_,
+        width: SizeSpec(SizeSpec.Kind.fit, 0, minCols, rigid: true),
         // A touch target at least `minRows` tall (`TOK7`: 48 dp on a phone),
         // the button drawn 36 dp tall in it (`TOK11`).
         height: minRows > 1 ? SizeSpec.fixed(minRows) : SizeSpec.fit_,
@@ -209,11 +273,19 @@ uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t 
     ));
 }
 
-/// A run of text in `slot`, optionally bold.
+/**
+The columns that make a target `rows` tall square on a `cellW` × `cellH` cell:
+an icon button as wide as it is tall, as it is drawn.
+*/
+int squareCols(int rows, int cellW, int cellH) @safe pure nothrow @nogc
+    => cellW > 0 ? (rows * cellH + cellW - 1) / cellW : rows;
+
+/// A run of data — a value, a key, an icon — in `slot`, optionally bold: the
+/// cell font at the body step (`uiMono`, D50).
 uint label(ref Builder b, const(char)[] text, Slot slot = Slot.textPrimary,
     bool bold = false) @safe
     => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot,
-        textStyle: TextStyle(bold: bold)));
+        textStyle: TextStyle(bold: bold, fontRole: FontRole.uiMono, typeStep: TypeStep.body)));
 
 /**
 `text` in the interface face (design-system `GLY10`): a name, a description, a
@@ -238,7 +310,10 @@ uint column(ref Builder b, uint[] children, int gap = 0) @safe
 uint band(ref Builder b, uint[] children, bool fullWidth = true) @safe
     => b.add(Widget(
         kind: WidgetKind.panel,
-        children: [column(b, children)],
+        // The column fills the band, so a full-width row in a sheet is a
+        // target across the whole sheet, not only under its text.
+        children: [b.add(Widget(kind: WidgetKind.column, children: children,
+            width: fullWidth ? SizeSpec.grow() : SizeSpec.fit_))],
         padding: Insets(0, 1, 0, 1),
         width: fullWidth ? SizeSpec.grow() : SizeSpec.fit_,
         slot: Slot.surface,
@@ -290,4 +365,13 @@ uint band(ref Builder b, uint[] children, bool fullWidth = true) @safe
     const dark = ChromeTheme.of(RgbColor(0xcd, 0xd6, 0xf4), RgbColor(0x1e, 0x1e, 0x2e));
     const light = ChromeTheme.of(RgbColor(0x4c, 0x4f, 0x69), RgbColor(0xef, 0xf1, 0xf5));
     assert(dark.palette.bg[Slot.surface] != light.palette.bg[Slot.surface]);
+}
+
+@("chrome.squareCols.coversTheTargetsHeight")
+@safe pure nothrow @nogc unittest
+{
+    // A phone's 3-row target on a 25 × 47 px cell: 141 px tall, so 6 columns.
+    assert(squareCols(3, 25, 47) == 6);
+    assert(squareCols(1, 1, 1) == 1, "a cell target: one column a row");
+    assert(squareCols(2, 0, 10) == 2, "no cell size: fall back to the rows");
 }

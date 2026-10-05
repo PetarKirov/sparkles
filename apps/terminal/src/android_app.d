@@ -54,6 +54,12 @@ int androidMain()
 
     const paths = SessionPaths(internalDataPath, config.amSocket);
     const fontsDir = buildPath(paths.files, "fonts");
+    {
+        import std.file : exists;
+        import chrome : debugHitBoxes;
+
+        debugHitBoxes = buildPath(paths.files, "debug-hits").exists;
+    }
     // The viewer's grammar queries are extracted beside the fonts; their
     // parsers ship as native libraries (`TDV1`, OQ6).
     static immutable owned = ["fonts", "grammars"];
