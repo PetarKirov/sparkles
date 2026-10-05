@@ -1,16 +1,47 @@
+---
+status: accepted
+owner: sparkles:base
+reviewed: 2026-10-05
+---
+
 # `sparkles.base.text.enums` — Specification
 
-_Audience: developers and coding agents building against `sparkles:base`. This
-document is normative and self-contained — it states how the module maps an enum
-to and from its textual name and its underlying value. It is a format-agnostic
-text primitive with **no serialization or UDA policy**; a policy layer such as
-[`sparkles:wired`](../../wired/SPEC.md) is one consumer. For the library overview
-see [`sparkles:base`](../../../libs/base/index.md)._
+## Abstract
+
+`sparkles:base` converts an enum value to its member name, optionally recased,
+and validates an underlying value back into a declared member. A second naming
+form accepts every value, including the ones enums translated from C headers
+produce: several members sharing one value, and values a program receives that
+no member declares. It can also drop the prefix every member shares. Every
+operation is allocation-free, and the name direction runs at compile time.
+
+## Introduction
+
+Serializers, loggers and diagnostics all need an enum's name as text and, in the
+other direction, an enum back from a value read off the wire. Phobos's `std.conv`
+conversions either allocate or throw, and they assume every value is a declared,
+distinct member. Enums that ImportC translates from C headers break that
+assumption twice: several members can share one value, and a C library can
+report a value that postdates the header the program was built against.
+
+This module gives each direction one non-allocating primitive that is _total_:
+it returns a result for every input value, never asserting or throwing. The
+naming direction also keeps a faster form that requires a declared member of an
+enum without duplicate values. Recasing uses the
+[case-style primitive](./case-style.md). The module is
+unopinionated: it renders a declared member's identifier and validates an
+underlying value, and nothing more. It has **no serialization or UDA policy**;
+per-member name overrides such as `@WireName` belong to policy layers like
+[`sparkles:wired`](../../wired/SPEC.md).
+
+Section 2 lists the API, §3 the semantics of each primitive, §4 the
+compile-time contract, and §5 runnable examples. The library overview is
+[`sparkles:base`](../../../libs/base/index.md).
 
 ## 1. Overview
 
-`sparkles.base.text.enums` provides the two directions of enum ↔ text/value
-conversion that higher layers build on:
+`sparkles.base.text.enums` provides the enum ↔ text/value conversions that
+higher layers build on:
 
 - **name** — an enum value's serialized member name, optionally recased by a
   [`CaseStyle`](./case-style.md);
@@ -25,11 +56,6 @@ several members with the same underlying value (an extension enumerator promoted
 to core keeps its former spelling as an alias), and a value read back from a C
 library need not be a declared member at all — a newer library may report an
 enumerator postdating the header this was built against.
-
-The module is unopinionated: it applies no per-member name overrides (those are a
-policy concern for a layer like `@WireName` in `sparkles:wired`). It only knows
-how to render a declared member's identifier — optionally recased — and how to
-validate an underlying value back into a declared member.
 
 | Identifier      | Value                               |
 | --------------- | ----------------------------------- |
@@ -89,9 +115,10 @@ member equal to `value`:
 - The result is a compile-time string literal selected by a `final switch` over
   the enum's members, so the call allocates nothing and is `@safe pure nothrow
 @nogc`.
-- `value` must be a declared member of `E`. A value that is not a declared member
-  (for example a cast-in out-of-range value) is a programming error, not a
-  recoverable outcome.
+
+**ENM1: Declared-member precondition.** A caller of `enumMemberName` **must**
+pass a declared member of `E`. Any other value, such as a cast-in out-of-range
+value, is a programming error, not a recoverable outcome.
 
 Because a `final switch` requires each member to map to a distinct `case`, an
 enum with duplicate underlying values is rejected at compile time when
@@ -104,7 +131,7 @@ It is specified as a sequence of equality tests over the declared members in
 declaration order, not as a `final switch`, and therefore:
 
 - **Duplicate underlying values are permitted**, and the **first declared**
-  matching member supplies the name. For a C-derived enum this is the required
+  matching member supplies the name. For a C-derived enum this is the necessary
   rule rather than an arbitrary tie-break: the header declares the core
   enumerator before the alias retaining the pre-promotion spelling.
 - **A value equal to no declared member yields `fallback`**, which the caller
@@ -162,10 +189,14 @@ returned `ParseExpected`.
 
 ## 4. Compile-time evaluation
 
-`enumMemberName` must be usable during CTFE so a consumer can derive an enum's
-wire names at compile time — for instance, building a `switch` of member-name
-cases without making the identifier a template argument. Both primitives select
-their results from the enum's declared members, so no runtime table is built.
+**ENM2: CTFE usability.** `enumMemberName` **must** be usable during CTFE
+without making the identifier a template argument.
+
+_Rationale:_ A consumer derives an enum's wire names at compile time, for
+instance to build a `switch` of member-name cases.
+
+Both primitives select their results from the enum's declared members, so no
+runtime table is built.
 
 ## 5. Examples
 

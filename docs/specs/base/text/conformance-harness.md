@@ -1,22 +1,62 @@
+---
+status: accepted
+owner: sparkles:base
+reviewed: 2026-10-05
+---
+
 # text-conformance
 
-A differential-testing harness that cross-checks
-[`sparkles.base.text`](../../../../libs/base/src/sparkles/base/text/) — terminal
-cell **width** and UAX #29 **grapheme segmentation** — against independent
-Unicode oracles. It replaces ad-hoc, font-dependent spot checks with exhaustive,
-data-driven comparison against authoritative sources.
+## Abstract
 
-It is the executable companion to the normative
-[cell-splitting & width spec](./index.md) and its curated
-[conformance test cases](./test-cases.md). The tool itself lives at
+`text-conformance` is the `sparkles:base` tool that cross-checks terminal
+[grid-cell](../../../glossary.md#grid-cell) **width** and UAX #29 **grapheme
+segmentation** against independent oracles. They are the official
+Unicode test files, an oracle written independently from raw Unicode data, the
+kitty, ghostty and notcurses terminal engines, the utf8proc, Rust
+`unicode-width` and Python `wcwidth` width libraries, and the utf8proc and ICU
+segmenters. The terminal engines and width libraries are other width policies,
+not Unicode authorities, so a disagreement with them is classified rather than
+assumed to be ours. Disagreements between implementations that are understood are
+recorded in a ledger, so a run fails only on a new one.
+
+## Introduction
+
+The [cell-splitting & width specification](./index.md) states the
+`terminalKitty` [width profile](../../../glossary.md#width-profile), and its
+[case table](./test-cases.md) pins curated, hand-picked inputs. Neither can show how the implementation behaves on every code point, or
+where it parts ways with other terminals. This harness is their executable
+companion: it compares the library with every independent implementation it can
+drive, layer by layer. It sorts each disagreement into one of three kinds. A
+_version skew_ is a code point whose answer differs only because two sides use
+different Unicode releases. A _contested width class_ is one where independent
+implementations disagree among themselves. Anything else is a regression. The
+tool lives at
 [`libs/base/tools/text-conformance/`](../../../../libs/base/tools/text-conformance/).
 
-This page describes the delivered harness and its two-version baseline. The
-[owned Unicode contract](./SPEC.md) and [acceptance strategy](./testing.md)
-require a single content-pinned release and zero divergences from its normative
-corpora after cutover. A documented disagreement between terminal width policies
-is separate from a failed Unicode boundary or normalization rule; the latter
-must not be hidden by the historical differential allowlist.
+The delivered library takes Unicode data from two places, so the harness pins
+two versions. The width tables are generated for one release, and grapheme
+segmentation comes from the toolchain's tables, which follow an older one. The
+harness checks each axis against its own pinned version (see
+[The two Unicode versions](#the-two-unicode-versions)). A single content-pinned
+release with zero divergences from its normative corpora is the target of the
+[owned Unicode contract](./SPEC.md) and its
+[acceptance strategy](./testing.md), reached at the gate tracked in
+[the delivery plan](./PLAN.md). _Owned_ there means that sparkles implements
+the Unicode data and algorithms itself
+([ownership](./SPEC.md#_1-scope-vocabulary-and-ownership)).
+
+The ledger records disagreements between oracles. Most are contested width
+classes and version skew; one is a boundary on which the two live segmenters
+disagree. A failure against the official Unicode test files (Layer 0) is never
+added to it. A documented disagreement between terminal width policies is
+separate from a failed Unicode boundary or normalization rule, and the ledger
+**must not** hide the latter.
+
+The sections below describe the layers, how to run them, the two Unicode
+versions, the ratchet ledger, the limitation of the clean-room oracle (the one
+derived from raw Unicode data, independently of `std.uni` and the generated
+tables),
+and the compiler comparison.
 
 ## The eleven layers
 
@@ -42,9 +82,10 @@ angles:
   The oracle deliberately mirrors `width.d`'s _model_, so a shared simplification
   is invisible to it (see "Shared constants").
 - **Live segmenters** (6 utf8proc, 7 ICU) — independent UAX #29 implementations
-  at current Unicode, cross-checking `byGraphemeCluster` (whose `std.uni` tables
-  lag — see "The two Unicode versions"). Layer 0 is the static-file version of
-  the same check.
+  at Unicode 17.0 (utf8proc) and ICU 16's data, cross-checking
+  `byGraphemeCluster`, whose `std.uni` tables segment like Unicode 15.0 (see
+  [The two Unicode versions](#the-two-unicode-versions)). Layer 0 is the
+  static-file version of the same check.
 - **Terminal width models** (3 kitty, 4 ghostty, 8 notcurses) — three real
   terminal emulators measuring whole strings (grapheme-aware).
 - **Library width models** (5 utf8proc, 9 Rust, 10 Python) — the dominant
@@ -125,25 +166,24 @@ The harness pins **two** versions because the library itself does:
 - **Width** (`--width-unicode-version`, default `17.0.0`) — matches the EAW /
   emoji-VS tables generated by
   [`gen_unicode_tables.d`](../../../../libs/base/tools/gen_unicode_tables.d).
-- **Segmentation** (`--segmentation-unicode-version`, default `15.0.0`) — must
-  match the toolchain's Phobos `std.uni` grapheme tables, which lag the width
-  pin. The original LDC 1.41 measurement found zero Layer 0 divergences at
-  15.0.0 and a cluster of Indic-conjunct/emoji-ZWJ divergences at 15.1+;
-  the live segmenters (6, 7) at current Unicode confirm the version gap.
+- **Segmentation** (`--segmentation-unicode-version`, default `15.0.0`) **must**
+  match the toolchain's Phobos `std.uni` grapheme tables, which segment like an
+  older release than the width pin. Under LDC 1.41, Layer 0 has zero
+  divergences at 15.0.0 and a cluster of Indic-conjunct/emoji-ZWJ divergences
+  at 15.1 and later; the live segmenters (6, 7) confirm the version gap.
 
 `--unicode-version` sets both. **After a compiler upgrade**, re-run `--layers 0`
-across a few versions to find the new matching segmentation version and bump
-`phobosGraphemeUnicodeVersion` in `config.d`.
+across a few versions to find the matching segmentation version and set
+`phobosGraphemeUnicodeVersion` in `config.d` to it.
 
-On LDC 1.42.0, the October 1, 2026 offline run passed all 1,112,064 scalar
-width cases and all 3,655 RGI emoji cases, but Layer 0 passed 601 of 602
-Unicode 15 cases. `U+2701 U+200D U+2701` split as `[2, 1]` code points
-instead of the expected `[3]`. A direct Phobos probe and the original
-`SharedBuffer`-based cluster window both returned the same first stride of
-two: the SIMD/window optimization did not introduce this divergence.
-It remains a failing conformance observation, not a new allowlist entry or
-a reason to change the normative expected boundary. See the
-[performance report](../../../research/simd-unicode/performance.md).
+Under LDC 1.42.0, the offline run passes all 1,112,064 scalar width cases and
+all 3,655 RGI emoji cases, and Layer 0 passes 601 of 602 Unicode 15 cases:
+`U+2701 U+200D U+2701` splits as `[2, 1]` code points instead of the expected
+`[3]`. A direct Phobos probe returns the same first stride of two as the
+`SharedBuffer`-based cluster window, so the divergence comes from Phobos, not
+from the SIMD/window optimization. It is a failing conformance observation:
+it is neither an allowlist entry nor a reason to change the normative expected
+boundary. See the [performance report](../../../research/simd-unicode/performance.md).
 
 ## The ratchet: `known-divergences.md`
 
@@ -163,9 +203,10 @@ nix shell nixpkgs#kitty --command \
 Each row carries a `reason`. The ledger's classes, by layer:
 
 - **Version skew (Layer 1, 42).** Combining marks `U+1ACF..U+1AE4` are width 0 in
-  UCD 17.0 but width 1 from the older `std.uni`. Resolve on a toolchain bump.
+  UCD 17.0 but width 1 from the Unicode 15.0 categories of `std.uni`. A
+  toolchain whose `std.uni` classifies them as marks resolves these rows.
 - **Live segmentation (Layer 6, 1).** `U+2701 U+200D U+2701` — utf8proc 17.0
-  splits the scissors-ZWJ sequence; `std.uni` 15.0 (and ICU 16 / Layer 7) keep
+  splits the scissors-ZWJ sequence; LDC 1.41's `std.uni` (and ICU 16 / Layer 7) keep
   it whole. Layer 7 has **0** divergences (ICU 16 matches `std.uni` for the
   corpus).
 - **Model gaps vs kitty (Layer 3, 108).** `sparkles` matches ghostty but not
@@ -185,8 +226,8 @@ Each row carries a `reason`. The ledger's classes, by layer:
 
 The headline holds across all eleven: the contested width classes are
 **implementation-dependent**, `sparkles` consistently follows the kitty Text
-Sizing Protocol, and the independent oracles corroborate the version skew and the
-segmentation lag from multiple angles.
+Sizing Protocol, and the independent oracles corroborate the version skew between
+the width and segmentation axes from multiple angles.
 
 ## Shared constants (Layer 1's honest limitation)
 

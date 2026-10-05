@@ -226,7 +226,7 @@ nix run .#ci -- --verify --files docs/specs/base/custom-float.md          # the 
 - `CFL8`: the `static assert`s throughout, and `CustomFloat.readAndWrite`.
 - The text round trip and its shortness: `CustomFloat.shortestIsShortest`,
   `CustomFloat.toString`, `CustomFloat.agreesWithBigIntOracle` — see
-  [`float_conv` §7](./text/float-conv.md#7-verification).
+  [`float_conv` §7](./text/float-conv.md#_7-verification).
 
 ---
 

@@ -268,7 +268,7 @@ decimal point (`1.`). A leading zero before the decimal point is optional for
 floating values (`.5`). Every float kind is read at its own width —
 `F` as `float`, `D` as `double`, `BD` as `real` — through
 `sparkles.wired.sdl.decimal`, the grammar adapter over the correctly-rounded
-`readDecimalFloat!T` ([float_conv spec §3](../../base/text/float-conv.md#3-parse-guarantees-prs)),
+`readDecimalFloat!T` ([float_conv spec §3](../../base/text/float-conv.md#_3-parse-guarantees-prs)),
 never as a narrowed `double`. Integer and date components are range-checked;
 malformed suffixes are errors rather than trailing identifiers.
 
@@ -546,7 +546,7 @@ that kind's own width, proven against the value's rounding interval rather than
 against any reader, and read back by a reader correctly rounded at every width
 `real` takes (binary64, x87 extended, binary128). The kernel renders those
 digits in scientific notation
-([float_conv spec §4](../../base/text/float-conv.md#4-format-guarantees-fmt));
+([float_conv spec §4](../../base/text/float-conv.md#_4-format-guarantees-fmt));
 the writer expands them to SDL's exponent-free notation, so `real.max` is a
 `BD` token of about 4 900 characters on binary128 and the reader's wide fast
 tier is what keeps reading it cheap. Non-finite floating values are encode
