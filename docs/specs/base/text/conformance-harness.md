@@ -169,11 +169,13 @@ the Nix build sandbox with `--no-network`, an explicit manifest, and an immutabl
 input directory. The summary and per-corpus totals are retained as the check's
 output file; `nix log` exposes the execution log even when a cached result is used.
 
-All 35 reviewed manifest artifacts, including every official boundary, bidi and
-normalization corpus, the raw casing/context inputs, and the license, are tracked
-under `libs/base/tools/unicode/18.0.0`. Their checked bytes match the pinned
-SHA-256 values. `unicode-conformance-data` provisions those bytes directly from
-the tree; execution does not download, consult a user cache, or sample the corpora.
+Only `libs/base/tools/unicode/manifest.json` is tracked as raw-input metadata.
+All 35 reviewed artifacts, including the official boundary, bidi and normalization
+corpora, raw casing/context inputs, and license, are ignored local cache data.
+`unicode-conformance-data` provisions each artifact through a manifest-driven Nix
+fixed-output download pinned to its SHA-256, then assembles an immutable inventory.
+Provisioning may fetch missing store objects; normative execution does not download,
+consult a user cache, or sample the corpora.
 Each consumed input is authenticated by the D harness against manifest identity
 `df3659783f974cb439f4f6436dc4e72f0d06313a45b865c04921dba1d938abcc`,
 which must also match the generated implementation.

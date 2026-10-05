@@ -19,17 +19,10 @@ is the generated `unicodeManifestIdentity`:
 df3659783f974cb439f4f6436dc4e72f0d06313a45b865c04921dba1d938abcc
 ```
 
-The checked-in raw inventory is `libs/base/tools/unicode/18.0.0/`. Acquisition
-is a separate, explicit operation into a destination that does not yet exist:
-
-```sh
-dub run --single libs/base/tools/gen_unicode_tables.d -- \
-  --acquire --manifest libs/base/tools/unicode/manifest.json \
-  --ucd-dir /tmp/unicode18-acquired
-```
-
-Acquisition stages and authenticates the entire inventory before installing
-the directory. Normal generation is offline; it reads no network resource:
+Only the manifest is tracked as raw-input metadata. The inventory at
+`libs/base/tools/unicode/18.0.0/` is ignored, locally cached data. Default
+generation fetches it when the root is absent, stages and authenticates all
+artifacts, then installs the directory atomically before generating:
 
 ```sh
 dub run --single libs/base/tools/gen_unicode_tables.d -- \
@@ -37,6 +30,29 @@ dub run --single libs/base/tools/gen_unicode_tables.d -- \
   --ucd-dir libs/base/tools/unicode/18.0.0 \
   --out-file libs/base/src/sparkles/base/text/unicode_tables.d
 ```
+
+Warm regeneration can explicitly forbid acquisition with `--no-network`.
+A missing root then fails without fetching; an existing incomplete or tampered
+inventory always fails authentication and is never silently repaired:
+
+```sh
+dub run --single libs/base/tools/gen_unicode_tables.d -- \
+  --no-network --manifest libs/base/tools/unicode/manifest.json \
+  --ucd-dir libs/base/tools/unicode/18.0.0 \
+  --out-file libs/base/src/sparkles/base/text/unicode_tables.d
+```
+
+`--acquire` remains an explicit acquisition-only operation into an absent root;
+it cannot be combined with `--no-network`. For example:
+
+```sh
+dub run --single libs/base/tools/gen_unicode_tables.d -- \
+  --acquire --ucd-dir /tmp/unicode18-acquired
+```
+
+The Nix conformance data derivation provisions the same inventory through
+manifest-driven fixed-output downloads, not checked-in raw bytes. Normative
+execution uses those immutable provisioned inputs with no network access.
 
 Every artifact, including conformance corpora and the Unicode license, is
 authenticated before parsing. Unknown aliases/values, malformed fields,
@@ -55,12 +71,12 @@ A reproduction recipe (run after integration, not a reported verification result
 mkdir -p /tmp/unicode18-a /tmp/unicode18-b
 LC_ALL=C dub run --single libs/base/tools/gen_unicode_tables.d \
   --compiler=ldc2 -bunittest -- \
-  --manifest libs/base/tools/unicode/manifest.json \
+  --no-network --manifest libs/base/tools/unicode/manifest.json \
   --ucd-dir libs/base/tools/unicode/18.0.0 \
   --out-file /tmp/unicode18-a/unicode_tables.d
 LC_ALL=C.UTF-8 dub run --single libs/base/tools/gen_unicode_tables.d \
   --compiler=dmd -bunittest -- \
-  --manifest libs/base/tools/unicode/manifest.json \
+  --no-network --manifest libs/base/tools/unicode/manifest.json \
   --ucd-dir libs/base/tools/unicode/18.0.0 \
   --out-file /tmp/unicode18-b/unicode_tables.d
 cmp /tmp/unicode18-a/unicode_tables.d /tmp/unicode18-b/unicode_tables.d

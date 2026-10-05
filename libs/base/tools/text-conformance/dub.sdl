@@ -36,3 +36,7 @@ configuration "unittest" {
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
+
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
