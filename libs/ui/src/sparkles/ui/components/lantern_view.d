@@ -32,7 +32,7 @@ import sparkles.base.buffer : SharedBuffer;
 import sparkles.input.events : altModifierName, Key, namedKeyLabel, superModifierName;
 public import sparkles.input.events : formatKbdChord, formatSymbolChord;
 import sparkles.ui.geometry : Insets, SizeSpec;
-import sparkles.ui.style : Slot;
+import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind;
 
 import sparkles.ui.keymap : Chord, ShiftReq;
@@ -366,6 +366,9 @@ private uint itemCell(ref Builder b, const(char)[] key, const(char)[] desc,
         // is what tells them apart at a glance, so the panel does not need a
         // second marker beyond the `+`.
         slot: isGroup ? Slot.chromeAccent : Slot.docs,
+        // The key is compared character by character, in the cell font; the
+        // description is read as words, in the interface face (`GLY10`).
+        textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body),
         width: SizeSpec.grow(),
     ));
     return b.add(Widget(
