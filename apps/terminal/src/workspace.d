@@ -168,11 +168,17 @@ struct Workspace
         if (t.zoomed)
         {
             DockLayout solo;
+            solo.dividerExtent = 0;
             solo.root = solo.addLeaf(t.zoomed);
             dockFrames(solo, area, f, t.focused);
             return;
         }
-        dockFrames(t.layout, area, f, t.focused);
+        // Panes meet edge to edge: the host draws a thin rule on the boundary
+        // and each pane keeps its text off it with padding, so a divider is
+        // as thin across as down instead of a whole cell column or row.
+        DockLayout l = t.layout;
+        l.dividerExtent = 0;
+        dockFrames(l, area, f, t.focused);
     }
 
     // ── tabs ────────────────────────────────────────────────────────────
