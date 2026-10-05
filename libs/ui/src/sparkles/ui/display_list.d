@@ -15,7 +15,7 @@ import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : CellMeasure, childClipOf, clipsX, clipsY, Frame,
     measureWidth, unclipped, spanStyle;
 import sparkles.ui.style : Palette, resolveVisual, ScrollbarGlyphs, Slot, StateSet, TextStyle, Visual;
-import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.text.width : codepointWidth;
 
@@ -183,12 +183,21 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             // lies beside it — a border, a scrollbar, the next cell of a row.
             // Layout shrinks an overfull row's text below its natural width;
             // the cut to that width happens here, once, for every backend.
+            // A proportional run narrower than its cells sits where the
+            // widget aligns its text (a button's caption: centred).
+            vis.textAlign = cast(ubyte) node.alignX;
+            // An aligned run keeps its frame's width, so the canvas can place it
+            // across those cells; a start-aligned one takes its measured width.
+            const aligned = node.alignX != Alignment.start;
             const lines = frames[idx].lines;
             if (lines.length == 0)
             {
                 const fitted = fitCells(tm, node.text, rect.width, node.textStyle);
                 ops.textRun(Rect(rect.x, rect.y,
-                    measureWidth(tm, fitted, node.textStyle), frames[idx].lineRows),
+                    aligned ? rect.width : measureWidth(tm, fitted, node.textStyle),
+                    // A single line keeps its frame's height: the canvas centres
+                    // its glyphs in the rows the widget gave it (a pill's caption).
+                    rect.height > frames[idx].lineRows ? rect.height : frames[idx].lineRows),
                     fitted, node.slot, vis);
                 break;
             }
@@ -199,9 +208,13 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             foreach (li, ln; lines)
             {
                 const fitted = fitCells(tm, ln, inner.width, node.textStyle);
+                // A run of one line keeps its frame's height, so the canvas
+                // centres its glyphs in the rows the widget gave it (a pill's
+                // caption stretched to its touch target).
+                const h = lines.length == 1 && inner.height > pitch ? inner.height : pitch;
                 ops.textRun(
                     Rect(inner.x, inner.y + cast(int) li * pitch,
-                        measureWidth(tm, fitted, node.textStyle), pitch),
+                        aligned ? inner.width : measureWidth(tm, fitted, node.textStyle), h),
                     fitted, node.slot, vis);
             }
             break;
@@ -1152,4 +1165,40 @@ unittest
         RgbColor(255, 255, 255), RgbColor(0, 0, 0));
     foreach (ref const op; ops)
         if (op.kind == OpKind.textRun) assert(op.text == "" && op.rect.width == 0);
+}
+
+@("ui.displayList.textCarriesItsAlignment")
+@safe unittest
+{
+    import std.algorithm : filter;
+    import std.array : array;
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.widget : Alignment, Builder;
+
+    // A proportional face draws a caption narrower than its whole cells; the
+    // canvas places it across them as the widget aligns its text.
+    auto b = Builder();
+    const caption = b.add(Widget(kind: WidgetKind.text, text: "OK", alignX: Alignment.center,
+        width: SizeSpec.fixed(6)));
+    const plain = b.add(Widget(kind: WidgetKind.text, text: "name"));
+    auto tree = b.finish(b.container(WidgetKind.column, [caption, plain]));
+    const ops = buildDisplayList(tree, layout(tree), defaultTwoslashPalette(),
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+    const runs = ops.filter!(o => o.kind == OpKind.textRun).array;
+    assert(runs.length == 2);
+    assert(runs[0].visual.textAlign == Alignment.center);
+    assert(runs[0].rect.width == 6, "an aligned run spans the cells it is aligned in");
+
+    // A caption stretched to a touch target's rows keeps them all, so the
+    // canvas centres its glyphs down the target, not in its first row.
+    auto b2 = Builder();
+    const tall = b2.add(Widget(kind: WidgetKind.text, text: "OK", height: SizeSpec.grow()));
+    auto tree2 = b2.finish(b2.add(Widget(kind: WidgetKind.row, children: [tall],
+        height: SizeSpec.fixed(3))));
+    const ops2 = buildDisplayList(tree2, layout(tree2), defaultTwoslashPalette(),
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+    assert(ops2.filter!(o => o.kind == OpKind.textRun).array[0].rect.height == 3);
+    assert(runs[1].visual.textAlign == Alignment.start);
 }
