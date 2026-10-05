@@ -26,6 +26,8 @@
   --spk-chrome-focused-fg: #3c3c43;
   --spk-code-font-scale: 100;
   --spk-completion-unmatched-fg: #888888;
+  --spk-control-on-bg: #77777c;
+  --spk-control-on-fg: #ffffff;
   --spk-coverage-covered-bg: rgb(27 166 115 / 0.1412);
   --spk-coverage-covered-fg: #1ba673;
   --spk-coverage-partial-bg: rgb(195 125 13 / 0.1412);
@@ -135,6 +137,8 @@ html.dark {
   --spk-chrome-focused-fg: #dfdfd6;
   --spk-code-font-scale: 100;
   --spk-completion-unmatched-fg: #888888;
+  --spk-control-on-bg: #a4a49f;
+  --spk-control-on-fg: #1b1b1f;
   --spk-coverage-covered-bg: rgb(27 166 115 / 0.1412);
   --spk-coverage-covered-fg: #1ba673;
   --spk-coverage-partial-bg: rgb(195 125 13 / 0.1412);

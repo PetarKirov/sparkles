@@ -1241,7 +1241,7 @@ version (unittest)
     }
     // Leaves carry their descriptions and controls; a scheme is a drill-in.
     assert(shown.canFind("Follow system") && shown.canFind("Switch between the dark"));
-    assert(shown.canFind("● off") || shown.canFind("on ●"));
+    assert(shown.canFind("●"), "a toggle switch's knob");
     assert(shown.canFind("Split right") && shown.canFind("␣ p v"));
 }
 
