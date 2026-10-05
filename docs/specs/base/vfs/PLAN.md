@@ -1,8 +1,9 @@
 # Capability VFS — Delivery plan
 
-_Companion to [SPEC.md](./SPEC.md). Owns delivery order, gates and milestone
-progress. Requirements are defined only in the specification; oracles only in
-[testing.md](./testing.md)._
+_Companion to [SPEC.md](./SPEC.md) and [backends.md](./backends.md). Owns
+delivery order, gates, milestone progress, and the migration of existing code
+onto the interface. Requirements are defined only in the specification;
+oracles and checks only in [testing.md](./testing.md)._
 
 The work lands as a stacked series of pull requests, one per milestone, each
 green on its own and each linking its predecessor. A milestone moves the
@@ -14,34 +15,36 @@ requirements it names from `unverified` to `verified` in the
 Each spike answers one question before the milestone that depends on it
 starts. A negative answer changes the specification first.
 
-| Spike | Question                                                                                   | Experiment                                                                                         | Decision criterion                                                                                                                      | Blocks         |
-| ----- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| S1    | Does `O_NOFOLLOW_ANY` work on the `macos-latest` runner?                                   | a single-file probe opening a path with a symlinked intermediate, run on the macOS leg             | refused with `ELOOP`: keep the macOS row of `VFR7`. Accepted or `EINVAL`: macOS reports `componentWalk` always                          | M2 macOS arm   |
-| S2    | Can D call `NtCreateFile` with `RootDirectory` and `OBJ_DONT_REPARSE` on `windows-latest`? | declare the NT functions (druntime has none), link `ntdll`, open a child of a junction             | returns `STATUS_REPARSE_POINT_ENCOUNTERED`: proceed. Otherwise record the failure and revisit `VFR7`'s Windows row                      | M2 Windows arm |
-| S3    | Does `-preview=dip1000` stop a `DirRef` from outliving its `Dir`?                          | the compile-fail case from oracle 5, against a move-only owner like `sparkles.base.unique`         | the escape does not compile: keep `VFH2` as written. It compiles: `VFH2` becomes a documented rule plus a runtime check in debug builds | M1             |
-| S4    | Can rights be a compile-time flag set with readable errors?                                | `Dir!(V, Rights.readOnly).removeTree` and `attenuate!(Rights.all)`, reading the compiler's message | the message names the missing right: proceed. Otherwise add a `static assert` with a message per operation                              | M1             |
+| Spike | Question                                                                                                                               | Experiment                                                                                                                              | Decision criterion                                                                                                                                                       | Blocks         |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
+| S1    | Does `O_NOFOLLOW_ANY` work on the `macos-latest` runner?                                                                               | a single-file probe opening a path with a symlinked intermediate, run on the macOS leg                                                  | refused with `ELOOP`: keep the macOS row of `VFN5`. Accepted or `EINVAL`: macOS reports `componentWalk` always                                                           | M2 macOS arm   |
+| S2    | Can D call `NtCreateFile` with `RootDirectory` and `OBJ_DONT_REPARSE` on `windows-latest`, and pass an owner-only security descriptor? | declare the NT functions (druntime has none), link `ntdll`, open a child of a junction, create an owner-only file                       | returns `STATUS_REPARSE_POINT_ENCOUNTERED` and the created file's access control list has one entry: proceed. Otherwise record the failure and revisit `VFN5` or `VFN12` | M2 Windows arm |
+| S3    | Does `-preview=dip1000` stop a `DirRef` from outliving its `Dir`?                                                                      | the compile-fail case from oracle 5, against a move-only owner like `sparkles.base.unique`                                              | the escape does not compile: keep `VFH2` as written. It compiles: `VFH2` becomes a documented rule plus a runtime check in debug builds                                  | M1             |
+| S4    | Can rights be a compile-time flag set with readable errors, including the sharing tags?                                                | `Dir!(V, Rights.readOnly).removeTree`, `attenuate!(Rights.all)`, and `Shared()` without `createShared`, reading the compiler's messages | the messages name the missing right: proceed. Otherwise add a `static assert` with a message per operation                                                               | M1             |
 
-The io_uring opcodes `VFB4` needs (`openat2`, `statx`, `mkdirat`, `unlinkat`,
+The io_uring opcodes `VFB5` needs (`openat2`, `statx`, `mkdirat`, `unlinkat`,
 `renameat`, `symlinkat`) are all exposed by the `during` binding the
-repository already pins; no spike is needed for them. `during` has no
+repository pins; no spike is needed for them. `during` has no
 directory-listing or `readlinkat` opcode, which is why those run on the
 blocking pool.
 
 ## M0: the specification
 
 **Obligations.** None verified; this milestone makes them reviewable.
-**Deliverable.** `docs/specs/base/vfs/` with SPEC, PLAN, testing and
-decisions, registered in the docs sidebar.
-**Acceptance.** `dub run :ci -- --check-docs-sidebar`, `--check-vcs-urls` and
-the docs site build pass; each requirement names an oracle. The independent
-review item of the Stage 0 gate stays unmet until a second reviewer reads it.
+**Deliverable.** `docs/specs/base/vfs/` with SPEC, backends, PLAN, testing and
+decisions, registered in the docs sidebar, and the glossary entries its
+opening relies on.
+**Acceptance.** `dub run :ci -- --check-docs-sidebar`, `--check-glossary`,
+`--check-vcs-urls` and the docs site build pass; every requirement has a row
+in [testing.md § requirement checks](./testing.md#requirement-checks). The
+independent-review item stays unmet until a second reviewer reads it.
 **Excludes.** Code.
 
 ## M1: base vocabulary, algorithms and MemVfs
 
-**Obligations.** `VFE1` (the base types), `VFE2`, `VFE5`; `VFP1`–`VFP8`; `VFR1`, `VFR2`,
-`VFR4` (with a backend double); `VFO1`–`VFO8` on `MemVfs`; `VFH1`–`VFH6`;
-`VFD1`–`VFD4`, `VFD6`, `VFD7`; `VFB1`, `VFB2`; `VFM1`–`VFM4`.
+**Obligations.** `VFE1` (the base types), `VFE2`, `VFE4`; `VFP1`–`VFP8`;
+`VFR1`, `VFR2`, `VFR4` (with a backend double); `VFO1`–`VFO9` on `MemVfs`;
+`VFH1`–`VFH6`; `VFD1`–`VFD5`; `VFB1`–`VFB3`; `VFM1`–`VFM5`.
 **Prerequisites.** S3, S4. Decide open question O1.
 **Deliverable.** `sparkles.base.io.errors`; `sparkles.base.vfs` and its
 `.walk`, `.remove`, `.write` and `.mem` modules, with unit tests in feature
@@ -60,8 +63,9 @@ so this milestone adds `sparkles.base.io.errors` beside it.
 
 ## M2: the blocking backend
 
-**Obligations.** `VFE3`, `VFE4`; `VFR3`, `VFR5`–`VFR8`; `VFH7`–`VFH9`; `VFD5`;
-`VFB3`, `VFB6`; `VFO1`–`VFO8` and `VFD1`–`VFD7` on `BlockingVfs`.
+**Obligations.** `VFE3`; `VFR3`, `VFR5`, `VFR6`; `VFH7`, `VFH8`;
+`VFN1`–`VFN13`; `VFB4`, `VFB6`; `VFO1`–`VFO9` and `VFD1`–`VFD5` on
+`BlockingVfs`.
 **Prerequisites.** M1; S1; S2. Decide open question O2.
 **Deliverable.** The `sparkles:event-horizon-sys` package with `BlockingVfs`
 for Linux, macOS, Windows and a generic POSIX arm; the test-only switches for
@@ -71,27 +75,52 @@ forcing the component walk and forcing probe absence.
 `expected` and `sparkles:reflection` (`VFB6`).
 **Excludes.** The event loop; consumers.
 
-## M3: the asynchronous backend and the unified errors
+## M3: the asynchronous backend and event-horizon's migration
 
-**Obligations.** `VFE1` in full (event-horizon's own error type removed);
-`VFB4`, `VFB5`; `VFC2`.
-**Prerequisites.** M2.
-**Deliverable.** `RingVfs` and the `fs` capability on every loop backend;
-event-horizon's `errors.d` reduced to re-exports; `fs.d`, `watch.d`,
-`cgroup.d` and `sampling.d` migrated; the `Effect!T` forms.
-**Acceptance.** Oracle 4 with all three backends on every leg; the full
-event-horizon suite and every consumer of it (`http`, `ui-app`, `wsi`,
-`terminal-view`) build and test at their previous counts.
+**Obligations.** `VFE1` in full; `VFB5`; event-horizon's own
+[§9.1](../../event-horizon/SPEC.md#_9-1-ioerror-and-ioresult) and
+[§10.5](../../event-horizon/SPEC.md#_10-5-the-file-system).
+**Prerequisites.** M2; event-horizon's open question
+[O32](../../event-horizon/open-issues.md#o32-network-and-process-error-kinds)
+decided.
+**Deliverable.**
+
+- `RingVfs`, and the `fs` member of the capability row on every loop backend.
+- Event-horizon's `errors.d` reduced to re-exports plus `fromRes`; its
+  `OpKind.statx` member renamed `statAt`.
+- `RingFs`, its path-string functions (`openFile`, `statxPath`, `readText` by
+  path) removed; the copyable `FileHandle` removed or reduced to a borrowed
+  view of a `File`, as O32 decides.
+- `cgroup.d` and `sampling.d` opening their `/sys/fs/cgroup` and `/proc` roots
+  with `openRoot` and performing their relative operations through the
+  resulting `Dir`.
+- `Watcher.addWatch` taking a path together with an `AmbientAuthority`.
+- The `Effect!T` forms of the `Dir` and `File` operations.
+
+**Acceptance.** Oracle 4 with all three backends on every leg; no `atFdCwd`
+constant and no raw `openat` or `mkdirat` declaration remain in
+`sparkles:event-horizon`; the full event-horizon suite and every consumer of
+it (`http`, `ui-app`, `wsi`, `terminal-view`) build and test at their previous
+counts.
 **Excludes.** `TmpFS`; the fileset specification.
 
 ## M4: TmpFS
 
-**Obligations.** `VFC1`.
+**Obligations.** None of this specification's; this milestone moves
+`sparkles:test-utils` onto the blocking backend.
 **Prerequisites.** M2 (not M3: `TmpFS` depends on `sparkles:event-horizon-sys`
 only).
-**Deliverable.** `TmpFS` over `Dir!(BlockingVfs, Rights.all)`; `enforceBeneath`
-removed; `test-utils` depends on `sparkles:event-horizon-sys`.
-**Acceptance.** The twelve consumer suites keep their test counts:
+**Deliverable.** `TmpFS` holds a `Dir!(BlockingVfs, Rights.all)` for its
+scratch directory and performs every write, directory creation and removal
+through it. Its public surface keeps `create`, `share`, `dir`, `writeFile`,
+`writeFileAt`, `ensureSubdir` and `createdFiles`, and `dir()` still returns a
+path string. A path that leaves the fixture remains an assertion failure at
+`TmpFS`'s own boundary, because its input is trusted test code; the VFS
+underneath still returns the error as a value. The string check
+`enforceBeneath` is deleted, and `test-utils` depends on
+`sparkles:event-horizon-sys`.
+**Acceptance.** `refusesAPathThatLeavesTheFixture` passes, and the twelve
+consumer suites keep their test counts:
 
 | Package          | Tests at the checked revision |
 | ---------------- | ----------------------------- |
@@ -114,18 +143,23 @@ between; the gate is "unchanged from that measurement".
 
 ## M5: the fileset specification
 
-**Obligations.** `VFC3`.
+**Obligations.** None of this specification's; this milestone rewrites the
+fileset specification to rest on it.
 **Prerequisites.** M0 (the text only needs the contract, not the code).
-**Deliverable.** The fileset specification's `FSD1`–`FSD7` and `FSM2`
-rewritten to reference this specification; its `FSD6` statement about
-`RESOLVE_NO_SYMLINKS` marked superseded; its decision A10 updated.
+**Deliverable.** The fileset specification's drivers (`FSD1`–`FSD7`) and
+request vocabulary (`FSM2`) state that its three drivers are this
+specification's three backends and that its driver is one generic adapter over
+`isVfs`. Its `FSD6` statement that `RESOLVE_NO_SYMLINKS` is not set is marked
+superseded by [`VFO2`](./SPEC.md#vfo2-the-named-entry-is-never-followed):
+reading a link's target is a single-name `readlinkAt`, and never needs a
+lookup that follows. Its decision A10 is updated.
 **Acceptance.** Docs checks pass, and a reading of the fileset specification
 finds no normative text duplicating this one.
 **Excludes.** Implementing the fileset machine.
 
 ## Progress
 
-| Milestone | State       | Pull request |
-| --------- | ----------- | ------------ |
-| M0        | in review   | —            |
-| M1–M5     | not started | —            |
+| Milestone | State                                                    | Pull request |
+| --------- | -------------------------------------------------------- | ------------ |
+| M0        | delivered; reshaped for readers and for creation sharing | #535, —      |
+| M1–M5     | not started                                              | —            |
