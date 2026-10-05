@@ -277,6 +277,7 @@ final class SettingsPage : Surface, Scrollable
         uint[] page = [titleBar(b, ctx), filterRow(b, ctx), body_];
         if (!touch)
             page ~= b.add(Widget(kind: WidgetKind.text, slot: Slot.muted,
+                textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption),
                 text: "↑↓ move · ←→ change · ↵ act · / filter · r reset · u undo · Esc back",
                 padding: Insets(0, 1, 0, 1), height: SizeSpec.fixed(1), clipX: true));
         const column_ = b.add(Widget(kind: WidgetKind.column, children: page,
@@ -666,11 +667,11 @@ final class SettingsPage : Surface, Scrollable
                 textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption)))],
             width: SizeSpec.grow(), clipX: true));
         const chip = b.add(Widget(kind: WidgetKind.panel, children: [b.add(Widget(
-            kind: WidgetKind.text, text: path, slot: Slot.code))],
+            kind: WidgetKind.text, text: path, slot: Slot.code, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body)))],
             padding: Insets(0, 1, 0, 1), slot: Slot.surfaceRaised, paintBackground: true,
             decoration: Decoration(borderRadius: 4)));
         const edit = b.add(Widget(kind: WidgetKind.panel, children: [b.add(Widget(
-            kind: WidgetKind.text, text: "✎", slot: Slot.textPrimary))],
+            kind: WidgetKind.text, text: "✎", slot: Slot.textPrimary, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body)))],
             padding: Insets(0, 1, 0, 1), hitId: bindingBase + i * 4 + 1,
             height: opt.targetRows > 1 ? SizeSpec.fixed(opt.targetRows) : SizeSpec.fit_,
             alignY: Alignment.center));
@@ -699,7 +700,7 @@ final class SettingsPage : Surface, Scrollable
             if (auto n = pane.nodeAt(p))
                 title ~= " › " ~ sentenceCase(n.label);
         const back = b.add(Widget(kind: WidgetKind.panel, children: [b.add(Widget(
-            kind: WidgetKind.text, text: "←", slot: Slot.textPrimary))],
+            kind: WidgetKind.text, text: "←", slot: Slot.textPrimary, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body)))],
             padding: Insets(0, 1, 0, 1), hitId: hitBack,
             // A square target, as tall as the bar: the arrow's whole corner.
             width: SizeSpec(SizeSpec.Kind.fit, 0, squareCols(ctx.targetRows, ctx.cellW, ctx.cellH)),
@@ -718,9 +719,9 @@ final class SettingsPage : Surface, Scrollable
     private uint filterRow(ref Builder b, in SurfaceContext ctx) @trusted
     {
         const q = pane.tv.filterQuery.idup;
-        TextSpan[] spans = [TextSpan(text: "⌕ ", slot: Slot.muted)];
+        TextSpan[] spans = [TextSpan(text: "⌕ ", slot: Slot.muted, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body))];
         if (q.length)
-            spans ~= TextSpan(text: q, slot: Slot.textPrimary);
+            spans ~= TextSpan(text: q, slot: Slot.textPrimary, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body));
         else if (!pane.tv.searching)
             spans ~= TextSpan(text: "Filter · e.g. colour, exit, keys", slot: Slot.muted,
                 textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body));
@@ -733,7 +734,7 @@ final class SettingsPage : Surface, Scrollable
             clipX: true))];
         if (q.length || pane.tv.searching)
             kids ~= b.add(Widget(kind: WidgetKind.text, text: " ✕ ", slot: Slot.muted,
-                hitId: hitFilterClear));
+                textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body), hitId: hitFilterClear));
         const fieldRows = ctx.targetRows > 1 ? ctx.targetRows : 1;
         const field = b.add(Widget(kind: WidgetKind.row, children: kids,
             width: SizeSpec.grow(),
@@ -751,10 +752,11 @@ final class SettingsPage : Surface, Scrollable
     private uint toastLayer(ref Builder b, int w, int h, int targetRows) @safe
     {
         uint[] kids = [b.add(Widget(kind: WidgetKind.text, text: toast.text,
-            slot: Slot.textPrimary, width: SizeSpec.grow(), clipX: true))];
+            slot: Slot.textPrimary, width: SizeSpec.grow(), clipX: true, textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body)))];
         if (toast.undo || toast.keysUndo)
             kids ~= b.add(Widget(kind: WidgetKind.text, text: "↶ UNDO", slot: Slot.textPrimary,
-                textStyle: TextStyle(bold: true), hitId: hitUndo, padding: Insets(0, 1, 0, 1)));
+                textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.label),
+                hitId: hitUndo, padding: Insets(0, 1, 0, 1)));
         const bar = b.add(Widget(kind: WidgetKind.row, children: kids, gap: 1,
             width: SizeSpec.grow(), height: SizeSpec.fixed(targetRows > 1 ? targetRows : 1),
             alignY: Alignment.center, padding: Insets(0, 1, 0, 1), slot: Slot.chromeAccent,
