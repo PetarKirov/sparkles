@@ -36,6 +36,8 @@ import sparkles.ui_tui : Grid;
 
 import sparkles.doc_view.document : Document;
 import live_types : applyTip, LiveTypesSession;
+import project_state : dubBuildFor;
+import settings : DubBuildSettings;
 import picker_view : pickerOriginRow;
 import tui : PreviewTui;
 
@@ -53,6 +55,9 @@ struct PickerDocPane
     Duration overlayDelay = 2.seconds;
     /// Master switch for the dwell-started oracle (tests turn it off).
     bool liveOverlays = true;
+    /// The global dub build (`dub` section); the shown document's package
+    /// entry is laid over it per oracle (`PRJ19`). The host refreshes it on open.
+    DubBuildSettings dubBuild;
     /// What the host's pointer can do — feeds the bars' hover/expand easing
     /// (`IXB10`). The window host overrides with its own profile.
     InputCapabilities caps = cellPointer;
@@ -391,7 +396,7 @@ private:
             return;
         string reason;
         live = LiveTypesSession.start(shownPath, reason,
-            silenceChildStderr: true);
+            silenceChildStderr: true, build: dubBuildFor(shownPath, dubBuild).build);
     }
 
     void stopLive() @system

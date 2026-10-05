@@ -145,6 +145,7 @@ import live_types : applyTip, LiveTypesSession;
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 import gui_state;
 import crt_config : applyCrtCapture, applyCrtConfig;
+import project_state : dubBuildFor, mutableCopy;
 import settings : DubBuildSettings, HueConfig, PointerMode, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
@@ -768,10 +769,23 @@ int runGui(GuiArgs guiArgs) @system
     LiveTypesSession*[2] diffLive;
     bool liveNoticeShown;
 
-    // The dub build live types describe (`PRJ3`), read from the settings as they
-    // stand now, so a settings-pane edit reaches the next file opened.
-    DubBuildSettings liveBuild()
-        => configStore is null ? DubBuildSettings.init : configStore.resolved.dub;
+    // The global `dub` section as it stands now, as a mutable copy. Callers
+    // pass this rather than an inline `configStore is null ? init : …`
+    // argument: DMD 2.112's backend segfaults on that ternary passed by value.
+    DubBuildSettings globalDub()
+        => configStore is null ? DubBuildSettings.init : configStore.resolved.dub.mutableCopy;
+
+    // The dub build live types describe for `path` (`PRJ3`, `PRJ19`): the
+    // global `dub` section as it stands now with the package's project-state
+    // entry over it, so a settings-pane edit or a picked configuration reaches
+    // the next oracle started.
+    DubBuildSettings liveBuildFor(string path)
+    {
+        auto r = dubBuildFor(path, globalDub);
+        if (r.warning.length)
+            stderr.writeln("hue: project state ignored: ", r.warning);
+        return r.build;
+    }
 
     void noteLive(string why)
     {
@@ -832,7 +846,7 @@ int runGui(GuiArgs guiArgs) @system
         foreach (i, p; paths)
         {
             string reason;
-            diffLive[i] = LiveTypesSession.start(p, reason, build: liveBuild);
+            diffLive[i] = LiveTypesSession.start(p, reason, build: liveBuildFor(p));
             if (diffLive[i] is null)
                 noteLive(reason);
         }
@@ -847,7 +861,7 @@ int runGui(GuiArgs guiArgs) @system
         if (!liveTypes || alreadyHasPayload || !path.endsWith(".d"))
             return;
         string reason;
-        liveSession = LiveTypesSession.start(path, reason, build: liveBuild);
+        liveSession = LiveTypesSession.start(path, reason, build: liveBuildFor(path));
         if (liveSession is null)
             noteLive(reason);
     }
@@ -1111,6 +1125,7 @@ int runGui(GuiArgs guiArgs) @system
         if (filePickerDoc is null)
             filePickerDoc = new PickerDocPane;
         filePickerDoc.load = loadDoc;
+        filePickerDoc.dubBuild = globalDub;
         filePickerDoc.pane.names = names;
         filePickerDoc.pane.themes = themes;
         filePickerDoc.pane.labels = labels;

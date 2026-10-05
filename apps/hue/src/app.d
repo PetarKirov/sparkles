@@ -65,6 +65,7 @@ import sparkles.ui_app.display : displayAvailable;
 
 import cli;
 import source_loc : SourceLoc;
+import project_state : dubBuildFor;
 import settings : HueConfig;
 import settings_load : LoadedConfig;
 import settings_store : ConfigStore;
@@ -518,7 +519,7 @@ private TwoslashReturn[string] extractTwoslashSources(ref SourceSet set,
             foreach (k; pool.parallel(iota(dAt.length), 1))
             {
                 auto r = extractTwoslash(set.entries[dAt[k]].path,
-                    build: effectiveConfig().dub);
+                    build: dubBuildFor(set.entries[dAt[k]].path, effectiveConfig().dub).build);
                 results[k] = r.hasError
                     ? Extracted(TwoslashReturn.init, r.error)
                     : Extracted(r.value, null);
