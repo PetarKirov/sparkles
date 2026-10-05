@@ -17,16 +17,23 @@ interaction and publication interfaces with actual-font and host-boundary eviden
 
 The [specification](./SPEC.md) owns the behavioral requirements, [testing](./testing.md)
 owns acceptance scenarios and evidence, and [decisions](./decisions.md) owns the
-architectural trade-offs. This is the sole milestone tracker for text-layout.
-
-The scope discussion dated 2026-10-04 approves pursuing owned text foundations and
-this layered publication seam. Independent contract review and repaired-trace
-rechecks are recorded in testing.md, not inferred from that approval. Bounded
-feasibility, a delivered package and font integration remain separate gates.
-Directory inspection found neither `libs/font` nor `libs/text-layout`; the font
-specification is a separate active draft whose milestones are delivery prerequisites.
+architectural trade-offs. This is the sole milestone tracker for text-layout. Its
+slices run from Stage 0 review through fixed-object plans (TL-M1), cell-grid
+integration (TL-M2), shaped flow (TL-M3), interaction (TL-M4), publication
+typography (TL-M5) and the alternatives/page/export handoff (TL-M6).
 
 ## 1. Progress and dependencies
+
+Approval of the scope, contract review, feasibility, the package's existence and
+font integration are separate gates; passing one does not imply another.
+
+| Gate                                                | State                                                                       | Passes when                                                                                                  |
+| --------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Owner approves owned text foundations and this seam | passed (scope discussion, 2026-10-04)                                       | —                                                                                                            |
+| Independent contract review of the specification    | passed through TL-038 ([testing](./testing.md#independent-contract-review)) | a recheck covers TL-039–TL-058, split from reviewed text, and TL-052's cell-grid reordering rule             |
+| Owner acceptance of the specification               | pending                                                                     | the owner records acceptance after Stage 0's exit gate                                                       |
+| `libs/font` exists with real shaping                | absent                                                                      | [font M4](../font/PLAN.md#m4-shaping) and [font M7](../font/PLAN.md#m7-discovery-and-fallback) are delivered |
+| `libs/text-layout` exists                           | absent                                                                      | TL-M1 delivers its first executable operation                                                                |
 
 | Slice                                                   | State                                         | Delivery prerequisite                                                                           |
 | ------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------- |
@@ -47,6 +54,11 @@ a build succeed is not. A shaped public configuration must not be released until
 [font M7](../font/PLAN.md#m7-discovery-and-fallback) actually run. Font M2 supplies
 instances/metrics; later publication data gates are additional, not substitutes.
 
+Downstream consumers wait on these slices without becoming text-layout milestones.
+[Design-system M9](../design-system/PLAN.md)'s proportional documentation runs
+([GLY7](../design-system/glyphs.md)) wait on TL-M3, which itself waits on font M4
+and M7; no interim `raylib-text` paragraph engine stands in for it.
+
 ## 2. Stage 0: agreement and experiments
 
 **Scope.** Review SPEC boundaries and TL-001–TL-013 at operation level before the
@@ -54,14 +66,39 @@ first implementation slice; review contextual/publication contracts before their
 slices. Keep the contract draft until an independent adversarial reviewer walks
 success, failure and boundary traces and the owner records dispositions.
 
-**Experiments.** These are planned, not results:
+**Experiments.** These are planned, not results. Each names its question, its
+bounded experiment and the criterion that decides it.
 
-| Question                                                              | Bounded experiment                                                                                                                                                                                                                              | Decision criterion                                                                                                                                                                                |
-| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Can rich plan/projection be independently useful without fonts?       | Execute fixed box/glue/kern/discretionary/anchor paragraphs through the actual base exact solver, then project selected branches into caller storage; include negative kern and overflow/capacity rejection                                     | Exact output/source identities and exhaustive-small-model optimum agree; no font invocation or unresolved fake text width. Otherwise change the first-slice interface before implementation       |
-| Can candidate metrics equal realized line metrics with a real engine? | After font prerequisites exist, measure and realize Arabic joining, a Latin ligature, an Indic conjunct and discretionary replacements at several widths using the same engine request/token; compare to independent one-line reference shaping | Every selected candidate reproduces origins, advance and glyph/cluster identities. Any disagreement blocks an exact provider claim; investigate source/context/scale rather than widen tolerances |
-| Does exact contextual search fit bounded workloads?                   | Measure candidate count, solver states, font calls and workspace for 1 KiB, 16 KiB and 256 KiB mixed paragraphs, fixed and varying measures, on named hardware/toolchain with cold and reused font caches                                       | Resource counters conform to stated bounds and a proposed workload budget can be reviewed. Exhaustion is a valid failure, not a justification for undeclared greedy fallback                      |
-| Are the publication handoffs sufficient?                              | A throwaway host chooses among real composed alternatives, fragments at a line boundary, changes exclusion geometry and consumes glyph/source export records without a renderer handle                                                          | Host can distinguish continuation, changed geometry, nonconvergence and synthetic/source text; inability identifies a missing contract, not a reason to implement page policy here                |
+1. **Can a rich plan and projection be independently useful without fonts?**
+   - _Experiment:_ execute fixed box/glue/kern/discretionary/anchor paragraphs
+     through the actual base exact solver, then project selected branches into
+     caller storage. Include a negative kern and overflow/capacity rejection.
+   - _Criterion:_ exact output/source identities and the exhaustive small-model
+     optimum agree, with no font invocation or unresolved fake text width.
+     Otherwise, change the first-slice interface before implementation.
+2. **Can candidate metrics equal realized line metrics with a real engine?**
+   - _Experiment:_ once the font prerequisites exist, measure and realize Arabic
+     joining, a Latin ligature, an Indic conjunct and discretionary replacements
+     at several widths using the same engine request and exact-measure token.
+     Compare to independent one-line reference shaping.
+   - _Criterion:_ every selected candidate reproduces origins, advance and
+     glyph/cluster identities. Any disagreement blocks an exact provider claim;
+     investigate source, context and scale rather than widen tolerances.
+3. **Does exact contextual search fit bounded workloads?**
+   - _Experiment:_ measure candidate count, solver states, font calls and
+     workspace for 1 KiB, 16 KiB and 256 KiB mixed paragraphs, at fixed and
+     varying measures, on named hardware and toolchain with cold and reused font
+     caches.
+   - _Criterion:_ resource counters conform to the stated bounds and a proposed
+     workload budget can be reviewed. Exhaustion is a valid failure, not a
+     justification for undeclared greedy fallback.
+4. **Are the publication handoffs sufficient?**
+   - _Experiment:_ a throwaway host chooses among real composed alternatives,
+     fragments at a line boundary, changes exclusion geometry and consumes
+     glyph/source export records without a renderer handle.
+   - _Criterion:_ the host can distinguish continuation, changed geometry,
+     nonconvergence and synthetic/source text. An inability identifies a missing
+     contract, not a reason to implement page policy here.
 
 These spikes establish feasibility for the specified configuration only. Neither a
 manually measured box nor a dependency fake counts as real-font evidence. Negative
@@ -75,7 +112,8 @@ contract status only after the review, not merely after this documentation merge
 
 ## 3. TL-M1: fixed-object plans and projections
 
-**Obligations.** TL-004–TL-013 for fixed-object content, TL-032/TL-033 only to the
+**Obligations.** TL-004–TL-013, TL-038–TL-044 and TL-046 for fixed-object content,
+TL-032/TL-033 only to the
 extent of base exact solver choices and already composed fixed-object lines.
 
 **Deliverable.** Real executable paragraph validation, immutable plans, selected
@@ -96,8 +134,9 @@ script-aware justification and claims of publication-grade text output.
 
 ## 4. TL-M2: owned analysis and cell-grid integration
 
-**Obligations.** TL-001–TL-003, TL-005, TL-009–TL-015, TL-020/TL-022–TL-025 for
-cell-grid mode, TL-037 for projected choices, and TL-036 for a selected cell consumer.
+**Obligations.** TL-001–TL-003, TL-005, TL-009–TL-015, TL-020/TL-022–TL-025,
+TL-039–TL-044, TL-046–TL-048, TL-052–TL-054 and TL-056 for cell-grid mode, TL-037
+for projected choices, and TL-036 for a selected cell consumer.
 
 **Prerequisites.** Base delivers its owned codec, grapheme, script/line/bidi and
 cell projection contracts with the versioned corpus and limits; dependency tests
@@ -117,7 +156,8 @@ cell measure preserves snapshot-qualified logical identities.
 
 ## 5. TL-M3: real contextual shaped flow
 
-**Obligations.** TL-001–TL-003, TL-006–TL-009, TL-014–TL-023 and TL-037.
+**Obligations.** TL-001–TL-003, TL-006–TL-009, TL-014–TL-023, TL-037, TL-039–TL-041,
+TL-045 and TL-047–TL-054.
 
 **Prerequisites.** Real font M2, M4 and M7, including the refined contextual input,
 flags, physical scale and whole-span fallback contracts. The font engine's Unicode
@@ -143,7 +183,7 @@ verified. TL-M1 must not be renamed to satisfy this milestone.
 
 ## 6. TL-M4: interaction and clean consumer migration
 
-**Obligations.** TL-004–TL-007, TL-013, TL-023–TL-025, TL-036.
+**Obligations.** TL-004–TL-007, TL-013, TL-023–TL-025, TL-036, TL-055, TL-056.
 
 **Deliverable.** Source/glyph/logical/visual mappings, caret affinity, selection and
 raw-source versus visible-text copy. Migrate one actual consumer end-to-end, naming
@@ -158,17 +198,17 @@ public hit-test outputs; pure geometry tests do not replace this surface check.
 
 ## 7. TL-M5: publication typography and inline composition
 
-**Obligations.** TL-026–TL-031 and the corresponding TL-017/TL-018/TL-021/TL-023
-consequences.
+**Obligations.** TL-026–TL-031, TL-057 and the corresponding
+TL-017/TL-018/TL-021/TL-023 consequences.
 
 **Prerequisites.** Font exposes tested physical design metrics, safe elongation,
 justification trial shaping, baselines/vertical data and optional ligature carets.
-Vertical profiles wait for required vertical-orientation policy and real fonts;
+Vertical typography profiles wait for required vertical-orientation policy and real fonts;
 math objects require real host-composed metrics, with font MATH parsing owned by
 font. Absence must produce a named unsupported capability, not a fallback claiming
 the requested feature.
 
-**Deliverable.** Finite bounded adjustment profiles, explicit protrusion, baseline
+**Deliverable.** Finite bounded typography profiles, explicit protrusion, baseline
 unions, writing-mode transforms, ruby and inline objects with provenance. A full
 mathematical composer is excluded; the font MATH interface and measured-object
 handoff are mandatory prerequisites for math consumers, not delivered formulae.
@@ -180,7 +220,8 @@ line fitting, and unprovided capabilities reject without mutating prior output.
 
 ## 8. TL-M6: alternatives and publication handoff
 
-**Obligations.** TL-032–TL-035, TL-004/TL-007/TL-009 for all handoff operations.
+**Obligations.** TL-032–TL-035, TL-058, and TL-004/TL-007/TL-009/TL-039 for all
+handoff operations.
 
 **Deliverable.** Real alternative layouts with objective provenance/completeness,
 immutable fragments and revisioned continuations, finite host geometry feedback,
@@ -200,11 +241,9 @@ proof, keeping behavior regressions at the real interface.
 Each accepted slice needs source revision or explicit dirty-tree snapshot, command,
 configuration, actual execution count, artifacts and remaining gaps in
 [testing](./testing.md). Tests alone do not prove an integrated surface: execute a
-public paragraph operation or actual consumer at the changed path. Shared project
-build/link/documentation checks run after integration, not between concurrent
-specification edits.
+public paragraph operation or actual consumer at the changed path.
 
-Do not add compatibility shims for proposed APIs. When a slice disproves a draft
+Do not add compatibility shims for proposed APIs. When a slice disproves a contract
 assumption, update the owning contract and acceptance scenario before proceeding.
 The next executable work for this tree is Stage 0 review and the real fixed-object
 feasibility experiment once base's relevant implementation exists; shaped work

@@ -238,9 +238,8 @@ for one bad record hides exactly what the user came to see.
 
 ## 7. Parsing
 
-[`parsing.md`](./parsing.md) refines these requirements to operation level for
-milestone M1: inputs, results, borrowing, errors and bounds for each
-operation.
+[`parsing.md`](./parsing.md) refines these requirements to operation level:
+inputs, results, borrowing, errors and bounds for each operation.
 
 ### Opening a face
 
@@ -729,6 +728,14 @@ honor the returned glyph positions and source-cluster coverage, including ligatu
 merges, multiple glyphs per scalar, marks, RTL and fallback. Layout's placement
 and hit-testing contracts are owned by [`text-layout`](../text-layout/SPEC.md);
 font supplies the measurements and provenance needed to satisfy them.
+
+The [design system](../design-system/SPEC.md) names typefaces through
+[font roles](../../glossary.md#font-role), such as the monospace and sans faces of
+the [Sparkles theme](../design-system/sparkles-theme.md). A role's value resolves
+to the inputs this library already defines: a font request matched under `FTD4`,
+a fallback chain under `FTD5`, and code-point routes under `FTD6`, for example the
+Private Use Area routed to a Nerd Font face. This library has no role concept; the
+design system owns the roles and their mapping onto those inputs.
 
 <!-- References -->
 
