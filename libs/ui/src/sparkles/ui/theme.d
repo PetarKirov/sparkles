@@ -163,9 +163,15 @@ struct Theme
         // accented selection is unmistakably not the panel surface.
         const accent = ruleFgFor("function", ruleFgFor("markup.link"));
         if (accent.kind == Color.Kind.rgb)
+        {
             set(Slot.chromeAccent, accent, rgb(mix(bg, accent.rgb, 0.20)));
+            set(Slot.controlOn, rgb(bg), accent);
+        }
         else
+        {
             set(Slot.chromeAccent, Color.init, rgb(mix(bg, fg, 0.30)));
+            set(Slot.controlOn, rgb(bg), rgb(mix(bg, fg, 0.70)));
+        }
         // The accent roles track the same probe (`TOK3`): where the theme
         // pins none, the scheme default's blue stays. The second accent is
         // the keyword/type hue, so a badge reads apart from a link.

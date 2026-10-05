@@ -5,8 +5,9 @@ monospace `FontSet` that draws terminal text (design-system `GLY10`).
 An application's own chrome — page titles, rows, chips, buttons — reads better
 in a proportional face at a type scale than in the terminal's cell font. A
 `UiFonts` holds one regular and one bold face per step of that scale, each
-rasterized at its size. Text advances by each glyph's real advance; a code
-point the sans face lacks (an icon, a check mark, a script it does not cover)
+rasterized at its size. Text advances by each glyph's real advance, with the
+face's kerning pairs applied (shaped by HarfBuzz with ligatures off, so every
+code point keeps its own atlas glyph); a code point the sans face lacks (an icon, a check mark, a script it does not cover)
 is drawn from the `FontSet`'s face for it, scaled to the step's size, so icons
 keep working. Loading needs an active raylib GL context.
 */
@@ -18,9 +19,14 @@ import sparkles.raylib_text.font : fontHasGlyph, glyphIndexFor, loadVariantFile,
     LoadedFont;
 import sparkles.raylib_text.font_discovery : FontSources;
 import sparkles.raylib_text.font_set : FontSet;
+import sparkles.raylib_text.shaping_api : st_face_close, st_face_open, st_kern_advances,
+    st_library_create, st_library_destroy, STFace, STLibrary;
 
 /// The number of steps on the type scale (`sparkles:ui`'s `TypeStep`).
 enum uiTypeSteps = 4;
+
+// `TypeStep.body`'s index: the step the cell font's x-height is matched at.
+private enum TypeStepBody = 0;
 
 /// One step's faces and metrics, in the backend's drawing units.
 struct UiFace
@@ -29,6 +35,8 @@ struct UiFace
     LoadedFont bold;    /// the bold face at `size`; absent means a doubled stroke
     int size;           /// the drawn size, in drawing units
     int lineHeight;     /// the height one line of this step occupies
+    STFace* kernRegular; /// `regular` opened for kerning; null: none
+    STFace* kernBold;    /// ditto for `bold`
 
     @disable this(this); // the LoadedFonts own move-only buffers
 }
@@ -155,6 +163,10 @@ struct UiFonts
     private UiFace[uiTypeSteps] steps;
     private FontSet* fallback;
     private float atlasScale = 1.0f;
+    private STLibrary* kernLibrary;
+    // The cell font's size relative to a step's: what makes its x-height the
+    // interface face's, so a monospace value reads at the size of its label.
+    private float monoScale = 1.0f;
 
     /// `true` once a regular face loaded for every step.
     bool present;
@@ -179,8 +191,44 @@ struct UiFonts
             const px = cast(int)(sizes[i] * atlasScale + 0.5f);
             loadVariantFile(face.regular, regularPath, px, uiCodepoints);
             loadVariantFile(face.bold, boldPath, px, uiCodepoints);
+            face.kernRegular = openKern(regularPath, px);
+            if (face.bold.present)
+                face.kernBold = openKern(boldPath, px);
             present = present && face.regular.present;
         }
+        monoScale = present ? xHeightRatio() : 1.0f;
+    }
+
+    // The interface face's x-height over the cell font's, each per unit of size.
+    private float xHeightRatio() @system
+    {
+        if (fallback is null)
+            return 1.0f;
+        bool fakeBold, fakeItalic;
+        auto mono = fallback.resolveFace('x', false, false, fakeBold, fakeItalic);
+        const ui = xHeight(steps[TypeStepBody].regular), cell = mono is null ? 0 : xHeight(*mono);
+        if (ui <= 0 || cell <= 0)
+            return 1.0f;
+        const r = ui / cell;
+        return r < 0.7f ? 0.7f : r > 1.2f ? 1.2f : r;
+    }
+
+    private static float xHeight(ref LoadedFont lf) @system
+    {
+        if (!lf.present || lf.font.baseSize <= 0 || !fontHasGlyph(lf, 'x'))
+            return 0;
+        return lf.font.recs[glyphIndexFor(lf, 'x')].height / cast(float) lf.font.baseSize;
+    }
+
+    // The face at `path` opened for kerning at `px`, or null (kerning is then
+    // skipped and glyphs advance by their own widths).
+    private STFace* openKern(string path, int px) @system
+    {
+        import std.string : toStringz;
+
+        if (kernLibrary is null)
+            kernLibrary = st_library_create();
+        return kernLibrary is null ? null : st_face_open(kernLibrary, path.toStringz, 0, px);
     }
 
     /// Releases every face.
@@ -188,6 +236,9 @@ struct UiFonts
     {
         foreach (ref face; steps)
         {
+            st_face_close(face.kernRegular);
+            st_face_close(face.kernBold);
+            face.kernRegular = face.kernBold = null;
             if (face.regular.present)
                 UnloadFont(face.regular.font);
             if (face.bold.present)
@@ -195,6 +246,9 @@ struct UiFonts
             face.regular = LoadedFont.init;
             face.bold = LoadedFont.init;
         }
+        if (kernLibrary !is null)
+            st_library_destroy(kernLibrary);
+        kernLibrary = null;
         present = false;
     }
 
@@ -203,15 +257,47 @@ struct UiFonts
         unload();
     }
 
+    /// The size `step` is drawn at — its glyph box, ascender to descender —
+    /// in drawing units.
+    int size(size_t step) const @safe pure nothrow @nogc
+        => steps[step].size;
+
     /// The height one line of `step` occupies, in drawing units.
     int lineHeight(size_t step) const @safe pure nothrow @nogc
         => steps[step].lineHeight;
 
+    /**
+    Whether every code point of `text` has a glyph in the faces this draws
+    from — the interface face (unless `mono`) or the `FontSet`'s loaded faces.
+    A symbol only the cell font's system fallback has (an icon from another
+    font) does not, and the caller draws such a run through the cell font.
+    */
+    bool covers(scope const(char)[] text, bool mono) @system
+    {
+        import std.typecons : Yes;
+        import std.utf : decode;
+
+        size_t i;
+        while (i < text.length)
+        {
+            const cp = cast(int) decode!(Yes.useReplacementDchar)(text, i);
+            if (cp < 0x20 || cp == 0x7F || (!mono && fontHasGlyph(steps[0].regular, cp)))
+                continue;
+            if (fallback is null)
+                return false;
+            bool fakeBold, fakeItalic;
+            auto lf = fallback.resolveFace(cp, false, false, fakeBold, fakeItalic);
+            if (lf is null || !fontHasGlyph(*lf, cp))
+                return false;
+        }
+        return true;
+    }
+
     /// The width of `text` drawn in `step`, in drawing units.
-    float width(size_t step, bool bold, scope const(char)[] text) @system
+    float width(size_t step, bool bold, scope const(char)[] text, bool mono = false) @system
     {
         float w = 0;
-        eachGlyph(step, bold, text, (ref LoadedFont lf, int cp, int size, float adv) {
+        eachGlyph(step, bold, mono, text, (ref LoadedFont lf, int cp, int size, float adv) {
             w += adv;
         });
         return w;
@@ -219,10 +305,12 @@ struct UiFonts
 
     /**
     Draws `text` in `step` with its top-left at `(x, y)`, in `fg`. Code points
-    the face lacks come from the `FontSet` at the same size.
+    the face lacks come from the `FontSet` at the same size. `mono` draws the
+    whole run in the cell font at the step's size, its x-height matched to the
+    interface face's, so a value sits beside its label at one size.
     */
     void draw(size_t step, bool bold, scope const(char)[] text, float x, float y,
-        Color fg) @system
+        Color fg, bool mono = false) @system
     {
         import sparkles.raylib_text.draw : drawGrapheme;
 
@@ -232,32 +320,68 @@ struct UiFonts
         const fake = bold && !steps[step].bold.present;
         const top = cast(float) cast(int)(y + 0.5f);
         float pen = x;
-        eachGlyph(step, bold, text, (ref LoadedFont lf, int cp, int size, float adv) {
+        const box = steps[step].size;
+        eachGlyph(step, bold, mono, text, (ref LoadedFont lf, int cp, int size, float adv) {
             const uint[1] one = [cast(uint) cp];
             const left = cast(float) cast(int)(pen + 0.5f);
-            drawGrapheme(lf, one[], left, top, size, fg);
+            // A smaller glyph box (a monospace run) is centred in the step's.
+            const t = top + (box - size) / 2;
+            drawGrapheme(lf, one[], left, t, size, fg);
             if (fake)
-                drawGrapheme(lf, one[], left + 1, top, size, fg);
+                drawGrapheme(lf, one[], left + 1, t, size, fg);
             pen += adv;
         });
     }
 
     // Each code point of `text` with the face it draws in, the size to draw it
     // at, and its advance in drawing units.
-    private void eachGlyph(size_t step, bool bold, scope const(char)[] text,
+    private void eachGlyph(size_t step, bool bold, bool mono, scope const(char)[] text,
         scope void delegate(ref LoadedFont, int, int, float) @system visit) @system
     {
         import std.typecons : Yes;
         import std.utf : decode;
 
         auto face = &steps[step];
-        LoadedFont* own = bold && face.bold.present ? &face.bold : &face.regular;
-        size_t i;
+        if (mono && fallback !is null)
+        {
+            const size = cast(int)(face.size * monoScale + 0.5f);
+            size_t j;
+            while (j < text.length)
+            {
+                const cp = cast(int) decode!(Yes.useReplacementDchar)(text, j);
+                if (cp < 0x20 || cp == 0x7F)
+                    continue;
+                bool fakeBold, fakeItalic;
+                auto lf = fallback.resolveFace(cp, bold, false, fakeBold, fakeItalic);
+                const idx = glyphIndexFor(*lf, cp);
+                const base = lf.font.baseSize > 0 ? lf.font.baseSize : size;
+                visit(*lf, cp, size, lf.font.glyphs[idx].advanceX * cast(float) size / base);
+            }
+            return;
+        }
+        const useBold = bold && face.bold.present;
+        LoadedFont* own = useBold ? &face.bold : &face.regular;
+
+        // The run's code points, then its kerned advances where the face can
+        // shape the whole run one glyph per code point.
+        uint[128] cpStore;
+        float[128] kernStore;
+        uint[] cps = text.length <= cpStore.length ? cpStore[] : new uint[text.length];
+        size_t n, i;
         while (i < text.length)
         {
-            const cp = cast(int) decode!(Yes.useReplacementDchar)(text, i);
-            if (cp < 0x20 || cp == 0x7F)
-                continue;
+            const cp = cast(uint) decode!(Yes.useReplacementDchar)(text, i);
+            if (cp >= 0x20 && cp != 0x7F)
+                cps[n++] = cp;
+        }
+        float[] kerned = n <= kernStore.length ? kernStore[0 .. n] : new float[n];
+        STFace* kf = useBold ? face.kernBold : face.kernRegular;
+        const haveKern = n > 1 && kf !is null
+            && st_kern_advances(kf, cps.ptr, cast(uint) n, kerned.ptr) != 0;
+
+        foreach (k, cp_; cps[0 .. n])
+        {
+            const cp = cast(int) cp_;
             LoadedFont* lf = own;
             if (!fontHasGlyph(*own, cp) && fallback !is null)
             {
@@ -266,7 +390,9 @@ struct UiFonts
             }
             const idx = glyphIndexFor(*lf, cp);
             const base = lf.font.baseSize > 0 ? lf.font.baseSize : face.size;
-            const adv = lf.font.glyphs[idx].advanceX * cast(float) face.size / base;
+            const adv = haveKern && lf is own
+                ? kerned[k] * face.size / own.font.baseSize
+                : lf.font.glyphs[idx].advanceX * cast(float) face.size / base;
             visit(*lf, cp, face.size, adv);
         }
     }
@@ -290,4 +416,31 @@ version (RaylibTextTests)
 
     assert(!resolveUiFace("Inter", sources, regular, bold), "a family the dirs lack");
     assert(regular == "" && bold == "");
+}
+
+version (RaylibTextTests)
+@("raylib_text.ui_font.kernAdvances.pairTightens")
+@system unittest
+{
+    import std.string : toStringz;
+    import sparkles.test_runner.skip : skipTest;
+
+    string regular, bold;
+    if (!resolveUiFace("sans-serif", FontSources(null, useSystemFontDb: true), regular, bold))
+        return skipTest("no system sans-serif face");
+    auto lib = st_library_create();
+    scope (exit) st_library_destroy(lib);
+    auto face = st_face_open(lib, regular.toStringz, 0, 32);
+    scope (exit) st_face_close(face);
+    assert(face !is null);
+
+    float[2] av, aa;
+    const uint[2] pairAV = ['A', 'V'], pairAA = ['A', 'A'];
+    assert(st_kern_advances(face, pairAV.ptr, 2, av.ptr));
+    assert(st_kern_advances(face, pairAA.ptr, 2, aa.ptr));
+    assert(av[0] < aa[0], "the A–V pair is kerned tighter than A–A");
+
+    const uint[2] fi = ['f', 'i'];
+    float[2] fiAdv;
+    assert(st_kern_advances(face, fi.ptr, 2, fiAdv.ptr), "no ligature: one glyph per code point");
 }

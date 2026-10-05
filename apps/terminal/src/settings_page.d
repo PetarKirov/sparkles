@@ -45,9 +45,10 @@ import sparkles.ui.geometry : Constraints, Insets, Point, SizeSpec;
 import sparkles.ui.keymap : acceptsTyped, Chord, ShiftReq;
 import sparkles.ui.layout : layout;
 import sparkles.ui.property_tree : EditValue, LeafKind, PropertyNode;
-import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
+import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
+import chrome : chromeLayout, squareCols;
 import keymap : Binding, isReserved, KeysConfig, leaderChord, leaderMark, TermCommand,
     TermScope, terminalBindings;
 import settings : TerminalConfig;
@@ -295,7 +296,7 @@ final class SettingsPage : Surface, Scrollable
         auto tree = b.finish(root);
 
         // Measure unscrolled, keep the focused row in view, then scroll.
-        auto frames = layout(tree, Constraints(maxW: cols, maxH: rows));
+        auto frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
         const view = frames[body_].rect;
         bodyRows = view.height;
         int contentBottom = view.y;
@@ -655,12 +656,14 @@ final class SettingsPage : Surface, Scrollable
         string sub = text(row.scope_, " scope");
         if (row.changed && row.defaultPath.length)
             sub ~= " · default " ~ row.defaultPath;
-        TextSpan[] title = [TextSpan(text: row.label, slot: Slot.textPrimary)];
+        const name = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body);
+        TextSpan[] title = [TextSpan(text: row.label, slot: Slot.textPrimary, textStyle: name)];
         if (row.changed)
-            title ~= TextSpan(text: " ●", slot: Slot.accentPrimary);
+            title ~= TextSpan(text: " ●", slot: Slot.accentPrimary, textStyle: name);
         const left = b.add(Widget(kind: WidgetKind.column, children: [
             b.add(Widget(kind: WidgetKind.rich, spans: title)),
-            b.add(Widget(kind: WidgetKind.text, text: sub, slot: Slot.muted))],
+            b.add(Widget(kind: WidgetKind.text, text: sub, slot: Slot.muted,
+                textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption)))],
             width: SizeSpec.grow(), clipX: true));
         const chip = b.add(Widget(kind: WidgetKind.panel, children: [b.add(Widget(
             kind: WidgetKind.text, text: path, slot: Slot.code))],
@@ -698,10 +701,13 @@ final class SettingsPage : Surface, Scrollable
         const back = b.add(Widget(kind: WidgetKind.panel, children: [b.add(Widget(
             kind: WidgetKind.text, text: "←", slot: Slot.textPrimary))],
             padding: Insets(0, 1, 0, 1), hitId: hitBack,
+            // A square target, as tall as the bar: the arrow's whole corner.
+            width: SizeSpec(SizeSpec.Kind.fit, 0, squareCols(ctx.targetRows, ctx.cellW, ctx.cellH)),
             height: ctx.targetRows > 1 ? SizeSpec.fixed(ctx.targetRows) : SizeSpec.fit_,
-            alignY: Alignment.center));
+            alignX: Alignment.center, alignY: Alignment.center));
         const name = b.add(Widget(kind: WidgetKind.text, text: title, slot: Slot.textPrimary,
-            textStyle: TextStyle(bold: true), width: SizeSpec.grow()));
+            textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.title),
+            width: SizeSpec.grow()));
         return b.add(Widget(kind: WidgetKind.row, children: [back, name], gap: 1,
             width: SizeSpec.grow(),
             height: SizeSpec.fixed(ctx.targetRows > 1 ? ctx.targetRows : 1),
@@ -716,11 +722,13 @@ final class SettingsPage : Surface, Scrollable
         if (q.length)
             spans ~= TextSpan(text: q, slot: Slot.textPrimary);
         else if (!pane.tv.searching)
-            spans ~= TextSpan(text: "Filter · e.g. colour, exit, keys", slot: Slot.muted);
+            spans ~= TextSpan(text: "Filter · e.g. colour, exit, keys", slot: Slot.muted,
+                textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body));
         if (pane.tv.searching)
             spans ~= TextSpan(text: "▏", slot: Slot.caret);
         if (pane.tree.filterError.length)
-            spans ~= TextSpan(text: "  ⚠ " ~ pane.tree.filterError, slot: Slot.error);
+            spans ~= TextSpan(text: "  ⚠ " ~ pane.tree.filterError, slot: Slot.error,
+                textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption));
         uint[] kids = [b.add(Widget(kind: WidgetKind.rich, spans: spans, width: SizeSpec.grow(),
             clipX: true))];
         if (q.length || pane.tv.searching)
@@ -1241,7 +1249,7 @@ version (unittest)
     }
     // Leaves carry their descriptions and controls; a scheme is a drill-in.
     assert(shown.canFind("Follow system") && shown.canFind("Switch between the dark"));
-    assert(shown.canFind("● off") || shown.canFind("on ●"));
+    assert(shown.canFind("●"), "a toggle switch's knob");
     assert(shown.canFind("Split right") && shown.canFind("␣ p v"));
 }
 

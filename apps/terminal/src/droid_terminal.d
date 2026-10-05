@@ -269,6 +269,19 @@ struct DroidTerminal
     /// The panes, the guide over their bottom rows, then the key row.
     void paint(H)(ref H h, in WidgetTree, in Frame[])
     {
+        // Surfaces lay out in the faces that draw them (`GLY10`).
+        static if (__traits(hasMember, H, "textMeasure"))
+        {
+            import std.functional : toDelegate;
+            import chrome : ChromeMeasure, useChromeMeasure;
+            import sparkles.ui.style : TextStyle;
+
+            static typeof(h.textMeasure()) gm;
+            static int width(scope const(char)[] s, in TextStyle st) @safe => gm.width(s, st);
+            static int rows(in TextStyle st) @safe => gm.rows(st);
+            gm = h.textMeasure();
+            useChromeMeasure(ChromeMeasure(toDelegate(&width), toDelegate(&rows)));
+        }
         const g = geometry(h);
         // The handles and the chip mark the panes; a page or a menu covers
         // them (`TSE3`, `TSE10`).

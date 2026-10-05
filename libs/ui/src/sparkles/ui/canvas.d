@@ -146,11 +146,12 @@ struct BoxChrome
     Shadow shadow;      /// resolved drop shadow
     bool arrow;         /// draw a popup arrow/tail off the top edge?
     int arrowOffset;    /// arrow offset from the left, in cells
+    int drawHeight;     /// drawn height in CSS px, centred; 0 = the whole rect
 
     /// Whether any of it would actually paint — the test the display list
     /// makes before spending an arena slot.
     bool any() const @safe pure nothrow @nogc
-        => border.any || shadow.any || arrow || borderRadius > 0;
+        => border.any || shadow.any || arrow || borderRadius > 0 || drawHeight > 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -599,7 +600,8 @@ Ink inkOf(in Visual v) @safe pure nothrow @nogc
 /// The box half of `v`.
 BoxChrome boxChromeOf(in Visual v) @safe pure nothrow @nogc
     => BoxChrome(border: v.border, borderRadius: v.borderRadius,
-        shadow: v.shadow, arrow: v.arrow, arrowOffset: v.arrowOffset);
+        shadow: v.shadow, arrow: v.arrow, arrowOffset: v.arrowOffset,
+        drawHeight: v.drawHeight);
 
 /// `ink` back as a `Visual`, for the canvas primitives that take one.
 Visual visualOf(in Ink ink) @safe pure nothrow @nogc
@@ -636,6 +638,7 @@ Visual visualOf(in FillRect f) @safe pure nothrow @nogc
         v.shadow = f.chrome.shadow;
         v.arrow = f.chrome.arrow;
         v.arrowOffset = f.chrome.arrowOffset;
+        v.drawHeight = f.chrome.drawHeight;
     }
     return v;
 }

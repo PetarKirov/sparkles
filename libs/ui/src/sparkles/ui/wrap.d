@@ -155,16 +155,15 @@ private void wrapGreedy(F)(
 {
     size_t lineStart = words[0].start;
     size_t lineEnd = words[0].end;
-    int lineW = measure(para[lineStart .. lineEnd]);
     int limit = firstW;
 
     foreach (word; words[1 .. $])
     {
-        // The candidate joint: the inter-word gap plus the word itself.
-        const jointW = measure(para[lineEnd .. word.end]);
-        if (lineW + jointW <= limit)
+        // The candidate line measured whole: a proportional measurer rounds
+        // each run up to whole cells, so summing the joints would wrap early.
+        const candidateW = measure(para[lineStart .. word.end]);
+        if (candidateW <= limit)
         {
-            lineW += jointW;
             lineEnd = word.end;
         }
         else
@@ -172,7 +171,6 @@ private void wrapGreedy(F)(
             lines ~= para[lineStart .. lineEnd];
             lineStart = word.start;
             lineEnd = word.end;
-            lineW = measure(para[lineStart .. lineEnd]);
             limit = width;
         }
     }
@@ -275,6 +273,17 @@ version (unittest)
     assert(wrapLines("", 10, &cols) == [""]);
 }
 
+
+@("ui.wrap.greedy.measuresTheWholeLine")
+@safe pure nothrow unittest
+{
+    // A proportional measurer rounds a run up to whole cells: 0.7 of a cell a
+    // character. "ab ab ab" is 5.6 cells, so 6; summing the rounded joints
+    // ("ab" 2, " ab" 3, " ab" 3) would make it 8 and wrap it early.
+    static int narrow(const(char)[] s) => cast(int)((s.length * 7 + 9) / 10);
+    assert(wrapLines("ab ab ab", 6, &narrow) == ["ab ab ab"]);
+    assert(wrapLines("ab ab ab", 5, &narrow) == ["ab ab", "ab"]);
+}
 @("ui.wrap.newlineForcesBreak")
 @safe pure nothrow unittest
 {

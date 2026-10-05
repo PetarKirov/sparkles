@@ -167,6 +167,11 @@ enum Slot : ubyte
     @WireName("coverage.uncovered") covUncovered,
     /// a line that ran, but not every branch out of it
     @WireName("coverage.partial") covPartial,
+
+    // Control slots (ui `WGT26`).
+    /// a control that is on — a switch's track: the accent filled, with the
+    /// page background's tone over it
+    @WireName("control.on") controlOn,
 }
 
 private enum slotCount = Slot.max + 1;
@@ -285,6 +290,11 @@ enum FontRole : ubyte
     /// chips, buttons) in a proportional sans at its $(LREF TypeStep)'s size,
     /// where the target has one (design-system `GLY10`); monospace elsewhere.
     ui,
+    /// Interface data: a value, a path or a key chord in an application's
+    /// chrome — the cell font's family at its $(LREF TypeStep)'s size, its
+    /// x-height matched to the interface face's, so it reads at the size of
+    /// the label beside it (`GLY10`, D50). The cell font on a cell target.
+    uiMono,
 }
 
 /**
@@ -363,6 +373,7 @@ struct Visual
     Shadow shadow;        /// resolved drop shadow (default: none)
     bool arrow;           /// draw a popup arrow/tail off this box's top edge?
     int arrowOffset;      /// arrow horizontal offset from the left, in cells
+    int drawHeight;       /// drawn box height in CSS px, centred; 0 = the whole rect
 
     // --- text chrome (resolved from a widget's TextStyle) ---
     FontRole fontRole;      /// which font family the run wants
@@ -391,6 +402,10 @@ struct Decoration
     bool shadow;                    /// draw the palette's popup drop shadow?
     bool arrow;                     /// draw a popup arrow/tail (backends place it)
     int arrowOffset;                /// arrow horizontal offset from the left, in cells
+    /// The height the box is drawn at, in CSS px, centred in its rect; 0 fills
+    /// the rect. A control keeps a 48 dp touch target and draws a 32 dp chip
+    /// (design-system `TOK11`); a cell target draws the whole rect.
+    int drawHeight;
 }
 
 /// A widget's declared text style — font role, relative size, weight/italic/
@@ -649,6 +664,8 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.bg[chromeFocused] = Color.fromRgb(0x37, 0x72, 0xcf);
         p.bgAlpha[chromeFocused] = 0x48;
         p.fg[chromeAccent] = Color.fromRgb(0x37, 0x72, 0xcf);
+        p.fg[controlOn] = Color.fromRgb(0xff, 0xff, 0xff);
+        p.bg[controlOn] = Color.fromRgb(0x37, 0x72, 0xcf);
         p.fg[gutter] = Color.fromRgb(0x88, 0x88, 0x88);
         // The number-gutter strip: the muted number fg over a faint neutral
         // wash that reads on any page — a personalized theme overrides both
@@ -842,6 +859,7 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
 
     v.arrow = deco.arrow;
     v.arrowOffset = deco.arrowOffset;
+    v.drawHeight = deco.drawHeight;
 
     // Text chrome.
     v.fontRole = text.fontRole;

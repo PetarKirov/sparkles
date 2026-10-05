@@ -29,10 +29,12 @@ module sparkles.ui.components.property_sections;
 import std.conv : text;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.ui.components.controls : chip, ControlSize, dropdownChip, segmented,
+    stepper, toggleSwitch;
 import sparkles.ui.components.tree_widget : TreeData;
 import sparkles.ui.geometry : cellsOf, Insets, SizeSpec;
 import sparkles.ui.property_tree : LeafKind, PropertyNode, SearchRole;
-import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
+import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind;
 import sparkles.ui.wrap : TextWrap;
 
@@ -328,7 +330,8 @@ struct SectionsOptions
 }
 
 /// The slots this view references (design-system `TOK6`).
-enum Slot[] propertySectionSlots = [Slot.chrome, Slot.chromeAccent, Slot.selection,
+enum Slot[] propertySectionSlots = [Slot.chrome, Slot.chromeAccent, Slot.controlOn,
+    Slot.textSecondary, Slot.selection,
     Slot.muted, Slot.textPrimary, Slot.surfaceRaised, Slot.surfaceSunken, Slot.border,
     Slot.warn, Slot.error, Slot.accentPrimary, Slot.caret, Slot.code];
 
@@ -360,8 +363,10 @@ uint sectionHeader(ref Builder b, string heading, string detail, bool collapsed,
 
     const title = b.add(Widget(kind: WidgetKind.text,
         text: (collapsed ? "▸ " : "▾ ") ~ heading.toUpper, slot: Slot.chromeAccent,
-        textStyle: TextStyle(bold: true), width: SizeSpec.grow()));
-    const right = b.add(Widget(kind: WidgetKind.text, text: detail, slot: Slot.muted));
+        textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.label),
+        width: SizeSpec.grow()));
+    const right = b.add(Widget(kind: WidgetKind.text, text: detail, slot: Slot.muted,
+        textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.caption)));
     return b.add(Widget(kind: WidgetKind.row, children: [title, right], gap: 1,
         width: SizeSpec.grow(), height: atLeast(opt.targetRows),
         padding: Insets(0, 1, 0, 1), alignY: Alignment.center, hitId: hitId,
@@ -401,21 +406,28 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
 
     if (item.kind == SectionItem.Kind.status)
         return b.add(Widget(kind: WidgetKind.text, text: item.label, slot: Slot.muted,
+            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption),
             padding: Insets(0, 2, 0, 2)));
 
     // The left: label, the changed marker, the description.
     uint[] left;
     {
-        TextSpan[] spans = [TextSpan(text: item.label, slot: Slot.textPrimary)];
+        // Names and descriptions read in the interface face; values (the
+        // controls on the right) stay in the cell font.
+        const name = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body);
+        TextSpan[] spans = [TextSpan(text: item.label, slot: Slot.textPrimary, textStyle: name)];
         if (st.changed)
-            spans ~= TextSpan(text: " ●", slot: Slot.accentPrimary);
+            spans ~= TextSpan(text: " ●", slot: Slot.accentPrimary, textStyle: name);
         left ~= b.add(Widget(kind: WidgetKind.rich, spans: spans));
         if (n.doc.length)
             left ~= b.add(Widget(kind: WidgetKind.text, text: n.doc, slot: Slot.muted,
+                textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption),
                 wrap: TextWrap.greedy, width: SizeSpec.grow()));
     }
+    // The name keeps its room (up to 16 cells) before a preview beside it does.
+    static int nameCells(const(char)[] s) => cellsOf(s) + 2 < 16 ? cast(int) cellsOf(s) + 2 : 16;
     const leftCol = b.add(Widget(kind: WidgetKind.column, children: left,
-        width: SizeSpec.grow(), clipX: true));
+        width: SizeSpec(SizeSpec.Kind.grow, 1, nameCells(item.label)), clipX: true));
 
     uint[] parts = [leftCol];
     if (st.chip.length)
@@ -429,6 +441,7 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
         parts ~= pill(b, "↺", Slot.muted, hit(SectionPart.reset), false, false, 1);
 
     const rows = opt.targetRows;
+    const size = ControlSize(rows: rows);
     const editor = item.kind == SectionItem.Kind.drill ? InlineEditor.drillIn
         : inlineEditorFor(*n, opt.segmentCells);
     final switch (editor)
@@ -438,19 +451,22 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
         case InlineEditor.toggle:
         {
             const on = n.badge == "true";
-            parts ~= pill(b, on ? "on ●" : "● off", on ? Slot.chromeAccent : Slot.muted,
-                hit(SectionPart.toggle), on, on, 1);
+            parts ~= toggleSwitch(b, on, hit(SectionPart.toggle), size);
             break;
         }
         case InlineEditor.segmented:
         {
-            uint[] segs;
+            string[] labels;
+            size_t[] hits;
+            size_t picked = size_t.max;
             foreach (i, c; n.choices)
-                segs ~= pill(b, choiceLabel(*n, i), Slot.textPrimary,
-                    hit(cast(uint)(SectionPart.choice0 + i)), c == n.badge, c == n.badge, 1);
-            parts ~= b.add(Widget(kind: WidgetKind.row, children: segs,
-                decoration: Decoration(borderStyle: BorderStyle.solid, borderWidth: Insets.all(1),
-                    borderSlot: Slot.border, borderRadius: 6)));
+            {
+                labels ~= choiceLabel(*n, i);
+                hits ~= hit(cast(uint)(SectionPart.choice0 + i));
+                if (c == n.badge)
+                    picked = i;
+            }
+            parts ~= segmented(b, labels, picked, hits, size);
             break;
         }
         case InlineEditor.dropdown:
@@ -459,17 +475,12 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
             foreach (i, c; n.choices)
                 if (c == n.badge)
                     shown = choiceLabel(*n, i);
-            parts ~= pill(b, shown ~ (st.open ? " ▴" : " ▾"), Slot.textPrimary,
-                hit(SectionPart.open), false, false, 1);
+            parts ~= dropdownChip(b, shown, st.open, hit(SectionPart.open), size);
             break;
         }
         case InlineEditor.stepper:
         {
-            const dec = pill(b, "−", Slot.textPrimary, hit(SectionPart.dec), false, false, 1);
-            const val = b.add(Widget(kind: WidgetKind.text, text: n.badge, slot: Slot.code));
-            const inc = pill(b, "+", Slot.textPrimary, hit(SectionPart.inc), false, false, 1);
-            parts ~= b.add(Widget(kind: WidgetKind.row, children: [dec, val, inc], gap: 1,
-                alignY: Alignment.center));
+            parts ~= stepper(b, n.badge, hit(SectionPart.dec), hit(SectionPart.inc), size);
             break;
         }
         case InlineEditor.swatch:
@@ -491,8 +502,7 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
             const room = opt.width / 3 > 8 ? opt.width / 3 : 8;
             if (cellsOf(v) > room)
                 v = clipCells(v, room - 1) ~ "…";
-            parts ~= pill(b, (v.length ? v : "—") ~ " ✎", Slot.code, hit(SectionPart.open),
-                false, false, 1);
+            parts ~= chip(b, (v.length ? v : "—") ~ " ✎", hit(SectionPart.open), false, size);
             break;
         }
         case InlineEditor.drillIn:
@@ -506,8 +516,11 @@ uint sectionRow(ref Builder b, ref const TreeData!PropertyNode data, ref const S
     }
 
     // The controls keep their width; the label and description wrap instead.
-    foreach (p; parts[1 .. $])
-        b.nodes[p].width = SizeSpec(SizeSpec.Kind.fit, 0, naturalCells(b, p));
+    // A drill-in's preview is a summary, so it gives way before the name does.
+    if (editor != InlineEditor.drillIn && editor != InlineEditor.readOnly)
+        foreach (p; parts[1 .. $])
+            if (b.nodes[p].width.kind == SizeSpec.Kind.fit)
+                b.nodes[p].width.rigid = true;
     // A described row keeps a blank row under its text: a description that
     // wraps to fill the 48 dp target otherwise runs straight into the next
     // row's label (the tablet's "Long press", `PRT37`).
@@ -632,12 +645,15 @@ private uint drillPreview(ref Builder b, ref const TreeData!PropertyNode data, u
     enum room = 28;
     if (!swatches && firsts.length)
         spans ~= TextSpan(text: cellsOf(firsts) > room ? clipCells(firsts, room - 1) ~ "…" : firsts,
-            slot: Slot.muted);
+            slot: Slot.muted, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.caption));
     const sep = !spans.length ? "" : swatches ? " " : " · ";
     // An empty list ("Schemes") says so, not "0 settings".
     spans ~= TextSpan(text: leaves == 0 ? text(sep, "none")
         : text(sep, leaves, leaves == 1 ? " setting" : " settings"), slot: Slot.muted);
-    return b.add(Widget(kind: WidgetKind.rich, spans: spans));
+    // Values in the cell font, the count in words; cut, not overflowing, when a
+    // crowded row takes its room.
+    spans[$ - 1].textStyle = TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption);
+    return b.add(Widget(kind: WidgetKind.rich, spans: spans, clipX: true));
 }
 
 /// `s` cut to at most `cells` cells.
