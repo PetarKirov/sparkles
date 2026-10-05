@@ -246,6 +246,30 @@ hue view sample.d --overlay twoslash=sample.twoslash.json --gui
 hue view sample.twoslash.json --html > snippet.html
 ```
 
+### Live D types and the dub configuration
+
+Opening a `.d` file in the terminal workspace or the GUI starts a live
+analysis of it, which describes one build of its dub package. To choose
+which, press `<space>cc`. It lists the configurations the package's recipe
+declares, previews each where it is declared, and marks the one in effect;
+`default` hands the choice back to dub. Accepting a row restarts the analysis
+with that configuration.
+
+The choice is per package, so `gpu-effects` for `libs/ui` leaves every other
+package alone. It is kept in `.sparkles/hue/project.json` at the project root
+(the nearest directory holding `.sparkles`, else `.git`), over the global
+`dub` section of the settings:
+
+```json
+{
+  "dubPackages": {
+    "libs/ui": {
+      "config": "gpu-effects"
+    }
+  }
+}
+```
+
 ### Interactive Showcase
 
 Hover over dotted-underline tokens to inspect type popups:
