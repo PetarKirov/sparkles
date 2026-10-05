@@ -101,9 +101,10 @@ into wired or duplicating reflection.
 property labels with schema documentation targets using output hyperlink capability.
 
 **Evidence:** `PrettyPrintOptions.useOscLinks` reaches `writeTypeName`, which links
-a type's source location. `RenderCaps.hyperlinks` is independent of color depth.
-Shared `text.wrap` closes/reopens OSC 8 links around wrapping; table rendering uses
-that wrapper. Source locations are not the requested documentation web pages.
+a type's source location. Existing `OutputCapabilities.hyperlinks` is independent
+of color depth. Shared `text.wrap` carries OSC state over wrapping, but the
+executed table probe exposes mandatory-break isolation failures documented in D8.
+Source locations are not the requested documentation web pages.
 
 **Choice:** enable report `useOscLinks` from the sink's hyperlink capability and
 link option labels to verified documentation targets. Type-value source links
@@ -187,6 +188,72 @@ sizes. Collections/custom values require separate accounting before C2 acceptanc
 unacceptable overhead. Preserve exact boundary semantics and update the oracle
 with any accepted default/accounting change.
 
+## D7 — Root definitions, typed presence, and branch projections
+
+**State:** proposed. **Affected:** WCFG11–16, WCFG38–51.
+
+**Question:** Can native list/map values and an enclosing owner preserve sparse
+submodule intent, source location, and independent mutable copies?
+
+**Alternatives:** treat native initialized values as supplied intent; deep-copy
+every projected child as another definition; retain root payloads with typed
+presence and scope-bound source projections.
+
+**Evidence:** Native nested decoding outlived the input/parsed document and moved
+through `Unique` without changing graph addresses. A finite hand-written capture
+isolated nested list/map mutation, but ordinary `.dup` collapsed non-null-empty
+arrays/maps to null backing. Explicit reconstruction preserved both states.
+Arena lookup returned the first duplicate key while typed AA decoding retained
+the later value. An original field-context enum map decoded successfully while
+public root-subtree decoding lost its site policy. These are bounded observations,
+not proof of generated capture or composition.
+
+**Choice:** [composition.md](./composition.md) derives presence, declared option
+patterns, original branch locators, and normalized results from the schema. Parent
+priority selection precedes child overrides. Native state is preserved for atomic/
+unchanged sole values; composed results have explicit normalization rules.
+Logical budgets count source, generated-default, normalized-value, and metadata
+categories independently of physical sharing.
+
+**Trade-off:** Presence and projection records cost storage; they prevent false
+supplied values and invented provenance. Custom-owned/conversion types and lazy
+graphs remain excluded rather than being treated as plain structs.
+
+**Revisit when:** Q6 disproves generated typed presence/original-site reuse, or
+actual ownership/accounting measurements invalidate the declared headroom policy.
+Revise the shared interface and oracle, not a single app's merge semantics.
+
+## D8 — Typed bounded formatting and table-owned link isolation
+
+**State:** proposed. **Affected:** WCI9–24.
+
+**Question:** Which shared seams can produce readable, bounded, documentation-linked
+cells without losing typed values or duplicating layout?
+
+**Alternatives:** format erased badges and pre-wrap cells; enable source-type links
+or rely on soft table floors; extend typed prettyprint policies and checked table
+layout/line emission while reusing their implementations.
+
+**Evidence:** The real probe emitted `Mode.fastPath`, not wire token `turbo`.
+A 12-cell table reached 14 cells. Ordinary and 506-byte linked labels preserved
+visible text but linked one physical newline and four frame bytes; a 507-byte URI
+also linked source/value cells because its 513-byte opening exceeded saved-link
+capacity. The source pipeline splits cells with `lineSplitter` before separately
+wrapping segments, losing state across mandatory breaks.
+
+**Choice:** [inspection.md](./inspection.md) owns generic value/member/limit
+policies, explicit cell budgets, checked hard floors and guide decoration, actual
+page/anchor manifests, and label-only OSC emission. Reuse `OutputCapabilities`,
+including colorless hyperlinks. URI506 is a saved-state bound, not a workaround
+for the shared table's mandatory-break defect.
+
+**Trade-off:** Base/table need narrow shared extensions before C3 is accepted.
+The spec PR ships no repair and must not claim the observed baseline passes
+WCI15/WCI24. Q7 requires the failing byte-state scenario to become a regression.
+
+**Revisit when:** a bounded seam experiment fails. Revise the owning shared module
+and acceptance trace; do not disable requested behavior or duplicate a renderer.
+
 ## Open questions
 
 Questions name the work they block. They do not block publication of a draft or
@@ -194,17 +261,18 @@ permit an implementation completion claim with missing prerequisites.
 
 ### Q1 — Storage and default limits
 
-**Owner:** wired implementer and reviewer. **State:** scalar contract specified;
-collection accounting open. **Blocks:** C2 collection/custom-value accounting,
-not C1 scalar interface design. **Affected:** WCFG7, WCFG17, WCFG21, WCFG25–37.
+**Owner:** wired implementer and reviewer. **State:** scalar and finite collection
+contracts specified; custom ownership open. **Blocks:** custom conversion/ownership
+extensions, not generic scalar/collection design. **Affected:** WCFG7, WCFG17,
+WCFG21, WCFG25–51.
 
-[D5](#d5-separate-presence-and-explicit-ownership-transfers) and
-[D6](#d6-logical-scalar-budgets-and-byte-identities) select the scalar ownership,
-identity, default-limit, and logical-accounting rules, with feasibility evidence
-in [testing.md](./testing.md#scalar-readiness-feasibility). Owner acceptance and
-implementation conformance remain separate gates. C2 must specify map/list/custom
-payload accounting, recursion, and ownership before those shapes are accepted.
-No scalar code may silently approximate nullable presence or ignore wire policies.
+[D5](#d5-separate-presence-and-explicit-ownership-transfers),
+[D6](#d6-logical-scalar-budgets-and-byte-identities), and
+[D7](#d7-root-definitions-typed-presence-and-branch-projections) select ownership,
+identity, defaults, and logical-accounting rules with scoped primitive evidence.
+Original-site/presence feasibility is separately gated by Q6. Custom values need
+explicit clone/transfer/accounting laws before admission; public conformance is
+unverified for every runtime slice. No codec or shallow-copy fallback is permitted.
 
 ### Q2 — Keybinding composition
 
@@ -233,15 +301,17 @@ here expands diagram's persistence or source discovery.
 
 ### Q4 — Option documentation pages
 
-**Owner:** UI docs and each app maintainer. **Blocks:** C3 fixture link gate;
-C4/C5 application link gates. **Affected:** WCI14–15.
+**Owner:** UI docs and each app maintainer. **State:** shared metadata/manifest
+contract specified; actual fixture/app targets unverified. **Blocks:** C3 fixture
+link gate and C4/C5 application gates. **Affected:** WCI14–15, WCI22–24.
 
-Choose shared documentation metadata spelling and generation of stable per-option
-anchors from the schema. Verify every fixture/app target against built pages,
-including renamed wire fields and map/list ownership. Prefer generated reference
-pages to a duplicated option table. External URLs require an explicit authority;
-controls and non-HTTP(S) schemes are rejected. Link capability is not a claim that
-a guessed URL exists.
+The shared declarations, canonical option-pattern anchors, inherited/overridden
+targets, URI bounds and actual page-ID verification are specified in
+[inspection §8](./inspection.md#_8-schema-documentation-metadata). Generate the
+fixture/app reference pages and verify their manifests before acceptance.
+External URLs require a named authority and actual fragment evidence; syntax,
+HTTP success, or a plausible target is not page identity. No app page is created
+or accepted by this specification refinement.
 
 ### Q5 — Publication versus acceptance
 
@@ -251,3 +321,29 @@ Review the worked traces and proposed local equal-scalar, map-selection, limit,
 and diagnostic policies. A merged draft can remain a draft. Record acceptance by
 updating front matter and the decision states with the owning review reference;
 do not infer approval from absence of PR comments.
+
+### Q6 — Original-site decoding and generated collection presence
+
+**Owner:** wired implementer. **Blocks:** C1 original-policy input adapter and C2
+presence/projection implementation. **Affected:** WCFG27, WCFG39–42, WCFG46.
+
+Expose an internal native schema-site leaf decode seam preserving the original
+root/node/member policies, and construct typed supplied-member projections while
+enumerating occurrences before AA assignment. A bounded fixture must decode
+field-targeted enum key/value policies, partial submodules in a list/map, and
+duplicate canonical fields/keys without serialize/reparse or initialized-value
+presence inference. Public root-subtree decoding is known insufficient; no
+production helper is claimed available by the positive whole-root probe.
+
+### Q7 — Shared table mandatory-break and checked-layout repair
+
+**Owner:** UI/base table implementer. **Blocks:** C3 and every app hyperlink gate.
+**Affected:** WCI10, WCI15, WCI18–24.
+
+Repair the shared cell-wrapping/line-emission seam so mandatory and soft breaks
+close/reopen label links around only label bytes, excluding guides, padding,
+borders and adjacent cells. Add checked hard floors and guide decoration through
+the same solver/renderer. Retain the ordinary/506-byte failing fixture and reject
+507-byte targets separately in metadata preflight. Visible-text parity alone
+misses the leak. Base prettyprint needs its typed value/member/limit policy
+experiments before nullable/presence/byte-cut behavior can be accepted.

@@ -1,7 +1,7 @@
 ---
 status: draft
 owner: sparkles:wired
-reviewed: 2026-10-04
+reviewed: 2026-10-05
 ---
 
 # `sparkles.wired.config` — Definition resolution
@@ -26,6 +26,8 @@ and explicit arguments. A reader needs to know why a setting has its value, not
 merely which files were read. A project can intentionally set a boolean to its
 compiled default, and several sources can intentionally extend the same list.
 Neither case can be reconstructed by comparing the final value with defaults.
+A typed schema is the D value declaration with field initializers and policy
+attributes, rather than a parallel document schema.
 
 An ordered overwrite fold records the last writer, but it cannot explain an
 assembled value, retain overridden definitions, or distinguish a legitimate
@@ -55,6 +57,8 @@ expression evaluation, and a lazy module evaluator are outside this scope.
 Sections 1–7 define the resolver contract, failure model, and compatibility
 seams. [Scalar resolution](./scalar-resolution.md) specifies the concrete
 scalar/string interface, identity, ownership, and budgets.
+[Composition](./composition.md) specifies collection/submodule presence, projections,
+native decoding, and additional resource accounting.
 [Inspection](./inspection.md) owns the shared report contract in `sparkles:ui`.
 [PLAN.md](./PLAN.md) owns delivery order and progress; [testing.md](./testing.md)
 owns oracles and evidence; [decisions.md](./decisions.md) owns consequential
@@ -306,10 +310,11 @@ shared retained metadata is charged once, definition payloads are charged per
 definition independently of physical sharing, and allocator/container overhead is
 excluded. These are logical-content limits, not an RSS guarantee.
 
-Scalar defaults and accounting are specified; collection/custom-value accounting
-remains gated by [Q1](./decisions.md#q1-storage-and-default-limits). No
-collection-completion claim is permitted until those additional rules are specified
-and verified.
+Scalar and supported finite collection accounting are specified by their concrete
+interface pages; [WCFG49–WCFG50](./composition.md#_6-collection-accounting-and-gates)
+extend scalar logical charges to derived records and normalized graphs. Custom
+conversion/ownership remains gated by [Q1](./decisions.md#q1-storage-and-default-limits).
+Specified limits and feasible primitives are not collection-conformance evidence.
 
 ## 6. Integration and compatibility
 
