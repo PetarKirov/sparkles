@@ -68,7 +68,7 @@ jobs:
           - runner: macos-latest
             system: aarch64-darwin
             DC: ldc2
-            timeout: 60
+            timeout: 90
           # The one host where `real` is binary128 (`real.mant_dig == 113`):
           # the leg that compiles and runs the wide-format conversion paths
           # natively. Scoped to `ci --test` for now; the example and OS-API
@@ -91,6 +91,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     # Budget the entire job, including cold toolchain builds and cleanup.
     # macOS passed its tests but twice hit 40m during the example sweep.
+    # Native macOS linked package 28/55 near 40m in run 37332583414.
+    # Its ~36m test prefix plus ~5m setup projects to ~78m before examples.
     # ARM Linux twice spent the whole 40m cap bootstrapping the SPIR-V LLVM
     # toolchain; cancelled builds do not publish that unfinished derivation,
     # so an unchanged rerun repeats the cold build instead of warming its cache.
