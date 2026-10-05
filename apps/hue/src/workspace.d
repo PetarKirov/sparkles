@@ -58,6 +58,7 @@ import picker_host : OwnedPicker, PickerAction, PickerHost;
 import picker_sources : PickerTarget;
 import picker_preview : PickerDocPane;
 import picker_view : PickerGeometry;
+import project_state : dubBuildFor, mutableCopy;
 import settings : DubBuildSettings, HueConfig, searchPolicy;
 import settings_pane : ApplyMask, SettingsGeometry, settingsGeometryFor,
     SettingsResult;
@@ -923,10 +924,23 @@ struct WorkspaceTui
 
     // ── Live D types ────────────────────────────────────────────────────────
 
-    /// The dub build live types describe (`PRJ3`), read from the settings as
-    /// they stand now, so a settings-pane edit reaches the next file opened.
-    private const(DubBuildSettings) liveBuild() const @safe pure nothrow
-        => cfg is null ? DubBuildSettings.init : cfg.resolved.dub;
+    /// The global `dub` section as it stands now, as a mutable copy.
+    private DubBuildSettings globalDub() const @safe pure nothrow
+        => cfg is null ? DubBuildSettings.init : cfg.resolved.dub.mutableCopy;
+
+    /// The dub build live types describe for `path` (`PRJ3`, `PRJ19`): the
+    /// global `dub` section as it stands now with the package's project-state
+    /// entry over it, so a settings-pane edit or a picked configuration
+    /// reaches the next oracle started.
+    private DubBuildSettings liveBuildFor(string path) @system
+    {
+        // `globalDub` rather than an inline `cfg is null ? init : …` argument:
+        // DMD 2.112's backend segfaults on that ternary passed by value.
+        auto r = dubBuildFor(path, globalDub);
+        if (r.warning.length && !liveNotice.length)
+            liveNotice = r.warning;
+        return r.build;
+    }
 
     /// Starts the oracle for a freshly opened `.d` document (`PRJ12`: on open,
     /// off the render path). A document that already carries a payload — a
@@ -942,7 +956,7 @@ struct WorkspaceTui
         // The child's stderr goes to /dev/null: the analyzer's warnings and
         // dub's own chatter would otherwise land on the alt screen.
         live = LiveTypesSession.start(path, reason, silenceChildStderr: true,
-            build: liveBuild);
+            build: liveBuildFor(path));
         if (live is null && !liveNotice.length)
             liveNotice = reason;
     }
@@ -995,7 +1009,7 @@ struct WorkspaceTui
         {
             string reason;
             diffLive[i] = LiveTypesSession.start(p, reason,
-                silenceChildStderr: true, build: liveBuild);
+                silenceChildStderr: true, build: liveBuildFor(p));
             if (diffLive[i] is null && !liveNotice.length)
                 liveNotice = reason;
         }
@@ -1326,6 +1340,7 @@ struct WorkspaceTui
         // loader, themes, labels, grammar cache and ANSI decoder — it IS the
         // document pane, opened on whatever the selection rests on.
         pickerDoc.load = loadDoc;
+        pickerDoc.dubBuild = globalDub;
         pickerDoc.pane.names = viewer.names;
         pickerDoc.pane.themes = viewer.themes;
         pickerDoc.pane.labels = viewer.labels;
