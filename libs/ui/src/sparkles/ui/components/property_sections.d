@@ -366,7 +366,8 @@ uint sectionHeader(ref Builder b, string heading, string detail, bool collapsed,
         text: (collapsed ? "▸ " : "▾ ") ~ heading.unicodeUpper, slot: Slot.chromeAccent,
         textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.label),
         width: SizeSpec.grow()));
-    const right = b.add(Widget(kind: WidgetKind.text, text: detail, slot: Slot.muted));
+    const right = b.add(Widget(kind: WidgetKind.text, text: detail, slot: Slot.muted,
+        textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.caption)));
     return b.add(Widget(kind: WidgetKind.row, children: [title, right], gap: 1,
         width: SizeSpec.grow(), height: atLeast(opt.targetRows),
         padding: Insets(0, 1, 0, 1), alignY: Alignment.center, hitId: hitId,
@@ -653,7 +654,7 @@ private uint drillPreview(ref Builder b, ref const TreeData!PropertyNode data, u
     enum room = 28;
     if (!swatches && firsts.length)
         spans ~= TextSpan(text: visibleWidth(firsts) > room ? clipCells(firsts, room - 1) ~ "…" : firsts,
-            slot: Slot.muted);
+            slot: Slot.muted, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.caption));
     const sep = !spans.length ? "" : swatches ? " " : " · ";
     // An empty list ("Schemes") says so, not "0 settings".
     spans ~= TextSpan(text: leaves == 0 ? text(sep, "none")
