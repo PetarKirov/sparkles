@@ -981,7 +981,12 @@ if (is(T == V[K], V, K))
     return nOk(result);
 }
 
-private NRes!K aaKeyParseNative(K, Root, size_t nodeIndex)(
+/**
+Internal key decoding at an original root/schema site.
+Occurrence-aware input adapters call this before associative-array assignment;
+the caller retains responsibility for duplicate admission and key ownership.
+*/
+package(sparkles.wired) NRes!K aaKeyParseNative(K, Root, size_t nodeIndex)(
     scope const(char)[] keyStr, ref JsonError failure)
 {
     static if (is(K == string))

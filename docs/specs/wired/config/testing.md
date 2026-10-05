@@ -651,6 +651,63 @@ Historical scalar nested-nullable/Mapped-policy failures were not rerun. No
 baseline failure was suppressed, no validation exclusion was expanded, and no
 runtime conformance milestone is passed by these primitive experiments.
 
+### C2 original-site and generated-presence readiness
+
+**Scope:** C1 commit `8b0b74ccb` plus package visibility for the existing native
+`aaKeyParseNative` helper; Linux x86-64, DMD and LDC, checked/assertions-live
+single-file probes with `-preview=in -preview=dip1000`. These are bounded
+original-site and structural-generation experiments, not production collection
+input, projection/metadata, composition, budget, or allocator-rollback evidence.
+
+| Experiment                                                                                                           | Observed result                                                                                                               | Decision / evidence limit                                                                                                                              |
+| -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Integral enum keys at original `Repr.value` site; enum values independently field-targeted to snake-case `Repr.name` | Keys 1/2 and values `fastPath`/`slowPath` decoded exactly through original key/value nodes                                    | Reuse native key parsing and owned scalar decoding, not a root-subtree shortcut                                                                        |
+| Partial submodules in lists/maps with renamed mode/title fields                                                      | Omitted and explicit `limit = 5` had equal payloads but opposite supplied flags; captured title survived document destruction | Derive presence from original occurrences; initialized payload cannot establish membership                                                             |
+| Omitted containers versus explicit empty list/map                                                                    | Supplied flags were false versus true                                                                                         | Logical JSON emptiness is not native backing-storage identity                                                                                          |
+| Escaped duplicate known fields/root rename/map keys, `1`/`01`, and `home_path`/`home_alias`                          | Every duplicate failed with original occurrence ordinals 0/1 and zero typed AA assignments                                    | Preflight canonical fields and typed keys before materialization, including equal-value aliases                                                        |
+| Undeclared key 99, D member name replacing wire rename, wrong enum value case                                        | Original-site rejection, zero AA assignments                                                                                  | Preserve original domain, strictness, rename, and value policy                                                                                         |
+| Scalar key-site decode of JSON string `"1"`; ordinary whole-root decode of duplicate numeric keys                    | Scalar seam rejected the string; ordinary root decode retained one later `slowPath` entry                                     | Map keys require the native key seam; ordinary root decoding erases occurrence evidence                                                                |
+| Generated presence over a second schema with fields named `supplied`, `entries`, `child`, and `members`              | Full/sparse member, array-position, string/enum-key, and nullable shapes compiled and retained separately                     | Generated member storage avoids collisions with presence-control names; no second field declaration                                                    |
+| Missing/extra array/map shape, equal-size wrong keys, absent slot children, and nullable mismatch                    | All incompatible shapes rejected                                                                                              | Shape admission cannot compare counts alone                                                                                                            |
+| Null/non-null-empty text, arrays, AAs, and nullable containers                                                       | Recursive capture and independent copy preserved backing state separately from wrapper nullness                               | Explicit zero-length storage and safe AA insertion/removal are representation primitives, not accepted production allocation policy                    |
+| Caller graph/presence mutation and destruction; retained graph mutation and destruction after copying                | Nested strings, arrays, maps, keys, nullable payloads, and independent presence remained exact                                | Generic structural capture is feasible; no custom ownership, policy-aware resolver, or failing-allocator proof                                         |
+| Omitted struct member with declared initializer 7 or true                                                            | Capture retained declared defaults without marking membership supplied or traversing ignored caller graphs                    | Use the enclosing declared member initializer, not the leaf type's `int.init`/`bool.init`; this does not implement fallback definitions                |
+| Enum `fastPath = 1, fast_path = 2` under original versus snake-case names                                            | Direct original name table was valid, snake-case table failed; original `WireWalk` schema also failed                         | Native schema helper instantiates all case-style tables; unused-style collision rejection is not original-site WCFG41 admission                        |
+| Equal-key aliases with distinct names versus both renamed `"one"`                                                    | Distinct-name aliases admitted; repeated wire names rejected by native schema policy                                          | Typed alias equality is representable, but native name uniqueness is stricter; resolve the original-site schema mismatch rather than claim C2 coverage |
+
+The three throwaway drivers ran as `dub run --single <probe.d>
+--compiler=<dmd-or-ldc2> --build=checked --skip-registry=all`. Both compilers
+passed the assertions in the original-site, generated-presence, and enum-schema
+probes. The wired regression suite also passed 243 tests under each compiler
+after the key-parser visibility change. The production key algorithm and ordinary
+AA decoder are unchanged.
+
+To reproduce the original-site fixture, define integral `Key` members
+`homePath = 1`, `otherPath = 2`, and `homeAlias = 1`, then an enum-valued map
+whose containing field sets independent key/value representation and value case.
+Generate presence from original struct fields and collection positions/typed keys,
+enumerate `JsonValue.byKeyValue` before any assignment, and call
+`aaKeyParseNative`/`decodeOwnedScalarAt` with the original root and child node.
+Assert that `{"1":"fast_path","01":"slow_path"}` and the two alias names fail
+before assignment. In nested optional structs compare omitted `limit` with
+explicit `limit: 5`; test a renamed title after destroying the document.
+
+For structural capture, derive the presence type recursively from original
+fields, `Nullable`, static/dynamic arrays, and string/integral-enum maps. Validate
+actual keys/positions and wrapper state, not only shape lengths. Capture supplied
+graphs recursively and independently copy both payload and presence. Keep
+unsupplied field membership false; preserve declared initializers independently
+of ignored caller contents. Test null-backed and allocated zero-length values,
+and mutate/destroy both caller and first capture before inspecting the independent
+copy. Compile-reject recursive/custom-ownership shapes. This fixture deliberately
+does not establish composition-aware descent, branch metadata, logical charges,
+owned-input transfer without cloning, or operational rollback.
+
+Q6 remains open for production projection/input and original-site enum schema
+admission. Owner acceptance of the composition contract and the full WCFG38–51
+gate are unchanged. Probe sources are throwaway and removed after recording
+these observations; no resolver conformance is inferred from their success.
+
 ### Composition and inspection contract review
 
 - **R7 — opening cold read: fixed.** An independent opening-only reader requested
