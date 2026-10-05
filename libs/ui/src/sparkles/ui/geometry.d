@@ -165,12 +165,18 @@ struct SizeSpec
     int min = 0;
     int max = int.max;
 
+    /// A crowded row never reclaims this extent: it keeps its content's
+    /// width (CSS `flex-shrink: 0`). A control beside wrapping text sets it.
+    bool rigid;
+
 @safe pure nothrow @nogc:
 
     /// Shrink to content (the default).
     enum SizeSpec fit_ = SizeSpec(Kind.fit);
     /// Fill remaining space with weight `weight`.
     static SizeSpec grow(int weight = 1) => SizeSpec(Kind.grow, weight);
+    /// Shrink to content, and never below it in a crowded row.
+    enum SizeSpec rigid_ = SizeSpec(Kind.fit, rigid: true);
     /// Exactly `n` cells.
     static SizeSpec fixed(int n) => SizeSpec(Kind.fixed, n);
     /// `p` percent of the parent extent.

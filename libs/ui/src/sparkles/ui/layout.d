@@ -273,7 +273,7 @@ if (isTextMeasure!TM)
             foreach (k, ci; children)
             {
                 const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
-                if (spec.kind != SizeSpec.Kind.fixed)
+                if (spec.kind != SizeSpec.Kind.fixed && !spec.rigid)
                     totalSlack += extents[k] > spec.min ? extents[k] - spec.min : 0;
             }
             if (deficit > totalSlack)
@@ -284,7 +284,7 @@ if (isTextMeasure!TM)
                 foreach (k, ci; children)
                 {
                     const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
-                    if (spec.kind == SizeSpec.Kind.fixed)
+                    if (spec.kind == SizeSpec.Kind.fixed || spec.rigid)
                         continue;
                     const slack = extents[k] > spec.min ? extents[k] - spec.min : 0;
                     const give = deficit * slack / totalSlack;
@@ -297,7 +297,7 @@ if (isTextMeasure!TM)
                     if (remainder == 0)
                         break;
                     const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
-                    if (spec.kind == SizeSpec.Kind.fixed || extents[k] <= spec.min)
+                    if (spec.kind == SizeSpec.Kind.fixed || spec.rigid || extents[k] <= spec.min)
                         continue;
                     extents[k]--;
                     remainder--;
@@ -1048,6 +1048,25 @@ version (unittest)
     assert(frames[t0].rect.width + frames[t1].rect.width == 10);
 }
 
+
+@("ui.layout.rigidKeepsItsContentWidth")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // A rigid fit child keeps its content's width in a crowded row; the other
+    // child absorbs the whole deficit — without a `min` spelled in cells.
+    auto b = Builder();
+    const t0 = b.add(Widget(kind: WidgetKind.text, text: "eight!!!"));
+    const t1 = b.add(Widget(kind: WidgetKind.text, text: "sixsix", width: SizeSpec.rigid_));
+    const row = b.add(Widget(kind: WidgetKind.row, children: [t0, t1],
+        width: SizeSpec.fixed(10)));
+    auto tree = b.finish(row);
+
+    auto frames = layout(tree);
+    assert(frames[t1].rect.width == 6);
+    assert(frames[t0].rect.width == 4);
+}
 @("ui.layout.wrappingTextReportsItsLineCount")
 @safe unittest
 {
