@@ -443,8 +443,12 @@ struct RaylibCanvas
     void fillRect(in Rect r, in Visual visual) @system
     {
         const v = densityScaled(narrowed(visual));
-        const x = px(r.x), y = py(r.y);
-        const w = cast(float)(r.width * cellW), h = cast(float)(r.height * cellH);
+        const x = px(r.x);
+        const w = cast(float)(r.width * cellW);
+        // A box drawn shorter than its rect (`TOK11`) is centred in it: the
+        // control keeps its whole touch target and draws a compact chip.
+        float y = py(r.y), h = cast(float)(r.height * cellH);
+        centredSpan(y, h, v.drawHeight);
 
         // Drop shadow first, behind the surface: an offset translucent rect.
         if (v.shadow.any)
@@ -466,7 +470,7 @@ struct RaylibCanvas
                 DrawRectangleRounded(Rectangle(x, y, w, h),
                     roundnessOf(v.borderRadius, w, h), 8, rlBg(v));
             else
-                DrawRectangle(cast(int) x, cast(int) y, r.width * cellW, r.height * cellH, rlBg(v));
+                DrawRectangle(cast(int) x, cast(int) y, cast(int) w, cast(int) h, rlBg(v));
         }
 
         // Border and popup arrow.
@@ -577,6 +581,7 @@ struct RaylibCanvas
         s.shadow.dx = dp(v.shadow.dx, density);
         s.shadow.dy = dp(v.shadow.dy, density);
         s.shadow.blur = dp(v.shadow.blur, density);
+        s.drawHeight = dp(v.drawHeight, density);
         return s;
     }
 
@@ -908,6 +913,30 @@ unittest
     assert(uiStepOf(FontRole.docs, TypeStep.body, 100) == TypeStep.body);
     assert(uiStepOf(FontRole.code, TypeStep.title, 100) == -1);
     assert(uiStepOf(FontRole.inherit, TypeStep.body, 100) == -1);
+}
+
+/// Shrinks the span `[y, y + h)` to `drawn` pixels centred in it, on whole
+/// pixels; a `drawn` of 0, or one at least `h`, leaves the span whole.
+void centredSpan(ref float y, ref float h, int drawn) @safe pure nothrow @nogc
+{
+    if (drawn <= 0 || drawn >= h)
+        return;
+    y += cast(int)((h - drawn) / 2);
+    h = drawn;
+}
+
+@("uiRaylib.centredSpan")
+@safe pure nothrow @nogc
+unittest
+{
+    float y = 100, h = 132; // 3 rows of 44 px
+    centredSpan(y, h, 88);  // a 32 dp chip at 2.75 px/dp
+    assert(y == 122 && h == 88);
+    y = 0; h = 20;
+    centredSpan(y, h, 0);
+    assert(y == 0 && h == 20, "0: the whole rect");
+    centredSpan(y, h, 40);
+    assert(y == 0 && h == 20, "taller than the rect: the whole rect");
 }
 
 /// `px` in whole cells of `cell`, rounded up; at least one cell for any ink.

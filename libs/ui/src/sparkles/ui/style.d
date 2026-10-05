@@ -363,6 +363,7 @@ struct Visual
     Shadow shadow;        /// resolved drop shadow (default: none)
     bool arrow;           /// draw a popup arrow/tail off this box's top edge?
     int arrowOffset;      /// arrow horizontal offset from the left, in cells
+    int drawHeight;       /// drawn box height in CSS px, centred; 0 = the whole rect
 
     // --- text chrome (resolved from a widget's TextStyle) ---
     FontRole fontRole;      /// which font family the run wants
@@ -391,6 +392,10 @@ struct Decoration
     bool shadow;                    /// draw the palette's popup drop shadow?
     bool arrow;                     /// draw a popup arrow/tail (backends place it)
     int arrowOffset;                /// arrow horizontal offset from the left, in cells
+    /// The height the box is drawn at, in CSS px, centred in its rect; 0 fills
+    /// the rect. A control keeps a 48 dp touch target and draws a 32 dp chip
+    /// (design-system `TOK11`); a cell target draws the whole rect.
+    int drawHeight;
 }
 
 /// A widget's declared text style — font role, relative size, weight/italic/
@@ -842,6 +847,7 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
 
     v.arrow = deco.arrow;
     v.arrowOffset = deco.arrowOffset;
+    v.drawHeight = deco.drawHeight;
 
     // Text chrome.
     v.fontRole = text.fontRole;
