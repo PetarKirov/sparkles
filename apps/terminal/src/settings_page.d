@@ -1141,6 +1141,8 @@ void applyToWorkspace(H)(ref H host, TerminalConfig c) @system
     host.overlayStyle = c.ui.overlayStyle;
     host.tabsOpener = c.ui.tabsOpener;
     host.paneChrome = c.ui.paneChrome;
+    host.viewerLineNumbers = c.viewer.lineNumbers;
+    host.viewerCodeLineNumbers = c.viewer.codeLineNumbers;
     const policy = protocolPolicyFrom(c);
     const limit = c.behaviour.scrollback < 0 ? size_t.max : cast(size_t) c.behaviour.scrollback;
     foreach (id, tv; host.pool)
