@@ -34,8 +34,11 @@ completion; terminal milestone summaries retain their named partial gaps.
 Milestones are not a strict waterfall. Run the AVF blockers early beside profile
 work; a successful PRoot slice cannot replace the required AVF gate.
 
-1. **Configuration/profile slice.** Refine the dynamic resolution policy in wired,
-   settle import/override precedence and legacy migration, then implement explicit
+1. **Configuration/profile slice.** Consume the wired owner's specification PR
+   answering [WQ1–WQ10](./decisions.md#questions-for-the-wired-configuration-owner).
+   [TPC](../terminal/profile-config.md) settles application source precedence,
+   Home Manager isolation, imports and migration policy; refine its remaining
+   host acquisition/transaction/format gates, then implement explicit
    argv/env/cwd profiles on desktop and externally provisioned NNS. Execute P1–P5,
    E1–E3 before expanding backend ownership. No implicit shell-string migration.
 2. **AVF feasibility slice, in parallel.** Execute F1–F3 below on exact firmware.
@@ -65,7 +68,10 @@ its stated criterion; prototypes do not bypass production acceptance.
 
 ## Resume point
 
-Baseline inspected: `d43f88a39`. Interview Q1–Q22 establishes scope, not the
-acceptance of every detailed contract in this draft. First executable action is
-the wired/profile policy review and F1 native ownership probe; no implementation
-change is required to publish these drafts. No device is assumed connected.
+Historical baseline: `d43f88a39`; PR #586 landed as `bc69a5216`.
+Interview Q1–Q43 establishes scope/application policy, not implementation conformance.
+The configuration slice is specified by TPC and TPF12/13; the generic wired seam
+is delegated to its owner through WQ1–WQ10. Next executable actions are the
+wired handoff and refinement of terminal acquisition/save/migration gates, alongside
+F1 native ownership evidence. Profile, resolver, watcher and migration code remains
+unimplemented; no device is assumed connected.

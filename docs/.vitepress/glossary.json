@@ -1,5 +1,19 @@
 [
   {
+    "id": "terminal-one-off",
+    "term": "one-off command",
+    "summary": "An explicit command request launched in a pane instead of its configured profile entry command, which remains inactive on workspace restoration.",
+    "definition": "A pane command supplied as explicit argv outside the profile's ordinary entry recipe, using the selected environment. Workspace restoration retains an inactive record; only an explicit execution action may run it again.",
+    "authority": [
+      {
+        "text": "Terminal launch and restore contract",
+        "link": "/specs/terminal/profiles#_3-launch-selection-and-restoration"
+      }
+    ],
+    "owner": "sparkles:terminal",
+    "seeAlso": ["terminal-profile", "pane", "exit-prompt"]
+  },
+  {
     "id": "terminal-environment",
     "term": "development environment",
     "summary": "An execution context with identified storage, prerequisites and resource ownership in which terminal panes run.",
