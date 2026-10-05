@@ -848,7 +848,10 @@ struct DroidTerminal
         // shrinking by more than a system bar is it.
         const screenHeight = GetScreenHeight();
         const softKeyboard = valid && screenHeight - r.bottom > screenHeight / 6;
-        const shown = extraKeysShown(config.effective.extraKeys.visible, softKeyboard,
+        // A full-screen page hides the row unless the keyboard is up to type
+        // into it (D49).
+        const shown = (!host.pageShown || softKeyboard)
+            && extraKeysShown(config.effective.extraKeys.visible, softKeyboard,
             hardwareKeyboardAttached(), rowDismissed);
         // A key is a touch target: 48 dp (`TOK7`), two cells at the least —
         // two cells alone were 35 dp at 440 dpi. Unless that leaves the

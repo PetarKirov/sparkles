@@ -1100,6 +1100,10 @@ struct WorkspaceHost
     /// ditto — the toasts, then the surface stack, bottom to top.
     void paintSurfaces(H)(ref H h) @system => surfaces.paint(h, theme);
 
+    /// Whether a full-screen page is up (D49): the embedder then hides what
+    /// it draws beside the workspace, such as the extra keys.
+    bool pageShown() @safe => surfaces.pageShown;
+
     /**
     Lays out the exit prompt of every shown pane that keeps one, along the
     bottom of its content (`TSS2`, mockup E1).
@@ -1148,7 +1152,8 @@ struct WorkspaceHost
     {
         SurfaceContext ctx = {area: panesArea, cellW: cellW, cellH: cellH, labels: labels,
             style: overlayStyle, targetRows: theme.targetRows, touch: touch,
-            panelArea: panelRect, panelFull: !usesPill(tabsOpener, phonePortrait)};
+            panelArea: panelRect, panelFull: !usesPill(tabsOpener, phonePortrait),
+            pageArea: area};
         if (auto tv = focusedView())
             if (auto b = boxOf(ws.focused))
             {
