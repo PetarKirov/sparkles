@@ -345,6 +345,8 @@ struct DroidTerminal
         host.notificationsConfig = config.effective.notifications;
         host.tabsOpener = config.effective.ui.tabsOpener;
         host.paneChrome = config.effective.ui.paneChrome;
+        host.viewerLineNumbers = config.effective.viewer.lineNumbers;
+        host.viewerCodeLineNumbers = config.effective.viewer.codeLineNumbers;
         host.linkTap = config.effective.links.tap;
         host.linkLongPress = config.effective.links.longPress;
         host.linkSchemes = config.effective.links.schemes.dup;
