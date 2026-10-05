@@ -1,7 +1,7 @@
 ---
 status: draft
 owner: sparkles:base
-reviewed: 2026-10-04
+reviewed: 2026-10-05
 ---
 
 # Owned text testing and evidence
@@ -10,9 +10,12 @@ reviewed: 2026-10-04
 
 Acceptance combines published Unicode vectors, manually derived encoding and
 coordinate traces, independent raw-data checks, bounded-state exploration, and
-actual consumer interactions. Default-algorithm conformance is distinct from a
-terminal-width interoperability policy. Historical failures motivate the target
-but do not verify any replacement implementation.
+actual consumer interactions. Default-algorithm conformance is distinct from
+terminal-width interoperability: width profiles and
+[scaled footprints](./SPEC.md#_6-4-scaled-grid-cell-footprints), the grid-cell blocks
+that scaled text occupies, are checked against pinned terminals' cursor reports. The
+scenarios are planned acceptance work: each names its oracle, and the evidence ledger
+records which have run.
 
 ## Introduction
 
@@ -44,9 +47,9 @@ derivation and exercise the implementation before those traces can become verifi
   overlaps/defaults and deliberately mutated generated values to prove disagreement
   is detected.
 - Terminal compatibility uses a pinned real engine and exact configuration. The
-  clean-room width oracle in the existing harness mirrors the delivered model and
+  clean-room width oracle in the conformance harness mirrors the cell-width reference and
   cannot independently validate that model's policy assumptions. A terminal/library
-  disagreement is categorized as version skew, accepted profile divergence, or bug;
+  disagreement is categorized as version skew, accepted width profile divergence, or bug;
   it is not automatically a new allowlist row.
 - Small models enumerate stream chunking and bounded output capacities. Keep seeds
   and minimized failures for larger randomized traces. Assertions compare tokens,
@@ -106,7 +109,7 @@ non-final lone `E0` is incomplete. Non-final UTF-16 `D800` is incomplete;
 `D800 0041` is definitely malformed. Empty-final is `end`, empty-non-final
 is `needInput`.
 
-### C04 — stream carry and absolute offsets (TXT-UTF5/7/8)
+### C04 — stream carry and absolute offsets (TXT-UTF5/7/8/15)
 
 Feed UTF-8 chunks `41 F0`, `90 80`, `80 42` in a stream converting to
 UTF-16. After the first feed the output is `0041`, consumed=2, and carry contains
@@ -124,7 +127,7 @@ An empty non-final feed to each of finalized and failed streams returns
 `invalidState`, not `needInput`, with no changes. An empty non-final feed to an
 active stream without pending final intent returns `needInput` and preserves carry.
 
-### C05 — token-atomic backpressure (TXT-UTF6/7/8)
+### C05 — token-atomic backpressure (TXT-UTF6/7/8/13–15)
 
 Retain UTF-8 `F0 90 80` in carry, then feed final `80 42` with only one
 UTF-16 output unit available. Expect `outputFull`, new consumed=0, written=0,
@@ -142,7 +145,7 @@ usable stream, then retry with disjoint storage/correct options.
 An empty non-final retry while final intent is pending also returns `invalidState`
 with carry and offsets unchanged.
 
-### C06 — whole transaction and termination (TXT-UTF9/11)
+### C06 — whole transaction and termination (TXT-UTF9/11/17)
 
 Convert `A\0界` ordinarily and observe all three scalars; `z` conversion
 must reject embedded NUL at byte 1 and preserve every sentinel. Convert `A界`
@@ -318,9 +321,9 @@ and no successful incomplete analysis may be consumed as complete text.
 
 ## 6. Cell, map, cache, and actual consumer scenarios
 
-**P01 — measure/fit identity (TXT-CELL1–3).** Under narrow ambiguous
+**P01 — measure/fit identity (TXT-CELL1–4, TXT-CELL9–11).** Under narrow ambiguous
 `terminalKitty`, measure `e\u0301x`, `界x`, `🇺🇸x`, and `👩‍👩‍👧‍👦x`
-as 2, 3, 3, and 3 cells. Budgets around the first cluster's width admit or exclude
+as 2, 3, 3, and 3 grid cells. Budgets around the first cluster's width admit or exclude
 that whole cluster. Suffix fitting must agree with independently enumerated forward
 boundaries, including odd RI runs. An isolated zero-advance sequence at a zero budget
 is included according to policy; negative budget errors rather than silently clips.
@@ -343,7 +346,7 @@ byte counts.
 **P04 — immutable cache reuse (TXT-CACHE1/3).** Cache the maps for one revision,
 replace bytes under the same document identity with a new revision, and request a
 cached coordinate. It must return `staleSource` before dereferencing old borrowed
-storage. Changing only the width/analysis manifest/profile yields `stalePolicy`.
+storage. Changing only the Unicode manifest, the width profile, or the analysis profile yields `stalePolicy`.
 One-short map storage returns `workspaceFull`; sparse checkpoints and uncached results
 must agree for every coordinate in the small traces.
 
@@ -353,22 +356,70 @@ an Indic context; modify bidi paragraph direction. A fixed nearby rescan is not 
 Compare accepted updated-cache maps against full rescans, including before/after
 relationships and deleted spans. Unproven reuse must be rejected, not merely likely.
 
-**P06 — terminal policy interoperability (TXT-CELL1).** Freeze real kitty/Ghostty
-engine revisions, clustering/configuration assumptions, input transcripts and cursor
-readings. Compare the named local profile with the control-free corpus and exercise
-an actual terminal surface; classify documented spacing-mark/Prepend and emoji
-presentation differences as profile differences, not Unicode segmentation failures.
-Ghostty-backed consumers retain the engine's authoritative cell coordinates instead
-of reconstructing them under `terminalKitty`. Missing engine/configuration leaves
-interoperability evidence unmet, but does not block pure profile/maps acceptance or
-make an installed engine's tables the production fallback.
+**P06 — terminal policy interoperability (TXT-CELL1/4–6).** Freeze real
+kitty/Ghostty engine revisions, clustering/configuration assumptions, input
+transcripts and cursor readings. Compare `terminalKitty` with the control-free corpus
+and exercise an actual terminal surface; classify documented spacing-mark/Prepend and
+emoji presentation differences as width profile differences, not Unicode segmentation
+failures. Ghostty-backed consumers retain the engine's authoritative cell coordinates
+instead of reconstructing them under `terminalKitty`. Missing engine/configuration
+leaves interoperability evidence unmet, but does not block pure width profile and map
+acceptance or make an installed engine's tables the production fallback.
+
+**P07 — clustered layout, folded emission (TXT-CELL5, TXT-CELL9, TXT-CELL12–13).**
+Under `terminalUnclustered` with narrow ambiguous width, measurement, fitting, and
+hit maps equal `terminalKitty`'s for every P01 input; only emitted bytes differ.
+Emit each grapheme below at the line's start, then `x`, and read a pinned XTerm's
+cursor report (`CSI 6 n`), the measurement design-system D38 performs, as the
+independent oracle:
+
+- `👨‍👩‍👧` (U+1F468 U+200D U+1F469 U+200D U+1F467), advance 2: emitted as
+  U+1F468 alone; `x` lands at grid cell 2. Emitting the whole cluster instead would
+  put `x` at 6, which is the failure the rule prevents.
+- `❤️` (U+2764 U+FE0F), advance 2: emitted as U+2764 and one space; `x` at 2.
+- `⌚︎` (U+231A U+FE0E), an emoji-presentation base with VS15, advance 1: the base alone
+  is 2 wide, so the replacement U+003F is emitted; `x` at 1.
+- `🇺🇸`, advance 2, and a single scalar such as `界`: emitted unchanged.
+
+Copying any of these from the grid returns the source bytes, not the folded ones.
+Fitting the family into budget 1 admits nothing and never splits the cluster;
+budget 2 admits it whole.
+
+**P08 — glyph-channel set (TXT-CELL7).** Under `terminalKitty` and
+`terminalUnclustered`, each with ambiguous width narrow and then wide, measure one
+scalar from the start, the end, and one interior point of every listed range: for
+example U+2500, U+257F, U+2588, U+2800, U+1FB00, U+1CD00, U+25CB, U+2022, U+26A0,
+U+E0B0, U+F0001, and U+10FFFD. Each measures 1 under all four configurations. Under the wide ambiguous choice, the ambiguous non-set scalar U+00A7
+measures 2, proving the choice is active. U+25FD measures 2 under every
+configuration, and U+2714 U+FE0F measures as its width profile's ordinary rules give,
+because a variation selector takes the grapheme outside the set. Changing the set
+changes the width profile identity and yields `stalePolicy` from a cache built under
+the earlier set.
+
+**P09 — width profile selection (TXT-CELL1, TXT-MIG1/3).** Build maps for one source
+under `terminalKitty`, then query them under `terminalUnclustered`: the cache returns
+`stalePolicy`. A caller that selects `terminalUnclustered` uses it for measure, fit,
+hit mapping, and emission on the same row; mixing width profiles within a row
+is a failing observation. An import audit finds no per-scalar or code-point advance
+helper outside a named width profile.
+
+**P10 — scaled footprints (TXT-SIZE1–5).** With `s = 2, w = 0`, the run `abc`
+has a footprint 6 grid cells wide and 2 rows high, and `界` one 4 wide and 2 high.
+With `s = 3, w = 2`, any run fitting the protocol has a footprint 6 wide and 3 high.
+With `s = 2, w = 0, n = 1, d = 2`, the footprint equals that of `s = 2, w = 0`.
+Sizing `s = 0`, `s = 8`, `w = 8`, `n = 2, d = 2`, and `d = 16` each return
+`invalidSizing`; `s = 1, w = 0, n = d = 0` measures exactly as unsized text. Fitting
+`abc` at `s = 2, w = 0` into a budget of 5 grid cells admits `ab`; at `s = 2, w = 3`
+it admits nothing. A hit at row 1 of the block maps to the same source positions as
+row 0. The independent oracle is a pinned kitty revision's cursor report after each
+escape: the cursor moves by the footprint width on the run's first row.
 
 **X01 — table drag/copy (TXT-MIG1/2).** Use real string and widget table views with
 `e\u0301x` and `🇺🇸x`. Locate the x cell and observe hit byte offsets 3 and
 8; drag over the complete preceding cluster and copy exactly its original bytes.
 Copy x alone and observe exactly `78`, not the final combining mark or second RI.
 Repeat after wrap/clip and verify source offsets remain attached to the displayed line.
-Both views must measure/render/select using one profile.
+Both views must measure/render/select using one width profile.
 
 **X02 — UI and relocated doc-view (TXT-MIG1/2).** Launch the real UI/display-list
 and doc-view surfaces, fit CJK and ZWJ text into narrow rows, then select/copy from
@@ -377,9 +428,14 @@ and correct original byte spans across escapes. A replaced document revision mus
 invalidate old selection caches. Text regenerated by cursor motion must be marked
 non-source/adapter-generated rather than given a fabricated original span.
 
-**X03 — TUI storage/render (TXT-MIG1/2).** Launch an actual TUI terminal flow with
-mode 2027, emit a cluster exceeding the existing 16-byte inline cell storage followed
-by x, and observe the complete grapheme in emitted bytes and the correct grid advance.
+**X03 — TUI storage/render (TXT-CELL8, TXT-MIG1/2).** Launch an actual TUI terminal
+flow under each width profile the probe can select: a terminal answering mode 2027
+or measuring its test cluster as two grid cells, and one doing neither. Emit a
+cluster exceeding the TUI cell's 16-byte inline storage followed by x. Observe the
+same grid advance under both. Under `terminalKitty` the complete grapheme appears in
+the emitted bytes; under `terminalUnclustered` the emitted bytes follow TXT-CELL12–13
+exactly as for a short grapheme, never truncated because of length. Grid copy
+returns the complete source grapheme under both.
 Repeat grid copy, retained-frame diff, and clipping so overflow storage does not
 borrow released frame memory. Configured storage failure must abort explicitly,
 not produce a truncated successful glyph. Observe input decoding of a scalar split
@@ -401,7 +457,7 @@ The existing [conformance harness](./conformance-harness.md),
 are the execution seams. Do not build a parallel harness whose expectations are
 computed by the production implementation.
 
-These command shapes exist before this target and are not claimed executed here:
+These command shapes are the harness entry points; no run of them is recorded as evidence for this target:
 
 ```sh
 # Published segmentation corpus; configure the pinned target only after cutover.
@@ -428,37 +484,152 @@ speed threshold or allocation-free claim is inferred from a wall-clock result.
 
 ## 8. Evidence ledger
 
-| Evidence                                                                                     | Classification                                   | Result and limitation                                                                                                                                                                             |
-| -------------------------------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-10-04 previously executed `cellsOf`/`takeCells` probe supplied to this specification    | historical failing baseline                      | Accents/ZWJ/flags split; CJK undercounted. Public table x hit mapped `e + accent + x` to byte 1 rather than 3, and flag+x to byte 4 rather than 8. Motivation for P02/X01; not post-change proof. |
-| Previously executed conformance layer 0 using Unicode 17 input                               | historical failing baseline                      | 750 pass, 16 fail; Indic conjunct failures. It does not certify Unicode 18, width policy, or the owned replacement engine.                                                                        |
-| Existing `analysis.d` and generator inspected on this documentation branch                   | source observation                               | Analysis consumes generated Unicode 17 normalization/folding/word properties and exposes bounded source/output/segment errors. It is not evidence of all-four-form/full-word conformance.         |
-| Existing `grapheme.d`, `width.d`, `utf8.d`, and compiler-probed grapheme generator inspected | source observation                               | Production segmentation/category/replacement paths still depend on Phobos, despite existing owned validators/SIMD/conversion paths. TXT-OWN1 target remains unverified.                           |
-| Unicode 18 final UCD ReadMe and stable UAX #29 revision 49 read on 2026-10-04                | source availability, not implementation evidence | Final release artifacts are reachable; actual consumed source hashes and executable target results are not recorded yet. Stale draft warning on the release index is discussed in decisions.md.   |
-| Target scenarios C01–X04                                                                     | planned; unverified                              | No owned Unicode 18 implementation run, consumer cutover or manifest reproducibility run is claimed by this specification batch. Contract review is recorded separately below.                    |
+Each row names the revision it was observed at. A row without a recorded revision is
+a motivating baseline, weaker than an acceptance record, and no row below is a
+post-cutover result.
 
-Baseline counts above are supplied observations from actual earlier probes; this
-page does not invent a checked commit, saved artifact URL, or repeated execution.
-They are intentionally weaker than an acceptance record. Future verification entries
-must identify source revision or dirty-tree snapshot, actual command and counts,
-configuration/toolchain, result/artifact, covered IDs, and residual cases. Publication
-checks certify links/rendering only and must be reported separately by the integrator.
+| Evidence                                                        | Revision                                | Classification                                   | Result and limitation                                                                                                                                                                                                                   |
+| --------------------------------------------------------------- | --------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cellsOf`/`takeCells` probe through the public table            | before `9db961a35`; commit not recorded | historical failing baseline                      | Accents/ZWJ/flags split; CJK undercounted. The table's x hit mapped `e + accent + x` to byte 1 rather than 3, and flag+x to byte 4 rather than 8. Motivates P02/X01.                                                                    |
+| Conformance layer 0 with Unicode 17 input                       | before `9db961a35`; commit not recorded | historical failing baseline                      | 750 pass, 16 fail; Indic conjunct failures. Certifies neither Unicode 18, a width profile, nor the owned engine.                                                                                                                        |
+| `analysis.d` and `gen_unicode_tables.d` read                    | `9db961a35`                             | source observation                               | Analysis consumes generated Unicode 17 normalization/folding/word properties and exposes bounded source/output/segment errors. Not evidence of all-four-form or full-word conformance.                                                  |
+| `grapheme.d`, `width.d`, `utf8.d`, `gen_grapheme_tables.d` read | `9db961a35`                             | source observation                               | Segmentation, category, and replacement paths depend on Phobos beside owned validators, SIMD, and conversion paths; `unclusteredWidth` computes the per-scalar advance outside any width profile. TXT-OWN1 and TXT-MIG3 are unverified. |
+| Unicode 18 final UCD ReadMe and UAX #29 revision 49 read        | external; read 2026-10-04               | source availability, not implementation evidence | Final release artifacts are reachable; consumed source hashes are not recorded. The release index's stale draft warning is discussed in decisions.md (D-TXT-02).                                                                        |
+| Scenarios C01–C10, D01–D06, G01–G05, A01–A06, P01–P10, X01–X04  | none                                    | gate: unverified                                 | No owned Unicode 18 implementation, width profile, scaled footprint, consumer cutover, or manifest reproducibility run is recorded.                                                                                                     |
+
+A verification entry **must** name the source revision or dirty-tree snapshot, the
+command and discovered/executed counts, configuration and toolchain, the result or
+artifact, the covered IDs, and residual cases. Publication checks certify links and
+rendering only and are a separate gate from every row above.
 
 ## 9. Independent contract review
 
-Separate read-only reviewer sessions on 2026-10-04 examined the owned-codec/data/
-Unicode contracts and the wrapping/provider contracts, including worked success,
-failure and boundary traces. They did not execute an implementation. The final
-scoped rechecks found no remaining blocking contract defect in the reviewed scope.
+Read-only reviewers examined the owned-codec, data, and Unicode contracts and the
+wrapping/provider contracts as committed in `9db961a35`, including the worked success, failure and
+boundary traces, without executing an implementation. The scoped rechecks found no
+remaining blocking contract defect in that scope.
 
-| Finding                                                                         | Disposition                                       | Contract and falsifying trace                                                              |
-| ------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Empty non-final feeds contradicted sealed/failed/pending-final state precedence | Fixed; independently rechecked                    | TXT-UTF8; C04/C05 require state validation first                                           |
-| Reordered contributor maps did not define before/after boundary projection      | Fixed; independently rechecked                    | TXT-MAP4; A04 fixes cut envelopes and inverse deletion ambiguity                           |
-| Global Ghostty default was not supported by the approved scope                  | Fixed during integration; independently rechecked | TXT-CELL1 and D-TXT-09 retain terminalKitty local policy, with engine-owned grids separate |
-| Glue realization ignored individual provider limits                             | Fixed; independently rechecked                    | WRAP-KP3 intersects bounds and rejects the single-glue counterexample                      |
-| Clamping could cause width-proportional residual iteration                      | Fixed; independently rechecked                    | WRAP-KP3 batches rounds; the billion-tick scenario preserves WRAP-WORK1                    |
+| Finding                                                                         | Disposition                    | Contract and falsifying trace                                                              |
+| ------------------------------------------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
+| Empty non-final feeds contradicted sealed/failed/pending-final state precedence | Fixed; independently rechecked | TXT-UTF8 and TXT-UTF15; C04/C05 require state validation first                             |
+| Reordered contributor maps did not define before/after boundary projection      | Fixed; independently rechecked | TXT-MAP4–7; A04 fixes cut envelopes and inverse deletion ambiguity                         |
+| A global Ghostty default was not supported by the approved scope                | Fixed; independently rechecked | TXT-CELL1 and D-TXT-09 retain `terminalKitty` as default, with engine-owned grids separate |
+| Glue realization ignored individual provider limits                             | Fixed; independently rechecked | WRAP-KP3 intersects bounds and rejects the single-glue counterexample                      |
+| Clamping could cause width-proportional residual iteration                      | Fixed; independently rechecked | WRAP-KP6 batches rounds; the billion-tick scenario preserves WRAP-WORK1                    |
+
+**Gate: review of the width profile, glyph-channel, overflow-storage, and
+scaled-footprint requirements.** TXT-CELL4–13, TXT-SIZE1–5, and TXT-MIG3 were
+written after that review and have not been reviewed independently. The gate closes
+when a reviewer walks P07–P10 and X03 against them and their dispositions are added
+to the table above.
 
 This is independent specification review, not Unicode conformance, performance,
 platform or consumer acceptance. Publication checks and implementation evidence
 have their own gates; real font and contextual provider feasibility remain distinct.
+
+## 10. Wrapping scenarios and evidence
+
+The normative acceptance obligations of wrapping (WRAP-TEST1–5) live in
+[wrapping.md](./wrapping.md); this section holds the scenarios, worked traces, and
+evidence that satisfy them.
+
+### 10.1 Permanent observable scenarios
+
+These scenarios for the [wrapping contract](./wrapping.md) are planned tests, not
+named test symbols.
+
+| Requirements                            | Stimulus and boundary                                                                                                    | Required observation                                                                                                                                           |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WRAP-OPP1`, `WRAP-OPP2`                | Release-pinned UAX #14 vectors, grapheme intersection, CRLF split between source chunks                                  | Correct default opportunity classes, no interior-cluster soft break, one consumed CRLF break                                                                   |
+| `WRAP-POL1–6`                           | Empty source, `a\n\n`, bounded zero, protected NBSP unit, overwide single CJK cluster, indent wider than capacity        | One initial empty line; three lines for `a\n\n`; explicit progress/overfull/rejection results; no repeated indent-only soft lines                              |
+| `WRAP-PLAN1–3`, `WRAP-MAP1`             | Collapse `a  b`, take a soft hyphen, expand a tab, insert indent                                                         | Copy-original exactly matches original bytes; rendered-copy matches chosen fragments; omitted/replaced/synthetic provenance stays distinct                     |
+| `WRAP-CELL1`, `WRAP-TAB1`               | `a\tb` with interval 4 at start column 0; repeat at start column 1; wrap into a continuation with two-cell indent        | First tab advances 3, second advances 2; continuation recomputes from its actual indent, never reuses previous-line width                                      |
+| `WRAP-FIT1`, `WRAP-MAP1`                | `e` + combining acute + `x`, flag + `x`, ZWJ family + `x`; fit or hit at cluster edges/interior cells                    | Whole-cluster fitting; `x` maps to byte 3 after accented `e`, byte 8 after a two-RI flag; before/after selects the proper side of a soft wrap                  |
+| `WRAP-CELL4`                            | The same source wrapped under `terminalKitty` and `terminalUnclustered`; a box-drawing and a Private Use Area scalar     | Identical line ends under both width profiles; glyph-channel scalars advance one grid cell under both                                                          |
+| `WRAP-GREEDY1`, `WRAP-MEASURE2`         | Candidate endpoints with whole widths 4, 7, 5 at capacity 5, no monotonicity capability                                  | Greedy selects the third endpoint; the failed second does not terminate scanning                                                                               |
+| `WRAP-BAL1`                             | Rigid `aaa bb cc ddddd`, collapse spaces, capacity 6, last line free                                                     | Greedy gives `aaa bb` / `cc` / `ddddd`; exact balanced gives `aaa` / `bb cc` / `ddddd` with squared-slack cost 10 instead of 16                                |
+| `WRAP-BAL1`, `WRAP-DP1`                 | Same source endpoint reached on different line counts; geometry capacities alternate 4 and 7                             | Exhaustive minimum preserved; no endpoint-only merge loses the geometry-dependent winner                                                                       |
+| `WRAP-MEASURE1–3`                       | Provider reports widths of separate pieces whose sum differs from whole candidate; ending hyphen changes context         | Exact whole-candidate result selects lines; forbidden prefix-sum shortcut is falsified; selected descriptor emits that same advance                            |
+| `WRAP-KP1–5`                            | `N=8,T=10,S=4` in raw integral units, optional penalty 3, linePenalty 10                                                 | Ratio 1/2, badness 13, decent fitness, demerit 538 before adjacency terms; realized glue reaches 10                                                            |
+| `WRAP-KP1–5`                            | Shrink ratio exactly -1 and just below -1; stretch exactly tolerance and just above; zero capacity; negative penalty     | Boundary feasibility matches exact rationals; signed penalty subtraction and objective ordering match oracle                                                   |
+| `WRAP-MEASURE1`, `WRAP-KP3`, `WRAP-KP7` | One glue: natural 1, stretch 4, shrink 0, provider maximum 2, tolerance 1, target 4                                      | Aggregate ratio 3/4 does not admit a width-4 realization; intersection/residual feasibility rejects the candidate without publishing output                    |
+| `WRAP-KP6`, `WRAP-WORK1`                | Two glues: natural 1 each, stretch M/1, shrink 0, individual maxima 1/M+1, tolerance M, target M+2, with M=1,000,000,000 | Exact realized widths 1 and M+1; allocation uses at most 64 record scans plus final pass, not M-1 tick iterations; input/state/record work bound remains valid |
+| `WRAP-KP2`, `WRAP-DP1`                  | Two paths at one endpoint with different fitness/flag and pre/post alternatives; cheaper prefix has expensive successor  | Full-path optimum beats endpoint-only minimum; consecutive and terminal discretionary costs occur on the declared transitions                                  |
+| `WRAP-UNIT1–3`, `WRAP-BAL1`, `WRAP-KP2` | Raw signed-64 extremes, half-tick conversions, accumulation past cost capacity                                           | Ties-to-even or precise arithmetic error; no saturated tie, device-dependent break, or implicit cells/points conversion                                        |
+| `WRAP-API1–3`, `WRAP-MEASURE4`          | Fill output/old plan with sentinels; inject failure on each callback ordinal; exact-sized output and one byte short      | Failed operation leaves sentinels/old plan/outExtent unchanged; successful output has exact byte count; unused suffix unchanged                                |
+| `WRAP-BUDGET1–4`                        | Budgets zero, exact-needed, and one below; complete approximate incumbent after prune; no incumbent                      | Exact success only with full search; exact exhaustion is uncommitted; approximate result labeled; no-incumbent exhaustion is failure                           |
+| `WRAP-ANSI1`, `WRAP-STYLE1`             | SGR between base/accent, OSC 8 inside a flag or ZWJ sequence, active style at chosen wrap                                | Same text clusters/lines as unstyled content; authored style boundaries survive; link/SGR suspension and resumption match stored snapshots                     |
+| `WRAP-ANSI2`                            | CSI cursor move, erase, mode change, image/query; incomplete CSI/OSC; oversized URI                                      | Exact offending range and declared error; no terminal side effect, hidden stripping, truncated resource, or committed bytes                                    |
+| `WRAP-HYP1–4`                           | Overlapping odd/even pattern weights, explicit exception, lookup casing expansion, source cluster with many marks        | Max-weight/exception rules and whole-source-boundary filtering; no length-subtraction offset; budget failure distinct from no candidates                       |
+| `WRAP-MIG1–2`                           | Real plain/rich UI and both table views with accents, flags, CJK, tabs, wrapped no-break spans and synthetic icons       | Matching sizing/paint advance/line ends; click/selection/copy identify correct original bytes; icons/borders never become source                               |
+| `WRAP-ALT1–3`                           | Exhaustively enumerate a tiny graph; constrain exact line count; request top 1, top 2, all; repeat with two geometries   | Ranked prefixes equal oracle, no endpoint-only loss of second-best path, explicit exhaustive/more status, no-result constraint distinct from exhaustion        |
+
+The hand-derived Knuth–Plass example uses `ceil(100*(1/2)^3)=13` and
+`(10+13)^2+3^2=538`. It is an explanatory expected result, not an executed probe.
+The balanced example excludes the final line's slack and counts no overfull or
+emergency choices. Tests derive those observations independently (WRAP-TEST3).
+The `WRAP-CELL4` row asserts only that wrapping follows the width profile; the exact
+advances come from P01, P07, and P08.
+
+### 10.2 Worked cell traces
+
+These are author-derived review inputs, not executed implementation evidence or
+independent acceptance. They bind the cell operation's success, failure, and
+boundary behavior to specific byte/source observations.
+
+**Success — formatting inside a cluster.** Use source `e\x1b[31ḿx`, width
+`bounded(1)`, empty indents, strict UTF/formatting, the `terminalKitty` width
+profile, `graphemeEmergency`, `suspendResume`, and `restoreInitialState`. Source
+byte ranges are `e` at `[0,1)`, SGR at `[1,6)`, acute at `[6,8)`, and `x` at
+`[8,9)`. The `e`/acute cluster consumes `[0,8)` including internal formatting; it is
+not broken at the SGR. The second line's `x` consumes `[8,9)`. Each line advances
+one grid cell, neither is overfull, and the soft break is anchored at byte 8 with
+before/after on the two lines.
+
+The rendered bytes are `e\x1b[31ḿ\x1b[0m\n\x1b[31mx\x1b[0m`: 23 bytes. The
+boundary snapshot is red; the newline is neutral; the final state is the initial
+default. The original-copy traversal is the nine original bytes, without synthetic
+resets, resumption, or newline. A 23-byte output slice succeeds; a 22-byte slice
+returns `needOutput(23)` with all bytes and `outExtent` unchanged. Splitting the
+logical view after byte 7 gives the same result, despite dividing the acute's UTF-8
+encoding between chunks.
+
+**Failure — style state cannot be committed early.** Start with a published plan and
+unrelated output-storage sentinels. For the same source, the callback consuming SGR
+`[1,6)` returns caller error 17 while deriving its output snapshot. Planning reports
+the style phase, that source range, and error 17. The old plan, its storage, the
+publication variable, and the caller's initial style snapshot remain unchanged; no
+newline, reset, or text has reached a sink. The scratch prefix is unusable. Changing
+that callback to success and retrying on the same immutable source can produce the
+success trace; base does not retry it automatically.
+
+**Boundary — capacity is zero, not "no wrap."** Use source `世\n`, `bounded(0)`,
+empty indents, preserve whitespace, and `graphemeEmergency`. The three-byte CJK
+cluster is indivisible, advances two grid cells under the width profile's wide rule,
+and occupies one overfull line. The following LF is a consumed mandatory separator,
+and the final line is empty with zero advance. The result has two lines, not a
+sequence of empty soft-break lines and not an unbounded line. With `reject`, the
+same source returns `unbreakableOverflow([0,3))` and publishes nothing. An
+`unbounded` request remains distinct and still retains the LF/final-empty-line
+convention.
+
+**Boundary — the cluster is not the scratch capacity.** Replace the accented cluster
+in the success trace with a base followed by 1000 combining marks and place a
+chunk/style boundary inside it. With enough byte/record budget the plan still has one
+whole first cluster, not groups of 16 or 32. With insufficient scratch the result is
+the explicit uncommitted capacity failure, not a different segmentation or a
+shortened copied source.
+
+### 10.3 Wrapping evidence ledger
+
+The shared Unicode prerequisite and historical defect baselines are in §8; they are
+not implementation proof for wrapping. Entries follow §8's rule for what a
+verification entry names; budget or arithmetic failures do not count as successful
+exact solves, and a missing font provider, unavailable dictionary, skipped driver,
+or pending review leaves its gate unmet.
+
+| Evidence                                  | Revision                              | Classification       | Result and remaining gate                                                                                                        |
+| ----------------------------------------- | ------------------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Base, UI, and table wrapping modules read | `9db961a35`                           | source observation   | The integration baseline in PLAN.md §6.1. No runtime conformance follows from reading source.                                    |
+| Wrapping/provider contract review         | contracts as committed in `9db961a35` | specification review | Findings and rechecks in §9. Requirements restructured since then (WRAP-KP6/KP7, WRAP-POL1–6, WRAP-CELL4) await re-review.       |
+| Wrapping scenarios in §10.1 and §10.2     | none                                  | gate: unverified     | No implementation run is recorded. Permanent scenarios, real drivers, consumer migration, and shaped-provider acceptance remain. |

@@ -1,7 +1,7 @@
 ---
 status: draft
 owner: sparkles:base
-reviewed: 2026-10-04
+reviewed: 2026-10-05
 ---
 
 # Owned text delivery plan
@@ -10,9 +10,10 @@ reviewed: 2026-10-04
 
 This plan delivers the [owned text contract](./SPEC.md) through executable slices:
 owned codecs, reproducible data and unbounded graphemes first; complete Unicode
-algorithms and source maps next; consumer cutovers and independent acceptance last.
-It also tracks the shared [wrapping contract](./wrapping.md), without duplicating
-its requirements. Passing a slice does not certify the rest of the target.
+algorithms, width profiles, and source maps next; consumer cutovers and independent
+acceptance last. It also tracks the shared [wrapping contract](./wrapping.md),
+without duplicating its requirements. Passing a slice does not certify the rest of
+the target.
 
 ## Introduction
 
@@ -20,37 +21,43 @@ Encoding, table generation, and segmentation can be implemented and falsified
 without a font subsystem. They are the first production slice because every later
 measurement, transformation, and paragraph consumer needs a stable source model.
 Consumer migration follows complete mechanisms, not replacement aliases that hide
-old behavior behind a new module name.
+old behavior behind a new module name. A _cutover_ moves a caller onto the contract
+and removes the code it replaces in the same change.
 
 This is the sole milestone tracker for the base text target. [Testing](./testing.md)
 owns expected observations and evidence; [decisions](./decisions.md) owns choices.
-All proposed operation names in the specification remain proposed until delivered.
+Proposed operation names in the specification remain proposed until a milestone
+delivers them.
 
 ## 1. State and gates
 
-| Milestone                         | State                                    | Acceptance boundary                                                                                                             |
-| --------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Stage 0: contract and scope       | scope approved; contract review complete | Independent reviews and repaired-trace rechecks are recorded in testing.md; integrated publication validation remains separate. |
-| M1a: owned encoding               | not started                              | TXT-OWN1/3 and TXT-UTF1–12, through real prefix/stream/whole operations.                                                        |
-| M1b: reproducible Unicode 18 data | not started                              | TXT-DATA1–6, offline regeneration, license retention, upgrade invalidation, and raw-data independent checks.                    |
-| M1c: unbounded graphemes          | not started                              | TXT-SEG1–4, including chunk partitions and source-span behavior.                                                                |
-| M2: complete Unicode algorithms   | not started                              | TXT-SEG5/6, TXT-BIDI1/2, TXT-ALG1, TXT-NORM1–3, TXT-CASE1, TXT-PROV1/2.                                                         |
-| M3: cell policy and maps          | not started                              | TXT-CELL1–3, TXT-MAP1–4, TXT-CACHE1–3.                                                                                          |
-| M4: wrapping mechanisms           | not started                              | Full wrapping.md scope; W1/W2/W3/W5 mechanisms, W4 under M5 cutover, W6 contextual integration above base.                      |
-| M5: caller cutover and removal    | not started                              | TXT-MIG1/2 and real consumer integration; no competing owning helpers.                                                          |
-| M6: independent acceptance        | not started                              | Complete promised suite, review, publication, and bounded-cost evidence.                                                        |
+| Milestone                                       | State                                                                                      | Acceptance boundary                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Stage 0 (incl. wrapping W0): contract and scope | scope approved; review recorded for the contracts committed in `9db961a35`; re-review open | testing.md §9 records independent review and repaired-trace rechecks of the base and wrapping contracts as committed in `9db961a35`. Requirements added or split since (TXT-CELL4–13, TXT-SIZE1–5, TXT-MIG3, and the restructured wrapping requirements) await re-review; publication validation is a separate gate. |
+| M1a: owned encoding                             | not started                                                                                | TXT-OWN1/3 and TXT-UTF1–17, through real prefix/stream/whole operations.                                                                                                                                                                                                                                             |
+| M1b: reproducible Unicode 18 data               | not started                                                                                | TXT-DATA1–6, offline regeneration, license retention, upgrade invalidation, and raw-data independent checks.                                                                                                                                                                                                         |
+| M1c: unbounded graphemes                        | not started                                                                                | TXT-SEG1–4, including chunk partitions and source-span behavior.                                                                                                                                                                                                                                                     |
+| M2: complete Unicode algorithms                 | not started                                                                                | TXT-SEG5/6, TXT-BIDI1/2, TXT-ALG1, TXT-NORM1–4, TXT-CASE1, TXT-PROV1/2.                                                                                                                                                                                                                                              |
+| M3: width profiles and maps                     | not started                                                                                | TXT-CELL1–13, TXT-MAP1–7, TXT-CACHE1–3; both `terminalKitty` and `terminalUnclustered` with its folded emission, and the glyph-channel set.                                                                                                                                                                          |
+| M3s: scaled footprints                          | not started                                                                                | TXT-SIZE1–5 as pure operations; the design system's `textSizing` consumer is gated on its own text-sizing entry condition (GLY5).                                                                                                                                                                                    |
+| M4/W1: cell wrapping end to end                 | not started                                                                                | WRAP-OPP1–4, WRAP-POL1–6, plans, cell geometry and tabs, greedy, bounded emission, ANSI/style; §5.1.                                                                                                                                                                                                                 |
+| M4/W2: exact balanced                           | not started                                                                                | Whole-candidate provider, variable geometry, exact budgets, squared objective and ties; §5.1.                                                                                                                                                                                                                        |
+| M4/W3: exact measurable solver                  | not started                                                                                | Primitive algebra, Knuth–Plass ratio/demerits/glue realization, full path state, alternatives; §5.1.                                                                                                                                                                                                                 |
+| M4/W5: hyphenation resources                    | not started                                                                                | Bounded parser/matcher and provenance over licensed resources supplied above base; §5.1.                                                                                                                                                                                                                             |
+| M5 (incl. W4): caller cutover and removal       | not started                                                                                | TXT-MIG1–3, WRAP-MIG1–2, and real consumer integration; no competing owning helpers; §6.                                                                                                                                                                                                                             |
+| W6: contextual provider acceptance              | not started; owned by text-layout                                                          | Real shaped provider above base, after font M4/M7; §5.1.                                                                                                                                                                                                                                                             |
+| M6: independent acceptance                      | not started                                                                                | Complete promised suite, review, publication, and bounded-cost evidence.                                                                                                                                                                                                                                             |
 
-States refer to this target, not absence of useful existing code. Existing validators,
-transactional UTF-16 converters, SIMD paths, generated Unicode 17 analysis tables,
-and conformance/benchmark infrastructure are assets to migrate. They do not satisfy
-an owned Unicode 18 claim by naming similarity. No new implementation or tests are
-claimed by this documentation change.
+A milestone's state refers to this target. The validators, transactional UTF-16
+converters, SIMD paths, generated Unicode 17 analysis tables, `unclusteredWidth`, and
+conformance/benchmark infrastructure in `libs/base` are assets to migrate; they do
+not satisfy an owned Unicode 18 claim by naming similarity, and no milestone above
+counts them as delivered.
 
-Stage 0 publication and independent semantic review are separate gates. The owner
-scope decision is recorded, but no reviewer identity, implementation signoff, or
-verified evidence is inferred from that decision. Review must walk the malformed
-stream, long-cluster, provenance, stale-cache, and public selection scenarios in
-[testing](./testing.md).
+Stage 0 publication and independent semantic review are separate gates. The owner's
+scope decision (D-TXT-01) implies no reviewer identity, implementation signoff, or
+verified evidence. Review walks the malformed stream, long-cluster, provenance,
+stale-cache, and public selection scenarios in [testing](./testing.md).
 
 ## 2. M1a: owned codecs, operation by operation
 
@@ -170,13 +177,23 @@ streaming transform's workspace and publication operation before its implementat
 acceptance includes all relevant official corpora, contextual casing examples,
 long combining sequences, and non-monotonic provenance traces A01–A06.
 
-M3 delivers the named `terminalKitty` revision-1 local profile using owned Unicode
-properties and cell fitting/maps. It preserves the delivered width algorithm while
-removing compiler-data skew. Pinned kitty/Ghostty comparisons classify interoperability
+M3 delivers the `terminalKitty` and `terminalUnclustered` width profiles, revision 1,
+using owned Unicode properties, together with the glyph-channel set, grid-cell
+fitting, and maps. `terminalKitty` carries the width algorithm of the
+[cell-width reference](./index.md) without compiler-data skew; `terminalUnclustered`
+shares those advances and adds the folded emission of TXT-CELL12–13, absorbing the
+free-standing `unclusteredWidth` helper as its per-scalar advance rather than wrapping
+it (TXT-MIG3). Pinned kitty, Ghostty, and XTerm comparisons classify interoperability
 differences; they are evidence gates for those adapters, not external prerequisites
-for the pure profile or maps. Complete scalar/UTF-16/grapheme/cell maps and stale-cache
-behavior before integrating public selection; scenarios P01–P06 and X01–X03 own
-acceptance. A storage maximum produces exhaustion without redefining a boundary.
+for the pure width profiles or maps. Complete scalar/UTF-16/grapheme/grid-cell maps
+and stale-cache behavior come before public selection is integrated; scenarios
+P01–P09 and X01–X03 own acceptance. A storage maximum produces exhaustion without
+redefining a boundary.
+
+M3s delivers scaled grid-cell footprints (TXT-SIZE1–5) as pure operations: sizing
+validation, footprint measurement, block fitting, and hit mapping, accepted by P10
+and decisions.md R6. It needs no terminal; a terminal adapter that emits OSC 66 and
+the design system's `textSizing` consumer build on it.
 
 M4 delivers the entire [wrapping contract](./wrapping.md). Its first cell slice
 reuses owned measurement, complete opportunities, source spans, and affinity. Its
@@ -184,27 +201,104 @@ rich generic paragraph solver slice exercises exact state, boxes/glue/kerns/pena
 discretionaries, anchors, fit objectives, and exhaustion with independent small
 models; it must not add a font dependency to base. Contextual shaped candidates,
 visual maps, mathematical composition, and publication are consumers above base.
-The wrapping document's W1 cell, W2 balanced, W3 measurable Knuth–Plass, and W5
-hyphenation-resource slices fall under M4 mechanisms. W4 caller/table cutover belongs
-to M5; W6 actual contextual/font integration is accepted by the text-layout owner
-after its real font prerequisites. All are not started. Its operation and scenario
-requirements govern acceptance; this tracker must record executed slice results,
-not a second milestone-progress tracker elsewhere.
+The wrapping slices W1 (cell), W2 (balanced), W3 (measurable Knuth–Plass), and W5
+(hyphenation resources) make up M4. W4, the caller and table cutover, is part of M5;
+W6, contextual and font integration, is accepted by the text-layout owner after its
+real font prerequisites. W0, the wrapping contract review, is part of Stage 0. The
+first implementation gate for every wrapping slice is the owned Unicode, grapheme,
+and grid-cell foundation (M1–M3), not another dependency on Phobos decoding or
+tables. wrapping.md's operation and scenario requirements govern acceptance, and this
+tracker records executed slice results.
+
+### 5.1 Wrapping slices
+
+**W1 — cell wrapping end to end.** Deliverable: `WRAP-OPP1–4`, `WRAP-POL1–6`, plans,
+cell geometry and tabs, greedy, the cell operation, bounded emission, and ANSI/style;
+requires the owned core algorithms and a width profile. W1 is an end-to-end cell
+slice, not an empty solver interface. Within `tryWrapCells` it covers complete
+borrowed UTF-8 views, bounded and unbounded widths, mandatory breaks, both whitespace
+modes, tabs, first and continuation indents, local greedy, explicit overflow policy,
+and ANSI formatting continuity, with LF/CRLF emission and overlap rejection. Until a
+mode is delivered, the operation reports `unsupportedCapability` for it. Gate: a real
+cell driver, source-copy and rendered-copy checks, transactional fault injection, and
+mandatory, emergency, zero-width, and long-cluster cases.
+
+**W2 — exact balanced.** Deliverable: a whole-candidate provider, variable geometry
+state, exact budgets, and the squared objective with its ties. Gate: an independent
+tiny exhaustive oracle, nonadditive and nonmonotone provider cases, and exact
+exhaustion with approximate labeling.
+
+**W3 — exact measurable solver.** Deliverable: primitive algebra, Knuth–Plass
+ratio/demerits/glue realization, full path state, and constrained and ranked
+alternatives. Gate: an exhaustive path-state oracle, hand-derived discretionary,
+fitness, and geometry cases, alternative completeness and top-K ranking, and
+arithmetic boundaries. Contextual shaping integration is not simulated as delivered.
+W2 and W3 join the same operation contracts as W1, stay generic, and import no font.
+
+**W4 — complete caller cutover (M5).** Deliverable: base and UI wrappers, both table
+views, mappings, and deletion of the competing code. Gate: actual table
+paint/selection/copy and UI line observations using the same plans, public consumer
+regressions, and updated delivered docs. W4 requires matching width changes in
+painting, not only a changed measurer while renderers advance by code point. It also
+retires ui LAY10's and LAY14's own measurement: `sparkles.ui.wrap` and
+`geometry.takeCells` keep policy and call base (WRAP-BOUND1).
+
+**W5 — hyphenation resources.** Deliverable: a bounded parser and matcher with
+provenance, over real licensed versioned resources supplied above base. Gate:
+pattern and exception vectors, hostile parser cases, expansion and reordering
+mappings, resource reproducibility, and linguistic-policy review. W5 supplies
+mechanisms; linguistic quality acceptance belongs to the resource and policy owner
+and requires the caller-supplied policy and a real resource corpus.
+
+**W6 — contextual provider acceptance (text-layout).** Deliverable: a real
+text-layout provider over delivered font M4/M7. Gate: real shaped candidates,
+safe-break reshaping, alternative widths, and physical-unit invariance. The absence
+of `libs/font` blocks this integration; a stub provider is not shaping proof.
 
 ## 6. M5: concrete clean cutovers
+
+### 6.1 Wrapping integration baseline
+
+The wrapping paths in the tree at `9db961a35` are the code the M5/W4 cutover
+replaces; they are not evidence of the proposed operations.
+
+- [Base wrapping](../../../../libs/base/src/sparkles/base/text/wrap.d) has
+  `WrapOptions`, `writeWrappedText`, `wrapText`, `WrappedLines`, and
+  `WrappedChunks`. Its classifier is a reduced UAX #14 subset and imports `std.uni`.
+  Noncontiguous inputs are gathered, and wrapped ranges own a materialized buffer
+  rather than borrowing a source plan.
+- [UI wrapping](../../../../libs/ui/src/sparkles/ui/wrap.d) has `wrapLines` and
+  `wrapSpans`, with ASCII-space tokenization and separate greedy and balanced logic.
+  Its balanced width accumulation assumes additivity, and its plain greedy path adds
+  independently measured substrings. ui LAY10's evidence stands for this code,
+  pending the cutover to base (WRAP-BOUND1).
+- [UI geometry](../../../../libs/ui/src/sparkles/ui/geometry.d) has `cellsOf` and
+  `takeCells`, based on lead-byte and code-point counting, not whole graphemes. ui
+  LAY14 has the same pending-cutover status.
+- The [table string renderer](../../../../libs/ui/src/sparkles/ui/components/table/render.d)
+  and [table widget renderer](../../../../libs/ui/src/sparkles/ui/components/table/widgets.d)
+  use different width and wrap authorities, a divergence the shared
+  [table layout](../../../../libs/ui/src/sparkles/ui/components/table/layout.d)
+  describes. Rich UI spans carry source metadata, which is not proof of
+  cluster-exact screen/source mappings.
+- The codec `LineWrapWriter`, which inserts newlines after a count of encoded ASCII
+  characters, is a byte-formatting adapter and stays outside the migration
+  (WRAP-MIG3).
+
+### 6.2 Cutover boundaries
 
 Each row is a migration boundary, not evidence of delivery. All listed paths exist;
 old module names in comments are not locations to edit.
 
-| Consumer surface                                                                                         | Required cutover                                                                                                                                                                                                                                                                                     |
-| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `libs/base/src/sparkles/base/text/{utf,utf8,utf16,analysis,width,grapheme,wrap,case_style}.d`            | Owned codecs/properties/breaks; remove malformed Phobos decoder, category CTFE data, partial word rules, and stale cached probes. Preserve explicit ASCII casing where that is the declared operation.                                                                                               |
-| `libs/ui/src/sparkles/ui/{geometry,wrap,layout,display_list,canvas,cmd_buffer}.d`                        | Replace `cellsOf`/`takeCells` code-point authority and competing wrapping with base measure/fit/plan; migrate every caller and remove obsolete owning functions. Rendering extent and clipping must use the same profile as hit mapping.                                                             |
-| `libs/ui/src/sparkles/ui/components/table/{layout,widgets,render}.d`                                     | Unify string/widget widths and wrapping; replace `columnToByte` with affinity-aware grapheme/cell maps. Selection must not land in accents, flags, or wide interiors.                                                                                                                                |
-| `libs/doc-view/src/sparkles/doc_view/{viewer_model,dsv_view,table_select,ansi_model,ansi_decode,pane}.d` | Use relocated doc-view paths, not historical `apps/hue/gui_*` names. Carry source spans through ANSI fences/DSV and table selection; source bytes copied from highlighted text must match the map. Replace scalar-stride editing where the consumer promises grapheme editing.                       |
-| `libs/tui/src/sparkles/tui/{cell,render,input,terminal}.d`                                               | Put whole clusters and profile advances in the grid; replace byDchar/codepoint advance. Inline cell storage must use owned overflow storage or explicit complete-render exhaustion, never silently truncate a long grapheme. Negotiate/record mode 2027 consistently with terminal profile evidence. |
-| `libs/android/src/sparkles/android/{clipboard,http,intents,jni,text_input}.d`                            | Owned UTF-16 conversion and explicit native modified-UTF-8 distinction; verify payload versus terminator counts and source/UTF-16 map units.                                                                                                                                                         |
-| Base examples, core-cli/table consumers, source-view integration, and remaining repository callers       | Audit direct and transitive auto-decoding, cell counts, and coordinate assumptions after the named boundaries; migrate all production callers, not only the observed failing example.                                                                                                                |
+| Consumer surface                                                                                         | Required cutover                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `libs/base/src/sparkles/base/text/{utf,utf8,utf16,analysis,width,grapheme,wrap,case_style}.d`            | Owned codecs/properties/breaks; remove malformed Phobos decoder, category CTFE data, partial word rules, stale cached probes, and the free-standing `unclusteredWidth`, which `terminalUnclustered` absorbs. Preserve explicit ASCII casing where that is the declared operation.                                                                                                                                                                                                                                                                                                                                                                                          |
+| `libs/ui/src/sparkles/ui/{geometry,wrap,layout,display_list,canvas,cmd_buffer}.d`                        | Replace `cellsOf`/`takeCells` code-point authority and competing wrapping with base measure/fit/plan; migrate every caller and remove obsolete owning functions. Rendering extent and clipping use the same width profile as hit mapping. `sparkles.ui.wrap` (LAY10) and `takeCells` (LAY14) keep only policy and call base's wrapping (WRAP-BOUND1).                                                                                                                                                                                                                                                                                                                      |
+| `libs/ui/src/sparkles/ui/components/table/{layout,widgets,render}.d`                                     | Unify string/widget widths and wrapping; replace `columnToByte` with affinity-aware grapheme/cell maps. Selection must not land in accents, flags, or wide interiors.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `libs/doc-view/src/sparkles/doc_view/{viewer_model,dsv_view,table_select,ansi_model,ansi_decode,pane}.d` | Use relocated doc-view paths, not historical `apps/hue/gui_*` names. Carry source spans through ANSI fences/DSV and table selection; source bytes copied from highlighted text must match the map. Replace scalar-stride editing where the consumer promises grapheme editing.                                                                                                                                                                                                                                                                                                                                                                                             |
+| `libs/tui/src/sparkles/tui/{cell,render,input,terminal}.d`                                               | Put whole clusters and width-profile advances in the grid; replace byDchar/codepoint advance. Inline cell storage uses owned overflow storage and fails the render explicitly on exhaustion, never truncating or folding a grapheme because of its length (TXT-CELL8). Emit under the width profile chosen from design-system [D38](../../design-system/decisions.md)'s probe through `sparkles.base.term_replies`: `terminalKitty` when the terminal answers mode 2027 or its measured test cluster is two grid cells, `terminalUnclustered` otherwise. Layout is the same under both; only the emitted bytes differ (TXT-CELL12–13), and grid copy returns source bytes. |
+| `libs/android/src/sparkles/android/{clipboard,http,intents,jni,text_input}.d`                            | Owned UTF-16 conversion and explicit native modified-UTF-8 distinction; verify payload versus terminator counts and source/UTF-16 map units.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Base examples, core-cli/table consumers, source-view integration, and remaining repository callers       | Audit direct and transitive auto-decoding, cell counts, and coordinate assumptions after the named boundaries; migrate all production callers, not only the observed failing example.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 The source-view/core-cli integration is a caller inventory task, not a claim that
 all its paths import Phobos. Inspect actual callsites when the slice starts.
@@ -233,17 +327,20 @@ policy explanations during each completed cutover.
 
 ### Resume boundary
 
-- Contract scope: approved on 2026-10-04; draft target contracts have completed
-  independent adversarial review with dispositions in testing.md. Publication
-  checks and PR review remain separate from implementation acceptance.
-- Implementation target: all milestones not started; historical observations in
-  testing.md are baselines only.
-- Checked material: existing codec, generator, analysis, grapheme, width, conformance,
-  benchmark, UI/table, relocated doc-view, and TUI source sections inspected for
-  contract seams. This documentation-only batch runs no implementation validation.
+- Contract scope: approved (D-TXT-01, D-TXT-11–14). The draft contracts carry
+  independent adversarial review with dispositions in testing.md §9; the width
+  profile, glyph-channel, overflow-storage, and scaled-footprint requirements
+  (TXT-CELL4–13, TXT-SIZE1–5, TXT-MIG3) await the same review. Publication checks
+  and PR review are separate from implementation acceptance.
+- Implementation target: every milestone is not started; the observations in
+  testing.md §8 are baselines only.
+- Checked material: the codec, generator, analysis, grapheme, width, conformance,
+  benchmark, UI/table, relocated doc-view, and TUI sources at `9db961a35` were read
+  for contract seams; no implementation validation is recorded against them.
 - Next executable action after specification review: write C01/C02 strict and
-  maximal-subpart regressions in the existing runner, confirm intended failure of
+  maximal-subpart regressions in the test runner, confirm intended failure of
   the owned replacement requirement, then implement M1a without production Phobos.
-- External dependencies: none for M1a/M1b/M1c or pure M3. Terminal interoperability
-  evidence requires pinned real engines; shaped integration above base requires
-  actual font M4/M7. Missing review/evidence is an unmet gate, not a fabricated pass.
+- External dependencies: none for M1a/M1b/M1c, pure M3, or pure M3s. Terminal
+  interoperability evidence requires pinned real engines; shaped integration above
+  base requires actual font M4/M7. Missing review or evidence is an unmet gate, not
+  a pass.

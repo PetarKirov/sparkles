@@ -1,51 +1,73 @@
 ---
 status: draft
 owner: sparkles:base
-reviewed: 2026-10-04
+reviewed: 2026-10-05
 ---
 
 # Owned UTF, Unicode, and cell text
 
 ## Abstract
 
-`sparkles:base` supplies allocation-free encoding primitives, reproducible Unicode
-properties and algorithms, and source-preserving terminal-cell text operations.
+`sparkles:base` supplies owned text handling: allocation-free encoding, Unicode
+properties and algorithms implemented from pinned Unicode data rather than inherited
+from the compiler's tables, and source-preserving terminal text operations.
 Consumers can validate hostile input, replace malformed sequences for display, or
-preserve malformed bytes for analysis without inheriting compiler Unicode tables.
-Segmentation has no artificial cluster-length limit. Explicit coordinates and
-provenance connect original bytes, transformed text, UTF-16 integrations, and cell
-positions. Fonts, shaping, graphical text layout, and publication remain separate
-owners of their respective contracts.
+keep malformed bytes as tagged opaque units. A character may be any length: caller
+storage can fail an operation but never moves a character boundary. Provenance, the
+record of which bytes produced each piece of output, links source, transformed text,
+UTF-16, and terminal grid positions. A grid runs under a named width profile chosen
+for its terminal, and scaled text occupies a known block of grid cells. Fonts,
+shaping and paragraph layout belong to other libraries.
 
 ## Introduction
 
 Text crosses several boundaries before it becomes visible: a file contains bytes,
 a platform API accepts UTF-16, search normalizes and folds, and a terminal places
-clusters in cells. Treating any two of those coordinate systems as interchangeable
+characters on a grid. Treating any two of those coordinate systems as interchangeable
 produces plausible ASCII output but broken selection, clipping, and diagnostics.
 Long combining sequences and malformed external bytes make such mistakes observable
 without exotic fonts or a graphical host.
 
-The foundation uses one owned decoding model and one pinned Unicode release.
-Algorithms consume explicit scalar or opaque-byte units and retain source spans;
-terminal consumers apply a named cell policy rather than counting bytes or code
-points. Bounded caller storage can reject an operation, but it cannot redefine a
-Unicode boundary to make the input fit.
+Terminals add a second difficulty: they do not agree on how far a character moves
+the cursor. Some lay out a whole [grapheme cluster](../../../glossary.md#grapheme-cluster)
+as one character; others advance by every Unicode scalar inside it. Some can also
+draw text at a larger scale. A measurement that disagrees with the terminal's
+cursor moves every later character on the row.
 
-This specification owns encoding, property data, Unicode algorithms, plain-cell
-measurement, and logical coordinate maps. [Wrapping](./wrapping.md) owns line
-selection, virtual indentation, tabs, line-relative maps, generic paragraph solvers,
-and the physical `LayoutUnit` contract. [Font](../../font/SPEC.md) owns font resources,
-matching, fallback, shaping, and rasterization. [Text layout](../../text-layout/SPEC.md)
-owns contextual paragraph composition and visual caret geometry above base and font.
-Locale dictionaries, collation, language-specific hyphenation, font-dependent widths,
-page construction, and document import/export are not base Unicode algorithms.
+The foundation uses one owned decoding model and one pinned Unicode release; _owned_
+means implemented in `sparkles:base` from pinned Unicode data rather than inherited
+from the compiler's or Phobos's tables. Algorithms consume explicit units, each a
+Unicode scalar or an opaque byte (a malformed input byte kept as itself, tagged so it
+is never mistaken for a character), and retain the source span each unit came from.
+Terminal consumers measure in [grid cells](../../../glossary.md#grid-cell), one
+terminal grid advance each, under a named
+[width profile](../../../glossary.md#width-profile) that states how wide each
+grapheme is and how it is emitted so the target terminal's cursor agrees, rather
+than counting bytes or code points. Bounded caller storage
+can reject an operation, but it cannot redefine a Unicode boundary to make the input
+fit.
 
+This specification owns encoding, property data, Unicode algorithms, plain grid-cell
+measurement, scaled grid-cell footprints (the block of grid cells, several rows high,
+that text drawn at a larger scale occupies), and logical coordinate maps.
+[Wrapping](./wrapping.md) owns line selection, virtual indentation, tabs,
+line-relative maps, generic paragraph solvers, and the physical `LayoutUnit`
+contract. [Font](../../font/SPEC.md) owns font resources, matching, fallback,
+shaping, and rasterization. [Text layout](../../text-layout/SPEC.md) owns contextual
+paragraph composition and visual caret geometry above base and font. The
+[design system](../../design-system/glyphs.md) decides which width profile a
+terminal is driven under and whether scaled text is used at all. Locale dictionaries,
+collation, language-specific hyphenation, font-dependent widths, page construction,
+and document import/export are not base Unicode algorithms.
+
+Sections 1–2 define vocabulary and the encoding operations, §3 the Unicode data
+pipeline, §4–5 segmentation, normalization, casing and provenance, §6 grid-cell text
+and coordinate maps, and §7 the obligations on callers that adopt this contract.
 [The delivery plan](./PLAN.md) is the sole milestone tracker.
-[Testing and evidence](./testing.md) defines falsifying scenarios and distinguishes
-historical measurements from target conformance. [Decisions](./decisions.md) records
-scope approval and consequential trade-offs. The [existing cell specification](./index.md)
-records the delivered policy, not completion of this target.
+[Testing and evidence](./testing.md) defines falsifying scenarios and records
+evidence. [Decisions](./decisions.md) records scope approval and consequential
+trade-offs. The [cell-width reference](./index.md) documents the per-scalar width
+rules that the `terminalKitty` width profile carries.
 
 ## Contract at a glance
 
@@ -61,13 +83,24 @@ records the delivered policy, not completion of this target.
    layout units are different coordinate types. Ambiguous mapping requires affinity.
 6. Borrowed views and caches carry source identity, revision, and policy identity;
    mutation invalidates them before reuse.
+7. Every grid-cell advance comes from one named width profile, shared by measure,
+   fit, render, and hit testing. Layout is the same on every terminal:
+   `terminalKitty` and `terminalUnclustered` measure alike, and differ only in the
+   bytes emitted for a grapheme a non-clustering terminal would advance differently.
+8. Glyph-channel ranges (box drawing, blocks, status marks, Private Use Area icons)
+   measure one grid cell under every width profile.
+9. A grapheme too long for a consumer's inline storage is kept whole or fails
+   explicitly; it is never truncated.
+10. A scaled run occupies a block of grid cells several rows high, and every
+    measuring, fitting, and hit-testing operation uses that whole block.
 
 ## 1. Scope, vocabulary, and ownership
 
-Normative **must**, **must not**, and **may** carry [BCP 14](https://www.rfc-editor.org/info/bcp14)
-meanings. Requirement IDs beginning `TXT-` belong to this page. API names described
-as **proposed** specify an operation shape, not an existing public symbol; concrete
-D naming is settled in the implementing slice without weakening the operation.
+Normative **must**, **must not**, **should**, **should not**, and **may** carry
+[BCP 14](https://www.rfc-editor.org/info/bcp14) meanings. Requirement IDs beginning
+`TXT-` belong to this page. API names described as **proposed** specify an operation
+shape, not a public symbol. Concrete D naming is settled by the implementation
+without weakening the operation.
 
 A _scalar_ is a Unicode scalar value, excluding surrogates. A _source span_ is a
 half-open interval in the immutable input's code-unit coordinates. A _token_ is one
@@ -135,10 +168,13 @@ return `invalidScalar`; explicit replacement encoding **must** encode U+FFFD.
 One-token encoding **must** check capacity before writing, return the exact required
 code-unit count, and leave the entire destination unchanged on failure.
 
-Opaque mode is intentionally byte-specific, matching the existing analysis use
-case. Surrogate-preserving WTF-8, CESU-8, modified UTF-8, and opaque UTF-16 modes
-are outside this contract; JNI adapters must not accidentally interpret modified
-UTF-8 as ordinary UTF-8.
+Opaque mode is intentionally byte-specific, matching the search-analysis use case.
+Surrogate-preserving WTF-8, CESU-8, modified UTF-8, and opaque UTF-16 modes are
+outside this contract.
+
+**TXT-UTF16: Modified UTF-8 is not UTF-8.** A native adapter whose platform API
+produces or consumes modified UTF-8, such as JNI, **must** convert at that boundary
+explicitly and **must not** pass modified UTF-8 to an ordinary UTF-8 operation.
 
 ### 2.2 Prefix and stream operations
 
@@ -155,21 +191,21 @@ and its required output units when known. Stream-global offsets are checked inte
 counts, not pointer differences. Strict errors expose encoding and reason without
 copying input bytes into diagnostics.
 
-| Status           | Meaning and next action                                                                                                                                                                              |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ok`             | A one-token operation committed a token.                                                                                                                                                             |
-| `end`            | Final input is completely consumed; the stream is finalized.                                                                                                                                         |
-| `needInput`      | Non-final supplied input is exhausted or ends in a potentially valid incomplete token; provide input or finalize.                                                                                    |
-| `outputFull`     | The next complete output token cannot fit; retry with capacity.                                                                                                                                      |
-| `invalid`        | A token is not accepted in the chosen mode; reason distinguishes malformed encoding, invalid scalar, or `opaqueNotEncodable`. Stateless calls may choose another mode; failed streams require reset. |
-| `overflow`       | A size or global-offset count is not representable; no wraparound.                                                                                                                                   |
-| `overlap`        | Conversion source and destination overlap; no input/output/state progress.                                                                                                                           |
-| `invalidOptions` | The operation's mode/encoding combination is unsupported; no progress.                                                                                                                               |
-| `invalidState`   | A finalized/failed stream was fed without reset or a pending final feed was changed to non-final; no progress.                                                                                       |
+| Status           | Meaning and next action                                                                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ok`             | A one-token operation committed a token.                                                                                                                                                                 |
+| `end`            | Final input is completely consumed; the stream is finalized.                                                                                                                                             |
+| `needInput`      | Non-final supplied input is exhausted or ends in a potentially valid incomplete token; provide input or finalize.                                                                                        |
+| `outputFull`     | The next complete output token cannot fit; retry with capacity.                                                                                                                                          |
+| `invalid`        | A token is not accepted in the chosen mode; reason distinguishes malformed encoding, invalid scalar, or `opaqueNotEncodable`. Stateless calls **may** choose another mode; failed streams require reset. |
+| `overflow`       | A size or global-offset count is not representable; no wraparound.                                                                                                                                       |
+| `overlap`        | Conversion source and destination overlap; no input/output/state progress.                                                                                                                               |
+| `invalidOptions` | The operation's mode/encoding combination is unsupported; no progress.                                                                                                                                   |
+| `invalidState`   | A finalized/failed stream was fed without reset or a pending final feed was changed to non-final; no progress.                                                                                           |
 
 `outputFull` is not a general request for more input. A prefix with an incomplete
 suffix reports `needInput` even if the destination is full: no complete output token
-is yet available. Definite invalidity is detected before output capacity, so strict
+is available. Definite invalidity is detected before output capacity, so strict
 `C0` is `invalid`, not `outputFull`, even with zero destination capacity.
 
 **TXT-UTF5: Incomplete versus invalid.** At non-final end, a suffix that can still
@@ -181,15 +217,20 @@ return `end`.
 
 **TXT-UTF6: Incremental commit.** Prefix and stream conversion **must** commit only
 complete encoded tokens, with no half surrogate pair or half UTF-8 representation.
-On `outputFull` or an invalid token, earlier tokens remain committed but the blocking
-token **must** remain unconsumed and unwritten; state and retained carry for that token
-**must** remain retryable on `outputFull`. Reported progress **must** describe exactly
-those effects, and unused destination bytes/code units **must** remain unchanged.
-Invalid options and overlap **must** be rejected before progress, without failing
-an otherwise usable stream; a rejected token **must** fail a stream, with its
-structured reason retained. Once a stream accepts `final=true`, subsequent retries
-**must** retain that final intent until `end` or failure; retracting it **must**
-return `invalidState` without changing the pending-final state.
+On `outputFull` or an invalid token, earlier tokens remain committed, while the
+blocking token **must** remain unconsumed and unwritten.
+
+**TXT-UTF13: Blocked-token effects.** On `outputFull`, the state and retained carry
+for the blocking token **must** remain retryable. Reported progress **must** describe
+exactly the committed effects, and unused destination bytes or code units **must**
+remain unchanged.
+
+**TXT-UTF14: Rejection and final intent.** Invalid options and overlap **must** be
+rejected before progress, without failing an otherwise usable stream; a rejected
+token **must** fail the stream and retain its structured reason. Once a stream
+accepts `final=true`, retries **must** retain that final intent until `end` or
+failure, and retracting it **must** return `invalidState` without changing the
+pending-final state.
 
 **TXT-UTF7: Carry ownership.** A stream **must** copy only its bounded incomplete
 encoding suffix into caller-owned state; input slices otherwise remain borrowed only
@@ -198,23 +239,25 @@ whereas a blocking token completed from carry and a new chunk **must not** consu
 new chunk units until it commits; absolute error offsets **must** still point to
 that token's original start.
 
-**TXT-UTF8: Finalization and reset.** `end` **must** seal a stream; strict-invalid
-and overflow **must** mark it failed. Feeding either state **must** return
-`invalidState` without input/output changes. Explicit reset **must** discard carry,
-zero offsets, and restore the selected initial mode. Retrying `outputFull` with the
-same unconsumed input and final flag **must** produce the same token as uninterrupted
-execution. State validation and pending-final validation **must** precede empty-input
-handling. An empty non-final feed **must** return `needInput` without state changes
-only for an active stream with no pending final intent; finalized, failed, or
-pending-final streams instead return the applicable `invalidState`.
+**TXT-UTF8: Finalization and reset.** `end` **must** seal a stream, strict-invalid
+and overflow **must** mark it failed, and feeding either state **must** return
+`invalidState` without input or output changes. Explicit reset **must** discard
+carry, zero offsets, and restore the selected initial mode.
+
+**TXT-UTF15: Retry and empty feeds.** Retrying `outputFull` with the same unconsumed
+input and final flag **must** produce the same token as uninterrupted execution.
+State validation and pending-final validation **must** precede empty-input handling,
+so an empty non-final feed **must** return `needInput` without state changes only
+for an active stream with no pending final intent; finalized, failed, or
+pending-final streams instead **must** return the applicable `invalidState`.
 
 ### 2.3 Whole bounded conversion
 
 Proposed `measureConversion` returns the exact payload and optional terminator
 capacity without writing. Proposed whole `convert` validates and measures the full
-source before writing into caller-provided storage. Existing `utf8ToUtf16`,
-`utf16ToUtf8`, and their `z` forms already provide an analogous transactional seam;
-this contract extends that seam rather than inventing a second conversion family.
+source before writing into caller-provided storage. The transactional `utf8ToUtf16`,
+`utf16ToUtf8`, and their `z` forms are instances of this operation; the contract
+generalizes them rather than adding a second conversion family.
 
 **TXT-UTF9: Transactional conversion.** Whole conversion **must** leave destination
 and published result state byte-for-byte unchanged on malformed input, embedded-NUL
@@ -238,11 +281,12 @@ before checking capacity, and **must** append exactly one zero code unit on succ
 An unrepresentable required capacity **must** return `overflow`, not an estimated
 size or `insufficientSpace` with a wrapped count.
 
-For whole conversion, validation order is options, overlap, first source defect
-(including embedded NUL for `z`), measurement overflow, then capacity. A source
-encoding defect or forbidden NUL at the earlier source token wins over a later one.
-Successful measurement does not permit source mutation before conversion: borrowed
-source contents must remain stable for the full operation.
+**TXT-UTF17: Validation order and source stability.** Whole conversion **must**
+check options, overlap, the first source defect (including embedded NUL for `z`),
+measurement overflow, then capacity, in that order, and an earlier source defect
+**must** win over a later one. The caller **must** keep borrowed source contents
+stable for the full operation; successful measurement does not permit mutation
+before conversion.
 
 **TXT-UTF12: Memory and work bounds.** Encoding and prefix operations **must** use
 constant internal storage and linear work in consumed source units; whole conversion
@@ -323,12 +367,12 @@ consumers **must not** load a partially upgraded mixture or silently accept a
 previous-version cache. Persisted consumer indexes require an explicit rebuild
 under their owning application's storage contract.
 
-The existing [Unicode generator](../../../../libs/base/tools/gen_unicode_tables.d),
+A single manifest-driven pipeline **may** emit several cohesive modules; nothing
+requires every property to live in one source file. Compiler-probed grapheme data has
+no place in the pipeline. The [Unicode generator](../../../../libs/base/tools/gen_unicode_tables.d),
 [grapheme generator](../../../../libs/base/tools/gen_grapheme_tables.d), and
-[analysis module](../../../../libs/base/src/sparkles/base/text/analysis.d) are migration
-seams. A single manifest-driven pipeline may emit several cohesive modules; it is
-not a requirement to store every property in one giant source file. Compiler-probed
-grapheme singleton data becomes obsolete at cutover.
+[analysis module](../../../../libs/base/src/sparkles/base/text/analysis.d) are the
+code seams the pipeline replaces; [the plan](./PLAN.md) tracks their migration.
 
 ## 4. Segmentation and Unicode algorithms
 
@@ -446,69 +490,166 @@ exhaustion rather than an altered boundary. A whole workspace transformation
 invalid-for-consumption output view on failure, with no successful partial result;
 workspace bytes **may** be overwritten but source bytes **must** remain unchanged.
 Streaming transformations **must** expose only complete normalized segments, exact
-committed progress, and retryable backpressure, because an incomplete segment may
+committed progress, and retryable backpressure, because an incomplete segment can
 still reorder or compose.
 
 **TXT-NORM3: Analysis composition.** Search analysis **must** apply explicitly named
 steps in order: decode, requested normalization, selected casing/folding, any
-renormalization needed by the declared profile, optional mark stripping, owned word
-boundaries, then caller-owned stopword filtering. The profile identity **must**
+renormalization needed by the declared analysis profile, optional mark stripping,
+owned word boundaries, then caller-owned stopword filtering. The analysis profile's
+identity **must**
 include each choice and lexicon revision. `sourceTooLong`, output capacity,
 segment/workspace exhaustion, and invalid options **must** remain distinguishable;
 32-bit provenance storage **must** reject a longer source rather than wrap offsets.
 
 NFC-sensitive code/path analysis and NFKC-full-fold-mark-stripping language analysis
-are policies above the core transforms. Their profile specifications must say whether
-folded output is renormalized; they cannot claim normalization by merely doing NFC
-before a folding step that may change it. Existing bounded storage is reusable, but
-its old set of supported forms is not the scope of this target.
+are policies above the core transforms.
+
+**TXT-NORM4: Declared renormalization.** An analysis profile's specification **must**
+state whether folded output is renormalized. An analysis profile **must not** claim
+normalized output when it applies NFC only before a folding step that can change it.
 
 ## 6. Cell text and coordinates
 
-### 6.1 Named cell policy and whole-cluster fitting
+### 6.1 Width profiles and whole-cluster fitting
 
-A cell is a terminal grid advance, not a pixel or typographic point. Plain-cell
-operations consume a single logical line without tabs, line separators, cursor
-controls, or ANSI escapes. ANSI/stateful terminal adapters and wrapping own those
-interpretations and return provenance to this plain input. Policy selection is
-explicit and shared by measurement, clipping, hit mapping, and rendering.
+A [grid cell](../../../glossary.md#grid-cell) is one terminal grid advance, not a
+pixel or typographic point. It is distinct from the UI toolkit's
+[cell](../../../glossary.md#cell), the length unit a `sparkles:ui` layout uses.
+Plain grid-cell operations consume a single logical line without tabs, line
+separators, cursor controls, or ANSI escapes. ANSI/stateful terminal adapters and
+wrapping own those interpretations and return provenance to this plain input.
 
-**TXT-CELL1: Policy identity.** Base **must** provide a named terminal-width profile
-whose identity includes Unicode manifest, profile revision, ambiguous-width choice,
-emoji/presentation rules, malformed-input mode, and any explicit substitutions.
-Changing any of these **must** change the identity. The default proposed
-`terminalKitty`, revision 1, **must** retain the delivered kitty-oriented width
-algorithm while deriving all properties from the owned Unicode release. Isolated
-controls, separators, noncharacters, marks (`Mn`, `Mc`, `Me`), format characters
-and the conjoining ranges specified in [the cell policy](./index.md) have width
-zero; regional indicators and East Asian Wide/Fullwidth scalars have width two;
-other scalars have width one, with ambiguous width narrow. A complete grapheme
-takes its leading scalar's width, modified by the last applicable VS15/VS16 for
-an emoji-variation base to one/two respectively; its members are not summed.
-These scalar rules do not waive TXT-CELL2's plain-input rejection.
+A [width profile](../../../glossary.md#width-profile) is the named rule set that
+gives each grapheme its advance in grid cells and decides which bytes are emitted for
+it. Its selection is explicit and shared by measurement, clipping, hit mapping, and
+rendering. Base defines two width profiles with the same advances. `terminalKitty`,
+the default, emits every grapheme unchanged, for terminals that lay out a whole
+grapheme as one character, as [kitty](https://sw.kovidgoyal.net/kitty/) does.
+`terminalUnclustered` serves a terminal without grapheme clustering, which advances
+its cursor scalar by scalar. A grapheme's _per-scalar advance_ is what such a
+terminal moves: the sum of its scalars' `terminalKitty` widths, with a regional
+indicator counted as one.
 
-This is a named local terminal profile, not a universal font-width claim.
-Independent kitty and Ghostty comparisons **must** pin engine revision and
-configuration and document disagreements; they do not define production tables.
-An actual Ghostty-backed grid remains authoritative for its own cell coordinates:
-consumers **must not** reconstruct those coordinates under another profile.
-A distinct explicitly selected policy requires a real consumer requirement and
-separate evidence; backward aliases are not required.
+**TXT-CELL1: Width profile identity.** Every grid-cell advance **must** come from a
+named width profile whose identity includes the Unicode manifest, the profile
+revision, the ambiguous-width choice, emoji/presentation rules, the glyph-channel
+set of TXT-CELL7, the emission rule and its replacement scalar, the malformed-input
+mode, and any explicit substitutions. Changing any of these **must** change the
+identity.
+
+**TXT-CELL4: The `terminalKitty` width profile.** Under `terminalKitty` revision 1,
+isolated controls, separators, noncharacters, marks (`Mn`, `Mc`, `Me`), format
+characters, and the conjoining ranges of [the cell-width reference](./index.md)
+**must** have width zero; regional indicators and East Asian Wide/Fullwidth scalars
+width two; and other scalars width one, with ambiguous width narrow unless the
+identity selects wide. A complete grapheme **must** take its leading scalar's width,
+set to one or two by the last applicable VS15 or VS16 after an emoji-variation base,
+and **must not** sum its members.
+
+**TXT-CELL5: The `terminalUnclustered` width profile.** Under `terminalUnclustered`
+revision 1, measurement, fitting, hit mapping, and every other advance **must** equal
+those of `terminalKitty` with the same ambiguous-width choice. The width profiles
+**must** differ only in emission, as TXT-CELL12 and TXT-CELL13 define.
+
+**TXT-CELL12: Folded emission.** Under `terminalUnclustered`, a single-scalar
+grapheme, and a multi-scalar grapheme whose per-scalar advance equals its advance,
+**must** be emitted unchanged. Any other grapheme of advance `A` **must** be emitted
+as its leading scalar of width `w` followed by `A - w` spaces, so the terminal's
+cursor moves exactly `A` grid cells.
+
+**TXT-CELL13: Overwide leading scalar.** When the leading scalar alone is wider than
+the grapheme's advance (`w > A`, as for an emoji-presentation base followed by VS15,
+where `A` is 1 and `w` is 2), `terminalUnclustered` **must** emit the width
+profile's replacement scalar followed by `A - 1` spaces. The replacement scalar of
+revision 1 is U+003F QUESTION MARK; a width profile **may** declare another, which
+**must** be East Asian Narrow or Halfwidth.
+
+_Rationale:_ Layout that is identical on every terminal means a document never
+reflows when it moves between terminals, and emitting only text whose per-scalar
+advance equals the layout's keeps a non-clustering terminal's cursor where layout
+put it. U+FFFD is not used as the replacement because it is East Asian Ambiguous,
+and a terminal set to wide ambiguous characters advances it two grid cells, the very
+overrun the rule prevents.
+
+A grapheme whose scalars already advance correctly, such as a letter with an accent
+or a flag, keeps its text. Folding is emission only: the source, its grapheme boundaries, maps, selection, and
+copy are unaffected, and copying from the grid **must** return the source bytes, not
+the folded ones. `w > A` is only possible when `A` is at least one, because a
+grapheme whose leading scalar has width zero has advance zero.
+
+Both width profiles take every property from the owned Unicode release. They are
+named local terminal width profiles, not universal font-width claims, and the scalar
+rules do not waive TXT-CELL2's plain-input rejection. Which width profile drives a
+given terminal is the consumer's choice; the design system's rule is
+[GLY6](../../design-system/glyphs.md#typography-and-sizing), decided by
+[D38](../../design-system/decisions.md).
+
+**TXT-CELL6: Engine comparisons and engine-owned grids.** Comparisons with kitty and
+[Ghostty](https://ghostty.org/) **must** pin engine revision and configuration and
+document disagreements, and **must not** define production tables. A Ghostty-backed
+grid is authoritative for its own cell coordinates, and consumers **must not**
+reconstruct those coordinates under a width profile.
+
+A further width profile needs a real consumer requirement and separate evidence;
+backward aliases are not required.
+
+**TXT-CELL7: The glyph-channel set.** Under every width profile and either
+ambiguous-width choice, a grapheme that consists of exactly one scalar from the
+ranges below **must** measure one grid cell:
+
+- box drawing, U+2500–U+257F;
+- block elements, U+2580–U+259F, which include the eighth-block ladder;
+- braille patterns, U+2800–U+28FF;
+- Symbols for Legacy Computing, U+1FB00–U+1FBFF, which include the sextants;
+- the block octants, U+1CD00–U+1CDE5;
+- geometric shapes, U+25A0–U+25FC;
+- the status marks U+2022, U+26A0, U+2714, and U+2716; and
+- the Private Use Areas U+E000–U+F8FF, U+F0000–U+FFFFD, and U+100000–U+10FFFD.
+
+_Rationale:_ The [glyph channel](../../../glossary.md#glyph-channel) of the design
+system draws borders, meters, sub-cell rasters, status marks
+([GLY3](../../design-system/glyphs.md#status-marks)), and Nerd Font icons as one cell
+each, and many of these ranges are East Asian Ambiguous. An ambiguous-wide choice
+exists for East Asian prose; applied to these ranges it would double every border and
+make measurement disagree with what the toolkit paints.
+
+The set stops at U+25FC because U+25FD and U+25FE are East Asian Wide emoji. A
+grapheme that adds a variation selector or a combining mark to one of these scalars
+is outside the set and follows the width profile's ordinary rules.
 
 **TXT-CELL2: Measurement and unsupported input.** Plain measurement **must** sum
-profile-defined whole-grapheme advances using checked counts. It **must** reject
-unsupported controls, tabs, line separators, and escapes with their source offset,
-unless the caller supplies an explicit substitution before measurement. Its width
-for ordinary ASCII, `e` plus combining acute, CJK `界`, a regional-indicator flag,
-and an RGI ZWJ emoji **must** be 1, 1, 2, 2, and 2 respectively under the selected
-narrow-ambiguous target profile. Replacement and opaque-display substitution
+whole-grapheme advances of the selected width profile using checked counts. It
+**must** reject unsupported controls, tabs, line separators, and escapes with their
+source offset, unless the caller supplies an explicit substitution before
+measurement.
+
+**TXT-CELL9: Reference widths.** The measured width of ordinary ASCII, `e` plus
+combining acute, CJK `界`, a regional-indicator flag, and an RGI ZWJ emoji **must**
+be 1, 1, 2, 2, and 2 respectively under either width profile with narrow ambiguous
+width.
+
+**TXT-CELL10: Substituted tokens.** Replacement and opaque-display substitution
 **must** use their declared displayed token widths and preserve original spans.
 
+**TXT-CELL8: Whole clusters in bounded cell storage.** A consumer that stores a
+grapheme inline in a fixed-size grid cell **must** keep a grapheme longer than that
+inline capacity whole in owned overflow storage. Exhausting the overflow storage
+**must** fail the render explicitly, and a grapheme's length **must not** cause it
+to be truncated, split, or folded.
+
+_Rationale:_ A cell's inline byte count is storage policy, not a Unicode limit
+(D-TXT-06). Overflow storage replaces folding as the answer to a long cluster on
+every target, so a long grapheme is folded only where TXT-CELL12 folds any grapheme;
+[D-TXT-12](./decisions.md) records the retired design-system fold.
+
 **TXT-CELL3: Prefix and suffix fitting.** Proposed `fitPrefix` and `fitSuffix`
-**must** return borrowed source spans, measured cells, and source boundary positions
-for the longest whole-cluster prefix or suffix within a nonnegative cell budget.
-They **must not** split a grapheme, manufacture padding, or count each scalar as a
-cell. A zero budget **must** include adjacent zero-advance clusters until a positive
+**must** return borrowed source spans, measured grid cells, and source boundary
+positions for the longest whole-cluster prefix or suffix within a nonnegative
+grid-cell budget. They **must not** split a grapheme, manufacture padding, or count
+each scalar as one grid cell.
+
+**TXT-CELL11: Budget edges and suffix boundaries.** A zero budget **must** include adjacent zero-advance clusters until a positive
 advance would be needed; negative budgets **must** return `invalidBudget`. Suffix
 fitting **must** use the same boundaries as forward scanning, including RI parity,
 rather than an independent backward heuristic.
@@ -517,7 +658,7 @@ rather than an independent backward heuristic.
 
 **TXT-MAP1: Distinct units.** Public mapping inputs and results **must** identify
 source-byte offsets, scalar indices, UTF-16 code-unit offsets, grapheme boundaries,
-and cell positions distinctly. Physical `LayoutUnit` is defined only by
+and grid-cell positions distinctly. Physical `LayoutUnit` is defined only by
 [wrapping](./wrapping.md), and **must not** be substituted for cells or bytes.
 All offset arithmetic **must** check overflow; out-of-range requests **must** return
 `outOfRange`, not silently clamp or wrap.
@@ -549,23 +690,30 @@ select before/after affinity and receive an exactness marker; source highlightin
 length. Empty output **must** retain both original source endpoints as a mapping
 relationship, not invent a source of length zero.
 
-For a source boundary `b`, first validate or snap the source coordinate under
-TXT-MAP2. Define `L` as the earliest transformed-unit start having any contributor
-whose source end exceeds `b`, or transformed end if none exists. Define `R` as the
-latest transformed-unit end having any contributor whose source start precedes
-`b`, or zero if none exists. `before` **must** return `L` and `after` **must**
-return `R`. At a valid source boundary `L <= R`; the interval is a conservative
-cut envelope, not an exact range of contributors, and may include unrelated
-transformed units when order changes. The complete relation remains available.
-The boundary result is exact only when `L == R`, the source coordinate was exact,
-and no nonempty deleted source span contains `b` in its closed endpoint interval;
-otherwise it is explicitly projected. Exact-only requests reject a projected cut.
-For inverse queries, apply the contributor-cut predicates with the domains
-exchanged, then include every deleted source span anchored at the queried output
-boundary. Return the minimum and maximum of these candidates as before/after;
-when deletion leaves a gap between the neighboring surviving source units, its
+**TXT-MAP5: Forward cut envelope.** For a source boundary `b`, a forward boundary
+query **must** first validate or snap the source coordinate under TXT-MAP2, then
+return `L` for `before` and `R` for `after`, as defined below.
+
+`L` is the earliest transformed-unit start having any contributor whose source end
+exceeds `b`, or transformed end if none exists. `R` is the latest transformed-unit
+end having any contributor whose source start precedes `b`, or zero if none exists.
+At a valid source boundary `L <= R`; the interval is a conservative cut envelope,
+not an exact range of contributors, and can include unrelated transformed units when
+order changes. The complete relation remains available.
+
+**TXT-MAP6: Exact versus projected cuts.** A forward boundary result **must** be
+marked exact only when `L == R`, the source coordinate was exact, and no nonempty
+deleted source span contains `b` in its closed endpoint interval; otherwise it
+**must** be marked projected, and an exact-only request **must** reject it.
+
+**TXT-MAP7: Inverse cuts.** An inverse query **must** apply the contributor-cut
+predicates with the domains exchanged, add every deleted source span anchored at the
+queried output boundary, and return the minimum and maximum of these candidates as
+before/after. Any non-singleton envelope or deleted-span candidate **must** be marked
+projected.
+
+When deletion leaves a gap between the neighboring surviving source units, the gap's
 two endpoints remain candidates even though no output unit represents the gap.
-Any non-singleton envelope or deleted-span candidate is projected, not exact.
 Synthetic output and its zero-length anchors are outside Unicode transformations
 and use the owning wrapping/projection contract.
 
@@ -573,12 +721,12 @@ and use the owning wrapping/projection contract.
 
 **TXT-CACHE1: Borrowing and invalidation.** A mapping or boundary cache **must**
 include source identity, revision, encoding, malformed mode, Unicode manifest,
-transform profile, and cell policy where used. It **must** reject `staleSource` or
+analysis profile, and width profile where used. It **must** reject `staleSource` or
 `stalePolicy` before a cached result is used with a mismatched key. Borrowed source
 and returned spans **must** remain valid only while that immutable revision lives;
 base **must not** own UI document identities or secretly retain released buffers.
 
-**TXT-CACHE2: Incremental edits.** A caller may supply edits for incremental cache
+**TXT-CACHE2: Incremental edits.** A caller **may** supply edits for incremental cache
 maintenance, but **must** supply the changed revision and affected source intervals.
 The cache **must** invalidate all context-dependent results until an algorithmically
 proven restart/synchronization point; a fixed lookbehind window **must not** certify
@@ -592,13 +740,64 @@ complete map. Eviction or sparse checkpoints **may** reduce stored entries but
 **must not** change mapping results; concurrent immutable queries require disjoint
 mutable workspace or an explicitly synchronized consumer cache, not hidden globals.
 
+### 6.4 Scaled grid-cell footprints
+
+Some terminals draw a run of text at a larger scale through the
+[kitty text-sizing protocol](https://sw.kovidgoyal.net/kitty/text-sizing-protocol/)
+(OSC 66). A scaled run occupies a rectangular block of grid cells, its _footprint_,
+several rows high. Base computes footprints whether or not a terminal honours the
+protocol. Whether it is used is the design system's `textSizing` capability
+([GLY5](../../design-system/glyphs.md#typography-and-sizing),
+[CAP2](../../design-system/capabilities.md)), and a target that does not honour it
+draws the run unscaled in the same footprint. Encoding a run into escapes, including
+the protocol's 4,096-byte payload limit, belongs to the terminal adapter. The
+operations in this section are **proposed**.
+
+**TXT-SIZE1: Run sizing.** A sized run **must** carry an integer scale `s` in 1–7, an
+explicit width `w` in 0–7 grid cells, and a fractional scale `n/d` with
+`0 <= n < d <= 15`, or `n = d = 0` for none. Values outside these ranges **must**
+return `invalidSizing`, and `s = 1, w = 0, n = d = 0` **must** measure exactly as
+the unsized run.
+
+**TXT-SIZE2: Footprint and advance.** A sized run's footprint **must** be `s` rows
+high. Its width, which is also the cursor advance on the run's first row, **must**
+be `s * w` when `w > 0`, and otherwise `s` times the run's plain measurement under
+the selected width profile.
+
+**TXT-SIZE3: Fractional scale leaves the footprint.** The fractional scale `n/d` and
+its alignment **must not** change the footprint or the advance; they only change how
+large the text is drawn inside it.
+
+**TXT-SIZE4: Fitting and hit testing at scale.** Measurement, fitting, and
+hit-testing of a sized run **must** use its footprint. A run with `w > 0` **must** be
+fitted and hit as one indivisible block; a run with `w = 0` **must** divide only at
+grapheme boundaries, each grapheme taking `s` times its unscaled advance, and every
+row of the block **must** map to the same source positions as its first row.
+
+**TXT-SIZE5: Sizing in cache identity.** A cache over sized runs **must** include
+each run's sizing in its key, in addition to the TXT-CACHE1 fields.
+
+_Rationale:_ A heading drawn at scale 2 and the same heading drawn plain on a
+terminal without the protocol consume the same rows and columns, so the document
+does not reflow between terminals. Owning the footprint in base gives measurement,
+fitting, and hit testing one answer for both.
+
 ## 7. Cutover and acceptance boundaries
 
+A _cutover_ moves a caller onto this contract and, in the same change, removes the
+code it replaces.
+
 **TXT-MIG1: One authority per caller.** Each migrated caller **must** use the same
-profile for measure, fit, wrap integration, render advance, hit testing, and copy
-selection. The migration **must** remove competing Unicode/width helpers and
-code-point-count compatibility paths after all callers are moved; it **must not**
+width profile for measure, fit, wrap integration, render advance, hit testing, and
+copy selection. The migration **must** remove competing Unicode/width helpers and
+code-point-count compatibility paths after all callers are moved, and **must not**
 leave obsolete re-exports or shims as an alternative default.
+
+**TXT-MIG3: Width profiles are not compatibility helpers.** A named width profile,
+including `terminalUnclustered`, is a selectable contract with its own identity and
+evidence, and **must** be selected explicitly by a caller. A per-scalar or
+code-point advance computed outside a named width profile **must** be removed as a
+competing helper under TXT-MIG1.
 
 **TXT-MIG2: Real public behavior.** Acceptance **must** exercise actual UI/table/TUI
 and relocated doc-view consumers with combining accents, flags, CJK, and ZWJ text,
@@ -608,6 +807,3 @@ Platform UTF-16 adapters **must** exercise native-boundary units and termination
 with unavailable platforms recorded as unverified rather than assumed passing.
 
 Stable obligation IDs map to independent scenarios in [testing](./testing.md).
-Delivery exclusions do not reduce the final scope: later implementation slices
-must refine any externally dependent operation before accepting it, and the draft
-contract is not accepted until independent adversarial review is recorded.
