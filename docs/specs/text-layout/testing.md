@@ -82,7 +82,7 @@ base's `LayoutUnit`; no glyph measurement is inferred from a textual label.
 
 P1–P3 are **author-worked success, failure and boundary traces**, not independent
 review or executed acceptance. Their arithmetic/source expectations are derived
-here to make the first delivery falsifiable; permanent tests and a real public
+here to make TL-M1 falsifiable; permanent tests and a real public
 operation must establish that an implementation follows them.
 
 **P1 — Discretionary choices and copy (TL-004/TL-005/TL-010–TL-013).** Source
@@ -106,7 +106,7 @@ not turn it into a legal break. Vary the second-line measure so two paths at one
 break have different feasible successors; compare the chosen cost/path to exhaustive
 enumeration, not just line count.
 
-**P3 — Plan rejection and atomics (TL-007–TL-010).** Inject a span beyond S1, a
+**P3 — Plan rejection and atomics (TL-007–TL-010/TL-042–TL-044/TL-046).** Inject a span beyond S1, a
 conflicting font/size/feature boundary inside `e` + U+0301, duplicate item IDs, a cyclic discretionary
 reference, a glue minimum above maximum, and a text item requiring unresolved
 physical measurement. Check the exact invalid-input or unsupported-capability
@@ -145,7 +145,7 @@ a deliberate endpoint-only-state solver must fail at least one retained fixture.
 
 ### Analysis and cell-grid behavior
 
-**A1 — Whole-paragraph semantics (TL-001/TL-014/TL-015/TL-020/TL-038).** Use combining
+**A1 — Whole-paragraph semantics (TL-001/TL-014/TL-015/TL-020/TL-038/TL-045/TL-046).** Use combining
 text, regional-indicator flags, ZWJ emoji, Indic conjuncts and mixed Hebrew/Latin
 with isolates and punctuation. Add paint changes, eligible font changes and page
 fragment boundaries without altering logical bytes. Compare grapheme/opportunity
@@ -156,14 +156,17 @@ boundary at source byte 1 succeeds, retains two paint spans and one unchanged
 grapheme/shape, introduces no interior-grapheme caret, and selects the default brush
 from the minimum logical source contributor.
 
-**A2 — Cell maps are not glyph maps (TL-003/TL-023–TL-025).** For `e` + U+0301 +
-`x`, `x` maps to original UTF-8 byte 3; for a two-regional-indicator flag + `x`, it
-maps to byte 8. For a width-two CJK grapheme, either occupied cell maps to the same
-grapheme start with the declared cell-edge affinity; the following cell maps after
-the full source span. With an actual ligature programming font, ink may cross cells
-but occupancy and these source maps remain identical to the unshaped cell plan.
+**A2 — Cell maps are not glyph maps (TL-003/TL-023–TL-025/TL-052/TL-056).** For
+`e` + U+0301 + `x`, `x` maps to original UTF-8 byte 3; for a two-regional-indicator
+flag + `x`, it maps to byte 8. For a width-two CJK grapheme, either occupied grid
+cell maps to the same grapheme start with the declared cell-edge affinity; the
+following grid cell maps after the full source span. With an actual ligature
+programming font, ink may cross grid cells but occupancy and these source maps
+remain identical to the unshaped cell plan. A mixed Hebrew/Latin line in `cellGrid`
+mode places its graphemes in logical order: the visual run order equals the logical
+sequence, while the paragraph bidi state stays reported.
 
-**A3 — Unbounded grapheme and hostile input (TL-001/TL-008/TL-009/TL-014).** Use
+**A3 — Unbounded grapheme and hostile input (TL-001/TL-008/TL-009/TL-014/TL-039/TL-040).** Use
 valid extended graphemes longer than 16 and 32 scalars, including a long combining
 sequence, alongside malformed UTF according to each selected base policy. Compare
 whole-grapheme spans and continuation behavior to base's declared vectors. At one
@@ -183,7 +186,7 @@ explicit capability/work failure, not a falsely exact result or a ban on the inp
 
 ### Actual shaped composition
 
-**S1 — Candidate context versus unbroken widths (TL-015–TL-018).** Use a Latin
+**S1 — Candidate context versus unbroken widths (TL-015–TL-018/TL-049–TL-051).** Use a Latin
 ligature/kerning pair and an Arabic joining sequence whose independent engine traces
 change at a selected line boundary. Measure all candidates, choose breaks through
 base, and realize the selected lines. Each selected candidate must match the
@@ -192,7 +195,7 @@ words implementation must select or realize a wrong retained fixture. Include a
 Unicode-legal break flagged unsafe and prove actual reshaping on both sides, not
 suppression of that opportunity.
 
-**S2 — RTL clusters and controls (TL-014/TL-020/TL-023).** Compose Arabic/Hebrew
+**S2 — RTL clusters and controls (TL-014/TL-020/TL-023/TL-047/TL-048).** Compose Arabic/Hebrew
 with Latin numbers, isolates, punctuation and trailing whitespace. Independently
 review paragraph levels and line visual order. Verify every source span remains
 reachable, including zero-glyph controls; glyph-order traversal must not stand in
@@ -216,7 +219,7 @@ physical origins and line total are identical, though raster bounds may differ.
 Inject nonfinite/unrepresentable conversion and near-limit arithmetic; require
 `arithmeticExhausted` and unchanged prior result, not saturation.
 
-**S5 — Two different caches (TL-017/TL-018/TL-022).** Compose a snapshot at two
+**S5 — Two different caches (TL-017/TL-018/TL-022/TL-053).** Compose a snapshot at two
 measures with unchanged font instances. Instrument cache observations in the
 exercise harness: parsed font/instance identity is reused, geometry-dependent
 candidate results are recomputed, and boundary-changing lines match independent
@@ -236,7 +239,7 @@ its residual while strict policy rejects. Clipping must not masquerade as fit.
 
 ### Interaction and consumer surfaces
 
-**I1 — Source, cluster and glyph identity (TL-004/TL-023/TL-038).** Use a decomposed
+**I1 — Source, cluster and glyph identity (TL-004/TL-023/TL-038/TL-045/TL-054).** Use a decomposed
 accent, one-to-many substitution, multi-grapheme ligature, zero-glyph control and
 synthetic discretionary hyphen in one paragraph. Independently list source spans,
 grapheme boundaries and glyph/cluster occurrence relationships. Require complete
@@ -249,7 +252,7 @@ Changing colour or a post-composition paint resolver updates the committed brush
 while preserving glyphs, origins, breaks, maps and carets and reusing semantic caches;
 retained source paint spans do not imply exact partial-glyph colouring.
 
-**I2 — Bidi and ligature carets (TL-024).** With actual fonts, hit-test on both
+**I2 — Bidi and ligature carets (TL-024/TL-055).** With actual fonts, hit-test on both
 sides of a bidi boundary and inside a ligature with font-provided GDEF carets.
 Expected stops come from reviewed font caret data and logical grapheme boundaries.
 Repeat with a font lacking carets: stops follow equal-advance subdivision and carry
@@ -289,13 +292,13 @@ fitting measure and ink extent but not invented source/caret offsets. DPI and
 atlas changes do not affect the result. A missing width-axis capability rejects or
 uses only an explicitly authorized labelled transform, never a fabricated axis.
 
-**U2 — Script-aware Arabic/CJK adjustment (TL-018/TL-021/TL-028).** With a font
+**U2 — Script-aware Arabic/CJK adjustment (TL-018/TL-021/TL-028/TL-057).** With a font
 reporting safe elongation, justify Arabic through authorized insertion/alternate
 choices and compare the final reshaped line to the reference. Tatweel is synthetic
 with origin provenance; no insertion occurs inside unsafe joins or combining
-sequences. A font lacking this capability rejects the elongating profile but can
+sequences. A font lacking this capability rejects the elongating typography profile but can
 run an explicitly non-elongating one. CJK opportunities and prohibited positions
-come from the declared profile; a Latin-space algorithm must fail the fixture.
+come from the declared typography profile; a Latin-space algorithm must fail the fixture.
 
 **U3 — Baselines and vertical composition (TL-029/TL-030).** Compose runs and an
 object with hand-derived before/after-baseline extents under a fixed strut; verify
@@ -331,7 +334,7 @@ independently proven ranked prefix plus `moreAlternatives`; full enumeration mar
 result storage for requested exhaustive enumeration fails atomically. A deliberately
 approximate best-found list reports unproven ranking/completeness, not global ranks.
 
-**F2 — Fragment/rejoin and suffix geometry (TL-013/TL-033).** Fragment a real mixed-
+**F2 — Fragment/rejoin and suffix geometry (TL-013/TL-033/TL-058).** Fragment a real mixed-
 direction, discretionary paragraph at a legal line boundary, retaining a break
 anchor and post-break replacement. Rejoin unchanged fragments: source coverage,
 branches, bidi state, lines and geometry match the original. Reject mid-line and
@@ -364,7 +367,7 @@ text-layout's input contract, not HTML/Markdown/MathML/TeX compatibility.
 
 ### Resource and failure boundaries
 
-**R1 — Work, capacity and arithmetic failures (TL-007–TL-009/TL-017–TL-019).** Run
+**R1 — Work, capacity and arithmetic failures (TL-007–TL-009/TL-017–TL-019/TL-039/TL-041/TL-051).** Run
 each public operation with empty, one-below, exact and one-above required output and
 workspace capacities; cap analysis entries, candidates, glyphs, states and
 alternatives independently. The category and counter identify the exact exhausted
@@ -375,20 +378,22 @@ arithmetic case and an engine failure that would otherwise appear as zero glyphs
 
 ## 3. Evidence ledger
 
-| Requirement area                   | Scenario IDs | Status     | Evidence and remaining gap                                                           |
-| ---------------------------------- | ------------ | ---------- | ------------------------------------------------------------------------------------ |
-| Plan/projection/ownership          | P1–P5, R1    | unverified | Planned; no executable text-layout plan in this specification batch                  |
-| Base analysis and cell integration | A1–A4, C1    | unverified | Planned; dependency conformance and historical cell probes are not integration proof |
-| Real contextual shaping and caches | S1–S6, R1    | unverified | Planned; real font M2/M4/M7 and a pinned font corpus required                        |
-| Source/visual interaction          | I1–I4, C1    | unverified | Planned; no real-font caret/reflow consumer capture supplied                         |
-| Publication typography             | U1–U5        | unverified | Planned; actual vertical/elongation/math capabilities and host integration required  |
-| Alternatives/page/export seam      | F1–F5        | unverified | Planned; no complete alternative search or host handoff executed                     |
+| Requirement area                   | Scenario IDs | Status     | Evidence and remaining gap                                                                    |
+| ---------------------------------- | ------------ | ---------- | --------------------------------------------------------------------------------------------- |
+| Plan/projection/ownership          | P1–P5, R1    | unverified | Planned; no text-layout package exists ([plan gates](./PLAN.md#_1-progress-and-dependencies)) |
+| Base analysis and cell integration | A1–A4, C1    | unverified | Planned; dependency conformance and historical cell probes are not integration proof          |
+| Real contextual shaping and caches | S1–S6, R1    | unverified | Planned; real font M2/M4/M7 and a pinned font corpus required                                 |
+| Source/visual interaction          | I1–I4, C1    | unverified | Planned; no real-font caret/reflow consumer capture supplied                                  |
+| Publication typography             | U1–U5        | unverified | Planned; actual vertical/elongation/math capabilities and host integration required           |
+| Alternatives/page/export seam      | F1–F5        | unverified | Planned; no complete alternative search or host handoff executed                              |
 
-The inspected dependency state on 2026-10-04 includes a draft
-[font delivery plan](../font/PLAN.md), not a font package. No compiler, test,
-formatter, renderer or paragraph smoke run was executed for this documentation-only
-batch. The parent's integrated document checks, if run, must be recorded separately
-and do not change any behavioral row to verified.
+Specification revisions carry no behavioral evidence. Documentation build and link
+checks never change a behavioral row to verified.
+
+| Specification revision                | Executed                                              | Effect on rows above |
+| ------------------------------------- | ----------------------------------------------------- | -------------------- |
+| TL-001–TL-038, reviewed 2026-10-04    | nothing: no compiler, test, renderer or paragraph run | none                 |
+| TL-039–TL-058 split out, TL-052 added | nothing: no compiler, test, renderer or paragraph run | none                 |
 
 Each subsequent evidence entry records requirement IDs, scenario/test and execution
 count, source revision or explicit dirty-tree snapshot, exact command, environment,
@@ -400,7 +405,7 @@ the failed trace and its disposition rather than erasing history.
 ## 4. Sampling and limits of evidence
 
 Run the core source/branch/limit fixtures in both modes where meaningful. Glyph,
-physical-conversion and publication profiles are shaped-flow-only; cell occupancy
+physical-conversion and publication typography profiles are shaped-flow-only; cell occupancy
 cannot prove them. Sample script/feature/variation combinations by risks such as
 unsafe breaks, joins, fallback and caret ambiguity, recording omitted combinations
 and why. Keep deterministic seeds and minimized generated paragraphs for every
@@ -411,22 +416,22 @@ input distributions, cold/reused font lifecycle, candidate/state/glyph counts,
 workspace, hardware/toolchain and rejection limits. A benchmark that warms a font
 cache while accidentally reusing stale width results is invalid. Performance
 thresholds are accepted after the bounded feasibility measurement, not invented as
-claims in this draft.
+claims in the specification.
 
 ## Independent contract review
 
-A separate read-only reviewer session on 2026-10-04 examined paragraph validation,
-contextual provider/state identities, font integration, visual mappings and
-publication seams. Final scoped rechecks found no remaining blocking defect in
-the repaired requirements. No text-layout or font implementation was executed.
+| Review                    | Revision and scope                                                                                                                      | Result                                                                        |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Independent, read-only    | TL-001–TL-038 as reviewed 2026-10-04: paragraph validation, provider/state identities, font integration, visual maps, publication seams | no blocking defect after scoped rechecks; no implementation executed          |
+| Recheck of the split text | TL-039–TL-058, including TL-052's cell-grid reordering rule                                                                             | open: gates owner acceptance ([plan](./PLAN.md#_1-progress-and-dependencies)) |
 
-| Finding                                                                       | Disposition                    | Contract and falsifying trace                                                       |
-| ----------------------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------- |
-| Discretionary fragments admitted breaks forbidden by base's primitive algebra | Fixed; independently rechecked | TL-010 and P3 reject interior Penalty items in all three fragments                  |
-| Blanket style prohibition rejected paint-only changes inside graphemes        | Fixed; independently rechecked | TL-038 and A1/I1 retain scalar paint spans without splitting analysis or shaping    |
-| Paint-independent caches could return stale committed brushes                 | Fixed; independently rechecked | TL-022 distinguishes semantic caches from paint-qualified presentation              |
-| Fixed-object first-slice P3 accidentally required a shaped paint result       | Fixed; independently rechecked | P3 is source-span admission only; glyph/RTL/reuse assertions remain real-font A1/I1 |
+| Finding                                                                       | Disposition                    | Contract and falsifying trace                                                           |
+| ----------------------------------------------------------------------------- | ------------------------------ | --------------------------------------------------------------------------------------- |
+| Discretionary fragments admitted breaks forbidden by base's primitive algebra | Fixed; independently rechecked | TL-043 and P3 reject interior Penalty items in all three fragments                      |
+| Blanket style prohibition rejected paint-only changes inside graphemes        | Fixed; independently rechecked | TL-038/TL-046 and A1/I1 retain scalar paint spans without splitting analysis or shaping |
+| Paint-independent caches could return stale committed brushes                 | Fixed; independently rechecked | TL-054 distinguishes semantic caches from paint-qualified presentation                  |
+| Fixed-object first-slice P3 accidentally required a shaped paint result       | Fixed; independently rechecked | P3 is source-span admission only; glyph/RTL/reuse assertions remain real-font A1/I1     |
 
 The author-worked traces remain unexecuted scenarios. Actual base solvers and font
-capabilities, contextual branch-state feasibility, publication profiles, and host
+capabilities, contextual branch-state feasibility, publication typography profiles, and host
 integration still require the evidence and delivery gates recorded above.

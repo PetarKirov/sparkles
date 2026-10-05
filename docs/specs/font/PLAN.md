@@ -28,6 +28,10 @@ The font explorer's own plan interleaves with this one: its `inspect`
 subcommand needs M1–M2, its glyph map M3 and M5, and its text specimens
 text-layout's TL-M3, which itself needs M2, M4 and M7. The explorer plan lives
 in [`../font-explorer/PLAN.md`](../font-explorer/PLAN.md).
+The [design system](../design-system/PLAN.md) is a downstream consumer: its
+[font roles](../../glossary.md#font-role) resolve through `FTD4`–`FTD6`, so
+discovery-backed role resolution waits on M7, and its proportional documentation
+runs (design-system M9, `GLY7`) wait on text-layout TL-M3.
 The [base text foundation](../base/text/PLAN.md) and
 [text-layout plan](../text-layout/PLAN.md) are separate delivery plans. Base
 does not wait for font. Text-layout's real-font composition waits for delivered
@@ -205,10 +209,10 @@ absent in a particular face, but a feature gate cannot be accepted only on fonts
 that lack the relevant data. Math composition and page/frontend/export delivery
 remain above font and are not milestones satisfied by this plan.
 
-At the 2026-10-04 specification update, `libs/font` is absent. No measurement,
-shaping or publication requirement here has implementation evidence. The research
-spikes establish only their recorded configurations; they do not satisfy M2/M4/M7
-or permit text-layout to substitute fake fonts. Progress states above remain the
+**Gate:** these prerequisites pass only when `libs/font` exists and M2, M4 and M7
+carry implementation evidence in [`testing.md`](./testing.md). The research spikes
+establish only their recorded configurations; they do not satisfy M2/M4/M7 or
+permit text-layout to substitute fake fonts. Progress states above remain the
 delivery authority.
 
 **Handoff.** Not started. The three Stage 0 spikes ran on 2026-10-03, and all
