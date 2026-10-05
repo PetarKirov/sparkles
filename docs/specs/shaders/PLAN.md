@@ -17,7 +17,7 @@ evidence ledger live in [`testing.md`](./testing.md).
 | [Stage 0](#stage-0-specification)                                           | in progress |
 | [M0 Baseline](#m0-baseline)                                                 | done        |
 | [M1 Rename](#m1-rename-to-sparkles-shaders)                                 | not started |
-| [M2 Unit membership](#m2-unit-membership)                                   | not started |
+| [M2 Unit membership](#m2-unit-membership)                                   | deferred    |
 | [M3 Interface and agreement evidence](#m3-interface-and-agreement-evidence) | not started |
 | [M4 Multi-pass effects](#m4-multi-pass-effects-in-single-source-d)          | not started |
 | [M5 Further platforms](#m5-further-device-platforms)                        | not started |
@@ -66,19 +66,23 @@ has no consumers outside this repository.
 
 **Obligations.** `SHB4`.
 
-**Deliverable.** The stamp records the unit's device modules, and freshness
-fails when one enters or leaves the unit.
+**Deliverable.** The stamp records the content digest of the unit's
+candidate fileset, and freshness recomputes it with a fileset resolution, so
+a device module entering or leaving the unit makes the next build
+regenerate.
 
-**Gate.** The `SHB4` scenario: a device module that no existing input imports,
-added to a package, makes the next build regenerate. The stamp format version
-changes, so every existing stamp goes stale once. The freshness check still
-runs without dub and without the compiler.
+**Entry condition.** Two prerequisites from `sparkles:build-primitives`: the
+[filesets](../build-primitives/filesets/PLAN.md) resolution machine and a
+driver, and a deterministic content-digest scheme on its scheme seam (the
+content-addressing contract the filesets specification defers to). M2 does
+not start, and does not build an interim directory listing, before both.
 
-**Open point.** Recording membership without asking dub on every build means
-recording what dub would discover: the source directories of the device
-configuration and its dependencies, with the files they held. Whether a
-directory listing suffices, or added files outside those directories must be
-caught too, is decided at the start of M2.
+**Gate.** The `SHB4` scenario: a device module that no existing input
+imports, added to a package, makes the next build regenerate, and removing
+it makes the following one regenerate again. The same tree in two
+directories, and on two platforms, yields the same digest. The stamp format
+version changes, so every existing stamp goes stale once. The freshness check
+still runs without dub and without the compiler.
 
 ## M3: Interface and agreement evidence
 

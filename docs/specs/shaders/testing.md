@@ -97,7 +97,9 @@ person.
   go stale after each; delete an output and expect the same.
 - Write a `prebuilt` stamp and expect freshness with no compiler present.
 - Add a device module that no existing input imports and expect the stamp to
-  go stale (`SHB4`).
+  go stale, then remove it and expect the same (`SHB4`). Compute the stamp's
+  digest for the same tree in two directories and on two platforms and
+  expect it to be identical.
 - Resolve, with dub, a consumer that selects the opt-in configuration in a
   parent configuration it does not use, and expect the dependency's default
   configuration.
@@ -107,8 +109,9 @@ person.
 Statuses follow [Writing Specification
 Docs](../../guidelines/spec-docs.md#keep-evidence-scoped-and-honest):
 `verified` means the named tests passed for the named configuration, `partial`
-names the missing case, `unverified` has no evidence yet, and `planned` is
-scheduled in [`PLAN.md`](./PLAN.md). Host tests run under DMD and LDC on every
+names the missing case, `unverified` has no evidence yet, `planned` is
+scheduled in [`PLAN.md`](./PLAN.md), and `deferred` waits for a
+prerequisite PLAN names. Host tests run under DMD and LDC on every
 CI leg; device evidence comes from the builds that generate GLSL, on x86_64
 Linux, aarch64 Linux and aarch64 macOS.
 
@@ -138,7 +141,7 @@ Linux, aarch64 Linux and aarch64 macOS.
 | SHP8             | unverified | —                                                                                                                           | no concurrency or stale-file test                                                        |
 | SHP9, SHP10      | partial    | exit 3 with instructions observed by hand without `ldc2-vulkan`                                                             | no automated test of the exit codes                                                      |
 | SHB1–SHB3        | verified   | `shaderCompile.stamp.freshUntilAnInputChanges`                                                                              | —                                                                                        |
-| SHB4             | planned    | M2                                                                                                                          | a new device module is unseen until another input changes                                |
+| SHB4             | deferred   | M2                                                                                                                          | a new device module is unseen until another input changes                                |
 | SHB5             | verified   | `ui.effect.builtins.carryOnlyTheirCpuHalfWithoutGpuEffects`, `ui_raylib.effect_gpu.builtinsCarryTheirGpuHalf`               | —                                                                                        |
 | SHB6             | verified   | CI builds the tui-only examples in a sandbox without `ldc2-vulkan`; `ui_raylib.effect_gpu` asserts `hasGpuEffects`          | the dub leak itself is recorded by hand, not by a test                                   |
 | SHB7             | partial    | the consumer recipe uses `--temp-build`                                                                                     | no parallel-build test                                                                   |
