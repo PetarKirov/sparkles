@@ -67,6 +67,8 @@ ExtraKey[][] extraKeysFrom(const(char)[] propertiesText) @safe pure
     assert(def[0][1] == ExtraKey(ExtraKeyKind.text, Key.none, "/", "/"));
     assert(def[1][1] == ExtraKey(ExtraKeyKind.modifier, Key.ctrl, null, "CTRL"));
     assert(def[1][6] == ExtraKey(ExtraKeyKind.menu, Key.none, null, "☰"), "MENU by default");
+    assert(def[0][4].label == "↑" && def[1][3].label == "←" && def[1][4].label == "↓"
+        && def[1][5].label == "→", "the arrows read as arrows");
 
     // The emulator test's layout (nix-on-droid tests/emulator), across a
     // continuation line, with a `{key: …}` object.
@@ -236,8 +238,11 @@ ExtraKey extraKey(string name, string display = null) @safe pure
 {
     import std.uni : toUpper;
 
-    const label = display.length ? display : name;
     const upper = name.toUpper;
+    // The arrows read as arrows, as Termux and the mockups draw them.
+    const label = display.length ? display
+        : upper == "UP" ? "↑" : upper == "DOWN" ? "↓"
+        : upper == "LEFT" ? "←" : upper == "RIGHT" ? "→" : name;
     Key k;
     switch (upper)
     {
@@ -283,13 +288,53 @@ ExtraKey extraKey(string name, string display = null) @safe pure
 }
 
 /**
-The modifiers latched by the row's CTRL/ALT/SHIFT buttons. A latch applies to
-the next key — from the row or the keyboard — and is then released; tapping a
-latched modifier again releases it without a key.
+The modifiers latched by the row's CTRL/ALT/SHIFT buttons. A modifier engages
+when its button goes down, so it is held for as long as the finger stays on it:
+every key typed meanwhile — on the row or the soft keyboard — takes it, and
+lifting the finger ends it. Tapped and lifted with no key in between, it stays
+latched for the next key only; tapping a latched modifier releases it.
 */
 struct Latch
 {
     Mods mods;
+    private Mods held;          // the modifiers whose button is down
+    private bool usedWhileHeld; // a key took them while held
+
+    /// `k`'s button went down: it engages, held (a latched one releases).
+    void press(Key k) @safe pure nothrow @nogc
+    {
+        toggle(k);
+        if (isOn(k))
+        {
+            set(held, k, true);
+            usedWhileHeld = false;
+        }
+    }
+
+    /// `k`'s button came up: a hold that typed something ends; a bare tap
+    /// stays latched for the next key.
+    void release(Key k) @safe pure nothrow @nogc
+    {
+        if (!get(held, k))
+            return;
+        set(held, k, false);
+        if (usedWhileHeld)
+            set(mods, k, false);
+    }
+
+    private static bool get(in Mods m, Key k) @safe pure nothrow @nogc
+        => k == Key.ctrl ? m.ctrl : k == Key.alt ? m.alt : k == Key.shift ? m.shift : false;
+
+    private static void set(ref Mods m, Key k, bool on) @safe pure nothrow @nogc
+    {
+        switch (k)
+        {
+            case Key.ctrl: m.ctrl = on; break;
+            case Key.alt: m.alt = on; break;
+            case Key.shift: m.shift = on; break;
+            default: break;
+        }
+    }
 
     /// Toggle the modifier `k` (`Key.ctrl`, `Key.alt`, `Key.shift`).
     void toggle(Key k) @safe pure nothrow @nogc
@@ -335,7 +380,10 @@ struct Latch
             e.ch = 0;
             e.text = null;
         }
-        mods = Mods.init;
+        // A one-shot latch is spent; a held one lasts until its button lifts.
+        mods = held;
+        if (held.ctrl || held.alt || held.shift)
+            usedWhileHeld = true;
         return e;
     }
 }
@@ -365,6 +413,40 @@ struct Latch
     l.toggle(Key.alt);
     l.toggle(Key.alt);
     assert(!l.any, "a second tap releases");
+}
+
+@("extra_keys.Latch.heldWhileTheButtonIsDown")
+@safe pure nothrow @nogc unittest
+{
+    KeyEvent typed(dchar c)
+    {
+        KeyEvent e;
+        e.key = Key.char_;
+        e.unshifted = c;
+        return e;
+    }
+
+    // Ctrl held on the row while c and x are typed on the keyboard: both are
+    // chords, and lifting the finger ends it.
+    Latch l;
+    l.press(Key.ctrl);
+    assert(l.isOn(Key.ctrl), "engaged on the way down");
+    assert(l.apply(typed('c')).mods.ctrl && l.apply(typed('x')).mods.ctrl);
+    l.release(Key.ctrl);
+    assert(!l.any && !l.apply(typed('v')).mods.ctrl);
+
+    // A bare tap latches for the next key only.
+    l.press(Key.ctrl);
+    l.release(Key.ctrl);
+    assert(l.isOn(Key.ctrl));
+    assert(l.apply(typed('c')).mods.ctrl && !l.any);
+
+    // A tap on a latched modifier releases it.
+    l.press(Key.alt);
+    l.release(Key.alt);
+    l.press(Key.alt);
+    l.release(Key.alt);
+    assert(!l.any);
 }
 
 private struct SpecParser
