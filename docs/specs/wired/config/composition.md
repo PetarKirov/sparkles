@@ -59,8 +59,9 @@ presentation and documentation links; it does not implement composition.
 Sections 1–6 specify policies, presence, projections, transitions, and accounting.
 [testing.md](./testing.md) owns independent traces and feasibility observations;
 [decisions.md](./decisions.md) owns local choices and remaining blockers;
-[PLAN.md](./PLAN.md) owns delivery progress. All interfaces named here are proposed,
-unimplemented symbols.
+[PLAN.md](./PLAN.md) owns delivery progress. Collection policy extensions and
+presence/projection interfaces named here are proposed, unimplemented symbols;
+the C1 scalar/section interfaces and native internal leaf seams already exist.
 
 ## 1. Contract at a glance
 
@@ -87,7 +88,8 @@ duplicate annotations, and conflicts with an explicit type-level section marker
 at compilation, naming the original member and schema type.
 
 These spellings refine the illustrative policy names in [SPEC §4](./SPEC.md#_4-selection-and-uda-directed-composition).
-They do not denote shipped code. Unannotated collections remain atomic. Ownership
+C1 already provides `Atomic` and direct `Submodule` sections; the collection
+extensions remain proposed. Unannotated collections remain atomic. Ownership
 walking through an atomic container is structural capture, not option composition.
 Section markers apply at option/submodule policy sites. Ownership-only descent
 inside an atomic container does not reinterpret nested members as options or
@@ -156,10 +158,13 @@ map keys. String and enum keys use the original resolved key policy; canonical
 wire spellings are byte-compared, not ordered by native AA iteration.
 
 The shipped arena preserves duplicate occurrences and typed decoding can overwrite
-them. Its public `fromJSON!V(JsonValue)` starts at `V`'s root policy, while the
-native context-aware decoder is private. C1/C2 therefore need an internal original
-schema-site decoder seam, with field-site dispatch and converter exclusion checked
-before use. This is an implementation prerequisite, not an available public API.
+them. Its public `fromJSON!V(JsonValue)` starts at `V`'s root policy. The internal
+`decodeOwnedScalarAt` and `aaKeyParseNative` seams preserve original scalar/value
+and map-key sites respectively; the key seam accepts the original member's key
+bytes, not a scalar JSON string substituted for a numeric enum key. C2 still
+requires occurrence-aware collection capture and generated presence around these
+leaves, with converter exclusion checked before use. Neither seam is a public
+configuration-input API or a collection resolver.
 
 **WCFG41: Key-collision timing.** Schema admission **must** prove canonical
 key-spelling injectivity over distinct valid typed keys at each original policy

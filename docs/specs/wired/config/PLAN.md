@@ -127,6 +127,15 @@ must preserve all owners and builder state. A finite hand-written clone or
 `Unique` move establishes only primitive feasibility, not this gate. No lazy or
 custom-value policy can silently enter the supported matrix.
 
+Readiness evidence: original-site recursive list/map decoding, canonical duplicate
+preflight, generated full/sparse presence, nested independent capture/copy, and
+typed null/non-null-empty preservation passed bounded checked-build probes under
+DMD and LDC. The native key parser is now package-visible; no collection resolver
+is implemented. [The recorded fixtures](./testing.md#c2-original-site-and-generated-presence-readiness)
+also expose native enum schema validation against unused case styles. Q6 remains
+open for that schema-site admission mismatch and the production projection/input
+implementation; owner contract acceptance and the full C2 gate remain pending.
+
 ## C3 — Shared inspection and links
 
 Use the concrete [inspection interface](./inspection.md#_5-proposed-report-interface)

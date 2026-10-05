@@ -324,16 +324,26 @@ do not infer approval from absence of PR comments.
 
 ### Q6 — Original-site decoding and generated collection presence
 
-**Owner:** wired implementer. **Blocks:** C1 original-policy input adapter and C2
-presence/projection implementation. **Affected:** WCFG27, WCFG39–42, WCFG46.
+**Owner:** wired implementer. **State:** scalar seam implemented; collection
+prerequisites partially verified. **Blocks:** C2 presence/projection implementation
+and original-site enum schema admission. **Affected:** WCFG39–42, WCFG46.
 
-Expose an internal native schema-site leaf decode seam preserving the original
-root/node/member policies, and construct typed supplied-member projections while
-enumerating occurrences before AA assignment. A bounded fixture must decode
-field-targeted enum key/value policies, partial submodules in a list/map, and
-duplicate canonical fields/keys without serialize/reparse or initialized-value
-presence inference. Public root-subtree decoding is known insufficient; no
-production helper is claimed available by the positive whole-root probe.
+The bounded original-site and generated-presence probes now pass under DMD and
+LDC with assertions live; [testing](./testing.md#c2-original-site-and-generated-presence-readiness)
+records the fixtures, duplicate evidence, ownership checks, and limits. Internal
+`decodeOwnedScalarAt` preserves original scalar/value policies; package-visible
+`aaKeyParseNative` preserves original map-key policy before AA assignment. Numeric
+enum keys cannot use the scalar seam on a JSON string. Public root-subtree
+decoding remains insufficient.
+
+Generated structural presence/capture is feasible, but production collection
+input, composition-aware projection/metadata, checked accounting, and rollback
+remain unimplemented. Native enum schema admission additionally rejects some
+names that collide only under an unused case style, and repeated wire names even
+for equal-key aliases. Resolve the schema-site validation mismatch before
+claiming WCFG41 coverage; do not weaken canonical injectivity or silently narrow
+the supported enum domain. These observations do not record owner acceptance of
+the composition contract.
 
 ### Q7 — Shared table mandatory-break and checked-layout repair
 
