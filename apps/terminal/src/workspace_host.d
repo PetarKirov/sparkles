@@ -1469,8 +1469,11 @@ struct WorkspaceHost
                 cast(void) ws.focusPane(pane);
                 final switch (cast(ToolAction)((hit - toolHit) % 4))
                 {
-                    case ToolAction.split:
+                    case ToolAction.splitRight:
                         cast(void) run(h, KeyCommand(TermCommand.splitRight), Rect.init);
+                        break;
+                    case ToolAction.splitDown:
+                        cast(void) run(h, KeyCommand(TermCommand.splitDown), Rect.init);
                         break;
                     case ToolAction.zoom:
                         ws.toggleZoom();
