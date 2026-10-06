@@ -130,12 +130,13 @@ int main(string[] args)
     }
 
     // A theme name no built-in carries is reported rather than silently
-    // substituted — the resolver returns null precisely so this layer, the one
-    // that can print, decides what to do about a typo.
-    if (resolveTheme(cli) is null)
+    // substituted — the resolver returns the reason precisely so this layer,
+    // the one that can print, decides what to do about a typo.
+    const lookup = resolveTheme(cli);
+    if (lookup.hasError)
     {
-        stderr.writefln("ui-gallery: unknown theme '%s' (try --list-themes)",
-            cli.theme);
+        stderr.writefln("ui-gallery: theme '%s': %s (try --list-themes)",
+            cli.theme, lookup.reason);
         return 2;
     }
 
@@ -197,6 +198,7 @@ int main(string[] args)
     auto app = Gallery(GalleryState(
         page: pageIndexOf(cli.page),
         themeIndex: themeIndexOf(cli.theme),
+        useFileTheme: loadFileTheme(cli.theme),
         profileCeiling: cli.profile,
         profile: cli.profile,
         emulator: cli.emulator,
@@ -222,6 +224,20 @@ int main(string[] args)
     }
 }
 
+
+/// Loads the theme file `spec` names into `state.fileTheme`; `false` when `spec` is a
+/// built-in's name, which the catalog's ordered list carries instead.
+private bool loadFileTheme(string spec)
+{
+    import sparkles.ui.theme_file : themeNamed;
+    import sparkles.ui.themes : builtinThemes;
+    static import state;
+
+    if (spec in builtinThemes)
+        return false;
+    state.fileTheme = themeNamed(spec).value; // validated above, so not null
+    return state.fileTheme !is null;
+}
 
 /// Where `name` sits in the catalog's own theme order. Falls back to the
 /// default rather than failing: an alias spelling (`tokyonight`) resolves as a

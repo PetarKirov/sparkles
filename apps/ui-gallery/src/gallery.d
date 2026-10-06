@@ -1159,6 +1159,7 @@ struct Gallery
 
     private void selectTheme(size_t to) @safe
     {
+        s.useFileTheme = false; // a chosen built-in replaces a loaded file
         s.themeIndex = to % themeNames.length;
         s.toastText = "theme · " ~ s.themeName;
         s.toast = typeof(s.toast).triggered(toastConfigFor(s.hasFrameClock));

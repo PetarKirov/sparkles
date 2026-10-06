@@ -145,9 +145,8 @@ AppTheme appThemeOf(O)(const O o)
 {
     static immutable Theme fallbackTheme;
 
-    immutable(Theme)* t = resolveTheme(o);
-    if (t is null)
-        t = &fallbackTheme;
+    auto resolved = resolveTheme(o);
+    immutable(Theme)* t = resolved.hasValue ? resolved.value : &fallbackTheme;
 
     return AppTheme(
         palette: t.effectivePalette,

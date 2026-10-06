@@ -47,6 +47,10 @@ The built-in themes in a $(B fixed order), by their canonical names.
 theme — and a browser that cycles with `]` needs both. This is the catalog's
 ordering, stated once.
 */
+/// The theme file `--theme` named, loaded once at startup (`FMT`); `null`
+/// when the theme is a built-in. One per process, like the command line.
+immutable(Theme)* fileTheme;
+
 static immutable string[] themeNames = [
     "one-dark-pro", "dracula", "nord", "monokai",
     "github-dark", "github-light", "github-dark-dimmed",
@@ -392,6 +396,9 @@ struct GalleryState
 
     // ── theming ─────────────────────────────────────────────────────────────
     size_t themeIndex = 7; /// `tokyo-night` — the shared default (`CLI3`)
+    /// Whether the theme is the file `--theme` loaded ($(LREF fileTheme))
+    /// rather than a built-in; cleared once a built-in is chosen.
+    bool useFileTheme;
 
     // ── capability profile (`CAP5`) ─────────────────────────────────────────
     /// The widest choice the switch may reach — `--profile`, else `native`.
@@ -497,10 +504,11 @@ struct GalleryState
 
     /// The theme every slot on every page resolves against.
     ref immutable(Theme) theme() const scope
-        => builtinThemes[themeNames[themeIndex]];
+        => useFileTheme && fileTheme !is null ? *fileTheme : builtinThemes[themeNames[themeIndex]];
 
     /// The active theme's name, for the header.
-    string themeName() const scope => themeNames[themeIndex];
+    string themeName() const scope
+        => useFileTheme && fileTheme !is null ? fileTheme.name : themeNames[themeIndex];
 
     /// `true` iff the target can hover — the one predicate that gates every
     /// pointer-only affordance. Consulted where an affordance is $(I drawn), so
@@ -812,4 +820,27 @@ ubyte[] swatchPixels(in Size size) @safe pure nothrow
     const px = swatchPixels(swatchSize);
     assert(px.length == cast(size_t) swatchSize.width * swatchSize.height * 4);
     assert(px[3] == 0xFF && px[$ - 1] == 0xFF, "opaque throughout");
+}
+
+@("ui_gallery.state.aFileThemeIsShownUntilABuiltInIsChosen")
+@system unittest
+{
+    import sparkles.ui.theme_file : exportTheme, loadThemeDocument;
+    import sparkles.ui.themes : builtinThemes;
+
+    // `--theme <file>`: the loaded theme is what every slot resolves against
+    // while the flag is set, and the catalog's own list once it is cleared.
+    auto loaded = loadThemeDocument(exportTheme(builtinThemes["nord"]));
+    assert(loaded.hasValue);
+    auto owned = new Theme;
+    *owned = loaded.value.theme;
+    owned.name = "my-theme";
+    fileTheme = cast(immutable(Theme)*) owned;
+    scope (exit) fileTheme = null;
+
+    auto s = GalleryState(useFileTheme: true);
+    assert(s.themeName == "my-theme");
+    assert(s.theme.defaultBg == builtinThemes["nord"].defaultBg);
+    s.useFileTheme = false;
+    assert(s.themeName == themeNames[s.themeIndex]);
 }
