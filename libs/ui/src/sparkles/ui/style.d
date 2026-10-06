@@ -91,7 +91,7 @@ enum Slot : ubyte
     /// a second accent for contrast with the first (badges, secondary actions)
     @WireName("accent.secondary") accentSecondary,
     /// link text (`TOK3`; the primary accent by default)
-    @WireName("link.fg") link,
+    @WireName("link") link,
     /// the focus ring drawn around the focused element
     @WireName("focus.ring") focusRing,
     /// hoverable-token underline (`.twoslash-hover`, always on)
@@ -124,7 +124,7 @@ enum Slot : ubyte
     /// emphasized chrome text (title, active segment, key hints)
     @WireName("chrome.accent") chromeAccent,
     /// line-number / marker column (foreground only)
-    @WireName("gutter.fg") gutter,
+    @WireName("gutter") gutter,
     /// the line-number gutter STRIP: its own band, distinct from both the
     /// page and a code panel's surface
     @WireName("gutter.band") gutterBand,
@@ -133,7 +133,7 @@ enum Slot : ubyte
     /// scrollbar thumb
     @WireName("scrollbar.thumb") thumb,
     /// selected-content tint (background only)
-    @WireName("selection.bg") selection,
+    @WireName("selection") selection,
     /// the focused pane's header band (accented background)
     @WireName("chrome.focused") chromeFocused,
 
@@ -488,49 +488,49 @@ struct Palette
     // Cell-typed metrics are the layout's own unit; px-typed ones (radius,
     // weights, shadow) carry a projection onto a cell target (`TOK7`/`GLY2`).
     /// popup corner radius (px in GUI, ignored in cells)
-    @WireName("radius.overlay") int overlayRadius = 4;
+    @WireName("overlay.radius") int overlayRadius = 4;
     /// popup horizontal padding, in cells
-    @WireName("pad.overlay.x") int overlayPadX = 1;
+    @WireName("overlay.pad.inline") int overlayPadX = 1;
     /// popup vertical padding, in cells
-    @WireName("pad.overlay.y") int overlayPadY = 1;
+    @WireName("overlay.pad.block") int overlayPadY = 1;
     /// blank rows between code and a detached meta block
-    @WireName("gap.detach") int detachGap = 1;
+    @WireName("overlay.gap") int detachGap = 1;
 
     /// The widest a hover popup may grow, in cells. The backend narrows this
     /// further to the room actually left at the popup's anchor — the metric is
     /// the ceiling, not the width (`LAY10`: a view never invents one).
     /// Popup docs width maximum, in cells. Handed to the layout engine as
-    @WireName("width.overlay.max") int overlayMaxWidth = 120;
+    @WireName("overlay.width.max") int overlayMaxWidth = 120;
     /// `Widget.width.max`, which wraps the run itself rather than the view
     /// packing lines.
     /// Continuation indent, in cells, for a signature broken across rows.
-    @WireName("width.docs.max") int docsMaxWidth = 56;
+    @WireName("docs.width.max") int docsMaxWidth = 56;
     /// The narrowest a hover popup may be squeezed to. Below this a popup
-    @WireName("indent.signature") int signatureIndent = 4;
+    @WireName("signature.indent") int signatureIndent = 4;
     /// stops informing and starts shredding words, so a backend with less room
     /// than this shifts the popup instead of shrinking it further.
-    @WireName("width.overlay.min") int overlayMinWidth = 24;
+    @WireName("overlay.width.min") int overlayMinWidth = 24;
 
     // Sub-cell chrome geometry, in device px, authored to match `twoslash.css`
     // (the CSS-lockstep test guards these against the stylesheet). The TUI cell
     // grid approximates: any non-zero border → a 1-cell box-drawing rule; radius
     // and shadow are ignored (and logged), since a cell grid has no sub-cell edge.
     /// hairline border (popup / `.twoslash-hover` underline)
-    @WireName("border.weight") int borderWeight = 1;
+    @WireName("border.width") int borderWeight = 1;
     /// left accent bar (error / warn / tag / query lines)
-    @WireName("border.accent") int accentWeight = 3;
+    @WireName("border.accent.width") int accentWeight = 3;
     /// popup drop-shadow x offset (`box-shadow` 0 1px 4px)
-    @WireName("shadow.dx") int shadowDx = 0;
+    @WireName("shadow.offset.x") int shadowDx = 0;
     /// popup drop-shadow y offset
-    @WireName("shadow.dy") int shadowDy = 1;
+    @WireName("shadow.offset.y") int shadowDy = 1;
     /// popup drop-shadow blur radius
     @WireName("shadow.blur") int shadowBlur = 4;
     /// popup code/signature size (`--twoslash-code-font-size` 1em)
-    @WireName("font.scale.code") ushort codeFontScale = 100;
+    @WireName("code.font.scale") ushort codeFontScale = 100;
     /// popup docs size (`.twoslash-popup-docs` 0.8em)
-    @WireName("font.scale.docs") ushort docsFontScale = 80;
+    @WireName("docs.font.scale") ushort docsFontScale = 80;
     /// JSDoc `@tag` chip size (`.twoslash-popup-docs-tag-name` 0.92em)
-    @WireName("font.scale.tag") ushort tagFontScale = 92;
+    @WireName("tag.font.scale") ushort tagFontScale = 92;
     /// popup arrow square size (`.twoslash-popup-arrow` 6px)
     @WireName("arrow.size") int arrowSize = 6;
 
