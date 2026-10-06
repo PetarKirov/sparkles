@@ -66,9 +66,9 @@ independent-review item stays unmet until a second reviewer reads it.
 ## M1: base vocabulary, algorithms and MemVfs
 
 **Obligations.** `VFE1` (the base types), `VFE2`, `VFE4`; `VFP1`–`VFP8`;
-`VFR1`, `VFR2`, `VFR4` (with a backend double); `VFO1`–`VFO9` on `MemVfs`;
+`VFR1`, `VFR2`, `VFR4` (with a backend double); `VFO1`–`VFO10` on `MemVfs`;
 `VFH1`–`VFH6`; `VFD1`–`VFD5`; `VFB1`–`VFB3`; `VFM1`–`VFM5`.
-**Prerequisites.** S3, S4. Decide open question O1.
+**Prerequisites.** S3, S4 (both passed).
 **Deliverable.** `sparkles.base.io.errors`; `sparkles.base.vfs` and its
 `.walk`, `.remove`, `.write` and `.mem` modules, with unit tests in feature
 modules, not `package.d`.
@@ -87,7 +87,7 @@ so this milestone adds `sparkles.base.io.errors` beside it.
 ## M2: the blocking backend
 
 **Obligations.** `VFE3`; `VFR3`, `VFR5`, `VFR6`; `VFH7`, `VFH8`;
-`VFN1`–`VFN13`; `VFB4`, `VFB6`; `VFO1`–`VFO9` and `VFD1`–`VFD5` on
+`VFN1`–`VFN13`; `VFB4`, `VFB6`; `VFO1`–`VFO10` and `VFD1`–`VFD5` on
 `BlockingVfs`.
 **Prerequisites.** M1; S1; S2. Decide open question O2.
 **Deliverable.** The `sparkles:event-horizon-sys` package with `BlockingVfs`

@@ -8,7 +8,8 @@ repository owner in a four-round design review held from September 23 to 28,
 [safe path traversal](../../../research/safe-path-traversal/index.md) research
 catalog and superseded an earlier plan for a `sparkles.base.dir_handle`
 module. DV19–DV22 were accepted in an editorial review held from October 3 to
-5, 2026, which reshaped the specification for its readers._
+5, 2026, which reshaped the specification for its readers. DV23 was decided on
+October 6, 2026._
 
 ## Accepted
 
@@ -279,14 +280,33 @@ with an explicit access control list, refused as `unsupported`, or ignored.
 **Revisit if** a consumer needs access control richer than owner-only versus
 shared on Windows, or a floor finer than one bit.
 
+### DV23: Symbolic link targets
+
+**Question.** Should `symlinkAt` refuse targets that point outside the root?
+
+**Alternatives.** (a) Store every target verbatim. (b) Refuse absolute
+targets, as cap-std does. (c) Also refuse relative targets whose `..`
+components climb above the root, judged from the depth at which the handle
+was reached. (d) Allow an absolute target when the call passes
+`ambientAuthority()`.
+
+**Evidence.** No walk through this interface follows an absolute target, so
+such a link only misleads tools that follow links. Whether a relative target
+escapes depends on the link's position, which a later rename of the link or
+of any directory above it changes; a creation-time check of (c) is defeated by
+renaming a directory upwards, and could not be kept as a property of the
+tree.
+
+**Choice.** (b), for simplicity
+([`VFO10`](./SPEC.md#vfo10-symbolic-link-targets)). It is one lexical check,
+identical on every platform, and it closes the case cap-std closes. Code that
+needs an absolute link creates it outside this interface.
+
+**Revisit if** a consumer extracts archives through this interface and needs
+protection against relative escaping links, the symlink variant of
+zip-slip; (c) is the candidate then.
+
 ## Open
-
-### O1: Should `symlinkAt` refuse absolute targets?
-
-cap-std refuses to create an absolute symlink so a sandboxed program cannot
-plant a trap for other tools. The specification stores targets verbatim.
-**Affects:** [`VFO3`](./SPEC.md#vfo3-the-operation-set). **Decide by:** the
-base milestone ([PLAN M1](./PLAN.md#m1-base-vocabulary-algorithms-and-memvfs)).
 
 ### O2: Case-insensitive names on Windows
 
