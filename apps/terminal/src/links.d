@@ -12,6 +12,7 @@ it, never over it) and L2 as a sheet, by `ui.overlayStyle` (`TCF10`).
 */
 module links;
 
+import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
@@ -151,13 +152,13 @@ final class LinkConfirm : Surface, Anchored
             lines ~= prose(b, (from.length ? "From the terminal output of " ~ from ~ ". " : "")
                 ~ "The address shown is the one that opens.", Slot.textSecondary);
         }
-        buttons ~= button(b, "⧉", "Copy", ctx.labels, Hit.copy, minRows: ctx.targetRows);
+        buttons ~= button(b, iconText(ActionIcon.copy), "Copy", ctx.labels, Hit.copy, minRows: ctx.targetRows);
         if (shareable)
-            buttons ~= button(b, "↗", "Share", ctx.labels, Hit.share, minRows: ctx.targetRows);
+            buttons ~= button(b, iconText(ActionIcon.share), "Share", ctx.labels, Hit.share, minRows: ctx.targetRows);
         if (ctx.style != OverlayStyle.anchored)
             buttons ~= button(b, "✕", "Cancel", ctx.labels, Hit.cancel, minRows: ctx.targetRows);
         if (openable)
-            buttons ~= button(b, "↗", ctx.style == OverlayStyle.anchored ? "Open" : "Open in browser",
+            buttons ~= button(b, iconText(ActionIcon.open), ctx.style == OverlayStyle.anchored ? "Open" : "Open in browser",
                 ctx.labels, Hit.open, primary: true, minRows: ctx.targetRows);
         else
             lines ~= label(b, "Only http, https and mailto links open (and links.schemes).",
@@ -258,8 +259,8 @@ private string hostOf(string uri) @safe pure
     foreach (ref n; place(l.build(card, 60), 60, 10, 0, 0, 1, 1, Place.top).tree.nodes)
         texts ~= n.text;
     // A button's icon and caption are separate runs: the caption is in the interface face.
-    assert(texts.canFind("OSC 8 link · https") && texts.canFind("⧉") && texts.canFind("Copy")
-        && texts.canFind("↗") && texts.canFind("Open"));
+    assert(texts.canFind("OSC 8 link · https") && texts.canFind(iconText(ActionIcon.copy)) && texts.canFind("Copy")
+        && texts.canFind(iconText(ActionIcon.open)) && texts.canFind("Open"));
 
     SurfaceContext sheet = {style: OverlayStyle.sheet};
     texts = null;

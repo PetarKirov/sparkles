@@ -19,6 +19,7 @@ $(LIST
 */
 module page_kit;
 
+import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
@@ -302,8 +303,9 @@ the keyboard, else the query, else `placeholder` — muted.
 uint searchField(ref Builder b, string query, bool focused, string placeholder,
     int rows = 1, size_t hitId = PageHit.search) @safe
 {
-    const shown = query.length ? "⌕ " ~ query ~ (focused ? "▏" : "")
-        : focused ? "⌕ ▏" : "⌕ " ~ placeholder;
+    const mark = iconText(ActionIcon.search) ~ " ";
+    const shown = query.length ? mark ~ query ~ (focused ? "▏" : "")
+        : focused ? mark ~ "▏" : mark ~ placeholder;
     // The placeholder is a sentence; what the user types stays in the cell
     // font, as any typed value does.
     const typed = query.length || focused;

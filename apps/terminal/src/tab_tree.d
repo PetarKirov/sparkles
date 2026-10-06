@@ -279,6 +279,8 @@ final class TabTree : Surface
 
 version (unittest)
 {
+    import sparkles.ui.glyphs : ActionIcon, iconText;
+
     private TreeTab[] sample() @safe
     {
         return [
@@ -321,10 +323,10 @@ version (unittest)
     assert(shown.canFind("    ❯ zsh") && !shown.canFind("    ≡ nvim viewer.md"),
         "only the current tab is open");
     assert(shown.canFind("●"), "the unseen mark");
-    assert(shown[0].canFind("⌕"), "the search field on top on the desktop");
+    assert(shown[0].canFind(iconText(ActionIcon.search)), "the search field on top on the desktop");
 
     SurfaceContext touch = {touch: true};
-    assert(texts(t.build(touch, 40))[$ - 1].canFind("⌕"), "at the bottom on touch");
+    assert(texts(t.build(touch, 40))[$ - 1].canFind(iconText(ActionIcon.search)), "at the bottom on touch");
 }
 
 @("tab_tree.key.searchOpensMatchingTabs")
@@ -405,7 +407,7 @@ long fuzzyScore(scope const(char)[] query, scope const(char)[] text) @trusted
     const full = place(t.build(rail, 40), 40, 30, 0, 0, 1, 1, Place.top);
     assert(full.bounds.height == 30);
     foreach (i, ref n; full.tree.nodes)
-        if (n.text.length && n.text[0 .. 3] == "⌕")
+        if (n.text.length >= 3 && n.text[0 .. 3] == iconText(ActionIcon.search))
             assert(full.frames[i].rect.y == 29, "the search field on the last row");
 
     SurfaceContext pill = rail;

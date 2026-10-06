@@ -29,6 +29,7 @@ field (the `Surface` contract).
 */
 module settings_page;
 
+import sparkles.ui.glyphs : ActionIcon, iconText;
 import core.time : MonoTime, seconds;
 
 import std.conv : text;
@@ -719,7 +720,7 @@ final class SettingsPage : Surface, Scrollable
     private uint filterRow(ref Builder b, in SurfaceContext ctx) @trusted
     {
         const q = pane.tv.filterQuery.idup;
-        TextSpan[] spans = [TextSpan(text: "⌕ ", slot: Slot.muted, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body))];
+        TextSpan[] spans = [TextSpan(text: iconText(ActionIcon.search) ~ " ", slot: Slot.muted, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body))];
         if (q.length)
             spans ~= TextSpan(text: q, slot: Slot.textPrimary, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body));
         else if (!pane.tv.searching)

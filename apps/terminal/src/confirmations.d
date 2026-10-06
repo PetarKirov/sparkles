@@ -20,6 +20,7 @@ answer.
 */
 module confirmations;
 
+import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.input.events : KeyEvent;
 import sparkles.terminal_view.component : TerminalView;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer;
@@ -86,7 +87,7 @@ final class PasteConfirm : Surface
         body_ ~= row(b, [
             button(b, "×", "Cancel", ctx.labels, Hit.cancel, minRows: ctx.targetRows),
             button(b, "⏎", "As one line", ctx.labels, Hit.oneLine, minRows: ctx.targetRows),
-            button(b, "✓", "Paste", ctx.labels, Hit.paste, primary: true, minRows: ctx.targetRows),
+            button(b, iconText(ActionIcon.paste), "Paste", ctx.labels, Hit.paste, primary: true, minRows: ctx.targetRows),
         ]);
         return b.finish(band(b, body_, fullWidth: false));
     }
@@ -151,11 +152,11 @@ final class ClipboardRead : Surface
             Slot.textPrimary, bold: true);
         body_ ~= prose(b, where ~ " asked through OSC 52. It could be a remote host over ssh.");
         body_ ~= row(b, [
-            button(b, "✓", "Allow once", ctx.labels, Hit.allowOnce, primary: true,
+            button(b, iconText(ActionIcon.allowOnce), "Allow once", ctx.labels, Hit.allowOnce, primary: true,
                 minRows: ctx.targetRows),
-            button(b, "∞", "Always for this pane", ctx.labels, Hit.allowAlways,
+            button(b, iconText(ActionIcon.alwaysAllow), "Always for this pane", ctx.labels, Hit.allowAlways,
                 minRows: ctx.targetRows),
-            button(b, "×", "Deny", ctx.labels, Hit.deny, minRows: ctx.targetRows),
+            button(b, iconText(ActionIcon.deny), "Deny", ctx.labels, Hit.deny, minRows: ctx.targetRows),
         ]);
         return b.finish(band(b, body_));
     }
