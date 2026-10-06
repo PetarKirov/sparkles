@@ -14,7 +14,7 @@ declaration caps it at paint time (`CAP4`: never at theme time).
 
 $(LREF Mark) is the status-mark vocabulary (`GLY3`, `ACC3`): one glyph per
 status in each of three charsets, declared on the member and consistent with
-the ladder by test.
+the ladder by test, and $(LREF ActionIcon) the action icons, in the same three.
 */
 module sparkles.ui.glyphs;
 
@@ -95,7 +95,8 @@ a one-cell glyph of strictly weaker need, so repeated application reaches
 ASCII. Marks step through their own charsets ($(LREF Mark)); box drawing
 folds to its ASCII stroke; blocks thin to the box stroke of the same weight or
 to a shade; finer rasters and braille coarsen to a shade; the common arrows
-and bullets have ASCII look-alikes; anything else — an icon with no mark, a
+and bullets have ASCII look-alikes; an $(LREF ActionIcon) steps down its own rungs;
+anything else — an icon with neither a mark nor an $(LREF ActionIcon), a
 letter the target cannot encode — becomes $(LREF replacementGlyph).
 */
 dchar fallbackOf(dchar g)
@@ -107,6 +108,15 @@ dchar fallbackOf(dchar g)
         if (g == mg.unicode && mg.unicode >= 0x80
                 && !(g >= 0x2500 && g <= 0x257F)) // a box stroke folds as a stroke
             return mg.ascii;
+    }
+    // An icon steps down its own ladder (a shared Unicode stand-in, such as
+    // `▶` or `✕`, folds as the switch below would).
+    foreach (ref ig; iconTable)
+    {
+        if (g == ig.nerdFont)
+            return ig.unicode;
+        if (g == ig.unicode)
+            return ig.ascii;
     }
     if (g >= 0x2500 && g <= 0x257F)
         return asciiStroke(g);
@@ -226,6 +236,65 @@ dchar markGlyph(Mark m, MarkCharset preferred, in TargetCapabilities caps)
     return projectGlyph(g, caps);
 }
 
+// ── action icons (GLY1, GLY4) ───────────────────────────────────────────────
+
+/// One icon's glyph in each charset — the same three rungs as a mark's.
+alias iconGlyphs = markGlyphs;
+
+/**
+The action icons buttons and menus name (`GLY1`): a Nerd Font icon, a
+Unicode stand-in a target without Nerd Font icons draws instead, and a
+one-cell ASCII stand-in below that, so an icon steps down its own ladder
+rather than to $(LREF replacementGlyph). The `nf-*` names are those of the
+Nerd Fonts release the flake pins (`GLY4`).
+*/
+enum ActionIcon : ubyte
+{
+    @iconGlyphs('', '↗', '^') share,             /// nf-fa-share_alt
+    @iconGlyphs('', '⇗', '>') open,              /// nf-fa-folder_open_o
+    @iconGlyphs('', '⧉', '=') copy,              /// nf-fa-copy
+    @iconGlyphs('', '⎘', 'v') paste,             /// nf-fa-clipboard_alt
+    @iconGlyphs('', '⌕', '/') search,            /// nf-fa-search
+    @iconGlyphs('', '▶', '>') run,               /// nf-fa-play_circle_o
+    @iconGlyphs('', '↻', 'r') rerun,             /// nf-fa-repeat
+    @iconGlyphs('', '❯', '$') shell,             /// nf-cod-terminal
+    @iconGlyphs('\U000F07F5', '⚿', '*') autofill,      /// nf-md-form_textbox_password
+    @iconGlyphs('', '✔', '+') allowOnce,         /// nf-fa-check (`Mark.ok`'s)
+    @iconGlyphs('', '∞', '&') alwaysAllow,       /// nf-fa-check_double
+    @iconGlyphs('', '✕', 'x') deny,              /// nf-fa-ban
+}
+
+/// Each icon's glyphs, by ordinal, read from the members' UDAs.
+static immutable iconGlyphs[] iconTable = () {
+    iconGlyphs[] t;
+    static foreach (i; EnumMembers!ActionIcon)
+        t ~= getUDAs!(i, iconGlyphs)[0];
+    return t;
+}();
+
+static foreach (n, i; EnumMembers!ActionIcon)
+    static assert(i == n, "ActionIcon must stay a contiguous 0-based enum");
+
+// Each icon's richest glyph as UTF-8, for a component's text.
+private static immutable string[] iconStrings = () {
+    import std.utf : encode;
+
+    string[] t;
+    foreach (ref ig; iconTable)
+    {
+        char[4] buf;
+        t ~= buf[0 .. encode(buf, ig.nerdFont)].idup;
+    }
+    return t;
+}();
+
+/**
+`i`'s richest glyph, as text: what a component asks for. A cell target caps
+it at paint time ($(LREF projectGlyph)): the Unicode stand-in without Nerd
+Font icons, the ASCII one without Unicode.
+*/
+string iconText(ActionIcon i) => iconStrings[i];
+
 // ── tests ───────────────────────────────────────────────────────────────────
 
 version (unittest)
@@ -243,6 +312,8 @@ version (unittest)
         ~ "\U0001FB00\U0001FB1E\U0001FB3B\U0001CD00\U0001CDE5⠀⠁⣿"
         ~ "▸▶►→›»⟩◂◀◄←‹«⟨⏎⇄↔▾▼↓▴▲↑·•∙▪■◆♦▫□◇—–‒―…✕×✗✓●◉○◌◯⊘✔✖⚠◐"
         ~ "\uF00C\uF00D\uF071\uF05A\uF10C\uF110\uF068\uE0B0\U000F0001"
+        ~ "\uF1E0\uF115\uF0C5\uF07F\uF002\uF01D\uF01E\uEA85\U000F07F5\uEE29\uF05E"
+        ~ "\u2197\u21D7\u29C9\u2398\u2315\u21BB\u276F\u26BF\u221E"
         ~ "日é€π";
 }
 
@@ -333,4 +404,33 @@ unittest
                 assert(markGlyph(a, MarkCharset.ascii, b) != markGlyph(c, MarkCharset.ascii, b));
                 assert(markGlyph(a, MarkCharset.unicode, e) != markGlyph(c, MarkCharset.unicode, e));
             }
+}
+
+@("ui.glyphs.icons.oneCellAndConsistentWithTheLadder")
+unittest
+{
+    const b = capabilitiesOf(Profile.baseline);
+    const e = capabilitiesOf(Profile.enhanced);
+    const f = capabilitiesOf(Profile.full);
+    static foreach (i; EnumMembers!ActionIcon)
+    {{
+        enum ig = getUDAs!(i, iconGlyphs)[0];
+        // One cell in every charset, as a mark is, so a button's width does
+        // not change with the target.
+        assert(codepointWidth(ig.nerdFont) == 1 && codepointWidth(ig.unicode) == 1
+            && ig.ascii < 0x80);
+        assert(needOf(ig.nerdFont) == GlyphNeed.nerdFont);
+        // The icon's own ladder, not the `?` an unknown icon falls to.
+        assert(projectGlyph(ig.nerdFont, f) == ig.nerdFont);
+        assert(projectGlyph(ig.nerdFont, e) == ig.unicode);
+        assert(projectGlyph(ig.nerdFont, b) == ig.ascii);
+    }}
+}
+
+@("ui.glyphs.iconText.theRichestGlyph")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(iconText(ActionIcon.share) == "");
+    assert(iconText(ActionIcon.autofill) == "\U000F07F5", "a code point beyond the BMP");
 }
