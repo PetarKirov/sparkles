@@ -327,9 +327,11 @@ A glyph whose `post` lookup failed and which has no `CFF` name **must** return
 the `post` error. One lookup **must** cost time linear in the `CFF` header, the
 INDEX headers, the Top DICT and the charset. `glyphNameIndex` (`FTP30`)
 **must** resolve every glyph from whichever source names it, `post` or `CFF`,
-storing one entry per glyph: `scratch` of `numGlyphs` entries always
-suffices, and is the length it reports. Lookups through the index are then
-constant time. Neither operation **may** allocate.
+in one pass over the `post` strings and one walk of the charset.
+`glyphNameIndexLength` reports the `scratch` it needs: one entry per glyph,
+plus one per stored `post` 2.0 string, whose offset a constant-time lookup
+needs. Lookups through the index are then constant time. Neither operation
+**may** allocate.
 
 ## 6. Classification and inspection
 

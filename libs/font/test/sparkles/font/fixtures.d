@@ -225,3 +225,57 @@ ubyte[] utf16be(string ascii)
 TableData[] minimalTables(uint numGlyphs = 2, const(uint[2])[] map = [[0x41, 1]])
     => [TableData("cmap", cmap([CmapRecord(3, 1, cmapFormat0(map))])),
         TableData("head", head(2048)), TableData("maxp", maxp(numGlyphs))];
+
+/// A `post` header of `version_` (16.16), followed by `tail`.
+ubyte[] postTable(uint version_, const(ubyte)[] tail = null)
+{
+    auto t = u32(version_);
+    t.length = 32;
+    return t ~ tail;
+}
+
+/// A `post` 2.0 body: glyph name indices then Pascal strings.
+ubyte[] post2(const(uint)[] indices, const(string)[] strings)
+{
+    ubyte[] t = u16(cast(uint) indices.length);
+    foreach (i; indices) t ~= u16(i);
+    foreach (s; strings) t ~= u8(cast(uint) s.length) ~ cast(const(ubyte)[]) s;
+    return postTable(0x0002_0000, t);
+}
+
+/// A CFF INDEX of `objects`, with 1- or 2-byte offsets.
+ubyte[] cffIndex(const(ubyte[])[] objects)
+{
+    if (!objects.length) return u16(0);
+    size_t total = 1;
+    foreach (o; objects) total += o.length;
+    const offSize = total <= 255 ? 1 : 2;
+    ubyte[] t = u16(cast(uint) objects.length) ~ u8(offSize);
+    size_t at = 1;
+    foreach (o; objects ~ []) { t ~= offSize == 1 ? u8(cast(uint) at) : u16(cast(uint) at); at += o.length; }
+    t ~= offSize == 1 ? u8(cast(uint) at) : u16(cast(uint) at);
+    foreach (o; objects) t ~= o;
+    return t;
+}
+
+/// A `CFF ` table with custom `strings` and a charset: a predefined id (0, 1, 2)
+/// when `charset` is null, else these bytes, placed after the INDEXes.
+ubyte[] cffTable(const(string)[] strings, const(ubyte)[] charset, uint predefined = 0, bool cidKeyed = false)
+{
+    ubyte[][] stringObjects;
+    foreach (s; strings) stringObjects ~= cast(ubyte[]) s.dup;
+    const header = u8(1) ~ u8(0) ~ u8(4) ~ u8(1);
+    const names = cffIndex([cast(ubyte[]) "Test".dup]);
+    const stringIndex = cffIndex(stringObjects);
+    const globalSubrs = u16(0);
+    // Top DICT: [ROS: 3 operands, 12 30] charset (int32) 15.
+    const rosOps = cidKeyed ? u8(139) ~ u8(139) ~ u8(139) ~ u8(12) ~ u8(30) : null;
+    const dictLength = rosOps.length + 6;
+    const topIndexLength = 2 + 1 + 2 + dictLength;
+    const charsetAt = charset is null ? predefined
+        : cast(uint)(header.length + names.length + topIndexLength + stringIndex.length + globalSubrs.length);
+    const dict = rosOps ~ u8(29) ~ u32(charsetAt) ~ u8(15);
+    const top = cffIndex([dict.dup]);
+    assert(top.length == topIndexLength);
+    return (header ~ names ~ top ~ stringIndex ~ globalSubrs ~ charset).dup;
+}
