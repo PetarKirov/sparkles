@@ -118,6 +118,40 @@ template monotoneMeasurePrefixes(T)
         enum bool monotoneMeasurePrefixes = false;
 }
 
+/**
+A text measurer behind two delegates, so a caller that names no backend can
+still lay out in a host's faces (`GLY10`): a styled run asks the host, and with
+no host a run is as wide as its cells and one row tall.
+*/
+struct DelegateMeasure
+{
+    int delegate(scope const(char)[], in TextStyle) @safe styledWidth; /// a run's cells in its style
+    int delegate(in TextStyle) @safe styledRows; /// the rows one line of a style takes
+    /// Its prefixes never measure wider than the runs they begin: cells with
+    /// no host, and a host's measurer (`GuiMeasure`) certifies the same. The
+    /// wrap solver needs the certificate for its linear search; without it a
+    /// long paragraph (a licence text) took the exhaustive one and never ended.
+    enum bool monotonePrefixes = true;
+
+    /// The cell font's width of `s`.
+    int width(scope const(char)[] s) const @safe pure nothrow @nogc => cast(int) visibleWidth(s);
+    /// The width of `s` in `style`, in whole cells.
+    int width(scope const(char)[] s, in TextStyle style) @safe
+        => styledWidth is null ? cast(int) visibleWidth(s) : styledWidth(s, style);
+    /// The rows one line in `style` occupies.
+    int rows(in TextStyle style) @safe => styledRows is null ? 1 : styledRows(style);
+}
+
+@("ui.layout.DelegateMeasure.fallsBackToCells")
+@safe unittest
+{
+    static assert(isStyledTextMeasure!DelegateMeasure);
+    DelegateMeasure m;
+    assert(m.width("abc", TextStyle.init) == 3 && m.rows(TextStyle.init) == 1);
+    m.styledWidth = (scope const(char)[] s, in TextStyle) => 1;
+    assert(m.width("abc", TextStyle.init) == 1, "a host measures");
+}
+
 /// A run's width through `tm`, in `style` where the measurer reads styles.
 int measureWidth(TM)(ref TM tm, scope const(char)[] s, in TextStyle style)
 {

@@ -34,7 +34,7 @@ import sparkles.twoslash.render_widgets : viewTwoslashDocumentInto;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect;
-import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.layout : DelegateMeasure, Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollView;
 import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, ElementStore,
     HoverTarget, hoverTargets, KeyedRect, keyedRects, selectionRects,
@@ -251,8 +251,24 @@ struct ViewerModel
     int tabWidth = 4;               /// tab stops in the raw view (--tab-width)
     bool listWhitespace;            /// vim `list` (--list-whitespace)
     bool codeLineNumbers = true;    /// in-panel fence numbers ('c' toggles)
+    /// The host's text measurer: a GUI host's lays interface-face runs out at
+    /// their real widths (`GLY10`); none measures in cells.
+    DelegateMeasure measure;
     /// The face the preview's prose reads in (`MdViewOptions.proseRole`).
     FontRole proseRole = FontRole.inherit;
+
+    // The document laid out in the host's faces only when its prose reads in
+    // one: the measured wrap search asks the host for every candidate line,
+    // minutes on a long document such as the credits, and a document all in
+    // the cell font measures the same by its cells.
+    private Frame[] layoutDoc(in WidgetTree t, in Constraints c)
+        => proseRole == FontRole.inherit ? layout(t, c) : layout(t, c, measure);
+
+    // ditto, for its display list.
+    private DrawOp[] displayListOf(in WidgetTree t, in Frame[] f)
+        => proseRole == FontRole.inherit
+            ? buildDisplayList(t, f, palette, pageFg, pageBg)
+            : buildDisplayList(t, f, palette, pageFg, pageBg, measure);
     /// `--code-overflow`: long fence lines scroll behind a per-fence
     /// viewport (default) or wrap in-panel.
     OverflowPolicy codeOverflow;
@@ -541,7 +557,7 @@ struct ViewerModel
         b.nodes[docRoot].scrollsX = true;
         auto pass1 = b.finish(docRoot);
         const rows1 = documentRows(pass1,
-            layout(pass1, Constraints(maxW: widthCols - chrome)));
+            layoutDoc(pass1, Constraints(maxW: widthCols - chrome)));
         if (channels.length == 0)
             return pass1;
         fillChannels(channels, rows1);
@@ -1120,8 +1136,8 @@ struct ViewerModel
                 diffSession, diffTypes, widthCols);
             // Scrolled sideways by this model, like every document (`LAY16`).
             tree.nodes[tree.root].scrollsX = true;
-            frames = layout(tree, Constraints(maxW: widthCols));
-            ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
+            frames = layoutDoc(tree, Constraints(maxW: widthCols));
+            ops = displayListOf(tree, frames);
             derive(withTargets: false);
             // `DVG1`: the file containers are keyed, so their laid-out rows
             // are a lookup rather than a re-walk of the tree.
@@ -1150,7 +1166,7 @@ struct ViewerModel
                 CodeViewOptions(
                     tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
             tree = gutter(b, docRoot);
-            frames = layout(tree, Constraints(maxW: widthCols));
+            frames = layoutDoc(tree, Constraints(maxW: widthCols));
             ops = buildDisplayList(tree, frames,
                 defaultTwoslashPalette(schemeForBackground(pageBg)),
                 pageFg, pageBg);
@@ -1195,9 +1211,8 @@ struct ViewerModel
                     inlineFoldMarker: inlineFoldMarker,
                     tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
             tree = gutter(b, docRoot);
-            frames = layout(tree, Constraints(maxW: widthCols));
-            ops = buildDisplayList(tree, frames,
-                palette, pageFg, pageBg);
+            frames = layoutDoc(tree, Constraints(maxW: widthCols));
+            ops = displayListOf(tree, frames);
             derive(withTargets: foldable.length != 0);
             cells = null;
             fences.length = 0;
@@ -1262,9 +1277,8 @@ struct ViewerModel
             alias mb = arena_;
             const mdRoot = viewMarkdownInto(mb, doc, opt);
             tree = gutter(mb, mdRoot);
-            frames = layout(tree, Constraints(maxW: widthCols));
-            ops = buildDisplayList(tree, frames,
-                palette, pageFg, pageBg);
+            frames = layoutDoc(tree, Constraints(maxW: widthCols));
+            ops = displayListOf(tree, frames);
             derive(withTargets: true);
         }
         // A document's first build only has to fill the pane: lay out a
