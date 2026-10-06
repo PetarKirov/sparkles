@@ -1,0 +1,545 @@
+{
+  "$extensions": {
+    "dev.petar-kirov.sparkles": {
+      "name": "catppuccin-macchiato"
+    }
+  },
+  "page": {
+    "bg": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0.1412, 0.1529, 0.2275],
+        "hex": "#24273a"
+      }
+    },
+    "fg": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0.7922, 0.8275, 0.9608],
+        "hex": "#cad3f5"
+      }
+    }
+  },
+  "syntax": {
+    "comment": {
+      "$extensions": {
+        "dev.petar-kirov.sparkles": {
+          "attrs": ["italic"]
+        }
+      },
+      "block": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9333, 0.6, 0.6275],
+            "hex": "#ee99a0"
+          }
+        }
+      },
+      "documentation": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.7922, 0.8275, 0.9608],
+            "hex": "#cad3f5"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.5765, 0.6039, 0.7176],
+          "hex": "#939ab7"
+        }
+      },
+      "line": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["italic"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9608, 0.7412, 0.902],
+            "hex": "#f5bde6"
+          }
+        }
+      }
+    },
+    "constant": {
+      "builtin": {
+        "boolean": {
+          "fg": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [0.9608, 0.6627, 0.498],
+              "hex": "#f5a97f"
+            }
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9294, 0.5294, 0.5882],
+            "hex": "#ed8796"
+          }
+        }
+      },
+      "character": {
+        "escape": {
+          "fg": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [0.9608, 0.7412, 0.902],
+              "hex": "#f5bde6"
+            }
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.9608, 0.6627, 0.498],
+          "hex": "#f5a97f"
+        }
+      },
+      "numeric": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9608, 0.6627, 0.498],
+            "hex": "#f5a97f"
+          }
+        }
+      }
+    },
+    "diff": {
+      "delta": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9608, 0.6627, 0.498],
+            "hex": "#f5a97f"
+          }
+        }
+      },
+      "minus": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9294, 0.5294, 0.5882],
+            "hex": "#ed8796"
+          }
+        }
+      },
+      "plus": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.651, 0.8549, 0.5843],
+            "hex": "#a6da95"
+          }
+        }
+      }
+    },
+    "function": {
+      "$extensions": {
+        "dev.petar-kirov.sparkles": {
+          "attrs": ["italic"]
+        }
+      },
+      "builtin": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["italic"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5412, 0.6784, 0.9569],
+            "hex": "#8aadf4"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.5412, 0.6784, 0.9569],
+          "hex": "#8aadf4"
+        }
+      }
+    },
+    "keyword": {
+      "control": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.7765, 0.6275, 0.9647],
+            "hex": "#c6a0f6"
+          }
+        }
+      },
+      "directive": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9333, 0.8314, 0.6235],
+            "hex": "#eed49f"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.7765, 0.6275, 0.9647],
+          "hex": "#c6a0f6"
+        }
+      },
+      "function": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.7765, 0.6275, 0.9647],
+            "hex": "#c6a0f6"
+          }
+        }
+      },
+      "operator": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5451, 0.8353, 0.7922],
+            "hex": "#8bd5ca"
+          }
+        }
+      },
+      "storage": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.7765, 0.6275, 0.9647],
+            "hex": "#c6a0f6"
+          }
+        }
+      }
+    },
+    "markup": {
+      "bold": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["bold"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9294, 0.5294, 0.5882],
+            "hex": "#ed8796"
+          }
+        }
+      },
+      "heading": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["bold"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9294, 0.5294, 0.5882],
+            "hex": "#ed8796"
+          }
+        }
+      },
+      "italic": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["italic"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9294, 0.5294, 0.5882],
+            "hex": "#ed8796"
+          }
+        }
+      },
+      "link": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.7176, 0.7412, 0.9725],
+            "hex": "#b7bdf8"
+          }
+        },
+        "url": {
+          "fg": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [0.5412, 0.6784, 0.9569],
+              "hex": "#8aadf4"
+            }
+          }
+        }
+      },
+      "list": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5451, 0.8353, 0.7922],
+            "hex": "#8bd5ca"
+          }
+        }
+      },
+      "quote": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9608, 0.7412, 0.902],
+            "hex": "#f5bde6"
+          }
+        }
+      },
+      "raw": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.651, 0.8549, 0.5843],
+            "hex": "#a6da95"
+          }
+        }
+      },
+      "strikethrough": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["strikethrough"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.6471, 0.6784, 0.7961],
+            "hex": "#a5adcb"
+          }
+        }
+      }
+    },
+    "module": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.9333, 0.8314, 0.6235],
+          "hex": "#eed49f"
+        }
+      }
+    },
+    "operator": {
+      "$extensions": {
+        "dev.petar-kirov.sparkles": {
+          "attrs": ["bold"]
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.7765, 0.6275, 0.9647],
+          "hex": "#c6a0f6"
+        }
+      }
+    },
+    "punctuation": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.5765, 0.6039, 0.7176],
+          "hex": "#939ab7"
+        }
+      }
+    },
+    "string": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.651, 0.8549, 0.5843],
+          "hex": "#a6da95"
+        }
+      },
+      "regexp": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.7922, 0.8275, 0.9608],
+            "hex": "#cad3f5"
+          }
+        }
+      },
+      "special": {
+        "key": {
+          "fg": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [0.9333, 0.8314, 0.6235],
+              "hex": "#eed49f"
+            }
+          }
+        },
+        "symbol": {
+          "fg": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [0.9333, 0.6, 0.6275],
+              "hex": "#ee99a0"
+            }
+          }
+        },
+        "url": {
+          "fg": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [0.7176, 0.7412, 0.9725],
+              "hex": "#b7bdf8"
+            }
+          }
+        }
+      }
+    },
+    "tag": {
+      "attribute": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["italic"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9333, 0.8314, 0.6235],
+            "hex": "#eed49f"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.5412, 0.6784, 0.9569],
+          "hex": "#8aadf4"
+        }
+      }
+    },
+    "type": {
+      "$extensions": {
+        "dev.petar-kirov.sparkles": {
+          "attrs": ["italic"]
+        }
+      },
+      "builtin": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["italic"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9333, 0.8314, 0.6235],
+            "hex": "#eed49f"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.9333, 0.8314, 0.6235],
+          "hex": "#eed49f"
+        }
+      }
+    },
+    "variable": {
+      "$extensions": {
+        "dev.petar-kirov.sparkles": {
+          "attrs": ["italic"]
+        }
+      },
+      "builtin": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9608, 0.7412, 0.902],
+            "hex": "#f5bde6"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.9333, 0.6, 0.6275],
+          "hex": "#ee99a0"
+        }
+      },
+      "parameter": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["italic"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9333, 0.6, 0.6275],
+            "hex": "#ee99a0"
+          }
+        }
+      }
+    }
+  }
+}

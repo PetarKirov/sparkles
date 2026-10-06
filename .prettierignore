@@ -21,3 +21,4 @@ libs/source-view/test/data/**
 # Verbatim examples of the DTCG 2025.10 specification (some carry comments,
 # as the specification writes them); the test reads them byte for byte.
 libs/ui/test/data/dtcg-2025.10/*.tokens
+libs/ui/test/data/themes/*.tokens

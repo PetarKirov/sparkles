@@ -1,0 +1,358 @@
+{
+  "$extensions": {
+    "dev.petar-kirov.sparkles": {
+      "name": "nord"
+    }
+  },
+  "page": {
+    "bg": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0.1804, 0.2039, 0.251],
+        "hex": "#2e3440"
+      }
+    },
+    "fg": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0.8471, 0.8706, 0.9137],
+        "hex": "#d8dee9"
+      }
+    }
+  },
+  "syntax": {
+    "comment": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.3804, 0.4314, 0.5333],
+          "hex": "#616e88"
+        }
+      }
+    },
+    "constant": {
+      "builtin": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5059, 0.6314, 0.7569],
+            "hex": "#81a1c1"
+          }
+        }
+      },
+      "character": {
+        "escape": {
+          "fg": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [0.9216, 0.7961, 0.5451],
+              "hex": "#ebcb8b"
+            }
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9216, 0.7961, 0.5451],
+            "hex": "#ebcb8b"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.9216, 0.7961, 0.5451],
+          "hex": "#ebcb8b"
+        }
+      },
+      "numeric": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.7059, 0.5569, 0.6784],
+            "hex": "#b48ead"
+          }
+        }
+      }
+    },
+    "diff": {
+      "delta": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9216, 0.7961, 0.5451],
+            "hex": "#ebcb8b"
+          }
+        }
+      },
+      "minus": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.749, 0.3804, 0.4157],
+            "hex": "#bf616a"
+          }
+        }
+      },
+      "plus": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.6392, 0.7451, 0.549],
+            "hex": "#a3be8c"
+          }
+        }
+      }
+    },
+    "error": {
+      "bg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.749, 0.3804, 0.4157],
+          "hex": "#bf616a"
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.8471, 0.8706, 0.9137],
+          "hex": "#d8dee9"
+        }
+      }
+    },
+    "function": {
+      "builtin": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5333, 0.7529, 0.8157],
+            "hex": "#88c0d0"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.5333, 0.7529, 0.8157],
+          "hex": "#88c0d0"
+        }
+      }
+    },
+    "keyword": {
+      "directive": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.3686, 0.5059, 0.6745],
+            "hex": "#5e81ac"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.5059, 0.6314, 0.7569],
+          "hex": "#81a1c1"
+        }
+      },
+      "operator": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5059, 0.6314, 0.7569],
+            "hex": "#81a1c1"
+          }
+        }
+      },
+      "storage": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5059, 0.6314, 0.7569],
+            "hex": "#81a1c1"
+          }
+        }
+      }
+    },
+    "markup": {
+      "bold": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["bold"]
+          }
+        }
+      },
+      "heading": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5333, 0.7529, 0.8157],
+            "hex": "#88c0d0"
+          }
+        }
+      }
+    },
+    "punctuation": {
+      "bracket": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9255, 0.9373, 0.9569],
+            "hex": "#eceff4"
+          }
+        }
+      },
+      "delimiter": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5059, 0.6314, 0.7569],
+            "hex": "#81a1c1"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.9255, 0.9373, 0.9569],
+          "hex": "#eceff4"
+        }
+      }
+    },
+    "string": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.6392, 0.7451, 0.549],
+          "hex": "#a3be8c"
+        }
+      },
+      "regexp": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.9216, 0.7961, 0.5451],
+            "hex": "#ebcb8b"
+          }
+        }
+      },
+      "special": {
+        "symbol": {
+          "$extensions": {
+            "dev.petar-kirov.sparkles": {
+              "attrs": ["bold"]
+            }
+          },
+          "fg": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [0.8471, 0.8706, 0.9137],
+              "hex": "#d8dee9"
+            }
+          }
+        }
+      }
+    },
+    "tag": {
+      "attribute": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5608, 0.7373, 0.7333],
+            "hex": "#8fbcbb"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.5059, 0.6314, 0.7569],
+          "hex": "#81a1c1"
+        }
+      }
+    },
+    "type": {
+      "$extensions": {
+        "dev.petar-kirov.sparkles": {
+          "attrs": ["bold"]
+        }
+      },
+      "builtin": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5608, 0.7373, 0.7333],
+            "hex": "#8fbcbb"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.5608, 0.7373, 0.7333],
+          "hex": "#8fbcbb"
+        }
+      }
+    },
+    "variable": {
+      "builtin": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5059, 0.6314, 0.7569],
+            "hex": "#81a1c1"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.8471, 0.8706, 0.9137],
+          "hex": "#d8dee9"
+        }
+      },
+      "parameter": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.8471, 0.8706, 0.9137],
+            "hex": "#d8dee9"
+          }
+        }
+      }
+    }
+  }
+}

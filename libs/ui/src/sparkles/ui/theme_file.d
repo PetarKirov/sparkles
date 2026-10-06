@@ -27,7 +27,7 @@ theme, so saving writes its primitives, aliases and unknown extensions back
 module sparkles.ui.theme_file;
 
 import std.algorithm.searching : canFind, endsWith, startsWith;
-import std.array : appender, join, split;
+import std.array : appender, join, replace, split;
 import std.conv : to;
 import std.format : format;
 import std.math : round;
@@ -318,18 +318,10 @@ DtcgResult!ThemeFile loadThemeDocument(DtcgJson doc, scope BaseResolver base = n
     file.document = doc;
 
     // The overlay: base first, this file after, later token wins.
-    auto merged = doc.dup;
-    if (auto name = baseName(doc))
-    {
-        if (base is null)
-            return fail!ThemeFile("$.$extensions." ~ extensionKey ~ ".base",
-                "the file names base " ~ name ~ ", and nothing resolves bases here");
-        auto b = base(name);
-        if (b.hasError)
-            return fail!ThemeFile("$.$extensions." ~ extensionKey ~ ".base",
-                "base " ~ name ~ ": " ~ b.error.path ~ ": " ~ b.error.message);
-        merged = overlay(b.value, doc);
-    }
+    auto overlaid = resolvedDocument(doc, base);
+    if (overlaid.hasError)
+        return err!ThemeFile(overlaid.error);
+    auto merged = overlaid.value;
 
     auto toks = collectTokens(merged);
     if (toks.hasError)
@@ -343,6 +335,122 @@ DtcgResult!ThemeFile loadThemeDocument(DtcgJson doc, scope BaseResolver base = n
     file.theme = *theme;
     file.warnings = r.unmapped();
     return ok!DtcgError(file);
+}
+
+/**
+The document a file describes with its base applied: the base's tokens first
+and the file's after them, the later winning per token. A file with no base is
+its own document. `base` resolves a named base to its own resolved document.
+*/
+DtcgResult!DtcgJson resolvedDocument(DtcgJson doc, scope BaseResolver base)
+{
+    auto name = baseName(doc);
+    if (name is null)
+        return ok!DtcgError(doc.dup);
+    enum where = "$.$extensions." ~ extensionKey ~ ".base";
+    if (base is null)
+        return fail!DtcgJson(where, "the file names base " ~ name ~ ", and nothing resolves bases here");
+    auto b = base(name);
+    if (b.hasError)
+        return fail!DtcgJson(where, "base " ~ name ~ ": " ~ b.error.path ~ ": " ~ b.error.message);
+    return ok!DtcgError(overlay(b.value, doc));
+}
+
+/**
+Loads a theme file from disk. Its base, and a base's base, is a built-in
+theme's name or a path relative to the directory of the file naming it; a
+cycle of bases fails, naming the chain.
+*/
+DtcgResult!ThemeFile loadThemeFile(string path)
+{
+    auto doc = readDocument(path);
+    if (doc.hasError)
+        return err!ThemeFile(doc.error);
+    string[] chain = [path];
+    return loadThemeDocument(doc.value, fileBases(path, chain));
+}
+
+/**
+The theme `spec` names: a built-in by name, else a theme file at that path
+(`THM9`). The one lookup every application's `--theme` goes through, so a
+name and a file are accepted, and refused, the same way everywhere.
+*/
+ThemeLookup themeNamed(scope const(char)[] spec)
+{
+    import std.file : exists;
+    import sparkles.ui.themes : builtinThemes;
+
+    if (auto t = spec in builtinThemes)
+        return ThemeLookup(t);
+    // `spec` is `scope` (a caller's `in` options): copy what the result keeps.
+    const path = spec.idup;
+    if (!exists(path))
+        return ThemeLookup(null, DtcgError(null, "no built-in theme or theme file has this name"));
+    auto f = loadThemeFile(path);
+    if (f.hasError)
+        return ThemeLookup(null, f.error);
+    auto owned = new Theme;
+    *owned = f.value.theme;
+    // Sound: `owned` and every array it holds were built by this load and
+    // are referenced nowhere else.
+    return ThemeLookup(() @trusted { return cast(immutable(Theme)*) owned; }());
+}
+
+/**
+What $(LREF themeNamed) found: a theme, or the error that says why there is
+none: a pointer and an error read as plain fields, with the same
+`hasValue`/`value`/`error` surface as an `Expected`.
+*/
+struct ThemeLookup
+{
+    immutable(Theme)* value; /// the theme, or `null`
+    DtcgError error;         /// why there is none
+
+    /// Why there is no theme, for a message after the spec: the error's path
+    /// (a file, and where in it) and what went wrong there.
+    string reason() const pure nothrow
+        => error.path.length ? error.path ~ ": " ~ error.message : error.message;
+
+    /// Which of the two it is.
+    bool hasValue() const pure nothrow @nogc => value !is null;
+    /// ditto
+    bool hasError() const pure nothrow @nogc => value is null;
+}
+
+private DtcgResult!DtcgJson readDocument(string path)
+{
+    import std.file : readText;
+
+    string text;
+    try
+        text = readText(path);
+    catch (Exception e)
+        return fail!DtcgJson(path, "cannot read: " ~ e.msg);
+    auto doc = parseDtcg(text);
+    if (doc.hasError)
+        return fail!DtcgJson(path ~ ": " ~ doc.error.path, doc.error.message);
+    return doc;
+}
+
+// A resolver for the bases of the file at `from`: built-in names first, then
+// paths relative to its directory, each resolved to its own overlaid document.
+private BaseResolver fileBases(string from, string[] chain)
+{
+    import std.algorithm.searching : canFind;
+    import std.path : buildNormalizedPath, dirName, isAbsolute;
+    import sparkles.ui.themes : builtinThemes;
+
+    return (string name) @safe {
+        if (auto t = name in builtinThemes)
+            return ok!DtcgError(exportTheme(*t));
+        const path = name.isAbsolute ? name : buildNormalizedPath(from.dirName, name);
+        if (chain.canFind(path))
+            return fail!DtcgJson(path, "a cycle of bases: " ~ (chain ~ path).join(" -> "));
+        auto doc = readDocument(path);
+        if (doc.hasError)
+            return doc;
+        return resolvedDocument(doc.value, fileBases(path, chain ~ path));
+    };
 }
 
 /// Writes the file canonically (`FMT4`): its own document, not the overlay.
@@ -900,4 +1008,110 @@ version (unittest)
     const saved = saveTheme(f.value);
     assert(saved.canFind(`"com.figma"`) && saved.canFind(`"TEXT_FILL"`));
     assert(saved.canFind(`"$value": "#cdd6f4"`), "a draft value is kept as written");
+}
+
+@("theme_file.loadThemeFile.basesAreRelativeAndNested")
+@system unittest
+{
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui.themes : builtinThemes;
+
+    auto tmp = TmpFS.create();
+    // top → mid (a sibling file) → nord (a built-in).
+    tmp.writeFileAt("themes/mid.tokens", `{
+        "$extensions": { "dev.petar-kirov.sparkles": { "base": "nord" } },
+        "accent": { "primary": { "fg": { "$type": "color", "$value": "#ff0066" } } }
+    }`);
+    const top = tmp.writeFileAt("themes/top.tokens", `{
+        "$extensions": { "dev.petar-kirov.sparkles": { "base": "mid.tokens", "name": "top" } },
+        "link": { "fg": { "$type": "color", "$value": "{accent.primary.fg}" } }
+    }`);
+    auto f = loadThemeFile(top);
+    assert(f.hasValue, f.hasError ? f.error.path ~ ": " ~ f.error.message : "");
+    const th = f.value.theme;
+    assert(th.name == "top");
+    assert(th.defaultBg == builtinThemes["nord"].defaultBg, "nord's page colors, two bases down");
+    assert(th.palette.fg[Slot.accentPrimary] == Color.fromRgb(RgbColor(0xff, 0x00, 0x66)), "mid's slot");
+    assert(th.palette.fg[Slot.link] == th.palette.fg[Slot.accentPrimary], "top's alias into mid");
+}
+
+@("theme_file.loadThemeFile.failsOnCyclesAndMissingFiles")
+@system unittest
+{
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    auto tmp = TmpFS.create();
+    const a = tmp.writeFileAt("a.tokens",
+        `{"$extensions": {"dev.petar-kirov.sparkles": {"base": "b.tokens"}}}`);
+    tmp.writeFileAt("b.tokens",
+        `{"$extensions": {"dev.petar-kirov.sparkles": {"base": "a.tokens"}}}`);
+    auto cyc = loadThemeFile(a);
+    assert(cyc.hasError && cyc.error.message.canFind("a cycle of bases"), cyc.error.message);
+
+    const lone = tmp.writeFileAt("lone.tokens",
+        `{"$extensions": {"dev.petar-kirov.sparkles": {"base": "absent.tokens"}}}`);
+    auto missing = loadThemeFile(lone);
+    assert(missing.hasError && missing.error.message.canFind("cannot read"), missing.error.message);
+
+    auto noFile = loadThemeFile(tmp.dir ~ "/nope.tokens");
+    assert(noFile.hasError && noFile.error.message.canFind("cannot read"));
+}
+
+@("theme_file.themeNamed.nameThenFile")
+@system unittest
+{
+    import sparkles.test_utils.tmpfs : TmpFS;
+    import sparkles.ui.themes : builtinThemes;
+
+    auto nord = themeNamed("nord");
+    assert(nord.hasValue && nord.value is ("nord" in builtinThemes), "a built-in, not a copy");
+
+    auto tmp = TmpFS.create();
+    const path = tmp.writeFile(writeDtcg(exportTheme(builtinThemes["dracula"])));
+    auto fromFile = themeNamed(path);
+    assert(fromFile.hasValue, fromFile.hasError ? fromFile.error.message : "");
+    assertSameTheme(builtinThemes["dracula"], *fromFile.value, "dracula from a file");
+
+    auto typo = themeNamed("draculla");
+    assert(typo.hasError && typo.reason == "no built-in theme or theme file has this name");
+}
+
+@("theme_file.builtins.exportsMatchTheCheckedInGoldens")
+@system unittest
+{
+    import std.algorithm.iteration : map;
+    import std.algorithm.sorting : sort;
+    import std.array : array;
+    import std.file : dirEntries, exists, readText, SpanMode, write;
+    import std.path : baseName, buildPath, dirName, stripExtension;
+    import std.process : environment;
+    import sparkles.ui.themes : builtinThemes;
+
+    // `FMT5`: every built-in's export is checked in, so a change to a theme is
+    // a token diff in review. Regenerate with
+    //     SPARKLES_UPDATE_GOLDENS=1 dub test :ui -- -i exportsMatchTheCheckedInGoldens
+    const dir = buildPath(__FILE_FULL_PATH__.dirName, "..", "..", "..", "test", "data", "themes");
+    const update = environment.get("SPARKLES_UPDATE_GOLDENS", "").length != 0;
+    bool[string] names;
+    string[] stale;
+    foreach (_, ref t; builtinThemes)
+    {
+        if (t.name in names)
+            continue; // an alias spelling of a theme already written
+        names[t.name] = true;
+        const path = buildPath(dir, t.name ~ ".tokens");
+        const text = writeDtcg(exportTheme(t));
+        if (update)
+            write(path, text);
+        // A Windows checkout may carry CRLF (no .gitattributes pins the data).
+        else if (!exists(path) || readText(path).replace("\r\n", "\n") != text)
+            stale ~= t.name;
+    }
+    assert(stale.length == 0, "exports differ from the goldens: " ~ stale.sort.join(", ")
+        ~ "; regenerate with SPARKLES_UPDATE_GOLDENS=1 and review the diff");
+    // And no golden outlives its theme.
+    auto files = () @trusted { return dirEntries(dir, "*.tokens", SpanMode.shallow).array; }();
+    foreach (f; files)
+        assert(f.name.baseName.stripExtension in names, "no built-in theme for " ~ f.name.baseName);
+    assert(files.length == names.length || update);
 }
