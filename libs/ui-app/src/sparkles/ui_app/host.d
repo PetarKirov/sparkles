@@ -140,6 +140,15 @@ struct RunConfig
     */
     int fontSizePxOverride;
 
+    /**
+    Whether the interface face (`GLY10`) follows the cell font: its body step
+    drawn at the cell font's size and the other steps in proportion, so a
+    font zoom grows chrome text with the cells it is laid out in. Off, the
+    steps keep their density-independent sizes. For an application whose
+    chrome sits beside a user-sized monospace grid, such as a terminal.
+    */
+    bool uiFollowsCellFont;
+
     /// Extra directories to resolve faces from, ahead of fontconfig. An
     /// Android build passes its extracted asset directory and `/system/fonts`.
     string[] extraFontSources;
