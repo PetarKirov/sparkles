@@ -21,6 +21,7 @@ module page_kit;
 
 import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.input.events : Key, KeyEvent;
+import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
@@ -249,22 +250,33 @@ size_t queryPrefixWithoutLastGrapheme(scope const(char)[] query)
 
 /**
 The header band (mockups C1, LG1, N2): Back, the title, then `actions` at the
-right — each a button made by the caller.
+right — each a button made by the caller. Every page shares it, Settings
+included (`backHit` is its own Back).
 */
-uint header(ref Builder b, string title, in SurfaceContext ctx, uint[] actions = null) @safe
+uint header(ref Builder b, string title, in SurfaceContext ctx, uint[] actions = null,
+    size_t backHit = PageHit.back) @safe
 {
-    const back = button(b, "←", "Back", ButtonLabels.icon, PageHit.back,
+    const back = button(b, "←", "Back", ButtonLabels.icon, backHit,
         minRows: ctx.targetRows, minCols: squareCols(ctx.targetRows, ctx.cellW, ctx.cellH));
+    // The title spans the bar's rows, so the face centres it on the buttons:
+    // given the two rows its step measures, it sat in the top two of three.
+    // It takes the room left, a long breadcrumb clipped at the actions.
     const name = b.add(Widget(kind: WidgetKind.text, text: title, slot: Slot.textPrimary,
-        textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.title)));
-    const spacer = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+        textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.title),
+        width: SizeSpec.grow(), clipX: true,
+        height: ctx.targetRows > 1 ? SizeSpec.fixed(ctx.targetRows) : SizeSpec.fit_));
     return b.add(Widget(
         kind: WidgetKind.row,
-        children: [back, name, spacer] ~ actions,
+        children: [back, name] ~ actions,
         gap: 1,
         alignY: Alignment.center,
         width: SizeSpec.grow(),
-        padding: Insets(0, 1, 0, 0),
+        // Fixed: a page whose body grows (Settings) reclaims overflow from
+        // whatever is not, and squeezed the bar to a row under its filter.
+        height: SizeSpec.fixed(ctx.targetRows > 1 ? ctx.targetRows : 1),
+        // A cell in at both ends: Back sat on the screen's edge while the
+        // actions kept a margin.
+        padding: Insets(0, 1, 0, 1),
         slot: Slot.surfaceSunken,
         paintBackground: true,
     ));
@@ -329,12 +341,16 @@ uint searchField(ref Builder b, string query, bool focused, string placeholder,
 /**
 $(LREF searchField) on its own row, a cell in from either side: the one
 search row every surface shares — the logs, the tab tree, the key guide.
+
+`inBand`: the row closes a sheet or a panel, whose band already pads the
+sides — the field lines up with the rows above it, and a cell below keeps it
+off the band's edge.
 */
 uint searchRow(ref Builder b, string query, bool focused, string placeholder,
-    int rows = 1, size_t hitId = PageHit.search) @safe
+    int rows = 1, size_t hitId = PageHit.search, bool inBand = false) @safe
     => b.add(Widget(kind: WidgetKind.panel,
         children: [searchField(b, query, focused, placeholder, rows, hitId)],
-        width: SizeSpec.grow(), padding: Insets(0, 1, 0, 1)));
+        width: SizeSpec.grow(), padding: inBand ? Insets(0, 0, 1, 0) : Insets(0, 1, 0, 1)));
 
 /**
 A sentence or a paragraph, in the interface face (design-system `GLY10`),
@@ -346,6 +362,77 @@ uint prose(ref Builder b, const(char)[] text, Slot slot = Slot.textPrimary,
     => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot,
         textStyle: TextStyle(bold: bold, fontRole: FontRole.ui, typeStep: TypeStep.body),
         wrap: TextWrap.greedy));
+
+// The longest prefix of `s` within `cols` cells, whole graphemes only.
+private inout(char)[] prefixCells(inout(char)[] s, long cols) @safe pure nothrow
+{
+    import grapheme = sparkles.base.text.grapheme;
+
+    return cols <= 0 ? s[0 .. 0] : s[0 .. grapheme.fitCells(s, cast(size_t) cols).bytes];
+}
+
+/**
+`s` within `cols` cells: itself when it fits, else cut with a `…` in the last
+cell — a line that runs off the page says so rather than stopping mid-word.
+*/
+string fitCells(string s, int cols) @safe pure nothrow
+{
+    if (cols <= 0 || visibleWidth(s) <= cols)
+        return s;
+    return prefixCells(s, cols - 1) ~ "…";
+}
+
+///
+@("page_kit.fitCells.cutsWithAnEllipsis")
+@safe pure nothrow unittest
+{
+    assert(fitCells("short", 10) == "short");
+    assert(fitCells("FONT: Data loaded successfully", 10) == "FONT: Dat…");
+    assert(visibleWidth(fitCells("ééééééé", 4)) == 4);
+}
+
+/**
+`s` with every unbroken run longer than `cols` cells — a package name, a
+path — split across lines at `cols`: the wrap breaks only at spaces, so such
+a run overflowed its column and was cut at the screen's edge.
+*/
+string breakLong(string s, int cols) @safe pure nothrow
+{
+    import std.array : appender;
+
+    if (cols <= 0 || visibleWidth(s) <= cols)
+        return s;
+    auto r = appender!string;
+    size_t i;
+    while (i < s.length)
+    {
+        size_t j = i;
+        while (j < s.length && s[j] != ' ')
+            j++;
+        auto word = s[i .. j];
+        while (visibleWidth(word) > cols)
+        {
+            const head = prefixCells(word, cols);
+            r ~= head;
+            r ~= '\n';
+            word = word[head.length .. $];
+        }
+        r ~= word;
+        if (j < s.length)
+            r ~= ' ';
+        i = j + 1;
+    }
+    return r[];
+}
+
+///
+@("page_kit.breakLong.splitsARunTooLongForItsColumn")
+@safe pure nothrow unittest
+{
+    assert(breakLong("0.1.0", 8) == "0.1.0");
+    assert(breakLong("dev.petar_kirov.sparkles", 10) == "dev.petar_\nkirov.spar\nkles");
+    assert(breakLong("a dev.petar_kirov b", 10) == "a dev.petar_\nkirov b");
+}
 
 /// A value, a path or a log line, in the cell font, wrapping to the room it
 /// is given.
@@ -573,4 +660,23 @@ version (unittest)
         sawOff |= n.text == "○ debug";
     }
     assert(sawOn && sawOff);
+}
+
+@("page_kit.header.keepsItsRowsInAGrowingColumn")
+@safe unittest
+{
+    // Settings: the header over a body that grows. The header keeps its
+    // three rows; the body takes what is left.
+    SurfaceContext ctx;
+    ctx.cellW = ctx.cellH = 1;
+    ctx.targetRows = 3;
+    Builder b;
+    const head = header(b, "Settings", ctx);
+    const body_ = b.add(Widget(kind: WidgetKind.column, height: SizeSpec.grow(),
+        children: [b.add(Widget(kind: WidgetKind.box, height: SizeSpec.fixed(40)))]));
+    const root = b.add(Widget(kind: WidgetKind.column, children: [head, body_],
+        width: SizeSpec.fixed(40), height: SizeSpec.fixed(20)));
+    auto t = b.finish(root);
+    const f = chromeLayout(t, Constraints(maxW: 40, maxH: 20));
+    assert(f[head].rect.height == 3 && f[body_].rect.y == 3);
 }

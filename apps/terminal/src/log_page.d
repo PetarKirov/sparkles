@@ -28,6 +28,7 @@ import sparkles.base.log_sinks : RingCoreLogger, RingLogRecord;
 import sparkles.base.logger : LogLevel;
 import sparkles.fuzzy.match : MatcherWorkspace;
 import sparkles.input.events : Key, KeyEvent;
+import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.style : Slot, TextStyle;
@@ -36,7 +37,7 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, Wi
 import chrome : button, column, label, row, uiLabel;
 import settings : ButtonLabels;
 import page_kit : bodyRowsFor, chip, finishPage, firstOwnHit, header, Page, PageServices,
-    searchRow;
+    fitCells, searchRow;
 import surfaces : SurfaceContext;
 
 /// The four levels the chips filter by.
@@ -539,7 +540,7 @@ final class LogPage : Page
         {
             uint[] items;
             foreach (k; first .. first + count)
-                items ~= entryRow(bb, lines[shown[k]], !narrow);
+                items ~= entryRow(bb, lines[shown[k]], !narrow, cols - 2);
             if (!shown.length)
                 items ~= uiLabel(bb, lines.length ? "No entry matches." : "The log is empty.",
                     Slot.muted);
@@ -588,7 +589,9 @@ final class LogPage : Page
 
     /// One entry: time, level letter, source, message — the level's colour
     /// on warnings and errors, its letter in every case (`ACC3`).
-    private static uint entryRow(ref Builder b, const LogLine l, bool withSource = true) @safe
+    /// A message longer than `width` cells ends in `…` (0: no limit).
+    private static uint entryRow(ref Builder b, const LogLine l, bool withSource = true,
+        int width = 0) @safe
     {
         import std.array : replace;
 
@@ -606,7 +609,10 @@ final class LogPage : Page
         spans[1] = TextSpan(text: letters[c], slot: slot,
             textStyle: TextStyle(bold: c >= LevelChip.warn));
         spans[2] = TextSpan(text: src, slot: Slot.textSecondary);
-        spans[3] = TextSpan(text: l.message.replace("\n", " ⏎ "), slot: slot);
+        const lead = cast(int) visibleWidth(l.time ~ " " ~ letters[c] ~ src);
+        const message = l.message.replace("\n", " ⏎ ");
+        spans[3] = TextSpan(text: width > 0 ? fitCells(message, width - lead) : message,
+            slot: slot);
         return b.add(Widget(kind: WidgetKind.rich, spans: spans));
     }
 

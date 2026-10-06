@@ -18,7 +18,7 @@ module workspace_host;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.doc_view.pane : chromeTheme, DocViewEnv, DocViewPane, PaneKey;
-import sparkles.terminal_view.component : TerminalView, TerminalViewOptions;
+import sparkles.terminal_view.component : Scrollback, TerminalView, TerminalViewOptions;
 import sparkles.terminal_view.input : ExitBehavior;
 import sparkles.terminal_view.pool : TerminalPool;
 import sparkles.ui.components.dock : DockAxis, DockFrames, DividerFrame, PaneId;
@@ -337,7 +337,10 @@ struct WorkspaceHost
         // quits the application or retitles the window itself.
         o.exitBehavior = ExitBehavior.hold;
         o.builtinChords = false;
-        o.internalScrollbar = true;
+        // A touch screen's bar is the workspace's, in the pane's padding
+        // (`paintScrollbar`): the view's own sat over the last column. A
+        // finger flings the pane rather than dragging a bar.
+        o.internalScrollbar = !touch;
         o.embedded = true;
         auto self = &this;
         // Every protocol event reaches the log at `trace` — "debug" in the
@@ -987,6 +990,35 @@ struct WorkspaceHost
             ? Rect(d.x - width / 2, d.y, width, d.height)
             : Rect(d.x, d.y - width / 2, d.width, width);
 
+    /**
+    The thumb of a pane's scrollbar on a touch screen: in the padding right of
+    its text, centred there and a third of it wide, as long as the viewport
+    is of the scrollback (20 px at the least). Empty when everything shows.
+    */
+    static Rect scrollThumb(in PaneBox b, in Scrollback sb) @safe pure nothrow @nogc
+    {
+        const pad = b.outer.x + b.outer.width - (b.content.x + b.content.width);
+        if (sb.total <= sb.len || sb.total <= 0 || pad < 3 || b.content.height <= 0)
+            return Rect.init;
+        const h = b.content.height;
+        long extent = sb.len * h / sb.total;
+        if (extent < 20)
+            extent = 20 < h ? 20 : h;
+        const start = (h - extent) * sb.offset / (sb.total - sb.len);
+        const w = pad / 3;
+        return Rect(b.content.x + b.content.width + (pad - w) / 2,
+            b.content.y + cast(int) start, w, cast(int) extent);
+    }
+
+    private void paintScrollbar(in PaneBox b, in Scrollback sb) @system
+    {
+        import raylib : Color, DrawRectangle;
+
+        const r = scrollThumb(b, sb);
+        if (r.width > 0)
+            DrawRectangle(r.x, r.y, r.width, r.height, Color(255, 255, 255, 120));
+    }
+
     private static bool contains(in Rect r, int x, int y) @safe pure nothrow @nogc
         => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
 
@@ -1215,6 +1247,8 @@ struct WorkspaceHost
                 DrawRectangle(b.outer.x, b.outer.y, b.outer.width, b.outer.height,
                     rgb(tv.background));
                 tv.paintPanePx(h, b.content.x, b.content.y, b.content.width, b.content.height);
+                if (touch)
+                    paintScrollbar(b, tv.scrollback());
             }
             else if (auto v = viewer(b.id))
             {
@@ -1861,6 +1895,20 @@ import sparkles.input : KeyEvent;
     assert(a == -1 && d == 1, "along the one across: that one only");
     WorkspaceHost.dividersNear(ds, rects, 50, 50, 8, a, d);
     assert(a == -1 && d == -1, "beside the junction, off both");
+}
+
+@("workspace_host.scrollThumb.inThePaddingNotOverTheText")
+@safe pure nothrow @nogc unittest
+{
+    // A pane 300 wide, its text inset 24 px either side.
+    PaneBox b = {outer: Rect(0, 0, 300, 400), content: Rect(24, 0, 252, 400)};
+    assert(WorkspaceHost.scrollThumb(b, Scrollback(40, 40, 0)).width == 0,
+        "nothing scrolled off: no bar");
+    const top = WorkspaceHost.scrollThumb(b, Scrollback(160, 40, 0));
+    assert(top.x >= 276 && top.x + top.width <= 300, "right of the text, inside the pane");
+    assert(top.y == 0 && top.height == 100, "a quarter of the scrollback, at its top");
+    const end = WorkspaceHost.scrollThumb(b, Scrollback(160, 40, 120));
+    assert(end.y + end.height == 400, "the newest rows: at the bottom");
 }
 
 @("workspace_host.stretchToEdges.theLeftoverCellGoesToTheEdge")

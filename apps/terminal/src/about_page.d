@@ -32,7 +32,8 @@ import sparkles.ui.style : Decoration, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : button, column, label, row, uiLabel;
-import page_kit : bodyRowsFor, finishPage, firstOwnHit, header, Page, PageServices, codeText, prose;
+import page_kit : bodyRowsFor, breakLong, codeText, finishPage, firstOwnHit, header, Page,
+    PageServices, prose;
 import surfaces : SurfaceContext;
 
 /// The process's document. Startup sets it once; about pages borrow it.
@@ -292,7 +293,7 @@ final class AboutPage : Page
         }
 
         items ~= uiLabel(b, "Build", Slot.textPrimary, bold: true);
-        addRows(b, items, facts.identityRows);
+        addRows(b, items, facts.identityRows, cols);
         items ~= blank(b);
 
         items ~= uiLabel(b, "Components", Slot.textPrimary, bold: true);
@@ -303,7 +304,7 @@ final class AboutPage : Page
         }
         items ~= blank(b);
 
-        addRows(b, items, facts.probeRows);
+        addRows(b, items, facts.probeRows, cols);
         items ~= blank(b);
         items ~= prose(b, "Credits list every component the terminal ships and how it uses "
             ~ "it, with its licence — docs/credits/terminal.md.", Slot.textSecondary);
@@ -337,7 +338,7 @@ final class AboutPage : Page
     private static uint blank(ref Builder b) @safe
         => b.add(Widget(kind: WidgetKind.box, height: SizeSpec.fixed(1)));
 
-    private static void addRows(ref Builder b, ref uint[] items, string[2][] rows) @safe
+    private static void addRows(ref Builder b, ref uint[] items, string[2][] rows, int cols) @safe
     {
         int keyWidth;
         foreach (kv; rows)
@@ -349,7 +350,9 @@ final class AboutPage : Page
             // the values line up.
             auto key = b.nodes[uiLabel(b, kv[0], Slot.muted)];
             key.width = SizeSpec.fixed(keyWidth + 2);
-            items ~= row(b, [b.add(key), codeText(b, kv[1])], 0);
+            // A value wider than its column — the package name on a phone —
+            // breaks across lines rather than off the page's edge.
+            items ~= row(b, [b.add(key), codeText(b, breakLong(kv[1], cols - 2 - keyWidth - 2))], 0);
         }
     }
 

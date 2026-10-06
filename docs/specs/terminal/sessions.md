@@ -144,8 +144,10 @@ it. A `rail` is a narrow column of tab icons, a new-tab button and a tree
 button, and a tap slides the full tree out beside it. The tree **never** opens
 on an edge swipe, which belongs to the system Back gesture, and tabs are not
 switched by swiping. The tree's search sits at the bottom of the panel on
-touch, within reach of the keyboard, and at the top on the desktop. A tap
-outside, Back or `Esc` closes it. Splits come from the pane header's actions,
+touch, within reach of the keyboard, and at the top on the desktop, and stays
+on the panel when the keyboard shortens it: the rows that no longer fit
+scroll, a mark counting those above and below. A tap outside, Back or `Esc`
+closes it. Splits come from the pane header's actions,
 the key guide and the MENU key, and in portrait a zoomed pane is the usual
 way to read one of several splits.
 
@@ -202,7 +204,7 @@ an unpainted strip along an edge.
 | `TSS10` | full                                                                                                                                                                                   | `Workspace.resizeSplit`, `Workspace.moveDivider`, `WorkspaceHost.dragDivider`, `WorkspaceHost.touchDivider`, `WorkspaceHost.dividersNear`, `WorkspaceHost.dividerHover` |
 | `TSS11` | full                                                                                                                                                                                   | `paneBoxes`, `paneHeader`, `paneFrame`, `paneToolbar`, `WorkspaceHost.placeChrome`                                                                                      |
 | `TSS12` | full                                                                                                                                                                                   | `TabTree`, `WorkspaceHost.treeTabs`                                                                                                                                     |
-| `TSS13` | full                                                                                                                                                                                   | `pillBand`, `rail`, `usesPill`, `WorkspaceHost.toggleTree`                                                                                                              |
+| `TSS13` | full                                                                                                                                                                                   | `pillBand`, `rail`, `usesPill`, `WorkspaceHost.toggleTree`, `TabTree.scroll`                                                                                            |
 | `TSS14` | partial: on the phone a pane comes back in its directory only when the shell reports it with OSC 7, which nix-on-droid's bash does not, and proot hides a guest's `chdir` from `/proc` | `saved`, `restored`, `WorkspaceHost.restore`, `WorkspaceHost.refreshCwds`                                                                                               |
 | `TSS15` | full                                                                                                                                                                                   | `Workspace.focusPane`, `DesktopIntegration.tick`, `DroidPlatform.focusPane`, `NotificationPage.openEntry`                                                               |
 | `TSS16` | full                                                                                                                                                                                   | `OpenerHit.guide`, `rail`, `pillBand`, `WorkspaceHost.takeGuideRequest`                                                                                                 |
