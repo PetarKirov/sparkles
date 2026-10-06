@@ -197,7 +197,7 @@ void renderStarterConfig(Writer)(ref Writer w)
     assert(r.value == Sparse!HueConfig.init);
 
     // Descriptions and defaults come from the schema.
-    assert(w[].canFind(`// Colour theme, by name`));
+    assert(w[].canFind(`// Colour theme: a built-in name`));
     assert(w[].canFind(`// "theme": "tokyo-night",`));
     assert(w[].canFind(`"appearance": {`));
     assert(w[].canFind(`// "tabWidth": 4,`));

@@ -162,15 +162,33 @@ hue gallery ./docs --markdown --theme catppuccin-mocha
 
 ### `hue theme`
 
-Inspect and list built-in color themes. `hue` ships with over 36 high-contrast,
-dark, and light themes (including `tokyo-night`, `catppuccin-mocha`, `nord`,
-`gruvbox-dark`, `github-light`, and `dracula`).
+Inspect, list and export color themes. `hue` ships with 36 dark and light
+themes (including `tokyo-night`, `catppuccin-mocha`, `nord`, `gruvbox-dark`,
+`github-light`, and `dracula`), and reads your own as a theme file: a
+[Design Tokens](https://www.designtokens.org/tr/2025.10/format/) document
+(`.tokens`) that can overlay a built-in and change only what it names.
 
 ```bash
 hue theme --list                         # list all available themes
 hue theme tokyo-night                    # inspect palette colors of a theme
-hue view file.d --theme catppuccin-latte # apply theme to view
+hue theme nord --export > mine.tokens    # a theme as a file, to edit
+hue view file.d --theme catppuccin-latte # apply a built-in theme to view
+hue view file.d --theme ./mine.tokens    # or a theme file
 ```
+
+A theme file that names a base keeps everything else from it:
+
+```json
+{
+  "$extensions": {
+    "dev.petar-kirov.sparkles": { "base": "nord", "name": "mine" }
+  },
+  "syntax": { "keyword": { "fg": { "$type": "color", "$value": "#ff0066" } } }
+}
+```
+
+The format and its rules are the design system's
+[theme file specification](../../specs/design-system/SPEC.md#theme-file-format-fmt).
 
 ---
 
@@ -222,7 +240,7 @@ sink for your current environment:
 
 Universal options can be passed to any `hue` command:
 
-- `--theme <name>`: Select active color theme (default: `tokyo-night`).
+- `--theme <name|file>`: Select the color theme, a built-in name or a theme file (default: `tokyo-night`).
 - `--background <full|soft|none>`: Background fill mode.
 - `--log-level <trace|info|warning|error|critical|off>`: Logging verbosity (default: `warning`).
 - `--overlay <kind>[=<artifact>]`: Attach one or more overlay payloads (e.g. `--overlay twoslash=nodes.json`).

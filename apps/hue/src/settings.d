@@ -279,7 +279,7 @@ struct CrtConfig
 @ConfigSection
 struct Appearance
 {
-    @Doc("Colour theme, by name (see `hue theme --list`).")
+    @Doc("Colour theme: a built-in name (see `hue theme --list`) or a DTCG theme file.")
     string theme = defaultTheme;
 
     @Doc("How the theme background paints in a terminal: noBackground, spans, or full.")
