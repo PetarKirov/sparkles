@@ -137,6 +137,22 @@ BOM detection are explicit adapter operations; these core conversions neither st
 nor insert a BOM. U+0000, noncharacters, and unassigned scalars are valid Unicode
 encoding input. Protocols that forbid them own that validation separately.
 
+**TXT-UTF18: UTF-16 byte-order adapter.** Proposed `measureUtf16BytesToUtf8`
+and `utf16BytesToUtf8` take UTF-16 as bytes with an explicit byte order, big- or
+little-endian, and **must** decode them with the core UTF-16 codec in `strict`
+or `replacement` mode; `opaque` is `invalidOptions`. They **must** follow whole
+conversion's rules (TXT-UTF17): the source is validated and measured before any
+write, and on failure the destination is unchanged. Error offsets **must** be
+byte offsets into the source. An odd trailing byte is `invalidUtf16` with reason
+`truncated` in strict mode, unless an earlier defect is found first, and is
+replaced by U+FFFD in replacement mode. A byte-order mark is decoded as U+FEFF,
+not stripped.
+
+_Rationale:_ Binary formats such as OpenType's `name` table store UTF-16 as
+big-endian bytes. Reading code units in a bounded chunk and handing them to the
+core codec keeps one owner of UTF-16 validation, with no second decoder in a
+consumer.
+
 **TXT-UTF1: Strict scalar validity.** Validation and strict decoding **must** accept
 exactly the well-formed encodings in Unicode 18 chapter 3, including UTF-8 shortest
 forms and UTF-16 surrogate pairing. A failure **must** identify the first code unit
