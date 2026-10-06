@@ -348,7 +348,11 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
             const pa = ctx.pageArea.width > 0 ? ctx.pageArea : ctx.area;
             const pcols = pa.width / ctx.cellW, prows = pa.height / ctx.cellH;
             const pcap = pcols > maxSurfaceCols ? maxSurfaceCols : pcols;
-            auto page = place(s.build(ctx, pcap), pcap, prows,
+            // The page builds for the area it fills: built for the panes'
+            // area, it left the opener's rows blank at its foot.
+            SurfaceContext pctx = ctx;
+            pctx.area = pa;
+            auto page = place(s.build(pctx, pcap), pcap, prows,
                 pa.x + (pcols - pcap) / 2 * ctx.cellW, pa.y, ctx.cellW, ctx.cellH, Place.top);
             page.opaque = true; // the panes and the opener do not show through
             page.backdrop = pa;
@@ -415,6 +419,7 @@ version (unittest)
         bool cancelled, confirmed;
         size_t activated;
         int builtCols; // the width `build` was given
+        Rect builtArea; // the area `build` was given
         Surfaces* host;     // where `activate` pushes `next`
         Surface next;
 
@@ -430,6 +435,7 @@ version (unittest)
             import sparkles.ui.widget : Builder;
 
             builtCols = cols;
+            builtArea = ctx.area;
             Builder b;
             uint[] rows;
             foreach (_; 0 .. lines - 1)
@@ -516,8 +522,11 @@ version (unittest)
     // sheet stays in the panes' area (D49).
     SurfaceContext ctx = {area: Rect(0, 60, 400, 600), pageArea: Rect(0, 0, 400, 660),
         cellW: 10, cellH: 20};
-    const page = placeOne(new Probe(Placement.page, 3), ctx);
+    auto probe = new Probe(Placement.page, 3);
+    const page = placeOne(probe, ctx);
     assert(page.y == 0 && page.backdrop == Rect(0, 0, 400, 660));
+    // It builds for the rows it fills, not the panes' (a blank foot).
+    assert(probe.builtArea == Rect(0, 0, 400, 660));
     const sheet = placeOne(new Probe(Placement.sheet, 2), ctx);
     assert(sheet.y + sheet.bounds.height * 20 == 660 && sheet.y > 60);
 }

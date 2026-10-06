@@ -18,12 +18,12 @@ module tab_tree;
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.components.dock : PaneId;
 import sparkles.ui.style : Slot;
-import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row, uiLabel;
 import page_kit : searchRow;
-import surfaces : Placement, Surface, SurfaceContext;
+import surfaces : Placement, Scrollable, Surface, SurfaceContext;
 
 /// One pane, as the tree shows it.
 struct TreePane
@@ -59,9 +59,11 @@ private struct Row
 private enum size_t rowHit = 0x7EE0_0000;
 /// The new-tab row.
 private enum size_t newTabHit = 0x7EDF_FFFF;
+/// The marks for rows above and below the window.
+private enum size_t moreAboveHit = 0x7EDF_FFFD, moreBelowHit = 0x7EDF_FFFE;
 
 /// The tree of tabs and panes.
-final class TabTree : Surface
+final class TabTree : Surface, Scrollable
 {
     private TreeTab[] delegate() snapshot;
     private void delegate(size_t tab, PaneId pane) pick;
@@ -69,6 +71,9 @@ final class TabTree : Surface
     private char[] query;
     private size_t selected;
     private Row[] rows;
+    private size_t top; // the first row shown, when they do not all fit
+    private size_t fit; // how many rows the last build showed
+    private enum unknownRoom = int.max; // no area to fit: show every row
 
     /// `snapshot` lists the workspace now; `pick` selects a tab and, when
     /// non-zero, focuses a pane.
@@ -88,12 +93,13 @@ final class TabTree : Surface
             lines ~= searchField(b, ctx);
 
         rows.length = 0;
+        uint[] items;
         foreach (ti, tab; filtered())
         {
             const open = tab.current || query.length;
             const hit = rowHit + rows.length;
             rows ~= Row(ti, 0);
-            lines ~= entry(b, ctx, (open ? "▾ " : "▸ ") ~ tab.icon ~ " " ~ tab.title,
+            items ~= entry(b, ctx, (open ? "▾ " : "▸ ") ~ tab.icon ~ " " ~ tab.title,
                 tab.panes.length == 1 ? "1 pane" : paneCount(tab.panes.length),
                 tab.unread ? "●" : "", tab.current, false, hit);
             if (open)
@@ -101,13 +107,26 @@ final class TabTree : Surface
                 {
                     const h = rowHit + rows.length;
                     rows ~= Row(ti, p.id);
-                    lines ~= entry(b, ctx, "    " ~ p.icon ~ " " ~ p.title, "      " ~ p.detail,
-                        p.unread ? "●" : "", p.focused, p.failed, h);
+                    items ~= entry(b, ctx, p.icon ~ " " ~ p.title, p.detail,
+                        p.unread ? "●" : "", p.focused, p.failed, h, indent: 2);
                 }
         }
+        if (selected >= rows.length)
+            selected = rows.length ? rows.length - 1 : 0;
+
+        // The rows left for the list: the panel less its top border, the
+        // search field and its margin, and the New tab row. The keyboard
+        // shrinks the panel; the list windows, the search field stays.
+        const per = ctx.targetRows > 1 ? ctx.targetRows : 1;
+        const showNew = newTab !is null && !query.length;
+        const areaRows = ctx.cellH > 0 && ctx.panelArea.height > 0
+            ? ctx.panelArea.height / ctx.cellH : 0;
+        const room = areaRows > 0
+            ? areaRows - 1 - per - 1 - (showNew ? per : 0) : unknownRoom;
+        lines ~= windowed(b, items, room, per);
         if (!rows.length)
             lines ~= uiLabel(b, "No tab or pane matches.", Slot.muted);
-        if (newTab !is null && !query.length)
+        if (showNew)
         {
             lines ~= b.add(Widget(kind: WidgetKind.row,
                 children: [uiLabel(b, "+ New tab", Slot.accentPrimary)],
@@ -133,8 +152,62 @@ final class TabTree : Surface
 
     Placement placement() const @safe => Placement.panel;
 
+    /// `Scrollable`: a drag or the wheel moves the list by whole rows.
+    void scroll(int dy) @system
+    {
+        if (dy > 0)
+            top += dy;
+        else
+            top = -dy >= top ? 0 : top + dy;
+        // Keep the selection on what is shown; `windowed` clamps the far end.
+        if (selected < top)
+            selected = top;
+        else if (fit && selected >= top + fit)
+            selected = top + fit - 1;
+    }
+
+    /**
+    `items` (each `per` rows tall) within `room` rows: all of them when they
+    fit, else a window holding the selection, with a mark for what lies above
+    and below — the marks take a row each, and a tap on one turns a page.
+    */
+    private uint[] windowed(ref Builder b, uint[] items, int room, int per) @safe
+    {
+        import std.conv : text;
+
+        if (room == unknownRoom || items.length * per <= room)
+        {
+            top = 0;
+            fit = items.length;
+            return items;
+        }
+        fit = (room - 2) / per > 0 ? (room - 2) / per : 1;
+        if (selected < top)
+            top = selected;
+        else if (selected >= top + fit)
+            top = selected + 1 - fit;
+        if (top + fit > items.length)
+            top = items.length - fit;
+        uint[] window;
+        if (top)
+            window ~= mark(b, text("↑ ", top, " more"), moreAboveHit);
+        window ~= items[top .. top + fit];
+        if (const below = items.length - top - fit)
+            window ~= mark(b, text("↓ ", below, " more"), moreBelowHit);
+        return window;
+    }
+
+    private static uint mark(ref Builder b, string text, size_t hit) @safe
+        => b.add(Widget(kind: WidgetKind.row, children: [uiLabel(b, text, Slot.muted)],
+            width: SizeSpec.grow(), hitId: hit));
+
     bool activate(size_t id) @system
     {
+        if (id == moreAboveHit || id == moreBelowHit)
+        {
+            scroll(id == moreAboveHit ? -cast(int) fit : cast(int) fit);
+            return false;
+        }
         if (id == newTabHit && newTab !is null)
         {
             newTab();
@@ -246,10 +319,12 @@ final class TabTree : Surface
     // the caret shows once there is one.
     private uint searchField(ref Builder b, in SurfaceContext ctx) @safe
         => searchRow(b, query.idup, query.length > 0, "Search tabs, panes, programs, dirs",
-            ctx.targetRows);
+            ctx.targetRows, inBand: true);
 
+    // A pane's row is `indent` cells in from its tab's, title and directory
+    // together: spaces in two faces put them on different columns.
     private uint entry(ref Builder b, in SurfaceContext ctx, string title, string detail,
-        string badge, bool marked, bool failed, size_t hit) @safe
+        string badge, bool marked, bool failed, size_t hit, int indent = 0) @safe
     {
         const line = row(b, [uiLabel(b, title, failed ? Slot.error
             : marked ? Slot.accentPrimary : Slot.textPrimary, bold: marked),
@@ -260,7 +335,7 @@ final class TabTree : Surface
         const selectedNow = rows.length && hit - rowHit == selected;
         return b.add(Widget(kind: WidgetKind.column, children: kids,
             height: ctx.targetRows > 1 ? SizeSpec.fixed(ctx.targetRows) : SizeSpec.fit_,
-            width: SizeSpec.grow(), hitId: hit,
+            width: SizeSpec.grow(), hitId: hit, padding: Insets(0, 0, 0, indent),
             slot: selectedNow ? Slot.chromeFocused : Slot.inherit,
             paintBackground: selectedNow));
     }
@@ -320,7 +395,7 @@ version (unittest)
     auto t = tree();
     const shown = texts(t.build(SurfaceContext.init, 40));
     assert(shown.canFind("▾ ❯ ~/sparkles") && shown.canFind("▸ ≡ nvim spec.md"));
-    assert(shown.canFind("    ❯ zsh") && !shown.canFind("    ≡ nvim viewer.md"),
+    assert(shown.canFind("❯ zsh") && !shown.canFind("≡ nvim viewer.md"),
         "only the current tab is open");
     assert(shown.canFind("●"), "the unseen mark");
     assert(shown[0].canFind(iconText(ActionIcon.search)), "the search field on top on the desktop");
@@ -338,8 +413,8 @@ version (unittest)
     foreach (dchar c; "viewer")
         assert(t.key(KeyEvent(Key.char_, c)));
     const shown = texts(t.build(SurfaceContext.init, 40));
-    assert(shown.canFind("    ≡ nvim viewer.md"), "the match opens its tab");
-    assert(!shown.canFind("    ❯ zsh"), "a tab without a match is gone");
+    assert(shown.canFind("≡ nvim viewer.md"), "the match opens its tab");
+    assert(!shown.canFind("❯ zsh"), "a tab without a match is gone");
 
     // Enter picks the first row: that tab.
     assert(t.confirm());
@@ -408,9 +483,38 @@ long fuzzyScore(scope const(char)[] query, scope const(char)[] text) @trusted
     assert(full.bounds.height == 30);
     foreach (i, ref n; full.tree.nodes)
         if (n.text.length >= 3 && n.text[0 .. 3] == iconText(ActionIcon.search))
-            assert(full.frames[i].rect.y == 29, "the search field on the last row");
+            assert(full.frames[i].rect.y == 28, "the search field above a cell of margin");
 
     SurfaceContext pill = rail;
     pill.panelFull = false;
     assert(place(t.build(pill, 40), 40, 30, 0, 0, 1, 1, Place.top).bounds.height < 30);
+}
+
+@("tab_tree.build.aShortPanelKeepsTheSearchField")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.ui.geometry : Rect;
+
+    import chrome : place, Place;
+
+    // The keyboard up: a panel of 10 rows for 8 rows of tabs and panes, a
+    // new-tab row and the search field, each 2 rows tall. The list windows;
+    // the search field stays on the panel.
+    auto t = new TabTree(() => sample(), (size_t, PaneId) {}, () {});
+    SurfaceContext kb = {touch: true, cellW: 1, cellH: 1, targetRows: 2,
+        panelArea: Rect(0, 0, 40, 10)};
+    const l = place(t.build(kb, 40), 40, 10, 0, 0, 1, 1, Place.top);
+    assert(l.bounds.height <= 10, "the panel's height, not the list's");
+    bool search;
+    foreach (i, ref n; l.tree.nodes)
+        if (n.text.length >= 3 && n.text[0 .. 3] == iconText(ActionIcon.search))
+            search = l.frames[i].rect.y + l.frames[i].rect.height <= 10;
+    assert(search, "the search field shows");
+    assert(texts(l.tree).canFind!(s => s.canFind("more")), "a mark for the rows not shown");
+
+    // Moving the selection down scrolls the window to it.
+    foreach (_; 0 .. 5)
+        t.key(KeyEvent(Key.down));
+    assert(texts(t.build(kb, 40)).canFind("▸ ▶ build"), "the selected row is shown");
 }

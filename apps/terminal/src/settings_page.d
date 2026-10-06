@@ -49,9 +49,10 @@ import sparkles.ui.property_tree : EditValue, LeafKind, PropertyNode;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
-import chrome : chromeLayout, squareCols;
+import chrome : chromeLayout;
 import keymap : Binding, isReserved, KeysConfig, leaderChord, leaderMark, TermCommand,
     TermScope, terminalBindings;
+import page_kit : header;
 import settings : TerminalConfig;
 import settings_store : TerminalApply, TerminalSettingsPane, TerminalSettingsStore;
 import surfaces : Placement, Scrollable, Surface, SurfaceContext;
@@ -700,21 +701,9 @@ final class SettingsPage : Surface, Scrollable
         foreach (p; levels)
             if (auto n = pane.nodeAt(p))
                 title ~= " › " ~ sentenceCase(n.label);
-        const back = b.add(Widget(kind: WidgetKind.panel, children: [b.add(Widget(
-            kind: WidgetKind.text, text: "←", slot: Slot.textPrimary, textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body)))],
-            padding: Insets(0, 1, 0, 1), hitId: hitBack,
-            // A square target, as tall as the bar: the arrow's whole corner.
-            width: SizeSpec(SizeSpec.Kind.fit, 0, squareCols(ctx.targetRows, ctx.cellW, ctx.cellH)),
-            height: ctx.targetRows > 1 ? SizeSpec.fixed(ctx.targetRows) : SizeSpec.fit_,
-            alignX: Alignment.center, alignY: Alignment.center));
-        const name = b.add(Widget(kind: WidgetKind.text, text: title, slot: Slot.textPrimary,
-            textStyle: TextStyle(bold: true, fontRole: FontRole.ui, typeStep: TypeStep.title),
-            width: SizeSpec.grow()));
-        return b.add(Widget(kind: WidgetKind.row, children: [back, name], gap: 1,
-            width: SizeSpec.grow(),
-            height: SizeSpec.fixed(ctx.targetRows > 1 ? ctx.targetRows : 1),
-            alignY: Alignment.center, slot: Slot.chrome,
-            paintBackground: true));
+        // The pages' one header (`page_kit.header`): the same Back tile,
+        // margins and title as the logs and About.
+        return header(b, title, ctx, null, hitBack);
     }
 
     private uint filterRow(ref Builder b, in SurfaceContext ctx) @trusted

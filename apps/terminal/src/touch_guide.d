@@ -5,7 +5,7 @@ search across every command at the bottom, within thumb reach.
 
 It reads the same table the keys resolve against (`KeyRouter.table`), so a
 row does what its key does: a group row descends, a command row runs and
-closes the guide. The breadcrumbs — `←`, `␣ leader`, the groups below it —
+closes the guide. The breadcrumbs — `←`, `leader`, the groups below it —
 are tappable; Back and `Esc` pop one level, closing at the root.
 
 A surface (`surfaces.Surface`) shown as a sheet above the extra keys. A level
@@ -80,11 +80,13 @@ final class TouchGuide : Surface, Scrollable
         builtQuery = query.length;
 
         // The rows left for the list: the area less the top border, the
-        // breadcrumbs, the Recent row and the search field (`TPG19`).
+        // breadcrumbs, the Recent row, and the search field with the cell
+        // below it (`TPG19`).
         const per = sctx.targetRows > 1 ? sctx.targetRows : 1;
         const areaRows = sctx.cellH > 0 ? sctx.area.height / sctx.cellH : 0;
         const showRecent = !query.length && recent.length;
-        const room = areaRows > 0 ? areaRows - 1 - per - (showRecent ? per : 0) - 1 : unknownRoom;
+        const room = areaRows > 0
+            ? areaRows - 1 - per - (showRecent ? per : 0) - per - 1 : unknownRoom;
 
         if (query.length)
             lines ~= windowed(b, searchResults(b, sctx), room, per);
@@ -102,7 +104,7 @@ final class TouchGuide : Surface, Scrollable
         }
         // The logs' search row (`TPG8`), a tap on it bringing up the keyboard.
         lines ~= searchRow(b, query.idup, query.length > 0, "Search all commands",
-            sctx.targetRows, searchHit);
+            sctx.targetRows, searchHit, inBand: true);
         return b.finish(band(b, lines));
     }
 
@@ -291,7 +293,7 @@ final class TouchGuide : Surface, Scrollable
         {
             if (i)
                 parts ~= label(b, "›", Slot.muted);
-            parts ~= chip(b, sctx, i == 0 ? "␣" : null, i == 0 ? "leader" : groupName(i),
+            parts ~= chip(b, sctx, null, i == 0 ? "leader" : groupName(i),
                 crumbHit + i, current: i + 1 == path.length);
         }
         return b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
@@ -401,9 +403,14 @@ final class TouchGuide : Surface, Scrollable
         import sparkles.ui.geometry : Insets;
         import sparkles.ui.style : BorderStyle, Decoration;
 
+        // An icon alone (the ← back) is as wide as it is tall: three cells
+        // were a 26 dp target on a phone.
+        const square = text.length || sctx.cellW <= 0 || sctx.targetRows <= 1 ? 0
+            : (sctx.targetRows * sctx.cellH + sctx.cellW - 1) / sctx.cellW;
         return b.add(Widget(kind: WidgetKind.panel,
             children: [chipContent(b, icon, text, current)],
             padding: Insets(0, 1, 0, 1),
+            width: square ? SizeSpec.fixed(square) : SizeSpec.fit_,
             height: sctx.targetRows > 1 ? SizeSpec.fixed(sctx.targetRows) : SizeSpec.fit_,
             hitId: hit, slot: Slot.surfaceRaised, paintBackground: true,
             alignY: Alignment.center,
@@ -471,13 +478,13 @@ string iconOf(TermCommand c) @safe pure nothrow @nogc
         case TermCommand.goToTab: return "#";
         case TermCommand.copy: return iconText(ActionIcon.copy);
         case TermCommand.paste: return iconText(ActionIcon.paste);
-        case TermCommand.toggleExtraKeys: return "⌨";
-        case TermCommand.showGuide: return "?";
-        case TermCommand.openAbout: return "ⓘ";
-        case TermCommand.openLogs: return "≣";
-        case TermCommand.openNotifications: return "◉";
-        case TermCommand.showCredits: return "©";
-        case TermCommand.openSettings: return "⚙";
+        case TermCommand.toggleExtraKeys: return iconText(ActionIcon.keyboard);
+        case TermCommand.showGuide: return iconText(ActionIcon.help);
+        case TermCommand.openAbout: return iconText(ActionIcon.about);
+        case TermCommand.openLogs: return iconText(ActionIcon.logs);
+        case TermCommand.openNotifications: return iconText(ActionIcon.notifications);
+        case TermCommand.showCredits: return iconText(ActionIcon.credits);
+        case TermCommand.openSettings: return iconText(ActionIcon.settings);
         default: return "·";
     }
 }
@@ -634,8 +641,8 @@ version (unittest)
     assert(shown.canFind!(t => t.length > 2 && t[0 .. 3] == "↓"), "what lies below is counted");
 
     // A tap on the mark (or a drag) turns the page: the end of the list shows.
-    assert(!g.activate(moreBelowHit));
-    assert(!g.activate(moreBelowHit));
+    foreach (_; 0 .. 8)
+        assert(!g.activate(moreBelowHit));
     shown = targets(layout());
     assert(shown.canFind("close pane") && !shown.canFind("split right"));
 }
