@@ -22,6 +22,7 @@ import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row, uiLabel;
+import page_kit : searchRow;
 import surfaces : Placement, Surface, SurfaceContext;
 
 /// One pane, as the tree shows it.
@@ -241,13 +242,11 @@ final class TabTree : Surface
     /// admitted.
     private long score(const(char)[] text) @safe => fuzzyScore(query, text);
 
+    // The logs' search row (`TPG8`): typing goes straight to the query, so
+    // the caret shows once there is one.
     private uint searchField(ref Builder b, in SurfaceContext ctx) @safe
-    {
-        const text = query.length ? "⌕ " ~ query.idup : "⌕ Search tabs, panes, programs, dirs";
-        return b.add(Widget(kind: WidgetKind.panel,
-            children: [query.length ? label(b, text, Slot.textPrimary) : uiLabel(b, text, Slot.muted)],
-            slot: Slot.surfaceSunken, paintBackground: true));
-    }
+        => searchRow(b, query.idup, query.length > 0, "Search tabs, panes, programs, dirs",
+            ctx.targetRows);
 
     private uint entry(ref Builder b, in SurfaceContext ctx, string title, string detail,
         string badge, bool marked, bool failed, size_t hit) @safe

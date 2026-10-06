@@ -300,7 +300,7 @@ The search field on its own row (`TPG8`): the query and a caret while it has
 the keyboard, else the query, else `placeholder` — muted.
 */
 uint searchField(ref Builder b, string query, bool focused, string placeholder,
-    int rows = 1) @safe
+    int rows = 1, size_t hitId = PageHit.search) @safe
 {
     const shown = query.length ? "⌕ " ~ query ~ (focused ? "▏" : "")
         : focused ? "⌕ ▏" : "⌕ " ~ placeholder;
@@ -317,12 +317,22 @@ uint searchField(ref Builder b, string query, bool focused, string placeholder,
         width: SizeSpec.grow(),
         height: rows > 1 ? SizeSpec.fixed(rows) : SizeSpec.fit_,
         alignY: Alignment.center,
-        hitId: PageHit.search,
+        hitId: hitId,
         slot: focused ? Slot.surfaceSunken : Slot.surfaceRaised,
         paintBackground: true,
         decoration: Decoration(borderRadius: 6),
     ));
 }
+
+/**
+$(LREF searchField) on its own row, a cell in from either side: the one
+search row every surface shares — the logs, the tab tree, the key guide.
+*/
+uint searchRow(ref Builder b, string query, bool focused, string placeholder,
+    int rows = 1, size_t hitId = PageHit.search) @safe
+    => b.add(Widget(kind: WidgetKind.panel,
+        children: [searchField(b, query, focused, placeholder, rows, hitId)],
+        width: SizeSpec.grow(), padding: Insets(0, 1, 0, 1)));
 
 /**
 A sentence or a paragraph, in the interface face (design-system `GLY10`),
