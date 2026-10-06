@@ -4,9 +4,9 @@ where each pane's content goes once its chrome has taken its share:
 
 $(LIST
     * `reveal` (default) — no chrome; the focused pane wears an accent
-        corner, and a pane's toolbar — title, directory, split, zoom, close —
-        shows while the pointer is at its top (desktop) or after a tap on it
-        (touch), until the next tap elsewhere;
+        corner, and a pane's toolbar — title, directory, split right, split
+        down, zoom, close — shows while the pointer is at its top (desktop)
+        or after a tap on it (touch), until the next tap elsewhere;
     * `header` — a one-line header on every pane, bold with a bar on the
         focused one;
     * `framed` — a rounded frame with the title set in its top border,
@@ -88,7 +88,8 @@ enum size_t toolHit = 0x7A00_0000;
 /// ditto
 enum ToolAction : size_t
 {
-    split,
+    splitRight,
+    splitDown,
     zoom,
     close,
 }
@@ -146,9 +147,9 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
 {
     Builder b;
     const base = toolHit + 4 * pane;
-    // Three captioned buttons need about 32 columns; a narrower pane (half a
+    // Four captioned buttons need about 40 columns; a narrower pane (half a
     // phone) shows their icons, so Close stays on screen.
-    if (labels != ButtonLabels.icon && cols < 40)
+    if (labels != ButtonLabels.icon && cols < 48)
         labels = ButtonLabels.icon;
     uint[] name = [keepTitle(b, uiLabel(b, title, Slot.textPrimary, bold: true))];
     if (detail.length)
@@ -156,7 +157,8 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     const titleRow = b.add(Widget(kind: WidgetKind.row, children: name, gap: 1,
         width: SizeSpec.grow(), alignY: Alignment.center));
     uint[] parts = [titleRow,
-        button(b, "◫", "Split", labels, base + ToolAction.split, minRows: targetRows),
+        button(b, "◫", "Right", labels, base + ToolAction.splitRight, minRows: targetRows),
+        button(b, "⬓", "Down", labels, base + ToolAction.splitDown, minRows: targetRows),
         button(b, "⤢", "Zoom", labels, base + ToolAction.zoom, minRows: targetRows),
         button(b, "×", "Close", labels, base + ToolAction.close, minRows: targetRows)];
     return b.finish(b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
@@ -214,24 +216,24 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     size_t[] ids;
     foreach (ref t; l.hits)
         ids ~= t.hitId;
-    assert(ids == [toolHit + 28 + ToolAction.split, toolHit + 28 + ToolAction.zoom,
-        toolHit + 28 + ToolAction.close]);
+    assert(ids == [toolHit + 28 + ToolAction.splitRight, toolHit + 28 + ToolAction.splitDown,
+        toolHit + 28 + ToolAction.zoom, toolHit + 28 + ToolAction.close]);
 }
 
 @("pane_chrome.paneToolbar.aLongTitleNeverCutsAButton")
 @safe unittest
 {
     import chrome : place, Place;
-
-    // A directory far wider than the pane: the title gives way, the three
-    // captions stay whole (they were cut to "S", "Zo", "Cl").
-    const l = place(paneToolbar(1, "sh", "/tmp/a/very/long/working/directory/that/goes/on",
-        ButtonLabels.iconText, 1, 40), 40, 3, 0, 0, 1, 1, Place.top);
     import sparkles.base.text.grapheme : visibleWidth;
 
+    // A directory far wider than the pane: the title gives way, the four
+    // captions stay whole (they were cut to "S", "Zo", "Cl").
+    const l = place(paneToolbar(1, "sh", "/tmp/a/very/long/working/directory/that/goes/on",
+        ButtonLabels.iconText, 1, 48), 48, 3, 0, 0, 1, 1, Place.top);
+
     // Each hit is a button: its rect holds its whole caption plus padding.
-    const captions = ["◫ Split", "⤢ Zoom", "× Close"];
-    assert(l.hits.length == 3);
+    const captions = ["◫ Right", "⬓ Down", "⤢ Zoom", "× Close"];
+    assert(l.hits.length == 4);
     foreach (i, ref t; l.hits)
         assert(t.rect.width >= visibleWidth(captions[i]) + 2, captions[i]);
 }
@@ -241,11 +243,11 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
 {
     import chrome : place, Place;
 
-    // Half a phone: captions would run past the edge; icons keep all three
+    // Half a phone: captions would run past the edge; icons keep all four
     // buttons inside the pane.
     const l = place(paneToolbar(1, "bash", "~", ButtonLabels.iconText, 1, 20), 20, 3,
         0, 0, 1, 1, Place.top);
-    assert(l.hits.length == 3);
+    assert(l.hits.length == 4);
     foreach (ref t; l.hits)
         assert(t.rect.x + t.rect.width <= 20);
 }
