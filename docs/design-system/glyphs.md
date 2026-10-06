@@ -29,6 +29,7 @@ always one cell wide, always ending in ASCII:
 | Asked for                                        | Steps to                              |
 | ------------------------------------------------ | ------------------------------------- |
 | a Nerd Font status icon                          | its Unicode mark, then its ASCII mark |
+| a Nerd Font action icon                          | its Unicode stand-in, then its ASCII  |
 | another Nerd Font icon                           | `?`                                   |
 | a braille cell, a quadrant, a sextant, an octant | `▒`, then `:`                         |
 | an eighth-block bar `▏ ▎`                        | `│`, then <code>&#124;</code>         |
@@ -57,6 +58,29 @@ charsets; a theme names the charset it prefers and the target caps it:
 | pending | `nf-fa-circle`               | `○`     | `o`   |
 | running | `nf-fa-spinner`              | `◐`     | `~`   |
 | skipped | `nf-fa-minus`                | `┄`     | `.`   |
+
+## Action icons
+
+Buttons and menus name an action's icon, never a code point, so each has the
+same three forms a status mark has. A target without Nerd Font icons draws the
+Unicode stand-in, one without Unicode the ASCII one:
+
+| Action       | Nerd Font                     | Unicode | ASCII |
+| ------------ | ----------------------------- | ------- | ----- |
+| share        | `nf-fa-share_alt`             | `↗`     | `^`   |
+| open         | `nf-fa-folder_open_o`         | `⇗`     | `>`   |
+| copy         | `nf-fa-copy`                  | `⧉`     | `=`   |
+| paste        | `nf-fa-clipboard_alt`         | `⎘`     | `v`   |
+| find, search | `nf-fa-search`                | `⌕`     | `/`   |
+| run          | `nf-fa-play_circle_o`         | `▶`     | `>`   |
+| re-run       | `nf-fa-repeat`                | `↻`     | `r`   |
+| shell        | `nf-cod-terminal`             | `❯`     | `$`   |
+| autofill     | `nf-md-form_textbox_password` | `⚿`     | `*`   |
+| allow once   | `nf-fa-check`                 | `✔`     | `+`   |
+| always allow | `nf-fa-check_double`          | `∞`     | `&`   |
+| deny         | `nf-fa-ban`                   | `✕`     | `x`   |
+
+Allow once is the ok mark's icon, so the two step down alike.
 
 ## Borders
 
