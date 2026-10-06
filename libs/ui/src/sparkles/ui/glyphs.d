@@ -242,11 +242,11 @@ dchar markGlyph(Mark m, MarkCharset preferred, in TargetCapabilities caps)
 alias iconGlyphs = markGlyphs;
 
 /**
-The action icons buttons and menus name (`GLY1`): a Nerd Font icon, a
-Unicode stand-in a target without Nerd Font icons draws instead, and a
-one-cell ASCII stand-in below that, so an icon steps down its own ladder
-rather than to $(LREF replacementGlyph). The `nf-*` names are those of the
-Nerd Fonts release the flake pins (`GLY4`).
+The icons buttons and menus name — actions, and the places a menu opens
+(`GLY1`): a Nerd Font icon, a Unicode stand-in a target without Nerd Font
+icons draws instead, and a one-cell ASCII stand-in below that, so an icon
+steps down its own ladder rather than to $(LREF replacementGlyph). The `nf-*`
+names are those of the Nerd Fonts release the flake pins (`GLY4`).
 */
 enum ActionIcon : ubyte
 {
@@ -262,6 +262,13 @@ enum ActionIcon : ubyte
     @iconGlyphs('', '✔', '+') allowOnce,         /// nf-fa-check (`Mark.ok`'s)
     @iconGlyphs('', '∞', '&') alwaysAllow,       /// nf-fa-check_double
     @iconGlyphs('', '✕', 'x') deny,              /// nf-fa-ban
+    @iconGlyphs('\uF059', '?', '?') help,          /// nf-fa-question_circle
+    @iconGlyphs('\uF11C', '⌨', 'k') keyboard,      /// nf-fa-keyboard
+    @iconGlyphs('\uF449', 'ⓘ', 'i') about,         /// nf-oct-info
+    @iconGlyphs('\uF03A', '≣', '=') logs,          /// nf-fa-list
+    @iconGlyphs('\uF0F3', '◉', 'o') notifications, /// nf-fa-bell
+    @iconGlyphs('\uF08A', '♡', 'c') credits,       /// nf-fa-heart_o
+    @iconGlyphs('\uF013', '⚙', '*') settings,      /// nf-fa-gear
 }
 
 /// Each icon's glyphs, by ordinal, read from the members' UDAs.
