@@ -160,8 +160,8 @@ mixin template GuiCliFields()
     string[] fontDir;
 
     @(Option("theme", description:
-        "Colour theme, by name (see sparkles.ui.themes for the built-in set). "
-        ~ "Applies to every target, not only the window."))
+        "Colour theme: a built-in name (see --list-themes where offered) or a "
+        ~ "DTCG theme file (.tokens). Applies to every target, not only the window."))
     string theme = defaultTheme;
 
     @(Option("window-width", description: "Initial window width in cells."))
@@ -241,18 +241,19 @@ FontRequest fontRequestOf(O)(const O o) @safe pure nothrow
 }
 
 /**
-The theme `o` names, or `null`.
+The theme `o` names: a built-in by name, else a theme file at that path
+($(REF themeNamed, sparkles,ui,theme_file)), or the error that says why neither.
 
-Returns a pointer into the built-in registry rather than a copy: the themes are
-`immutable`, so there is nothing to protect and nothing to duplicate. `null` for
-a name no built-in carries, so a caller reports a typo instead of silently
+A built-in comes back as a pointer into the registry rather than a copy: the
+themes are `immutable`, so there is nothing to protect. A name that is neither is
+an error rather than a substitution, so a caller reports a typo instead of
 rendering in something the user did not choose.
 */
-immutable(Theme)* resolveTheme(O)(const O o)
+auto resolveTheme(O)(const O o)
 {
-    import sparkles.ui.themes : builtinThemes;
+    import sparkles.ui.theme_file : themeNamed;
 
-    return o.theme in builtinThemes;
+    return themeNamed(o.theme);
 }
 
 /// The window size `o` asks for, in cells.
@@ -396,18 +397,18 @@ unittest
     // that does not exist would be a startup failure nobody sees until they run
     // the thing.
     auto t = resolveTheme(GuiOptions.init);
-    assert(t !is null && t.name == "tokyo-night");
+    assert(t.hasValue && t.value.name == "tokyo-night");
 
     // A name no built-in carries is reported, not silently substituted: a typo
     // should say so rather than render in something the user did not choose.
     GuiOptions bad;
     bad.theme = "tokoy-night";
-    assert(resolveTheme(bad) is null);
+    assert(resolveTheme(bad).hasError);
 
     // The registry's alias spellings work too, since resolution is its.
     GuiOptions alt;
     alt.theme = "tokyonight";
-    assert(resolveTheme(alt).name == "tokyo-night");
+    assert(resolveTheme(alt).value.name == "tokyo-night");
 }
 
 @("ui_app.gui_options.windowCells")

@@ -126,6 +126,11 @@ the terminal goes light (`github-dark` ↔ `github-light`), and back. A theme
 with no sibling in the set, like the default `tokyo-night`, stays, and the
 toast says so.
 
+`--theme` also takes a theme file (`--theme ./mine.tokens`, a
+[Design Tokens](https://www.designtokens.org/tr/2025.10/format/) document).
+The gallery shows it until a built-in is chosen with `[`/`]` or on the Themes
+page, which labels it "a theme file".
+
 ## Rendering a frame without opening anything
 
 ```bash

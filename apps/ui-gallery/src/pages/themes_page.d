@@ -48,8 +48,8 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= row(b, [
         label(b, "selected", Slot.muted),
         label(b, t.name, Slot.chromeAccent, TextStyle(bold: true)),
-        label(b, text("(", s.themeIndex + 1, " of ", themeNames.length, ")"),
-            Slot.muted),
+        label(b, s.useFileTheme ? "(a theme file)"
+            : text("(", s.themeIndex + 1, " of ", themeNames.length, ")"), Slot.muted),
         label(b, schemeForBackground(bgOf(t.defaultBg)) == ColorScheme.dark
             ? "dark" : "light", Slot.info),
     ]);
@@ -185,6 +185,7 @@ bool handleActivate(ref GalleryState s, size_t id)
     const which = themeAt(id);
     if (which == size_t.max)
         return false;
+    s.useFileTheme = false;
     s.themeIndex = which;
     s.toastText = "theme · " ~ s.themeName;
     s.toast = typeof(s.toast).triggered(toastConfigFor(s.hasFrameClock));
