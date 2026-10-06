@@ -52,32 +52,38 @@ Policy columns: **N** = `symlinks none, dotDot reject` (the default);
 **B** = `beneath, reject`; **BI** = `beneath, inScope`; **NI** =
 `none, inScope`. `crossMounts` is `false` except where a row says otherwise.
 
-| #   | Tree                                     | Operation              | N                | NI               | B                | BI               |
-| --- | ---------------------------------------- | ---------------------- | ---------------- | ---------------- | ---------------- | ---------------- |
-| 1   | `a/b/f`                                  | `walk("a/b")`          | ok               | ok               | ok               | ok               |
-| 2   | `a/b/f`                                  | `walk("./a//b/.")`     | ok               | ok               | ok               | ok               |
-| 3   | —                                        | `walk("/etc")`         | escapesRoot      | escapesRoot      | escapesRoot      | escapesRoot      |
-| 4   | —                                        | `walk("..")`           | dotDotRefused    | escapesRoot      | dotDotRefused    | escapesRoot      |
-| 5   | `a/`, `c/`                               | `walk("a/../c")`       | dotDotRefused    | ok (`c`)         | dotDotRefused    | ok (`c`)         |
-| 6   | `a/`                                     | `walk("a/../../x")`    | dotDotRefused    | escapesRoot      | dotDotRefused    | escapesRoot      |
-| 7   | `a/b/`, `s -> a`                         | `walk("s/b")`          | symlinkRefused   | symlinkRefused   | ok (`a/b`)       | ok (`a/b`)       |
-| 8   | `s -> /`                                 | `walk("s")`            | symlinkRefused   | symlinkRefused   | escapesRoot      | escapesRoot      |
-| 9   | `s -> ../outside`                        | `walk("s")`            | symlinkRefused   | symlinkRefused   | escapesRoot      | escapesRoot      |
-| 10  | chain `s1 -> a/s2`, `a/s2 -> ../b`, `b/` | `walk("s1")`           | symlinkRefused   | symlinkRefused   | ok (`b`)         | ok (`b`)         |
-| 11  | chain as 10 with `a/s2 -> ../../outside` | `walk("s1")`           | symlinkRefused   | symlinkRefused   | escapesRoot      | escapesRoot      |
-| 12  | cycle `s1 -> s2`, `s2 -> s1`             | `walk("s1")`           | symlinkRefused   | symlinkRefused   | symlinkLoop      | symlinkLoop      |
-| 13  | `a/b/`, `a/f/`, `s -> a/b`               | `walk("s/../f")`       | dotDotRefused    | symlinkRefused   | dotDotRefused    | ok (`a/f`)       |
-| 14  | `d/`, `d/d -> ..`                        | `walk("d/d")`          | symlinkRefused   | symlinkRefused   | ok (root)        | ok (root)        |
-| 15  | `f` (a file)                             | `walk("f/x")`          | notADirectory    | notADirectory    | notADirectory    | notADirectory    |
-| 16  | `a/`                                     | `walk("a/missing")`    | notFound         | notFound         | notFound         | notFound         |
-| 17  | `m/` on another device                   | `walk("m")`            | crossesMount     | crossesMount     | crossesMount     | crossesMount     |
-| 18  | as 17, `crossMounts = true`              | `walk("m")`            | ok               | ok               | ok               | ok               |
-| 19  | 41-link chain inside the root            | `walk("s1")`           | symlinkRefused   | symlinkRefused   | symlinkLoop      | symlinkLoop      |
-| 20  | 65 nested directories                    | `walkAll` of them      | depthExceeded    | depthExceeded    | depthExceeded    | depthExceeded    |
-| 21  | —                                        | `openDir("a\0b")`      | invalidName      | invalidName      | invalidName      | invalidName      |
-| 22  | —                                        | `openDir` of 256 bytes | nameTooLong      | nameTooLong      | nameTooLong      | nameTooLong      |
-| 23  | `s -> outside/secret` (a file)           | `openFile("s", read)`  | symlinkRefused   | symlinkRefused   | symlinkRefused   | symlinkRefused   |
-| 24  | `s -> outside/`                          | `removeTree("s")`      | ok, link removed | ok, link removed | ok, link removed | ok, link removed |
+| #   | Tree                                     | Operation                                | N                   | NI                  | B                   | BI                  |
+| --- | ---------------------------------------- | ---------------------------------------- | ------------------- | ------------------- | ------------------- | ------------------- |
+| 1   | `a/b/f`                                  | `walk("a/b")`                            | ok                  | ok                  | ok                  | ok                  |
+| 2   | `a/b/f`                                  | `walk("./a//b/.")`                       | ok                  | ok                  | ok                  | ok                  |
+| 3   | —                                        | `walk("/etc")`                           | escapesRoot         | escapesRoot         | escapesRoot         | escapesRoot         |
+| 4   | —                                        | `walk("..")`                             | dotDotRefused       | escapesRoot         | dotDotRefused       | escapesRoot         |
+| 5   | `a/`, `c/`                               | `walk("a/../c")`                         | dotDotRefused       | ok (`c`)            | dotDotRefused       | ok (`c`)            |
+| 6   | `a/`                                     | `walk("a/../../x")`                      | dotDotRefused       | escapesRoot         | dotDotRefused       | escapesRoot         |
+| 7   | `a/b/`, `s -> a`                         | `walk("s/b")`                            | symlinkRefused      | symlinkRefused      | ok (`a/b`)          | ok (`a/b`)          |
+| 8   | `s -> /`                                 | `walk("s")`                              | symlinkRefused      | symlinkRefused      | escapesRoot         | escapesRoot         |
+| 9   | `s -> ../outside`                        | `walk("s")`                              | symlinkRefused      | symlinkRefused      | escapesRoot         | escapesRoot         |
+| 10  | chain `s1 -> a/s2`, `a/s2 -> ../b`, `b/` | `walk("s1")`                             | symlinkRefused      | symlinkRefused      | ok (`b`)            | ok (`b`)            |
+| 11  | chain as 10 with `a/s2 -> ../../outside` | `walk("s1")`                             | symlinkRefused      | symlinkRefused      | escapesRoot         | escapesRoot         |
+| 12  | cycle `s1 -> s2`, `s2 -> s1`             | `walk("s1")`                             | symlinkRefused      | symlinkRefused      | symlinkLoop         | symlinkLoop         |
+| 13  | `a/b/`, `a/f/`, `s -> a/b`               | `walk("s/../f")`                         | dotDotRefused       | symlinkRefused      | dotDotRefused       | ok (`a/f`)          |
+| 14  | `d/`, `d/d -> ..`                        | `walk("d/d")`                            | symlinkRefused      | symlinkRefused      | ok (root)           | ok (root)           |
+| 15  | `f` (a file)                             | `walk("f/x")`                            | notADirectory       | notADirectory       | notADirectory       | notADirectory       |
+| 16  | `a/`                                     | `walk("a/missing")`                      | notFound            | notFound            | notFound            | notFound            |
+| 17  | `m/` on another device                   | `walk("m")`                              | crossesMount        | crossesMount        | crossesMount        | crossesMount        |
+| 18  | as 17, `crossMounts = true`              | `walk("m")`                              | ok                  | ok                  | ok                  | ok                  |
+| 19  | 41-link chain inside the root            | `walk("s1")`                             | symlinkRefused      | symlinkRefused      | symlinkLoop         | symlinkLoop         |
+| 20  | 65 nested directories                    | `walkAll` of them                        | depthExceeded       | depthExceeded       | depthExceeded       | depthExceeded       |
+| 21  | —                                        | `openDir("a\0b")`                        | invalidName         | invalidName         | invalidName         | invalidName         |
+| 22  | —                                        | `openDir` of 256 bytes                   | nameTooLong         | nameTooLong         | nameTooLong         | nameTooLong         |
+| 23  | `s -> outside/secret` (a file)           | `openFile("s", read)`                    | symlinkRefused      | symlinkRefused      | symlinkRefused      | symlinkRefused      |
+| 24  | `s -> outside/`                          | `removeTree("s")`                        | ok, link removed    | ok, link removed    | ok, link removed    | ok, link removed    |
+| 25  | —                                        | `symlinkAt("s", "/etc")`                 | escapesRoot         | escapesRoot         | escapesRoot         | escapesRoot         |
+| 26  | `a/`                                     | `symlinkAt("s", "../../outside")` on `a` | ok, stored verbatim | ok, stored verbatim | ok, stored verbatim | ok, stored verbatim |
+
+Rows 25 and 26 check that only absolute link targets are refused
+([`VFO10`](./SPEC.md#vfo10-symbolic-link-targets)); on Windows, row 25 also
+runs with `C:\x`, `\\server\share` and `\??\C:`.
 
 Rows 23 and 24 check that the named entry is never followed
 ([`VFO2`](./SPEC.md#vfo2-the-named-entry-is-never-followed),
@@ -223,6 +229,7 @@ that observation is made.
 | [`VFO7`](./SPEC.md#vfo7-listing)                           | listing a directory twice through the same `Dir`, concurrently, yields the full set both times                                                                       | 4, 6    |
 | [`VFO8`](./SPEC.md#vfo8-rename-stays-in-one-root)          | two roots over one directory; a rename between them fails and neither tree changes                                                                                   | 4       |
 | [`VFO9`](./SPEC.md#vfo9-atomic-write)                      | R9; a reader loop concurrent with 1000 writes never sees a mixed or empty file on the Linux and Windows legs; the replacement has the requested sharing              | 2, 6    |
+| [`VFO10`](./SPEC.md#vfo10-symbolic-link-targets)           | rows 25 and 26, with the operation counter unchanged after row 25                                                                                                    | 1       |
 
 ### Paths and resolution policy (`VFP`)
 

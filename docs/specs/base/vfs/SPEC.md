@@ -342,7 +342,7 @@ optional argument of [`VFO5`](#vfo5-sharing-of-created-entries); passing
 | `mkdirAt(name, sharing)`                | `create`                                            | nothing; `exists` if present                                 |
 | `statAt(name, mask)`                    | `stat`                                              | a `Stat` of the entry itself                                 |
 | `readlinkAt(name, buffer)`              | `stat`                                              | the target bytes, as a slice of `buffer`                     |
-| `symlinkAt(name, target)`               | `create`                                            | nothing; `target` stored verbatim                            |
+| `symlinkAt(name, target)`               | `create`                                            | nothing; see [`VFO10`](#vfo10-symbolic-link-targets)         |
 | `unlinkAt(name)`                        | `remove`                                            | nothing; `isADirectory` for a directory                      |
 | `rmdirAt(name)`                         | `remove`                                            | nothing; `notEmpty` if it has entries                        |
 | `renameAt(name, dst, dstName)`          | `rename` on both                                    | nothing; replaces a non-directory target                     |
@@ -421,6 +421,20 @@ sharing, write and sync it, and rename it over `name`. On any failure it
 either the complete old content or the complete new content. The replacement
 does not take the replaced file's permissions; a caller who wants them reads
 them with `statAt` and passes them as `PosixMode`.
+
+<a id="vfo10-symbolic-link-targets"></a>
+**VFO10: Symbolic link targets.** `symlinkAt` **must** fail with `escapesRoot`,
+before any backend call, if `target` is absolute by the rules of
+[`VFP3`](#vfp3-path-syntax): it begins with `/`, or on Windows with `\`, a
+drive letter, a UNC prefix or an NT prefix. It **must** fail with
+`invalidName` if `target` is empty or contains NUL. Any other target is stored
+verbatim, including one whose `..` components climb above the root.
+
+_Rationale:_ No walk through this interface can follow an absolute target
+([`VFP5`](#vfp5-beneath)), so such a link only ever misleads other tools, as
+cap-std also judges. A relative target's escape depends on where the link
+ends up, which renames can change, so it is not checked
+([DV23](./decisions.md#dv23-symbolic-link-targets)).
 
 ## 7. Paths and resolution policy (`VFP`)
 
@@ -631,7 +645,7 @@ event-horizon's specification defines.
 | `notEmpty`           | a directory removal found entries                                                                                 |
 | `permission`         | the operating system denied access                                                                                |
 | `busy`               | the entry is in use in a way that blocks the operation                                                            |
-| `invalidName`        | a name failed [`VFO1`](#vfo1-names)                                                                               |
+| `invalidName`        | a name failed [`VFO1`](#vfo1-names), or a link target failed [`VFO10`](#vfo10-symbolic-link-targets)              |
 | `escapesRoot`        | the operation would leave the root: an absolute path, an absolute symbolic-link target, or a climb above the root |
 | `dotDotRefused`      | a `..` component under the `reject` policy                                                                        |
 | `symlinkRefused`     | a symbolic link or name-surrogate reparse point where the policy forbids one                                      |
