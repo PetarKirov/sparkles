@@ -123,6 +123,21 @@ still compiling desktop applications after cold dependency builds.
 `with-cachix.sh` publishes completed paths throughout the build, but the
 job must finish the full closure and runnable examples in one attempt.
 
+### Darwin dtools fallback fixture
+
+The pinned dtools `test_rdmd` checks that rdmd searches beside its own executable
+before searching `PATH`. Its original fixture writes an empty, non-executable
+compiler and expects the resulting process error to exit with status 1. That
+assumption failed on macOS in run `37439278965`, before Sparkles applications
+compiled.
+
+The Darwin toolchain applies
+[`dtools-native-fallback-compiler.patch`](../nix/dtools-native-fallback-compiler.patch):
+the fixture compiles a native local compiler that deliberately returns 1. Both
+existing exit-status and local-search-order assertions remain enabled, as does
+the complete dtools check phase. The compiler-source fixture is removed on exit.
+Linux keeps the upstream fixture.
+
 ## `prepare-cloud-env.sh` — ephemeral agent containers
 
 An agent container (Claude Code on the web, and anything comparable) clones the

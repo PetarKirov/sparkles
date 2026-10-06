@@ -1,0 +1,13 @@
+--- a/rdmd_test.d
++++ b/rdmd_test.d
+@@ -685,5 +685,9 @@ void runFallbackTest(string rdmdApp, string buildCompiler, string model)
+        search its own binary path first when looking for the default
+        compiler (determined by the compiler used to build it) */
+     string localDMD = buildPath(dirName(rdmdApp), baseName(buildCompiler).setExtension(binExt));
+-    std.file.write(localDMD, ""); // An empty file avoids the "Not a valid 16-bit application" pop-up on Windows
++    string localSource = localDMD ~ ".d";
++    std.file.write(localSource, "module rdmd_fallback_compiler; int main() { return 1; }");
++    scope(exit) std.file.remove(localSource);
++    auto built = execute([buildCompiler, modelSwitch(model), "-of" ~ localDMD, localSource]);
++    enforce(built.status == 0, built.output);
+     scope(exit) std.file.remove(localDMD);
