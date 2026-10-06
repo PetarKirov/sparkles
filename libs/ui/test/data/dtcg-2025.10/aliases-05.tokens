@@ -1,0 +1,44 @@
+{
+  "base": {
+    "blue": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0.2, 0.4, 0.9],
+        "hex": "#3366e6"
+      },
+      "$type": "color"
+    }
+  },
+  "semantic": {
+    // semantic.primary keeps the same red and green components as base.blue
+    // but uses a different blue component (0.7)
+    "primary": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          { "$ref": "#/base/blue/$value/components/0" },
+          { "$ref": "#/base/blue/$value/components/1" },
+          0.7
+        ],
+        "hex": "#3366b3"
+      },
+      "$type": "color"
+    },
+    // semantic.secondary keeps the same red and green components as base.blue
+    // but uses a different blue component (0.5)
+    "secondary": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [
+          { "$ref": "#/base/blue/$value/components/0" },
+          { "$ref": "#/base/blue/$value/components/1" },
+          0.5
+        ],
+        "hex": "#336680"
+      },
+      "$type": "color"
+    }
+    // Changes to the hue of base.blue will automatically propagate
+    // to both semantic colors
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "notification-border-style": {
+    "$type": "strokeStyle",
+    "$value": {
+      "dashArray": ["{dash-length-medium}", { "value": 0.25, "unit": "rem" }],
+      "lineCap": "butt"
+    }
+  },
+
+  "mixed-dash-style": {
+    "$type": "strokeStyle",
+    "$value": {
+      "dashArray": [
+        "{dash-length-long}",
+        "{dash-gap-short}",
+        { "value": 0.125, "unit": "rem" },
+        "{dash-gap-short}"
+      ],
+      "lineCap": "round"
+    }
+  },
+
+  "dash-length-medium": {
+    "$type": "dimension",
+    "$value": {
+      "value": 10,
+      "unit": "px"
+    }
+  },
+
+  "dash-length-long": {
+    "$type": "dimension",
+    "$value": { "value": 1, "unit": "rem" }
+  },
+
+  "dash-gap-short": {
+    "$type": "dimension",
+    "$value": { "value": 0.25, "unit": "rem" }
+  }
+}

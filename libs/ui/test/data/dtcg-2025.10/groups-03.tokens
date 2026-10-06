@@ -1,0 +1,19 @@
+{
+  "button-primary": {
+    "$extends": "{button}",
+    "background": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0.8, 0, 0.4],
+        "hex": "#cc0066"
+      }
+    },
+    "focus": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [1, 0.2, 0.6],
+        "hex": "#ff3399"
+      }
+    }
+  }
+}

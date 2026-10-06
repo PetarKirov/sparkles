@@ -1,0 +1,16 @@
+{
+  "spacing-stack-0": {
+    "$value": {
+      "value": 0,
+      "unit": "px"
+    },
+    "$type": "dimension"
+  },
+  "spacing-stack-1": {
+    "$value": {
+      "value": 0.5,
+      "unit": "rem"
+    },
+    "$type": "dimension"
+  }
+}

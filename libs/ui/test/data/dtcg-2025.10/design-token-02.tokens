@@ -1,0 +1,14 @@
+{
+  "font-size": {
+    "$value": { "value": 3, "unit": "rem" },
+    "$type": "dimension"
+  },
+
+  "FONT-SIZE": {
+    "$value": {
+      "value": 16,
+      "unit": "px"
+    },
+    "$type": "dimension"
+  }
+}

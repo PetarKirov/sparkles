@@ -1,0 +1,6 @@
+{
+  "focus-ring-style": {
+    "$type": "strokeStyle",
+    "$value": "dashed"
+  }
+}

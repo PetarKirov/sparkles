@@ -1,0 +1,24 @@
+{
+  "base": {
+    "spacing": {
+      "$value": { "value": 16, "unit": "px" },
+      "$type": "dimension"
+    }
+  },
+  "layout": {
+    "small": {
+      "$value": {
+        "value": { "$ref": "#/base/spacing/$value/value" },
+        "unit": "rem"
+      },
+      "$type": "dimension"
+    },
+    "large": {
+      "$value": {
+        "value": 32,
+        "unit": { "$ref": "#/base/spacing/$value/unit" }
+      },
+      "$type": "dimension"
+    }
+  }
+}

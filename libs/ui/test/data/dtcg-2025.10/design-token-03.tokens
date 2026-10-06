@@ -1,0 +1,10 @@
+{
+  "Button background": {
+    "$type": "color",
+    "$description": "The background color for buttons in their normal state.",
+    "$value": {
+      "colorSpace": "srgb",
+      "components": [0.467, 0.467, 0.467]
+    }
+  }
+}

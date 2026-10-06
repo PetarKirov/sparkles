@@ -1,0 +1,24 @@
+{
+  "brand-color-acid-green": {
+    "$type": "color",
+    "$value": {
+      "colorSpace": "srgb",
+      "components": [0, 1, 0.4]
+    }
+  },
+  "brand-color-hot-pink": {
+    "$type": "color",
+    "$value": {
+      "colorSpace": "srgb",
+      "components": [1, 0, 1]
+    }
+  },
+  "brand-typeface-primary": {
+    "$value": "Comic Sans MS",
+    "$type": "fontFamily"
+  },
+  "brand-typeface-secondary": {
+    "$value": "Times New Roman",
+    "$type": "fontFamily"
+  }
+}

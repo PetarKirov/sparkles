@@ -1,0 +1,11 @@
+{
+  "base": {
+    "color": { "$value": "#blue" },
+    "spacing": { "$value": "16px" }
+  },
+  "extended": {
+    "$extends": "{base}",
+    "color": { "$value": "#red" }, // Overrides base.color
+    "border": { "$value": "1px solid" } // Adds new token
+  }
+}

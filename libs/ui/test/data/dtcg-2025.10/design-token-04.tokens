@@ -1,0 +1,9 @@
+{
+  "Button background": {
+    "$type": "color",
+    "$value": {
+      "colorSpace": "srgb",
+      "components": [0.467, 0.467, 0.467]
+    }
+  }
+}

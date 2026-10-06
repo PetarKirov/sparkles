@@ -1,0 +1,5 @@
+{
+  "a": { "$value": "{b}" },
+  "b": { "$value": "{c}" },
+  "c": { "$value": "{a}" } // Creates circular reference: a → b → c → a
+}
