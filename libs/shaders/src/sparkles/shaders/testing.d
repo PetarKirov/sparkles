@@ -64,6 +64,12 @@ import sparkles.shaders.types;
     assert(dot(v3(1, 2, 3), v3(4, 5, 6)) == 32);
     assert(length(v2(3, 4)) == 5);
     assert(sqrt(16.0f) == 4);
+    assert(exp(0.0f) == 1);
+    assert(exp(1.0f) > 2.71828f && exp(1.0f) < 2.71829f);
+    assert(exp(-30.0f) > 0 && exp(-30.0f) < 1e-12f, "a halo fades, it never goes negative");
+    assert(exp(v2(0, 0)).array == [1, 1]);
+    const float base = 4, half = 0.5f;
+    assert(pow(base, half) == 2, "a `const` argument resolves under every compiler");
     assert(luma(v3(1)) > 0.999f && luma(v3(1)) < 1.001f);
     assert(luma(v3(0, 0, 1)) > 0, "blue text must not vanish");
 }
