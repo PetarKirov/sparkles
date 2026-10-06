@@ -1,7 +1,7 @@
 ---
 status: draft
 owner: sparkles:terminal
-reviewed: 2026-10-05
+reviewed: 2026-10-06
 ---
 
 # Environment decisions and design gates
@@ -10,7 +10,9 @@ reviewed: 2026-10-05
 
 The project owner explicitly confirmed Q1–Q22 during the specification interview
 on 2026-10-05. Q23–Q43 then established the application configuration policy,
-including the explicit revision of invocation precedence in Q41/Q43. These choices establish scope; the detailed draft requirements and
+including the explicit revision of invocation precedence in Q41/Q43. Q44–Q47,
+confirmed on 2026-10-06, settle root-associated workspaces, ambiguous import aliases,
+supported local-state writers and unsupported-version recovery. These choices establish scope; the detailed draft requirements and
 implementation conformance require their own reviews. Revisit a choice explicitly
 if feasibility evidence conflicts with it.
 
@@ -37,7 +39,7 @@ can proceed without claiming Stage 0 feasibility completion.
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | G1 — Dynamic configuration        | Wired owner defines dynamic ID → independent field resolution preserving metadata without whole-map selection; test P1                                                                         | Profile schema implementation; settle before resolver cutover                       |
 | G2 — Import and writable layer    | Application policy is specified by TPC; refine source descriptor schema, file identities/limits, reload scheduling and transactional save coordination. Wired owns priority mechanism/encoding | P2/C1–C7 and settings migration; settle remaining mechanics before implementation   |
-| G3 — Persisted compatibility      | Legacy startup commands and workspace migration, version markers, backup and downgrade behavior; no guessed argv or one-off replay                                                             | Profile cutover and P5; review fixtures first                                       |
+| G3 — Persisted compatibility      | Root-scoped workspace and unsupported-version policy are settled by TPC16/17; specify legacy migration, version markers and backup transactions; no guessed argv or one-off replay             | Profile cutover and P5; review fixtures first                                       |
 | G4 — Native AVF support           | Exact stock firmware, grants, owner API and SDK/flavor constraints; F1/F2                                                                                                                      | Production owner/image architecture; no target device assumed connected             |
 | G5 — Guest transport              | Independent PTYs, authority, protocol, buffer bounds, cancellation, namespace/lookup/inherited-env semantics; F3                                                                               | Production guest broker and E/P/R acceptance                                        |
 | G6 — Storage/network/resources    | Firmware-specific units/defaults/limits, transfer interruption semantics, stopped/unbootable extraction, port transport; F4                                                                    | Resource/transfer/network implementation acceptance                                 |
@@ -210,3 +212,35 @@ is preserved; no shared wired contract was edited by this revision.
 Final strict opening recheck and final independent combined-artifact review found
 no remaining blocker to draft publication. The review confirmed that the G2/G3
 refinements remain unmet implementation gates and wired authority is unchanged.
+
+## Persistence boundary agreement (Q44–Q47)
+
+The owner explicitly confirmed these four recommendations on 2026-10-06.
+TPC6/11/16/17 own the resulting obligations; C3/C5/C9–C11 own their acceptance
+scenarios. This agreement resolves the policy questions raised by the preceding
+review, without claiming that their implementation gates have passed.
+
+| Decision                      | Accepted choice                                                                                                                                  | Alternatives and consequence                                                                                                                                                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D-ADE17 — Workspace namespace | Saved workspaces share the configured-root namespace of local overrides; cross-root transfer requires explicit action and destination validation | A global workspace could resolve identical IDs into unrelated environments. Root isolation prevents this; symlink activations retain the namespace but still require restore validation                                       |
+| D-ADE18 — Import aliases      | Relative imports use the configured directory; aliases with divergent resolved graphs reject the snapshot with both paths                        | First-visited wins would depend on traversal order; resolving against physical targets would change configured-relative semantics. Equivalent aliases still contribute once; graph equivalence needs an acquisition algorithm |
+| D-ADE19 — Supported writers   | App and terminal settings CLI coordinate transactions; manual local-state editing requires all such writers stopped                              | Uncoordinated editors cannot receive an unconditional no-overwrite guarantee. Detected changes still reject stale saves; declarative files remain editable live. CLI/protocol design remains a terminal-owned gate            |
+| D-ADE20 — Unsupported state   | Preserve unsupported files; offer an explicit temporary session without restoration or unsupported overrides; replacement requires backup/reset  | Guessing a downgrade conversion or silently creating replacement state risks loss. Recovery remains usable while preserving originals; format and backup mechanics still require review                                       |
+
+Revisit these decisions explicitly if filesystem capabilities cannot implement the
+supported coordination protocol or a later product requirement needs live manual
+state editing. Generic wired priority, decoding and snapshot decisions remain with
+the wired owner. Remaining terminal gates include source identity/comparison,
+acquisition and watcher bounds, coordinated publication, version markers and
+crash-consistent backup/migration.
+
+### Boundary revision review
+
+Scope: the Q44–Q47 changes to TPC6/11/16/17, C3/C5/C9–C11 and affected delivery
+gates, reviewed 2026-10-06. An opening-only cold reader found the problem,
+ownership and root-associated workspace/local-state policy comprehensible.
+Independent semantic review found that temporary recovery could restore a supported
+workspace when only override state was unsupported. TPC17 now forbids all saved-pane
+restoration in that mode; C11 covers each mismatch independently and together.
+The final corrected combined artifact received a clear publication recheck.
+Coordination, acquisition and persisted-format implementation gates remain unmet.

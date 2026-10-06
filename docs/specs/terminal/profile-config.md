@@ -1,7 +1,7 @@
 ---
 status: draft
 owner: sparkles:terminal
-reviewed: 2026-10-05
+reviewed: 2026-10-06
 ---
 
 # Profile configuration sources and persistence (`TPC`)
@@ -13,7 +13,7 @@ edits across desktop and Android. Generated Home Manager files can remain read-o
 including their containing directory, because local edits use separate application
 state. Local settings take precedence over command-line options and host environment
 variables that supply application settings. Explicit imports add ordinary configuration files and Termux compatibility
-inputs. Alternate roots have isolated local settings, and validated reloads observe
+inputs. Alternate roots have isolated local settings and saved workspaces, and validated reloads observe
 file replacement without changing running panes' captured launch recipes.
 
 ## Introduction
@@ -24,8 +24,8 @@ symlink into an immutable store. Rewriting it to save a font or profile preferen
 fails or destroys the distinction between managed configuration and local edits.
 
 Configuration also changes outside the app. Home Manager can replace a symlink,
-multiple files can import one common module, and an editor can change writable
-state while a settings page holds an older draft. A loader that watches only an old
+multiple files can import one common module, and another supported settings writer
+can change local state while a settings page holds an older draft. A loader that watches only an old
 symlink target or saves its opening snapshot can miss changes or lose another edit.
 
 Configuration-environment inputs mean host process variables configuring the
@@ -56,7 +56,7 @@ remaining encoding, migration and feasibility gates.
 
 1. Local UI overrides win over invocation inputs, including after restart.
 2. Managed roots and imports are never rewritten by a settings edit.
-3. Each configured root path has independent frontend-owned writable state, stable across symlink retargeting.
+3. Each configured root path has independent local overrides and saved workspaces, stable across symlink retargeting.
 4. Explicit `--config` replaces root discovery, not the selected import graph.
 5. Termux compatibility exists only through an explicit typed import.
 6. Reload commits a validated snapshot; running launch snapshots remain unchanged.
@@ -123,6 +123,15 @@ retain import locations and configured paths for diagnostics without requiring t
 resolver to discover files. Optional absence **may** be ignored only when explicitly
 requested; an unreadable or malformed existing source still requires a diagnostic.
 
+Relative imports **must** use the configured importing path's directory, before
+resolving that path's symlink target. When aliases of one physical source produce
+different resolved import graphs, loading **must** reject the snapshot and identify
+both configured paths and the divergent import. Reversing traversal order **must
+not** change acceptance or select a different graph. Deduplication **must not**
+skip the alias comparison or active-cycle check. Aliases with equivalent resolved
+graphs still contribute once. Filesystem identity and graph-comparison mechanics
+remain acquisition gates; this rule does not require duplicate contributions.
+
 **TPC7: Explicit Termux adapter.** A typed Termux import **must** list the named
 paths for `termux.properties`, `colors.properties`, and `font.ttf` that the adapter
 is authorized to consume. The adapter **must not** search `~/.termux` or infer
@@ -183,11 +192,22 @@ local value **must** win over matching CLI/environment settings after restart to
 UI reset **must** remove the local contribution and reveal the next source;
 writing the compiled default is a distinct explicit value, not reset.
 
-**TPC11: Stale saves.** If writable-state content changed since the settings page's
+**TPC11: Stale saves.** Supported writes to local state **must** coordinate through
+the app or a terminal settings CLI participating in the same transaction protocol.
+Manual editing of local state is supported only while all app/settings writers
+using that state are stopped. Declarative roots and imports remain externally
+editable while the app runs; this restriction applies only to frontend-owned state.
+
+Within that coordination contract, if writable-state content changed since the settings page's
 base snapshot, save **must** refuse before replacing that content. Pending edits
 **must** remain available for reload/reapply with a conflict explanation. The app
 **must** serialize its own writers and use a transaction that detects external
 replacement/content changes; checking parseability alone is insufficient.
+Detected changes by an uncoordinated external writer **must** also refuse stale
+saves and preserve drafts. The app makes no no-overwrite guarantee for arbitrary
+concurrent editors that bypass coordination. The settings CLI and coordination
+protocol are planned interfaces requiring specification before implementation;
+a hash check followed by rename alone does not satisfy the supported-writer contract.
 Automatic merge of external edits is excluded. Failed persistence **must** retain
 the pending edit and expose unsaved state, not report a durable success.
 
@@ -224,8 +244,31 @@ records until the user supplies explicit argv; migration **must not** parse them
 heuristically or auto-execute them. Existing records **must** be backed up before
 migration commit. Unsupported workspace versions **must** enter recovery without
 source overwrite. New version markers, atomic backup/publication, repeat-migration
-handling, workspace/root namespace association and downgrade behavior remain a format acceptance gate under
+handling and backup transactions remain a format acceptance gate under
 [TPF11](./profiles.md#_4-compatibility-amendment).
+
+**TPC16: Workspace root isolation.** Saved workspaces **must** use the same
+configured-root namespace as local overrides under TPC5. Starting with root B
+**must not** restore root A's panes merely because their profile/environment IDs
+match. Returning to root A **must** select A's saved workspace. Symlink retargeting
+**must** preserve that association while restoration validates current profile and
+environment definitions. Transferring a pane between roots **must** require an
+explicit user action and validation against the destination configuration before
+launch. Namespace equality never establishes backend readiness. Runtime root
+switching and a transfer UI are not promised by this clause; if provided, they
+must obey these rules.
+
+**TPC17: Unsupported persisted versions.** An unsupported workspace or local
+override-state version **must** remain untouched and produce a version-mismatch
+explanation. Recovery **must** offer an explicitly temporary session that restores
+no saved panes, regardless of which persisted file caused the mismatch, and does
+not apply unsupported overrides.
+Such a session **must not** save settings or workspace state over the preserved
+files, including during normal exit. Creating replacement state **must** require
+an explicit backup/reset action; failed backup **must** leave the originals intact
+and refuse reset. Exact format markers and backup/publication mechanics remain
+persisted-format gates. This policy applies to downgrade and any other unsupported
+version, without promising that every older binary already implements it.
 
 | Accepted baseline                  | Intentional amendment on accepting this extension                                    |
 | ---------------------------------- | ------------------------------------------------------------------------------------ |
