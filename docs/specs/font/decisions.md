@@ -479,3 +479,8 @@ and no blocker remains. Its remaining findings and their dispositions:
 
 The reviewer's gate verdict: with these fixed, the M1 contracts meet the Stage
 0 criterion of first-slice contracts at operation level with oracles.
+
+The HarfBuzz oracle later overturned one disposition. The first review's
+`post` finding treated name indices of 32,768 and above as reserved, an older
+TrueType reading; current OpenType allows 258–65,535, and Maple Mono NF CN
+uses them for 875 glyphs. `FTP30` now accepts them.
