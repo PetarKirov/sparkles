@@ -176,6 +176,7 @@ private int desktopMain(string[] args)
         title: "sparkles:terminal",
         gui: guiOptionsFrom(lc.effective, windowCols, windowRows),
         keyRelease: true, // the terminal-grade keyboard (kitty releases)
+        uiFollowsCellFont: true, // chrome text at the terminal's size
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };
 

@@ -182,6 +182,7 @@ int androidMain()
         title: "sparkles:terminal",
         gui: gui,
         keyRelease: true, // the terminal-grade keyboard
+        uiFollowsCellFont: true, // chrome text at the terminal's size
         touchGestures: true, // taps, drags and pinches — not an emulated mouse
         pointerUnit: PointerUnit.pixels, // the key row is not on the cell grid
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
