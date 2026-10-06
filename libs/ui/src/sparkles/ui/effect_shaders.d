@@ -84,3 +84,30 @@ vec2 curvature(in vec2 uv, float amount) @safe pure nothrow @nogc
     const fit = 1.0f / (1.0f + amount * 0.25f);
     return (warped - v2(0.5f)) * fit + v2(0.5f);
 }
+
+/**
+Bloom's bright pass: what of `color` glows, faded in over a quarter
+of luminance above `threshold`. Rec. 709 luma, not $(D luma)'s Rec. 601 —
+the weights the pass has always used.
+
+Deliberately not weighted by alpha: the bracket's texture is premultiplied
+nowhere, and weighting it dimmed the glow of every translucent element.
+*/
+vec3 bloomBright(in vec3 color, float threshold) @safe pure nothrow @nogc
+{
+    const lum = dot(color, v3(0.2126f, 0.7152f, 0.0722f));
+    return color * smoothstep(threshold, threshold + 0.25f, lum);
+}
+
+/**
+Bloom's composite: `glow` added over `base`, "over" in straight alpha. The
+glow brings its own coverage — its brightest channel — so a glow over a
+transparent pixel shows instead of vanishing with it.
+*/
+vec4 bloomOver(in vec4 base, in vec3 glow) @safe pure nothrow @nogc
+{
+    const ga = clamp(max(glow.x, max(glow.y, glow.z)), 0.0f, 1.0f);
+    const a = base.w + ga * (1.0f - base.w);
+    const rgb = a > 0.0f ? (base.xyz * base.w + glow) / a : v3(0.0f);
+    return v4(min(rgb, v3(1.0f)), a);
+}

@@ -19,7 +19,7 @@ evidence ledger live in [`testing.md`](./testing.md).
 | [M1 Rename](#m1-rename-to-sparkles-shaders)                                 | done        |
 | [M2 Unit membership](#m2-unit-membership)                                   | deferred    |
 | [M3 Interface and agreement evidence](#m3-interface-and-agreement-evidence) | not started |
-| [M4 Multi-pass effects](#m4-multi-pass-effects-in-single-source-d)          | not started |
+| [M4 Multi-pass effects](#m4-multi-pass-effects-in-single-source-d)          | in progress |
 | [M5 Further platforms](#m5-further-device-platforms)                        | not started |
 
 ## Stage 0: specification
@@ -112,6 +112,12 @@ pass. The work is specified by the effects specification
 each effect calls the same D functions as its GPU passes.
 
 **Entry condition.** M1, so the new code is written against the final names.
+
+**Progress.** Bloom is done: its four passes are generated, the composite reads
+two textures, and the gallery's and the CRT's captures are byte-identical
+before and after. The CRT's tube remains. It needs `exp` and a vector
+`smoothstep` in the vocabulary, and its curvature and lens moved into a
+module that the CPU projection (`crt_projection`) and the pass both call.
 
 ## M5: Further device platforms
 

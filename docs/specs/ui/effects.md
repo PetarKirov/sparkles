@@ -266,6 +266,17 @@ comparison also found a real bug — the bright pass weighted by alpha, which
 antialiased text leaves just under 1 — and it was fixed rather than
 tolerated.
 
+`bloom`'s four passes later moved from hand-written GLSL to single-source D
+(`EFX25`): `bloomExtract`, `bloomBlurH`, `bloomBlurV` and `bloomComposite` are
+`@fragment` entry points in `libs/ui/shaders/effects.d`, and their colour
+maths — `effect_shaders.bloomBright` and `bloomOver` — is host code with host
+tests (`ui.effect.bloom.colourMathsOnTheHost`). The composite is the first
+entry point that reads two textures. Captured with the clock pinned, the
+gallery's effects page and hue's CRT frame — which reuses the first three
+passes — are byte-identical before and after. The comparison is not blind:
+widening the bright pass's knee changes the gallery capture. The CRT's tube is
+still hand-written; [`sparkles:shaders`](../shaders/PLAN.md) M4 tracks it.
+
 ## Decisions
 
 - **Effects bracket like clips rather than becoming a widget kind.** A widget
