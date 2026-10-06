@@ -12,7 +12,9 @@ The project owner explicitly confirmed Q1–Q22 during the specification intervi
 on 2026-10-05. Q23–Q43 then established the application configuration policy,
 including the explicit revision of invocation precedence in Q41/Q43. Q44–Q47,
 confirmed on 2026-10-06, settle root-associated workspaces, ambiguous import aliases,
-supported local-state writers and unsupported-version recovery. These choices establish scope; the detailed draft requirements and
+supported local-state writers and unsupported-version recovery. Q48–Q49 additionally
+confirm retained migration/reset backups and an explicit legacy workspace destination.
+These choices establish scope; the detailed draft requirements and
 implementation conformance require their own reviews. Revisit a choice explicitly
 if feasibility evidence conflicts with it.
 
@@ -244,3 +246,18 @@ workspace when only override state was unsupported. TPC17 now forbids all saved-
 restoration in that mode; C11 covers each mismatch independently and together.
 The final corrected combined artifact received a clear publication recheck.
 Coordination, acquisition and persisted-format implementation gates remain unmet.
+
+## Migration policy agreement (Q48–Q49)
+
+The owner confirmed both recommendations on 2026-10-06. TPC18/19 own these
+obligations; C12/13 provide the acceptance scenarios. No migration implementation
+or backup durability is established by this agreement. Independent read-only review
+of the requirements, C12/13 and affected delivery gates found no publication
+blocker. Backup failures and conflicting root identities have explicit rejection
+scenarios; format/crash-consistency gates remain unmet. This review covers the
+narrow addition, not implementation acceptance.
+
+| Decision                     | Accepted choice                                                                                                                                                      | Trade-off / remaining gate                                                                                                                                                                                                 |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D-ADE21 — Backup retention   | Migration/reset backups persist until explicit deletion, with location/size exposed; incomplete backup blocks commit                                                 | Automatic pruning risks losing the only recoverable original. Retained backups use storage; ordinary settings saves do not create migration backups. Complete-backup and crash-publication mechanics require format review |
+| D-ADE22 — Legacy destination | Offer pre-namespace workspace migration into default/legacy namespace; explicit roots never auto-adopt; other-root import requires explicit selection and validation | Inferring destination from matching IDs risks launching another environment. Historical namespace mapping and repeated imports require fixtures; command strings remain inactive                                           |
