@@ -1,4 +1,4 @@
-/** Finite scalar configuration admission, ownership, and resolution. */
+/** Finite configuration admission, ownership, and eager composition. */
 module sparkles.wired.config.core;
 
 import core.stdc.stdlib : malloc, free;
@@ -7,13 +7,28 @@ import core.atomic : atomicLoad, cas;
 import core.memory : GC;
 import std.algorithm.mutation : move;
 import std.algorithm.sorting : sort;
+import std.meta : AliasSeq, NoDuplicates;
 import std.traits : FieldNameTuple, Unqual, OriginalType, hasUDA, TemplateOf,
-    TemplateArgsOf;
+    TemplateArgsOf, Parameters, isDynamicArray, isStaticArray, isAssociativeArray;
 import std.typecons : Nullable;
 import sparkles.wired.overlay : WireSection;
+import sparkles.wired.config.payload;
+import sparkles.wired.config.metadata;
+import sparkles.wired.config.key_accounting;
+import sparkles.wired.config.borrow : ConfigArrayValueView, ConfigMapValueView,
+    ConfigStructValueView, ConfigPresenceView;
+import sparkles.wired.config.resolution;
+import sparkles.wired.json.codec : Json, aaKeyText;
+import sparkles.wired.policy : WireInvalid;
+import sparkles.wired.schema : NodeKind;
+import sparkles.wired.walk : WireWalk;
 
 struct Atomic {}
 struct Submodule {}
+struct ListOf(Policy) { alias elementPolicy = Policy; }
+struct AttrsOf(Policy) { alias valuePolicy = Policy; }
+struct Lines {}
+struct NullOr(Policy) { alias containedPolicy = Policy; }
 struct ConfigMerge(Policy) { alias policy = Policy; }
 struct ConfigCheck(alias predicate_) { alias predicate = predicate_; }
 
@@ -37,8 +52,14 @@ enum ConfigErrorKind : ubyte
     wrongOwner, unknownOption, invalidHandle, duplicateSource, duplicateDefinition,
     limitExceeded, arithmeticOverflow, allocationFailed, notFullyResolved
 }
-enum OptionStatus : ubyte { resolved, conflict, invalidSelectedValue }
-enum DefinitionDisposition : ubyte { overridden, contributing, conflicting, invalid }
+enum OptionStatus : ubyte
+{
+    resolved, conflict, invalidSelectedValue, unresolvedChildren, invalidMergedValue
+}
+enum DefinitionDisposition : ubyte
+{
+    overridden, contributing, conflicting, invalid, selected
+}
 
 struct SourceId
 {
@@ -63,9 +84,21 @@ struct DefinitionRef
 {
     private ulong owner;
     private uint index;
+    private bool generated;
     bool opEquals(DefinitionRef other) scope const @safe pure nothrow @nogc
+        => owner == other.owner && index == other.index && generated == other.generated;
+}
+struct ContributionRef
+{
+    private ulong owner;
+    private uint index;
+    bool opEquals(ContributionRef other) scope const @safe pure nothrow @nogc
         => owner == other.owner && index == other.index;
 }
+package ContributionRef contributionRef(ulong owner, uint index) @safe pure nothrow @nogc
+    => ContributionRef(owner, index);
+package DefinitionRef generatedDefinitionRef(ulong owner, uint index) @safe pure nothrow @nogc
+    => DefinitionRef(owner, index, true);
 struct SourceLocation
 {
     ulong byteOffset;
@@ -79,6 +112,9 @@ struct ConfigLimits
     ulong maxPayloadBytes = 16_777_216;
     uint maxOptions = 4096;
     uint maxDepth = 32;
+    uint maxValueNodes = 262_144;
+    uint maxResolvedRecords = 65_536;
+    uint maxContributions = 262_144;
 }
 struct ConfigUsage
 {
@@ -87,16 +123,19 @@ struct ConfigUsage
     ulong payloadBytes;
     ulong options;
     ulong depth;
+    ulong valueNodes;
+    ulong resolvedRecords;
+    ulong contributions;
 }
 struct ConfigError
 {
     ConfigErrorKind kind;
-    string path;
+    const(char)[] path;
     string limit;
     ulong used;
     ulong requested;
     /// Borrowed from the snapshot; valid only while that snapshot remains alive.
-    const(string)[] failedOptions;
+    const(const(char)[])[] failedOptions;
 }
 
 /** Explicit operation result; ownership is extracted, never implicitly copied. */
@@ -138,6 +177,24 @@ package ConfigResult!V errorResult(V)(return scope ConfigError error)
 private ConfigError fail(ConfigErrorKind kind, string path = null) @safe pure nothrow @nogc
     => ConfigError(kind, path);
 
+/** Catch allocation failure without weakening the callback's safety proof. */
+package R catchConfigAllocation(R)(scope R delegate() @safe operation, R failure) @safe
+{
+    import core.exception : OutOfMemoryError;
+    static assert(is(R == bool) || is(R == ConfigError));
+    // Only the OOM catch needs trust; the callback's body is checked separately.
+    return (() @trusted {
+        try { return operation(); }
+        catch (OutOfMemoryError) { return failure; }
+    })();
+}
+package R catchConfigAllocation(R)(scope R delegate() operation, R failure) @system
+{
+    import core.exception : OutOfMemoryError;
+    try { return operation(); }
+    catch (OutOfMemoryError) { return failure; }
+}
+
 package alias ConfigFieldNames(T) = FieldNameTuple!T;
 package alias ConfigFieldType(T, string name) = Unqual!(typeof(__traits(getMember, T.init, name)));
 
@@ -163,18 +220,27 @@ private template MergePolicy(T, string name)
     else static foreach (a; __traits(getAttributes, __traits(getMember, T, name)))
         static if (isAttribute!(a, ConfigMerge)) alias MergePolicy = typeof(a).policy;
 }
+package template ConfigFieldPolicy(T, string name)
+{
+    alias Explicit = MergePolicy!(T, name);
+    static if (!is(Explicit == void)) alias ConfigFieldPolicy = Explicit;
+    else static if (is(ConfigFieldType!(T, name) == struct)
+        && hasUDA!(ConfigFieldType!(T, name), WireSection))
+        alias ConfigFieldPolicy = Submodule;
+    else alias ConfigFieldPolicy = Atomic;
+}
 package template ConfigIsSection(T, string name)
 {
     alias V = ConfigFieldType!(T, name);
     alias P = MergePolicy!(T, name);
     enum marked = is(V == struct) && hasUDA!(V, WireSection);
-    static assert(is(P == void) || is(P == Atomic) || is(P == Submodule),
-        T.stringof ~ "." ~ name ~ ": unsupported merge policy");
+    static assert(policyCompatible!(V, ConfigFieldPolicy!(T, name)),
+        T.stringof ~ "." ~ name ~ ": incompatible configuration merge policy");
     static assert(!(marked && is(P == Atomic)),
         T.stringof ~ "." ~ name ~ ": Atomic conflicts with WireSection");
     static assert(!is(P == Submodule) || is(V == struct),
         T.stringof ~ "." ~ name ~ ": Submodule requires a section struct");
-    enum ConfigIsSection = marked || is(P == Submodule);
+    enum ConfigIsSection = is(ConfigFieldPolicy!(T, name) == Submodule);
 }
 private template supportedScalar(V)
 {
@@ -189,7 +255,7 @@ private template supportedScalar(V)
 private enum supportedInteger(V) = is(V == byte) || is(V == ubyte)
     || is(V == short) || is(V == ushort) || is(V == int) || is(V == uint)
     || is(V == long) || is(V == ulong);
-private template CheckPolicy(T, string name)
+package template CheckPolicy(T, string name)
 {
     enum count = () {
         uint n;
@@ -202,36 +268,96 @@ private template CheckPolicy(T, string name)
     else static foreach (a; __traits(getAttributes, __traits(getMember, T, name)))
         static if (isAttribute!(a, ConfigCheck)) alias CheckPolicy = typeof(a).predicate;
 }
-private ValidationResult callCheck(alias predicate, V)(in V value) @safe pure nothrow
+package ValidationResult callCheck(alias predicate, V)(in V value) @safe pure nothrow
 {
     return predicate(value);
 }
 private template validateSchema(T, string prefix = "", Ancestors...)
 {
     static assert(is(T == struct), T.stringof ~ ": configuration root/section must be struct");
+    static assert(supportedConfigGraph!T, T.stringof ~ ": unsupported ownership or recursive graph");
     static foreach (A; Ancestors)
         static assert(!is(T == A), T.stringof ~ ": cyclic configuration at " ~ prefix);
     static foreach (name; ConfigFieldNames!T)
     {
+        static assert(ConfigMemberAdmission!(T, name));
         static if (ConfigIsSection!(T, name))
-        {
-            static assert(is(CheckPolicy!(T, name) == void),
-                T.stringof ~ "." ~ prefix ~ name ~ ": ConfigCheck requires scalar");
             static assert(validateSchema!(ConfigFieldType!(T, name), prefix ~ name ~ ".", Ancestors, T));
-        }
-        else
-        {
-            static assert(supportedScalar!(ConfigFieldType!(T, name)),
-                T.stringof ~ "." ~ prefix ~ name ~ ": unsupported scalar configuration type "
-                    ~ ConfigFieldType!(T, name).stringof);
-            static if (!is(CheckPolicy!(T, name) == void))
-                static assert(__traits(compiles,
-                    callCheck!(CheckPolicy!(T, name), ConfigFieldType!(T, name))(
-                        ConfigFieldType!(T, name).init)),
-                    T.stringof ~ "." ~ prefix ~ name ~ ": check must be @safe pure nothrow and return ValidationResult");
-        }
     }
+    static assert(ConfigWireAdmission!(T, T, 0), T.stringof ~ ": invalid original wire schema");
     enum validateSchema = true;
+}
+
+private template ConfigMemberAdmission(T, string name)
+{
+    alias Value = ConfigFieldType!(T, name);
+    enum section = ConfigIsSection!(T, name);
+    static assert(policyCompatible!(Value, ConfigFieldPolicy!(T, name)),
+        T.stringof ~ "." ~ name ~ ": incompatible configuration merge policy");
+    static assert(ConfigPolicyAdmission!(Value, ConfigFieldPolicy!(T, name)));
+    static if (!is(CheckPolicy!(T, name) == void))
+        static assert(__traits(compiles,
+            callCheck!(CheckPolicy!(T, name), Value)(Value.init)),
+            T.stringof ~ "." ~ name ~ ": check must be @safe pure nothrow and return ValidationResult");
+    enum ConfigMemberAdmission = true;
+}
+
+package template ConfigWireAdmission(V, Root, size_t site)
+{
+    alias walk = WireWalk!(Json, Root);
+    enum node = walk.node!site;
+    static assert(node.kind != NodeKind.converted
+        && node.policy.field.onInvalid != WireInvalid.useDefault,
+        Root.stringof ~ ": custom conversion/default-on-invalid is unsupported");
+    static if (is(V == Nullable!N, N))
+        static assert(ConfigWireAdmission!(N, Root, walk.child!(site, 0)));
+    else static if (!is(V == string) && (is(V == E[], E) || is(V == E[n], E, size_t n)))
+        static assert(ConfigWireAdmission!(Unqual!E, Root, walk.child!(site, 0)));
+    else static if (is(V == E[K], E, K))
+    {
+        enum keySite = walk.child!(site, 0);
+        static if (is(K == enum))
+        {
+            enum injective = () {
+                static foreach (i, member; __traits(allMembers, K))
+                {{
+                    enum key = __traits(getMember, K, member);
+                    enum spelling = aaKeyText!(K, Root, keySite)(key);
+                    static foreach (j, earlier; __traits(allMembers, K))
+                        static if (j < i && key != __traits(getMember, K, earlier))
+                            if (spelling == aaKeyText!(K, Root, keySite)(
+                                __traits(getMember, K, earlier))) return false;
+                }}
+                return true;
+            }();
+            static assert(injective, Root.stringof ~ ": noninjective original enum key spelling");
+        }
+        static assert(ConfigWireAdmission!(K, Root, keySite));
+        static assert(ConfigWireAdmission!(E, Root, walk.child!(site, 1)));
+    }
+    else static if (is(V == struct))
+        static foreach (i, name; ConfigFieldNames!V)
+            static assert(ConfigWireAdmission!(ConfigFieldType!(V, name), Root, walk.child!(site, i)));
+    enum ConfigWireAdmission = true;
+}
+private template ConfigPolicyAdmission(V, P)
+{
+    static if (is(P == Submodule))
+    {
+        static foreach (name; ConfigFieldNames!V)
+            static assert(ConfigMemberAdmission!(V, name));
+    }
+    else static if (is(P == ListOf!Q, Q))
+    {
+        static if (is(V == E[], E)) static assert(ConfigPolicyAdmission!(E, Q));
+    }
+    else static if (is(P == AttrsOf!Q, Q))
+    {
+        static if (is(V == E[K], E, K)) static assert(ConfigPolicyAdmission!(E, Q));
+    }
+    else static if (is(P == NullOr!Q, Q))
+        static if (is(V == Nullable!N, N)) static assert(ConfigPolicyAdmission!(N, Q));
+    enum ConfigPolicyAdmission = true;
 }
 private string[] makePaths(T)(string prefix = "")
 {
@@ -244,23 +370,77 @@ private string[] makePaths(T)(string prefix = "")
     }
     return result;
 }
-private uint schemaDepth(T)()
+private uint graphDepth(V)()
 {
-    uint depth;
+    static if (is(V == Nullable!N, N)) return graphDepth!N();
+    else static if (!is(V == string) && (is(V == E[], E) || is(V == E[n], E, size_t n)))
+        return 1 + graphDepth!E();
+    else static if (is(V == E[K], E, K)) return 1 + graphDepth!E();
+    else static if (is(V == struct))
+    {
+        uint depth;
+        static foreach (name; ConfigFieldNames!V)
+        {{
+            auto memberDepth = 1 + graphDepth!(ConfigFieldType!(V, name))();
+            if (memberDepth > depth) depth = memberDepth;
+        }}
+        return depth;
+    }
+    else return 0;
+}
+private uint schemaDepth(T)() => graphDepth!T();
+
+private string[] childPatterns(V, P)(string prefix)
+{
+    static if (is(P == ListOf!Q, Q))
+    {
+        static if (is(V == E[], E)) return childPatterns!(E, Q)(prefix ~ "[<index>]");
+    }
+    else static if (is(P == AttrsOf!Q, Q))
+    {
+        static if (is(V == E[K], E, K)) return childPatterns!(E, Q)(prefix ~ "[<key>]");
+    }
+    else static if (is(P == NullOr!Q, Q))
+    {
+        static if (is(V == Nullable!N, N)) return childPatterns!(N, Q)(prefix);
+    }
+    else static if (is(P == Submodule))
+    {
+        string[] paths;
+        static foreach (name; ConfigFieldNames!V)
+        {{
+            enum section = ConfigIsSection!(V, name);
+            auto path = prefix ~ "." ~ name;
+            static if (!section) paths ~= path;
+            paths ~= childPatterns!(ConfigFieldType!(V, name),
+                ConfigFieldPolicy!(V, name))(path);
+        }}
+        return paths;
+    }
+    return null;
+}
+private string[] makePatterns(T)(string prefix = "")
+{
+    string[] paths;
     static foreach (name; ConfigFieldNames!T)
     {{
         static if (ConfigIsSection!(T, name))
+            paths ~= makePatterns!(ConfigFieldType!(T, name))(prefix ~ name ~ ".");
+        else
         {
-            auto child = 1 + schemaDepth!(ConfigFieldType!(T, name))();
-            if (child > depth) depth = child;
+            auto path = prefix ~ name;
+            paths ~= path;
+            paths ~= childPatterns!(ConfigFieldType!(T, name),
+                ConfigFieldPolicy!(T, name))(path);
         }
-        else if (depth < 1) depth = 1;
     }}
-    return depth;
+    return paths;
 }
 package enum ConfigPaths(T) = makePaths!T();
 package enum ConfigLeafCount(T) = ConfigPaths!T.length;
 package enum ConfigDepth(T) = schemaDepth!T();
+package enum ConfigPatterns(T) = makePatterns!T();
+package enum ConfigOptionCount(T) = ConfigPatterns!T.length;
 private string[] sortedPaths(T)()
 {
     auto paths = makePaths!T();
@@ -301,6 +481,25 @@ private template LeafSite(T, string path)
         alias Value = Next.Value;
     }
 }
+
+private template LeafWireSite(Root, string path, S = Root, size_t site = 0)
+{
+    alias walk = WireWalk!(Json, Root);
+    enum dot = dotPosition(path);
+    enum field = path[0 .. dot];
+    private size_t ordinal()
+    {
+        static foreach (i, name; ConfigFieldNames!S)
+            if (name == field) return i;
+        assert(false);
+    }
+    enum child = walk.child!(site, ordinal());
+    static if (dot == path.length)
+        enum LeafWireSite = child;
+    else
+        enum LeafWireSite = LeafWireSite!(Root, path[dot + 1 .. $],
+            ConfigFieldType!(S, field), child);
+}
 private string metadataPath(string path) @safe pure
 {
     string result;
@@ -308,7 +507,24 @@ private string metadataPath(string path) @safe pure
     return result;
 }
 
-struct DefinitionSlot(V) { bool supplied; V value; }
+struct DefinitionSlot(V)
+{
+    bool supplied;
+    V value;
+    ConfigPresence!V presence;
+    this(bool supplied, V value)
+    {
+        this.supplied = supplied;
+        this.value = value;
+        if (supplied) presence = fullPresence!V(value);
+    }
+    this(bool supplied, V value, ConfigPresence!V presence)
+    {
+        this.supplied = supplied;
+        this.value = value;
+        this.presence = presence;
+    }
+}
 struct LeafDefinitionMetadata
 {
     Nullable!uint priority;
@@ -336,7 +552,27 @@ struct DefinitionMetadata(T)
     static foreach (name; ConfigFieldNames!T)
         static if (ConfigIsSection!(T, name))
             mixin("SectionDefinitionMetadata!(ConfigFieldType!(T, \"" ~ name ~ "\")) " ~ name ~ ";");
-        else mixin("LeafDefinitionMetadata " ~ name ~ ";");
+        else static if (supportedScalar!(ConfigFieldType!(T, name)))
+            mixin("LeafDefinitionMetadata " ~ name ~ ";");
+        else mixin("CollectionDefinitionMetadata!(ConfigFieldType!(T, \"" ~ name ~ "\")) " ~ name ~ ";");
+}
+
+/// Full typed construction explicitly supplies every declared option.
+ConfigInput!T fullConfigInput(T)(return scope ref T value)
+{
+    ConfigInput!T input;
+    static foreach (name; ConfigFieldNames!T)
+    {
+        static if (ConfigIsSection!(T, name))
+            __traits(getMember, input, name) = fullConfigInput(__traits(getMember, value, name));
+        else
+        {
+            __traits(getMember, input, name).supplied = true;
+            __traits(getMember, input, name).value = __traits(getMember, value, name);
+            __traits(getMember, input, name).presence = fullPresence(__traits(getMember, value, name));
+        }
+    }
+    return input;
 }
 
 /** Stateless native allocation seam. Templates infer attributes for adapters. */
@@ -347,13 +583,13 @@ package struct ConfigAllocator
     static void* allocateCopy(size_t bytes) @trusted
     {
         import core.exception : OutOfMemoryError;
-        try { return GC.malloc(bytes, GC.BlkAttr.NO_SCAN); }
+        try { return GC.malloc(bytes); }
         catch (OutOfMemoryError) { return null; }
     }
     static void deallocateCopy(void* address) @trusted nothrow @nogc { GC.free(address); }
 }
 private struct Allocation { Allocation* next; }
-private struct Arena(A)
+package struct Arena(A)
 {
     Allocation* first;
     Allocation* last;
@@ -365,6 +601,11 @@ private struct Arena(A)
         if (bytes > size_t.max - overhead) return null;
         auto memory = A.allocate(bytes + overhead);
         if (memory is null) return null;
+        if (!registerArenaMemory(memory, bytes + overhead))
+        {
+            A.deallocate(memory);
+            return null;
+        }
         auto block = allocationPointer(memory);
         block.next = null;
         if (last is null) first = block;
@@ -377,7 +618,8 @@ private struct Arena(A)
         auto raw = allocateBytes(X.sizeof, X.alignof);
         if (raw is null) return null;
         auto value = typedPointer!X(raw);
-        *value = X.init;
+        X initialValue;
+        *value = initialValue;
         return value;
     }
     X[] array(X)(size_t count)
@@ -387,8 +629,22 @@ private struct Arena(A)
         auto raw = allocateBytes(count * X.sizeof, X.alignof);
         if (raw is null) return null;
         auto values = typedSlice!X(raw, count);
-        foreach (ref item; values) item = X.init;
+        foreach (ref item; values)
+        {
+            X initialValue;
+            item = initialValue;
+        }
         return values;
+    }
+    X[] nonNullArray(X)(size_t count)
+    {
+        auto storage = array!X(count ? count : 1);
+        return storage.ptr is null ? null : storage[0 .. count];
+    }
+    bool nonNullArray(X)(out X[] result)
+    {
+        result = nonNullArray!X(0);
+        return result.ptr !is null;
     }
     bool text(scope const(char)[] input, out string result)
     {
@@ -420,10 +676,21 @@ private struct Arena(A)
         while (block !is null)
         {
             auto next = block.next;
+            unregisterArenaMemory(block);
             A.deallocate(block);
             block = next;
         }
     }
+}
+private bool registerArenaMemory(void* memory, size_t size) @trusted
+{
+    import core.exception : OutOfMemoryError;
+    try { GC.addRange(memory, size); return true; }
+    catch (OutOfMemoryError) { return false; }
+}
+private void unregisterArenaMemory(void* memory) @trusted nothrow @nogc
+{
+    GC.removeRange(memory);
 }
 private Allocation* allocationPointer(void* raw) @trusted nothrow @nogc
     => cast(Allocation*) raw;
@@ -466,7 +733,9 @@ private bool validIdentity(scope const(ubyte)[] bytes) @safe pure nothrow @nogc
 private ConfigError validateLimits(ConfigLimits limits) @safe pure nothrow @nogc
 {
     if (!limits.maxSources || !limits.maxDefinitions || !limits.maxPayloadBytes
-        || !limits.maxOptions || !limits.maxDepth) return fail(ConfigErrorKind.invalidLimits);
+        || !limits.maxOptions || !limits.maxDepth || !limits.maxValueNodes
+        || !limits.maxResolvedRecords || !limits.maxContributions)
+        return fail(ConfigErrorKind.invalidLimits);
     return ConfigError.init;
 }
 package ConfigError checkedCharge(ulong used, ulong added, ulong limit, string name)
@@ -508,8 +777,17 @@ private ConfigError checkUsage(ConfigUsage usage, ConfigLimits limits, bool reta
     error = checkedCharge(retained ? usage.options : 0, retained ? 0 : usage.options,
         limits.maxOptions, "maxOptions");
     if (error.kind != ConfigErrorKind.none) return error;
-    return checkedCharge(retained ? usage.depth : 0, retained ? 0 : usage.depth,
+    error = checkedCharge(retained ? usage.depth : 0, retained ? 0 : usage.depth,
         limits.maxDepth, "maxDepth");
+    if (error.kind != ConfigErrorKind.none) return error;
+    error = checkedCharge(retained ? usage.valueNodes : 0, retained ? 0 : usage.valueNodes,
+        limits.maxValueNodes, "maxValueNodes");
+    if (error.kind != ConfigErrorKind.none) return error;
+    error = checkedCharge(retained ? usage.resolvedRecords : 0, retained ? 0 : usage.resolvedRecords,
+        limits.maxResolvedRecords, "maxResolvedRecords");
+    if (error.kind != ConfigErrorKind.none) return error;
+    return checkedCharge(retained ? usage.contributions : 0, retained ? 0 : usage.contributions,
+        limits.maxContributions, "maxContributions");
 }
 private bool addBytes(ref ulong used, ulong added) @safe pure nothrow @nogc
 {
@@ -552,16 +830,31 @@ private bool clonePayload(V, A)(ref Arena!A arena, scope ref const V input, out 
 private bool hasOverrides(scope ref const LeafDefinitionMetadata metadata) @safe pure nothrow @nogc
     => !metadata.priority.isNull || !metadata.order.isNull || !metadata.localId.isNull
         || !metadata.location.isNull;
-private ConfigError validateLeaf(V)(scope ref const DefinitionSlot!V slot,
-    scope ref const LeafDefinitionMetadata metadata, string path)
+private const(ConfigPresence!V) slotPresence(V)(return scope ref const DefinitionSlot!V slot)
+{
+    static if (supportedScalar!V) return fullPresence!V(slot.value);
+    else return slot.presence;
+}
+private ConfigError validateLeaf(V, M, P = Atomic)(scope ref const DefinitionSlot!V slot,
+    scope ref const M metadata, string path)
 {
     if (!slot.supplied)
+    {
+        static if (__traits(hasMember, M, "branches"))
+            if (!branchMetadataInert(metadata.branches)) return fail(ConfigErrorKind.invalidMetadata, path);
         return hasOverrides(metadata) ? fail(ConfigErrorKind.invalidMetadata, path) : ConfigError.init;
+    }
     if ((!metadata.localId.isNull && !validIdentity(metadata.localId.get.bytes))
         || (!metadata.location.isNull
             && (!metadata.location.get.line || !metadata.location.get.column)))
         return fail(ConfigErrorKind.invalidMetadata, path);
-    if (!primitiveValid(slot.value)) return fail(ConfigErrorKind.invalidValue, path);
+    auto presence = slotPresence(slot);
+    if (!validPresence!(V, P)(slot.value, presence))
+        return fail(ConfigErrorKind.invalidMetadata, path);
+    static if (__traits(hasMember, M, "branches"))
+        if (!validBranchMetadata!(V, P)(slot.value, presence, metadata.branches))
+            return fail(ConfigErrorKind.invalidMetadata, path);
+    if (!validGraph!(V, P)(slot.value, presence)) return fail(ConfigErrorKind.invalidValue, path);
     return ConfigError.init;
 }
 private uint inheritedPriority(T, string path)(scope ref const DefinitionMetadata!T metadata,
@@ -612,8 +905,13 @@ private bool cloneMetadata(T, A)(ref Arena!A arena, scope ref const DefinitionMe
     copySectionPriorities(input, output);
     IdentityRecord* identities;
     static foreach (path; ConfigPaths!T)
+    {{
         if (!cloneLeafMetadata(arena, mixin("input." ~ metadataPath(path)),
                 mixin("output." ~ metadataPath(path)), identities)) return false;
+        static if (__traits(hasMember, typeof(mixin("input." ~ metadataPath(path))), "branches"))
+            if (!captureBranchMetadata(arena, mixin("input." ~ metadataPath(path) ~ ".branches"),
+                mixin("output." ~ metadataPath(path) ~ ".branches"))) return false;
+    }}
     return true;
 }
 
@@ -624,6 +922,7 @@ private struct CapsuleState(T, A)
     DefinitionMetadata!T metadata;
     ConfigLimits limits;
     ConfigUsage usage;
+    GraphKeyRecord* keys;
     bool finished;
 }
 struct OwnedConfigInput(T, A = ConfigAllocator)
@@ -671,36 +970,120 @@ package ConfigError captureString(T, A)(ref OwnedConfigInput!(T, A) owner,
     if (!owner.state.arena.text(bytes, captured)) return fail(ConfigErrorKind.allocationFailed);
     return ConfigError.init;
 }
+
+package ConfigError captureArray(T, A, X)(ref OwnedConfigInput!(T, A) owner,
+    size_t count, bool nonNull, out X[] result)
+{
+    if (owner.state is null || owner.state.finished) return fail(ConfigErrorKind.invalidState);
+    result = nonNull ? owner.state.arena.nonNullArray!X(count) : owner.state.arena.array!X(count);
+    return count || nonNull
+        ? (result.ptr is null ? fail(ConfigErrorKind.allocationFailed) : ConfigError.init)
+        : ConfigError.init;
+}
+package ConfigError captureMapEmpty(T, A, K, V)(ref OwnedConfigInput!(T, A) owner,
+    ref V[K] result)
+{
+    if (owner.state is null || owner.state.finished) return fail(ConfigErrorKind.invalidState);
+    auto keeper = owner.state.arena.allocate!(V[K])();
+    if (keeper is null) return fail(ConfigErrorKind.allocationFailed);
+    return catchConfigAllocation(() {
+        (*keeper)[K.init] = V.init;
+        (*keeper).remove(K.init);
+        result = *keeper;
+        return ConfigError.init;
+    }, fail(ConfigErrorKind.allocationFailed));
+}
+package ConfigError captureMapEntry(T, A, K, V)(ref OwnedConfigInput!(T, A) owner,
+    ref V[K] result, K key, V value)
+{
+    if (owner.state is null || owner.state.finished) return fail(ConfigErrorKind.invalidState);
+    return catchConfigAllocation(() {
+        result[key] = value;
+        return ConfigError.init;
+    }, fail(ConfigErrorKind.allocationFailed));
+}
+package string configKeyText(K, Root, size_t site)(K key)
+{
+    static if (is(K == string)) return key;
+    else static foreach (member; __traits(allMembers, K))
+    {{
+        enum declared = __traits(getMember, K, member);
+        enum spelling = aaKeyText!(K, Root, site)(declared);
+        if (key == declared) return spelling;
+    }}
+    assert(false, "undeclared configuration enum key");
+}
+package ConfigError captureCanonicalKey(Root, size_t site, T, A, K)(
+    ref OwnedConfigInput!(T, A) owner, scope K key, out string captured)
+{
+    if (owner.state is null || owner.state.finished) return fail(ConfigErrorKind.invalidState);
+    auto spelling = configKeyText!(K, Root, site)(key);
+    for (auto record = owner.state.keys; record !is null; record = record.next)
+        if (record.spelling == spelling) { captured = record.spelling; return ConfigError.init; }
+    auto record = owner.state.arena.allocate!GraphKeyRecord();
+    if (record is null || !owner.state.arena.text(spelling, record.spelling))
+        return fail(ConfigErrorKind.allocationFailed);
+    record.next = owner.state.keys;
+    owner.state.keys = record;
+    captured = record.spelling;
+    return ConfigError.init;
+}
+package ConfigError captureDefaultGraph(Root, size_t site, T, A, V)(
+    ref OwnedConfigInput!(T, A) owner, scope ref const V original, out V captured,
+    out ConfigPresence!V presence)
+{
+    if (owner.state is null || owner.state.finished) return fail(ConfigErrorKind.invalidState);
+    auto full = fullPresence(original);
+    return captureGraph!(V, Atomic, Root, site)(owner.state.arena, original, full,
+        captured, presence, owner.state.keys)
+        ? ConfigError.init : fail(ConfigErrorKind.allocationFailed);
+}
 private ConfigError capsuleUsage(T)(scope ref const ConfigInput!T input,
     scope ref const DefinitionMetadata!T metadata, out ConfigUsage usage)
 {
-    usage.options = ConfigLeafCount!T;
+    usage.options = ConfigOptionCount!T;
     usage.depth = ConfigDepth!T;
+    static foreach (pattern; ConfigPatterns!T)
+        if (!addBytes(usage.payloadBytes, pattern.length))
+            return fail(ConfigErrorKind.arithmeticOverflow, pattern);
     static foreach (path; SortedPaths!T)
     {{
-        auto error = validateLeaf(mixin("input." ~ path), mixin("metadata." ~ metadataPath(path)), path);
+        alias Site = LeafSite!(T, path);
+        auto error = validateLeaf!(Site.Value, typeof(mixin("metadata." ~ metadataPath(path))),
+            ConfigFieldPolicy!(Site.Parent, Site.name))(
+            mixin("input." ~ path), mixin("metadata." ~ metadataPath(path)), path);
         if (error.kind != ConfigErrorKind.none) return error;
     }}
+    CanonicalKeyAccounting keyAccounting;
+    static foreach (pattern; ConfigPatterns!T) keyAccounting.seed(pattern);
+    if (keyAccounting.allocationFailed) return fail(ConfigErrorKind.allocationFailed);
     static foreach (i, path; ConfigPaths!T)
     {{
         auto error = chargeCapsuleLeaf!(T, path, i)(
             mixin("input." ~ path), mixin("metadata." ~ metadataPath(path)),
-            input, metadata, usage);
+            input, metadata, usage, keyAccounting);
         if (error.kind != ConfigErrorKind.none) return error;
     }}
     return ConfigError.init;
 }
-private ConfigError chargeCapsuleLeaf(T, string path, size_t index, V)(
-    scope ref const DefinitionSlot!V slot, scope ref const LeafDefinitionMetadata md,
+private ConfigError chargeCapsuleLeaf(T, string path, size_t index, V, M)(
+    scope ref const DefinitionSlot!V slot, scope ref const M md,
     scope ref const ConfigInput!T input, scope ref const DefinitionMetadata!T metadata,
-    ref ConfigUsage usage)
+    ref ConfigUsage usage, ref CanonicalKeyAccounting keyAccounting)
 {
-    if (!addBytes(usage.payloadBytes, path.length))
-        return fail(ConfigErrorKind.arithmeticOverflow, path);
     if (!slot.supplied) return ConfigError.init;
-    ++usage.definitions;
-    if (!addBytes(usage.payloadBytes, payloadCharge(slot.value)))
+    if (!addBytes(usage.definitions, 1))
         return fail(ConfigErrorKind.arithmeticOverflow, path);
+    alias Site = LeafSite!(T, path);
+    auto presence = slotPresence(slot);
+    ulong bytes, nodes;
+    if (!measureGraph!(V, ConfigFieldPolicy!(Site.Parent, Site.name))(
+        slot.value, presence, bytes, nodes)
+        || !chargeGraphKeys!(V, ConfigFieldPolicy!(Site.Parent, Site.name), T,
+            LeafWireSite!(T, path))(slot.value, presence, keyAccounting, bytes)
+        || !addBytes(usage.payloadBytes, bytes) || !addBytes(usage.valueNodes, nodes))
+        return fail(keyAccounting.allocationFailed ? ConfigErrorKind.allocationFailed
+            : ConfigErrorKind.arithmeticOverflow, path);
     if (!md.localId.isNull)
     {
         bool seen;
@@ -726,6 +1109,58 @@ package ConfigError preflightInput(T)(scope ref const ConfigInput!T input,
     if (error.kind != ConfigErrorKind.none) return error;
     if (!addBytes(usage.payloadBytes, additionalStringBytes))
         return fail(ConfigErrorKind.arithmeticOverflow);
+    return checkUsage(usage, limits);
+}
+
+package ConfigError preflightInput(T)(scope ref const ConfigInput!T input,
+    scope ref const DefinitionMetadata!T metadata, ConfigLimits limits,
+    ulong exactBytes, ulong exactNodes, ulong canonicalBytes)
+{
+    auto error = validateLimits(limits);
+    if (error.kind != ConfigErrorKind.none) return error;
+    ConfigUsage usage;
+    usage.options = ConfigOptionCount!T;
+    usage.depth = ConfigDepth!T;
+    usage.valueNodes = exactNodes;
+    usage.payloadBytes = exactBytes;
+    if (!addBytes(usage.payloadBytes, canonicalBytes))
+        return fail(ConfigErrorKind.arithmeticOverflow);
+    static foreach (pattern; ConfigPatterns!T)
+        if (!addBytes(usage.payloadBytes, pattern.length))
+            return fail(ConfigErrorKind.arithmeticOverflow, pattern);
+    static foreach (i, path; ConfigPaths!T)
+    {{
+        with (mixin("metadata." ~ metadataPath(path)))
+        {
+            if (!mixin("input." ~ path ~ ".supplied"))
+            {
+                if (hasOverrides(mixin("metadata." ~ metadataPath(path))))
+                    return fail(ConfigErrorKind.invalidMetadata, path);
+                static if (__traits(hasMember, typeof(mixin("metadata." ~ metadataPath(path))), "branches"))
+                    if (!branchMetadataInert(branches)) return fail(ConfigErrorKind.invalidMetadata, path);
+            }
+            else
+            {
+                if ((!localId.isNull && !validIdentity(localId.get.bytes))
+                    || (!location.isNull && (!location.get.line || !location.get.column)))
+                    return fail(ConfigErrorKind.invalidMetadata, path);
+                if (!addBytes(usage.definitions, 1))
+                    return fail(ConfigErrorKind.arithmeticOverflow, path);
+                if (!localId.isNull)
+                {
+                    bool seen;
+                    static foreach (j, earlier; ConfigPaths!T)
+                        static if (j < i)
+                            if (mixin("input." ~ earlier ~ ".supplied")
+                                && !mixin("metadata." ~ metadataPath(earlier) ~ ".localId.isNull")
+                                && compareBytes(mixin("metadata." ~ metadataPath(earlier) ~ ".localId.get.bytes"),
+                                    localId.get.bytes) == 0) seen = true;
+                    if (!seen && !addBytes(usage.payloadBytes, localId.get.bytes.length))
+                        return fail(ConfigErrorKind.arithmeticOverflow, path);
+                }
+            }
+        }
+    }}
     return checkUsage(usage, limits);
 }
 package ConfigError finishOwnedInput(T, A)(ref OwnedConfigInput!(T, A) owner)
@@ -755,15 +1190,20 @@ ConfigResult!(OwnedConfigInput!(T, A)) captureInput(T, A = ConfigAllocator)(
     if (started.hasError) return errorResult!Owner(started.error);
     auto owner = started.takeValue();
     static foreach (path; ConfigPaths!T)
-    {
+    {{
         if (mixin("input." ~ path ~ ".supplied"))
         {
-            if (!clonePayload(owner.state.arena, mixin("input." ~ path ~ ".value"),
-                mixin("owner.state.input." ~ path ~ ".value")))
+            alias Site = LeafSite!(T, path);
+            auto presence = slotPresence(mixin("input." ~ path));
+            if (!captureGraph!(Site.Value, ConfigFieldPolicy!(Site.Parent, Site.name),
+                T, LeafWireSite!(T, path))(owner.state.arena,
+                mixin("input." ~ path ~ ".value"), presence,
+                mixin("owner.state.input." ~ path ~ ".value"),
+                mixin("owner.state.input." ~ path ~ ".presence"), owner.state.keys))
                 return errorResult!Owner(fail(ConfigErrorKind.allocationFailed));
             mixin("owner.state.input." ~ path ~ ".supplied") = true;
         }
-    }
+    }}
     owner.state.usage = usage;
     owner.state.finished = true;
     return successResult(owner);
@@ -824,7 +1264,7 @@ ConfigResult!(OwnedConfigInput!(T, A)) captureInput(T, A = ConfigAllocator)(
 }
 
 private struct IdentityRecord { IdentityRecord* next; immutable(ubyte)[] bytes; }
-private struct SourceRecord
+package struct SourceRecord
 {
     SourceRecord* next;
     SourceRef ref_;
@@ -843,6 +1283,12 @@ template ConfigBorrowedValue(V)
         alias ConfigBorrowedValue = const(char)[];
     else static if (is(V == Nullable!N, N))
         alias ConfigBorrowedValue = ConfigNullableValueView!N;
+    else static if (!is(V == string) && (is(V == E[], E) || is(V == E[n], E, size_t n)))
+        alias ConfigBorrowedValue = ConfigArrayValueView!(Unqual!E);
+    else static if (is(V == E[K], E, K))
+        alias ConfigBorrowedValue = ConfigMapValueView!(Unqual!K, Unqual!E);
+    else static if (is(V == struct))
+        alias ConfigBorrowedValue = ConfigStructValueView!V;
     else
         alias ConfigBorrowedValue = V;
 }
@@ -868,22 +1314,43 @@ struct ConfigValueView(V)
         return payload_;
     }
 }
-private ConfigBorrowedValue!V borrowValue(V)(return scope ref const V original)
+package ConfigBorrowedValue!V borrowValue(V)(return ref const V original)
+    if (is(V == struct) || isStaticArray!V)
 {
     static if (is(V == Nullable!N, N))
     {
         ConfigBorrowedValue!V borrowed;
         borrowed.null_ = original.isNull;
-        if (!original.isNull) borrowed.payload_ = borrowValue(original.get);
+        if (!original.isNull) borrowed.payload_ = borrowValue!N(original.get);
         return borrowed;
     }
+    else static if (is(V == string)) return original;
+    else static if (is(V == struct) || isDynamicArray!V || isStaticArray!V || isAssociativeArray!V)
+        return ConfigBorrowedValue!V(original);
     else return original;
 }
-private ConfigValueView!V valueView(V)(return scope ref const V original)
+package ConfigBorrowedValue!V borrowValue(V)(return scope const V original)
+    if (!is(V == struct) && !isStaticArray!V)
+{
+    static if (is(V == string)) return original;
+    else static if (isDynamicArray!V || isAssociativeArray!V)
+        return ConfigBorrowedValue!V(original);
+    else return original;
+}
+private ConfigValueView!V valueView(V)(return ref const V original)
+    if (is(V == struct) || isStaticArray!V)
 {
     ConfigValueView!V view;
     view.present_ = true;
-    view.payload_ = borrowValue(original);
+    view.payload_ = borrowValue!V(original);
+    return view;
+}
+private ConfigValueView!V valueView(V)(return scope const V original)
+    if (!is(V == struct) && !isStaticArray!V)
+{
+    ConfigValueView!V view;
+    view.present_ = true;
+    view.payload_ = borrowValue!V(original);
     return view;
 }
 
@@ -897,11 +1364,13 @@ private struct DefinitionRecord(V)
     int order;
     Nullable!SourceLocation location;
     const(V)* value;
+    const(ConfigPresence!V)* presence;
+    const(ConfigBranchMetadata!V)* metadata;
     DefinitionDisposition disposition;
 }
 struct ValidationFailureView
 {
-    string path;
+    const(char)[] path;
     DefinitionRef definition;
     SourceRef source;
     uint priority;
@@ -930,7 +1399,7 @@ private ConfigDiagnosticView diagnosticView(return scope ref const ValidationFai
 }
 struct OptionView(V)
 {
-    string path;
+    const(char)[] path;
     enum policy = Atomic();
     OptionStatus status;
     uint selectedPriority;
@@ -941,7 +1410,7 @@ struct OptionView(V)
 }
 struct DefinitionView(V)
 {
-    string path;
+    const(char)[] path;
     DefinitionRef ref_;
     SourceRef source;
     const(ubyte)[] sourceId;
@@ -951,7 +1420,44 @@ struct DefinitionView(V)
     Nullable!SourceLocation location;
     DefinitionDisposition disposition;
     ConfigValueView!V value;
+    ConfigPresenceView!V presence;
     @property DefinitionRef reference() scope const @safe pure nothrow @nogc => ref_;
+}
+
+/** One active graph branch, including data owned by an enclosing option. */
+struct BranchView(V)
+{
+    const(char)[] path;
+    const(char)[] pattern;
+    const(char)[] owningOption;
+    bool declaredOption;
+    OptionStatus status;
+    uint selectedPriority;
+    ConfigValueView!V effective;
+    const(ContributionRef)[] definitions;
+    const(ContributionRef)[] contributors;
+    const(const(char)[])[] failedChildren;
+    ConfigDiagnosticView diagnostic;
+}
+
+/** One original supplied branch. Excluded projections have no active path. */
+struct BranchDefinitionView(V)
+{
+    const(char)[] path;
+    const(char)[] pattern;
+    const(char)[] originalLocator;
+    DefinitionRef parent;
+    ContributionRef ref_;
+    SourceRef source;
+    const(ubyte)[] sourceId;
+    const(ubyte)[] localId;
+    uint priority;
+    int order;
+    Nullable!SourceLocation location;
+    DefinitionDisposition disposition;
+    ConfigValueView!V value;
+    ConfigPresenceView!V presence;
+    @property ContributionRef reference() scope const @safe pure nothrow @nogc => ref_;
 }
 struct SourceView
 {
@@ -974,6 +1480,7 @@ private struct OptionStorage(V)
     uint selectedPriority;
     const(V)* effective;
     ValidationFailureView* diagnostic;
+    ResolutionNode!V* node;
 }
 private struct RetainedState(T, A)
 {
@@ -986,7 +1493,9 @@ private struct RetainedState(T, A)
     SourceRecord* lastSource;
     SourceRecord*[] sources;
     IdentityRecord* identities;
-    string[] failedOptions;
+    const(char)[][] failedOptions;
+    GraphKeyRecord* keys;
+    ResolutionContext!A context;
     static foreach (i, path; ConfigPaths!T)
         mixin("OptionStorage!(LeafSite!(T, \"" ~ path ~ "\").Value) option" ~ i.stringof ~ ";");
 }
@@ -1046,8 +1555,64 @@ private immutable(ubyte)[] submittedLocal(return scope ref const LeafDefinitionM
     @safe pure nothrow @nogc
     => metadata.localId.isNull ? immutableBytes("value") : metadata.localId.get.bytes;
 
+private enum DeclaredResolutionRecords(T) = () {
+    ulong count;
+    static foreach (name; ConfigFieldNames!T)
+        static if (ConfigIsSection!(T, name))
+            count += 1 + DeclaredResolutionRecords!(ConfigFieldType!(T, name));
+        else
+            ++count;
+    return count;
+}();
+
+private ConfigError resolveDirectSections(Root, S = Root, string prefix = "", A)(
+    ref ResolutionContext!A context)
+{
+    static foreach (name; ConfigFieldNames!S)
+    {{
+        static if (ConfigIsSection!(S, name))
+        {
+            alias V = ConfigFieldType!(S, name);
+            enum path = prefix ~ name;
+            auto error = resolveDirectSections!(Root, V, path ~ ".")(context);
+            if (error.kind != ConfigErrorKind.none) return error;
+            ResolutionHeader*[ConfigFieldNames!V.length] children;
+            static foreach (i, field; ConfigFieldNames!V)
+            {{
+                alias E = ConfigFieldType!(V, field);
+                for (auto h = context.records; h !is null; h = h.next)
+                    if (h.path == path ~ "." ~ field && h.nativeType is typeid(E))
+                    {
+                        children[i] = h;
+                        break;
+                    }
+                assert(children[i] !is null, "Missing resolved direct-section child");
+            }}
+            auto assembled = context.arena.allocate!V();
+            if (assembled is null) return fail(ConfigErrorKind.allocationFailed, path);
+            clearGraph(*assembled);
+            static foreach (i, field; ConfigFieldNames!V)
+            {{
+                alias E = ConfigFieldType!(V, field);
+                if (children[i].status == OptionStatus.resolved)
+                {
+                    auto node = (() @trusted => cast(ResolutionNode!E*) children[i])();
+                    __traits(getMember, *assembled, field) =
+                        (() @trusted => *cast(E*) node.effective)();
+                }
+            }}
+            ResolutionNode!V* node;
+            error = resolveSectionCandidate!(V, CheckPolicy!(S, name))(
+                context, assembled, children[], path, node);
+            if (error.kind != ConfigErrorKind.none) return error;
+        }
+    }}
+    return ConfigError.init;
+}
+
 /** A move-only collecting owner. Successful resolution consumes it. */
 struct ConfigBuilder(T, A = ConfigAllocator)
+    if (supportedConfigGraph!T)
 {
     static assert(validateSchema!T);
     @disable this(this);
@@ -1065,18 +1630,37 @@ struct ConfigBuilder(T, A = ConfigAllocator)
     {
         auto error = validateLimits(limits);
         if (error.kind != ConfigErrorKind.none) return errorResult!ConfigBuilder(error);
-        T defaults = T.init;
+        T defaults;
         static foreach (path; SortedPaths!T)
-            if (!primitiveValid(mixin("defaults." ~ path)))
+        {{
+            alias Site = LeafSite!(T, path);
+            alias P = ConfigFieldPolicy!(Site.Parent, Site.name);
+            auto presence = fullPresence(mixin("defaults." ~ path));
+            if (!validPrototype!(Site.Value, P)() || !validGraph!(Site.Value, P)(
+                mixin("defaults." ~ path), presence))
                 return errorResult!ConfigBuilder(fail(ConfigErrorKind.invalidValue, path));
-        ConfigUsage usage = ConfigUsage(1, ConfigLeafCount!T, 8, ConfigLeafCount!T, ConfigDepth!T);
+        }}
+        ConfigUsage usage = ConfigUsage(1, ConfigLeafCount!T, 8, ConfigOptionCount!T, ConfigDepth!T);
         if (ConfigLeafCount!T) usage.payloadBytes += 11;
+        CanonicalKeyAccounting keyAccounting;
+        static foreach (pattern; ConfigPatterns!T) keyAccounting.seed(pattern);
+        if (keyAccounting.allocationFailed)
+            return errorResult!ConfigBuilder(fail(ConfigErrorKind.allocationFailed));
+        static foreach (pattern; ConfigPatterns!T)
+            if (!addBytes(usage.payloadBytes, pattern.length))
+                return errorResult!ConfigBuilder(fail(ConfigErrorKind.arithmeticOverflow, pattern));
         static foreach (path; ConfigPaths!T)
-        {
-            if (!addBytes(usage.payloadBytes, path.length)
-                || !addBytes(usage.payloadBytes, payloadCharge(mixin("defaults." ~ path))))
+        {{
+            ulong bytes, nodes;
+            alias Site = LeafSite!(T, path);
+            if (!chargeFullGraphKeys!(Site.Value, T, LeafWireSite!(T, path))(
+                mixin("defaults." ~ path), keyAccounting, usage.payloadBytes))
+                return errorResult!ConfigBuilder(fail(keyAccounting.allocationFailed
+                    ? ConfigErrorKind.allocationFailed : ConfigErrorKind.arithmeticOverflow, path));
+            if (!measureFullGraph(mixin("defaults." ~ path), bytes, nodes)
+                || !addBytes(usage.payloadBytes, bytes) || !addBytes(usage.valueNodes, nodes))
                 return errorResult!ConfigBuilder(fail(ConfigErrorKind.arithmeticOverflow, path));
-        }
+        }}
         error = checkUsage(usage, limits);
         if (error.kind != ConfigErrorKind.none) return errorResult!ConfigBuilder(error);
         auto identity = freshOwner();
@@ -1105,7 +1689,8 @@ struct ConfigBuilder(T, A = ConfigAllocator)
             return errorResult!ConfigBuilder(fail(ConfigErrorKind.allocationFailed));
         static foreach (i, path; ConfigPaths!T)
         {{
-            alias V = LeafSite!(T, path).Value;
+            alias Site = LeafSite!(T, path);
+            alias V = Site.Value;
             auto definition = retained.arena.allocate!(DefinitionRecord!V)();
             if (definition is null) return errorResult!ConfigBuilder(fail(ConfigErrorKind.allocationFailed));
             definition.ref_ = DefinitionRef(retained.owner, cast(uint) i);
@@ -1113,6 +1698,14 @@ struct ConfigBuilder(T, A = ConfigAllocator)
             definition.localId = local;
             definition.priority = builtinPriority;
             definition.order = builtinOrder;
+            auto presence = retained.arena.allocate!(ConfigPresence!V)();
+            if (presence is null) return errorResult!ConfigBuilder(fail(ConfigErrorKind.allocationFailed));
+            auto full = fullPresence(mixin("defaults." ~ path));
+            if (!captureGraph!(V, ConfigFieldPolicy!(Site.Parent, Site.name),
+                T, LeafWireSite!(T, path))(retained.arena, mixin("defaults." ~ path), full,
+                mixin("retained.defaults." ~ path), *presence, retained.keys))
+                return errorResult!ConfigBuilder(fail(ConfigErrorKind.allocationFailed));
+            definition.presence = presence;
             definition.value = &mixin("retained.defaults." ~ path);
             appendDefinition(mixin("retained.option" ~ i.stringof), definition);
         }}
@@ -1179,7 +1772,10 @@ struct ConfigBuilder(T, A = ConfigAllocator)
         if (error.kind != ConfigErrorKind.none) return error;
         static foreach (path; SortedPaths!T)
         {{
-            error = validateLeaf(mixin("input." ~ path), mixin("metadata." ~ metadataPath(path)), path);
+            alias Site = LeafSite!(T, path);
+            error = validateLeaf!(Site.Value, typeof(mixin("metadata." ~ metadataPath(path))),
+                ConfigFieldPolicy!(Site.Parent, Site.name))(
+                mixin("input." ~ path), mixin("metadata." ~ metadataPath(path)), path);
             if (error.kind != ConfigErrorKind.none) return error;
         }}
         static foreach (path; SortedPaths!T)
@@ -1194,14 +1790,27 @@ struct ConfigBuilder(T, A = ConfigAllocator)
                         return fail(ConfigErrorKind.duplicateDefinition, path);
             }
         }}
-        ulong count, extra;
+        ulong count, extra, nodes;
+        CanonicalKeyAccounting keyAccounting;
+        static foreach (pattern; ConfigPatterns!T) keyAccounting.seed(pattern);
+        keyAccounting.seed(state.keys);
+        if (keyAccounting.allocationFailed) return fail(ConfigErrorKind.allocationFailed);
         static foreach (i, path; ConfigPaths!T)
         {{
             if (mixin("input." ~ path ~ ".supplied"))
             {
-                ++count;
-                if (!addBytes(extra, payloadCharge(mixin("input." ~ path ~ ".value"))))
-                    return fail(ConfigErrorKind.arithmeticOverflow, path);
+                alias Site = LeafSite!(T, path);
+                auto presence = slotPresence(mixin("input." ~ path));
+                ulong graphBytes, graphNodes;
+                if (!addBytes(count, 1)
+                    || !measureGraph!(Site.Value, ConfigFieldPolicy!(Site.Parent, Site.name))(
+                        mixin("input." ~ path ~ ".value"), presence, graphBytes, graphNodes)
+                    || !chargeGraphKeys!(Site.Value, ConfigFieldPolicy!(Site.Parent, Site.name), T,
+                        LeafWireSite!(T, path))(mixin("input." ~ path ~ ".value"), presence,
+                            keyAccounting, graphBytes)
+                    || !addBytes(extra, graphBytes) || !addBytes(nodes, graphNodes))
+                    return fail(keyAccounting.allocationFailed ? ConfigErrorKind.allocationFailed
+                        : ConfigErrorKind.arithmeticOverflow, path);
                 auto local = submittedLocal(mixin("metadata." ~ metadataPath(path)));
                 bool seen = lookupIdentity(state, local) !is null;
                 static foreach (j, earlier; ConfigPaths!T)
@@ -1213,14 +1822,12 @@ struct ConfigBuilder(T, A = ConfigAllocator)
                     return fail(ConfigErrorKind.arithmeticOverflow, path);
             }
         }}
-        error = checkedCharge(state.usage.definitions, count, state.limits.maxDefinitions, "maxDefinitions");
-        if (error.kind != ConfigErrorKind.none) return error;
-        error = checkedCharge(state.usage.payloadBytes, extra, state.limits.maxPayloadBytes, "maxPayloadBytes");
-        if (error.kind != ConfigErrorKind.none) return error;
         usage = state.usage;
-        usage.definitions += count;
-        usage.payloadBytes += extra;
-        return ConfigError.init;
+        if (!addBytes(usage.definitions, count)
+            || !addBytes(usage.payloadBytes, extra)
+            || !addBytes(usage.valueNodes, nodes))
+            return fail(ConfigErrorKind.arithmeticOverflow);
+        return checkUsage(usage, state.limits);
     }
 
     ConfigError submitBorrowed()(SourceRef source, scope ref const ConfigInput!T input,
@@ -1231,7 +1838,8 @@ struct ConfigBuilder(T, A = ConfigAllocator)
         if (error.kind != ConfigErrorKind.none) return error;
         if (usage.definitions == state.usage.definitions) return ConfigError.init;
         // Detached accounting is distinct; the builder preflight already applies its policy.
-        ConfigLimits temporaryLimits = ConfigLimits(uint.max, uint.max, ulong.max, uint.max, uint.max);
+        ConfigLimits temporaryLimits = ConfigLimits(uint.max, uint.max, ulong.max,
+            uint.max, uint.max, uint.max, uint.max, uint.max);
         auto captured = captureInput!(T, A)(input, metadata, temporaryLimits);
         if (captured.hasError) return captured.error;
         auto owner = captured.takeValue();
@@ -1270,12 +1878,29 @@ struct ConfigBuilder(T, A = ConfigAllocator)
                 record.order = metadata.order.isNull ? sourceRecord.order : metadata.order.get;
                 record.location = metadata.location;
                 record.value = &mixin("input.state.input." ~ path ~ ".value");
+                record.presence = &mixin("input.state.input." ~ path ~ ".presence");
+                static if (__traits(hasMember, typeof(*metadata), "branches"))
+                    record.metadata = &metadata.branches;
                 mixin("pending" ~ i.stringof) = record;
             }
         }}
+        auto keys = state.keys;
+        for (auto original = input.state.keys; original !is null; original = original.next)
+        {
+            bool found;
+            for (auto known = keys; known !is null; known = known.next)
+                if (known.spelling == original.spelling) { found = true; break; }
+            if (found) continue;
+            auto key = temporary.allocate!GraphKeyRecord();
+            if (key is null) return fail(ConfigErrorKind.allocationFailed);
+            key.spelling = original.spelling;
+            key.next = keys;
+            keys = key;
+        }
         state.arena.absorb(temporary);
         state.arena.absorb(input.state.arena);
         state.identities = identities;
+        state.keys = keys;
         static foreach (i, path; ConfigPaths!T)
             if (mixin("pending" ~ i.stringof) !is null)
                 appendDefinition(mixin("state.option" ~ i.stringof), mixin("pending" ~ i.stringof));
@@ -1287,143 +1912,146 @@ struct ConfigBuilder(T, A = ConfigAllocator)
     ConfigResult!(ConfigSnapshot!(T, A)) resolve()
     {
         alias Snapshot = ConfigSnapshot!(T, A);
-        if (state is null) return errorResult!Snapshot(fail(ConfigErrorKind.invalidState));
-        static foreach (i, path; ConfigPaths!T)
+        ConfigResult!Snapshot rejected(ConfigError problem)
         {
-            mixin("OptionStorage!(LeafSite!(T, \"" ~ path ~ "\").Value) pending" ~ i.stringof ~ ";");
-            mixin("size_t count" ~ i.stringof ~ ", selected" ~ i.stringof ~ ";");
-            mixin("ValidationResult validation" ~ i.stringof ~ ";");
+            // A rejected transaction releases its arena before the caller sees the error.
+            if (!catchConfigAllocation(() {
+                    problem.path = problem.path.idup;
+                    return true;
+                }, false))
+                return errorResult!Snapshot(fail(ConfigErrorKind.allocationFailed));
+            return errorResult!Snapshot(problem);
         }
-        ulong diagnosticBytes;
-        size_t failureCount;
-        // Compute selection and all diagnostic charges before attempting allocation.
+        if (state is null) return errorResult!Snapshot(fail(ConfigErrorKind.invalidState));
+        auto error = checkedCharge(state.usage.resolvedRecords, DeclaredResolutionRecords!T,
+            state.limits.maxResolvedRecords, "maxResolvedRecords");
+        if (error.kind != ConfigErrorKind.none) return errorResult!Snapshot(error);
+        ResolutionContext!A context;
+        scope(exit) context.arena.release();
+        context.owner = state.owner;
+        context.builtinSource = state.firstSource;
+        context.builtinPriority = state.firstSource.priority;
+        context.builtinOrder = state.firstSource.order;
+        context.usage = state.usage;
+        context.limits = state.limits;
+        static foreach (pattern; ConfigPatterns!T)
+        {
+            error = seedResolutionPattern(context, pattern);
+            if (error.kind != ConfigErrorKind.none) return rejected(error);
+        }
+        for (auto key = state.keys; key !is null; key = key.next)
+        {
+            error = seedResolutionText(context, key.spelling);
+            if (error.kind != ConfigErrorKind.none) return rejected(error);
+        }
+        static foreach (i, path; ConfigPaths!T)
+            mixin("OptionStorage!(LeafSite!(T, \"" ~ path ~ "\").Value) pending" ~ i.stringof ~ ";");
         static foreach (i, path; ConfigPaths!T)
         {{
             alias Site = LeafSite!(T, path);
+            alias V = Site.Value;
+            alias P = ConfigFieldPolicy!(Site.Parent, Site.name);
             scope auto option = &mixin("state.option" ~ i.stringof);
             scope auto pending = &mixin("pending" ~ i.stringof);
             pending.first = option.first;
             pending.last = option.last;
-            pending.selectedPriority = uint.max;
-            const(DefinitionRecord!(Site.Value))* winner;
+            size_t count;
+            for (auto record = option.first; record !is null; record = record.next) ++count;
+            pending.sorted = context.arena.array!(DefinitionRecord!V*)(count);
+            pending.definitions = context.arena.array!DefinitionRef(count);
+            auto inputs = context.arena.array!(ResolutionInput!V)(count);
+            if (count && (pending.sorted.ptr is null || pending.definitions.ptr is null
+                || inputs.ptr is null))
+                return errorResult!Snapshot(fail(ConfigErrorKind.allocationFailed, path));
+            size_t at;
             for (auto record = option.first; record !is null; record = record.next)
-            {
-                ++mixin("count" ~ i.stringof);
-                if (winner is null || record.priority < pending.selectedPriority)
-                {
-                    pending.selectedPriority = record.priority;
-                    mixin("selected" ~ i.stringof) = 1;
-                    winner = record;
-                }
-                else if (record.priority == pending.selectedPriority)
-                    ++mixin("selected" ~ i.stringof);
-            }
-            if (mixin("selected" ~ i.stringof) > 1)
-            {
-                pending.status = OptionStatus.conflict;
-                ++failureCount;
-            }
-            else
-            {
-                static if (!is(CheckPolicy!(Site.Parent, Site.name) == void))
-                    mixin("validation" ~ i.stringof) =
-                        callCheck!(CheckPolicy!(Site.Parent, Site.name), Site.Value)(*winner.value);
-                scope auto validation = &mixin("validation" ~ i.stringof);
-                if (validation.accepted)
-                {
-                    pending.status = OptionStatus.resolved;
-                    pending.effective = winner.value;
-                }
-                else
-                {
-                    assert(validation.code.length, "ConfigCheck rejection requires a stable nonempty code");
-                    pending.status = OptionStatus.invalidSelectedValue;
-                    ++failureCount;
-                    if (!addBytes(diagnosticBytes, validation.code.length)
-                        || !addBytes(diagnosticBytes, validation.detail.length))
-                        return errorResult!Snapshot(fail(ConfigErrorKind.arithmeticOverflow, path));
-                }
-            }
-        }}
-        auto error = checkedCharge(state.usage.payloadBytes, diagnosticBytes,
-            state.limits.maxPayloadBytes, "maxPayloadBytes");
-        if (error.kind != ConfigErrorKind.none) return errorResult!Snapshot(error);
-        Arena!A temporary;
-        scope(exit) temporary.release();
-        static foreach (i, path; ConfigPaths!T)
-        {{
-            alias V = LeafSite!(T, path).Value;
-            scope auto pending = &mixin("pending" ~ i.stringof);
-            auto count = mixin("count" ~ i.stringof);
-            auto selected = mixin("selected" ~ i.stringof);
-            pending.sorted = temporary.array!(DefinitionRecord!V*)(count);
-            pending.definitions = temporary.array!DefinitionRef(count);
-            pending.contributors = temporary.array!DefinitionRef(selected);
-            if (pending.sorted.ptr is null || pending.definitions.ptr is null
-                || pending.contributors.ptr is null)
-                return errorResult!Snapshot(fail(ConfigErrorKind.allocationFailed));
-            size_t n;
-            for (auto record = pending.first; record !is null; record = record.next)
-                pending.sorted[n++] = record;
+                pending.sorted[at++] = record;
             sortDefinitions(pending.sorted);
             foreach (j, record; pending.sorted)
             {
                 pending.definitions[j] = record.ref_;
-                if (j < selected) pending.contributors[j] = record.ref_;
+                inputs[j].value = record.value;
+                inputs[j].presence = record.presence;
+                inputs[j].metadata = record.metadata;
+                inputs[j].parent = record.ref_;
+                inputs[j].source = record.source;
+                inputs[j].localId = record.localId;
+                inputs[j].priority = record.priority;
+                inputs[j].order = record.order;
+                inputs[j].location = record.location;
+                inputs[j].builtin = record.source.kind == ConfigSourceKind.builtinDefault;
             }
-            if (pending.status == OptionStatus.invalidSelectedValue)
-            {
-                scope auto validation = &mixin("validation" ~ i.stringof);
-                pending.diagnostic = temporary.allocate!ValidationFailureView();
-                if (pending.diagnostic is null)
-                    return errorResult!Snapshot(fail(ConfigErrorKind.allocationFailed));
-                auto winner = pending.sorted[0];
-                pending.diagnostic.path = path;
-                pending.diagnostic.definition = winner.ref_;
-                pending.diagnostic.source = winner.source.ref_;
-                pending.diagnostic.priority = pending.selectedPriority;
-                pending.diagnostic.location = winner.location;
-                string code, detail;
-                if (!temporary.text(validation.code, code)
-                    || !temporary.text(validation.detail, detail))
-                    return errorResult!Snapshot(fail(ConfigErrorKind.allocationFailed));
-                pending.diagnostic.code = code;
-                pending.diagnostic.detail = detail;
-            }
+            error = resolveNode!(V, P, T, LeafWireSite!(T, path),
+                CheckPolicy!(Site.Parent, Site.name))(context, inputs, path, path, true, pending.node);
+            if (error.kind != ConfigErrorKind.none) return rejected(error);
+            pending.status = pending.node.header.status;
+            pending.selectedPriority = pending.node.header.priority;
+            pending.effective = pending.node.effective;
+            size_t selectedCount;
+            foreach (record; pending.sorted)
+                if (record.priority == pending.selectedPriority) ++selectedCount;
+            pending.contributors = context.arena.array!DefinitionRef(selectedCount);
+            if (selectedCount && pending.contributors.ptr is null)
+                return errorResult!Snapshot(fail(ConfigErrorKind.allocationFailed, path));
+            at = 0;
+            foreach (record; pending.sorted)
+                if (record.priority == pending.selectedPriority)
+                    pending.contributors[at++] = record.ref_;
         }}
-        auto failed = temporary.array!string(failureCount);
+        error = resolveDirectSections!T(context);
+        if (error.kind != ConfigErrorKind.none) return rejected(error);
+        for (auto h = context.records; h !is null; h = h.next)
+            if (h.parent is null)
+            {
+                error = finishResolution(context, h);
+                if (error.kind != ConfigErrorKind.none) return rejected(error);
+            }
+        error = finishInspection(context);
+        if (error.kind != ConfigErrorKind.none) return rejected(error);
+        size_t failureCount;
+        for (auto failure = context.failures; failure !is null; failure = failure.nextFailure)
+            ++failureCount;
+        auto failed = context.arena.array!(const(char)[])(failureCount);
         if (failureCount && failed.ptr is null)
             return errorResult!Snapshot(fail(ConfigErrorKind.allocationFailed));
         size_t at;
-        static foreach (path; SortedPaths!T)
-        {{
-            enum i = pathIndex!(T, path)();
-            if (mixin("pending" ~ i.stringof ~ ".status") != OptionStatus.resolved) failed[at++] = path;
-        }}
-        auto sources = temporary.array!(SourceRecord*)(cast(size_t) state.usage.sources);
+        for (auto failure = context.failures; failure !is null; failure = failure.nextFailure)
+            failed[at++] = failure.path;
+        auto sources = context.arena.array!(SourceRecord*)(cast(size_t) state.usage.sources);
         if (sources.ptr is null) return errorResult!Snapshot(fail(ConfigErrorKind.allocationFailed));
         at = 0;
         for (auto record = state.firstSource; record !is null; record = record.next) sources[at++] = record;
         sortSources(sources);
+        // Publish only after every semantic branch and retained allocation succeeded.
         static foreach (i, path; ConfigPaths!T)
         {{
+            alias Site = LeafSite!(T, path);
+            alias P = ConfigFieldPolicy!(Site.Parent, Site.name);
             scope auto pending = &mixin("pending" ~ i.stringof);
+            pending.diagnostic = pending.node.header.diagnostic;
             foreach (record; pending.sorted)
             {
-                if (record.priority != pending.selectedPriority) record.disposition = DefinitionDisposition.overridden;
-                else final switch (pending.status)
+                if (record.priority != pending.selectedPriority)
+                    record.disposition = DefinitionDisposition.overridden;
+                else static if (!is(P == Atomic))
+                    record.disposition = DefinitionDisposition.selected;
+                else
                 {
-                    case OptionStatus.resolved: record.disposition = DefinitionDisposition.contributing; break;
-                    case OptionStatus.conflict: record.disposition = DefinitionDisposition.conflicting; break;
-                    case OptionStatus.invalidSelectedValue: record.disposition = DefinitionDisposition.invalid; break;
+                    switch (pending.status)
+                    {
+                        case OptionStatus.resolved: record.disposition = DefinitionDisposition.contributing; break;
+                        case OptionStatus.conflict: record.disposition = DefinitionDisposition.conflicting; break;
+                        default: record.disposition = DefinitionDisposition.invalid; break;
+                    }
                 }
             }
             mixin("state.option" ~ i.stringof) = *pending;
         }}
         state.sources = sources;
         state.failedOptions = failed;
-        state.usage.payloadBytes += diagnosticBytes;
-        state.arena.absorb(temporary);
+        state.usage = context.usage;
+        state.arena.absorb(context.arena);
+        state.context = context;
         Snapshot snapshot;
         snapshot.state = state;
         state = null;
@@ -1657,23 +2285,206 @@ private void sortSources(SourceRecord*[] records) @safe
 {
     sort!((a, b) => compareBytes(a.id, b.id) < 0)(records);
 }
-private OptionView!V optionView(V)(string path, return scope ref const OptionStorage!V option)
-{
-    OptionView!V view;
-    view.path = path;
-    view.status = option.status;
-    view.selectedPriority = option.selectedPriority;
-    view.definitions = option.definitions;
-    view.contributors = option.contributors;
-    if (option.status == OptionStatus.resolved) view.effective = valueView(*option.effective);
-    if (option.status == OptionStatus.invalidSelectedValue) view.diagnostic = diagnosticView(*option.diagnostic);
-    return view;
-}
-private DefinitionView!V definitionView(V)(string path, return scope const DefinitionRecord!V* record)
+private DefinitionView!V definitionView(V)(return scope const(char)[] path,
+    return scope const DefinitionRecord!V* record)
 {
     return DefinitionView!V(path, record.ref_, record.source.ref_, record.source.id,
         record.localId, record.priority, record.order, record.location, record.disposition,
-        valueView(*record.value));
+        valueView!V(*record.value), ConfigPresenceView!V(*record.presence));
+}
+
+// The admitted schema is finite. Runtime type tags select only these native
+// types; the casts remain internal and never become an erased public payload.
+private template GraphMemberTypes(V, names...)
+{
+    static if (names.length == 0)
+        alias GraphMemberTypes = AliasSeq!();
+    else
+        alias GraphMemberTypes = AliasSeq!(
+            GraphNativeTypes!(Unqual!(typeof(__traits(getMember, V.init, names[0])))),
+            GraphMemberTypes!(V, names[1 .. $]));
+}
+private template GraphNativeTypes(V)
+{
+    static if (is(V == Nullable!N, N))
+        alias GraphNativeTypes = AliasSeq!(V, GraphNativeTypes!N);
+    else static if (!is(V == string)
+        && (is(V == E[], E) || is(V == E[n], E, size_t n)))
+        alias GraphNativeTypes = AliasSeq!(V, GraphNativeTypes!(Unqual!E));
+    else static if (is(V == E[K], E, K))
+        alias GraphNativeTypes = AliasSeq!(V, GraphNativeTypes!(Unqual!E));
+    else static if (is(V == struct))
+        alias GraphNativeTypes = AliasSeq!(V, GraphMemberTypes!(V, FieldNameTuple!V));
+    else
+        alias GraphNativeTypes = AliasSeq!V;
+}
+private alias SnapshotNativeTypes(T) = NoDuplicates!(GraphNativeTypes!T);
+
+private const(ResolutionNode!V)* typedResolutionNode(V)(
+    return scope const ResolutionHeader* header)
+{
+    assert(header.nativeType is typeid(V));
+    return (() @trusted => cast(const(ResolutionNode!V)*) header)();
+}
+private const(ResolutionProjection!V)* typedResolutionProjection(V)(
+    return scope const ResolutionProjectionHeader* header)
+{
+    assert(header.nativeType is typeid(V));
+    return (() @trusted => cast(const(ResolutionProjection!V)*) header)();
+}
+private const(ResolutionGenerated!V)* typedResolutionGenerated(V)(
+    return scope const ResolutionGeneratedHeader* header)
+{
+    assert(header.nativeType is typeid(V));
+    return (() @trusted => cast(const(ResolutionGenerated!V)*) header)();
+}
+private OptionView!V optionView(V)(return scope const ResolutionNode!V* node)
+{
+    OptionView!V view;
+    view.path = node.header.path;
+    view.status = node.header.status;
+    view.selectedPriority = node.header.priority;
+    view.definitions = node.header.optionDefinitions;
+    view.contributors = node.header.optionContributors;
+    if (node.effective !is null) view.effective = valueView!V(*node.effective);
+    if (node.header.diagnostic !is null)
+        view.diagnostic = diagnosticView(*node.header.diagnostic);
+    return view;
+}
+private BranchView!V branchView(V)(return scope const ResolutionNode!V* node)
+{
+    BranchView!V view;
+    view.path = node.header.path;
+    view.pattern = node.header.declaredPattern;
+    view.owningOption = node.header.owningOption;
+    view.declaredOption = node.header.declaredOption;
+    view.status = node.header.status;
+    view.selectedPriority = node.header.priority;
+    if (node.effective !is null) view.effective = valueView!V(*node.effective);
+    view.definitions = node.header.branchDefinitions;
+    view.contributors = node.header.branchContributors;
+    view.failedChildren = node.header.failedChildPaths;
+    if (node.header.diagnostic !is null)
+        view.diagnostic = diagnosticView(*node.header.diagnostic);
+    return view;
+}
+private BranchDefinitionView!V branchDefinitionView(V)(
+    return scope const ResolutionProjection!V* projection,
+    return scope const(char)[] originalLocator)
+{
+    auto h = &projection.header;
+    return BranchDefinitionView!V(h.activePath, h.declaredPattern, originalLocator,
+        h.parent, h.ref_, h.source.ref_, h.source.id, h.localId, h.priority,
+        h.order, h.location, h.disposition, valueView!V(*projection.value),
+        ConfigPresenceView!V(*projection.presence));
+}
+private DefinitionView!V projectionDefinitionView(V)(
+    return scope const ResolutionProjection!V* projection)
+{
+    auto h = &projection.header;
+    return DefinitionView!V(h.activePath, h.parent, h.source.ref_, h.source.id,
+        h.localId, h.priority, h.order, h.location, h.disposition,
+        valueView!V(*projection.value), ConfigPresenceView!V(*projection.presence));
+}
+private DefinitionView!V generatedDefinitionView(V)(
+    return scope const ResolutionGenerated!V* generated,
+    DefinitionDisposition disposition)
+{
+    auto h = &generated.header;
+    return DefinitionView!V(h.path, h.ref_, h.source.ref_, h.source.id,
+        immutableBytes(h.localId), h.priority, h.order, Nullable!SourceLocation.init,
+        disposition, valueView!V(generated.value), ConfigPresenceView!V(generated.presence));
+}
+private void deliverNode(alias sink, alias makeView, T)(
+    scope const ResolutionHeader* header)
+{
+    static foreach (V; SnapshotNativeTypes!T)
+        if (header.nativeType is typeid(V))
+        {
+            scope auto view = makeView!V(typedResolutionNode!V(header));
+            deliver!sink(view);
+            return;
+        }
+    assert(0, "Resolution header has a type outside its admitted schema");
+}
+private void deliverProjection(alias sink, T, bool encoded = false)(
+    scope const ResolutionProjectionHeader* header, scope const(char)[] original = null)
+{
+    static foreach (V; SnapshotNativeTypes!T)
+        if (header.nativeType is typeid(V))
+        {
+            static if (sinkAcceptsView!(sink, BranchDefinitionView!V))
+            {
+                static if (encoded) scope auto locator = original;
+                else scope auto locator = originalLocatorText(header.locator);
+                scope auto view = branchDefinitionView!V(typedResolutionProjection!V(header), locator);
+                deliver!sink(view);
+            }
+            return;
+        }
+    assert(0, "Resolution projection has a type outside its admitted schema");
+}
+private void deliverProjectionDefinition(alias sink, T)(
+    scope const ResolutionProjectionHeader* header)
+{
+    static foreach (V; SnapshotNativeTypes!T)
+        if (header.nativeType is typeid(V))
+        {
+            scope auto view = projectionDefinitionView!V(typedResolutionProjection!V(header));
+            deliver!sink(view);
+            return;
+        }
+    assert(0, "Resolution projection has a type outside its admitted schema");
+}
+private void deliverGeneratedDefinition(alias sink, T)(
+    scope const ResolutionGeneratedHeader* header, DefinitionDisposition disposition)
+{
+    static foreach (V; SnapshotNativeTypes!T)
+        if (header.nativeType is typeid(V))
+        {
+            scope auto view = generatedDefinitionView!V(typedResolutionGenerated!V(header), disposition);
+            deliver!sink(view);
+            return;
+        }
+    assert(0, "Generated definition has a type outside its admitted schema");
+}
+
+private const(ResolutionHeader)* findBranch(A)(return scope ref const ResolutionContext!A context,
+    scope const(char)[] path)
+{
+    for (const(ResolutionHeader)* header = context.records; header !is null; header = header.next)
+        if (header.path == path) return header;
+    return null;
+}
+private const(ResolutionHeader)* owningDeclaredOption(return scope const(ResolutionHeader)* branch)
+    @safe pure nothrow @nogc
+{
+    while (branch !is null && !branch.declaredOption) branch = branch.parent;
+    return branch;
+}
+private bool hasRootDefinition(T, A)(scope const RetainedState!(T, A)* state,
+    DefinitionRef handle)
+{
+    static foreach (i, path; ConfigPaths!T)
+        foreach (record; mixin("state.option" ~ i.stringof ~ ".sorted"))
+            if (record.ref_ == handle) return true;
+    return false;
+}
+private const(ResolutionGeneratedHeader)* findGeneratedDefinition(A)(
+    return scope ref const ResolutionContext!A context, DefinitionRef handle)
+{
+    for (const(ResolutionGeneratedHeader)* record = context.generated; record !is null; record = record.next)
+        if (record.ref_ == handle) return record;
+    return null;
+}
+private DefinitionDisposition generatedDisposition(A)(
+    scope ref const ResolutionContext!A context, DefinitionRef handle)
+{
+    for (const(ResolutionProjectionHeader)* projection = context.projections;
+        projection !is null; projection = projection.next)
+        if (projection.parent == handle && projection.locator is null)
+            return projection.disposition;
+    assert(0, "Generated definition has no retained root projection");
 }
 private SourceView sourceView(return scope const SourceRecord* record) @safe pure nothrow @nogc
 {
@@ -1703,13 +2514,13 @@ struct ConfigSnapshot(T, A = ConfigAllocator)
             error.failedOptions = state.failedOptions;
             return errorResult!T(error);
         }
-        T result = T.init;
+        T result;
         CopyArena!A temporary;
         scope(exit) temporary.release();
         static foreach (i, path; ConfigPaths!T)
         {{
-            if (!copyIndependent(temporary, *mixin("state.option" ~ i.stringof ~ ".effective"),
-                    mixin("result." ~ path)))
+            if (!independentGraph!(LeafSite!(T, path).Value)(
+                    temporary, *mixin("state.option" ~ i.stringof ~ ".effective"), mixin("result." ~ path)))
                 return errorResult!T(fail(ConfigErrorKind.allocationFailed));
         }}
         temporary.commit();
@@ -1717,43 +2528,39 @@ struct ConfigSnapshot(T, A = ConfigAllocator)
     }
 }
 
-/// Borrows one option through a typed, scoped sink.
+/// Borrows a declared option; data-only addresses bind their owning option.
 ConfigError visitOption(alias sink, T, A)(scope ref const ConfigSnapshot!(T, A) snapshot,
     scope const(char)[] path)
 {
     scope auto state = snapshot.state;
     if (state is null) return fail(ConfigErrorKind.invalidState);
-    static foreach (i, canonical; ConfigPaths!T)
-        if (path == canonical)
-        {
-            scope auto view = optionView(canonical, mixin("state.option" ~ i.stringof));
-            deliver!sink(view);
-            return ConfigError.init;
-        }
-    return fail(ConfigErrorKind.unknownOption);
+    scope auto option = owningDeclaredOption(findBranch(state.context, path));
+    if (option is null) return fail(ConfigErrorKind.unknownOption);
+    deliverNode!(sink, optionView, T)(option);
+    return ConfigError.init;
 }
 
-/// Visits options in schema declaration order.
+/// Visits declarations and dynamic instances in graph presentation order.
 ConfigError visitOptions(alias sink, T, A)(scope ref const ConfigSnapshot!(T, A) snapshot)
 {
     scope auto state = snapshot.state;
     if (state is null) return fail(ConfigErrorKind.invalidState);
-    static foreach (i, canonical; ConfigPaths!T)
-    {{
-        scope auto view = optionView(canonical, mixin("state.option" ~ i.stringof));
-        deliver!sink(view);
-    }}
+    for (scope const(ResolutionHeader)* header = state.context.records;
+        header !is null; header = header.next)
+        if (header.declaredOption) deliverNode!(sink, optionView, T)(header);
     return ConfigError.init;
 }
 
-/// Visits all accepted definitions of one option in precedence order.
+/// Visits original root definitions or projections of a dynamic declared option.
 ConfigError visitDefinitions(alias sink, T, A)(scope ref const ConfigSnapshot!(T, A) snapshot,
     scope const(char)[] path)
 {
     scope auto state = snapshot.state;
     if (state is null) return fail(ConfigErrorKind.invalidState);
+    scope auto option = owningDeclaredOption(findBranch(state.context, path));
+    if (option is null) return fail(ConfigErrorKind.unknownOption);
     static foreach (i, canonical; ConfigPaths!T)
-        if (path == canonical)
+        if (option.path == canonical)
         {
             foreach (record; mixin("state.option" ~ i.stringof ~ ".sorted"))
             {
@@ -1762,16 +2569,26 @@ ConfigError visitDefinitions(alias sink, T, A)(scope ref const ConfigSnapshot!(T
             }
             return ConfigError.init;
         }
-    return fail(ConfigErrorKind.unknownOption);
+    for (scope const(ResolutionProjectionHeader)* projection = option.projections;
+        projection !is null; projection = projection.nextAtNode)
+        deliverProjectionDefinition!(sink, T)(projection);
+    return ConfigError.init;
 }
 
-/// Borrows one definition through its checked owner-bound handle.
+/// Borrows an original submitted or generated definition through its checked handle.
 ConfigError visitDefinition(alias sink, T, A)(scope ref const ConfigSnapshot!(T, A) snapshot,
     DefinitionRef handle)
 {
     scope auto state = snapshot.state;
     if (state is null) return fail(ConfigErrorKind.invalidState);
     if (handle.owner != state.owner) return fail(ConfigErrorKind.wrongOwner);
+    if (handle.generated)
+    {
+        scope auto record = findGeneratedDefinition(state.context, handle);
+        if (record is null) return fail(ConfigErrorKind.invalidHandle);
+        deliverGeneratedDefinition!(sink, T)(record, generatedDisposition(state.context, handle));
+        return ConfigError.init;
+    }
     static foreach (i, canonical; ConfigPaths!T)
         foreach (record; mixin("state.option" ~ i.stringof ~ ".sorted"))
             if (record.ref_ == handle)
@@ -1780,6 +2597,99 @@ ConfigError visitDefinition(alias sink, T, A)(scope ref const ConfigSnapshot!(T,
                 deliver!sink(view);
                 return ConfigError.init;
             }
+    return fail(ConfigErrorKind.invalidHandle);
+}
+
+/// Borrows one exact active branch, without promoting it to a declared option.
+ConfigError visitBranch(alias sink, T, A)(scope ref const ConfigSnapshot!(T, A) snapshot,
+    scope const(char)[] path)
+{
+    scope auto state = snapshot.state;
+    if (state is null) return fail(ConfigErrorKind.invalidState);
+    scope auto header = findBranch(state.context, path);
+    if (header is null) return fail(ConfigErrorKind.unknownOption);
+    deliverNode!(sink, branchView, T)(header);
+    return ConfigError.init;
+}
+
+/// Visits branches in declaration, effective-index, and canonical-key order.
+ConfigError visitBranches(alias sink, T, A)(scope ref const ConfigSnapshot!(T, A) snapshot)
+{
+    scope auto state = snapshot.state;
+    if (state is null) return fail(ConfigErrorKind.invalidState);
+    for (scope const(ResolutionHeader)* header = state.context.records;
+        header !is null; header = header.next)
+        deliverNode!(sink, branchView, T)(header);
+    return ConfigError.init;
+}
+
+/// Visits all original definitions projected onto one exact active branch.
+ConfigError visitBranchDefinitions(alias sink, T, A)(scope ref const ConfigSnapshot!(T, A) snapshot,
+    scope const(char)[] path)
+{
+    scope auto state = snapshot.state;
+    if (state is null) return fail(ConfigErrorKind.invalidState);
+    scope auto header = findBranch(state.context, path);
+    if (header is null) return fail(ConfigErrorKind.unknownOption);
+    for (scope const(ResolutionProjectionHeader)* projection = header.projections;
+        projection !is null; projection = projection.nextAtNode)
+        deliverProjection!(sink, T)(projection);
+    return ConfigError.init;
+}
+
+/// Looks up an exact original relative locator, including excluded definitions.
+ConfigError visitBranchDefinitions(alias sink, T, A)(scope ref const ConfigSnapshot!(T, A) snapshot,
+    DefinitionRef parent, scope const(char)[] originalLocator)
+{
+    scope auto state = snapshot.state;
+    if (state is null) return fail(ConfigErrorKind.invalidState);
+    if (parent.owner != state.owner) return fail(ConfigErrorKind.wrongOwner);
+    if (parent.generated ? findGeneratedDefinition(state.context, parent) is null
+        : !hasRootDefinition(state, parent))
+        return fail(ConfigErrorKind.invalidHandle);
+    bool found;
+    for (scope const(ResolutionProjectionHeader)* projection = state.context.projections;
+        projection !is null; projection = projection.next)
+    {
+        if (projection.parent != parent) continue;
+        scope auto locator = originalLocatorText(projection.locator);
+        if (locator != originalLocator) continue;
+        found = true;
+        deliverProjection!(sink, T, true)(projection, locator);
+    }
+    return found ? ConfigError.init : fail(ConfigErrorKind.unknownOption);
+}
+
+/// Visits every retained original projection of a checked parent definition.
+ConfigError visitBranchDefinitions(alias sink, T, A)(scope ref const ConfigSnapshot!(T, A) snapshot,
+    DefinitionRef parent)
+{
+    scope auto state = snapshot.state;
+    if (state is null) return fail(ConfigErrorKind.invalidState);
+    if (parent.owner != state.owner) return fail(ConfigErrorKind.wrongOwner);
+    if (parent.generated ? findGeneratedDefinition(state.context, parent) is null
+        : !hasRootDefinition(state, parent))
+        return fail(ConfigErrorKind.invalidHandle);
+    for (scope const(ResolutionProjectionHeader)* projection = state.context.projections;
+        projection !is null; projection = projection.next)
+        if (projection.parent == parent) deliverProjection!(sink, T)(projection);
+    return ConfigError.init;
+}
+
+/// Borrows a retained projection through its owner-checked contribution handle.
+ConfigError visitBranchDefinition(alias sink, T, A)(scope ref const ConfigSnapshot!(T, A) snapshot,
+    ContributionRef handle)
+{
+    scope auto state = snapshot.state;
+    if (state is null) return fail(ConfigErrorKind.invalidState);
+    if (handle.owner != state.owner) return fail(ConfigErrorKind.wrongOwner);
+    for (scope const(ResolutionProjectionHeader)* projection = state.context.projections;
+        projection !is null; projection = projection.next)
+        if (projection.ref_ == handle)
+        {
+            deliverProjection!(sink, T)(projection);
+            return ConfigError.init;
+        }
     return fail(ConfigErrorKind.invalidHandle);
 }
 
@@ -1953,6 +2863,196 @@ private struct FailingConfigAllocator
     static void deallocateCopy(void* address) @safe nothrow @nogc
     {
         ConfigAllocator.deallocateCopy(address);
+    }
+}
+
+/// Known record-limit rejection precedes allocation faults and remains retryable.
+@("wired.config.core.recordLimitPrecedesAllocationFailure")
+@safe unittest
+{
+    alias A = FailingConfigAllocator;
+    struct Settings { int first = 1; int second = 2; }
+    A.reset(-1);
+    scope(exit) A.reset(-1);
+    {
+        ConfigLimits limits;
+        limits.maxResolvedRecords = 1;
+        auto created = ConfigBuilder!(Settings, A).create(limits);
+        assert(created.hasValue);
+        auto builder = created.takeValue();
+        const before = builder.usage;
+        A.reset(0);
+        auto limited = builder.resolve();
+        assert(limited.hasError && limited.error.kind == ConfigErrorKind.limitExceeded
+            && limited.error.limit == "maxResolvedRecords");
+        assert(builder.collecting && builder.usage == before);
+        limits.maxResolvedRecords = 2;
+        assert(builder.setLimits(limits).kind == ConfigErrorKind.none);
+        auto denied = builder.resolve();
+        assert(denied.hasError && denied.error.kind == ConfigErrorKind.allocationFailed);
+        assert(builder.collecting && builder.usage == before);
+        A.reset(-1);
+        auto resolved = builder.resolve();
+        assert(resolved.hasValue);
+        auto snapshot = resolved.takeValue();
+        auto copied = snapshot.copyConfig();
+        assert(copied.hasValue && copied.value.first == 1 && copied.value.second == 2);
+    }
+    assert(A.liveNative == 0);
+}
+
+/// Every injected collection allocation fault preserves owners and permits retry.
+@("wired.config.core.realCollectionAllocationRollback")
+@safe unittest
+{
+    alias A = FailingConfigAllocator;
+    struct Entry
+    {
+        string label = "default";
+        int width = 4;
+        string[] tags;
+        string[][string] groups;
+    }
+    struct Settings
+    {
+        @(ConfigMerge!(AttrsOf!Submodule)()) Entry[string] tools;
+        @(ConfigMerge!(ListOf!Submodule)()) Entry[] items;
+        Nullable!(string[]) optional;
+    }
+    Settings sourceValue;
+    sourceValue.tools["k"] = Entry("captured", 8, ["one", "two"], ["g": ["nested"]]);
+    sourceValue.items = [Entry("listed", 12, ["three"], ["h": ["list"]])];
+    sourceValue.optional = ["wrapped"];
+    auto input = fullConfigInput(sourceValue);
+    enum Operation { capture, borrowed, owned, resolve, copy }
+    A.reset(-1);
+    scope(exit) A.reset(-1);
+    foreach (operation; Operation.min .. Operation.max + 1)
+    {
+        bool succeeded;
+        for (long failure = 0; failure < 512 && !succeeded; ++failure)
+        {
+            A.reset(-1);
+            Settings independent;
+            {
+                auto created = ConfigBuilder!(Settings, A).create();
+                assert(created.hasValue);
+                auto builder = created.takeValue();
+                auto registered = builder.registerSource(SourceId("u"), ConfigSourceKind.custom, "");
+                assert(registered.hasValue);
+                auto captured = captureInput!(Settings, A)(input);
+                assert(captured.hasValue);
+                auto capsule = captured.takeValue();
+                ConfigSnapshot!(Settings, A) snapshot;
+                if (operation == Operation.resolve || operation == Operation.copy)
+                {
+                    assert(builder.submitOwned(registered.value, capsule).kind == ConfigErrorKind.none);
+                    if (operation == Operation.copy)
+                    {
+                        auto resolved = builder.resolve();
+                        assert(resolved.hasValue);
+                        snapshot = resolved.takeValue();
+                    }
+                }
+                const before = operation == Operation.copy ? snapshot.usage : builder.usage;
+                const capsuleBefore = capsule.usage;
+                const live = A.liveNative;
+                A.reset(failure);
+                if (operation == Operation.capture)
+                {
+                    auto attempted = captureInput!(Settings, A)(input);
+                    succeeded = attempted.hasValue;
+                    if (!succeeded)
+                        assert(attempted.error.kind == ConfigErrorKind.allocationFailed);
+                    else
+                    {
+                        auto retained = attempted.takeValue();
+                        assert(retained.state.input.tools.value["k"].groups["g"][0] == "nested");
+                        assert(retained.state.input.items.value[0].tags == ["three"]);
+                        assert(retained.state.input.optional.value.get == ["wrapped"]);
+                    }
+                }
+                else if (operation == Operation.borrowed || operation == Operation.owned)
+                {
+                    auto error = operation == Operation.borrowed
+                        ? builder.submitBorrowed(registered.value, input)
+                        : builder.submitOwned(registered.value, capsule);
+                    succeeded = error.kind == ConfigErrorKind.none;
+                    if (!succeeded)
+                    {
+                        assert(error.kind == ConfigErrorKind.allocationFailed);
+                        assert(!capsule.consumed && capsule.usage == capsuleBefore);
+                        assert(capsule.state.input.tools.value["k"].groups["g"][0] == "nested");
+                    }
+                    else if (operation == Operation.owned) assert(capsule.consumed);
+                }
+                else if (operation == Operation.resolve)
+                {
+                    auto attempted = builder.resolve();
+                    succeeded = attempted.hasValue;
+                    if (!succeeded)
+                        assert(attempted.error.kind == ConfigErrorKind.allocationFailed);
+                    else snapshot = attempted.takeValue();
+                }
+                else
+                {
+                    auto attempted = snapshot.copyConfig();
+                    succeeded = attempted.hasValue;
+                    if (!succeeded)
+                        assert(attempted.error.kind == ConfigErrorKind.allocationFailed);
+                    else independent = attempted.takeValue();
+                }
+                if (!succeeded)
+                {
+                    assert(A.liveNative == live);
+                    if (operation == Operation.copy) assert(snapshot.usage == before);
+                    else assert(builder.collecting && builder.usage == before);
+                }
+                assert(input.tools.value["k"].label == "captured"
+                    && input.items.value[0].groups["h"][0] == "list"
+                    && input.optional.value.get == ["wrapped"]);
+                A.reset(-1);
+                if (operation == Operation.capture
+                    || (!succeeded && (operation == Operation.borrowed || operation == Operation.owned)))
+                {
+                    auto error = operation == Operation.borrowed
+                        ? builder.submitBorrowed(registered.value, input)
+                        : builder.submitOwned(registered.value, capsule);
+                    assert(error.kind == ConfigErrorKind.none);
+                }
+                if (builder.collecting)
+                {
+                    auto retry = builder.resolve();
+                    assert(retry.hasValue);
+                    snapshot = retry.takeValue();
+                }
+                if (operation != Operation.copy || !succeeded)
+                {
+                    auto copied = snapshot.copyConfig();
+                    assert(copied.hasValue);
+                    independent = copied.takeValue();
+                }
+            }
+            assert(A.liveNative == 0);
+            assert(independent.tools["k"].label == "captured"
+                && independent.tools["k"].width == 8
+                && independent.tools["k"].tags == ["one", "two"]
+                && independent.tools["k"].groups["g"] == ["nested"]);
+            assert(independent.items[0].label == "listed"
+                && independent.items[0].groups["h"] == ["list"]
+                && independent.optional.get == ["wrapped"]);
+            independent.tools["k"].width = 99;
+            independent.tools["k"].tags[0] = "changed";
+            independent.tools["k"].groups["g"][0] = "changed";
+            independent.items[0].groups["h"][0] = "changed";
+            independent.optional.get[0] = "changed";
+            assert(input.tools.value["k"].width == 8
+                && input.tools.value["k"].tags[0] == "one"
+                && input.tools.value["k"].groups["g"][0] == "nested"
+                && input.items.value[0].groups["h"][0] == "list"
+                && input.optional.value.get[0] == "wrapped");
+        }
+        assert(succeeded, "Collection operation never reached its successful allocation boundary");
     }
 }
 
@@ -2292,11 +3392,40 @@ private struct FailingConfigAllocator
 }
 
 private struct CopyRecord { CopyRecord* next; void* payload; }
-private struct CopyArena(A)
+package struct CopyArena(A)
 {
     Arena!A records;
     CopyRecord* first;
     bool committed;
+    X[] array(X)(size_t count)
+    {
+        if (!count) return null;
+        if (count > size_t.max / X.sizeof) return null;
+        auto record = records.allocate!CopyRecord();
+        if (record is null) return null;
+        auto payload = A.allocateCopy(count * X.sizeof);
+        if (payload is null) return null;
+        record.payload = payload;
+        record.next = first;
+        first = record;
+        auto result = typedSlice!X(payload, count);
+        foreach (ref item; result)
+        {
+            X initialValue;
+            item = initialValue;
+        }
+        return result;
+    }
+    X[] nonNullArray(X)(size_t count)
+    {
+        auto storage = array!X(count ? count : 1);
+        return storage.ptr is null ? null : storage[0 .. count];
+    }
+    bool nonNullArray(X)(out X[] result)
+    {
+        result = nonNullArray!X(0);
+        return result.ptr !is null;
+    }
     bool text(scope const(char)[] input, out string output)
     {
         if (input.ptr is null) { output = null; return true; }
@@ -2321,22 +3450,27 @@ private struct CopyArena(A)
         records.release();
     }
 }
-private bool copyIndependent(V, A)(ref CopyArena!A arena, scope ref const V input, out V output)
+
+// Inspect the typed signature, not the sink body. Swallowing body errors with
+// __traits(compiles, sink(view)) would silently permit invalid lifetime escapes.
+private template sinkAcceptsView(alias sink, View)
 {
-    static if (is(V == Nullable!N, N))
+    static if (__traits(compiles, Parameters!sink))
     {
-        if (input.isNull) { output.nullify(); return true; }
-        N value;
-        if (!copyIndependent(arena, input.get, value)) return false;
-        output = value;
-        return true;
+        static if (Parameters!sink.length == 1)
+            enum sinkAcceptsView = is(const View : Parameters!sink[0]);
+        else
+            enum sinkAcceptsView = false;
     }
-    else static if (is(V == string)) return arena.text(input, output);
-    else { output = input; return true; }
+    else
+        enum sinkAcceptsView = true; // Generic typed sink: instantiate normally.
 }
 
 private void deliver(alias sink, View)(scope ref const View view)
 {
-    static assert(is(typeof(sink(view)) == void), "Configuration visitor must return void");
-    sink(view);
+    static if (sinkAcceptsView!(sink, View))
+    {
+        static assert(is(typeof(sink(view)) == void), "Configuration visitor must return void");
+        sink(view);
+    }
 }

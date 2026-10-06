@@ -5,11 +5,13 @@ where their values came from. The schema supplies compiled defaults; each source
 supplies sparse definitions with numerical priorities. Smaller priorities win.
 Two equally preferred scalar definitions conflict, even when their values agree.
 
-This interface handles supported scalars, strings, enums, nullable scalar payloads,
-and explicitly marked finite sections. It rejects collection/custom-owner fields
-rather than silently reporting a partial application schema. Collection composition,
-app source discovery, settings persistence, and `config show` rendering are separate
-contracts, not features of this scalar interface.
+This guide concentrates on supported scalars, strings, integral enums, nullable
+scalar payloads, and explicitly marked finite sections. The shared builder also
+supports collections and submodules through typed policies; see
+[collections and submodules](../index.md#collections-and-submodules) for presence,
+composition, and branch inspection. Custom-owner fields remain unsupported.
+App source discovery, settings persistence, and `config show` rendering are
+separate application contracts, not features of this library interface.
 
 ## Load and resolve
 
@@ -84,12 +86,17 @@ is a structured lookup error, never a dereference of a retired owner.
 
 ## Keep limits explicit
 
-Limits count sources, definitions, logical payload bytes, declared options, and
-member depth. They include compiled defaults, overridden values and retained
-validation text. Equal limits fit; one excess fails atomically. Payload accounting
-is independent of allocator capacity or internal immutable sharing and is not an
-RSS guarantee. Detached capsules count supplied values and schema paths, not
-registered sources or built-in definitions.
+`ConfigLimits` bounds sources, definitions, logical payload bytes, declared option
+patterns, member/key/index depth, value nodes, resolved records, and contributions.
+`ConfigUsage` exposes the corresponding counters. These budgets include compiled
+defaults, overridden values, generated defaults and retained validation text;
+collections additionally charge normalized candidates and branch records.
+Equal limits fit; one excess fails atomically. Payload accounting is independent
+of allocator capacity or internal immutable sharing and is not an RSS guarantee.
+Detached capsules count supplied values and schema paths, not registered sources
+or built-in definitions. See the
+[collection accounting table](../index.md#limits-and-logical-accounting) for exact
+units and defaults.
 
 For the exact supported policy/type matrix, ownership transitions, budget formulas,
 and acceptance obligations, see the

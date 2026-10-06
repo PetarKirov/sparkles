@@ -220,7 +220,7 @@ private enum bool isExpectedLike(X) =
 /// The JSON object-key text for an associative-array key: a `string` verbatim,
 /// a type carrying a type-level `@WireConvert` by its converter's `to`, or an
 /// enum by its resolved name / underlying-value text (§7).
-private string aaKeyText(K, Root, size_t nodeIndex)(K k)
+package(sparkles.wired) string aaKeyText(K, Root, size_t nodeIndex)(K k)
 {
     alias walk = WireWalk!(Json, Root);
     enum node = walk.node!nodeIndex;
