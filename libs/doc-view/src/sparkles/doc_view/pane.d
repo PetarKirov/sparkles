@@ -31,6 +31,7 @@ import sparkles.ui.style : ColorScheme, schemeForBackground, Slot, Visual;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinDark, builtinLight;
 import sparkles.ui_raylib : RaylibCanvas;
+import sparkles.ui_raylib.raylib_canvas : GuiMeasure;
 
 import sparkles.doc_view.document : DocumentPipeline;
 import sparkles.doc_view.kind : ViewKind, viewKindOf;
@@ -100,6 +101,9 @@ struct DocViewPane
 {
     /// The document's model (null-document while `error` is set).
     ViewerModel vm;
+    // The host's measurer the model lays out with, once a GUI host paints it.
+    private GuiMeasure guiMeasure;
+    private bool measured;
     /// The path the pane shows (restore re-opens it, `TDV5`).
     string path;
     /// The file name, for the pane's title.
@@ -534,6 +538,25 @@ struct DocViewPane
         auto c = RaylibCanvas(host.fonts, &buf, cw, ch, px, py);
         c.fx = host.fx;
         c.images = host.images;
+        // The host's interface faces, density and capabilities: prose set in
+        // `FontRole.ui`
+        // (`MdViewOptions.proseRole`) draws in the faces, radii scale with the screen.
+        c.uiFonts = host.uiFonts;
+        c.density = host.density;
+        c.capabilities = host.capabilities;
+        // The model lays out in the faces that draw it (`GLY10`): a prose run
+        // in the interface face is as wide as it draws, not as its cells.
+        guiMeasure = GuiMeasure(host.capabilities.proportionalText ? host.uiFonts : null, cw, ch);
+        if (!measured && host.capabilities.proportionalText && host.uiFonts !is null)
+        {
+            import sparkles.ui.style : UiStyle = TextStyle;
+
+            vm.measure.styledWidth = (scope const(char)[] t, in UiStyle st) @safe
+                => guiMeasure.width(t, st);
+            vm.measure.styledRows = (in UiStyle st) @safe => guiMeasure.rows(st);
+            measured = true;
+            vm.rebuild();
+        }
         c.fillPixels(px, py, pw, ph, vm.pageBg);
         if (cols < 4 || rows < 2)
             return;
@@ -903,4 +926,27 @@ version (unittest)
     auto pane = new DocViewPane;
     assert(!pane.open(env, "/nonexistent/x.md", chromeTheme(RgbColor(0, 0, 0), RgbColor(255, 255, 255))));
     assert(pane.error.length, "a located error, not a crash");
+}
+
+@("pane.open.aLongDocumentLaysOutPromptly")
+@system unittest
+{
+    import core.time : MonoTime, seconds;
+
+    // The credits, opened in preview as a phone restores them, laid out at
+    // phone widths: measuring through the host's faces made each layout take
+    // minutes in the wrap search, and the app hung on its first frame.
+    auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
+    auto pane = new DocViewPane;
+    const start = MonoTime.currTime;
+    import std.path : buildPath, dirName;
+
+    // The repository root: six directories up from this file.
+    const root = __FILE_FULL_PATH__.dirName.dirName.dirName.dirName.dirName.dirName;
+    assert(pane.open(env, buildPath(root, "docs", "credits", "terminal.md"),
+        chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
+    assert(pane.vm.showPreview, "a markdown document opens in preview");
+    foreach (w; [60, 40, 30, 20])
+        pane.vm.relayout(w);
+    assert(MonoTime.currTime - start < 20.seconds, "a few seconds at most, not minutes");
 }

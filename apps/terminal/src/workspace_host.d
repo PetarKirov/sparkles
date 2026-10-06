@@ -409,15 +409,16 @@ struct WorkspaceHost
                 : DocViewEnv.create(GrammarRegistry.fromEnvironment());
         }
         auto p = new DocViewPane;
-        cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
+        // Set before `open`, which builds the first view: no line numbers by
+        // default (`TDV13`), the prose in the interface face (D50).
         p.vm.lineNumbers = viewerLineNumbers;
         p.vm.codeLineNumbers = viewerCodeLineNumbers;
-        // The document's prose reads in the interface face (D50).
         {
             import sparkles.ui.style : FontRole;
 
             p.vm.proseRole = FontRole.ui;
         }
+        cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
         viewers[id] = p;
         dirty = true;
         return true;
