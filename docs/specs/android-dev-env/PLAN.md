@@ -69,10 +69,11 @@ its stated criterion; prototypes do not bypass production acceptance.
 ## Resume point
 
 Historical baseline: `d43f88a39`; PR #586 landed as `bc69a5216`.
-Interview Q1–Q47 establishes scope/application policy, not implementation conformance.
+Interview Q1–Q49 establishes scope/application policy, not implementation conformance.
 The configuration slice is specified by TPC and TPF12/13; the generic wired seam
 is delegated to its owner through WQ1–WQ10. TPC6/11/16/17 settle alias ambiguity,
 supported-writer assumptions, root-scoped workspaces and unsupported-version recovery.
+TPC18/19 settle retained migration/reset backups and legacy workspace destinations.
 Next executable actions are the wired handoff and specification of terminal
 acquisition bounds, writer coordination and persisted-format transactions, alongside
 F1 native ownership evidence. Profile, resolver, watcher and migration code remains

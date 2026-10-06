@@ -270,6 +270,25 @@ and refuse reset. Exact format markers and backup/publication mechanics remain
 persisted-format gates. This policy applies to downgrade and any other unsupported
 version, without promising that every older binary already implements it.
 
+**TPC18: Migration and reset backups.** Backups created for migration or persisted
+state reset **must** remain available until explicit user deletion; automatic
+pruning **must not** remove them. Recovery **must** expose each backup's location
+and size. Migration/reset **must** refuse to commit when a complete backup cannot
+be saved, including insufficient space or a failed write. Failure **must** preserve
+the original state and explain the failed backup. Ordinary settings saves **must
+not** create migration backups. Complete-backup verification, crash-consistent
+publication and deletion mechanics remain persisted-format acceptance gates.
+
+**TPC19: Legacy workspace destination.** Migration of a workspace predating root
+namespaces **must** be offered into the default/legacy configuration namespace.
+Starting with an explicit `--config` root **must not** automatically adopt that
+workspace, including when profile/environment ID spellings match. Importing it
+into another root **must** require explicit selection and validation against that
+destination before launch. The migration **must** preserve TPC15's inactive legacy
+command strings and TPC18's backup requirement. Identifying the historical default/
+legacy namespace and repeat-import handling remain persisted-format gates; this
+clause does not authorize guessing a destination from the current working directory.
+
 | Accepted baseline                  | Intentional amendment on accepting this extension                                    |
 | ---------------------------------- | ------------------------------------------------------------------------------------ |
 | `TCF2`, CLI strongest              | `TPC3`: persistent local edits strongest; invocation sources remain inspectable      |
