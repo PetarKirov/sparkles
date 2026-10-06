@@ -66,7 +66,7 @@ independent-review item stays unmet until a second reviewer reads it.
 ## M1: base vocabulary, algorithms and MemVfs
 
 **Obligations.** `VFE1` (the base types), `VFE2`, `VFE4`; `VFP1`–`VFP8`;
-`VFR1`, `VFR2`, `VFR4` (with a backend double); `VFO1`–`VFO10` on `MemVfs`;
+`VFR2`, `VFR4` (with a backend double); `VFO1`–`VFO10` on `MemVfs`;
 `VFH1`–`VFH6`; `VFD1`–`VFD5`; `VFB1`–`VFB3`; `VFM1`–`VFM5`.
 **Prerequisites.** S3, S4 (both passed).
 **Deliverable.** `sparkles.base.io.errors`; `sparkles.base.vfs` and its
@@ -80,13 +80,18 @@ dub test :base -- -i "vfs|io.errors"
 
 Oracles 1 (the `MemVfs` columns), 2, 5 and the allocation check pass on the
 Linux, macOS and Windows legs; the run reports a non-zero count of discovered
-`vfs` tests.
+`vfs` tests. On Linux the allocation audit also passes:
+
+```bash
+dub test :base -c allocation-audit -- -i "vfs.allocation"
+```
+
 **Excludes.** Native backends. Event-horizon keeps its own `IoError` until M3,
 so this milestone adds `sparkles.base.io.errors` beside it.
 
 ## M2: the blocking backend
 
-**Obligations.** `VFE3`; `VFR3`, `VFR5`, `VFR6`; `VFH7`, `VFH8`;
+**Obligations.** `VFE3`; `VFR1`, `VFR3`, `VFR5`, `VFR6`; `VFH7`, `VFH8`;
 `VFN1`–`VFN13`; `VFB4`, `VFB6`; `VFO1`–`VFO10` and `VFD1`–`VFD5` on
 `BlockingVfs`.
 **Prerequisites.** M1; S1; S2. Decide open question O2.
@@ -185,4 +190,5 @@ finds no normative text duplicating this one.
 | Milestone | State                                                    | Pull request |
 | --------- | -------------------------------------------------------- | ------------ |
 | M0        | delivered; reshaped for readers and for creation sharing | #535, #594   |
-| M1–M5     | not started                                              | —            |
+| M1        | in review                                                | —            |
+| M2–M5     | not started                                              | —            |

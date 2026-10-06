@@ -9,7 +9,8 @@ repository owner in a four-round design review held from September 23 to 28,
 catalog and superseded an earlier plan for a `sparkles.base.dir_handle`
 module. DV19–DV22 were accepted in an editorial review held from October 3 to
 5, 2026, which reshaped the specification for its readers. DV23 was decided on
-October 6, 2026._
+October 6, 2026, and DV24–DV26 record what implementing the base milestone
+changed._
 
 ## Accepted
 
@@ -305,6 +306,40 @@ needs an absolute link creates it outside this interface.
 **Revisit if** a consumer extracts archives through this interface and needs
 protection against relative escaping links, the symlink variant of
 zip-slip; (c) is the candidate then.
+
+### DV24: Empty handles instead of no default constructor
+
+**Question.** VFH1 first required owning handles to be non-default-
+constructible. Can they be?
+
+**Evidence.** `expected` 0.4 rejects a payload with `@disable this()` ("field
+must be initialized in constructor"), and every operation returns its handle
+in an `IoResult`.
+
+**Choice.** Owners stay default-constructible. A default-initialized handle
+is empty, and every operation on it fails with `other` and the context
+`"empty handle"` rather than reaching the backend
+([`VFH1`](./SPEC.md#vfh1-owning-handles)). The same holds for a borrow.
+
+**Revisit if** `expected` accepts payloads without a default constructor.
+
+### DV25: The open mode is a template argument
+
+`openFile` takes its mode as a template argument, `openFile!(OpenMode.read)`,
+because the rights a mode needs can only be checked at compile time
+([`VFH6`](./SPEC.md#vfh6-rights-are-checked-at-compile-time)) if the mode is
+known then ([`VFO4`](./SPEC.md#vfo4-open-modes)). A caller that chooses a mode
+at run time branches over the modes it supports.
+
+### DV26: Two limits the implementation needed
+
+Splicing link targets into the rest of a walk needs a bounded buffer, so the
+remaining path is limited to 4096 bytes, Linux's `PATH_MAX`; a longer one
+fails with `nameTooLong`. Removing a directory that keeps receiving new
+entries could loop forever, so `removeTree` lists such a directory again at
+most 16 times and then fails with `notEmpty`
+([§11](./SPEC.md#_11-limits)). Both were found writing M1; the second by the
+race sweep of oracle 2.
 
 ## Open
 
