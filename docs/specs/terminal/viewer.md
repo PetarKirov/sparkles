@@ -116,6 +116,12 @@ directory, its content kind and its size, with **New tab**, **Split right**,
 Both a tab and a split are first-class (mockups V1 and V2): `open.target`
 chooses the default and the card the exception.
 
+**TDV13: Reading defaults.** The terminal's viewer **must** open a document
+without its line numbers or its code blocks' (`viewer.lineNumbers`,
+`viewer.codeLineNumbers`, both off by default; `l` and `c` still toggle
+them), and **must** set its prose — paragraphs, headings, list items — in
+the interface face, its tables and code in the cell font (design-system D50).
+
 ### Status
 
 | ID      | Status                                                                                                                                                                                         | Traces to                                                                          |
@@ -132,6 +138,7 @@ chooses the default and the card the exception.
 | `TDV10` | full (`86421bb68`)                                                                                                                                                                             | [`TPG12`](./pages.md); `showCredits`                                               |
 | `TDV11` | full (`caacfa304`)                                                                                                                                                                             | `UIA14`, `sparkles:doc-view`                                                       |
 | `TDV12` | open                                                                                                                                                                                           | [design](./design.md)                                                              |
+| `TDV13` | full                                                                                                                                                                                           | `ViewerConfig`, `MdViewOptions.proseRole`, `ViewerModel.proseRole`                 |
 
 ## Resolved questions
 
