@@ -19,7 +19,7 @@ evidence ledger live in [`testing.md`](./testing.md).
 | [M1 Rename](#m1-rename-to-sparkles-shaders)                                 | done        |
 | [M2 Unit membership](#m2-unit-membership)                                   | deferred    |
 | [M3 Interface and agreement evidence](#m3-interface-and-agreement-evidence) | not started |
-| [M4 Multi-pass effects](#m4-multi-pass-effects-in-single-source-d)          | in progress |
+| [M4 Multi-pass effects](#m4-multi-pass-effects-in-single-source-d)          | done        |
 | [M5 Further platforms](#m5-further-device-platforms)                        | not started |
 
 ## Stage 0: specification
@@ -113,11 +113,20 @@ each effect calls the same D functions as its GPU passes.
 
 **Entry condition.** M1, so the new code is written against the final names.
 
-**Progress.** Bloom is done: its four passes are generated, the composite reads
-two textures, and the gallery's and the CRT's captures are byte-identical
-before and after. The CRT's tube remains. It needs `exp` and a vector
-`smoothstep` in the vocabulary, and its curvature and lens moved into a
-module that the CPU projection (`crt_projection`) and the pass both call.
+**Outcome.** The gate is met.
+
+- Bloom's four passes and the CRT's tube are generated from D, and no
+  hand-written shader is left in the effect pipeline.
+- The CRT's bend and lens are `sparkles.ui.crt_shaders` functions, called by the
+  tube and by `CrtProjection` on the CPU.
+- Captured with the clock pinned, bloom is byte-identical to the hand-written
+  passes. The CRT differs from the hand-written tube in one pixel in 720,000,
+  by 1/255; control builds show the capture is sensitive to the shaders.
+- The vocabulary gained `exp`, and `pow` now resolves `const` arguments under
+  DMD.
+- The tube exposed two constructs the pinned SPIR-V backend structures wrongly,
+  both rejected by `spirv-val`: an `if … else if (a && b)` chain, and early
+  returns among short-circuit masks. The tube avoids both.
 
 ## M5: Further device platforms
 

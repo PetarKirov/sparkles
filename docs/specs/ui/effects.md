@@ -274,8 +274,17 @@ tests (`ui.effect.bloom.colourMathsOnTheHost`). The composite is the first
 entry point that reads two textures. Captured with the clock pinned, the
 gallery's effects page and hue's CRT frame — which reuses the first three
 passes — are byte-identical before and after. The comparison is not blind:
-widening the bright pass's knee changes the gallery capture. The CRT's tube is
-still hand-written; [`sparkles:shaders`](../shaders/PLAN.md) M4 tracks it.
+widening the bright pass's knee changes the gallery capture.
+
+The CRT's tube followed, which left no hand-written shader in the effect
+pipeline. `crtTube` is an entry point in `libs/ui/shaders/effects.d`. Its bend and
+lens come from `sparkles.ui.crt_shaders` (`crtCurve`, `crtLens`), which
+`CrtProjection` calls on the CPU to map the pointer, so the picture and the
+input agree by construction instead of through a hand-kept twin. Captured with
+the clock pinned, hue's CRT frame differs from the hand-written tube in one
+pixel of 720,000, by 1/255, with the lens and tilt off and again with both on:
+float re-association in the generated code. A control build with a doubled
+vignette exponent changes 678,632 pixels.
 
 ## Decisions
 

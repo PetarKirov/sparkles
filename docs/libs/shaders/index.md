@@ -69,6 +69,24 @@ stage), each `@uniform` a uniform of that name, each `Sampler2D` a sampled image
 at the next binding, and the return value the colour output. Everything in the
 function body is ordinary D over this vocabulary — the same D the CPU runs.
 
+An entry point may read several textures. Name the parameters `texture0`,
+`texture1` and so on, in the order the renderer binds them.
+
+### Control flow the device compiler cannot structure
+
+SPIR-V requires structured control flow, and the pinned compiler's SPIR-V
+backend gets two common shapes wrong. Each comes out as code `spirv-val`
+rejects ("branches to the selection construct, but not to the selection
+header"). It is a build failure, never a wrong picture:
+
+- an `if … else if (a && b)` chain;
+- early returns interleaved with long `&&`/`||` chains, such as a function
+  that returns as soon as one of several shape tests matches.
+
+Compute each condition as a `bool` and combine the conditions with `&` and
+`|`, which do not branch. Then use one select (`?:`) or independent `if`s. The
+CRT's cursor and divider in `libs/ui/shaders/effects.d` are written that way.
+
 ## Editor support
 
 hue's live types (and anything else on `sparkles:dmd-lsp`) analyze a shader
