@@ -73,6 +73,10 @@ struct GuiRequest
     */
     string uiFontFamily = defaultUiFontFamily;
 
+    /// `RunConfig.uiFollowsCellFont`: size the interface steps from the cell
+    /// font, and reload them with it.
+    bool uiFollowsCellFont;
+
     int targetFps = 60; ///
 }
 
@@ -92,8 +96,22 @@ struct GuiSession
     /// Drawing units per density-independent pixel: the panel's content
     /// scale, which sizes the interface steps and the CSS-px box chrome.
     float uiScale = 1.0f;
+    /// `GuiRequest.uiFollowsCellFont`: the interface steps are sized from
+    /// the cell font, and reload with it.
+    bool uiFollowsCellFont;
+    /// The interface face's resolved files, for a reload.
+    string uiRegular, uiBold;
 
     @disable this(this);
+
+    /// (Re)loads the interface faces from `uiRegular` at this session's sizes.
+    void reloadUiFaces() @system
+    {
+        if (uiRegular.length == 0)
+            return;
+        uiFonts.load(uiRegular, uiBold,
+            uiStepSizes(uiScale, uiFollowsCellFont ? fontSizePx : 0), &fonts, atlasScale);
+    }
 
     ~this() @system
     {
@@ -113,10 +131,13 @@ struct GuiSession
     pixel size does not (matching what every terminal emulator does — more or
     fewer cells, same window).
     */
-    void setFontSize(int px) @system nothrow @nogc
+    void setFontSize(int px) @system
     {
         fontSizePx = px < minFontSizePx ? minFontSizePx : px;
         fonts.reload(fontSizePx);
+        // Interface faces that follow the cell font grow and shrink with it.
+        if (uiFollowsCellFont)
+            reloadUiFaces();
     }
 }
 
@@ -200,6 +221,7 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
     // 3b. The interface faces, one per type step, each at its size in drawing
     //     units: dp times the panel scale (1 for a pinned capture, as above).
     session.uiScale = req.fontSizePxOverride > 0 ? 1.0f : metrics.scale;
+    session.uiFollowsCellFont = req.uiFollowsCellFont;
     loadUiFaces(session, req.uiFontFamily, sources);
 
     // 4. The size, now that a cell has a width. Skipped on Android, where the
@@ -231,24 +253,51 @@ unittest
 
 /**
 Loads `family` into `session.uiFonts` at every type step, scaled by
-`session.uiScale` and oversampled like the cell font, with the cell font set
-as the fallback for code points the family lacks. A family that does not
-resolve leaves `uiFonts.present` false; chrome then draws in the cell font.
+`session.uiScale` — or, with `session.uiFollowsCellFont`, by the cell font's
+size — and oversampled like the cell font, with the cell font set as the
+fallback for code points the family lacks. A family that does not resolve
+leaves `uiFonts.present` false; chrome then draws in the cell font.
 */
 void loadUiFaces(ref GuiSession session, string family,
     in FontSet.FontSources sources) @system
 {
-    import sparkles.ui.style : TypeStep, typeStepDp;
-
     if (family.length == 0)
         return;
     string regular, bold;
     if (!resolveUiFace(family, sources, regular, bold))
         return;
+    session.uiRegular = regular;
+    session.uiBold = bold;
+    session.reloadUiFaces();
+}
+
+/**
+The interface steps' sizes in drawing units: `dp` each at `uiScale`, or —
+`cellFontPx` non-zero — the body step at the cell font's size and every other
+step in its proportion to the body's.
+*/
+int[uiTypeSteps] uiStepSizes(float uiScale, int cellFontPx = 0) @safe pure nothrow @nogc
+{
+    import sparkles.ui.style : TypeStep, typeStepDp;
+
+    const scale = cellFontPx > 0 ? cellFontPx / cast(float) typeStepDp(TypeStep.body) : uiScale;
     int[uiTypeSteps] sizes;
     foreach (i, ref s; sizes)
-        s = uiStepPx(typeStepDp(cast(TypeStep) i), session.uiScale);
-    session.uiFonts.load(regular, bold, sizes, &session.fonts, session.atlasScale);
+        s = uiStepPx(typeStepDp(cast(TypeStep) i), scale);
+    return sizes;
+}
+
+@("ui_app.gui_setup.uiStepSizes.followTheCellFont")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.ui.style : TypeStep;
+
+    const dp = uiStepSizes(2.75f);
+    assert(dp[TypeStep.body] == 39 && dp[TypeStep.title] == 47, "14 and 17 dp at 440 dpi");
+    const cell = uiStepSizes(2.75f, cellFontPx: 28);
+    assert(cell[TypeStep.body] == 28, "the body step is the cell font's size");
+    assert(cell[TypeStep.title] == 34 && cell[TypeStep.caption] == 24, "the rest in proportion");
 }
 
 /// A type step of `dp` density-independent px at `scale`, in whole drawing units.
