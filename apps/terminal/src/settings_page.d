@@ -1286,11 +1286,13 @@ version (unittest)
     cast(void) f.page.build(phone(), 45);
     f.page.activate(hitFor(f.page, "extraKeys.visible", SectionPart.reset));
     assert(f.store.resolved.extraKeys.visible == f.store.resolved.extraKeys.visible.automatic);
-    // On a phone a three-member enum that does not fit is a dropdown: a tap
-    // on its row opens it, as drawn.
-    f.page.activate(hitFor(f.page, "extraKeys.visible", SectionPart.row));
-    assert(allText(f.page.build(phone(), 45)).canFind("✓ auto"));
-    f.page.activate(hitFor(f.page, "extraKeys.visible", SectionPart.row));
+    // On a phone a three-member enum that fits is a segmented control (G3).
+    // Its segment is a target of its own, as drawn.
+    cast(void) f.page.build(phone(), 45);
+    f.page.activate(hitFor(f.page, "extraKeys.visible", SectionPart.choice0 + 1));
+    assert(f.store.resolved.extraKeys.visible == f.store.resolved.extraKeys.visible.always);
+    cast(void) f.page.build(phone(), 45);
+    f.page.activate(hitFor(f.page, "extraKeys.visible", SectionPart.reset));
 
     // A dropdown opens in place; a choice commits and closes it.
     f.page.activate(hitFor(f.page, "behaviour.onExit", SectionPart.open));
