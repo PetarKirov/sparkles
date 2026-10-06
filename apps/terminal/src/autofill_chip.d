@@ -11,6 +11,7 @@ band from the panes, so it never covers the prompt it is about.
 */
 module autofill_chip;
 
+import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.terminal_view.process_info : PtyReading;
 
 import chrome : ChromeTheme, Layer;
@@ -46,7 +47,7 @@ auto chipTree(ButtonLabels labels, int targetRows, int cols = 80) @safe
     import chrome : button, label;
 
     Builder b;
-    const btn = button(b, "⚿", "Autofill password", labels, chipHit, primary: true,
+    const btn = button(b, iconText(ActionIcon.autofill), "Autofill password", labels, chipHit, primary: true,
         minRows: targetRows);
     // The reason, as much of it as the band has room for beside the button.
     const why = label(b, cols >= 64 ? "echo is off — a password is being read" : "echo is off",

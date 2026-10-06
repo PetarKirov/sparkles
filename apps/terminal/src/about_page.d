@@ -21,6 +21,7 @@ import std.array : appender;
 import sparkles.core_cli.build_info : BuildInfo, BuildLoad, JsonSubject,
     buildInfoFromJSON, buildInfoSection;
 import sparkles.wired.json.document : JsonKind;
+import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.components.property_view : propertyView, writePropertyText;
 import sparkles.ui.components.tree_view : TreeViewState;
@@ -261,7 +262,7 @@ final class AboutPage : Page
         Builder b;
         uint[] actions;
         if (services.copy !is null)
-            actions ~= button(b, "⧉", "Copy", ctx.labels, copyHit, minRows: ctx.targetRows);
+            actions ~= button(b, iconText(ActionIcon.copy), "Copy", ctx.labels, copyHit, minRows: ctx.targetRows);
         const head = header(b, "About", ctx, actions);
 
         uint[] items;

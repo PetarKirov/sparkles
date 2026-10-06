@@ -23,6 +23,7 @@ previous run and back, `c` copies.
 */
 module log_page;
 
+import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.base.log_sinks : RingCoreLogger, RingLogRecord;
 import sparkles.base.logger : LogLevel;
 import sparkles.fuzzy.match : MatcherWorkspace;
@@ -515,7 +516,7 @@ final class LogPage : Page
         Builder b;
         uint[] actions;
         if (services.share !is null)
-            actions ~= button(b, "↗", "Share", labels, Hit.share, minRows: ctx.targetRows);
+            actions ~= button(b, iconText(ActionIcon.share), "Share", labels, Hit.share, minRows: ctx.targetRows);
         const head = header(b, showingPrevious ? "Logs · previous run" : "Logs", ctx, actions);
 
         const search = searchRow(b, query, searching, "Search · text, source:am, /regex/",
@@ -554,7 +555,7 @@ final class LogPage : Page
             statusSlot = Slot.error;
         }
         else if (ranked)
-            status = text("⌕ ", shown.length, " ranked");
+            status = text(iconText(ActionIcon.search), " ", shown.length, " ranked");
         else if (showingPrevious)
             status = text("⟲ ", shown.length, " entries");
         else if (following)
@@ -571,7 +572,7 @@ final class LogPage : Page
             foot ~= button(b, "⟲", showingPrevious ? "This run" : "Previous run", ctx.labels,
                 Hit.previous, minRows: ctx.targetRows);
         if (services.copy !is null)
-            foot ~= button(b, "⧉", "Copy", ctx.labels, Hit.copy, minRows: ctx.targetRows);
+            foot ~= button(b, iconText(ActionIcon.copy), "Copy", ctx.labels, Hit.copy, minRows: ctx.targetRows);
         const footer = b.add(Widget(kind: WidgetKind.row, children: foot, gap: 1,
             alignY: Alignment.center, width: SizeSpec.grow(), padding: Insets(0, 1, 0, 1),
             slot: Slot.surfaceSunken, paintBackground: true));

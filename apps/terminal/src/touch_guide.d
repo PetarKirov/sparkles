@@ -15,6 +15,7 @@ the marks are tappable, and a drag or the wheel scrolls it (`Scrollable`).
 */
 module touch_guide;
 
+import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.input.events : Key, KeyEvent;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : Slot;
@@ -468,8 +469,8 @@ string iconOf(TermCommand c) @safe pure nothrow @nogc
         case TermCommand.newTab: return "＋";
         case TermCommand.tabTree: return "☰";
         case TermCommand.goToTab: return "#";
-        case TermCommand.copy: return "⧉";
-        case TermCommand.paste: return "⎘";
+        case TermCommand.copy: return iconText(ActionIcon.copy);
+        case TermCommand.paste: return iconText(ActionIcon.paste);
         case TermCommand.toggleExtraKeys: return "⌨";
         case TermCommand.showGuide: return "?";
         case TermCommand.openAbout: return "ⓘ";

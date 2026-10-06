@@ -10,6 +10,7 @@ maps the hit ids back to commands.
 */
 module exit_banner;
 
+import sparkles.ui.glyphs : ActionIcon, iconText;
 import std.datetime.systime : SysTime;
 
 import sparkles.ui.widget : Builder, WidgetTree;
@@ -103,8 +104,8 @@ WidgetTree exitBanner(ExitInfo info, bool expanded, bool actions, ButtonLabels l
     }
     if (actions)
         lines ~= row(b, [
-            button(b, "↻", "Re-run", labels, ExitHit.rerun, primary: true, minRows: targetRows),
-            button(b, "❯", "Shell", labels, ExitHit.shell, minRows: targetRows),
+            button(b, iconText(ActionIcon.rerun), "Re-run", labels, ExitHit.rerun, primary: true, minRows: targetRows),
+            button(b, iconText(ActionIcon.shell), "Shell", labels, ExitHit.shell, minRows: targetRows),
             button(b, "×", "Close", labels, ExitHit.close, minRows: targetRows),
         ]);
     return b.finish(band(b, lines));

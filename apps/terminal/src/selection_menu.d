@@ -25,6 +25,7 @@ The selection model itself — anchors, words, text — is
 */
 module selection_menu;
 
+import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.input.events : Key, KeyAction, KeyEvent;
 import sparkles.terminal_view.component : TerminalView;
 import sparkles.terminal_view.selection : Granularity, SelectionBounds, SelectionEnd;
@@ -63,14 +64,14 @@ struct ActionLook
 
 /// The mockups' icons and words (S2, B1, X1).
 immutable ActionLook[MenuAction.max + 1] looks = [
-    MenuAction.copy: ActionLook("⧉", "Copy", "Copy"),
-    MenuAction.paste: ActionLook("⎘", "Paste", "Paste"),
+    MenuAction.copy: ActionLook(iconText(ActionIcon.copy), "Copy", "Copy"),
+    MenuAction.paste: ActionLook(iconText(ActionIcon.paste), "Paste", "Paste"),
     MenuAction.selectAll: ActionLook("▣", "Select all", "All"),
-    MenuAction.openUrl: ActionLook("⇗", "Open URL", "Open"),
-    MenuAction.share: ActionLook("↗", "Share", "Share"),
-    MenuAction.find: ActionLook("⌕", "Find in scrollback", "Find"),
-    MenuAction.run: ActionLook("❯", "Run in a new pane", "Run"),
-    MenuAction.autofill: ActionLook("⚿", "Autofill password", "Autofill"),
+    MenuAction.openUrl: ActionLook(iconText(ActionIcon.open), "Open URL", "Open"),
+    MenuAction.share: ActionLook(iconText(ActionIcon.share), "Share", "Share"),
+    MenuAction.find: ActionLook(iconText(ActionIcon.search), "Find in scrollback", "Find"),
+    MenuAction.run: ActionLook(iconText(ActionIcon.run), "Run in a new pane", "Run"),
+    MenuAction.autofill: ActionLook(iconText(ActionIcon.autofill), "Autofill password", "Autofill"),
     MenuAction.more: ActionLook("⋯", "More", "More"),
 ];
 
@@ -1768,7 +1769,7 @@ version (unittest)
     c.geo.box = Rect(60, 400, 40, 20);
     c.geo.cellH = 20;
     const pill = c.placeIn(ctx);
-    assert(shows(pill, "⧉") && !shows(pill, "Copy"));
+    assert(shows(pill, iconText(ActionIcon.copy)) && !shows(pill, "Copy"));
 }
 
 @("selection_menu.ActionMenu.desktopMenuGroupsShortcutsAndKeys")
@@ -1783,7 +1784,7 @@ version (unittest)
     m.geo.box = Rect(100, 160, 230, 20);
     const l = m.placeIn(ctx);
     assert(l.y >= 180, "below the selection's row");
-    assert(shows(l, "⧉ Copy") && shows(l, "Ctrl+Shift+C"));
+    assert(shows(l, iconText(ActionIcon.copy) ~ " Copy") && shows(l, "Ctrl+Shift+C"));
     assert(hitIds(l) == [hitBase + MenuAction.copy, hitBase + MenuAction.paste,
         hitBase + MenuAction.selectAll, hitBase + MenuAction.find, hitBase + MenuAction.run,
         hitBase + MenuAction.more]);
