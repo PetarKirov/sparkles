@@ -15,7 +15,7 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | Milestone                                                                 | State       |
 | ------------------------------------------------------------------------- | ----------- |
 | [Stage 0](#stage-0-specification-and-spikes)                              | done        |
-| [M1 Parse](#m1-parse)                                                     | not started |
+| [M1 Parse](#m1-parse)                                                     | done        |
 | [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | not started |
 | [M3 Outlines](#m3-outlines)                                               | not started |
 | [M4 Shaping](#m4-shaping)                                                 | not started |
@@ -79,9 +79,13 @@ decoding or temporary competing font-local UTF helper.
 Committed fixtures and the byte builder for hostile input.
 
 **Acceptance.** `dub test :font` passes with the corpus set, with the test count
-reported; the HarfBuzz differential suites for parsing pass in the `engine`
-unittest configuration; the mutation corpus runs clean under
-`ci --test-sanitize`.
+reported; the HarfBuzz differential suite for parsing passes in the test-only
+`sparkles:font-oracle` package, which links HarfBuzz so that `sparkles:font`'s
+own configurations never do (`FTA7`); the mutation corpus runs clean under
+AddressSanitizer, as `ci --test-sanitize` builds it.
+
+**State.** Done on 2026-10-06; the evidence and its remaining gaps are in
+[`testing.md`](./testing.md#evidence-ledger).
 
 **Excluded.** Variation application, metrics beyond the raw tables, outlines.
 
@@ -216,9 +220,10 @@ establish only their recorded configurations; they do not satisfy M2/M4/M7 or
 permit text-layout to substitute fake fonts. Progress states above remain the
 delivery authority.
 
-**Handoff.** Stage 0 is done: the spikes ran on 2026-10-03, M1's
-operation-level contracts ([`parsing.md`](./parsing.md)) passed adversarial
-review on 2026-10-05, and the owner accepted the specification on 2026-10-06.
-Next action: M1. Base's owned UTF codecs are on `main`; name decoding (`FTP29`)
-also needs base's UTF-16 big-endian byte adapter, which base delivers first,
-so that byte order stays a base concern.
+**Handoff.** Stage 0 and M1 are done: the owner accepted the specification on
+2026-10-06, and `libs/font` parses faces, tables, character maps, names and
+glyph names, checked against HarfBuzz over the bundle. Open M1 gaps are in the
+evidence ledger: an Android build (`FTA7`), a concurrency test (`FTA2`) and a
+reflection walk (`FTI1`). Next action: M2. It waits for base's accepted
+physical-unit arithmetic and conversion contract, and for its `MATH`, `BASE`
+and vertical-metric query contracts to be refined first.
