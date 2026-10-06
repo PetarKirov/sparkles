@@ -582,6 +582,53 @@
         ]
       },
       {
+        "text": "font",
+        "link": "/libs/font/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Tutorial",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Open a face and map text",
+                "link": "/libs/font/tutorial/getting-started"
+              }
+            ]
+          },
+          {
+            "text": "How-to",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Inspect a damaged font",
+                "link": "/libs/font/how-to/inspect-a-font"
+              }
+            ]
+          },
+          {
+            "text": "Reference",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "API",
+                "link": "/libs/font/reference/api"
+              }
+            ]
+          },
+          {
+            "text": "Explanation",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Borrowing and leniency",
+                "link": "/libs/font/explanation/design"
+              }
+            ]
+          }
+        ]
+      },
+      {
         "text": "fuzzy",
         "link": "/libs/fuzzy/",
         "collapsed": true,

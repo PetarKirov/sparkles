@@ -30,6 +30,8 @@ live under `docs/libs/<name>/` and specs under `docs/specs/`.
 - **`sparkles:dql`** (`libs/dql`) — D Query Language engine: path-based aggregate addressing, typed constraint evaluation, fuzzy matching via `sparkles:fuzzy`, zero-allocation predicate filtering, and schema introspection (spec: `docs/specs/dql/SPEC.md`)
 - **`sparkles:dsv`** (`libs/dsv`) — Delimiter-Separated Values engine behind hue's DSV preview / data browser ([spec](../specs/hue/dsv-preview.md) `DS*`): dialect detection (delimiter/quote/header sniffing over a bounded sample, incl. the semicolon-CSV case), a tolerant RFC 4180 parser with a raw-byte-span **identity channel** per cell (ragged rows degrade, never error), and sampled typed columns. Offsets-not-copies over borrowed sources; `@safe pure nothrow @nogc` throughout; `sparkles:base` is its only dependency
 - **`sparkles:event-horizon`** (`libs/event-horizon`) — Completion-first (io_uring/kqueue/IOCP) event loop with a native algebraic-effect layer (three API tiers: callback, direct-style fibers, `Effect!T`)
+- **`sparkles:font`** (`libs/font`) — Font files parsed in D over borrowed bytes, with no C library: faces and collections, the table directory with checksums, typed views of `head`/`hhea`/`maxp`/`OS/2`/`post`/`hmtx`/`fvar`/`avar`/`STAT`, character maps chosen in HarfBuzz's order with lenient checks and coverage ranges, `name` records decoded through base's codecs, and glyph names from `post` and the `CFF` charset. Milestone M1 of `docs/specs/font`; malformed data returns a `FontError`, nothing allocates
+- **`sparkles:font-oracle`** (`libs/font-oracle`) — Test-only: checks `sparkles:font` against HarfBuzz, through hand-declared prototypes, over every bundled font (`$SPARKLES_FONTS_PATH`), so that `sparkles:font` itself links no C library
 - **`sparkles:fuzzy`** (`libs/fuzzy`) — Bounded allocation-free fuzzy search core: Unicode-aware query/constraint parsing, Thompson-NFA globs, exact needle-deletion witnesses with source-byte positions, affine-gap ranking with a deterministic fallback, composite scoring and global top-K, fixed-point frecency/combo history, and generation-bound chunked search. Depends only on `sparkles:base` and `expected`; hue owns clocks, jobs, snapshots, and persistence (spec: `docs/specs/fuzzy/`)
 - **`sparkles:ghostty`** (`libs/ghostty`) — D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)
 - **`sparkles:http`** (`libs/http`) — HTTP/1.1 building blocks (request parser + minimal server API) over `sparkles:event-horizon`
@@ -164,6 +166,8 @@ sparkles/
 │   │   └── diff_tools.d, tmpfs.d, string.d, package.d
 │   ├── input/src/sparkles/input/   # events.d (sum-type Event + Key/Mods/Point vocabulary), tier.d (tier-0/1/2 ladder)
 │   ├── math/src/sparkles/math/     # vector.d, package.d
+│   ├── font/src/sparkles/font/     # face.d (open, directory), tables.d, cmap.d, names.d, glyph_names.d, errors.d; test/ fixtures + mutation corpus
+│   ├── font-oracle/                # test-only: HarfBuzz differential over the bundled fonts
 │   ├── raylib-text/src/sparkles/raylib_text/  # multi-face FontSet (on-demand atlas, real bold/italic) + drawGrapheme/drawSolid/drawText (shared by terminal + hue --gui)
 │   ├── ghostty/src/sparkles/ghostty/
 │   │   ├── c.c                     # ImportC shim: #include <ghostty/vt.h>
