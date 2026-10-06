@@ -17,10 +17,10 @@ import sparkles.shaders.attributes : compute, CompileFor;
 import sparkles.shaders.types;
 
 version (LDC)
-    import ldc.intrinsics : llvm_cos, llvm_fabs, llvm_floor, llvm_pow, llvm_sin,
+    import ldc.intrinsics : llvm_cos, llvm_exp, llvm_fabs, llvm_floor, llvm_pow, llvm_sin,
         llvm_sqrt;
 else
-    import std.math : fabs, floor, cos, sin, sqrt, pow;
+    import std.math : exp, fabs, floor, cos, sin, sqrt, pow;
 
 // A `float`, or an LDC-native `__vector` of them: what the intrinsics take.
 private enum isNative(T) = __traits(isFloating, T);
@@ -124,13 +124,25 @@ T cos(T)(in T v) @safe pure nothrow @nogc
         return perComponent!((float s) => cos(s), T)(v);
 }
 
+/// GLSL `exp`: e raised to `v`.
+T exp(T)(in T v) @safe pure nothrow @nogc
+{
+    static if (isNative!T)
+    {
+        version (LDC) return llvm_exp(v);
+        else return cast(T) .exp(cast(float) v);
+    }
+    else
+        return perComponent!((float s) => exp(s), T)(v);
+}
+
 /// GLSL `pow`.
 T pow(T)(in T a, in T b) @safe pure nothrow @nogc
 {
     static if (isNative!T)
     {
         version (LDC) return llvm_pow(a, b);
-        else return .pow(a, b);
+        else return cast(T) .pow(cast(float) a, cast(float) b); // unqualified: std.math.pow is ambiguous on `const(float)`
     }
     else
         return perComponent2!((float p, float q) => pow(p, q), T)(a, b);
