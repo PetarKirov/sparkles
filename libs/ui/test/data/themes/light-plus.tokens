@@ -1,0 +1,389 @@
+{
+  "$extensions": {
+    "dev.petar-kirov.sparkles": {
+      "name": "light-plus"
+    }
+  },
+  "page": {
+    "bg": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [1, 1, 1],
+        "hex": "#ffffff"
+      }
+    },
+    "fg": {
+      "$type": "color",
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0, 0, 0],
+        "hex": "#000000"
+      }
+    }
+  },
+  "syntax": {
+    "comment": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0, 0.502, 0],
+          "hex": "#008000"
+        }
+      }
+    },
+    "constant": {
+      "builtin": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0, 0, 1],
+            "hex": "#0000ff"
+          }
+        }
+      },
+      "character": {
+        "escape": {
+          "fg": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [0.9333, 0, 0],
+              "hex": "#ee0000"
+            }
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0, 0, 1],
+            "hex": "#0000ff"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.5059, 0.1216, 0.2471],
+          "hex": "#811f3f"
+        }
+      },
+      "numeric": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.0353, 0.5255, 0.3451],
+            "hex": "#098658"
+          }
+        }
+      }
+    },
+    "diff": {
+      "delta": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.0157, 0.3176, 0.6471],
+            "hex": "#0451a5"
+          }
+        }
+      },
+      "minus": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.6392, 0.0824, 0.0824],
+            "hex": "#a31515"
+          }
+        }
+      },
+      "plus": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.0353, 0.5255, 0.3451],
+            "hex": "#098658"
+          }
+        }
+      }
+    },
+    "embedded": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0, 0, 0],
+          "hex": "#000000"
+        }
+      }
+    },
+    "error": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.8039, 0.1922, 0.1922],
+          "hex": "#cd3131"
+        }
+      }
+    },
+    "function": {
+      "builtin": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.4745, 0.3686, 0.149],
+            "hex": "#795e26"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.4745, 0.3686, 0.149],
+          "hex": "#795e26"
+        }
+      }
+    },
+    "keyword": {
+      "control": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.6863, 0, 0.8588],
+            "hex": "#af00db"
+          }
+        }
+      },
+      "directive": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0, 0, 1],
+            "hex": "#0000ff"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0, 0, 1],
+          "hex": "#0000ff"
+        }
+      },
+      "operator": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0, 0, 0],
+            "hex": "#000000"
+          }
+        }
+      },
+      "storage": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0, 0, 1],
+            "hex": "#0000ff"
+          }
+        }
+      }
+    },
+    "label": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0, 0, 0],
+          "hex": "#000000"
+        }
+      }
+    },
+    "markup": {
+      "bold": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["bold"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0, 0, 0.502],
+            "hex": "#000080"
+          }
+        }
+      },
+      "heading": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["bold"]
+          }
+        },
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.502, 0, 0],
+            "hex": "#800000"
+          }
+        }
+      },
+      "italic": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["italic"]
+          }
+        }
+      },
+      "strikethrough": {
+        "$extensions": {
+          "dev.petar-kirov.sparkles": {
+            "attrs": ["strikethrough"]
+          }
+        }
+      }
+    },
+    "module": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.149, 0.498, 0.6],
+          "hex": "#267f99"
+        }
+      }
+    },
+    "operator": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0, 0, 1],
+          "hex": "#0000ff"
+        }
+      }
+    },
+    "punctuation": {
+      "special": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0, 0.0627, 0.502],
+            "hex": "#001080"
+          }
+        }
+      }
+    },
+    "string": {
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.6392, 0.0824, 0.0824],
+          "hex": "#a31515"
+        }
+      },
+      "regexp": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.5059, 0.1216, 0.2471],
+            "hex": "#811f3f"
+          }
+        }
+      },
+      "special": {
+        "key": {
+          "fg": {
+            "$type": "color",
+            "$value": {
+              "colorSpace": "srgb",
+              "components": [0.898, 0, 0],
+              "hex": "#e50000"
+            }
+          }
+        }
+      }
+    },
+    "tag": {
+      "attribute": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.898, 0, 0],
+            "hex": "#e50000"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.502, 0, 0],
+          "hex": "#800000"
+        }
+      }
+    },
+    "type": {
+      "builtin": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0.149, 0.498, 0.6],
+            "hex": "#267f99"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0.149, 0.498, 0.6],
+          "hex": "#267f99"
+        }
+      }
+    },
+    "variable": {
+      "builtin": {
+        "fg": {
+          "$type": "color",
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [0, 0, 1],
+            "hex": "#0000ff"
+          }
+        }
+      },
+      "fg": {
+        "$type": "color",
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0, 0.0627, 0.502],
+          "hex": "#001080"
+        }
+      }
+    }
+  }
+}
