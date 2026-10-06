@@ -1,0 +1,44 @@
+name "font-oracle"
+description "Test-only: sparkles:font checked against HarfBuzz over the bundled fonts"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "expected" version="~>0.4.1"
+
+// HarfBuzz is the oracle, reached through hand-declared prototypes. It is
+// linked here, never by sparkles:font's pure-D library configuration (FTA7).
+libs "harfbuzz"
+
+configuration "library" {
+    targetType "library"
+    dependency "sparkles:font" path="../.."
+    dependency "sparkles:base" path="../.."
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:font" path="../.."
+    dependency "sparkles:base" path="../.."
+
+    // The differential suite exists only for tests.
+    sourcePaths "src" "test"
+    importPaths "src" "test"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses. Neither `debug` (which compiles those blocks in) nor
+// `release` (which deletes assert *expressions*, side effects included).
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
