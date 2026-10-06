@@ -4,22 +4,21 @@ The CRT's geometry, with no GPU in it (`CRT8`, `CRT10`, `PTR2`).
 Everything about $(I where) a screen pixel reads from — the tube's curvature,
 its fit to the screen, the magnifier lens, and the two maps that answer for a
 pointer — separated from $(REF CrtEffect, sparkles,ui_raylib,crt), which also
-owns GLSL text, a render texture, twenty-five uniform locations and the
-compositor cursor.
+owns a render texture, twenty-five uniform values and the compositor cursor.
+It is `@safe pure nothrow @nogc`, so the maps are testable as arithmetic
+rather than through a `@system` wrapper that works by luck of field ordering.
 
-The split earns its keep twice. It is the whole of what the shader's `curve()`
-must agree with, so the correspondence has one address instead of being spread
-through a struct that cannot be constructed without a GL context; and it is
-`@safe pure nothrow @nogc`, so the maps are testable as arithmetic rather than
-through a `@system` wrapper that works by luck of field ordering.
-
-$(B This is one half of a pair.) The other half is the GLSL `curve()` in
-$(MREF sparkles,ui_raylib,crt), and nothing the compiler can see enforces that
-they agree — see $(LREF CrtProjection.curveStep).
+$(B The geometry is the shader's own.) The bend and the lens are
+$(MREF sparkles,ui,crt_shaders), the single-source functions the tube's
+fragment shader is compiled from, so the picture and the pointer agree by
+construction. They used to be a GLSL `curve()` and a hand twin here that
+nothing could hold together.
 */
 module sparkles.ui_raylib.crt_projection;
 
 import sparkles.input.gesture : PointF;
+import sparkles.shaders : v2, x, y;
+import sparkles.ui.crt_shaders : crtCurve, crtLens;
 
 /**
 The tube's shape and the two questions asked of it.
@@ -55,30 +54,18 @@ struct CrtProjection
     /**
     The curvature step alone, in normalized y-flipped coordinates.
 
-    $(B The twin of the shader's `curve()`), and the reason that function and
-    this one must be read together: one runs on the GPU and one on the CPU, so
-    no compiler, linker or test can see that they agree. Two bugs of exactly
-    that shape are in this file's history — a lens applied in the wrong space,
-    and a screen fit hardcoded to one curvature — and both were found by eye.
+    It is $(REF crtCurve, sparkles,ui,crt_shaders) — the function the tube's
+    fragment shader calls — so the pointer map and the picture agree by
+    construction rather than by two copies kept in step by eye.
 
     `mx`/`my` are the apex the tilt bends around, ignored when tilt is off.
     */
     void curveStep(float nx, float ny, float mx, float my,
         out float uvX, out float uvY) const @safe pure nothrow @nogc
     {
-        const apexX = tilt ? mx : 0.5f;
-        const apexY = tilt ? my : 0.5f;
-        const k = tilt ? curvature * 0.625f : curvature;
-        const ccX = nx - apexX;
-        const ccY = ny - apexY;
-        const dist = ccX * ccX + ccY * ccY;
-        // `CRT10`: seat the texture's edge midpoints on the screen's edges. The
-        // bend pushes a point at radius r out by (1 + k*r*r), so an edge
-        // midpoint — at r = 1/2 — lands at (1 + k/4); the reciprocal puts it
-        // back. Exact for a centred apex, which is the model it is stated for.
-        const fit = 1.0f / (1.0f + k * 0.25f);
-        uvX = (nx + ccX * (dist * k) - 0.5f) * fit + 0.5f;
-        uvY = (ny + ccY * (dist * k) - 0.5f) * fit + 0.5f;
+        const uv = crtCurve(v2(nx, ny), v2(mx, my), tilt ? 1.0f : 0.0f, curvature);
+        uvX = uv.x;
+        uvY = uv.y;
     }
 
     /**
@@ -139,24 +126,14 @@ struct CrtProjection
         float uvX, uvY;
         curveStep(nx, ny, mx, my, uvX, uvY);
 
-        // The lens in TEXTURE space, after curvature — the same order the
-        // shader applies it in, so this stays its exact inverse-free twin.
-        // Applying it before curvature made the two disagree (`CRT8`).
+        // The lens in TEXTURE space, after curvature — the order the shader
+        // applies it in, and the same function (`crtLens`). Applying it before
+        // curvature once made the two disagree (`CRT8`).
         if (magnify)
         {
-            import std.math : sqrt, pow;
-
-            const dx = (uvX - mx) * aspect;
-            const dy = uvY - my;
-            const dist = cast(float) sqrt(dx * dx + dy * dy);
-            if (dist < lensRadius)
-            {
-                const normDist = dist / lensRadius;
-                const z = cast(float) sqrt(1.0f - normDist * normDist);
-                const factor = 1.0f - lensPower * cast(float) pow(z, 1.4f);
-                uvX = mx + (uvX - mx) * factor;
-                uvY = my + (uvY - my) * factor;
-            }
+            const uv = crtLens(v2(uvX, uvY), v2(mx, my), aspect, lensRadius, lensPower);
+            uvX = uv.x;
+            uvY = uv.y;
         }
 
         return PointF(uvX * cast(float) screenW, (1.0f - uvY) * cast(float) screenH);

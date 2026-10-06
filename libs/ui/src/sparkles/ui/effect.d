@@ -625,6 +625,9 @@ version (SparklesUiGpuEffects)
     enum string bloomBlurVGlsl = import("bloomBlurV" ~ glslDialect);
     /// ditto
     enum string bloomCompositeGlsl = import("bloomComposite" ~ glslDialect);
+    /// ditto — the CRT's tube (`shaders/effects.d`), which `sparkles:ui-raylib`'s
+    /// `CrtEffect` runs after bloom's first three passes.
+    enum string crtTubeGlsl = import("crtTube" ~ glslDialect);
 }
 else
 {
@@ -635,6 +638,7 @@ else
     enum string dimGlsl = null; /// ditto
     enum string spectrumGlsl = null; /// ditto
     enum string curvatureGlsl = null; /// ditto
+    enum string crtTubeGlsl = null; /// ditto
 }
 
 version (SparklesUiGpuEffects) {} else
