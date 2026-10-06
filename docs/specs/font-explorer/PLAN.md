@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:font-explorer
-reviewed:
+reviewed: 2026-10-06
 ---
 
 # `font-explorer` — Delivery plan
@@ -13,7 +13,7 @@ the library milestones it waits for._
 
 | Milestone                                                 | Waits for (libraries) | State       |
 | --------------------------------------------------------- | --------------------- | ----------- |
-| [Stage 0](#stage-0)                                       | —                     | in progress |
+| [Stage 0](#stage-0)                                       | —                     | done        |
 | [A1 `inspect` subcommand](#a1-inspect)                    | M1, M2                | not started |
 | [A2 Explorer shell](#a2-explorer-shell)                   | M3, M5                | not started |
 | [A3 Specimens and inspector](#a3-specimens-and-inspector) | M3–M6, TL-M3          | not started |
@@ -32,7 +32,8 @@ This specification accepted, and one mockup variant chosen per surface in
 [`design.md`](./design.md).
 
 **Progress.** Variants were chosen on 2026-10-03 and the chosen explorer was
-redrawn at each width class. Acceptance of the specification is open.
+redrawn at each width class. The owner accepted the specification on
+2026-10-06.
 
 ## A1 `inspect`
 

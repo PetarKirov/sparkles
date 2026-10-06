@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:font-explorer
-reviewed:
+reviewed: 2026-10-06
 ---
 
 # `font-explorer` — Design register
