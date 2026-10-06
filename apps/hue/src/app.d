@@ -377,10 +377,7 @@ int executePr(in HueCli root, in Pr pr)
 {
     ref const(HueConfig) eff = effectiveConfig();
     const labels = LabelSet.standard();
-    const theme = resolveTheme(builtinThemes.get(eff.appearance.theme, {
-            warning(i"theme '$(eff.appearance.theme)' not found; falling back to the default dark theme");
-            return builtinDark;
-        }()), labels);
+    const theme = resolveTheme(namedTheme(eff.appearance.theme), labels);
 
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
@@ -427,16 +424,27 @@ int executePr(in HueCli root, in Pr pr)
         null, &pipeline, null);
 }
 
-/// Resolves a built-in theme by name against `labels`, warning and falling back
-/// to the default dark theme on a miss — the `--theme` policy, shared with
+/// Resolves a theme by name or file against `labels`, warning and falling back to
+/// the default dark theme when it is neither — the `--theme` policy, shared with
 /// `--dark-theme`.
 private ResolvedTheme resolveNamedTheme(string name, LabelSet labels)
+    => resolveTheme(namedTheme(name), labels);
+
+/**
+The theme `spec` names: a built-in by name, else a DTCG theme file at that
+path (`sparkles.ui.theme_file.themeNamed`, the lookup every `--theme` shares).
+When it is neither, or the file is malformed, the warning says why and the
+default dark theme stands in.
+*/
+private immutable(Theme) namedTheme(string spec)
 {
-    // `.get`'s default is `lazy`, so the warning fires only on a miss.
-    return resolveTheme(builtinThemes.get(name, {
-            warning(i"theme '$(name)' not found; falling back to the default dark theme");
-            return builtinDark;
-        }()), labels);
+    import sparkles.ui.theme_file : themeNamed;
+
+    auto t = themeNamed(spec);
+    if (t.hasValue)
+        return *t.value;
+    warning(i"theme '$(spec)': $(t.reason); falling back to the default dark theme");
+    return builtinDark;
 }
 
 /// `true` when the run's HTML leaves its rules to a **shared stylesheet**
@@ -613,10 +621,7 @@ int executeGallery(in HueCli root, in Gallery gallery)
 
     const themeName = effectiveConfig().appearance.theme;
     const labels = LabelSet.standard();
-    const theme = resolveTheme(builtinThemes.get(themeName, {
-            warning(i"theme '$(themeName)' not found; falling back to the default dark theme");
-            return builtinDark;
-        }()), labels);
+    const theme = resolveTheme(namedTheme(themeName), labels);
 
     const dark = gallery.darkTheme.length
         ? resolveNamedTheme(gallery.darkTheme, labels) : ResolvedTheme.init;
@@ -803,10 +808,7 @@ int executeSite(in HueCli root, in Site cmd)
     }
 
     const labels = LabelSet.standard();
-    const theme = resolveTheme(builtinThemes.get(root.theme, {
-            warning(i"theme '$(root.theme)' not found; falling back to the default dark theme");
-            return builtinDark;
-        }()), labels);
+    const theme = resolveTheme(namedTheme(root.theme), labels);
     const dark = cmd.darkTheme.length
         ? resolveNamedTheme(cmd.darkTheme, labels) : ResolvedTheme.init;
 
@@ -923,16 +925,25 @@ int executeTheme(in HueCli root, in ThemeCmd cmd)
         return 0;
     }
 
-    if (auto p = cmd.name in builtinThemes)
+    import sparkles.ui.dtcg : writeDtcg;
+    import sparkles.ui.theme_file : exportTheme, themeNamed;
+    import std.stdio : write;
+
+    auto t = themeNamed(cmd.name);
+    if (t.hasError)
     {
-        writeln("Theme '", cmd.name, "':");
-        writeln("  Foreground: ", p.defaultFg);
-        writeln("  Background: ", p.defaultBg);
+        stderr.writeln("hue: theme '", cmd.name, "': ", t.reason);
+        return 1;
+    }
+    if (cmd.exportTokens)
+    {
+        write(writeDtcg(exportTheme(*t.value)));
         return 0;
     }
-
-    stderr.writeln("hue: unknown theme '", cmd.name, "'");
-    return 1;
+    writeln("Theme '", t.value.name, "':");
+    writeln("  Foreground: ", t.value.defaultFg);
+    writeln("  Background: ", t.value.defaultBg);
+    return 0;
 }
 
 int executeOverlay(in HueCli root, in OverlayCmd cmd)
@@ -1074,10 +1085,7 @@ private int runDirectoryTarget(string dir, bool twoslash, string themeName,
         warning(i"no renderable files in '$(dir)' — writing an empty gallery index");
 
     const labels = LabelSet.standard();
-    const theme = resolveTheme(builtinThemes.get(themeName, {
-            warning(i"theme '$(themeName)' not found; falling back to the default dark theme");
-            return builtinDark;
-        }()), labels);
+    const theme = resolveTheme(namedTheme(themeName), labels);
 
     auto registry = defaultRegistry();
     auto cache = TsConfigCache.create(&registry, labels);
@@ -1914,8 +1922,19 @@ private auto sortedThemes(string name, bool grouped = true)
         if (n == name)
         {
             s.idx = i;
-            break;
+            return s;
         }
+    // Not a built-in's name: a theme file joins the cycle, selected, so the
+    // arrows still step away from it to the built-ins and back.
+    import sparkles.ui.theme_file : themeNamed;
+
+    auto file = themeNamed(name);
+    if (file.hasValue)
+    {
+        s.idx = s.names.length;
+        s.names ~= file.value.name.length ? file.value.name : name;
+        s.themes ~= *file.value;
+    }
     return s;
 }
 

@@ -473,14 +473,19 @@ struct Site
 }
 
 @(Command("theme",
-    shortDescription: "Inspect, list, and preview built-in color themes",
+    shortDescription: "Inspect, list, and export color themes",
 ))
 struct ThemeCmd
 {
     @(Option("list|l", description: "List all built-in themes."))
     bool list;
 
-    @(Argument("name", description: "Theme name to inspect.", optional: true))
+    @(Option("export", description:
+        "Print the theme as a DTCG theme file (Design Tokens Format Module "
+        ~ "2025.10), the format --theme reads."))
+    bool exportTokens;
+
+    @(Argument("name", description: "A built-in theme's name, or a theme file.", optional: true))
     string name;
 
     int run(Program)(in Program program)
@@ -584,7 +589,7 @@ struct HueCli
     @(Option("list-keys", description: "Print the effective key table — the user's keys overlay included — and exit (KBD6)."))
     bool listKeys;
 
-    @(Option("theme", description: "Colour theme, by name (see sparkles.ui.themes for the built-in set)."))
+    @(Option("theme", description: "Colour theme: a built-in name (see `hue theme --list`) or a DTCG theme file (see `hue theme <name> --export`)."))
     string theme = defaultTheme;
 
     @(Option("background", description: "Terminal background mode: no-background, spans, or full."))
