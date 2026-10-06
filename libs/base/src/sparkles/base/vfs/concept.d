@@ -14,6 +14,7 @@ $(TABLE
 $(TR $(TH Primitive) $(TH Result))
 $(TR $(TD `openRootDir(path)`) $(TD the ambient open behind `openRoot`; follows links))
 $(TR $(TD `openDirAt(dir, name)`) $(TD a directory handle; `symlinkRefused` for a link))
+$(TR $(TD `reopen(dir)`) $(TD a new handle to the same directory, by opening `.`))
 $(TR $(TD `openFileAt(dir, name, mode, sharing)`) $(TD a file handle))
 $(TR $(TD `mkdirAt(dir, name, sharing)`) $(TD nothing))
 $(TR $(TD `statAt(dir, name, mask)`, `fstat(h, mask)`) $(TD a `Stat`))
@@ -44,6 +45,7 @@ enum isVfs(V) = is(V.Handle) && is(V.Listing) && __traits(compiles, (
         scope ubyte[] data, scope const(ubyte)[] cdata, Sharing s, OpenMode m, StatMask mask) {
     IoResult!(V.Handle) root = v.openRootDir(n);
     IoResult!(V.Handle) dir = v.openDirAt(h, n);
+    IoResult!(V.Handle) again = v.reopen(h);
     IoResult!(V.Handle) file = v.openFileAt(h, n, m, s);
     IoResult!void mk = v.mkdirAt(h, n, s);
     IoResult!Stat st = v.statAt(h, n, mask);

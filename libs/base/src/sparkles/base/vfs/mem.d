@@ -153,6 +153,14 @@ struct MemVfs
         }
     }
 
+    /// A new handle to the directory `dir` names, as opening `.` gives.
+    IoResult!Handle reopen(Handle dir) @safe nothrow @nogc
+    {
+        enter(OpKind.openAt);
+        const d = dirNode(dir, OpKind.openAt);
+        return d.hasError ? ioErr!Handle(d) : newHandle(d.value, true, Access.read, OpKind.openAt);
+    }
+
     /// Opens or creates the file `name` in `dir` without following it.
     IoResult!Handle openFileAt(Handle dir, scope const(char)[] name, OpenMode mode,
         Sharing sharing) @safe nothrow @nogc
