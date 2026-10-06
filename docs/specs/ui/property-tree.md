@@ -201,9 +201,11 @@ quoted segment: `["…"]` addresses a child by arbitrary name, with `\"` and
 identifier-shaped and the quoted form otherwise, so every emitted path
 re-parses to the same segments. `at!"style.opacity"(subject)` is a
 compile-time-checked, `ref`-returning direct access; a typo is a build error.
-`resolve` parses the same grammar at run time and returns a refusal for a bad
-member, bad index or null pointer rather than faulting. The two forms are
-differentially equal over all base-grammar paths the planner emits, and the
+`parsePath` in `sparkles.base.text.property_path` owns the runtime syntax;
+`resolve` consumes its segments and refuses bad members, indices or null pointers
+instead of faulting. Import the syntax helpers from the base module, not
+`sparkles.ui.property_tree`.
+The compile-time and runtime forms are differentially equal over all base-grammar paths the planner emits, and the
 quoted round-trip is proved in the same spike, by
 [`path-addressing.d`](../../research/property-tree/examples/path-addressing.d);
 quoted segments, like keyed ones below, are runtime-resolved only.
@@ -488,6 +490,7 @@ promises inspection only.
 
 | Planned source file                                  | Requirements                                                        |
 | ---------------------------------------------------- | ------------------------------------------------------------------- |
+| `libs/base/src/sparkles/base/text/property_path.d`   | `PRT6`–`PRT7` (runtime syntax), `PRT26` (quoted names)              |
 | `libs/ui/src/sparkles/ui/property_tree.d`            | `PRT1`–`PRT11`, `PRT14`–`PRT35`                                     |
 | `libs/ui/src/sparkles/ui/property_tree_showif.d`     | `PRT10` (the condition resolves in the subject's module scope)      |
 | `libs/ui/src/sparkles/ui/components/property_view.d` | `PRT12`–`PRT13`, `PRT21`, `PRT23`, `PRT25`–`PRT28`, `PRT32`–`PRT35` |

@@ -44,6 +44,9 @@ import std.traits : EnumMembers, FieldNameTuple, getUDAs, hasUDA,
     isAggregateType, isArray, isBoolean, isFloatingPoint, isIntegral,
     isSomeString;
 
+import sparkles.base.text.property_path : PathSeg, parsePath, childPath,
+    elementPath, keyedPath, parentPath;
+
 import sparkles.fuzzy.common : CandidateView, DefaultFuzzyCaps, FuzzyLimits,
     StableId, TextRange;
 import sparkles.fuzzy.match : match, MatchConfig, MatcherWorkspace, MatchKind,
@@ -58,7 +61,7 @@ import sparkles.ui.property_tree_showif : showIfHolds;
 import sparkles.ui.state : DisclosureState;
 
 // Templates infer their attributes (a caller-supplied sink or subject decides
-// them); the non-template path helpers are explicitly `@safe`.
+// them).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The metadata vocabulary (PRT9–PRT11).
@@ -144,179 +147,8 @@ enum bool hasElementKey(T) = __traits(compiles,
     (ref const T t) { ulong k = t.propElementKey; });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Paths (PRT6–PRT7): the address grammar, both directions.
+// Path resolution (PRT6–PRT7); shared syntax lives in base.text.property_path.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// One parsed path segment.
-struct PathSeg
-{
-    string name;   /// member / erased-child name (bare or quoted form)
-    size_t index;  /// positional element
-    ulong key;     /// `[#key]` stable element identity
-    bool isIndex;  ///
-    bool isKey;    ///
-}
-
-/**
-Parses `name ( "." name | "[" digits "]" | "[#" digits "]" | "[\"…\"]" )*`.
-Returns `false` (and an empty result) for malformed text — an unterminated
-bracket or quote, a non-numeric index, an empty segment — rather than
-guessing.
-*/
-bool parsePath(scope const(char)[] path, out PathSeg[] segs)
-    @safe pure nothrow
-{
-    segs = null;
-    size_t i;
-    bool expectName = true;
-    while (i < path.length)
-    {
-        const c = path[i];
-        if (c == '.')
-        {
-            if (expectName)
-                return false; // ".." / leading "."
-            i++;
-            expectName = true;
-            continue;
-        }
-        if (c == '[')
-        {
-            if (expectName && segs.length)
-                return false; // ".["
-            if (i + 1 >= path.length)
-                return false;
-            if (path[i + 1] == '#')
-            {
-                size_t j = i + 2;
-                ulong key;
-                bool any;
-                while (j < path.length && path[j] >= '0' && path[j] <= '9')
-                {
-                    key = key * 10 + (path[j] - '0');
-                    j++;
-                    any = true;
-                }
-                if (!any || j >= path.length || path[j] != ']')
-                    return false;
-                PathSeg s = { isKey: true, key: key };
-                segs ~= s;
-                i = j + 1;
-            }
-            else if (path[i + 1] == '"')
-            {
-                size_t j = i + 2;
-                string name;
-                while (j < path.length && path[j] != '"')
-                {
-                    if (path[j] == '\\')
-                    {
-                        j++;
-                        if (j >= path.length)
-                            return false;
-                    }
-                    name ~= path[j];
-                    j++;
-                }
-                if (j + 1 >= path.length || path[j] != '"' || path[j + 1] != ']')
-                    return false;
-                segs ~= PathSeg(name);
-                i = j + 2;
-            }
-            else
-            {
-                size_t j = i + 1;
-                size_t index;
-                bool any;
-                while (j < path.length && path[j] >= '0' && path[j] <= '9')
-                {
-                    index = index * 10 + (path[j] - '0');
-                    j++;
-                    any = true;
-                }
-                if (!any || j >= path.length || path[j] != ']')
-                    return false;
-                PathSeg s = { isIndex: true, index: index };
-                segs ~= s;
-                i = j + 1;
-            }
-            expectName = false;
-        }
-        else
-        {
-            size_t j = i;
-            while (j < path.length && path[j] != '.' && path[j] != '[')
-                j++;
-            segs ~= PathSeg(path[i .. j].idup);
-            i = j;
-            expectName = false;
-        }
-    }
-    return !expectName || segs.length == 0;
-}
-
-/// `true` iff `name` needs no quoting: an identifier-shaped ASCII name.
-private bool bareName(scope const(char)[] name) @safe pure nothrow @nogc
-{
-    if (name.length == 0 || (name[0] >= '0' && name[0] <= '9'))
-        return false;
-    foreach (c; name)
-        if (!(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
-            || (c >= '0' && c <= '9')))
-            return false;
-    return true;
-}
-
-/**
-How the walk mints a member/erased-child path. A name outside the bare
-identifier subset is emitted as a quoted segment with `\"`/`\\` escapes, so
-every emitted path re-parses to the same segments (`PRT6`).
-*/
-string childPath(string parent, scope const(char)[] member) @safe pure nothrow
-{
-    if (bareName(member))
-        return parent.length ? parent ~ "." ~ member.idup : member.idup;
-    string q = `["`;
-    foreach (c; member)
-    {
-        if (c == '"' || c == '\\')
-            q ~= '\\';
-        q ~= c;
-    }
-    return parent ~ q ~ `"]`;
-}
-
-/// ditto — a positional element.
-string elementPath(string parent, size_t i) @safe pure
-    => parent ~ "[" ~ i.to!string ~ "]";
-
-/// ditto — a keyed element (`PRT7`).
-string keyedPath(string parent, ulong key) @safe pure
-    => parent ~ "[#" ~ key.to!string ~ "]";
-
-/// The inverse of `parsePath` for one segment appended to `parent`.
-private string appendSeg(string parent, in PathSeg s) @safe pure
-{
-    if (s.isKey)
-        return keyedPath(parent, s.key);
-    if (s.isIndex)
-        return elementPath(parent, s.index);
-    return childPath(parent, s.name);
-}
-
-/// The parent address, or `""` for a root segment. Malformed input answers `""`.
-string parentPath(string path) @safe pure nothrow
-{
-    PathSeg[] segs;
-    if (!parsePath(path, segs) || segs.length < 2)
-        return "";
-    string p;
-    // Emitting can only throw on allocation failure (an Error).
-    scope (failure) assert(0, "path emit cannot fail");
-    foreach (ref const s; segs[0 .. $ - 1])
-        p = appendSeg(p, s);
-    return p;
-}
 
 /**
 Compile-time path resolution (`PRT6`): a direct, `ref`-returning field access
@@ -1721,35 +1553,6 @@ version (UiPropertyFixtures)
     }
 }
 
-version (UiPropertyFixtures)
-@("ui.property_tree.pathGrammarRoundTrips")
-@safe pure unittest
-{
-    PathSeg[] segs;
-    assert(parsePath("style.opacity", segs) && segs.length == 2);
-    assert(segs[1].name == "opacity");
-    assert(parsePath("stops[2]", segs) && segs[1].isIndex && segs[1].index == 2);
-    assert(parsePath("items[#7]", segs) && segs[1].isKey && segs[1].key == 7);
-    assert(parsePath(`["weird.key [0]"]`, segs) && segs.length == 1);
-    assert(segs[0].name == "weird.key [0]");
-
-    // The emitter picks bare exactly when identifier-shaped, and every
-    // emitted path re-parses to the same segments (PRT6).
-    assert(childPath("fill", "tint") == "fill.tint");
-    const quoted = childPath("extra", `say "hi"`);
-    assert(parsePath(quoted, segs) && segs[$ - 1].name == `say "hi"`);
-    assert(parentPath("a.b[2].c") == "a.b[2]");
-    assert(parentPath(quoted) == "extra");
-    assert(parentPath("a") == "");
-
-    // Malformed text is refused, not guessed.
-    PathSeg[] bad;
-    assert(!parsePath("a..b", bad));
-    assert(!parsePath("a[", bad));
-    assert(!parsePath("a[x]", bad));
-    assert(!parsePath(`a["unterminated`, bad));
-    assert(!parsePath("a[#]", bad));
-}
 
 version (UiPropertyFixtures)
 @("ui.property_tree.atAndResolveAgree")
