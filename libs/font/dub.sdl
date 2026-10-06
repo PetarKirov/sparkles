@@ -1,0 +1,39 @@
+name "font"
+description "Font files parsed in D: faces, tables, character maps and names over borrowed bytes"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "expected" version="~>0.4.1"
+
+// The pure-D library: no C library on the link line (FTA7).
+configuration "library" {
+    targetType "library"
+    dependency "sparkles:base" path="../.."
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+
+    // The fixture builder exists only for tests.
+    sourcePaths "src" "test"
+    importPaths "src" "test"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses. Neither `debug` (which compiles those blocks in) nor
+// `release` (which deletes assert *expressions*, side effects included).
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
