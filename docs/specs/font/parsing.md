@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:font
-reviewed:
+reviewed: 2026-10-06
 ---
 
 # `sparkles:font` — Parsing operations (M1)

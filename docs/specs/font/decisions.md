@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:font
-reviewed:
+reviewed: 2026-10-06
 ---
 
 # `sparkles:font` — Decisions
@@ -53,7 +53,7 @@ being decided by it:
 
 ## FTX1: HarfBuzz is the shaper
 
-**State:** proposed · **Affects:** `FTS1`–`FTS11`, the `engine` configuration
+**State:** accepted 2026-10-06 · **Affects:** `FTS1`–`FTS11`, the `engine` configuration
 
 **Question.** Write an OpenType shaping engine in D, or use HarfBuzz?
 
@@ -75,7 +75,7 @@ upstream.
 
 ## FTX2: HarfBuzz through hand-declared prototypes
 
-**State:** proposed · **Affects:** `FTA8`, `FTS6`
+**State:** accepted 2026-10-06 · **Affects:** `FTA8`, `FTS6`
 
 **Question.** Reach HarfBuzz through ImportC of `hb.h`, a C shim, or
 hand-declared `extern(C)` prototypes?
@@ -96,7 +96,7 @@ instead of corrupting memory.
 
 ## FTX3: An own parser; FreeType is an oracle, not a dependency
 
-**State:** proposed · **Affects:** `FTP*`, `FTO*`, `FTR1`–`FTR3`, `FTA7`
+**State:** accepted 2026-10-06 · **Affects:** `FTP*`, `FTO*`, `FTR1`–`FTR3`, `FTA7`
 
 **Question.** Parse and rasterize through FreeType, or in D?
 
@@ -116,7 +116,7 @@ output; this is accepted, with the hinting entry condition under [exclusions](#e
 
 ## FTX4: PNG strikes decoded in D over Phobos's zlib
 
-**State:** proposed · **Affects:** `FTR7`, `FTA14`
+**State:** accepted 2026-10-06 · **Affects:** `FTR7`, `FTA14`
 
 **Question.** How are `CBDT` and `sbix` colour glyphs (the bundled Noto Color
 Emoji is a `CBDT` font with no outlines) rendered without FreeType?
@@ -134,7 +134,7 @@ decoded; no surveyed emoji font uses them, and the refusal is a reported error.
 
 ## FTX5: Platform services list files; the library describes faces
 
-**State:** proposed · **Affects:** `FTD1`–`FTD3`
+**State:** accepted 2026-10-06 · **Affects:** `FTD1`–`FTD3`
 
 **Question.** Should matching use fontconfig, Core Text and DirectWrite's own
 matchers, or one matcher over records this library produces?
@@ -156,7 +156,7 @@ system's fallback is reported.
 
 ## FTX6: Requirement prefixes
 
-**State:** proposed
+**State:** accepted 2026-10-06
 
 `FT` plus a letter per area: `FTA` architecture, `FTB` trust boundary, `FTP`
 parsing, `FTV` variation, `FTM` metrics, `FTO` outlines, `FTR` rasterization,
@@ -165,7 +165,7 @@ open questions. None was in use under `docs/specs/` on 2026-10-03.
 
 ## FTX7: Ligatures keep one glyph per cell; their ink crosses cells
 
-**State:** proposed · **Affects:** `FTR1`, `FTS4`, `FTA16`, milestone M8 ·
+**State:** accepted 2026-10-06 · **Affects:** `FTR1`, `FTS4`, `FTA16`, milestone M8 ·
 **Resolves:** `FTQ3` for the measured corpus, not arbitrary OpenType text
 
 **Question.** Does any common programming font's `calt` or `liga` merge
@@ -212,7 +212,7 @@ a universal glyph-index-to-cell-index mapping.
 
 ## FTX8: The catalog builds synchronously over a worker pool
 
-**State:** proposed · **Affects:** `FTD1`–`FTD3`, milestone M7 ·
+**State:** accepted 2026-10-06 · **Affects:** `FTD1`–`FTD3`, milestone M7 ·
 **Resolves:** `FTQ2`
 
 **Question.** Is describing every font file on a machine fast enough to do
@@ -317,7 +317,7 @@ must match FreeType's rendering.
 
 ## FTX11: One owner for Unicode and paragraph semantics
 
-**State:** proposed 2026-10-04 · **Affects:** `FTA15`, `FTS7`–`FTS9`, `FTD7`
+**State:** accepted 2026-10-06 · **Affects:** `FTA15`, `FTS7`–`FTS9`, `FTD7`
 
 **Question.** Should font continue exposing shaping as an isolated UTF-8 string
 operation, with independently guessed Unicode properties and paragraph context?
@@ -336,13 +336,12 @@ updates every caller and removes competing decoding/segmentation/placement
 helpers. A layout candidate cannot be measured by summing nominal advances or
 reusing unsafe shaped fragments.
 
-**Evidence state.** This is a draft boundary contract, not a font implementation
-result. The 2026-10-04 text-foundation scope instruction does not settle the
-independent font Stage 0 acceptance or establish adversarial reviewer signoff.
+**Evidence state.** This is a boundary contract, not a font implementation
+result. The owner accepted it with the font specification on 2026-10-06.
 
 ## FTX12: Unicode callbacks do not replace an engine compatibility profile
 
-**State:** proposed 2026-10-04 · **Affects:** `FTS8`, milestone M4
+**State:** accepted 2026-10-06 · **Affects:** `FTS8`, milestone M4
 
 **Question.** Is installing base-backed HarfBuzz Unicode callbacks enough to
 ensure all shaping uses the selected Unicode release?
@@ -361,7 +360,7 @@ used under a misleading profile.
 
 ## FTX13: Scalable resources below publication composition
 
-**State:** proposed 2026-10-04 · **Affects:** `FTP13`, `FTM4`–`FTM7`,
+**State:** accepted 2026-10-06 · **Affects:** `FTP13`, `FTM4`–`FTM7`,
 `FTS10`–`FTS11`, milestones M2/M4
 
 **Question.** Can pixel-only measurements and feature names serve contextual

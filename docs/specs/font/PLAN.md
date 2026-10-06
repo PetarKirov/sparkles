@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:font
-reviewed:
+reviewed: 2026-10-06
 ---
 
 # `sparkles:font` — Delivery plan
@@ -14,7 +14,7 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 
 | Milestone                                                                 | State       |
 | ------------------------------------------------------------------------- | ----------- |
-| [Stage 0](#stage-0-specification-and-spikes)                              | in progress |
+| [Stage 0](#stage-0-specification-and-spikes)                              | done        |
 | [M1 Parse](#m1-parse)                                                     | not started |
 | [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | not started |
 | [M3 Outlines](#m3-outlines)                                               | not started |
@@ -39,8 +39,9 @@ font capabilities, not merely these draft requirements or a substitute shaper.
 
 ## Stage 0: specification and spikes
 
-**Deliverable.** This specification tree accepted, and the three spikes run
-(done 2026-10-03: `FTX7`–`FTX10`).
+**Deliverable.** This specification tree accepted, and the three spikes run.
+The spikes ran on 2026-10-03 (`FTX7`–`FTX10`); the owner accepted the
+specification on 2026-10-06.
 
 **Gate.** Per the [spec guideline's Stage 0 gate](../../guidelines/spec-docs.md#stage-0-gate):
 scope, ownership, non-goals and invariants agreed; first-slice (M1) contracts
@@ -215,10 +216,9 @@ establish only their recorded configurations; they do not satisfy M2/M4/M7 or
 permit text-layout to substitute fake fonts. Progress states above remain the
 delivery authority.
 
-**Handoff.** Not started. The three Stage 0 spikes ran on 2026-10-03, and all
-four Stage 0 questions are answered (`FTX7`–`FTX10`). M1's operation-level
-contracts ([`parsing.md`](./parsing.md)) and `SPEC.md` § 2–7 passed an
-adversarial review and a scoped recheck on 2026-10-05, dispositioned in
-[`decisions.md`](./decisions.md#m1-operation-contract-review). Next action:
-the owner's acceptance of the specification. M1 also waits for base's owned
-UTF codecs (base M1a), which name decoding uses.
+**Handoff.** Stage 0 is done: the spikes ran on 2026-10-03, M1's
+operation-level contracts ([`parsing.md`](./parsing.md)) passed adversarial
+review on 2026-10-05, and the owner accepted the specification on 2026-10-06.
+Next action: M1. Base's owned UTF codecs are on `main`; name decoding (`FTP29`)
+also needs base's UTF-16 big-endian byte adapter, which base delivers first,
+so that byte order stays a base concern.
