@@ -92,6 +92,35 @@ enum bool isStyledTextMeasure(T) = isTextMeasure!T
         int r = m.rows(TextStyle.init);
     });
 
+/**
+A text measurer behind two delegates, so a caller that names no backend can
+still lay out in a host's faces (`GLY10`): a styled run asks the host, and with
+no host a run is as wide as its cells and one row tall.
+*/
+struct DelegateMeasure
+{
+    int delegate(scope const(char)[], in TextStyle) @safe styledWidth; /// a run's cells in its style
+    int delegate(in TextStyle) @safe styledRows; /// the rows one line of a style takes
+
+    /// The cell font's width of `s`.
+    int width(scope const(char)[] s) const @safe pure nothrow @nogc => cast(int) cellsOf(s);
+    /// The width of `s` in `style`, in whole cells.
+    int width(scope const(char)[] s, in TextStyle style) @safe
+        => styledWidth is null ? cast(int) cellsOf(s) : styledWidth(s, style);
+    /// The rows one line in `style` occupies.
+    int rows(in TextStyle style) @safe => styledRows is null ? 1 : styledRows(style);
+}
+
+@("ui.layout.DelegateMeasure.fallsBackToCells")
+@safe unittest
+{
+    static assert(isStyledTextMeasure!DelegateMeasure);
+    DelegateMeasure m;
+    assert(m.width("abc", TextStyle.init) == 3 && m.rows(TextStyle.init) == 1);
+    m.styledWidth = (scope const(char)[] s, in TextStyle) => 1;
+    assert(m.width("abc", TextStyle.init) == 1, "a host measures");
+}
+
 /// A run's width through `tm`, in `style` where the measurer reads styles.
 int measureWidth(TM)(ref TM tm, scope const(char)[] s, in TextStyle style)
 {

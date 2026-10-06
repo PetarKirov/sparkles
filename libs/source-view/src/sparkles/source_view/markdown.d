@@ -1981,7 +1981,8 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
             case codeSpan:
             {
                 auto s = base;
-                s.fontRole = FontRole.code;
+                // Code beside interface-face prose is data at its size (`uiMono`).
+                s.fontRole = base.fontRole == FontRole.ui ? FontRole.uiMono : FontRole.code;
                 const raw = sliceOf(src, inl.span);
                 if (raw.length)
                 {
@@ -2535,7 +2536,7 @@ version (unittest)
             if (op.text == "code") code = op.visual.fontRole;
         }
     assert(title == FontRole.ui && body == FontRole.ui, "prose in the prose face");
-    assert(code == FontRole.code, "a code span stays monospace");
+    assert(code == FontRole.uiMono, "a code span stays monospace, at the prose's size");
 }
 @("md.render_widgets.codeGroup.tabSwitchKeepsHeight")
 @safe unittest
