@@ -140,7 +140,7 @@ IoResult!void publishReport(BlockingVfs* vfs, in char[] outDir, in char[] text)
     // A helper gets a narrowed handle: it may look up, list, stat and read.
     // Calling view.removeTree("x") would not compile.
     auto view = dir.value.attenuate!(Rights.readOnly);
-    auto file = view.openFile("summary.txt", OpenMode.read);
+    auto file = view.openFile!(OpenMode.read)("summary.txt");
     if (file.hasError && file.error.kind == ErrorKind.symlinkRefused)
         return ioErr!void(file.error); // replaced by a link since the write
     return ioOk();
@@ -240,9 +240,15 @@ type states which operations. Each requirement's check is listed in
 <a id="vfh1-owning-handles"></a>
 **VFH1: Owning handles.** `Dir!(V, R)` and `File!(V, R)` **must** hold a
 `V.Handle` and a pointer to the backend instance `V`, be move-only
-(`@disable this(this)`) and not default-constructible, and close their handle
-exactly once: in `close()` if it is called, otherwise in the destructor.
-`close()` **must** return a close failure; the destructor drops it.
+(`@disable this(this)`), and close their handle exactly once: in `close()` if
+it is called, otherwise in the destructor. `close()` **must** return a close
+failure; the destructor drops it. A default-initialized handle is empty:
+every operation on it **must** fail with `other` and the context
+`"empty handle"`, and closing it does nothing.
+
+_Rationale:_ The `expected` library cannot hold a payload without a default
+constructor, and every operation returns its handle in an `IoResult`
+([DV24](./decisions.md#dv24-empty-handles-instead-of-no-default-constructor)).
 
 <a id="vfh2-borrowed-handles"></a>
 **VFH2: Borrowed handles.** `DirRef!(V, R)` and `FileRef!(V, R)` borrow an
@@ -338,7 +344,7 @@ optional argument of [`VFO5`](#vfo5-sharing-of-created-entries); passing
 | Operation                               | Right(s)                                            | Result                                                       |
 | --------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------ |
 | `openDir(name)`                         | `lookup`                                            | a child `Dir` with the same rights                           |
-| `openFile(name, mode, sharing)`         | `read` and/or `write`; `create` for a creating mode | a `File`                                                     |
+| `openFile!mode(name, sharing)`          | `read` and/or `write`; `create` for a creating mode | a `File`                                                     |
 | `mkdirAt(name, sharing)`                | `create`                                            | nothing; `exists` if present                                 |
 | `statAt(name, mask)`                    | `stat`                                              | a `Stat` of the entry itself                                 |
 | `readlinkAt(name, buffer)`              | `stat`                                              | the target bytes, as a slice of `buffer`                     |
@@ -356,8 +362,10 @@ A `File` **must** provide `read(buffer)`, `write(bytes)`, `stat(mask)`,
 `sync()` and `close()`, gated by the rights it was opened with.
 
 <a id="vfo4-open-modes"></a>
-**VFO4: Open modes.** `openFile` **must** accept `read`, `write`, `readWrite`
-or `append` access, combined with `existing` (fail with `notFound` if
+**VFO4: Open modes.** `openFile` **must** take its mode as a template
+argument, so the rights the mode needs are checked at compile time
+([`VFH6`](#vfh6-rights-are-checked-at-compile-time)). A mode combines `read`,
+`write`, `readWrite` or `append` access combined with `existing` (fail with `notFound` if
 absent), `createNew` (fail with `exists` if present) or `createOrTruncate`. A
 creating mode **may** add `executable`, which marks the created file
 executable for everyone its sharing admits.
@@ -483,7 +491,8 @@ continue by splicing the link's target into the remaining path, resolved
 relative to the directory holding the link. An absolute target, or a target
 whose `..` climbs above the root, fails with `escapesRoot`. A walk that
 follows more links than the [symlink hop limit](#_11-limits) fails with
-`symlinkLoop`. A `..` inside a link target is always resolved in scope,
+`symlinkLoop`. A walk whose remaining path, with a target spliced in, exceeds
+the [spliced path limit](#_11-limits) fails with `nameTooLong`. A `..` inside a link target is always resolved in scope,
 whatever `dotDot` says.
 
 _Rationale:_ The kernel's `RESOLVE_BENEATH` resolves `..` in targets the same
@@ -594,7 +603,9 @@ every policy.
 **VFD3: Listing until empty.** `removeTree` **must** list each directory
 through its own handle ([`VFO7`](#vfo7-listing)) and list it again until a
 listing yields no entries, because removing entries during a listing can make
-the listing skip some.
+the listing skip some. When removing an emptied directory finds new entries in
+it, `removeTree` lists it again, up to the [re-listing limit](#_11-limits),
+and then fails with `notEmpty`.
 
 <a id="vfd4-vanished-entries"></a>
 **VFD4: Vanished entries.** An entry that is gone when `removeTree` removes or
@@ -681,6 +692,8 @@ errno so callers need one error model
 | Walk depth             | 64 entered directories, shared with the `..` handle stack  | `depthExceeded`      |
 | Removal depth          | 64 directories                                             | `depthExceeded`      |
 | Symlink hops           | 40 per walk                                                | `symlinkLoop`        |
+| Spliced path           | 4096 bytes of remaining path per walk                      | `nameTooLong`        |
+| Removal re-listing     | 16 per directory                                           | `notEmpty`           |
 | Race retries           | 128 per whole-path call                                    | `raceRetryExhausted` |
 | Windows delete retries | 50 per entry                                               | `busy` or `notEmpty` |
 

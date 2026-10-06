@@ -24,8 +24,9 @@ is listed in [testing.md](./testing.md#backends-vfb); delivery order is in
 <a id="vfb1-the-concept"></a>
 **VFB1: The concept.** `isVfs!V` **must** be true exactly when `V` provides a
 `Handle` type and, over `(V.Handle, name)`, the single-name primitives of
-[`VFO3`](./SPEC.md#vfo3-the-operation-set), plus `close`, `read`, `write`,
-`sync` and the listing primitives, each returning `IoResult`. The algorithms
+[`VFO3`](./SPEC.md#vfo3-the-operation-set), plus `reopen` (a new handle to a
+directory, by opening `.`), `close`, `read`, `write`, `sync` and the listing
+primitives, each returning `IoResult`. The algorithms
 (`walk`, `walkAll`, `removeTree`, `writeFileAtomic`) are written once, over
 the concept, in `sparkles:base`.
 

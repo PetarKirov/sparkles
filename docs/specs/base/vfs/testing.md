@@ -122,6 +122,10 @@ forbidden effect it must not produce.
 | R8  | `a/b/`; **N**, `walk("a/b")`                                        | after `a` is opened, mount a device on `a/b`            | `crossesMount`                                                                                                             |
 | R9  | `f`; `writeFileAtomic("f", new)`                                    | at every call index in turn, read `f`                   | each read sees the complete old or the complete new content                                                                |
 
+The suite runs each scenario once for every call the unraced operation
+makes, firing the hook before that call, which covers every single-point
+interleaving rather than one chosen index.
+
 The hook proves the resolver's _logic_ under each interleaving. It does not
 prove that a real kernel's interleavings are covered; that evidence comes
 from oracle 6, which runs R1 and R4 natively with a concurrent renaming
@@ -198,6 +202,14 @@ Every operation and algorithm runs under the libc allocation wrapper and the
 GC counter that `sparkles:fuzzy` uses, on each backend. The expected count is
 zero for every operation, including `MemVfs` with a pre-sized arena.
 
+```bash
+dub test :base -- -i "vfs.check.allocation"                    # GC counter
+dub test :base -c allocation-audit -- -i "vfs.allocation"     # Linux: libc wrapped too
+```
+
+The audit configuration first calls `malloc` once and requires the wrapper to
+count it, so a build without the `--wrap` flags fails instead of passing.
+
 ## Requirement checks
 
 One row per requirement: the observation that would falsify it, and where
@@ -207,7 +219,7 @@ that observation is made.
 
 | Requirement                                                 | Check                                                                                                             | Oracle           |
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------- |
-| [`VFH1`](./SPEC.md#vfh1-owning-handles)                     | a backend double counts closes; every test ends with one close per open                                           | 4                |
+| [`VFH1`](./SPEC.md#vfh1-owning-handles)                     | the backend counts open handles; every test ends with none; an empty `.init` handle fails every operation         | 4                |
 | [`VFH2`](./SPEC.md#vfh2-borrowed-handles)                   | a `@safe` function that returns a `DirRef` to a local `Dir` does not compile                                      | 5                |
 | [`VFH3`](./SPEC.md#vfh3-the-backend-is-part-of-the-type)    | passing a `DirRef!(MemVfs, R)` as `renameAt`'s destination on a `Dir!(BlockingVfs, R)` does not compile           | 5                |
 | [`VFH4`](./SPEC.md#vfh4-rights)                             | the presets' members are pinned by a `static assert`                                                              | unit             |
@@ -261,7 +273,7 @@ that observation is made.
 | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------ |
 | [`VFD1`](./SPEC.md#vfd1-bounded-explicit-stack)                | a tree one level deeper than the removal limit fails with `depthExceeded`; a sentinel beside it survives  | 4      |
 | [`VFD2`](./SPEC.md#vfd2-never-descend-a-link)                  | row 24 and R4: a link to a sentinel directory outside the tree; the sentinel's contents survive           | 1, 2   |
-| [`VFD3`](./SPEC.md#vfd3-listing-until-empty)                   | a directory of 5000 entries is emptied in one call                                                        | 4, 6   |
+| [`VFD3`](./SPEC.md#vfd3-listing-until-empty)                   | a directory of 5000 entries is emptied in one call; R4 plants entries after a directory was emptied       | 4, 6   |
 | [`VFD4`](./SPEC.md#vfd4-vanished-entries)                      | R5: entries removed from under the removal; the call succeeds                                             | 2      |
 | [`VFD5`](./SPEC.md#vfd5-partial-progress-is-the-failure-state) | a directory made unremovable mid-tree; the error reports `unlinkAt` or `rmdirAt`, and a sentinel survives | 6      |
 
@@ -340,9 +352,10 @@ without a backend call ([`VFP7`](./SPEC.md#vfp7-in-scope-dot-dot)).
 
 ## Evidence ledger
 
-| Requirements      | State      | Evidence | Gap                      |
-| ----------------- | ---------- | -------- | ------------------------ |
-| every requirement | unverified | —        | no implementation exists |
+| Requirements                                                                                                                      | State                | Evidence                                                                                                                                                                                                                                               | Gap                                                                                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `VFE1`, `VFE2`, `VFE4`; `VFP1`–`VFP8`; `VFR2`, `VFR4`; `VFO1`–`VFO10`; `VFH1`–`VFH6`; `VFD1`–`VFD5`; `VFB1`–`VFB3`; `VFM1`–`VFM5` | verified on `MemVfs` | oracles 1, 2, 5, the requirement checks and the allocation audit: `dub test :base`, 50 tests, on Linux x86_64 (LDC 1.42.0, DMD 2.112.1) and macOS 27 arm64 (LDC 1.42.0); the same tests cross-built for `x86_64-pc-windows-msvc` and run under Wine 11 | Windows itself runs only in CI; Wine is not Windows; on `MemVfs`, `VFP8` exercises only the device comparison, and `VFR4` a backend double |
+| every other requirement, `VFR1` included                                                                                          | unverified           | —                                                                                                                                                                                                                                                      | needs a native backend; `VFR1` needs a kernel resolver to compare with (oracle 3)                                                          |
 
 The independent-review item of the specification's acceptance gate is
 **unmet**: the specification was written by the same agent that ran the
