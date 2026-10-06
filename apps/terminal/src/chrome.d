@@ -40,6 +40,24 @@ struct ChromeTheme
         return ChromeTheme(Theme(defaultFg: Color.fromRgb(fg), defaultBg: Color.fromRgb(bg))
             .effectivePalette(), fg, bg);
     }
+
+    /// The colour slot `s` fills a surface with (the background when it has
+    /// none), for chrome drawn in pixels rather than through a layer.
+    RgbColor slotFill(Slot s) const @safe pure nothrow @nogc
+    {
+        import sparkles.ui.style : resolveSlot;
+
+        const v = resolveSlot(palette, s, fg, bg);
+        return v.hasBg ? v.bg : bg;
+    }
+
+    /// The colour slot `s` draws text and lines in.
+    RgbColor slotInk(Slot s) const @safe pure nothrow @nogc
+    {
+        import sparkles.ui.style : resolveSlot;
+
+        return resolveSlot(palette, s, fg, bg).fg;
+    }
 }
 
 /**
