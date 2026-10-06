@@ -409,6 +409,10 @@
         export JSON_TEST_SUITE=${config.packages.json-test-suite}
         export NATIVEJSON_TEST_SUITE=${config.packages.nativejson-test-suite}
 
+        # The bundled fonts, the corpus for sparkles:font and its HarfBuzz
+        # oracle (dub test :font / :font-oracle skip those tests when unset).
+        export SPARKLES_FONTS_PATH=${config.packages.sparkles-fonts}/fonts
+
         # druntime/phobos sources matching the pinned dmd:frontend, for
         # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
         export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
