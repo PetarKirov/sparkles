@@ -326,7 +326,7 @@ struct SectionsOptions
     /// The cells a segmented control may take before an enum becomes a
     /// dropdown: what `inlineEditorFor` is asked with, by the view and by a
     /// host that acts on a hit alike.
-    int segmentCells() const @safe pure nothrow @nogc => width * 2 / 5;
+    int segmentCells() const @safe pure nothrow @nogc => width * 3 / 5;
 }
 
 /// The slots this view references (design-system `TOK6`).

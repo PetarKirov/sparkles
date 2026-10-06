@@ -558,13 +558,14 @@ final class LogPage : Page
         }
         else
             status = narrow ? "○ paused" : "○ paused · End follows";
-        uint[] foot = [label(b, status, statusSlot),
+        // The footer has room for captions on a phone too (LG1).
+        uint[] foot = [uiLabel(b, status, statusSlot),
             b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()))];
         if (previousPath.length)
-            foot ~= button(b, "⟲", showingPrevious ? "This run" : "Previous run", labels,
+            foot ~= button(b, "⟲", showingPrevious ? "This run" : "Previous run", ctx.labels,
                 Hit.previous, minRows: ctx.targetRows);
         if (services.copy !is null)
-            foot ~= button(b, "⧉", "Copy", labels, Hit.copy, minRows: ctx.targetRows);
+            foot ~= button(b, "⧉", "Copy", ctx.labels, Hit.copy, minRows: ctx.targetRows);
         const footer = b.add(Widget(kind: WidgetKind.row, children: foot, gap: 1,
             alignY: Alignment.center, width: SizeSpec.grow(), padding: Insets(0, 1, 0, 1),
             slot: Slot.surfaceSunken, paintBackground: true));
