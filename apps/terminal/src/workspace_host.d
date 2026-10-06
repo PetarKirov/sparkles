@@ -412,6 +412,12 @@ struct WorkspaceHost
         cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
         p.vm.lineNumbers = viewerLineNumbers;
         p.vm.codeLineNumbers = viewerCodeLineNumbers;
+        // The document's prose reads in the interface face (D50).
+        {
+            import sparkles.ui.style : FontRole;
+
+            p.vm.proseRole = FontRole.ui;
+        }
         viewers[id] = p;
         dirty = true;
         return true;
