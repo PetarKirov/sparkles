@@ -27,6 +27,7 @@ the detailed descriptions and the module map live there.
 | `twoslash`, `twoslash-d`, `twoslash-protocol`, `dmd-lsp`, `dmd-fmt`                 | type overlays, the DMD-frontend semantic core, the D formatter                               |
 | `event-horizon`, `http`                                                             | completion-first event loop with effects; HTTP/1.1 over it                                   |
 | `wsi`, `vulkan`, `vulkan-wsi`, `raylib-text`, `ghostty`, `terminal-view`, `shaders` | windowing, GPU, fonts, VT engine, embeddable terminal, shader vocabulary                     |
+| `font`, `font-oracle`                                                               | font files parsed in D; its HarfBuzz differential tests                                      |
 | `wired`, `reflection`, `metadata`, `dql`, `fuzzy`                                   | serialization, reflection kernel, UDA vocabulary, query engine, fuzzy search                 |
 | `build-primitives`, `code-instrumentation`, `docs`, `nix`, `versions`, `math`       | gitignore/walk/`runGit`, coverage, SSG, Nix C API, versioning, vectors                       |
 | `test-runner` (+ internal `test-runner-impl`), `test-utils`                         | the unittest runner; test helpers                                                            |
