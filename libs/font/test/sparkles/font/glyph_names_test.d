@@ -55,8 +55,9 @@ unittest
     assert(!f.glyphName(5).value.present); // past post's own glyph count
     assertIndexMatches(f);
 
-    const reserved = openFace(fontWith(2, [TableData("post", post2([0, 40_000], []))])).value;
-    assert(reserved.glyphName(1).error.kind == FontErrorKind.badValue);
+    // Indices up to 65,535 name strings; with no such string it is badValue.
+    const high = openFace(fontWith(2, [TableData("post", post2([0, 40_000], []))])).value;
+    assert(high.glyphName(1).error.kind == FontErrorKind.badValue);
 
     // A Pascal string running past the table.
     auto cut = post2([258], ["long"]);

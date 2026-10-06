@@ -101,8 +101,6 @@ private FontResult!GlyphName postName(return scope const PostNames p, uint gid)
             const index = be16(p.data, 34 + 2 * gid);
             if (index < 258)
                 return named(macGlyphNames[index]);
-            if (index >= 32_768)
-                return fontErr!GlyphName(tableError(FontErrorKind.badValue, postTag, p.start, 34 + 2 * gid));
             const at = postString(p, index - 258);
             if (at.hasError)
                 return fontErr!GlyphName(at.error);
@@ -517,7 +515,7 @@ FontResult!GlyphNameIndex glyphNameIndex(return scope const Face face, return sc
                 const index = be16(q.data, 34 + 2 * gid);
                 if (index < 258) return entry(sourceMac, index);
                 const k = index - 258;
-                if (index >= 32_768 || k >= strings) return entry(sourceSlow, 0);
+                if (k >= strings) return entry(sourceSlow, 0);
                 const at = scratch[n + k];
                 if (!fits(q.data.length, at + 1, q.data[at])) return entry(sourceSlow, 0);
                 // An empty name falls back to CFF.
