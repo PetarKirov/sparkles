@@ -70,8 +70,12 @@ a border.
 */
 uint toggleSwitch(ref Builder b, bool on, size_t hitId, ControlSize sz = ControlSize.init)
 {
+    // The knob takes the track's whole height, so a face that draws it finer
+    // than the cells centres it there: given only the rows its title step
+    // measures, it was centred in the top two of three and sat high.
     const knob = b.add(Widget(kind: WidgetKind.text, text: "●",
         slot: on ? Slot.controlOn : Slot.textSecondary,
+        height: sz.rows > 1 ? SizeSpec.fixed(sz.rows) : SizeSpec.fit_,
         textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.title)));
     auto track = controlBox([knob], ControlSize(sz.rows, 28), hitId,
         on ? Slot.controlOn : Slot.surfaceSunken, 14, bordered: !on);
@@ -109,12 +113,23 @@ uint stepper(ref Builder b, string value, size_t decHit, size_t incHit,
     ControlSize sz = ControlSize.init)
 {
     const round = ControlSize(sz.rows, 36);
-    const dec = chip(b, "−", decHit, false, round);
+    // The round button draws three cells wide, a 26 dp target on a phone:
+    // the target is as wide as it is tall (a cell is about twice as tall as
+    // it is wide), the button drawn compact in its middle.
+    uint button(string glyph, size_t hit)
+    {
+        const drawn = chip(b, glyph, 0, false, round);
+        return b.add(Widget(kind: WidgetKind.panel, children: [drawn], hitId: hit,
+            width: sz.rows > 1 ? SizeSpec.fixed(sz.rows * 2) : SizeSpec.fit_,
+            height: sz.rows > 1 ? SizeSpec.fixed(sz.rows) : SizeSpec.fit_,
+            alignX: Alignment.center, alignY: Alignment.center));
+    }
+    const dec = button("−", decHit);
     const val = b.add(Widget(kind: WidgetKind.text, text: value, slot: Slot.code,
         textStyle: valueStyle(),
         width: SizeSpec.fixed(cast(int) visibleWidth(value) + 1), alignX: Alignment.center));
-    const inc = chip(b, "+", incHit, false, round);
-    return b.add(Widget(kind: WidgetKind.row, children: [dec, val, inc], gap: 1,
+    const inc = button("+", incHit);
+    return b.add(Widget(kind: WidgetKind.row, children: [dec, val, inc],
         alignY: Alignment.center));
 }
 
@@ -152,6 +167,8 @@ uint dropdownChip(ref Builder b, string value, bool open, size_t hitId,
     assert(b.nodes[on].alignX == Alignment.end && b.nodes[off].alignX == Alignment.start);
     assert(b.nodes[on].slot == Slot.controlOn && b.nodes[off].slot == Slot.surfaceSunken);
     assert(b.nodes[on].decoration.drawHeight == 28);
+    assert(b.nodes[b.nodes[off].children[0]].height == SizeSpec.fixed(3),
+        "the knob spans the track's rows, centred in them");
     assert(b.nodes[off].decoration.borderStyle == BorderStyle.solid, "off is outlined");
 }
 
@@ -174,7 +191,9 @@ uint dropdownChip(ref Builder b, string value, bool open, size_t hitId,
     const st = stepper(b, "16", 3, 4, ControlSize(rows: 3));
     const parts = b.nodes[st].children;
     assert(b.nodes[parts[0]].hitId == 3 && b.nodes[parts[2]].hitId == 4);
-    assert(b.nodes[parts[0]].decoration.drawHeight == 36, "round 36 dp buttons");
+    const drawn = b.nodes[b.nodes[parts[0]].children[0]];
+    assert(drawn.decoration.drawHeight == 36 && drawn.hitId == 0, "round 36 dp buttons");
+    assert(b.nodes[parts[0]].width == SizeSpec.fixed(6), "a target as wide as it is tall");
     const d = dropdownChip(b, "confirm", false, 5);
     assert(b.nodes[b.nodes[d].children[0]].text == "confirm ▾");
     assert(b.nodes[d].decoration.borderStyle == BorderStyle.solid);

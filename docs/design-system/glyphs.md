@@ -80,7 +80,21 @@ Unicode stand-in, one without Unicode the ASCII one:
 | always allow | `nf-fa-check_double`          | `∞`     | `&`   |
 | deny         | `nf-fa-ban`                   | `✕`     | `x`   |
 
-Allow once is the ok mark's icon, so the two step down alike.
+The places a menu opens name their icons the same way:
+
+| Place         | Nerd Font               | Unicode | ASCII |
+| ------------- | ----------------------- | ------- | ----- |
+| help          | `nf-fa-question_circle` | `?`     | `?`   |
+| keyboard      | `nf-fa-keyboard`        | `⌨`     | `k`   |
+| about         | `nf-oct-info`           | `ⓘ`     | `i`   |
+| logs          | `nf-fa-list`            | `≣`     | `=`   |
+| notifications | `nf-fa-bell`            | `◉`     | `o`   |
+| credits       | `nf-fa-heart_o`         | `♡`     | `c`   |
+| settings      | `nf-fa-gear`            | `⚙`     | `*`   |
+
+Allow once is the ok mark's icon, so the two step down alike. About is not
+the info mark's `nf-fa-circle_info`: a code point has one ladder, and the info
+mark steps to `•`.
 
 ## Borders
 
