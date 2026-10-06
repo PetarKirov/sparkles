@@ -102,7 +102,7 @@
       '';
 
       win32Ldc2 = pkgs.writeShellScriptBin "win32-ldc2" ''
-        exec ldc2 -mtriple=x86_64-pc-windows-msvc --linker=lld-link -mscrtlib=msvcrt \
+        exec ldc2 -mtriple=x86_64-pc-windows-msvc -link-internally -mscrtlib=msvcrt \
           --gcc=${clangCl}/bin/clang-cl \
           "-L/LIBPATH:${ldcWindowsLibs}" \
           "-L/LIBPATH:${winSdk}/crt/lib/x64" \
