@@ -109,7 +109,6 @@ in
         stringImportDirs = [
           "apps/hue/src"
           "libs/twoslash/src/sparkles/twoslash/views"
-          "libs/ui/src/sparkles/ui/shaders"
           "${config.packages.ui-shaders}"
         ];
         cIncludes = [

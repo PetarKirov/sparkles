@@ -110,9 +110,9 @@
                 # `.d`/`.c`/`.i` sources (`.c`/`.i` for ImportC shims) plus
                 # `.css`/`.svg` string-import view assets (e.g. sparkles:twoslash's
                 # `views/twoslash.css` and `views/icons/**/*.svg`, pulled in via `import()`)
-                # and `.frag` shaders (sparkles:ui's hand-written tier-2 effect
-                # bodies under `src/sparkles/ui/shaders/tier2/`, string-imported
-                # by `effect.d`; the generated ones come from `ui-shaders`).
+                # and `.frag` shaders (sparkles:ui's are generated and come from
+                # `ui-shaders`; this keeps any hand-written one a package
+                # string-imports).
                 file:
                 file.hasExt "d"
                 || file.hasExt "c"

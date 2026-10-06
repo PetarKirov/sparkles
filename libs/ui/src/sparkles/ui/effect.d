@@ -32,7 +32,6 @@ import std.algorithm : canFind;
 import sparkles.base.term_color : RgbColor;
 import sparkles.shaders : clamp, v2, v3, vec3, x, y, z;
 import sparkles.ui.geometry : Point, Size;
-import sparkles.ui.glsl_dialect : activePrologue;
 static import sparkles.ui.effect_shaders;
 
 /**
@@ -556,30 +555,24 @@ private EffectImpl[] glslImpl(string source) @safe pure nothrow
 The `bloom` built-in's four passes: extract the bright part at half size,
 blur it horizontally, then vertically, then add it back over the bracket.
 
-Hand-written GLSL (`shaders/tier2/bloom.frag`), one body compiled four ways by
-a `BLOOM_PASS` define. Public because a larger tier-2 effect — the CRT —
-reuses them as its own first three passes rather than keeping a second copy.
-Empty when the build carries no GPU half ($(LREF hasGpuEffects)).
+Each pass is a `@fragment` entry point in `shaders/effects.d` (`bloomExtract`,
+`bloomBlurH`, `bloomBlurV`, `bloomComposite`), generated like the tier-0
+built-ins; the colour maths is `effect_shaders.bloomBright` and `bloomOver`.
+Public because a larger tier-2 effect — the CRT — reuses them as its own
+first three passes rather than keeping a second copy. Empty when the build
+carries no GPU half ($(LREF hasGpuEffects)).
 */
 EffectPass[] bloomPasses() @safe pure nothrow
 {
     version (SparklesUiGpuEffects)
         return [
-            EffectPass(bloomPassSource!0, downscale: 2, from: 0),
-            EffectPass(bloomPassSource!1, downscale: 2),
-            EffectPass(bloomPassSource!2, downscale: 2),
-            EffectPass(bloomPassSource!3, from: 0, inputs: [3]),
+            EffectPass(bloomExtractGlsl, downscale: 2, from: 0),
+            EffectPass(bloomBlurHGlsl, downscale: 2),
+            EffectPass(bloomBlurVGlsl, downscale: 2),
+            EffectPass(bloomCompositeGlsl, from: 0, inputs: [3]),
         ];
     else
         return null;
-}
-
-version (SparklesUiGpuEffects)
-{
-    /// One pass of `bloom`, in this build's GLSL dialect.
-    enum string bloomPassSource(int pass) = activePrologue
-        ~ "#define BLOOM_PASS " ~ cast(char)('0' + pass) ~ "\n"
-        ~ import("tier2/bloom.frag");
 }
 
 // The unseeded registry's view: the same records, evaluated at compile time.
@@ -624,6 +617,14 @@ version (SparklesUiGpuEffects)
     enum string spectrumGlsl = import("spectrum" ~ glslDialect);
     /// ditto — the tier-1 warp, sampling at what `effect_shaders.curvature` returns.
     enum string curvatureGlsl = import("curvature" ~ glslDialect);
+    /// ditto — `bloom`'s four passes ($(LREF bloomPasses)).
+    enum string bloomExtractGlsl = import("bloomExtract" ~ glslDialect);
+    /// ditto
+    enum string bloomBlurHGlsl = import("bloomBlurH" ~ glslDialect);
+    /// ditto
+    enum string bloomBlurVGlsl = import("bloomBlurV" ~ glslDialect);
+    /// ditto
+    enum string bloomCompositeGlsl = import("bloomComposite" ~ glslDialect);
 }
 else
 {
@@ -738,6 +739,38 @@ version (SparklesUiGpuEffects) {} else
     // (`ui_raylib.effect_gpu.bloomIsAMultiPassChain`).
     static if (!hasGpuEffects)
         assert(impl is null, "a build without the GPU half carries no passes");
+}
+
+@("ui.effect.bloom.colourMathsOnTheHost")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.shaders : v4, vec4, w;
+    import sparkles.ui.effect_shaders : bloomBright, bloomOver;
+
+    static bool near(float a, float b) => a - b < 1e-6f && b - a < 1e-6f;
+
+    // The bright pass: nothing below the threshold, everything a quarter of
+    // luminance above it, and white is all glow.
+    assert(bloomBright(v3(0.5f, 0.5f, 0.5f), 0.65f).x == 0.0f);
+    assert(near(bloomBright(v3(1.0f, 1.0f, 1.0f), 0.65f).x, 1.0f));
+    // Rec. 709: pure green (0.7152) blooms at 0.65 while pure blue (0.0722)
+    // does not — Rec. 601's 0.587 green would have been under the knee.
+    assert(bloomBright(v3(0.0f, 1.0f, 0.0f), 0.65f).y > 0.0f);
+    assert(bloomBright(v3(0.0f, 0.0f, 1.0f), 0.65f).z == 0.0f);
+
+    // The composite: no glow leaves an opaque pixel as it was.
+    const red = v4(1.0f, 0.0f, 0.0f, 1.0f);
+    const kept = bloomOver(red, v3(0.0f));
+    assert(kept.x == 1.0f && kept.y == 0.0f && kept.w == 1.0f);
+    // Glow over a transparent pixel brings its own coverage — the brightest
+    // channel — rather than vanishing with the pixel beneath it.
+    const halo = bloomOver(v4(0.0f), v3(0.25f, 0.5f, 0.0f));
+    assert(near(halo.w, 0.5f) && near(halo.y, 1.0f) && near(halo.x, 0.5f));
+    // Fully transparent and no glow stays transparent, not NaN.
+    assert(bloomOver(v4(0.0f), v3(0.0f)).w == 0.0f);
+    // Colour clamps at white; coverage does not exceed one.
+    const hot = bloomOver(red, v3(1.0f));
+    assert(hot.x == 1.0f && hot.y == 1.0f && hot.w == 1.0f);
 }
 
 @("ui.effect.builtins.areHonouredByACellGrid")

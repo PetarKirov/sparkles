@@ -75,7 +75,7 @@ configuration "library" {
 configuration "gpu-effects" {
     targetType "library"
     versions "SparklesUiGpuEffects"
-    stringImportPaths "generated/shaders" "src/sparkles/ui/shaders"
+    stringImportPaths "generated/shaders"
     preGenerateCommands "$DUB run --temp-build -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR --out=$PACKAGE_DIR/generated/shaders --if-stale"
 }
 

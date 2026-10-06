@@ -68,3 +68,57 @@ sits on.
         return v4(0.0f);
     return texture0.sample(uv) * fragColor;
 }
+
+// ── bloom: four passes (tier 2) ─────────────────────────────────────────────
+// Extract the bright part at half size, blur it horizontally, then vertically,
+// then add it back over the bracket. `ui_raylib.effect_gpu` chains them: each
+// pass draws the previous one's image as `texture0`, and the composite also
+// reads the blurred glow as `texture1`. `uResolution` is the size of the image
+// a pass writes.
+
+/// ditto
+@fragment vec4 bloomExtract(@input vec2 fragTexCoord, Sampler2D texture0,
+    @uniform float uBloomThreshold)
+    => v4(sparkles.ui.effect_shaders.bloomBright(texture0.sample(fragTexCoord).xyz,
+        uBloomThreshold), 1.0f);
+
+/**
+A nine-tap Gaussian along `dir`, `uBloomRadius` output pixels per tap. Each
+tap is weighted and added on its own, in the order the hand-written pass
+used, so the float rounding matches it.
+*/
+private vec3 bloomBlur(Sampler2D texture0, vec2 uv, vec2 dir, vec2 uResolution,
+    float uBloomRadius) @safe pure nothrow @nogc
+{
+    enum float w0 = 0.2270270270f, w1 = 0.1945945946f, w2 = 0.1216216216f,
+        w3 = 0.0540540541f, w4 = 0.0162162162f;
+    const s = dir * uBloomRadius / uResolution;
+    vec3 sum = texture0.sample(uv).xyz * w0;
+    sum = sum + texture0.sample(uv + s * 1.0f).xyz * w1;
+    sum = sum + texture0.sample(uv - s * 1.0f).xyz * w1;
+    sum = sum + texture0.sample(uv + s * 2.0f).xyz * w2;
+    sum = sum + texture0.sample(uv - s * 2.0f).xyz * w2;
+    sum = sum + texture0.sample(uv + s * 3.0f).xyz * w3;
+    sum = sum + texture0.sample(uv - s * 3.0f).xyz * w3;
+    sum = sum + texture0.sample(uv + s * 4.0f).xyz * w4;
+    sum = sum + texture0.sample(uv - s * 4.0f).xyz * w4;
+    return sum;
+}
+
+/// ditto
+@fragment vec4 bloomBlurH(@input vec2 fragTexCoord, Sampler2D texture0,
+    @uniform vec2 uResolution, @uniform float uBloomRadius)
+    => v4(bloomBlur(texture0, fragTexCoord, v2(1.0f, 0.0f), uResolution, uBloomRadius), 1.0f);
+
+/// ditto
+@fragment vec4 bloomBlurV(@input vec2 fragTexCoord, Sampler2D texture0,
+    @uniform vec2 uResolution, @uniform float uBloomRadius)
+    => v4(bloomBlur(texture0, fragTexCoord, v2(0.0f, 1.0f), uResolution, uBloomRadius), 1.0f);
+
+/// ditto — `texture0` is the bracket, `texture1` the blurred glow.
+@fragment vec4 bloomComposite(@input vec2 fragTexCoord, @input vec4 fragColor,
+    Sampler2D texture0, Sampler2D texture1, @uniform vec4 colDiffuse,
+    @uniform float uBloomIntensity)
+    => sparkles.ui.effect_shaders.bloomOver(
+        texture0.sample(fragTexCoord) * colDiffuse * fragColor,
+        texture1.sample(fragTexCoord).xyz * uBloomIntensity);

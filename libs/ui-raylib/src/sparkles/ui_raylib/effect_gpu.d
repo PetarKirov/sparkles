@@ -553,10 +553,17 @@ void scissorInTarget(int x, int y, int w, int h, int targetHeight) @system
     assert(impl.passes[0].from == 0 && impl.passes[0].downscale == 2);
     assert(impl.passes[1].from == previousImage && impl.passes[2].downscale == 2);
     assert(impl.passes[3].from == 0 && impl.passes[3].inputs == [3]);
+    // Each pass is its own generated entry point (`EFX25`), reading exactly
+    // the uniforms the backend uploads to it by name.
+    static immutable entries = ["bloomExtract", "bloomBlurH", "bloomBlurV", "bloomComposite"];
     foreach (i, ref p; impl.passes)
     {
         assert(p.source.canFind("#version"), "each pass is a complete shader");
-        assert(p.source.canFind("BLOOM_PASS"));
+        assert(p.source.canFind("entry point `" ~ entries[i] ~ "`"), entries[i]);
     }
-    assert(impl.passes[3].source.canFind("uBloomIntensity"));
+    assert(impl.passes[0].source.canFind("uBloomThreshold"));
+    assert(impl.passes[1].source.canFind("uResolution")
+        && impl.passes[1].source.canFind("uBloomRadius"));
+    assert(impl.passes[3].source.canFind("uBloomIntensity")
+        && impl.passes[3].source.canFind("texture1"), "the composite reads the glow");
 }

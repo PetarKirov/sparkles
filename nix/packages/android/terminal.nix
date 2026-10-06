@@ -90,7 +90,6 @@ in
             }
           ];
           stringImportDirs = [
-            "libs/ui/src/sparkles/ui/shaders"
             "${config.packages.ui-shaders}"
             # The document viewer (sparkles:doc-view) renders twoslash payloads.
             "libs/twoslash/src/sparkles/twoslash/views"
