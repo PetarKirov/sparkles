@@ -83,6 +83,7 @@ terminal that does not cluster; `GLY12` has no evidence.
 (`LAY5`, `LAY10` and `LAY14` in the [layout specification](../ui/layout.md))
 stands for the delivered code and is pending base's cutover of those callers
 (D51).
+| `FMT1`–`FMT6`, `O4`, D12, D14, D55–D58 | `feat/ui-theme-file` | `dub test :ui -- -i "dtcg|theme_file"`: the edition's 48 examples (35 load and resolve; 13 illustrations rejected, each named), every built-in's export, load, save and re-export, the malformed corpus | linux-x86_64, ldc2 | green | the checked-in exports and `--theme <file>` (FMT5, M5's second half); font roles and box chrome not mapped |
 
 Everything else is `unverified`.
 
