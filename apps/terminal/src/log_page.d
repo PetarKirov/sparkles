@@ -35,7 +35,7 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, Wi
 import chrome : button, column, label, row, uiLabel;
 import settings : ButtonLabels;
 import page_kit : bodyRowsFor, chip, finishPage, firstOwnHit, header, Page, PageServices,
-    searchField;
+    searchRow;
 import surfaces : SurfaceContext;
 
 /// The four levels the chips filter by.
@@ -518,10 +518,8 @@ final class LogPage : Page
             actions ~= button(b, "↗", "Share", labels, Hit.share, minRows: ctx.targetRows);
         const head = header(b, showingPrevious ? "Logs · previous run" : "Logs", ctx, actions);
 
-        const search = b.add(Widget(kind: WidgetKind.panel,
-            children: [searchField(b, query, searching,
-                "Search · text, source:am, /regex/", ctx.targetRows)],
-            width: SizeSpec.grow(), padding: Insets(0, 1, 0, 1)));
+        const search = searchRow(b, query, searching, "Search · text, source:am, /regex/",
+            ctx.targetRows);
 
         static immutable string[4] names = ["debug", "info", "warn", "error"];
         static immutable string[4] letters = ["D", "I", "W", "E"];

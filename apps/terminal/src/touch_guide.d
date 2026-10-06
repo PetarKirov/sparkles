@@ -21,6 +21,7 @@ import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row, uiLabel;
+import page_kit : searchRow;
 import keymap : Binding, Chord, KeyCommand, TermCommand, TermContext;
 import surfaces : Placement, Scrollable, Surface, SurfaceContext;
 
@@ -98,11 +99,9 @@ final class TouchGuide : Surface, Scrollable
                     alignY: Alignment.center));
             }
         }
-        lines ~= b.add(Widget(kind: WidgetKind.panel,
-            children: [uiLabel(b, query.length ? "⌕ " ~ query.idup : "⌕ Search all commands",
-                query.length ? Slot.textPrimary : Slot.muted)],
-            width: SizeSpec.grow(), slot: Slot.surfaceSunken, paintBackground: true,
-            hitId: searchHit));
+        // The logs' search row (`TPG8`), a tap on it bringing up the keyboard.
+        lines ~= searchRow(b, query.idup, query.length > 0, "Search all commands",
+            sctx.targetRows, searchHit);
         return b.finish(band(b, lines));
     }
 
