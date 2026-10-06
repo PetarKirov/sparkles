@@ -167,6 +167,15 @@ the guide while the row is hidden.
 _Rationale:_ A tablet with a keyboard cover hides the extra-keys row, and with
 it the MENU key, so the opener is the one control always on screen.
 
+## Spacing (`TSS17`)
+
+**TSS17: Panes and their rules.** A pane's text **must** keep a margin from
+the pane's sides and top (8 and 4 dp on a phone), and split panes **must**
+be separated by a rule of one thickness whichever way they are split (1 dp on
+a phone), dragged within a finger's reach of it. On a phone the opener's band
+**must** be opaque and ruled off from the panes. Violation: text against the
+screen's edge, or a stacked split's divider thicker than a side-by-side one.
+
 ## Status
 
 | ID      | Status                                                                                                                                                                                 | Traces to                                                                                                     |
@@ -187,5 +196,6 @@ it the MENU key, so the opener is the one control always on screen.
 | `TSS14` | partial: on the phone a pane comes back in its directory only when the shell reports it with OSC 7, which nix-on-droid's bash does not, and proot hides a guest's `chdir` from `/proc` | `saved`, `restored`, `WorkspaceHost.restore`, `WorkspaceHost.refreshCwds`                                     |
 | `TSS15` | full                                                                                                                                                                                   | `Workspace.focusPane`, `DesktopIntegration.tick`, `DroidPlatform.focusPane`, `NotificationPage.openEntry`     |
 | `TSS16` | full                                                                                                                                                                                   | `OpenerHit.guide`, `rail`, `pillBand`, `WorkspaceHost.takeGuideRequest`                                       |
+| `TSS17` | full                                                                                                                                                                                   | `paneBoxes`, `WorkspaceHost.ruleRect`, `WorkspaceHost.padX`, `pillBand`                                       |
 
 → [Overview](./index.md) · [Containers `DCK`](../ui/containers.md) · [Keymap](./keymap.md)
