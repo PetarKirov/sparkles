@@ -300,7 +300,8 @@ struct DroidTerminal
         selection.paint(accent);
         chip.paint(h, host.theme);
         host.paintSurfaces(h);
-        paintGuide(h, router, context, g.paneCols, g.paneRows, 0, g.top, chromeFg, chromeBg);
+        paintGuide(h, router, context, g.paneCols, g.paneRows, 0, g.top, chromeFg, chromeBg,
+            g.width, g.paneHeight);
         paintKeys(h, g);
     }
 
@@ -388,7 +389,7 @@ struct DroidTerminal
 
     /// The panes' area, in pixels: the content rect above the key row.
     private Rect paneArea(in Geometry g) const
-        => Rect(0, g.top, g.paneCols * cellW, g.paneRows * cellH);
+        => Rect(0, g.top, g.width, g.paneHeight);
 
     // ── keys ────────────────────────────────────────────────────────────────
 
@@ -919,6 +920,7 @@ struct DroidTerminal
     private static struct Geometry
     {
         int top, width, paneCols, paneRows;
+        int paneHeight; // the panes' pixel height, a cell's remainder included
         int keysTop, keysHeight, keyHeight;
         int chipHeight; // the Autofill chip's band, above the key row
     }
@@ -965,6 +967,7 @@ struct DroidTerminal
         const paneHeight = bottom - g.top - g.keysHeight - g.chipHeight;
         g.paneCols = g.width / cellW > 0 ? g.width / cellW : 1;
         g.paneRows = paneHeight / cellH > 0 ? paneHeight / cellH : 1;
+        g.paneHeight = paneHeight > cellH ? paneHeight : cellH;
         g.keysTop = bottom - g.keysHeight;
         return g;
     }

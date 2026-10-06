@@ -42,8 +42,19 @@ import settings : ButtonLabels, LinkAction, NotificationsConfig, OnExit, OpenTar
     OverlayStyle, PaneChrome, TabsOpener;
 import links : canOpen, LinkConfirm, openUri, schemeOf;
 import surfaces : SurfaceContext, Surfaces;
+import sparkles.ui.style : Slot;
 import workspace : dividerAt, dividerClamp, Direction, maxPanesPerTab, maxTabs, PaneSpec,
     Placement, Refusal, restored, saved, SavedWorkspace, Workspace;
+
+/// What a divider offers under the pointer (`TSS10`): the shape a desktop
+/// pointer takes there.
+enum DividerHover : ubyte
+{
+    none,
+    across, /// a divider down the screen: resize left and right
+    down, /// a divider across it: resize up and down
+    both, /// a junction: resize either way
+}
 
 /// What a pane does when its program has exited (`TSS1`).
 enum ExitAction : ubyte
@@ -163,6 +174,10 @@ struct WorkspaceHost
     private Rect[] dividerRects;
     private ptrdiff_t dragging = -1; // the divider being dragged (`TSS10`)
     private int dragPos; // where it would land, in cells along its axis
+    // At a junction, the divider across `dragging`'s axis, moved with it.
+    private ptrdiff_t draggingCross = -1;
+    private int dragCrossPos;
+    private DividerHover shownHover; // the pointer shape last asked for
     private Rect panesArea;
     private Layer openerLayer;
     private Layer[] paneChromeLayers;
@@ -623,6 +638,20 @@ struct WorkspaceHost
                 }
             }
             dragDivider(mx, my, leftDown, IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT));
+            // Over a divider the pointer says which way it resizes: across,
+            // down, or — at a junction — either way.
+            const hover = dividerHover(mx, my);
+            if (hover != shownHover)
+            {
+                import sparkles.base.term_control : PointerShape;
+
+                shownHover = hover;
+                static immutable PointerShape[DividerHover.max + 1] shapes = [
+                    PointerShape.default_, PointerShape.ewResize, PointerShape.nsResize,
+                    PointerShape.grab];
+                static if (__traits(compiles, h.pointerShape(PointerShape.default_)))
+                    h.pointerShape(shapes[hover]);
+            }
             if (dragging >= 0)
                 under = pointerOwner = 0;
             if (!leftDown)
@@ -755,7 +784,30 @@ struct WorkspaceHost
         foreach (ref d; f.dividers)
             dividerRects ~= Rect(panesArea.x + d.rect.x * cellW, panesArea.y + d.rect.y * cellH,
                 d.rect.width * cellW, d.rect.height * cellH);
+        // The part of a cell left over at the right and the bottom belongs to
+        // whatever reaches that edge: a pane's background and a divider's rule
+        // run to the window's edge rather than stopping at the last cell.
+        const gridRight = panesArea.x + panesArea.width / cellW * cellW;
+        const gridBottom = panesArea.y + panesArea.height / cellH * cellH;
+        foreach (ref b; boxes)
+            stretchToEdges(b.outer, gridRight, gridBottom, panesArea);
+        foreach (ref r; dividerRects)
+            stretchToEdges(r, gridRight, gridBottom, panesArea);
+        this.openerRect = openerRect;
     }
+
+    // `r` widened to `area`'s right edge when it ends at `gridRight`, and
+    // lengthened to its bottom when it ends at `gridBottom`.
+    private static void stretchToEdges(ref Rect r, int gridRight, int gridBottom, in Rect area)
+        @safe pure nothrow @nogc
+    {
+        if (r.x + r.width == gridRight)
+            r.size.width = area.x + area.width - r.x;
+        if (r.y + r.height == gridBottom)
+            r.size.height = area.y + area.height - r.y;
+    }
+
+    private Rect openerRect; // the pill band or the rail, to the window's edges
 
     /**
     The touch half of a divider drag (`TSS10`), for an embedder that polls
@@ -806,8 +858,11 @@ struct WorkspaceHost
     A divider drag (`TSS10`): a press on a divider (or within a few pixels of
     it) picks it up, moving shows where it would land, and the release
     resizes the split — once, so each program sees one settled size rather
-    than one per frame. `slop` widens the divider's target: a few pixels for
-    a mouse, a finger's width on a touch screen.
+    than one per frame. A press where a divider across meets one down (a
+    junction: ┼ ├ ┤ ┬ ┴) picks up both, and the drag moves each along its
+    own axis. `slop` widens a divider's target: a few pixels for a mouse, a
+    finger's width on a touch screen. A press on a revealed toolbar is the
+    toolbar's.
     */
     private void dragDivider(int mx, int my, bool down, bool pressed, int slop = 4) @safe
     {
@@ -816,17 +871,18 @@ struct WorkspaceHost
 
         if (dragging < 0)
         {
-            if (!pressed)
+            if (!pressed || toolbarLayer.contains(mx, my))
                 return;
-            foreach (i, r; dividerRects)
-                if (contains(Rect(r.x - slop, r.y - slop, r.width + 2 * slop,
-                    r.height + 2 * slop), mx, my))
-                {
-                    dragging = i;
-                    const d = dividers[i];
-                    dragPos = dividerAt(d);
-                    return;
-                }
+            dividersNear(dividers, dividerRects, mx, my, slop, dragging, draggingCross);
+            if (dragging < 0)
+            {
+                dragging = draggingCross;
+                draggingCross = -1;
+            }
+            if (dragging >= 0)
+                dragPos = dividerAt(dividers[dragging]);
+            if (draggingCross >= 0)
+                dragCrossPos = dividerAt(dividers[draggingCross]);
             return;
         }
         const d = dividers[dragging];
@@ -836,11 +892,81 @@ struct WorkspaceHost
             dragPos = pos;
             repaint = true;
         }
+        int crossPos;
+        if (draggingCross >= 0)
+        {
+            crossPos = dividerClamp(dividers[draggingCross], along(dividers[draggingCross]));
+            if (crossPos != dragCrossPos)
+            {
+                dragCrossPos = crossPos;
+                repaint = true;
+            }
+        }
         if (down)
             return;
         dragging = -1;
         if (ws.moveDivider(d, pos))
             repaint = dirty = true;
+        if (draggingCross >= 0)
+        {
+            const c = dividers[draggingCross];
+            draggingCross = -1;
+            if (ws.moveDivider(c, crossPos))
+                repaint = dirty = true;
+        }
+    }
+
+    /**
+    The dividers within `slop` of (`mx`, `my`): the nearest one down the
+    screen (`across`, a horizontal-axis split) and the nearest one across
+    it (`down`); -1 for none. Both at a junction.
+    */
+    static void dividersNear(in DividerFrame[] dividers, in Rect[] dividerRects, int mx,
+        int my, int slop, out ptrdiff_t across,
+        out ptrdiff_t down) @safe pure nothrow @nogc
+    {
+        across = down = -1;
+        int bestAcross = int.max, bestDown = int.max;
+        foreach (i, r; dividerRects)
+        {
+            if (!contains(Rect(r.x - slop, r.y - slop, r.width + 2 * slop, r.height + 2 * slop),
+                mx, my))
+                continue;
+            if (dividers[i].axis == DockAxis.horizontal)
+            {
+                const dist = mx < r.x ? r.x - mx : mx - r.x;
+                if (dist < bestAcross)
+                {
+                    bestAcross = dist;
+                    across = i;
+                }
+            }
+            else
+            {
+                const dist = my < r.y ? r.y - my : my - r.y;
+                if (dist < bestDown)
+                {
+                    bestDown = dist;
+                    down = i;
+                }
+            }
+        }
+    }
+
+    /// What a divider offers under (`x`, `y`) — the pointer shape a desktop
+    /// shows there: none, resize across, resize down, or both at a junction.
+    DividerHover dividerHover(int x, int y, int slop = 4) const @safe pure nothrow @nogc
+    {
+        if (dragging >= 0)
+            return draggingCross >= 0 ? DividerHover.both
+                : dividers[dragging].axis == DockAxis.horizontal
+                    ? DividerHover.across : DividerHover.down;
+        if (toolbarLayer.contains(x, y))
+            return DividerHover.none;
+        ptrdiff_t a, d;
+        dividersNear(dividers, dividerRects, x, y, slop, a, d);
+        return a >= 0 && d >= 0 ? DividerHover.both : a >= 0 ? DividerHover.across
+            : d >= 0 ? DividerHover.down : DividerHover.none;
     }
 
     private Rect panelRect; // where the tree opens
@@ -875,10 +1001,17 @@ struct WorkspaceHost
             final switch (paneChrome)
             {
                 case PaneChrome.reveal:
+                    // Inset by the pane's padding, clear of the dividers on
+                    // its edges, so a press beside the toolbar still grabs
+                    // a divider and one on it is the toolbar's.
                     if (b.id == revealed)
+                    {
+                        const tcols = (b.outer.width - 2 * padX) / cellW;
                         toolbarLayer = place(paneToolbar(b.id, paneTitle(b.id), paneDetail(b.id),
-                            labels, theme.targetRows, cols), cols, rows, b.outer.x, b.outer.y,
+                            labels, theme.targetRows, tcols), tcols, rows,
+                            b.outer.x + (b.outer.width - tcols * cellW) / 2, b.outer.y + padTop,
                             cellW, cellH, Place.top);
+                    }
                     break;
                 case PaneChrome.header:
                     paneChromeLayers ~= place(paneHeader(paneTitle(b.id), paneDetail(b.id),
@@ -1060,14 +1193,36 @@ struct WorkspaceHost
 
         static Color rgb(RgbColor x) => Color(x.r, x.g, x.b, 255);
 
+        // The opener's band to the window's edges, and its rule — the extra
+        // keys' thickness — along the side that faces the panes.
+        const pill = usesPill(tabsOpener, phonePortrait);
+        DrawRectangle(openerRect.x, openerRect.y, openerRect.width, openerRect.height,
+            rgb(theme.slotFill(pill ? Slot.surfaceSunken : Slot.chrome)));
         paintLayer(h, openerLayer, theme);
+        const rule = rgb(theme.slotInk(Slot.border));
+        if (pill)
+            DrawRectangle(openerRect.x, openerRect.y + openerRect.height - ruleWidth,
+                openerRect.width, ruleWidth, rule);
+        else
+            DrawRectangle(openerRect.x + openerRect.width - ruleWidth, openerRect.y, ruleWidth,
+                openerRect.height, rule);
         auto canvas = h.canvas;
+        // Each pane's background fills its whole box, so its padding reads as
+        // part of the pane, not as a margin around it.
         foreach (ref b; boxes)
             if (auto tv = pool.byId(b.id))
+            {
+                DrawRectangle(b.outer.x, b.outer.y, b.outer.width, b.outer.height,
+                    rgb(tv.background));
                 tv.paintPanePx(h, b.content.x, b.content.y, b.content.width, b.content.height);
+            }
             else if (auto v = viewer(b.id))
+            {
+                DrawRectangle(b.outer.x, b.outer.y, b.outer.width, b.outer.height,
+                    rgb(viewerBg));
                 v.paint(canvas, b.content.x, b.content.y, b.content.width, b.content.height,
                     focused: b.focused);
+            }
         // A rule on each boundary, `ruleWidth` thick either way.
         foreach (i, ref d; dividerRects)
         {
@@ -1075,17 +1230,24 @@ struct WorkspaceHost
             DrawRectangle(r.x, r.y, r.width, r.height, rgb(divider));
         }
         // Where a dragged divider would land.
-        if (dragging >= 0)
+        void preview(ptrdiff_t i, int pos)
         {
-            const d = dividers[dragging];
+            if (i < 0)
+                return;
+            const d = dividers[i];
+            const r = dividerRects[i];
             const thick = ruleWidth * 2 + 1;
             if (d.axis == DockAxis.horizontal)
-                DrawRectangle(panesArea.x + dragPos * cellW - thick / 2,
-                    panesArea.y + d.rect.y * cellH, thick, d.rect.height * cellH, rgb(accent));
-            else
-                DrawRectangle(panesArea.x + d.rect.x * cellW,
-                    panesArea.y + dragPos * cellH - thick / 2, d.rect.width * cellW, thick,
+                DrawRectangle(panesArea.x + pos * cellW - thick / 2, r.y, thick, r.height,
                     rgb(accent));
+            else
+                DrawRectangle(r.x, panesArea.y + pos * cellH - thick / 2, r.width, thick,
+                    rgb(accent));
+        }
+        if (dragging >= 0)
+        {
+            preview(dragging, dragPos);
+            preview(draggingCross, dragCrossPos);
         }
         foreach (ref l; paneChromeLayers)
             paintLayer(h, l, theme);
@@ -1674,4 +1836,36 @@ import sparkles.input : KeyEvent;
     // The toast names the file, not its path; the log keeps the path.
     h.reportConfigWarnings(["config: /home/u/.config/sparkles-terminal/config.json: bad"]);
     assert(h.surfaces.toasts[2].text == "config.json: bad");
+}
+
+@("workspace_host.dividersNear.aJunctionTakesBoth")
+@safe pure nothrow unittest
+{
+    // ├ on the right half: a divider down the middle at x = 100, and one
+    // across the right half at y = 50.
+    DividerFrame down = {axis: DockAxis.horizontal};
+    DividerFrame across = {axis: DockAxis.vertical};
+    const DividerFrame[] ds = [down, across];
+    const Rect[] rects = [Rect(100, 0, 0, 100), Rect(100, 50, 100, 0)];
+    ptrdiff_t a, d;
+    WorkspaceHost.dividersNear(ds, rects, 103, 52, 8, a, d);
+    assert(a == 0 && d == 1, "at the junction: both, each along its own axis");
+    WorkspaceHost.dividersNear(ds, rects, 103, 20, 8, a, d);
+    assert(a == 0 && d == -1, "up the divider down the screen: that one only");
+    WorkspaceHost.dividersNear(ds, rects, 160, 47, 8, a, d);
+    assert(a == -1 && d == 1, "along the one across: that one only");
+    WorkspaceHost.dividersNear(ds, rects, 50, 50, 8, a, d);
+    assert(a == -1 && d == -1, "beside the junction, off both");
+}
+
+@("workspace_host.stretchToEdges.theLeftoverCellGoesToTheEdge")
+@safe pure nothrow @nogc unittest
+{
+    // A 103 × 47 area of 10 × 10 cells: the grid ends at 100 and 40.
+    const area = Rect(0, 0, 103, 47);
+    auto right = Rect(50, 0, 50, 40), inner = Rect(0, 0, 50, 20);
+    WorkspaceHost.stretchToEdges(right, 100, 40, area);
+    WorkspaceHost.stretchToEdges(inner, 100, 40, area);
+    assert(right == Rect(50, 0, 53, 47), "a pane at the corner reaches both edges");
+    assert(inner == Rect(0, 0, 50, 20), "one inside the grid keeps its box");
 }

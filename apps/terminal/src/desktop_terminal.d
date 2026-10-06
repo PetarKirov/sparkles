@@ -159,7 +159,8 @@ struct DesktopTerminal
         import raylib : GetScreenHeight, GetScreenWidth;
 
         host.paint(h, Rect(0, 0, GetScreenWidth(), GetScreenHeight()), divider, accent);
-        paintGuide(h, keys, context, h.size.width, h.size.height, 0, 0, chromeFg, chromeBg);
+        paintGuide(h, keys, context, h.size.width, h.size.height, 0, 0, chromeFg, chromeBg,
+            GetScreenWidth(), GetScreenHeight());
     }
 
     /// The chrome takes the scheme's foreground and background (D17).
