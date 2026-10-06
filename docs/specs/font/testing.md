@@ -44,9 +44,9 @@ listed in the ledger with the HarfBuzz or FreeType revision.
   `$SPARKLES_FONTS_PATH`, a derived-package variable set by the dev shell. Tests
   needing it **skip** when it is unset, and a gate that requires corpus evidence
   is unmet until a run with it set passes.
-- **Committed fixtures.** Planned small fonts and malformed byte sequences under
-  `libs/font/test/data/`, so the parser's unit tests run with no environment. This
-  path is a delivery target, not an existing fixture directory.
+- **Committed fixtures.** Small fonts and malformed byte sequences built by a
+  test-only byte builder, `libs/font/test/sparkles/font/fixtures.d`, so the
+  parser's unit tests run with no environment.
 - **System fonts** are never a test input: they differ between machines.
 
 The publication corpus must add at least one real OpenType math face (a candidate
@@ -366,19 +366,30 @@ checked, on the configuration that ran them.
 
 ## Evidence ledger
 
-No requirement has evidence. Entries are added here as milestones land, each
-naming requirement IDs, source revision, command, configuration and remaining
-gap, per the [spec guideline](../../guidelines/spec-docs.md#keep-evidence-scoped-and-honest).
+Entries are added here as milestones land, each naming requirement IDs, source
+revision, command, configuration and remaining gap, per the
+[spec guideline](../../guidelines/spec-docs.md#keep-evidence-scoped-and-honest).
+The M1 rows below come from the M1 series of 2026-10-06 (`libs/font`,
+`libs/font-oracle`), run on Linux x86_64 with LDC 1.42 and DMD, with
+`$SPARKLES_FONTS_PATH` set to the `sparkles-fonts` bundle of that revision
+(180 outline faces).
 
-The 2026-10-04 text-foundation extensions are planned/unverified. `libs/font` is
-absent; no listed test command or proposed API in this page is claimed to exist
-or to have run for `FTA15`–`FTA16`, `FTP13`, `FTM6`–`FTM7`, `FTS7`–`FTS11` or
-`FTD7`. Existing research measurements do not certify these requirements. The
+The 2026-10-04 text-foundation extensions are planned/unverified: no listed test
+command or proposed API in this page is claimed to exist or to have run for
+`FTA16`, `FTP13`, `FTM6`–`FTM7`, `FTS7`–`FTS11` or `FTD7`. Existing research
+measurements do not certify these requirements. The
 real-math/vertical/caret/JSTF corpus manifests and compatible engine profile are
 acceptance prerequisites still to acquire.
 
-| Requirement | Revision | Command | Result | Gap |
-| ----------- | -------- | ------- | ------ | --- |
+| Requirement                                        | Revision  | Command                                                                                                    | Result                                                                                                                                                                                                                                                     | Gap                                                                                                                             |
+| -------------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `FTP1`–`FTP5`, `FTP14`–`FTP22`, `FTP33`, `FTI5`    | M1 series | `dub test :font` (`face_test`)                                                                             | pass: the 422-byte trace, exact-end and one-byte-short, local `badOffset`, signatures, required tables, the 4,096-record limit, offset overflow, duplicate tags, a two-face collection, checksums                                                          | The bundle has no collection file; collections are covered by the committed fixture only.                                       |
+| `FTP7`, `FTP12`, `FTP23`, `FTP24`, `FTP32`, `FTI1` | M1 series | `dub test :font` (`tables_test`)                                                                           | pass: every view and version length, `hmtx` leniency, spacing; on the bundle Maple Mono NF CN is `dual`, DejaVu Sans Mono `mono`, Noto Sans `proportional`                                                                                                 | No test walks the views with `sparkles:reflection` (`FTI1`).                                                                    |
+| `FTP9`, `FTP10`, `FTP25`–`FTP27`                   | M1 series | `dub test :font` (`cmap_test`); `dub test :font-oracle`                                                    | pass: every format, choice and fallback, symbol and Mac Roman lookups, effective spans, counters, format 14; `ranges()` equals `glyph()` over all of Unicode on five bundled faces; every codepoint either side maps agrees with HarfBuzz on all 180 faces | Overlapping format-4 segments do not occur in the bundle; they are covered by fixtures only.                                    |
+| `FTP8`, `FTP28`, `FTP29`, `FTA15`                  | M1 series | `dub test :font` (`names_test`); `dub test :font-oracle`                                                   | pass: UTF-16BE through base's adapter, including the surrogate trace; Mac Roman and its excluded variants; every name HarfBuzz decodes on all 180 faces matches a record                                                                                   | —                                                                                                                               |
+| `FTP11`, `FTP30`, `FTP31`                          | M1 series | `dub test :font` (`glyph_names_test`); `dub test :font-oracle`                                             | pass: `post` 1.0, 2.0, 2.5, 3.0, `CFF` charsets 0–2 and predefined, CID-keyed; the index equals direct lookup for every glyph; every glyph HarfBuzz names on all 180 faces has the same name                                                               | The oracle found `post` 2.0 indices above 32,767 in Maple Mono NF CN; `FTP30` was corrected to accept them.                     |
+| `FTB1`–`FTB3`, `FTA9`–`FTA11`                      | M1 series | `dub test :font` (`hostile_test`); the same with `DFLAGS="-fsanitize=address --enable-stackovf-sanitizer"` | pass: 1,600 mutants of four fixtures and 120 of three bundled faces through every public read, in the debug build and under AddressSanitizer, with no assertion or report                                                                                  | Outline and colour limits of `FTB3` belong to M3 and M6.                                                                        |
+| `FTA1`, `FTA2`, `FTA6`, `FTA7`                     | M1 series | `dub build :font`; `dub test :font` with LDC and DMD                                                       | pass: the library configuration builds with no C library; all public reads are `@safe` under `-preview=dip1000`                                                                                                                                            | The Android build of the `library` configuration is not yet run (`FTA7`); concurrent reads of one face are not tested (`FTA2`). |
 
 <!-- References -->
 
