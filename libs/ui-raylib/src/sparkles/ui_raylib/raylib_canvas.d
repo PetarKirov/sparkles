@@ -563,10 +563,14 @@ struct RaylibCanvas
         const v = narrowed(visual);
         const step = cast(size_t) uiStepOf(v.fontRole, v.typeStep, v.fontScale);
         const bold = (v.styleBits & TextAttr.bold.bits) != 0;
-        // The glyph box centred in the rows the run was given.
+        // The glyph box centred in the rows the run was given, and the run
+        // placed across its cells as its widget aligns it.
+        const mono = v.fontRole == FontRole.uiMono;
         const dy = uiCentreOffset(uiFonts.size(step), r.height, cellH);
-        uiFonts.draw(step, bold, projected(text), px(r.x), py(r.y) + dy, rlFg(v),
-            mono: v.fontRole == FontRole.uiMono);
+        const dx = alignOffsetPx(v.textAlign, r.width * cellW,
+            uiFonts.width(step, bold, projected(text), mono));
+        uiFonts.draw(step, bold, projected(text), px(r.x) + dx, py(r.y) + dy, rlFg(v),
+            mono: mono);
     }
 
     /// `v` with its corner radius and shadow in device pixels: they are CSS px
@@ -897,6 +901,25 @@ struct GuiMeasure
     private bool usesUiFace(in UiTextStyle style) const @safe pure nothrow @nogc
         => uiStepOf(style.fontRole, style.typeStep, style.fontScale) >= 0
             && uiFonts !is null && uiFonts.present;
+}
+
+/// How far into a `rectPx`-wide rect a `runPx`-wide run starts, aligned
+/// `align` (0 start, 1 centre, 2 end); never before the rect's start.
+float alignOffsetPx(ubyte align_, int rectPx, float runPx) @safe pure nothrow @nogc
+{
+    const slack = rectPx - runPx;
+    if (slack <= 0 || align_ == 0)
+        return 0;
+    return cast(float) cast(int)(align_ == 1 ? slack / 2 : slack);
+}
+
+@("uiRaylib.alignOffsetPx")
+@safe pure nothrow @nogc unittest
+{
+    assert(alignOffsetPx(0, 100, 60) == 0, "start");
+    assert(alignOffsetPx(1, 100, 60) == 20, "centre, on a whole pixel");
+    assert(alignOffsetPx(2, 100, 60) == 40, "end");
+    assert(alignOffsetPx(1, 50, 60) == 0, "a run wider than its rect starts at it");
 }
 
 /**

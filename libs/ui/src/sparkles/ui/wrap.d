@@ -446,6 +446,7 @@ if (is(typeof(measure("")) : int) || is(typeof(measure("", TextStyle.init)) : in
 
     TextSpan[][] lines;
     TextSpan[] cur;
+    int[] curWs; // each slice of `cur` measured whole
     int curW;
     size_t lastSpan = size_t.max; // the span cur's last slice came from
     size_t pendingGlue = size_t.max; // index into frags of glue awaiting content
@@ -463,6 +464,11 @@ if (is(typeof(measure("")) : int) || is(typeof(measure("", TextStyle.init)) : in
             && isContiguous(cur[$ - 1].text, f.text))
         {
             cur[$ - 1].text = joinSlices(cur[$ - 1].text, f.text);
+            // Measured whole: a proportional measurer rounds each run up
+            // to whole cells, so adding up fragments would overstate it.
+            const whole = widthOf(f.span, cur[$ - 1].text);
+            curW += whole - curWs[$ - 1];
+            curWs[$ - 1] = whole;
             // The joined slice covers more source: extend the identity too
             // (contiguous slices ⇒ end = start + length).
             if (cur[$ - 1].srcStart != size_t.max)
@@ -484,15 +490,17 @@ if (is(typeof(measure("")) : int) || is(typeof(measure("", TextStyle.init)) : in
             }
             s.text = f.text;
             cur ~= s;
+            curWs ~= w;
+            curW += w;
         }
         lastSpan = f.span;
-        curW += w;
     }
 
     void flush()
     {
         lines ~= cur;
         cur = null;
+        curWs = null;
         curW = 0;
         lastSpan = size_t.max;
         pendingGlue = size_t.max;
@@ -526,7 +534,28 @@ if (is(typeof(measure("")) : int) || is(typeof(measure("", TextStyle.init)) : in
         const glueW = pendingGlue != size_t.max
             ? widthOf(frags[pendingGlue].span, frags[pendingGlue].text) : 0;
         const limit = lines.length == 0 ? width : contWidth;
-        if (cur.length && curW + glueW + tokenW > limit)
+        // The line with the glue and the token on it, measured whole where they
+        // continue the line's last run (prose: a paragraph is one run).
+        int candidate = curW + glueW + tokenW;
+        if (cur.length && pendingGlue != size_t.max && frags[pendingGlue].span == lastSpan)
+        {
+            const(char)[] joined = cur[$ - 1].text;
+            bool same = isContiguous(joined, frags[pendingGlue].text);
+            if (same)
+                joined = joinSlices(joined, frags[pendingGlue].text);
+            foreach (k; i .. j)
+            {
+                if (!same || frags[k].span != lastSpan || !isContiguous(joined, frags[k].text))
+                {
+                    same = false;
+                    break;
+                }
+                joined = joinSlices(joined, frags[k].text);
+            }
+            if (same)
+                candidate = curW - curWs[$ - 1] + widthOf(lastSpan, joined);
+        }
+        if (cur.length && candidate > limit)
             flush(); // the pending glue is consumed by the break
         else if (pendingGlue != size_t.max && cur.length)
             append(pendingGlue);
@@ -644,4 +673,15 @@ private const(char)[] joinSlices(return scope const(char)[] a,
     const lines = wrapSpans(spans, 80, &cols2);
     assert(lines.length == 2);
     assert(lines[0][0].text == "one" && lines[1][0].text == "two three");
+}
+
+@("ui.wrap.spans.measuresTheRunWhole")
+@safe pure nothrow unittest
+{
+    // As `ui.wrap.greedy.measuresTheWholeLine`, for a styled run: 0.7 of a
+    // cell a character, rounded up per measurement.
+    static int narrow(const(char)[] s) => cast(int)((s.length * 7 + 9) / 10);
+    const one = [TextSpan(text: "ab ab ab")];
+    assert(wrapSpans(one, 6, &narrow).length == 1, "5.6 cells fit in 6");
+    assert(wrapSpans(one, 5, &narrow).length == 2);
 }

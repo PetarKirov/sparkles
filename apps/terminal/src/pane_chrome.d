@@ -23,7 +23,7 @@ import sparkles.ui.geometry : Insets, Rect, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
-import chrome : button, label, row;
+import chrome : button, label, row, uiLabel;
 import settings : ButtonLabels, PaneChrome;
 
 /// One pane's place on screen, in pixels: all of it, and its content.
@@ -45,7 +45,7 @@ The boxes of the panes in `f` (cells within `area`, a pixel rect) under
 lines clear of the text.
 */
 PaneBox[] paneBoxes(in DockFrames f, in Rect area, int cw, int ch, PaneChrome mode,
-    PaneId focused) @safe pure nothrow
+    PaneId focused, int padX = 0, int padTop = 0) @safe pure nothrow
 {
     PaneBox[] boxes;
     foreach (ref p; f.panes)
@@ -59,9 +59,12 @@ PaneBox[] paneBoxes(in DockFrames f, in Rect area, int cw, int ch, PaneChrome mo
         final switch (mode)
         {
             case PaneChrome.reveal:
+                b.content = Rect(b.outer.x + padX, b.outer.y + padTop,
+                    b.outer.width - 2 * padX, b.outer.height - padTop);
                 break;
             case PaneChrome.header:
-                b.content = Rect(b.outer.x, b.outer.y + ch, b.outer.width, b.outer.height - ch);
+                b.content = Rect(b.outer.x + padX, b.outer.y + ch,
+                    b.outer.width - 2 * padX, b.outer.height - ch);
                 break;
             case PaneChrome.framed:
                 const pad = cw / 2 > 3 ? cw / 2 : 4;
@@ -71,6 +74,10 @@ PaneBox[] paneBoxes(in DockFrames f, in Rect area, int cw, int ch, PaneChrome mo
         }
         b.cols = b.content.width / cw > 0 ? b.content.width / cw : 1;
         b.rows = b.content.height / ch > 0 ? b.content.height / ch : 1;
+        // The part of a cell left over across goes half to each side.
+        const spare = b.content.width - b.cols * cw;
+        if (spare > 0)
+            b.content = Rect(b.content.x + spare / 2, b.content.y, b.cols * cw, b.content.height);
         boxes ~= b;
     }
     return boxes;
@@ -91,7 +98,7 @@ WidgetTree paneHeader(string title, string detail, bool focused, int cols) @safe
 {
     Builder b;
     uint[] parts = [label(b, focused ? "▍" : "│", Slot.accentPrimary),
-        keepTitle(b, label(b, title, focused ? Slot.textPrimary : Slot.muted, bold: focused))];
+        keepTitle(b, uiLabel(b, title, focused ? Slot.textPrimary : Slot.muted, bold: focused))];
     if (detail.length)
         parts ~= label(b, detail, Slot.muted);
     return b.finish(b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1,
@@ -111,7 +118,7 @@ WidgetTree paneFrame(string title, bool focused, int cols, int rows) @safe
             borderWidth: focused ? Insets(2, 2, 2, 2) : Insets(1, 1, 1, 1),
             borderSlot: focused ? Slot.accentPrimary : Slot.border, borderRadius: 6)));
     const name = b.add(Widget(kind: WidgetKind.row,
-        children: [label(b, " " ~ title ~ " ", focused ? Slot.accentPrimary : Slot.muted,
+        children: [uiLabel(b, " " ~ title ~ " ", focused ? Slot.accentPrimary : Slot.muted,
             bold: focused)],
         padding: Insets(0, 0, 0, 1), slot: Slot.surfaceBase, paintBackground: true));
     const nameRow = b.add(Widget(kind: WidgetKind.row, children: [name],
@@ -143,7 +150,7 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
     // phone) shows their icons, so Close stays on screen.
     if (labels != ButtonLabels.icon && cols < 40)
         labels = ButtonLabels.icon;
-    uint[] name = [keepTitle(b, label(b, title, Slot.textPrimary, bold: true))];
+    uint[] name = [keepTitle(b, uiLabel(b, title, Slot.textPrimary, bold: true))];
     if (detail.length)
         name ~= label(b, detail, Slot.muted);
     const titleRow = b.add(Widget(kind: WidgetKind.row, children: name, gap: 1,
@@ -180,6 +187,21 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
 
     const framed = paneBoxes(f, area, 10, 20, PaneChrome.framed, 2);
     assert(framed[0].content.x == 48 + 5 && framed[0].cols == 39 && framed[0].rows == 18);
+}
+
+@("pane_chrome.paneBoxes.paddingKeepsTextOffTheEdges")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.components.dock : PaneFrame;
+
+    // Two panes edge to edge (no divider cells); 10 × 20 px cells; 8 px
+    // across and 4 px at the top. 40 cells are 400 px; less 16 px of padding
+    // that is 38 whole cells and 4 px over, 2 px of it on each side.
+    DockFrames f;
+    f.panes = [PaneFrame(1, Rect(0, 0, 40, 20)), PaneFrame(2, Rect(40, 0, 40, 20))];
+    const b = paneBoxes(f, Rect(0, 0, 800, 400), 10, 20, PaneChrome.reveal, 1, 8, 4);
+    assert(b[0].content == Rect(10, 4, 380, 396) && b[0].cols == 38 && b[0].rows == 19);
+    assert(b[1].content.x == 410, "the second pane pads from the shared boundary too");
 }
 
 @("pane_chrome.paneToolbar.hitsNameThePaneAndAction")

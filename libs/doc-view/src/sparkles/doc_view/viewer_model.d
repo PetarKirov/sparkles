@@ -34,14 +34,14 @@ import sparkles.twoslash.render_widgets : viewTwoslashDocumentInto;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect;
-import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.layout : DelegateMeasure, Frame, layout;
 import sparkles.ui.components.scroll_view : ScrollView;
 import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, documentRows, ElementStore,
     HoverTarget, hoverTargets, KeyedRect, keyedRects, selectionRects,
     sourceOffsetAt;
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_color : Color;
-import sparkles.ui.style : defaultTwoslashPalette, Palette,
+import sparkles.ui.style : defaultTwoslashPalette, FontRole, Palette,
     schemeForBackground, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, WidgetKind, WidgetTree;
 
@@ -251,6 +251,11 @@ struct ViewerModel
     int tabWidth = 4;               /// tab stops in the raw view (--tab-width)
     bool listWhitespace;            /// vim `list` (--list-whitespace)
     bool codeLineNumbers = true;    /// in-panel fence numbers ('c' toggles)
+    /// The host's text measurer: a GUI host's lays interface-face runs out at
+    /// their real widths (`GLY10`); none measures in cells.
+    DelegateMeasure measure;
+    /// The face the preview's prose reads in (`MdViewOptions.proseRole`).
+    FontRole proseRole = FontRole.inherit;
     /// `--code-overflow`: long fence lines scroll behind a per-fence
     /// viewport (default) or wrap in-panel.
     OverflowPolicy codeOverflow;
@@ -525,7 +530,7 @@ struct ViewerModel
         b.nodes[docRoot].scrollsX = true;
         auto pass1 = b.finish(docRoot);
         const rows1 = documentRows(pass1,
-            layout(pass1, Constraints(maxW: widthCols - chrome)));
+            layout(pass1, Constraints(maxW: widthCols - chrome), measure));
         if (channels.length == 0)
             return pass1;
         fillChannels(channels, rows1);
@@ -1070,8 +1075,8 @@ struct ViewerModel
                 diffSession, diffTypes, widthCols);
             // Scrolled sideways by this model, like every document (`LAY16`).
             tree.nodes[tree.root].scrollsX = true;
-            frames = layout(tree, Constraints(maxW: widthCols));
-            ops = buildDisplayList(tree, frames, palette, pageFg, pageBg);
+            frames = layout(tree, Constraints(maxW: widthCols), measure);
+            ops = buildDisplayList(tree, frames, palette, pageFg, pageBg, measure);
             derive(withTargets: false);
             // `DVG1`: the file containers are keyed, so their laid-out rows
             // are a lookup rather than a re-walk of the tree.
@@ -1100,7 +1105,7 @@ struct ViewerModel
                 CodeViewOptions(
                     tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
             tree = gutter(b, docRoot);
-            frames = layout(tree, Constraints(maxW: widthCols));
+            frames = layout(tree, Constraints(maxW: widthCols), measure);
             ops = buildDisplayList(tree, frames,
                 defaultTwoslashPalette(schemeForBackground(pageBg)),
                 pageFg, pageBg);
@@ -1145,9 +1150,9 @@ struct ViewerModel
                     inlineFoldMarker: inlineFoldMarker,
                     tintedRanges: hasCoverage ? coverageTintedRanges(coverage) : null));
             tree = gutter(b, docRoot);
-            frames = layout(tree, Constraints(maxW: widthCols));
+            frames = layout(tree, Constraints(maxW: widthCols), measure);
             ops = buildDisplayList(tree, frames,
-                palette, pageFg, pageBg);
+                palette, pageFg, pageBg, measure);
             derive(withTargets: foldable.length != 0);
             cells = null;
             fences.length = 0;
@@ -1171,6 +1176,7 @@ struct ViewerModel
             foldHitBase: foldHitBase,
             inlineFoldMarker: inlineFoldMarker,
             codeLineNumbers: codeLineNumbers,
+            proseRole: proseRole,
             codeOverflow: codeOverflow,
             codeMaxLines: resolvedCodeMaxLines(),
             fenceScrolls: fenceScrollList(),
@@ -1207,9 +1213,9 @@ struct ViewerModel
         alias mb = arena_;
         const mdRoot = viewMarkdownInto(mb, preview.doc, opt);
         tree = gutter(mb, mdRoot);
-        frames = layout(tree, Constraints(maxW: widthCols));
+        frames = layout(tree, Constraints(maxW: widthCols), measure);
         ops = buildDisplayList(tree, frames,
-            palette, pageFg, pageBg);
+            palette, pageFg, pageBg, measure);
         derive(withTargets: true);
         cells = keyedRects(tree, frames);
         collectStructure();

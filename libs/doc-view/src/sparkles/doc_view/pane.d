@@ -31,6 +31,7 @@ import sparkles.ui.style : ColorScheme, schemeForBackground, Slot, Visual;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.themes : builtinDark, builtinLight;
 import sparkles.ui_raylib : RaylibCanvas;
+import sparkles.ui_raylib.raylib_canvas : GuiMeasure;
 
 import sparkles.doc_view.document : DocumentPipeline;
 import sparkles.doc_view.kind : ViewKind, viewKindOf;
@@ -100,6 +101,9 @@ struct DocViewPane
 {
     /// The document's model (null-document while `error` is set).
     ViewerModel vm;
+    // The host's measurer the model lays out with, once a GUI host paints it.
+    private GuiMeasure guiMeasure;
+    private bool measured;
     /// The path the pane shows (restore re-opens it, `TDV5`).
     string path;
     /// The file name, for the pane's title.
@@ -529,6 +533,25 @@ struct DocViewPane
         auto c = RaylibCanvas(host.fonts, &buf, cw, ch, px, py);
         c.fx = host.fx;
         c.images = host.images;
+        // The host's interface faces, density and capabilities: prose set in
+        // `FontRole.ui`
+        // (`MdViewOptions.proseRole`) draws in the faces, radii scale with the screen.
+        c.uiFonts = host.uiFonts;
+        c.density = host.density;
+        c.capabilities = host.capabilities;
+        // The model lays out in the faces that draw it (`GLY10`): a prose run
+        // in the interface face is as wide as it draws, not as its cells.
+        guiMeasure = GuiMeasure(host.capabilities.proportionalText ? host.uiFonts : null, cw, ch);
+        if (!measured && host.capabilities.proportionalText && host.uiFonts !is null)
+        {
+            import sparkles.ui.style : UiStyle = TextStyle;
+
+            vm.measure.styledWidth = (scope const(char)[] t, in UiStyle st) @safe
+                => guiMeasure.width(t, st);
+            vm.measure.styledRows = (in UiStyle st) @safe => guiMeasure.rows(st);
+            measured = true;
+            vm.rebuild();
+        }
         c.fillPixels(px, py, pw, ph, vm.pageBg);
         if (cols < 4 || rows < 2)
             return;

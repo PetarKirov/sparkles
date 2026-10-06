@@ -48,6 +48,9 @@ struct SurfaceContext
     /// The panel takes all of `panelArea`'s height — the tree slid out beside
     /// the rail (mockup E) — rather than floating below the pill.
     bool panelFull;
+    /// Where a `page` goes: the whole workspace, the tab pill or rail included
+    /// — a page is full screen, as the page mockups draw it (D49). Empty: `area`.
+    Rect pageArea;
 }
 
 /// Where a surface goes.
@@ -128,6 +131,9 @@ struct Surfaces
     /// Whether a surface owns the keyboard.
     bool modal() const @safe pure nothrow @nogc => stack.length != 0;
 
+    /// Whether the top surface is a full-screen page (D49).
+    bool pageShown() const @safe => stack.length && stack[$ - 1].placement == Placement.page;
+
     /// Shows `s` on top.
     void push(Surface s) @safe pure nothrow
     {
@@ -185,7 +191,7 @@ struct Surfaces
         {
             import chrome : band;
             import sparkles.ui.geometry : SizeSpec;
-            import sparkles.ui.style : Slot;
+            import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
             import sparkles.ui.widget : Builder, Widget, WidgetKind;
             import sparkles.ui.wrap : TextWrap;
 
@@ -198,7 +204,8 @@ struct Surfaces
             uint[] lines;
             foreach (ref t; toasts)
                 lines ~= b.add(Widget(kind: WidgetKind.text, text: t.text,
-                    slot: Slot.textPrimary, wrap: TextWrap.greedy, width: width));
+                    slot: Slot.textPrimary, wrap: TextWrap.greedy, width: width,
+                    textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body)));
             toastLayer = .place(b.finish(band(b, lines, fullWidth: false)), cols,
                 ctx.area.height / ctx.cellH, ctx.area.x + ctx.cellW, ctx.area.y,
                 ctx.cellW, ctx.cellH, Place.top);
@@ -229,8 +236,9 @@ struct Surfaces
         if (top.contains(x, y))
         {
             const id = top.hitAt(x, y);
-            if (id && stack[$ - 1].activate(id))
-                pop();
+            auto hit = stack[$ - 1];
+            if (id && hit.activate(id))
+                remove(hit);
             return true;
         }
         stack[$ - 1].cancel();
@@ -241,8 +249,11 @@ struct Surfaces
     /// Enter on the top surface.
     void confirm() @system
     {
-        if (stack.length && stack[$ - 1].confirm())
-            pop();
+        if (!stack.length)
+            return;
+        auto top = stack[$ - 1];
+        if (top.confirm())
+            remove(top);
     }
 
     /// A key nothing bound, to the top surface; true when it used it.
@@ -283,6 +294,22 @@ struct Surfaces
         pop();
     }
 
+    // Removes `s`, wherever it now is: an action may push a surface of its
+    // own (Paste raises the paste guard) before the one it ran on closes, and
+    // popping the top would close the new one instead.
+    private void remove(Surface s) @safe pure nothrow
+    {
+        foreach_reverse (i, t; stack)
+            if (t is s)
+            {
+                stack = stack[0 .. i] ~ stack[i + 1 .. $];
+                if (layers.length > i)
+                    layers = layers[0 .. i] ~ layers[i + 1 .. $];
+                changed = true;
+                return;
+            }
+    }
+
     private void pop() @safe pure nothrow
     {
         stack = stack[0 .. $ - 1];
@@ -316,11 +343,17 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
     final switch (s.placement)
     {
         case Placement.page:
-            auto page = place(s.build(ctx, capped), capped, rows, x, ctx.area.y,
-                ctx.cellW, ctx.cellH, Place.top);
-            page.opaque = true; // the panes under it do not show through
-            page.backdrop = ctx.area;
+        {
+            // Full screen: the pill or the rail is covered too (D49).
+            const pa = ctx.pageArea.width > 0 ? ctx.pageArea : ctx.area;
+            const pcols = pa.width / ctx.cellW, prows = pa.height / ctx.cellH;
+            const pcap = pcols > maxSurfaceCols ? maxSurfaceCols : pcols;
+            auto page = place(s.build(ctx, pcap), pcap, prows,
+                pa.x + (pcols - pcap) / 2 * ctx.cellW, pa.y, ctx.cellW, ctx.cellH, Place.top);
+            page.opaque = true; // the panes and the opener do not show through
+            page.backdrop = pa;
             return page;
+        }
         case Placement.panel:
             const pc = ctx.panelArea.width / ctx.cellW, pr = ctx.panelArea.height / ctx.cellH;
             return place(s.build(ctx, pc), pc, pr, ctx.panelArea.x, ctx.panelArea.y, ctx.cellW,
@@ -382,6 +415,8 @@ version (unittest)
         bool cancelled, confirmed;
         size_t activated;
         int builtCols; // the width `build` was given
+        Surfaces* host;     // where `activate` pushes `next`
+        Surface next;
 
         this(Placement where, int lines) @safe pure nothrow
         {
@@ -404,7 +439,13 @@ version (unittest)
         }
 
         Placement placement() const @safe => where;
-        bool activate(size_t id) @system { activated = id; return true; }
+        bool activate(size_t id) @system
+        {
+            activated = id;
+            if (next !is null)
+                host.push(next);
+            return true;
+        }
         bool confirm() @system { confirmed = true; return true; }
         void cancel() @system { cancelled = true; }
         bool key(in KeyEvent k) @system { return false; }
@@ -466,6 +507,37 @@ version (unittest)
     s.push(c);
     s.confirm();
     assert(c.confirmed && !s.modal);
+}
+
+@("surfaces.placeOne.aPageIsFullScreen")
+@safe unittest
+{
+    // The panes sit under a 3-row pill band; a page takes the band too, a
+    // sheet stays in the panes' area (D49).
+    SurfaceContext ctx = {area: Rect(0, 60, 400, 600), pageArea: Rect(0, 0, 400, 660),
+        cellW: 10, cellH: 20};
+    const page = placeOne(new Probe(Placement.page, 3), ctx);
+    assert(page.y == 0 && page.backdrop == Rect(0, 0, 400, 660));
+    const sheet = placeOne(new Probe(Placement.sheet, 2), ctx);
+    assert(sheet.y + sheet.bounds.height * 20 == 660 && sheet.y > 60);
+}
+
+@("surfaces.Surfaces.anActionThatPushesKeepsWhatItPushed")
+@system unittest
+{
+    // Paste in the selection menu raises the paste guard before the menu
+    // closes: closing the menu must not close the guard.
+    SurfaceContext ctx = {area: Rect(0, 0, 800, 480), cellW: 10, cellH: 20};
+    Surfaces s;
+    auto menu = new Probe(Placement.sheet, 2);
+    auto guard = new Probe(Placement.sheet, 2);
+    menu.host = &s;
+    menu.next = guard;
+    s.push(menu);
+    s.place(ctx);
+    assert(s.tap(15, 470));
+    assert(menu.activated == 42);
+    assert(s.stack.length == 1 && s.stack[0] is guard, "the guard is up, the menu gone");
 }
 
 @("surfaces.Surfaces.toastsExpire")

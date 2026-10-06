@@ -407,6 +407,19 @@ struct OpenConfig
     bool intercept = true;
 }
 
+/// ditto
+@WireSection
+struct ViewerConfig
+{
+    @Description("Number the document's lines in the viewer.")
+    @Label("line numbers")
+    bool lineNumbers = false;
+
+    @Description("Number the lines of its code blocks.")
+    @Label("code line numbers")
+    bool codeLineNumbers = false;
+}
+
 /// The whole configuration (`TCF1`). `TerminalConfig.init` is the defaults
 /// layer.
 struct TerminalConfig
@@ -431,6 +444,8 @@ struct TerminalConfig
     UiConfig ui;
     @Label("opening files") @Section("Opening files")
     OpenConfig open;
+    @Section("Viewer")
+    ViewerConfig viewer;
     /// The binding overlay: context → chord path → command, `null` unbinding
     /// (`TKM8`). Contexts are `overlay` and `pane`; `leader` spells the leader.
     @Description("Key bindings over the defaults: context, chord path, command or null.")

@@ -264,7 +264,7 @@ uint chip(ref Builder b, string label, bool on, size_t hitId, int rows = 1) @saf
     // On: the selection's fill under primary text — accent-coloured text on
     // a grey mix read poorly on the tablet.
     const text = b.add(Widget(kind: WidgetKind.text, text: (on ? "✓ " : "○ ") ~ label,
-        slot: Slot.textPrimary,
+        slot: Slot.textPrimary, alignX: Alignment.center, width: SizeSpec.grow(),
         textStyle: TextStyle(bold: on, fontRole: FontRole.ui, typeStep: TypeStep.label)));
     return b.add(Widget(
         kind: WidgetKind.panel,

@@ -99,6 +99,11 @@ struct DroidTerminal
     private bool guideWasShown;
     private int defaultFontPx;
     private Latch latch;
+    // The row key under a finger, from its press to its release: drawn pressed,
+    // fired on release over the same key; a modifier engages on the press.
+    private ptrdiff_t pressedRow = -1, pressedCol = -1;
+    private bool rowContact;             // the raw contact was down last frame
+    private int rowLastX, rowLastY;      // where it last was
     private bool keyboardShown;
     private float pinchBase = 0; // the font size a pinch started from
     private Geometry lastGeometry;
@@ -142,6 +147,11 @@ struct DroidTerminal
             // Buttons are touch targets: 48 dp, in whole rows (`TOK7`).
             host.theme.targetRows = (dpToPx(48) + cellH - 1) / cellH;
             host.cornerPx = dpToPx(16);
+            // Text clear of the screen's edges and the dividers; dividers a
+            // 1 dp rule, the same across as down (`TSS12`).
+            host.padX = dpToPx(8);
+            host.padTop = dpToPx(4);
+            host.ruleWidth = dpToPx(1) > 1 ? dpToPx(1) : 1;
             host.cornerThickPx = dpToPx(3);
         }
         if (defaultFontPx == 0) // the first frame
@@ -211,6 +221,7 @@ struct DroidTerminal
 
             const n = GetTouchPointCount();
             const p = n > 0 ? GetTouchPosition(0) : typeof(GetTouchPosition(0)).init;
+            pollKeyRow(h, g, n > 0, cast(int) p.x, cast(int) p.y);
             if (host.touchDivider(cast(int) p.x, cast(int) p.y, n == 1, dpToPx(16)))
                 dividerGesture = true;
             else if (n > 0 && !host.draggingDivider && !dividerGestureHeld)
@@ -290,7 +301,7 @@ struct DroidTerminal
         chip.paint(h, host.theme);
         host.paintSurfaces(h);
         paintGuide(h, router, context, g.paneCols, g.paneRows, 0, g.top, chromeFg, chromeBg);
-        paintKeys(g);
+        paintKeys(h, g);
     }
 
     /**
@@ -334,6 +345,8 @@ struct DroidTerminal
         host.notificationsConfig = config.effective.notifications;
         host.tabsOpener = config.effective.ui.tabsOpener;
         host.paneChrome = config.effective.ui.paneChrome;
+        host.viewerLineNumbers = config.effective.viewer.lineNumbers;
+        host.viewerCodeLineNumbers = config.effective.viewer.codeLineNumbers;
         host.linkTap = config.effective.links.tap;
         host.linkLongPress = config.effective.links.longPress;
         host.linkSchemes = config.effective.links.schemes.dup;
@@ -594,16 +607,26 @@ struct DroidTerminal
         keyboardShown = !keyboardShown;
     }
 
-    private void paintKeys(in Geometry g)
+    /// The row (mockups E, K3): the chrome's band with a rule along its top;
+    /// a key under a finger tinted, a latched modifier filled with the accent;
+    /// labels centred in the cell font at the label step (`uiMono`).
+    private void paintKeys(H)(ref H h, in Geometry g)
     {
         import raylib : Color, DrawRectangle;
-        import sparkles.raylib_text.draw : drawText;
-        import sparkles.raylib_text.style : TextStyle;
-        import std.utf : count;
+        import sparkles.ui.geometry : Rect;
+        import sparkles.ui.style : FontRole, resolveSlot, Slot, TypeStep, Visual;
 
-        if (keys.length == 0 || g.keysHeight == 0 || fonts is null)
+        if (keys.length == 0 || g.keysHeight == 0)
             return;
-        DrawRectangle(0, g.keysTop, g.width, g.keysHeight, Color(0x24, 0x27, 0x3a, 255));
+        const t = host.theme;
+        static Color rgb(RgbColor c) => Color(c.r, c.g, c.b, 255);
+        RgbColor fill(Slot s) { const v = resolveSlot(t.palette, s, t.fg, t.bg); return v.hasBg ? v.bg : t.bg; }
+        const band = fill(Slot.surfaceSunken), pressed = fill(Slot.surfaceRaised), on = fill(Slot.controlOn);
+        const onText = resolveSlot(t.palette, Slot.controlOn, t.fg, t.bg).fg;
+        const rule = resolveSlot(t.palette, Slot.border, t.fg, t.bg).fg;
+        DrawRectangle(0, g.keysTop, g.width, g.keysHeight, rgb(band));
+        DrawRectangle(0, g.keysTop, g.width, host.ruleWidth, rgb(rule));
+        auto c = h.canvas;
         foreach (r, row; keys)
         {
             if (row.length == 0)
@@ -614,16 +637,88 @@ struct DroidTerminal
                 const x0 = cast(int)(i * g.width / row.length);
                 const x1 = cast(int)((i + 1) * g.width / row.length);
                 const lit = key.kind == ExtraKeyKind.modifier && latch.isOn(key.key);
-                if (lit)
-                    DrawRectangle(x0 + 2, y + 2, x1 - x0 - 4, g.keyHeight - 4,
-                        Color(0x8a, 0xad, 0xf4, 255));
-                const cols = cast(int) count(key.label);
-                const tx = x0 + (x1 - x0 - cols * cellW) / 2;
-                const ty = y + (g.keyHeight - cellH) / 2;
-                drawText(*fonts, key.label, tx, ty, TextStyle.init,
-                    lit ? RgbColor(0x1e, 0x20, 0x30) : RgbColor(0xca, 0xd3, 0xf5));
+                const down = r == pressedRow && i == pressedCol;
+                const inset = host.ruleWidth * 3;
+                if (lit || down)
+                    DrawRectangle(x0 + inset, y + inset, x1 - x0 - 2 * inset,
+                        g.keyHeight - 2 * inset, rgb(lit ? on : pressed));
+                // The label centred in the key, whole cells laid over it.
+                const cols = (x1 - x0) / cellW, rows = g.keyHeight / cellH;
+                c.originX = x0 + ((x1 - x0) - cols * cellW) / 2;
+                c.originY = y + (g.keyHeight - rows * cellH) / 2;
+                Visual v;
+                v.fg = lit ? onText : t.fg;
+                v.fontRole = FontRole.uiMono;
+                // A lone symbol (an arrow, ☰) reads at the title size; a name or a
+                // character at the label size.
+                import std.utf : count;
+
+                v.typeStep = count(key.label) == 1 && key.label[0] >= 0x80
+                    ? TypeStep.title : TypeStep.label;
+                v.textAlign = 1;
+                c.textRunIn(Rect(0, 0, cols > 0 ? cols : 1, rows > 0 ? rows : 1), key.label, v);
             }
         }
+        c.originX = c.originY = 0;
+    }
+
+    /**
+    The row from the raw contact, each frame: the recogniser reports a tap
+    only once the finger lifts, but a key must show it is down while it is,
+    and a modifier must engage on the way down so that holding CTRL while
+    typing on the keyboard sends Ctrl+c. Down on a key: drawn pressed, a
+    modifier engaged. Up: a modifier released, any other key fired when the
+    finger lifts over it; a finger that slid off it fires nothing.
+    */
+    private void pollKeyRow(H)(ref H h, in Geometry g, bool down, int x, int y)
+    {
+        size_t r, i;
+        if (down && !rowContact)
+        {
+            if (keyAt(g, x, y, r, i))
+            {
+                pressedRow = r;
+                pressedCol = i;
+                if (keys[r][i].kind == ExtraKeyKind.modifier)
+                    latch.press(keys[r][i].key);
+                host.invalidate();
+            }
+        }
+        else if (!down && rowContact && pressedRow >= 0)
+        {
+            const pr = cast(size_t) pressedRow, pc = cast(size_t) pressedCol;
+            pressedRow = pressedCol = -1;
+            host.invalidate();
+            if (pr < keys.length && pc < keys[pr].length)
+            {
+                const key = keys[pr][pc];
+                if (key.kind == ExtraKeyKind.modifier)
+                    latch.release(key.key);
+                else if (keyAt(g, rowLastX, rowLastY, r, i) && r == pr && i == pc)
+                    pressExtraKey(h, key);
+            }
+        }
+        rowContact = down;
+        if (down)
+        {
+            rowLastX = x;
+            rowLastY = y;
+        }
+    }
+
+    /// The row key at pixel (`x`, `y`): its row and column; false off the row.
+    private bool keyAt(in Geometry g, int x, int y, out size_t r, out size_t i) const
+    {
+        if (g.keyHeight <= 0 || y < g.keysTop || y >= g.keysTop + g.keysHeight)
+            return false;
+        r = (y - g.keysTop) / g.keyHeight;
+        if (r >= keys.length || keys[r].length == 0)
+            return false;
+        const at = x * cast(int) keys[r].length / (g.width > 0 ? g.width : 1);
+        if (at < 0 || at >= keys[r].length)
+            return false;
+        i = at;
+        return true;
     }
 
     // ── touch ───────────────────────────────────────────────────────────────
@@ -670,13 +765,8 @@ struct DroidTerminal
         const g = geometry(h);
         if (g.keyHeight > 0 && p.pos.y >= g.keysTop && p.pos.y < g.keysTop + g.keysHeight)
         {
-            const r = (p.pos.y - g.keysTop) / g.keyHeight;
-            if (r < keys.length && keys[r].length)
-            {
-                const i = p.pos.x * cast(int) keys[r].length / (g.width > 0 ? g.width : 1);
-                if (i >= 0 && i < keys[r].length)
-                    pressExtraKey(h, keys[r][i]);
-            }
+            // The row reads the raw contact itself (`pollKeyRow`): the tap the
+            // recogniser makes of it on release is already handled.
             return;
         }
         if (chip.tap(p.pos.x, p.pos.y))
@@ -708,6 +798,14 @@ struct DroidTerminal
 
     private void onWheel(H)(ref H h, in WheelEvent w)
     {
+        // A moving contact is a drag, not a key: an unmodified key under it
+        // comes up without firing.
+        if (pressedRow >= 0 && pressedRow < keys.length && pressedCol < keys[pressedRow].length
+            && keys[pressedRow][pressedCol].kind != ExtraKeyKind.modifier)
+        {
+            pressedRow = pressedCol = -1;
+            host.invalidate();
+        }
         if (dividerGesture) // the divider's drag (`TSS10`)
             return;
         const g = geometry(h);
@@ -843,7 +941,10 @@ struct DroidTerminal
         // shrinking by more than a system bar is it.
         const screenHeight = GetScreenHeight();
         const softKeyboard = valid && screenHeight - r.bottom > screenHeight / 6;
-        const shown = extraKeysShown(config.effective.extraKeys.visible, softKeyboard,
+        // A full-screen page hides the row unless the keyboard is up to type
+        // into it (D49).
+        const shown = (!host.pageShown || softKeyboard)
+            && extraKeysShown(config.effective.extraKeys.visible, softKeyboard,
             hardwareKeyboardAttached(), rowDismissed);
         // A key is a touch target: 48 dp (`TOK7`), two cells at the least —
         // two cells alone were 35 dp at 440 dpi. Unless that leaves the

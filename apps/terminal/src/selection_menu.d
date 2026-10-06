@@ -30,7 +30,7 @@ import sparkles.terminal_view.component : TerminalView;
 import sparkles.terminal_view.selection : Granularity, SelectionBounds, SelectionEnd;
 import sparkles.ui.components.dock : PaneId;
 import sparkles.ui.geometry : Insets, Point, Rect, SizeSpec;
-import sparkles.ui.style : Decoration, Slot, TextStyle;
+import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : Layer, label, place, Place;
@@ -669,13 +669,17 @@ final class ActionMenu : Surface, SelfPlaced
         const mode = iconOnly ? ButtonLabels.icon : ctx.labels;
         const slot = cut ? Slot.muted : a == MenuAction.copy ? Slot.accentPrimary
             : a == MenuAction.more ? Slot.muted : Slot.textPrimary;
-        const style = TextStyle(bold: a == MenuAction.copy);
+        // The icon is data (the cell font carries it), the caption words (D50).
+        const bold = a == MenuAction.copy;
         uint[] lines;
         if (mode != ButtonLabels.text)
-            lines ~= b.add(Widget(kind: WidgetKind.text, text: look.icon, slot: slot, textStyle: style));
+            lines ~= b.add(Widget(kind: WidgetKind.text, text: look.icon, slot: slot,
+                alignX: Alignment.center, width: SizeSpec.grow(),
+                textStyle: TextStyle(bold: bold, fontRole: FontRole.uiMono, typeStep: TypeStep.body)));
         if (mode != ButtonLabels.icon)
             lines ~= b.add(Widget(kind: WidgetKind.text, text: look.shortLabel, slot: slot,
-                textStyle: style));
+                alignX: Alignment.center, width: SizeSpec.grow(),
+                textStyle: TextStyle(bold: bold, fontRole: FontRole.ui, typeStep: TypeStep.label)));
         const tall = ctx.targetRows > lines.length ? ctx.targetRows : cast(int) lines.length;
         return b.add(Widget(
             kind: WidgetKind.panel,
@@ -695,7 +699,8 @@ final class ActionMenu : Surface, SelfPlaced
         Builder b;
         uint[] body_;
         const title = describe(facts) ~ (fellBack ? " · no room for a card, shown as a sheet" : "");
-        body_ ~= label(b, title, Slot.muted);
+        body_ ~= b.add(Widget(kind: WidgetKind.text, text: title, slot: Slot.muted,
+            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.caption)));
 
         if (showingMore)
         {
@@ -839,10 +844,12 @@ final class ActionMenu : Surface, SelfPlaced
                 list ~= b.add(Widget(
                     kind: WidgetKind.panel,
                     children: [b.add(Widget(kind: WidgetKind.row, width: SizeSpec.grow(), children: [
-                        b.add(Widget(kind: WidgetKind.text, text: caption, slot: text)),
+                        b.add(Widget(kind: WidgetKind.text, text: caption, slot: text,
+                            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body))),
                         b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow())),
                         b.add(Widget(kind: WidgetKind.text, text: hint,
-                            slot: focused ? text : Slot.muted)),
+                            slot: focused ? text : Slot.muted,
+                            textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.label))),
                     ]))],
                     width: SizeSpec.fixed(menuW),
                     padding: Insets(0, 1, 0, 1),

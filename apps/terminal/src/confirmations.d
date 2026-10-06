@@ -23,11 +23,11 @@ module confirmations;
 import sparkles.input.events : KeyEvent;
 import sparkles.terminal_view.component : TerminalView;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer;
-import sparkles.ui.style : Slot;
+import sparkles.ui.style : FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
-import chrome : band, button, label, row;
+import chrome : band, button, label, row, uiLabel;
 import surfaces : Placement, Surface, SurfaceContext;
 
 /// Hit ids.
@@ -42,9 +42,10 @@ private enum Hit : size_t
     deny,
 }
 
-/// A paragraph that wraps to the room it is given.
+/// A paragraph that wraps to the room it is given, in the interface face (D50).
 private uint prose(ref Builder b, const(char)[] text, Slot slot = Slot.textSecondary) @safe
-    => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot, wrap: TextWrap.greedy));
+    => b.add(Widget(kind: WidgetKind.text, text: text, slot: slot, wrap: TextWrap.greedy,
+        textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body)));
 
 /// The paste guard (`TPR19`).
 final class PasteConfirm : Surface
@@ -69,7 +70,8 @@ final class PasteConfirm : Surface
 
         Builder b;
         uint[] body_;
-        body_ ~= label(b, "⚠ Paste " ~ lines.to!string ~ " lines?", Slot.warn, bold: true);
+        body_ ~= uiLabel(b, "⚠ Paste " ~ lines.to!string ~ " lines?", Slot.warn, bold: true,
+            step: TypeStep.title);
         body_ ~= prose(b, "The program has not turned on bracketed paste, so each line runs as typed.");
         size_t shown;
         foreach (line; text.splitter('\n'))
@@ -145,7 +147,7 @@ final class ClipboardRead : Surface
     {
         Builder b;
         uint[] body_;
-        body_ ~= label(b, (program.length ? program : "A program") ~ " wants to read your clipboard",
+        body_ ~= uiLabel(b, (program.length ? program : "A program") ~ " wants to read your clipboard",
             Slot.textPrimary, bold: true);
         body_ ~= prose(b, where ~ " asked through OSC 52. It could be a remote host over ssh.");
         body_ ~= row(b, [

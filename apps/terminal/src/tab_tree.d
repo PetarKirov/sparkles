@@ -21,7 +21,7 @@ import sparkles.ui.style : Slot;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
-import chrome : band, label, row;
+import chrome : band, label, row, uiLabel;
 import surfaces : Placement, Surface, SurfaceContext;
 
 /// One pane, as the tree shows it.
@@ -105,11 +105,11 @@ final class TabTree : Surface
                 }
         }
         if (!rows.length)
-            lines ~= label(b, "No tab or pane matches.", Slot.muted);
+            lines ~= uiLabel(b, "No tab or pane matches.", Slot.muted);
         if (newTab !is null && !query.length)
         {
             lines ~= b.add(Widget(kind: WidgetKind.row,
-                children: [label(b, "+ New tab", Slot.accentPrimary)],
+                children: [uiLabel(b, "+ New tab", Slot.accentPrimary)],
                 width: SizeSpec.grow(),
                 height: ctx.targetRows > 1 ? SizeSpec.fixed(ctx.targetRows) : SizeSpec.fit_,
                 hitId: newTabHit));
@@ -243,14 +243,14 @@ final class TabTree : Surface
     {
         const text = query.length ? "⌕ " ~ query.idup : "⌕ Search tabs, panes, programs, dirs";
         return b.add(Widget(kind: WidgetKind.panel,
-            children: [label(b, text, query.length ? Slot.textPrimary : Slot.muted)],
+            children: [query.length ? label(b, text, Slot.textPrimary) : uiLabel(b, text, Slot.muted)],
             slot: Slot.surfaceSunken, paintBackground: true));
     }
 
     private uint entry(ref Builder b, in SurfaceContext ctx, string title, string detail,
         string badge, bool marked, bool failed, size_t hit) @safe
     {
-        const line = row(b, [label(b, title, failed ? Slot.error
+        const line = row(b, [uiLabel(b, title, failed ? Slot.error
             : marked ? Slot.accentPrimary : Slot.textPrimary, bold: marked),
             label(b, badge, Slot.warn)]);
         uint[] kids = [line];

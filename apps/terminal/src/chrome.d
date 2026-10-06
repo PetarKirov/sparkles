@@ -13,7 +13,7 @@ module chrome;
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ui.geometry : cellsOf, Constraints, Insets, Rect, SizeSpec;
-import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.layout : DelegateMeasure, Frame, layout;
 import sparkles.ui.state : HoverTarget, hoverTargets;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle,
     TypeStep;
@@ -57,22 +57,8 @@ void useChromeMeasure(ChromeMeasure m) @safe nothrow @nogc
     haveChromeMeasure = true;
 }
 
-/**
-The host's measurer behind two delegates, so this module names no backend: a
-run in the cell font is as wide as its cells; a styled run asks the host.
-*/
-struct ChromeMeasure
-{
-    int delegate(scope const(char)[], in TextStyle) @safe styledWidth; /// a run's cells in its style
-    int delegate(in TextStyle) @safe styledRows; /// the rows one line of a style takes
-
-    /// The cell font's width of `s`.
-    int width(scope const(char)[] s) const @safe pure nothrow @nogc => cast(int) cellsOf(s);
-    /// The width of `s` in `style`, in whole cells.
-    int width(scope const(char)[] s, in TextStyle style) @safe => styledWidth(s, style);
-    /// The rows one line in `style` occupies.
-    int rows(in TextStyle style) @safe => styledRows(style);
-}
+/// The host's measurer, behind delegates so this module names no backend.
+alias ChromeMeasure = DelegateMeasure;
 
 /// Lays `tree` out within `c` in the host's faces where it published them.
 Frame[] chromeLayout(in WidgetTree tree, in Constraints c) @safe
@@ -252,6 +238,13 @@ uint button(ref Builder b, string icon, string label, ButtonLabels mode, size_t 
     if (mode != ButtonLabels.icon && label.length)
         parts ~= b.add(Widget(kind: WidgetKind.text, text: label, slot: slot,
             textStyle: TextStyle(bold: primary, fontRole: FontRole.ui, typeStep: TypeStep.label)));
+    // A lone icon or caption fills the button and centres in it (the canvas
+    // places a narrower proportional run by its alignment).
+    if (parts.length == 1)
+    {
+        b.nodes[parts[0]].alignX = Alignment.center;
+        b.nodes[parts[0]].width = SizeSpec.grow();
+    }
     const content = parts.length == 1 ? parts[0]
         : b.add(Widget(kind: WidgetKind.row, children: parts, gap: 1, alignY: Alignment.center));
     return b.add(Widget(

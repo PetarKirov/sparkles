@@ -54,7 +54,8 @@ A chip: a short label in a pill — a filter, a choice, a compact button.
 uint chip(ref Builder b, string label, size_t hitId, bool selected = false,
     ControlSize sz = ControlSize.init)
 {
-    const t = b.add(Widget(kind: WidgetKind.text, text: label,
+    const t = b.add(Widget(kind: WidgetKind.text, text: label, alignX: Alignment.center,
+        width: SizeSpec.grow(),
         slot: selected ? Slot.chromeAccent : Slot.textPrimary,
         textStyle: valueStyle(selected)));
     return b.add(controlBox([t], sz, hitId,
@@ -90,7 +91,8 @@ in (labels.length == hitIds.length)
     foreach (i, l; labels)
     {
         const on = i == selected;
-        const t = b.add(Widget(kind: WidgetKind.text, text: l,
+        const t = b.add(Widget(kind: WidgetKind.text, text: l, alignX: Alignment.center,
+            width: SizeSpec.grow(),
             slot: on ? Slot.chromeAccent : Slot.textPrimary, textStyle: valueStyle(on)));
         segs ~= b.add(controlBox([t], sz, hitIds[i],
             on ? Slot.chromeAccent : Slot.surfaceRaised, 6));
@@ -120,6 +122,7 @@ uint dropdownChip(ref Builder b, string value, bool open, size_t hitId,
     ControlSize sz = ControlSize.init)
 {
     const t = b.add(Widget(kind: WidgetKind.text, text: value ~ (open ? " ▴" : " ▾"),
+        alignX: Alignment.center, width: SizeSpec.grow(),
         slot: Slot.textPrimary, textStyle: valueStyle()));
     return b.add(controlBox([t], sz, hitId, Slot.surfaceRaised, 6, bordered: true));
 }

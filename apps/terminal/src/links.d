@@ -18,7 +18,7 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 import sparkles.input.events : KeyEvent;
 
-import chrome : band, button, label, row;
+import chrome : band, button, label, row, uiLabel;
 import settings : OverlayStyle;
 import surfaces : Anchored, Placement, Surface, SurfaceContext;
 
@@ -135,13 +135,15 @@ final class LinkConfirm : Surface, Anchored
         {
             // L1: what kind of link, the whole URI, the actions.
             lines ~= label(b, (hyperlink ? "OSC 8 link · " : "link · ") ~ scheme, Slot.muted);
+            // The URI is data: compared character by character (D50).
             lines ~= b.add(Widget(kind: WidgetKind.text, text: uri, slot: Slot.link,
-                wrap: TextWrap.greedy));
+                wrap: TextWrap.greedy,
+                textStyle: TextStyle(fontRole: FontRole.uiMono, typeStep: TypeStep.body)));
         }
         else
         {
             // L2: the question, the host in bold, where it came from.
-            lines ~= label(b, "Open this link?", Slot.textPrimary, bold: true);
+            lines ~= uiLabel(b, "Open this link?", Slot.textPrimary, bold: true, step: TypeStep.title);
             const host = hostOf(uri);
             lines ~= row(b, [label(b, host, Slot.textPrimary, bold: true),
                 label(b, uri[(uri.length - restOf(uri).length) .. $][host.length .. $],

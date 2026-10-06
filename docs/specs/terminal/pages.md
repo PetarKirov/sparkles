@@ -169,13 +169,19 @@ tools that look for one, is generated from the parts.
 **TPG17: hue's credits.** hue **must** show its own credits page
 (`docs/credits/hue.md`) the same way, in its GUI and on Android.
 
-## Wide screens (`TPG19`)
+## Wide screens and full-screen pages (`TPG19`, `TPG20`)
 
 **TPG19: Bounded surfaces.** On a wide screen, a page, the settings page and a
 sheet such as the touch guide or a confirmation **must** take at most 100
 columns, centred. A sheet **must not** take more rows than its area; what
 does not fit scrolls. Violation: a page's controls 100 columns from their
 labels, or two rows drawn over each other.
+
+**TPG20: Full-screen pages.** A page **must** take the whole workspace — the
+tab pill or rail and the `⋯` button included — as the page mockups draw it
+([D49](./decisions.md)); a sheet or a card keeps the panes' area. On a phone
+the extra-keys row **must** hide under a page unless the soft keyboard is up.
+Violation: the pill drawn above a page.
 
 ## Status
 
@@ -200,5 +206,6 @@ labels, or two rows drawn over each other.
 | `TPG17` | partial (`c30ebdaa8`): `hue credits` shows it in the terminal and with `--gui`; hue on Android has no route to it                                                                     | [D30](./decisions.md); `CreditsCmd`, `creditsDocument`                                                                               |
 | `TPG18` | full                                                                                                                                                                                  | [D38](./decisions.md); `groupOf`, `groupLog`, `ruleMatches`, `gitRootOf`, `loadGrouping`, `NotificationsConfig.agents`               |
 | `TPG19` | full                                                                                                                                                                                  | `maxSurfaceCols`, `placeOne`, `Layer.backdrop`, `TouchGuide.windowed`                                                                |
+| `TPG20` | full                                                                                                                                                                                  | `SurfaceContext.pageArea`, `Surfaces.pageShown`, `placeOne`                                                                          |
 
 → [Overview](./index.md) · [Protocols](./protocols.md)

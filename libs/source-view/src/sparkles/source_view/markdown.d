@@ -52,6 +52,10 @@ struct MdViewOptions
     TextStyle baseStyle;
     /// Prose slot (`inherit` = the page text; a popup passes `docs`).
     Slot proseSlot = Slot.inherit;
+    /// The face paragraphs, headings and list items read in — an
+    /// application's viewer passes `FontRole.ui` (design-system D50). Tables,
+    /// code spans and fences keep the cell font; `inherit` changes nothing.
+    FontRole proseRole = FontRole.inherit;
     /// Nesting budget: markdown ⊃ fence ⊃ markdown recursion stops here and
     /// degrades to plain text (totality — `RND5`).
     int depthBudget = 8;
@@ -1114,7 +1118,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
         case heading:
         {
             TextSpan[] spans;
-            TextStyle style = opt.baseStyle;
+            TextStyle style = proseStyle(opt, title: blk.level <= 2);
             style.bold = true;
             if (opt.theme.present)
             {
@@ -1147,7 +1151,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
         case paragraph:
         {
             TextSpan[] spans;
-            inlinesToSpans(blk.inlines, src, opt.baseStyle, opt.proseSlot, spans,
+            inlinesToSpans(blk.inlines, src, proseStyle(opt), opt.proseSlot, spans,
                 opt.theme.present ? &opt.theme : null, opt.emph, opt.linkTable,
                 &opt.glyphs);
             return proseRow(b, spans, opt);
@@ -1221,7 +1225,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 TextSpan[] spans = [leader];
                 const inls = item.inlines.length ? item.inlines
                     : (item.children.length ? item.children[0].inlines : null);
-                inlinesToSpans(inls, src, opt.baseStyle, opt.proseSlot, spans,
+                inlinesToSpans(inls, src, proseStyle(opt), opt.proseSlot, spans,
                     opt.theme.present ? &opt.theme : null, opt.emph,
                     opt.linkTable, &opt.glyphs);
                 const lead = leaderHang(leader);
@@ -1905,6 +1909,21 @@ private int leaderHang(in TextSpan leader) @safe
     return cast(int) cellsOf(leader.text);
 }
 
+// The style prose takes: the base, in `proseRole` when one is set — a
+// heading at the title step when `title`, else the body.
+private TextStyle proseStyle(in MdViewOptions opt, bool title = false) @safe
+{
+    import sparkles.ui.style : TypeStep;
+
+    TextStyle s = opt.baseStyle;
+    if (opt.proseRole != FontRole.inherit)
+    {
+        s.fontRole = opt.proseRole;
+        s.typeStep = title ? TypeStep.title : TypeStep.body;
+    }
+    return s;
+}
+
 private TextStyle codeStyle(MdViewOptions opt)
 {
     TextStyle s = opt.baseStyle;
@@ -1962,7 +1981,8 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
             case codeSpan:
             {
                 auto s = base;
-                s.fontRole = FontRole.code;
+                // Code beside interface-face prose is data at its size (`uiMono`).
+                s.fontRole = base.fontRole == FontRole.ui ? FontRole.uiMono : FontRole.code;
                 const raw = sliceOf(src, inl.span);
                 if (raw.length)
                 {
@@ -2489,6 +2509,35 @@ version (unittest)
     assert(sawTitle && sawBold && sawQuoteBar && sawQuoted);
 }
 
+
+@("md.render_widgets.proseRoleSetsTheProseFace")
+@safe unittest
+{
+    // "# Title\n\nbody `code`": with a prose role the heading and the body
+    // read in it; the code span keeps the cell font.
+    const src = "Title body code";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.heading, level: 1, inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(0, 5))]),
+        MdBlock(kind: MdBlockKind.paragraph, inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(6, 11)),
+            MdInline(kind: MdInlineKind.codeSpan, span: Span(11, 15)),
+        ]),
+    ]), src);
+    MdViewOptions opt;
+    opt.proseRole = FontRole.ui;
+    auto c = renderDoc(doc, opt);
+    FontRole title, body, code;
+    foreach (ref op; c.ops)
+        if (op.kind == OpKind.textRun)
+        {
+            if (op.text == "Title") title = op.visual.fontRole;
+            if (op.text == "body ") body = op.visual.fontRole;
+            if (op.text == "code") code = op.visual.fontRole;
+        }
+    assert(title == FontRole.ui && body == FontRole.ui, "prose in the prose face");
+    assert(code == FontRole.uiMono, "a code span stays monospace, at the prose's size");
+}
 @("md.render_widgets.codeGroup.tabSwitchKeepsHeight")
 @safe unittest
 {

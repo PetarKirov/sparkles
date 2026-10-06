@@ -155,19 +155,29 @@ _Rationale:_ Android takes `Ctrl+Shift+Space` from a hardware keyboard to
 switch the keyboard layout, so the desktop's leader never reaches an Android
 app.
 
+**TKM11: Extra keys as keys.** A key of the extra-keys row **must** show that
+it is down for as long as a finger is on it, and fire when the finger lifts
+over it; a finger that slides off it fires nothing. A modifier (CTRL, ALT,
+SHIFT) **must** engage when its key goes down and stay engaged while the
+finger stays on it, so that keys typed on the soft keyboard meanwhile take
+it; tapped and lifted with nothing typed, it latches for the next key only.
+`UP`, `DOWN`, `LEFT` and `RIGHT` **must** read as `↑ ↓ ← →` unless the layout
+names a label. Violation: holding CTRL while typing `c` sends a plain `c`.
+
 ### Status
 
-| ID      | Status                                                                                                                                 | Traces to                                                           |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `TKM1`  | full                                                                                                                                   | `defaultBindings`, `terminalBindings`, `KeyRouter`; `builtinChords` |
-| `TKM2`  | partial: swept over the router, every named key and printable under every modifier set; the recording-pty half of the sweep is not run | `claimsExactly`, `everyUnclaimedKeyReachesTheProgram`               |
-| `TKM3`  | full                                                                                                                                   | `reservedChords`, `isReserved`, `reservedChordsAreNeverBound`       |
-| `TKM4`  | full                                                                                                                                   | `TermScope`, `TermContext`, `Surfaces.key`                          |
-| `TKM5`  | full                                                                                                                                   | `leaderChord`, `KeyRouter.tick`, `untilShown`                       |
-| `TKM6`  | full                                                                                                                                   | `TouchGuide`, `fuzzyScore`, `DroidTerminal.pressExtraKey`           |
-| `TKM7`  | full                                                                                                                                   | `ExtraKeyKind.menu`, `defaultExtraKeysSpec`                         |
-| `TKM8`  | full                                                                                                                                   | `applyKeysOverlay`, `KeysConfig`                                    |
-| `TKM9`  | full                                                                                                                                   | `bindingsMarkdown`, `bindingsMarkdown.matchesTheReference`          |
-| `TKM10` | full                                                                                                                                   | `defaultLeader`, `androidLeader`, `LanternConfig.leader`            |
+| ID      | Status                                                                                                                                 | Traces to                                                              |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `TKM1`  | full                                                                                                                                   | `defaultBindings`, `terminalBindings`, `KeyRouter`; `builtinChords`    |
+| `TKM2`  | partial: swept over the router, every named key and printable under every modifier set; the recording-pty half of the sweep is not run | `claimsExactly`, `everyUnclaimedKeyReachesTheProgram`                  |
+| `TKM3`  | full                                                                                                                                   | `reservedChords`, `isReserved`, `reservedChordsAreNeverBound`          |
+| `TKM4`  | full                                                                                                                                   | `TermScope`, `TermContext`, `Surfaces.key`                             |
+| `TKM5`  | full                                                                                                                                   | `leaderChord`, `KeyRouter.tick`, `untilShown`                          |
+| `TKM6`  | full                                                                                                                                   | `TouchGuide`, `fuzzyScore`, `DroidTerminal.pressExtraKey`              |
+| `TKM7`  | full                                                                                                                                   | `ExtraKeyKind.menu`, `defaultExtraKeysSpec`                            |
+| `TKM8`  | full                                                                                                                                   | `applyKeysOverlay`, `KeysConfig`                                       |
+| `TKM9`  | full                                                                                                                                   | `bindingsMarkdown`, `bindingsMarkdown.matchesTheReference`             |
+| `TKM10` | full                                                                                                                                   | `defaultLeader`, `androidLeader`, `LanternConfig.leader`               |
+| `TKM11` | full                                                                                                                                   | `Latch.press`, `Latch.release`, `DroidTerminal.pollKeyRow`, `extraKey` |
 
 → [Overview](./index.md) · [`KEY`/`LTN`](../ui/keymap.md) · [Keyboard vocabulary](../design-system/keyboard.md)

@@ -131,6 +131,14 @@ struct WorkspaceHost
     bool phonePortrait;
     /// ditto
     bool touch;
+    /// `viewer.lineNumbers` and `viewer.codeLineNumbers`: a new viewer pane
+    /// starts with them; `l` and `c` still toggle them in the pane.
+    bool viewerLineNumbers, viewerCodeLineNumbers;
+    /// The space between a pane's text and its edges, in pixels: across, and
+    /// at the top (`TSS12`). The embedder sets them in dp.
+    int padX = 8, padTop = 4;
+    /// A divider rule's thickness, in pixels — the same across as down.
+    int ruleWidth = 1;
     /// The key that opens the tree, shown beside the pill on the desktop.
     string treeHint;
     /// `links.tap`, `links.longPress` and `links.schemes` (`TPR5`, `TPR6`).
@@ -401,6 +409,15 @@ struct WorkspaceHost
                 : DocViewEnv.create(GrammarRegistry.fromEnvironment());
         }
         auto p = new DocViewPane;
+        // Set before `open`, which builds the first view: no line numbers by
+        // default (`TDV13`), the prose in the interface face (D50).
+        p.vm.lineNumbers = viewerLineNumbers;
+        p.vm.codeLineNumbers = viewerCodeLineNumbers;
+        {
+            import sparkles.ui.style : FontRole;
+
+            p.vm.proseRole = FontRole.ui;
+        }
         cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
         viewers[id] = p;
         dirty = true;
@@ -735,7 +752,7 @@ struct WorkspaceHost
 
         DockFrames f;
         ws.frames(Rect(0, 0, panesArea.width / cellW, panesArea.height / cellH), f);
-        boxes = paneBoxes(f, panesArea, cellW, cellH, paneChrome, ws.focused);
+        boxes = paneBoxes(f, panesArea, cellW, cellH, paneChrome, ws.focused, padX, padTop);
         dividers = f.dividers.dup;
         dividerRects.length = 0;
         foreach (ref d; f.dividers)
@@ -839,6 +856,13 @@ struct WorkspaceHost
                 return &b;
         return null;
     }
+
+    // The rule drawn for divider rect `d` (a boundary: zero wide across its
+    // axis) `width` px thick, centred on it.
+    static Rect ruleRect(in Rect d, DockAxis axis, int width) @safe pure nothrow @nogc
+        => axis == DockAxis.horizontal
+            ? Rect(d.x - width / 2, d.y, width, d.height)
+            : Rect(d.x, d.y - width / 2, d.width, width);
 
     private static bool contains(in Rect r, int x, int y) @safe pure nothrow @nogc
         => x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
@@ -1047,18 +1071,23 @@ struct WorkspaceHost
             else if (auto v = viewer(b.id))
                 v.paint(canvas, b.content.x, b.content.y, b.content.width, b.content.height,
                     focused: b.focused);
-        foreach (ref d; dividerRects)
-            DrawRectangle(d.x, d.y, d.width, d.height, rgb(divider));
+        // A rule on each boundary, `ruleWidth` thick either way.
+        foreach (i, ref d; dividerRects)
+        {
+            const r = ruleRect(d, dividers[i].axis, ruleWidth);
+            DrawRectangle(r.x, r.y, r.width, r.height, rgb(divider));
+        }
         // Where a dragged divider would land.
         if (dragging >= 0)
         {
             const d = dividers[dragging];
+            const thick = ruleWidth * 2 + 1;
             if (d.axis == DockAxis.horizontal)
-                DrawRectangle(panesArea.x + dragPos * cellW + cellW / 2 - 1,
-                    panesArea.y + d.rect.y * cellH, 3, d.rect.height * cellH, rgb(accent));
+                DrawRectangle(panesArea.x + dragPos * cellW - thick / 2,
+                    panesArea.y + d.rect.y * cellH, thick, d.rect.height * cellH, rgb(accent));
             else
                 DrawRectangle(panesArea.x + d.rect.x * cellW,
-                    panesArea.y + dragPos * cellH + cellH / 2 - 1, d.rect.width * cellW, 3,
+                    panesArea.y + dragPos * cellH - thick / 2, d.rect.width * cellW, thick,
                     rgb(accent));
         }
         foreach (ref l; paneChromeLayers)
@@ -1082,6 +1111,10 @@ struct WorkspaceHost
 
     /// ditto — the toasts, then the surface stack, bottom to top.
     void paintSurfaces(H)(ref H h) @system => surfaces.paint(h, theme);
+
+    /// Whether a full-screen page is up (D49): the embedder then hides what
+    /// it draws beside the workspace, such as the extra keys.
+    bool pageShown() @safe => surfaces.pageShown;
 
     /**
     Lays out the exit prompt of every shown pane that keeps one, along the
@@ -1131,7 +1164,8 @@ struct WorkspaceHost
     {
         SurfaceContext ctx = {area: panesArea, cellW: cellW, cellH: cellH, labels: labels,
             style: overlayStyle, targetRows: theme.targetRows, touch: touch,
-            panelArea: panelRect, panelFull: !usesPill(tabsOpener, phonePortrait)};
+            panelArea: panelRect, panelFull: !usesPill(tabsOpener, phonePortrait),
+            pageArea: area};
         if (auto tv = focusedView())
             if (auto b = boxOf(ws.focused))
             {
