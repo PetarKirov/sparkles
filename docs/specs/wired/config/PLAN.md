@@ -29,14 +29,14 @@ starting, rather than implementing around confident-looking interface sketches.
 
 ## Milestones
 
-| Slice | Obligations                               | Status      | Required result                                                                           |
-| ----- | ----------------------------------------- | ----------- | ----------------------------------------------------------------------------------------- |
-| C0    | Scope, decisions, oracles, publication    | in progress | Independently reviewed draft with explicit blocking questions                             |
-| C1    | WCFG1–10, WCFG13–14, WCFG17–21, WCFG25–37 | implemented | Scalar core and original-policy JSON adapter; local conformance and checked driver passed |
-| C2    | WCFG11–16, WCFG20–21, WCFG38–51           | not started | Typed collection/submodule presence, projections, normalized graphs, exact budgets        |
-| C3    | WCI1–24, WCFG24                           | not started | Typed bounded report, checked table floors/guides, actual docs targets and OSC isolation  |
-| C4    | WCFG22–24, WCI1–24                        | not started | Hue and terminal startup/report/persistence use one definition model                      |
-| C5    | WCFG22–24, WCI1–24                        | not started | Diagram preserves its grid wire contract and shares resolution with startup               |
+| Slice | Obligations                               | Status      | Required result                                                                                         |
+| ----- | ----------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------- |
+| C0    | Scope, decisions, oracles, publication    | in progress | Independently reviewed draft with explicit blocking questions                                           |
+| C1    | WCFG1–10, WCFG13–14, WCFG17–21, WCFG25–37 | implemented | Scalar core and original-policy JSON adapter; local conformance and checked driver passed               |
+| C2    | WCFG11–16, WCFG20–21, WCFG38–51           | implemented | Typed collection presence/projections, exact budget oracles, both full suites and checked driver passed |
+| C3    | WCI1–24, WCFG24                           | not started | Typed bounded report, checked table floors/guides, actual docs targets and OSC isolation                |
+| C4    | WCFG22–24, WCI1–24                        | not started | Hue and terminal startup/report/persistence use one definition model                                    |
+| C5    | WCFG22–24, WCI1–24                        | not started | Diagram preserves its grid wire contract and shares resolution with startup                             |
 
 The obligations listed for C1 apply to its scalar/string subset; C2 closes their
 collection and recursion cases. Lazy evaluation and executable configuration are
@@ -69,9 +69,9 @@ C1's scalar/string definition driver and independent table oracle.
 
 **Prerequisites:** owner review of the concrete
 [scalar interface](./scalar-resolution.md); Q1 is specified for this subset.
-Collection/custom-value accounting remains gated for C2. The scalar implementation
-and its conformance evidence are recorded in
-[testing.md](./testing.md#c1-scalar-implementation).
+The scalar implementation and its conformance evidence are recorded in
+[testing.md](./testing.md#c1-scalar-implementation); C2 now supplies the finite
+collection extension. Custom ownership remains excluded.
 
 C1 supports exactly the scalar/section matrix in WCFG25, with no silent filtering
 of collection fields. Implement the move-only builder/input/snapshot interface,
@@ -103,7 +103,7 @@ the caller's running value remains unchanged.
 Exclude collection composition, custom-value ownership, file discovery, persistence,
 and graphical hosts. Do not publish a complete-config value when any option is
 unresolved. Local implementation evidence is distinct from publication and CI;
-neither implies delivery of the deferred collection or application slices.
+the C1 result alone does not imply delivery of later slices.
 
 ## C2 — Composition and contributor provenance
 
@@ -112,7 +112,7 @@ original-site decoder/presence experiment in Q6, and C1's retained-owner interfa
 Q1 specifies finite collection accounting; custom conversion/ownership remains
 excluded. Q2 blocks keybinding-specific integration, not the generic core policies.
 
-Implement WCFG38–51 using root definitions plus typed presence and branch
+WCFG38–51 are implemented using root definitions plus typed presence and branch
 projections, not a second merge engine. The native AA/struct decoder overwrites
 duplicates and a root-subtree decoder loses containing-field policy, so neither
 is a faithful source-admission shortcut. Preserve typed null/non-null-empty
@@ -127,16 +127,22 @@ must preserve all owners and builder state. A finite hand-written clone or
 `Unique` move establishes only primitive feasibility, not this gate. No lazy or
 custom-value policy can silently enter the supported matrix.
 
-Readiness evidence: original-site recursive list/map decoding, canonical duplicate
-preflight, generated full/sparse presence, nested independent capture/copy, and
-typed null/non-null-empty preservation passed bounded checked-build probes under
-DMD and LDC. The native key parser is now package-visible; no collection resolver
-is implemented. [The recorded fixtures](./testing.md#c2-original-site-and-generated-presence-readiness)
-exposed native enum validation against unused case styles. That native defect is
-repaired: schema reification uses the resolved case/representation, and the codec
-regressions cover original spellings, selected collisions, field overrides, and
-numeric aliases. Q6 remains open for production projection/input and canonical
-key-domain admission; owner acceptance and the full C2 gate remain pending.
+Production evidence is recorded in
+[testing.md](./testing.md#c2-collection-implementation): all 28 original collection
+acceptance scenarios and review regressions pass in the ordinary full wired suite
+under both DMD and LDC (**282 tests, zero failures** on each compiler).
+The exact 25/48/79-byte list and 43/56/92-byte map traces, independent 6144-set
+map algebra, original-site admission, scope/ownership controls, budget rollback,
+shared-owner and nested collection allocator rollback, generated-child winner,
+and known-limit-before-allocation regressions are included. The checked
+`libs/wired/examples/collection-config.d` driver passes under both compilers,
+showing successful composition, original-to-effective projections, and an
+equal-priority width conflict with rejected full-config copying.
+
+Q6's supported finite-graph production presence/projection and canonical
+key-domain readiness is closed. Contract owner acceptance is still pending;
+these local results do not claim CI, publication checks for the current snapshot,
+report delivery, app cutover, or custom/keybinding policy acceptance.
 
 ## C3 — Shared inspection and links
 
@@ -189,10 +195,13 @@ unless an explicit accepted migration changes it. Resolve Q4 for diagram options
 ## Handoff
 
 - Contract: draft; owner acceptance remains a PR review gate.
-- Implementation: C1 scalar core and JSON presence adapter are implemented;
-  collection composition, reporting, and application migration remain deferred.
+- Implementation: C1 scalar and C2 finite collection/submodule resolution and
+  original-policy JSON input are implemented; C3 reporting and C4/C5 application
+  migration remain deferred.
 - Evidence and review findings: [testing.md](./testing.md#evidence-ledger).
 - Blocking questions: [decisions.md](./decisions.md#open-questions).
-- Next action: publish and validate C1, then implement C2 composition and Q7/C3
-  shared table/formatter seams. Custom ownership, keybindings, diagram's adapter,
-  and actual app documentation gates remain explicitly blocked.
+- Next action: C3 shared inspection/report and documentation-link delivery,
+  including Q7's remaining shared table/formatter gates. Custom ownership,
+  keybindings, diagram's adapter, and actual app documentation gates remain
+  explicitly blocked; draft owner acceptance and current publication checks
+  remain separate from the local C2 runtime gate.

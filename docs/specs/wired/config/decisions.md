@@ -182,7 +182,9 @@ original shared-content wording so alias/interner choices cannot change admissio
 **Trade-off:** Logical content is not RSS. Record limits bound count, not allocator
 overhead; transient decoding/capture storage has no RSS claim. These defaults give
 headroom above the measured scalar subjects without promising arbitrary document
-sizes. Collections/custom values require separate accounting before C2 acceptance.
+sizes. Finite collection accounting and its exact local boundary evidence are now
+recorded in [C2 testing](./testing.md#c2-collection-implementation); custom values
+still require a separate accounting contract.
 
 **Revisit when:** measured valid application workloads exceed the policy or expose
 unacceptable overhead. Preserve exact boundary semantics and update the oracle
@@ -190,7 +192,8 @@ with any accepted default/accounting change.
 
 ## D7 — Root definitions, typed presence, and branch projections
 
-**State:** proposed. **Affected:** WCFG11–16, WCFG38–51.
+**State:** implemented locally; composition-contract owner acceptance pending.
+**Affected:** WCFG11–16, WCFG38–51.
 
 **Question:** Can native list/map values and an enclosing owner preserve sparse
 submodule intent, source location, and independent mutable copies?
@@ -207,6 +210,13 @@ Arena lookup returned the first duplicate key while typed AA decoding retained
 the later value. An original field-context enum map decoded successfully while
 public root-subtree decoding lost its site policy. These are bounded observations,
 not proof of generated capture or composition.
+
+Production typed capture, presence, projections, normalized resolution, and exact
+accounting now run through `sparkles.wired.config`; the
+[C2 implementation ledger](./testing.md#c2-collection-implementation) records
+the actual modules, acceptance symbols, full compiler suites, and checked driver.
+This supersedes the primitive-feasibility limit for the supported finite graph,
+not the draft's owner-acceptance gate or custom-ownership exclusions.
 
 **Choice:** [composition.md](./composition.md) derives presence, declared option
 patterns, original branch locators, and normalized results from the schema. Parent
@@ -269,10 +279,12 @@ WCFG21, WCFG25–51.
 [D5](#d5-separate-presence-and-explicit-ownership-transfers),
 [D6](#d6-logical-scalar-budgets-and-byte-identities), and
 [D7](#d7-root-definitions-typed-presence-and-branch-projections) select ownership,
-identity, defaults, and logical-accounting rules with scoped primitive evidence.
-Original-site/presence feasibility is separately gated by Q6. Custom values need
-explicit clone/transfer/accounting laws before admission; public conformance is
-unverified for every runtime slice. No codec or shallow-copy fallback is permitted.
+identity, defaults, and logical-accounting rules with
+[local scalar and collection implementation evidence](./testing.md#c2-collection-implementation).
+Q6's production presence/original-site readiness is closed for the supported
+finite graph. Custom values still need explicit clone/transfer/accounting laws
+before admission; owner acceptance and app/report conformance remain separate.
+No codec or shallow-copy fallback is permitted.
 
 ### Q2 — Keybinding composition
 
@@ -324,28 +336,31 @@ do not infer approval from absence of PR comments.
 
 ### Q6 — Original-site decoding and generated collection presence
 
-**Owner:** wired implementer. **State:** original-site scalar/key seams and native
-enum spelling admission implemented; collection prerequisites partially verified.
-**Blocks:** C2 presence/projection and canonical key-domain admission.
-**Affected:** WCFG39–42, WCFG46.
+**Owner:** wired implementer. **State:** production readiness closed for the
+supported finite collection graph; composition-contract owner acceptance pending.
+**Blocks:** no remaining C2 presence/projection or canonical key-domain
+implementation gate. **Affected:** WCFG39–42, WCFG46.
 
-The bounded original-site and generated-presence probes now pass under DMD and
-LDC with assertions live; [testing](./testing.md#c2-original-site-and-generated-presence-readiness)
-records the fixtures, duplicate evidence, ownership checks, and limits. Internal
-`decodeOwnedScalarAt` preserves original scalar/value policies; package-visible
-`aaKeyParseNative` preserves original map-key policy before AA assignment. Numeric
-enum keys cannot use the scalar seam on a JSON string. Public root-subtree
-decoding remains insufficient.
+The [earlier bounded probes](./testing.md#c2-original-site-and-generated-presence-readiness)
+established original-site feasibility; the
+[C2 production evidence](./testing.md#c2-collection-implementation) now exercises
+`ConfigPresence`, `ConfigBranchMetadata`, `decodeConfigInput`, and typed
+`visitBranch`/`visitBranchDefinitions` against the actual retained-owner resolver.
+`originalSitePoliciesAndDuplicateOccurrences`,
+`compileTimePolicyAndGraphAdmission`, and `enumAliasKeysAcrossDefinitions` in
+`sparkles.wired.config.collections_acceptance` cover original-site enum/key/value
+policy, pre-assignment duplicate rejection, and schema-level key-domain admission
+before prospective priorities or map contents.
 
-Generated structural presence/capture is feasible, but production collection
-input, composition-aware projection/metadata, checked accounting, and rollback
-remain unimplemented. Native enum reification now derives labels only at the
-resolved original case/representation site. Unused-case collisions cannot reject
-that site, and `Repr.value` labels do not constrain its value domain. `Repr.name`
-retains the native unique-member-name rule, including alias declarations.
-C2 must still establish canonical typed-key injectivity and duplicate preflight
-in its own admission interface; the native repair does not implement WCFG41.
-These observations do not record owner acceptance of the composition contract.
+Internal `decodeOwnedScalarAt` and `aaKeyParseNative` preserve original value and
+map-key sites. Native enum reification evaluates only the resolved
+case/representation: unused-case collisions cannot reject that site, and
+`Repr.value` labels do not constrain its value domain. `Repr.name` retains the
+native unique-member-name rule, including alias declarations. Equal typed-key
+aliases duplicate within one source but may overlap across definitions.
+The passing ordinary DMD/LDC suites and checked collection driver close this
+scoped readiness question, not custom ownership, keybinding integration,
+report/app delivery, or owner acceptance.
 
 ### Q7 — Shared table mandatory-break and checked-layout repair
 

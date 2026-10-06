@@ -57,11 +57,12 @@ remain outside this contract. The [inspection contract](./inspection.md) owns
 presentation and documentation links; it does not implement composition.
 
 Sections 1–6 specify policies, presence, projections, transitions, and accounting.
-[testing.md](./testing.md) owns independent traces and feasibility observations;
+[testing.md](./testing.md) owns independent traces and implementation evidence;
 [decisions.md](./decisions.md) owns local choices and remaining blockers;
-[PLAN.md](./PLAN.md) owns delivery progress. Collection policy extensions and
-presence/projection interfaces named here are proposed, unimplemented symbols;
-the C1 scalar/section interfaces and native internal leaf seams already exist.
+[PLAN.md](./PLAN.md) owns delivery progress. The collection policies and typed
+presence/projection interfaces are implemented in `sparkles.wired.config`;
+[local C2 evidence](./testing.md#c2-collection-implementation) is distinct from
+owner acceptance of this draft and the deferred inspection/application gates.
 
 ## 1. Contract at a glance
 
@@ -88,9 +89,9 @@ duplicate annotations, and conflicts with an explicit type-level section marker
 at compilation, naming the original member and schema type.
 
 These spellings refine the illustrative policy names in [SPEC §4](./SPEC.md#_4-selection-and-uda-directed-composition).
-C1 already provides `Atomic` and direct `Submodule` sections; the collection
-extensions remain proposed. Unannotated collections remain atomic. Ownership
-walking through an atomic container is structural capture, not option composition.
+`sparkles.wired.config` provides these typed policies. Unannotated collections
+remain atomic. Ownership walking through an atomic container is structural
+capture, not option composition.
 Section markers apply at option/submodule policy sites. Ownership-only descent
 inside an atomic container does not reinterpret nested members as options or
 apply their composition/check UDAs; a `Submodule` policy admits those declarations.
@@ -161,10 +162,11 @@ The shipped arena preserves duplicate occurrences and typed decoding can overwri
 them. Its public `fromJSON!V(JsonValue)` starts at `V`'s root policy. The internal
 `decodeOwnedScalarAt` and `aaKeyParseNative` seams preserve original scalar/value
 and map-key sites respectively; the key seam accepts the original member's key
-bytes, not a scalar JSON string substituted for a numeric enum key. C2 still
-requires occurrence-aware collection capture and generated presence around these
-leaves, with converter exclusion checked before use. Neither seam is a public
-configuration-input API or a collection resolver.
+bytes, not a scalar JSON string substituted for a numeric enum key.
+`sparkles.wired.config.json.decodeConfigInput` implements occurrence-aware
+collection capture and generated presence around these leaves, rejecting excluded
+converters before use. The internal leaf seams remain separate from that public
+configuration-input API and the collection resolver.
 
 **WCFG41: Key-collision timing.** Schema admission **must** prove canonical
 key-spelling injectivity over distinct valid typed keys at each original policy

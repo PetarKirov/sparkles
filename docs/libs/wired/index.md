@@ -345,7 +345,7 @@ folding layers destructively. The [scalar guide](./how-to/resolve-scalar-config.
 explains source registration, owned submission, and the collecting-to-snapshot
 transition.
 
-The [concise typed example](../../../README.md#collection-configuration) shows
+The concise typed example in the repository's `README.md` shows
 sparse collection input. The runnable
 [collection example](../../../libs/wired/examples/collection-config.d) decodes two
 JSON sources, composes a plugin list and a tool map, inspects original versus
