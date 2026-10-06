@@ -1,0 +1,29 @@
+{
+  "color": {
+    "$type": "color",
+    "primary": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0, 0.4, 0.8],
+        "hex": "#0066cc"
+      }
+    },
+    "secondary": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0.4, 0.6, 1],
+        "hex": "#6699ff"
+      }
+    },
+    "semantic": {
+      "success": {
+        "$value": {
+          "colorSpace": "srgb",
+          "components": [0, 0.8, 0.4],
+          "hex": "#00cc66"
+        }
+      },
+      "warning": { "$type": "string", "$value": "amber" }
+    }
+  }
+}

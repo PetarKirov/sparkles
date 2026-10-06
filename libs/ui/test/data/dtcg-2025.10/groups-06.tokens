@@ -1,0 +1,6 @@
+{
+  "experimental": {
+    "$description": "Tokens for experimental features - currently empty",
+    "$deprecated": "This group is being phased out"
+  }
+}

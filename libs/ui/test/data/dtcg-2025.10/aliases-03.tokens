@@ -1,0 +1,20 @@
+{
+  "base": {
+    "primary": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0, 0.4, 0.8],
+        "hex": "#0066cc"
+      },
+      "$type": "color"
+    }
+  },
+  "semantic": {
+    "brand": {
+      "$value": "{base.primary}"
+    },
+    "link": {
+      "$value": "{semantic.brand}"
+    }
+  }
+}

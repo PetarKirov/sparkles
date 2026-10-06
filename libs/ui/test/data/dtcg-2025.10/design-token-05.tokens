@@ -1,0 +1,15 @@
+{
+  "Button background": {
+    "$type": "color",
+    "$value": {
+      "colorSpace": "srgb",
+      "components": [0.467, 0.467, 0.467]
+    },
+    "$extensions": {
+      "org.example.tool-a": 42,
+      "org.example.tool-b": {
+        "turn-up-to-11": true
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "border": {
+    "heavy": {
+      "$type": "border",
+      "$value": {
+        "color": {
+          "colorSpace": "srgb",
+          "components": [0.218, 0.218, 0.218]
+        },
+        "width": {
+          "value": 3,
+          "unit": "px"
+        },
+        "style": "solid"
+      }
+    },
+    "focusring": {
+      "$type": "border",
+      "$value": {
+        "color": "{color.focusring}",
+        "width": {
+          "value": 1,
+          "unit": "px"
+        },
+        "style": {
+          "dashArray": [
+            { "value": 0.5, "unit": "rem" },
+            { "value": 0.25, "unit": "rem" }
+          ],
+          "lineCap": "round"
+        }
+      }
+    }
+  }
+}

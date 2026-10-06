@@ -1,0 +1,10 @@
+{
+  "font-weight-default": {
+    "$value": 350,
+    "$type": "fontWeight"
+  },
+  "font-weight-thick": {
+    "$value": "extra-bold",
+    "$type": "fontWeight"
+  }
+}

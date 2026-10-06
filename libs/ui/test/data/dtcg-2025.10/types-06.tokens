@@ -1,0 +1,6 @@
+{
+  "line-height-large": {
+    "$value": 2.3,
+    "$type": "number"
+  }
+}

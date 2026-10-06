@@ -1,0 +1,12 @@
+{
+  "alert-border-style": {
+    "$type": "strokeStyle",
+    "$value": {
+      "dashArray": [
+        { "value": 0.5, "unit": "rem" },
+        { "value": 0.25, "unit": "rem" }
+      ],
+      "lineCap": "round"
+    }
+  }
+}

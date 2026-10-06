@@ -1,0 +1,9 @@
+{
+  "ambiguous": {
+    "data": [10, 20, 30],
+    "metadata": {
+      "0": "Info about first item",
+      "1": "Info about second item"
+    }
+  }
+}

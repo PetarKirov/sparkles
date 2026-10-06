@@ -1,0 +1,33 @@
+{
+  "base": {
+    "text": {
+      "$value": {
+        "fontFamily": ["Helvetica", "Arial", "sans-serif"],
+        "fontSize": { "value": 16, "unit": "px" },
+        "fontWeight": 400,
+        "lineHeight": 1.5
+      },
+      "$type": "typography"
+    }
+  },
+  "headings": {
+    "h1": {
+      "$value": {
+        "fontFamily": { "$ref": "#/base/text/$value/fontFamily" },
+        "fontSize": { "value": 32, "unit": "px" },
+        "fontWeight": 700,
+        "lineHeight": { "$ref": "#/base/text/$value/lineHeight" }
+      },
+      "$type": "typography"
+    },
+    "h2": {
+      "$value": {
+        "fontFamily": { "$ref": "#/base/text/$value/fontFamily" },
+        "fontSize": { "value": 24, "unit": "px" },
+        "fontWeight": 600,
+        "lineHeight": { "$ref": "#/base/text/$value/lineHeight" }
+      },
+      "$type": "typography"
+    }
+  }
+}

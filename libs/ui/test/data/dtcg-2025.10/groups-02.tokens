@@ -1,0 +1,29 @@
+{
+  "button": {
+    "$type": "color",
+    "background": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0, 0.4, 0.8],
+        "hex": "#0066cc"
+      }
+    },
+    "text": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [1, 1, 1],
+        "hex": "#ffffff"
+      }
+    }
+  },
+  "button-primary": {
+    "$extends": "{button}",
+    "background": {
+      "$value": {
+        "colorSpace": "srgb",
+        "components": [0.8, 0, 0.4],
+        "hex": "#cc0066"
+      }
+    }
+  }
+}

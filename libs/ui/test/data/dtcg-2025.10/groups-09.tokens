@@ -1,0 +1,9 @@
+{
+  "spacing": {
+    "$type": "dimension",
+    "$description": "Base spacing scale",
+    "$root": { "$value": { "value": 16, "unit": "px" } },
+    "small": { "$value": { "value": 8, "unit": "px" } },
+    "large": { "$value": { "value": 32, "unit": "px" } }
+  }
+}

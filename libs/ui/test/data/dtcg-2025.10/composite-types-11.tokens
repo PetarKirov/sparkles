@@ -1,0 +1,21 @@
+{
+  "mostly-yellow": {
+    "$type": "gradient",
+    "$value": [
+      {
+        "color": {
+          "colorSpace": "srgb",
+          "components": [1, 1, 0]
+        },
+        "position": 0.666
+      },
+      {
+        "color": {
+          "colorSpace": "srgb",
+          "components": [1, 0, 0]
+        },
+        "position": 1
+      }
+    ]
+  }
+}
