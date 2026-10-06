@@ -4628,7 +4628,35 @@ private bool isSourceLibrary(string repoRoot, string packagePath)
     const sdl = buildPath(repoRoot, packagePath, "dub.sdl");
     if (!sdl.exists)
         return false;
-    return sdl.readText.canFind("sourceLibrary");
+    return declaresSourceLibrary(sdl.readText);
+}
+
+/// Whether recipe text sets `targetType "sourceLibrary"` on a line of its own.
+/// The word in a comment does not count: ui-gallery's recipe mentions a
+/// sourceLibrary it depends on, and treating it as one built its `unittest`
+/// configuration, which never compiles `main`, so `--build-each-commit`
+/// passed a commit whose executable did not build.
+bool declaresSourceLibrary(string recipe) @safe pure
+{
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : findSplitBefore;
+
+    foreach (line; recipe.splitter('\n'))
+    {
+        const code = line.findSplitBefore("//")[0].strip;
+        if (code.startsWith("targetType") && code.canFind(`"sourceLibrary"`))
+            return true;
+    }
+    return false;
+}
+
+@("ci.declaresSourceLibrary.ignoresComments")
+@safe pure unittest
+{
+    assert(declaresSourceLibrary("name \"x\"\ntargetType \"sourceLibrary\"\n"));
+    assert(declaresSourceLibrary("configuration \"a\" {\n    targetType \"sourceLibrary\"\n}\n"));
+    assert(!declaresSourceLibrary("// A sourceLibrary: its sources compile here\ntargetType \"executable\"\n"));
+    assert(!declaresSourceLibrary("targetType \"library\" // not a sourceLibrary\n"));
 }
 
 /// `dub build :pkg` argv, honouring `$DC` and stating dub's default `debug`
