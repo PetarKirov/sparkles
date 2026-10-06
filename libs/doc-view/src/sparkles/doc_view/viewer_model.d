@@ -41,7 +41,7 @@ import sparkles.ui.state : ScrollAxis, ScrollbarState, DisclosureState, DocRow, 
     sourceOffsetAt;
 import sparkles.base.term_control : PointerShape;
 import sparkles.base.term_color : Color;
-import sparkles.ui.style : defaultTwoslashPalette, Palette,
+import sparkles.ui.style : defaultTwoslashPalette, FontRole, Palette,
     schemeForBackground, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, WidgetKind, WidgetTree;
 
@@ -251,6 +251,8 @@ struct ViewerModel
     int tabWidth = 4;               /// tab stops in the raw view (--tab-width)
     bool listWhitespace;            /// vim `list` (--list-whitespace)
     bool codeLineNumbers = true;    /// in-panel fence numbers ('c' toggles)
+    /// The face the preview's prose reads in (`MdViewOptions.proseRole`).
+    FontRole proseRole = FontRole.inherit;
     /// `--code-overflow`: long fence lines scroll behind a per-fence
     /// viewport (default) or wrap in-panel.
     OverflowPolicy codeOverflow;
@@ -1171,6 +1173,7 @@ struct ViewerModel
             foldHitBase: foldHitBase,
             inlineFoldMarker: inlineFoldMarker,
             codeLineNumbers: codeLineNumbers,
+            proseRole: proseRole,
             codeOverflow: codeOverflow,
             codeMaxLines: resolvedCodeMaxLines(),
             fenceScrolls: fenceScrollList(),
