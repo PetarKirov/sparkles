@@ -1241,10 +1241,14 @@ struct TerminalView
     routing. The application-level layers (clipboard chords, font hotkeys,
     the exit-policy key) stay with the caller — the whole-surface `handle`
     stacks them on top of this. Returns `false` when nothing was written
-    (child gone, or an unencodable event with no text).
+    (not opened yet, child gone, or an unencodable event with no text).
     */
     bool sendKey(in KeyEvent k) @system nothrow @nogc
     {
+        // Not opened yet (a pane split this frame, or one too small to get a
+        // box): no terminal and no encoder to take the key.
+        if (!opened)
+            return false;
         // Mode changes must reach the encoder before this frame's first
         // encode — the polling loop's drain-before-input order (the frame's
         // own drain then covers the render).
@@ -2572,6 +2576,20 @@ const(char)[] kittyTextEvent(scope const(char)[] text, ubyte flags, return scope
     assert(kittyTextEvent("👍🏽", 8 | 16, b) == "\x1b[0;;128077:127997u");
     assert(kittyTextEvent("©", 8, b) == "\x1b[0u");
     assert(kittyTextEvent("©", 1 | 2, b) == "©");
+}
+
+@("terminal_view.component.sendKey.notOpenedTakesNothing")
+@system unittest
+{
+    import sparkles.input.events : Key, KeyEvent;
+
+    // A pane a workspace split this frame has no terminal until its first
+    // frame opens one: a key typed meanwhile is dropped, not encoded
+    // through a null encoder (a segfault on the desktop).
+    auto tv = new TerminalView;
+    KeyEvent k;
+    k.key = Key.enter;
+    assert(!tv.sendKey(k));
 }
 
 /// `text` without the C0 controls a paste may not carry (`TPR18`): all but

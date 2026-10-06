@@ -1616,8 +1616,10 @@ struct WorkspaceHost
             }
             return;
         }
+        // A pane opens on its first frame with a box: until then (split this
+        // frame, or too small to show) it has no terminal to take a key.
         if (auto tv = focusedView())
-            if (!tv.s.childExited)
+            if (tv.s.terminal !is null && !tv.s.childExited)
                 tv.handle(h, Event(k));
     }
 
