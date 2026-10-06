@@ -637,6 +637,33 @@ struct MemVfs
             n.touched = false;
     }
 
+    /// The path of the node an open handle names, from the backend's root,
+    /// written into `buffer`; null for a closed handle or a removed node.
+    const(char)[] pathOf(Handle h, return ref char[4096] buffer) const scope @safe nothrow @nogc
+    {
+        if (h.slot >= handleCapacity || slots[h.slot].node == none
+            || slots[h.slot].generation != h.generation)
+            return null;
+        uint[64] chain;
+        size_t depth;
+        for (uint n = slots[h.slot].node; n != 0; n = nodes[n].parent)
+        {
+            if (n == none || depth == chain.length)
+                return null;
+            chain[depth++] = n;
+        }
+        size_t length;
+        foreach_reverse (n; chain[0 .. depth])
+        {
+            if (length)
+                buffer[length++] = '/';
+            const name = nodes[n].name[0 .. nodes[n].nameLength];
+            buffer[length .. length + name.length] = name[];
+            length += name.length;
+        }
+        return buffer[0 .. length];
+    }
+
     /// Entries currently in use, the root included.
     size_t liveNodes() const scope @safe nothrow @nogc
     {
