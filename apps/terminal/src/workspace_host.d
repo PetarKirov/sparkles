@@ -410,14 +410,11 @@ struct WorkspaceHost
         }
         auto p = new DocViewPane;
         // Set before `open`, which builds the first view: no line numbers by
-        // default (`TDV13`), the prose in the interface face (D50).
+        // default (`TDV13`). The prose stays in the cell font, beside the
+        // tables and code blocks that need it, until the design system sets
+        // the viewer's proportional type (`TDV13`).
         p.vm.lineNumbers = viewerLineNumbers;
         p.vm.codeLineNumbers = viewerCodeLineNumbers;
-        {
-            import sparkles.ui.style : FontRole;
-
-            p.vm.proseRole = FontRole.ui;
-        }
         cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
         viewers[id] = p;
         dirty = true;
