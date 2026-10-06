@@ -293,19 +293,19 @@ string data, costing time linear in the table's length.
 return `limitExceeded` when `scratch` is too short, reporting the length it
 needs. The value borrows both the face's buffer and `scratch`.
 
-| Situation                                                                             | Result                                     |
-| ------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `gid ≥ numGlyphs` of `maxp`                                                           | `indexOutOfRange`                          |
-| version 1.0, `gid < 258`                                                              | the standard name                          |
-| version 1.0, `gid ≥ 258`; version 3.0; no `post`                                      | no name from `post` (`FTP31` applies)      |
-| version 2.0, `gid` at or past `post`'s own glyph count                                | no name from `post`                        |
-| version 2.0, index below 258                                                          | the standard name                          |
-| version 2.0, index from 258 to 32,767, naming a stored string                         | that string                                |
-| version 2.0, index naming a string past the last one stored, or index 32,768 or above | `badValue` for that glyph                  |
-| version 2.0, the string an index names runs past the table                            | `truncated` for that glyph                 |
-| version 2.0, the glyph-index array itself runs past the table                         | `truncated` for every glyph                |
-| version 2.5, `gid + offset[gid]` from 0 to 257                                        | that standard name                         |
-| version 2.5, `gid + offset[gid]` outside 0–257, or the offset array past the table    | `badValue`, or `truncated`, for that glyph |
+| Situation                                                                          | Result                                     |
+| ---------------------------------------------------------------------------------- | ------------------------------------------ |
+| `gid ≥ numGlyphs` of `maxp`                                                        | `indexOutOfRange`                          |
+| version 1.0, `gid < 258`                                                           | the standard name                          |
+| version 1.0, `gid ≥ 258`; version 3.0; no `post`                                   | no name from `post` (`FTP31` applies)      |
+| version 2.0, `gid` at or past `post`'s own glyph count                             | no name from `post`                        |
+| version 2.0, index below 258                                                       | the standard name                          |
+| version 2.0, index from 258 to 65,535, naming a stored string                      | that string                                |
+| version 2.0, index naming a string past the last one stored                        | `badValue` for that glyph                  |
+| version 2.0, the string an index names runs past the table                         | `truncated` for that glyph                 |
+| version 2.0, the glyph-index array itself runs past the table                      | `truncated` for every glyph                |
+| version 2.5, `gid + offset[gid]` from 0 to 257                                     | that standard name                         |
+| version 2.5, `gid + offset[gid]` outside 0–257, or the offset array past the table | `badValue`, or `truncated`, for that glyph |
 
 **FTP31: Glyph names from `CFF`.** For a face with `CFF` outlines, a glyph
 whose `post` lookup gives no name, an empty name or an error **must** take its
