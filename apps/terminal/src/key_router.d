@@ -178,10 +178,11 @@ struct KeyRouter
 Paints the guide panel along the bottom of a pane `cols` × `rows` cells whose
 top-left pixel is (`x`, `y`), in the chrome colours derived from the
 terminal's own foreground and background (D17, `THM7`). Nothing when the
-panel is not shown or lists nothing.
+panel is not shown or lists nothing. With the area's pixel size (`pxW`, `pxH`),
+the panel meets its bottom and right edges exactly.
 */
 void paintGuide(H)(ref H h, ref KeyRouter router, in TermContext ctx, int cols,
-    int rows, int x, int y, RgbColor fg, RgbColor bg) @system
+    int rows, int x, int y, RgbColor fg, RgbColor bg, int pxW = 0, int pxH = 0) @system
 {
     import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.term_color : Color;
@@ -220,12 +221,24 @@ void paintGuide(H)(ref H h, ref KeyRouter router, in TermContext ctx, int cols,
     static FrameOps ops;
     ops.reset();
     chromeDisplayList(tree, frames, palette, fg, bg, ops);
-    foreach (ref op; ops.ops[0 .. ops.length])
-        op.translate(0, dy > 0 ? dy : 0);
-
     auto c = h.canvas;
+    // `pxW` × `pxH` given, the panel sits on the area's bottom pixel, and its
+    // background runs on to the right edge: the part of a cell left over
+    // there is the panel's, not a gap.
+    const cellH = c.cellH, cellW = c.cellW;
+    const panelRows = frames[tree.root].rect.height;
+    const top = pxH > 0 ? y + pxH - panelRows * cellH : y + (dy > 0 ? dy : 0) * cellH;
+    if (pxW > cols * cellW || pxH > 0)
+    {
+        import raylib : Color, DrawRectangle;
+        import chrome : ChromeTheme;
+
+        const fill = ChromeTheme.of(fg, bg).slotFill(tree.nodes[tree.root].slot);
+        DrawRectangle(x, top, pxW > cols * cellW ? pxW : cols * cellW, y + pxH - top,
+            Color(fill.r, fill.g, fill.b, 255));
+    }
     c.originX = x;
-    c.originY = y;
+    c.originY = top;
     paint(c, ops[]);
 }
 

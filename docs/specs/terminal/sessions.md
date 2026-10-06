@@ -111,7 +111,11 @@ or click on a pane focuses it.
 
 **TSS10: Dividers.** Dragging a divider **must** resize the split (`DCK3`).
 Each pane is resized in whole cells, and its program is notified once per
-settled size, not once per frame of the drag.
+settled size, not once per frame of the drag. Where a divider down the screen
+meets one across it (┼ ├ ┤ ┬ ┴), a drag from the junction **must** move both,
+each along its own axis. On the desktop the pointer over a divider **must**
+show which way it resizes: left and right, up and down, or — at a junction —
+either way.
 
 **TSS11: Pane chrome.** The focused pane **must** be visible without colour
 ([`ACC4`](../design-system/SPEC.md)) under every `ui.paneChrome`
@@ -170,32 +174,38 @@ it the MENU key, so the opener is the one control always on screen.
 ## Spacing (`TSS17`)
 
 **TSS17: Panes and their rules.** A pane's text **must** keep a margin from
-the pane's sides and top (8 and 4 dp on a phone), and split panes **must**
-be separated by a rule of one thickness whichever way they are split (1 dp on
-a phone), dragged within a finger's reach of it. On a phone the opener's band
-**must** be opaque and ruled off from the panes. Violation: text against the
-screen's edge, or a stacked split's divider thicker than a side-by-side one.
+the pane's sides and top (8 and 4 dp on a phone), painted in the pane's own
+background, and split panes **must** be separated by a rule of one thickness
+whichever way they are split (1 dp on a phone), dragged within a finger's
+reach of it. A revealed toolbar **must** sit inside that margin, clear of the
+rules beside it. On a phone the opener's band **must** be opaque and ruled
+off from the panes by a rule of the extra keys' thickness. The part of a cell
+left over at the window's right and bottom edges **must** belong to whatever
+reaches them — a pane, a rule, the opener, the key guide — never a bare
+strip. Violation: text against the screen's edge, a margin in another colour
+than its pane, a stacked split's divider thicker than a side-by-side one, or
+an unpainted strip along an edge.
 
 ## Status
 
-| ID      | Status                                                                                                                                                                                 | Traces to                                                                                                     |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `TSS1`  | full                                                                                                                                                                                   | `exitActionFor`, `WorkspaceHost.applyExits`                                                                   |
-| `TSS2`  | partial: a long command wraps and scrolls under the wheel; scrolling it by touch has not been seen on a device                                                                         | `exitBanner`, `commandLines`, `WorkspaceHost.scrollBanner`, `WorkspaceHost.tap`, `CoreState.embedderOwnsExit` |
-| `TSS3`  | full                                                                                                                                                                                   | `TerminalView.respawn`, `respawnRunsTheProgramAgainInPlace`                                                   |
-| `TSS4`  | partial: the installer hands over to the login by respawning the pane, which has not been seen on the phone                                                                            | `DroidTerminal.view`, `configureSession`                                                                      |
-| `TSS5`  | full                                                                                                                                                                                   | `Workspace.empty`, `DesktopTerminal.view`                                                                     |
-| `TSS6`  | full                                                                                                                                                                                   | `Workspace`, `TerminalPool`, `maxTabs`, `maxPanesPerTab`                                                      |
-| `TSS7`  | full                                                                                                                                                                                   | `WorkspaceHost.frame`                                                                                         |
-| `TSS8`  | partial: renaming a tab has no command, for want of a text field                                                                                                                       | `WorkspaceHost.run`, `Workspace.split`, `Workspace.focusToward`, `Workspace.resizeToward`                     |
-| `TSS9`  | full                                                                                                                                                                                   | `handle_mouse` (pane origin), `WorkspaceHost.paneAt`, `DroidTerminal.onPointer`                               |
-| `TSS10` | full                                                                                                                                                                                   | `Workspace.resizeSplit`, `Workspace.moveDivider`, `WorkspaceHost.dragDivider`, `WorkspaceHost.touchDivider`   |
-| `TSS11` | partial: the reveal toolbar's split always splits right                                                                                                                                | `paneBoxes`, `paneHeader`, `paneFrame`, `paneToolbar`, `WorkspaceHost.placeChrome`                            |
-| `TSS12` | full                                                                                                                                                                                   | `TabTree`, `WorkspaceHost.treeTabs`                                                                           |
-| `TSS13` | full                                                                                                                                                                                   | `pillBand`, `rail`, `usesPill`, `WorkspaceHost.toggleTree`                                                    |
-| `TSS14` | partial: on the phone a pane comes back in its directory only when the shell reports it with OSC 7, which nix-on-droid's bash does not, and proot hides a guest's `chdir` from `/proc` | `saved`, `restored`, `WorkspaceHost.restore`, `WorkspaceHost.refreshCwds`                                     |
-| `TSS15` | full                                                                                                                                                                                   | `Workspace.focusPane`, `DesktopIntegration.tick`, `DroidPlatform.focusPane`, `NotificationPage.openEntry`     |
-| `TSS16` | full                                                                                                                                                                                   | `OpenerHit.guide`, `rail`, `pillBand`, `WorkspaceHost.takeGuideRequest`                                       |
-| `TSS17` | full                                                                                                                                                                                   | `paneBoxes`, `WorkspaceHost.ruleRect`, `WorkspaceHost.padX`, `pillBand`                                       |
+| ID      | Status                                                                                                                                                                                 | Traces to                                                                                                                                                               |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TSS1`  | full                                                                                                                                                                                   | `exitActionFor`, `WorkspaceHost.applyExits`                                                                                                                             |
+| `TSS2`  | partial: a long command wraps and scrolls under the wheel; scrolling it by touch has not been seen on a device                                                                         | `exitBanner`, `commandLines`, `WorkspaceHost.scrollBanner`, `WorkspaceHost.tap`, `CoreState.embedderOwnsExit`                                                           |
+| `TSS3`  | full                                                                                                                                                                                   | `TerminalView.respawn`, `respawnRunsTheProgramAgainInPlace`                                                                                                             |
+| `TSS4`  | partial: the installer hands over to the login by respawning the pane, which has not been seen on the phone                                                                            | `DroidTerminal.view`, `configureSession`                                                                                                                                |
+| `TSS5`  | full                                                                                                                                                                                   | `Workspace.empty`, `DesktopTerminal.view`                                                                                                                               |
+| `TSS6`  | full                                                                                                                                                                                   | `Workspace`, `TerminalPool`, `maxTabs`, `maxPanesPerTab`                                                                                                                |
+| `TSS7`  | full                                                                                                                                                                                   | `WorkspaceHost.frame`                                                                                                                                                   |
+| `TSS8`  | partial: renaming a tab has no command, for want of a text field                                                                                                                       | `WorkspaceHost.run`, `Workspace.split`, `Workspace.focusToward`, `Workspace.resizeToward`                                                                               |
+| `TSS9`  | full                                                                                                                                                                                   | `handle_mouse` (pane origin), `WorkspaceHost.paneAt`, `DroidTerminal.onPointer`                                                                                         |
+| `TSS10` | full                                                                                                                                                                                   | `Workspace.resizeSplit`, `Workspace.moveDivider`, `WorkspaceHost.dragDivider`, `WorkspaceHost.touchDivider`, `WorkspaceHost.dividersNear`, `WorkspaceHost.dividerHover` |
+| `TSS11` | partial: the reveal toolbar's split always splits right                                                                                                                                | `paneBoxes`, `paneHeader`, `paneFrame`, `paneToolbar`, `WorkspaceHost.placeChrome`                                                                                      |
+| `TSS12` | full                                                                                                                                                                                   | `TabTree`, `WorkspaceHost.treeTabs`                                                                                                                                     |
+| `TSS13` | full                                                                                                                                                                                   | `pillBand`, `rail`, `usesPill`, `WorkspaceHost.toggleTree`                                                                                                              |
+| `TSS14` | partial: on the phone a pane comes back in its directory only when the shell reports it with OSC 7, which nix-on-droid's bash does not, and proot hides a guest's `chdir` from `/proc` | `saved`, `restored`, `WorkspaceHost.restore`, `WorkspaceHost.refreshCwds`                                                                                               |
+| `TSS15` | full                                                                                                                                                                                   | `Workspace.focusPane`, `DesktopIntegration.tick`, `DroidPlatform.focusPane`, `NotificationPage.openEntry`                                                               |
+| `TSS16` | full                                                                                                                                                                                   | `OpenerHit.guide`, `rail`, `pillBand`, `WorkspaceHost.takeGuideRequest`                                                                                                 |
+| `TSS17` | full                                                                                                                                                                                   | `paneBoxes`, `WorkspaceHost.ruleRect`, `WorkspaceHost.padX`, `WorkspaceHost.stretchToEdges`, `pillBand`, `paintGuide`                                                   |
 
 → [Overview](./index.md) · [Containers `DCK`](../ui/containers.md) · [Keymap](./keymap.md)
