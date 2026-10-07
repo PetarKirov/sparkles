@@ -103,6 +103,11 @@ struct TableViewportSpec
     int maxLines;        /// interior line clamp (0 = no vertical viewport)
     int x;               /// horizontal scroll offset, in interior cells
     int y;               /// vertical scroll offset, in interior lines
+    /// How far past `x`/`y` the interior is scrolled, in fractions of a
+    /// cell (`LAY7`): a pixel target paints it.
+    float fx = 0;
+    /// ditto
+    float fy = 0;
     size_t hBarHitId;    /// bottom-border bar hit id (0 → `style.hitId`)
     size_t vBarHitId;    /// right-border track hit id (0 → `style.hitId`)
     RgbColor hThumbFg;   /// resolved h-thumb color (hot logic is the caller's)
@@ -369,6 +374,9 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
         sy = interiorLines - shownLines;
     if (sy < 0)
         sy = 0;
+    // The fraction past them, none at the far end (`LAY7`).
+    const fx = sx < interiorW - viewInnerW ? vp.fx : 0;
+    const fy = sy < interiorLines - shownLines ? vp.fy : 0;
 
     const iconW = cast(int) visibleWidth(style.cutout.icon.text);
     const cutout = style.cutout.present && props.border && iconW > 0
@@ -635,6 +643,7 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
         Widget col = Widget(kind: WidgetKind.column, children: runs,
             width: SizeSpec.fixed(1), clipY: clip,
             childOffset: Point(0, clip ? sy : 0));
+        col.childOffsetFracY = clip ? fy : 0;
         if (clip)
             col.height = SizeSpec.fixed(shown);
         return b.add(col);
@@ -661,6 +670,7 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
                 clipX: true, childOffset: Point(sx, 0),
                 width: SizeSpec.fixed(window),
                 height: SizeSpec.fixed(1));
+            clip.childOffsetFracX = fx;
             parts ~= b.add(clip);
         }
         else
@@ -757,10 +767,13 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             children: paneParts[rb][cb], width: SizeSpec.fixed(w0),
             height: SizeSpec.fixed(h0)));
         const cx = cb == 1 && hOver, cy = rb == 1 && vOver;
-        return b.add(Widget(kind: WidgetKind.column, children: [inner],
+        auto port = Widget(kind: WidgetKind.column, children: [inner],
             clipX: cx, clipY: cy,
             childOffset: Point(cx ? sx : 0, cy ? sy : 0),
-            width: SizeSpec.fixed(boxW), height: SizeSpec.fixed(boxH)));
+            width: SizeSpec.fixed(boxW), height: SizeSpec.fixed(boxH));
+        port.childOffsetFracX = cx ? fx : 0;
+        port.childOffsetFracY = cy ? fy : 0;
+        return b.add(port);
     }
 
     uint[] frameRows;
