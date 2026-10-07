@@ -342,10 +342,9 @@ struct WorkspaceHost
         // quits the application or retitles the window itself.
         o.exitBehavior = ExitBehavior.hold;
         o.builtinChords = false;
-        // A touch screen's bar is the workspace's, in the pane's padding
-        // (`paintScrollbar`): the view's own sat over the last column. A
-        // finger flings the pane rather than dragging a bar.
-        o.internalScrollbar = !touch;
+        // Every pane's bar is the workspace's overlay bar in its padding
+        // (`paintPaneBar`, `SCV13`): the view's own sat over the last column.
+        o.internalScrollbar = false;
         o.embedded = true;
         auto self = &this;
         // Every protocol event reaches the log at `trace` — "debug" in the
@@ -973,6 +972,18 @@ struct WorkspaceHost
                 sb.motion.pos, sb.wide, (double p) { sb.barTo(p); });
             return true;
         }
+        if (auto tv = pool.byId(pane))
+        {
+            auto b = boxOf(pane);
+            if (b is null)
+                return false;
+            const sb = tv.scrollback();
+            if (sb.total <= sb.len)
+                return false;
+            t = BarTarget(&paneBars.require(pane, OverlayBar.init), barBand(*b), sb.total,
+                sb.len, tv.scrollPos(), touch && wideBars, (double p) { tv.scrollTo(p); });
+            return true;
+        }
         if (auto v = viewer(pane))
         {
             Rect band;
@@ -1147,33 +1158,41 @@ struct WorkspaceHost
             ? Rect(d.x - width / 2, d.y, width, d.height)
             : Rect(d.x, d.y - width / 2, d.width, width);
 
-    /**
-    The thumb of a pane's scrollbar on a touch screen: in the padding right of
-    its text, centred there and a third of it wide, as long as the viewport
-    is of the scrollback (20 px at the least). Empty when everything shows.
-    */
-    static Rect scrollThumb(in PaneBox b, in Scrollback sb) @safe pure nothrow @nogc
+    /// The band a pane's overlay bar is drawn in (`SCV13`): its right
+    /// padding, beside the text, for the text's height.
+    static Rect barBand(in PaneBox b) @safe pure nothrow @nogc
     {
-        const pad = b.outer.x + b.outer.width - (b.content.x + b.content.width);
-        if (sb.total <= sb.len || sb.total <= 0 || pad < 3 || b.content.height <= 0)
-            return Rect.init;
-        const h = b.content.height;
-        long extent = sb.len * h / sb.total;
-        if (extent < 20)
-            extent = 20 < h ? 20 : h;
-        const start = (h - extent) * sb.offset / (sb.total - sb.len);
-        const w = pad / 3;
-        return Rect(b.content.x + b.content.width + (pad - w) / 2,
-            b.content.y + cast(int) start, w, cast(int) extent);
+        const right = b.content.x + b.content.width;
+        return Rect(right, b.content.y, b.outer.x + b.outer.width - right, b.content.height);
     }
 
-    private void paintScrollbar(in PaneBox b, in Scrollback sb) @system
-    {
-        import raylib : Color, DrawRectangle;
+    private OverlayBar[PaneId] paneBars;   // the panes' bars' fade and grab
+    private double[PaneId] paneBarPos;     // where each was last frame
 
-        const r = scrollThumb(b, sb);
-        if (r.width > 0)
-            DrawRectangle(r.x, r.y, r.width, r.height, Color(255, 255, 255, 120));
+    // A terminal pane's overlay bar, where its scrollback is — fraction
+    // included, so the thumb slides with the rows (`SCV13`).
+    private void paintPaneBar(C)(ref C c, in PaneBox b, TerminalView* tv) @system
+    {
+        import sparkles.ui.canvas : RuleEdge, Scrollbar;
+        import sparkles.ui.components.chrome : fracByte;
+
+        const sb = tv.scrollback();
+        if (sb.total <= sb.len)
+            return;
+        auto bar = &paneBars.require(b.id, OverlayBar.init);
+        const pos = tv.scrollPos();
+        const whole = cast(long) pos;
+        c.scrollbarPx(barBand(b), Scrollbar(
+            content: cast(int) sb.total,
+            viewport: cast(int) sb.len,
+            offset: cast(int) whole,
+            offsetFrac: fracByte(cast(float)(pos - whole)),
+            fg: RgbColor(255, 255, 255),
+            fgAlpha: 120,
+            edge: RuleEdge.right,
+            expandPercent: touch && wideBars ? 100 : 0,
+            fadePercent: touch ? bar.anim.fadePercent : 100,
+        ));
     }
 
     private static bool contains(in Rect r, int x, int y) @safe pure nothrow @nogc
@@ -1404,8 +1423,7 @@ struct WorkspaceHost
                 DrawRectangle(b.outer.x, b.outer.y, b.outer.width, b.outer.height,
                     rgb(tv.background));
                 tv.paintPanePx(h, b.content.x, b.content.y, b.content.width, b.content.height);
-                if (touch)
-                    paintScrollbar(b, tv.scrollback());
+                paintPaneBar(canvas, b, tv);
             }
             else if (auto v = viewer(b.id))
             {
@@ -1604,6 +1622,20 @@ struct WorkspaceHost
         bool more = surfaces.animate(dt);
         foreach (id, v; viewers)
             more |= v.animate(dt);
+        // A pane's bar shows while its scrollback moves, then fades (the
+        // scrollback's own motion runs in `TerminalView.frame`).
+        if (touch)
+            foreach (ref b; boxes)
+                if (auto tv = pool.byId(b.id))
+                {
+                    const p = tv.scrollPos();
+                    auto last = b.id in paneBarPos;
+                    auto bar = &paneBars.require(b.id, OverlayBar.init);
+                    const moved = last !is null && *last != p;
+                    paneBarPos[b.id] = p;
+                    bar.anim.stepFade(moved || bar.grabbed, dt);
+                    more |= bar.anim.fading;
+                }
         animatedAt = more ? now : MonoTime.init;
         return more;
     }
@@ -2085,20 +2117,14 @@ import sparkles.input : KeyEvent, WheelEvent;
     assert(a == -1 && d == -1, "beside the junction, off both");
 }
 
-@("workspace_host.scrollThumb.inThePaddingNotOverTheText")
+@("workspace_host.barBand.thePaddingBesideTheText")
 @safe pure nothrow @nogc unittest
 {
     // A pane 300 wide, its text inset 24 px either side.
     PaneBox b = {outer: Rect(0, 0, 300, 400), content: Rect(24, 0, 252, 400)};
-    assert(WorkspaceHost.scrollThumb(b, Scrollback(40, 40, 0)).width == 0,
-        "nothing scrolled off: no bar");
-    const top = WorkspaceHost.scrollThumb(b, Scrollback(160, 40, 0));
-    assert(top.x >= 276 && top.x + top.width <= 300, "right of the text, inside the pane");
-    assert(top.y == 0 && top.height == 100, "a quarter of the scrollback, at its top");
-    const end = WorkspaceHost.scrollThumb(b, Scrollback(160, 40, 120));
-    assert(end.y + end.height == 400, "the newest rows: at the bottom");
+    assert(WorkspaceHost.barBand(b) == Rect(276, 0, 24, 400),
+        "right of the text, inside the pane, as tall as the text");
 }
-
 @("workspace_host.stretchToEdges.theLeftoverCellGoesToTheEdge")
 @safe pure nothrow @nogc unittest
 {

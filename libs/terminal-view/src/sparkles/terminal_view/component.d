@@ -37,7 +37,9 @@ import raylib;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ghostty.c;
 import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction, PasteEvent,
-    KeyEvent, match, Mods, mousePointer, PointerAction, PointerEvent;
+    KeyEvent, match, Mods, mousePointer, PointerAction, PointerEvent, WheelEvent;
+import sparkles.ui.scroll_motion : ScrollMotion;
+import core.time : MonoTime;
 import sparkles.raylib_text : FontSet;
 import sparkles.terminal_view.child_env : sanitizeChildEnv;
 import sparkles.terminal_view.core;
@@ -1032,7 +1034,12 @@ struct TerminalView
             handle_mouse(s.pty_fd, s.mouse_encoder, s.mouse_event, s.terminal,
                 s.cellWidth, s.cellHeight, paneCols * s.cellWidth,
                 paneRows * s.cellHeight, s.selState, s.sbState,
-                s.hoverState, originX, originY);
+                s.hoverState, originX, originY, s.internalScrollbar, &wheelRows);
+        if (wheelRows != 0)
+        {
+            scrollSmooth(WheelEvent(fdy: wheelRows));
+            wheelRows = 0;
+        }
         if (s.hoverState.openRequested)
         {
             s.hoverState.openRequested = false;
@@ -1055,6 +1062,10 @@ struct TerminalView
         const redraw = decideRedraw();
         if (!redraw && !opts.embedded)
             h.skipFrame();
+        // A scroll in motion (`SCV12`) needs the next frame, input or not.
+        if (scrollMoving)
+            static if (__traits(compiles, h.requestFrame()))
+                h.requestFrame();
 
         // The debug screenshot hook (the golden capture): full-rate frames,
         // shot at 120, gone at 130.
@@ -1126,12 +1137,155 @@ struct TerminalView
         originX = px;
         originY = py;
 
+        // Scrolled between rows (`SCV12`): the viewport is painted lower by
+        // the fraction, and the band it uncovers shows the row above it.
+        const shift = shiftPx();
         BeginScissorMode(px, py, pw, ph);
         rlPushMatrix();
-        rlTranslatef(px, py - liftRows * s.cellHeight, 0);
+        rlTranslatef(px, py - liftRows * s.cellHeight + shift, 0);
         paintFrame(s, pw, ph);
         rlPopMatrix();
+        // (Lifted over a sheet, the rows above the viewport's top are the
+        // lifted ones, already painted.)
+        if (shift > 0 && liftRows == 0)
+            paintRowAbove(px, py, pw, shift);
         EndScissorMode();
+    }
+
+    // ── scrolling between rows (`SCV12`) ────────────────────────────────────
+
+    /// The scrollback position while it moves, in rows from the top of the
+    /// history: the viewport's top row is the position rounded up, and the
+    /// content is painted that much lower, part of the row above it showing.
+    /// At rest it settles on a whole row, so the cursor, a selection and a
+    /// tap keep reading whole rows.
+    ScrollMotion scrollMotion;
+    private float shiftRows = 0;
+    private long syncedOffset = -1;
+    private MonoTime lastScrollInput;
+    private GhosttyRenderState aboveState;
+    private MonoTime scrolledAt;  // the last animated frame, while moving
+    private float wheelRows = 0;  // the polled wheel's rows this frame
+    private bool scrollMoving;    // the motion wants the next frame
+
+    /// Where the scrollback is, in rows from its top, fraction included —
+    /// what the overlay bar shows (`SCV13`).
+    double scrollPos() @system nothrow @nogc
+        => syncedOffset >= 0 ? syncedOffset - shiftRows : (opened ? scrollback().offset : 0);
+
+    /// The pixels the content is painted below the pane's top this frame.
+    int shiftPx() const @safe pure nothrow @nogc
+        => cast(int)(shiftRows * s.cellHeight + 0.5f);
+
+    /**
+    A drag or a wheel notch walks the scrollback between rows: a drag 1:1,
+    a notch eased (`SCV12`). For an application that does not read the
+    mouse; one that does takes `sendWheel`. Nothing to walk (the alternate
+    screen keeps no history): nothing moves.
+    */
+    void scrollSmooth(in WheelEvent w) @system nothrow @nogc
+    {
+        if (!opened)
+            return;
+        const sb = scrollback();
+        syncScroll(sb);
+        const limit = sb.total > sb.len ? sb.total - sb.len : 0;
+        if (w.precise)
+            scrollMotion.drag(w.exactY, limit);
+        else
+            scrollMotion.nudge(w.exactY, limit);
+        lastScrollInput = MonoTime.currTime;
+        applyScroll(sb);
+    }
+
+    /// The bar dragged the scrollback to `pos` rows from its top.
+    void scrollTo(double pos) @system nothrow @nogc
+    {
+        if (!opened)
+            return;
+        const sb = scrollback();
+        syncScroll(sb);
+        scrollMotion.jumpTo(pos, sb.total > sb.len ? sb.total - sb.len : 0);
+        lastScrollInput = MonoTime.currTime;
+        applyScroll(sb);
+    }
+
+    /**
+    One frame of the scroll's motion, `dt` seconds: an ease or a fling
+    steps, and a position left between rows settles on the nearest whole
+    one once the input has been still a moment. True while frames must
+    keep coming.
+    */
+    bool animateScroll(float dt) @system nothrow @nogc
+    {
+        import core.time : msecs;
+
+        if (!opened)
+            return false;
+        const sb = scrollback();
+        syncScroll(sb);
+        const limit = sb.total > sb.len ? sb.total - sb.len : 0;
+        bool more = scrollMotion.step(dt, limit);
+        if (!more && shiftRows != 0 && MonoTime.currTime - lastScrollInput > 120.msecs)
+        {
+            const p = scrollMotion.pos;
+            const nearest = cast(long)(p + 0.5);
+            scrollMotion.scrollTo(nearest, limit);
+            more = scrollMotion.step(dt, limit);
+        }
+        applyScroll(sb);
+        return more || shiftRows != 0;
+    }
+
+    // Output or a key moved the viewport (re-pinned to the bottom, cleared):
+    // the motion starts where it is now.
+    private void syncScroll(in Scrollback sb) @system nothrow @nogc
+    {
+        if (sb.offset == syncedOffset)
+            return;
+        scrollMotion.jumpTo(sb.offset, sb.total > sb.len ? sb.total - sb.len : 0);
+        shiftRows = 0;
+        syncedOffset = sb.offset;
+    }
+
+    private void applyScroll(in Scrollback sb) @system nothrow @nogc
+    {
+        const pos = scrollMotion.pos;
+        const limit = sb.total > sb.len ? sb.total - sb.len : 0;
+        long top = cast(long) pos;
+        if (top < pos)
+            ++top;
+        if (top > limit)
+            top = limit;
+        const shift = cast(float)(top - pos);
+        if (top != sb.offset)
+            scrollViewport(cast(int)(top - sb.offset));
+        if (top != sb.offset || shift != shiftRows)
+            pendingForce = true;
+        shiftRows = shift < 0 ? 0 : shift;
+        syncedOffset = top;
+    }
+
+    // The row above the viewport, in the `band` pixels a shift uncovers at
+    // the top of the pane: rendered from a second state with the viewport
+    // one row up, then the viewport put back.
+    private void paintRowAbove(int px, int py, int pw, int band) @system
+    {
+        import raylib.rlgl : rlPopMatrix, rlPushMatrix, rlTranslatef;
+
+        if (aboveState is null)
+            ghostty_render_state_new(null, &aboveState);
+        scrollViewport(-1);
+        ghostty_render_state_update(aboveState, s.terminal);
+        auto keep = s.render_state;
+        s.render_state = aboveState;
+        BeginScissorMode(px, py, pw, band);
+        rlPushMatrix();
+        rlTranslatef(px, py + band - s.cellHeight, 0);
+        paintFrame(s, pw, s.cellHeight);
+        rlPopMatrix();
+        s.render_state = keep;
+        scrollViewport(1);
     }
 
     // ── the embedded surface (TVW7) ─────────────────────────────────────────
@@ -1191,6 +1345,17 @@ struct TerminalView
         // The begin transition captured the completed prefix at its exact
         // stream position. Overlay/forced paints use that same immutable
         // snapshot, never an in-progress synchronized update.
+        // The scrollback's motion (`SCV12`), before the state is read: an
+        // ease or a fling in flight keeps the frames coming.
+        {
+            const now = MonoTime.currTime;
+            float dt = scrolledAt == MonoTime.init ? 1.0f / 60
+                : (now - scrolledAt).total!"usecs" / 1e6f;
+            if (dt > 0.05f)
+                dt = 0.05f;
+            scrollMoving = animateScroll(dt);
+            scrolledAt = scrollMoving ? now : MonoTime.init;
+        }
         if (!s.synchronizedOutput.held)
             ghostty_render_state_update(s.render_state, s.terminal);
 
@@ -1448,10 +1613,15 @@ struct TerminalView
             return false;
         ghostty_mouse_event_set_button(s.mouse_event,
             dy < 0 ? GHOSTTY_MOUSE_BUTTON_FOUR : GHOSTTY_MOUSE_BUTTON_FIVE);
-        ghostty_mouse_event_set_action(s.mouse_event, GHOSTTY_MOUSE_ACTION_PRESS);
-        mouse_encode_and_write(s.pty_fd, s.mouse_encoder, s.mouse_event);
-        ghostty_mouse_event_set_action(s.mouse_event, GHOSTTY_MOUSE_ACTION_RELEASE);
-        mouse_encode_and_write(s.pty_fd, s.mouse_encoder, s.mouse_event);
+        // One report per row: a drag that covered three rows is three
+        // notches to the application, as on any other terminal.
+        foreach (_; 0 .. dy < 0 ? -dy : dy)
+        {
+            ghostty_mouse_event_set_action(s.mouse_event, GHOSTTY_MOUSE_ACTION_PRESS);
+            mouse_encode_and_write(s.pty_fd, s.mouse_encoder, s.mouse_event);
+            ghostty_mouse_event_set_action(s.mouse_event, GHOSTTY_MOUSE_ACTION_RELEASE);
+            mouse_encode_and_write(s.pty_fd, s.mouse_encoder, s.mouse_event);
+        }
         return true;
     }
 
