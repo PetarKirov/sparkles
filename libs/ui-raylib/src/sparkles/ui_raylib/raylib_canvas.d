@@ -748,6 +748,33 @@ struct RaylibCanvas
     }
 
     /// Draws the semantic scrollbar op with the backend's continuous px rail.
+    /**
+    The overlay bar (`SCV13`) in a band given in window pixels — a pane's
+    right padding, which no cell rect describes — resolved through the same
+    geometry as $(LREF scrollbar), so what a pointer grabs is what is drawn.
+    Returns the rail it drew (`live` false: nothing to draw).
+    */
+    ScrollbarRail scrollbarPx(in Rect band, in Scrollbar op) @system
+    {
+        const idle = railIdlePx(cellW);
+        const thickness = idle + (railExpandedPx(cellW) - idle) * op.expandPercent / 100;
+        const r = op.fadePercent == 0 ? ScrollbarRail.init
+            : scrollbarRailPx(band, op.edge, op.content, op.viewport, op.offset,
+                op.offsetFrac, thickness);
+        if (!r.live)
+            return r;
+        const fg = projectColor(op.fg, capabilities.colorDepth, false);
+        if (op.trackLit)
+        {
+            const tc = projectColor(op.trackColor, capabilities.colorDepth, false);
+            DrawRectangle(r.track.x, r.track.y, r.track.width, r.track.height,
+                Color(tc.r, tc.g, tc.b, cast(ubyte)(op.trackAlpha * op.fadePercent / 100)));
+        }
+        DrawRectangle(r.thumb.x, r.thumb.y, r.thumb.width, r.thumb.height,
+            Color(fg.r, fg.g, fg.b, cast(ubyte)(op.fgAlpha * op.fadePercent / 100)));
+        return r;
+    }
+
     void scrollbar(in Scrollbar original) @system
     {
         Scrollbar op = original;

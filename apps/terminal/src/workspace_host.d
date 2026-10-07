@@ -43,6 +43,7 @@ import settings : ButtonLabels, LinkAction, NotificationsConfig, OnExit, OpenTar
     OverlayStyle, PaneChrome, TabsOpener;
 import links : canOpen, LinkConfirm, openUri, schemeOf;
 import surfaces : SurfaceContext, Surfaces;
+import sparkles.ui.components.scroll_view : OverlayBar;
 import sparkles.ui.style : Slot;
 import workspace : dividerAt, dividerClamp, Direction, maxPanesPerTab, maxTabs, PaneSpec,
     Placement, Refusal, restored, saved, SavedWorkspace, Workspace;
@@ -143,6 +144,9 @@ struct WorkspaceHost
     bool phonePortrait;
     /// ditto
     bool touch;
+    /// `scrollbar.touchWidth` is `wide`: on a touch screen, every overlay bar
+    /// is drawn at its full width (`SCV13`).
+    bool wideBars;
     /// `viewer.lineNumbers` and `viewer.codeLineNumbers`: a new viewer pane
     /// starts with them; `l` and `c` still toggle them in the pane.
     bool viewerLineNumbers, viewerCodeLineNumbers;
@@ -204,7 +208,7 @@ struct WorkspaceHost
     RgbColor viewerBg = RgbColor(0x1e, 0x1e, 0x2e);
 
     private DocViewPane*[PaneId] viewers; // the viewer panes, by id
-    private float wheelRest = 0; // the polled wheel's fractional rows
+
     private bool[PaneId] prompting; // exited panes that keep their prompt
     private bool[PaneId] expanded; // prompts whose status line is open
     private SysTime[PaneId] started, ended; // when each program ran
@@ -481,12 +485,15 @@ struct WorkspaceHost
 
     /// Scrolls viewer pane `id` by `rows` (a touch drag); false when `id` is
     /// not a viewer, so the caller scrolls a terminal pane instead.
-    bool scrollViewer(PaneId id, long rows) @system
+    /// A wheel notch or a drag `w` at window pixel (`x`, `y`) on viewer pane
+    /// `id`: a code block or a table under it first, else the document,
+    /// between rows (`TDV6`, `SCV12`). False when `id` is no viewer.
+    bool scrollViewer(PaneId id, int x, int y, in WheelEvent w) @system
     {
         auto p = viewer(id);
         if (p is null)
             return false;
-        if (p.scrollBy(rows))
+        if (p.wheel(x, y, w))
             repaint = true;
         return true;
     }
@@ -672,13 +679,22 @@ struct WorkspaceHost
             // polls its own (`pollMouse`).
             if (auto v = surfaces.modal ? null : viewer(under))
             {
-                import raylib : GetMouseWheelMove;
+                import raylib : GetMouseWheelMoveV;
+                import sparkles.input.events : linesPerNotch;
 
-                wheelRest -= GetMouseWheelMove() * 3;
-                const rows = cast(long) wheelRest;
-                wheelRest -= rows;
-                if (v.scrollBy(rows))
-                    repaint = true;
+                // A notch eases, between rows (`SCV12`); shift scrolls sideways.
+                const wm = GetMouseWheelMoveV();
+                if (wm.x != 0 || wm.y != 0)
+                {
+                    import sparkles.input.events : Mods;
+                    import raylib : IsKeyDown, KeyboardKey;
+
+                    const shift = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
+                        || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
+                    if (v.wheel(mx, my, WheelEvent(fdx: -wm.x * linesPerNotch,
+                            fdy: -wm.y * linesPerNotch, mods: Mods(shift: shift))))
+                        repaint = true;
+                }
             }
             if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && under)
             {
@@ -884,50 +900,99 @@ struct WorkspaceHost
         import sparkles.ui_raylib.raylib_canvas : railExpandedPx, railIdlePx,
             scrollbarRailPx;
 
-        Layer l;
-        auto sb = surfaces.topScrolling(l);
+        BarTarget t;
         if (!down)
         {
-            if (barHeld && sb !is null)
-                sb.bar.release();
+            if (barHeld && barTarget(barPane, t))
+                t.bar.release();
             const was = barHeld;
             barHeld = false;
             if (was)
                 repaint = true;
             return was;
         }
-        if (sb is null || sb.barNode >= l.frames.length || l.cellW <= 0)
-        {
-            barHeld = false;
-            return false;
-        }
-        const r = l.frames[sb.barNode].rect;
-        const band = Rect(l.x + r.x * l.cellW, l.y + r.y * l.cellH, r.width * l.cellW,
-            r.height * l.cellH);
-        const thickness = sb.wide ? railExpandedPx(l.cellW) : railIdlePx(l.cellW);
-        const rail = scrollbarRailPx(band, RuleEdge.right, sb.content, sb.viewport,
-            sb.motion.whole, fracByte(sb.motion.frac), thickness);
+        // A press takes the bar under it: the top surface's while one is up,
+        // else the pane's; a drag keeps the one it took.
+        if (pressed && !barHeld)
+            barPane = surfaces.modal ? PaneId.init : paneUnder(x, y);
+        if (!barTarget(barPane, t) || cellW <= 0)
+            return barHeld = false;
+        const whole = cast(long) t.pos;
+        const thickness = t.wide ? railExpandedPx(cellW) : railIdlePx(cellW);
+        const rail = scrollbarRailPx(t.band, RuleEdge.right, t.content, t.viewport,
+            whole, fracByte(cast(float)(t.pos - whole)), thickness);
         if (!rail.live)
             return barHeld = false;
         if (pressed && !barHeld)
         {
-            if (touch && (sb.bar.anim.fadePercent == 0
+            if (touch && (t.bar.anim.fadePercent == 0
                     || y < rail.thumb.y - zone / 4 || y >= rail.thumb.y + rail.thumb.height + zone / 4))
                 return false;
-            double pos = sb.motion.pos;
-            if (!sb.bar.press(x, y, rail.track, rail.thumb, zone, sb.content, sb.viewport, pos))
+            double pos = t.pos;
+            if (!t.bar.press(x, y, rail.track, rail.thumb, zone, t.content, t.viewport, pos))
                 return false;
-            sb.barTo(pos);
+            t.moveTo(pos);
             barHeld = true;
             repaint = true;
             return true;
         }
         if (barHeld)
         {
-            sb.barTo(sb.bar.dragTo(y, rail.track, rail.thumb, sb.content, sb.viewport));
+            t.moveTo(t.bar.dragTo(y, rail.track, rail.thumb, t.content, t.viewport));
             repaint = true;
         }
         return barHeld;
+    }
+
+    private PaneId barPane; // the pane whose bar is held; none: the surface's
+
+    // One overlay bar a pointer may take (`SCV13`): where it is, in window
+    // pixels, the extents it shows, and what moving it does.
+    private struct BarTarget
+    {
+        OverlayBar* bar;
+        Rect band;
+        long content, viewport;
+        double pos;
+        bool wide;
+        void delegate(double) @system moveTo;
+    }
+
+    // The bar of pane `pane` — none: the top surface's.
+    private bool barTarget(PaneId pane, out BarTarget t) @system
+    {
+        if (pane == PaneId.init)
+        {
+            Layer l;
+            auto sb = surfaces.topScrolling(l);
+            if (sb is null || sb.barNode >= l.frames.length)
+                return false;
+            const r = l.frames[sb.barNode].rect;
+            t = BarTarget(&sb.bar, Rect(l.x + r.x * l.cellW, l.y + r.y * l.cellH,
+                r.width * l.cellW, r.height * l.cellH), sb.content, sb.viewport,
+                sb.motion.pos, sb.wide, (double p) { sb.barTo(p); });
+            return true;
+        }
+        if (auto v = viewer(pane))
+        {
+            Rect band;
+            long content, view;
+            if (!v.barGeometry(band, content, view))
+                return false;
+            t = BarTarget(&v.bar, band, content, view, v.motion.pos, v.wide,
+                (double p) { v.barTo(p); });
+            return true;
+        }
+        return false;
+    }
+
+    // The pane whose box holds window pixel (`x`, `y`), padding included.
+    private PaneId paneUnder(int x, int y) const @safe pure nothrow @nogc
+    {
+        foreach (ref b; boxes)
+            if (contains(b.outer, x, y))
+                return b.id;
+        return PaneId.init;
     }
 
     /// Whether the opener's `⋯` was tapped since the last call: the embedder
@@ -1346,8 +1411,14 @@ struct WorkspaceHost
             {
                 DrawRectangle(b.outer.x, b.outer.y, b.outer.width, b.outer.height,
                     rgb(viewerBg));
+                // The overlay bar in the pane's right padding (`SCV13`).
+                v.touch = touch;
+                v.wide = touch && wideBars;
+                const right = b.content.x + b.content.width;
                 v.paint(canvas, b.content.x, b.content.y, b.content.width, b.content.height,
-                    focused: b.focused);
+                    focused: b.focused,
+                    barBand: Rect(right, b.content.y, b.outer.x + b.outer.width - right,
+                        b.content.height));
             }
         // A rule on each boundary, `ruleWidth` thick either way.
         foreach (i, ref d; dividerRects)
@@ -1450,7 +1521,7 @@ struct WorkspaceHost
         SurfaceContext ctx = {area: panesArea, cellW: cellW, cellH: cellH, labels: labels,
             style: overlayStyle, targetRows: theme.targetRows, touch: touch,
             panelArea: panelRect, panelFull: !usesPill(tabsOpener, phonePortrait),
-            pageArea: area};
+            pageArea: area, wideBars: wideBars};
         if (auto tv = focusedView())
             if (auto b = boxOf(ws.focused))
             {
@@ -1530,7 +1601,9 @@ struct WorkspaceHost
             : (now - animatedAt).total!"usecs" / 1e6f;
         if (dt > 0.05f)
             dt = 0.05f;
-        const more = surfaces.animate(dt);
+        bool more = surfaces.animate(dt);
+        foreach (id, v; viewers)
+            more |= v.animate(dt);
         animatedAt = more ? now : MonoTime.init;
         return more;
     }

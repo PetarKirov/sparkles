@@ -826,19 +826,20 @@ struct DroidTerminal
         // Under a page the drag scrolls it (finger up: towards the end).
         if (host.scrollSurface(w))
             return;
-        // Below here only whole rows scroll; a drag's fraction waits for them.
-        if (w.dy == 0)
-            return;
         // The pane the drag began in: an application tracking the mouse gets
         // wheel reports (a pager, an editor); otherwise the drag walks its
         // scrollback.
         int left, top;
         const id = host.paneAt(w.pos.x, w.pos.y, left, top);
         // An expanded exit prompt scrolls its command (`TSS2`).
-        if (host.scrollBanner(w.pos.x, w.pos.y, w.dy))
+        if (w.dy != 0 && host.scrollBanner(w.pos.x, w.pos.y, w.dy))
             return;
-        // A viewer pane scrolls its document (`TDV6`).
-        if (host.scrollViewer(id ? id : host.ws.focused, w.dy))
+        // A viewer pane scrolls its document — or a code block or a table in
+        // it — between rows (`TDV6`, `SCV12`).
+        if (host.scrollViewer(id ? id : host.ws.focused, w.pos.x, w.pos.y, w))
+            return;
+        // Below here only whole rows scroll; a drag's fraction waits for them.
+        if (w.dy == 0)
             return;
         auto tv = id ? host.pool.byId(id) : host.focusedView();
         if (tv is null)
