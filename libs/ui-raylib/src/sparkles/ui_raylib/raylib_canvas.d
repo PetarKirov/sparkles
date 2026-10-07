@@ -152,6 +152,20 @@ ScrollbarRail scrollbarRailPx(in Rect band, RuleEdge edge, long content,
     return r;
 }
 
+@("ui_raylib.scrollbarRail.aLongHistoryKeepsAThumbAFingerCanTake")
+@safe pure nothrow @nogc
+unittest
+{
+    // `seq 1 100000` in a 40-row pane on a 2000 px track: proportionally a
+    // thumb under a pixel; the minimum keeps it 132 px (48 dp at 2.75×), and
+    // it still travels the whole track.
+    const band = Rect(0, 0, 24, 2000);
+    const top = scrollbarRailPx(band, RuleEdge.right, 100_040, 40, 0, 0, 8, 132);
+    const end = scrollbarRailPx(band, RuleEdge.right, 100_040, 40, 100_000, 0, 8, 132);
+    assert(top.thumb.height == 132 && top.thumb.y == 0);
+    assert(end.thumb.y + end.thumb.height == 2000, "the newest rows: at the bottom");
+}
+
 @("ui_raylib.scrollbarRail.aFractionSlidesTheThumb")
 @safe pure nothrow @nogc
 unittest
@@ -265,6 +279,10 @@ struct RaylibCanvas
     /// Device pixels per density-independent pixel. Corner radii, rounded
     /// outlines and shadows are CSS px (`TOK7`) and scale by it.
     float density = 1;
+    /// The shortest a scrollbar's thumb is drawn, in device pixels, on
+    /// either axis (`SCV13`): a mouse's 24 px, or a finger's 48 dp on a
+    /// touch screen — set by the host, which knows which it has.
+    int minThumbPx = scrollbarMinExtentPx;
 
     /**
     What this canvas paints for (`CAP1`): $(LREF raylibCapabilities) unless a
@@ -760,7 +778,7 @@ struct RaylibCanvas
         const thickness = idle + (railExpandedPx(cellW) - idle) * op.expandPercent / 100;
         const r = op.fadePercent == 0 ? ScrollbarRail.init
             : scrollbarRailPx(band, op.edge, op.content, op.viewport, op.offset,
-                op.offsetFrac, thickness);
+                op.offsetFrac, thickness, minThumbPx);
         if (!r.live)
             return r;
         const fg = projectColor(op.fg, capabilities.colorDepth, false);
@@ -781,7 +799,7 @@ struct RaylibCanvas
         op.fg = projectColor(original.fg, capabilities.colorDepth, false);
         op.trackColor = projectColor(original.trackColor, capabilities.colorDepth, false);
         const r = scrollbarRail(op, cellW, cellH,
-            cast(int) originX, cast(int) originY);
+            cast(int) originX, cast(int) originY, minThumbPx);
         if (!r.live)
             return;
         if (op.trackLit)
