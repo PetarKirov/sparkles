@@ -838,14 +838,20 @@ struct DroidTerminal
         // it — between rows (`TDV6`, `SCV12`).
         if (host.scrollViewer(id ? id : host.ws.focused, w.pos.x, w.pos.y, w))
             return;
-        // Below here only whole rows scroll; a drag's fraction waits for them.
-        if (w.dy == 0)
-            return;
         auto tv = id ? host.pool.byId(id) : host.focusedView();
         if (tv is null)
             return;
-        if (!tv.sendWheel(w.dy, (w.pos.x - left) / cellW, (w.pos.y - top) / cellH))
-            tv.scrollViewport(w.dy);
+        // An application reading the mouse gets a report per whole row; the
+        // scrollback otherwise walks between rows (`SCV12`).
+        if (tv.mouseTracking)
+        {
+            if (w.dy != 0)
+                cast(void) tv.sendWheel(w.dy, (w.pos.x - left) / cellW,
+                    (w.pos.y - top) / cellH);
+        }
+        else
+            tv.scrollSmooth(w);
+        host.invalidate();
     }
 
     /// `TCF7`: a downward swipe on the row hides it; an upward swipe from the

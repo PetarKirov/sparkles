@@ -337,7 +337,9 @@ void handle_mouse(
     ref OverlayScrollbar sbState,
     ref HoverState hoverState,
     float originX = 0,
-    float originY = 0)
+    float originY = 0,
+    bool ownBar = true,
+    float* wheelRows = null)
 {
     ghostty_mouse_encoder_setopt_from_terminal(encoder, terminal);
 
@@ -375,7 +377,10 @@ void handle_mouse(
     GhosttyMousePosition gpos = { x: pos.x, y: pos.y };
     ghostty_mouse_event_set_position(event, gpos);
 
-    // Process Scrollbar Overlay
+    // Process Scrollbar Overlay — unless the embedder draws the bar (the
+    // overlay bar in its padding, `SCV13`) and routes its pointer itself.
+    if (ownBar)
+    {
     GhosttyTerminalScrollbar sb;
     ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR, cast(void*)&sb);
 
@@ -414,6 +419,7 @@ void handle_mouse(
         || (action == PointerAction.press && over);
     if (barConsumed)
         return;
+    }
 
     bool mouse_tracking = false;
     ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_MOUSE_TRACKING, cast(void*)&mouse_tracking);
@@ -541,6 +547,9 @@ void handle_mouse(
             mouse_encode_and_write(pty_fd, encoder, event);
             ghostty_mouse_event_set_action(event, GHOSTTY_MOUSE_ACTION_RELEASE);
             mouse_encode_and_write(pty_fd, encoder, event);
+        } else if (wheelRows !is null) {
+            // The embedder walks the scrollback between rows (`SCV12`).
+            *wheelRows -= wheel * 3;
         } else {
             int scroll_delta = (wheel > 0.0f) ? -3 : 3;
             GhosttyTerminalScrollViewport sv;
