@@ -110,7 +110,8 @@ struct GuiSession
         if (uiRegular.length == 0)
             return;
         uiFonts.load(uiRegular, uiBold,
-            uiStepSizes(uiScale, uiFollowsCellFont ? fontSizePx : 0), &fonts, atlasScale);
+            uiStepSizes(uiScale, uiFollowsCellFont ? fontSizePx : 0), &fonts, atlasScale,
+            matchCellPx: uiFollowsCellFont ? fontSizePx : 0);
     }
 
     ~this() @system
