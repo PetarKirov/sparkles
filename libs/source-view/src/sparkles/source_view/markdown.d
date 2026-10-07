@@ -352,6 +352,11 @@ struct FenceScroll
     size_t bodyStart;
     int x;
     int y;
+    /// How far past `x`/`y` the body is scrolled, in fractions of a cell
+    /// (`LAY7`): a pixel target paints it, a cell target shows `x`/`y`.
+    float fx = 0;
+    /// ditto
+    float fy = 0;
 }
 
 /// One table's scroll position (`TBL7`/`TBL8`): `x` interior cells scrolled
@@ -362,6 +367,11 @@ struct TableScroll
     size_t tableStart;
     int x;
     int y;
+    /// How far past `x`/`y` the interior is scrolled, in fractions of a
+    /// cell (`LAY7`).
+    float fx = 0;
+    /// ditto
+    float fy = 0;
 }
 
 /// A code group's tab strip, as the showing fence's header sees it.
@@ -1452,6 +1462,9 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     clipX: true, clipY: vOver,
                     childOffset: Point(fs.x, vOver ? fs.y : 0),
                     width: SizeSpec.grow());
+                // Scrolled between cells (`LAY7`), on a target that can.
+                vp.childOffsetFracX = fs.fx;
+                vp.childOffsetFracY = vOver ? fs.fy : 0;
                 if (vOver)
                     vp.height = SizeSpec.fixed(shownRows);
                 const viewport = b.add(vp);
@@ -1480,6 +1493,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         children: nums, width: SizeSpec.fixed(numW + 1),
                         clipY: vOver,
                         childOffset: Point(0, vOver ? fs.y : 0));
+                    nc.childOffsetFracY = vOver ? fs.fy : 0;
                     if (vOver)
                         nc.height = SizeSpec.fixed(shownRows);
                     parts ~= b.add(nc);
@@ -1708,6 +1722,8 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     availWidth: availW,
                     maxLines: opt.tableMaxLines > 0 ? opt.tableMaxLines : 0,
                     x: ts.x,
+                    fx: ts.fx,
+                    fy: opt.tableExtras.virtualRows > 0 ? 0 : ts.fy,
                     // `DSN4`: a windowed table was handed exactly the rows
                     // its viewport shows, so the scroll already happened —
                     // applying it again inside the table would skip past the
@@ -2698,6 +2714,16 @@ version (unittest)
         if (n.clipX && n.childOffset.x == 4)
             sawClip = true;
     assert(sawClip);
+
+    // A fraction past the offset rides on the same viewport (`LAY7`).
+    MdViewOptions fracOpt = {maxWidth: 30,
+        tableScrolls: [TableScroll(0, 4, 0, fx: 0.5f)]};
+    auto fracTree = viewMarkdown(doc, fracOpt);
+    bool sawFrac;
+    foreach (ref const n; fracTree.nodes)
+        if (n.clipX && n.childOffset.x == 4 && n.childOffsetFracX == 0.5f)
+            sawFrac = true;
+    assert(sawFrac, "the table's body slides between cells");
 
     // Wrap mode: no viewport anywhere; the widest row fits the pane.
     MdViewOptions wrapOpt = {maxWidth: 30,

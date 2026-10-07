@@ -1909,7 +1909,7 @@ struct ViewerModel
     {
         FenceScroll[] list;
         foreach (v; fenceScrollAt)
-            if (v.x != 0 || v.y != 0)
+            if (v.x != 0 || v.y != 0 || v.fx != 0 || v.fy != 0)
                 list ~= v;
         return list;
     }
@@ -1987,7 +1987,7 @@ struct ViewerModel
 
     /// Sets a fence's absolute scroll (either axis), clamped to its
     /// overflow; true when it moved (and the pipeline rebuilt).
-    bool setFenceScroll(size_t bodyStart, long x, long y)
+    bool setFenceScroll(size_t bodyStart, double x, double y)
     {
         if (isWrap(codeOverflow))
             return false;
@@ -1997,14 +1997,16 @@ struct ViewerModel
         const maxX = e.widest > e.innerW && e.innerW > 0
             ? e.widest - e.innerW : 0;
         const maxY = e.lines - e.shownRows;
-        auto next = FenceScroll(bodyStart,
-            cast(int)(x < 0 ? 0 : (x > maxX ? maxX : x)),
-            cast(int)(y < 0 ? 0 : (y > maxY ? maxY : y)));
+        const cx = x < 0 ? 0 : (x > maxX ? maxX : x);
+        const cy = y < 0 ? 0 : (y > maxY ? maxY : y);
+        // Whole cells for layout, the fraction past them painted (`LAY7`).
+        auto next = FenceScroll(bodyStart, cast(int) cx, cast(int) cy,
+            cast(float)(cx - cast(int) cx), cast(float)(cy - cast(int) cy));
         const cur = fenceScrollAt.get(bodyStart,
             FenceScroll(bodyStart, 0, 0));
         if (next == cur)
             return false;
-        if (next.x == 0 && next.y == 0)
+        if (next.x == 0 && next.y == 0 && next.fx == 0 && next.fy == 0)
             fenceScrollAt.remove(bodyStart);
         else
             fenceScrollAt[bodyStart] = next;
@@ -2012,32 +2014,21 @@ struct ViewerModel
         return true;
     }
 
-    /// Scrolls a fence sideways by `delta` cells; true when it moved.
-    bool scrollFence(size_t bodyStart, int delta)
+    /// Scrolls a fence sideways by `delta` cells — a fraction too, painted
+    /// between cells (`LAY7`); true when it moved.
+    bool scrollFence(size_t bodyStart, double delta)
     {
         const cur = fenceScrollAt.get(bodyStart, FenceScroll(bodyStart, 0, 0));
         return delta != 0
-            && setFenceScroll(bodyStart, cur.x + delta, cur.y);
-    }
-
-    /// Whether a fence can scroll vertically towards `dir`'s sign — a drag
-    /// still short of a whole line belongs to it then, not to the document.
-    bool canScrollFenceV(size_t bodyStart, float dir) const @safe
-    {
-        if (isWrap(codeOverflow) || dir == 0)
-            return false;
-        const e = fenceExtent(bodyStart);
-        const maxY = e.lines - e.shownRows;
-        const cur = fenceScrollAt.get(bodyStart, FenceScroll(bodyStart, 0, 0));
-        return dir > 0 ? cur.y < maxY : cur.y > 0;
+            && setFenceScroll(bodyStart, cur.x + cur.fx + delta, cur.y + cur.fy);
     }
 
     /// Scrolls a fence vertically by `delta` lines; true when it moved.
-    bool scrollFenceV(size_t bodyStart, int delta)
+    bool scrollFenceV(size_t bodyStart, double delta)
     {
         const cur = fenceScrollAt.get(bodyStart, FenceScroll(bodyStart, 0, 0));
         return delta != 0
-            && setFenceScroll(bodyStart, cur.x, cur.y + delta);
+            && setFenceScroll(bodyStart, cur.x + cur.fx, cur.y + cur.fy + delta);
     }
 
     /// The armed per-table scrolls, as the view consumes them.
@@ -2045,7 +2036,7 @@ struct ViewerModel
     {
         TableScroll[] list;
         foreach (v; tableScrollAt)
-            if (v.x != 0 || v.y != 0)
+            if (v.x != 0 || v.y != 0 || v.fx != 0 || v.fy != 0)
                 list ~= v;
         return list;
     }
@@ -2093,7 +2084,7 @@ struct ViewerModel
     /// Sets a table's absolute scroll (either axis), clamped to its
     /// overflow; true when it moved (and the pipeline rebuilt). A pure-wrap
     /// table never scrolls (its contract — no bars at all).
-    bool setTableScroll(size_t spanStart, long x, long y)
+    bool setTableScroll(size_t spanStart, double x, double y)
     {
         if (isWrap(tableOverflow))
             return false;
@@ -2102,14 +2093,16 @@ struct ViewerModel
         const maxY = e.lines > e.shownLines ? e.lines - e.shownLines : 0;
         if (maxX == 0 && maxY == 0)
             return false;
-        auto next = TableScroll(spanStart,
-            cast(int)(x < 0 ? 0 : (x > maxX ? maxX : x)),
-            cast(int)(y < 0 ? 0 : (y > maxY ? maxY : y)));
+        const cx = x < 0 ? 0 : (x > maxX ? maxX : x);
+        const cy = y < 0 ? 0 : (y > maxY ? maxY : y);
+        // Whole cells for layout, the fraction past them painted (`LAY7`).
+        auto next = TableScroll(spanStart, cast(int) cx, cast(int) cy,
+            cast(float)(cx - cast(int) cx), cast(float)(cy - cast(int) cy));
         const cur = tableScrollAt.get(spanStart,
             TableScroll(spanStart, 0, 0));
         if (next == cur)
             return false;
-        if (next.x == 0 && next.y == 0)
+        if (next.x == 0 && next.y == 0 && next.fx == 0 && next.fy == 0)
             tableScrollAt.remove(spanStart);
         else
             tableScrollAt[spanStart] = next;
@@ -2130,30 +2123,19 @@ struct ViewerModel
     void delegate(size_t spanStart, int x, int y) @system onWindowScroll;
 
     /// Scrolls a table sideways by `delta` cells; true when it moved.
-    bool scrollTable(size_t spanStart, int delta)
+    bool scrollTable(size_t spanStart, double delta)
     {
         const cur = tableScrollAt.get(spanStart, TableScroll(spanStart, 0, 0));
         return delta != 0
-            && setTableScroll(spanStart, cur.x + delta, cur.y);
-    }
-
-    /// Whether a table can scroll vertically towards `dir`'s sign.
-    bool canScrollTableV(size_t spanStart, float dir) const @safe
-    {
-        if (isWrap(tableOverflow) || dir == 0)
-            return false;
-        const e = tableExtent(spanStart);
-        const maxY = e.lines > e.shownLines ? e.lines - e.shownLines : 0;
-        const cur = tableScrollAt.get(spanStart, TableScroll(spanStart, 0, 0));
-        return dir > 0 ? cur.y < maxY : cur.y > 0;
+            && setTableScroll(spanStart, cur.x + cur.fx + delta, cur.y + cur.fy);
     }
 
     /// Scrolls a table vertically by `delta` lines; true when it moved.
-    bool scrollTableV(size_t spanStart, int delta)
+    bool scrollTableV(size_t spanStart, double delta)
     {
         const cur = tableScrollAt.get(spanStart, TableScroll(spanStart, 0, 0));
         return delta != 0
-            && setTableScroll(spanStart, cur.x, cur.y + delta);
+            && setTableScroll(spanStart, cur.x + cur.fx, cur.y + cur.fy + delta);
     }
 
     /// The table index of the table starting at `spanStart`, else -1.

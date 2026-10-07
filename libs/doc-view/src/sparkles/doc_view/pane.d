@@ -299,7 +299,7 @@ struct DocViewPane
 
     private float frac = 0;      // painted past `vm.top`
     private long movedTop = -1;  // the `vm.top` the motion last wrote
-    private float nestRestX = 0, nestRestY = 0; // a nested scroller's fraction
+
     // Where the document rows were painted, for a pointer: window pixels.
     private int docX, docY, docW, cellH_ = 1, cellW_ = 1;
     private Rect barBand_;
@@ -362,43 +362,22 @@ struct DocViewPane
         return applyMotion();
     }
 
-    // A code block's or a table's own scroll, in whole cells — a drag's
-    // fraction carried until it makes one.
+    // A code block's or a table's own scroll — between cells too (`LAY7`).
     private bool nested(long row, float dx, float dy) @system
     {
-        static int whole(ref float rest, float d)
-        {
-            rest += d;
-            const n = cast(int) rest;
-            rest -= n;
-            return n;
-        }
-
         const fb = vm.fenceBodyAtRow(row);
         const tb = fb == size_t.max ? vm.tableAtRow(row) : size_t.max;
         if (fb == size_t.max && tb == size_t.max)
-        {
-            nestRestX = nestRestY = 0;
             return false;
-        }
         if (dx != 0)
         {
-            const n = whole(nestRestX, dx);
-            const moved = n != 0 && (fb != size_t.max ? vm.scrollFence(fb, n)
-                : vm.scrollTable(tb, n));
-            dirty |= moved;
+            dirty |= fb != size_t.max ? vm.scrollFence(fb, dx) : vm.scrollTable(tb, dx);
             // Sideways belongs to the block even at its edge: the document
             // does not scroll sideways under it.
             return true;
         }
-        const n = whole(nestRestY, dy);
-        if (n == 0)
-            return (fb != size_t.max ? vm.canScrollFenceV(fb, dy)
-                : vm.canScrollTableV(tb, dy));
-        const moved = fb != size_t.max ? vm.scrollFenceV(fb, n) : vm.scrollTableV(tb, n);
+        const moved = fb != size_t.max ? vm.scrollFenceV(fb, dy) : vm.scrollTableV(tb, dy);
         dirty |= moved;
-        if (!moved)
-            nestRestY = 0;
         return moved;
     }
 
