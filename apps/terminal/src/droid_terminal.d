@@ -29,6 +29,7 @@ import sparkles.input : Event, GestureEvent, Gesture, Key, KeyAction, KeyEvent,
     match, PasteEvent, PointerAction, PointerEvent, WheelEvent;
 import sparkles.raylib_text.font_set : FontSet;
 import sparkles.terminal_view.component : ColorOverrides, TerminalView, TerminalViewOptions;
+import sparkles.ui.components.dock : PaneId;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
@@ -106,6 +107,7 @@ struct DroidTerminal
     private bool rowContact;             // the raw contact was down last frame
     private int rowLastX, rowLastY;      // where it last was
     private bool keyboardShown;
+    private PaneId keyboardFocus; // the pane focused when the keyboard was last decided
     private float pinchBase = 0; // the font size a pinch started from
     private Geometry lastGeometry;
     private FontSet* fonts; // the host's, for the key row's labels
@@ -216,6 +218,19 @@ struct DroidTerminal
             host.phonePortrait = GetScreenHeight() > GetScreenWidth() && !largeScreen();
         }
         selection.reducedMotion = platform.reducedMotion; // `ACC5`, `TSE3`
+        // Focus reaching a document viewer — a tab, the tree, a pane closed
+        // under it — puts the keyboard away: a viewer takes no keys (`TDV14`).
+        if (host.ws.focused != keyboardFocus)
+        {
+            keyboardFocus = host.ws.focused;
+            if (viewerFocused && !host.surfaces.modal)
+            {
+                import sparkles.android.soft_input : hideSoftKeyboard;
+
+                hideSoftKeyboard();
+                keyboardShown = false;
+            }
+        }
         // A finger on a divider resizes the split (`TSS10`); that contact,
         // its fling included, is then the divider's, not the panes'.
         {
@@ -802,11 +817,24 @@ struct DroidTerminal
         if (host.tapLink(p.pos.x, p.pos.y, longPress: false))
             return;
         // A tap on a pane focuses it (`TSS9`), shows its toolbar under `reveal`
-        // (`TSS11`) and asks for the keyboard.
+        // (`TSS11`) and asks for the keyboard — a terminal's. A document
+        // viewer is read with the finger: its tap puts the keyboard away.
         cast(void) host.tapPane(p.pos.x, p.pos.y);
+        if (viewerFocused)
+        {
+            import sparkles.android.soft_input : hideSoftKeyboard;
+
+            hideSoftKeyboard();
+            keyboardShown = false;
+            return;
+        }
         showSoftKeyboard();
         keyboardShown = true;
     }
+
+    /// Whether the focused pane is a document viewer: no keyboard, no
+    /// extra keys for it (`TDV14`).
+    private bool viewerFocused() @safe => host.viewer(host.ws.focused) !is null;
 
     private void onWheel(H)(ref H h, in WheelEvent w)
     {
@@ -966,7 +994,10 @@ struct DroidTerminal
         const softKeyboard = valid && screenHeight - r.bottom > screenHeight / 6;
         // A full-screen page hides the row unless the keyboard is up to type
         // into it (D49).
+        // Nor does a document viewer, which takes no keys (`TDV14`) — unless
+        // the keyboard is up for a field over it (the guide's search).
         const shown = (!host.pageShown || softKeyboard)
+            && (!viewerFocused || softKeyboard)
             && extraKeysShown(config.effective.extraKeys.visible, softKeyboard,
             hardwareKeyboardAttached(), rowDismissed);
         // A key is a touch target: 48 dp (`TOK7`), two cells at the least —
