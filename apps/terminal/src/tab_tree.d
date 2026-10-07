@@ -15,14 +15,14 @@ pick delegate, so it holds no reference into the workspace's storage.
 */
 module tab_tree;
 
-import sparkles.input.events : Key, KeyEvent;
+import sparkles.input.events : Key, KeyEvent, WheelEvent;
 import sparkles.ui.components.dock : PaneId;
 import sparkles.ui.style : Slot;
 import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row, uiLabel;
-import page_kit : searchRow;
+import page_kit : ScrollBody, searchRow;
 import surfaces : Placement, Scrollable, Surface, SurfaceContext;
 
 /// One pane, as the tree shows it.
@@ -152,7 +152,25 @@ final class TabTree : Surface, Scrollable
 
     Placement placement() const @safe => Placement.panel;
 
-    /// `Scrollable`: a drag or the wheel moves the list by whole rows.
+    /// `Scrollable`: a drag or the wheel moves the list by whole rows; a
+    /// drag's fractions add up to them.
+    void scroll(in WheelEvent w) @system
+    {
+        rest += w.exactY;
+        const rows = cast(int) rest;
+        rest -= rows;
+        scroll(rows);
+    }
+
+    /// ditto
+    bool animate(float) @system => false;
+
+    /// ditto
+    ScrollBody* scrolling() @safe => null;
+
+    private float rest = 0;
+
+    /// The list moved by `dy` whole rows.
     void scroll(int dy) @system
     {
         if (dy > 0)

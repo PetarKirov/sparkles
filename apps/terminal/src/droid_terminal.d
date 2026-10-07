@@ -118,6 +118,8 @@ struct DroidTerminal
     private bool windowFocused = true; // last frame's, for the save on leaving
     private bool dividerGesture; // this contact began on a divider (`TSS10`)
     private bool dividerGestureHeld; // a finger was down last frame
+    private bool barGesture; // this contact grabbed an overlay bar (`SCV13`)
+    private bool barGestureHeld; // ditto, a finger was down last frame
 
     @disable this(this);
 
@@ -222,7 +224,18 @@ struct DroidTerminal
             const n = GetTouchPointCount();
             const p = n > 0 ? GetTouchPosition(0) : typeof(GetTouchPosition(0)).init;
             pollKeyRow(h, g, n > 0, cast(int) p.x, cast(int) p.y);
-            if (host.touchDivider(cast(int) p.x, cast(int) p.y, n == 1, dpToPx(16)))
+            // A page's or the guide's overlay bar, grabbed (`SCV13`): the
+            // contact is the bar's until it lifts.
+            // Its fling tail too: the gesture stays the bar's until the next
+            // contact begins.
+            if (host.touchBar(cast(int) p.x, cast(int) p.y, n == 1, dpToPx(44)))
+                barGesture = true;
+            else if (n > 0 && !barGestureHeld)
+                barGesture = false;
+            barGestureHeld = n > 0;
+            if (barGesture)
+                dividerGesture = false;
+            else if (host.touchDivider(cast(int) p.x, cast(int) p.y, n == 1, dpToPx(16)))
                 dividerGesture = true;
             else if (n > 0 && !host.draggingDivider && !dividerGestureHeld)
                 dividerGesture = false; // a new contact elsewhere
@@ -803,7 +816,7 @@ struct DroidTerminal
             pressedRow = pressedCol = -1;
             host.invalidate();
         }
-        if (dividerGesture) // the divider's drag (`TSS10`)
+        if (dividerGesture || barGesture) // the divider's or the bar's drag
             return;
         const g = geometry(h);
         if (swipeKeyRow(g, w))
@@ -811,7 +824,10 @@ struct DroidTerminal
         if (selection.wheel(w.pos)) // a handle's or the menu's drag (`TSE4`)
             return;
         // Under a page the drag scrolls it (finger up: towards the end).
-        if (host.scrollSurface(w.dy))
+        if (host.scrollSurface(w))
+            return;
+        // Below here only whole rows scroll; a drag's fraction waits for them.
+        if (w.dy == 0)
             return;
         // The pane the drag began in: an application tracking the mouse gets
         // wheel reports (a pager, an editor); otherwise the drag walks its

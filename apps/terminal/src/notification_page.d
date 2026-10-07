@@ -323,7 +323,7 @@ final class NotificationPage : Page
         const content = b.add(Widget(kind: WidgetKind.column, children: cards, gap: 1,
             width: SizeSpec.grow(), padding: Insets(1, 0, 1, 0)));
         viewRows = bodyRowsFor(b, top, null, cols, rows);
-        return finishPage(b, top, content, null, viewRows, scroll, cols, rows, reveal);
+        return finishPage(b, top, content, null, viewRows, scrollBody, cols, rows, reveal);
     }
 
     private static string countText(size_t n) @safe
@@ -480,7 +480,7 @@ final class NotificationPage : Page
     {
         grouping = g;
         selected = 0;
-        scroll = 0;
+        scrollBody.motion.jumpTo(0, scrollBody.limit);
         saveGrouping(statePath, g);
     }
 }

@@ -104,6 +104,7 @@ int launchDesktop(ref CommandNode!TerminalCli node)
         gui: guiOptionsFrom(lc.effective, windowCols, windowRows),
         keyRelease: true, // the terminal-grade keyboard (kitty releases)
         uiFollowsCellFont: true, // chrome text at the terminal's size
+        fractionalScroll: true, // scrolled between cells (`LAY7`)
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };
 

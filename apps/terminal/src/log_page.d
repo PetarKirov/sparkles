@@ -27,7 +27,7 @@ import sparkles.ui.glyphs : ActionIcon, iconText;
 import sparkles.base.log_sinks : RingCoreLogger, RingLogRecord;
 import sparkles.base.logger : LogLevel;
 import sparkles.fuzzy.match : MatcherWorkspace;
-import sparkles.input.events : Key, KeyEvent;
+import sparkles.input.events : Key, KeyEvent, WheelEvent;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame;
@@ -37,6 +37,7 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, Wi
 import chrome : button, column, label, row, uiLabel;
 import settings : ButtonLabels;
 import page_kit : bodyRowsFor, chip, finishPage, firstOwnHit, header, Page, PageServices,
+    ScrollBody,
     fitCells, searchRow;
 import surfaces : SurfaceContext;
 
@@ -482,25 +483,70 @@ final class LogPage : Page
 
     override void scrolled(int delta) @safe
     {
+        // A key moves the window at once; the wheel and a drag glide
+        // (`scroll`).
         refilter();
+        syncMotion();
+        scrollBody.motion.jumpTo(scrollBody.motion.pos + delta, scrollBody.limit);
+        applyMotion();
+    }
+
+    /// `Scrollable`: a drag follows, a notch eases — by entries, the
+    /// fraction of one painted between cells (`SCV12`).
+    override void scroll(in WheelEvent w) @system
+    {
+        refilter();
+        syncMotion();
+        scrollBody.scroll(w);
+        applyMotion();
+    }
+
+    /// ditto
+    override bool animate(float dt) @system
+    {
+        const more = scrollBody.animate(dt);
+        // Also what a grabbed bar moved (`ScrollBody.barTo`).
+        if (more || scrollBody.bar.grabbed)
+            applyMotion();
+        return more;
+    }
+
+    // The window's position (`firstRow` plus the fraction of an entry past
+    // it) into the motion — unless the motion is moving it, when the motion
+    // is the truth. The anchor survives entries dropped from the ring's head.
+    private void syncMotion() @safe
+    {
         const rows = viewRows > 0 ? viewRows : 1;
-        const first = firstRow(rows);
-        long to = cast(long) first + delta;
+        scrollBody.content = shown.length;
+        scrollBody.viewport = rows;
+        if (!scrollBody.motion.active && !scrollBody.bar.grabbed)
+            scrollBody.motion.jumpTo(firstRow(rows) + (following ? 0 : frac),
+                scrollBody.limit);
+    }
+
+    // The motion's position back into the window: the first entry, the
+    // fraction past it, and whether it follows the tail.
+    private void applyMotion() @safe
+    {
+        const rows = viewRows > 0 ? viewRows : 1;
+        const pos = scrollBody.motion.pos;
         const last = shown.length > rows ? shown.length - rows : 0;
-        if (to < 0)
-            to = 0;
+        size_t to = pos <= 0 ? 0 : cast(size_t) pos;
         if (to >= last)
             to = last;
+        frac = to >= last ? 0 : cast(float)(pos - to);
         if (ranked)
         {
-            rankTop = cast(size_t) to;
+            rankTop = to;
             return;
         }
         // At the bottom it follows; anywhere above it stays put (`TPG8`).
         following = to >= last;
         if (!following && shown.length)
-            topSeq = lines[shown[cast(size_t) to]].seq;
+            topSeq = lines[shown[to]].seq;
     }
+
+    private float frac = 0; // of the first entry, scrolled past
 
     override WidgetTree buildPage(in SurfaceContext ctx, int cols, int rows) @safe
     {
@@ -580,11 +626,32 @@ final class LogPage : Page
 
         // Measure the body with nothing in it, then fill it.
         viewRows = bodyRowsFor(b, [head, search, filters], [footer], cols, rows);
+        syncMotion();
         const first = firstRow(viewRows);
-        const count = shown.length - first < viewRows ? shown.length - first : viewRows;
-        int noScroll; // the window is the scroll: the body is exactly the rows shown
-        return finishPage(b, [head, search, filters], body_(b, first, count), [footer],
-            viewRows, noScroll, cols, rows);
+        const f = following ? 0 : frac;
+        // The window is the scroll: the body is the rows shown, one more when
+        // the fraction reveals it, scrolled by that fraction alone.
+        const want = viewRows + (f > 0 ? 1 : 0);
+        const count = shown.length - first < want ? shown.length - first : want;
+        ScrollBody window;
+        window.touch = scrollBody.touch;
+        window.wide = scrollBody.wide;
+        window.bar = scrollBody.bar;
+        window.motion.pos = f;
+        auto tree = finishPage(b, [head, search, filters], body_(b, first, count), [footer],
+            viewRows, window, cols, rows);
+        // The bar is the whole log's.
+        import sparkles.ui.components.chrome : fracByte;
+
+        scrollBody.barNode = window.barNode;
+        with (tree.nodes[window.barNode])
+        {
+            barContent = shown.length;
+            barViewport = viewRows;
+            barOffset = first;
+            barOffsetFrac = fracByte(f);
+        }
+        return tree;
     }
 
     /// One entry: time, level letter, source, message — the level's colour

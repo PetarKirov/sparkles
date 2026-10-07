@@ -209,6 +209,7 @@ int androidMain()
         keyRelease: true, // the terminal-grade keyboard
         uiFollowsCellFont: true, // chrome text at the terminal's size
         touchGestures: true, // taps, drags and pinches — not an emulated mouse
+        fractionalScroll: true, // scrolled between cells (`LAY7`)
         pointerUnit: PointerUnit.pixels, // the key row is not on the cell grid
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
     };

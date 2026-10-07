@@ -25,6 +25,7 @@ import sparkles.ui.components.dock : DockAxis, DockFrames, DividerFrame, PaneId;
 import sparkles.ui.geometry : Rect;
 
 import std.datetime.systime : Clock, SysTime;
+import core.time : MonoTime;
 
 import std.algorithm.comparison : min;
 
@@ -640,7 +641,11 @@ struct WorkspaceHost
                     repaint = true;
                 }
             }
-            dragDivider(mx, my, leftDown, IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT));
+            // The overlay bar under the pointer takes it first (`SCV13`).
+            const onBar = barPointer(mx, my, leftDown,
+                IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT), cellW, touch: false);
+            if (!onBar)
+                dragDivider(mx, my, leftDown, IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT));
             // Over a divider the pointer says which way it resizes: across,
             // down, or — at a junction — either way.
             const hover = dividerHover(mx, my);
@@ -660,7 +665,7 @@ struct WorkspaceHost
             if (!leftDown)
                 pointerOwner = under;
             // A click on the chrome is the chrome's, not the pane's.
-            if (dragging < 0 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
+            if (!onBar && dragging < 0 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
                 && tap(h, mx, my))
                 under = pointerOwner = 0;
             // A viewer pane scrolls with the wheel over it; a terminal pane
@@ -708,6 +713,14 @@ struct WorkspaceHost
         applyExits();
         placeChrome();
         placeBanners();
+        // Scroll motions advance before the surfaces build on them; one in
+        // flight keeps the frames coming (`SCV12`).
+        if (animate())
+        {
+            repaint = true;
+            static if (__traits(compiles, h.requestFrame()))
+                h.requestFrame();
+        }
         placeSurfaces(area);
         if (clipboardPending)
         {
@@ -840,6 +853,83 @@ struct WorkspaceHost
         return dragging >= 0;
     }
 
+    /**
+    A contact at (`x`, `y`), `down` or lifted, on a touch screen: a press on
+    the top surface's overlay bar grabs it (`SCV13`), a drag moves the view.
+    True while the bar holds the contact — its wheel steps and its lift are
+    then the bar's, not the content's. `zone` is how wide, in pixels, the
+    band a finger may take the thumb in is (44 dp, `TOK11`).
+    */
+    bool touchBar(int x, int y, bool down, int zone) @system
+    {
+        const pressed = down && !barWasDown;
+        barWasDown = down;
+        return barPointer(x, y, down, pressed, zone, touch: true);
+    }
+
+    private bool barWasDown;
+    private bool barHeld;
+
+    /**
+    The overlay bar's pointer (`SCV13`): `pressed` is the frame the pointer
+    went down. A press in the bar's band grabs it — on a touch screen only
+    where the thumb is, while the bar shows, so a tap on a row's control
+    beside it stays the control's — and a drag moves the view. True while a
+    bar holds the pointer.
+    */
+    bool barPointer(int x, int y, bool down, bool pressed, int zone, bool touch) @system
+    {
+        import sparkles.ui.canvas : RuleEdge;
+        import sparkles.ui.components.chrome : fracByte;
+        import sparkles.ui_raylib.raylib_canvas : railExpandedPx, railIdlePx,
+            scrollbarRailPx;
+
+        Layer l;
+        auto sb = surfaces.topScrolling(l);
+        if (!down)
+        {
+            if (barHeld && sb !is null)
+                sb.bar.release();
+            const was = barHeld;
+            barHeld = false;
+            if (was)
+                repaint = true;
+            return was;
+        }
+        if (sb is null || sb.barNode >= l.frames.length || l.cellW <= 0)
+        {
+            barHeld = false;
+            return false;
+        }
+        const r = l.frames[sb.barNode].rect;
+        const band = Rect(l.x + r.x * l.cellW, l.y + r.y * l.cellH, r.width * l.cellW,
+            r.height * l.cellH);
+        const thickness = sb.wide ? railExpandedPx(l.cellW) : railIdlePx(l.cellW);
+        const rail = scrollbarRailPx(band, RuleEdge.right, sb.content, sb.viewport,
+            sb.motion.whole, fracByte(sb.motion.frac), thickness);
+        if (!rail.live)
+            return barHeld = false;
+        if (pressed && !barHeld)
+        {
+            if (touch && (sb.bar.anim.fadePercent == 0
+                    || y < rail.thumb.y - zone / 4 || y >= rail.thumb.y + rail.thumb.height + zone / 4))
+                return false;
+            double pos = sb.motion.pos;
+            if (!sb.bar.press(x, y, rail.track, rail.thumb, zone, sb.content, sb.viewport, pos))
+                return false;
+            sb.barTo(pos);
+            barHeld = true;
+            repaint = true;
+            return true;
+        }
+        if (barHeld)
+        {
+            sb.barTo(sb.bar.dragTo(y, rail.track, rail.thumb, sb.content, sb.viewport));
+            repaint = true;
+        }
+        return barHeld;
+    }
+
     /// Whether the opener's `⋯` was tapped since the last call: the embedder
     /// opens its touch guide (`TSS16`), as it does for `MENU`.
     bool takeGuideRequest() @safe pure nothrow @nogc
@@ -874,7 +964,9 @@ struct WorkspaceHost
 
         if (dragging < 0)
         {
-            if (!pressed || toolbarLayer.contains(mx, my))
+            // A surface captures the pointer (the key guide over a split):
+            // what is under it is not there to be resized (`TSS10`).
+            if (!pressed || toolbarLayer.contains(mx, my) || surfaces.modal)
                 return;
             dividersNear(dividers, dividerRects, mx, my, slop, dragging, draggingCross);
             if (dragging < 0)
@@ -964,7 +1056,7 @@ struct WorkspaceHost
             return draggingCross >= 0 ? DividerHover.both
                 : dividers[dragging].axis == DockAxis.horizontal
                     ? DividerHover.across : DividerHover.down;
-        if (toolbarLayer.contains(x, y))
+        if (toolbarLayer.contains(x, y) || surfaces.modal)
             return DividerHover.none;
         ptrdiff_t a, d;
         dividersNear(dividers, dividerRects, x, y, slop, a, d);
@@ -1423,23 +1515,46 @@ struct WorkspaceHost
         return false;
     }
 
+    private MonoTime animatedAt;
+
     /**
-    A wheel or a drag of `rows` (positive: towards the end) while a surface
-    is modal: the top one scrolls, as by that many arrow keys. False when no
+    One frame of every scroll motion — the top surface's — true while one
+    needs the next. The step is the wall-clock time since the last one,
+    capped: the first frame after an idle gap steps one frame's worth, not
+    the gap.
+    */
+    private bool animate() @system
+    {
+        const now = MonoTime.currTime;
+        float dt = animatedAt == MonoTime.init ? 1.0f / 60
+            : (now - animatedAt).total!"usecs" / 1e6f;
+        if (dt > 0.05f)
+            dt = 0.05f;
+        const more = surfaces.animate(dt);
+        animatedAt = more ? now : MonoTime.init;
+        return more;
+    }
+
+    /**
+    A wheel or a drag (`w.exactY` positive: towards the end) while a surface
+    is modal: the top one scrolls — itself when `Scrollable`, between cells
+    (`SCV12`); any other as by its whole rows of arrow keys. False when no
     surface is shown — the panes' then.
     */
-    bool scrollSurface(int rows) @system
+    bool scrollSurface(in WheelEvent w) @system
     {
         import sparkles.input.events : Key;
 
         if (!surfaces.modal)
             return false;
-        // A `Scrollable` surface scrolls itself; any other, as by arrow keys.
         if (!surfaces.topScrolls)
+        {
+            const rows = w.dy;
             foreach (_; 0 .. rows < 0 ? -rows : rows)
                 cast(void) surfaces.key(KeyEvent(rows < 0 ? Key.up : Key.down));
+        }
         else
-            cast(void) surfaces.scroll(rows);
+            cast(void) surfaces.scroll(w);
         repaint = true;
         return true;
     }
@@ -1838,7 +1953,7 @@ struct WorkspaceHost
     }
 }
 
-import sparkles.input : KeyEvent;
+import sparkles.input : KeyEvent, WheelEvent;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests.
