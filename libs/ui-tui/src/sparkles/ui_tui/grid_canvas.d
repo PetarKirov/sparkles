@@ -195,6 +195,11 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
             case popClip:
                 canvas.popClip();
                 break;
+            case pushShift:
+            case popShift:
+                // A cell has no fraction to move by: the content stays on
+                // the whole cells layout gave it (`LAY7`).
+                break;
         }
     }
 }

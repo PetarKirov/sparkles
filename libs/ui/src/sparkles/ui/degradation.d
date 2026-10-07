@@ -22,7 +22,8 @@ import std.traits : EnumMembers, getUDAs;
 import sparkles.base.term_color : ColorDepth, RgbColor;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.ui.canvas : DrawOp, FillRect, Glyph, Ink, Line, LineStyle, match,
-    ImageDraw, PopClip, PopEffect, PushClip, PushEffect, Rule, RuleEdge, Scrollbar, TextRun;
+    ImageDraw, PopClip, PopEffect, PopShift, PushClip, PushEffect, PushShift,
+    Rule, RuleEdge, Scrollbar, TextRun;
 import sparkles.base.term_caps : BlockTier;
 import sparkles.ui.glyphs : admits, GlyphNeed, needOf;
 import sparkles.ui.image_raster : ImageRung, imageRungOf;
@@ -333,6 +334,8 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
             // a capability of the target's.
             (in PushEffect _) {},
             (in PopEffect _) {},
+            (in PushShift _) {},
+            (in PopShift _) {},
         );
     return r;
 }

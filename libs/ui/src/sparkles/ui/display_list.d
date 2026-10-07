@@ -12,7 +12,7 @@ module sparkles.ui.display_list;
 import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge;
 import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.layout : CellMeasure, childClipOf, clipsX, clipsY, Frame,
+import sparkles.ui.layout : CellMeasure, childClipOf, clipsX, cullClipOf, clipsY, Frame,
     measureWidth, unclipped, spanStyle;
 import sparkles.ui.style : Palette, resolveVisual, ScrollbarGlyphs, Slot, StateSet, TextStyle, Visual;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
@@ -383,13 +383,29 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             // a canvas that replaces loses the ancestor on exactly those. The
             // contract a canvas implements is the one stated on `pushClip`:
             // nested clips intersect.
+            //
+            // A viewport scrolled by a fraction of a cell (`LAY7`) shifts its
+            // children inside that scissor, so the clip stays put while the
+            // content moves, and keeps the one row the fraction reveals past
+            // the clip's end (`cullClipOf`).
             const clips = clipsX(node) || clipsY(node);
             const childClip = childClipOf(node, rect, clip);
+            const fx = clipsX(node) ? node.childOffsetFracX : 0;
+            const fy = clipsY(node) ? node.childOffsetFracY : 0;
+            enum canShift = __traits(compiles, ops.pushShift(0f, 0f));
+            const shifts = canShift && (fx > 0 || fy > 0);
             if (clips)
                 ops.pushClip(childClip);
+            static if (canShift)
+                if (shifts)
+                    ops.pushShift(-fx, -fy);
+            const cull = shifts ? cullClipOf(node, rect, clip) : childClip;
             foreach (child; node.children)
-                emit(tree, child, frames, pal, pageFg, pageBg, childClip,
+                emit(tree, child, frames, pal, pageFg, pageBg, cull,
                     overflowX || node.scrollsX || clipsX(node), ops, tm);
+            static if (canShift)
+                if (shifts)
+                    ops.popShift();
             if (clips)
                 ops.popClip();
             break;
@@ -431,6 +447,48 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
 
     assert(ops[2].kind == OpKind.textRun && ops[2].text == "The title.");
     assert(ops[2].visual.fg == RgbColor(0x88, 0x88, 0x88)); // docs muted
+}
+
+@("ui.display_list.subCellScroll.shiftsInsideTheClipAndKeepsTheRevealedRow")
+@safe unittest
+{
+    import std.algorithm : count, countUntil;
+    import sparkles.ui.canvas : match, PushShift;
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+
+    // A 2-row viewport over 4 one-row lines, scrolled 1.5 rows.
+    static WidgetTree viewport(float frac)
+    {
+        auto b = Builder();
+        uint[] lines;
+        foreach (s; ["zero", "one", "two", "three"])
+            lines ~= b.add(Widget(kind: WidgetKind.text, text: s));
+        const col = b.container(WidgetKind.column, lines);
+        auto view = Widget(kind: WidgetKind.column, children: [col], clipY: true,
+            height: SizeSpec.fixed(2), childOffset: Point(0, 1));
+        view.childOffsetFracY = frac;
+        return b.finish(b.add(view));
+    }
+
+    const pal = defaultTwoslashPalette();
+    const fg = RgbColor(0, 0, 0), bg = RgbColor(0xff, 0xff, 0xff);
+    auto whole = viewport(0);
+    auto wholeOps = buildDisplayList(whole, layout(whole), pal, fg, bg);
+    assert(wholeOps.count!(o => o.kind == OpKind.pushShift) == 0);
+    assert(wholeOps.count!(o => o.kind == OpKind.textRun) == 2); // one, two
+
+    auto half = viewport(0.5);
+    auto ops = buildDisplayList(half, layout(half), pal, fg, bg);
+    const clip = ops.countUntil!(o => o.kind == OpKind.pushClip);
+    const shift = ops.countUntil!(o => o.kind == OpKind.pushShift);
+    assert(clip >= 0 && shift == clip + 1, "the shift sits inside the clip");
+    ops[shift].payload.match!((in PushShift s) { assert(s.dx == 0 && s.dy == -0.5f); }, (_) {});
+    // "three" is half in view now, so it is emitted too.
+    assert(ops.count!(o => o.kind == OpKind.textRun) == 3);
+    assert(ops[$ - 2].kind == OpKind.popShift && ops[$ - 1].kind == OpKind.popClip);
 }
 
 @("ui.display_list.nodeStatesSelectTheThemeOverlay")

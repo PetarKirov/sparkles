@@ -103,6 +103,8 @@ enum OpKind : ubyte
     popClip,   /// undo the matching `pushClip`
     pushEffect, /// apply `effect` to the bracketed subtree (`EFX1`)
     popEffect,  /// undo the matching `pushEffect`
+    pushShift,  /// move what follows by a fraction of a cell (`LAY7`)
+    popShift,   /// undo the matching `pushShift`
 }
 
 /**
@@ -311,6 +313,28 @@ struct PopEffect
 {
 }
 
+/**
+Move every operation up to the matching $(LREF PopShift) by (`dx`, `dy`)
+cells, each a fraction of a cell (`LAY7`): the sub-cell part of a viewport's
+scroll offset, whose whole cells layout has already applied.
+
+It is emitted $(B inside) the viewport's $(LREF PushClip), so the clip stays
+where the viewport is while its content moves; a clip pushed inside the pair
+moves with the content. Shifts nest by adding. A canvas that cannot place
+anything between cells ignores the pair, and the content stays on the whole
+cells layout gave it.
+*/
+struct PushShift
+{
+    float dx = 0; /// cells, `-1 < dx < 1`
+    float dy = 0; /// ditto
+}
+
+/// Undo the matching $(LREF PushShift).
+struct PopShift
+{
+}
+
 // A slice whose target outlives the aggregate it was reached through. Not a
 // general-purpose escape: the one caller is `DrawOp.text`, whose comment
 // carries the argument.
@@ -324,7 +348,7 @@ private const(char)[] launder(scope const(char)[] s) @trusted pure nothrow @nogc
 
 /// The sum itself: exactly one of the payloads above.
 alias Payload = SumType!(FillRect, TextRun, Glyph, Line, Rule, Scrollbar,
-    ImageDraw, PushClip, PopClip, PushEffect, PopEffect);
+    ImageDraw, PushClip, PopClip, PushEffect, PopEffect, PushShift, PopShift);
 
 /**
 One reified drawing command in abstract cell space.
@@ -421,6 +445,8 @@ struct DrawOp
             (ref PopClip _) {},
             (ref PushEffect e) { e.rect = moved(e.rect, dx, dy); },
             (ref PopEffect _) {},
+            (ref PushShift _) {},
+            (ref PopShift _) {},
         );
     }
 
@@ -440,6 +466,8 @@ struct DrawOp
             (in PopClip _) => OpKind.popClip,
             (in PushEffect _) => OpKind.pushEffect,
             (in PopEffect _) => OpKind.popEffect,
+            (in PushShift _) => OpKind.pushShift,
+            (in PopShift _) => OpKind.popShift,
         );
 
     /**
@@ -462,6 +490,8 @@ struct DrawOp
             (in PushEffect e) => e.rect,
             (in PopClip _) => Rect.init,
             (in PopEffect _) => Rect.init,
+            (in PushShift _) => Rect.init,
+            (in PopShift _) => Rect.init,
         );
 
     /**
@@ -767,6 +797,13 @@ DrawOp pushEffectOp(in Rect rect, EffectId effect) @safe pure nothrow @nogc
 /// ditto
 DrawOp popEffectOp() @safe pure nothrow @nogc => DrawOp(PopEffect());
 
+/// ditto
+DrawOp pushShiftOp(float dx, float dy) @safe pure nothrow @nogc
+    => DrawOp(PushShift(dx, dy));
+
+/// ditto
+DrawOp popShiftOp() @safe pure nothrow @nogc => DrawOp(PopShift());
+
 /**
 The endpoints of a $(LREF RuleEdge) within `rect`, in whole cells — the
 fallback every canvas without a sub-cell `rule` primitive paints instead.
@@ -935,6 +972,19 @@ struct RecordingCanvas
     void popEffect()
     {
         ops ~= popEffectOp();
+    }
+
+    // The optional shift pair — recorded so a test can assert where a
+    // viewport's sub-cell offset lands against its clip.
+    void pushShift(float dx, float dy)
+    {
+        ops ~= pushShiftOp(dx, dy);
+    }
+
+    /// ditto
+    void popShift()
+    {
+        ops ~= popShiftOp();
     }
 
     // The optional clipping pair — recorded so tests can assert scissor

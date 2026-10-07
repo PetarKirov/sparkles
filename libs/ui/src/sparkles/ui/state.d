@@ -39,7 +39,8 @@ import sparkles.ui.wrap : spanPaintAdvance;
 import sparkles.input : cellPointer, InputCapabilities, mousePointer,
     PointerAction, PointerEvent, touchPointer;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.layout : childClipOf, Frame, unclipped;
+import sparkles.ui.layout : childClipOf, clipsX, clipsY, cullClipOf, Frame,
+    unclipped;
 import sparkles.ui.widget : TextSpan, Visibility, WidgetKind, WidgetTree;
 
 @safe:
@@ -50,6 +51,50 @@ struct HoverTarget
 {
     Rect rect;
     size_t hitId;
+
+    /**
+    Where a target inside a viewport scrolled by a fraction of a cell
+    (`LAY7`) really is: painted (`dx`, `dy`) cells from `rect`, and only
+    inside the scissor it paints under, in window cells (`[x0, x1) × [y0,
+    y1)`). Both are the identity for a target no fractional scroll moves,
+    whose `rect` is already clipped — so a whole-cell host keeps testing
+    `rect` and a pixel host asks $(LREF contains) with the pointer's
+    fractional cell.
+    */
+    float dx = 0;
+    /// ditto
+    float dy = 0;
+    /// ditto
+    float x0 = -float.infinity;
+    /// ditto
+    float y0 = -float.infinity;
+    /// ditto
+    float x1 = float.infinity;
+    /// ditto
+    float y1 = float.infinity;
+
+    /// Whether the fractional window cell (`x`, `y`) hits this target: inside
+    /// the scissor, and inside `rect` once the shift is undone.
+    bool contains(float x, float y) const pure nothrow @nogc
+    {
+        if (x < x0 || x >= x1 || y < y0 || y >= y1)
+            return false;
+        const lx = x - dx, ly = y - dy;
+        return lx >= rect.x && lx < rect.x + rect.width
+            && ly >= rect.y && ly < rect.y + rect.height;
+    }
+}
+
+/// The topmost target at the fractional window cell (`x`, `y`) — a pixel
+/// pointer divided by the cell size, no flooring — or 0 for none. Later
+/// targets win, as in $(LREF HoverState).
+size_t hitAt(in HoverTarget[] targets, float x, float y) pure nothrow @nogc
+{
+    size_t hit;
+    foreach (ref t; targets)
+        if (t.contains(x, y))
+            hit = t.hitId;
+    return hit;
 }
 
 /**
@@ -67,7 +112,12 @@ HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
 {
     HoverTarget[] targets;
 
-    void walk(uint idx, in Rect clip)
+    // `clip` is in the node's own cells; (`sx`, `sy`) is how far its
+    // viewports paint it from them, and `sc` the scissor it paints under,
+    // in window cells — both only move once a fractional scroll is entered.
+    static struct Scissor { float x0, y0, x1, y1; }
+
+    void walk(uint idx, in Rect clip, float sx, float sy, Scissor sc)
     {
         const node = tree.nodes[idx];
         if (node.visibility != Visibility.visible)
@@ -77,15 +127,75 @@ HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
         {
             const visible = rect.intersection(clip);
             if (!visible.empty)
-                targets ~= HoverTarget(visible, node.hitId);
+            {
+                auto t = HoverTarget(visible, node.hitId);
+                if (sx != 0 || sy != 0)
+                {
+                    t.dx = sx;
+                    t.dy = sy;
+                    t.x0 = sc.x0;
+                    t.y0 = sc.y0;
+                    t.x1 = sc.x1;
+                    t.y1 = sc.y1;
+                }
+                targets ~= t;
+            }
         }
-        const childClip = childClipOf(node, rect, clip);
+        const fx = clipsX(node) ? node.childOffsetFracX : 0;
+        const fy = clipsY(node) ? node.childOffsetFracY : 0;
+        const shifts = fx > 0 || fy > 0;
+        if (shifts || sx != 0 || sy != 0)
+        {
+            // The scissor this node pushes, where it lands on the window.
+            const c = childClipOf(node, rect, clip);
+            if (clipsX(node))
+            {
+                sc.x0 = sc.x0 > c.x + sx ? sc.x0 : c.x + sx;
+                sc.x1 = sc.x1 < c.x + c.width + sx ? sc.x1 : c.x + c.width + sx;
+            }
+            if (clipsY(node))
+            {
+                sc.y0 = sc.y0 > c.y + sy ? sc.y0 : c.y + sy;
+                sc.y1 = sc.y1 < c.y + c.height + sy ? sc.y1 : c.y + c.height + sy;
+            }
+        }
+        const childClip = shifts ? cullClipOf(node, rect, clip)
+            : childClipOf(node, rect, clip);
         foreach (ci; node.children)
-            walk(ci, childClip);
+            walk(ci, childClip, sx - fx, sy - fy, sc);
     }
 
-    walk(tree.root, unclipped());
+    walk(tree.root, unclipped(), 0, 0, Scissor(-float.infinity,
+        -float.infinity, float.infinity, float.infinity));
     return targets;
+}
+
+@("ui.state.hoverTargets.subCellScrollHitsWhatIsPainted")
+@safe unittest
+{
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget;
+
+    // A 2-row viewport over four one-row lines (hit 1..4), scrolled 1.5 rows:
+    // "two" (2) is painted over [-0.5, 0.5), "three" (3) over [0.5, 1.5) and
+    // "four" (4) over [1.5, 2.5), cut by the viewport at 2.
+    auto b = Builder();
+    uint[] lines;
+    foreach (i, s; ["one", "two", "three", "four"])
+        lines ~= b.add(Widget(kind: WidgetKind.text, text: s, hitId: i + 1));
+    const col = b.container(WidgetKind.column, lines);
+    auto view = Widget(kind: WidgetKind.column, children: [col], clipY: true,
+        height: SizeSpec.fixed(2), childOffset: Point(0, 1));
+    view.childOffsetFracY = 0.5;
+    auto tree = b.finish(b.add(view));
+    const targets = hoverTargets(tree, layout(tree));
+
+    assert(targets.hitAt(0.5, 0.25) == 2);
+    assert(targets.hitAt(0.5, 0.75) == 3);
+    assert(targets.hitAt(0.5, 1.75) == 4, "the revealed row is hit");
+    assert(targets.hitAt(0.5, 2.25) == 0, "nothing past the viewport");
+    assert(targets.hitAt(0.5, -0.25) == 0, "nor before it");
 }
 
 /// A keyed element and where it landed — `hoverTargets` for `Widget.key`

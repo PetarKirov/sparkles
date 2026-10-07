@@ -165,9 +165,10 @@ What the raylib window declares (`CAP1`) — constants, because a window needs
 no probing for what this canvas draws: every color, procedural box drawing and
 the bundled font's block elements, the bundled Nerd Font's icons, and the chrome
 a pixel target honours rather than projects — rounded rects, drop shadows,
-alpha. What it does not draw yet stays off: link targets, styled underlines (a
-`TextStyle` underline is straight), a scaled run (the grid keeps mono at 1em),
-and sub-cell scrolling (design-system M9 turns those on). A proportional face
+alpha — and a viewport scrolled by a fraction of a cell (`subCellScroll`).
+What it does not draw yet stays off: link targets, styled underlines (a
+`TextStyle` underline is straight), a scaled run (the grid keeps mono at 1em)
+(design-system M9 turns those on). A proportional face
 (`proportionalText`) is the host's: one that loads the interface faces into
 `RaylibCanvas.uiFonts` turns it on (`GLY7`, `GLY10`).
 Input is the mouse `RaylibEvents` synthesizes.
@@ -196,6 +197,8 @@ enum TargetCapabilities raylibCapabilities = () {
     else
         c.pointerShape = true;
     c.input = mousePointer;
+    // A viewport's sub-cell scroll offset is painted (`LAY7`, `pushShift`).
+    c.subCellScroll = true;
     return c;
 }();
 
@@ -292,15 +295,16 @@ struct RaylibCanvas
 
     private float px(int cx) const @safe pure nothrow @nogc => originX + cx * cellW;
     private float py(int cy) const @safe pure nothrow @nogc => originY + cy * cellH;
-
     /// The optional clipping pair of the canvas concept: a GL scissor per
     /// pushed rect (cell coordinates → pixels), stacked so nested viewports
     /// restore the enclosing one — widget content never bleeds past its rect.
-    private Rect[] clips;
+    /// Each clip remembers the sub-cell shift in force when it was pushed
+    /// (`LAY7`), so a viewport's own clip stays put while its content moves.
+    private ClipEntry[] clips;
 
     void pushClip(in Rect r) scope @system
     {
-        clips ~= r;
+        clips ~= ClipEntry(r, shiftX, shiftY);
         applyScissor();
     }
 
@@ -311,6 +315,37 @@ struct RaylibCanvas
             clips = clips[0 .. $ - 1];
         applyScissor();
     }
+
+    /**
+    The optional shift pair (`LAY7`): what follows draws (`dx`, `dy`) cells
+    further, rounded to whole device pixels so a glyph rasterises the same at
+    every offset. Clips pushed before it stay where they were.
+    */
+    void pushShift(float dx, float dy) scope @system
+    {
+        const x = shiftPx(dx, cellW), y = shiftPx(dy, cellH);
+        shifts ~= [x, y];
+        originX += x;
+        originY += y;
+        shiftX += x;
+        shiftY += y;
+    }
+
+    /// ditto
+    void popShift() scope @system
+    {
+        if (!shifts.length)
+            return;
+        const s = shifts[$ - 1];
+        shifts = shifts[0 .. $ - 1];
+        originX -= s[0];
+        originY -= s[1];
+        shiftX -= s[0];
+        shiftY -= s[1];
+    }
+
+    private float[2][] shifts;
+    private float shiftX = 0, shiftY = 0; // the open shifts' sum, in pixels
 
     /// Returns the accumulated geometric intersection of all active clips on the stack.
     package static Rect effectiveClip(scope const(Rect)[] clips) pure nothrow @nogc @safe
@@ -327,17 +362,11 @@ struct RaylibCanvas
         return eff;
     }
 
-    private Rect effectiveClip() const pure nothrow @nogc @safe
-        => effectiveClip(clips);
-
     private void applyScissor() scope @system
     {
         EndScissorMode();
         if (!clips.length)
             return;
-        // Intersect across the clip stack so nested child clips (e.g. wide tables
-        // or code blocks) stay strictly bounded by their enclosing viewports.
-        const r = effectiveClip();
         // Inside an effect bracket the render target is not the screen, so its
         // size is what bounds the box and what Y is flipped against.
         const inTarget = fx !is null && fx.depth > 0
@@ -345,8 +374,12 @@ struct RaylibCanvas
         const boundW = inTarget > 0 ? fx.currentTargetWidth : GetScreenWidth();
         const boundH = inTarget > 0 ? inTarget : GetScreenHeight();
 
+        // Intersect across the clip stack so nested child clips (e.g. wide
+        // tables or code blocks) stay strictly bounded by their enclosing
+        // viewports — in pixels, each clip at the origin it was pushed under.
         ScissorBox box;
-        if (!scissorBoxOf(r, originX, originY, cellW, cellH, boundW, boundH, box))
+        if (!scissorBoxOfStack(clips, originX - shiftX, originY - shiftY,
+                cellW, cellH, boundW, boundH, box))
         {
             BeginScissorMode(0, 0, 0, 0);
             return;
@@ -1442,7 +1475,8 @@ unittest
     assert(c.nerdFont, "the bundle ships FiraCode Nerd Font Mono");
     // Not a terminal profile: it draws what no terminal can, and lacks OSC 8.
     assert(!subsetOf(c, capabilitiesOf(Profile.full)));
-    assert(!c.hyperlinks && !c.subCellScroll, "M9's, not yet honoured");
+    assert(!c.hyperlinks, "no OSC 8 target in a window");
+    assert(c.subCellScroll, "a viewport's fraction is painted (M9)");
     // The window carries a copy and a pointer shape itself (`HST8`), so an
     // application asking the target whether a copy landed is told yes.
     assert(c.clipboard && c.pointerShape && !c.notifications);
@@ -1547,6 +1581,73 @@ bool scissorBoxOf(in Rect clip, float originX, float originY,
     box = ScissorBox(cast(int) x0, cast(int) y0,
         cast(int)(x1 - x0), cast(int)(y1 - y0));
     return true;
+}
+
+/// A pushed clip and the sub-cell shift, in pixels, in force when it was
+/// pushed (`LAY7`).
+struct ClipEntry
+{
+    Rect rect;
+    float shiftX = 0;
+    float shiftY = 0;
+}
+
+/// A shift of `cells` (a fraction) as whole device pixels of a `cell`-pixel
+/// cell: rounded, so the glyphs under it rasterise identically at every
+/// offset and the hit test can undo exactly what was painted.
+float shiftPx(float cells, int cell) @safe pure nothrow @nogc
+{
+    const v = cells * cell;
+    return cast(float)(v < 0 ? -cast(long)(-v + 0.5f) : cast(long)(v + 0.5f));
+}
+
+/**
+The device-pixel scissor a stack of clips resolves to: each clip turned into
+pixels at the origin it was pushed under — `baseX`/`baseY` is the origin with
+no shift open, and each entry adds the shift that was — then intersected.
+A clip pushed outside a viewport's shift stays where the viewport is; one
+pushed inside it moves with the content (`LAY7`).
+*/
+bool scissorBoxOfStack(scope const(ClipEntry)[] clips, float baseX, float baseY,
+    int cellW, int cellH, int boundW, int boundH, out ScissorBox box)
+    @safe pure nothrow @nogc
+{
+    if (!clips.length)
+        return false;
+    int x0 = 0, y0 = 0, x1 = int.max, y1 = int.max;
+    foreach (ref const c; clips)
+    {
+        ScissorBox b;
+        if (!scissorBoxOf(c.rect, baseX + c.shiftX, baseY + c.shiftY, cellW, cellH,
+                boundW, boundH, b))
+            return false;
+        x0 = b.x > x0 ? b.x : x0;
+        y0 = b.y > y0 ? b.y : y0;
+        x1 = b.x + b.w < x1 ? b.x + b.w : x1;
+        y1 = b.y + b.h < y1 ? b.y + b.h : y1;
+    }
+    if (x1 <= x0 || y1 <= y0)
+        return false;
+    box = ScissorBox(x0, y0, x1 - x0, y1 - y0);
+    return true;
+}
+
+@("ui_raylib.raylib_canvas.aShiftMovesTheContentNotTheViewportClip")
+@safe pure nothrow @nogc
+unittest
+{
+    // 10×20 px cells. A viewport clip at rows 1..5, then a half-row shift
+    // (−10 px), then a nested clip (a code block) at rows 2..4 of the content.
+    assert(shiftPx(-0.5f, 20) == -10);
+    assert(shiftPx(-0.26f, 20) == -5, "rounded to a whole pixel");
+    ClipEntry[2] stack = [ClipEntry(Rect(0, 1, 30, 4)),
+        ClipEntry(Rect(0, 2, 30, 2), 0, -10)];
+    ScissorBox box;
+    assert(scissorBoxOfStack(stack[0 .. 1], 0, 0, 10, 20, 800, 600, box));
+    assert(box == ScissorBox(0, 20, 300, 80), "the viewport's own clip ignores the shift");
+    assert(scissorBoxOfStack(stack[], 0, 0, 10, 20, 800, 600, box));
+    assert(box == ScissorBox(0, 30, 300, 40), "the nested clip moves with the content");
+    assert(!scissorBoxOfStack(null, 0, 0, 10, 20, 800, 600, box));
 }
 
 @("ui_raylib.raylib_canvas.scissorBoxClampsToTheTargetNotToASentinel")
