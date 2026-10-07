@@ -10,26 +10,26 @@ are tappable; Back and `Esc` pop one level, closing at the root.
 
 A surface (`surfaces.Surface`) shown as a sheet above the extra keys. A level
 or a result list taller than the room left (`TPG19`: a soft keyboard up, a
-long group) shows a window onto its rows with how many lie above and below;
-the marks are tappable, and a drag or the wheel scrolls it (`Scrollable`).
+long group) scrolls in a viewport of a fixed height — the room, whatever the
+position — between cells, with the overlay bar at its right (`SCV12`,
+`SCV13`); a drag or the wheel scrolls it (`Scrollable`).
 */
 module touch_guide;
 
 import sparkles.ui.glyphs : ActionIcon, iconText;
-import sparkles.input.events : Key, KeyEvent;
+import sparkles.input.events : Key, KeyEvent, WheelEvent;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 
 import chrome : band, label, row, uiLabel;
-import page_kit : searchRow;
+import page_kit : ScrollBody, searchRow;
 import keymap : Binding, Chord, KeyCommand, TermCommand, TermContext;
 import surfaces : Placement, Scrollable, Surface, SurfaceContext;
 
 /// Hit ids.
 private enum size_t crumbHit = 0x6C00_0000, rowHit = 0x6C10_0000, recentHit = 0x6C20_0000,
-    backHit = 0x6BFF_FFFF, moreAboveHit = 0x6C30_0000, moreBelowHit = 0x6C30_0001,
-    searchHit = 0x6C30_0002;
+    backHit = 0x6BFF_FFFF, searchHit = 0x6C30_0002;
 
 /// The commands run from the guide most recently, newest first (shared by
 /// every guide opened in this run).
@@ -45,10 +45,8 @@ final class TouchGuide : Surface, Scrollable
     private char[] query;
     private Binding[] shown; // the rows built, for the hits
     private KeyCommand[] found; // the search results
-    private size_t top; // the first list row shown, when they do not all fit
-    private size_t fit; // how many list rows the last build showed
-    private size_t listed; // how many list rows there were
-    private size_t builtDepth, builtQuery; // what `top` belongs to
+    private ScrollBody list; // the list's scroll and bar
+    private size_t builtDepth, builtQuery; // what `list`'s position belongs to
     private enum unknownRoom = int.max; // no area to fit: show every row
 
     /// A tap on the search field: the embedder brings up a keyboard to type
@@ -75,7 +73,7 @@ final class TouchGuide : Surface, Scrollable
         found.length = 0;
         // Another level or another query starts at its top.
         if (path.length != builtDepth || query.length != builtQuery)
-            top = 0;
+            list.motion.jumpTo(0, 0);
         builtDepth = path.length;
         builtQuery = query.length;
 
@@ -88,11 +86,14 @@ final class TouchGuide : Surface, Scrollable
         const room = areaRows > 0
             ? areaRows - 1 - per - (showRecent ? per : 0) - per - 1 : unknownRoom;
 
+        list.touch = sctx.touch;
+        list.wide = sctx.touch && sctx.wideBars;
+        uint port, bar;
         if (query.length)
-            lines ~= windowed(b, searchResults(b, sctx), room, per);
+            lines ~= viewport(b, searchResults(b, sctx), room, per, port, bar);
         else
         {
-            lines ~= windowed(b, levelRows(b, sctx), room, per);
+            lines ~= viewport(b, levelRows(b, sctx), room, per, port, bar);
             if (showRecent)
             {
                 uint[] chips = [uiLabel(b, "Recent", Slot.muted)];
@@ -105,54 +106,64 @@ final class TouchGuide : Surface, Scrollable
         // The logs' search row (`TPG8`), a tap on it bringing up the keyboard.
         lines ~= searchRow(b, query.idup, query.length > 0, "Search all commands",
             sctx.targetRows, searchHit, inBand: true);
-        return b.finish(band(b, lines));
+        auto tree = b.finish(band(b, lines));
+        // The position, now that the list's extent is known.
+        import sparkles.ui.components.chrome : fracByte;
+
+        if (list.motion.pos > list.limit)
+            list.motion.jumpTo(list.limit, list.limit);
+        tree.nodes[port].childOffset.y = cast(int) list.motion.whole;
+        tree.nodes[port].childOffsetFracY = list.motion.frac;
+        with (tree.nodes[bar])
+        {
+            barContent = list.content;
+            barViewport = list.viewport;
+            barOffset = list.motion.whole;
+            barOffsetFrac = fracByte(list.motion.frac);
+            barFadePercent = list.touch ? list.bar.anim.fadePercent : 100;
+        }
+        return tree;
     }
 
     Placement placement() const @safe => Placement.sheet;
 
-    /// `Scrollable`: a drag or the wheel moves the list by whole rows.
-    void scroll(int dy) @system
+    /// `Scrollable`: a drag follows, the wheel eases (`SCV12`).
+    void scroll(in WheelEvent w) @system
     {
-        if (dy > 0)
-            top += dy;
-        else
-            top = -dy >= top ? 0 : top + dy;
-        // `windowed` clamps the far end on the next build.
+        list.scroll(w);
     }
+
+    /// ditto
+    bool animate(float dt) @system => list.animate(dt);
+
+    /// ditto
+    ScrollBody* scrolling() @safe return => &list;
 
     /**
-    `items` (each `per` rows tall) within `room` rows: all of them when they
-    fit, else a window from `top` with a mark for what lies above and below —
-    the marks take a row each, and a tap on one turns a page.
+    `items` (each `per` rows tall) in a viewport `room` rows tall, or as tall
+    as they are when they fit. The height depends on the items and the room
+    alone — never on the position — so the sheet holds still while its list
+    scrolls; the overlay bar takes the column at its right.
     */
-    private uint[] windowed(ref Builder b, uint[] items, int room, int per) @safe
+    private uint viewport(ref Builder b, uint[] items, int room, int per,
+        out uint port, out uint bar) @safe
     {
-        import std.conv : text;
+        import sparkles.ui.components.chrome : scrollbar, ScrollbarSpec;
+        import sparkles.ui.state : ScrollAxis;
 
-        listed = items.length;
-        // An unknown area (`room` from no area at all) shows everything; a
-        // known one too small for the marks still shows a row.
-        if (room == unknownRoom || items.length * per <= room)
-        {
-            top = 0;
-            fit = items.length;
-            return items;
-        }
-        fit = (room - 2) / per > 0 ? (room - 2) / per : 1;
-        if (top + fit > items.length)
-            top = items.length - fit;
-        uint[] window;
-        if (top)
-            window ~= mark(b, text("↑ ", top, " more"), moreAboveHit);
-        window ~= items[top .. top + fit];
-        if (const below = items.length - top - fit)
-            window ~= mark(b, text("↓ ", below, " more"), moreBelowHit);
-        return window;
+        const rows = cast(int) items.length * per;
+        const view = room == unknownRoom || rows <= room ? rows
+            : (room > per ? room : per);
+        list.content = rows;
+        list.viewport = view;
+        port = b.add(Widget(kind: WidgetKind.column, children: items,
+            width: SizeSpec.grow(), height: SizeSpec.fixed(view), clipX: true, clipY: true));
+        bar = scrollbar(b, ScrollbarSpec(axis: ScrollAxis.vertical,
+            expandPercent: list.wide ? 100 : 0), view);
+        list.barNode = bar;
+        return b.add(Widget(kind: WidgetKind.row, children: [port, bar],
+            width: SizeSpec.grow(), height: SizeSpec.fixed(view)));
     }
-
-    private static uint mark(ref Builder b, string text, size_t hit) @safe
-        => b.add(Widget(kind: WidgetKind.row, children: [uiLabel(b, text, Slot.muted)],
-            width: SizeSpec.grow(), hitId: hit));
 
     bool activate(size_t id) @system
     {
@@ -160,11 +171,6 @@ final class TouchGuide : Surface, Scrollable
         {
             if (onSearch !is null)
                 onSearch();
-            return false;
-        }
-        if (id == moreAboveHit || id == moreBelowHit)
-        {
-            scroll(id == moreAboveHit ? -cast(int) fit : cast(int) fit);
             return false;
         }
         if (id == backHit)
@@ -638,11 +644,21 @@ version (unittest)
                 "two targets overlap");
     auto shown = targets(l);
     assert(shown.canFind("split right") && !shown.canFind("close pane"));
-    assert(shown.canFind!(t => t.length > 2 && t[0 .. 3] == "↓"), "what lies below is counted");
+    const height = l.bounds.height;
 
-    // A tap on the mark (or a drag) turns the page: the end of the list shows.
-    foreach (_; 0 .. 8)
-        assert(!g.activate(moreBelowHit));
-    shown = targets(layout());
+    // A drag scrolls it between rows; the sheet holds its height throughout.
+    g.scroll(WheelEvent(fdy: 1.5f, precise: true));
+    auto mid = layout();
+    assert(mid.bounds.height == height, "the sheet holds still while its list scrolls");
+    bool half;
+    foreach (ref n; mid.tree.nodes)
+        half |= n.childOffset.y == 1 && n.childOffsetFracY == 0.5f;
+    assert(half, "a row and a half down, painted between cells");
+
+    // To the end: the last command shows, the first no longer does.
+    g.scroll(WheelEvent(fdy: 100, precise: true));
+    auto end = layout();
+    assert(end.bounds.height == height);
+    shown = targets(end);
     assert(shown.canFind("close pane") && !shown.canFind("split right"));
 }

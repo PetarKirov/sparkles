@@ -20,7 +20,7 @@ $(LIST
 module page_kit;
 
 import sparkles.ui.glyphs : ActionIcon, iconText;
-import sparkles.input.events : Key, KeyEvent;
+import sparkles.input.events : Key, KeyEvent, WheelEvent;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Constraints, Insets, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
@@ -30,7 +30,7 @@ import sparkles.ui.wrap : TextWrap;
 
 import chrome : button, chromeLayout, squareCols;
 import settings : ButtonLabels;
-import surfaces : Placement, Surface, SurfaceContext;
+import surfaces : Placement, Scrollable, Surface, SurfaceContext;
 
 /// What a page may ask of the application. Every member may be null: the
 /// page then leaves the action out.
@@ -68,11 +68,11 @@ The base of every page: header, scrolling, search editing. A page builds its
 body in `buildPage`, answers its own hits in `onHit` and its own keys in
 `onKey`.
 */
-abstract class Page : Surface
+abstract class Page : Surface, Scrollable
 {
     protected PageServices services;
-    /// The first body row shown, in cells (`scrolled` clamps it).
-    protected int scroll;
+    /// The body's scroll: its position, motion and bar ($(LREF finishPage)).
+    ScrollBody scrollBody;
     /// The search text, and whether the field has the keyboard.
     protected string query;
     /// ditto
@@ -98,16 +98,30 @@ abstract class Page : Surface
     bool hasSearch() const @safe pure nothrow @nogc => false;
     /// The search text changed.
     void queryChanged() @safe {}
-    /// The body scrolled by `rows` (positive: down, towards the end).
+    /// A key scrolled the body by `rows` (positive: down, towards the end).
     void scrolled(int rows) @safe
     {
-        scroll += rows;
-        if (scroll < 0)
-            scroll = 0;
+        scrollBody.by(rows);
     }
 
+    /// `Scrollable`: a wheel notch or a drag moves the view (`SCV12`).
+    void scroll(in WheelEvent w) @system
+    {
+        scrollBody.scroll(w);
+    }
+
+    /// ditto
+    bool animate(float dt) @system => scrollBody.animate(dt);
+
+    /// ditto
+    ScrollBody* scrolling() @safe return => &scrollBody;
+
     final WidgetTree build(in SurfaceContext ctx, int cols) @safe
-        => buildPage(ctx, cols, ctx.cellH > 0 ? ctx.area.height / ctx.cellH : 24);
+    {
+        scrollBody.touch = ctx.touch;
+        scrollBody.wide = ctx.touch && ctx.wideBars;
+        return buildPage(ctx, cols, ctx.cellH > 0 ? ctx.area.height / ctx.cellH : 24);
+    }
 
     Placement placement() const @safe => Placement.page;
 
@@ -470,47 +484,132 @@ int bodyRowsFor(ref Builder b, uint[] top, uint[] bottom, int cols, int rows) @s
 }
 
 /**
+/**
+A page body's scroll (`SCV12`, `SCV13`): where it is and how it moves —
+a drag 1:1, a wheel notch or a key eased — and the overlay bar in its right
+padding, which a pointer can grab and which fades on a touch screen.
+$(LREF finishPage) lays it out; the host steps it every frame
+(`Scrollable.animate`) and routes a press on the bar to `bar`.
+*/
+struct ScrollBody
+{
+    import sparkles.ui.components.scroll_view : OverlayBar;
+    import sparkles.ui.scroll_motion : ScrollMotion;
+
+    /// The position, in rows.
+    ScrollMotion motion;
+    /// The bar's grab and fade.
+    OverlayBar bar;
+    /// The content's and the viewport's heights, in rows, as last laid out.
+    long content, viewport;
+    /// The bar's node in the last tree (`uint.max`: none).
+    uint barNode = uint.max;
+    /// A touch screen: the bar fades when idle.
+    bool touch;
+    /// Draw the bar at its full width (`scrollbar.touchWidth`).
+    bool wide;
+
+    /// The largest position.
+    double limit() const @safe pure nothrow @nogc
+        => content > viewport ? content - viewport : 0;
+
+    /// A wheel notch eases, a drag follows (`WheelEvent.precise`).
+    void scroll(in WheelEvent w) @safe pure nothrow @nogc
+    {
+        const rows = w.exactY;
+        if (w.precise)
+            motion.drag(rows, limit);
+        else
+            motion.nudge(rows, limit);
+        bar.anim.stepFade(true, 0);
+    }
+
+    /// A key moved the view `rows`: eased.
+    void by(double rows) @safe pure nothrow @nogc
+    {
+        motion.nudge(rows, limit);
+        bar.anim.stepFade(true, 0);
+    }
+
+    /// The bar dragged the view to `pos` rows: at once.
+    void barTo(double pos) @safe pure nothrow @nogc
+    {
+        motion.jumpTo(pos, limit);
+        bar.anim.stepFade(true, 0);
+    }
+
+    /// One frame: true while the motion or the fade needs the next.
+    bool animate(float dt) @safe pure nothrow @nogc
+    {
+        const moving = motion.step(dt, limit);
+        if (!touch)
+            return moving;
+        bar.anim.stepFade(moving || bar.grabbed, dt);
+        return moving || bar.anim.fading;
+    }
+}
+
+/**
 Finishes a page: `top`, a viewport `bodyRows` tall over `content`, then
-`bottom`. The viewport is clipped and scrolled `scroll` rows down — clamped
-here so the content's last row is at most the viewport's last, and moved so
-node `reveal` (when not `uint.max`) is wholly in view: a selection followed
-by the keyboard.
+`bottom`. The viewport is clipped and scrolled to `body`'s position — the
+whole rows as its offset, the fraction painted between cells (`LAY7`) —
+clamped so the content's last row is at most the viewport's last, and moved
+so node `reveal` (when not `uint.max`) is wholly in view: a selection
+followed by the keyboard. The overlay bar takes the right padding column.
 */
 WidgetTree finishPage(ref Builder b, uint[] top, uint content, uint[] bottom, int bodyRows,
-    ref int scroll, int cols, int rows, uint reveal = uint.max) @safe
+    ref ScrollBody body, int cols, int rows, uint reveal = uint.max) @safe
 {
-    const view = b.add(Widget(
-        kind: WidgetKind.panel,
+    import sparkles.ui.components.chrome : fracByte, scrollbar, ScrollbarSpec;
+    import sparkles.ui.state : ScrollAxis;
+
+    const port = b.add(Widget(
+        kind: WidgetKind.column,
         children: [content],
         width: SizeSpec.grow(),
         height: SizeSpec.fixed(bodyRows),
-        padding: Insets(0, 1, 0, 1),
         clipX: true,
         clipY: true,
     ));
+    const bar = scrollbar(b, ScrollbarSpec(axis: ScrollAxis.vertical,
+        expandPercent: body.wide ? 100 : 0), bodyRows);
+    const view = b.add(Widget(
+        kind: WidgetKind.row,
+        children: [port, bar],
+        width: SizeSpec.grow(),
+        height: SizeSpec.fixed(bodyRows),
+        padding: Insets(0, 0, 0, 1),
+    ));
     auto tree = b.finish(pageColumn(b, top ~ view ~ bottom));
     const frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
+    body.content = frames[content].rect.height;
+    body.viewport = bodyRows;
+    body.barNode = bar;
+    if (body.motion.pos > body.limit)
+        body.motion.jumpTo(body.limit, body.limit);
     const contentTop = frames[content].rect.y;
     if (reveal != uint.max && reveal < frames.length)
     {
         const r = frames[reveal].rect;
         const y0 = r.y - contentTop, y1 = y0 + r.height;
-        if (y0 < scroll)
-            scroll = y0;
-        else if (y1 > scroll + bodyRows)
-            scroll = y1 - bodyRows;
+        const from = body.motion.mode == body.motion.mode.easing
+            ? body.motion.target : body.motion.pos;
+        if (y0 < from)
+            body.motion.scrollTo(y0, body.limit);
+        else if (y1 > from + bodyRows)
+            body.motion.scrollTo(y1 - bodyRows, body.limit);
     }
-    scroll = clampScroll(scroll, bodyRows, frames[content].rect.height);
-    tree.nodes[view].childOffset = Point(0, scroll);
+    tree.nodes[port].childOffset = Point(0, cast(int) body.motion.whole);
+    tree.nodes[port].childOffsetFracY = body.motion.frac;
+    with (tree.nodes[bar])
+    {
+        barContent = body.content;
+        barViewport = bodyRows;
+        barOffset = body.motion.whole;
+        barOffsetFrac = fracByte(body.motion.frac);
+        barFadePercent = body.touch ? body.bar.anim.fadePercent : 100;
+    }
     return tree;
-}
-
-/// `scroll` clamped so the content's last row is at most the viewport's
-/// last.
-int clampScroll(int scroll, int viewHeight, int contentHeight) @safe pure nothrow @nogc
-{
-    const most = contentHeight - viewHeight;
-    return scroll > most ? (most > 0 ? most : 0) : scroll < 0 ? 0 : scroll;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -543,7 +642,7 @@ version (unittest)
             const body_ = column(b, items);
             uint[] top = [header(b, "Lines", ctx), searchField(b, query, searching, "search")];
             viewRows = bodyRowsFor(b, top, null, cols, rows);
-            return finishPage(b, top, body_, null, viewRows, scroll, cols, rows);
+            return finishPage(b, top, body_, null, viewRows, scrollBody, cols, rows);
         }
 
         override bool onHit(size_t id) @system
@@ -616,15 +715,42 @@ version (unittest)
     // 12 rows: the header and the field take one each, the body ten.
     cast(void) p.build(ctx, 40);
     assert(p.viewRows == 10);
+    // Keys ease (`SCV12`): run the motion out, then look.
+    long settled()
+    {
+        while (p.animate(1.0f / 60)) {}
+        cast(void) p.build(ctx, 40);
+        return p.scrollBody.motion.whole;
+    }
     assert(p.key(KeyEvent(Key.end)));
-    cast(void) p.build(ctx, 40);
-    assert(p.scroll == 20, "the last line is the body's last row");
+    assert(settled == 20, "the last line is the body's last row");
     assert(p.key(KeyEvent(Key.pageUp)));
-    cast(void) p.build(ctx, 40);
-    assert(p.scroll == 11);
+    assert(settled == 11);
     assert(p.key(KeyEvent(Key.home)));
+    assert(settled == 0);
+}
+
+@("page_kit.finishPage.paintsTheFractionAndTheBar")
+@system unittest
+{
+    import sparkles.input.events : WheelEvent;
+
+    SurfaceContext ctx;
+    ctx.cellW = ctx.cellH = 1;
+    ctx.area = Rect(0, 0, 80, 12);
+    auto p = new Lines(30);
     cast(void) p.build(ctx, 40);
-    assert(p.scroll == 0);
+    p.scroll(WheelEvent(fdy: 2.5f, precise: true)); // a drag: followed at once
+    const t = p.build(ctx, 40);
+    bool shifted, bar;
+    foreach (ref n; t.nodes)
+    {
+        shifted |= n.childOffset.y == 2 && n.childOffsetFracY == 0.5f;
+        bar |= n.kind == WidgetKind.scrollbar && n.barContent == 30
+            && n.barViewport == 10 && n.barOffset == 2 && n.barOffsetFrac == 128;
+    }
+    assert(shifted, "two whole rows and half of one");
+    assert(bar, "the bar slides with it");
 }
 
 @("page_kit.Page.backAndSearchHits")

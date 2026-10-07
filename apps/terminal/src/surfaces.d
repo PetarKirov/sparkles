@@ -17,12 +17,13 @@ module surfaces;
 
 import core.time : Duration, MonoTime, seconds;
 
-import sparkles.input.events : KeyEvent;
+import sparkles.input.events : KeyEvent, WheelEvent;
 import sparkles.ui.geometry : Rect;
 import sparkles.ui.widget : WidgetTree;
 
 import chrome : ChromeTheme, Layer, paintLayer, place, Place;
 import settings : ButtonLabels, OverlayStyle;
+import page_kit : ScrollBody;
 
 /// What a surface is laid out against.
 struct SurfaceContext
@@ -48,6 +49,9 @@ struct SurfaceContext
     /// The panel takes all of `panelArea`'s height — the tree slid out beside
     /// the rail (mockup E) — rather than floating below the pill.
     bool panelFull;
+    /// Overlay scrollbars at their full width on a touch screen
+    /// (`scrollbar.touchWidth`, `SCV13`).
+    bool wideBars;
     /// Where a `page` goes: the whole workspace, the tab pill or rail included
     /// — a page is full screen, as the page mockups draw it (D49). Empty: `area`.
     Rect pageArea;
@@ -103,11 +107,18 @@ interface SelfPlaced
 }
 
 /// A surface whose content scrolls: a wheel notch, or a drag on a touch
-/// screen, reaches it while it is on top (`dy` > 0 moves the content up).
+/// screen, reaches it while it is on top (`w.exactY` > 0 moves the content
+/// up; a drag is `w.precise` and followed 1:1, a notch eased — `SCV12`).
 interface Scrollable
 {
     /// ditto
-    void scroll(int dy) @system;
+    void scroll(in WheelEvent w) @system;
+    /// One frame of its motion and its bar's fade, `dt` seconds; true while
+    /// it needs the next frame.
+    bool animate(float dt) @system;
+    /// Its body's scroll and overlay bar, for a press on the bar (`SCV13`);
+    /// null when it has none.
+    ScrollBody* scrolling() @safe;
 }
 
 /// A transient line: a refusal, "Copied by …", "Saved".
@@ -273,16 +284,45 @@ struct Surfaces
     /// Whether the top surface scrolls itself (`Scrollable`).
     bool topScrolls() @safe => stack.length && cast(Scrollable) stack[$ - 1] !is null;
 
-    bool scroll(int dy) @system
+    bool scroll(in WheelEvent w) @system
     {
         if (!stack.length)
             return false;
         if (auto s = cast(Scrollable) stack[$ - 1])
         {
-            s.scroll(dy);
+            s.scroll(w);
             changed = true;
         }
         return true;
+    }
+
+    /// One frame of the top surface's scroll motion; true while it needs
+    /// the next frame.
+    bool animate(float dt) @system
+    {
+        if (!stack.length)
+            return false;
+        if (auto s = cast(Scrollable) stack[$ - 1])
+            if (s.animate(dt))
+            {
+                changed = true;
+                return true;
+            }
+        return false;
+    }
+
+    /// The top surface's scroll body and its layer this frame, for a press
+    /// on its bar; null when it has none.
+    ScrollBody* topScrolling(out Layer layer) @safe
+    {
+        if (!stack.length || layers.length != stack.length)
+            return null;
+        if (auto s = cast(Scrollable) stack[$ - 1])
+        {
+            layer = layers[$ - 1];
+            return s.scrolling();
+        }
+        return null;
     }
 
     /// Escape or Back: the top surface's safe answer.

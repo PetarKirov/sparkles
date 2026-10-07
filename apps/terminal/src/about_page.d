@@ -312,7 +312,7 @@ final class AboutPage : Page
         const content = b.add(Widget(kind: WidgetKind.column, children: items,
             width: SizeSpec.grow(), padding: Insets(1, 0, 0, 0)));
         viewRows = bodyRowsFor(b, [head], null, cols, rows);
-        return finishPage(b, [head], content, null, viewRows, scroll, cols, rows);
+        return finishPage(b, [head], content, null, viewRows, scrollBody, cols, rows);
     }
 
     /// Identity, then the whole component tree, then the probes. A node

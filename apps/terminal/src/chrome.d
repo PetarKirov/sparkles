@@ -129,15 +129,13 @@ struct Layer
     /// The hit id under pixel (`px`, `py`); 0 for none.
     size_t hitAt(int px, int py) const @safe pure nothrow @nogc
     {
+        import sparkles.ui.state : hitAt;
+
         if (empty || cellW <= 0 || cellH <= 0 || px < x || py < y)
             return 0;
-        const cx = (px - x) / cellW, cy = (py - y) / cellH;
-        size_t found;
-        foreach (ref t; hits) // later nodes paint on top: the last one wins
-            if (cx >= t.rect.x && cx < t.rect.x + t.rect.width
-                && cy >= t.rect.y && cy < t.rect.y + t.rect.height)
-                found = t.hitId;
-        return found;
+        // In fractional cells: a list scrolled between cells (`LAY7`) is hit
+        // where it was painted. Later nodes paint on top: the last one wins.
+        return hits.hitAt(cast(float)(px - x) / cellW, cast(float)(py - y) / cellH);
     }
 
     /// Whether pixel (`px`, `py`) is on the surface (a tap there is the

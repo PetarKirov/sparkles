@@ -132,7 +132,7 @@ struct DesktopTerminal
             // The wheel: a page under it (`TKM4`), else an expanded exit
             // prompt (`TSS2`); the panes poll their own.
             (in WheelEvent w) {
-                if (!host.scrollSurface(w.dy))
+                if (!host.scrollSurface(w) && w.dy != 0)
                     cast(void) host.scrollBanner(w.pos.x, w.pos.y, w.dy);
             },
             (in EndOfInput _) { h.quit(); },

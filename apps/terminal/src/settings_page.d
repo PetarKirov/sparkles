@@ -34,7 +34,7 @@ import core.time : MonoTime, seconds;
 
 import std.conv : text;
 
-import sparkles.input.events : Key, KeyAction, KeyEvent;
+import sparkles.input.events : Key, KeyAction, KeyEvent, WheelEvent;
 import sparkles.ui.components.chord_capture : CaptureConflict, CaptureHit, CapturePhase,
     CaptureResolution, ChordCapture, chordCaptureView, pathLabel;
 import sparkles.ui.components.property_sections : choiceLabel, decodeSectionHit,
@@ -52,7 +52,9 @@ import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, Wi
 import chrome : chromeLayout;
 import keymap : Binding, isReserved, KeysConfig, leaderChord, leaderMark, TermCommand,
     TermScope, terminalBindings;
-import page_kit : header;
+import page_kit : header, ScrollBody;
+import sparkles.ui.components.chrome : fracByte, scrollbar, ScrollbarSpec;
+import sparkles.ui.state : ScrollAxis;
 import settings : TerminalConfig;
 import settings_store : TerminalApply, TerminalSettingsPane, TerminalSettingsStore;
 import surfaces : Placement, Scrollable, Surface, SurfaceContext;
@@ -204,7 +206,7 @@ final class SettingsPage : Surface, Scrollable
     private Item[] items;
     private size_t focus;
     private bool focusMoved;
-    private int scrollCells, maxScroll, bodyRows;
+    private ScrollBody scrollBody; // the body's scroll and bar (`SCV12`)
     private BindingRow[] bindings;
     private Chord leader;
     private ChordCapture capture;
@@ -273,8 +275,16 @@ final class SettingsPage : Surface, Scrollable
         const opt = opts;
         foreach (i, ref it; items)
             itemIds ~= itemWidget(b, i, it, opt);
-        const body_ = b.add(Widget(kind: WidgetKind.column, children: itemIds,
+        const port = b.add(Widget(kind: WidgetKind.column, children: itemIds,
             width: SizeSpec.grow(), height: SizeSpec.grow(), clipX: true, clipY: true));
+        // The overlay bar (`SCV13`) in the column at the body's right.
+        scrollBody.touch = touch;
+        scrollBody.wide = touch && ctx.wideBars;
+        const bar = scrollbar(b, ScrollbarSpec(axis: ScrollAxis.vertical,
+            expandPercent: scrollBody.wide ? 100 : 0), 0);
+        b.nodes[bar].height = SizeSpec.grow();
+        const body_ = b.add(Widget(kind: WidgetKind.row, children: [port, bar],
+            width: SizeSpec.grow(), height: SizeSpec.grow()));
 
         uint[] page = [titleBar(b, ctx), filterRow(b, ctx), body_];
         if (!touch)
@@ -297,32 +307,38 @@ final class SettingsPage : Surface, Scrollable
             alignX: Alignment.center, alignY: Alignment.center,
             hitId: touch ? 0 : hitScrim));
         auto tree = b.finish(root);
-
-        // Measure unscrolled, keep the focused row in view, then scroll.
         auto frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
-        const view = frames[body_].rect;
-        bodyRows = view.height;
+        const view = frames[port].rect;
         int contentBottom = view.y;
         foreach (id; itemIds)
             contentBottom = frames[id].rect.y + frames[id].rect.height;
-        maxScroll = contentBottom - view.y - view.height;
-        if (maxScroll < 0)
-            maxScroll = 0;
+        scrollBody.content = contentBottom - view.y;
+        scrollBody.viewport = view.height;
+        scrollBody.barNode = bar;
+        auto m = &scrollBody.motion;
+        if (m.pos > scrollBody.limit)
+            m.jumpTo(scrollBody.limit, scrollBody.limit);
         if (focusMoved && focus < itemIds.length)
         {
             const r = frames[itemIds[focus]].rect;
             const top = r.y - view.y, bottom = top + r.height;
-            if (top < scrollCells)
-                scrollCells = top;
-            else if (bottom > scrollCells + view.height)
-                scrollCells = bottom - view.height;
+            const from = m.mode == m.mode.easing ? m.target : m.pos;
+            if (top < from)
+                m.scrollTo(top, scrollBody.limit);
+            else if (bottom > from + view.height)
+                m.scrollTo(bottom - view.height, scrollBody.limit);
             focusMoved = false;
         }
-        if (scrollCells > maxScroll)
-            scrollCells = maxScroll;
-        if (scrollCells < 0)
-            scrollCells = 0;
-        tree.nodes[body_].childOffset = Point(0, scrollCells);
+        tree.nodes[port].childOffset = Point(0, cast(int) m.whole);
+        tree.nodes[port].childOffsetFracY = m.frac;
+        with (tree.nodes[bar])
+        {
+            barContent = scrollBody.content;
+            barViewport = view.height;
+            barOffset = m.whole;
+            barOffsetFrac = fracByte(m.frac);
+            barFadePercent = touch ? scrollBody.bar.anim.fadePercent : 100;
+        }
         return tree;
     }
 
@@ -444,7 +460,7 @@ final class SettingsPage : Surface, Scrollable
                 cast(void) pane.tv.filterKey(k);
             pane.refresh();
             focus = 0;
-            scrollCells = 0;
+            scrollBody.motion.jumpTo(0, scrollBody.limit);
             return true;
         }
 
@@ -536,14 +552,16 @@ final class SettingsPage : Surface, Scrollable
 
     // ── Scrollable ──────────────────────────────────────────────────────────
 
-    void scroll(int dy) @system
+    void scroll(in WheelEvent w) @system
     {
-        scrollCells += dy;
-        if (scrollCells > maxScroll)
-            scrollCells = maxScroll;
-        if (scrollCells < 0)
-            scrollCells = 0;
+        scrollBody.scroll(w);
     }
+
+    /// ditto
+    bool animate(float dt) @system => scrollBody.animate(dt);
+
+    /// ditto
+    ScrollBody* scrolling() @safe return => &scrollBody;
 
     // ── the rows ────────────────────────────────────────────────────────────
 
@@ -769,7 +787,7 @@ final class SettingsPage : Surface, Scrollable
     {
         levels = levels[0 .. $ - 1];
         focus = 0;
-        scrollCells = 0;
+        scrollBody.motion.jumpTo(0, scrollBody.limit);
         openDropdown = null;
     }
 
@@ -856,7 +874,7 @@ final class SettingsPage : Surface, Scrollable
         {
             levels ~= n.path;
             focus = 0;
-            scrollCells = 0;
+            scrollBody.motion.jumpTo(0, scrollBody.limit);
             openDropdown = null;
             return;
         }
