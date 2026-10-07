@@ -24,8 +24,12 @@ void emitVisibleOps(ref ViewerModel vm, long docRows, scope void delegate(ref Dr
     foreach (ref sourceOp; vm.ops)
     {
         const oy = sourceOp.rect.y;
+        // Brackets carry no row of their own — a clip's, or a viewport's
+        // sub-cell shift (`LAY7`) — and always pass, so they balance.
         if (sourceOp.kind != OpKind.pushClip
             && sourceOp.kind != OpKind.popClip
+            && sourceOp.kind != OpKind.pushShift
+            && sourceOp.kind != OpKind.popShift
             && (oy + sourceOp.rect.height <= vm.top
                 || oy > vm.top + docRows))
             continue;
@@ -77,4 +81,23 @@ ubyte barPercent(float value) @safe pure nothrow @nogc
     assert(barPercent(-3) == 0);
     assert(barPercent(42.7) == 42);
     assert(barPercent(250) == 100);
+}
+
+@("view_ops.emitVisibleOps.keepsAViewportsShiftAnywhereInTheDocument")
+@system unittest
+{
+    import sparkles.ui.canvas : popClipOp, popShiftOp, pushClipOp, pushShiftOp,
+        textRunOp;
+    import sparkles.ui.geometry : Rect;
+
+    // A code block scrolled half a line, far down the document: its shift
+    // carries no row, and must reach the canvas wherever the view is (`LAY7`).
+    ViewerModel vm;
+    vm.ops = [pushClipOp(Rect(0, 40, 20, 4)), pushShiftOp(0, -0.5f),
+        textRunOp(Rect(0, 41, 4, 1), "code"), popShiftOp(), popClipOp()];
+    vm.top = 38;
+    OpKind[] seen;
+    emitVisibleOps(vm, 10, (ref DrawOp op) { seen ~= op.kind; });
+    assert(seen == [OpKind.pushClip, OpKind.pushShift, OpKind.textRun,
+        OpKind.popShift, OpKind.popClip]);
 }
