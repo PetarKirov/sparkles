@@ -800,6 +800,27 @@ struct WheelEvent
     /// consumers scroll by `dx`/`dy` either way; it exists so a host can, for
     /// example, decline to animate a precise scroll.
     bool precise;
+    /**
+    The exact distance, fraction included, in the same cells as `dx`/`dy`
+    (`INP12`): what a target that paints between cells scrolls by (`LAY7`).
+    `dx`/`dy` are the whole cells due so far, accumulated, so a consumer
+    reads one pair or the other, never both. A producer that only knows
+    notches leaves these 0; $(LREF exactX)/$(LREF exactY) fall back.
+
+    A producer asked for fractions ($(REF GestureConfig.fractional,
+    sparkles,input,gesture), `RaylibEvents.fractionalWheel`) also emits
+    events whose whole part is still 0, so only a consumer that reads these
+    should ask for them.
+    */
+    float fdx = 0;
+    /// ditto
+    float fdy = 0;
+
+    /// The exact distance on each axis: `fdx`/`fdy` when the producer gave
+    /// them, else the whole cells.
+    float exactX() const @safe pure nothrow @nogc => fdx != 0 ? fdx : dx;
+    /// ditto
+    float exactY() const @safe pure nothrow @nogc => fdy != 0 ? fdy : dy;
 }
 
 /// Rows a discrete wheel notch scrolls. Applied by the $(B producer) so that

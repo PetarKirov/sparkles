@@ -281,6 +281,9 @@ bool runGui(alias present, alias handle, alias draw = noDraw,
         const slop = session.cellH / 2.0f;
         events.gestures.cfg.slopPx = slop > 8 ? slop : 8;
         events.gestures.cfg.cellH = session.cellH;
+        events.gestures.cfg.cellW = session.cellW;
+        events.gestures.cfg.fractional = cfg.fractionalScroll;
+        events.fractionalWheel = cfg.fractionalScroll;
 
         // Input first: the frame an application presents should reflect what
         // just happened, not what happened before it. `HST18`: a 1×1 cell is
