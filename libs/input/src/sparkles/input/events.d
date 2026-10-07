@@ -816,6 +816,15 @@ struct WheelEvent
     /// ditto
     float fdy = 0;
 
+    /**
+    The first event of one continuous scroll — a drag's first move, a wheel
+    turned after a pause — whose later events (a drag's, its fling's, the
+    wheel's next notches) carry `false`. A consumer with nested scrollers
+    picks the one the gesture belongs to here and keeps it to the end
+    (`SCV12`). A producer that cannot tell sets it on every event.
+    */
+    bool begins;
+
     /// The exact distance on each axis: `fdx`/`fdy` when the producer gave
     /// them, else the whole cells.
     float exactX() const @safe pure nothrow @nogc => fdx != 0 ? fdx : dx;

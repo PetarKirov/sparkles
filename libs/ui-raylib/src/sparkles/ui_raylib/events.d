@@ -70,6 +70,7 @@ struct RaylibEvents
     // (high-resolution wheels/trackpads report sub-step values raylib
     // would otherwise truncate to zero) — M14.
     private float wheelAccumX = 0, wheelAccumY = 0;
+    private double lastWheelAt = -1; // `GetTime` of the last wheel movement
 
     /// Emit every wheel movement with its exact distance
     /// (`WheelEvent.fdx`/`fdy`), whole step due or not: for an application
@@ -166,11 +167,17 @@ struct RaylibEvents
         const wheel = GetMouseWheelMoveV();
         const dx = wheelSteps(wheelAccumX, -wheel.x) * linesPerNotch;
         const dy = wheelSteps(wheelAccumY, -wheel.y) * linesPerNotch;
-        if (fractionalWheel && (wheel.x != 0 || wheel.y != 0))
+        // A wheel turned after a pause starts a gesture (`WheelEvent.begins`).
+        const moved = wheel.x != 0 || wheel.y != 0;
+        const begins = moved && GetTime() - lastWheelAt > 0.15;
+        if (moved)
+            lastWheelAt = GetTime();
+        if (fractionalWheel && moved)
             sink(Event(WheelEvent(dx: dx, dy: dy, pos: pos, mods: mods,
-                fdx: -wheel.x * linesPerNotch, fdy: -wheel.y * linesPerNotch)));
+                fdx: -wheel.x * linesPerNotch, fdy: -wheel.y * linesPerNotch,
+                begins: begins)));
         else if (dx != 0 || dy != 0)
-            sink(Event(WheelEvent(dx: dx, dy: dy, pos: pos, mods: mods)));
+            sink(Event(WheelEvent(dx: dx, dy: dy, pos: pos, mods: mods, begins: begins)));
 
         // -- touch ---------------------------------------------------------
         // raylib maps the first contact onto the mouse, which is an adapter
@@ -434,7 +441,7 @@ struct RaylibEvents
                 action: p.action, button: p.button, pos: at, mods: m)),
             (WheelEvent w) => Event(WheelEvent(
                 dx: w.dx, dy: w.dy, pos: at, mods: m, precise: w.precise,
-                fdx: w.fdx, fdy: w.fdy)),
+                fdx: w.fdx, fdy: w.fdy, begins: w.begins)),
             (GestureEvent g) => Event(GestureEvent(
                 gesture: g.gesture, pos: at, scale: g.scale, mods: m)),
             (ref other) => Event(other),
