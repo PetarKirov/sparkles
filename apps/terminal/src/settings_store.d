@@ -60,6 +60,7 @@ immutable ApplyRule[] terminalApplyRules = [
     ApplyRule("lantern.", TerminalApply.lantern | TerminalApply.keys),
     ApplyRule("keys", TerminalApply.keys),
     ApplyRule("ui.", TerminalApply.chrome),
+    ApplyRule("scrollbar.", TerminalApply.chrome),
     ApplyRule("behaviour.", TerminalApply.behaviour),
     ApplyRule("paste.", TerminalApply.policy),
     ApplyRule("clipboard.", TerminalApply.policy),

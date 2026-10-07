@@ -41,6 +41,7 @@ import touch_guide : TouchGuide;
 import keymap : KeyCommand, TermCommand, TermContext;
 import screen_oracle : ScreenOracle;
 import selection_menu : SelectionUi;
+import settings : ScrollbarWidth;
 import settings_load : LoadedConfig;
 import settings_page : SettingsPage;
 import settings_store : TerminalSettingsStore;
@@ -361,6 +362,7 @@ struct DroidTerminal
         host.paneChrome = config.effective.ui.paneChrome;
         host.viewerLineNumbers = config.effective.viewer.lineNumbers;
         host.viewerCodeLineNumbers = config.effective.viewer.codeLineNumbers;
+        host.wideBars = config.effective.scrollbar.touchWidth == ScrollbarWidth.wide;
         host.linkTap = config.effective.links.tap;
         host.linkLongPress = config.effective.links.longPress;
         host.linkSchemes = config.effective.links.schemes.dup;
