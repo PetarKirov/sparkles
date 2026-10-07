@@ -26,7 +26,7 @@ module sparkles.ui.components.tree_widget;
 
 import sparkles.ui.state : DisclosureState;
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.style : GuideGlyphs, InteractionState, Slot, StateSet;
+import sparkles.ui.style : GuideGlyphs, InteractionState, Slot, StateSet, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
 
 @safe:
@@ -265,7 +265,14 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
         static if (__traits(compiles, { Slot s = v.slot; }))
             labelSlot = v.slot;
 
-        auto lbl = TextSpan(labelOf(v), labelSlot);
+        // Optional per-node text style (VMD6) for the label and its badge —
+        // an application's chrome names its rows in the interface face
+        // (design-system `GLY10`), the current one bold.
+        TextStyle labelStyle;
+        static if (__traits(compiles, { TextStyle ts = v.textStyle; }))
+            labelStyle = v.textStyle;
+
+        auto lbl = TextSpan(labelOf(v), labelSlot, labelStyle);
         // Optional per-node label color (VMD6) — e.g. the open document's
         // theme accent — riding the resolved-color channel.
         static if (__traits(compiles, { bool b2 = v.hasLabelFg; lbl.fg = v.labelFg; }))
@@ -281,14 +288,18 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
         static if (__traits(compiles, { const(char)[] bt = v.badge; }))
             if (v.badge.length)
             {
-                auto bsp = TextSpan(v.badge, labelSlot);
+                // Optional badge slot (VMD6): a muted count beside a label.
+                Slot badgeSlot = labelSlot;
+                static if (__traits(compiles, { Slot s2 = v.badgeSlot; }))
+                    badgeSlot = v.badgeSlot;
+                auto bsp = TextSpan(v.badge, badgeSlot, labelStyle);
                 static if (__traits(compiles, { bool hb = v.hasBadgeFg; bsp.fg = v.badgeFg; }))
                     if (v.hasBadgeFg)
                     {
                         bsp.fg = v.badgeFg;
                         bsp.hasFg = true;
                     }
-                spans ~= TextSpan(" ", labelSlot);
+                spans ~= TextSpan(" ", labelSlot, labelStyle);
                 spans ~= bsp;
             }
 
@@ -486,6 +497,34 @@ version (unittest)
     const spans = wt.nodes[wt.nodes[tree].children[0]].spans;
     assert(spans[$ - 2].text == " " && spans[$ - 2].slot == Slot.info);
     assert(spans[$ - 1].text == "README.md" && spans[$ - 1].slot == Slot.info);
+}
+
+@("ui.tree_widget.textStyleAndBadgeSlot")
+@safe unittest
+{
+    import sparkles.ui.style : FontRole;
+
+    // An application's chrome names its rows in the interface face, with a
+    // muted count beside (VMD6, design-system `GLY10`).
+    static struct TabNode
+    {
+        string label;
+        string badge;
+        Slot badgeSlot;
+        TextStyle textStyle;
+    }
+
+    TreeData!TabNode t;
+    t.add(TabNode("build", "2 panes", Slot.muted, TextStyle(bold: true, fontRole: FontRole.ui)));
+
+    auto b = Builder();
+    const tree = treeView(b, t, flatten(t, (uint) => true), (uint) => true);
+    auto wt = b.finish(tree);
+    const spans = wt.nodes[wt.nodes[tree].children[0]].spans;
+    assert(spans[$ - 3].text == "build" && spans[$ - 3].textStyle.fontRole == FontRole.ui
+        && spans[$ - 3].textStyle.bold);
+    assert(spans[$ - 1].text == "2 panes" && spans[$ - 1].slot == Slot.muted
+        && spans[$ - 1].textStyle.fontRole == FontRole.ui, "the badge in its own slot");
 }
 
 @("ui.tree_widget.nodeExpandableIsTheSharedProjection")
