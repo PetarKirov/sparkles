@@ -9,6 +9,7 @@ side is lives in `sparkles:ui-app`. The desktop flags are `TerminalCli`
 module app;
 
 import cli : TerminalCli, guiOptionsFrom, parsedLaunch, viewOptionsFrom;
+import settings : ScrollbarWidth;
 import settings_load : loadTerminalConfig, LoadedConfig;
 import desktop_terminal : DesktopTerminal;
 import logging : desktopStateDir;
@@ -122,6 +123,7 @@ int launchDesktop(ref CommandNode!TerminalCli node)
     app.host.paneChrome = lc.effective.ui.paneChrome;
     app.host.viewerLineNumbers = lc.effective.viewer.lineNumbers;
     app.host.viewerCodeLineNumbers = lc.effective.viewer.codeLineNumbers;
+    app.host.wideBars = lc.effective.scrollbar.touchWidth == ScrollbarWidth.wide;
     app.host.linkTap = lc.effective.links.tap;
     app.host.linkLongPress = lc.effective.links.longPress;
     app.host.linkSchemes = lc.effective.links.schemes.dup;

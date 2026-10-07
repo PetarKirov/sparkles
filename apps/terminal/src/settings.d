@@ -124,6 +124,15 @@ enum PaneChrome : ubyte
     framed,
 }
 
+/// `SCV13`: how wide an overlay scrollbar is drawn on a touch screen.
+enum ScrollbarWidth : ubyte
+{
+    /// A thin rail beside the content.
+    thin,
+    /// The full, expanded width: easier to see while it moves.
+    wide,
+}
+
 /// `TDV2`: where a file opened from a pane appears.
 enum OpenTarget : ubyte
 {
@@ -420,6 +429,15 @@ struct ViewerConfig
     bool codeLineNumbers = false;
 }
 
+/// ditto
+@WireSection
+struct ScrollbarConfig
+{
+    @Description("How wide scrollbars are on a touch screen: thin or wide.")
+    @Label("touch width")
+    ScrollbarWidth touchWidth = ScrollbarWidth.thin;
+}
+
 /// The whole configuration (`TCF1`). `TerminalConfig.init` is the defaults
 /// layer.
 struct TerminalConfig
@@ -446,6 +464,8 @@ struct TerminalConfig
     OpenConfig open;
     @Section("Viewer")
     ViewerConfig viewer;
+    @Section("Scrollbars")
+    ScrollbarConfig scrollbar;
     /// The binding overlay: context → chord path → command, `null` unbinding
     /// (`TKM8`). Contexts are `overlay` and `pane`; `leader` spells the leader.
     @Description("Key bindings over the defaults: context, chord path, command or null.")
