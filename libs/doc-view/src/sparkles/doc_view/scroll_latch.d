@@ -354,3 +354,27 @@ version (unittest)
     });
     assert(whole == 2 && frac == 64, "the thumb a quarter cell past 2, like the content");
 }
+
+@("scroll_latch.aPaintedBlockScrollsWithoutARebuild")
+@system unittest
+{
+    import sparkles.ui.canvas : DrawOp, match, PushShift, Scrollbar;
+    import sparkles.doc_view.view_ops : emitVisibleOps;
+
+    // A host that paints block scroll: crossing whole cells rebuilds
+    // nothing; the shift carries the whole distance, the bar the position.
+    auto vm = wideTable();
+    vm.paintsBlockScroll = true;
+    vm.rebuild();
+    const before = vm.ops.ptr;
+    ScrollLatch l;
+    assert(l.feed(vm, tableRow(vm), 3.5f, 0, precise: true, begins: true));
+    assert(vm.ops.ptr is before, "three and a half cells, no rebuild");
+    float dx = 0;
+    int whole = -1;
+    emitVisibleOps(vm, 50, (ref DrawOp op) {
+        op.payload.match!((ref PushShift s) { if (s.key && (s.axes & 1)) dx = s.dx; },
+            (ref Scrollbar b) { whole = b.offset; }, (ref _) {});
+    });
+    assert(dx == -3.5f && whole == 3);
+}

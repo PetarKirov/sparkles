@@ -9,7 +9,8 @@ lights up. Backend-free: operations in, operations out.
 */
 module sparkles.doc_view.view_ops;
 
-import sparkles.ui.canvas : DrawOp, match, OpKind, PushShift, RuleEdge, Scrollbar;
+import sparkles.ui.canvas : DrawOp, match, OpKind, PopShift, PushShift, RuleEdge,
+    Scrollbar;
 
 import sparkles.doc_view.viewer_model : ViewerModel;
 
@@ -21,9 +22,15 @@ are in document cells; the caller places them.
 */
 void emitVisibleOps(ref ViewerModel vm, long docRows, scope void delegate(ref DrawOp op) sink)
 {
+    // The rows the open shifts move their content by: a block scrolled
+    // without a rebuild paints its lines away from where they were laid
+    // out, so they are culled where they will land.
+    float[16] shifts = 0;
+    size_t depth;
+    float moved = 0;
     foreach (ref sourceOp; vm.ops)
     {
-        const oy = sourceOp.rect.y;
+        const oy = sourceOp.rect.y + moved;
         // Brackets carry no row of their own — a clip's, or a viewport's
         // sub-cell shift (`LAY7`) — and always pass, so they balance.
         if (sourceOp.kind != OpKind.pushClip
@@ -34,9 +41,27 @@ void emitVisibleOps(ref ViewerModel vm, long docRows, scope void delegate(ref Dr
                 || oy > vm.top + docRows))
             continue;
         auto op = sourceOp;
-        // A block's keyed shift takes its fraction now: moving within a cell
-        // does not rebuild the document (`ViewerModel.paintShift`).
-        op.payload.match!((ref PushShift s) { if (s.key) vm.paintShift(s); },
+        // A block's keyed shift takes its scroll now: moving it does not
+        // rebuild the document (`ViewerModel.paintShift`).
+        op.payload.match!(
+            (ref PushShift s)
+            {
+                if (s.key)
+                    vm.paintShift(s);
+                if (depth < shifts.length)
+                    shifts[depth] = s.dy;
+                ++depth;
+                moved += s.dy;
+            },
+            (ref PopShift _)
+            {
+                if (depth)
+                {
+                    --depth;
+                    if (depth < shifts.length)
+                        moved -= shifts[depth];
+                }
+            },
             (ref Scrollbar b) { vm.paintBar(b); }, (ref _) {});
         const activeSv = vm.activeBar();
         if (activeSv !is null

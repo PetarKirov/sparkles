@@ -151,6 +151,9 @@ struct DocViewPane
         kind = viewKindOf(path_);
         vm.names = ["chrome"];
         vm.themes = [theme];
+        // The window moves code blocks and tables as it paints: scrolling
+        // one never rebuilds the document (`LAY7`).
+        vm.paintsBlockScroll = true;
         vm.labels = env.labels;
         vm.visibleFirst = true;
         vm.cache = &env.cache;

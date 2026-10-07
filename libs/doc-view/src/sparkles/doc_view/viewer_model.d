@@ -306,6 +306,17 @@ struct ViewerModel
     /// Per-table scroll offsets, keyed by the table's `span.start`
     /// (scroll / wrap-at modes).
     TableScroll[size_t] tableScrollAt;
+    /**
+    The host paints code blocks' and tables' scroll itself — a window,
+    whose canvas moves a keyed shift (`paintShift`, `LAY7`): scrolling one
+    never rebuilds the document, which on a phone cost a frame at every
+    cell crossed. A cell target (hue's terminal) leaves it off and rebuilds.
+    */
+    bool paintsBlockScroll;
+    // The scrolls the tree was built at, so a painter shifts by the
+    // difference (`paintShift`).
+    private FenceScroll[size_t] builtFenceAt;
+    private TableScroll[size_t] builtTableAt;
     /// The per-bar drag/hover machines (`SCV5`): one `ScrollView` per bar
     /// owner — a fence's (and a table's) — keyed by the owner's canonical
     /// bar key, so every bar keeps its own hover and easing phase instead of
@@ -1239,7 +1250,7 @@ struct ViewerModel
             proseRole: proseRole,
             codeOverflow: codeOverflow,
             codeMaxLines: resolvedCodeMaxLines(),
-            fenceScrolls: fenceScrollList(),
+            fenceScrolls: snapshotBuilt(),
             fenceHBarHitBase: fenceHBarHitBase,
             fenceVBarHitBase: fenceVBarHitBase,
             hotFenceHBar: fenceHotGlyphs && activeBarH()
@@ -1905,6 +1916,15 @@ struct ViewerModel
     }
 
     /// The armed per-fence scrolls, as the view consumes them.
+    // The block scrolls a rebuild lays the tree out at, remembered so a
+    // painter shifts by what moved since (`paintShift`).
+    private FenceScroll[] snapshotBuilt()
+    {
+        builtFenceAt = fenceScrollAt.dup;
+        builtTableAt = tableScrollAt.dup;
+        return fenceScrollList();
+    }
+
     private FenceScroll[] fenceScrollList() const
     {
         FenceScroll[] list;
@@ -1993,22 +2013,24 @@ struct ViewerModel
     void paintShift(ref PushShift s) const @safe
     {
         const tag = s.key & shiftKeyMask, id = s.key & ~shiftKeyMask;
+        // How far the block is scrolled past the whole cells it was laid
+        // out at: a fraction, or — when the host paints block scroll — any
+        // distance (`paintsBlockScroll`).
+        static float past(double now, int built) => cast(float)(now - built);
         float fx = 0, fy = 0;
         if (tag == fenceShiftKeyBase)
         {
-            if (auto p = id in fenceScrollAt)
-            {
-                fx = p.fx;
-                fy = p.fy;
-            }
+            const cur = fenceScrollAt.get(id, FenceScroll(id, 0, 0));
+            const was = builtFenceAt.get(id, FenceScroll(id, 0, 0));
+            fx = past(cur.x + cur.fx, was.x);
+            fy = past(cur.y + cur.fy, was.y);
         }
         else if (tag == tableShiftKeyBase)
         {
-            if (auto p = id in tableScrollAt)
-            {
-                fx = p.fx;
-                fy = p.fy;
-            }
+            const cur = tableScrollAt.get(id, TableScroll(id, 0, 0));
+            const was = builtTableAt.get(id, TableScroll(id, 0, 0));
+            fx = past(cur.x + cur.fx, was.x);
+            fy = past(cur.y + cur.fy, was.y);
         }
         else
             return;
@@ -2031,25 +2053,19 @@ struct ViewerModel
             if (t.rect != bar.rect || t.hitId < tableVBarHitBase)
                 continue;
             const id = t.hitId;
-            float f = 0;
+            double pos = 0;
             if (id >= fenceHBarHitBase)
-            {
-                if (auto p = (id - fenceHBarHitBase) in fenceScrollAt)
-                    f = p.fx;
-            }
+                pos = fenceScrollPos(id - fenceHBarHitBase, true);
             else if (id >= fenceVBarHitBase)
-            {
-                if (auto p = (id - fenceVBarHitBase) in fenceScrollAt)
-                    f = p.fy;
-            }
+                pos = fenceScrollPos(id - fenceVBarHitBase, false);
             else if (id >= tableHBarHitBase)
-            {
-                if (auto p = (id - tableHBarHitBase) in tableScrollAt)
-                    f = p.fx;
-            }
-            else if (auto p = (id - tableVBarHitBase) in tableScrollAt)
-                f = p.fy;
-            bar.offsetFrac = fracByte(f);
+                pos = tableScrollPos(id - tableHBarHitBase, true);
+            else
+                pos = tableScrollPos(id - tableVBarHitBase, false);
+            // Where the block is now, not where it was built: the thumb
+            // follows a block scrolled without a rebuild.
+            bar.offset = cast(int) pos;
+            bar.offsetFrac = fracByte(cast(float)(pos - cast(int) pos));
             return;
         }
     }
@@ -2119,7 +2135,9 @@ struct ViewerModel
             fenceScrollAt[bodyStart] = next;
         // Within a cell only the fraction moved: the painter sets it on the
         // fence's keyed shift (`paintShift`), and the layout stands.
-        if (next.x != cur.x || next.y != cur.y)
+        // Across a cell too, a host that paints block scroll (`paintsBlockScroll`)
+        // shifts what is built.
+        if ((next.x != cur.x || next.y != cur.y) && !paintsBlockScroll)
             rebuild();
         return true;
     }
@@ -2258,7 +2276,7 @@ struct ViewerModel
             return true;
         if (onWindowScroll !is null)
             onWindowScroll(spanStart, next.x, next.y);
-        else
+        else if (!paintsBlockScroll)
             rebuild();
         return true;
     }
