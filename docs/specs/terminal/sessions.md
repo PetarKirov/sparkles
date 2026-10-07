@@ -134,8 +134,12 @@ unseen-notification mark, and expands to its panes, each with its icon, title,
 directory and a failed exit shown as such. The current tab and the focused
 pane are marked. A search field filters tabs and panes by title, program and
 directory, ranked by `sparkles:fuzzy`, and opens matching tabs to show their
-matches. Choosing an entry selects that tab, focuses that pane, and closes the
-tree where it was an overlay.
+matches. A tab with one pane is one entry, its title and its directory, never
+a tab and a pane repeating it. The tree is the toolkit's tree component, the
+one hue's explorer is: its guides, disclosure markers, selection and Left and
+Right keys. A click selects an entry, selects that tab or focuses that pane,
+opens or closes a tab with panes, and leaves the tree open; Enter does the
+same and closes it.
 
 ## Opening, restoring and focusing (`TSS13`–`TSS16`)
 
@@ -148,7 +152,8 @@ on an edge swipe, which belongs to the system Back gesture, and tabs are not
 switched by swiping. The tree's search sits at the bottom of the panel on
 touch, within reach of the keyboard, and at the top on the desktop, and stays
 on the panel when the keyboard shortens it: the rows that no longer fit
-scroll, a mark counting those above and below. A tap outside, Back or `Esc`
+scroll under the overlay scrollbar. Beside the rail the panel fills its area
+to the last pixel, with a rule against the panes. A tap outside, Back or `Esc`
 closes it. Splits come from the pane header's actions,
 the key guide and the MENU key, and in portrait a zoomed pane is the usual
 way to read one of several splits.
@@ -220,8 +225,8 @@ thumb that steps a row at a time while the rows glide.
 | `TSS9`  | full                                                                                                                                                                                   | `handle_mouse` (pane origin), `WorkspaceHost.paneAt`, `DroidTerminal.onPointer`                                                                                                                                                       |
 | `TSS10` | full                                                                                                                                                                                   | `Workspace.resizeSplit`, `Workspace.moveDivider`, `WorkspaceHost.dragDivider`, `WorkspaceHost.touchDivider`, `WorkspaceHost.dividersNear`, `WorkspaceHost.dividerHover`, `Surfaces.modal`                                             |
 | `TSS11` | full                                                                                                                                                                                   | `paneBoxes`, `paneHeader`, `paneFrame`, `paneToolbar`, `WorkspaceHost.placeChrome`                                                                                                                                                    |
-| `TSS12` | full                                                                                                                                                                                   | `TabTree`, `WorkspaceHost.treeTabs`                                                                                                                                                                                                   |
-| `TSS13` | full                                                                                                                                                                                   | `pillBand`, `rail`, `usesPill`, `WorkspaceHost.toggleTree`, `TabTree.scroll`                                                                                                                                                          |
+| `TSS12` | full                                                                                                                                                                                   | `TabTree`, `TreeViewState`, `treeView`, `WorkspaceHost.treeTabs`                                                                                                                                                                      |
+| `TSS13` | full                                                                                                                                                                                   | `pillBand`, `rail`, `usesPill`, `WorkspaceHost.toggleTree`, `TabTree.scroll`, `scrollViewport`, `Layer.edgeWidth`                                                                                                                     |
 | `TSS14` | partial: on the phone a pane comes back in its directory only when the shell reports it with OSC 7, which nix-on-droid's bash does not, and proot hides a guest's `chdir` from `/proc` | `saved`, `restored`, `WorkspaceHost.restore`, `WorkspaceHost.refreshCwds`                                                                                                                                                             |
 | `TSS15` | full                                                                                                                                                                                   | `Workspace.focusPane`, `DesktopIntegration.tick`, `DroidPlatform.focusPane`, `NotificationPage.openEntry`                                                                                                                             |
 | `TSS16` | full                                                                                                                                                                                   | `OpenerHit.guide`, `rail`, `pillBand`, `WorkspaceHost.takeGuideRequest`                                                                                                                                                               |

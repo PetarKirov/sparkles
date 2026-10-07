@@ -1545,6 +1545,7 @@ struct WorkspaceHost
         SurfaceContext ctx = {area: panesArea, cellW: cellW, cellH: cellH, labels: labels,
             style: overlayStyle, targetRows: theme.targetRows, touch: touch,
             panelArea: panelRect, panelFull: !usesPill(tabsOpener, phonePortrait),
+            ruleWidth: ruleWidth,
             pageArea: area, wideBars: wideBars};
         if (auto tv = focusedView())
             if (auto b = boxOf(ws.focused))
