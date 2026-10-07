@@ -572,7 +572,7 @@ WidgetTree finishPage(ref Builder b, uint[] top, uint content, uint[] bottom, in
         clipY: true,
     ));
     const bar = scrollbar(b, ScrollbarSpec(axis: ScrollAxis.vertical,
-        expandPercent: body.wide ? 100 : 0), bodyRows);
+        expandPercent: body.bar.expandPercent(body.wide)), bodyRows);
     const view = b.add(Widget(
         kind: WidgetKind.row,
         children: [port, bar],

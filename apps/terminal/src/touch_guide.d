@@ -159,7 +159,7 @@ final class TouchGuide : Surface, Scrollable
         port = b.add(Widget(kind: WidgetKind.column, children: items,
             width: SizeSpec.grow(), height: SizeSpec.fixed(view), clipX: true, clipY: true));
         bar = scrollbar(b, ScrollbarSpec(axis: ScrollAxis.vertical,
-            expandPercent: list.wide ? 100 : 0), view);
+            expandPercent: list.bar.expandPercent(list.wide)), view);
         list.barNode = bar;
         return b.add(Widget(kind: WidgetKind.row, children: [port, bar],
             width: SizeSpec.grow(), height: SizeSpec.fixed(view)));

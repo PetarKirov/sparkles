@@ -281,7 +281,7 @@ final class SettingsPage : Surface, Scrollable
         scrollBody.touch = touch;
         scrollBody.wide = touch && ctx.wideBars;
         const bar = scrollbar(b, ScrollbarSpec(axis: ScrollAxis.vertical,
-            expandPercent: scrollBody.wide ? 100 : 0), 0);
+            expandPercent: scrollBody.bar.expandPercent(scrollBody.wide)), 0);
         b.nodes[bar].height = SizeSpec.grow();
         const body_ = b.add(Widget(kind: WidgetKind.row, children: [port, bar],
             width: SizeSpec.grow(), height: SizeSpec.grow()));

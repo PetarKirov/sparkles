@@ -841,7 +841,7 @@ struct DocViewPane
                 slot: Slot.thumb,
                 offsetFrac: fracByte(frac),
                 fadePercent: touch ? bar.anim.fadePercent : 100,
-                expandPercent: wide ? 100 : 0,
+                expandPercent: bar.expandPercent(wide),
             );
             if (overlay)
             {
