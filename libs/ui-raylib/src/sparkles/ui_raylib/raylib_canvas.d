@@ -73,10 +73,8 @@ ScrollbarRail scrollbarRail(in Scrollbar op, int cellW, int cellH,
     int minExtent = scrollbarMinExtentPx)
     @safe pure nothrow @nogc
 {
-    ScrollbarRail r;
-    if (op.content <= op.viewport || op.content <= 0)
-        return r;
-
+    if (op.fadePercent == 0)
+        return ScrollbarRail.init;
     bool vertical;
     final switch (op.edge) with (RuleEdge)
     {
@@ -87,26 +85,47 @@ ScrollbarRail scrollbarRail(in Scrollbar op, int cellW, int cellH,
             vertical = false;
             break;
     }
-
-    const x = originX + op.rect.x * cellW;
-    const y = originY + op.rect.y * cellH;
-    const w = op.rect.width * cellW;
-    const h = op.rect.height * cellH;
     const idle = railIdlePx(vertical ? cellW : cellH);
     const expanded = railExpandedPx(cellW);
     const thickness = idle
         + (expanded - idle) * cast(int) op.expandPercent / 100;
+    return scrollbarRailPx(Rect(originX + op.rect.x * cellW,
+            originY + op.rect.y * cellH, op.rect.width * cellW,
+            op.rect.height * cellH),
+        op.edge, op.content, op.viewport, op.offset, op.offsetFrac, thickness,
+        minExtent);
+}
 
-    final switch (op.edge) with (RuleEdge)
+/**
+The same resolution for a band given in pixels — a terminal pane's padding,
+which is not a whole number of cells — at a `thickness` the caller resolved:
+the one geometry every bar paints and hit-tests with (`SCV13`).
+`offsetFrac` is the view's fraction past `offset` in 256ths, so the thumb
+slides with content scrolled between cells (`LAY7`).
+*/
+ScrollbarRail scrollbarRailPx(in Rect band, RuleEdge edge, long content,
+    long viewport, long offset, ubyte offsetFrac, int thickness,
+    int minExtent = scrollbarMinExtentPx)
+    @safe pure nothrow @nogc
+{
+    ScrollbarRail r;
+    if (content <= viewport || content <= 0)
+        return r;
+    const x = band.x, y = band.y, w = band.width, h = band.height;
+    bool vertical;
+    final switch (edge) with (RuleEdge)
     {
         case left:
             r.track = Rect(x, y, thickness, h);
+            vertical = true;
             break;
         case right:
             r.track = Rect(x + w - thickness, y, thickness, h);
+            vertical = true;
             break;
         case centerX:
             r.track = Rect(x + w / 2 - thickness / 2, y, thickness, h);
+            vertical = true;
             break;
         case top:
             r.track = Rect(x, y, w, thickness);
@@ -122,13 +141,35 @@ ScrollbarRail scrollbarRail(in Scrollbar op, int cellW, int cellH,
     const track = vertical ? h : w;
     if (track <= 0 || thickness <= 0)
         return ScrollbarRail.init;
-    const thumb = scrollbarThumb(op.content, op.viewport,
-        op.offset, track, minExtent);
+    // In 256ths of a unit, so a fraction moves the thumb by the pixels it
+    // should rather than by none until a whole unit is crossed.
+    const thumb = scrollbarThumb(content * 256, viewport * 256,
+        offset * 256 + offsetFrac, track, minExtent);
     r.thumb = vertical
         ? Rect(r.track.x, y + thumb.start, thickness, thumb.extent)
         : Rect(x + thumb.start, r.track.y, thumb.extent, thickness);
     r.live = true;
     return r;
+}
+
+@("ui_raylib.scrollbarRail.aFractionSlidesTheThumb")
+@safe pure nothrow @nogc
+unittest
+{
+    // 100 rows in a 10-row view, a 400 px track: the thumb is 40 px and
+    // travels 360 px over 90 rows — 4 px a row, 2 px for half of one.
+    const band = Rect(0, 0, 12, 400);
+    const at = scrollbarRailPx(band, RuleEdge.right, 100, 10, 45, 0, 4);
+    const half = scrollbarRailPx(band, RuleEdge.right, 100, 10, 45, 128, 4);
+    assert(at.live && at.thumb.height == 40 && at.thumb.y == 180);
+    assert(half.thumb.y == 182);
+    assert(half.track == Rect(8, 0, 4, 400), "on the band's right edge");
+    Scrollbar faded;
+    faded.content = 100;
+    faded.viewport = 10;
+    faded.rect = Rect(0, 0, 1, 10);
+    faded.fadePercent = 0;
+    assert(!scrollbarRail(faded, 8, 16).live, "a faded-out bar paints nothing");
 }
 
 /// A resolved `Visual`'s foreground as a raylib `Color` (with its alpha).
@@ -719,7 +760,7 @@ struct RaylibCanvas
         if (op.trackLit)
             DrawRectangle(r.track.x, r.track.y, r.track.width, r.track.height,
                 Color(op.trackColor.r, op.trackColor.g, op.trackColor.b,
-                    op.trackAlpha));
+                    cast(ubyte)(op.trackAlpha * op.fadePercent / 100)));
         else if (op.paintsIdleTrack)
             // A bar that owns its rule IS the border it sits on, so idle it
             // must look like one — a hairline on the same edge, at the weight
@@ -728,8 +769,10 @@ struct RaylibCanvas
             // instead thickened every overflowing fence's bottom border from
             // 1px to cellH/3; the window A/B oracle caught it.
             idleRule(op);
-        DrawRectangle(r.thumb.x, r.thumb.y, r.thumb.width, r.thumb.height,
-            rlFg(visualOf(op)));
+        // A fading bar (`SCV13`) fades as a whole: thumb and track together.
+        auto thumb = rlFg(visualOf(op));
+        thumb.a = cast(ubyte)(thumb.a * op.fadePercent / 100);
+        DrawRectangle(r.thumb.x, r.thumb.y, r.thumb.width, r.thumb.height, thumb);
     }
 
     void line(in Point from, in Point to, in Visual visual, LineStyle style) @system

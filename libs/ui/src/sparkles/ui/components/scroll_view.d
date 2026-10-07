@@ -48,6 +48,149 @@ struct ScrollbarAnim
     /// Transitional/device-backend resolution of the semantic percentage.
     float extent(float idle, float expanded) const pure nothrow @nogc
         => idle + (expanded - idle) * percent / 100.0f;
+
+    /**
+    The touch fade (`SCV13`): how visible the bar is, 0–100. A target with
+    no hover has nothing to reveal the bar on demand, so it shows while the
+    content moves or the thumb is held, and fades out `fadeAfter` seconds
+    after both stop — the overlay bar Android and iOS draw. A target with
+    hover keeps it (`visible` 100).
+    */
+    float visible = 100;
+    /// ditto
+    float idleFor = 0;
+    /// Seconds an idle bar stays before it fades, and how long the fade takes.
+    enum float fadeAfter = 0.8f, fadeSeconds = 0.25f;
+
+    /// One frame of the fade: `active` while the content moved this frame
+    /// or the thumb is held.
+    void stepFade(bool active, float dt) pure nothrow @nogc
+    {
+        if (active)
+        {
+            visible = 100;
+            idleFor = 0;
+            return;
+        }
+        idleFor += dt;
+        if (idleFor > fadeAfter)
+            visible -= 100 * dt / fadeSeconds;
+        if (visible < 0)
+            visible = 0;
+    }
+
+    /// Whether the fade still needs frames.
+    bool fading() const pure nothrow @nogc => visible > 0 && visible < 100
+        || (visible == 100 && idleFor > 0 && idleFor <= fadeAfter);
+
+    /// `visible` as `Scrollbar.fadePercent`.
+    ubyte fadePercent() const pure nothrow @nogc
+        => cast(ubyte)(visible < 0 ? 0 : visible > 100 ? 100 : visible);
+}
+
+/**
+The overlay scrollbar's pointer half (`SCV13`): a vertical bar drawn in a
+viewport's right inset, taking no content column, that a pointer can grab.
+
+Geometry is the caller's — the backend resolves the track and thumb in its
+pixels (`scrollbarRailPx` on the window) and hands them in, so what is hit is
+what was painted. A finger is wider than a rail, so a press counts anywhere
+in a band `zone` pixels wide along the track's outer edge (44 dp, `TOK11`);
+on the thumb it grabs in place, elsewhere on the band it jumps the thumb's
+middle there. While grabbed, the pointer's travel maps onto the position.
+*/
+struct OverlayBar
+{
+    /// The hover/fade animation (`ScrollbarAnim.stepFade` for touch).
+    ScrollbarAnim anim;
+    /// A pointer holds the thumb.
+    bool grabbed;
+    /// Where in the thumb it was taken, in pixels.
+    int grabAt;
+
+@safe pure nothrow @nogc:
+
+    /// Whether (`x`, `y`) is in the grab band of a bar whose track is `track`
+    /// (its right edge being the band's).
+    static bool inZone(int x, int y, in Rect track, int zone)
+        => track.height > 0 && y >= track.y && y < track.y + track.height
+            && x < track.x + track.width && x >= track.x + track.width - zone;
+
+    /**
+    A press at (`x`, `y`): grabs and returns `true` when it is in the band.
+    On the thumb it grabs in place; elsewhere the thumb's middle moves under
+    the pointer, and the new position comes back through `pos`.
+    */
+    bool press(int x, int y, in Rect track, in Rect thumb, int zone,
+        long content, long viewport, ref double pos)
+    {
+        if (!inZone(x, y, track, zone))
+            return false;
+        grabbed = true;
+        if (y >= thumb.y && y < thumb.y + thumb.height)
+            grabAt = y - thumb.y;
+        else
+        {
+            grabAt = thumb.height / 2;
+            pos = dragTo(y, track, thumb, content, viewport);
+        }
+        anim.stepFade(true, 0);
+        return true;
+    }
+
+    /// The position a grabbed thumb dragged to `y` puts the view at.
+    double dragTo(int y, in Rect track, in Rect thumb, long content, long viewport) const
+    {
+        const span = track.height - thumb.height;
+        const most = content - viewport;
+        if (span <= 0 || most <= 0)
+            return 0;
+        double t = cast(double)(y - grabAt - track.y) / span;
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        return t * most;
+    }
+
+    /// The pointer let go.
+    void release()
+    {
+        grabbed = false;
+    }
+}
+
+@("ui.scroll_view.overlayBar.aWideBandGrabsAndMapsTravel")
+@safe pure nothrow @nogc
+unittest
+{
+    // A 4 px rail at x 196..200 over a 400 px track; the thumb is 40 px.
+    const track = Rect(196, 0, 4, 400);
+    const thumb = Rect(196, 180, 4, 40);
+    OverlayBar bar;
+    double pos = 45;
+    assert(!bar.press(100, 190, track, thumb, 44, 100, 10, pos), "outside the band");
+    assert(bar.press(170, 190, track, thumb, 44, 100, 10, pos) && pos == 45,
+        "on the thumb, 30 px off the rail: grabbed in place");
+    assert(bar.grabAt == 10);
+    assert(bar.dragTo(10, track, thumb, 100, 10) == 0);
+    assert(bar.dragTo(370, track, thumb, 100, 10) == 90);
+    bar.release();
+    assert(bar.press(199, 0, track, thumb, 44, 100, 10, pos) && pos == 0,
+        "the track jumps the thumb's middle to the pointer, clamped");
+}
+
+@("ui.scroll_view.scrollbarAnim.touchFadeShowsWhileMovingThenFades")
+@safe pure nothrow @nogc
+unittest
+{
+    ScrollbarAnim a;
+    a.visible = 0;
+    a.stepFade(true, 0.016f);
+    assert(a.fadePercent == 100, "moving shows it at once");
+    foreach (_; 0 .. 40) // 0.64 s idle: still shown
+        a.stepFade(false, 0.016f);
+    assert(a.fadePercent == 100 && a.fading);
+    foreach (_; 0 .. 40) // past 0.8 s, then a 0.25 s fade
+        a.stepFade(false, 0.016f);
+    assert(a.fadePercent == 0 && !a.fading);
 }
 
 /// The pointer input one axis consumes for one frame (`SCV3`) —

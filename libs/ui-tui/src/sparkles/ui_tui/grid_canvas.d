@@ -26,7 +26,7 @@ import sparkles.tui.images : ImagePlacement;
 import sparkles.base.text.grapheme : byGraphemeCluster, ClusterMeasure;
 import sparkles.base.text.width : codepointWidth;
 
-import sparkles.ui.canvas : DrawOp, fillRectOp, isCanvas, LineStyle, OpKind,
+import sparkles.ui.canvas : DrawOp, fillRectOp, isCanvas, LineStyle, match, OpKind,
     ruleSpan, RuleEdge, Scrollbar, scrollbarCell, scrollbarCellCount,
     textRunOp;
 import sparkles.ui.geometry : Point, Rect, Size;
@@ -187,7 +187,9 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 }
                 break;
             case scrollbar:
-                paintScrollbarCells(canvas, op);
+                // A faded-out bar (`SCV13`) paints nothing.
+                if (op.payload.match!((in Scrollbar s) => s.fadePercent != 0, (_) => true))
+                    paintScrollbarCells(canvas, op);
                 break;
             case pushClip:
                 canvas.pushClip(op.rect);
