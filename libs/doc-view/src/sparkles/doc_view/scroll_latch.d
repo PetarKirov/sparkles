@@ -336,3 +336,21 @@ version (unittest)
         vm.tableScrollAt.clear();
     }
 }
+
+@("scroll_latch.aBlocksBarSlidesWithItsFraction")
+@system unittest
+{
+    import sparkles.ui.canvas : DrawOp, match, Scrollbar;
+    import sparkles.doc_view.view_ops : emitVisibleOps;
+
+    auto vm = wideTable();
+    ScrollLatch l;
+    assert(l.feed(vm, tableRow(vm), 2.25f, 0, precise: true, begins: true));
+    int whole = -1;
+    ubyte frac;
+    emitVisibleOps(vm, 50, (ref DrawOp op) {
+        op.payload.match!((ref Scrollbar b) { whole = b.offset; frac = b.offsetFrac; },
+            (ref _) {});
+    });
+    assert(whole == 2 && frac == 64, "the thumb a quarter cell past 2, like the content");
+}
