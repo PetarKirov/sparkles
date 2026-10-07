@@ -114,6 +114,42 @@ private const(char)[] fitCells(TM)(ref TM tm, return scope const(char)[] text,
 }
 
 /+
+`text` cut to `cells` as $(LREF fitCells) cuts it, but ending in "…" when it
+was cut (`LAY14`): a label cut mid-word reads as a different word. The
+ellipsized run is built in `buf`; one too long for it is cut bare.
++/
+private const(char)[] fitEllipsis(TM)(ref TM tm, return scope const(char)[] text,
+    int cells, in TextStyle style, return ref char[256] buf)
+{
+    const fit = fitCells(tm, text, cells, style);
+    if (fit.length == text.length || cells < 2)
+        return fit;
+    const(char)[] head = fitCells(tm, text, cells - 1, style);
+    while (head.length && head[$ - 1] == ' ')
+        head = head[0 .. $ - 1];
+    enum ellipsis = "…";
+    // The ellipsis is a cell on a cell measurer, but a face may draw it
+    // wider: shorten the head until the whole run fits.
+    while (head.length)
+    {
+        if (head.length + ellipsis.length > buf.length)
+            return fit;
+        buf[0 .. head.length] = head[];
+        buf[head.length .. head.length + ellipsis.length] = ellipsis;
+        if (measureWidth(tm, buf[0 .. head.length + ellipsis.length], style) <= cells)
+            return buf[0 .. head.length + ellipsis.length];
+        // A cut always fits zero-width clusters and escapes whole, so a head
+        // that measures nothing cannot shrink: stop rather than spin.
+        const shorter = fitCells(tm, head, cast(int) measureWidth(tm, head, style) - 1,
+            style).length;
+        if (shorter >= head.length)
+            break;
+        head = head[0 .. shorter];
+    }
+    return fit; // no room for a letter and the ellipsis: the bare cut
+}
+
+/+
 `overflowX`: whether a rich row here may run past its frame — it may when
 something on the way down contains it on x: an ancestor that clips on that
 axis (a viewport, or a bordered box — `LAY15`), or one whose host does
@@ -190,9 +226,10 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             // across those cells; a start-aligned one takes its measured width.
             const aligned = node.alignX != Alignment.start;
             const lines = frames[idx].lines;
+            char[256] ell; // an ellipsized run's storage
             if (lines.length == 0)
             {
-                const fitted = fitCells(tm, node.text, rect.width, node.textStyle);
+                const fitted = fitEllipsis(tm, node.text, rect.width, node.textStyle, ell);
                 ops.textRun(Rect(rect.x, rect.y,
                     aligned ? rect.width : measureWidth(tm, fitted, node.textStyle),
                     // A single line keeps its frame's height: the canvas centres
@@ -207,7 +244,7 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             const pitch = frames[idx].lineRows;
             foreach (li, ln; lines)
             {
-                const fitted = fitCells(tm, ln, inner.width, node.textStyle);
+                const fitted = fitEllipsis(tm, ln, inner.width, node.textStyle, ell);
                 // A run of one line keeps its frame's height, so the canvas
                 // centres its glyphs in the rows the widget gave it (a pill's
                 // caption stretched to its touch target).
@@ -613,7 +650,7 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
     StyledMeasure m;
     auto ops = buildDisplayList(tree, layout(tree, Constraints.init, m),
         defaultTwoslashPalette(), RgbColor(0, 0, 0), RgbColor(255, 255, 255), m);
-    assert(ops.length == 1 && ops[0].text == "é");
+    assert(ops.length == 1 && ops[0].text == "é…", "the first cluster, then the ellipsis");
 }
 
 @("ui.display_list.styledMeasure.escapeInsideGraphemeKeepsWholeBoundary")

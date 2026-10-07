@@ -2073,9 +2073,9 @@ version (unittest)
         {
             assert(op.rect.x + cast(int) visibleWidth(op.text) <= listRight,
                 op.text);
-            sawCut |= op.text == "Property";
+            sawCut |= op.text == "Propert…";
         }
-    assert(sawCut, "the long caption is there, cut to the list's width");
+    assert(sawCut, "the long caption is there, cut to the list's width with an ellipsis");
 }
 
 @("ui_gallery.gallery.draggingTheInspectorDividerKeepsTheCentreFlexible")

@@ -9,7 +9,7 @@
    Decoration        |                                                                         #
    Effects           | +---------------------------------------------------------------------+ #
    Grid              | | none - one line, clipped by whatever contains it                    | #
-   Components        | | A widget names a semantic slot, ne                                  | #
+   Components        | | A widget names a semantic slot, n~                                  | #
    Tree              | +---------------------------------------------------------------------+ |
    Property tree     |                                                                         |
    Table             | +---------------------------------------------------------------------+ |
