@@ -672,6 +672,7 @@ struct DocViewPane
         // (`MdViewOptions.proseRole`) draws in the faces, radii scale with the screen.
         c.uiFonts = host.uiFonts;
         c.density = host.density;
+        c.minThumbPx = host.minThumbPx;
         c.capabilities = host.capabilities;
         // The model lays out in the faces that draw it (`GLY10`): a prose run
         // in the interface face is as wide as it draws, not as its cells.

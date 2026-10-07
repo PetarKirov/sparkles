@@ -609,6 +609,7 @@ struct WorkspaceHost
             h.wakeIn(250.msecs);
 
         auto c = h.canvas;
+        minThumbPx = c.minThumbPx; // what the bars paint with, for their hits
         cellW = c.fonts.cellW() > 0 ? c.fonts.cellW() : 1;
         cellH = c.fonts.cellH() > 0 ? c.fonts.cellH() : 1;
         // A new area (a rotation, a resized window) is a new frame, whatever
@@ -922,7 +923,7 @@ struct WorkspaceHost
         const idle = railIdlePx(cellW);
         const thickness = idle + (railExpandedPx(cellW) - idle) * t.bar.expandPercent(t.wide) / 100;
         const rail = scrollbarRailPx(t.band, RuleEdge.right, t.content, t.viewport,
-            whole, fracByte(cast(float)(t.pos - whole)), thickness);
+            whole, fracByte(cast(float)(t.pos - whole)), thickness, minThumbPx);
         if (!rail.live)
             return barHeld = false;
         if (pressed && !barHeld)
@@ -948,6 +949,7 @@ struct WorkspaceHost
 
     private PaneId barPane; // the pane whose bar is held; none: the surface's
     private int hoverX = -1, hoverY = -1; // the pointer, last frame (desktop)
+    private int minThumbPx = 24; // the canvas's, last frame (`SCV13`)
 
     // One overlay bar a pointer may take (`SCV13`): where it is, in window
     // pixels, the extents it shows, and what moving it does.

@@ -191,6 +191,9 @@ struct GuiHost
             session.cellW, session.cellH, capabilities: target);
         c.uiFonts = &session.uiFonts;
         c.density = session.uiScale;
+        // A thumb a finger can take where there is no pointer (`SCV13`).
+        if (!capabilities.hover)
+            c.minThumbPx = cast(int)(48 * session.uiScale + 0.5f);
         c.images = &imageTextures;
         c.fx = &effectGpu;
         return c;
