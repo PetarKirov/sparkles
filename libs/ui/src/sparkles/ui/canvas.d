@@ -243,6 +243,12 @@ struct Scrollbar
     Slot slot = Slot.inherit;
     dchar trackGlyph = '│'; /// the cell fallback's track glyph
     dchar thumbGlyph = '█'; /// the cell fallback's thumb glyph
+    /// How far past `offset` the view is, in 256ths of a unit (`LAY7`): a
+    /// pixel target slides the thumb with the content instead of stepping it.
+    ubyte offsetFrac;
+    /// How visible the bar is, 0–100: a touch target fades an idle bar out
+    /// (`SCV13`); 0 paints nothing.
+    ubyte fadePercent = 100;
 }
 
 /**

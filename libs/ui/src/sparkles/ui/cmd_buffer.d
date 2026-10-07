@@ -187,7 +187,8 @@ if (isArena!Arena)
         RgbColor trackColor = RgbColor.init, bool trackLit = false,
         ubyte expandPercent = 0, dchar trackGlyph = '│',
         dchar thumbGlyph = '█', ubyte trackAlpha = 0xFF,
-        bool paintsIdleTrack = false)
+        bool paintsIdleTrack = false, ubyte offsetFrac = 0,
+        ubyte fadePercent = 100)
     {
         _ops ~= DrawOp(Scrollbar(
             rect: rect, content: content, viewport: viewport, offset: offset,
@@ -196,6 +197,7 @@ if (isArena!Arena)
             paintsIdleTrack: paintsIdleTrack,
             expandPercent: expandPercent, edge: edge, slot: slot,
             trackGlyph: trackGlyph, thumbGlyph: thumbGlyph,
+            offsetFrac: offsetFrac, fadePercent: fadePercent,
         ));
     }
 

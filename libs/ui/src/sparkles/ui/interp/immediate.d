@@ -73,7 +73,7 @@ if (isCanvas!Canvas)
                 // shared one/two-cell degradation with STM2's thumb.
                 static if (__traits(compiles, canvas.scrollbar(s)))
                     canvas.scrollbar(s);
-                else
+                else if (s.fadePercent != 0) // a faded-out bar paints nothing
                     paintScrollbarCells(canvas, s);
             },
             (in ImageDraw i)

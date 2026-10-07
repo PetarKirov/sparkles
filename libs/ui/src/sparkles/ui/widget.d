@@ -138,6 +138,11 @@ struct Widget
     dchar barThumbGlyph; /// ditto
     RgbColor barTrackFgOverride;
     bool hasBarTrackFgOverride;
+    /// The view's fraction past `barOffset`, in 256ths (`LAY7`), and the
+    /// bar's visibility, 0–100 (`SCV13`) — `Scrollbar.offsetFrac`/`fadePercent`.
+    ubyte barOffsetFrac;
+    /// ditto
+    ubyte barFadePercent = 100;
 
     /// The effect applied to this node and its subtree (`EFX4`), or the null
     /// id for none.

@@ -95,6 +95,12 @@ struct ScrollbarSpec
     $(REF rectOfKey, sparkles,ui,state) to route against (`SCV11`).
     */
     size_t key;
+    /// The view's fraction past `offset`, `0 ≤ f < 1` (`LAY7`): the thumb
+    /// slides with content a pixel target scrolls between cells.
+    float offsetFrac = 0;
+    /// How visible the bar is, 0–100: a touch target fades an idle bar out
+    /// (`SCV13`).
+    ubyte fadePercent = 100;
     /**
     Paint the track even when the bar is idle.
 
@@ -139,8 +145,14 @@ uint scrollbar(ref Builder b, in ScrollbarSpec spec, int track)
         hasFgOverride: spec.hasThumbFg,
         hitId: spec.hitId,
         key: spec.key,
+        barOffsetFrac: fracByte(spec.offsetFrac),
+        barFadePercent: spec.fadePercent,
     ));
 }
+
+/// A fraction `0 ≤ f < 1` in 256ths, as `Scrollbar.offsetFrac` carries it.
+ubyte fracByte(float f) pure nothrow @nogc
+    => f <= 0 ? 0 : (f >= 255.0f / 256 ? 255 : cast(ubyte)(f * 256));
 
 /**
 A vertical scrollbar (`WGT10`): a one-column track of `track` rows whose thumb
