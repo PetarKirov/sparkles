@@ -43,6 +43,14 @@ struct GestureConfig
     float pinchIn = 0.87;      /// separation ratio that reads as zoom out
     float pinchOut = 1.15;     /// …and as zoom in
     float cellH = 16;          /// device px per row, for scroll quantisation
+    float cellW = 8;           /// device px per column, for a sideways drag
+    /**
+    Emit every tick's exact distance (`WheelEvent.fdx`/`fdy`), not only whole
+    rows, and let a drag that starts sideways scroll sideways (the axis is
+    locked once the slop is crossed). For a consumer that paints between
+    cells (`LAY7`); off, a drag is vertical and arrives in whole rows.
+    */
+    bool fractional;
 }
 
 /**
@@ -64,9 +72,16 @@ struct GestureRecognizer
     {
         // Single-pointer gesture state (the primary contact).
         bool wasDown_, dragging_, longFired_;
-        float startX_ = 0, startY_ = 0, lastY_ = 0;
+        float startX_ = 0, startY_ = 0, lastX_ = 0, lastY_ = 0;
         float holdMs_ = 0;
-        float velocity_ = 0; // px/s at release
+        float velocity_ = 0; // px/s at release, in the scroll's direction
+        bool horizontal_;    // the drag's locked axis (`fractional` only)
+
+        // The drag's travel over time, for the release velocity: the last
+        // few ticks' (time, travel) pairs, read back over a short window.
+        float clock_ = 0, travel_ = 0;
+        float[8] sampleT_, sampleP_;
+        ubyte samples_;
 
         // Multi-touch: a pinch owns the pointer until EVERY contact lifts.
         ubyte contacts_;
@@ -75,14 +90,12 @@ struct GestureRecognizer
         float pinchScale_ = 1;
         bool pinchPending_;
 
-        // Pixels since the last `tick`, and the last per-sample step (for the
-        // release velocity). Scroll is coalesced into ONE wheel event per
-        // tick rather than one per sample: that matches how a frame loop
-        // consumes it, and — the reason it is not merely tidier — it bounds
-        // the queue. Emitting per sample overflowed a fixed queue and silently
-        // dropped rows.
+        // Pixels since the last `tick`. Scroll is coalesced into ONE wheel
+        // event per tick rather than one per sample: that matches how a
+        // frame loop consumes it, and — the reason it is not merely tidier —
+        // it bounds the queue. Emitting per sample overflowed a fixed queue
+        // and silently dropped rows.
         float pendingPx_ = 0;
-        float lastStepPx_ = 0;
 
         // Deepest simultaneous resolution: press + release + one gesture + one
         // wheel step.
@@ -117,7 +130,8 @@ struct GestureRecognizer
     {
         wasDown_ = dragging_ = longFired_ = false;
         holdMs_ = velocity_ = 0;
-        pendingPx_ = lastStepPx_ = 0;
+        pendingPx_ = 0;
+        samples_ = 0;
     }
 
     /**
@@ -138,18 +152,26 @@ struct GestureRecognizer
         {
             startX_ = at.x;
             startY_ = at.y;
+            lastX_ = at.x;
             lastY_ = at.y;
             holdMs_ = 0;
             dragging_ = false;
             longFired_ = false;
             velocity_ = 0; // a new touch stops a running fling
+            clock_ = travel_ = 0;
+            samples_ = 0;
         }
         else if (down)
         {
             const dx = at.x - startX_;
             const dy = at.y - startY_;
             if (!dragging_ && !longFired_ && dx * dx + dy * dy > cfg.slopPx * cfg.slopPx)
+            {
                 dragging_ = true;
+                // The axis it set off along holds for the whole drag: a
+                // vertical scroll must not wander sideways (`GST6`).
+                horizontal_ = cfg.fractional && (dx < 0 ? -dx : dx) > (dy < 0 ? -dy : dy);
+            }
         }
         else if (wasDown_ && !dragging_ && !longFired_ && holdMs_ < cfg.longPressMs)
         {
@@ -166,12 +188,14 @@ struct GestureRecognizer
         {
             // Finger down (+y) reveals earlier lines: the content follows the
             // finger, so the view scrolls toward the start.
-            lastStepPx_ = at.y - lastY_;
-            pendingPx_ += -lastStepPx_;
+            const step = horizontal_ ? at.x - lastX_ : at.y - lastY_;
+            pendingPx_ -= step;
+            travel_ -= step;
         }
 
         if (!down)
             dragging_ = false;
+        lastX_ = at.x;
         lastY_ = at.y;
         wasDown_ = down;
     }
@@ -223,8 +247,8 @@ struct GestureRecognizer
         // inventing one makes every fling wrong by that factor.
         if (wasDown_ && dragging_)
         {
-            velocity_ = lastStepPx_ / dt;
-            lastStepPx_ = 0;
+            clock_ += dt;
+            velocity_ = sampledVelocity(clock_, travel_);
         }
 
         flushScroll();
@@ -251,7 +275,7 @@ struct GestureRecognizer
         else if (!wasDown_ && velocity_ != 0)
         {
             // The fling tail: exponential decay to a full stop.
-            pendingPx_ = -velocity_ * dt;
+            pendingPx_ = velocity_ * dt;
             flushScroll();
             velocity_ *= expApprox(-cfg.flingFriction * dt);
             if (velocity_ > -cfg.minFlingSpeed && velocity_ < cfg.minFlingSpeed)
@@ -280,21 +304,57 @@ struct GestureRecognizer
     /// Where the in-flight (or most recent) gesture began, in device space.
     PointF anchor() const => PointF(startX_, startY_);
 
-    private float scrollAccum_ = 0;
+    private float scrollAccum_ = 0, scrollAccumX_ = 0;
+
+    // The drag's speed, px/s in the scroll's direction: its travel over the
+    // last 100 ms of ticks rather than the last step alone, which a single
+    // late or early sample could double or zero — and which kept a finger
+    // that stopped before lifting flinging at its earlier speed.
+    private float sampledVelocity(float t, float p)
+    {
+        if (samples_ == sampleT_.length)
+        {
+            foreach (i; 1 .. samples_)
+            {
+                sampleT_[i - 1] = sampleT_[i];
+                sampleP_[i - 1] = sampleP_[i];
+            }
+            --samples_;
+        }
+        sampleT_[samples_] = t;
+        sampleP_[samples_] = p;
+        ++samples_;
+        size_t first = samples_ - 1;
+        while (first > 0 && t - sampleT_[first - 1] <= 0.1f)
+            --first;
+        const span = t - sampleT_[first];
+        if (first + 1 == samples_)
+            return 0;
+        return span > 1e-4f ? (p - sampleP_[first]) / span : 0;
+    }
 
     // Pixels accumulate; whole rows are emitted, at most one event per tick.
     // The fractional remainder is carried, so a slow drag is never truncated
-    // to nothing.
+    // to nothing. `fractional`, every tick that moved emits, carrying the
+    // exact distance too.
     private void flushScroll()
     {
         if (pendingPx_ == 0)
             return;
-        scrollAccum_ += pendingPx_;
-        pendingPx_ = 0;
-        const rows = cast(int)(scrollAccum_ / cfg.cellH);
-        if (rows == 0)
+        const cell = horizontal_ ? cfg.cellW : cfg.cellH;
+        if (cell <= 0)
             return;
-        scrollAccum_ -= rows * cfg.cellH;
+        auto accum = horizontal_ ? &scrollAccumX_ : &scrollAccum_;
+        const exact = pendingPx_ / cell;
+        *accum += pendingPx_;
+        pendingPx_ = 0;
+        const whole = cast(int)(*accum / cell);
+        *accum -= whole * cell;
+        if (whole == 0 && !cfg.fractional)
+            return;
+        const rows = horizontal_ ? 0 : whole, cols = horizontal_ ? whole : 0;
+        const fdy = horizontal_ || !cfg.fractional ? 0 : exact;
+        const fdx = horizontal_ && cfg.fractional ? exact : 0;
 
         // Merge into an undrained wheel event rather than queueing a second.
         // Scrolling is additive, so this is exact — and it means a caller that
@@ -305,14 +365,27 @@ struct GestureRecognizer
         {
             bool merged = false;
             queue_[i].match!(
-                (ref WheelEvent w) { w.dy += rows; merged = true; },
+                (ref WheelEvent w)
+                {
+                    w.dx += cols;
+                    w.dy += rows;
+                    w.fdx += fdx;
+                    w.fdy += fdy;
+                    merged = true;
+                },
                 (ref _) {},
             );
             if (merged)
                 return;
         }
         // `precise`: already whole rows, so no consumer multiplies (INP12).
-        emit(Event(WheelEvent(dy: rows, pos: Point(0, 0), precise: true)));
+        auto w = WheelEvent(dx: cols, dy: rows, pos: Point(0, 0), precise: true);
+        if (cfg.fractional)
+        {
+            w.fdx = fdx;
+            w.fdy = fdy;
+        }
+        emit(Event(w));
     }
 
     // The module is `@nogc pure nothrow`; std.math's exp/sqrt are not `pure`
@@ -396,6 +469,76 @@ unittest
     assert(d.presses == 1 && d.releases == 1);
     assert(d.longPresses == 0);
     assert(g.anchor().x == 100 && g.anchor().y == 100);
+}
+
+@("input.gesture.fractionalEmitsTheExactDistanceOnTheLockedAxis")
+@safe pure nothrow @nogc
+unittest
+{
+    GestureRecognizer g;
+    g.cfg.cellH = 20;
+    g.cfg.cellW = 10;
+    g.cfg.fractional = true;
+
+    static void drain(ref GestureRecognizer g, out float fx, out float fy,
+        out int wx, out int wy)
+    {
+        fx = fy = 0; // `out` floats start as NaN
+        for (auto e = g.next(); !isNoEvent(e); e = g.next())
+            e.match!((in WheelEvent w) { fx += w.fdx; fy += w.fdy; wx += w.dx; wy += w.dy; },
+                (_) {});
+    }
+
+    // Up by 13 px past the slop, then 6 more: a quarter row is a quarter row.
+    float fx, fy;
+    int wx, wy;
+    g.pointer(0, true, PointF(100, 400));
+    g.tick(16);
+    g.pointer(0, true, PointF(100, 387));
+    g.tick(16);
+    g.pointer(0, true, PointF(101, 382));
+    g.tick(16);
+    drain(g, fx, fy, wx, wy);
+    assert(fy > 0.89f && fy < 0.91f, "18 px of 20 per row, no rounding");
+    assert(wy == 0 && fx == 0 && wx == 0, "no whole row yet, and vertical only");
+    g.pointer(0, false, PointF(101, 382));
+    g.cancel();
+
+    // A drag that sets off sideways stays sideways.
+    g.pointer(0, true, PointF(100, 400));
+    g.tick(16);
+    g.pointer(0, true, PointF(70, 405));
+    g.tick(16);
+    drain(g, fx, fy, wx, wy);
+    assert(fy == 0 && fx > 2.9f && fx < 3.1f && wx == 3);
+}
+
+@("input.gesture.aFingerThatStopsBeforeLiftingDoesNotFling")
+@safe pure nothrow @nogc
+unittest
+{
+    GestureRecognizer g;
+    g.cfg.cellH = 10;
+    Drain d;
+    g.pointer(0, true, PointF(100, 400));
+    g.tick(16);
+    foreach (i; 0 .. 5)
+    {
+        g.pointer(0, true, PointF(100, 400 - 30 * (i + 1)));
+        g.tick(16);
+    }
+    foreach (_; 0 .. 10) // held still for 160 ms
+    {
+        g.pointer(0, true, PointF(100, 250));
+        g.tick(16);
+    }
+    d.run(g);
+    const dragged = d.scrollRows;
+    g.pointer(0, false, PointF(100, 250));
+    foreach (_; 0 .. 30)
+        g.tick(16);
+    d.run(g);
+    assert(d.scrollRows == dragged, "no fling from a resting finger");
 }
 
 @("input.gesture.dragScrollsAndFlings")

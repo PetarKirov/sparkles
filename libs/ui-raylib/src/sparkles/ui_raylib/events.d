@@ -70,6 +70,12 @@ struct RaylibEvents
     // (high-resolution wheels/trackpads report sub-step values raylib
     // would otherwise truncate to zero) — M14.
     private float wheelAccumX = 0, wheelAccumY = 0;
+
+    /// Emit every wheel movement with its exact distance
+    /// (`WheelEvent.fdx`/`fdy`), whole step due or not: for an application
+    /// that scrolls between cells (`LAY7`). The host sets it from
+    /// `HostConfig.fractionalScroll`.
+    bool fractionalWheel;
     private PointF lastTouch;
     // When the recogniser was last ticked (`GetTime`, seconds); 0 before the
     // first poll.
@@ -160,7 +166,10 @@ struct RaylibEvents
         const wheel = GetMouseWheelMoveV();
         const dx = wheelSteps(wheelAccumX, -wheel.x) * linesPerNotch;
         const dy = wheelSteps(wheelAccumY, -wheel.y) * linesPerNotch;
-        if (dx != 0 || dy != 0)
+        if (fractionalWheel && (wheel.x != 0 || wheel.y != 0))
+            sink(Event(WheelEvent(dx: dx, dy: dy, pos: pos, mods: mods,
+                fdx: -wheel.x * linesPerNotch, fdy: -wheel.y * linesPerNotch)));
+        else if (dx != 0 || dy != 0)
             sink(Event(WheelEvent(dx: dx, dy: dy, pos: pos, mods: mods)));
 
         // -- touch ---------------------------------------------------------
@@ -424,7 +433,8 @@ struct RaylibEvents
             (PointerEvent p) => Event(PointerEvent(
                 action: p.action, button: p.button, pos: at, mods: m)),
             (WheelEvent w) => Event(WheelEvent(
-                dx: w.dx, dy: w.dy, pos: at, mods: m, precise: w.precise)),
+                dx: w.dx, dy: w.dy, pos: at, mods: m, precise: w.precise,
+                fdx: w.fdx, fdy: w.fdy)),
             (GestureEvent g) => Event(GestureEvent(
                 gesture: g.gesture, pos: at, scale: g.scale, mods: m)),
             (ref other) => Event(other),

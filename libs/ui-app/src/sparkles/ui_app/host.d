@@ -116,6 +116,14 @@ struct RunConfig
     */
     bool touchGestures;
     /**
+    GPU target: deliver scrolls with their exact, fractional distance
+    (`WheelEvent.fdx`/`fdy`) every frame they move — a wheel's, and a touch
+    drag's on the axis it set off along — for an application that scrolls
+    between cells (`LAY7`, `ScrollMotion`). Such events can carry 0 whole
+    cells, so only an application that reads the fractions turns it on.
+    */
+    bool fractionalScroll;
+    /**
     TUI: ask the terminal what it can do before the first frame (`CAP3`) — the
     query battery, fenced by DA1, bounded by a short timeout — so the target
     declares what the terminal answered: 24-bit colour, synchronized output,
