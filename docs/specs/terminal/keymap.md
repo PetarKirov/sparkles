@@ -127,7 +127,13 @@ search across every command at every level, whose results show their full
 key path and are ranked by `sparkles:fuzzy`, and it lists recently used
 commands. Layout (mockup K3): the breadcrumbs on top, then the commands or
 search results, then the recent commands, and the search field at the bottom,
-just above the extra keys.
+just above the extra keys. A list taller than the room it has scrolls in a
+viewport whose height depends on the list and the room alone, never on the
+position, so the sheet holds still while the list moves. It scrolls between
+rows under a drag or the wheel, with the overlay bar in its right column
+([`SCV12`, `SCV13`](../ui/containers.md)), and a press on the guide is the
+guide's: it never picks up a divider beneath it ([`TSS10`](./sessions.md)).
+Violation: a sheet that grows or shrinks as its list scrolls.
 
 _Rationale:_ Navigation sits first, where the eye starts; the search field
 sits within reach of the thumb that types into it.
@@ -166,18 +172,18 @@ names a label. Violation: holding CTRL while typing `c` sends a plain `c`.
 
 ### Status
 
-| ID      | Status                                                                                                                                 | Traces to                                                              |
-| ------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `TKM1`  | full                                                                                                                                   | `defaultBindings`, `terminalBindings`, `KeyRouter`; `builtinChords`    |
-| `TKM2`  | partial: swept over the router, every named key and printable under every modifier set; the recording-pty half of the sweep is not run | `claimsExactly`, `everyUnclaimedKeyReachesTheProgram`                  |
-| `TKM3`  | full                                                                                                                                   | `reservedChords`, `isReserved`, `reservedChordsAreNeverBound`          |
-| `TKM4`  | full                                                                                                                                   | `TermScope`, `TermContext`, `Surfaces.key`                             |
-| `TKM5`  | full                                                                                                                                   | `leaderChord`, `KeyRouter.tick`, `untilShown`                          |
-| `TKM6`  | full                                                                                                                                   | `TouchGuide`, `fuzzyScore`, `DroidTerminal.pressExtraKey`              |
-| `TKM7`  | full                                                                                                                                   | `ExtraKeyKind.menu`, `defaultExtraKeysSpec`                            |
-| `TKM8`  | full                                                                                                                                   | `applyKeysOverlay`, `KeysConfig`                                       |
-| `TKM9`  | full                                                                                                                                   | `bindingsMarkdown`, `bindingsMarkdown.matchesTheReference`             |
-| `TKM10` | full                                                                                                                                   | `defaultLeader`, `androidLeader`, `LanternConfig.leader`               |
-| `TKM11` | full                                                                                                                                   | `Latch.press`, `Latch.release`, `DroidTerminal.pollKeyRow`, `extraKey` |
+| ID      | Status                                                                                                                                 | Traces to                                                                                                        |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `TKM1`  | full                                                                                                                                   | `defaultBindings`, `terminalBindings`, `KeyRouter`; `builtinChords`                                              |
+| `TKM2`  | partial: swept over the router, every named key and printable under every modifier set; the recording-pty half of the sweep is not run | `claimsExactly`, `everyUnclaimedKeyReachesTheProgram`                                                            |
+| `TKM3`  | full                                                                                                                                   | `reservedChords`, `isReserved`, `reservedChordsAreNeverBound`                                                    |
+| `TKM4`  | full                                                                                                                                   | `TermScope`, `TermContext`, `Surfaces.key`                                                                       |
+| `TKM5`  | full                                                                                                                                   | `leaderChord`, `KeyRouter.tick`, `untilShown`                                                                    |
+| `TKM6`  | full                                                                                                                                   | `TouchGuide`, `fuzzyScore`, `DroidTerminal.pressExtraKey`; `TouchGuide.viewport`, `ScrollBody`, `Surfaces.modal` |
+| `TKM7`  | full                                                                                                                                   | `ExtraKeyKind.menu`, `defaultExtraKeysSpec`                                                                      |
+| `TKM8`  | full                                                                                                                                   | `applyKeysOverlay`, `KeysConfig`                                                                                 |
+| `TKM9`  | full                                                                                                                                   | `bindingsMarkdown`, `bindingsMarkdown.matchesTheReference`                                                       |
+| `TKM10` | full                                                                                                                                   | `defaultLeader`, `androidLeader`, `LanternConfig.leader`                                                         |
+| `TKM11` | full                                                                                                                                   | `Latch.press`, `Latch.release`, `DroidTerminal.pollKeyRow`, `extraKey`                                           |
 
 → [Overview](./index.md) · [`KEY`/`LTN`](../ui/keymap.md) · [Keyboard vocabulary](../design-system/keyboard.md)
