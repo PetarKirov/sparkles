@@ -49,6 +49,9 @@ struct SurfaceContext
     /// The panel takes all of `panelArea`'s height — the tree slid out beside
     /// the rail (mockup E) — rather than floating below the pill.
     bool panelFull;
+    /// The width of a rule between chrome and the panes, in pixels: a full
+    /// panel's edge is one.
+    int ruleWidth = 1;
     /// Overlay scrollbars at their full width on a touch screen
     /// (`scrollbar.touchWidth`, `SCV13`).
     bool wideBars;
@@ -400,8 +403,16 @@ Layer placeOne(Surface s, in SurfaceContext ctx) @safe
         }
         case Placement.panel:
             const pc = ctx.panelArea.width / ctx.cellW, pr = ctx.panelArea.height / ctx.cellH;
-            return place(s.build(ctx, pc), pc, pr, ctx.panelArea.x, ctx.panelArea.y, ctx.cellW,
-                ctx.cellH, Place.top);
+            auto panel = place(s.build(ctx, pc), pc, pr, ctx.panelArea.x, ctx.panelArea.y,
+                ctx.cellW, ctx.cellH, Place.top);
+            // Beside the rail the panel is its whole area — the pixels its
+            // whole cells leave over too — with a rule against the panes.
+            if (ctx.panelFull)
+            {
+                panel.panel = ctx.panelArea;
+                panel.edgeWidth = ctx.ruleWidth;
+            }
+            return panel;
         case Placement.sheet:
             return place(s.build(ctx, capped), capped, rows, x, ctx.area.y, ctx.cellW,
                 ctx.cellH, Place.bottom);

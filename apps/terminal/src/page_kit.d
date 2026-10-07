@@ -329,18 +329,23 @@ the keyboard, else the query, else `placeholder` — muted.
 uint searchField(ref Builder b, string query, bool focused, string placeholder,
     int rows = 1, size_t hitId = PageHit.search) @safe
 {
-    const mark = iconText(ActionIcon.search) ~ " ";
-    const shown = query.length ? mark ~ query ~ (focused ? "▏" : "")
-        : focused ? mark ~ "▏" : mark ~ placeholder;
+    const shown = query.length ? query ~ (focused ? "▏" : "")
+        : focused ? "▏" : placeholder;
     // The placeholder is a sentence; what the user types stays in the cell
-    // font, as any typed value does.
+    // font, as any typed value does. The magnifier is its own cell-font run
+    // a cell before the text: a space in the interface face is narrower than
+    // the icon's ink, which ran into the first letter.
     const typed = query.length || focused;
+    const mark = b.add(Widget(kind: WidgetKind.text, text: iconText(ActionIcon.search),
+        slot: Slot.muted));
     const text = b.add(Widget(kind: WidgetKind.text, text: shown,
-        slot: typed ? Slot.textPrimary : Slot.muted,
+        slot: typed ? Slot.textPrimary : Slot.muted, width: SizeSpec.grow(),
         textStyle: typed ? TextStyle.init : TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body)));
+    const line = b.add(Widget(kind: WidgetKind.row, children: [mark, text], gap: 1,
+        width: SizeSpec.grow()));
     return b.add(Widget(
         kind: WidgetKind.panel,
-        children: [text],
+        children: [line],
         padding: Insets(0, 1, 0, 1),
         width: SizeSpec.grow(),
         height: rows > 1 ? SizeSpec.fixed(rows) : SizeSpec.fit_,
@@ -560,56 +565,100 @@ followed by the keyboard. The overlay bar takes the right padding column.
 WidgetTree finishPage(ref Builder b, uint[] top, uint content, uint[] bottom, int bodyRows,
     ref ScrollBody body, int cols, int rows, uint reveal = uint.max) @safe
 {
-    import sparkles.ui.components.chrome : fracByte, scrollbar, ScrollbarSpec;
+    const v = scrollViewport(b, content, bodyRows, body);
+    auto tree = b.finish(pageColumn(b, top ~ v.view ~ bottom));
+    const frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
+    const contentTop = frames[content].rect.y;
+    long y0 = -1, y1 = -1;
+    if (reveal != uint.max && reveal < frames.length)
+    {
+        const r = frames[reveal].rect;
+        y0 = r.y - contentTop;
+        y1 = y0 + r.height;
+    }
+    settleViewport(tree, v, frames[content].rect.height, body, y0, y1);
+    return tree;
+}
+
+/// The nodes $(LREF scrollViewport) built.
+struct Viewport
+{
+    uint view; /// the row holding the port and the bar: place this one
+    uint port; /// the clipped column the content scrolls in
+    uint bar;  /// the overlay bar
+    int rows;  /// the port's height
+}
+
+/**
+A viewport `bodyRows` tall over `content`, the overlay bar in its right
+padding column, scrolled by `body` once $(LREF settleViewport) has the laid-out
+content's height — a page's body, the tab tree's list. `clipX` false
+leaves wide rows to cut themselves, with an ellipsis (`LAY14`).
+*/
+Viewport scrollViewport(ref Builder b, uint content, int bodyRows, ref ScrollBody body,
+    bool clipX = true) @safe
+{
+    import sparkles.ui.components.chrome : scrollbar, ScrollbarSpec;
     import sparkles.ui.state : ScrollAxis;
 
-    const port = b.add(Widget(
+    Viewport v;
+    v.rows = bodyRows;
+    v.port = b.add(Widget(
         kind: WidgetKind.column,
         children: [content],
         width: SizeSpec.grow(),
         height: SizeSpec.fixed(bodyRows),
-        clipX: true,
+        clipX: clipX,
         clipY: true,
     ));
-    const bar = scrollbar(b, ScrollbarSpec(axis: ScrollAxis.vertical,
+    v.bar = scrollbar(b, ScrollbarSpec(axis: ScrollAxis.vertical,
         expandPercent: body.bar.expandPercent(body.wide)), bodyRows);
-    const view = b.add(Widget(
+    v.view = b.add(Widget(
         kind: WidgetKind.row,
-        children: [port, bar],
+        children: [v.port, v.bar],
         width: SizeSpec.grow(),
         height: SizeSpec.fixed(bodyRows),
         padding: Insets(0, 0, 0, 1),
     ));
-    auto tree = b.finish(pageColumn(b, top ~ view ~ bottom));
-    const frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
-    body.content = frames[content].rect.height;
-    body.viewport = bodyRows;
-    body.barNode = bar;
+    return v;
+}
+
+/**
+Scrolls `v` in the finished `tree` to `body`'s position — the whole rows as
+the port's offset, the fraction painted between cells (`LAY7`) — clamped so
+the content's last row (of `content` rows) is at most the viewport's last,
+and moved so content rows `y0` to `y1` (when `y0` is not negative) are
+wholly in view: a selection followed by the keyboard.
+*/
+void settleViewport(ref WidgetTree tree, in Viewport v, long content, ref ScrollBody body,
+    long y0 = -1, long y1 = -1) @safe
+{
+    import sparkles.ui.components.chrome : fracByte;
+
+    body.content = content;
+    body.viewport = v.rows;
+    body.barNode = v.bar;
     if (body.motion.pos > body.limit)
         body.motion.jumpTo(body.limit, body.limit);
-    const contentTop = frames[content].rect.y;
-    if (reveal != uint.max && reveal < frames.length)
+    if (y0 >= 0)
     {
-        const r = frames[reveal].rect;
-        const y0 = r.y - contentTop, y1 = y0 + r.height;
         const from = body.motion.mode == body.motion.mode.easing
             ? body.motion.target : body.motion.pos;
         if (y0 < from)
             body.motion.scrollTo(y0, body.limit);
-        else if (y1 > from + bodyRows)
-            body.motion.scrollTo(y1 - bodyRows, body.limit);
+        else if (y1 > from + v.rows)
+            body.motion.scrollTo(y1 - v.rows, body.limit);
     }
-    tree.nodes[port].childOffset = Point(0, cast(int) body.motion.whole);
-    tree.nodes[port].childOffsetFracY = body.motion.frac;
-    with (tree.nodes[bar])
+    tree.nodes[v.port].childOffset = Point(0, cast(int) body.motion.whole);
+    tree.nodes[v.port].childOffsetFracY = body.motion.frac;
+    with (tree.nodes[v.bar])
     {
         barContent = body.content;
-        barViewport = bodyRows;
+        barViewport = v.rows;
         barOffset = body.motion.whole;
         barOffsetFrac = fracByte(body.motion.frac);
         barFadePercent = body.touch ? body.bar.anim.fadePercent : 100;
     }
-    return tree;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
