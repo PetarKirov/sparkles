@@ -30,6 +30,7 @@ public import sparkles.ui.layout;
 public import sparkles.ui.tracks;
 public import sparkles.ui.state;
 public import sparkles.ui.components.scroll_view;
+public import sparkles.ui.scroll_motion;
 public import sparkles.ui.components.dock;
 public import sparkles.ui.display_list;
 public import sparkles.ui.interp.immediate;
