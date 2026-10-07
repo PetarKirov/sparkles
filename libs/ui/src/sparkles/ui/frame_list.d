@@ -151,8 +151,12 @@ struct FrameList
                 if (_clipDepth)
                     --_clipDepth;
                 break;
+            // A sub-cell shift moves what it brackets by less than a cell:
+            // the regions keep the cells layout gave (off by under one).
             case OpKind.pushEffect:
             case OpKind.popEffect:
+            case OpKind.pushShift:
+            case OpKind.popShift:
                 break;
             case OpKind.fillRect:
             case OpKind.textRun:

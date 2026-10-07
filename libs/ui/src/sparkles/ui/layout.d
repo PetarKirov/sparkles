@@ -984,6 +984,41 @@ Rect childClipOf(in Widget node, in Rect rect, in Rect clip) pure nothrow @nogc
 }
 
 /**
+What a node's children are culled and hit-tested against, in their own
+(unshifted) cells: $(LREF childClipOf), grown by one cell on the trailing edge
+of each clipped axis the node scrolls by a fraction (`LAY7`). Content painted
+`childOffsetFrac` further along shows part of the cell past the clip's end, so
+that row (the N+1th) must still be emitted. The scissor itself stays
+$(LREF childClipOf).
+*/
+Rect cullClipOf(in Widget node, in Rect rect, in Rect clip) pure nothrow @nogc
+{
+    auto c = childClipOf(node, rect, clip);
+    if (c.empty)
+        return c;
+    if (node.childOffsetFracX > 0 && clipsX(node))
+        c.size.width = c.width + 1;
+    if (node.childOffsetFracY > 0 && clipsY(node))
+        c.size.height = c.height + 1;
+    return c;
+}
+
+@("ui.layout.cullClipOf.keepsTheRowAFractionReveals")
+@safe pure nothrow @nogc
+unittest
+{
+    Widget w = Widget(kind: WidgetKind.column, clipY: true);
+    const rect = Rect(0, 2, 10, 5);
+    assert(cullClipOf(w, rect, unclipped()) == childClipOf(w, rect, unclipped()));
+    w.childOffsetFracY = 0.5;
+    const grown = cullClipOf(w, rect, unclipped());
+    assert(grown.y == 2 && grown.height == 6);
+    // An axis the node does not clip has no edge to grow.
+    w.childOffsetFracX = 0.5;
+    assert(cullClipOf(w, rect, unclipped()).width == unclipped().width);
+}
+
+/**
 Serializes a laid-out tree to `w`, one depth-indented line per node — kind,
 resolved rectangle, slot, and the payload/flags that explain a layout at a
 glance (`LAY12`; the tiling-WM catalog calls an introspectable tree the

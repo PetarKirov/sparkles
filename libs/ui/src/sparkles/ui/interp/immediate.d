@@ -10,7 +10,8 @@ interpreters are later siblings under `interp/`.
 module sparkles.ui.interp.immediate;
 
 import sparkles.ui.canvas : DrawOp, FillRect, Glyph, ImageDraw, isCanvas, Line,
-    LineStyle, match, OpKind, PopClip, PopEffect, PushClip, PushEffect, Rule,
+    LineStyle, match, OpKind, PopClip, PopEffect, PopShift, PushClip, PushEffect,
+    PushShift, Rule,
     RuleEdge, ruleSpan, Scrollbar, scrollbarCell, scrollbarCellCount, TextRun,
     visualOf;
 import sparkles.base.text.grapheme : visibleWidth;
@@ -116,6 +117,18 @@ if (isCanvas!Canvas)
             {
                 static if (__traits(compiles, canvas.popEffect()))
                     canvas.popEffect();
+            },
+            (in PushShift s)
+            {
+                // Optional like the clip pair: a canvas that cannot place
+                // between cells leaves the content on its whole cells.
+                static if (__traits(compiles, canvas.pushShift(s.dx, s.dy)))
+                    canvas.pushShift(s.dx, s.dy);
+            },
+            (in PopShift _)
+            {
+                static if (__traits(compiles, canvas.popShift()))
+                    canvas.popShift();
             },
         );
 }

@@ -167,6 +167,15 @@ struct Widget
     /// The *value* is written by the view; the scroll position it mirrors is
     /// interaction state and lives in a state machine, never in the arena.
     Point childOffset;
+    /// The sub-cell part of the scroll offset, in fractions of a cell on each
+    /// axis (`0 ≤ v < 1`; `LAY7`). Layout ignores it — children land on the
+    /// whole cells `childOffset` gives them — and the display list paints the
+    /// children that much further along, inside this node's clip, on a target
+    /// that can place between cells (`subCellScroll`). A cell target shows
+    /// the whole-cell position.
+    float childOffsetFracX = 0;
+    /// ditto
+    float childOffsetFracY = 0;
     /// Clip painting of the subtree to this node's padded content box, per
     /// axis (`LAY7`) — the display list brackets the children in scissor ops
     /// and culls children that fall fully outside. A clipping container plus

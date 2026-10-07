@@ -30,8 +30,8 @@ import sparkles.base.term_color : RgbColor;
 
 import sparkles.ui.arena : FrameArena, GcArena, isArena;
 import sparkles.ui.canvas : boxChromeOf, DrawOp, FillRect, Glyph, ImageDraw,
-    inkOf, Line, LineStyle, PopClip, PopEffect, PushClip, PushEffect, Rule,
-    RuleEdge, Scrollbar, TextRun;
+    inkOf, Line, LineStyle, PopClip, PopEffect, PopShift, PushClip, PushEffect,
+    PushShift, Rule, RuleEdge, Scrollbar, TextRun;
 import sparkles.ui.effect : EffectId;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.ui.geometry : Point, Rect, Size;
@@ -234,6 +234,18 @@ if (isArena!Arena)
     void popEffect()
     {
         _ops ~= DrawOp(PopEffect());
+    }
+
+    /// ditto — a viewport's sub-cell scroll (`LAY7`), inside its clip.
+    void pushShift(float dx, float dy)
+    {
+        _ops ~= DrawOp(PushShift(dx, dy));
+    }
+
+    /// ditto
+    void popShift()
+    {
+        _ops ~= DrawOp(PopShift());
     }
 
     /// The cell extent of `text` — the `isCanvas` primitive, so a buffer can
