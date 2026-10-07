@@ -510,6 +510,7 @@ struct Visual
     bool arrow;           /// draw a popup arrow/tail off this box's top edge?
     int arrowOffset;      /// arrow horizontal offset from the left, in cells
     int drawHeight;       /// drawn box height in CSS px, centred; 0 = the whole rect
+    int drawWidth;        /// drawn box width in CSS px, centred; 0 = the whole rect
 
     // --- text chrome (resolved from a widget's TextStyle) ---
     FontRole fontRole;      /// which font family the run wants
@@ -546,6 +547,14 @@ struct Decoration
     /// the rect. A control keeps a 48 dp touch target and draws a 32 dp chip
     /// (design-system `TOK11`); a cell target draws the whole rect.
     int drawHeight;
+    /// The width the box is drawn at, in CSS px, centred in its rect; 0 fills
+    /// the rect. With `drawHeight` and a radius of half of it, a circle: a
+    /// switch's knob (`TOK11`).
+    int drawWidth;
+    /// Fill the box with the slot's ink (its foreground), not its background:
+    /// a mark drawn as a shape — a switch's knob, the ink a glyph `●` had —
+    /// keeps the colour the glyph would have had. Needs `paintBackground`.
+    bool inkFill;
 }
 
 /// A widget's declared text style — font role, relative size, weight/italic/
@@ -1013,6 +1022,13 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
     v.arrow = deco.arrow;
     v.arrowOffset = deco.arrowOffset;
     v.drawHeight = deco.drawHeight;
+    v.drawWidth = deco.drawWidth;
+    if (deco.inkFill)
+    {
+        v.bg = v.fg;
+        v.bgAlpha = v.fgAlpha;
+        v.hasBg = true;
+    }
 
     // Text chrome.
     v.fontRole = text.fontRole;
@@ -1275,6 +1291,22 @@ unittest
     assert(v.shadow.any);
     assert(v.shadow.dx == 0 && v.shadow.dy == 1 && v.shadow.blur == 4);
     assert(v.shadow.color == RgbColor(0, 0, 0) && v.shadow.alpha == 0x14);
+}
+
+@("ui.style.resolveVisual.inkFillPaintsTheForeground")
+@safe pure nothrow @nogc
+unittest
+{
+    // A switch's knob: drawn as a shape in the ink its glyph had.
+    const pal = defaultTwoslashPalette();
+    const pageFg = RgbColor(0x22, 0x22, 0x22), pageBg = RgbColor(0xff, 0xff, 0xff);
+    const deco = Decoration(borderRadius: 11, drawHeight: 22, drawWidth: 22, inkFill: true);
+    const v = resolveVisual(pal, Slot.controlOn, deco, TextStyle.init, pageFg, pageBg);
+    assert(v.hasBg && v.bg == RgbColor(0xff, 0xff, 0xff), "control.on's ink: white");
+    assert(v.drawWidth == 22 && v.drawHeight == 22);
+    const plain = resolveVisual(pal, Slot.controlOn, Decoration.init, TextStyle.init,
+        pageFg, pageBg);
+    assert(plain.bg == RgbColor(0x37, 0x72, 0xcf), "without it, the slot's fill");
 }
 
 @("ui.style.resolveVisual.textStyleAndHoverUnderline")

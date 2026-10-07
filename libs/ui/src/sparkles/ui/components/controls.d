@@ -63,23 +63,38 @@ uint chip(ref Builder b, string label, size_t hitId, bool selected = false,
         selected ? Slot.chromeAccent : Slot.surfaceRaised, sz.drawDp / 2));
 }
 
+/// A switch's geometry, in CSS px (`TOK11`): the track a stadium — its
+/// radius half its height — and the knob a circle inset in either end cap.
+enum switchTrackDp = 28, switchKnobDp = 22;
+/// ditto, in cells: the track, and the knob's rect at either end of it.
+enum switchTrackCols = 5, switchKnobCols = 3;
+
 /**
 A toggle switch: a track with its knob at the start (off) or the end (on). On
 fills the track with the accent (`control.on`); off is the sunken surface with
 a border.
+
+The track is drawn `switchTrackDp` tall, a stadium. The knob is a circle
+`switchKnobDp` across, centred in a rect of `switchKnobCols` cells flush with
+the track's start or end, so its centre sits about an end cap's radius in —
+concentric with the cap — and its position alone says on or off. A cell
+target, which draws no sub-cell box, fills the knob's cells instead.
 */
 uint toggleSwitch(ref Builder b, bool on, size_t hitId, ControlSize sz = ControlSize.init)
 {
-    // The knob takes the track's whole height, so a face that draws it finer
-    // than the cells centres it there: given only the rows its title step
-    // measures, it was centred in the top two of three and sat high.
-    const knob = b.add(Widget(kind: WidgetKind.text, text: "●",
-        slot: on ? Slot.controlOn : Slot.textSecondary,
-        height: sz.rows > 1 ? SizeSpec.fixed(sz.rows) : SizeSpec.fit_,
-        textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.title)));
-    auto track = controlBox([knob], ControlSize(sz.rows, 28), hitId,
-        on ? Slot.controlOn : Slot.surfaceSunken, 14, bordered: !on);
-    track.width = SizeSpec.fixed(5);
+    // A shape, not the glyph `●` it was: a glyph is drawn at its face's size
+    // and its run's start, so it came out a third of the knob's size and in
+    // the middle of the track, whichever the state. It keeps the glyph's ink.
+    const knob = b.add(Widget(kind: WidgetKind.box,
+        slot: on ? Slot.controlOn : Slot.textSecondary, paintBackground: true,
+        width: SizeSpec.fixed(switchKnobCols),
+        height: sz.rows > 1 ? SizeSpec.fixed(sz.rows) : SizeSpec.fixed(1),
+        decoration: Decoration(borderRadius: switchKnobDp / 2, drawHeight: switchKnobDp,
+            drawWidth: switchKnobDp, inkFill: true)));
+    auto track = controlBox([knob], ControlSize(sz.rows, switchTrackDp), hitId,
+        on ? Slot.controlOn : Slot.surfaceSunken, switchTrackDp / 2, bordered: !on);
+    track.padding = Insets.init;
+    track.width = SizeSpec.fixed(switchTrackCols);
     track.alignX = on ? Alignment.end : Alignment.start;
     return b.add(track);
 }
@@ -167,8 +182,13 @@ uint dropdownChip(ref Builder b, string value, bool open, size_t hitId,
     assert(b.nodes[on].alignX == Alignment.end && b.nodes[off].alignX == Alignment.start);
     assert(b.nodes[on].slot == Slot.controlOn && b.nodes[off].slot == Slot.surfaceSunken);
     assert(b.nodes[on].decoration.drawHeight == 28);
-    assert(b.nodes[b.nodes[off].children[0]].height == SizeSpec.fixed(3),
-        "the knob spans the track's rows, centred in them");
+    // The knob: a circle in a rect flush with the track's start or end.
+    const k = b.nodes[b.nodes[off].children[0]];
+    assert(k.kind == WidgetKind.box && k.height == SizeSpec.fixed(3), "spans the track's rows");
+    assert(k.decoration.drawWidth == k.decoration.drawHeight
+        && k.decoration.borderRadius * 2 == k.decoration.drawWidth, "a circle");
+    assert(k.decoration.inkFill && k.paintBackground, "in the glyph's ink");
+    assert(b.nodes[off].padding == Insets.init, "flush with the track's ends");
     assert(b.nodes[off].decoration.borderStyle == BorderStyle.solid, "off is outlined");
 }
 
