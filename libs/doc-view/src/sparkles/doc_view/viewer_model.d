@@ -31,7 +31,7 @@ import sparkles.syntax.ts.highlighter : ParsedLayer;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewTwoslashDocumentInto;
-import sparkles.ui.canvas : DrawOp, OpKind, PushShift;
+import sparkles.ui.canvas : DrawOp, OpKind, PushShift, Scrollbar;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.layout : DelegateMeasure, Frame, layout;
@@ -2014,6 +2014,44 @@ struct ViewerModel
             return;
         s.dx = s.axes & 1 ? -fx : 0;
         s.dy = s.axes & 2 ? -fy : 0;
+    }
+
+    /**
+    Sets a code block's or a table's bar to the fraction its scroll is past
+    the whole cells it was built at, so the thumb slides with the content
+    between rebuilds as every other bar does (`SCV13`). The bar is known by
+    the hit rect it was built with; any other bar is left as built.
+    */
+    void paintBar(ref Scrollbar bar) const @safe
+    {
+        import sparkles.ui.components.chrome : fracByte;
+
+        foreach (ref const t; targets)
+        {
+            if (t.rect != bar.rect || t.hitId < tableVBarHitBase)
+                continue;
+            const id = t.hitId;
+            float f = 0;
+            if (id >= fenceHBarHitBase)
+            {
+                if (auto p = (id - fenceHBarHitBase) in fenceScrollAt)
+                    f = p.fx;
+            }
+            else if (id >= fenceVBarHitBase)
+            {
+                if (auto p = (id - fenceVBarHitBase) in fenceScrollAt)
+                    f = p.fy;
+            }
+            else if (id >= tableHBarHitBase)
+            {
+                if (auto p = (id - tableHBarHitBase) in tableScrollAt)
+                    f = p.fx;
+            }
+            else if (auto p = (id - tableVBarHitBase) in tableScrollAt)
+                f = p.fy;
+            bar.offsetFrac = fracByte(f);
+            return;
+        }
     }
 
     /// A fence's scroll on one axis, fraction included (`LAY7`).

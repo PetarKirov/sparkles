@@ -36,7 +36,8 @@ void emitVisibleOps(ref ViewerModel vm, long docRows, scope void delegate(ref Dr
         auto op = sourceOp;
         // A block's keyed shift takes its fraction now: moving within a cell
         // does not rebuild the document (`ViewerModel.paintShift`).
-        op.payload.match!((ref PushShift s) { if (s.key) vm.paintShift(s); }, (ref _) {});
+        op.payload.match!((ref PushShift s) { if (s.key) vm.paintShift(s); },
+            (ref Scrollbar b) { vm.paintBar(b); }, (ref _) {});
         const activeSv = vm.activeBar();
         if (activeSv !is null
             && (vm.activeFenceOwner != size_t.max
