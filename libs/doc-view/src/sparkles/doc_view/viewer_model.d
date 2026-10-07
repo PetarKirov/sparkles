@@ -408,7 +408,7 @@ struct ViewerModel
     ScrollAnchorMode anchorMode = ScrollAnchorMode.segment;
     /// `NAV6`: set while a resize has legitimately parked `top` past the
     /// last full screen, so the per-frame clamp leaves it alone.
-    private bool anchorOvershoot;
+    package bool anchorOvershoot;
     /// How `search` matches. Resolved from `SearchSettings` by the host, so the
     /// window and the terminal cannot hold different policies (`UIA13`).
     SearchPolicy searchPolicy;
@@ -2020,6 +2020,18 @@ struct ViewerModel
             && setFenceScroll(bodyStart, cur.x + delta, cur.y);
     }
 
+    /// Whether a fence can scroll vertically towards `dir`'s sign — a drag
+    /// still short of a whole line belongs to it then, not to the document.
+    bool canScrollFenceV(size_t bodyStart, float dir) const @safe
+    {
+        if (isWrap(codeOverflow) || dir == 0)
+            return false;
+        const e = fenceExtent(bodyStart);
+        const maxY = e.lines - e.shownRows;
+        const cur = fenceScrollAt.get(bodyStart, FenceScroll(bodyStart, 0, 0));
+        return dir > 0 ? cur.y < maxY : cur.y > 0;
+    }
+
     /// Scrolls a fence vertically by `delta` lines; true when it moved.
     bool scrollFenceV(size_t bodyStart, int delta)
     {
@@ -2123,6 +2135,17 @@ struct ViewerModel
         const cur = tableScrollAt.get(spanStart, TableScroll(spanStart, 0, 0));
         return delta != 0
             && setTableScroll(spanStart, cur.x + delta, cur.y);
+    }
+
+    /// Whether a table can scroll vertically towards `dir`'s sign.
+    bool canScrollTableV(size_t spanStart, float dir) const @safe
+    {
+        if (isWrap(tableOverflow) || dir == 0)
+            return false;
+        const e = tableExtent(spanStart);
+        const maxY = e.lines > e.shownLines ? e.lines - e.shownLines : 0;
+        const cur = tableScrollAt.get(spanStart, TableScroll(spanStart, 0, 0));
+        return dir > 0 ? cur.y < maxY : cur.y > 0;
     }
 
     /// Scrolls a table vertically by `delta` lines; true when it moved.

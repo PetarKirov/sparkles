@@ -22,7 +22,7 @@ import std.datetime.systime : SysTime;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.term_color : Color, mix, RgbColor;
-import sparkles.input.events : Key, KeyEvent;
+import sparkles.input.events : Key, KeyEvent, WheelEvent;
 import sparkles.syntax : GrammarRegistry, LabelSet, TsConfigCache;
 import sparkles.ui.canvas : DrawOp, fillRectOp, popClipOp, pushClipOp,
     RuleEdge, Scrollbar;
@@ -37,6 +37,8 @@ import sparkles.doc_view.document : DocumentPipeline;
 import sparkles.doc_view.kind : ViewKind, viewKindOf;
 import sparkles.doc_view.view_ops : emitVisibleOps;
 import sparkles.doc_view.viewer_model : ScrollAnchor, ViewerModel;
+import sparkles.ui.components.scroll_view : OverlayBar;
+import sparkles.ui.scroll_motion : ScrollMotion;
 
 /**
 What every pane of one application shares: the grammars, the highlighting
@@ -282,6 +284,160 @@ struct DocViewPane
         return moved;
     }
 
+    // ── scrolling between rows (`SCV12`) ────────────────────────────────
+
+    /// The document's motion, in visual rows: `vm.top` is its whole part,
+    /// and a pixel target paints its fraction (`LAY7`).
+    ScrollMotion motion;
+    /// The overlay bar's fade and grab (`SCV13`), when the host gives the
+    /// pane a band for it (`paint`'s `barBand`).
+    OverlayBar bar;
+    /// A touch screen: the bar fades when idle.
+    bool touch;
+    /// Draw the bar at its full width.
+    bool wide;
+
+    private float frac = 0;      // painted past `vm.top`
+    private long movedTop = -1;  // the `vm.top` the motion last wrote
+    private float nestRestX = 0, nestRestY = 0; // a nested scroller's fraction
+    // Where the document rows were painted, for a pointer: window pixels.
+    private int docX, docY, docW, cellH_ = 1, cellW_ = 1;
+    private Rect barBand_;
+
+    /// The largest position: the last that fills the pane — or, while a
+    /// resize keeps the reader past it (`NAV5`), where it is.
+    private double limit() const @safe pure nothrow @nogc
+    {
+        const m = vm.maxTopFor(docRows);
+        return vm.anchorOvershoot && vm.top > m ? vm.top : m;
+    }
+
+    // A key, a search, a goto moved `vm.top` itself: the motion starts there.
+    private void syncMotion() @safe pure nothrow @nogc
+    {
+        if (vm.top == movedTop)
+            return;
+        frac = 0;
+        motion.jumpTo(vm.top, limit);
+        movedTop = vm.top;
+    }
+
+    private bool applyMotion() @safe pure nothrow @nogc
+    {
+        const w = motion.whole;
+        const f = motion.frac;
+        const moved = w != vm.top || f != frac;
+        vm.top = w;
+        frac = f;
+        if (vm.top <= vm.maxTopFor(docRows))
+            vm.anchorOvershoot = false;
+        movedTop = vm.top;
+        dirty |= moved;
+        return moved;
+    }
+
+    /**
+    A wheel notch or a drag at window pixel (`x`, `y`): a code block or a
+    table under it scrolls first, to its edge (hue's rule, `COD6`); else the
+    document — a drag followed, a notch eased, between rows (`SCV12`).
+    True when anything moved.
+    */
+    bool wheel(int x, int y, in WheelEvent w) @system
+    {
+        if (error.length || kind == ViewKind.image)
+            return false;
+        syncMotion();
+        const dx = w.exactX + (w.mods.shift ? w.exactY : 0);
+        const dy = w.mods.shift ? 0 : w.exactY;
+        const row = vm.top + cast(long)((y - docY + frac * cellH_) / cellH_);
+        if (nested(row, dx, dy))
+            return true;
+        if (dy == 0)
+            return false;
+        if (w.precise)
+            motion.drag(dy, limit);
+        else
+            motion.nudge(dy, limit);
+        bar.anim.stepFade(true, 0);
+        return applyMotion();
+    }
+
+    // A code block's or a table's own scroll, in whole cells — a drag's
+    // fraction carried until it makes one.
+    private bool nested(long row, float dx, float dy) @system
+    {
+        static int whole(ref float rest, float d)
+        {
+            rest += d;
+            const n = cast(int) rest;
+            rest -= n;
+            return n;
+        }
+
+        const fb = vm.fenceBodyAtRow(row);
+        const tb = fb == size_t.max ? vm.tableAtRow(row) : size_t.max;
+        if (fb == size_t.max && tb == size_t.max)
+        {
+            nestRestX = nestRestY = 0;
+            return false;
+        }
+        if (dx != 0)
+        {
+            const n = whole(nestRestX, dx);
+            const moved = n != 0 && (fb != size_t.max ? vm.scrollFence(fb, n)
+                : vm.scrollTable(tb, n));
+            dirty |= moved;
+            // Sideways belongs to the block even at its edge: the document
+            // does not scroll sideways under it.
+            return true;
+        }
+        const n = whole(nestRestY, dy);
+        if (n == 0)
+            return (fb != size_t.max ? vm.canScrollFenceV(fb, dy)
+                : vm.canScrollTableV(tb, dy));
+        const moved = fb != size_t.max ? vm.scrollFenceV(fb, n) : vm.scrollTableV(tb, n);
+        dirty |= moved;
+        if (!moved)
+            nestRestY = 0;
+        return moved;
+    }
+
+    /// One frame of the motion and the bar's fade, `dt` seconds; true while
+    /// it needs the next.
+    bool animate(float dt) @system
+    {
+        if (error.length || kind == ViewKind.image)
+            return false;
+        syncMotion();
+        const more = motion.step(dt, limit);
+        cast(void) applyMotion();
+        if (!touch)
+            return more;
+        bar.anim.stepFade(more || bar.grabbed, dt);
+        const fading = bar.anim.fading;
+        dirty |= fading;
+        return more || fading;
+    }
+
+    /// The bar dragged the document to `pos` rows.
+    void barTo(double pos) @system
+    {
+        syncMotion();
+        motion.jumpTo(pos, limit);
+        bar.anim.stepFade(true, 0);
+        cast(void) applyMotion();
+    }
+
+    /// The overlay bar's band, its content and viewport in rows, as last
+    /// painted — for a press on it (`SCV13`). False when it has none.
+    bool barGeometry(out Rect band, out long content, out long viewport) const @safe pure nothrow @nogc
+    {
+        band = barBand_;
+        content = vm.scrollExtent(docRows);
+        viewport = docRows;
+        return band.width > 0 && content > viewport;
+    }
+
     /// One key: the viewer's own bindings, `q`/`Esc` asking to close.
     PaneKey key(in KeyEvent k) @system
     {
@@ -520,7 +676,8 @@ struct DocViewPane
     canvas of the host's (its fonts, effect backend and images). `focused`
     lights the header.
     */
-    void paint(ref RaylibCanvas host, int px, int py, int pw, int ph, bool focused) @system
+    void paint(ref RaylibCanvas host, int px, int py, int pw, int ph, bool focused,
+        in Rect barBand = Rect.init) @system
     {
         import sparkles.ui.components.chrome : headerBar;
         import sparkles.ui.display_list : buildDisplayList;
@@ -609,9 +766,18 @@ struct DocViewPane
             return;
         }
 
-        // Lay out for the width (one column for the bar), then keep the
-        // viewport inside the document.
-        const width = cols - 1 > 8 ? cols - 1 : 8;
+        // Lay out for the width (one column for the bar, unless the host
+        // gave it a band outside the pane — `SCV13`), then keep the viewport
+        // inside the document.
+        const overlay = barBand.width > 0;
+        const barCols = overlay ? 0 : 1;
+        const width = cols - barCols > 8 ? cols - barCols : 8;
+        docX = px;
+        docY = py + y0 * ch;
+        docW = pw;
+        cellW_ = cw;
+        cellH_ = ch;
+        barBand_ = overlay ? Rect(barBand.x, docY, barBand.width, docRows * ch) : Rect.init;
         vm.viewRows = docRows;
         if (width != laidCols || vm.widthCols != width)
         {
@@ -632,18 +798,29 @@ struct DocViewPane
         // gutter (as in hue's window), otherwise one.
         const pinned = vm.hsb.offset > 0 ? vm.pinnedCols : 0;
         const dhx = cast(int) vm.hsb.offset;
+        // Scrolled between rows (`LAY7`): inside the clip, the rows move up
+        // by the fraction — and `emitVisibleOps` keeps the one it reveals.
+        syncMotion();
         void pass(int dx, in Rect clip)
         {
             const dy = y0 - cast(int) vm.top;
             emit(pushClipOp(clip), dx, dy);
+            if (frac > 0)
+                c.pushShift(0, -frac);
             emitVisibleOps(vm, docRows, (ref DrawOp op) { emit(op, dx, dy); });
+            if (frac > 0)
+                c.popShift();
             emit(popClipOp());
         }
         if (pinned > 0)
             pass(0, Rect(0, cast(int) vm.top, pinned, docRows));
         pass(-dhx, Rect(pinned + dhx, cast(int) vm.top, width - pinned, docRows));
 
-        // Search matches, through the identity channel (raw views).
+        // Search matches, through the identity channel (raw views) — under
+        // the document's clip and shift, so they sit on the rows they mark.
+        c.pushClip(Rect(0, y0, width, docRows));
+        if (frac > 0)
+            c.pushShift(0, -frac);
         if (!vm.showPreview)
             foreach (i, rects; vm.matchRects)
                 foreach (ref const r; rects)
@@ -661,11 +838,18 @@ struct DocViewPane
                         Visual(bg: i == vm.curMatch ? RgbColor(255, 145, 0) : RgbColor(255, 215, 0),
                             bgAlpha: i == vm.curMatch ? 130 : 70, hasBg: true)));
                 }
+        if (frac > 0)
+            c.popShift();
+        c.popClip();
 
-        // The vertical bar.
+        // The vertical bar: in the host's band (the overlay bar, `SCV13`),
+        // else in the pane's last column.
         const extent = vm.scrollExtent(docRows);
         if (extent > docRows)
-            emit(DrawOp(Scrollbar(
+        {
+            import sparkles.ui.components.chrome : fracByte;
+
+            auto sb = Scrollbar(
                 rect: Rect(cols - 1, y0, 1, docRows),
                 content: cast(int)(extent > int.max ? int.max : extent),
                 viewport: docRows,
@@ -676,7 +860,19 @@ struct DocViewPane
                 trackGlyph: '│',
                 thumbGlyph: '█',
                 slot: Slot.thumb,
-            )));
+                offsetFrac: fracByte(frac),
+                fadePercent: touch ? bar.anim.fadePercent : 100,
+                expandPercent: wide ? 100 : 0,
+            );
+            if (overlay)
+            {
+                c.popClip(); // the band is outside the pane
+                cast(void) c.scrollbarPx(barBand_, sb);
+                c.pushClip(Rect(0, 0, cols, rows));
+            }
+            else
+                emit(DrawOp(sb));
+        }
 
         if (searching)
             textLine(c, rows - 1, cols, "/" ~ cast(string) query.idup,
