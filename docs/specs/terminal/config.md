@@ -62,6 +62,8 @@ of it. Its sections follow what a user thinks they are changing:
 | `notifications` | `enabled`, `when` (`unseen`/`always`/`never`)                                                                                                       |
 | `ui`            | `buttonLabels`, `overlayStyle`, `selectionMenu`, `tabsOpener`, `paneChrome`                                                                         |
 | `open`          | `target`, `intercept`                                                                                                                               |
+| `viewer`        | `lineNumbers`, `codeLineNumbers` ([`TDV13`](./viewer.md))                                                                                           |
+| `scrollbar`     | `touchWidth` (`thin`/`wide`)                                                                                                                        |
 | `lantern`       | `enabled`, `delayMs`, `leader`                                                                                                                      |
 | `keys`          | the binding overlay ([`TKM`](./keymap.md)), as hue's `CFG6`                                                                                         |
 
@@ -191,24 +193,33 @@ _Rationale:_ 600 dp is Android's conventional tablet threshold (`sw600dp`). On
 such a screen a portrait window is wide enough for the rail, and a card leaves
 the selection's context in view where a sheet would cover half of it.
 
+**TCF15: Scrollbar width.** `scrollbar.touchWidth` **must** choose how wide
+every overlay bar ([`SCV13`](../ui/containers.md)) is drawn on a touch screen:
+`thin`, the default, a rail beside the content, or `wide`, the full expanded
+width, easier to see while the content moves. It covers the panes' bars
+([`TSS18`](./sessions.md)), the viewer panes', the pages' and the key
+guide's, applies at once, and changes nothing on the desktop. Violation: a
+`wide` setting that leaves one of those bars thin on a phone.
+
 ### Status (`TCF`)
 
-| ID      | Status                                                                                                                   | Traces to                                                                                        |
-| ------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `TCF1`  | full                                                                                                                     | `TerminalConfig`, `leafCount`                                                                    |
-| `TCF2`  | full                                                                                                                     | `loadTerminalConfig`, `applyCli`                                                                 |
-| `TCF3`  | full                                                                                                                     | `termuxLayer`                                                                                    |
-| `TCF4`  | full                                                                                                                     | `readJsoncFileTolerant`, `configWarning`, `locateWirePath`, `WorkspaceHost.reportConfigWarnings` |
-| `TCF5`  | full                                                                                                                     | `renderConfigShow`, `renderStarterConfig`                                                        |
-| `TCF6`  | full                                                                                                                     | `stripJsonc`, `readJsoncFile`, `renderStarterSections`                                           |
-| `TCF7`  | full                                                                                                                     | `extraKeysShown`, `swipeKeyRow`, `TermCommand.toggleExtraKeys`                                   |
-| `TCF8`  | partial: the font family and styled faces apply at the next start; the size applies live                                 | `loadSettings`, `TerminalView.recolor`, `applyToWorkspace`                                       |
-| `TCF9`  | partial: an icon-only button has no tooltip or accessible name, which `sparkles:ui` widgets do not carry                 | `chrome.button`, [design](./design.md)                                                           |
-| `TCF10` | partial: the paste guard and the link card follow it; the OSC 52 read is always a sheet; the file-link card is `TDV12`'s | `placeOne`, `SurfaceContext.style`                                                               |
-| `TCF11` | full                                                                                                                     | `SelectionUi.useAndroid`, `ActionMenu`, `menuStyle`                                              |
-| `TCF12` | full                                                                                                                     | `usesPill`, `WorkspaceHost.tabsOpener`                                                           |
-| `TCF13` | full                                                                                                                     | `paneBoxes`, `WorkspaceHost.paneChrome`                                                          |
-| `TCF14` | full                                                                                                                     | `largeScreen`, `menuStyle`, `DroidTerminal.view` (`phonePortrait`)                               |
+| ID      | Status                                                                                                                   | Traces to                                                                                                   |
+| ------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `TCF1`  | full                                                                                                                     | `TerminalConfig`, `leafCount`                                                                               |
+| `TCF2`  | full                                                                                                                     | `loadTerminalConfig`, `applyCli`                                                                            |
+| `TCF3`  | full                                                                                                                     | `termuxLayer`                                                                                               |
+| `TCF4`  | full                                                                                                                     | `readJsoncFileTolerant`, `configWarning`, `locateWirePath`, `WorkspaceHost.reportConfigWarnings`            |
+| `TCF5`  | full                                                                                                                     | `renderConfigShow`, `renderStarterConfig`                                                                   |
+| `TCF6`  | full                                                                                                                     | `stripJsonc`, `readJsoncFile`, `renderStarterSections`                                                      |
+| `TCF7`  | full                                                                                                                     | `extraKeysShown`, `swipeKeyRow`, `TermCommand.toggleExtraKeys`                                              |
+| `TCF8`  | partial: the font family and styled faces apply at the next start; the size applies live                                 | `loadSettings`, `TerminalView.recolor`, `applyToWorkspace`                                                  |
+| `TCF9`  | partial: an icon-only button has no tooltip or accessible name, which `sparkles:ui` widgets do not carry                 | `chrome.button`, [design](./design.md)                                                                      |
+| `TCF10` | partial: the paste guard and the link card follow it; the OSC 52 read is always a sheet; the file-link card is `TDV12`'s | `placeOne`, `SurfaceContext.style`                                                                          |
+| `TCF11` | full                                                                                                                     | `SelectionUi.useAndroid`, `ActionMenu`, `menuStyle`                                                         |
+| `TCF12` | full                                                                                                                     | `usesPill`, `WorkspaceHost.tabsOpener`                                                                      |
+| `TCF13` | full                                                                                                                     | `paneBoxes`, `WorkspaceHost.paneChrome`                                                                     |
+| `TCF14` | full                                                                                                                     | `largeScreen`, `menuStyle`, `DroidTerminal.view` (`phonePortrait`)                                          |
+| `TCF15` | full                                                                                                                     | `ScrollbarConfig`, `ScrollbarWidth`, `WorkspaceHost.wideBars`, `SurfaceContext.wideBars`, `ScrollBody.wide` |
 
 ## The settings page (`TSP`)
 
