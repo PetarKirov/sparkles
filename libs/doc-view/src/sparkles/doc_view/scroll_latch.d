@@ -148,14 +148,15 @@ struct ScrollLatch
     private void apply(ref ViewerModel vm) @system
     {
         const p = motion.instant ? cast(double) motion.whole : motion.pos;
+        // The latched axis moves; the other stays exactly where it is.
         if (target == LatchTarget.fence)
             cast(void) vm.setFenceScroll(id,
-                horizontal ? p : vm.fenceScrollPos(id, false),
-                horizontal ? vm.fenceScrollPos(id, true) : p);
+                horizontal ? p : vm.fenceScrollPos(id, true),
+                horizontal ? vm.fenceScrollPos(id, false) : p);
         else
             cast(void) vm.setTableScroll(id,
-                horizontal ? p : vm.tableScrollPos(id, false),
-                horizontal ? vm.tableScrollPos(id, true) : p);
+                horizontal ? p : vm.tableScrollPos(id, true),
+                horizontal ? vm.tableScrollPos(id, false) : p);
     }
 }
 
@@ -262,4 +263,56 @@ version (unittest)
             (ref _) {});
     });
     assert(dx == -0.25f, "the table's scrolled parts are painted a quarter cell on");
+}
+
+@("scroll_latch.aBlockScrollingBothWaysMovesOneAxisAtATime")
+@system unittest
+{
+    import sparkles.syntax : MdDoc;
+    import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
+    import sparkles.twoslash.protocol : TwoslashReturn;
+    import sparkles.ui.themes : builtinDark;
+    import sparkles.doc_view.preview_model : PreviewModel;
+
+    // Twelve 80-cell lines in a 30-cell pane, five lines shown: the block
+    // overflows on both axes.
+    string src;
+    foreach (_; 0 .. 12)
+    {
+        foreach (c; 0 .. 80)
+            src ~= "x";
+        src ~= "\n";
+    }
+    ViewerModel vm;
+    vm.themes = [builtinDark];
+    vm.names = ["dark"];
+    vm.widthCols = 30;
+    vm.codeMaxLines = 5;
+    vm.applyTheme(0);
+    vm.setDocument("code.md", "", src, null, PreviewModel(present: true,
+        doc: MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+            MdBlock(kind: MdBlockKind.codeFence, span: Span(0, src.length),
+                codeBody: Span(0, src.length))]), src)),
+        TwoslashReturn.init, "markdown");
+    long row = -1;
+    foreach (r; 0 .. cast(long) vm.rows.length)
+        if (vm.fenceBodyAtRow(r) != size_t.max)
+        {
+            row = r;
+            break;
+        }
+    assert(row >= 0, "precondition: a fence body row");
+    const fb = vm.fenceBodyAtRow(row);
+    assert(vm.fenceScrollMax(fb, true) > 0 && vm.fenceScrollMax(fb, false) > 0,
+        "precondition: it scrolls both ways");
+
+    ScrollLatch l;
+    assert(l.feed(vm, row, 0, 2.5f, precise: true, begins: true));
+    assert(vm.fenceScrollPos(fb, false) == 2.5 && vm.fenceScrollPos(fb, true) == 0,
+        "down only");
+    assert(l.feed(vm, row, 7.25f, 0, precise: true, begins: true));
+    assert(vm.fenceScrollPos(fb, true) == 7.25 && vm.fenceScrollPos(fb, false) == 2.5,
+        "across only — down stays where it was");
+    assert(l.feed(vm, row, 1, 0, precise: true, begins: false));
+    assert(vm.fenceScrollPos(fb, true) == 8.25 && vm.fenceScrollPos(fb, false) == 2.5);
 }
