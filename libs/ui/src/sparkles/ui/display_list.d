@@ -407,7 +407,11 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
                     else
                         ops.pushShift(-fx, -fy);
                 }
-            const cull = shifts ? cullClipOf(node, rect, clip) : childClip;
+            // A viewport whose scroll a painter moves (`shiftBracket`) may
+            // bring any of its children into view without a rebuild: none is
+            // culled by its own clip, only by the ones around it.
+            const cull = node.shiftBracket ? clip
+                : shifts ? cullClipOf(node, rect, clip) : childClip;
             foreach (child; node.children)
                 emit(tree, child, frames, pal, pageFg, pageBg, cull,
                     overflowX || node.scrollsX || clipsX(node), ops, tm);
