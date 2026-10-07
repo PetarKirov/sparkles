@@ -418,9 +418,15 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
     const total = frames.length ? frames[tree.root].rect.height : 0;
     auto rows = new DocRow[](total > 0 ? total : 0);
 
+    // The rows a vertical viewport shows: content it scrolls out of view is
+    // laid out past its box — over the document's rows above and below —
+    // and must not be credited to them (a code block's hidden lines made
+    // the paragraph after it look like the block's body).
+    int clipTop = int.min, clipBottom = int.max;
+
     void addText(int y, const(char)[] text, size_t srcStart, size_t srcEnd)
     {
-        if (y < 0 || y >= cast(int) rows.length)
+        if (y < 0 || y >= cast(int) rows.length || y < clipTop || y >= clipBottom)
             return;
         rows[y].text ~= text;
         if (srcStart != size_t.max)
@@ -464,8 +470,19 @@ DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
             case glyph, line, scrollbar, box, image:
                 break;
             case row, column, stack, panel, popup:
+                const keepTop = clipTop, keepBottom = clipBottom;
+                if (clipsY(node))
+                {
+                    const box_ = frames[idx].rect.deflate(node.padding);
+                    if (box_.y > clipTop)
+                        clipTop = box_.y;
+                    if (box_.y + box_.height < clipBottom)
+                        clipBottom = box_.y + box_.height;
+                }
                 foreach (ci; node.children)
                     walk(ci);
+                clipTop = keepTop;
+                clipBottom = keepBottom;
                 break;
         }
     }
@@ -2201,6 +2218,35 @@ size_t[] elementKeys(in WidgetTree tree) pure nothrow
     auto tree = b.finish(root);
 
     assert(elementKeys(tree) == [42]); // key 0 nodes are anonymous
+}
+
+@("ui.state.documentRows.aViewportsHiddenLinesBelongToNoRow")
+@system unittest
+{
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
+
+    // A paragraph, a two-row viewport scrolled one line into four, a
+    // paragraph: the viewport's hidden lines lie over the paragraphs' rows
+    // in layout, and must not be credited to them.
+    auto b = Builder();
+    uint line(string s, size_t at)
+        => b.add(Widget(kind: WidgetKind.rich, spans: [TextSpan(s, srcStart: at,
+            srcEnd: at + 1)]));
+    const a = line("a", 0);
+    uint[] lines;
+    foreach (i; 0 .. 4)
+        lines ~= line("x", 10 + i);
+    const port = b.add(Widget(kind: WidgetKind.column, children: lines, clipY: true,
+        height: SizeSpec.fixed(2), childOffset: Point(0, 1)));
+    const z = line("b", 20);
+    auto tree = b.finish(b.container(WidgetKind.column, [a, port, z]));
+    const rows = documentRows(tree, layout(tree));
+    assert(rows.length == 4);
+    assert(rows[0].srcStart == 0, "the line scrolled above is not the paragraph's");
+    assert(rows[1].srcStart == 11 && rows[2].srcStart == 12, "the two it shows");
+    assert(rows[3].srcStart == 20, "nor the line below it the next paragraph's");
 }
 
 @("ui.state.documentRows.sourceTextExcludesChrome")
