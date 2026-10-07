@@ -227,6 +227,26 @@ and `HyphenationCandidateDraft` matcher scratch retain no borrowed fragments and
 can be released after publication; the published resource/candidates cannot outlive
 their borrowed inputs. No compatibility status-return overload remains.
 
+## `sparkles.base.text.property_path`
+
+Import this module explicitly for syntax-only runtime property addresses.
+The property tree uses the same parser and emitters; resolving an address against
+a subject remains the consumer's responsibility.
+
+| Symbol                          | Description                                                                                                                                                                                        |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PathSeg`                       | Owned parsed segment: `name`, positional `index`, or stable `key`, with `isIndex`, `isKey`, and `isQuoted` discriminators.                                                                         |
+| `parsePath(path, out segments)` | Parse the empty root, ASCII identifier members, quoted names, `[index]`, and `[#key]`. Reject malformed continuations, unsupported escapes, and numeric overflow; failure leaves `segments` empty. |
+| `childPath(parent, member)`     | Append a member name, using a bare identifier when possible and a quoted name otherwise.                                                                                                           |
+| `keyPath(parent, key)`          | Append an always-quoted map key, including identifier-shaped keys: `keyPath("tools", "build")` returns `tools["build"]`.                                                                           |
+| `elementPath(parent, index)`    | Append a positional index.                                                                                                                                                                         |
+| `keyedPath(parent, key)`        | Append a stable `ulong` identity, distinct from a map key.                                                                                                                                         |
+| `parentPath(path)`              | Remove the final segment and canonicalize numeric spelling without losing quoting. A root segment or malformed path returns `""`.                                                                  |
+
+Quoted names escape only `"` and `\` as `\"` and `\\`; other bytes pass through
+unchanged. Parsing owns each name independently of the input. These allocating
+APIs are `@safe pure nothrow`, not `@nogc`.
+
 ## `sparkles.base.term_style`
 
 | Symbol                      | Description                                                                                                   |

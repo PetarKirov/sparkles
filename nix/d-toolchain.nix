@@ -181,15 +181,13 @@
                     };
                   };
 
-              # Build `dtools` (rdmd, dustmite, …) against the *unwrapped* ldc.
-              # Its check phase (`test_rdmd`) copies `ldmd2` into a temp dir and
-              # execs it, which trips over the Darwin wrapper above ("Permission
-              # denied"), and the tool bundle gains nothing from our cleaned
-              # config. A bare `prev.dtools` would not help: nixpkgs `by-name`
-              # packages bind `callPackage` to the *final* package set, so
-              # `prev.dtools` already resolves `ldc` to the wrapper — the `ldc`
-              # argument has to be overridden back to the plain package.
-              dtools = prev.dtools.override { ldc = rawLdc; };
+              # Keep dtools on the pinned compiler without project driver flags.
+              # Its fallback fixture must execute a real local compiler: spawning
+              # an empty, non-executable file has a different failure exit status
+              # on Darwin. Keep both the exit-status and search-order assertions.
+              dtools = (prev.dtools.override { ldc = rawLdc; }).overrideAttrs (old: {
+                patches = (old.patches or [ ]) ++ lib.optional isDarwin ./dtools-native-fallback-compiler.patch;
+              });
 
               dmd =
                 let

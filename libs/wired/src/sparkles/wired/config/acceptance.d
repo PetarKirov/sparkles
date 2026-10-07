@@ -174,7 +174,7 @@ import sparkles.wired.config.core : ConfigBuilder, ConfigErrorKind, ConfigInput,
     import std.typecons : Nullable;
     struct TextSettings { string text; }
     struct NullableSettings { Nullable!string text; }
-    static assert(__traits(compiles, (() @safe {
+    (() @safe {
         ConfigSnapshot!TextSettings owner;
         auto visited = owner.visitOption!((scope ref const OptionView!string view) @safe {
             if (view.effective.hasValue)
@@ -182,7 +182,7 @@ import sparkles.wired.config.core : ConfigBuilder, ConfigErrorKind, ConfigInput,
                 auto length = view.effective.get.length;
             }
         })("text");
-    })()));
+    })();
     static assert(!__traits(compiles, (() @safe {
         ConfigSnapshot!TextSettings owner;
         const(char)[] escaped;

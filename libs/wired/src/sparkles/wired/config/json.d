@@ -1,15 +1,22 @@
-/** Presence-aware JSON input for the finite scalar configuration resolver. */
+/** Original-site, presence-aware JSON input for finite configuration graphs. */
 module sparkles.wired.config.json;
 
 import core.lifetime : move;
 import sparkles.wired.config.core;
-import sparkles.wired.json.codec : Json, decodeOwnedScalarAt;
+import sparkles.wired.json.codec : Json, decodeOwnedScalarAt, aaKeyParseNative, aaKeyText;
 import sparkles.wired.json.document : JsonKind, JsonValue;
 import sparkles.wired.json.error : JsonError, JsonStage, parseStageError;
 import sparkles.wired.json.reader : JsonReadOptions, parseJsonDocument;
 import sparkles.wired.policy : WireInvalid, hasWireStrict;
 import sparkles.wired.schema : NodeKind;
 import sparkles.wired.walk : WireWalk;
+import sparkles.wired.config.payload : ConfigPresence, measureFullGraph, clearGraph, validGraph;
+import sparkles.wired.config.metadata : ConfigBranchMetadata, branchMetadataInert,
+    validBranchMetadataControls, validAtomicChildBranchMetadataControls,
+    validAbsentBranchMetadata;
+import std.traits : isDynamicArray, isStaticArray, isAssociativeArray;
+import std.typecons : Nullable;
+import std.algorithm.sorting : sort;
 
 /// Unknown keys never create definitions. Strict schema sections always reject.
 enum ConfigUnknownMembers : ubyte
@@ -76,10 +83,8 @@ private ConfigDecodeResult!T captureFailureResult(T)(ConfigError error)
     return move(result);
 }
 
-private template JsonLeafAdmission(V, Root, size_t site, string path)
+private template JsonGraphAdmission(V, Root, size_t site, string path)
 {
-    import std.typecons : Nullable;
-
     alias walk = WireWalk!(Json, Root);
     enum node = walk.node!site;
     static assert(node.kind != NodeKind.converted,
@@ -88,37 +93,31 @@ private template JsonLeafAdmission(V, Root, size_t site, string path)
         "wired.config: WireOptional useDefault is unsupported at "
             ~ Root.stringof ~ "." ~ path);
     static if (is(V == Nullable!Contained, Contained))
-        enum bool JsonLeafAdmission = JsonLeafAdmission!(Contained, Root,
-            walk.child!(site, 0), path);
-    else
-        enum bool JsonLeafAdmission = true;
+        static assert(JsonGraphAdmission!(Contained, Root, walk.child!(site, 0), path));
+    else static if (!is(V == string) && (isDynamicArray!V || isStaticArray!V))
+        static assert(JsonGraphAdmission!(typeof(V.init[0]), Root,
+            walk.child!(site, 0), path ~ "[]"));
+    else static if (isAssociativeArray!V)
+    {
+        static assert(JsonGraphAdmission!(typeof(V.init.keys[0]), Root,
+            walk.child!(site, 0), path ~ "[<key>]"));
+        static assert(JsonGraphAdmission!(typeof(V.init.values[0]), Root,
+            walk.child!(site, 1), path ~ "[<key>]"));
+    }
+    else static if (is(V == struct))
+    {
+        static assert(node.kind == NodeKind.aggregate,
+            "wired.config: original JSON struct must be an aggregate at "
+                ~ Root.stringof ~ "." ~ path);
+        static assert(node.edgeCount == ConfigFieldNames!V.length);
+        static foreach (ordinal, name; ConfigFieldNames!V)
+            static assert(JsonGraphAdmission!(ConfigFieldType!(V, name), Root,
+                walk.child!(site, ordinal), path.length ? path ~ "." ~ name : name));
+    }
+    enum bool JsonGraphAdmission = true;
 }
 
-private template JsonSchemaAdmission(S, Root = S, size_t site = 0, string path = "")
-{
-    alias walk = WireWalk!(Json, Root);
-    static assert(walk.node!site.kind == NodeKind.aggregate,
-        "wired.config: original JSON section must be an aggregate at "
-            ~ Root.stringof ~ "." ~ path ~ " (WireConvert is unsupported)");
-    static assert(walk.node!site.edgeCount == ConfigFieldNames!S.length);
-    static foreach (ordinal, name; ConfigFieldNames!S)
-    {
-        static assert(() {
-            alias V = ConfigFieldType!(S, name);
-            enum child = walk.child!(site, ordinal);
-            enum childPath = path.length ? path ~ "." ~ name : name;
-            static assert(walk.node!child.policy.field.onInvalid != WireInvalid.useDefault,
-                "wired.config: WireOptional useDefault is unsupported at "
-                    ~ Root.stringof ~ "." ~ childPath);
-            static if (ConfigIsSection!(S, name))
-                static assert(JsonSchemaAdmission!(V, Root, child, childPath));
-            else
-                static assert(JsonLeafAdmission!(V, Root, child, childPath));
-            return true;
-        }());
-    }
-    enum bool JsonSchemaAdmission = true;
-}
+private enum JsonSchemaAdmission(T) = JsonGraphAdmission!(T, T, 0, "");
 
 /** Decode text with explicit native parser options and detached capsule limits. */
 ConfigDecodeResult!T decodeConfigInput(T, JsonReadOptions parserOptions = JsonReadOptions.init)(
@@ -131,12 +130,12 @@ ConfigDecodeResult!T decodeConfigInput(T, JsonReadOptions parserOptions = JsonRe
     auto parsed = parseJsonDocument!parserOptions(text);
     if (parsed.hasError)
         return jsonFailureResult!T(parseStageError(parsed.error, text));
-    JsonFailureSite failedSite;
+    JsonFailureSite!T failedSite;
     auto result = decodeRoot!T(parsed.document.root, metadata, limits, options, failedSite);
     if (result.hasJsonError)
     {
         size_t cursor, offset;
-        if (locateSite!T(parsed.document.root, failedSite, text, cursor, offset))
+        if (locateSite(parsed.document.root, failedSite, text, cursor, offset))
             result.jsonFailure.setLocation(text, offset);
     }
     return move(result);
@@ -149,31 +148,47 @@ ConfigDecodeResult!T decodeConfigInput(T)(scope JsonValue root,
     ConfigDecodeOptions options = ConfigDecodeOptions.init)
 {
     static assert(JsonSchemaAdmission!T);
-    JsonFailureSite failedSite;
+    JsonFailureSite!T failedSite;
     return decodeRoot!T(root, metadata, limits, options, failedSite);
 }
 
-// Exact occurrence identity without retaining a borrowed arena view.
-// The section index comes from the original schema; member ordinals are local
-// document occurrences, so escaped duplicates remain individually locatable.
-private struct JsonFailureSite
+// Occurrence coordinates distinguish repeated instances of the same schema
+// node, escaped spellings, and typed-key aliases without retaining a document.
+// Finite schema depth bounds storage and lexical location scanning.
+private struct JsonFailureSite(Root)
 {
-    size_t section;
-    size_t occurrence = size_t.max; // the section itself, including the root
+    size_t[WireWalk!(Json, Root).schema.nodes.length] occurrences;
+    size_t depth;
+
+    void prepend(size_t occurrence) @safe pure nothrow @nogc
+    {
+        assert(depth < occurrences.length);
+        foreach_reverse (i; 0 .. depth)
+            occurrences[i + 1] = occurrences[i];
+        occurrences[0] = occurrence;
+        ++depth;
+    }
 }
 
 private ConfigDecodeResult!T decodeRoot(T)(scope JsonValue root,
     scope ref const DefinitionMetadata!T metadata, ConfigLimits limits,
-    ConfigDecodeOptions options, ref JsonFailureSite failedSite)
+    ConfigDecodeOptions options, ref JsonFailureSite!T failedSite)
 {
     // Force core schema admission, including excluded shapes and merge policies.
     enum optionsCount = ConfigLeafCount!T;
     JsonError failure, unknownFailure;
-    JsonFailureSite unknownSite;
+    JsonFailureSite!T unknownSite;
     bool unknown;
+    JsonScratch scratch;
+    scope(exit) scratch.arena.release();
+    ConfigError captureFailure;
     if (!enumerateOccurrences!(T, T, 0)(root, options, failure, failedSite,
-            unknown, unknownFailure, unknownSite))
+            unknown, unknownFailure, unknownSite, scratch, captureFailure))
+    {
+        if (captureFailure.kind != ConfigErrorKind.none)
+            return captureFailureResult!T(captureFailure);
         return jsonFailureResult!T(failure);
+    }
     if (unknown)
     {
         failedSite = unknownSite;
@@ -183,7 +198,7 @@ private ConfigDecodeResult!T decodeRoot(T)(scope JsonValue root,
     // String counting emits no borrowed header and performs no string copy.
     ConfigInput!T staged;
     StringCaptureBudget counted;
-    ConfigError captureFailure;
+    counted.scratch = &scratch;
     if (!assembleSection!(T, T, 0, StringCaptureBudget, countString)(
             root, staged, counted, failure, captureFailure, failedSite))
     {
@@ -191,14 +206,21 @@ private ConfigDecodeResult!T decodeRoot(T)(scope JsonValue root,
             return captureFailureResult!T(captureFailure);
         return jsonFailureResult!T(failure);
     }
-    const preflight = preflightInput!T(staged, metadata, limits, counted.bytes);
+    captureFailure = validateMetadataOccurrences!(T, T, 0)(root, metadata);
+    if (captureFailure.kind != ConfigErrorKind.none)
+        return captureFailureResult!T(captureFailure);
+    ulong canonicalBytes;
+    captureFailure = countCanonicalSpellings!T(scratch, canonicalBytes);
+    if (captureFailure.kind != ConfigErrorKind.none)
+        return captureFailureResult!T(captureFailure);
+    const preflight = preflightInput!T(staged, metadata, limits,
+        counted.bytes, counted.nodes, canonicalBytes);
     if (preflight.kind != ConfigErrorKind.none)
         return captureFailureResult!T(preflight);
     auto begun = beginOwnedInput!T(metadata, limits);
     if (begun.hasError)
         return captureFailureResult!T(begun.error);
     auto capsule = begun.takeValue();
-    assemblyInput(capsule) = staged;
     if (!assembleSection!(T, T, 0, OwnedConfigInput!T, captureString, true)(
             root, assemblyInput(capsule), capsule,
             failure, captureFailure, failedSite))
@@ -225,69 +247,568 @@ private JsonError sectionError(S)(scope JsonValue value, string reason) @safe
     return failure;
 }
 
-// Occurrences are enumerated before any slot is assigned. A duplicate known
-// member wins over unknown-member rejection, and both precede value capture.
-private bool enumerateOccurrences(S, Root, size_t site)(scope JsonValue value,
-    ConfigDecodeOptions options, ref JsonError failure, ref JsonFailureSite failedSite,
-    ref bool unknown, ref JsonError unknownFailure, ref JsonFailureSite unknownSite)
+// Enumerate the complete occurrence tree before any value/presence map is
+// materialized. Known duplicates beat unknown-member rejection at every depth.
+private bool enumerateOccurrences(V, Root, size_t site)(scope JsonValue value,
+    ConfigDecodeOptions options, ref JsonError failure, ref JsonFailureSite!Root failedSite,
+    ref bool unknown, ref JsonError unknownFailure, ref JsonFailureSite!Root unknownSite,
+    ref JsonScratch scratch, ref ConfigError captureFailure)
+{
+    alias walk = WireWalk!(Json, Root);
+    static if (is(V == Nullable!E, E))
+    {
+        if (value.kind == JsonKind.null_)
+            return true;
+        return enumerateOccurrences!(E, Root, walk.child!(site, 0))(value,
+            options, failure, failedSite, unknown, unknownFailure, unknownSite,
+            scratch, captureFailure);
+    }
+    else static if (!is(V == string) && (isDynamicArray!V || isStaticArray!V))
+    {
+        if (value.kind != JsonKind.array)
+            return true; // original value decoder reports the domain failure
+        size_t index;
+        foreach (element; value.byElement)
+        {
+            const hadUnknown = unknown;
+            if (!enumerateOccurrences!(typeof(V.init[0]), Root, walk.child!(site, 0))(
+                    element, options, failure, failedSite, unknown,
+                    unknownFailure, unknownSite, scratch, captureFailure))
+            {
+                failure.prependIndex(index);
+                failedSite.prepend(index);
+                return false;
+            }
+            if (!hadUnknown && unknown)
+            {
+                unknownFailure.prependIndex(index);
+                unknownSite.prepend(index);
+            }
+            ++index;
+        }
+    }
+    else static if (isAssociativeArray!V)
+    {
+        if (value.kind != JsonKind.object)
+            return true;
+        alias K = typeof(V.init.keys[0]);
+        auto keyRecord = scratch.allocateMap(value.length);
+        if (keyRecord is null)
+        {
+            captureFailure = ConfigError(ConfigErrorKind.allocationFailed);
+            return false;
+        }
+        size_t occurrence;
+        static if (is(K == enum))
+            bool[__traits(allMembers, K).length] seen;
+        foreach (member; value.byKeyValue)
+        {
+            bool duplicate;
+            static if (is(K == string))
+                rememberKey(keyRecord.entries[occurrence], member.key, member.key,
+                    occurrence, member.value.kind);
+            else
+            {
+                auto parsed = aaKeyParseNative!(K, Root, walk.child!(site, 0))(
+                    member.key, failure);
+                if (parsed.failed)
+                {
+                    failedSite = JsonFailureSite!Root.init;
+                    failedSite.prepend(occurrence);
+                    return false;
+                }
+                bool matched;
+                static foreach (i, name; __traits(allMembers, K))
+                {{
+                    if (!matched && parsed.value == __traits(getMember, K, name))
+                    {
+                        matched = true;
+                        duplicate = seen[i];
+                        seen[i] = true;
+                        enum canonical = aaKeyText!(K, Root, walk.child!(site, 0))(
+                            __traits(getMember, K, name));
+                        rememberKey(keyRecord.entries[occurrence], canonical, member.key,
+                            occurrence, member.value.kind);
+                    }
+                }}
+            }
+            if (duplicate)
+            {
+                failure = sectionError!V(member.value,
+                    "duplicate canonical configuration map key");
+                failure.prependKey(member.key);
+                failedSite = JsonFailureSite!Root.init;
+                failedSite.prepend(occurrence);
+                return false;
+            }
+            ++occurrence;
+        }
+        static if (is(K == string))
+        {
+            keyRecord.entries.sort!((a, b) => a.spelling == b.spelling
+                ? a.occurrence < b.occurrence : a.spelling < b.spelling);
+            size_t duplicate = size_t.max;
+            foreach (i; 1 .. keyRecord.entries.length)
+                if (keyRecord.entries[i - 1].spelling == keyRecord.entries[i].spelling
+                        && (duplicate == size_t.max
+                            || keyRecord.entries[i].occurrence
+                                < keyRecord.entries[duplicate].occurrence))
+                    duplicate = i;
+            if (duplicate != size_t.max)
+            {
+                const entry = keyRecord.entries[duplicate];
+                failure = sectionError!V(value, "duplicate canonical configuration map key");
+                failure.actualKind = entry.actualKind;
+                failure.prependKey(entry.original);
+                failedSite = JsonFailureSite!Root.init;
+                failedSite.prepend(entry.occurrence);
+                return false;
+            }
+        }
+        occurrence = 0;
+        foreach (member; value.byKeyValue)
+        {
+            const hadUnknown = unknown;
+            if (!enumerateOccurrences!(typeof(V.init.values[0]), Root,
+                    walk.child!(site, 1))(member.value, options, failure,
+                    failedSite, unknown, unknownFailure, unknownSite, scratch, captureFailure))
+            {
+                failure.prependKey(member.key);
+                failedSite.prepend(occurrence);
+                return false;
+            }
+            if (!hadUnknown && unknown)
+            {
+                unknownFailure.prependKey(member.key);
+                unknownSite.prepend(occurrence);
+            }
+            ++occurrence;
+        }
+    }
+    else static if (is(V == struct))
+    {
+        alias policies = walk.childPolicies!site;
+        if (value.kind != JsonKind.object)
+        {
+            failure = sectionError!V(value, "expected a JSON object");
+            failedSite = JsonFailureSite!Root.init;
+            return false;
+        }
+        bool[ConfigFieldNames!V.length] seen;
+        size_t occurrence;
+        foreach (member; value.byKeyValue)
+        {
+            bool known;
+            static foreach (ordinal, name; ConfigFieldNames!V)
+            {{
+                if (member.key == policies[ordinal].key)
+                {
+                    known = true;
+                    if (seen[ordinal])
+                    {
+                        failure = sectionError!V(member.value,
+                            "duplicate canonical configuration member");
+                        failure.prependKey(member.key);
+                        failedSite = JsonFailureSite!Root.init;
+                        failedSite.prepend(occurrence);
+                        return false;
+                    }
+                    seen[ordinal] = true;
+                }
+            }}
+            if (!known && !unknown && (options.unknownMembers == ConfigUnknownMembers.reject
+                    || hasWireStrict!(Json, V)))
+            {
+                unknown = true;
+                unknownFailure = sectionError!V(member.value, "unknown configuration member");
+                unknownFailure.prependKey(member.key);
+                unknownSite = JsonFailureSite!Root.init;
+                unknownSite.prepend(occurrence);
+            }
+            ++occurrence;
+        }
+        occurrence = 0;
+        foreach (member; value.byKeyValue)
+        {
+            static foreach (ordinal, name; ConfigFieldNames!V)
+            {{
+                if (member.key == policies[ordinal].key)
+                {
+                    const hadUnknown = unknown;
+                    if (!enumerateOccurrences!(ConfigFieldType!(V, name), Root,
+                            walk.child!(site, ordinal))(member.value, options, failure,
+                            failedSite, unknown, unknownFailure, unknownSite,
+                            scratch, captureFailure))
+                    {
+                        failure.prependKey(member.key);
+                        failedSite.prepend(occurrence);
+                        return false;
+                    }
+                    if (!hadUnknown && unknown)
+                    {
+                        unknownFailure.prependKey(member.key);
+                        unknownSite.prepend(occurrence);
+                    }
+                }
+            }}
+            ++occurrence;
+        }
+    }
+    return true;
+}
+
+private struct CanonicalOccurrence
+{
+    const(char)[] spelling;
+    const(char)[] original;
+    size_t occurrence;
+    JsonKind actualKind;
+}
+private struct CanonicalMapRecord
+{
+    CanonicalOccurrence[] entries;
+    CanonicalMapRecord* next;
+}
+private struct JsonScratch
+{
+    Arena!ConfigAllocator arena;
+    CanonicalMapRecord* maps;
+    size_t keys;
+
+    CanonicalMapRecord* allocateMap(size_t count) @safe
+    {
+        if (count > size_t.max - keys)
+            return null;
+        auto record = arena.allocate!CanonicalMapRecord();
+        if (record is null)
+            return null;
+        record.entries = arena.array!CanonicalOccurrence(count);
+        if (count && record.entries.ptr is null)
+            return null;
+        record.next = maps;
+        maps = record;
+        keys += count;
+        return record;
+    }
+}
+
+// Scratch borrows only until decodeRoot releases its arena, before document
+// destruction. Neither these headers nor their allocator escape that call.
+private void rememberKey(ref CanonicalOccurrence entry,
+    scope const(char)[] spelling, scope const(char)[] original,
+    size_t occurrence, JsonKind kind) @trusted
+{
+    entry.spelling = spelling;
+    entry.original = original;
+    entry.occurrence = occurrence;
+    entry.actualKind = kind;
+}
+
+private ConfigError rememberDefaultKeys(V, Root, size_t site)(
+    scope ref const V value, ref JsonScratch scratch)
+{
+    alias walk = WireWalk!(Json, Root);
+    static if (is(V == Nullable!E, E))
+    {
+        if (!value.isNull)
+            return rememberDefaultKeys!(E, Root, walk.child!(site, 0))(value.get, scratch);
+    }
+    else static if (is(V == string)) {}
+    else static if (isDynamicArray!V || isStaticArray!V)
+    {
+        foreach (ref item; value)
+        {
+            auto error = rememberDefaultKeys!(typeof(V.init[0]), Root,
+                walk.child!(site, 0))(item, scratch);
+            if (error.kind != ConfigErrorKind.none)
+                return error;
+        }
+    }
+    else static if (isAssociativeArray!V)
+    {
+        alias K = typeof(V.init.keys[0]);
+        auto record = scratch.allocateMap(value.length);
+        if (record is null)
+            return ConfigError(ConfigErrorKind.allocationFailed);
+        size_t index;
+        foreach (key, ref item; value)
+        {
+            static if (is(K == string))
+                rememberKey(record.entries[index], key, key, index, JsonKind.none);
+            else
+            {
+                bool matched;
+                static foreach (name; __traits(allMembers, K))
+                {{
+                    if (!matched && key == __traits(getMember, K, name))
+                    {
+                        matched = true;
+                        enum canonical = aaKeyText!(K, Root, walk.child!(site, 0))(
+                            __traits(getMember, K, name));
+                        rememberKey(record.entries[index], canonical, canonical,
+                            index, JsonKind.none);
+                    }
+                }}
+                if (!matched)
+                    return ConfigError(ConfigErrorKind.invalidValue);
+            }
+            ++index;
+            auto error = rememberDefaultKeys!(typeof(V.init.values[0]), Root,
+                walk.child!(site, 1))(item, scratch);
+            if (error.kind != ConfigErrorKind.none)
+                return error;
+        }
+    }
+    else static if (is(V == struct))
+    {
+        static foreach (ordinal, name; ConfigFieldNames!V)
+        {{
+            auto error = rememberDefaultKeys!(ConfigFieldType!(V, name), Root,
+                walk.child!(site, ordinal))(__traits(getMember, value, name), scratch);
+            if (error.kind != ConfigErrorKind.none)
+                return error;
+        }}
+    }
+    return ConfigError.init;
+}
+
+private ConfigError countCanonicalSpellings(Root)(ref JsonScratch scratch,
+    out ulong bytes)
+{
+    bytes = 0;
+    auto spellings = scratch.arena.array!(const(char)[])(scratch.keys);
+    if (scratch.keys && spellings.ptr is null)
+        return ConfigError(ConfigErrorKind.allocationFailed);
+    size_t index;
+    for (auto record = scratch.maps; record !is null; record = record.next)
+        foreach (entry; record.entries)
+            spellings[index++] = entry.spelling;
+    spellings.sort;
+    foreach (i, spelling; spellings)
+    {
+        if (i && spellings[i - 1] == spelling)
+            continue;
+        bool declaredPath;
+        static foreach (path; ConfigPatterns!Root)
+            if (spelling == path)
+                declaredPath = true;
+        if (!declaredPath)
+        {
+            if (spelling.length > ulong.max - bytes)
+                return ConfigError(ConfigErrorKind.arithmeticOverflow);
+            bytes += spelling.length;
+        }
+    }
+    return ConfigError.init;
+}
+
+private struct StringCaptureBudget
+{
+    ulong bytes;
+    ulong nodes;
+    JsonScratch* scratch;
+}
+
+private ConfigError countCharge(scope ref StringCaptureBudget budget, ulong bytes,
+    ulong nodes = 0) @safe pure nothrow @nogc
+{
+    if (bytes > ulong.max - budget.bytes || nodes > ulong.max - budget.nodes)
+        return ConfigError(ConfigErrorKind.arithmeticOverflow);
+    budget.bytes += bytes;
+    budget.nodes += nodes;
+    return ConfigError.init;
+}
+
+private ConfigError countString(scope ref StringCaptureBudget budget,
+    scope const(char)[] bytes, out string captured) @safe pure nothrow @nogc
+{
+    captured = null;
+    return countCharge(budget, bytes.length);
+}
+
+private template ElementPolicy(P)
+{
+    static if (is(P == ListOf!E, E)) alias ElementPolicy = E;
+    else alias ElementPolicy = Atomic;
+}
+private template ValuePolicy(P)
+{
+    static if (is(P == AttrsOf!E, E)) alias ValuePolicy = E;
+    else alias ValuePolicy = Atomic;
+}
+private template ContainedPolicy(P)
+{
+    static if (is(P == NullOr!E, E)) alias ContainedPolicy = E;
+    else alias ContainedPolicy = Atomic;
+}
+private template MemberPolicy(S, string name, P)
+{
+    static if (is(P == Submodule)) alias MemberPolicy = ConfigFieldPolicy!(S, name);
+    else alias MemberPolicy = Atomic;
+}
+
+private ConfigError captureOriginalStringKey(Root, size_t site, Owner)(
+    scope ref Owner owner, scope const(char)[] text, out string key) @trusted
+{
+    // The only immutable cast is the duration of a core-owned capture call.
+    // Core interns/copies on a miss and never retains the borrowed header.
+    return captureCanonicalKey!(Root, site)(owner, cast(string) text, key);
+}
+
+private auto stringMetadataEntry(M)(scope const(char)[] key,
+    return scope ref const M entries) @trusted
+{
+    // An AA lookup reads the key; the returned pointer borrows only `entries`.
+    return cast(string) key in entries;
+}
+
+// Core owns control/absence policy. This adapter contributes only original
+// occurrence shape, so count-only slots never need a fabricated presence tree.
+private ConfigError validateMetadataOccurrences(S, Root, size_t site, string prefix = "")(
+    scope JsonValue value, scope ref const DefinitionMetadata!S metadata)
 {
     alias walk = WireWalk!(Json, Root);
     alias policies = walk.childPolicies!site;
-    if (value.kind != JsonKind.object)
-    {
-        failure = sectionError!S(value, "expected a JSON object");
-        failedSite = JsonFailureSite(site);
-        return false;
-    }
-    bool[ConfigFieldNames!S.length] seen;
-    size_t occurrence;
     foreach (member; value.byKeyValue)
     {
-        bool known;
         static foreach (ordinal, name; ConfigFieldNames!S)
         {{
             if (member.key == policies[ordinal].key)
             {
-                known = true;
-                if (seen[ordinal])
+                static if (ConfigIsSection!(S, name))
                 {
-                    failure = sectionError!S(member.value,
-                        "duplicate canonical configuration member");
-                    failure.prependKey(member.key);
-                    failedSite = JsonFailureSite(site, occurrence);
-                    return false;
+                    auto error = validateMetadataOccurrences!(ConfigFieldType!(S, name),
+                        Root, walk.child!(site, ordinal), prefix ~ name ~ ".")(
+                            member.value, __traits(getMember, metadata, name).members);
+                    if (error.kind != ConfigErrorKind.none)
+                        return error;
                 }
-                seen[ordinal] = true;
+                else static if (__traits(hasMember,
+                    typeof(__traits(getMember, metadata, name)), "branches"))
+                {
+                    if (!validJsonBranchMetadata!(ConfigFieldType!(S, name),
+                            ConfigFieldPolicy!(S, name), Root, walk.child!(site, ordinal))(
+                            member.value, __traits(getMember, metadata, name).branches))
+                        return ConfigError(ConfigErrorKind.invalidMetadata, prefix ~ name);
+                }
             }
         }}
-        if (!known && !unknown && (options.unknownMembers == ConfigUnknownMembers.reject
-                || hasWireStrict!(Json, S)))
-        {
-            unknown = true;
-            unknownFailure = sectionError!S(member.value, "unknown configuration member");
-            unknownFailure.prependKey(member.key);
-            unknownSite = JsonFailureSite(site, occurrence);
-        }
-        occurrence++;
     }
-    foreach (member; value.byKeyValue)
+    return ConfigError.init;
+}
+
+private bool validJsonBranchMetadata(V, P, Root, size_t site, bool atomicChild = false)(
+    scope JsonValue source, scope ref const ConfigBranchMetadata!V metadata)
+{
+    static if (atomicChild)
     {
-        static foreach (ordinal, name; ConfigFieldNames!S)
-        {{
-            static if (ConfigIsSection!(S, name))
+        if (!validAtomicChildBranchMetadataControls(metadata))
+            return false;
+    }
+    else if (!validBranchMetadataControls(metadata))
+        return false;
+    if (branchMetadataInert(metadata))
+        return true;
+    alias walk = WireWalk!(Json, Root);
+    static if (is(V == Nullable!E, E))
+    {
+        if (!metadata.shaped)
+            return !metadata.hasValue && branchMetadataInert(metadata.child);
+        const hasValue = source.kind != JsonKind.null_;
+        if (metadata.hasValue != hasValue)
+            return false;
+        return hasValue
+            ? validJsonBranchMetadata!(E, ContainedPolicy!P, Root, walk.child!(site, 0),
+                is(P == Atomic))(
+                source, metadata.child)
+            : validAbsentBranchMetadata!(E, ContainedPolicy!P)(metadata.child);
+    }
+    else static if (is(V == string)) {}
+    else static if (isDynamicArray!V || isStaticArray!V)
+    {
+        if (!metadata.shaped)
+            return metadata.elements.length == 0;
+        if (metadata.elements.length != source.length)
+            return false;
+        size_t index;
+        foreach (element; source.byElement)
+        {
+            if (!validJsonBranchMetadata!(typeof(V.init[0]), ElementPolicy!P,
+                    Root, walk.child!(site, 0), is(P == Atomic))(
+                    element, metadata.elements[index++]))
+                return false;
+        }
+    }
+    else static if (isAssociativeArray!V)
+    {
+        if (!metadata.shaped)
+            return metadata.entries.length == 0;
+        if (metadata.entries.length != source.length)
+            return false;
+        alias K = typeof(V.init.keys[0]);
+        foreach (member; source.byKeyValue)
+        {
+            static if (is(K == string))
+                auto branch = stringMetadataEntry(member.key, metadata.entries);
+            else
             {
+                JsonError ignored;
+                auto parsed = aaKeyParseNative!(K, Root, walk.child!(site, 0))(
+                    member.key, ignored);
+                if (parsed.failed)
+                    return false;
+                auto branch = parsed.value in metadata.entries;
+            }
+            if (branch is null || !validJsonBranchMetadata!(typeof(V.init.values[0]),
+                    ValuePolicy!P, Root, walk.child!(site, 1), is(P == Atomic))(
+                    member.value, *branch))
+                return false;
+        }
+    }
+    else static if (is(V == struct))
+    {
+        if (!metadata.shaped)
+        {
+            static foreach (name; ConfigFieldNames!V)
+                if (!branchMetadataInert(__traits(getMember, metadata.members, name)))
+                    return false;
+            return true;
+        }
+        alias policies = walk.childPolicies!site;
+        bool[ConfigFieldNames!V.length] seen;
+        foreach (member; source.byKeyValue)
+        {
+            static foreach (ordinal, name; ConfigFieldNames!V)
+            {{
                 if (member.key == policies[ordinal].key)
                 {
-                    const hadUnknown = unknown;
-                    if (!enumerateOccurrences!(ConfigFieldType!(S, name), Root,
-                            walk.child!(site, ordinal))(member.value, options, failure,
-                            failedSite, unknown, unknownFailure, unknownSite))
-                    {
-                        failure.prependKey(member.key);
+                    seen[ordinal] = true;
+                    if (!validJsonBranchMetadata!(ConfigFieldType!(V, name),
+                            MemberPolicy!(V, name, P), Root, walk.child!(site, ordinal),
+                            is(P == Atomic))(
+                            member.value, __traits(getMember, metadata.members, name)))
                         return false;
-                    }
-                    if (!hadUnknown && unknown)
-                        unknownFailure.prependKey(member.key);
+                }
+            }}
+        }
+        static foreach (ordinal, name; ConfigFieldNames!V)
+        {{
+            if (!seen[ordinal])
+            {
+                static if (is(P == Submodule))
+                {
+                    if (!validAbsentBranchMetadata!(ConfigFieldType!(V, name),
+                            MemberPolicy!(V, name, P))(
+                            __traits(getMember, metadata.members, name)))
+                        return false;
+                }
+                else
+                {
+                    static const initial = __traits(getMember, V.init, name);
+                    if (!validDefaultAtomicBranchMetadata!(ConfigFieldType!(V, name))(
+                            initial,
+                            __traits(getMember, metadata.members, name)))
+                        return false;
                 }
             }
         }}
@@ -295,28 +816,75 @@ private bool enumerateOccurrences(S, Root, size_t site)(scope JsonValue value,
     return true;
 }
 
-private struct StringCaptureBudget
-{
-    ulong bytes;
-}
 
-private ConfigError countString(ref StringCaptureBudget budget,
-    scope const(char)[] bytes, out string captured) @safe pure nothrow @nogc
+// Optional Atomic omissions are initialized native data, not sparse members.
+// Their full initializer shape is source data, but Atomic child controls apply.
+private bool validDefaultAtomicBranchMetadata(V)(scope ref const V value,
+    scope ref const ConfigBranchMetadata!V metadata)
 {
-    captured = null;
-    if (bytes.length > ulong.max - budget.bytes)
-        return ConfigError(ConfigErrorKind.arithmeticOverflow);
-    budget.bytes += bytes.length;
-    return ConfigError.init;
+    if (!validAtomicChildBranchMetadataControls(metadata))
+        return false;
+    if (branchMetadataInert(metadata))
+        return true;
+    static if (is(V == Nullable!E, E))
+    {
+        if (!metadata.shaped)
+            return !metadata.hasValue && branchMetadataInert(metadata.child);
+        if (metadata.hasValue != !value.isNull)
+            return false;
+        return value.isNull
+            ? validAbsentBranchMetadata!(E, Atomic)(metadata.child)
+            : validDefaultAtomicBranchMetadata!E(value.get, metadata.child);
+    }
+    else static if (is(V == string)) {}
+    else static if (isDynamicArray!V || isStaticArray!V)
+    {
+        if (!metadata.shaped)
+            return metadata.elements.length == 0;
+        if (metadata.elements.length != value.length)
+            return false;
+        foreach (i, ref item; value)
+            if (!validDefaultAtomicBranchMetadata!(typeof(V.init[0]))(
+                    item, metadata.elements[i]))
+                return false;
+    }
+    else static if (isAssociativeArray!V)
+    {
+        if (!metadata.shaped)
+            return metadata.entries.length == 0;
+        if (metadata.entries.length != value.length)
+            return false;
+        foreach (key, ref item; value)
+        {
+            auto child = key in metadata.entries;
+            if (child is null || !validDefaultAtomicBranchMetadata!(
+                    typeof(V.init.values[0]))(item, *child))
+                return false;
+        }
+    }
+    else static if (is(V == struct))
+    {
+        if (!metadata.shaped)
+        {
+            static foreach (name; ConfigFieldNames!V)
+                if (!branchMetadataInert(__traits(getMember, metadata.members, name)))
+                    return false;
+            return true;
+        }
+        static foreach (name; ConfigFieldNames!V)
+            if (!validDefaultAtomicBranchMetadata!(ConfigFieldType!(V, name))(
+                    __traits(getMember, value, name),
+                    __traits(getMember, metadata.members, name)))
+                return false;
+    }
+    return true;
 }
 
 private bool assembleSection(S, Root, size_t site, Owner, alias capture,
-    bool stringsOnly = false)(
-    scope JsonValue value, ref ConfigInput!S input, ref Owner capsule, ref JsonError failure,
-    ref ConfigError captureFailure, ref JsonFailureSite failedSite)
+    bool owning = false, string prefix = "")(
+    scope JsonValue value, ref ConfigInput!S input, scope ref Owner capsule, ref JsonError failure,
+    ref ConfigError captureFailure, ref JsonFailureSite!Root failedSite)
 {
-    import std.typecons : Nullable;
-
     alias walk = WireWalk!(Json, Root);
     alias policies = walk.childPolicies!site;
     size_t occurrence;
@@ -328,92 +896,378 @@ private bool assembleSection(S, Root, size_t site, Owner, alias capture,
             {
                 alias V = ConfigFieldType!(S, name);
                 enum child = walk.child!(site, ordinal);
+                bool decoded;
                 static if (ConfigIsSection!(S, name))
+                    decoded = assembleSection!(V, Root, child, Owner, capture, owning,
+                        prefix ~ name ~ ".")(
+                        member.value, __traits(getMember, input, name), capsule,
+                        failure, captureFailure, failedSite);
+                else
                 {
-                    if (!assembleSection!(V, Root, child, Owner, capture, stringsOnly)(member.value,
-                            __traits(getMember, input, name), capsule, failure,
-                            captureFailure, failedSite))
-                    {
-                        failure.prependKey(member.key);
-                        return false;
-                    }
-                }
-                else static if (!stringsOnly || is(V == string) || is(V == Nullable!string))
-                {
-                    if (!decodeOwnedScalarAt!(V, Root, child, Owner,
-                            ConfigError, capture)(member.value,
+                    decoded = assembleGraph!(V, ConfigFieldPolicy!(S, name), Root, child,
+                        Owner, capture, owning)(member.value,
                             __traits(getMember, input, name).value,
-                            failure, capsule, captureFailure))
-                    {
-                        failedSite = JsonFailureSite(site, occurrence);
-                        failure.prependKey(member.key);
-                        return false;
-                    }
-                    static if (!stringsOnly)
+                            __traits(getMember, input, name).presence,
+                            capsule, failure, captureFailure, failedSite);
+                    if (decoded)
                         __traits(getMember, input, name).supplied = true;
+                }
+                if (!decoded)
+                {
+                    if (captureFailure.kind != ConfigErrorKind.none
+                            && captureFailure.path.length == 0)
+                        captureFailure.path = prefix ~ name;
+                    failure.prependKey(member.key);
+                    failedSite.prepend(occurrence);
+                    return false;
                 }
             }
         }}
-        occurrence++;
+        ++occurrence;
     }
     return true;
 }
 
-// Only known schema sections can contain a deeper error site. Their recursion
-// is bounded by the admitted schema, not the input. Everything else is skipped
-// lexically with constant storage, including arbitrarily deep ignored values.
-// The native parser has already validated the text; this does not reparse it.
-private bool locateSite(S, Root = S, size_t site = 0)(
-    scope JsonValue current, JsonFailureSite target,
-    scope const(char)[] text, ref size_t cursor, out size_t offset)
+// The count pass validates original primitive sites without retaining a string
+// header or materializing a container. The ownership pass writes each leaf
+// directly into the capsule and builds independent generated presence.
+private bool assembleGraph(V, P, Root, size_t site, Owner, alias capture, bool owning)(
+    scope JsonValue source, ref V value, ref ConfigPresence!V presence,
+    scope ref Owner owner, ref JsonError failure, ref ConfigError captureFailure,
+    ref JsonFailureSite!Root failedSite)
 {
     alias walk = WireWalk!(Json, Root);
-    alias policies = walk.childPolicies!site;
-    skipSpace(text, cursor);
-    offset = cursor;
-    if (target.section == site && target.occurrence == size_t.max)
-        return true;
-    if (current.kind != JsonKind.object)
+    failedSite = JsonFailureSite!Root.init;
+    static if (owning)
     {
-        skipValue(text, cursor);
-        return false;
+        clearGraph(value);
+        presence = ConfigPresence!V.init;
     }
-    cursor++; // opening brace
-    size_t occurrence;
-    foreach (member; current.byKeyValue)
+    static if (!owning)
     {
-        skipSpace(text, cursor);
-        skipString(text, cursor);
-        skipSpace(text, cursor);
-        cursor++; // colon
-        skipSpace(text, cursor);
-        offset = cursor;
-        if (target.section == site && target.occurrence == occurrence)
-            return true;
-        bool searchedSection;
-        static foreach (ordinal, name; ConfigFieldNames!S)
-        {{
-            static if (ConfigIsSection!(S, name))
+        captureFailure = countCharge(owner, 0, 1);
+        if (captureFailure.kind != ConfigErrorKind.none)
+            return false;
+    }
+    static if (is(V == string))
+    {
+        if (!decodeOwnedScalarAt!(V, Root, site, Owner, ConfigError, capture)(
+                source, value, failure, owner, captureFailure))
+            return false;
+    }
+    else static if (is(V == Nullable!E, E))
+    {
+        static if (!owning)
+        {
+            captureFailure = countCharge(owner, 1);
+            if (captureFailure.kind != ConfigErrorKind.none)
+                return false;
+        }
+        if (source.kind == JsonKind.null_)
+        {
+            static if (owning)
             {
+                value = V.init;
+                presence.hasValue = false;
+            }
+        }
+        else
+        {
+            E childValue;
+            ConfigPresence!E childPresence;
+            if (!assembleGraph!(E, ContainedPolicy!P, Root, walk.child!(site, 0),
+                    Owner, capture, owning)(source, childValue, childPresence,
+                    owner, failure, captureFailure, failedSite))
+                return false;
+            static if (owning)
+            {
+                value = V(childValue);
+                presence.hasValue = true;
+                presence.child = childPresence;
+            }
+        }
+    }
+    else static if (isDynamicArray!V || isStaticArray!V)
+    {
+        alias E = typeof(V.init[0]);
+        if (source.kind != JsonKind.array)
+        {
+            failure = sectionError!V(source, "expected a JSON array");
+            return false;
+        }
+        static if (isStaticArray!V)
+        {
+            if (source.length != V.length)
+            {
+                failure = sectionError!V(source, "wrong number of array elements");
+                return false;
+            }
+        }
+        else static if (!owning)
+        {
+            captureFailure = countCharge(owner, 1);
+            if (captureFailure.kind != ConfigErrorKind.none)
+                return false;
+        }
+        static if (owning)
+        {
+            static if (isDynamicArray!V)
+            {
+                captureFailure = captureArray(owner, source.length, true, value);
+                if (captureFailure.kind != ConfigErrorKind.none)
+                    return false;
+            }
+            captureFailure = captureArray(owner, source.length, true, presence.elements);
+            if (captureFailure.kind != ConfigErrorKind.none)
+                return false;
+        }
+        size_t index;
+        foreach (element; source.byElement)
+        {
+            E childValue;
+            ConfigPresence!E childPresence;
+            if (!assembleGraph!(E, ElementPolicy!P, Root, walk.child!(site, 0),
+                    Owner, capture, owning)(element, childValue, childPresence,
+                    owner, failure, captureFailure, failedSite))
+            {
+                failure.prependIndex(index);
+                failedSite.prepend(index);
+                return false;
+            }
+            static if (owning)
+            {
+                value[index] = childValue;
+                presence.elements[index] = childPresence;
+            }
+            ++index;
+        }
+    }
+    else static if (isAssociativeArray!V)
+    {
+        alias K = typeof(V.init.keys[0]);
+        alias E = typeof(V.init.values[0]);
+        if (source.kind != JsonKind.object)
+        {
+            failure = sectionError!V(source, "expected a JSON object");
+            return false;
+        }
+        static if (!owning)
+        {
+            captureFailure = countCharge(owner, 1);
+            if (captureFailure.kind != ConfigErrorKind.none)
+                return false;
+        }
+        static if (owning)
+        {
+            captureFailure = captureMapEmpty(owner, value);
+            if (captureFailure.kind != ConfigErrorKind.none)
+                return false;
+            captureFailure = captureMapEmpty(owner, presence.entries);
+            if (captureFailure.kind != ConfigErrorKind.none)
+                return false;
+        }
+        size_t occurrence;
+        foreach (member; source.byKeyValue)
+        {
+            K key;
+            static if (is(K == string))
+            {
+                static if (owning)
+                    captureFailure = captureOriginalStringKey!(Root,
+                        walk.child!(site, 0))(owner, member.key, key);
+                else
+                    captureFailure = capture(owner, member.key, key);
+            }
+            else
+            {
+                auto parsed = aaKeyParseNative!(K, Root, walk.child!(site, 0))(
+                    member.key, failure);
+                if (parsed.failed)
+                {
+                    failedSite.prepend(occurrence);
+                    return false;
+                }
+                key = parsed.value;
+                static if (!owning)
+                    captureFailure = countCharge(owner, K.sizeof);
+            }
+            static if (!owning)
+            {
+                if (captureFailure.kind == ConfigErrorKind.none)
+                    captureFailure = countCharge(owner, 0, 1);
+            }
+            if (captureFailure.kind != ConfigErrorKind.none)
+                return false;
+            static if (owning && !is(K == string))
+            {
+                string canonical;
+                captureFailure = captureCanonicalKey!(Root, walk.child!(site, 0))(
+                    owner, key, canonical);
+                if (captureFailure.kind != ConfigErrorKind.none)
+                    return false;
+            }
+            E childValue;
+            ConfigPresence!E childPresence;
+            if (!assembleGraph!(E, ValuePolicy!P, Root, walk.child!(site, 1),
+                    Owner, capture, owning)(member.value, childValue, childPresence,
+                    owner, failure, captureFailure, failedSite))
+            {
+                failure.prependKey(member.key);
+                failedSite.prepend(occurrence);
+                return false;
+            }
+            static if (owning)
+            {
+                captureFailure = captureMapEntry(owner, value, key, childValue);
+                if (captureFailure.kind != ConfigErrorKind.none)
+                    return false;
+                captureFailure = captureMapEntry(owner, presence.entries, key, childPresence);
+                if (captureFailure.kind != ConfigErrorKind.none)
+                    return false;
+            }
+            ++occurrence;
+        }
+    }
+    else static if (is(V == struct))
+    {
+        if (source.kind != JsonKind.object)
+        {
+            failure = sectionError!V(source, "expected a JSON object");
+            return false;
+        }
+        alias policies = walk.childPolicies!site;
+        bool[ConfigFieldNames!V.length] seen;
+        size_t occurrence;
+        foreach (member; source.byKeyValue)
+        {
+            static foreach (ordinal, name; ConfigFieldNames!V)
+            {{
                 if (member.key == policies[ordinal].key)
                 {
-                    searchedSection = true;
-                    if (locateSite!(ConfigFieldType!(S, name), Root,
-                            walk.child!(site, ordinal))(
-                            member.value, target, text, cursor, offset))
-                        return true;
+                    if (!assembleGraph!(ConfigFieldType!(V, name), MemberPolicy!(V, name, P),
+                            Root, walk.child!(site, ordinal), Owner, capture, owning)(
+                            member.value, __traits(getMember, value, name),
+                            __traits(getMember, presence.members, name), owner,
+                            failure, captureFailure, failedSite))
+                    {
+                        failure.prependKey(member.key);
+                        failedSite.prepend(occurrence);
+                        return false;
+                    }
+                    seen[ordinal] = true;
                 }
-            }
-        }}
-        if (!searchedSection)
-            skipValue(text, cursor);
-        skipSpace(text, cursor);
-        if (cursor < text.length && text[cursor] == ',')
-            cursor++;
-        occurrence++;
+            }}
+            ++occurrence;
+        }
+        static if (!is(P == Submodule))
+        {
+            static foreach (ordinal, name; ConfigFieldNames!V)
+            {{
+                alias E = ConfigFieldType!(V, name);
+                if (!seen[ordinal])
+                {
+                    static if (!policies[ordinal].optional && !is(E == Nullable!N, N))
+                    {
+                        failure = sectionError!V(source, "missing required field");
+                        failure.prependKey(policies[ordinal].key);
+                        failedSite = JsonFailureSite!Root.init;
+                        return false;
+                    }
+                    else
+                    {
+                        const initialized = __traits(getMember, V.init, name);
+                        static if (owning)
+                            captureFailure = captureDefaultGraph!(Root,
+                                walk.child!(site, ordinal))(owner, initialized,
+                                    __traits(getMember, value, name),
+                                    __traits(getMember, presence.members, name));
+                        else
+                        {
+                            ulong bytes, nodes;
+                            if (!measureFullGraph(initialized, bytes, nodes))
+                                captureFailure = ConfigError(ConfigErrorKind.arithmeticOverflow);
+                            else
+                                captureFailure = countCharge(owner, bytes, nodes);
+                            if (captureFailure.kind == ConfigErrorKind.none)
+                                captureFailure = rememberDefaultKeys!(E, Root,
+                                    walk.child!(site, ordinal))(initialized, *owner.scratch);
+                        }
+                        if (captureFailure.kind != ConfigErrorKind.none)
+                            return false;
+                    }
+                }
+            }}
+        }
     }
+    else
+    {
+        if (!decodeOwnedScalarAt!(V, Root, site, Owner, ConfigError, capture)(
+                source, value, failure, owner, captureFailure))
+            return false;
+        static if (!owning)
+        {
+            ConfigPresence!V checked;
+            checked.supplied = true;
+            if (!validGraph!(V, Atomic)(value, checked))
+            {
+                captureFailure = ConfigError(ConfigErrorKind.invalidValue);
+                return false;
+            }
+            captureFailure = countCharge(owner, V.sizeof);
+            if (captureFailure.kind != ConfigErrorKind.none)
+                return false;
+        }
+    }
+    static if (owning)
+        presence.supplied = true;
+    return true;
+}
+
+// Follow only the recorded original occurrence chain. Ignored/unrelated
+// subtrees are skipped lexically with constant storage, not decoded/reparsed.
+private bool locateSite(Root)(scope JsonValue current, JsonFailureSite!Root target,
+    scope const(char)[] text, ref size_t cursor, out size_t offset, size_t depth = 0)
+{
     skipSpace(text, cursor);
-    cursor++; // closing brace
+    offset = cursor;
+    if (depth == target.depth)
+        return true;
+    if (current.kind != JsonKind.object && current.kind != JsonKind.array)
+        return false;
+    cursor++; // opening brace/bracket
+    size_t occurrence;
+    if (current.kind == JsonKind.object)
+    {
+        foreach (member; current.byKeyValue)
+        {
+            skipSpace(text, cursor);
+            skipString(text, cursor);
+            skipSpace(text, cursor);
+            cursor++; // colon
+            skipSpace(text, cursor);
+            if (occurrence == target.occurrences[depth])
+                return locateSite(member.value, target, text, cursor, offset, depth + 1);
+            skipValue(text, cursor);
+            skipSpace(text, cursor);
+            if (cursor < text.length && text[cursor] == ',')
+                cursor++;
+            ++occurrence;
+        }
+    }
+    else
+    {
+        foreach (element; current.byElement)
+        {
+            skipSpace(text, cursor);
+            if (occurrence == target.occurrences[depth])
+                return locateSite(element, target, text, cursor, offset, depth + 1);
+            skipValue(text, cursor);
+            skipSpace(text, cursor);
+            if (cursor < text.length && text[cursor] == ',')
+                cursor++;
+            ++occurrence;
+        }
+    }
     return false;
 }
 
@@ -691,8 +1545,6 @@ version (unittest)
         @WireConvert!(toWire, fromWire) int width;
     }
     static assert(!__traits(compiles, decodeConfigInput!Converted(`{"width":1}`)));
-    struct Collection { int[] widths; }
-    static assert(!__traits(compiles, decodeConfigInput!Collection(`{"widths":[1]}`)));
 }
 
 @("wired.config.json.captureBudgetBoundaries")

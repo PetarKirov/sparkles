@@ -47,8 +47,8 @@ concatenate, or recursively combine. Retained inputs and their final disposition
 explain the result; an execution trace of intermediate merge steps is not required.
 
 This contract owns the typed, synchronous, I/O-free configuration resolver in
-`sparkles:wired`; `sparkles.wired.config` is a proposed module family, not a new
-package. Applications discover sources, choose decoding policy, use library input
+`sparkles:wired`; `sparkles.wired.config` is the implemented module family, not a
+new package. Applications discover sources, choose decoding policy, use library input
 adapters or submit typed definitions, and report conversion failures. They own
 priority assignment and startup decisions; the UI library owns presentation.
 File writing, reactive evaluation, arbitrary executable configuration, Nix
@@ -196,7 +196,8 @@ compile-time schema UDAs and typed policies, with no runtime string registry.
 Unannotated scalar and collection options **must** use atomic conflict semantics;
 collection type alone **must not** opt an option into composition.
 
-The following policy names are illustrative vocabulary, not shipped symbols:
+The following policy names are illustrative vocabulary; the shipped typed
+spellings are specified in [composition](./composition.md#_2-typed-policies-and-supported-payloads):
 
 | Policy       | Accepted values                                   | Equal-priority result                                                    |
 | ------------ | ------------------------------------------------- | ------------------------------------------------------------------------ |
@@ -321,7 +322,9 @@ Scalar and supported finite collection accounting are specified by their concret
 interface pages; [WCFG49–WCFG50](./composition.md#_6-collection-accounting-and-gates)
 extend scalar logical charges to derived records and normalized graphs. Custom
 conversion/ownership remains gated by [Q1](./decisions.md#q1-storage-and-default-limits).
-Specified limits and feasible primitives are not collection-conformance evidence.
+Specified limits and feasible primitives alone are not collection-conformance
+evidence; [testing](./testing.md#c2-collection-implementation) records the local
+production acceptance and runtime observations without claiming CI or app cutover.
 
 ## 6. Integration and compatibility
 

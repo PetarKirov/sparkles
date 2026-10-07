@@ -168,6 +168,76 @@ UTF-16 payload=3 units=0041,D83D,DE00,0000
 See [Unicode analysis](docs/libs/base/reference/unicode-analysis.md) for borrowed
 transform workspaces, provenance, epochs, and authenticated table generation.
 
+### Collection Configuration
+
+The same builder composes collections through typed policies. `ListOf!Submodule`
+keeps each element as a separate instance and resolves its supplied members with
+the struct's defaults. Native initialized values do not imply presence: here the
+unsupplied `enabled = false` is ignored, so the declared default `true` survives.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_collection_config"
+    dependency "sparkles:wired" version="*"
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
++/
+import std.stdio : writeln;
+import sparkles.wired.config : ConfigBuilder, ConfigErrorKind, ConfigInput,
+    ConfigMerge, ConfigPresence, ConfigSourceKind, DefinitionSlot, ListOf,
+    SourceId, Submodule;
+
+struct Plugin
+{
+    string label = "default";
+    bool enabled = true;
+}
+
+struct Settings
+{
+    @(ConfigMerge!(ListOf!Submodule)()) Plugin[] plugins;
+}
+
+void main() @safe
+{
+    auto created = ConfigBuilder!Settings.create();
+    assert(created.hasValue);
+    auto builder = created.takeValue();
+    auto user = builder.registerSource(SourceId("user"),
+        ConfigSourceKind.userFile, "typed settings", 1000);
+    assert(user.hasValue);
+
+    Plugin[] plugins = [Plugin("lint", false)];
+    ConfigPresence!(Plugin[]) presence;
+    presence.elements.length = 1;
+    presence.elements[0].supplied = true;
+    presence.elements[0].members.label.supplied = true;
+    ConfigInput!Settings input;
+    input.plugins = DefinitionSlot!(Plugin[])(true, plugins, presence);
+    auto submitted = builder.submitBorrowed(user.value, input);
+    assert(submitted.kind == ConfigErrorKind.none);
+    auto resolved = builder.resolve();
+    assert(resolved.hasValue);
+    auto snapshot = resolved.takeValue();
+    auto copied = snapshot.copyConfig();
+    assert(copied.hasValue);
+    writeln(copied.value.plugins[0].label);
+    writeln(copied.value.plugins[0].enabled);
+}
+```
+
+```ansi
+lint
+true
+```
+
+See [collections and submodules](docs/libs/wired/index.md#collections-and-submodules)
+for full versus sparse input, map/list policies, branch provenance, and budgets.
+Application source discovery and `config show` rendering are not provided by this
+library interface.
+
 ### Versions
 
 `sparkles:versions` is an ecosystem-aware version library: it parses,

@@ -546,7 +546,7 @@ if (hasConvert!(F, syms))
 
 /// The first value in `names` that equals an earlier one, or `null` when all are
 /// distinct. CTFE helper for the uniqueness checks (§5.5).
-private string firstDuplicate(const(string)[] names)
+private string firstDuplicate(const(string)[] names) @safe pure
 {
     bool[string] seen;
     foreach (n; names)
@@ -878,6 +878,54 @@ if (is(T == struct))
     alias fieldPolicies = schemaFieldPolicies!(F, T);
 }
 
+private string recaseEnumName(string name, CaseStyle style) @safe pure
+{
+    final switch (style)
+    {
+        static foreach (candidate; __traits(allMembers, CaseStyle))
+        {
+            case __traits(getMember, CaseStyle, candidate):
+                return convertCase!(__traits(getMember, CaseStyle, candidate))(name);
+        }
+    }
+}
+
+/// Internal selected-site enum labels; only name representation requires uniqueness.
+package(sparkles.wired) string[] enumWireNames(F, E)(CaseStyle style, Repr repr)
+if (is(E == enum))
+{
+    auto names = new string[__traits(allMembers, E).length];
+    static foreach (i, member; __traits(allMembers, E))
+    {{
+        string explicitName;
+        int nameTier;
+        static foreach (uda; __traits(getAttributes, __traits(getMember, E, member)))
+        {{
+            static if (is(typeof(uda) == WireNameAttr!F))
+                enum tier = 2;
+            else static if (is(typeof(uda) == WireNameAttr!AnyFormat))
+                enum tier = 1;
+            static if (is(typeof(tier)))
+            {
+                if (nameTier < tier)
+                {
+                    explicitName = uda.name;
+                    nameTier = tier;
+                }
+            }
+        }}
+        names[i] = nameTier ? explicitName : recaseEnumName(member, style);
+    }}
+    if (repr == Repr.name)
+    {
+        const duplicate = firstDuplicate(names);
+        assert(duplicate is null,
+            "wired: duplicate member name \"" ~ duplicate ~ "\" for enum "
+            ~ E.stringof ~ " under format " ~ F.stringof);
+    }
+    return names;
+}
+
 /// The resolved wire names of `E`'s members under format `F` at case `style`,
 /// in declaration order, computed in one compile-time pass: an explicit
 /// `@WireName!F` wins, then `@WireName!Any`, else the identifier recased by
@@ -887,38 +935,7 @@ if (is(E == enum))
 {
     // `static immutable` for the same reason as `fieldPolicies`: per-member
     // `names[i]` reads must not re-copy the whole array.
-    static immutable string[] wireNames = () {
-        string[] r;
-        static foreach (m; __traits(allMembers, E))
-        {{
-            string explicitName;
-            int nameTier;
-            static foreach (uda; __traits(getAttributes, __traits(getMember, E, m)))
-            {{
-                static if (is(typeof(uda) == WireNameAttr!F))
-                    enum tier = 2;
-                else static if (is(typeof(uda) == WireNameAttr!AnyFormat))
-                    enum tier = 1;
-                static if (is(typeof(tier)))
-                {
-                    if (nameTier < tier)
-                    {
-                        explicitName = uda.name;
-                        nameTier = tier;
-                    }
-                }
-            }}
-            r ~= nameTier ? explicitName : convertCase!style(m);
-        }}
-        return r;
-    }();
-
-    // §5.5: the names actually used on the wire must be unique — checked on the
-    // exact (format, enum, style) table, so field-override styles are covered.
-    private enum dupName = firstDuplicate(wireNames);
-    static assert(dupName is null,
-        "wired: duplicate member name \"" ~ dupName ~ "\" for enum " ~ E.stringof
-        ~ " under format " ~ F.stringof);
+    static immutable string[] wireNames = enumWireNames!(F, E)(style, Repr.name);
 }
 
 // One aggregate exercising every FieldPolicy component at once: renamed,

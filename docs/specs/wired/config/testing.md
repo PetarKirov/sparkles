@@ -434,9 +434,10 @@ finite eager resolution cannot certify them.
 
 ## 5. Evidence ledger
 
-All implementation requirements are **unverified** until their named acceptance
-scenarios run. No tests or implementation modules are delivered by this spec PR.
-The entries below are scoped observations, not requirement-conformance claims.
+Implementation requirements remain **unverified** until their named acceptance
+scenarios run. The historical specification-only records and primitive probes
+below do not establish runtime conformance; the C1/C2 implementation entries
+separately record actual production acceptance and consumer observations.
 
 | Record                         | Scope and observation                                                                                                                                              | Result / remaining gap                                                                                                   |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
@@ -703,10 +704,29 @@ copy. Compile-reject recursive/custom-ownership shapes. This fixture deliberatel
 does not establish composition-aware descent, branch metadata, logical charges,
 owned-input transfer without cloning, or operational rollback.
 
-Q6 remains open for production projection/input and original-site enum schema
-admission. Owner acceptance of the composition contract and the full WCFG38–51
-gate are unchanged. Probe sources are throwaway and removed after recording
-these observations; no resolver conformance is inferred from their success.
+At this probe snapshot, Q6's production projection/input and canonical key-domain
+admission were still open; no resolver conformance followed from probe success.
+The [later C2 implementation evidence](#c2-collection-implementation) supersedes
+that readiness limit. Owner acceptance remains separate. Probe sources were
+throwaway and removed after recording these observations.
+
+### Original-site enum admission repair
+
+The native regression `wired.json.schemaWalk.enumAdmissionAtOriginalSite`
+failed compilation before the repair for `fastPath = 1, fast_path = 2` under
+the valid original name policy. Enum label derivation is now shared by the schema
+and native name table, with only the resolved case style evaluated. Name
+representation validates unique member labels; value representation retains
+labels as metadata without treating their collisions as wire ambiguity.
+
+The two codec regressions assert exact original-name and numeric-key decoding
+and encoding, compile-time rejection of selected snake-case/name-label
+collisions, field overrides of a colliding enum type policy, and equivalent
+numeric aliases. Both DMD and LDC passed all 245 wired tests. A separate checked
+runtime driver decoded the original keys to 7/9 and retained rejection of the
+selected snake-case collision under both compilers, with deprecations rejected.
+This repairs native policy admission, not collection capture/composition,
+canonical class admission, or the full WCFG41 gate.
 
 ### Composition and inspection contract review
 
@@ -787,3 +807,132 @@ all 19 examples, including the scalar example's output `8`.
 Independent storage/lifetime and decoder reviews found no remaining
 evidence-backed defect after repairing scoped access and bounded error location.
 These are local implementation results, not CI or C2–C5 delivery claims.
+
+### C2 collection implementation
+
+**Scope:** production implementation on `feat/wired-config-collections`, Linux
+x86-64, following the shared base/UI property-path cutover. This is implementation
+evidence for the supported finite graph, not owner acceptance of the draft,
+CI evidence, or C3–C5 delivery.
+
+The public `sparkles.wired.config` package retains the C1 builder/input/snapshot
+interface. `sparkles.wired.config.core` adds collection policies,
+`fullConfigInput`, typed `BranchView`/`BranchDefinitionView` visits, and
+owner-checked `ContributionRef` handles. Production `payload` derives
+`ConfigPresence` and structural capture/copy, `metadata` supplies
+`ConfigBranchMetadata`/`CollectionDefinitionMetadata`, `resolution` performs
+transactional composition and retains original projections, `key_accounting`
+accounts for canonical text, and `borrow` supplies scoped native graph/presence
+views. `sparkles.wired.config.json.decodeConfigInput` captures collection input
+at original `WireWalk` sites after occurrence preflight. These are actual
+modules/symbols, not proposed alternate decoders or resolver APIs.
+
+Both final ordinary full suites passed **282 tests, zero failures**:
+
+```bash
+dub test :wired --compiler=dmd -- -v
+dub test :wired --compiler=ldc2 -- -v
+```
+
+Neither command disables verifiers. The suites include all 28 original
+`sparkles.wired.config.collections_acceptance` scenarios and subsequent review
+regressions, alongside the existing scalar, codec, and shared-owner tests:
+
+- **Exact accounting and budget rollback:** collection scenarios
+  `wired.config.collections.exactListAccountingAndRollback` and
+  `wired.config.collections.exactMapAccountingAndGeneratedDefaultRollback`
+  assert the 25/48/79-byte list and 43/56/92-byte map traces. Final list counts are
+  10 value nodes, 4 resolved records, and 5 contributions; final map counts are
+  9 value nodes, 3 resolved records, and 3 contributions, including one generated
+  definition. One-below/exact boundaries leave a failed builder collecting with
+  unchanged usage, then allow retry and exact independent native materialization.
+- **Independent algebra and provenance:** `listDefinitionSetPermutations`,
+  `identityOrderAndLines`, `mapParentSelectionAndListValues`, and
+  `mapDefinitionSetAlgebra` check ordering/selection independently of arrival and
+  borrowed/owned grouping. The map oracle covers 6144 source sets (8 priority
+  choices × 8 key choices × 8 value choices × 6 arrival permutations × 2 transfer
+  groupings), asserting exact eligible conflict contributor sets and copied values.
+  `excludedParentAndOriginalProjectionLookup` and
+  `typedBranchesAndSourceEffectiveLocators` retain excluded source projections and
+  original `[0]` locators even when the active list index is `[2]`.
+- **Original-site and schema admission:** `originalSitePoliciesAndDuplicateOccurrences`,
+  `compileTimePolicyAndGraphAdmission`, `enumAliasKeysAcrossDefinitions`, and
+  `originalOccurrenceErrorLocations` exercise enclosing key/value policy,
+  escaped/alternate-spelling/equal-typed-key duplicates, original occurrence
+  locations, and canonical key-domain admission before contents or priorities.
+  `shapeAdmissionAndIgnoredPayload` and
+  `metadataShapeAndAbsentOverrideAdmission` reject incompatible source/metadata
+  shapes, including equal-size wrong keys, without committing a partial batch.
+- **Ownership and scopes:** `nestedCaptureAndIndependentCopies`,
+  `mutableBuiltinGraphCapture`, and `nullableAndContainerStates` check deep
+  independence, declared nested default graphs, and nullable/null-backed/
+  allocated-empty reconstruction. `scopedBranchValueEscape` and
+  `wired.config.borrow.scopedCollectionValueEscape` reject escaping borrowed
+  graph/presence storage; `wired.config.borrow.collectionValuesAndPresence`
+  supplies positive immediate-read controls. Typed projection handles survive
+  owner moves and reject cross-owner lookup.
+- **Allocator rollback and error precedence:** the shared-owner tests
+  `wired.config.core.realAllocationRollbackCaptureAndRegistration`,
+  `realAllocationRollbackOwnedTransferAndResolve`,
+  `realAllocationRollbackBorrowedBatch`, and
+  `realAllocationRollbackIndependentCopy` exercise the real failing allocator
+  seam with scalar/string owner fixtures. The subsequent collection-specific
+  `wired.config.core.realCollectionAllocationRollback` passed first in a focused
+  ordinary LDC run (1 test, zero failures), then in both final full suites.
+  It sweeps allocation failures through
+  `captureInput`, borrowed/owned submission, resolution, and independent copying
+  for `AttrsOf!Submodule`/`ListOf!Submodule` with nested atomic maps/arrays and a
+  nullable array. Failures report `allocationFailed`, preserve usage and collecting/
+  capsule state, reclaim native allocations, and permit retry; independent nested
+  values survive snapshot destruction and mutable edits do not affect the source.
+  `wired.config.core.recordLimitPrecedesAllocationFailure` rejects a known
+  resolved-record limit even with allocation denied, preserves builder state,
+  then returns allocation failure after raising the limit and succeeds after
+  restoring allocation. The exact collection budget rollback tests above use
+  logical boundaries rather than substituting an allocation failure.
+- **Defaults and mixed failures:** `sparseDefaultsAndSelectedBuiltin`,
+  `selectedListBuiltinAndPriorityOrder`, and
+  `generatedChildOverridesFullSuppliedContainer` cover generated defaults,
+  selected-built-in suppression, and a generated priority-1500 child winning over
+  a fully supplied priority-2000 child in a selected parent. Both typed visits and
+  copied containing values reflect width 4, not the source width 8.
+  `mixedBranchFailuresSuppressAncestorCheck` and
+  `directSectionMergedCheckAndSuppression` keep successful siblings inspectable,
+  suppress checks above failed children, and reject incomplete full-config copies.
+
+Both actual checked collection driver commands passed:
+
+```bash
+dub run --single libs/wired/examples/collection-config.d --compiler=dmd -b checked
+dub run --single libs/wired/examples/collection-config.d --compiler=ldc2 -b checked
+```
+
+Both printed the same observed output:
+
+```text
+plugins[0]: project, enabled=false
+plugins[1]: user, enabled=true
+build: width=12, enabled=false
+lint: width=6, enabled=true
+tools["build"].width: 0, value=12
+original=[0].label, effective=plugins[1].label
+conflict=tools["build"].width, contributors=2
+```
+
+The driver also asserts successful sibling inspection and rejected full-config
+copying for the conflict snapshot. A separate actual DMD create→resolve→copy
+probe of a nested built-in map/list default printed `[3,4]`; this is scoped
+default-materialization evidence, not a replacement for the checked consumer
+driver or a cross-compiler claim for that separate probe.
+
+`dub add-local . && dub run :ci -- --verify --files README.md` passed all
+**20 examples** (artifact 452), including `readme_collection_config` with exact
+output `lint` then `true`, each newline-terminated. No expected-output update was
+needed. This is a local example-verifier result, not CI workflow or full
+documentation-publication evidence.
+
+Q6's production presence/projection and canonical key-domain readiness is closed
+for this supported matrix. Owner acceptance of composition remains pending.
+No current-snapshot documentation publication build, CI workflow,
+config-show renderer, application startup/persistence cutover, custom ownership,
+or keybinding-specific integration is claimed by this entry. C3–C5 remain deferred.
