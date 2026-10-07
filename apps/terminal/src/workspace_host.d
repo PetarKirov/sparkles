@@ -628,6 +628,8 @@ struct WorkspaceHost
         {
             const m = GetMousePosition();
             const mx = cast(int) m.x, my = cast(int) m.y;
+            hoverX = mx;
+            hoverY = my;
             const leftDown = IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT);
             PaneId under;
             foreach (ref b; boxes)
@@ -917,7 +919,8 @@ struct WorkspaceHost
         if (!barTarget(barPane, t) || cellW <= 0)
             return barHeld = false;
         const whole = cast(long) t.pos;
-        const thickness = t.wide ? railExpandedPx(cellW) : railIdlePx(cellW);
+        const idle = railIdlePx(cellW);
+        const thickness = idle + (railExpandedPx(cellW) - idle) * t.bar.expandPercent(t.wide) / 100;
         const rail = scrollbarRailPx(t.band, RuleEdge.right, t.content, t.viewport,
             whole, fracByte(cast(float)(t.pos - whole)), thickness);
         if (!rail.live)
@@ -944,6 +947,7 @@ struct WorkspaceHost
     }
 
     private PaneId barPane; // the pane whose bar is held; none: the surface's
+    private int hoverX = -1, hoverY = -1; // the pointer, last frame (desktop)
 
     // One overlay bar a pointer may take (`SCV13`): where it is, in window
     // pixels, the extents it shows, and what moving it does.
@@ -1190,7 +1194,7 @@ struct WorkspaceHost
             fg: RgbColor(255, 255, 255),
             fgAlpha: 120,
             edge: RuleEdge.right,
-            expandPercent: touch && wideBars ? 100 : 0,
+            expandPercent: bar.expandPercent(touch && wideBars),
             fadePercent: touch ? bar.anim.fadePercent : 100,
         ));
     }
@@ -1622,6 +1626,30 @@ struct WorkspaceHost
         bool more = surfaces.animate(dt);
         foreach (id, v; viewers)
             more |= v.animate(dt);
+        // Under a pointer, a bar widens while hovered or held (`SCV13`).
+        if (!touch)
+        {
+            BarTarget hot;
+            const hp = surfaces.modal ? PaneId.init : paneUnder(hoverX, hoverY);
+            const hit = barTarget(hp, hot) && contains(Rect(hot.band.x - cellW, hot.band.y,
+                hot.band.width + cellW, hot.band.height), hoverX, hoverY);
+            void ease(OverlayBar* b)
+            {
+                const on = (hit && b is hot.bar) || b.grabbed;
+                b.anim.step(on, dt);
+                const target = on ? 100.0f : 0.0f;
+                const gap = b.anim.percent - target;
+                if (gap > 0.5f || gap < -0.5f)
+                    more = true;
+            }
+            Layer l;
+            if (auto sb = surfaces.topScrolling(l))
+                ease(&sb.bar);
+            foreach (id, v; viewers)
+                ease(&v.bar);
+            foreach (id, ref b; paneBars)
+                ease(&b);
+        }
         // A pane's bar shows while its scrollback moves, then fades (the
         // scrollback's own motion runs in `TerminalView.frame`).
         if (touch)

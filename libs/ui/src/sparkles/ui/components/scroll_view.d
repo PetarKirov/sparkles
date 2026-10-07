@@ -155,6 +155,11 @@ struct OverlayBar
     {
         grabbed = false;
     }
+
+    /// How expanded to draw it (`Scrollbar.expandPercent`): fully when
+    /// `wide`, else as far as hovering has eased it (`anim.step`).
+    ubyte expandPercent(bool wide) const
+        => wide ? 100 : cast(ubyte)(anim.percent < 0 ? 0 : anim.percent > 100 ? 100 : anim.percent);
 }
 
 @("ui.scroll_view.overlayBar.aWideBandGrabsAndMapsTravel")
