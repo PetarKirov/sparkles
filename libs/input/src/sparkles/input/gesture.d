@@ -76,6 +76,7 @@ struct GestureRecognizer
         float holdMs_ = 0;
         float velocity_ = 0; // px/s at release, in the scroll's direction
         bool horizontal_;    // the drag's locked axis (`fractional` only)
+        bool beginPending_;  // the drag's first scroll is still to come
 
         // The drag's travel over time, for the release velocity: the last
         // few ticks' (time, travel) pairs, read back over a short window.
@@ -130,6 +131,7 @@ struct GestureRecognizer
     {
         wasDown_ = dragging_ = longFired_ = false;
         holdMs_ = velocity_ = 0;
+        beginPending_ = false;
         pendingPx_ = 0;
         samples_ = 0;
     }
@@ -168,6 +170,7 @@ struct GestureRecognizer
             if (!dragging_ && !longFired_ && dx * dx + dy * dy > cfg.slopPx * cfg.slopPx)
             {
                 dragging_ = true;
+                beginPending_ = true; // its first scroll starts a gesture
                 // The axis it set off along holds for the whole drag: a
                 // vertical scroll must not wander sideways (`GST6`).
                 horizontal_ = cfg.fractional && (dx < 0 ? -dx : dx) > (dy < 0 ? -dy : dy);
@@ -371,15 +374,21 @@ struct GestureRecognizer
                     w.dy += rows;
                     w.fdx += fdx;
                     w.fdy += fdy;
+                    w.begins |= beginPending_;
                     merged = true;
                 },
                 (ref _) {},
             );
             if (merged)
+            {
+                beginPending_ = false;
                 return;
+            }
         }
         // `precise`: already whole rows, so no consumer multiplies (INP12).
-        auto w = WheelEvent(dx: cols, dy: rows, pos: Point(0, 0), precise: true);
+        auto w = WheelEvent(dx: cols, dy: rows, pos: Point(0, 0), precise: true,
+            begins: beginPending_);
+        beginPending_ = false;
         if (cfg.fractional)
         {
             w.fdx = fdx;
@@ -511,6 +520,41 @@ unittest
     g.tick(16);
     drain(g, fx, fy, wx, wy);
     assert(fy == 0 && fx > 2.9f && fx < 3.1f && wx == 3);
+}
+
+@("input.gesture.aDragBeginsOneGestureItsFlingContinues")
+@safe pure nothrow @nogc
+unittest
+{
+    GestureRecognizer g;
+    g.cfg.cellH = 10;
+    g.cfg.fractional = true;
+    int begins, events;
+    void drain()
+    {
+        for (auto e = g.next(); !isNoEvent(e); e = g.next())
+            e.match!((in WheelEvent w) { ++events; begins += w.begins; }, (_) {});
+    }
+
+    foreach (round; 0 .. 2)
+    {
+        g.pointer(0, true, PointF(100, 400));
+        g.tick(16);
+        foreach (i; 0 .. 4)
+        {
+            g.pointer(0, true, PointF(100, 400 - 30 * (i + 1)));
+            g.tick(16);
+            drain();
+        }
+        g.pointer(0, false, PointF(100, 280));
+        foreach (_; 0 .. 10) // the fling: the same gesture
+        {
+            g.tick(16);
+            drain();
+        }
+        assert(begins == round + 1, "one start per drag, none in its fling");
+    }
+    assert(events > 10);
 }
 
 @("input.gesture.aFingerThatStopsBeforeLiftingDoesNotFling")
