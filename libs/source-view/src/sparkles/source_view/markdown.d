@@ -359,6 +359,27 @@ struct FenceScroll
     float fy = 0;
 }
 
+/**
+The `Widget.key` a fence body's viewport (and its number gutter) carries,
+and a table's scrolled parts: their shift brackets stay at every offset, so
+a painter that knows the scroll sets the fraction as it paints (`LAY7`,
+`Widget.shiftBracket`). Disjoint from every other key the views use by
+their top bits.
+*/
+enum size_t fenceShiftKeyBase = 0xF5C0_0000_0000_0000UL;
+/// ditto
+enum size_t tableShiftKeyBase = 0xF5D0_0000_0000_0000UL;
+/// ditto
+enum size_t shiftKeyMask = 0xFFF0_0000_0000_0000UL;
+
+/// ditto — a fence's, by its `codeBody.start`.
+size_t fenceShiftKey(size_t bodyStart) @safe pure nothrow @nogc
+    => fenceShiftKeyBase | (bodyStart & ~shiftKeyMask);
+
+/// ditto — a table's, by its `span.start`.
+size_t tableShiftKey(size_t tableStart) @safe pure nothrow @nogc
+    => tableShiftKeyBase | (tableStart & ~shiftKeyMask);
+
 /// One table's scroll position (`TBL7`/`TBL8`): `x` interior cells scrolled
 /// off to the left, `y` interior lines scrolled off the top, keyed by the
 /// table's `span.start`.
@@ -1462,9 +1483,12 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     clipX: true, clipY: vOver,
                     childOffset: Point(fs.x, vOver ? fs.y : 0),
                     width: SizeSpec.grow());
-                // Scrolled between cells (`LAY7`), on a target that can.
+                // Scrolled between cells (`LAY7`), on a target that can —
+                // keyed, so a painter sets the fraction without a rebuild.
                 vp.childOffsetFracX = fs.fx;
                 vp.childOffsetFracY = vOver ? fs.fy : 0;
+                vp.key = fenceShiftKey(fs.bodyStart);
+                vp.shiftBracket = true;
                 if (vOver)
                     vp.height = SizeSpec.fixed(shownRows);
                 const viewport = b.add(vp);
@@ -1494,6 +1518,8 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                         clipY: vOver,
                         childOffset: Point(0, vOver ? fs.y : 0));
                     nc.childOffsetFracY = vOver ? fs.fy : 0;
+                    nc.key = fenceShiftKey(fs.bodyStart);
+                    nc.shiftBracket = vOver;
                     if (vOver)
                         nc.height = SizeSpec.fixed(shownRows);
                     parts ~= b.add(nc);
@@ -1723,6 +1749,7 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                     maxLines: opt.tableMaxLines > 0 ? opt.tableMaxLines : 0,
                     x: ts.x,
                     fx: ts.fx,
+                    shiftKey: tableShiftKey(blk.span.start),
                     fy: opt.tableExtras.virtualRows > 0 ? 0 : ts.fy,
                     // `DSN4`: a windowed table was handed exactly the rows
                     // its viewport shows, so the scroll already happened —

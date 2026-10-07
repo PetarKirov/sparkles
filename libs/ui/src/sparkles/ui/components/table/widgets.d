@@ -108,6 +108,10 @@ struct TableViewportSpec
     float fx = 0;
     /// ditto
     float fy = 0;
+    /// The `Widget.key` the scrolled parts carry, keeping their shift
+    /// brackets so a painter sets the fraction without a rebuild
+    /// (`Widget.shiftBracket`); 0: none.
+    size_t shiftKey;
     size_t hBarHitId;    /// bottom-border bar hit id (0 → `style.hitId`)
     size_t vBarHitId;    /// right-border track hit id (0 → `style.hitId`)
     RgbColor hThumbFg;   /// resolved h-thumb color (hot logic is the caller's)
@@ -644,6 +648,8 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             width: SizeSpec.fixed(1), clipY: clip,
             childOffset: Point(0, clip ? sy : 0));
         col.childOffsetFracY = clip ? fy : 0;
+        col.key = clip ? vp.shiftKey : 0;
+        col.shiftBracket = clip && vp.shiftKey != 0;
         if (clip)
             col.height = SizeSpec.fixed(shown);
         return b.add(col);
@@ -671,6 +677,8 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
                 width: SizeSpec.fixed(window),
                 height: SizeSpec.fixed(1));
             clip.childOffsetFracX = fx;
+            clip.key = vp.shiftKey;
+            clip.shiftBracket = vp.shiftKey != 0;
             parts ~= b.add(clip);
         }
         else
@@ -773,6 +781,11 @@ TableWidgetResult buildTableWidgets(ref Builder b, in SpanCell[][] cells,
             width: SizeSpec.fixed(boxW), height: SizeSpec.fixed(boxH));
         port.childOffsetFracX = cx ? fx : 0;
         port.childOffsetFracY = cy ? fy : 0;
+        if ((cx || cy) && vp.shiftKey != 0)
+        {
+            port.key = vp.shiftKey;
+            port.shiftBracket = true;
+        }
         return b.add(port);
     }
 

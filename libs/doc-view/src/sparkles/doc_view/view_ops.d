@@ -9,7 +9,7 @@ lights up. Backend-free: operations in, operations out.
 */
 module sparkles.doc_view.view_ops;
 
-import sparkles.ui.canvas : DrawOp, match, OpKind, RuleEdge, Scrollbar;
+import sparkles.ui.canvas : DrawOp, match, OpKind, PushShift, RuleEdge, Scrollbar;
 
 import sparkles.doc_view.viewer_model : ViewerModel;
 
@@ -34,6 +34,9 @@ void emitVisibleOps(ref ViewerModel vm, long docRows, scope void delegate(ref Dr
                 || oy > vm.top + docRows))
             continue;
         auto op = sourceOp;
+        // A block's keyed shift takes its fraction now: moving within a cell
+        // does not rebuild the document (`ViewerModel.paintShift`).
+        op.payload.match!((ref PushShift s) { if (s.key) vm.paintShift(s); }, (ref _) {});
         const activeSv = vm.activeBar();
         if (activeSv !is null
             && (vm.activeFenceOwner != size_t.max

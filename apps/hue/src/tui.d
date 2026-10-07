@@ -19,6 +19,7 @@ import sparkles.doc_view.diff_session : DiffSession, SessionEntry;
 import sparkles.doc_view.diff_view : TypeOverlay;
 import sparkles.source_view.markdown : FenceScroll, TableScroll;
 import sparkles.doc_view.table_select : serializeTable, TableCopyFormat, TableRegion;
+import sparkles.doc_view.scroll_latch : LatchTarget, ScrollLatch;
 import sparkles.doc_view.dsv_view : DsvCopy, serializeGridCopy;
 import core.time : Duration, msecs;
 import input_line : InputState, Mode;
@@ -486,38 +487,33 @@ struct PreviewTui
     private bool handleWheel(in WheelEvent w) @system
     {
         const dx = w.dx + (w.mods.shift ? w.dy : 0);
-        if (dx != 0)
+        if (dx == 0 && w.mods.shift)
+            return true; // a shifted notch never scrolls vertically
+        const dy = dx != 0 ? 0 : w.dy;
+        // The gesture belongs to what was under the pointer where it began
+        // (`ScrollLatch`, `SCV12`): a fence or a table that could move that
+        // way keeps it, edge included; a notch after a pause starts anew, so
+        // notch by notch a block still scrolls to its edge and the next
+        // reaches the document (the COD6/TBL8 rule). `DSN4`: a grid that
+        // owns the vertical axis owns every notch inside the pane — a cell's
+        // border carries no source identity a table lookup could find.
+        latch.motion.instant = true; // a terminal steps whole cells
+        if (latch.feed(vm, top + (w.pos.y - bodyTop), dx, dy, w.precise, w.begins,
+                gridOwnsVertical()))
+            return true;
+        if (latch.target == LatchTarget.grid)
         {
-            const fb = vm.fenceBodyAtRow(top + (w.pos.y - bodyTop));
-            if (fb != size_t.max && vm.scrollFence(fb, dx))
-                return true;
-            const tb = vm.tableAtRow(top + (w.pos.y - bodyTop));
-            if (tb != size_t.max && vm.scrollTable(tb, dx))
-                return true;
-            vm.scrollHorizontal(dx);
+            cast(void) scrollGridV(dy);
             return true;
         }
-        if (w.mods.shift)
-            return true; // a shifted notch never scrolls vertically
-        // A vertical notch over a TALL fence or table scrolls it until its
-        // edge; only then does it reach the document (the COD6/TBL8 rule).
-        const fbV = vm.fenceBodyAtRow(top + (w.pos.y - bodyTop));
-        if (fbV != size_t.max && vm.scrollFenceV(fbV, w.dy))
-            return true;
-        // `DSN4`: a grid that owns the vertical axis owns every notch inside
-        // the pane. `tableAtRow` answers by SOURCE identity, and a cell's
-        // top/bottom border carries none — so a notch delivered over a rule
-        // row used to find no table and fall through to a document scroll
-        // that a windowed grid cannot perform. The pointer was over the
-        // grid; the grid scrolls.
-        if (gridOwnsVertical() && scrollGridV(w.dy))
-            return true;
-        const tbV = vm.tableAtRow(top + (w.pos.y - bodyTop));
-        if (tbV != size_t.max && vm.scrollTableV(tbV, w.dy))
-            return true;
-        vm.scrollVertical(w.dy, bodyRows());
+        if (dx != 0)
+            vm.scrollHorizontal(dx);
+        else
+            vm.scrollVertical(dy, bodyRows());
         return true;
     }
+
+    private ScrollLatch latch; // the wheel's scroller for this gesture
 
     /// `DSN4`: does this document's grid own the vertical axis? True only
     /// for a windowed DSV view, where the document IS the window.
@@ -2371,7 +2367,7 @@ unittest
     const quoted = t.vm.fenceExtent(0);
     assert(quoted.innerW == top.innerW - 3,
         "the clamp reflects the card's 2-left + 1-right insets");
-    assert(t.vm.setFenceScroll(0, long.max, 0));
+    assert(t.vm.setFenceScroll(0, double.max, 0));
     assert(t.vm.fenceScrollAt[0].x == quoted.widest - quoted.innerW,
         "the quoted fence scrolls all the way to its last column");
 }

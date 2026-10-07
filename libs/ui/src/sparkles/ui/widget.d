@@ -181,6 +181,11 @@ struct Widget
     float childOffsetFracX = 0;
     /// ditto
     float childOffsetFracY = 0;
+    /// Emit this viewport's shift pair even at a fraction of 0, carrying
+    /// `key`: a painter that tracks the scroll by that key then sets the
+    /// fraction as it paints, and moving between cells needs no rebuild —
+    /// a document's code blocks and tables (`LAY7`).
+    bool shiftBracket;
     /// Clip painting of the subtree to this node's padded content box, per
     /// axis (`LAY7`) — the display list brackets the children in scissor ops
     /// and culls children that fall fully outside. A clipping container plus

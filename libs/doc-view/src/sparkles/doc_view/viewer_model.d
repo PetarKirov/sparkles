@@ -21,7 +21,7 @@ import sparkles.syntax.md.model : codeLineCount, fenceBody, MdBlock,
     MdBlockKind, MdDoc, Span;
 import sparkles.source_view.code : CodeViewOptions, viewCodeDocumentInto;
 import sparkles.source_view.markdown : FenceScroll, isWrap, OverflowPolicy,
-    TableScroll,
+    TableScroll, fenceShiftKeyBase, shiftKeyMask, tableShiftKeyBase,
     foldableSpans, highlightedFenceRenderer, MdLinkRange, MdLinkTable,
     mdLinkRanges, MdViewOptions, MdViewTheme, viewMarkdownInto;
 import sparkles.ui.components.gutter : blankCell, cellOf, GutterCell,
@@ -31,7 +31,7 @@ import sparkles.syntax.ts.highlighter : ParsedLayer;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : TwoslashReturn;
 import sparkles.twoslash.render_widgets : viewTwoslashDocumentInto;
-import sparkles.ui.canvas : DrawOp, OpKind;
+import sparkles.ui.canvas : DrawOp, OpKind, PushShift;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.layout : DelegateMeasure, Frame, layout;
@@ -1985,6 +1985,75 @@ struct ViewerModel
         return e;
     }
 
+    /**
+    Sets a keyed shift (`Widget.shiftBracket`) to the fraction its code
+    block or table is scrolled now — so moving within a cell repaints
+    without rebuilding (`LAY7`). A shift with another key is left as built.
+    */
+    void paintShift(ref PushShift s) const @safe
+    {
+        const tag = s.key & shiftKeyMask, id = s.key & ~shiftKeyMask;
+        float fx = 0, fy = 0;
+        if (tag == fenceShiftKeyBase)
+        {
+            if (auto p = id in fenceScrollAt)
+            {
+                fx = p.fx;
+                fy = p.fy;
+            }
+        }
+        else if (tag == tableShiftKeyBase)
+        {
+            if (auto p = id in tableScrollAt)
+            {
+                fx = p.fx;
+                fy = p.fy;
+            }
+        }
+        else
+            return;
+        s.dx = s.axes & 1 ? -fx : 0;
+        s.dy = s.axes & 2 ? -fy : 0;
+    }
+
+    /// A fence's scroll on one axis, fraction included (`LAY7`).
+    double fenceScrollPos(size_t bodyStart, bool horizontal) const @safe
+    {
+        const cur = fenceScrollAt.get(bodyStart, FenceScroll(bodyStart, 0, 0));
+        return horizontal ? cur.x + cur.fx : cur.y + cur.fy;
+    }
+
+    /// How far a fence scrolls on one axis; 0 when it does not.
+    double fenceScrollMax(size_t bodyStart, bool horizontal) const @safe
+    {
+        if (isWrap(codeOverflow))
+            return 0;
+        const e = fenceExtent(bodyStart);
+        if (e.lines == 0)
+            return 0;
+        if (horizontal)
+            return e.widest > e.innerW && e.innerW > 0 ? e.widest - e.innerW : 0;
+        return e.lines > e.shownRows ? e.lines - e.shownRows : 0;
+    }
+
+    /// A table's scroll on one axis, fraction included (`LAY7`).
+    double tableScrollPos(size_t spanStart, bool horizontal) const @safe
+    {
+        const cur = tableScrollAt.get(spanStart, TableScroll(spanStart, 0, 0));
+        return horizontal ? cur.x + cur.fx : cur.y + cur.fy;
+    }
+
+    /// How far a table scrolls on one axis; 0 when it does not.
+    double tableScrollMax(size_t spanStart, bool horizontal) const @safe
+    {
+        if (isWrap(tableOverflow))
+            return 0;
+        const e = tableExtent(spanStart);
+        if (horizontal)
+            return e.content > e.viewport ? e.content - e.viewport : 0;
+        return e.lines > e.shownLines ? e.lines - e.shownLines : 0;
+    }
+
     /// Sets a fence's absolute scroll (either axis), clamped to its
     /// overflow; true when it moved (and the pipeline rebuilt).
     bool setFenceScroll(size_t bodyStart, double x, double y)
@@ -2010,7 +2079,10 @@ struct ViewerModel
             fenceScrollAt.remove(bodyStart);
         else
             fenceScrollAt[bodyStart] = next;
-        rebuild();
+        // Within a cell only the fraction moved: the painter sets it on the
+        // fence's keyed shift (`paintShift`), and the layout stands.
+        if (next.x != cur.x || next.y != cur.y)
+            rebuild();
         return true;
     }
 
@@ -2110,6 +2182,10 @@ struct ViewerModel
         // the viewport means materializing different rows — a re-layout of
         // what is already built would just re-draw the same window. The host
         // that owns the projection re-adapts (and rebuilds) instead.
+        // Within a cell only the fraction moved: the painter sets it on the
+        // table's keyed shifts (`paintShift`), and the layout stands.
+        if (next.x == cur.x && next.y == cur.y)
+            return true;
         if (onWindowScroll !is null)
             onWindowScroll(spanStart, next.x, next.y);
         else
