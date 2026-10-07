@@ -15,7 +15,7 @@ module sparkles.raylib_text.ui_font;
 
 import raylib;
 
-import sparkles.raylib_text.font : fontHasGlyph, glyphIndexFor, loadVariantFile,
+import sparkles.raylib_text.font : fontHasGlyph, glyphIndexFor, loadFontInto, loadVariantFile,
     LoadedFont;
 import sparkles.raylib_text.font_discovery : FontSources;
 import sparkles.raylib_text.font_set : FontSet;
@@ -37,6 +37,10 @@ struct UiFace
     int lineHeight;     /// the height one line of this step occupies
     STFace* kernRegular; /// `regular` opened for kerning; null: none
     STFace* kernBold;    /// ditto for `bold`
+    LoadedFont mono;     /// the cell font's regular face at `monoSize`; absent: the `FontSet`'s, scaled
+    LoadedFont monoBold; /// ditto, bold
+    int monoSize;        /// the size a monospace run of this step draws at
+    bool monoLoaded, monoBoldLoaded; /// whether `mono`/`monoBold` were rasterized yet
 
     @disable this(this); // the LoadedFonts own move-only buffers
 }
@@ -59,6 +63,11 @@ immutable int[] uiCodepoints = () {
         cps ~= cp;
     return cps;
 }();
+
+/// The largest body glyph box, as a share of the cell font's size, when the
+/// interface steps follow the cell font: the rest of the cell is the line's
+/// leading.
+enum float uiBodyOfCell = 0.85f;
 
 /// The line height for a face drawn at `size`: the size plus a third, the
 /// leading the mockups use (17 px titles on 22–24 px lines, 14 px body on 19).
@@ -176,19 +185,36 @@ struct UiFonts
     units; the atlas is rasterized `atlasScale` times denser, as `FontSet`'s
     is) and routes missing code points to `fallback`. A missing bold file
     leaves bold drawn as a doubled stroke.
+
+    `matchCellPx` non-zero says `sizes` follow the cell font drawn at that size
+    (`GLY10`): every step shrinks by the interface face's x-height over the
+    cell font's, so body text reads at the terminal's size, and at least to
+    $(LREF uiBodyOfCell) of it, so a body line keeps leading inside its cell
+    instead of touching the rules and boxes around it.
     */
     void load(string regularPath, string boldPath, const int[uiTypeSteps] sizes,
-        FontSet* fallback, float atlasScale = 1.0f) @system
+        FontSet* fallback, float atlasScale = 1.0f, int matchCellPx = 0) @system
     {
         unload();
         this.fallback = fallback;
         this.atlasScale = atlasScale;
+        int[uiTypeSteps] at = sizes;
+        if (matchCellPx > 0)
+        {
+            const xh = probeXHeightRatio(regularPath, sizes[TypeStepBody]);
+            const shrink = xh * uiBodyOfCell < 1 ? 1 / uiBodyOfCell : xh;
+            foreach (i, ref s; at)
+            {
+                const v = cast(int)(sizes[i] / shrink + 0.5f);
+                s = v < 1 ? 1 : v;
+            }
+        }
         present = true;
         foreach (i, ref face; steps)
         {
-            face.size = sizes[i];
-            face.lineHeight = uiLineHeight(sizes[i]);
-            const px = cast(int)(sizes[i] * atlasScale + 0.5f);
+            face.size = at[i];
+            face.lineHeight = uiLineHeight(at[i]);
+            const px = cast(int)(at[i] * atlasScale + 0.5f);
             loadVariantFile(face.regular, regularPath, px, uiCodepoints);
             loadVariantFile(face.bold, boldPath, px, uiCodepoints);
             face.kernRegular = openKern(regularPath, px);
@@ -196,21 +222,74 @@ struct UiFonts
                 face.kernBold = openKern(boldPath, px);
             present = present && face.regular.present;
         }
-        monoScale = present ? xHeightRatio() : 1.0f;
+        if (!present)
+            return;
+        monoScale = xHeightRatio(steps[TypeStepBody].regular);
+        loadMonoFaces();
     }
 
-    // The interface face's x-height over the cell font's, each per unit of size.
-    private float xHeightRatio() @system
+    // Each step's monospace faces, rasterized at the step's monospace size so a
+    // value is as crisp as its label (a face stretched off its raster blurs).
+    private void loadMonoFaces() @system
+    {
+        if (fallback is null)
+            return;
+        foreach (ref face; steps)
+        {
+            const v = cast(int)(face.size * monoScale + 0.5f);
+            face.monoSize = v < 1 ? 1 : v;
+            face.mono.pathZ = fallback.facePathZ(false);
+            face.monoBold.pathZ = fallback.facePathZ(true);
+            face.monoLoaded = face.monoBoldLoaded = false;
+        }
+    }
+
+    // A step's monospace face, rasterized the first time a run needs it:
+    // eight atlases up front cost a phone a quarter of a second at startup,
+    // for steps and weights a screen may never show.
+    private LoadedFont* monoFace(ref UiFace face, bool bold) @system nothrow @nogc
+    {
+        const px = cast(int)(face.monoSize * atlasScale + 0.5f);
+        if (bold)
+        {
+            if (!face.monoBoldLoaded && face.monoBold.pathZ !is null)
+                loadFontInto(face.monoBold, px, uiCodepoints);
+            face.monoBoldLoaded = true;
+            if (face.monoBold.present)
+                return &face.monoBold;
+        }
+        if (!face.monoLoaded && face.mono.pathZ !is null)
+            loadFontInto(face.mono, px, uiCodepoints);
+        face.monoLoaded = true;
+        return &face.mono;
+    }
+
+    // The x-height ratio of the face at `path` (loaded once at `size` to
+    // measure), clamped so a face with a smaller x-height never grows past the
+    // cell. 1 when either face cannot be measured.
+    private float probeXHeightRatio(string path, int size) @system
+    {
+        LoadedFont probe;
+        loadVariantFile(probe, path, cast(int)(size * atlasScale + 0.5f), uiCodepoints);
+        scope (exit)
+            if (probe.present)
+                UnloadFont(probe.font);
+        const r = xHeightRatio(probe);
+        return r < 1.0f ? 1.0f : r;
+    }
+
+    // `ui`'s x-height over the cell font's, each per unit of size.
+    private float xHeightRatio(ref LoadedFont ui) @system
     {
         if (fallback is null)
             return 1.0f;
         bool fakeBold, fakeItalic;
         auto mono = fallback.resolveFace('x', false, false, fakeBold, fakeItalic);
-        const ui = xHeight(steps[TypeStepBody].regular), cell = mono is null ? 0 : xHeight(*mono);
-        if (ui <= 0 || cell <= 0)
+        const u = xHeight(ui), cell = mono is null ? 0 : xHeight(*mono);
+        if (u <= 0 || cell <= 0)
             return 1.0f;
-        const r = ui / cell;
-        return r < 0.7f ? 0.7f : r > 1.2f ? 1.2f : r;
+        const r = u / cell;
+        return r < 0.7f ? 0.7f : r > 1.3f ? 1.3f : r;
     }
 
     private static float xHeight(ref LoadedFont lf) @system
@@ -218,6 +297,16 @@ struct UiFonts
         if (!lf.present || lf.font.baseSize <= 0 || !fontHasGlyph(lf, 'x'))
             return 0;
         return lf.font.recs[glyphIndexFor(lf, 'x')].height / cast(float) lf.font.baseSize;
+    }
+
+    // Where `lf`'s baseline sits below the top of its glyph box, per unit of
+    // size: the bottom of its 'x'. 0.8 (a typical ascent) when it has none.
+    private static float baseline(ref LoadedFont lf) @system
+    {
+        if (!lf.present || lf.font.baseSize <= 0 || !fontHasGlyph(lf, 'x'))
+            return 0.8f;
+        const i = glyphIndexFor(lf, 'x');
+        return (lf.font.glyphs[i].offsetY + lf.font.recs[i].height) / cast(float) lf.font.baseSize;
     }
 
     // The face at `path` opened for kerning at `px`, or null (kerning is then
@@ -243,8 +332,14 @@ struct UiFonts
                 UnloadFont(face.regular.font);
             if (face.bold.present)
                 UnloadFont(face.bold.font);
+            if (face.mono.present)
+                UnloadFont(face.mono.font);
+            if (face.monoBold.present)
+                UnloadFont(face.monoBold.font);
             face.regular = LoadedFont.init;
             face.bold = LoadedFont.init;
+            face.mono = LoadedFont.init;
+            face.monoBold = LoadedFont.init;
         }
         if (kernLibrary !is null)
             st_library_destroy(kernLibrary);
@@ -319,8 +414,9 @@ struct UiFonts
     /**
     Draws `text` in `step` with its top-left at `(x, y)`, in `fg`. Code points
     the face lacks come from the `FontSet` at the same size. `mono` draws the
-    whole run in the cell font at the step's size, its x-height matched to the
-    interface face's, so a value sits beside its label at one size.
+    whole run in the cell font, rasterized at the step's monospace size (its
+    x-height the interface face's) and set on the step's baseline, so a value
+    sits beside its label at one size, as crisp as it.
     */
     void draw(size_t step, bool bold, scope const(char)[] text, float x, float y,
         Color fg, bool mono = false) @system
@@ -334,11 +430,14 @@ struct UiFonts
         const top = cast(float) cast(int)(y + 0.5f);
         float pen = x;
         const box = steps[step].size;
+        const base = baseline(steps[step].regular) * box;
         eachGlyph(step, bold, mono, text, (ref LoadedFont lf, int cp, int size, float adv) {
             const uint[1] one = [cast(uint) cp];
             const left = cast(float) cast(int)(pen + 0.5f);
-            // A smaller glyph box (a monospace run) is centred in the step's.
-            const t = top + (box - size) / 2;
+            // A monospace run sits on the step's baseline, on a whole pixel;
+            // a glyph of the step's own size shares its box.
+            const t = size == box ? top
+                : cast(float) cast(int)(top + base - baseline(lf) * size + 0.5f);
             drawGrapheme(lf, one[], left, t, size, fg);
             if (fake)
                 drawGrapheme(lf, one[], left + 1, t, size, fg);
@@ -358,7 +457,8 @@ struct UiFonts
         auto face = &steps[step];
         if (mono && fallback !is null)
         {
-            const size = cast(int)(face.size * monoScale + 0.5f);
+            const size = face.monoSize;
+            LoadedFont* own = monoFace(*face, bold);
             foreach (part; byAnsiToken(text))
             {
                 if (part.isEscape) continue;
@@ -368,7 +468,8 @@ struct UiFonts
                     if (cp < 0x20 || cp == 0x7F)
                         continue;
                     bool fakeBold, fakeItalic;
-                    auto lf = fallback.resolveFace(cp, bold, false, fakeBold, fakeItalic);
+                    auto lf = own.present && fontHasGlyph(*own, cp) ? own
+                        : fallback.resolveFace(cp, bold, false, fakeBold, fakeItalic);
                     const idx = glyphIndexFor(*lf, cp);
                     const base = lf.font.baseSize > 0 ? lf.font.baseSize : size;
                     visit(*lf, cp, size, lf.font.glyphs[idx].advanceX * cast(float) size / base);

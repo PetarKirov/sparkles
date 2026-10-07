@@ -142,6 +142,13 @@ struct FontSet
     /// with it outside the run/cell path (e.g. an overlay banner).
     ref inout(Font) primaryFont() inout return @safe pure nothrow @nogc => primary.font;
 
+    /// The file the regular (or, `bold`, the bold) face loaded from, NUL-terminated;
+    /// null when that face is absent. `UiFonts` rasterizes monospace chrome
+    /// from it at its own sizes.
+    const(char)* facePathZ(bool bold) const @safe pure nothrow @nogc
+        => bold ? (fontBold.present ? fontBold.pathZ : null)
+            : (primary.present ? primary.pathZ : null);
+
     // ── loading ──────────────────────────────────────────────────────────────
 
     /**
