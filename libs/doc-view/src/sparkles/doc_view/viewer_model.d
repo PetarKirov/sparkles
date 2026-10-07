@@ -2128,6 +2128,38 @@ struct ViewerModel
         return size_t.max;
     }
 
+    /**
+    The table, or the fence, whose $(I box) holds visual row `row`: its own
+    rows, and the rows of its frame that carry no source — its top and
+    bottom borders, the rules between its rows, a fence's title border.
+    A scroll anywhere on a block is the block's (`SCV12`); by source
+    identity alone a border was nobody's, and a finger on one scrolled the
+    document. `size_t.max` for none.
+    */
+    size_t tableBoxAtRow(long row) const @safe pure nothrow @nogc
+    {
+        const own = tableAtRow(row);
+        if (own != size_t.max || !bareRow(row))
+            return own;
+        const above = tableAtRow(row - 1);
+        return above != size_t.max ? above : tableAtRow(row + 1);
+    }
+
+    /// ditto
+    size_t fenceBoxAtRow(long row) const @safe pure nothrow @nogc
+    {
+        const own = fenceBodyAtRow(row);
+        if (own != size_t.max || !bareRow(row))
+            return own;
+        const above = fenceBodyAtRow(row - 1);
+        return above != size_t.max ? above : fenceBodyAtRow(row + 1);
+    }
+
+    // A visual row that carries no source: a frame's border or rule.
+    private bool bareRow(long row) const @safe pure nothrow @nogc
+        => row >= 0 && row < cast(long) rows.length
+            && rows[cast(size_t) row].srcStart == size_t.max;
+
     /// Measures the framed table starting at `spanStart` off its retained
     /// scrollbar leaves (`TBL7`/`TBL8`) — a bar exists exactly when its axis
     /// overflows, the only case the clamp matters. Zeros where an axis has

@@ -110,7 +110,7 @@ struct ScrollLatch
         horizontal = ax > ay;
         const d = horizontal ? dx : dy;
         motion.stop();
-        const fb = vm.fenceBodyAtRow(row);
+        const fb = vm.fenceBoxAtRow(row);
         if (fb != size_t.max && movable(vm.fenceScrollPos(fb, horizontal),
                 vm.fenceScrollMax(fb, horizontal), d))
             return latch(LatchTarget.fence, fb, vm.fenceScrollPos(fb, horizontal),
@@ -120,7 +120,7 @@ struct ScrollLatch
             target = LatchTarget.grid;
             return;
         }
-        const tb = vm.tableAtRow(row);
+        const tb = vm.tableBoxAtRow(row);
         if (tb != size_t.max && movable(vm.tableScrollPos(tb, horizontal),
                 vm.tableScrollMax(tb, horizontal), d))
             return latch(LatchTarget.table, tb, vm.tableScrollPos(tb, horizontal),
@@ -315,4 +315,24 @@ version (unittest)
         "across only — down stays where it was");
     assert(l.feed(vm, row, 1, 0, precise: true, begins: false));
     assert(vm.fenceScrollPos(fb, true) == 8.25 && vm.fenceScrollPos(fb, false) == 2.5);
+}
+
+@("scroll_latch.aTablesBordersAreTheTables")
+@system unittest
+{
+    // The rows of the table's frame carry no source; a scroll on one is
+    // still the table's.
+    auto vm = wideTable();
+    long[] borders;
+    foreach (r; 0 .. cast(long) vm.rows.length)
+        if (vm.tableAtRow(r) == size_t.max && vm.tableBoxAtRow(r) == 0)
+            borders ~= r;
+    assert(borders.length >= 2, "the top and bottom borders at least");
+    foreach (r; borders)
+    {
+        ScrollLatch l;
+        assert(l.feed(vm, r, 1, 0, precise: true, begins: true));
+        assert(l.target == LatchTarget.table);
+        vm.tableScrollAt.clear();
+    }
 }
