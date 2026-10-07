@@ -134,6 +134,12 @@ without its line numbers or its code blocks' (`viewer.lineNumbers`,
 them), and **must** set its prose — paragraphs, headings, list items — in
 the interface face, its tables and code in the cell font (design-system D64).
 
+**TDV14: Read with the finger.** A document viewer takes no typing, so on a
+touch screen focusing one — a tap on it, a tab or the tree landing on it —
+**must** put the soft keyboard away and **must not** raise it, and the
+extra-keys row **must** stay hidden while it has the focus, unless the
+keyboard is up for a field over it (the key guide's search).
+
 ### Status
 
 | ID      | Status                                                                                                                                                                                                    | Traces to                                                                                                                                                                                                                                                                       |
@@ -151,6 +157,7 @@ the interface face, its tables and code in the cell font (design-system D64).
 | `TDV11` | full (`caacfa304`)                                                                                                                                                                                        | `UIA14`, `sparkles:doc-view`                                                                                                                                                                                                                                                    |
 | `TDV12` | open                                                                                                                                                                                                      | [design](./design.md)                                                                                                                                                                                                                                                           |
 | `TDV13` | partial: line numbers off by default; the prose stays in the cell font, since Roboto at the interface step read unevenly beside cell-font tables and code, until the design system sets the viewer's type | `ViewerConfig`, `MdViewOptions.proseRole`, `ViewerModel.proseRole`                                                                                                                                                                                                              |
+| `TDV14` | full                                                                                                                                                                                                      | `DroidTerminal.viewerFocused`, `DroidTerminal.onPointer`, `DroidTerminal.geometry`                                                                                                                                                                                              |
 
 ## Resolved questions
 
