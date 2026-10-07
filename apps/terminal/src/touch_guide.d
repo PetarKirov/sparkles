@@ -210,8 +210,14 @@ final class TouchGuide : Surface, Scrollable
     bool key(in KeyEvent k) @system
     {
         import sparkles.base.text.utf : encodeScalar, UtfStatus;
+        import sparkles.input.events : KeyAction;
         import page_kit : queryPrefixWithoutLastGrapheme;
 
+        // A desktop key arrives pressed and released: acting on the release
+        // too climbed two levels an Escape and erased two letters a Backspace.
+        if (k.action == KeyAction.release)
+            return k.key == Key.escape || k.key == Key.back || k.key == Key.backspace
+                || k.key == Key.char_;
         if (k.mods.ctrl || k.mods.alt || k.mods.super_)
             return false;
         switch (k.key)
