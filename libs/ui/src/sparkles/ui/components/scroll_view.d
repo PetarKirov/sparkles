@@ -182,6 +182,26 @@ unittest
         "the track jumps the thumb's middle to the pointer, clamped");
 }
 
+@("ui.scroll_view.overlayBar.aSecondClickWhereTheThumbLandedHoldsIt")
+@safe pure nothrow @nogc
+unittest
+{
+    // Jump to the spot: the thumb's middle lands under the pointer, so the
+    // next press there is on the thumb and grabs it where it is.
+    const track = Rect(196, 0, 4, 400);
+    OverlayBar bar;
+    double pos = 0;
+    assert(bar.press(198, 300, track, Rect(196, 0, 4, 40), 44, 100, 10, pos));
+    bar.release();
+    // Where `pos` puts the thumb: 360 px of travel over 90 rows.
+    const start = cast(int)(pos / 90 * 360);
+    const landed = Rect(196, start, 4, 40);
+    assert(300 >= landed.y && 300 < landed.y + landed.height, "under the pointer");
+    const before = pos;
+    assert(bar.press(198, 300, track, landed, 44, 100, 10, pos));
+    assert(pos == before && bar.grabAt == 300 - landed.y, "held, not moved");
+}
+
 @("ui.scroll_view.scrollbarAnim.touchFadeShowsWhileMovingThenFades")
 @safe pure nothrow @nogc
 unittest

@@ -1198,14 +1198,19 @@ struct TerminalView
         applyScroll(sb);
     }
 
-    /// The bar dragged the scrollback to `pos` rows from its top.
+    /**
+    The bar took the scrollback to `pos` rows from its top: to the nearest
+    whole row, at once. A thumb pixel spans many rows, so nothing is lost —
+    and nothing is left between rows to settle afterwards, which crept the
+    thumb out from under the pointer that had just put it there.
+    */
     void scrollTo(double pos) @system nothrow @nogc
     {
         if (!opened)
             return;
         const sb = scrollback();
         syncScroll(sb);
-        scrollMotion.jumpTo(pos, sb.total > sb.len ? sb.total - sb.len : 0);
+        scrollMotion.jumpTo(cast(long)(pos + 0.5), sb.total > sb.len ? sb.total - sb.len : 0);
         lastScrollInput = MonoTime.currTime;
         applyScroll(sb);
     }
@@ -3281,4 +3286,32 @@ private void openWithPlatform(scope const(char)[] uri) @system nothrow
     assert(tv.selectionText == "https://ex.org/x?y=1", "the URL whole, its full stop not");
     assert(!tv.selectAt(25, 0, Granularity.word) && !tv.hasSelection);
     assert(!tv.copy(c), "nothing selected, nothing copied");
+}
+
+@("terminal_view.component.scrollback.betweenRowsByDragOnWholeRowsByTheBar")
+@system unittest
+{
+    TerminalView tv;
+    GhosttyTerminalOptions options = { cols: 10, rows: 3, max_scrollback: 1000 };
+    assert(ghostty_terminal_new(null, &tv.s.terminal, options) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_terminal_free(tv.s.terminal);
+    tv.opened = true;
+    scope (exit) tv.opened = false;
+    tv.s.cellHeight = 20;
+    foreach (i; 0 .. 20)
+        feedPtyChunk(tv.s, "line\r\n");
+    const sb = tv.scrollback();
+    assert(sb.total > sb.len, "precondition: history to walk");
+
+    // A drag up by two and a half rows: the viewport's top is the row
+    // above, the content painted half a row lower (`SCV12`).
+    tv.scrollSmooth(WheelEvent(fdy: -2.5f, precise: true));
+    assert(tv.scrollPos == sb.offset - 2.5);
+    assert(tv.shiftPx == 10);
+
+    // The bar puts it on a whole row at once; nothing is left to settle.
+    tv.scrollTo(5.6);
+    assert(tv.scrollPos == 6 && tv.shiftPx == 0);
+    assert(!tv.animateScroll(1.0f / 60), "no motion after a bar jump");
+    assert(tv.scrollPos == 6);
 }
