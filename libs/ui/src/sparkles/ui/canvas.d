@@ -334,6 +334,12 @@ struct PushShift
 {
     float dx = 0; /// cells, `-1 < dx < 1`
     float dy = 0; /// ditto
+    /// The viewport's `Widget.key` when it keeps its bracket at every
+    /// offset (`Widget.shiftBracket`): a painter that knows the scroll by
+    /// that key sets the fraction here without a rebuild. 0: none.
+    size_t key;
+    /// The axes the viewport scrolls on: 1 across, 2 down, 3 both.
+    ubyte axes = 3;
 }
 
 /// Undo the matching $(LREF PushShift).
@@ -804,8 +810,9 @@ DrawOp pushEffectOp(in Rect rect, EffectId effect) @safe pure nothrow @nogc
 DrawOp popEffectOp() @safe pure nothrow @nogc => DrawOp(PopEffect());
 
 /// ditto
-DrawOp pushShiftOp(float dx, float dy) @safe pure nothrow @nogc
-    => DrawOp(PushShift(dx, dy));
+DrawOp pushShiftOp(float dx, float dy, size_t key = 0, ubyte axes = 3)
+    @safe pure nothrow @nogc
+    => DrawOp(PushShift(dx, dy, key, axes));
 
 /// ditto
 DrawOp popShiftOp() @safe pure nothrow @nogc => DrawOp(PopShift());

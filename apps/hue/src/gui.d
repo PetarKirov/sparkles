@@ -67,6 +67,7 @@ import sparkles.diff.model : DiffDoc;
 import sparkles.doc_view.ansi_decode : decodeAnsi;
 import sparkles.doc_view.viewer_model : Dims, MdCell, MdFence, ScrollAnchorMode, ViewerModel;
 import sparkles.doc_view.view_ops : emitVisibleOps;
+import sparkles.doc_view.scroll_latch : LatchTarget, ScrollLatch;
 import format_preview : formatPreviewActive, formatPreviewChip,
     formatPreviewCycle, formatPreviewNudge, formatPreviewPump,
     formatPreviewRulerCol, formatPreviewRulerDragging, formatPreviewRulerHits,
@@ -286,6 +287,8 @@ struct GuiArgs
 struct GuiRunState
 {
     ViewerModel vm;
+    /// The document wheel's scroller for the current gesture (`SCV12`).
+    ScrollLatch docLatch;
     ResizeDebounce rd;
     Panes pn;
     InputState inp;
@@ -3663,29 +3666,21 @@ int runGui(GuiArgs guiArgs) @system
                 {
                     bool nested;
                     route.event.match!((in WheelEvent local) {
+                        // The gesture belongs to what was under the pointer
+                        // where it began (`ScrollLatch`, `SCV12`): a code
+                        // block or a table that could move that way keeps
+                        // it, edge included — chosen per notch, they and the
+                        // document took turns as the document carried
+                        // blocks under the pointer. `DSN4`: a grid owning the
+                        // vertical axis owns every notch in the pane (a cell
+                        // border carries no source identity a table lookup
+                        // could find).
                         const row = vm.top + local.pos.y;
-                        const fb = vm.fenceBodyAtRow(row);
-                        if (dx != 0 && fb != size_t.max)
-                            nested = vm.scrollFence(fb, dx);
-                        else if (dy != 0 && fb != size_t.max)
-                            nested = vm.scrollFenceV(fb, dy);
-                        if (nested)
-                            return;
-                        // `DSN4`: a grid owning the vertical axis owns every
-                        // notch in the pane — `tableAtRow` answers by source
-                        // identity, and a cell border carries none, so a
-                        // notch over a rule row would otherwise find no
-                        // table and fall through to a scroll the windowed
-                        // document cannot perform.
-                        if (dy != 0 && gridOwnsVertical() && scrollGridV(dy))
-                            return;
-                        // A table under the pointer scrolls to its edge
-                        // before the document (the COD6 rule, for TBL7/8).
-                        const tb = vm.tableAtRow(row);
-                        if (dx != 0 && tb != size_t.max)
-                            nested = vm.scrollTable(tb, dx);
-                        else if (dy != 0 && tb != size_t.max)
-                            nested = vm.scrollTableV(tb, dy);
+                        docLatch.motion.instant = true; // hue steps whole cells
+                        nested = docLatch.feed(vm, row, dx, dy, local.precise,
+                            local.begins, gridOwnsVertical());
+                        if (docLatch.target == LatchTarget.grid && dy != 0)
+                            cast(void) scrollGridV(dy);
                     }, (_) {});
                     if (!nested)
                         pn.dock.scrollBy(docPane, dx, dy);

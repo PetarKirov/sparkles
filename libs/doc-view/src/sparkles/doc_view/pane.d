@@ -39,6 +39,7 @@ import sparkles.doc_view.view_ops : emitVisibleOps;
 import sparkles.doc_view.viewer_model : ScrollAnchor, ViewerModel;
 import sparkles.ui.components.scroll_view : OverlayBar;
 import sparkles.ui.scroll_motion : ScrollMotion;
+import sparkles.doc_view.scroll_latch : ScrollLatch;
 
 /**
 What every pane of one application shares: the grammars, the highlighting
@@ -297,6 +298,8 @@ struct DocViewPane
     /// Draw the bar at its full width.
     bool wide;
 
+    /// Which scroller the current gesture belongs to (`SCV12`).
+    ScrollLatch latch;
     private float frac = 0;      // painted past `vm.top`
     private long movedTop = -1;  // the `vm.top` the motion last wrote
 
@@ -337,10 +340,12 @@ struct DocViewPane
     }
 
     /**
-    A wheel notch or a drag at window pixel (`x`, `y`): a code block or a
-    table under it scrolls first, to its edge (hue's rule, `COD6`); else the
-    document — a drag followed, a notch eased, between rows (`SCV12`).
-    True when anything moved.
+    A wheel notch or a drag at window pixel (`x`, `y`). The gesture belongs
+    to what was under the pointer where it began (`ScrollLatch`): a code
+    block or a table that could move that way keeps it to the end, edge
+    included; otherwise the document has it. Either way a drag is followed
+    and a notch eased, between rows and cells (`SCV12`). True when anything
+    moved.
     */
     bool wheel(int x, int y, in WheelEvent w) @system
     {
@@ -350,8 +355,13 @@ struct DocViewPane
         const dx = w.exactX + (w.mods.shift ? w.exactY : 0);
         const dy = w.mods.shift ? 0 : w.exactY;
         const row = vm.top + cast(long)((y - docY + frac * cellH_) / cellH_);
-        if (nested(row, dx, dy))
+        // The gesture's scroller, chosen where it starts (`SCV12`): a block
+        // keeps it to the end, between cells; the document's is ours.
+        if (latch.feed(vm, row, dx, dy, w.precise, w.begins))
+        {
+            dirty = true;
             return true;
+        }
         if (dy == 0)
             return false;
         if (w.precise)
@@ -362,25 +372,6 @@ struct DocViewPane
         return applyMotion();
     }
 
-    // A code block's or a table's own scroll — between cells too (`LAY7`).
-    private bool nested(long row, float dx, float dy) @system
-    {
-        const fb = vm.fenceBodyAtRow(row);
-        const tb = fb == size_t.max ? vm.tableAtRow(row) : size_t.max;
-        if (fb == size_t.max && tb == size_t.max)
-            return false;
-        if (dx != 0)
-        {
-            dirty |= fb != size_t.max ? vm.scrollFence(fb, dx) : vm.scrollTable(tb, dx);
-            // Sideways belongs to the block even at its edge: the document
-            // does not scroll sideways under it.
-            return true;
-        }
-        const moved = fb != size_t.max ? vm.scrollFenceV(fb, dy) : vm.scrollTableV(tb, dy);
-        dirty |= moved;
-        return moved;
-    }
-
     /// One frame of the motion and the bar's fade, `dt` seconds; true while
     /// it needs the next.
     bool animate(float dt) @system
@@ -388,7 +379,9 @@ struct DocViewPane
         if (error.length || kind == ViewKind.image)
             return false;
         syncMotion();
-        const more = motion.step(dt, limit);
+        const nestedMoving = latch.step(vm, dt);
+        dirty |= nestedMoving;
+        const more = motion.step(dt, limit) || nestedMoving;
         cast(void) applyMotion();
         if (!touch)
             return more;

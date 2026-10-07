@@ -239,9 +239,9 @@ if (isArena!Arena)
     }
 
     /// ditto — a viewport's sub-cell scroll (`LAY7`), inside its clip.
-    void pushShift(float dx, float dy)
+    void pushShift(float dx, float dy, size_t key = 0, ubyte axes = 3)
     {
-        _ops ~= DrawOp(PushShift(dx, dy));
+        _ops ~= DrawOp(PushShift(dx, dy, key, axes));
     }
 
     /// ditto

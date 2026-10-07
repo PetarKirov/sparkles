@@ -395,12 +395,18 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
             const fx = clipsX(node) ? node.childOffsetFracX : 0;
             const fy = clipsY(node) ? node.childOffsetFracY : 0;
             enum canShift = __traits(compiles, ops.pushShift(0f, 0f));
-            const shifts = canShift && (fx > 0 || fy > 0);
+            const shifts = canShift && (fx > 0 || fy > 0 || (node.shiftBracket && clips));
             if (clips)
                 ops.pushClip(childClip);
             static if (canShift)
                 if (shifts)
-                    ops.pushShift(-fx, -fy);
+                {
+                    static if (__traits(compiles, ops.pushShift(0f, 0f, size_t(0), ubyte(0))))
+                        ops.pushShift(-fx, -fy, node.key,
+                            cast(ubyte)((clipsX(node) ? 1 : 0) | (clipsY(node) ? 2 : 0)));
+                    else
+                        ops.pushShift(-fx, -fy);
+                }
             const cull = shifts ? cullClipOf(node, rect, clip) : childClip;
             foreach (child; node.children)
                 emit(tree, child, frames, pal, pageFg, pageBg, cull,

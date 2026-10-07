@@ -996,9 +996,11 @@ Rect cullClipOf(in Widget node, in Rect rect, in Rect clip) pure nothrow @nogc
     auto c = childClipOf(node, rect, clip);
     if (c.empty)
         return c;
-    if (node.childOffsetFracX > 0 && clipsX(node))
+    // A viewport whose fraction a painter sets (`shiftBracket`) may show
+    // one at any frame, so its trailing row always stays.
+    if ((node.childOffsetFracX > 0 || node.shiftBracket) && clipsX(node))
         c.size.width = c.width + 1;
-    if (node.childOffsetFracY > 0 && clipsY(node))
+    if ((node.childOffsetFracY > 0 || node.shiftBracket) && clipsY(node))
         c.size.height = c.height + 1;
     return c;
 }
