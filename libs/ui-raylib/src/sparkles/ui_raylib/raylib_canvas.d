@@ -449,10 +449,11 @@ struct RaylibCanvas
     void fillRect(in Rect r, in Visual visual) @system
     {
         const v = densityScaled(narrowed(visual));
-        const x = px(r.x);
-        const w = cast(float)(r.width * cellW);
-        // A box drawn shorter than its rect (`TOK11`) is centred in it: the
-        // control keeps its whole touch target and draws a compact chip.
+        // A box drawn smaller than its rect (`TOK11`) is centred in it: the
+        // control keeps its whole touch target and draws a compact chip —
+        // or, drawn narrower too, a switch's round knob.
+        float x = px(r.x), w = cast(float)(r.width * cellW);
+        centredSpan(x, w, v.drawWidth);
         float y = py(r.y), h = cast(float)(r.height * cellH);
         centredSpan(y, h, v.drawHeight);
 
@@ -595,6 +596,7 @@ struct RaylibCanvas
         s.shadow.dy = dp(v.shadow.dy, density);
         s.shadow.blur = dp(v.shadow.blur, density);
         s.drawHeight = dp(v.drawHeight, density);
+        s.drawWidth = dp(v.drawWidth, density);
         return s;
     }
 

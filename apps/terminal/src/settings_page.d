@@ -1230,7 +1230,8 @@ version (unittest)
     auto fs = TmpFS.create();
     auto f = new PageFixture(fs.dir);
     f.open();
-    const shown = allText(f.page.build(phone(), 45));
+    const tree = f.page.build(phone(), 45);
+    const shown = allText(tree);
     // `TSP7`: every section open, in the struct's order, keys in place.
     const order = ["APPEARANCE", "KEYBOARD", "WHEN A PROGRAM EXITS", "LINKS", "PASTE",
         "CLIPBOARD", "NOTIFICATIONS", "KEY GUIDE", "INTERFACE", "OPENING FILES", "KEYS"];
@@ -1243,7 +1244,7 @@ version (unittest)
     }
     // Leaves carry their descriptions and controls; a scheme is a drill-in.
     assert(shown.canFind("Follow system") && shown.canFind("Switch between the dark"));
-    assert(shown.canFind("●"), "a toggle switch's knob");
+    assert(tree.nodes.canFind!(n => n.decoration.inkFill), "a toggle switch's knob");
     assert(shown.canFind("Split right") && shown.canFind("␣ p v"));
 }
 
