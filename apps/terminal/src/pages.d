@@ -18,7 +18,8 @@ top of `host`'s surfaces. A page already on top is not opened twice.
 */
 void openPage(ref WorkspaceHost host, TermCommand cmd) @system
 {
-    import about_page : AboutPage, gatherAboutFacts;
+    import about_page : AboutPage, gatherAboutFacts, processBuild;
+    import sparkles.core_cli.build_info : BuildLoad;
     import log_page : LogPage;
     import logging : previousLogPath, terminalLog, terminalStateDir;
     import notification_page : NotificationPage;
@@ -36,7 +37,10 @@ void openPage(ref WorkspaceHost host, TermCommand cmd) @system
     switch (cmd)
     {
         case TermCommand.openAbout:
-            host.surfaces.push(new AboutPage(gatherAboutFacts(), services));
+            if (!processBuild.hasValue)
+                processBuild = BuildLoad.unstamped();
+            host.surfaces.push(new AboutPage(
+                gatherAboutFacts(processBuild.info), &processBuild, services));
             break;
         case TermCommand.openLogs:
             host.surfaces.push(new LogPage(terminalLog(), previousLogPath(), services));

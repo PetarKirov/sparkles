@@ -3,19 +3,16 @@ The shell: resolve the configuration, run the terminal component.
 
 Everything the emulator $(I is) lives in `sparkles:terminal-view`
 (`TerminalView`, a `runApp` component); everything the window/font/backend
-side is lives in `sparkles:ui-app`. This file parses the desktop's flags —
-spellings preserved — as the configuration's highest layer (`TCF2`), and
-answers `terminal config show|write` (`TCF5`).
+side is lives in `sparkles:ui-app`. The desktop flags are `TerminalCli`
+($(MREF cli)); this file loads the build-info section and runs the window.
 */
 module app;
 
-import std.getopt;
-
-import cli : guiOptionsFrom, onExitFromFlag, viewOptionsFrom;
-import settings : TerminalConfig;
-import settings_load : desktopConfigPath, loadTerminalConfig, LoadedConfig;
+import cli : TerminalCli, guiOptionsFrom, parsedLaunch, viewOptionsFrom;
+import settings_load : loadTerminalConfig, LoadedConfig;
 import desktop_terminal : DesktopTerminal;
 import logging : desktopStateDir;
+import sparkles.core_cli.args : CommandNode, runCli;
 import sparkles.terminal_view.component : TerminalViewOptions;
 import sparkles.wired.json : readJSONFile;
 import workspace : PaneSpec, SavedWorkspace;
@@ -26,7 +23,6 @@ import sparkles.terminal_view.log : routeTraceLog;
 import sparkles.ui_app.host : RunConfig;
 import sparkles.ui_app.run : RunOutcome;
 import sparkles.ui_app.run_app : runApp;
-import sparkles.wired.overlay : Sparse;
 
 int main(string[] args)
 {
@@ -37,18 +33,43 @@ int main(string[] args)
         return androidMain();
     }
     else
-        return desktopMain(args);
+    {
+        // Run as `xdg-open` (the shim on every session's PATH, `TDV4`): hand the
+        // file to the terminal that owns the session, or to the next xdg-open.
+        import std.path : baseName;
+
+        if (args.length && args[0].baseName == "xdg-open")
+        {
+            import open_request : xdgOpenShim;
+
+            return xdgOpenShim(args);
+        }
+        return runCli!TerminalCli(args, (ref CommandNode!TerminalCli node) => prepareDesktop(node));
+    }
 }
 
-/// One explicitly typed flag: what it sets, and its spelling (the origin
-/// `config show` reports).
-private struct CliFlag
+/// The file log and the build line, after `runCli` has installed the logger.
+/// `--version` returns before this. `config` does not open the log file.
+private int prepareDesktop(ref CommandNode!TerminalCli node)
 {
-    Sparse!TerminalConfig overlay;
-    string flag;
+    if (node.commandSelected)
+        return 0;
+
+    import std.file : thisExePath;
+
+    import about_page : adoptBuild, processBuild;
+    import logging : installTerminalLog;
+
+    installTerminalLog(desktopStateDir());
+    adoptBuild(thisExePath);
+    const name = processBuild.info.name.length ? processBuild.info.name : "sparkles:terminal";
+    logBuildInfo(processBuild.info.version_, processBuild.info.commitLabel, name);
+    return 0;
 }
 
-private int desktopMain(string[] args)
+/// The window. `cli.TerminalCli.run` calls this; the unittest build excludes
+/// this module, so that call stays inside the template.
+int launchDesktop(ref CommandNode!TerminalCli node)
 {
     import std.array : join;
     import std.file : exists, getcwd;
@@ -58,112 +79,18 @@ private int desktopMain(string[] args)
 
     import sparkles.base.logger : warning;
 
-    // Run as `xdg-open` (the shim on every session's PATH, `TDV4`): hand the
-    // file to the terminal that owns the session, or to the next xdg-open.
-    {
-        import std.path : baseName;
-
-        if (args.length && args[0].baseName == "xdg-open")
-        {
-            import open_request : xdgOpenShim;
-
-            return xdgOpenShim(args);
-        }
-    }
-    if (args.length >= 2 && args[1] == "config")
-        return configCommand(args[0], args[2 .. $]);
-
-    string configPath = desktopConfigPath();
-    int windowCols = 100;
-    int windowRows = 30;
-    bool debugScreenshotAndExit = false;
-    CliFlag[] flags;
-    string[] codepointMaps, fontDirs;
-    string badExit;
-
-    void set(string flag, scope void delegate(ref Sparse!TerminalConfig) @safe apply)
-    {
-        CliFlag f = {flag: flag};
-        apply(f.overlay);
-        flags ~= f;
-    }
-
-    auto helpInfo = getopt(
-        args,
-        // Stop at the first non-option so a trailing command (and its own flags)
-        // is left untouched: `terminal --font-size 14 -- vim file -R`.
-        config.stopOnFirstNonOption,
-        "config", "Configuration file (default: " ~ configPath ~ ")", &configPath,
-        "font|f", "Font path or name (e.g. '/path/to/font.ttf' or 'Fira Code')",
-            (string _, string v) { set("--font", (ref s) { s.appearance.font.family = v; }); },
-        "font-size|s", "Font size in points (default: 13)",
-            (string _, string v) {
-                import std.conv : to;
-
-                const pt = v.to!int;
-                set("--font-size", (ref s) { s.appearance.font.size = pt; });
-            },
-        "window-width", "Initial window width in columns (default: 100)", &windowCols,
-        "window-height", "Initial window height in rows (default: 30)", &windowRows,
-        "scrollback-limit", "Maximum number of lines to keep in scrollback history (0 to disable, default: infinite)",
-            (string _, string v) {
-                import std.conv : to;
-
-                const n = v.to!long;
-                set("--scrollback-limit", (ref s) { s.behaviour.scrollback = n; });
-            },
-        "font-codepoint-map", "Render codepoints from a specific font (repeatable): 'U+XXXX-U+YYYY,U+ZZZZ=Family'", &codepointMaps,
-        "font-dir", "Resolve fonts by scanning this directory instead of fontconfig (repeatable). Makes a build portable and its font selection deterministic: no fc-match subprocess, no dependence on the host's fontconfig configuration. Pair with the bundle from `nix build .#sparkles-fonts`.", &fontDirs,
-        "exit-behavior", "On child exit: close | wait-for-key | hold | hold-on-failure (default)",
-            (string _, string v) {
-                import settings : OnExit;
-
-                OnExit e;
-                if (onExitFromFlag(v, e))
-                    set("--exit-behavior", (ref s) { s.behaviour.onExit = e; });
-                else
-                    badExit = v;
-            },
-        "debug-take-screenshot-and-exit", "Takes a screenshot after 2 seconds and exits", &debugScreenshotAndExit
-    );
-
-    if (helpInfo.helpWanted)
-    {
-        defaultGetoptPrinter(
-            "sparkles:terminal — a minimal terminal emulator using libghostty-vt.\n\n" ~
-            "Usage: terminal [options] [-- command [args...]]\n" ~
-            "       terminal config show [--changed] | write [--force] | keys\n\n" ~
-            "With no command, the login shell runs interactively. With a command,\n" ~
-            "the shell runs it via `-c` and then exits (e.g. `terminal -- vim file`).\n" ~
-            "Settings come from the configuration file; a flag overrides it.",
-            helpInfo.options);
-        return 0;
-    }
-    if (codepointMaps.length)
-        set("--font-codepoint-map", (ref s) { s.appearance.font.codepointMap = codepointMaps; });
-    if (fontDirs.length)
-        set("--font-dir", (ref s) { s.appearance.font.fontDir = fontDirs; });
-
-    // Any arguments left after the options are an optional command to run in
-    // the shell. A leading `--` separator is accepted and stripped.
-    string[] command = args[1 .. $];
-    if (command.length && command[0] == "--")
-        command = command[1 .. $];
-
-    {
-        import logging : desktopStateDir, installTerminalLog;
-        import sparkles.base.logger : initLogger, LogLevel;
-
-        initLogger(LogLevel.info); // stderr, then the file and the ring
-        installTerminalLog(desktopStateDir());
-    }
-    logBuildInfo();
+    auto launch = parsedLaunch(node);
+    const configPath = launch.configPath;
+    const windowCols = launch.windowCols;
+    const windowRows = launch.windowRows;
+    const debugScreenshotAndExit = launch.debugScreenshot;
+    const command = launch.command;
 
     auto lc = loadTerminalConfig(configPath, null);
-    foreach (f; flags)
+    foreach (f; launch.flags)
         lc.applyCli(f.overlay, f.flag);
-    if (badExit.length)
-        lc.warnings ~= "config: --exit-behavior " ~ badExit ~ " is not one of "
+    if (launch.badExit.length)
+        lc.warnings ~= "config: --exit-behavior " ~ launch.badExit ~ " is not one of "
             ~ "close, wait-for-key, hold, hold-on-failure — the flag was ignored";
 
     RunConfig cfg = {
@@ -295,69 +222,4 @@ private string bundledCredits()
             return doc;
     }
     return null;
-}
-
-/// `terminal config show [--changed] [--config PATH]` and `terminal config
-/// write [--force] [--config PATH]` (`TCF5`).
-private int configCommand(string program, string[] rest)
-{
-    import std.array : appender;
-    import std.file : exists, fileWrite = write, mkdirRecurse;
-    import std.path : dirName;
-    import std.stdio : stderr, stdout, writeln;
-
-    import settings_io : renderConfigShow, renderStarterConfig;
-
-    string configPath = desktopConfigPath();
-    bool changed, force;
-    auto args = [program] ~ rest;
-    try
-        getopt(args, "config", &configPath, "changed", &changed, "force", &force);
-    catch (Exception e)
-    {
-        stderr.writeln("terminal config: ", e.msg);
-        return 2;
-    }
-    const action = args.length >= 2 ? args[1] : "show";
-    switch (action)
-    {
-        case "show":
-            auto w = appender!string;
-            renderConfigShow(w, loadTerminalConfig(configPath, null), changedOnly: changed);
-            stdout.write(w[]);
-            return 0;
-        case "write":
-            if (!configPath.length)
-            {
-                stderr.writeln("terminal: no config location (no config dir; pass --config)");
-                return 1;
-            }
-            if (configPath.exists && !force)
-            {
-                stderr.writeln("terminal: ", configPath, " already exists — pass --force to overwrite");
-                return 1;
-            }
-            auto w = appender!string;
-            renderStarterConfig(w);
-            try
-            {
-                mkdirRecurse(configPath.dirName);
-                fileWrite(configPath, w[]);
-            }
-            catch (Exception e)
-            {
-                stderr.writeln("terminal: ", e.msg);
-                return 1;
-            }
-            writeln("wrote ", configPath);
-            return 0;
-        case "keys":
-            import keymap : bindingsMarkdown;
-
-            stdout.write(bindingsMarkdown());
-            return 0;
-        default:
-            stderr.writeln("terminal config: unknown action '", action, "' (show, write, keys)");
-            return 2;
-    }
 }
