@@ -128,9 +128,11 @@ static foreach (s; 0 .. slotCount)
 The document for `t`: page colors, syntax rules, the root extension, and —
 only when the theme sets its palette explicitly — every slot, state and
 metric. A theme that leaves its palette derived exports without one, so
-loading the export derives the same palette (`FMT5`).
+loading the export derives the same palette (`FMT5`). With
+`resolvedPalette`, a derived palette is exported too, resolved: the form a
+consumer that has no derivation of its own reads, as the CSS emitter does.
 */
-DtcgJson exportTheme(const Theme t)
+DtcgJson exportTheme(const Theme t, bool resolvedPalette = false)
 {
     auto root = DtcgJson.object();
     void put(string path, DtcgJson token)
@@ -193,8 +195,8 @@ DtcgJson exportTheme(const Theme t)
             g.set("$extensions", DtcgJson.object([DtcgMember(extensionKey, e)]));
     }
 
-    if (t.hasPalette)
-        exportPalette(t.palette, &group, &put);
+    if (t.hasPalette || resolvedPalette)
+        exportPalette(t.effectivePalette, &group, &put);
     return root;
 }
 
