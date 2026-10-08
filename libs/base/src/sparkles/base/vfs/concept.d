@@ -82,3 +82,10 @@ MountCheck mountCheckOf(V)(ref V vfs, ResolvePolicy policy)
     else
         return policy.crossMounts ? MountCheck.none : MountCheck.racy;
 }
+
+/// Whether `V` can open a directory for search only (VFN14):
+/// `openSearchAt(dir, name)`, used by the walk for the directories it passes
+/// through.
+enum hasSearchOpen(V) = __traits(compiles, (ref V v, V.Handle h, scope const(char)[] n) {
+    IoResult!(V.Handle) r = v.openSearchAt(h, n);
+});

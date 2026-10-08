@@ -375,3 +375,39 @@ struct RefusingKernel
     exercise(v);
     assert(GC.allocatedInCurrentThread() == before, "a VFS operation allocated on the GC heap");
 }
+
+// A backend that can open for search only, for VFN14.
+struct SearchingVfs
+{
+    MemVfs inner;
+    alias Handle = MemVfs.Handle;
+    alias Listing = MemVfs.Listing;
+    alias inner this;
+    size_t searchOpens;
+    @disable this(this);
+
+    IoResult!Handle openSearchAt(Handle dir, scope const(char)[] name) @safe nothrow @nogc
+    {
+        ++searchOpens;
+        return inner.openDirAt(dir, name);
+    }
+}
+
+@("vfs.check.VFN14.walkOpensForSearch")
+@safe unittest
+{
+    static assert(hasSearchOpen!SearchingVfs && !hasSearchOpen!MemVfs);
+    auto v = new SearchingVfs(MemVfs(new MemNode[64], new ubyte[1024]));
+    v.writeFile("r/a/b/c/f", null);
+    auto root = openRoot!(Rights.all)(v, "r", ambientAuthority());
+    v.resetCounts();
+    auto c = root.value.walk("a/b/c");
+    assert(!c.hasError);
+    assert(v.searchOpens == 3, "every directory passed through is opened for search");
+    // The double forwards each search open to openDirAt, so: three, plus the reopen.
+    assert(v.count(OpKind.openAt) == 4, "only the result is reopened with full access");
+    char[16] names;
+    auto l = c.value.list(names[]);
+    assert(l.value.next().value && l.value.front.name == "f");
+    assert(v.openHandles == 3, "the root, the result, and the listing's own handle");
+}
