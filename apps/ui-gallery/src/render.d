@@ -478,3 +478,53 @@ private string[2][] goldenFiles(size_t page)
         assert(nav != content, p.title ~ ": focus moved and nothing visible changed");
     }
 }
+
+@("ui_gallery.render.focusMovesVisiblyInsideEveryPage")
+@safe unittest
+{
+    import registry : pages;
+
+    // `ACC4`, inside the pages: every step of a page's focus walk (its
+    // `focusKey`, from the content region) changes something a monochrome
+    // terminal shows on the focused things themselves — an attribute, or a
+    // glyph that is not a letter, digit or space (a `>` marker, a box edge).
+    // Words are left out on purpose: a "focused: two" label says where focus
+    // is without showing it on the focused element.
+    static bool shown(in Grid a, in Grid b)
+    {
+        import std.uni : isAlphaNum;
+
+        static bool wordish(scope const(char)[] g) => g.length == 0 || g == " "
+            || (g.length == 1 && isAlphaNum(g[0]));
+        foreach (ushort y; 1 .. cast(ushort)(a.rows - 1))
+            foreach (ushort x; 0 .. a.cols)
+            {
+                const p = a[x, y], q = b[x, y];
+                if (p.style.attrs != q.style.attrs || p.style.underline != q.style.underline)
+                    return true;
+                if (p.grapheme != q.grapheme && !(wordish(p.grapheme) && wordish(q.grapheme)))
+                    return true;
+            }
+        return false;
+    }
+
+    size_t walked;
+    foreach (i, ref p; pages)
+    {
+        if (p.focusKey == dchar.init)
+            continue;
+        walked++;
+        string keys = "\t";
+        auto prev = renderGrid(RenderRequest(page: i, keys: keys, profile: Profile.baseline));
+        foreach (step; 1 .. 4)
+        {
+            keys ~= p.focusKey;
+            auto next = renderGrid(RenderRequest(page: i, keys: keys, profile: Profile.baseline));
+            import std.conv : to;
+            assert(shown(prev, next), p.title ~ ": focus step " ~ step.to!string
+                ~ " moved and nothing monochrome showed it");
+            prev = next;
+        }
+    }
+    assert(walked >= 2, "the State and Dock pages walk their focus");
+}
