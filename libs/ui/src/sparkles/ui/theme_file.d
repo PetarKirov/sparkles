@@ -40,7 +40,7 @@ import sparkles.ui.dtcg : collectTokens, colorValue, dimensionValue, DtcgColor,
     DtcgError, DtcgJson, DtcgMember, DtcgResult, DtcgToken, DtcgTokens, parseColor,
     numberOf, parseDimension, parseDtcg, aliasTarget;
 import sparkles.ui.style : InteractionState, Palette, Slot;
-import sparkles.ui.theme : StyleSpec, TextAttr, Theme, ThemeRule, UnderlineStyle;
+import sparkles.ui.theme : GlyphSet, StyleSpec, TextAttr, Theme, ThemeRule, UnderlineStyle;
 import sparkles.ui.tokens : stateNames, tokenPath;
 import sparkles.wired.policy : AnyFormat, resolveCaseStyle, WireNameAttr, wireNames;
 
@@ -72,6 +72,12 @@ private enum TextAttr[6] attrBits = [TextAttr.bold, TextAttr.dim, TextAttr.itali
 
 private alias underlineNames = wireNames!(AnyFormat, UnderlineStyle,
     resolveCaseStyle!(AnyFormat, UnderlineStyle));
+
+// The glyph families (`GLY1`), by their wire names: the `glyphs` object in the
+// root extension, which names only the families a theme changes.
+private alias familyNames(E) = wireNames!(AnyFormat, E, resolveCaseStyle!(AnyFormat, E));
+
+private enum glyphFamilies = ["frame", "treeGuide", "thumb", "marks"];
 
 /// px-typed metrics (`dimension`); the rest are cells (`number`), except the
 /// font scales, which are percentages.
@@ -154,6 +160,15 @@ DtcgJson exportTheme(const Theme t)
     auto ext = DtcgJson.object([DtcgMember("name", DtcgJson.str(t.name))]);
     if (!t.glyphs.unicode)
         ext.set("unicode", DtcgJson.boolean_(false));
+    auto families = DtcgJson.object();
+    static foreach (field; glyphFamilies)
+    {{
+        const v = __traits(getMember, t.glyphs, field);
+        if (v != __traits(getMember, GlyphSet.init, field))
+            families.set(field, DtcgJson.str(familyNames!(typeof(v))[v]));
+    }}
+    if (families.members.length)
+        ext.set("glyphs", families);
     root.set("$extensions", DtcgJson.object([DtcgMember(extensionKey, ext)]));
 
     if (auto tok = colorToken(t.defaultFg))
@@ -573,6 +588,24 @@ private struct Mapper
                     theme.name = n.text;
                 if (auto u = ns.get("unicode"))
                     theme.glyphs.unicode = u.boolean;
+                if (auto g = ns.get("glyphs"))
+                {
+                    static foreach (field; glyphFamilies)
+                    {{
+                        alias E = typeof(__traits(getMember, theme.glyphs, field));
+                        if (auto v = g.get(field))
+                        {
+                            bool found;
+                            foreach (i, n; familyNames!E)
+                                if (v.isString && v.text == n)
+                                    __traits(getMember, theme.glyphs, field) = cast(E) i, found = true;
+                            if (!found)
+                                return new DtcgError("$.$extensions." ~ extensionKey ~ ".glyphs." ~ field,
+                                    "not a " ~ field ~ " family; expected one of "
+                                    ~ familyNames!E[].join(", "));
+                        }
+                    }}
+                }
             }
 
         // Syntax rules.
@@ -1114,4 +1147,27 @@ version (unittest)
     foreach (f; files)
         assert(f.name.baseName.stripExtension in names, "no built-in theme for " ~ f.name.baseName);
     assert(files.length == names.length || update);
+}
+
+@("theme_file.glyphFamiliesRoundTrip")
+@safe unittest
+{
+    import sparkles.ui.style : FrameFamily, GuideFamily, MarkCharset, ThumbFamily;
+
+    // `GLY1`: a theme's glyph families travel in the root extension; the
+    // defaults are left out, so every built-in's export is unchanged.
+    Theme t = Theme(name: "glyphs");
+    t.glyphs.frame = FrameFamily.rounded;
+    t.glyphs.treeGuide = GuideFamily.heavy;
+    t.glyphs.thumb = ThumbFamily.shade;
+    t.glyphs.marks = MarkCharset.nerdFont;
+    const text = writeDtcg(exportTheme(t));
+    assert(text.canFind(`"treeGuide": "heavy"`), text);
+    auto f = loadTheme(text);
+    assert(f.hasValue, f.hasError ? f.error.message : "");
+    assert(f.value.theme.glyphs == t.glyphs);
+    assert(!writeDtcg(exportTheme(Theme(name: "plain"))).canFind(`"glyphs"`));
+
+    auto bad = loadTheme(`{"$extensions": {"dev.petar-kirov.sparkles": {"glyphs": {"thumb": "zigzag"}}}}`);
+    assert(bad.hasError && bad.error.path == "$.$extensions.dev.petar-kirov.sparkles.glyphs.thumb");
 }
