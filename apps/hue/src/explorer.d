@@ -36,12 +36,12 @@ import sparkles.ui.components.tree_view : jumpMatching, measureContent,
     treeActivate = activate, treeCollapseOrUp = collapseOrUp, TreeStep,
     TreeViewState, viewSlice;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
-    TreeGlyphs, treeGlyphsFor, treeView;
+    TreeGlyphs, treeView;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : layout;
 import sparkles.ui.state : CaptureState, DisclosureState, LineEditState;
-import sparkles.ui.style : Palette, Slot, TextStyle;
+import sparkles.ui.style : GlyphSet, Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
 import sparkles.ui_tui : CellStyle, Color, Grid, paintGrid;
 
@@ -106,9 +106,11 @@ private GitStatus sessionGitStatus(FileChange c) @safe pure nothrow @nogc
     }
 }
 
-/// The explorer's tree charset: no separate disclosure marker — the folder
-/// icon (open/closed) already carries that state (`XPL6`).
-enum TreeGlyphs explorerGlyphs = TreeGlyphs(closed: "", open: "", leaf: "");
+/// The explorer's tree charset: the theme's guides (`GLY1`) and no separate
+/// disclosure marker — the folder icon (open/closed) already carries that
+/// state (`XPL6`).
+TreeGlyphs explorerGlyphs(in GlyphSet theme) @safe pure nothrow @nogc
+    => TreeGlyphs(guides: theme.guides, closed: "", open: "", leaf: "");
 
 /// A file-type icon: the Nerd glyph + its conventional brand color (`XPL6`,
 /// the vscode-icons / snacks-explorer look). Directories use the folder pair.
@@ -671,7 +673,7 @@ struct ExplorerTui
         auto tb = Builder();
         const tree2 = viewSlice(tb, data, tv,
             (uint i) @safe => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path),
-            treeGlyphsFor(palette.glyphs.treeGuide, explorerGlyphs), selBg,
+            explorerGlyphs(palette.glyphs), selBg,
             hasSelectionBg: true);
         Widget colW = Widget(kind: WidgetKind.column, children: [tree2],
             width: SizeSpec.fixed(width + hx));

@@ -290,10 +290,10 @@ void writeTreeText(Writer, T)(ref Writer w, in TreeData!T data,
         {
             final switch (g) with (Guide)
             {
-                case space: w.put(glyphs.space); break;
-                case continueBar: w.put(glyphs.continueBar); break;
-                case fork: w.put(glyphs.fork); break;
-                case end: w.put(glyphs.end); break;
+                case space: w.put(glyphs.guides.space); break;
+                case continueBar: w.put(glyphs.guides.bar); break;
+                case fork: w.put(glyphs.guides.fork); break;
+                case end: w.put(glyphs.guides.end); break;
             }
         }
         if (isOpen !is null)

@@ -20,7 +20,7 @@ module scrollbars;
 
 import sparkles.input : InputCapabilities, PointerAction, PointerButton,
     PointerEvent;
-import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+import sparkles.ui.components.chrome : scrollbar;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer, ScrollView;
@@ -89,7 +89,6 @@ uint verticalBar(ref Builder b, in ScrollView sv, in BarGeometry g,
         ));
 
     return scrollbar(b, sv.v, g.content, g.viewport, g.track,
-        ScrollbarGlyphs(thumb: '█', track: '│'),
         expandPercent: cast(ubyte) sv.vAnim.percent,
         gutter: gutterCells,
         hitId: hitId);
@@ -111,8 +110,8 @@ uint verticalBar(ref Builder b, in ScrollView sv, in BarGeometry g,
     assert(b.nodes[node].barExpandPercent == 100);
     assert(!b.nodes[node].barTrackLit,
         "hover must not request a full-height track fill");
-    assert(b.nodes[node].barTrackGlyph == '│',
-        "the cell fallback's track does not brighten either");
+    assert(b.nodes[node].barTrackGlyph == dchar.init,
+        "the cell fallback's track is the theme's own glyph, not a brighter one");
 }
 
 /**

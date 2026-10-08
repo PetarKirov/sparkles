@@ -22,6 +22,8 @@ import sparkles.ui.components.scroll_view : ScrollLayout, ScrollView;
 import sparkles.ui.state : PressState, ScrollAxis, ScrollbarState, ScrollState,
     scrollbarThumb;
 import sparkles.ui.style : InteractionState, Slot, StateSet, TextStyle;
+/// The bar's charset is theme data (`GLY1`); unset glyphs take the theme's.
+public import sparkles.ui.style : ScrollbarGlyphs;
 import sparkles.ui.widget : Alignment, Builder, Visibility, Widget, WidgetKind;
 
 @safe:
@@ -50,13 +52,6 @@ uint scrollView(ref Builder b, uint content, int height,
     ));
 }
 
-/// The scrollbar's charset (colors come from the `track`/`thumb` slots; the
-/// characters are theme-glyph data, defaulting to the unicode blocks).
-struct ScrollbarGlyphs
-{
-    dchar thumb = '█';
-    dchar track = '│';
-}
 
 /**
 The widget-level semantic scrollbar payload. Content stays in content units;
@@ -166,7 +161,7 @@ uint scrollbar(ref Builder b, long content, long viewport, long offset,
 
 /// ditto — driven by the whole machine (`STM9`/`IXB1`): the state carries
 /// the offset and the axis picks the container (a column for a vertical
-/// bar, a row for a horizontal one; pass row glyphs like `━`/`─` for it).
+/// bar, a row for a horizontal one; the theme picks each axis' glyphs).
 uint scrollbar(ref Builder b, in ScrollbarState sb, long content,
     long viewport, int track, in ScrollbarGlyphs glyphs = ScrollbarGlyphs.init,
     ubyte expandPercent = 0, int gutter = 1, bool trackLit = false,
@@ -208,14 +203,14 @@ struct ScrollbarView
 
 /// The vertical bar's presentation, read off the machine that animates it.
 ScrollbarView vBar(in ScrollView sv, long offset,
-    ScrollbarGlyphs glyphs = ScrollbarGlyphs('█', '░'), size_t hitId = 0)
+    ScrollbarGlyphs glyphs = ScrollbarGlyphs.init, size_t hitId = 0)
     pure nothrow @nogc
     => ScrollbarView(offset, cast(ubyte) sv.vAnim.percent,
         sv.v.hovered || sv.v.dragging, glyphs, hitId);
 
-/// ditto, for the horizontal bar (row glyphs by default).
+/// ditto, for the horizontal bar.
 ScrollbarView hBar(in ScrollView sv, long offset,
-    ScrollbarGlyphs glyphs = ScrollbarGlyphs('━', '─'), size_t hitId = 0)
+    ScrollbarGlyphs glyphs = ScrollbarGlyphs.init, size_t hitId = 0)
     pure nothrow @nogc
     => ScrollbarView(offset, cast(ubyte) sv.hAnim.percent,
         sv.h.hovered || sv.h.dragging, glyphs, hitId);

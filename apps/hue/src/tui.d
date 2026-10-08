@@ -904,11 +904,11 @@ struct PreviewTui
         // the vertical bar, horizontal axis.
         if (!externalScroll && vm.hOverflows())
         {
-            import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+            import sparkles.ui.components.chrome : scrollbar;
 
             auto hb = Builder();
             const bar = scrollbar(hb, vm.hsb, vm.contentCols, vm.widthCols,
-                width - 1, ScrollbarGlyphs('━', '─'));
+                width - 1);
             auto hbt = hb.finish(bar);
             paintGrid(g, pageBg, buildDisplayList(hbt, layout(hbt),
                 vm.palette, pageFg, pageBg), originX, height - 2);
@@ -1116,11 +1116,11 @@ struct PreviewTui
         // The one component (WGT10) over the one machine (STM9), tinted by
         // the palette's track/thumb entries (B-1) — the GUI renders the
         // same state through its animated px painter.
-        import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+        import sparkles.ui.components.chrome : scrollbar;
 
         auto vb = Builder();
         const vbar = scrollbar(vb, sb.scrolledTo(top),
-            cast(size_t) lineCount, rows, rows, ScrollbarGlyphs('█', '░'));
+            cast(size_t) lineCount, rows, rows);
         auto vbt = vb.finish(vbar);
         paintGrid(g, pageBg, buildDisplayList(vbt, layout(vbt), vm.palette,
             pageFg, pageBg), originX + width - 1, 1);

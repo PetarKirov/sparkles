@@ -728,14 +728,14 @@ struct WorkspaceTui
         const lay = pickerDoc.bars;
         if (lay.vLive)
         {
-            import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+            import sparkles.ui.components.chrome : scrollbar;
             import sparkles.ui.widget : Builder;
 
             const sv = pickerDoc.pane.vm.scroll;
             auto b = Builder();
             const bar = scrollbar(b, sv.v,
                 lay.vExtents.content, lay.vExtents.viewport,
-                lay.vExtents.track, ScrollbarGlyphs('█', '░'),
+                lay.vExtents.track,
                 expandPercent: cast(ubyte) sv.vAnim.percent,
                 gutter: lay.vTrack.width,
                 trackLit: sv.v.hovered || sv.v.dragging);
@@ -752,14 +752,14 @@ struct WorkspaceTui
         // edge of the pane that exists to show it.
         if (lay.hLive)
         {
-            import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+            import sparkles.ui.components.chrome : scrollbar;
             import sparkles.ui.widget : Builder;
 
             const sv = pickerDoc.pane.vm.scroll;
             auto b = Builder();
             const bar = scrollbar(b, sv.h,
                 lay.hExtents.content, lay.hExtents.viewport,
-                lay.hExtents.track, ScrollbarGlyphs('━', '─'),
+                lay.hExtents.track,
                 expandPercent: cast(ubyte) sv.hAnim.percent,
                 gutter: lay.hTrack.height,
                 trackLit: sv.h.hovered || sv.h.dragging);
@@ -778,7 +778,7 @@ struct WorkspaceTui
     /// geometry and state owner changed.
     private void paintDockScrollbars(ref Grid g) @system
     {
-        import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs;
+        import sparkles.ui.components.chrome : scrollbar;
         import sparkles.ui.display_list : buildDisplayList;
         import sparkles.ui.layout : layout;
         import sparkles.ui.widget : Builder;
@@ -794,7 +794,7 @@ struct WorkspaceTui
                 auto b = Builder();
                 const bar = scrollbar(b, sv.h,
                     barFrame.hExtents.content, barFrame.hExtents.viewport,
-                    barFrame.hExtents.track, ScrollbarGlyphs('━', '─'),
+                    barFrame.hExtents.track,
                     expandPercent: cast(ubyte) sv.hAnim.percent,
                     gutter: barFrame.hTrack.height,
                     trackLit: sv.h.hovered || sv.h.dragging);
@@ -807,7 +807,7 @@ struct WorkspaceTui
                 auto b = Builder();
                 const bar = scrollbar(b, sv.v,
                     barFrame.vExtents.content, barFrame.vExtents.viewport,
-                    barFrame.vExtents.track, ScrollbarGlyphs('█', '░'),
+                    barFrame.vExtents.track,
                     expandPercent: cast(ubyte) sv.vAnim.percent,
                     gutter: barFrame.vTrack.width,
                     trackLit: sv.v.hovered || sv.v.dragging);

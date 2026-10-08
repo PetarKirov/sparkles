@@ -9,12 +9,12 @@ SSG/ANSI backend consumes without ever touching a widget or a palette again.
 */
 module sparkles.ui.display_list;
 
-import sparkles.ui.canvas : DrawOp, OpKind;
+import sparkles.ui.canvas : DrawOp, OpKind, RuleEdge;
 import sparkles.ui.cmd_buffer : CmdBuffer, GcCmdBuffer;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : CellMeasure, childClipOf, clipsX, clipsY, Frame,
     measureWidth, unclipped, spanStyle;
-import sparkles.ui.style : Palette, resolveVisual, Slot, StateSet, TextStyle, ThumbFamily, Visual;
+import sparkles.ui.style : Palette, resolveVisual, ScrollbarGlyphs, Slot, StateSet, TextStyle, Visual;
 import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
 import sparkles.base.text.width : codepointWidth;
@@ -339,14 +339,19 @@ private void emit(Sink, TM)(in WidgetTree tree, uint idx, in Frame[] frames,
                 trackVis.fg = node.barTrackFgOverride;
             if (node.hasFgOverride)
                 thumbVis.fg = node.fgOverride;
+            // `GLY1`: a glyph the widget left unset is the theme's.
+            const vertical = node.barEdge == RuleEdge.left
+                || node.barEdge == RuleEdge.right || node.barEdge == RuleEdge.centerX;
+            const glyphs = ScrollbarGlyphs(node.barThumbGlyph, node.barTrackGlyph)
+                .or(pal.glyphs.scrollbar(vertical));
             ops.scrollbar(rect, node.barEdge,
                 barInt(node.barContent), barInt(node.barViewport),
                 barInt(node.barOffset), Slot.thumb, thumbVis,
                 trackColor: trackVis.fg, trackAlpha: trackVis.fgAlpha,
                 trackLit: node.barTrackLit,
                 expandPercent: node.barExpandPercent,
-                trackGlyph: thumbFamilyGlyph(pal.glyphs.thumb, node.barTrackGlyph, false),
-                thumbGlyph: thumbFamilyGlyph(pal.glyphs.thumb, node.barThumbGlyph, true),
+                trackGlyph: glyphs.track,
+                thumbGlyph: glyphs.thumb,
                 paintsIdleTrack: node.barPaintsIdleTrack);
             break;
         case box:
@@ -1147,31 +1152,4 @@ unittest
         RgbColor(255, 255, 255), RgbColor(0, 0, 0));
     foreach (ref const op; ops)
         if (op.kind == OpKind.textRun) assert(op.text == "" && op.rect.width == 0);
-}
-
-/**
-The scrollbar glyph the theme's thumb family draws (`GLY1`): a widget that set its
-own glyph keeps it; one that left the default (`█` over `│`) takes the family's.
-*/
-private dchar thumbFamilyGlyph(ThumbFamily family, dchar widgetGlyph, bool thumb)
-    @safe pure nothrow @nogc
-{
-    if (widgetGlyph != (thumb ? '█' : '│'))
-        return widgetGlyph;
-    final switch (family)
-    {
-        case ThumbFamily.block: return thumb ? '█' : '│';
-        case ThumbFamily.shade: return thumb ? '▓' : '░';
-        case ThumbFamily.line:  return thumb ? '┃' : '│';
-    }
-}
-
-@("ui.display_list.thumbFamilyDrawsDefaultsOnly")
-@safe pure nothrow @nogc unittest
-{
-    assert(thumbFamilyGlyph(ThumbFamily.block, '█', true) == '█');
-    assert(thumbFamilyGlyph(ThumbFamily.shade, '█', true) == '▓');
-    assert(thumbFamilyGlyph(ThumbFamily.shade, '│', false) == '░');
-    assert(thumbFamilyGlyph(ThumbFamily.line, '█', true) == '┃');
-    assert(thumbFamilyGlyph(ThumbFamily.shade, '■', true) == '■', "a widget's own glyph wins");
 }
