@@ -37,6 +37,8 @@ import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Palette, Slot,
 // and this toolkit share one type; re-exported so `sparkles.ui.theme.StyleSpec`
 // (and `TextAttr`/`UnderlineStyle`) resolve for every backend.
 public import sparkles.base.term_style : TermStyle, TextAttr, UnderlineStyle;
+public import sparkles.ui.style : FrameFamily, GlyphSet, GuideFamily, MarkCharset,
+    ThumbFamily;
 
 @safe:
 
@@ -56,23 +58,6 @@ struct ThemeRule
     StyleSpec style; /// the whole spec assigned on match (no cascade)
 }
 
-/**
-Glyph sets a theme selects — box-drawing charsets, table rules, status marks.
-
-$(B Declared, not yet populated.) The concrete glyph vocabulary currently lives
-with the terminal components in `sparkles:core-cli`, expressed in terms of their
-own box and table types; it lands here when those components move. Declaring the
-channel now fixes the shape of $(LREF Theme) so that move is additive rather than
-another breaking change.
-*/
-struct GlyphSet
-{
-    /// Whether non-ASCII glyphs may be used at all. A target that cannot render
-    /// them selects the ASCII charset regardless of what the theme asks for —
-    /// but that decision belongs to the *target's* declared capabilities, not to
-    /// this flag, which only records the theme's preference.
-    bool unicode = true;
-}
 
 /**
 A theme as plain data: all four channels in one value.
@@ -109,10 +94,15 @@ struct Theme
     Palette effectivePalette() const pure nothrow @nogc
     {
         if (hasPalette)
-            return palette;
+        {
+            Palette own = palette;
+            own.glyphs = glyphs; // the glyph channel is the theme's
+            return own;
+        }
         const bg = defaultBg.toRgbOr(RgbColor(0, 0, 0));
         const scheme = schemeForBackground(bg);
         auto p = defaultTwoslashPalette(scheme);
+        p.glyphs = glyphs;
         if (defaultBg.kind != Color.Kind.rgb)
             return p; // nothing personal to derive from — the scheme default
 

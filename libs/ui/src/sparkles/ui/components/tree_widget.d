@@ -26,7 +26,7 @@ module sparkles.ui.components.tree_widget;
 
 import sparkles.ui.state : DisclosureState;
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.style : InteractionState, Slot, StateSet;
+import sparkles.ui.style : GuideFamily, InteractionState, Slot, StateSet;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
 
 @safe:
@@ -198,6 +198,44 @@ struct TreeGlyphs
     string closed = "▸ "; /// disclosure marker: children, not shown
     string open = "▾ ";   /// disclosure marker: children, shown
     string leaf = "";     /// no children
+}
+
+/**
+The guides of a theme's tree-guide family (`GLY1`), keeping `markers`' disclosure
+glyphs: the family says how the connectors are drawn, the caller what a row's
+disclosure looks like.
+*/
+TreeGlyphs treeGlyphsFor(GuideFamily family, TreeGlyphs markers = TreeGlyphs.init)
+    @safe pure nothrow @nogc
+{
+    auto g = markers;
+    final switch (family)
+    {
+        case GuideFamily.light:
+            break;
+        case GuideFamily.heavy:
+            g.fork = "┣━ "; g.end = "┗━ "; g.continueBar = "┃  ";
+            break;
+        case GuideFamily.rounded:
+            g.end = "╰─ ";
+            break;
+        case GuideFamily.ascii:
+            g.fork = "|- "; g.end = "`- "; g.continueBar = "|  ";
+            break;
+    }
+    return g;
+}
+
+@("ui.tree_widget.treeGlyphsFor.familiesKeepTheMarkers")
+@safe pure nothrow @nogc unittest
+{
+    assert(treeGlyphsFor(GuideFamily.light) == TreeGlyphs.init);
+    assert(treeGlyphsFor(GuideFamily.heavy).fork == "┣━ ");
+    assert(treeGlyphsFor(GuideFamily.rounded).end == "╰─ ");
+    assert(treeGlyphsFor(GuideFamily.ascii).continueBar == "|  ");
+    const icons = TreeGlyphs(closed: "", open: "", leaf: "");
+    const g = treeGlyphsFor(GuideFamily.heavy, icons);
+    assert(g.closed == "" && g.open == "" && g.fork == "┣━ ");
 }
 
 /**
