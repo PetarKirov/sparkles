@@ -85,8 +85,7 @@ auto rootOf(Rights R = Rights.all)(MemVfs* v, string path = "r",
     fails(d.rmdirAt("a"), ErrorKind.notEmpty, OpKind.rmdirAt);
     assert(!d.renameAt("l", d, "l3").hasError);
     fails(d.renameAt("missing", d, "x"), ErrorKind.notFound, OpKind.renameAt);
-    char[64] names;
-    assert(!d.list(names[]).hasError);
+    assert(!d.list().hasError);
     assert(!d.walkAll("x/y").hasError);
     fails(d.walk("missing"), ErrorKind.notFound, OpKind.openAt);
     assert(!d.removeTree("x").hasError);
@@ -165,9 +164,8 @@ auto rootOf(Rights R = Rights.all)(MemVfs* v, string path = "r",
     foreach (n; ["r/a", "r/b", "r/c"])
         v.writeFile(n, null);
     auto root = rootOf(v);
-    char[16] b1, b2;
-    auto l1 = root.value.list(b1[]);
-    auto l2 = root.value.list(b2[]);
+    auto l1 = root.value.list();
+    auto l2 = root.value.list();
     size_t n1, n2;
     while (l1.value.next().value)
     {
@@ -179,9 +177,6 @@ auto rootOf(Rights R = Rights.all)(MemVfs* v, string path = "r",
     while (l2.value.next().value)
         ++n2;
     assert(n1 == 3 && n2 == 3);
-    char[0] tiny;
-    auto small = root.value.list(tiny[]);
-    assert(small.value.next().error.kind == ErrorKind.bufferTooSmall);
 }
 
 @("vfs.check.VFO8.renameStaysInOneRoot")
@@ -207,8 +202,7 @@ auto rootOf(Rights R = Rights.all)(MemVfs* v, string path = "r",
     ubyte[128] big;
     auto w = root.value.writeFileAtomic("f", big[]);
     assert(w.hasError && w.error.context == "arena exhausted");
-    char[64] names;
-    auto l = root.value.list(names[]);
+    auto l = root.value.list();
     assert(!l.value.next().value, "no temporary entry is left behind");
 }
 
@@ -363,8 +357,7 @@ struct RefusingKernel
         auto d = root.value.walkAll("x/y");
         cast(void) d.value.writeFileAtomic("w", "payload");
         auto l = root.value.walk("l");
-        char[32] names;
-        auto listing = root.value.list(names[]);
+        auto listing = root.value.list();
         while (!listing.value.next().hasError && listing.value.next().value) {}
         cast(void) root.value.removeTree("x");
         cast(void) root.value.removeTree("a");
@@ -406,8 +399,7 @@ struct SearchingVfs
     assert(v.searchOpens == 3, "every directory passed through is opened for search");
     // The double forwards each search open to openDirAt, so: three, plus the reopen.
     assert(v.count(OpKind.openAt) == 4, "only the result is reopened with full access");
-    char[16] names;
-    auto l = c.value.list(names[]);
+    auto l = c.value.list();
     assert(l.value.next().value && l.value.front.name == "f");
     assert(v.openHandles == 3, "the root, the result, and the listing's own handle");
 }

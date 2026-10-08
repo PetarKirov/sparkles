@@ -89,3 +89,13 @@ MountCheck mountCheckOf(V)(ref V vfs, ResolvePolicy policy)
 enum hasSearchOpen(V) = __traits(compiles, (ref V v, V.Handle h, scope const(char)[] n) {
     IoResult!(V.Handle) r = v.openSearchAt(h, n);
 });
+
+/// Whether the kernel resolver `vfs` chose for a root has since been found
+/// withdrawn (VFR5): the backend's `wholePathWithdrawn()`, or false.
+bool resolverWithdrawn(V)(ref V vfs)
+{
+    static if (__traits(compiles, vfs.wholePathWithdrawn()))
+        return vfs.wholePathWithdrawn();
+    else
+        return false;
+}

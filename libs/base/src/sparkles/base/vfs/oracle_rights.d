@@ -43,7 +43,7 @@ enum string checkOp(string op, string missing) = `
     mixin(checkOp!(`d.unlinkAt("x")`, "remove"));
     mixin(checkOp!(`d.rmdirAt("x")`, "remove"));
     mixin(checkOp!(`d.renameAt("x", d, "y")`, "rename"));
-    mixin(checkOp!(`char[4] b; d.list(b[])`, "list"));
+    mixin(checkOp!(`d.list()`, "list"));
     mixin(checkOp!(`d.walk("x")`, "lookup"));
     mixin(checkOp!(`d.walkAll("x")`, "lookup"));
     mixin(checkOp!(`d.walkAll("x")`, "create"));

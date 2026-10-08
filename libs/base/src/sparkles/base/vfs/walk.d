@@ -15,8 +15,8 @@ on success and on failure alike.
 */
 module sparkles.base.vfs.walk;
 
-import sparkles.base.io.errors : ErrorKind, IoError, IoResult, OpKind, ioErr, ioOk;
-import sparkles.base.vfs.concept : hasSearchOpen, hasWholePathResolver, isVfs;
+import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
+import sparkles.base.vfs.concept : hasSearchOpen, hasWholePathResolver, isVfs, resolverWithdrawn;
 import sparkles.base.vfs.names : checkName, checkWalkPath, isAbsolutePath, isSeparator,
     lexicalError;
 import sparkles.base.vfs.types : ResolvePolicy, Resolution, Sharing, StatMask, SymlinkPolicy,
@@ -30,7 +30,8 @@ that does not exist is created with `sharing` (`walkAll`).
 // `H` rather than `V.Handle`: a backend whose `Handle` aliases another
 // backend's would otherwise make `V` deduce two ways.
 IoResult!(V.Handle) walkFrom(V, H)(ref V vfs, H start, scope const(char)[] path,
-    ResolvePolicy policy, Resolution resolution, bool createMissing, Sharing sharing)
+    ResolvePolicy policy, Resolution resolution, bool createMissing, Sharing sharing,
+    bool requireKernel = false)
 if (isVfs!V && is(H == V.Handle))
 {
     const lexical = checkWalkPath(path, policy);
@@ -39,9 +40,24 @@ if (isVfs!V && is(H == V.Handle))
 
     static if (hasWholePathResolver!V)
     {
-        // VFR4: a kernel refusal is the result; the walk never runs for it.
-        if (resolution == Resolution.kernelWholePath && !createMissing)
-            return vfs.resolveWhole(start, path, policy);
+        if (resolution == Resolution.kernelWholePath)
+        {
+            // VFR5: once the resolver is found withdrawn, a root that requires it
+            // fails, and any other root uses the component walk from then on.
+            const withdrawn = resolverWithdrawn(vfs);
+            if (withdrawn && requireKernel)
+                return ioErr!(V.Handle)(ErrorKind.unsupported, OpKind.resolve, 0,
+                    IoErrorStage.probe, "the kernel resolver is no longer available");
+            if (!withdrawn && !createMissing)
+            {
+                // VFR4: a kernel refusal is the result; the walk never runs for it.
+                // Only a withdrawal found during this very call falls through.
+                auto r = vfs.resolveWhole(start, path, policy);
+                if (!r.hasError || requireKernel || r.error.kind != ErrorKind.unsupported
+                    || r.error.stage != IoErrorStage.probe)
+                    return r;
+            }
+        }
     }
 
     Walk!V w = Walk!V(&vfs, start, policy, createMissing, sharing);
