@@ -200,6 +200,22 @@ private string fontStack(const DtcgJson v) @safe
         ~ ": var(" ~ cssName(Slot.selection, ColorChannel.bg) ~ ");\n"), css);
 }
 
+@("ui.css.themeProperties.fontFacesAndRoles")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.ui.theme : FontFace, FontRole;
+
+    Theme t = Theme(name: "typed");
+    t.fonts.faces[FontFace.sans] = ["Inter", "sans-serif"];
+    const css = themeProperties(t);
+    assert(css.canFind("  --spk-font-family-sans: 'Inter', sans-serif;\n"), css);
+    // A role is a reference to its face, so retargeting it is one line.
+    assert(css.canFind("  --spk-font-body: var(--spk-font-family-sans);\n"), css);
+    // A role whose face is empty is the target's default: nothing emitted.
+    assert(!css.canFind("--spk-font-code"), css);
+}
+
 @("ui.css.fontStack.quotesNamesNotGenerics")
 @safe unittest
 {

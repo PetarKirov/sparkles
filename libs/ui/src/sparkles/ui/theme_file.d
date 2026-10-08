@@ -10,8 +10,9 @@ group at `syntax.<selector>` with the same `fg`/`bg` leaves and its
 attributes and underline in the group's `$extensions`, so a rule that only
 sets attributes is a group with no color token. Metrics keep their role-first
 paths: cells as `number` tokens, px as `dimension` tokens, font scales as
-`number` percentages. The project's own data lives under the
-$(LREF extensionKey) namespace.
+`number` percentages. Fonts are two layers (D63): `font.family.<face>`
+`fontFamily` stacks, and `font.<role>` aliases of a face. The project's own
+data lives under the $(LREF extensionKey) namespace.
 
 $(B Overlay.) A file may name a $(I base): a built-in theme or another file.
 The base's tokens come first and the file's after them, the later winning per
@@ -40,7 +41,8 @@ import sparkles.ui.dtcg : collectTokens, colorValue, dimensionValue, DtcgColor,
     DtcgError, DtcgJson, DtcgMember, DtcgResult, DtcgToken, DtcgTokens, parseColor,
     numberOf, parseDimension, parseDtcg, aliasTarget;
 import sparkles.ui.style : InteractionState, Palette, Slot;
-import sparkles.ui.theme : GlyphSet, StyleSpec, TextAttr, Theme, ThemeRule, UnderlineStyle;
+import sparkles.ui.theme : FontFace, FontRole, GlyphSet, StyleSpec, TextAttr, Theme,
+    ThemeRule, UnderlineStyle;
 import sparkles.ui.tokens : stateNames, tokenPath;
 import sparkles.wired.policy : AnyFormat, resolveCaseStyle, WireNameAttr, wireNames;
 
@@ -78,6 +80,10 @@ private alias underlineNames = wireNames!(AnyFormat, UnderlineStyle,
 private alias familyNames(E) = wireNames!(AnyFormat, E, resolveCaseStyle!(AnyFormat, E));
 
 private enum glyphFamilies = ["frame", "treeGuide", "thumb", "marks"];
+
+// The font channel's path segments (`WEB6`): `font.family.<face>`, `font.<role>`.
+private alias faceNames = familyNames!FontFace;
+private alias roleNames = familyNames!FontRole;
 
 /// px-typed metrics (`dimension`); the rest are cells (`number`), except the
 /// font scales, which are percentages.
@@ -172,6 +178,26 @@ DtcgJson exportTheme(const Theme t, bool resolvedPalette = false)
     if (families.members.length)
         ext.set("glyphs", families);
     root.set("$extensions", DtcgJson.object([DtcgMember(extensionKey, ext)]));
+
+    // Fonts (`WEB6`, D63): each face a fallback stack, each role an alias of
+    // its face. A role whose face is empty is the target's default.
+    foreach (f, name; faceNames)
+        if (t.fonts.faces[f].length)
+        {
+            DtcgJson[] names;
+            foreach (n; t.fonts.faces[f])
+                names ~= DtcgJson.str(n);
+            put("font.family." ~ name, DtcgJson.object([
+                DtcgMember("$type", DtcgJson.str("fontFamily")),
+                DtcgMember("$value", DtcgJson.array(names)),
+            ]));
+        }
+    foreach (r, name; roleNames)
+        if (t.fonts.faces[t.fonts.roles[r]].length)
+            put("font." ~ name, DtcgJson.object([
+                DtcgMember("$type", DtcgJson.str("fontFamily")),
+                DtcgMember("$value", DtcgJson.str("{font.family." ~ faceNames[t.fonts.roles[r]] ~ "}")),
+            ]));
 
     if (auto tok = colorToken(t.defaultFg))
         put("page.fg", *tok);
@@ -610,6 +636,9 @@ private struct Mapper
                 }
             }
 
+        if (auto e = fonts())
+            return e;
+
         // Syntax rules.
         if (auto s = doc.get("syntax"))
             if (auto e = rules(*s, "syntax"))
@@ -619,6 +648,68 @@ private struct Mapper
         // slot, state or metric, in which case the derivation is the start.
         if (auto e = palette())
             return e;
+        return null;
+    }
+
+    // Faces are stacks; a role must alias a face, which is what lets a theme
+    // retarget it (`WEB6`, D63).
+    DtcgError* fonts()
+    {
+        foreach (i, name; faceNames)
+        {
+            const path = "font.family." ~ name;
+            auto t = path in *toks;
+            if (t is null)
+                continue;
+            used[path] = true;
+            if (t.type != "fontFamily")
+                return new DtcgError(t.jsonPath ~ ".$type", "expected fontFamily, found " ~ t.type);
+            auto v = toks.resolved(path);
+            if (v.hasError)
+                return boxed(v.error);
+            string[] stack;
+            if (v.value.isString)
+                stack = [v.value.text];
+            else if (v.value.kind == DtcgJson.Kind.array)
+            {
+                foreach (j, ref item; v.value.items)
+                {
+                    if (!item.isString)
+                        return new DtcgError(format("%s.$value[%d]", t.jsonPath, j),
+                            "a font family is a name");
+                    stack ~= item.text;
+                }
+            }
+            else
+                return new DtcgError(t.jsonPath ~ ".$value",
+                    "a fontFamily is a name or an array of names");
+            theme.fonts.faces[i] = stack;
+        }
+        foreach (i, name; roleNames)
+        {
+            const path = "font." ~ name;
+            auto t = path in *toks;
+            if (t is null)
+                continue;
+            used[path] = true;
+            auto target = aliasTarget(t.value);
+            bool found;
+            if (target !is null && !target.pointer)
+                foreach (j, face; faceNames)
+                    if (target.text == "font.family." ~ face)
+                    {
+                        theme.fonts.roles[i] = cast(FontFace) j;
+                        found = true;
+                    }
+            if (!found)
+            {
+                string faces;
+                foreach (j, face; faceNames)
+                    faces ~= (j ? ", " : "") ~ "{font.family." ~ face ~ "}";
+                return new DtcgError(t.jsonPath ~ ".$value",
+                    "a font role names a face: one of " ~ faces);
+            }
+        }
         return null;
     }
 
@@ -885,6 +976,7 @@ version (unittest)
         assert(a.defaultFg == b.defaultFg && a.defaultBg == b.defaultBg, what ~ ": page colors");
         assert(effectiveRules(a) == effectiveRules(b), what ~ ": syntax rules");
         assert(a.glyphs == b.glyphs, what ~ ": glyphs");
+        assert(a.fonts == b.fonts, what ~ ": fonts");
         assert(a.effectivePalette() == b.effectivePalette(), what ~ ": palette");
     }
 }
@@ -906,6 +998,36 @@ version (unittest)
         assert(saveTheme(loaded.value) == text, name ~ ": save(load(x)) == x");
         assert(writeDtcg(exportTheme(loaded.value.theme)) == text, name ~ ": export is a fixed point");
     }
+}
+
+@("theme_file.fonts.facesAndRolesRoundTrip")
+@safe unittest
+{
+    import sparkles.ui.theme : FontSet;
+
+    Theme t = Theme(name: "typed");
+    t.fonts.faces[FontFace.sans] = ["Inter", "ui-sans-serif", "sans-serif"];
+    t.fonts.faces[FontFace.mono] = ["Fira Code", "monospace"];
+    t.fonts.roles[FontRole.heading] = FontFace.sans; // headings in the body face
+    const text = writeDtcg(exportTheme(t));
+    assert(text.canFind(`"$value": "{font.family.sans}"`), text);
+    // The display face is empty, so nothing names it.
+    assert(!text.canFind("display"), text);
+    auto loaded = loadTheme(text);
+    assert(loaded.hasValue, loaded.error.message);
+    assert(loaded.value.theme.fonts == t.fonts);
+    assert(loaded.value.warnings.length == 0, loaded.value.warnings[0]);
+}
+
+@("theme_file.fonts.aRoleMustNameAFace")
+@safe unittest
+{
+    auto literal = loadTheme(`{"font": {"body": {"$type": "fontFamily", "$value": ["Inter"]}}}`);
+    assert(literal.hasError && literal.error.path == "$.font.body.$value", literal.error.message);
+    auto wrongType = loadTheme(`{"font": {"family": {"sans": {"$type": "color", "$value": "#fff"}}}}`);
+    assert(wrongType.hasError && wrongType.error.path == "$.font.family.sans.$type");
+    auto bare = loadTheme(`{"font": {"family": {"mono": {"$type": "fontFamily", "$value": "Iosevka"}}}}`);
+    assert(bare.value.theme.fonts.stackOf(FontRole.code) == ["Iosevka"]);
 }
 
 @("theme_file.palette.slotsStatesAndMetricsRoundTrip")
