@@ -1,0 +1,40 @@
+name "event-horizon-sys"
+description "Loop-free system-call layer of sparkles:event-horizon: the capability VFS's blocking backend"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+targetType "library"
+
+// No event loop, no `during`, no sparkles:event-horizon (VFB6): test fixtures
+// in every package's test build reach the blocking backend through here.
+dependency "sparkles:base" path="../.."
+
+importPaths "src" "../test-runner/src"
+dflags "-preview=in" "-preview=dip1000"
+dflags "-linkonce-templates" platform="ldc"
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    // sparkles:test-utils will depend on this package (VFS PLAN M4), which
+    // puts it in the test runner's own dependency closure; like base, it
+    // source-includes the runner instead of depending on it.
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    buildRequirements "disallowDeprecations"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses.
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
