@@ -20,6 +20,11 @@
         pname = "hue";
         version = "0.1.0";
 
+        # `hue --version` reports the commit (`TPG2`), so this package is
+        # rebuilt (step 2 only) on every commit.
+        stampBuildInfo = true;
+        checkBuildInfo = config.legacyPackages.checkHueBuildInfo;
+
         # `gitMinimal` for the same reason as apps/twoslash-extract: the format
         # preview (`FPR2`) links `sparkles:dmd-fmt`, so `dmd:frontend`'s
         # pre-generate step (`config.d`) runs here — and it shells out to

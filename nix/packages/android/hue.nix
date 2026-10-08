@@ -127,7 +127,18 @@ in
           "${config.packages.libghostty-vt-android}/lib/${abi}/libghostty-vt.a"
           "${config.packages.libkqueue-android}/lib/${abi}/libkqueue.a"
         ];
+        emptyBuildInfo = true;
         description = "hue (full GUI closure) as an Android shared library, per ABI";
+      };
+
+      # The build document in `.build_info` (`TPG2`), per ABI. Nothing in hue
+      # on Android shows it yet (HUE-O6); it is there for tooling and that
+      # page. The unstamped library stays cached across commits.
+      libhueStamped = config.legacyPackages.stampAndroidLib {
+        unstamped = libhue;
+        libName = "hue";
+        app = "hue";
+        check = config.legacyPackages.checkHueBuildInfo;
       };
 
       # The font set is defined once, in nix/packages/fonts.nix, and shared
@@ -272,7 +283,7 @@ in
       apkLibs = lib.mapAttrs' (name: t: {
         name = t.abi;
         value = {
-          "libhue.so" = "${libhue}/lib/${t.abi}/libhue.so";
+          "libhue.so" = "${libhueStamped}/lib/${t.abi}/libhue.so";
         }
         // (
           let

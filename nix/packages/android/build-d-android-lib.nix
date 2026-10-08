@@ -20,6 +20,7 @@ in
       config,
       pkgs,
       system,
+      inputs',
       ...
     }:
     let
@@ -52,6 +53,10 @@ in
           cIncludes ? [ ],
           # Static archives to link, per ABI: `abi: [ path ... ]`.
           staticLibs ? (abi: [ ]),
+          # Append a stable `{}` `.build_info` section so a later
+          # `--update-section` has something to replace. The contents do not
+          # name a commit, so this derivation stays cached across commits.
+          emptyBuildInfo ? false,
           description ? "D application as an Android shared library, per ABI",
         }:
         pkgs.stdenv.mkDerivation {
@@ -62,7 +67,8 @@ in
           nativeBuildInputs = [
             (androidHost system).ldcAndroid
             pkgs.unzip
-          ];
+          ]
+          ++ lib.optional emptyBuildInfo pkgs.llvmPackages.llvm;
 
           buildPhase = ''
             runHook preBuild
@@ -105,6 +111,13 @@ in
             ${lib.concatMapStrings (t: ''
               install -Dm644 lib${libName}-${t.abi}.so $out/lib/${t.abi}/lib${libName}.so
             '') (lib.attrValues ndk.targets)}
+            ${lib.optionalString emptyBuildInfo ''
+              emptyInfo=${config.legacyPackages.emptyBuildInfoJson}
+              ${lib.concatMapStrings (t: ''
+                llvm-objcopy --add-section .build_info=$emptyInfo \
+                  "$out/lib/${t.abi}/lib${libName}.so"
+              '') (lib.attrValues ndk.targets)}
+            ''}
             runHook postInstall
           '';
 
@@ -117,5 +130,94 @@ in
             platforms = (androidHost system).platforms;
           };
         };
+
+      # The native libraries an app's `.so` links, as build-info components.
+      # hue and the terminal link the same set (their `staticLibs`). libpng
+      # and zlib are archives inside the freetype output: one store path, two
+      # component names. `abi` is unused while every Android package is one
+      # multi-ABI output; a later per-ABI output is the only change here.
+      legacyPackages.androidNativeComponents =
+        abi:
+        let
+          at = pkg: {
+            version = pkg.version or "unknown";
+            storePath = pkg.outPath;
+          };
+          ft = config.packages.freetype-android;
+        in
+        assert abi != "";
+        {
+          raylib = at config.packages.raylib-android;
+          harfbuzz = at config.packages.harfbuzz-android;
+          freetype = at ft;
+          libpng = {
+            version = pkgs.libpng.version;
+            storePath = ft.outPath;
+          };
+          zlib = {
+            version = pkgs.zlib.version;
+            storePath = ft.outPath;
+          };
+          tree-sitter = at config.packages.tree-sitter-android;
+          libghostty-vt = {
+            version = inputs'.ghostty.packages.libghostty-vt.version or "unknown";
+            storePath = config.packages.libghostty-vt-android.outPath;
+          };
+          libkqueue = at config.packages.libkqueue-android;
+        };
+
+      # Step 2 for an Android library built with `emptyBuildInfo = true`: a
+      # copy whose `.build_info` section holds the document (`TPG2`), per ABI.
+      # The unstamped library stays cached across commits; only this copy
+      # changes with the commit. The components are the desktop document's
+      # in-tree set plus `nativeComponents abi`, and `check` runs (with
+      # `assertBuildInfo`) at evaluation time, as `buildSparklesApp` does.
+      legacyPackages.stampAndroidLib =
+        {
+          unstamped,
+          libName,
+          # The app directory, `apps/<name>`; the document is `sparkles:<name>`.
+          app,
+          version ? "0.1.0",
+          buildType ? "checked",
+          links ? { },
+          nativeComponents ? config.legacyPackages.androidNativeComponents,
+          check ? (doc: doc),
+        }:
+        let
+          targets = lib.attrValues ndk.targets;
+          inTree = config.legacyPackages.inTreeComponents (sources.componentNames "apps/${app}");
+          infoFor =
+            t:
+            config.legacyPackages.sparklesBuildInfo {
+              name = "sparkles:${app}";
+              inherit version buildType links;
+              components = inTree // nativeComponents t.abi;
+            };
+          checked = t: check (config.legacyPackages.assertBuildInfo (infoFor t).document);
+          jsonFor = t: pkgs.writeText "build-info-${t.abi}.json" (builtins.seq (checked t) (infoFor t).json);
+        in
+        pkgs.runCommand "lib${libName}-android-build-info"
+          {
+            dontStrip = true;
+            nativeBuildInputs = [ pkgs.llvmPackages.llvm ];
+            passthru = {
+              inherit unstamped;
+              buildInfo = lib.listToAttrs (
+                map (t: {
+                  name = t.abi;
+                  value = checked t;
+                }) targets
+              );
+            };
+          }
+          ''
+            cp -a ${unstamped} "$out"
+            chmod -R u+w "$out"
+            ${lib.concatMapStrings (t: ''
+              llvm-objcopy --update-section .build_info=${jsonFor t} \
+                "$out/lib/${t.abi}/lib${libName}.so"
+            '') targets}
+          '';
     };
 }
