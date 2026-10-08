@@ -18,7 +18,7 @@ import sparkles.input : Key, KeyEvent;
 import sparkles.ui.components.tree_view : treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep;
 import sparkles.ui.components.tree_widget : flatten, FlatTreeRow, Guide,
-    TreeData, TreeGlyphs, treeGlyphsFor, treeView;
+    TreeData, TreeGlyphs, treeView;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
@@ -107,12 +107,12 @@ uint view(ref Builder b, in GalleryState s)
 
     body_ ~= section(b, "your view", [
         treeView(b, data, rows, (uint n) => d.open.isOpen(n), selected,
-            treeGlyphsFor(s.theme.glyphs.treeGuide)),
+            TreeGlyphs(guides: s.theme.glyphs.guides)),
     ]);
     body_ ~= spacer(b);
     body_ ~= section(b, "the same data, everything open", [
         treeView(b, data, allRows, (uint n) => true, uint.max,
-            treeGlyphsFor(s.theme.glyphs.treeGuide)),
+            TreeGlyphs(guides: s.theme.glyphs.guides)),
     ]);
     body_ ~= spacer(b);
 

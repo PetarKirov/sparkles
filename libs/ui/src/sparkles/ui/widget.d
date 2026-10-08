@@ -133,8 +133,9 @@ struct Widget
     /// The bar owns its rule, so every target paints the track even when idle
     /// (`SCV11`) — a bar mounted on a panel border IS that border.
     bool barPaintsIdleTrack;
-    dchar barTrackGlyph = '│';
-    dchar barThumbGlyph = '█';
+    /// The bar's characters; `dchar.init` takes the theme's (`GLY1`).
+    dchar barTrackGlyph;
+    dchar barThumbGlyph; /// ditto
     RgbColor barTrackFgOverride;
     bool hasBarTrackFgOverride;
 

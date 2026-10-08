@@ -6,7 +6,7 @@ import std.conv : text;
 import sparkles.fuzzy : CandidateSnapshot, RankedResult, TextRange;
 import sparkles.ui.geometry : Insets, Rect, SizeSpec;
 import sparkles.ui.layout : Frame;
-import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs,
+import sparkles.ui.components.chrome : scrollbar,
     ScrollbarSpec;
 import sparkles.ui.state : ScrollAxis;
 import sparkles.ui.style : BorderStyle, Decoration, Slot, TextStyle;
@@ -382,8 +382,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
                 offset: cast(long) state.firstRow,
                 axis: ScrollAxis.vertical,
                 expandPercent: clampPercent(state.scroll.vAnim.percent),
-                hitId: pickerVBarHitId,
-                glyphs: ScrollbarGlyphs('█', '░')),
+                hitId: pickerVBarHitId),
                 cast(int) state.viewRows);
         else
             listChildren ~= builder.add(Widget(kind: WidgetKind.box,
@@ -416,8 +415,7 @@ WidgetTree pickerView(size_t Capacity, size_t PromptCapacity)(
             // never a pixel width, which is the bargain that let the five
             // rail-width copies be deleted.
             expandPercent: clampPercent(state.scroll.hAnim.percent),
-            hitId: pickerHBarHitId,
-            glyphs: ScrollbarGlyphs('━', '─')), track);
+            hitId: pickerHBarHitId), track);
     }
 
     const inspection = state.debugScore;

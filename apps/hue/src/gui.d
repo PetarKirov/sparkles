@@ -2078,7 +2078,7 @@ int runGui(GuiArgs guiArgs) @system
             auto tb = Builder();
             const tv = viewSlice(tb, pn.tree.data, pn.tree.tv,
                 (uint i) @safe => pn.tree.open.isOpen(pn.tree.data.nodes[i].value.path),
-                explorerGlyphs, pn.tree.selBg, hasSelectionBg: true);
+                explorerGlyphs(vm.palette.glyphs), pn.tree.selBg, hasSelectionBg: true);
             Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
                 width: SizeSpec.fixed(treeBodyCols), clipX: true);
             auto wt = tb.finish(tb.add(paneW));

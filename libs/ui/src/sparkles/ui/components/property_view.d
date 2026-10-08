@@ -168,11 +168,11 @@ uint propertyView(ref Builder b, in TreeData!PropertyNode data,
         {
             final switch (g) with (Guide)
             {
-                case space: spans ~= TextSpan(opt.glyphs.space, Slot.gutter); break;
+                case space: spans ~= TextSpan(opt.glyphs.guides.space, Slot.gutter); break;
                 case continueBar:
-                    spans ~= TextSpan(opt.glyphs.continueBar, Slot.gutter); break;
-                case fork: spans ~= TextSpan(opt.glyphs.fork, Slot.gutter); break;
-                case end: spans ~= TextSpan(opt.glyphs.end, Slot.gutter); break;
+                    spans ~= TextSpan(opt.glyphs.guides.bar, Slot.gutter); break;
+                case fork: spans ~= TextSpan(opt.glyphs.guides.fork, Slot.gutter); break;
+                case end: spans ~= TextSpan(opt.glyphs.guides.end, Slot.gutter); break;
             }
             used += 3;
         }
@@ -322,10 +322,10 @@ void writePropertyText(Writer)(ref Writer w, in TreeData!PropertyNode data,
         {
             final switch (g) with (Guide)
             {
-                case space: w.put(opt.glyphs.space); break;
-                case continueBar: w.put(opt.glyphs.continueBar); break;
-                case fork: w.put(opt.glyphs.fork); break;
-                case end: w.put(opt.glyphs.end); break;
+                case space: w.put(opt.glyphs.guides.space); break;
+                case continueBar: w.put(opt.glyphs.guides.bar); break;
+                case fork: w.put(opt.glyphs.guides.fork); break;
+                case end: w.put(opt.glyphs.guides.end); break;
             }
             used += 3;
         }

@@ -287,9 +287,9 @@ enum GuideFamily : ubyte
 /// ditto
 enum ThumbFamily : ubyte
 {
-    block, /// a full block on a light rule: `█` over `│`
-    shade, /// a dark shade on a light one: `▓` over `░`
-    line,  /// a heavy rule on a light one: `┃` over `│`
+    block, /// a full block on a light shade: `█` over `░`, `━` over `─` across
+    shade, /// a dark shade on a light one: `▓` over `░` on both axes
+    line,  /// a heavy rule on a light one: `┃` over `│`, `━` over `─` across
 }
 
 /// Which charset a theme prefers its status marks in (`GLY1`, `GLY3`).
@@ -301,9 +301,43 @@ enum MarkCharset : ubyte
 }
 
 /**
+The connectors a tree draws in front of a row, each one 3-cell segment. A tree
+widget takes these as data — from $(LREF GlyphSet.guides), or its caller's own —
+and never sees the family they came from.
+*/
+struct GuideGlyphs
+{
+    string fork  = "├─ "; /// a child with later siblings
+    string end   = "└─ "; /// the last child of its parent
+    string bar   = "│  "; /// continuation under an ancestor with later siblings
+    string space = "   "; /// continuation under a completed ancestor
+}
+
+/**
+A scrollbar's two characters. A field left at `dchar.init` takes the theme's
+glyph for the bar's axis at display-list time ($(LREF GlyphSet.scrollbar)); a
+caller sets one only where the bar must match something else it draws, as a
+table's bar shares the table's rule.
+*/
+struct ScrollbarGlyphs
+{
+    dchar thumb; /// the thumb; `dchar.init` takes the theme's
+    dchar track; /// the track; `dchar.init` takes the theme's
+
+    /// This charset with each unset glyph taken from `theme`.
+    ScrollbarGlyphs or(in ScrollbarGlyphs theme) const @safe pure nothrow @nogc
+        => ScrollbarGlyphs(thumb != dchar.init ? thumb : theme.thumb,
+            track != dchar.init ? track : theme.track);
+}
+
+/**
 The glyph channel of a theme: whether it may use non-ASCII glyphs at all, and
 its family per role. The target's declared capabilities, not these fields,
 decide what reaches the screen; these record the theme's preference.
+
+The families stay inside the theme layer: a component reads the glyphs they
+resolve to ($(LREF guides), $(LREF scrollbar), the corner radius
+$(LREF resolveVisual) applies), never the family itself.
 */
 struct GlyphSet
 {
@@ -312,6 +346,55 @@ struct GlyphSet
     GuideFamily treeGuide;                   /// tree guide connectors
     ThumbFamily thumb;                       /// scrollbar thumb and track
     MarkCharset marks = MarkCharset.unicode; /// status marks
+
+@safe pure nothrow @nogc:
+
+    /// The tree guides of this theme's guide family.
+    GuideGlyphs guides() const
+    {
+        final switch (treeGuide)
+        {
+            case GuideFamily.light:   return GuideGlyphs.init;
+            case GuideFamily.heavy:   return GuideGlyphs(fork: "┣━ ", end: "┗━ ", bar: "┃  ");
+            case GuideFamily.rounded: return GuideGlyphs(end: "╰─ ");
+            case GuideFamily.ascii:   return GuideGlyphs(fork: "|- ", end: "`- ", bar: "|  ");
+        }
+    }
+
+    /// The scrollbar glyphs of this theme's thumb family, for one axis.
+    ScrollbarGlyphs scrollbar(bool vertical) const
+    {
+        final switch (thumb)
+        {
+            case ThumbFamily.block: return vertical ? ScrollbarGlyphs('█', '░') : ScrollbarGlyphs('━', '─');
+            case ThumbFamily.shade: return vertical ? ScrollbarGlyphs('▓', '░') : ScrollbarGlyphs('▓', '░');
+            case ThumbFamily.line:  return vertical ? ScrollbarGlyphs('┃', '│') : ScrollbarGlyphs('━', '─');
+        }
+    }
+}
+
+@("ui.style.GlyphSet.familiesResolveToGlyphs")
+@safe pure nothrow @nogc unittest
+{
+    GlyphSet g;
+    assert(g.guides == GuideGlyphs.init);
+    assert(g.scrollbar(vertical: true) == ScrollbarGlyphs('█', '░'));
+    assert(g.scrollbar(vertical: false) == ScrollbarGlyphs('━', '─'));
+
+    g.treeGuide = GuideFamily.heavy;
+    assert(g.guides.fork == "┣━ " && g.guides.space == "   ");
+    g.treeGuide = GuideFamily.rounded;
+    assert(g.guides.end == "╰─ " && g.guides.fork == "├─ ");
+    g.treeGuide = GuideFamily.ascii;
+    assert(g.guides.bar == "|  ");
+
+    g.thumb = ThumbFamily.shade;
+    assert(g.scrollbar(vertical: true) == ScrollbarGlyphs('▓', '░'));
+
+    // A caller's own glyph wins; an unset one takes the theme's.
+    const theme = g.scrollbar(vertical: true);
+    assert(ScrollbarGlyphs.init.or(theme) == theme);
+    assert(ScrollbarGlyphs('┃', dchar.init).or(theme) == ScrollbarGlyphs('┃', '░'));
 }
 
 enum BorderStyle : ubyte
