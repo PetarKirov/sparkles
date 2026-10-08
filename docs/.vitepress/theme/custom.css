@@ -8,66 +8,79 @@
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
 
 /* --------------------------------------------------------------------------
- * Color palette
+ * The design-system mapping (WEB3)
+ *
+ * Every color and font family on this site comes from `spk.css`, which is
+ * generated from `sparkles-light.tokens` / `sparkles-dark.tokens` by
+ * `apps/ci/tools/gen-site-css.d`. This block maps VitePress's variables from
+ * those `--spk-*` properties and authors no value of its own; edit a theme
+ * file and rerun the generator to change one. A VitePress variable not
+ * mapped here keeps VitePress's default, and the modal's scrim and shadow
+ * stay neutral black.
+ *
+ * The `.dark` half needs no block: `spk.css` scopes the dark values under
+ * `html.dark`, and every mapping below reads them through `var()`.
  * -------------------------------------------------------------------------- */
 :root {
-  /* Brand: indigo-violet spectrum */
-  --vp-c-brand-1: #6366f1;
-  --vp-c-brand-2: #818cf8;
-  --vp-c-brand-3: #4f46e5;
-  --vp-c-brand-soft: rgba(99, 102, 241, 0.12);
+  /* Page, surfaces and text */
+  --vp-c-bg: var(--spk-page-bg);
+  --vp-c-bg-alt: var(--spk-surface-sunken-bg);
+  --vp-c-bg-elv: var(--spk-surface-overlay-bg);
+  --vp-c-bg-soft: var(--spk-surface-raised-bg);
+  --vp-c-text-1: var(--spk-text-primary-fg);
+  --vp-c-text-2: var(--spk-text-secondary-fg);
+  --vp-c-text-3: var(--spk-text-muted-fg);
+  --vp-c-divider: var(--spk-border-default-fg);
+  --vp-c-border: var(--spk-border-strong-fg);
+
+  /* Brand: the primary accent and its states */
+  --vp-c-brand-1: var(--spk-accent-primary-fg);
+  --vp-c-brand-2: var(--spk-accent-primary-hover-fg);
+  --vp-c-brand-3: var(--spk-accent-primary-pressed-fg);
+  --vp-c-brand-soft: var(--spk-accent-primary-bg);
 
   /* Accent: cyan sparkle */
-  --sparkle-accent: #22d3ee;
-  --sparkle-accent-soft: rgba(34, 211, 238, 0.1);
+  --sparkle-accent: var(--spk-accent-secondary-fg);
+  --sparkle-accent-soft: var(--spk-accent-secondary-bg);
 
-  /* Sidebar */
-  --vp-sidebar-width: 340px;
+  /* Alerts and custom blocks: tip and note keep the brand, important keeps
+    VitePress's purple (no slot of ours carries it) */
+  --vp-c-success-1: var(--spk-status-success-fg);
+  --vp-c-success-soft: var(--spk-status-success-bg);
+  --vp-c-warning-1: var(--spk-status-warning-fg);
+  --vp-c-warning-soft: var(--spk-status-warning-bg);
+  --vp-c-danger-1: var(--spk-status-error-fg);
+  --vp-c-danger-soft: var(--spk-status-error-bg);
+  --vp-c-caution-1: var(--spk-status-error-fg);
+  --vp-c-caution-soft: var(--spk-status-error-bg);
 
-  /* Hero */
+  /* Font roles (WEB6). The families are not web-loaded except the two
+    `@font-face` subsets at the end of this file; each applies where installed
+    and degrades to the next entry. The mono stack lists the Nerd Font
+    families, so Private Use Area glyphs resolve by per-glyph fallback. */
+  --vp-font-family-base: var(--spk-font-body);
+  --vp-font-family-mono: var(--spk-font-code);
+
+  /* Hero: the brand's ramps, the same in either scheme */
   --vp-home-hero-name-color: transparent;
   --vp-home-hero-name-background: linear-gradient(
     135deg,
-    #6366f1 0%,
-    #818cf8 25%,
-    #a78bfa 50%,
-    #22d3ee 75%,
-    #67e8f9 100%
+    var(--spk-palette-indigo-500) 0%,
+    var(--spk-palette-indigo-400) 25%,
+    var(--spk-palette-violet-400) 50%,
+    var(--spk-palette-cyan-400) 75%,
+    var(--spk-palette-cyan-300) 100%
   );
 
   --vp-home-hero-image-background-image: linear-gradient(
     135deg,
-    #4f46e5 30%,
-    #22d3ee 70%
+    var(--spk-palette-indigo-600) 30%,
+    var(--spk-palette-cyan-400) 70%
   );
   --vp-home-hero-image-filter: blur(68px);
-}
 
-.dark {
-  --vp-c-brand-1: #818cf8;
-  --vp-c-brand-2: #a5b4fc;
-  --vp-c-brand-3: #6366f1;
-  --vp-c-brand-soft: rgba(129, 140, 248, 0.12);
-
-  --sparkle-accent: #67e8f9;
-  --sparkle-accent-soft: rgba(103, 232, 249, 0.08);
-}
-
-/* --------------------------------------------------------------------------
- * Typography
- * -------------------------------------------------------------------------- */
-:root {
-  --vp-font-family-base:
-    'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
-    'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-  /* Fira Code first (ligatures), with Nerd Font families so glyphs in the
-    Private Use Area (Powerline, devicons, box-drawing extras) resolve via the
-    browser's per-glyph fallback. Like the other families here, these are not
-    web-loaded — they apply where installed and degrade to the next entry. */
-  --vp-font-family-mono:
-    'FiraCode Nerd Font Mono', 'Fira Code', 'Symbols Nerd Font Mono',
-    'Symbols Nerd Font', 'JetBrains Mono', ui-monospace, 'Menlo', 'Monaco',
-    'Consolas', 'Liberation Mono', 'Courier New', monospace;
+  /* Sidebar */
+  --vp-sidebar-width: 340px;
 }
 
 /* -- Headings: Space Grotesk with refined tracking ----------------------- */
@@ -80,7 +93,7 @@
 .VPHero .name,
 .VPHero .text,
 .VPFeature .title {
-  font-family: 'Space Grotesk', var(--vp-font-family-base);
+  font-family: var(--spk-font-heading);
 }
 
 .vp-doc h1 {
@@ -167,7 +180,7 @@
 
 /* -- Nav & sidebar typography -------------------------------------------- */
 .VPNavBarTitle .title {
-  font-family: 'Space Grotesk', var(--vp-font-family-base);
+  font-family: var(--spk-font-heading);
   font-weight: 700;
   letter-spacing: -0.02em;
 }
@@ -178,7 +191,7 @@
 
 /* Level-0 sidebar group labels: uppercase micro-label style */
 .VPSidebarItem.level-0 > .item > .text {
-  font-family: 'Space Grotesk', var(--vp-font-family-base);
+  font-family: var(--spk-font-heading);
   font-weight: 600;
   font-size: 0.8em;
   letter-spacing: 0.06em;
@@ -226,31 +239,31 @@
 }
 
 .VPSidebarItem.level-1.has-active {
-  background-color: rgba(99, 102, 241, 0.1);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 10%, transparent);
 }
 
 .VPSidebarItem.level-2.has-active {
-  background-color: rgba(99, 102, 241, 0.14);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 14%, transparent);
 }
 
 .VPSidebarItem.level-3.has-active {
-  background-color: rgba(99, 102, 241, 0.18);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent);
 }
 
 .dark .VPSidebarItem.level-0.has-active {
-  background-color: rgba(129, 140, 248, 0.08);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 8%, transparent);
 }
 
 .dark .VPSidebarItem.level-1.has-active {
-  background-color: rgba(129, 140, 248, 0.1);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 10%, transparent);
 }
 
 .dark .VPSidebarItem.level-2.has-active {
-  background-color: rgba(129, 140, 248, 0.14);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 14%, transparent);
 }
 
 .dark .VPSidebarItem.level-3.has-active {
-  background-color: rgba(129, 140, 248, 0.18);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent);
 }
 
 /* Hover effect */
@@ -266,35 +279,35 @@
 
 /* Active takes precedence over hover */
 .VPSidebarItem.level-0.has-active:hover {
-  background-color: rgba(99, 102, 241, 0.14);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 14%, transparent);
 }
 
 .VPSidebarItem.level-1.has-active:hover {
-  background-color: rgba(99, 102, 241, 0.16);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 16%, transparent);
 }
 
 .VPSidebarItem.level-2.has-active:hover {
-  background-color: rgba(99, 102, 241, 0.2);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 20%, transparent);
 }
 
 .VPSidebarItem.level-3.has-active:hover {
-  background-color: rgba(99, 102, 241, 0.24);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 24%, transparent);
 }
 
 .dark .VPSidebarItem.level-0.has-active:hover {
-  background-color: rgba(129, 140, 248, 0.12);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 12%, transparent);
 }
 
 .dark .VPSidebarItem.level-1.has-active:hover {
-  background-color: rgba(129, 140, 248, 0.14);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 14%, transparent);
 }
 
 .dark .VPSidebarItem.level-2.has-active:hover {
-  background-color: rgba(129, 140, 248, 0.18);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 18%, transparent);
 }
 
 .dark .VPSidebarItem.level-3.has-active:hover {
-  background-color: rgba(129, 140, 248, 0.22);
+  background-color: color-mix(in srgb, var(--vp-c-brand-1) 22%, transparent);
 }
 
 /* Expand/collapse animation */
@@ -335,7 +348,7 @@
 
 /* Table header refinement */
 .vp-doc table th {
-  font-family: 'Space Grotesk', var(--vp-font-family-base);
+  font-family: var(--spk-font-heading);
   font-weight: 600;
   letter-spacing: 0.02em;
   font-size: 0.85em;
@@ -344,14 +357,14 @@
 
 /* Badge typography */
 .VPBadge {
-  font-family: 'Space Grotesk', var(--vp-font-family-base);
+  font-family: var(--spk-font-heading);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
 /* Outline heading in aside */
 .VPDocAsideOutline .outline-title {
-  font-family: 'Space Grotesk', var(--vp-font-family-base);
+  font-family: var(--spk-font-heading);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -587,7 +600,7 @@ div[class*='language-']:hover > .code-block-actions {
   display: inline-flex;
   align-items: center;
   margin-left: 6px;
-  color: var(--vp-c-green-1, #10b981);
+  color: var(--vp-c-success-1);
   font-weight: bold;
   cursor: help;
   vertical-align: middle;
