@@ -16,7 +16,7 @@ on success and on failure alike.
 module sparkles.base.vfs.walk;
 
 import sparkles.base.io.errors : ErrorKind, IoError, IoResult, OpKind, ioErr, ioOk;
-import sparkles.base.vfs.concept : hasWholePathResolver, isVfs;
+import sparkles.base.vfs.concept : hasSearchOpen, hasWholePathResolver, isVfs;
 import sparkles.base.vfs.names : checkName, checkWalkPath, isAbsolutePath, isSeparator,
     lexicalError;
 import sparkles.base.vfs.types : ResolvePolicy, Resolution, Sharing, StatMask, SymlinkPolicy,
@@ -119,7 +119,11 @@ private struct Walk(V)
             if (nameKind != ErrorKind.other)
                 return fail(lexicalError(nameKind, OpKind.resolve));
 
-            auto opened = vfs.openDirAt(cur, c);
+            // VFN14: pass through for search only where the backend can.
+            static if (hasSearchOpen!V)
+                auto opened = vfs.openSearchAt(cur, c);
+            else
+                auto opened = vfs.openDirAt(cur, c);
             if (!opened.hasError)
             {
                 retried = false;
@@ -172,6 +176,15 @@ private struct Walk(V)
 
         if (depth == 0)
             return vfs.reopen(start); // VFP3: an empty path yields a new handle
+        static if (hasSearchOpen!V)
+        {
+            // The result was opened for search only; reopen it with full access.
+            auto full = vfs.reopen(cur);
+            if (full.hasError)
+                return fail(full.error);
+            vfs.close(cur);
+            cur = full.value;
+        }
         foreach (i; 1 .. depth)
             vfs.close(stack[i]);
         depth = 0;
