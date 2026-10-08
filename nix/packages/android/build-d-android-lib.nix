@@ -52,6 +52,10 @@ in
           cIncludes ? [ ],
           # Static archives to link, per ABI: `abi: [ path ... ]`.
           staticLibs ? (abi: [ ]),
+          # Append a stable `{}` `.build_info` section so a later
+          # `--update-section` has something to replace. The contents do not
+          # name a commit, so this derivation stays cached across commits.
+          emptyBuildInfo ? false,
           description ? "D application as an Android shared library, per ABI",
         }:
         pkgs.stdenv.mkDerivation {
@@ -62,7 +66,8 @@ in
           nativeBuildInputs = [
             (androidHost system).ldcAndroid
             pkgs.unzip
-          ];
+          ]
+          ++ lib.optional emptyBuildInfo pkgs.llvmPackages.llvm;
 
           buildPhase = ''
             runHook preBuild
@@ -105,6 +110,13 @@ in
             ${lib.concatMapStrings (t: ''
               install -Dm644 lib${libName}-${t.abi}.so $out/lib/${t.abi}/lib${libName}.so
             '') (lib.attrValues ndk.targets)}
+            ${lib.optionalString emptyBuildInfo ''
+              emptyInfo=${pkgs.writeText "build-info-empty.json" "{}"}
+              ${lib.concatMapStrings (t: ''
+                llvm-objcopy --add-section .build_info=$emptyInfo \
+                  "$out/lib/${t.abi}/lib${libName}.so"
+              '') (lib.attrValues ndk.targets)}
+            ''}
             runHook postInstall
           '';
 

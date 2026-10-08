@@ -236,59 +236,64 @@
       # (transitively: base, core-cli, ghostty, math, and the test-runner
       # shim+impl) and supplies the shared dub plumbing, so only the raylib +
       # libghostty-vt build inputs and the fontconfig runtime wrapper remain.
-      packages.terminal = config.legacyPackages.buildSparklesApp (finalAttrs: {
-        pname = "terminal";
-        version = "0.1.0";
+      packages.terminal =
+        let
+          drv = config.legacyPackages.buildSparklesApp (finalAttrs: {
+            pname = "terminal";
+            version = "0.1.0";
 
-        nativeBuildInputs = [ pkgs.pkg-config ];
+            nativeBuildInputs = [ pkgs.pkg-config ];
 
-        buildInputs = [
-          # The document viewer (`TDV`, sparkles:doc-view) highlights through
-          # sparkles:syntax.
-          pkgs.tree-sitter
-          pkgs.raylib
-          inputs'.ghostty.packages.libghostty-vt
-          inputs'.ghostty.packages.libghostty-vt.dev
-        ];
+            buildInputs = [
+              # The document viewer (`TDV`, sparkles:doc-view) highlights through
+              # sparkles:syntax.
+              pkgs.tree-sitter
+              pkgs.raylib
+              inputs'.ghostty.packages.libghostty-vt
+              inputs'.ghostty.packages.libghostty-vt.dev
+            ];
 
-        env = d-toolchain.env;
+            env = d-toolchain.env;
 
-        # The credits page (`TPG15`), beside the executable: the document and
-        # its staged licence texts, the files the docs site renders (`TPG16`).
-        installPhase = ''
-          install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
-          mkdir -p $out/share/sparkles-terminal
-          cp -r ${config.legacyPackages.sparklesCredits.bundle} $out/share/sparkles-terminal/credits
-        '';
+            # Buttons on the about page. The document carries them; the page
+            # does not.
+            links = {
+              source = "https://github.com/PetarKirov/sparkles";
+              docs = "https://sparkles.petar-kirov.dev/apps/terminal/";
+              credits = "https://sparkles.petar-kirov.dev/credits/terminal";
+            };
 
-        # The version and commit `logBuildInfo` reports (`TPG2`): the stamp
-        # lands in the `stringImportPaths "views"` apps/terminal/dub.sdl names.
-        preBuild = ''
-          chmod -R u+w "$NIX_BUILD_TOP"
-          mkdir -p views
-          cp ${
-            config.legacyPackages.mkBuildStamp {
-              inherit (finalAttrs) version;
-              components."libghostty-vt" = inputs'.ghostty.packages.libghostty-vt.version;
-            }
-          }/sparkles-build-stamp views/
-        '';
+            # The credits page (`TPG15`), beside the executable: the document and
+            # its staged licence texts, the files the docs site renders (`TPG16`).
+            installPhase = ''
+              install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
+              mkdir -p $out/share/sparkles-terminal
+              cp -r ${config.legacyPackages.sparklesCredits.bundle} $out/share/sparkles-terminal/credits
+            '';
 
-        # The terminal shells out to `fc-match` (fontconfig) at runtime to
-        # resolve fonts (see apps/terminal/src/app.d). Under `nix run` PATH is
-        # the ambient user environment, so wrap the binary to guarantee
-        # fontconfig is reachable instead of relying on the user's PATH.
-        postFixup = ''
-          wrapProgram $out/bin/${finalAttrs.pname} \
-            --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
-            --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
-        '';
+            # The terminal shells out to `fc-match` (fontconfig) at runtime to
+            # resolve fonts (see apps/terminal/src/app.d). Under `nix run` PATH is
+            # the ambient user environment, so wrap the binary to guarantee
+            # fontconfig is reachable instead of relying on the user's PATH.
+            # Step 2 runs this, after the build-info section is replaced.
+            postFixup = ''
+              wrapProgram $out/bin/${finalAttrs.pname} \
+                --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
+                --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
+            '';
 
-        meta = {
-          description = "A minimal terminal emulator using libghostty-vt";
-          mainProgram = finalAttrs.pname;
+            meta = {
+              description = "A minimal terminal emulator using libghostty-vt";
+              mainProgram = finalAttrs.pname;
+            };
+          });
+        in
+        drv
+        // {
+          passthru = drv.passthru // {
+            buildInfo = config.legacyPackages.assertDirectBuildInfo drv.passthru.buildInfo;
+          };
         };
-      });
 
       # CPU benchmark harness for the terminal. Pure D + core-cli (it only spawns
       # terminal binaries handed to it and reads /proc), so no raylib/ghostty
