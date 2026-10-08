@@ -10,6 +10,9 @@ struct CliError
     {
         parse,
         help,
+        /// `-V` / `--version`. Exit 0 when the section is missing or valid.
+        /// `version` is a D keyword, so the member is `version_`.
+        version_,
     }
 
     Kind kind;
@@ -18,6 +21,9 @@ struct CliError
     int exitCode = 1;
 
     bool isHelp() const @safe pure nothrow @nogc => kind == Kind.help;
+
+    /// `-V` / `--version`.
+    bool isVersion() const @safe pure nothrow @nogc => kind == Kind.version_;
 }
 
 alias CliExpected(T) = Expected!(T, CliError);
