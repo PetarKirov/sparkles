@@ -21,6 +21,7 @@ module sparkles.ui.glyphs;
 import std.traits : EnumMembers, getUDAs;
 
 import sparkles.base.term_caps : BlockTier;
+import sparkles.ui.icons : Icon;
 import sparkles.ui.interp.cells : asciiStroke;
 import sparkles.ui.tokens : TargetCapabilities;
 
@@ -193,13 +194,13 @@ shift between a Nerd Font terminal and a pipe.
 */
 enum Mark : ubyte
 {
-    @markGlyphs('\uF00C', '✔', '+') ok,      /// nf-fa-check
-    @markGlyphs('\uF00D', '✖', 'x') fail,    /// nf-fa-xmark
-    @markGlyphs('\uF071', '⚠', '!') warn,    /// nf-fa-triangle_exclamation
-    @markGlyphs('\uF05A', '•', '*') info,    /// nf-fa-circle_info
-    @markGlyphs('\uF10C', '○', 'o') pending, /// nf-fa-circle (outline)
-    @markGlyphs('\uF110', '◐', '~') running, /// nf-fa-spinner
-    @markGlyphs('\uF068', '┄', '.') skipped, /// nf-fa-minus
+    @markGlyphs(Icon.faCheck, '✔', '+') ok,                 /// `fa-check`
+    @markGlyphs(Icon.faXmark, '✖', 'x') fail,               /// `fa-xmark`
+    @markGlyphs(Icon.faTriangleExclamation, '⚠', '!') warn, /// `fa-triangle_exclamation`
+    @markGlyphs(Icon.faCircleInfo, '•', '*') info,          /// `fa-circle_info`
+    @markGlyphs(Icon.faCircleO, '○', 'o') pending,          /// `fa-circle_o`
+    @markGlyphs(Icon.faSpinner, '◐', '~') running,          /// `fa-spinner`
+    @markGlyphs(Icon.faMinus, '┄', '.') skipped,            /// `fa-minus`
 }
 
 /// Which charset a theme prefers its marks in (`GLY1`); the target caps it.
