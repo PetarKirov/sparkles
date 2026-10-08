@@ -52,6 +52,7 @@ import forge : CommentThread, PullRequest, ThreadSide;
 import sparkles.doc_view.diff_structural : StructuralPolicy;
 import sparkles.doc_view.diff_view : DiffLayout, DiffViewOptions;
 import sparkles.diff : WhitespaceMode;
+import sparkles.docs.assets : markdownPreviewCss;
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 import sparkles.doc_view.table_select : TableCopyFormat;
 import sparkles.doc_view.dsv_view : resolveTableCopy;
@@ -2018,22 +2019,6 @@ private string hex2(ubyte v) @safe pure nothrow
     return [d[v >> 4], d[v & 0xF]].idup;
 }
 
-private enum markdownPreviewCss =
-    ".md { max-width: 48em; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }\n" ~
-    ".md pre.code-fence { padding: .75em 1em; overflow-x: auto; border-radius: 6px; }\n" ~
-    ".md :not(pre) > code { padding: .1em .35em; border-radius: 3px; background: #8882; }\n" ~
-    ".md blockquote { border-left: 3px solid #8888; margin: 1em 0; padding: 0 1em; opacity: .85; }\n" ~
-    ".md table { border-collapse: collapse; margin: 1em 0; }\n" ~
-    ".md th, .md td { border: 1px solid #8884; padding: .3em .6em; }\n" ~
-    ".md img { max-width: 100%; }\n" ~
-    ".callout { border-left: 4px solid; margin: 1em 0; padding: .1em 1em; border-radius: 4px; background: #8881; }\n" ~
-    ".callout-title { font-weight: 600; margin: .4em 0; }\n" ~
-    ".callout-note { border-color: #539bf5; }\n" ~
-    ".callout-tip { border-color: #57ab5a; }\n" ~
-    ".callout-important { border-color: #986ee2; }\n" ~
-    ".callout-warning { border-color: #c69026; }\n" ~
-    ".callout-caution { border-color: #e5534b; }\n";
-
 /**
 Render `source` as a rich HTML markdown preview (`HTM5`): the `MdDoc → HTML`
 emitter (`renderMarkdownHtml`) wrapped in the theme's stylesheet, with fenced
@@ -2047,8 +2032,6 @@ stdout and returns the exit code.
 int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
     ref GrammarRegistry registry, ref TsConfigCache cache) @system
 {
-    import sparkles.docs.assets : markdownPreviewCss;
-
     auto doc = extractMarkdown(registry, source);
     if (doc.root.children.length == 0 && source.length)
         warning(i"no markdown grammar (set SPARKLES_TS_GRAMMAR_PATH) — empty output");
