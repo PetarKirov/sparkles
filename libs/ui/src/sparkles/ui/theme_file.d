@@ -521,7 +521,7 @@ private string baseName(const DtcgJson doc)
 
 // The resolver rule: every token of `top` replaces the base's token at the
 // same path; groups merge; `top`'s root extension wins.
-private DtcgJson overlay(const DtcgJson base, const DtcgJson top)
+package DtcgJson overlay(const DtcgJson base, const DtcgJson top)
 {
     auto r = base.dup;
     r.remove("$extensions");
