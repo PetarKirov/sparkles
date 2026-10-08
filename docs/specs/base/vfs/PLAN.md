@@ -209,4 +209,4 @@ finds no normative text duplicating this one.
 | M2        | implemented locally; Windows leg pending                 | —            |
 | M3        | blocked on event-horizon's O32                           | —            |
 | M4        | implemented locally                                      | —            |
-| M5        | not started                                              | —            |
+| M5        | written locally                                          | —            |
