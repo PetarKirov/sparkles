@@ -188,11 +188,11 @@ intended reason and not a typo.
 
 ## Oracle 6: native legs
 
-| Leg                     | Additionally covers                                                                                                                                                                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Linux (x86_64, aarch64) | `openat2` flags, `RESOLVE_NO_XDEV` against a bind mount where the runner permits one, R1/R4 with a real renaming thread, created mode bits under a fixed umask                                                                           |
-| macOS                   | the `O_NOFOLLOW_ANY` probe and its reported `resolution`; `crossesMount` by device comparison, labelled racy; created mode bits under a fixed umask                                                                                      |
-| Windows                 | junctions, the forced `OBJ_DONT_REPARSE` downgrade, removal of a git repository's read-only objects ([`VFN13`](./backends.md#vfn13-windows-deletion)), non-inheritable handles, the access control list of owner-only and shared entries |
+| Leg                     | Additionally covers                                                                                                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Linux (x86_64, aarch64) | a search-only directory (mode `0111`) walked through by both resolvers (`VFN14`); `openat2` flags, `RESOLVE_NO_XDEV` against a bind mount where the runner permits one, R1/R4 with a real renaming thread, created mode bits under a fixed umask |
+| macOS                   | a search-only directory walked through by both resolvers; the `O_NOFOLLOW_ANY` probe and its reported `resolution`; `crossesMount` by device comparison, labelled racy; created mode bits under a fixed umask                                    |
+| Windows                 | junctions, the forced `OBJ_DONT_REPARSE` downgrade, removal of a git repository's read-only objects ([`VFN13`](./backends.md#vfn13-windows-deletion)), non-inheritable handles, the access control list of owner-only and shared entries         |
 
 A leg that cannot create a bind mount records the row as not run.
 
@@ -299,21 +299,22 @@ that observation is made.
 
 ### Native backends (`VFN`)
 
-| Requirement                                                   | Check                                                                                   | Oracle |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------ |
-| [`VFN1`](./backends.md#vfn1-kind-is-computed-once)            | oracle 3 compares kinds across resolvers                                                | 3      |
-| [`VFN2`](./backends.md#vfn2-ambiguous-native-results)         | one fixture per table row asserts the kind                                              | 6      |
-| [`VFN3`](./backends.md#vfn3-availability-is-cached-one-way)   | the forced-absence switch, as for `VFR5`                                                | 3      |
-| [`VFN4`](./backends.md#vfn4-race-retries)                     | the `EAGAIN` double, as for `VFR6`                                                      | 3      |
-| [`VFN5`](./backends.md#vfn5-platform-accelerators)            | each leg's reported `resolution` per policy matches the table; oracle 3 passes on Linux | 3, 6   |
-| [`VFN6`](./backends.md#vfn6-the-mount-check)                  | the bind-mount row on Linux where permitted; macOS reports `racy`                       | 6      |
-| [`VFN7`](./backends.md#vfn7-the-windows-component-walk)       | the Windows leg with real junctions and directory symlinks, the downgrade forced        | 6      |
-| [`VFN8`](./backends.md#vfn8-windows-dot-dot)                  | the **NI** and **BI** rows with `..` on the Windows leg, junctions in place of links    | 1, 6   |
-| [`VFN9`](./backends.md#vfn9-no-follow)                        | the `VFO2` check on every native leg                                                    | 1, 6   |
-| [`VFN10`](./backends.md#vfn10-listing-through-a-fresh-handle) | the `VFO7` check on every native leg                                                    | 6      |
-| [`VFN11`](./backends.md#vfn11-rights-reach-the-os)            | on Windows, a read-only `File`'s queried access mask excludes `FILE_WRITE_DATA`         | 6      |
-| [`VFN12`](./backends.md#vfn12-sharing-on-each-platform)       | mode bits under a fixed umask on POSIX; the queried access control list on Windows      | 6      |
-| [`VFN13`](./backends.md#vfn13-windows-deletion)               | the Windows leg removes a tree containing a git repository's read-only object files     | 6      |
+| Requirement                                                                   | Check                                                                                              | Oracle |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------ |
+| [`VFN1`](./backends.md#vfn1-kind-is-computed-once)                            | oracle 3 compares kinds across resolvers                                                           | 3      |
+| [`VFN2`](./backends.md#vfn2-ambiguous-native-results)                         | one fixture per table row asserts the kind                                                         | 6      |
+| [`VFN3`](./backends.md#vfn3-availability-is-cached-one-way)                   | the forced-absence switch, as for `VFR5`                                                           | 3      |
+| [`VFN4`](./backends.md#vfn4-race-retries)                                     | the `EAGAIN` double, as for `VFR6`                                                                 | 3      |
+| [`VFN5`](./backends.md#vfn5-platform-accelerators)                            | each leg's reported `resolution` per policy matches the table; oracle 3 passes on Linux            | 3, 6   |
+| [`VFN6`](./backends.md#vfn6-the-mount-check)                                  | the bind-mount row on Linux where permitted; macOS reports `racy`                                  | 6      |
+| [`VFN7`](./backends.md#vfn7-the-windows-component-walk)                       | the Windows leg with real junctions and directory symlinks, the downgrade forced                   | 6      |
+| [`VFN8`](./backends.md#vfn8-windows-dot-dot)                                  | the **NI** and **BI** rows with `..` on the Windows leg, junctions in place of links               | 1, 6   |
+| [`VFN9`](./backends.md#vfn9-no-follow)                                        | the `VFO2` check on every native leg                                                               | 1, 6   |
+| [`VFN10`](./backends.md#vfn10-listing-through-a-fresh-handle)                 | the `VFO7` check on every native leg                                                               | 6      |
+| [`VFN11`](./backends.md#vfn11-rights-reach-the-os)                            | on Windows, a read-only `File`'s queried access mask excludes `FILE_WRITE_DATA`                    | 6      |
+| [`VFN12`](./backends.md#vfn12-sharing-on-each-platform)                       | mode bits under a fixed umask on POSIX; the queried access control list on Windows                 | 6      |
+| [`VFN13`](./backends.md#vfn13-windows-deletion)                               | the Windows leg removes a tree containing a git repository's read-only object files                | 6      |
+| [`VFN14`](./backends.md#vfn14-intermediate-directories-are-opened-for-search) | a walk through a directory with mode `0111` succeeds on both resolvers on the Linux and macOS legs | 3, 6   |
 
 ### The in-memory backend (`VFM`)
 
