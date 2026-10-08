@@ -114,16 +114,19 @@ struct SessionPaths
 @("session.SessionPaths")
 @safe pure unittest
 {
-    const p = SessionPaths("/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files");
-    assert(p.home == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/home");
-    assert(p.prefix == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/usr");
-    assert(p.login == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/usr/bin/login");
-    assert(p.termuxDir == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/home/.termux");
-    assert(p.packageName == "dev.petar_kirov.sparkles.terminal.nix");
-    assert(p.amSocket == "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/apps/"
-        ~ "dev.petar_kirov.sparkles.terminal.nix/termux-am/am.sock", "Termux's layout");
+    const p = SessionPaths("/data/user/0/dev.petar_kirov.sparkles.terminal/files");
+    assert(p.home == "/data/user/0/dev.petar_kirov.sparkles.terminal/files/home");
+    assert(p.prefix == "/data/user/0/dev.petar_kirov.sparkles.terminal/files/usr");
+    assert(p.login == "/data/user/0/dev.petar_kirov.sparkles.terminal/files/usr/bin/login");
+    assert(p.termuxDir == "/data/user/0/dev.petar_kirov.sparkles.terminal/files/home/.termux");
+    assert(p.packageName == "dev.petar_kirov.sparkles.terminal");
+    assert(p.amSocket == "/data/user/0/dev.petar_kirov.sparkles.terminal/files/apps/"
+        ~ "dev.petar_kirov.sparkles.terminal/termux-am/am.sock", "Termux's layout");
+    // `sun_path` holds 108 bytes including the NUL, so this layout does not fit.
+    assert(p.amSocket.length > 107);
     const short_ = SessionPaths(p.files, "/data/data/x/files/apps/termux-am/am.sock");
     assert(short_.amSocket == "/data/data/x/files/apps/termux-am/am.sock");
+    assert(short_.amSocket.length <= 107);
 }
 
 /**

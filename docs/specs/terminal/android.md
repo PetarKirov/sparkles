@@ -1,7 +1,7 @@
 ---
 status: accepted
 owner: sparkles:terminal
-reviewed: 2026-10-03
+reviewed: 2026-10-08
 ---
 
 # `apps/terminal` on Android — the nix-on-droid terminal
@@ -43,8 +43,8 @@ they reached Termux: over a Unix socket that speaks Termux's `am` request
 protocol, which the app answers itself. Its installer is a program inside the
 terminal rather than a second user interface, and the APK is data-driven: an
 asset selects the session mode, so the same code builds a plain terminal and
-nix-on-droid's app. [Decisions](#decisions) D1–D5 record these choices; the
-`NOD` requirements below are numbered for nix-on-droid.
+nix-on-droid's login as one package. [Decisions](#decisions) D1–D5 record
+these choices; the `NOD` requirements below are numbered for nix-on-droid.
 
 **In scope:** the Android build of `apps/terminal`; two session modes (a plain
 shell, and a nix-on-droid bootstrap followed by its login); the soft keyboard
@@ -103,14 +103,17 @@ reading code:
 
 ## Decisions
 
-**D1 — A new package, `dev.petar_kirov.sparkles.terminal.nix`.** Termux's
-data directory is `/data/data/com.termux.nix`, and the fork's signing key is
-not ours, so the new app cannot replace an installed one either way.
-nix-on-droid gains an app-id option from which `installationDir`,
-`user.home` and the request paths derive; its default stays
-`com.termux.nix`, so an unchanged configuration keeps working with the old
-app. The bootstrap built _for_ the new app bakes its id into the first-boot
-configuration it generates.
+**D1 — One package, `dev.petar_kirov.sparkles.terminal`.** Termux's data
+directory is `/data/data/com.termux.nix`, and the fork's signing key is not
+ours, so this app cannot replace an installed Termux. The plain shell and the
+nix-on-droid bootstrap are two builds of this one package: installing one
+replaces the other, and both use its data directory. nix-on-droid's app-id
+option supplies `installationDir`, `user.home` and the request paths; its
+default stays `com.termux.nix`, so an unchanged configuration keeps working
+with Termux. The bootstrap built for this app bakes
+`dev.petar_kirov.sparkles.terminal` into the first-boot configuration it
+generates. A package id of `dev.petar_kirov.sparkles.terminal.nix` is a
+different app and does not share this data directory.
 
 **D2 — No DEX, ever.** The repository owner's decision. JNI calls into
 _framework_ classes (`ClipboardManager`, `KeyCharacterMap`,
@@ -147,9 +150,11 @@ Normative for `apps/terminal` on Android.
 (`hasCode="false"`) and **must** be produced by a Nix derivation from tracked
 sources alone; `sign = false` yields the publishable unsigned artifact.
 
-**NOD2: One code base, two apps.** The package id, label and session
-parameters **must** be builder inputs, so the same code builds both the plain
-terminal and the nix-on-droid app.
+**NOD2: One package, two session modes.** Both shipped builds **must** use
+the package id `dev.petar_kirov.sparkles.terminal`. The label and session
+parameters **must** remain builder inputs, so the same code builds the plain
+terminal and the nix-on-droid session. The two builds share one data
+directory; installing one replaces the other.
 
 **NOD3: SDK levels.** `targetSdk` **must** be 28 and `minSdk` 29
 ([D3](#decisions)).
@@ -220,7 +225,7 @@ the flag it performs no such file I/O.
 | ID    | Status | Verified by                                         |
 | ----- | ------ | --------------------------------------------------- |
 | NOD1  | full   | `unzip -l` in the derivation's check phase          |
-| NOD2  | full   | two flake outputs                                   |
+| NOD2  | full   | two flake outputs, one package id                   |
 | NOD3  | full   | `aapt2 dump badging`                                |
 | NOD4  | full   | emulator: `echo $HOME` in the screen oracle         |
 | NOD5  | full   | emulator bootstrap test                             |

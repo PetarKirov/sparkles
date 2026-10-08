@@ -11,14 +11,17 @@ design and its requirements are in the
 
 There are two variants, both built from this repository:
 
-| Variant         | Package id                              | Runs on first start                          | Build                          |
-| --------------- | --------------------------------------- | -------------------------------------------- | ------------------------------ |
-| Plain           | `dev.petar_kirov.sparkles.terminal`     | `/system/bin/sh`                             | `nix build .#terminal-apk`     |
-| Nix (bootstrap) | `dev.petar_kirov.sparkles.terminal.nix` | nix-on-droid's bootstrap install, then login | `nix build .#terminal-nix-apk` |
+| Variant         | Package id                          | Runs on first start                          | Build                          |
+| --------------- | ----------------------------------- | -------------------------------------------- | ------------------------------ |
+| Plain           | `dev.petar_kirov.sparkles.terminal` | `/system/bin/sh`                             | `nix build .#terminal-apk`     |
+| Nix (bootstrap) | `dev.petar_kirov.sparkles.terminal` | nix-on-droid's bootstrap install, then login | `nix build .#terminal-nix-apk` |
 
-Both are labelled `sparkles:terminal` and can be installed side by side. The
-Nix variant runs nix-on-droid in place of its Termux-based app; the bootstrap
-it installs is built for its package id by nix-on-droid's
+Both are labelled `sparkles:terminal` and are the same Android package, so
+installing one replaces the other and they share one data directory. An
+existing `dev.petar_kirov.sparkles.terminal.nix` install is a different app;
+uninstall it. Its files stay in that package's directory and are not moved.
+The Nix variant runs nix-on-droid in place of its Termux-based app; the
+bootstrap it installs is built for this package id by nix-on-droid's
 `lib.bootstrapPackages` (the `nix-on-droid` flake input). Its
 `terminal-nix-apk-unsigned` is the release build, for signing outside Nix.
 
@@ -83,13 +86,13 @@ emulator, `x86_64` for a Linux host's emulator — and building it needs
 nix build --impure .#terminal-nix-bootstrap-aarch64 -o bootstrap
 nix develop .#android -c bash -c '
   adb push bootstrap/bootstrap-aarch64.zip /data/local/tmp/
-  adb shell "run-as dev.petar_kirov.sparkles.terminal.nix sh -c \"mkdir -p files/n-o-d && cp /data/local/tmp/bootstrap-aarch64.zip files/n-o-d/\""'
+  adb shell "run-as dev.petar_kirov.sparkles.terminal sh -c \"mkdir -p files/n-o-d && cp /data/local/tmp/bootstrap-aarch64.zip files/n-o-d/\""'
 ```
 
 Start the app and answer the prompt with the directory holding the zip:
 
 ```text
-file:///data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/n-o-d
+file:///data/user/0/dev.petar_kirov.sparkles.terminal/files/n-o-d
 ```
 
 Alternatively, `nix build --impure .#terminal-nix-apk-offline` carries both
@@ -138,7 +141,7 @@ default, or the bootstrap bundled in an offline APK), downloads and unpacks it,
 and starts nix-on-droid's `login`. Your configuration must name the app:
 
 ```nix
-build.androidAppId = "dev.petar_kirov.sparkles.terminal.nix";
+build.androidAppId = "dev.petar_kirov.sparkles.terminal";
 ```
 
 A configuration created by the app's first start already has it.
