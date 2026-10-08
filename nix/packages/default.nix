@@ -240,6 +240,11 @@
         pname = "terminal";
         version = "0.1.0";
 
+        # The about page shows the commit (`TPG2`), so this package is
+        # rebuilt (step 2 only) on every commit.
+        stampBuildInfo = true;
+        checkBuildInfo = config.legacyPackages.checkTerminalBuildInfo;
+
         nativeBuildInputs = [ pkgs.pkg-config ];
 
         buildInputs = [
@@ -253,6 +258,8 @@
 
         env = d-toolchain.env;
 
+        links = config.legacyPackages.terminalLinks;
+
         # The credits page (`TPG15`), beside the executable: the document and
         # its staged licence texts, the files the docs site renders (`TPG16`).
         installPhase = ''
@@ -261,23 +268,11 @@
           cp -r ${config.legacyPackages.sparklesCredits.bundle} $out/share/sparkles-terminal/credits
         '';
 
-        # The version and commit `logBuildInfo` reports (`TPG2`): the stamp
-        # lands in the `stringImportPaths "views"` apps/terminal/dub.sdl names.
-        preBuild = ''
-          chmod -R u+w "$NIX_BUILD_TOP"
-          mkdir -p views
-          cp ${
-            config.legacyPackages.mkBuildStamp {
-              inherit (finalAttrs) version;
-              components."libghostty-vt" = inputs'.ghostty.packages.libghostty-vt.version;
-            }
-          }/sparkles-build-stamp views/
-        '';
-
         # The terminal shells out to `fc-match` (fontconfig) at runtime to
         # resolve fonts (see apps/terminal/src/app.d). Under `nix run` PATH is
         # the ambient user environment, so wrap the binary to guarantee
         # fontconfig is reachable instead of relying on the user's PATH.
+        # Step 2 runs this, after the build-info section is replaced.
         postFixup = ''
           wrapProgram $out/bin/${finalAttrs.pname} \
             --set-default SPARKLES_TS_GRAMMAR_PATH ${config.packages.ts-grammars} \
@@ -289,6 +284,14 @@
           mainProgram = finalAttrs.pname;
         };
       });
+
+      # Buttons on the terminal's about page, desktop and Android alike. The
+      # document carries them; the page does not.
+      legacyPackages.terminalLinks = {
+        source = "https://github.com/PetarKirov/sparkles";
+        docs = "https://sparkles.petar-kirov.dev/apps/terminal/";
+        credits = "https://sparkles.petar-kirov.dev/credits/terminal";
+      };
 
       # CPU benchmark harness for the terminal. Pure D + core-cli (it only spawns
       # terminal binaries handed to it and reads /proc), so no raylib/ghostty
