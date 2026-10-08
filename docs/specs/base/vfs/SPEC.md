@@ -244,7 +244,9 @@ type states which operations. Each requirement's check is listed in
 it is called, otherwise in the destructor. `close()` **must** return a close
 failure; the destructor drops it. A default-initialized handle is empty:
 every operation on it **must** fail with `other` and the context
-`"empty handle"`, and closing it does nothing.
+`"empty handle"`, and closing it does nothing. `backendHandle()` exposes the backend's
+handle for backend tests and for code that takes a raw descriptor; using it
+bypasses rights and policy.
 
 _Rationale:_ The `expected` library cannot hold a payload without a default
 constructor, and every operation returns its handle in an `IoResult`
@@ -352,7 +354,7 @@ optional argument of [`VFO5`](#vfo5-sharing-of-created-entries); passing
 | `unlinkAt(name)`                        | `remove`                                            | nothing; `isADirectory` for a directory                      |
 | `rmdirAt(name)`                         | `remove`                                            | nothing; `notEmpty` if it has entries                        |
 | `renameAt(name, dst, dstName)`          | `rename` on both                                    | nothing; replaces a non-directory target                     |
-| `list(buffer)`                          | `list`                                              | a `Listing` over the entries                                 |
+| `list()`                                | `list`                                              | a `Listing` over the entries                                 |
 | `walk(path)`                            | `lookup`                                            | a `Dir` for the directory `path` names                       |
 | `walkAll(path, sharing)`                | `lookup`, `create`                                  | as `walk`, creating missing directories                      |
 | `removeTree(name)`                      | `lookup`, `list`, `remove`                          | nothing; see [§9](#_9-deletion-vfd)                          |
@@ -413,8 +415,9 @@ recreate a file with the mode it had ([`VFO9`](#vfo9-atomic-write)).
 **VFO7: Listing.** `list` **must** read entries through a listing independent
 of every other listing of the same directory. Entries come in an unspecified
 order, never include `.` or `..`, and carry a name and a kind hint that may be
-`unknown`. Each name is a slice of the caller's buffer, valid until the next
-advance. A buffer too small for one entry yields `bufferTooSmall`.
+`unknown`. A listing holds its names in a buffer of its own, 1024 bytes, enough
+for the longest name on any supported platform; each name is valid until the
+next advance, and a longer one yields `bufferTooSmall`.
 
 <a id="vfo8-rename-stays-in-one-root"></a>
 **VFO8: Rename stays in one root.** `renameAt` **must** fail with

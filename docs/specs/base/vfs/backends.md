@@ -95,17 +95,18 @@ the component walk **must** classify the same condition alike
 **VFN2: Ambiguous native results.** These native results **must** map as
 stated, because each is ambiguous on its own:
 
-| Native result                                                   | Context                                             | Kind             |
-| --------------------------------------------------------------- | --------------------------------------------------- | ---------------- |
-| `ENOTDIR` or `ELOOP` from `openat(… O_NOFOLLOW \| O_DIRECTORY)` | the named entry is a symlink (checked by `fstatat`) | `symlinkRefused` |
-| same                                                            | the named entry is a non-directory                  | `notADirectory`  |
-| `EMLINK` (FreeBSD), `EFTYPE` (NetBSD)                           | `O_NOFOLLOW` open of a symlink                      | `symlinkRefused` |
-| `EXDEV` from `openat2`                                          | `RESOLVE_NO_XDEV` set, no escape                    | `crossesMount`   |
-| `EXDEV` from `openat2`                                          | otherwise                                           | `escapesRoot`    |
-| `ELOOP` from `openat2` with `RESOLVE_NO_SYMLINKS`               | —                                                   | `symlinkRefused` |
-| `EBUSY`, `STATUS_SHARING_VIOLATION`                             | any                                                 | `busy`           |
-| `STATUS_REPARSE_POINT_ENCOUNTERED`                              | `OBJ_DONT_REPARSE` set                              | `symlinkRefused` |
-| `STATUS_DELETE_PENDING`                                         | any                                                 | `notFound`       |
+| Native result                                                   | Context                                             | Kind                                                                                   |
+| --------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `ENOTDIR` or `ELOOP` from `openat(… O_NOFOLLOW \| O_DIRECTORY)` | the named entry is a symlink (checked by `fstatat`) | `symlinkRefused`                                                                       |
+| same                                                            | the named entry is a non-directory                  | `notADirectory`                                                                        |
+| `EMLINK` (FreeBSD), `EFTYPE` (NetBSD)                           | `O_NOFOLLOW` open of a symlink                      | `symlinkRefused`                                                                       |
+| `EXDEV` from `openat2`                                          | `RESOLVE_NO_XDEV` set, no escape                    | `crossesMount`                                                                         |
+| `EXDEV` from `openat2`                                          | otherwise                                           | `escapesRoot`                                                                          |
+| `ELOOP` from `openat2` with `RESOLVE_NO_SYMLINKS`               | —                                                   | `symlinkRefused`                                                                       |
+| `EBUSY`, `STATUS_SHARING_VIOLATION`                             | any                                                 | `busy`                                                                                 |
+| `STATUS_REPARSE_POINT_ENCOUNTERED`                              | `OBJ_DONT_REPARSE` set                              | `symlinkRefused`                                                                       |
+| `STATUS_DELETE_PENDING`                                         | any                                                 | `notFound`                                                                             |
+| `STATUS_OBJECT_PATH_NOT_FOUND` from `OBJ_DONT_REPARSE`          | an intermediate may be a file                       | the kind of the first step that fails, found by stepping through with nothing returned |
 
 To tell the two `EXDEV` rows apart, the backend re-issues the lookup with
 `O_PATH` and without `RESOLVE_NO_XDEV`, then closes the result unused; it never
