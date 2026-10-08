@@ -246,6 +246,9 @@ struct Argument
     string description_;
     bool optional_;
     bool hidden_;
+    /// After this argument's first token, option parsing stops and the
+    /// remainder of argv is copied verbatim. A known subcommand still wins.
+    bool rest_;
 
     this(
         string placeholder,
@@ -254,6 +257,7 @@ struct Argument
         bool optional = false,
         bool hidden = false,
         size_t position = size_t.max,
+        bool rest = false,
     ) @safe
     {
         this.placeholder_ = placeholder;
@@ -261,6 +265,7 @@ struct Argument
         this.optional_ = optional;
         this.hidden_ = hidden;
         this.position = position;
+        this.rest_ = rest;
     }
 
     this(
@@ -270,6 +275,7 @@ struct Argument
         string description = null,
         bool optional = false,
         bool hidden = false,
+        bool rest = false,
     ) @safe
     {
         this.position = position;
@@ -277,6 +283,7 @@ struct Argument
         this.description_ = description;
         this.optional_ = optional;
         this.hidden_ = hidden;
+        this.rest_ = rest;
     }
 
     Argument description(string text) @safe
@@ -297,6 +304,14 @@ struct Argument
     {
         auto result = this;
         result.hidden_ = value;
+        return result;
+    }
+
+    /// The remainder of argv, verbatim, once this argument takes a token.
+    Argument rest(bool value = true) @safe
+    {
+        auto result = this;
+        result.rest_ = value;
         return result;
     }
 }
@@ -332,6 +347,11 @@ unittest
     assert(byPosition.description_ == "Source path.");
     assert(byPosition.optional_);
     assert(byPosition.hidden_);
+
+    auto withRest = Argument("command", optional: true, rest: true);
+    assert(withRest.optional_);
+    assert(withRest.rest_);
+    assert(Argument("command").rest().rest_);
 }
 
 struct Subcommands {}
