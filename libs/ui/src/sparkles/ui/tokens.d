@@ -781,3 +781,61 @@ unittest
     oneSide.style = BorderStyle.solid;
     assert(projectBorder(oneSide, 0, cell).charset == BoxCharset.heavy);
 }
+
+@("ui.tokens.capabilityTableNamesExactlyTheFields")
+@system unittest
+{
+    import std.algorithm.searching : startsWith;
+    import std.algorithm.sorting : sort;
+    import std.array : array, join, split;
+    import std.file : exists, readText;
+    import std.path : buildPath, dirName;
+    import std.regex : matchAll, regex;
+    import std.string : lineSplitter, strip;
+    import sparkles.test_runner.skip : skipTest;
+
+    // `CAP2`: the capability table names exactly the fields of `CAP1`'s
+    // type — a row with no field, or a field with no row, fails. The table is
+    // read from the specification page itself.
+    const page = buildPath(__FILE_FULL_PATH__.dirName, "..", "..", "..", "..", "..",
+        "docs", "specs", "design-system", "capabilities.md");
+    if (!exists(page))
+        skipTest("the design-system specification is not in this checkout");
+
+    bool[string] fields;
+    static foreach (f; __traits(allMembers, OutputCapabilities))
+        static if (!is(typeof(__traits(getMember, OutputCapabilities, f)) == function)
+            && __traits(compiles, __traits(getMember, OutputCapabilities.init, f).offsetof))
+            fields[f] = true;
+    static foreach (f; __traits(allMembers, InputCapabilities))
+        static if (__traits(compiles, __traits(getMember, InputCapabilities.init, f).offsetof))
+            fields["input." ~ f] = true;
+    static foreach (f; __traits(allMembers, TargetCapabilities))
+        static if (f != "output" && f != "input"
+            && __traits(compiles, __traits(getMember, TargetCapabilities.init, f).offsetof))
+            fields[f] = true;
+
+    bool[string] rows;
+    bool inTable;
+    auto name = regex("`([A-Za-z.]+)`");
+    foreach (line; readText(page).lineSplitter)
+    {
+        if (line.startsWith("## "))
+            inTable = line.strip == "## The capability table";
+        if (!inTable || !line.startsWith("| `"))
+            continue;
+        const firstCell = line[1 .. $].split("|")[0];
+        foreach (m; firstCell.matchAll(name))
+            rows[m[1].idup] = true;
+    }
+
+    string[] noField, noRow;
+    foreach (r, _; rows)
+        if (r !in fields)
+            noField ~= r;
+    foreach (f, _; fields)
+        if (f !in rows)
+            noRow ~= f;
+    assert(noField.length == 0, "table rows naming no field: " ~ noField.sort.join(", "));
+    assert(noRow.length == 0, "fields with no table row: " ~ noRow.sort.join(", "));
+}
