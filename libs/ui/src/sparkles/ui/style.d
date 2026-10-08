@@ -261,6 +261,59 @@ unittest
 /// twoslash chrome uses (the `.twoslash-hover` bottom border is `dotted`; the
 /// popup / accent bars are `solid`). A text-decoration underline uses the base
 /// $(REF UnderlineStyle, sparkles,base,term_style) instead.
+/**
+The glyph families a theme picks per role (design-system `GLY1`). A widget says
+how strong its edge is (its width and stroke style); the family says which
+glyphs draw it. The target's tier caps the result at paint time, as for every
+glyph (`CAP4`). Each first member is the toolkit's behaviour without a
+preference, so a theme that names none draws exactly as before.
+*/
+enum FrameFamily : ubyte
+{
+    byRadius, /// corners follow the widget's own radius
+    square,   /// square corners everywhere
+    rounded,  /// rounded corners on every drawn frame
+}
+
+/// ditto
+enum GuideFamily : ubyte
+{
+    light,   /// `├─ └─ │`
+    heavy,   /// `┣━ ┗━ ┃`
+    rounded, /// `├─ ╰─ │`
+    ascii,   /// `|- ` ~ "`" ~ `- |`
+}
+
+/// ditto
+enum ThumbFamily : ubyte
+{
+    block, /// a full block on a light rule: `█` over `│`
+    shade, /// a dark shade on a light one: `▓` over `░`
+    line,  /// a heavy rule on a light one: `┃` over `│`
+}
+
+/// Which charset a theme prefers its status marks in (`GLY1`, `GLY3`).
+enum MarkCharset : ubyte
+{
+    ascii,    /// `+ x ! * o ~ .`
+    unicode,  /// `✔ ✖ ⚠ • ○ ◐ ┄`
+    nerdFont, /// the Font Awesome icons
+}
+
+/**
+The glyph channel of a theme: whether it may use non-ASCII glyphs at all, and
+its family per role. The target's declared capabilities, not these fields,
+decide what reaches the screen; these record the theme's preference.
+*/
+struct GlyphSet
+{
+    bool unicode = true;                     /// the theme prefers non-ASCII glyphs
+    FrameFamily frame;                       /// box frame corners
+    GuideFamily treeGuide;                   /// tree guide connectors
+    ThumbFamily thumb;                       /// scrollbar thumb and track
+    MarkCharset marks = MarkCharset.unicode; /// status marks
+}
+
 enum BorderStyle : ubyte
 {
     none,   /// no edge drawn
@@ -535,6 +588,9 @@ struct Palette
     @WireName("arrow.size") int arrowSize = 6;
 
     dchar caretGlyph = '^';   /// query caret marker (the `^` twoslash draws)
+    /// The theme's glyph families (`GLY1`), carried here so every stage
+    /// that resolves against the palette reads the same choice.
+    GlyphSet glyphs;
     dchar arrowGlyph = '─';   /// leader from a meta line up to its column
     dchar queryGlyph = '│';   /// vertical connector under a `^?` query
 }
@@ -828,7 +884,17 @@ Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle
             alpha: bc.fgAlpha,
         );
     }
-    v.borderRadius = deco.borderRadius;
+    // `GLY1`: the widget says whether it has a frame; the theme's frame
+    // family says which corners draw it.
+    final switch (pal.glyphs.frame)
+    {
+        case FrameFamily.byRadius: v.borderRadius = deco.borderRadius; break;
+        case FrameFamily.square:   v.borderRadius = 0; break;
+        case FrameFamily.rounded:
+            v.borderRadius = deco.borderRadius > 0 ? deco.borderRadius
+                : pal.overlayRadius > 0 ? pal.overlayRadius : 1;
+            break;
+    }
 
     // Drop shadow: the palette owns the geometry (0 1px 4px), Slot.shadow the color.
     if (deco.shadow)
@@ -1198,4 +1264,28 @@ unittest
     assert(s.canFind("  --twoslash-popup-bg: #f8f8f8;\n"));     // opaque ⇒ no alpha
     assert(s.canFind("  --twoslash-border-color: #88888888;\n")); // CSS #8888 = rgba, alpha 0x88
     assert(s.canFind("  --twoslash-underline-color: #88888855;\n")); // fainter than the border
+}
+
+@("ui.style.resolveVisual.frameFamilyPicksTheCorners")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.ui.geometry : Insets;
+
+    // `GLY1`: the widget says it has a frame (width, style); the theme's
+    // frame family says which corners draw it.
+    Decoration framed = { borderWidth: Insets(1, 1, 1, 1), borderStyle: BorderStyle.solid };
+    Decoration roundedOwn = framed;
+    roundedOwn.borderRadius = 6;
+    auto pal = defaultTwoslashPalette();
+    const fg = RgbColor(0xcc, 0xcc, 0xcc), bg = RgbColor(0, 0, 0);
+
+    assert(resolveVisual(pal, Slot.border, framed, TextStyle.init, fg, bg).borderRadius == 0, "byRadius: square stays square");
+    assert(resolveVisual(pal, Slot.border, roundedOwn, TextStyle.init, fg, bg).borderRadius == 6, "byRadius: the widget's radius");
+
+    pal.glyphs.frame = FrameFamily.square;
+    assert(resolveVisual(pal, Slot.border, roundedOwn, TextStyle.init, fg, bg).borderRadius == 0);
+
+    pal.glyphs.frame = FrameFamily.rounded;
+    assert(resolveVisual(pal, Slot.border, framed, TextStyle.init, fg, bg).borderRadius == pal.overlayRadius);
+    assert(resolveVisual(pal, Slot.border, roundedOwn, TextStyle.init, fg, bg).borderRadius == 6);
 }

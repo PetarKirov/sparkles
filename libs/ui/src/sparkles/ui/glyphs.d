@@ -22,6 +22,7 @@ import std.traits : EnumMembers, getUDAs;
 
 import sparkles.base.term_caps : BlockTier;
 import sparkles.ui.icons : Icon;
+public import sparkles.ui.style : MarkCharset;
 import sparkles.ui.interp.cells : asciiStroke;
 import sparkles.ui.tokens : TargetCapabilities;
 
@@ -203,13 +204,6 @@ enum Mark : ubyte
     @markGlyphs(Icon.faMinus, '┄', '.') skipped,            /// `fa-minus`
 }
 
-/// Which charset a theme prefers its marks in (`GLY1`); the target caps it.
-enum MarkCharset : ubyte
-{
-    ascii,    /// `+ x ! * o ~ .`
-    unicode,  /// `✔ ✖ ⚠ • ○ ◐ ┄`
-    nerdFont, /// the Font Awesome icons
-}
 
 /// Each mark's glyphs, by ordinal — read from the members' UDAs, so the table
 /// is spelled once, on the enum.
