@@ -11,6 +11,10 @@ importPaths "src" "../test-runner/src"
 
 dflags "-preview=in" "-preview=dip1000"
 
+// `TmpFS` resolves every fixture path through the blocking VFS backend.
+// `event-horizon-sys` depends on `base` alone, which has no edge back here.
+dependency "sparkles:event-horizon-sys" path="../.."
+
 configuration "library" {
     targetType "library"
     excludedSourceFiles "src/app.d"

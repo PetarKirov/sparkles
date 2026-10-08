@@ -41,14 +41,34 @@ that make recursive removal fail.
 */
 struct TmpFS
 {
-    import std.file : mkdirRecurse, tempDir, remove;
+    import sparkles.base.io.errors : ErrorKind, IoError;
+    import sparkles.base.vfs : Dir, OpenMode, ResolvePolicy, Rights, SymlinkPolicy,
+        ambientAuthority, openRoot;
+    import sparkles.event_horizon.sys : BlockingVfs;
+    import std.file : tempDir;
     import std.path : buildPath;
 
     enum uuid = 0;
 
+    private alias Scratch = Dir!(BlockingVfs, Rights.all);
+
+    // Test code is trusted, so links inside the fixture are followed as long
+    // as they stay in it; `..` is still refused, which is what turns a typo
+    // into an assertion rather than a write outside the tree.
+    private enum policy = ResolvePolicy(symlinks: SymlinkPolicy.beneath, crossMounts: true);
+
     private string root;
     private string[] files;
+    private string[] relativeFiles;
     private bool ownsDir;
+    // The backend lives on the heap: `Dir` points at it, and `create` moves
+    // the fixture out of the frame that made it.
+    private BlockingVfs* vfs;
+    private Scratch scratch;
+    // The directory holding `root`, kept open by an owning fixture so that
+    // removal names the directory it created, wherever the path now leads.
+    private Scratch parent;
+    private string leaf;
 
     @disable this();
 
@@ -62,34 +82,47 @@ struct TmpFS
         return files;
     }
 
-    private this(string root, bool ownsDir) pure nothrow @nogc
+    private this(string root, BlockingVfs* vfs, Scratch scratch) nothrow
     {
+        import core.lifetime : move;
+
         this.root = root;
-        this.ownsDir = ownsDir;
+        this.vfs = vfs;
+        this.scratch = move(scratch);
     }
 
     ~this() nothrow
     {
-        import std.file : rmdirRecurse;
+        if (vfs is null)
+            return;
 
-        foreach (f; files)
-            try
-                remove(f);
-            catch (Exception)
-            {
-            }
+        foreach (rel; relativeFiles)
+            removeFile(rel);
 
         if (!ownsDir)
             return;
 
-        try
+        // Close first: Windows will not remove a directory with an open
+        // handle on it unless every opener shared delete access.
+        scratch.close();
+        // The backend clears Windows' read-only attribute itself (VFN13),
+        // which git sets on every object it writes.
+        parent.removeTree(leaf);
+    }
+
+    private void removeFile(string rel) nothrow
+    {
+        import std.path : baseName, dirName;
+
+        const dir = rel.dirName;
+        if (dir == ".")
         {
-            clearReadOnly(root);
-            rmdirRecurse(root);
+            scratch.unlinkAt(rel);
+            return;
         }
-        catch (Exception)
-        {
-        }
+        auto d = scratch.walk(dir);
+        if (d.hasValue)
+            d.value.unlinkAt(rel.baseName);
     }
 
     /**
@@ -124,15 +157,28 @@ struct TmpFS
     static TmpFS create(string prefix = __FUNCTION__, string basePath = tempDir())
     {
         import core.atomic : atomicOp;
+        import core.lifetime : move;
         import std.conv : to;
+        import std.file : mkdirRecurse;
 
         static shared uint counter;
         const ordinal = atomicOp!"+="(counter, 1u);
+        const leaf = prefix ~ "-" ~ processToken() ~ "-" ~ ordinal.to!string;
 
-        const root = buildPath(basePath,
-            prefix ~ "-" ~ processToken() ~ "-" ~ ordinal.to!string);
-        mkdirRecurse(root);
-        return TmpFS(root, true);
+        // `basePath` is the one path the fixture trusts, and the only one it
+        // resolves from the process's ambient authority.
+        mkdirRecurse(basePath);
+        auto vfs = new BlockingVfs;
+        auto parent = check(openRoot!(Rights.all)(vfs, basePath, ambientAuthority, policy),
+            basePath);
+        check(parent.mkdirAt(leaf), leaf);
+        auto scratch = check(parent.openDir(leaf), leaf);
+
+        auto tmp = TmpFS(buildPath(basePath, leaf), vfs, move(scratch));
+        tmp.ownsDir = true;
+        tmp.parent = move(parent);
+        tmp.leaf = leaf;
+        return tmp;
     }
 
     /**
@@ -146,11 +192,12 @@ struct TmpFS
     static TmpFS share(string existingDir)
     in (existingDir.length > 0, "existingDir must not be empty")
     {
-        import std.file : exists, isDir;
+        import core.lifetime : move;
 
-        assert(existingDir.exists && existingDir.isDir,
-            "share() needs an existing directory: " ~ existingDir);
-        return TmpFS(existingDir, false);
+        auto vfs = new BlockingVfs;
+        auto scratch = openRoot!(Rights.all)(vfs, existingDir, ambientAuthority, policy);
+        assert(scratch.hasValue, "share() needs an existing directory: " ~ existingDir);
+        return TmpFS(existingDir, vfs, move(scratch.value));
     }
 
     string writeFile(string contents, uint suffix = uuid)
@@ -159,10 +206,7 @@ struct TmpFS
         import std.uuid : randomUUID;
 
         string end = suffix == uuid ? randomUUID.toString() : suffix.to!string;
-        const filepath = buildPath(root, "tmpfs-file#" ~ end);
-        writeContents(filepath, contents);
-        this.files ~= filepath;
-        return filepath;
+        return writeFileAt("tmpfs-file#" ~ end, contents);
     }
 
     /// The scratch directory's path. It exists for as long as the instance
@@ -170,51 +214,6 @@ struct TmpFS
     string dir() const pure nothrow @nogc
     {
         return root;
-    }
-
-    /// Rejects a relative path that would leave the fixture.
-    ///
-    /// Without this, `writeFileAt("../x")` writes *outside* the scratch tree —
-    /// and, because tracked files are removed individually, then deletes that
-    /// outside file when the fixture goes out of scope. A mistyped `..` would
-    /// overwrite and then remove a real file.
-    ///
-    /// This is a component check rather than `openat2(RESOLVE_BENEATH)` on
-    /// purpose: `openat2` is Linux 5.6+, and this helper runs on the Windows
-    /// and macOS legs too. The kernel guarantee is worth having where the
-    /// threat is an adversarial symlink race; here the threat is a typo in
-    /// trusted test code, which a portable check answers completely.
-    private static void enforceBeneath(string relativePath) @safe pure
-    {
-        import std.algorithm.iteration : splitter;
-        import std.algorithm.searching : canFind;
-        import std.path : isAbsolute;
-
-        assert(!relativePath.isAbsolute,
-            "relativePath must be relative: " ~ relativePath);
-        assert(!relativePath.splitter('/').canFind("..")
-            && !relativePath.splitter('\\').canFind(".."),
-            "relativePath must stay beneath the fixture: " ~ relativePath);
-    }
-
-    /// On Windows a read-only file refuses deletion outright, and git marks
-    /// every object it writes read-only — so a fixture that ran `git commit`
-    /// would otherwise outlive itself. Elsewhere the attribute has no such
-    /// meaning and the walk is skipped.
-    private static void clearReadOnly(string root)
-    {
-        version (Windows)
-        {
-            import core.sys.windows.winnt : FILE_ATTRIBUTE_READONLY;
-            import std.file : dirEntries, getAttributes, setAttributes, SpanMode;
-
-            foreach (entry; dirEntries(root, SpanMode.depth, false))
-            {
-                const attrs = getAttributes(entry.name);
-                if (attrs & FILE_ATTRIBUTE_READONLY)
-                    setAttributes(entry.name, attrs & ~FILE_ATTRIBUTE_READONLY);
-            }
-        }
     }
 
     /// Eight hex digits of randomness, drawn once per *thread* — `static`
@@ -246,11 +245,8 @@ struct TmpFS
     string ensureSubdir(string relativePath)
     in (relativePath.length > 0, "relativePath must not be empty")
     {
-        enforceBeneath(relativePath);
-
-        const path = buildPath(root, relativePath);
-        mkdirRecurse(path);
-        return path;
+        check(scratch.walkAll(relativePath), relativePath);
+        return buildPath(root, relativePath);
     }
 
     /**
@@ -259,99 +255,89 @@ struct TmpFS
 
     Unlike $(LREF writeFile), the caller chooses the name — which is what a
     test needs when the name is part of the behaviour under test (`.gitignore`,
-    `dub.sdl`, `logs/app.log`). `relativePath` must be relative; separators may
-    be `/` on every platform.
+    `dub.sdl`, `logs/app.log`). `relativePath` must be relative and must not
+    contain a `..` component; separators are `/` on every platform.
+
+    The descriptor is close-on-exec from the instant it opens (VFH8), so a
+    child that a concurrent thread spawns cannot keep an executable fixture
+    `ETXTBSY` after this write has finished.
 
     Returns: the full path written.
     */
     string writeFileAt(string relativePath, string contents)
     in (relativePath.length > 0, "relativePath must not be empty")
     {
-        import std.path : dirName;
+        import std.path : baseName, dirName;
 
-        enforceBeneath(relativePath);
+        const dir = relativePath.dirName;
+        if (dir == ".")
+            writeContents(scratch, relativePath, contents);
+        else
+        {
+            auto d = check(scratch.walkAll(dir), relativePath);
+            writeContents(d, relativePath.baseName, contents);
+        }
 
         const filepath = buildPath(root, relativePath);
-        mkdirRecurse(filepath.dirName);
-        writeContents(filepath, contents);
         this.files ~= filepath;
+        this.relativeFiles ~= relativePath;
         return filepath;
     }
 
-    private static void writeContents(string path, string contents) @safe
+    private static void writeContents(ref Scratch dir, string name, string contents)
     {
-        version (Posix)
+        import std.algorithm.comparison : min;
+        import std.string : representation;
+
+        auto f = check(dir.openFile!(OpenMode.createOrTruncate)(name), name);
+        auto bytes = contents.representation;
+        while (bytes.length > 0)
         {
-            import core.stdc.errno : EINTR, EIO, errno;
-            import core.sys.posix.fcntl : O_CREAT, O_TRUNC, O_WRONLY, open;
-            import core.sys.posix.unistd : close, write;
-            import std.algorithm.comparison : min;
-            import std.file : FileException;
-            import std.string : toStringz;
-
-            // druntime omits these platforms' O_CLOEXEC definitions. Darwin
-            // follows the same SDK constant as test_runner.cache_regime.
-            version (OSX)
-                enum closeOnExec = 0x0100_0000;
-            else version (iOS)
-                enum closeOnExec = 0x0100_0000;
-            else version (TVOS)
-                enum closeOnExec = 0x0100_0000;
-            else version (WatchOS)
-                enum closeOnExec = 0x0100_0000;
-            else version (FreeBSD)
-                // https://github.com/freebsd/freebsd-src/blob/main/sys/sys/fcntl.h
-                enum closeOnExec = 0x0010_0000;
-            else version (NetBSD)
-                // https://github.com/NetBSD/src/blob/trunk/sys/sys/fcntl.h
-                enum closeOnExec = 0x0040_0000;
-            else version (Solaris)
-                // https://github.com/illumos/illumos-gate/blob/master/usr/src/uts/common/sys/fcntl.h
-                enum closeOnExec = 0x0080_0000;
-            else
-            {
-                import core.sys.posix.fcntl : O_CLOEXEC;
-
-                enum closeOnExec = O_CLOEXEC;
-            }
-
-            // Setting FD_CLOEXEC afterwards still races a concurrent spawn.
-            // An inherited writer can keep an executable fixture ETXTBSY
-            // even after this function has closed its own descriptor.
-            const pathz = path.toStringz;
-            int fd = (() @trusted => open(pathz,
-                O_CREAT | O_WRONLY | O_TRUNC | closeOnExec, 438 /* 0o666 */))();
-            if (fd < 0)
-                throw new FileException(path, errno);
-            scope (exit) if (fd >= 0) (() @trusted => close(fd))();
-
-            size_t offset;
-            while (offset < contents.length)
-            {
-                const count = min(contents.length - offset, cast(size_t) 1 << 30);
-                const written = (() @trusted =>
-                    write(fd, contents.ptr + offset, count))();
-                if (written < 0)
-                {
-                    if (errno == EINTR)
-                        continue;
-                    throw new FileException(path, errno);
-                }
-                if (written == 0)
-                    throw new FileException(path, EIO);
-                offset += written;
-            }
-            const rc = (() @trusted => close(fd))();
-            fd = -1;
-            if (rc != 0)
-                throw new FileException(path, errno);
+            const n = check(f.write(bytes[0 .. min(bytes.length, size_t(1) << 30)]), name);
+            bytes = bytes[n .. $];
         }
-        else
+        check(f.close(), name);
+    }
+
+    /// The value of `r`, or the failure it names. A path that leaves the
+    /// fixture is a bug in the test, so it fails as an assertion; anything
+    /// else is the environment's, and throws as `std.file` would have.
+    private static auto check(R)(auto ref R r, string what)
+    {
+        import core.lifetime : move;
+
+        if (r.hasError)
         {
-            import std.file : write;
-
-            write(path, contents);
+            const e = r.error;
+            switch (e.kind)
+            {
+                case ErrorKind.escapesRoot, ErrorKind.dotDotRefused, ErrorKind.invalidName:
+                    assert(0, "relativePath must stay beneath the fixture: " ~ what);
+                default:
+                    throw new TmpFSException(what, e);
+            }
         }
+        static if (__traits(hasMember, R, "value"))
+            return move(r.value);
+    }
+}
+
+/// A file-system failure inside a $(LREF TmpFS) fixture.
+class TmpFSException : Exception
+{
+    import sparkles.base.io.errors : IoError;
+
+    /// The failure as the capability VFS reported it.
+    IoError error;
+
+    this(string what, IoError error, string file = __FILE__, size_t line = __LINE__) @safe
+    {
+        import std.conv : text;
+
+        this.error = error;
+        super(text(what, ": ", error.kind, " in ", error.op,
+            error.code ? text(" (", error.code, ")") : "",
+            error.context.length ? ": " ~ error.context : ""), file, line);
     }
 }
 
