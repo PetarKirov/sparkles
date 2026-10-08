@@ -21,6 +21,7 @@ configuration "library" {
     dependency "sparkles:build-primitives" path="../.."
     dependency "sparkles:syntax" path="../.."
     dependency "sparkles:twoslash" path="../.."
+    dependency "sparkles:ui" path="../.."
     dependency "sparkles:wired" path="../.."
 }
 
@@ -32,6 +33,7 @@ configuration "unittest" {
     dependency "sparkles:build-primitives" path="../.."
     dependency "sparkles:syntax" path="../.."
     dependency "sparkles:twoslash" path="../.."
+    dependency "sparkles:ui" path="../.."
     dependency "sparkles:wired" path="../.."
     // Scratch-tree fixtures for the tests that walk a real directory. Test
     // helpers only — never a library dependency, which would drag them into
