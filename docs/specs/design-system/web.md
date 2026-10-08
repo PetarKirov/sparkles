@@ -36,8 +36,8 @@ collapses at the widths where a terminal layout does.
 
 Interactive web output beyond static CSS, and following the operating system's
 appearance, are out of scope. Delivery order lives in [PLAN.md](./PLAN.md)
-(M6), and the open choice between suffixed properties and pseudo-class rules is
-[OQ4](./decisions.md#open-questions).
+(M6), and the choice of suffixed properties over pseudo-class rules is
+[D60](./decisions.md).
 
 ## Contract at a glance
 
@@ -48,30 +48,33 @@ appearance, are out of scope. Delivery order lives in [PLAN.md](./PLAN.md)
 
 ## Requirements
 
-| ID     | Requirement                                                                                                                                                                                                                      | Status   | Traces to                                                      |
-| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------- |
-| `WEB1` | The framework **must** declare the CSS custom properties: one `--spk-<path>` per token ([`TOK2`](./SPEC.md)) and one `--spk-<path>-<state>` per state override a theme sets ([`TOK4`](./SPEC.md)), named by `cssName`.           | proposed | `tokens.d` `cssName`; `sparkles.docs.assets`                   |
-| `WEB2` | The **theme defines the values**: `sparkles.docs.assets` **must** emit one stylesheet from a `Theme`, light values unscoped and dark values under `html.dark` and `@media (prefers-color-scheme: dark)`.                         | partial  | `assets.d` `themeStylesheet` (syntax only; callouts hardcoded) |
-| `WEB3` | **VitePress consumes, never authors.** `custom.css` **must** map its own variables _from_ `--spk-*` in one mapping block, and a test **must** diff the committed stylesheet against a fresh emission. Responsive breakpoints are |
+| ID     | Requirement                                                                                                                                                                                                                                                                               | Status      | Traces to                                                                                                                                                                         |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WEB1` | The framework **must** declare the CSS custom properties: one `--spk-<path>` per token of a theme file, its path with `.` → `-`, so a state ([`TOK4`](./SPEC.md)) and a color channel sit in the name exactly as in the file (D60).                                                       | full        | `css.d` `writeThemeProperties`, `cssPropertyName`; `tokens.d` `cssName`; tests `ui.css.themeProperties.slotNamesAndAliases`, `ui.css.themeProperties.aFilesOwnTokensAndAliases`   |
+| `WEB2` | The **theme defines the values**: `sparkles.docs.assets` **must** emit one stylesheet from a theme pair, light values on `:root` and dark values under `html.dark`, and under `@media (prefers-color-scheme: dark)` for a page with no toggle.                                            | full        | `assets.d` `tokenStylesheet`, `calloutSlots`; tests `web_assets.tokenStylesheet.darkValuesAreScoped`, `web_assets.markdownPreviewCss.calloutsReadStatusTokens`                    |
+| `WEB3` | **VitePress consumes, never authors.** `custom.css` **must** map its own variables _from_ `--spk-*` in one mapping block, and a test **must** diff the committed stylesheet against a fresh emission.                                                                                     | full        | `custom.css` mapping block; `spk.css` from `sparkles-light.tokens` and `sparkles-dark.tokens` by `gen-site-css.d` (D61); test `web_assets.siteStylesheet.committedSheetIsCurrent` |
+| `WEB4` | The **`html_semantic` interpreter** ([`TGT4`](../ui/backends.md)) **must** emit class names derived from slot paths (`.spk-text-primary`) and use the same emitted stylesheet.                                                                                                            | partial     | `interp/html_semantic.d` (own class scheme)                                                                                                                                       |
+| `WEB5` | Responsive breakpoints **must** be **in columns**: 80, 120 and 160, mapped to px through the mono face's `1ch`, as container queries over `ch` units, not device px, for the generated pages and VitePress's own chrome (D62).                                                            | not started |                                                                                                                                                                                   |
+| `WEB6` | Each [font role](../../glossary.md#font-role) ([`GLY11`](./glyphs.md)) **must** be a token the site reads (`font.body`, `font.code`, `font.heading`), naming a face (`font.family.sans`, `font.family.mono`, `font.family.display`) whose `fontFamily` value is its fallback chain (D63). | full        | `theme.d` `FontSet`; `theme_file.d` fonts; tests `theme_file.fonts.facesAndRolesRoundTrip`, `theme_file.fonts.aRoleMustNameAFace`, `ui.css.themeProperties.fontFacesAndRoles`     |
 
-measured in character columns (CSS `ch` units of the mono face), so a page
-collapses at the widths where a terminal layout does. | not started | `docs/.vitepress/theme/custom.css` (hand-authored) |
-| `WEB4` | The **`html_semantic` interpreter** ([`TGT4`](../ui/backends.md)) **must** emit class names derived from slot paths (`.spk-text-primary`) and use the same emitted stylesheet. | partial | `interp/html_semantic.d` (own class scheme) |
-| `WEB5` | Responsive breakpoints **must** be **in columns**: 80, 120 and 160, mapped to px through the mono face's `1ch`, as container queries over `ch` units, not device px. | not started | |
-| `WEB6` | Each [font role](../../glossary.md#font-role) ([`GLY11`](./glyphs.md)) **must** be a token the site reads (`font.sans`, `font.mono`), emitted from the role's font request and fallback chain. | not started | `custom.css` `--vp-font-family-*` |
+**WEB1 notes.** For example, `text.primary.fg` becomes `--spk-text-primary-fg`
+and `scrollbar.thumb.hover.bg` becomes `--spk-scrollbar-thumb-hover-bg`.
+Components' CSS reads `var(--spk-x-hover-fg, var(--spk-x-fg))`, so an unset
+state falls through exactly as `TOK4` requires. An alias in the file stays a
+`var()` of its target, and a token the theme does not map, such as a site's
+primitive, still gets its property. A name is never typed in a stylesheet by
+hand.
 
-**WEB1 notes.** For example, `text.primary` becomes `--spk-text-primary`.
-Components' CSS reads `var(--spk-x-hover, var(--spk-x))`, so an unset state
-falls through exactly as `TOK4` requires. A name is never typed in a stylesheet
-by hand.
-
-**WEB2 notes.** The stylesheet includes the syntax channel (`.syn-*`) and the
-callout colors, which become `status.*` tokens instead of hex literals.
+**WEB2 notes.** The callouts' accents are `status.*` tokens instead of hex
+literals; each falls back to the default palette's value, so a lone document
+with no token sheet stays readable. The syntax channel (`.syn-*`) keeps its own
+class rules ([`THM5`](./SPEC.md)).
 
 **WEB3 notes.** The mapped variables are `--vp-c-brand-*`, `--vp-c-bg*`,
-`--vp-c-text-*` and their relatives. The generated stylesheet is imported from a
-build artifact (`ci --emit-css` or a `sparkles:docs` step). The diff is the
-`THM5` lockstep pattern, generalised, so the site cannot drift from the theme.
+`--vp-c-text-*` and their relatives; a variable not mapped keeps VitePress's
+default. The theme files are seeds holding the site's current values until the
+Sparkles theme replaces them (D61). The diff is the `THM5` lockstep pattern,
+generalised, so the site cannot drift from the theme.
 
 **WEB4 notes.** A `ui-gallery` page rendered to HTML and a docs page then share
 one design language byte for byte.
@@ -82,8 +85,8 @@ the web: `UGL15`'s 60-column sidebar collapse and `UGL5`'s sizes.
 **WEB6 notes.** A role's value is a font request, a fallback chain and
 code-point routes ([font `FTD4`–`FTD6`](../font/SPEC.md#_13-discovery-matching-and-fallback));
 CSS expresses the request and the chain as a `font-family` stack. The mono stack
-lists the bundled Nerd Font families first, as `custom.css` does, which carries
-the Private Use Area route on the web. The Sparkles theme fixes the values
+lists the bundled Nerd Font families first, as the site's theme files do,
+which carries the Private Use Area route on the web. The Sparkles theme fixes the values
 ([`SPK4`](./sparkles-theme.md)).
 
 → [Overview](./index.md) · [Specification](./SPEC.md) · [Sparkles theme](./sparkles-theme.md)
