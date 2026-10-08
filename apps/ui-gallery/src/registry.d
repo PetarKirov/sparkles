@@ -113,6 +113,13 @@ struct Page
     */
     bool function(ref GalleryState s, in PointerEvent p, in WidgetTree tree,
         in Frame[] frames) @safe onPointer;
+
+    /**
+    The key that moves focus among the page's own focusables, from the
+    content region, or `dchar.init` for a page with none. `ACC4`'s monochrome
+    check walks it: every step must show the move without color.
+    */
+    dchar focusKey;
 }
 
 /**
@@ -150,11 +157,12 @@ static immutable Page[] pages = [
         GalleryScope.pageScrolling, &scrollingOnCommand, null,
         &scrollingOnPointer),
     Page("State", "the interaction machines", &machinesView,
-        GalleryScope.pageMachines, &machinesOnCommand, &machinesOnActivate),
+        GalleryScope.pageMachines, &machinesOnCommand, &machinesOnActivate,
+        null, 'f'),
     Page("Split", "a divider between two panes", &splitView,
         GalleryScope.pageSplit, &splitOnCommand),
     Page("Dock", "panes as a value", &dockView,
-        GalleryScope.pageDock, &dockOnCommand, null, &dockOnPointer),
+        GalleryScope.pageDock, &dockOnCommand, null, &dockOnPointer, 'f'),
     Page("Terminal", "a shell as a widget", &terminalView,
         GalleryScope.pageTerminal, &terminalOnCommand, &terminalOnActivate,
         &terminalOnPointer),
