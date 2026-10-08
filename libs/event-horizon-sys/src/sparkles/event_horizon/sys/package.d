@@ -7,4 +7,7 @@ test build, can reach the file system through directory capabilities.
 */
 module sparkles.event_horizon.sys;
 
-public import sparkles.event_horizon.sys.vfs;
+version (Windows)
+    public import sparkles.event_horizon.sys.vfs_nt;
+else
+    public import sparkles.event_horizon.sys.vfs;
