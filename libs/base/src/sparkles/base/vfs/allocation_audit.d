@@ -75,8 +75,7 @@ version (linux)
             auto d = root.value.walkAll("x/y");
             cast(void) d.value.writeFileAtomic("w", "payload");
             auto l = root.value.walk("l");
-            char[32] names;
-            auto listing = root.value.list(names[]);
+            auto listing = root.value.list();
             while (listing.value.next().value) {}
             cast(void) root.value.removeTree("x");
         }

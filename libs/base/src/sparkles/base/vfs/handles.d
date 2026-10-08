@@ -19,7 +19,7 @@ import core.lifetime : move;
 import std.traits : isInstanceOf;
 
 import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
-import sparkles.base.vfs.concept : hasWholePathResolver, isVfs, mountCheckOf;
+import sparkles.base.vfs.concept : hasWholePathResolver, isVfs, mountCheckOf, resolverWithdrawn;
 import sparkles.base.vfs.names : checkLinkTarget, checkName, lexicalError;
 import sparkles.base.vfs.remove : removeTreeAt;
 import sparkles.base.vfs.types;
@@ -212,10 +212,16 @@ mixin template DirOperations(V, Rights R)
     private static IoResult!T emptyHandle(T)()
         => ioErr!T(ErrorKind.other, OpKind.none, 9, IoErrorStage.completion, "empty handle");
 
+    /// The backend's handle, for backend tests and interoperation with code
+    /// that takes a raw descriptor. Using it bypasses rights and policy.
+    V.Handle backendHandle() const scope => self.handle;
+
     /// The root's policy (VFP2), resolver and mount check (VFR2).
     ResolvePolicy policy() const scope => self.root.policy;
     /// ditto
-    Resolution resolution() const scope => self.root.resolution;
+    Resolution resolution() scope
+        => self.root.resolution == Resolution.kernelWholePath && !resolverWithdrawn(*self.vfs)
+            ? Resolution.kernelWholePath : Resolution.componentWalk;
     /// ditto
     MountCheck mountCheck() const scope => self.root.mountCheck;
 
@@ -362,8 +368,8 @@ mixin template DirOperations(V, Rights R)
         return self.vfs.renameAt(self.handle, name, dst.self.handle, dstName);
     }
 
-    /// Lists this directory into names held in `buffer` (VFO7).
-    IoResult!(Listing!V) list()(return scope char[] buffer) scope
+    /// Lists this directory (VFO7).
+    IoResult!(Listing!V) list()() scope
     {
         need!(Rights.list, "list");
         if (!alive)
@@ -371,7 +377,9 @@ mixin template DirOperations(V, Rights R)
         auto l = self.vfs.openListing(self.handle);
         if (l.hasError)
             return ioErr!(Listing!V)(l);
-        return ioOk(Listing!V(self.vfs, l.value, buffer));
+        // The backend pointer is the one the caller gave `openRoot`, which every
+        // handle of the root holds; a listing holds it on the same terms.
+        return (() @trusted => ioOk(Listing!V(cast(V*) self.vfs, l.value)))();
     }
 
     /// A `Dir` for the directory `path` names, under the root's policy (VFP).
@@ -381,7 +389,7 @@ mixin template DirOperations(V, Rights R)
         if (!alive)
             return emptyHandle!(Dir!(V, R))();
         auto h = walkFrom(*self.vfs, self.handle, path, self.root.policy,
-            self.root.resolution, false, Sharing.init);
+            self.root.resolution, false, Sharing.init, self.root.requireKernel);
         if (h.hasError)
             return ioErr!(Dir!(V, R))(h);
         return ioOk(Dir!(V, R)(DirCore!V(self.vfs, h.value, self.root, true)));
@@ -394,7 +402,7 @@ mixin template DirOperations(V, Rights R)
         if (!alive)
             return emptyHandle!(Dir!(V, R))();
         auto h = walkFrom(*self.vfs, self.handle, path, self.root.policy,
-            self.root.resolution, true, resolveSharing(sharing));
+            self.root.resolution, true, resolveSharing(sharing), self.root.requireKernel);
         if (h.hasError)
             return ioErr!(Dir!(V, R))(h);
         return ioOk(Dir!(V, R)(DirCore!V(self.vfs, h.value, self.root, true)));
@@ -442,23 +450,28 @@ Rights fileRights(Rights R, OpenMode mode) @safe pure nothrow @nogc
     return cast(Rights)(r | (R & Rights.stat));
 }
 
-/// A listing in progress (VFO7): `next` advances, `front` is valid until
-/// the next advance. Closes itself when destroyed.
+/// The longest entry name a listing holds: 255 bytes on POSIX, and 255 UTF-16
+/// code units on Windows, which is at most 765 bytes of UTF-8.
+enum size_t maxListedNameBytes = 1024;
+
+/// A listing in progress (VFO7): `next` advances, `front` is valid until the
+/// next advance. It owns its name buffer, so it borrows nothing from the
+/// caller, and it closes itself when destroyed.
 struct Listing(V)
 {
     private V* vfs;
     private V.Listing state;
-    private char[] buffer;
-    private DirEntry current;
+    private char[maxListedNameBytes] names;
+    private size_t nameLength;
+    private EntryKind kind;
     private bool open;
 
     @disable this(this);
 
-    private this(V* vfs, V.Listing state, return scope char[] buffer)
+    private this(V* vfs, V.Listing state)
     {
         this.vfs = vfs;
         this.state = state;
-        this.buffer = buffer;
         open = true;
     }
 
@@ -474,16 +487,14 @@ struct Listing(V)
     /// Advances to the next entry; `false` at the end.
     IoResult!bool next() scope
     {
-        size_t length;
-        EntryKind kind;
-        auto more = vfs.nextEntry(state, buffer, length, kind);
-        if (!more.hasError && more.value)
-            current = DirEntry(buffer[0 .. length], kind);
-        return more;
+        if (!open)
+            return ioErr!bool(ErrorKind.other, OpKind.readDir, 9, IoErrorStage.completion,
+                "empty handle");
+        return vfs.nextEntry(state, names[], nameLength, kind);
     }
 
-    /// The current entry.
-    DirEntry front() return scope => current;
+    /// The current entry; its name is valid until the next advance.
+    DirEntry front() return => DirEntry(names[0 .. nameLength], kind);
 }
 
 /// An owning, move-only open file (VFH1, VFO3).
