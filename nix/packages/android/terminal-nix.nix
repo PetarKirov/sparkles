@@ -1,6 +1,6 @@
-# The terminal's Nix flavour: an app (`dev.petar_kirov.sparkles.terminal.nix`)
-# that installs nix-on-droid's bootstrap on first start and runs its `login`.
-# See docs/apps/terminal/android.md.
+# The terminal's Nix flavour: the same package as the plain terminal
+# (`dev.petar_kirov.sparkles.terminal`). It installs nix-on-droid's bootstrap
+# on first start and runs its `login`. See docs/apps/terminal/android.md.
 #
 #   terminal-nix-apk                debug-signed; downloads the bootstrap
 #   terminal-nix-apk-offline        both ABIs' bootstraps inside   (--impure)
@@ -20,10 +20,10 @@ let
   # Whether this system can build Android at all (./host.nix).
   androidHost = import ./host.nix { inherit inputs; };
 
-  appId = "dev.petar_kirov.sparkles.terminal.nix";
+  appId = "dev.petar_kirov.sparkles.terminal";
   # Where the app's `am` server listens. Not Termux's layout
-  # (`files/apps/<id>/termux-am/am.sock`): with this id that is 115 bytes,
-  # over the 107 a Unix socket path can have.
+  # (`files/apps/<id>/termux-am/am.sock`): with this id that path is 109
+  # bytes, over the 107 a Unix socket path can have.
   amSocket = "/data/data/${appId}/files/apps/termux-am/am.sock";
 in
 {
