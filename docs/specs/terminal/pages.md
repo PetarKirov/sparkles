@@ -38,23 +38,28 @@ for them all; the evidence is in [Testing](./testing.md).
 
 ## About (`TPG1`–`TPG3`)
 
-**TPG1: Build facts.** The about page **must** show the name
-(`sparkles:terminal`), the version and the short commit it was built from,
-the build type, libghostty-vt's version and build options, and the rendering
-backend; on Android also the package id, `versionCode`, the device ABI and
-the API level. These are the facts hue's startup popup shows
+**TPG1: Build facts.** The about page **must** show, in order, the name
+(`sparkles:terminal`), the version, the commit and the build type; then each
+direct dependency as a read-only property tree, including a field the page
+source does not name; then the probes the document cannot know:
+libghostty-vt's build options, the GL version string and the platform, and
+on Android the package id, `versionCode`, the device ABI and the API level.
+These are the facts hue's startup popup shows
 ([`NSI1`](../hue/notifier.md)).
 
-**TPG2: Version from the build.** The version and commit **must** come from
-the build, not from the source tree at run time. The Nix build passes them in,
-the commit only in a release build so that other builds stay cached across
-commits; a plain `dub build` reports `dev`. A dirty tree **must** be reported
-as such, never as the last commit.
+**TPG2: Version from the build.** The version, the commit, the build type,
+the links and the direct dependencies **must** come from the `.build_info`
+section the second derivation writes. The commit is not a compile input: a
+commit that changes none of what was linked **must not** rebuild the binary.
+A missing section reports `dev`. A dirty tree **must** be reported as such,
+never as the last commit. `runCli`'s `--version` prints this same document.
+A plain `dub build` has no section and reports `dev`.
 
 **TPG3: Credits and sources.** The about page **must** link to the credits
-page (`TPG12`) and to the source and the documentation, opened through the
-link allow-list ([`TPR6`](./protocols.md)). It **must not** carry a second,
-hand-kept licence list.
+page (`TPG12`) and to the source and the documentation. Those URLs are
+`links` entries of the build-info document, opened through the link
+allow-list ([`TPR6`](./protocols.md)). The component tree is read-only. The
+page **must not** carry a second, hand-kept licence list.
 
 ## Logs (`TPG4`–`TPG8`)
 
@@ -181,9 +186,9 @@ labels, or two rows drawn over each other.
 
 | ID      | Status                                                                                                                                                                                | Traces to                                                                                                                            |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `TPG1`  | full                                                                                                                                                                                  | `AboutFacts`, `gatherAboutFacts`, `AboutPage`; `componentVersion`, `packageInfo`, `ghosttyBuild`                                     |
-| `TPG2`  | partial: a dev build reports `0.1.0 (unknown commit)` on the phone; a release build's commit has not been run on a device                                                             | `buildStampOf`, `parseBuildStamp`, `logBuildInfo`; `build-sparkles-app.nix`, `terminal.nix`                                          |
-| `TPG3`  | full                                                                                                                                                                                  | [`TPG12`](#credits-tpg12tpg17); `sourceUrl`, `docsUrl`, `creditsUrl`, `WorkspaceHost.open`                                           |
+| `TPG1`  | full                                                                                                                                                                                  | `AboutFacts`, `gatherAboutFacts`, `AboutPage`, `JsonSubject`; `packageInfo`, `ghosttyBuild`                                          |
+| `TPG2`  | partial: the section is written by the second derivation and has not been read back from a device                                                                                     | `BuildInfo`, `buildInfoSection`, `buildInfoFromJSON`, `logBuildInfo`; `build-sparkles-app.nix`, `terminal.nix`                       |
+| `TPG3`  | full                                                                                                                                                                                  | [`TPG12`](#credits-tpg12tpg17); `links`, `AboutPage`, `WorkspaceHost.open`                                                           |
 | `TPG4`  | full                                                                                                                                                                                  | `RingCoreLogger`, `installRingLog`, `ForwardingCoreLogger`                                                                           |
 | `TPG5`  | full                                                                                                                                                                                  | `RotatingFileCoreLogger`, `installFileLog`, `installTerminalLog`                                                                     |
 | `TPG6`  | partial: typing and pasting are tested, and an autofilled marker was searched for on the device (`TSE9`); copying and OSC 52 payloads are not in the marker test                      | [D24](./decisions.md); `routeTraceLog`, `runInstaller`                                                                               |
