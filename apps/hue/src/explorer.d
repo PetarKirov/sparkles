@@ -36,7 +36,7 @@ import sparkles.ui.components.tree_view : jumpMatching, measureContent,
     treeActivate = activate, treeCollapseOrUp = collapseOrUp, TreeStep,
     TreeViewState, viewSlice;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
-    TreeGlyphs, treeView;
+    TreeGlyphs, treeGlyphsFor, treeView;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Rect, SizeSpec;
 import sparkles.ui.layout : layout;
@@ -671,7 +671,8 @@ struct ExplorerTui
         auto tb = Builder();
         const tree2 = viewSlice(tb, data, tv,
             (uint i) @safe => filter.text.length != 0 || open.isOpen(data.nodes[i].value.path),
-            explorerGlyphs, selBg, hasSelectionBg: true);
+            treeGlyphsFor(palette.glyphs.treeGuide, explorerGlyphs), selBg,
+            hasSelectionBg: true);
         Widget colW = Widget(kind: WidgetKind.column, children: [tree2],
             width: SizeSpec.fixed(width + hx));
         const framed = scrollBox(tb, tb.add(colW), scrollFrame,

@@ -64,6 +64,10 @@ uint view(ref Builder b, in GalleryState s)
             ? "authored by the theme"
             : "derived from the background", 16, Slot.code),
         kv(b, "unicode glyphs", t.glyphs.unicode ? "yes" : "no", 16, Slot.code),
+        // `GLY1`: the families the theme picks, which a theme file sets.
+        kv(b, "glyph families", text("frame ", t.glyphs.frame, " · guides ",
+            t.glyphs.treeGuide, " · thumb ", t.glyphs.thumb, " · marks ",
+            t.glyphs.marks), 16, Slot.code),
         kv(b, "page fg / bg", text(hex(bgOf(t.defaultFg)), "  ",
             hex(bgOf(t.defaultBg))), 16, Slot.code),
     ]);
