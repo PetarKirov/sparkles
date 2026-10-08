@@ -10,6 +10,9 @@ import InstallInstructions from './InstallInstructions.vue';
 // loads it once site-wide. The dockview-vue *component* is client-only and is
 // dynamically imported inside TablePlayground.vue instead.
 import 'dockview-vue/dist/styles/dockview.css';
+// The design system's properties (generated; see custom.css's mapping block),
+// before the stylesheet that maps VitePress's variables from them.
+import './spk.css';
 import './custom.css';
 
 export default {
