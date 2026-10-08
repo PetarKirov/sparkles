@@ -9,8 +9,9 @@ repository owner in a four-round design review held from September 23 to 28,
 catalog and superseded an earlier plan for a `sparkles.base.dir_handle`
 module. DV19–DV22 were accepted in an editorial review held from October 3 to
 5, 2026, which reshaped the specification for its readers. DV23 was decided on
-October 6, 2026, and DV24–DV26 record what implementing the base milestone
-changed._
+October 6, 2026. DV24–DV26 record what implementing the base milestone
+changed, and DV27–DV28, decided on October 8, 2026, close the questions the
+blocking backend needed answered._
 
 ## Accepted
 
@@ -341,22 +342,44 @@ most 16 times and then fails with `notEmpty`
 ([§11](./SPEC.md#_11-limits)). Both were found writing M1; the second by the
 race sweep of oracle 2.
 
+### DV27: Case-insensitive names stay a native-leg concern (was O2)
+
+`MemVfs` stays case-sensitive. The three-backend differential leaves out names
+that differ only in case, and the Windows leg tests the platform's own case
+behaviour. Case folding depends on the volume: NTFS uses its own upper-case
+table, and a directory can be marked case-sensitive. A `MemVfs` mode would
+model one approximation of that, and no consumer needs one.
+
+**Revisit if** a consumer needs `MemVfs` to stand in for a Windows tree.
+
+### DV28: Intermediate directories are opened for search (was O5)
+
+**Question.** The component walk opened every intermediate directory with
+read access, so on POSIX it needed read permission where `openat2` needs only
+search permission, and the two resolvers disagreed (`VFR1`).
+
+**Evidence.** On macOS 27, `openat(…, O_RDONLY | O_DIRECTORY)` of a
+directory with mode `0111` fails with `EACCES`; `O_SEARCH` opens it, and
+`openat` relative to that handle reaches its children.
+
+**Choice.** A backend that can opens the directories a walk passes through
+for search only: `O_PATH` on Linux, `O_SEARCH` on macOS and FreeBSD,
+`FILE_TRAVERSE` on Windows. The walk opens the directory it returns with full
+access, so it can be listed
+([`VFN14`](./backends.md#vfn14-intermediate-directories-are-opened-for-search)).
+The search-only handles never leave the walk, so the non-goal of handing out
+handles that only locate an entry still holds. A POSIX system without such a
+flag keeps read access, and has no kernel resolver to disagree with.
+
 ## Open
-
-### O2: Case-insensitive names on Windows
-
-The Windows backend opens names case-insensitively, as the platform does;
-`MemVfs` is case-sensitive. The differential excludes case-only differences.
-Whether `MemVfs` should offer a case-insensitive mode for Windows parity is
-open. **Affects:** oracle 4. **Decide by:** the blocking-backend milestone
-([PLAN M2](./PLAN.md#m2-the-blocking-backend)).
 
 ### O3: Where `O_NOFOLLOW_ANY` is available
 
 The research could not pin the macOS version that introduced
 `O_NOFOLLOW_ANY` ([Darwin](../../../research/safe-path-traversal/darwin.md)).
-Spike S1 in [PLAN.md](./PLAN.md#feasibility-spikes) answers it on the CI
-runner. **Affects:** the macOS row of
+Spike S1 found it working on macOS 27.0.1; the CI runner's version is checked
+by the macOS leg, and the backend's probe (`VFN3`) reports absence on an older
+system rather than assuming. **Affects:** the macOS row of
 [`VFN5`](./backends.md#vfn5-platform-accelerators).
 
 ### O4: Platforms without a CI leg
@@ -364,17 +387,3 @@ runner. **Affects:** the macOS row of
 FreeBSD and other POSIX systems get the component walk and no evidence. Using
 FreeBSD's `O_RESOLVE_BENEATH`, which needs a behaviour probe because 13 and 14
 differ, is deferred until a FreeBSD leg exists.
-
-### O5: Directories the program may search but not read
-
-The component walk opens every intermediate directory, so on POSIX it needs
-read permission on each. `openat2` resolves intermediates without opening
-them and needs only search permission. A tree with a search-only directory
-therefore succeeds on Linux's kernel resolver and fails with `permission` on
-the walk, which [`VFR1`](./SPEC.md#vfr1-two-resolvers-one-result) forbids.
-Candidates: open intermediates with `O_PATH` where the platform has it, which
-this interface otherwise excludes; exempt `permission` outcomes from `VFR1`
-and document the difference; or state that walking requires readable
-directories on every resolver. Found by the cold read of the specification's
-opening. **Affects:** `VFR1`, oracle 3. **Decide by:** the blocking-backend
-milestone ([PLAN M2](./PLAN.md#m2-the-blocking-backend)).

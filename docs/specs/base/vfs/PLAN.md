@@ -36,6 +36,12 @@ Both M1 spikes ran on DMD 2.112.1 and LDC 1.42.0 with `-preview=dip1000
   parameter all compile. Moving the owner while a borrow is alive is not
   caught, but the borrow then sees the moved-from owner's closed handle, so
   an operation through it fails rather than touching freed memory.
+- **S1: positive; the macOS row of `VFN5` stands.** On macOS 27.0.1 arm64,
+  `openat` with `O_NOFOLLOW_ANY` refuses a symlinked intermediate and a
+  symlinked final component with `ELOOP`, and does not confine `..`, which
+  is why the row needs `dotDot = reject`. The same machine showed that
+  `O_SEARCH` opens a directory with mode `0111` where `O_RDONLY` fails with
+  `EACCES`, which settled O5 (DV28).
 - **S4: positive, with messages from `static assert`.** A template constraint
   per operation rejects every missing right on both compilers, and quotes
   the failed constraint (`R & Rights.remove`) rather than naming the right.
@@ -92,9 +98,9 @@ so this milestone adds `sparkles.base.io.errors` beside it.
 ## M2: the blocking backend
 
 **Obligations.** `VFE3`; `VFR1`, `VFR3`, `VFR5`, `VFR6`; `VFH7`, `VFH8`;
-`VFN1`–`VFN13`; `VFB4`, `VFB6`; `VFO1`–`VFO10` and `VFD1`–`VFD5` on
+`VFN1`–`VFN14`; `VFB4`, `VFB6`; `VFO1`–`VFO10` and `VFD1`–`VFD5` on
 `BlockingVfs`.
-**Prerequisites.** M1; S1; S2. Decide open question O2.
+**Prerequisites.** M1; S1 (passed); S2.
 **Deliverable.** The `sparkles:event-horizon-sys` package with `BlockingVfs`
 for Linux, macOS, Windows and a generic POSIX arm; the test-only switches for
 forcing the component walk and forcing probe absence.
