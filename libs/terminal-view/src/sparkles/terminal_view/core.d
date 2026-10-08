@@ -555,21 +555,22 @@ struct CoreState
 
 /**
 Which build is running, logged at `info` (terminal `TPG2`, `TPG7`): the
-application's version and commit as the build stamped them — `dev` for a plain
-`dub build` — and how libghostty-vt was built (SIMD, optimization mode).
+version and commit the caller read from the build-info section — `dev` and
+`unknown commit` when the caller passes none — and how libghostty-vt was
+built (SIMD, optimization mode).
 
-The stamp is read in $(I this) compilation: terminal-view is a source library,
-so it is the embedding application's `-J` that supplies it
-($(REF buildStampOf, sparkles,base,build_stamp)).
+This module does not decode the document. A caller with no section passes
+nothing and gets those defaults.
 */
-void logBuildInfo(string appName = "sparkles:terminal") @system nothrow @nogc
+void logBuildInfo(
+    string version_ = "dev",
+    string commitLabel = "unknown commit",
+    string appName = "sparkles:terminal",
+) @system nothrow @nogc
 {
-    import sparkles.base.build_stamp : buildStampOf;
     import sparkles.base.logger : info;
 
-    enum stamp = buildStampOf!();
-    enum commit = stamp.commitLabel;
-    info(i"$(appName) $(stamp.version_) ($(commit))");
+    info(i"$(appName) $(version_) ($(commitLabel))");
 
     const vt = ghosttyBuild();
     const simdName = vt.simd ? "enabled" : "disabled";

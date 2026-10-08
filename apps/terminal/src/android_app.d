@@ -23,6 +23,21 @@ import sparkles.ui_app.run_app : runApp;
 /// The logcat tag (`adb logcat -s terminal`).
 enum logTag = "terminal";
 
+/// Address `dladdr` resolves to this library. The process image is
+/// `app_process`, so the build-info section is not on `/proc/self/exe`.
+extern(C) void sparkles_terminal_build_anchor() @nogc nothrow {}
+
+private string thisLibraryPath()
+{
+    import core.sys.posix.dlfcn : Dl_info, dladdr;
+    import std.string : fromStringz;
+
+    Dl_info info;
+    if (dladdr(&sparkles_terminal_build_anchor, &info) == 0 || info.dli_fname is null)
+        return null;
+    return fromStringz(info.dli_fname).idup;
+}
+
 /// Android's own monospace face: the fallback when the configured font (by
 /// default the one the APK bundles, nix/packages/android/terminal.nix) is
 /// not there.
@@ -43,9 +58,14 @@ int androidMain()
         import logging : installTerminalLog;
         import sparkles.terminal_view.core : logBuildInfo;
 
+        import about_page : adoptBuild, processBuild;
+
         // logcat, then the file (`files/state/sparkles-terminal/`) and the ring.
+        // `/proc/self/exe` is `app_process`; the section is in this library.
         installTerminalLog(buildPath(internalDataPath, "state"));
-        logBuildInfo();
+        adoptBuild(thisLibraryPath());
+        const name = processBuild.info.name.length ? processBuild.info.name : "sparkles:terminal";
+        logBuildInfo(processBuild.info.version_, processBuild.info.commitLabel, name);
     }
 
     const conf = readAssetText("session.conf");
