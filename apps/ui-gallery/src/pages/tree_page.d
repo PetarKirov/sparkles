@@ -18,7 +18,7 @@ import sparkles.input : Key, KeyEvent;
 import sparkles.ui.components.tree_view : treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep;
 import sparkles.ui.components.tree_widget : flatten, FlatTreeRow, Guide,
-    TreeData, TreeGlyphs, treeView;
+    TreeData, TreeGlyphs, treeGlyphsFor, treeView;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.style : Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind;
@@ -106,11 +106,13 @@ uint view(ref Builder b, in GalleryState s)
     body_ ~= spacer(b);
 
     body_ ~= section(b, "your view", [
-        treeView(b, data, rows, (uint n) => d.open.isOpen(n), selected),
+        treeView(b, data, rows, (uint n) => d.open.isOpen(n), selected,
+            treeGlyphsFor(s.theme.glyphs.treeGuide)),
     ]);
     body_ ~= spacer(b);
     body_ ~= section(b, "the same data, everything open", [
-        treeView(b, data, allRows, (uint n) => true, uint.max),
+        treeView(b, data, allRows, (uint n) => true, uint.max,
+            treeGlyphsFor(s.theme.glyphs.treeGuide)),
     ]);
     body_ ~= spacer(b);
 
@@ -340,4 +342,40 @@ bool handleActivate(ref GalleryState s, size_t id)
     assert(closed.length < open.length);
     assert(open.length == data.nodes.length, "everything open shows every node");
     assert(closed.length == 3, "three roots when nothing is expanded");
+}
+
+@("ui_gallery.pages.treeGuidesFollowTheThemesFamily")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.ui.style : GuideFamily;
+    import sparkles.ui.theme : Theme;
+    import sparkles.ui.themes : builtinThemes;
+    static import state;
+
+    // `GLY1`: the theme picks the guide family; the page draws with it. A
+    // theme file with heavy guides gives the specimen heavy connectors.
+    static string drawn(in GalleryState s)
+    {
+        auto b = Builder();
+        const tree = b.finish(view(b, s));
+        string all;
+        foreach (ref n; tree.nodes)
+        {
+            all ~= n.text;
+            foreach (ref sp; n.spans)
+                all ~= sp.text;
+        }
+        return all;
+    }
+
+    assert(drawn(GalleryState.init).canFind("├─ "), "the default family is light");
+    auto heavy = new Theme;
+    heavy.name = "heavy guides";
+    heavy.defaultBg = builtinThemes["nord"].defaultBg;
+    heavy.glyphs.treeGuide = GuideFamily.heavy;
+    state.fileTheme = cast(immutable(Theme)*) heavy;
+    scope (exit) state.fileTheme = null;
+    const s = GalleryState(useFileTheme: true);
+    assert(drawn(s).canFind("┣━ ") && !drawn(s).canFind("├─ "));
 }
