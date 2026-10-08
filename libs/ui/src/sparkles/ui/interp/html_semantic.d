@@ -5,12 +5,18 @@ of widgets is themable by swapping one `<style>`, diffs read as structure
 rather than color soup, and tier-0 interactivity (hover-reveal, disclosure) is
 $(B pure CSS) with no script.
 
-Two functions, one contract:
+Three functions, one contract (design-system `WEB4`):
 
 $(LIST
-    * $(LREF writeSlotStylesheet) — the palette as CSS: one `.spk-<slot>` rule
-        per $(REF Slot, sparkles,ui,style) plus the structural base classes and
-        the tier-0 interaction rules.
+    * $(LREF writeSlotRules) — the structural base classes, the tier-0
+        interaction rules, and one rule per $(REF Slot, sparkles,ui,style)
+        named by its token path (`.spk-text-muted`) that reads the slot's
+        design-system properties (`var(--spk-text-muted-fg)`). It names no
+        color, so it is the same for every theme.
+    * $(LREF writeSlotStylesheet) — a theme's properties
+        ($(REF writeThemeProperties, sparkles,ui,css)) and those rules: what a
+        page with no other stylesheet links. A page that already carries the
+        properties, as the docs site does, needs the rules alone.
     * $(LREF renderWidgetHtmlClasses) — the tree as markup that references
         those classes; only per-node $(I geometry) (sizes, padding, gap,
         scroll offset) stays inline, because it is structure, not theme.
@@ -26,11 +32,12 @@ import std.conv : to;
 import std.range.primitives : isOutputRange, put;
 
 import sparkles.ui.geometry : Insets, SizeSpec;
-import sparkles.ui.style : Palette, resolveSlot, Slot, Visual;
+import sparkles.ui.css : writeThemeProperties;
+import sparkles.ui.style : InteractionState, Slot;
+import sparkles.ui.theme : Theme;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
-import sparkles.ui.tokens : TargetCapabilities;
+import sparkles.ui.tokens : ColorChannel, TargetCapabilities, tokenPath, writeCssName;
 import sparkles.ui.wrap : TextWrap;
-import sparkles.base.term_color : RgbColor;
 
 @safe:
 
@@ -57,19 +64,20 @@ enum TargetCapabilities semanticHtmlCapabilities = () {
 }();
 
 /**
-Writes the stylesheet: the structural base classes (`.spk`, `.spk-row`, …),
-the tier-0 interaction rules (`.spk-hit:hover > .spk-reveal`, `<details>`
-disclosure), and one `.spk-<slot>` rule per palette slot resolved against the
-page colors. Swap the palette, re-emit this one block, and every page themed
-by it follows.
+Writes the rules (`WEB4`): the structural base classes (`.spk`, `.spk-row`,
+…), the tier-0 interaction rules (`.spk-hit:hover > .spk-reveal`, `<details>`
+disclosure), and per slot a class named by its token path whose colors are the
+slot's design-system properties. A hit target's hover reads the slot's
+`-hover-` property, falling back to the rest value (D60). Nothing here depends
+on a theme: the properties carry the values.
 */
-void writeSlotStylesheet(Writer)(ref Writer w, in Palette pal,
-    in RgbColor pageFg, in RgbColor pageBg)
+void writeSlotRules(Writer)(ref Writer w)
 if (isOutputRange!(Writer, char))
 {
     // Structural base classes: one per widget kind, plus clip/visibility.
     put(w, ".spk{box-sizing:border-box}"
-        ~ ".spk-text,.spk-rich,.spk-glyph{white-space:pre;font-family:ui-monospace,monospace}"
+        ~ ".spk-text,.spk-rich,.spk-glyph{white-space:pre;"
+        ~ "font-family:var(--spk-font-code,ui-monospace,monospace)}"
         ~ ".spk-row{display:flex;flex-direction:row;align-items:flex-start}"
         ~ ".spk-column{display:flex;flex-direction:column}"
         ~ ".spk-stack,.spk-panel,.spk-popup{position:relative;display:flex;flex-direction:column}"
@@ -81,24 +89,56 @@ if (isOutputRange!(Writer, char))
         ~ ".spk-hit:hover>.spk-reveal{display:block}"
         ~ "details.spk-disclosure>summary{cursor:pointer;list-style:none}");
 
-    // One rule per slot, colors resolved against the page.
+    // One rule per slot, reading its properties. A channel the theme leaves
+    // unset has no property, so the declaration falls back: the color
+    // inherits and the background stays transparent, as in every other target.
     foreach (slot; Slot.min .. Slot.max + 1)
     {
         const s = cast(Slot) slot;
         if (s == Slot.inherit)
             continue;
-        const vis = resolveSlot(pal, s, pageFg, pageBg);
-        put(w, ".spk-");
-        put(w, s.to!string);
-        put(w, "{color:");
-        rgba(w, vis.fg, vis.fgAlpha);
-        if (vis.hasBg)
-        {
-            put(w, ";background:");
-            rgba(w, vis.bg, vis.bgAlpha);
-        }
-        put(w, "}");
+        put(w, ".");
+        writeSlotClass(w, s);
+        put(w, "{color:var(");
+        writeCssName(w, s, ColorChannel.fg);
+        put(w, ");background-color:var(");
+        writeCssName(w, s, ColorChannel.bg);
+        put(w, ")}");
+
+        put(w, ".spk-hit.");
+        writeSlotClass(w, s);
+        put(w, ":hover{color:var(");
+        writeCssName(w, s, ColorChannel.fg, InteractionState.hover);
+        put(w, ",var(");
+        writeCssName(w, s, ColorChannel.fg);
+        put(w, "));background-color:var(");
+        writeCssName(w, s, ColorChannel.bg, InteractionState.hover);
+        put(w, ",var(");
+        writeCssName(w, s, ColorChannel.bg);
+        put(w, "))}");
     }
+}
+
+/**
+The whole stylesheet for a page that links nothing else: `theme`'s
+design-system properties on `:root`, then $(LREF writeSlotRules). Swap the
+theme, re-emit this one block, and every page themed by it follows.
+*/
+void writeSlotStylesheet(Writer)(ref Writer w, const Theme theme)
+if (isOutputRange!(Writer, char))
+{
+    put(w, ":root{\n");
+    writeThemeProperties(w, theme);
+    put(w, "}\n");
+    writeSlotRules(w);
+}
+
+/// The class of a slot (`WEB4`): `spk-` and its token path, `.` → `-`.
+private void writeSlotClass(Writer)(ref Writer w, Slot s)
+{
+    put(w, "spk-");
+    foreach (c; tokenPath(s))
+        put(w, c == '.' ? '-' : c);
 }
 
 /**
@@ -125,8 +165,8 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx)
     put(w, node.kind.to!string);
     if (node.slot != Slot.inherit)
     {
-        put(w, " spk-");
-        put(w, node.slot.to!string);
+        put(w, " ");
+        writeSlotClass(w, node.slot);
     }
     if (node.clipX)
         put(w, " spk-clip-x");
@@ -155,8 +195,8 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx)
                 put(w, "<span");
                 if (span.slot != Slot.inherit)
                 {
-                    put(w, " class=\"spk-");
-                    put(w, span.slot.to!string);
+                    put(w, " class=\"");
+                    writeSlotClass(w, span.slot);
                     put(w, "\"");
                 }
                 put(w, ">");
@@ -266,29 +306,6 @@ private void num(Writer)(ref Writer w, int v)
     writeInteger(w, cast(uint) v);
 }
 
-private void rgba(Writer)(ref Writer w, in RgbColor c, ubyte alpha)
-{
-    put(w, "rgba(");
-    num(w, c.r);
-    put(w, ",");
-    num(w, c.g);
-    put(w, ",");
-    num(w, c.b);
-    put(w, ",");
-    if (alpha == 0xFF)
-        put(w, "1");
-    else
-    {
-        // two-decimal fraction of 255
-        const centi = (alpha * 100 + 127) / 255;
-        put(w, "0.");
-        if (centi < 10)
-            put(w, "0");
-        num(w, centi);
-    }
-    put(w, ")");
-}
-
 private void escape(Writer)(ref Writer w, scope const(char)[] s)
 {
     foreach (char c; s)
@@ -311,18 +328,59 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
 {
     import std.algorithm.searching : canFind;
     import sparkles.base.buffer : SharedBuffer;
-    import sparkles.ui.style : defaultTwoslashPalette;
+    import std.array : appender;
 
-    SharedBuffer!(char, 4096) w;
-    writeSlotStylesheet(w, defaultTwoslashPalette(),
-        RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
+    auto w = appender!string;
+    writeSlotRules(w);
     const css = w[];
 
-    // Every slot (except inherit) has a rule; the tier-0 rules are present.
+    // Every slot (except inherit) has a rule named by its token path that reads
+    // its properties, and a hover that falls back to the rest value (D60).
+    assert(css.canFind(".spk-text-muted{color:var(--spk-text-muted-fg);"
+        ~ "background-color:var(--spk-text-muted-bg)}"), css);
+    assert(css.canFind(".spk-hit.spk-scrollbar-thumb:hover{color:var("
+        ~ "--spk-scrollbar-thumb-hover-fg,var(--spk-scrollbar-thumb-fg))"), css);
     foreach (slot; Slot.min + 1 .. Slot.max + 1)
-        assert(css.canFind(".spk-" ~ (cast(Slot) slot).to!string ~ "{"));
+    {
+        auto c = appender!string;
+        writeSlotClass(c, cast(Slot) slot);
+        assert(css.canFind("." ~ c[] ~ "{color:var("), c[]);
+    }
     assert(css.canFind(".spk-hit:hover>.spk-reveal{display:block}"));
     assert(css.canFind("details.spk-disclosure>summary"));
+    // The rules name no color: every value is a property.
+    assert(!css.canFind("#") && !css.canFind("rgb"), css);
+}
+
+@("ui.interp.html_semantic.stylesheetCarriesTheThemesProperties")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.array : appender;
+    import sparkles.ui.themes : builtinThemes;
+
+    auto w = appender!string;
+    writeSlotStylesheet(w, builtinThemes["github-dark"]);
+    assert(w[].canFind(":root{\n  --spk-"), w[]);
+    assert(w[].canFind("--spk-text-muted-fg: #"), w[]);
+    assert(w[].canFind(".spk-text-muted{color:var(--spk-text-muted-fg)"), w[]);
+}
+
+@("ui.interp.html_semantic.slotClassesNeverCollideWithKindClasses")
+@safe unittest
+{
+    import std.array : appender;
+    import std.traits : EnumMembers;
+
+    // A one-segment slot path (link, gutter, selection) must not name a
+    // widget kind's class, or a node's kind would paint its slot's colors.
+    foreach (slot; Slot.min + 1 .. Slot.max + 1)
+    {
+        auto c = appender!string;
+        writeSlotClass(c, cast(Slot) slot);
+        static foreach (k; EnumMembers!WidgetKind)
+            assert(c[] != "spk-" ~ k.to!string, c[]);
+    }
 }
 
 @("ui.interp.html_semantic.markupIsClassesNotColors")
@@ -344,9 +402,10 @@ private void escape(Writer)(ref Writer w, scope const(char)[] s)
     renderWidgetHtmlClasses(w, tree);
     const html = w[];
 
-    assert(html.canFind(`<div class="spk spk-popup spk-surface"`));
-    assert(html.canFind(`<span class="spk spk-rich spk-code spk-hit"`));
-    assert(html.canFind(`<span class="spk-docs">const</span>`));
+    // Classes are token paths (`WEB4`): `surface.overlay` → `spk-surface-overlay`.
+    assert(html.canFind(`<div class="spk spk-popup spk-surface-overlay"`));
+    assert(html.canFind(`<span class="spk spk-rich spk-text-code spk-hit"`));
+    assert(html.canFind(`<span class="spk-text-docs">const</span>`));
     assert(html.canFind("padding:1lh 1ch 1lh 1ch"));
     // The whole point: not one color in the markup.
     assert(!html.canFind("rgba(") && !html.canFind("color:"));
