@@ -42,6 +42,14 @@ Both M1 spikes ran on DMD 2.112.1 and LDC 1.42.0 with `-preview=dip1000
   is why the row needs `dotDot = reject`. The same machine showed that
   `O_SEARCH` opens a directory with mode `0111` where `O_RDONLY` fails with
   `EACCES`, which settled O5 (DV28).
+- **S2: partly answered; real Windows decides the rest.** Under Wine 11, D
+  calls `NtCreateFile` relative to a directory handle, deletes through
+  `FileDispositionInformationEx`, and attaches a security descriptor to a
+  new file. Wine cannot create a junction (`STATUS_NOT_SUPPORTED`), cannot
+  resolve the symbolic links it reports creating, and does not keep a
+  protected DACL, so `OBJ_DONT_REPARSE` through a link and the owner-only
+  entry's single access-control entry wait for the Windows leg, where their
+  tests are written and run.
 - **S4: positive, with messages from `static assert`.** A template constraint
   per operation rejects every missing right on both compilers, and quotes
   the failed constraint (`R & Rights.remove`) rather than naming the right.
@@ -106,7 +114,7 @@ for Linux, macOS, Windows and a generic POSIX arm; the test-only switches for
 forcing the component walk and forcing probe absence.
 **Acceptance.** Oracles 1, 3, 4 (with two backends) and 6 pass on every leg.
 `dub describe :event-horizon-sys` shows no dependency beyond base,
-`expected` and `sparkles:reflection` (`VFB6`).
+`expected`, `sparkles:reflection` and `sparkles:metadata` (`VFB6`).
 **Excludes.** The event loop; consumers.
 
 ## M3: the asynchronous backend and event-horizon's migration
@@ -197,4 +205,5 @@ finds no normative text duplicating this one.
 | --------- | -------------------------------------------------------- | ------------ |
 | M0        | delivered; reshaped for readers and for creation sharing | #535, #594   |
 | M1        | in review                                                | —            |
-| M2–M5     | not started                                              | —            |
+| M2        | implemented locally; Windows leg pending                 | —            |
+| M3–M5     | not started                                              | —            |

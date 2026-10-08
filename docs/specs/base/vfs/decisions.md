@@ -11,7 +11,7 @@ module. DV19–DV22 were accepted in an editorial review held from October 3 to
 5, 2026, which reshaped the specification for its readers. DV23 was decided on
 October 6, 2026. DV24–DV26 record what implementing the base milestone
 changed, and DV27–DV28, decided on October 8, 2026, close the questions the
-blocking backend needed answered._
+blocking backend needed answered, and DV29 records what writing it changed._
 
 ## Accepted
 
@@ -370,6 +370,23 @@ access, so it can be listed
 The search-only handles never leave the walk, so the non-goal of handing out
 handles that only locate an entry still holds. A POSIX system without such a
 flag keeps read access, and has no kernel resolver to disagree with.
+
+### DV29: What the native backends changed
+
+Writing the blocking backend changed three things.
+
+- **A listing owns its names.** A result that borrows a caller's stack buffer
+  is `scope`, and `expected`'s destructor is not, so once a listing held a
+  native pointer (a `DIR*`) it could not be destroyed in `@safe` code. A
+  listing now holds a 1024-byte name buffer of its own, and `list()` takes no
+  argument ([`VFO7`](./SPEC.md#vfo7-listing)).
+- **The kernel's vaguer refusals are classified.** `OBJ_DONT_REPARSE` reports
+  only that a path was not found when an intermediate is a file; the Windows
+  backend steps through to name the kind, so both resolvers report
+  `notADirectory` ([`VFN2`](./backends.md#vfn2-ambiguous-native-results)).
+- **Handles have an escape hatch.** `backendHandle()` gives backend tests and
+  descriptor-taking code the raw handle, the same capability in an honest
+  name ([`VFH1`](./SPEC.md#vfh1-owning-handles)).
 
 ## Open
 
