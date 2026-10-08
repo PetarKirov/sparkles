@@ -233,6 +233,7 @@
         ./nix/packages/tree-sitter-d.nix
         ./nix/packages/tree-sitter-sdl.nix
         ./nix/packages/ts-grammars.nix
+        ./nix/packages/nerd-font-glyphnames.nix
         ./nix/packages/twoslash-extract.nix
         ./nix/packages/uwidth-rs.nix
         ./nix/packages/wired-bench-data.nix
