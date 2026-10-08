@@ -120,11 +120,25 @@ static foreach (i, m; EnumMembers!InteractionState)
 
 // ── CSS custom-property names (TOK2, WEB1) ──────────────────────────────────
 
+/// A slot's two color channels: the `fg` and `bg` leaves of its theme-file group.
+enum ColorChannel : ubyte
+{
+    fg, /// foreground
+    bg, /// background
+}
+
+/// The leaf names of $(LREF ColorChannel), in declaration order.
+alias channelNames = wireNames!(AnyFormat, ColorChannel,
+    resolveCaseStyle!(AnyFormat, ColorChannel));
+
 /**
-Writes `--spk-<path with '.' → '-'>[-<state>]` (`WEB1`) into `w`. The GC-free
-form the stylesheet emitter uses; $(LREF cssName) is the convenience wrapper.
+Writes the CSS custom property of one color leaf (`WEB1`, D60): `--spk-`, then
+the leaf's theme-file path `<slot path>[.<state>].<channel>` with `.` → `-`. The
+GC-free form; $(LREF cssName) is the convenience wrapper, and
+`sparkles.ui.css.cssPropertyName` the same rule over any token path.
 */
-void writeCssName(W)(ref W w, Slot slot, InteractionState state = InteractionState.rest)
+void writeCssName(W)(ref W w, Slot slot, ColorChannel channel,
+    InteractionState state = InteractionState.rest)
 {
     import std.range.primitives : put;
 
@@ -136,15 +150,18 @@ void writeCssName(W)(ref W w, Slot slot, InteractionState state = InteractionSta
         put(w, '-');
         put(w, stateNames[state]);
     }
+    put(w, '-');
+    put(w, channelNames[channel]);
 }
 
 /// ditto — allocating.
-string cssName(Slot slot, InteractionState state = InteractionState.rest) @safe pure
+string cssName(Slot slot, ColorChannel channel,
+    InteractionState state = InteractionState.rest) @safe pure
 {
     import std.array : appender;
 
     auto w = appender!string;
-    writeCssName(w, slot, state);
+    writeCssName(w, slot, channel, state);
     return w[];
 }
 
@@ -565,10 +582,14 @@ unittest
 @safe pure
 unittest
 {
-    assert(cssName(Slot.muted) == "--spk-text-muted");
-    assert(cssName(Slot.highlightBorder) == "--spk-twoslash-highlight-border");
-    assert(cssName(Slot.thumb, InteractionState.hover) == "--spk-scrollbar-thumb-hover");
-    assert(cssName(Slot.thumb, InteractionState.rest) == cssName(Slot.thumb));
+    with (ColorChannel)
+    {
+        assert(cssName(Slot.muted, fg) == "--spk-text-muted-fg");
+        assert(cssName(Slot.highlightBorder, bg) == "--spk-twoslash-highlight-border-bg");
+        // The state sits before the channel, as in the theme file.
+        assert(cssName(Slot.thumb, bg, InteractionState.hover) == "--spk-scrollbar-thumb-hover-bg");
+        assert(cssName(Slot.thumb, fg, InteractionState.rest) == cssName(Slot.thumb, fg));
+    }
 }
 
 @("ui.tokens.writeCssName.nogc")
@@ -577,8 +598,8 @@ unittest
 {
     import sparkles.base.buffer : checkWriter;
 
-    checkWriter!((ref w) => writeCssName(w, Slot.chromeAccent, InteractionState.disabled))
-        ("--spk-chrome-accent-disabled");
+    checkWriter!((ref w) => writeCssName(w, Slot.chromeAccent, ColorChannel.fg,
+        InteractionState.disabled))("--spk-chrome-accent-disabled-fg");
 }
 
 @("ui.tokens.slotsWithin.checksEveryOp")

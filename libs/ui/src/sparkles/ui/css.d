@@ -1,0 +1,210 @@
+/**
+A theme as CSS custom properties (design-system `WEB1`).
+
+Every token of a theme file becomes one property named from its path: `--spk-`
+then the path with `.` replaced by `-`, so `text.muted.fg` is
+`--spk-text-muted-fg` and `scrollbar.thumb.hover.bg` is
+`--spk-scrollbar-thumb-hover-bg`. The name is computable from the file alone,
+and a state sits before the channel exactly as it does in the file (D60).
+
+A component's stylesheet reads a state with the rest value as its fallback —
+`var(--spk-x-hover-fg, var(--spk-x-fg))` — so a state a theme leaves unset
+falls through as `TOK4` requires. Nothing here writes a selector for a state:
+states are properties, not rules (OQ4, D60).
+
+$(LREF writeThemeProperties) writes the declarations for one theme; the
+stylesheet around them (light, dark, scopes) is the caller's, as
+`sparkles.docs.assets` composes it.
+*/
+module sparkles.ui.css;
+
+import std.algorithm.sorting : sort;
+import std.array : appender;
+import std.format : format;
+import std.range.primitives : put;
+
+import sparkles.ui.dtcg : aliasTarget, collectTokens, DtcgJson, DtcgResult, formatNumber,
+    parseColor, parseDimension;
+import sparkles.ui.theme : Theme;
+import sparkles.ui.theme_file : exportTheme;
+
+/// Writes the custom-property name of the token at `path` (`WEB1`).
+void writeCssPropertyName(W)(ref W w, scope const(char)[] path)
+{
+    put(w, "--spk-");
+    foreach (c; path)
+        put(w, c == '.' ? '-' : c);
+}
+
+/// ditto — allocating.
+string cssPropertyName(scope const(char)[] path) @safe pure
+{
+    auto w = appender!string;
+    writeCssPropertyName(w, path);
+    return w[];
+}
+
+///
+@("ui.css.cssPropertyName.isThePathDashed")
+@safe pure unittest
+{
+    assert(cssPropertyName("text.muted.fg") == "--spk-text-muted-fg");
+    assert(cssPropertyName("scrollbar.thumb.hover.bg") == "--spk-scrollbar-thumb-hover-bg");
+    assert(cssPropertyName("page.bg") == "--spk-page-bg");
+}
+
+/**
+Writes one `--spk-*: value;` declaration per token of `t`, sorted by path,
+each on its own line after `indent`. Colors are `#rrggbb`, or `rgb(r g b / a)`
+when translucent; dimensions keep their unit; plain numbers (cell metrics,
+percentages) stay unitless for the reading rule to scale; an alias is a
+`var()` of its target. A derived palette is resolved, so every slot has its
+values, not only the ones the theme pins.
+*/
+void writeThemeProperties(W)(ref W w, const Theme t, string indent = "  ")
+{
+    auto tokens = collectTokens(exportTheme(t, resolvedPalette: true));
+    assert(tokens.hasValue, "an exported theme is a valid document");
+    string[] paths;
+    foreach (ref tok; tokens.value.tokens)
+        paths ~= tok.path;
+    paths.sort();
+    foreach (path; paths)
+    {
+        const tok = path in tokens.value;
+        string css;
+        if (auto target = aliasTarget(tok.value))
+        {
+            // An alias stays a reference, so the relation holds in CSS too. A
+            // state aliased to a channel its target leaves unset takes
+            // nothing from it (`TOK4`), and is not written.
+            if (target.pointer || (target.text in tokens.value) is null)
+                continue;
+            css = "var(" ~ cssPropertyName(target.text) ~ ")";
+        }
+        else
+        {
+            auto value = tokens.value.resolved(path);
+            assert(value.hasValue, path);
+            css = cssValue(tok.type, value.value, path);
+        }
+        if (css.length == 0)
+            continue;
+        put(w, indent);
+        writeCssPropertyName(w, path);
+        put(w, ": ");
+        put(w, css);
+        put(w, ";\n");
+    }
+}
+
+/// ditto — allocating.
+string themeProperties(const Theme t, string indent = "  ") @safe
+{
+    auto w = appender!string;
+    writeThemeProperties(w, t, indent);
+    return w[];
+}
+
+/// A resolved token value as CSS, or `null` for a type CSS has no value for.
+private string cssValue(string type, const DtcgJson v, string path) @safe
+{
+    switch (type)
+    {
+        case "color":
+            const c = parseColor(v, path);
+            if (c.hasError)
+                return null;
+            const rgb = c.value.rgb;
+            return c.value.alpha == 0xFF
+                ? format("#%02x%02x%02x", rgb.r, rgb.g, rgb.b)
+                : format("rgb(%d %d %d / %s)", rgb.r, rgb.g, rgb.b,
+                    formatNumber(c.value.alpha / 255.0));
+        case "dimension":
+            const d = parseDimension(v, path);
+            return d.hasError ? null : formatNumber(d.value.value) ~ d.value.unit;
+        case "number":
+            return v.kind == DtcgJson.Kind.number ? v.text : null;
+        case "fontFamily":
+            return fontStack(v);
+        default:
+            return null;
+    }
+}
+
+/// A `fontFamily` value as a `font-family` stack: names quoted, the CSS
+/// generic families (`monospace`, `ui-sans-serif`, …) bare.
+private string fontStack(const DtcgJson v) @safe
+{
+    import std.algorithm.comparison : among;
+
+    string one(string name)
+        => name.among("serif", "sans-serif", "monospace", "cursive", "fantasy",
+            "system-ui", "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded",
+            "math", "emoji", "fangsong")
+            ? name : "'" ~ name ~ "'";
+    if (v.isString)
+        return one(v.text);
+    if (v.kind != DtcgJson.Kind.array)
+        return null;
+    string s;
+    foreach (i, ref item; v.items)
+    {
+        if (!item.isString)
+            return null;
+        s ~= (i ? ", " : "") ~ one(item.text);
+    }
+    return s;
+}
+
+@("ui.css.themeProperties.everySlotAndTheSyntax")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.ui.themes : builtinThemes;
+
+    const css = themeProperties(builtinThemes["one-dark-pro"]);
+    // The palette is derived, yet every slot has its values.
+    assert(css.canFind("  --spk-text-muted-fg: #"), css);
+    assert(css.canFind("  --spk-scrollbar-thumb-fg: #"), css);
+    assert(css.canFind("  --spk-page-bg: #"), css);
+    assert(css.canFind("  --spk-syntax-keyword-fg: #"), css);
+    // Cell metrics stay unitless; px dimensions keep their unit.
+    assert(css.canFind("  --spk-overlay-pad-inline: "), css);
+}
+
+@("ui.css.themeProperties.slotNamesAndAliases")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.base.term_color : Color;
+    import sparkles.ui.style : InteractionState, Slot;
+    import sparkles.ui.themes : builtinThemes;
+    import sparkles.ui.tokens : ColorChannel, cssName;
+
+    const t = builtinThemes["one-dark-pro"];
+    const css = themeProperties(t);
+    // The slot form of the name and the path form agree, for every set leaf.
+    const p = t.effectivePalette;
+    foreach (i; 0 .. Slot.max + 1)
+    {
+        if (p.fg[i].kind == Color.Kind.rgb)
+            assert(css.canFind("  " ~ cssName(cast(Slot) i, ColorChannel.fg) ~ ": "),
+                cssName(cast(Slot) i, ColorChannel.fg));
+        if (p.bg[i].kind == Color.Kind.rgb)
+            assert(css.canFind("  " ~ cssName(cast(Slot) i, ColorChannel.bg) ~ ": "),
+                cssName(cast(Slot) i, ColorChannel.bg));
+    }
+    // A state aliased to another slot stays a reference to it.
+    assert(css.canFind(cssName(Slot.inherit, ColorChannel.bg, InteractionState.selected)
+        ~ ": var(" ~ cssName(Slot.selection, ColorChannel.bg) ~ ");\n"), css);
+}
+
+@("ui.css.fontStack.quotesNamesNotGenerics")
+@safe unittest
+{
+    const v = DtcgJson.array([DtcgJson.str("Fira Code"), DtcgJson.str("ui-monospace"),
+        DtcgJson.str("monospace")]);
+    assert(fontStack(v) == "'Fira Code', ui-monospace, monospace");
+    assert(fontStack(DtcgJson.str("Inter")) == "'Inter'");
+}
