@@ -56,6 +56,7 @@ default_packages=(
   metadata
   reflection
   base
+  event-horizon-sys
   math
   input
   test-runner
