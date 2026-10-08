@@ -79,16 +79,15 @@ and code-point routes come from font M7.
 
 _One section describing the state, updated at each interruption._
 
-- **Checked revision:** `feat/ui-keymap-universal`, on top of PR #576.
-- **Delivered:** M1, M2, M7 and M8 as their rows state; M3 except its
-  leftovers. Beyond M3: the live capability-profile switch in `ui-gallery`
+- **Checked revision:** `feat/design-system-m3-leftovers`, on top of PR #611.
+- **Delivered:** M1, M2, M5, M7 and M8 as their rows state; M3 except the
+  per-role glyph families (`GLY1`) and the Nerd Font face on the web (`GLY4`). Beyond M3: the live capability-profile switch in `ui-gallery`
   (`}`/`{`, narrowing with `meet`); emulator presets from the `O5` corpus
   (`CAP10`, D32, D33); the image ladder, cell rungs and the kitty and sixel
   protocol rungs (`GLY9`, `IMG5`, D34); the interface face and chrome type
   scale (`GLY10`, D49); density-scaled radius and shadow (`TOK7`).
-- **Open:** the sub-cell hairline rule (`GLY2a`); per-role glyph preferences
-  beyond marks (`GLY1`); `ACC4` for every focusable inside pages; the `CAP2`
-  table audit; the icon table (`GLY4`); metrics per state (no consumer); the
+- **Open:** per-role glyph families (`GLY1`: the widget says how strong an
+  edge is, the theme which family draws it; owner, 2026-10-08); metrics per state (no consumer); the
   scrollbar's `trackLit` is a paint choice, not a state; the inspector
   header's spans choose their slot per span; the twoslash, source-view and hue
   views' slot declarations (`TOK6`).
@@ -97,8 +96,8 @@ _One section describing the state, updated at each interruption._
   M5's TUI-grid cutover; `GLY5` on the text-sizing proposal's M0 and base/text's
   scaled footprints (OQ5, D54); `LAY10`/`LAY14` evidence on base/text M5 (D51).
 - **Blockers:** none. M4 needs the brand design exercise (owner, D23, OQ2).
-- **Next executable actions**, in the owner's order: (1) M3's
-  leftovers; (2) M6, web; then `KBD5`'s Readline keys with the text-input
+- **Next executable actions**, in the owner's order: (1) `GLY1`'s
+  per-role glyph families; (2) M6, web; then `KBD5`'s Readline keys with the text-input
   component. Beside them: iTerm2, WezTerm and Apple Terminal into the `O5`
   corpus (macOS, and WezTerm headless), Windows Terminal and the Linux console
   with a person at the machine; M4 once the owner's design session has
