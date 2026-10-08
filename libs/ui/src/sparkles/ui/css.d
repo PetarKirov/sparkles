@@ -21,12 +21,13 @@ module sparkles.ui.css;
 import std.algorithm.sorting : sort;
 import std.array : appender;
 import std.format : format;
+import std.math : round;
 import std.range.primitives : put;
 
 import sparkles.ui.dtcg : aliasTarget, collectTokens, DtcgJson, DtcgResult, formatNumber,
     parseColor, parseDimension;
 import sparkles.ui.theme : Theme;
-import sparkles.ui.theme_file : exportTheme;
+import sparkles.ui.theme_file : exportTheme, overlay, ThemeFile;
 
 /// Writes the custom-property name of the token at `path` (`WEB1`).
 void writeCssPropertyName(W)(ref W w, scope const(char)[] path)
@@ -62,8 +63,20 @@ percentages) stay unitless for the reading rule to scale; an alias is a
 values, not only the ones the theme pins.
 */
 void writeThemeProperties(W)(ref W w, const Theme t, string indent = "  ")
+    => writeDocumentProperties(w, exportTheme(t, resolvedPalette: true), indent);
+
+/**
+ditto, for a loaded theme file: its theme's tokens, with the file's own tokens
+over them — its aliases stay `var()`s, and tokens the theme does not map (a
+site's own primitives, such as a gradient's stops) reach CSS too.
+*/
+void writeThemeProperties(W)(ref W w, const ThemeFile f, string indent = "  ")
+    => writeDocumentProperties(w,
+        overlay(exportTheme(f.theme, resolvedPalette: true), f.document), indent);
+
+private void writeDocumentProperties(W)(ref W w, const DtcgJson doc, string indent)
 {
-    auto tokens = collectTokens(exportTheme(t, resolvedPalette: true));
+    auto tokens = collectTokens(doc);
     assert(tokens.hasValue, "an exported theme is a valid document");
     string[] paths;
     foreach (ref tok; tokens.value.tokens)
@@ -119,7 +132,7 @@ private string cssValue(string type, const DtcgJson v, string path) @safe
             return c.value.alpha == 0xFF
                 ? format("#%02x%02x%02x", rgb.r, rgb.g, rgb.b)
                 : format("rgb(%d %d %d / %s)", rgb.r, rgb.g, rgb.b,
-                    formatNumber(c.value.alpha / 255.0));
+                    formatNumber(round(c.value.alpha / 255.0 * 1e4) / 1e4));
         case "dimension":
             const d = parseDimension(v, path);
             return d.hasError ? null : formatNumber(d.value.value) ~ d.value.unit;
@@ -198,6 +211,28 @@ private string fontStack(const DtcgJson v) @safe
     // A state aliased to another slot stays a reference to it.
     assert(css.canFind(cssName(Slot.inherit, ColorChannel.bg, InteractionState.selected)
         ~ ": var(" ~ cssName(Slot.selection, ColorChannel.bg) ~ ");\n"), css);
+}
+
+@("ui.css.themeProperties.aFilesOwnTokensAndAliases")
+@safe unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.ui.theme_file : loadTheme;
+
+    auto f = loadTheme(`{
+        "palette": { "$type": "color", "indigo": { "$value": "#6366f1" } },
+        "accent": { "primary": { "fg": { "$value": "{palette.indigo}" } } }
+    }`);
+    assert(f.hasValue, f.error.message);
+    auto w = appender!string;
+    writeThemeProperties(w, f.value);
+    const css = w[];
+    // The primitive the theme does not map still reaches CSS, and the slot
+    // stays a reference to it.
+    assert(css.canFind("  --spk-palette-indigo: #6366f1;\n"), css);
+    assert(css.canFind("  --spk-accent-primary-fg: var(--spk-palette-indigo);\n"), css);
+    // Everything else is the theme's, derived as usual.
+    assert(css.canFind("  --spk-text-muted-fg: #"), css);
 }
 
 @("ui.css.themeProperties.fontFacesAndRoles")
