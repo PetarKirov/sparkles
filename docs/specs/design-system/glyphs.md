@@ -80,13 +80,16 @@ and evidence live in [testing.md](./testing.md), delivery order in
 
 ## Glyph tiers
 
-| ID     | Requirement                                                                                                                                                                                                                                                                    | Status  | Traces to                                                                                                                                                       |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GLY1` | Glyphs **must** be organised in **nested tiers**: `ascii ⊂ boxLight ⊂ boxFull ⊂ blocks ⊂ braille ⊂ nerdFont`. The target's declared tier **must** cap the charset a theme prefers per role, and the capped choice is the published substitution ([`CAP6`](./capabilities.md)). | partial | `glyphs.d` `needOf`/`admits`/`fallbackOf`/`projectGlyph`; `ui_tui` `GridCanvas` projects every glyph; per-role theme preferences only for marks (`MarkCharset`) |
+| ID     | Requirement                                                                                                                                                                                                                                                                    | Status | Traces to                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GLY1` | Glyphs **must** be organised in **nested tiers**: `ascii ⊂ boxLight ⊂ boxFull ⊂ blocks ⊂ braille ⊂ nerdFont`. The target's declared tier **must** cap the charset a theme prefers per role, and the capped choice is the published substitution ([`CAP6`](./capabilities.md)). | full   | `glyphs.d` `needOf`/`admits`/`fallbackOf`/`projectGlyph`; `ui_tui` `GridCanvas` projects every glyph; `style.d` `GlyphSet` (`FrameFamily`, `GuideFamily`, `ThumbFamily`, `MarkCharset`) carried by `Palette`; frames in `resolveVisual`, thumbs in `display_list.d`, guides by `treeGlyphsFor`; tests `ui.style.resolveVisual.frameFamilyPicksTheCorners`, `ui.display_list.thumbFamilyDrawsDefaultsOnly`, `ui_gallery.pages.treeGuidesFollowTheThemesFamily` |
 
 **GLY1 notes.** `boxFull` adds the heavy, double, rounded and dashed families
-to `boxLight`; `blocks` is graded by the target's `blocks` level. The roles a
-theme names a charset for are frame, rule, tree guide, thumb and marks.
+to `boxLight`; `blocks` is graded by the target's `blocks` level. A theme names
+a family for four roles: frame, tree guide, thumb and marks. A widget says how
+strong its edge is (width and stroke); the family says which glyphs draw it;
+the target's tier caps the result (D59). Rules have no family: nothing
+theme-driven draws one.
 Violation: a glyph outside the target's tier reaching the canvas.
 
 ## Border projection
