@@ -40,6 +40,7 @@ import sparkles.ui.image : defaultCellPixels, fitRect, ImageData, ImageFit, Imag
 import sparkles.ui.image_raster : ImageRung, imageRungOf, paintImageRaster;
 import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.style : BorderStyle, Visual;
+import sparkles.base.term_caps : BlockTier;
 import sparkles.ui.tokens : boxGlyphs, projectBorder, TargetCapabilities;
 
 import sparkles.base.term_color : Color, RgbColor, toRgb;
@@ -174,11 +175,16 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
                 canvas.popEffect();
                 break;
             case rule:
-                // The cell backend has no sub-cell resolution: a hairline
-                // becomes the box-drawing line along the same edge (UIA2).
-                Point rf, rt;
-                ruleSpan(op.rect, op.ruleEdge, rf, rt);
-                canvas.line(rf, rt, op.visual, LineStyle.solid);
+                // `GLY2a`: where the target has the half blocks, a hairline
+                // on a rect's edge is the thin glyph on that cell boundary.
+                // Otherwise, and for a centre rule, which runs through a cell
+                // rather than along one, it is the cell line (`UIA2`).
+                if (!canvas.hairline(op.rect, op.ruleEdge, op.visual))
+                {
+                    Point rf, rt;
+                    ruleSpan(op.rect, op.ruleEdge, rf, rt);
+                    canvas.line(rf, rt, op.visual, LineStyle.solid);
+                }
                 break;
             case scrollbar:
                 paintScrollbarCells(canvas, op);
@@ -886,6 +892,44 @@ struct GridCanvas
     /// Underlines the cells `from` → `to` in `v.fg`: `wavy` → an SGR-58 curly
     /// undercurl (the error squiggle), `solid` → a single underline. The glyphs
     /// beneath keep their own foreground.
+    /**
+    A hairline on the cell boundary `edge` names (`GLY2a`): `▔` along the top,
+    `▁` the bottom, `▏` the left and `▕` the right edge of the cells the rule
+    runs through. `false`, painting nothing, where the target has no half blocks
+    or the edge is a centre, which runs through a cell rather than along
+    one; the caller then draws the cell line.
+    */
+    bool hairline(in Rect r, RuleEdge edge, in Visual v) scope
+    {
+        if (!capabilities.unicode || capabilities.blocks < BlockTier.half)
+            return false;
+        dchar g;
+        final switch (edge) with (RuleEdge)
+        {
+            case top:    g = '▔'; break;
+            case bottom: g = '▁'; break;
+            case left:   g = '▏'; break;
+            case right:  g = '▕'; break;
+            case centerX: case centerY:
+                return false;
+        }
+        Point from, to;
+        ruleSpan(r, edge, from, to);
+        const vertical = edge == RuleEdge.left || edge == RuleEdge.right;
+        foreach (i; 0 .. vertical ? to.y - from.y : to.x - from.x)
+        {
+            const x = vertical ? from.x : from.x + i;
+            const y = vertical ? from.y + i : from.y;
+            if (!inBounds(x, y))
+                continue;
+            auto c = &cell(x, y);
+            auto st = c.style;
+            st.fg = Color.fromRgb(v.fg);
+            c.setCodepoint(g, 1, st);
+        }
+        return true;
+    }
+
     void line(in Point from, in Point to, in Visual v, LineStyle style) scope
     {
         if (from.y == to.y || from.x != to.x)
@@ -1379,8 +1423,38 @@ static assert(isCanvas!GridCanvas);
     paintGrid(g, RgbColor(0, 0, 0), ops);
 
     foreach (x; 0 .. 6)
-        assert(g[cast(ushort) x, 1].style.underline == UnderlineStyle.single,
+        assert(g[cast(ushort) x, 1].grapheme == "▔",
             "the rule covers its whole rect, last cell included");
+}
+
+@("tui_canvas.aHairlineSitsOnTheEdgeItNames")
+@safe unittest
+{
+    import sparkles.base.term_caps : BlockTier;
+    import sparkles.ui.canvas : ruleOp, RuleEdge;
+    import sparkles.ui.style : Slot;
+
+    // `GLY2a`: with the half blocks a hairline is the thin glyph on the
+    // boundary its edge names, so a right-edge rule hugs the right side of
+    // its column and a top-edge rule the top of its row.
+    static string at(RuleEdge e, BlockTier blocks, int x, int y)
+    {
+        Grid g;
+        g.resize(4, 4);
+        auto c = gridCapabilities;
+        c.blocks = blocks;
+        auto ops = [ruleOp(Rect(0, 0, 4, 4), e, Slot.border,
+            Visual(fg: RgbColor(0x88, 0x88, 0x88)))];
+        paintGrid(g, RgbColor(0, 0, 0), ops, caps: c);
+        return g[cast(ushort) x, cast(ushort) y].grapheme.idup;
+    }
+    assert(at(RuleEdge.top, BlockTier.half, 2, 0) == "▔");
+    assert(at(RuleEdge.bottom, BlockTier.half, 2, 3) == "▁");
+    assert(at(RuleEdge.left, BlockTier.half, 0, 2) == "▏");
+    assert(at(RuleEdge.right, BlockTier.half, 3, 2) == "▕");
+    // Without the half blocks, no thin glyph reaches the target.
+    assert(at(RuleEdge.top, BlockTier.none, 2, 0) != "▔");
+    assert(at(RuleEdge.right, BlockTier.none, 3, 2) != "▕");
 }
 
 @("tui_canvas.capabilities.painterDoesWhatTheReportSays")

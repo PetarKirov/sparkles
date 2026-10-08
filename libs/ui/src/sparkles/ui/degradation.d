@@ -22,7 +22,7 @@ import std.traits : EnumMembers, getUDAs;
 import sparkles.base.term_color : ColorDepth, RgbColor;
 import sparkles.base.term_style : UnderlineStyle;
 import sparkles.ui.canvas : DrawOp, FillRect, Glyph, Ink, Line, LineStyle, match,
-    ImageDraw, PopClip, PopEffect, PushClip, PushEffect, Rule, Scrollbar, TextRun;
+    ImageDraw, PopClip, PopEffect, PushClip, PushEffect, Rule, RuleEdge, Scrollbar, TextRun;
 import sparkles.base.term_caps : BlockTier;
 import sparkles.ui.glyphs : admits, GlyphNeed, needOf;
 import sparkles.ui.image_raster : ImageRung, imageRungOf;
@@ -290,6 +290,11 @@ DegradationReport degradationsOf(in DrawOp[] ops, in TargetCapabilities caps)
                 ink(ru.ink);
                 if (!caps.unicode)
                     r.note(Substitution.asciiBorder);
+                // `GLY2a`: an edge hairline is a thin boundary glyph only
+                // with the half blocks; without them it is the cell line.
+                else if (noBlocks && ru.edge != RuleEdge.centerX
+                        && ru.edge != RuleEdge.centerY)
+                    r.note(Substitution.blocksFolded);
             },
             (in Scrollbar s) {
                 color();
