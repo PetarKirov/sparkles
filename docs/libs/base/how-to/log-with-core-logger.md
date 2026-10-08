@@ -106,20 +106,33 @@ auto ring = installRingLog();                       // ring → file → stderr
 `initLogger` sets the level on every link of the chain. Writing to either sink
 is `@safe nothrow @nogc`.
 
-## Report the build: `buildStampOf`
+## Report the build
 
-`buildStampOf!()` (`sparkles.base.build_stamp`) is the version and commit a
-packaging build wrote to `sparkles-build-stamp` on the compiler's `-J` path —
-`dev` for a plain `dub build`. It is a template, so the _application's_
-compilation resolves it:
+A packaging build writes the version, the commit and the direct dependencies
+into a JSON section of the binary (ELF `.build_info`). The second derivation
+writes that section, so a commit that changes none of what was linked does
+not rebuild the binary. Only apps that opt in (`stampBuildInfo = true`) get
+it; the rest keep an empty `{}` section and stay cached across commits.
+`sparkles.core_cli.build_info` reads it:
 
+```d
+import std.file : thisExePath;
+
+import sparkles.core_cli.build_info : BuildLoad, buildInfoFromJSON, buildInfoSection;
+
+auto section = buildInfoSection(thisExePath);
+auto load = section is null
+    ? BuildLoad.unstamped()
+    : buildInfoFromJSON(cast(const(char)[]) section);
 ```
-enum stamp = buildStampOf!();
-info(i"myapp $(stamp.version_) ($(stamp.commitLabel))");
-```
 
-The Nix side is `legacyPackages.mkBuildStamp { version = …; }`, which stamps a
-dirty tree as `<rev>-dirty` (`commitLabel`: `<rev> + uncommitted changes`).
+A `dub build` has no section, and `buildInfoSection` returns `null`: take the
+unstamped facts (`version` is `dev`) rather than parsing nothing, which is an
+error. A section that fails to decode is an error too (`load.hasError`). A
+dirty tree is `dirty: true` with the hash, not the hash alone.
+
+`sparkles.base.build_stamp.buildStampOf` is the leftover compile-time `-J`
+import. The packaging path does not call it.
 
 ## Advanced Customization: Fatal Handlers
 
