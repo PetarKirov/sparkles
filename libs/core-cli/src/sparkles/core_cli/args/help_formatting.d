@@ -299,7 +299,10 @@ private string[] collectUsageParts(Cli)()
 
 private string[] formatOptions(Root, Cli)()
 {
-    string[] lines = [helpRow("-h".sty.bold ~ ", " ~ "--help".sty.bold, "Show this help text.")];
+    string[] lines = [
+        helpRow("-h".sty.bold ~ ", " ~ "--help".sty.bold, "Show this help text."),
+        helpRow("-V".sty.bold ~ ", " ~ "--version".sty.bold, "Show the build-info JSON."),
+    ];
     lines ~= collectUngroupedOptions!(Root, Cli)();
     return lines;
 }
