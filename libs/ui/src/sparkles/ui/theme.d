@@ -47,6 +47,66 @@ public import sparkles.ui.style : FrameFamily, GlyphSet, GuideFamily, MarkCharse
 /// `Color.Kind.unset` means "not specified".
 alias StyleSpec = TermStyle;
 
+/**
+A font face of a theme, named by how it looks (`WEB6`, D63): the lower of the
+two font layers, each a fallback stack.
+*/
+enum FontFace : ubyte
+{
+    sans,    /// the proportional text face
+    mono,    /// the monospace face
+    display, /// the face for headings and other large text
+}
+
+/// A font role, named by what it is for: the upper layer, each naming a face.
+enum FontRole : ubyte
+{
+    body,    /// running text
+    code,    /// code, terminal content, anything on the cell grid
+    heading, /// headings
+}
+
+/**
+The font channel of a theme (`WEB6`, `GLY11`, D63). A face holds its fallback
+stack, most preferred first and ending, by convention, in a generic family
+(`monospace`); a role names the face it draws with, so a theme retargets
+headings without touching body text. A face left empty is the target's
+default face, and nothing is emitted for it.
+*/
+struct FontSet
+{
+    string[][FontFace.max + 1] faces; /// each face's stack, by $(LREF FontFace)
+    /// The face each role draws with, by $(LREF FontRole).
+    FontFace[FontRole.max + 1] roles = [FontFace.sans, FontFace.mono, FontFace.display];
+
+    /// Whether the theme names any face.
+    bool any() const pure nothrow @nogc
+    {
+        foreach (f; faces)
+            if (f.length)
+                return true;
+        return false;
+    }
+
+    /// The stack `role` draws with; empty when its face is the target's default.
+    const(string)[] stackOf(FontRole role) const pure nothrow @nogc
+        => faces[roles[role]];
+}
+
+///
+@("ui.theme.FontSet.rolesNameFaces")
+@safe pure nothrow unittest
+{
+    FontSet f;
+    assert(!f.any && f.stackOf(FontRole.body).length == 0);
+    f.faces[FontFace.sans] = ["Inter", "sans-serif"];
+    assert(f.any && f.stackOf(FontRole.body) == ["Inter", "sans-serif"]);
+    // A heading drawn in the body face: retarget the role, not the stack.
+    assert(f.stackOf(FontRole.heading).length == 0);
+    f.roles[FontRole.heading] = FontFace.sans;
+    assert(f.stackOf(FontRole.heading) == ["Inter", "sans-serif"]);
+}
+
 /// One syntax rule: a dotted label selector and the style it assigns.
 ///
 /// Matching is longest-dot-prefix, whole-spec-wins (no attribute cascade), and
@@ -78,6 +138,7 @@ struct Theme
     bool hasPalette; /// ditto — `true` once `palette` was set explicitly
 
     GlyphSet glyphs; /// glyph channel
+    FontSet fonts;   /// font channel (`WEB6`): faces and the roles that use them
 
     /// Effect channel (`EFX16`): the theme's say over the built-in effect
     /// set. All-default leaves them exactly as registered; a binding turns
