@@ -30,9 +30,10 @@ naming direction also keeps a faster form that requires a declared member of an
 enum without duplicate values. Recasing uses the
 [case-style primitive](./case-style.md). The module is
 unopinionated: it renders a declared member's identifier and validates an
-underlying value, and nothing more. It has **no serialization or UDA policy**;
-per-member name overrides such as `@WireName` belong to policy layers like
-[`sparkles:wired`](../../wired/SPEC.md).
+underlying value, and nothing more. It has **no UDA policy**: a member's name in
+a format, `@WireName` included, is the format-aware writer's and reader's
+(`writeEnumMemberName!F`, `readEnumString!(E, F)`), resolved by
+`sparkles.base.text.wire_names` ([wired §3](../../wired/SPEC.md#_3-the-format-concept)).
 
 Section 2 lists the API, §3 the semantics of each primitive, §4 the
 compile-time contract, and §5 runnable examples. The library overview is
@@ -102,6 +103,8 @@ policy:
 - `writeEnumMemberName!style` / `writeEnumValue`
   (`sparkles.base.text.writers`) — the output-range writers for the name and
   value directions.
+- `writeEnumMemberName!F` / `readEnumString!(E, F)` — the same directions in a
+  format `F`, whose names honour `@WireName` as the format's name source allows.
 
 ## 3. Name and value semantics
 

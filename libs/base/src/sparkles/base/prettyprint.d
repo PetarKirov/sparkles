@@ -3,7 +3,8 @@ module sparkles.base.prettyprint;
 import std.typecons : Tuple;
 
 import sparkles.base.term_style : Style;
-import sparkles.base.text.writers : EnumRender, writeEscapeSeq, writeStylized, writeStyledValue;
+import sparkles.base.text.wire_names : Pretty;
+import sparkles.base.text.writers : writeEscapeSeq, writeStylized, writeStyledValue;
 
 struct PrettyPrintOptions(SourceUriHook = void)
 {
@@ -530,7 +531,7 @@ private struct PrettyLeafHook
 {
     enum escapeStrings = true;
     enum escapeChars = true;
-    enum enumRender = EnumRender.memberName;
+    alias Format = Pretty; // enums by identifier: a debugging view of the source
 
     Style styleOf(T)(in T val) const @safe pure nothrow @nogc
     {

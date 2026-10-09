@@ -3,7 +3,7 @@ Integration schemas: `sparkles.input.Event` through the reflection kernel.
 
 The input vocabulary is plain data — no DQL knowledge, no resolver, no
 policy. The schema is generated inside DQL from the types themselves; the
-only input-side contributions are neutral metadata (`@Name`/`@Aliases` on
+only input-side contributions are neutral metadata (`@WireName`/`@Aliases` on
 `Key`'s members and the variant types) and the language capability that makes
 `KeyEvent.text` a `@property`.
 */
@@ -64,7 +64,7 @@ alias parseAndEval = parseAndEvalDql!InputSchema;
         action: KeyAction.press);
 
     foreach (query; [
-        "key.key == pageup",     // @Name spelling
+        "key.key == pageup",     // @WireName spelling
         "key.key == pgup",       // @Aliases spelling
         "key.key == pageUp",     // declared identifier
         "key.action == press",

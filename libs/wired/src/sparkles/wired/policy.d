@@ -18,31 +18,18 @@ module sparkles.wired.policy;
 
 import std.traits : getUDAs, TemplateArgsOf, TemplateOf;
 
-// `CaseStyle` is part of the public `@WireCase` surface (`@WireCase(CaseStyle.…)`),
-// so re-export it; `convertCase` stays an internal resolution helper.
-public import sparkles.base.text.case_style : CaseStyle;
+// The format vocabulary — `AnyFormat`, the format tags, `CaseStyle`, `Repr`,
+// `WireTarget` and the `@WireName`/`@WireCase`/`@WireRepr` attributes — lives
+// in `sparkles:metadata`, so `sparkles:base` can resolve names through it; the
+// type-level resolution rule is `sparkles.base.text.wire_names`. Both are part
+// of this module's public surface, re-exported unchanged.
+public import sparkles.metadata.wire : AnyFormat, CaseStyle, DSource, NameSource,
+    nameSourceOf, Pretty, Repr, WireCase, WireCaseAttr, WireName, WireNameAttr,
+    WireRepr, WireReprAttr, WireTarget;
+public import sparkles.base.text.wire_names : hasExplicitWireName, resolveCaseStyle,
+    resolveRepr;
 import sparkles.base.text.case_style : convertCase;
-
-/// The sentinel format: an untagged `@Wire*` UDA applies under every format.
-struct AnyFormat
-{
-}
-
-/// Enum serialization representation — by member name or underlying value (§7).
-enum Repr
-{
-    name,  /// the member's serialized name
-    value, /// the member's underlying value (via `OriginalType`)
-}
-
-/// Which slot of a wrapped field a slot-targeted `WireCase`/`WireRepr` applies
-/// to (§5.2).
-enum WireTarget
-{
-    all,   /// every eligible target on any branch (the default)
-    key,   /// only enums reached in an associative-array key position
-    value, /// only the value branch (array element, AA value, nullable contained)
-}
+import sparkles.base.text.wire_names : enumNames, firstDuplicate;
 
 /// Encode omission policy for `@WireOptional` (§5.4).
 enum WireSkip
@@ -65,45 +52,6 @@ enum MatchStrategy
     exactlyOne, /// exactly one variant must decode (the default)
     first,      /// the first variant that decodes, in declaration order
 }
-
-/// The attribute produced by $(LREF WireName): an explicit member/field name
-/// tagged with the format it applies under.
-struct WireNameAttr(Format_ = AnyFormat)
-{
-    string name;           /// the explicit wire name
-    alias Format = Format_; /// the format this name applies under
-}
-
-/// `@WireName!F("text")` — the serialized member or field name under format `F`.
-WireNameAttr!Format WireName(Format = AnyFormat)(string name) @safe pure nothrow @nogc
-    => WireNameAttr!Format(name);
-
-/// The attribute produced by $(LREF WireCase).
-struct WireCaseAttr(Format_ = AnyFormat)
-{
-    CaseStyle style;                    /// the case to recase into
-    WireTarget target = WireTarget.all; /// which slot the recasing applies to
-    alias Format = Format_;             /// the format this recasing applies under
-}
-
-/// `@WireCase!F(style[, target])` — recase member/field names under `F` (§6).
-WireCaseAttr!Format WireCase(Format = AnyFormat)(
-    CaseStyle style, WireTarget target = WireTarget.all) @safe pure nothrow @nogc
-    => WireCaseAttr!Format(style, target);
-
-/// The attribute produced by $(LREF WireRepr).
-struct WireReprAttr(Format_ = AnyFormat)
-{
-    Repr repr;                          /// name vs value
-    WireTarget target = WireTarget.all; /// which slot the representation applies to
-    alias Format = Format_;             /// the format this representation applies under
-}
-
-/// `@WireRepr!F(repr[, target])` — serialize an enum by member name vs
-/// underlying value under `F` (§7).
-WireReprAttr!Format WireRepr(Format = AnyFormat)(
-    Repr repr, WireTarget target = WireTarget.all) @safe pure nothrow @nogc
-    => WireReprAttr!Format(repr, target);
 
 /// The attribute produced by $(LREF WireOptional).
 struct WireOptionalAttr(Format_ = AnyFormat)
@@ -298,76 +246,6 @@ struct WireMatch
 // Policy resolution
 // ─────────────────────────────────────────────────────────────────────────────
 
-private bool broadTarget(A)(A a) => a.target == WireTarget.all;
-
-/// Index of the first `Attr` UDA on `sym` whose format is exactly `Fmt` and that
-/// passes `pred`, or -1. CTFE helper underpinning the resolvers.
-private template firstAttr(alias sym, alias Attr, Fmt, alias pred)
-{
-    enum ptrdiff_t firstAttr = () {
-        static foreach (i, uda; getUDAs!(sym, Attr))
-            static if (is(typeof(uda).Format == Fmt))
-                if (pred(uda))
-                    return cast(ptrdiff_t) i;
-        return cast(ptrdiff_t)(-1);
-    }();
-}
-
-/// The first `Attr` UDA on `sym` passing `pred`, preferring an exact-`F` tag
-/// over `AnyFormat` — the one resolution rule every `@Wire*` attribute follows
-/// (§5.1). `found` tells whether one matched; `uda` exists only when it did.
-/// The `AnyFormat` scan is not instantiated when the exact-`F` scan hits, and
-/// an unannotated symbol — the overwhelmingly common case in a type walk —
-/// short-circuits before any `getUDAs` scan is instantiated at all.
-private template pickAttr(alias sym, alias Attr, F, alias pred)
-{
-    static if (__traits(getAttributes, sym).length == 0)
-        enum found = false;
-    else static if (firstAttr!(sym, Attr, F, pred) >= 0)
-    {
-        enum found = true;
-        enum uda = getUDAs!(sym, Attr)[firstAttr!(sym, Attr, F, pred)];
-    }
-    else static if (firstAttr!(sym, Attr, AnyFormat, pred) >= 0)
-    {
-        enum found = true;
-        enum uda = getUDAs!(sym, Attr)[firstAttr!(sym, Attr, AnyFormat, pred)];
-    }
-    else
-        enum found = false;
-}
-
-package template hasExplicitWireName(F, alias symbol)
-{
-    enum hasExplicitWireName = pickAttr!(symbol, WireNameAttr, F,
-        (_) => true).found;
-}
-
-/// The broad (`WireTarget.all`) `CaseStyle` of type `T` under format `F`,
-/// preferring an exact-`F` `WireCase` over its `AnyFormat` form, and falling
-/// back to `CaseStyle.original` (§6). Field-level overrides live in
-/// $(LREF fieldPolicies); this answers the per-type question.
-template resolveCaseStyle(F, T)
-{
-    private alias p = pickAttr!(T, WireCaseAttr, F, broadTarget);
-    static if (p.found)
-        enum CaseStyle resolveCaseStyle = p.uda.style;
-    else
-        enum CaseStyle resolveCaseStyle = CaseStyle.original;
-}
-
-/// The broad (`WireTarget.all`) `Repr` of type `T` under format `F`, preferring
-/// exact-`F` over `AnyFormat`, defaulting to `Repr.name` (§7). Field-level
-/// overrides live in $(LREF fieldPolicies); this answers the per-type question.
-template resolveRepr(F, T)
-{
-    private alias p = pickAttr!(T, WireReprAttr, F, broadTarget);
-    static if (p.found)
-        enum Repr resolveRepr = p.uda.repr;
-    else
-        enum Repr resolveRepr = Repr.name;
-}
-
 @("wired.policy.resolve.caseReprAndName")
 @safe pure unittest
 {
@@ -544,19 +422,6 @@ if (hasConvert!(F, syms))
     static assert(convertOf!(Toml, S.both).to(3) == 4);
 }
 
-/// The first value in `names` that equals an earlier one, or `null` when all are
-/// distinct. CTFE helper for the uniqueness checks (§5.5).
-private string firstDuplicate(const(string)[] names)
-{
-    bool[string] seen;
-    foreach (n; names)
-    {
-        if (n in seen)
-            return n;
-        seen[n] = true;
-    }
-    return null;
-}
 
 /// Compile-time check that enum `E`'s resolved member names are unique under
 /// format `F` (after `WireName` and `WireCase` resolution) — the requirement for
@@ -879,47 +744,11 @@ if (is(T == struct))
 }
 
 /// The resolved wire names of `E`'s members under format `F` at case `style`,
-/// in declaration order, computed in one compile-time pass: an explicit
-/// `@WireName!F` wins, then `@WireName!Any`, else the identifier recased by
-/// `convertCase!style` (§5.1, §6).
-template wireNames(F, E, CaseStyle style)
-if (is(E == enum))
-{
-    // `static immutable` for the same reason as `fieldPolicies`: per-member
-    // `names[i]` reads must not re-copy the whole array.
-    static immutable string[] wireNames = () {
-        string[] r;
-        static foreach (m; __traits(allMembers, E))
-        {{
-            string explicitName;
-            int nameTier;
-            static foreach (uda; __traits(getAttributes, __traits(getMember, E, m)))
-            {{
-                static if (is(typeof(uda) == WireNameAttr!F))
-                    enum tier = 2;
-                else static if (is(typeof(uda) == WireNameAttr!AnyFormat))
-                    enum tier = 1;
-                static if (is(typeof(tier)))
-                {
-                    if (nameTier < tier)
-                    {
-                        explicitName = uda.name;
-                        nameTier = tier;
-                    }
-                }
-            }}
-            r ~= nameTier ? explicitName : convertCase!style(m);
-        }}
-        return r;
-    }();
-
-    // §5.5: the names actually used on the wire must be unique — checked on the
-    // exact (format, enum, style) table, so field-override styles are covered.
-    private enum dupName = firstDuplicate(wireNames);
-    static assert(dupName is null,
-        "wired: duplicate member name \"" ~ dupName ~ "\" for enum " ~ E.stringof
-        ~ " under format " ~ F.stringof);
-}
+/// in declaration order: an explicit `@WireName!F` wins, then `@WireName!Any`,
+/// else the identifier recased (§5.1, §6). The shared rule of
+/// $(REF enumNames, sparkles,base,text,wire_names), which also enforces §5.5's
+/// uniqueness at compile time.
+alias wireNames(F, E, CaseStyle style) = enumNames!(F, E, style);
 
 // One aggregate exercising every FieldPolicy component at once: renamed,
 // slot-targeted, optional, match-tuned, and plain fields side by side.

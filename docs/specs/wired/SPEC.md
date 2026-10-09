@@ -133,23 +133,32 @@ true
 | Source root     | `libs/wired/src/sparkles/wired/` |
 | Package module  | `sparkles.wired`                 |
 
-| Module                  | Contents                                                                                                                                                                                     |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sparkles.wired`        | Public re-exports (`package.d`)                                                                                                                                                              |
-| `sparkles.wired.policy` | `AnyFormat`, the `@Wire*` UDAs (`WireName`, `WireCase`, `WireRepr`, `WireOptional`, `WireConvert`, `WireMatch`) and their enums (`Repr`, `WireTarget`, `WireSkip`, `WireInvalid`), resolvers |
-| `sparkles.wired.json`   | `struct Json {}` (the JSON format marker) + the JSON backend (`toJSON`, `fromJSON`, `readJSONFile`, `writeJSONFile`)                                                                         |
+| Module                  | Contents                                                                                                                                                                                       |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sparkles.wired`        | Public re-exports (`package.d`)                                                                                                                                                                |
+| `sparkles.wired.policy` | The serde-only UDAs (`WireOptional`, `WireConvert`, `WireMatch`, `WireStrict`) and their enums (`WireSkip`, `WireInvalid`), the field-policy resolvers; re-exports the format vocabulary below |
+| `sparkles.wired.json`   | `struct Json {}` (the JSON format marker) + the JSON backend (`toJSON`, `fromJSON`, `readJSONFile`, `writeJSONFile`)                                                                           |
 
 Each format module owns its own marker type (§3); there is no central format
 registry.
 
-**Foundation in `sparkles:base`** — the format-agnostic text primitives live in
-`base`, not in `wired`:
+**The format vocabulary in `sparkles:metadata`** — data only, so that `base`
+can resolve names through it without depending on `wired`:
 
-| Module                          | Provides                                                                                                             |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `sparkles.base.text.case_style` | `CaseStyle`, `convertCase!style(ident)`, `writeConvertedCase!style(w, ident)` — CTFE-compatible case conversion (§6) |
-| `sparkles.base.text.enums`      | `enumMemberName!style(value)`, `enumFromValue!E(v)` — enum name ⇄ value primitives                                   |
-| `sparkles.base.text.errors`     | `ParseError {code, offset, context}`, `ParseErrorCode`, `ParseExpected!T`                                            |
+| Module                         | Provides                                                                                                                                                                   |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sparkles.metadata.wire`       | `AnyFormat`, `NameSource` and `nameSourceOf`, the identifier formats `Pretty` and `DSource` (§3), the `WireName`, `WireCase` and `WireRepr` UDAs, and `Repr`, `WireTarget` |
+| `sparkles.metadata.case_style` | `CaseStyle`                                                                                                                                                                |
+
+**Foundation in `sparkles:base`** — the format-agnostic text primitives and
+the name-resolution rule live in `base`, not in `wired`:
+
+| Module                          | Provides                                                                                                                                                        |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sparkles.base.text.wire_names` | `enumNames!(F, E)`, `resolveCaseStyle!(F, T)`, `resolveRepr!(F, T)`, `hasExplicitWireName!(F, sym)` — the member- and type-level resolution of §5.1, per format |
+| `sparkles.base.text.case_style` | `convertCase!style(ident)`, `writeConvertedCase!style(w, ident)` — CTFE-compatible case conversion (§6); re-exports `CaseStyle`                                 |
+| `sparkles.base.text.enums`      | `enumMemberName!style(value)`, `enumFromValue!E(v)` — enum name ⇄ value primitives                                                                              |
+| `sparkles.base.text.errors`     | `ParseError {code, offset, context}`, `ParseErrorCode`, `ParseExpected!T`                                                                                       |
 
 ## 3. The Format concept
 
@@ -168,6 +177,27 @@ Every `@Wire*` UDA (§5) is format-aware and defaults to `AnyFormat`. A value is
 (de)serialized **under** one format — `toJSON` operates under `Json` — and policy
 is resolved relative to that format: the most format-specific UDA wins, falling
 back to the `AnyFormat` form, then to the built-in default.
+
+**The format is the context.** An enum has several reasonable spellings — a
+pretty-printed dump, D source, a JSON string, a JSON number, a theme file's
+leaf — and the format being written selects one. A format tag may declare
+where its names come from:
+
+```d
+enum NameSource { wire, identifier }
+
+struct Json {}                                               // wire (the default)
+struct Pretty  { enum nameSource = NameSource.identifier; }  // a debugging view
+struct DSource { enum nameSource = NameSource.identifier; }  // string mixins
+```
+
+A `wire` format honours `AnyFormat` UDAs. An `identifier` format honours only
+UDAs tagged with itself, so a type annotated for serde is pretty-printed and
+turned into compilable D by its identifiers with no further annotation;
+`@WireName!DSource("…")` customises the rare case. `Pretty` and `DSource` ship
+in `sparkles:metadata` with the vocabulary; the text writers use them
+(`prettyPrint` writes under `Pretty`), and `writeEnumMemberName!F` /
+`readEnumString!(E, F)` write and read any format's names.
 
 ## 4. The JSON backend
 

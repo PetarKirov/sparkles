@@ -23,7 +23,7 @@ import std.sumtype : SumType;
 import sparkles.base.buffer : InlineBuffer;
 import sparkles.base.meta : isVersion;
 import sparkles.math : ScreenPosition, ScreenSize;
-public import sparkles.metadata : Aliases, Label, Name;
+public import sparkles.metadata : Aliases, AnyFormat, Label, WireName, WireNameAttr;
 
 /// Re-exported so consumers dispatch with `event.match!(…)` without importing
 /// `std.sumtype` themselves.
@@ -44,9 +44,8 @@ enum KeyRole : ubyte
     modifier,
 }
 
-/// Compatibility names for the original input metadata vocabulary.
-alias WireName = Name;
-/// ditto
+/// Compatibility names for the original input metadata vocabulary; a key's
+/// wire name is the format-neutral `@WireName` itself.
 alias WireAliases = Aliases;
 /// ditto
 alias WireDisplayName = Label;
@@ -135,7 +134,7 @@ struct Mods
     bool ctrl;
     bool alt;
     bool shift;
-    @Name("meta") bool super_;
+    @WireName("meta") bool super_;
 }
 
 /// The platform-idiomatic name for the `super_` modifier key ("Cmd" on Apple, "Super" elsewhere).
@@ -228,7 +227,7 @@ bool parseKey(string name, out Key key) @safe pure nothrow
     {
         static if (k != Key.none && k != Key.char_)
         {
-            static foreach (uda; getUDAs!(__traits(getMember, Key, __traits(identifier, k)), WireName))
+            static foreach (uda; getUDAs!(__traits(getMember, Key, __traits(identifier, k)), WireNameAttr!AnyFormat))
             {
                 if (name == uda.name || (uda.name.length > 1 && iequal(name, uda.name)))
                 {
@@ -428,8 +427,8 @@ string keyWireName(Key k) @safe pure nothrow @nogc
         static foreach (m; EnumMembers!Key)
         {
             case m:
-                static if (getUDAs!(__traits(getMember, Key, __traits(identifier, m)), WireName).length > 0)
-                    return getUDAs!(__traits(getMember, Key, __traits(identifier, m)), WireName)[0].name;
+                static if (getUDAs!(__traits(getMember, Key, __traits(identifier, m)), WireNameAttr!AnyFormat).length > 0)
+                    return getUDAs!(__traits(getMember, Key, __traits(identifier, m)), WireNameAttr!AnyFormat)[0].name;
                 else
                     return __traits(identifier, m);
         }
@@ -975,7 +974,7 @@ struct GestureEvent
 
 /// An unrecognized or incomplete input sequence — ignorable, but its presence
 /// is visible (e.g. to a raw-input debugger) rather than silently dropped.
-@Name("none")
+@WireName("none")
 struct NoEvent
 {
 }

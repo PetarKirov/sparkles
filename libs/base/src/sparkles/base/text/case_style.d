@@ -21,16 +21,9 @@ module sparkles.base.text.case_style;
 import std.range.primitives : ElementType, isForwardRange, isOutputRange, put;
 import std.traits : isSomeChar;
 
-/// The set of case styles $(LREF convertCase) can rejoin an identifier into.
-enum CaseStyle
-{
-    original,           /// return the identifier unchanged (no split/rejoin)
-    camelCase,          /// `fromXmlToJson` — lowercase first word, title-case the rest
-    pascalCase,         /// `FromXmlToJson` — title-case every word
-    snakeCase,          /// `from_xml_to_json` — lowercase words joined with `_`
-    kebabCase,          /// `from-xml-to-json` — lowercase words joined with `-`
-    screamingSnakeCase, /// `FROM_XML_TO_JSON` — uppercase words joined with `_`
-}
+/// The set of case styles $(LREF convertCase) can rejoin an identifier into:
+/// vocabulary, so it lives in `sparkles:metadata` beside `@WireCase`.
+public import sparkles.metadata.case_style : CaseStyle;
 
 // Slices must be indexed as code units instead of using Phobos's implicitly
 // decoding front/popFront primitives. Caller-provided ranges keep their contract.

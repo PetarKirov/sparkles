@@ -206,7 +206,7 @@ string generate(string workload, string moduleName, uint size)
     const header = "module " ~ moduleName ~ ";\n\n"
         ~ "import std.sumtype : SumType;\n\n"
         ~ "import sparkles.dql.schema : DqlSchema;\n"
-        ~ "import sparkles.metadata : Aliases, Description, Name;\n\n";
+        ~ "import sparkles.metadata : Aliases, Description, WireName;\n\n";
 
     switch (workload)
     {
@@ -238,12 +238,12 @@ private string anchor(string type)
 /// One `SumType` of `size` alternatives, each a struct of six fields cycling
 /// through the leaf shapes the input/wsi vocabularies use: enums, bools,
 /// floats, chars, a modifier aggregate, and a value-like wrapper. Every 4th
-/// alternative carries `@Aliases`, every 5th `@Name`.
+/// alternative carries `@Aliases`, every 5th `@WireName`.
 string genSum(uint size)
 {
     string s = "enum Mode { alpha, beta, gamma, delta }\n\n"
         ~ "struct Mods { bool ctrl; bool alt; bool shift;"
-        ~ " @Name(\"meta\") bool super_; }\n\n"
+        ~ " @WireName(\"meta\") bool super_; }\n\n"
         ~ "struct Extent\n{\n"
         ~ "    private int value_;\n"
         ~ "    @property int value() const => value_;\n"
@@ -252,7 +252,7 @@ string genSum(uint size)
     foreach (i; 0 .. size)
     {
         if (i % 5 == 4)
-            s ~= format!"@Name(\"alt%s\")\n"(i);
+            s ~= format!"@WireName(\"alt%s\")\n"(i);
         else if (i % 4 == 3)
             s ~= format!"@Aliases(\"a%s\")\n"(i);
         s ~= format!"struct Alt%sEvent\n{\n"(i);

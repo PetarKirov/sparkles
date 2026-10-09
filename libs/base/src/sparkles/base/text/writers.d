@@ -12,6 +12,8 @@ import std.traits : isSomeChar, isSomeString;
 
 import sparkles.base.term_style : Style;
 import sparkles.base.text.case_style : CaseStyle, convertCase;
+import sparkles.base.text.wire_names : AnyFormat, DSource, enumNames, Pretty, Repr,
+    resolveRepr, WireName;
 import sparkles.reflection.kind : TypeKind, typeKindOf;
 
 version (unittest)
@@ -756,7 +758,10 @@ $(UL
     $(LI `Style styleOf(T)(value)` — per-type/per-value style selection)
     $(LI `enum bool escapeStrings` — write strings quoted and escaped)
     $(LI `enum bool escapeChars` — write chars quoted and escaped)
-    $(LI `enum EnumRender enumRender` — how enum values are rendered)
+    $(LI `alias Format` — the format enum values are written in: by the name
+        `writeEnumMemberName!Format` resolves, or by underlying value when the
+        type's `@WireRepr` says so for that format. Absent, an enum writes its
+        underlying value.)
 )
 */
 /// The value of a compile-time `bool` member of `Policy`, or `false` when
@@ -770,14 +775,8 @@ private template policyFlag(Policy, string name)
         enum bool policyFlag = false;
 }
 
-/// ditto, for the `enumRender` hook; absent means `EnumRender.underlying`.
-private template policyEnumRender(Policy)
-{
-    static if (__traits(compiles, { enum EnumRender r = __traits(getMember, Policy, "enumRender"); }))
-        enum EnumRender policyEnumRender = __traits(getMember, Policy, "enumRender");
-    else
-        enum EnumRender policyEnumRender = EnumRender.underlying;
-}
+/// Whether `Policy` names the format its enums are written in.
+private enum bool hasPolicyFormat(Policy) = is(Policy.Format);
 
 private void writeValueBody(Policy, Writer, T)(ref Writer w,
     auto ref const T value, in Policy policy)
@@ -791,8 +790,8 @@ private void writeValueBody(Policy, Writer, T)(ref Writer w,
     }
     else static if (typeKindOf!T == TypeKind.enumeration)
     {
-        static if (policyEnumRender!Policy == EnumRender.memberName)
-            writeEnumMemberName(w, value);
+        static if (hasPolicyFormat!Policy && resolveRepr!(Policy.Format, T) == Repr.name)
+            writeEnumMemberName!(Policy.Format)(w, value);
         else
             // The underlying value, through this same dispatch: an integral
             // base keeps the pinned writeInteger rendering, while text,
@@ -1134,6 +1133,50 @@ if (is(E == enum))
     writeValue(w, cast(OriginalType!E) val);
 }
 
+/**
+ditto, the member's name under format `F`: its `@WireName` that applies under
+`F`, else its identifier recased by the type's resolved case
+(`sparkles.base.text.wire_names`). A wire format such as JSON or a theme file
+honours `AnyFormat` names; an identifier format such as `Pretty` or `DSource`
+spells the D identifier unless annotated for itself. Falls back to the
+underlying value when no member matches.
+*/
+void writeEnumMemberName(F, Writer, E)(ref Writer w, const E val)
+if (is(E == enum))
+{
+    import std.range.primitives : put;
+    import std.traits : OriginalType;
+
+    static foreach (i, member; __traits(allMembers, E))
+    {{
+        if (val == __traits(getMember, E, member))
+        {
+            put(w, enumNames!(F, E)[i]);
+            return;
+        }
+    }}
+
+    writeValue(w, cast(OriginalType!E) val);
+}
+
+///
+@("writers.writeEnumMemberName.followsTheFormat")
+@safe pure nothrow @nogc unittest
+{
+    enum Channel
+    {
+        @WireName("fg") foreground,
+        @WireName!DSource("Fg") background,
+    }
+
+    // A wire format takes the AnyFormat name; an identifier format does not.
+    checkWriter!((ref b) => b.writeEnumMemberName!AnyFormat(Channel.foreground))("fg");
+    checkWriter!((ref b) => b.writeEnumMemberName!Pretty(Channel.foreground))("foreground");
+    checkWriter!((ref b) => b.writeEnumMemberName!DSource(Channel.background))("Fg");
+    // The format-less form is still the plain identifier.
+    checkWriter!((ref b) => b.writeEnumMemberName(Channel.foreground))("foreground");
+}
+
 /// Writes an enum value's underlying value (`cast(OriginalType!E)`) to an output
 /// range, using $(LREF writeValue). The value-representation counterpart of
 /// $(LREF writeEnumMemberName).
@@ -1193,13 +1236,6 @@ unittest
 // Styled Value Writing
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Controls how enum values are rendered by `writeStyledValue`.
-enum EnumRender
-{
-    underlying, /// Write as underlying integer (default for styled hooks)
-    memberName, /// Write the member name string (e.g., `"green"`)
-}
-
 /// True if `T` is a leaf type that can be written by `writeStyledValue`
 /// without requiring recursive pretty-printing.
 ///
@@ -1242,7 +1278,7 @@ unittest
 ///
 /// A thin wrapper over the shared dispatch body
 /// (`writeValueImpl`): the hook's optional primitives — `styleOf`,
-/// `escapeStrings`, `escapeChars`, `enumRender` — select presentation only;
+/// `escapeStrings`, `escapeChars`, `Format` — select presentation only;
 /// type handling and the conversion chain are the shared body's, identical to
 /// plain `writeValue`.
 ///
@@ -1322,21 +1358,32 @@ unittest
     assert(buf[] == `'\t'`);
 }
 
-/// Hook with enum member name rendering.
+/// Hook with a format: enums are written by their name in it.
 @("writeStyledValue.enumMemberName")
 @safe pure nothrow @nogc
 unittest
 {
-    enum Dir { north, south, east, west }
+    enum Dir { north, @WireName("S") south, east, west }
 
-    struct EnumHook
+    struct PrettyHook
     {
-        enum enumRender = EnumRender.memberName;
+        alias Format = Pretty;
+    }
+
+    struct AnyHook
+    {
+        alias Format = AnyFormat;
     }
 
     SharedBuffer!(char, 32) buf;
-    writeStyledValue(buf, Dir.south, EnumHook(), false);
-    assert(buf[] == "south");
+    writeStyledValue(buf, Dir.south, PrettyHook(), false);
+    assert(buf[] == "south", "an identifier format ignores the wire name");
+    buf.clear();
+    writeStyledValue(buf, Dir.south, AnyHook(), false);
+    assert(buf[] == "S");
+    buf.clear();
+    writeStyledValue(buf, Dir.south, PlainValuePolicy(), false);
+    assert(buf[] == "1", "no format: the underlying value");
 }
 
 /// Hook with styling disabled (colored=false): no escape codes emitted.

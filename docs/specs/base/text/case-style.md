@@ -35,7 +35,8 @@ overview is [`sparkles:base`](../../../libs/base/index.md).
 
 ## 1. Overview
 
-`sparkles.base.text.case_style` provides a `CaseStyle` enumeration and a
+`sparkles.base.text.case_style` provides (re-exports, from `sparkles:metadata`,
+where the `@WireCase` attribute needs it) a `CaseStyle` enumeration and a
 compile-time-evaluable `convertCase` that renames a single identifier from one
 convention (e.g. `fastPath`) into another (e.g. `fast_path`, `FAST_PATH`,
 `FastPath`). It carries no opinion about where identifiers come from; callers pass

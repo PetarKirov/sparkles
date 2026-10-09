@@ -9,7 +9,7 @@ mirror `sparkles.dql.resolve.resolveValue` case for case: the path prefix
 is an ordinary argument, so a segment can neither leak out of its subtree
 nor go missing from one. There is no per-domain policy type: naming is
 mechanical (`sparkles.dql.convention`), and the only overrides are the
-neutral metadata attributes (`@Name`, `@Aliases`, `@Description`) any
+neutral metadata attributes (`@WireName`, `@Aliases`, `@Description`) any
 consumer of the metadata package already speaks.
 
 Structural conventions:
@@ -18,7 +18,7 @@ $(UL
         attach to the parent path, so an event's `PointerEvent` variant is
         addressed as `pointer.action`, not `payload.pointer.action`)
     $(LI an alternative's segment is its type name minus an `Event` suffix,
-        recased to camelCase; `@Name` on the variant type overrides)
+        recased to camelCase; `@WireName` on the variant type overrides)
     $(LI a fieldless value type whose single `@property` is the value
         (`ScaleFactor`), or that slices to UTF-8 text (`InlineBuffer!(char, N)`),
         is a leaf at its own address)
@@ -37,7 +37,7 @@ import sparkles.dql.convention : descriptionOf, enumValueMatches,
     getterName, includeField, queryGetters, queryValueLikeGetter,
     variantAliasesOf, variantNameOf;
 import sparkles.dql.help : DqlPathDoc;
-import sparkles.metadata : Aliases, Description, Name;
+import sparkles.metadata : Aliases, Description;
 import std.meta : staticIndexOf;
 import std.traits : TemplateArgsOf;
 
@@ -386,11 +386,11 @@ bool isDqlCategory(Schema)(scope const(char)[] name) @safe pure nothrow @nogc
 @safe unittest
 {
     import std.sumtype : SumType;
-    import sparkles.metadata : Name;
+    import sparkles.metadata : WireName;
 
     struct FirstEvent { int a; }
 
-    @Name("first")
+    @WireName("first")
     struct SecondEvent { int b; }
 
     // Two alternatives answering to one token would silently shadow each

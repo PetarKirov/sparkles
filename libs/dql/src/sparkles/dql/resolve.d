@@ -175,7 +175,7 @@ private DqlResolution resolveValue(T, string suffix, Sink)(ref const T value,
             {{
                 if (!matched)
                 {
-                    // The canonical spelling — `@Name` overrides the
+                    // The canonical spelling — `@WireName` overrides the
                     // identifier — or one of the getter's `@Aliases`.
                     size_t consumed = consume(path, getterName!getter);
                     static foreach (aliasName; getterAliasesOf!getter)
@@ -346,7 +346,7 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
 @safe unittest
 {
     import std.sumtype : SumType;
-    import sparkles.metadata : Aliases, Name;
+    import sparkles.metadata : Aliases, WireName;
     import sparkles.dql.engine : DqlEngine;
     import sparkles.dql.eval : evalDql;
     import sparkles.dql.parser : parseDql;
@@ -357,7 +357,7 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
         @Aliases("dy") int deltaY;
         private int raw_;
 
-        @Name("speed") @Aliases("velocity")
+        @WireName("speed") @Aliases("velocity")
         @property int rawSpeed() const pure nothrow @nogc => raw_;
     }
 
@@ -371,7 +371,7 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
     assert(isDqlPath!Schema("wheel.dy"));
     assert(isDqlPath!Schema("wheel.speed"));
     assert(isDqlPath!Schema("wheel.velocity"));
-    assert(!isDqlPath!Schema("wheel.rawSpeed")); // @Name replaced it
+    assert(!isDqlPath!Schema("wheel.rawSpeed")); // @WireName replaced it
 
     // …and both walks accept them end to end.
     WheelEvent inner;
@@ -440,7 +440,7 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
 @safe unittest
 {
     import std.sumtype : SumType;
-    import sparkles.metadata : Name;
+    import sparkles.metadata : WireName;
     import sparkles.dql.schema : isDqlPath;
 
     struct KeyedEvent
@@ -449,7 +449,7 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
         private char[8] text_;
         private ubyte length_;
 
-        @Name("text")
+        @WireName("text")
         @property const(char)[] rawText() const return pure nothrow @nogc
             => text_[0 .. length_];
 
@@ -461,7 +461,7 @@ bool resolveDqlCategory(Schema)(ref const Schema.Subject subject,
 
     alias Schema = DqlSchema!(SumType!(KeyedEvent, PadEvent));
 
-    // The schema publishes the @Name spelling; the mutating getter and the
+    // The schema publishes the @WireName spelling; the mutating getter and the
     // raw identifier of a renamed getter do not exist as paths.
     assert(isDqlPath!Schema("keyed.text"));
     assert(!isDqlPath!Schema("keyed.rawText"));

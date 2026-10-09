@@ -4,14 +4,14 @@ The kernel answers exactly one question — **what shape is this type?** — and
 enumerates the members a shape has. Everything else is the consumer's policy,
 and the boundary is deliberate:
 
-| The kernel owns                                                              | The consumer owns                                            |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| Type classification                                                          | Whether a shape is presented, edited, serialized, or queried |
-| Field and property discovery                                                 | Visibility, editing, and mutation rules                      |
-| The field spine and getter discovery                                         | Which alternative naming a wire format uses                  |
-| The value-like wrapper rule                                                  | Error and result models                                      |
-| Const-readability of getters                                                 | Depth and size budgets, traversal order, cycle policy        |
-| Neutral `@Name`/`@Aliases`/`@Description` metadata (via `sparkles:metadata`) | Domain-specific attributes and their enforcement             |
+| The kernel owns                                                                  | The consumer owns                                            |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| Type classification                                                              | Whether a shape is presented, edited, serialized, or queried |
+| Field and property discovery                                                     | Visibility, editing, and mutation rules                      |
+| The field spine and getter discovery                                             | Which alternative naming a wire format uses                  |
+| The value-like wrapper rule                                                      | Error and result models                                      |
+| Const-readability of getters                                                     | Depth and size budgets, traversal order, cycle policy        |
+| Neutral `@WireName`/`@Aliases`/`@Description` metadata (via `sparkles:metadata`) | Domain-specific attributes and their enforcement             |
 
 ## Why the consumer owns the walk
 
