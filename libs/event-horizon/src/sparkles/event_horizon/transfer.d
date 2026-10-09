@@ -14,14 +14,14 @@ import core.stdc.errno : EIO, EOVERFLOW, EFBIG;
 import sparkles.base.buffer : UniqueBuffer, HeapBuffer;
 import sparkles.event_horizon.buffer : Buf, isOwnedIoBuf;
 import sparkles.event_horizon.errors : IoResult, IoErrorStage, OpKind, ioErr, ioOk;
-import sparkles.event_horizon.io : FileHandle, Stream, read, recv;
-import sparkles.event_horizon.sys.descriptor : isFdBorrowable;
+import sparkles.event_horizon.io : Stream, read, recv;
+import sparkles.event_horizon.sys.descriptor : BorrowedFd, OwnedFd, isFdBorrowable;
+import sparkles.event_horizon.sched : currentScheduler;
+import sparkles.event_horizon.op : OpRead, OpWrite, OpRecv, OpSend;
 
 /// A handle the file verbs take: anything lending a descriptor, except a
 /// `Stream`, which has its own overloads.
 private enum isFileLike(H) = isFdBorrowable!H && !is(H == Stream);
-import sparkles.event_horizon.sched : currentScheduler;
-import sparkles.event_horizon.op : OpRead, OpWrite, OpRecv, OpSend;
 
 /// Ownership and completed prefix are returned even on failure. `res` describes
 /// completion of the whole request, not only the last system call.
@@ -160,14 +160,14 @@ version (Posix)
     scope(exit) sched.destroy();
     int[2] fds;
     assert(pipe(fds) == 0);
-    auto input = FileHandle(fds[0]);
-    auto output = FileHandle(fds[1]);
+    auto input = OwnedFd(fds[0]);
+    auto output = OwnedFd(fds[1]);
     scope(exit) input.close();
     scope(exit) output.close();
     auto ran = sched.run(() {
         UniqueBuffer!(ubyte, 8) invalid;
         invalid ~= cast(ubyte) 42;
-        auto rejected = readInto(FileHandle(-1), invalid);
+        auto rejected = readInto(BorrowedFd(-1), invalid);
         assert(rejected.hasError && invalid.length == 1 && invalid[0] == 42);
         assert(sched.spawn(() {
             UniqueBuffer!(ubyte, 8) bytes;
@@ -188,11 +188,11 @@ version (Posix)
 @("transfer.emptyAndOverflowDoNotSubmit") @system unittest
 {
     UniqueBuffer!(ubyte, 8) bytes;
-    auto empty = writeAll(FileHandle(-1), move(bytes));
+    auto empty = writeAll(BorrowedFd(-1), move(bytes));
     assert(!empty.res.hasError && empty.transferred == 0);
     bytes = move(empty.buf);
     bytes.length = 8;
-    auto overflow = writeAll(FileHandle(-1), move(bytes), ulong.max - 4);
+    auto overflow = writeAll(BorrowedFd(-1), move(bytes), ulong.max - 4);
     assert(overflow.res.error.code == EOVERFLOW);
     assert(overflow.transferred == 0 && overflow.buf.length == 8);
 }
@@ -211,8 +211,8 @@ version (Posix)
     scope(exit) sched.destroy();
     int[2] fds;
     assert(pipe(fds) == 0);
-    auto input = FileHandle(fds[0]);
-    auto output = FileHandle(fds[1]);
+    auto input = OwnedFd(fds[0]);
+    auto output = OwnedFd(fds[1]);
     scope(exit) input.close();
     scope(exit) output.close();
     auto ran = sched.run(() {
