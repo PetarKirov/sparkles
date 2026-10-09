@@ -515,6 +515,39 @@ if (isTextMeasure!TM)
                 foreach (ref const span; node.spans)
                     retained = retained && span.wrapPlan is node.spans[0].wrapPlan
                         && span.wrapLine == node.spans[0].wrapLine;
+                // A run that wraps is replanned at its allocated width by
+                // `naturalHeight`; on a cell measurer its natural width, when
+                // every span is printable ASCII, is its byte count, so the
+                // unbounded plan here would only be thrown away.
+                static if (!isStyledTextMeasure!TM)
+                    if (!retained && node.wrap != TextWrap.none)
+                    {
+                        // Unwrapped, a newline is a hard break: the width is
+                        // the widest segment between them, spans joined.
+                        size_t segment, widest;
+                        bool ascii = true;
+                        foreach (ref const span; node.spans)
+                            foreach (ubyte c; cast(const(ubyte)[]) span.text)
+                            {
+                                if (c == '\n')
+                                {
+                                    segment = 0;
+                                    continue;
+                                }
+                                if (c < 0x20 || c > 0x7E)
+                                {
+                                    ascii = false;
+                                    break;
+                                }
+                                if (++segment > widest)
+                                    widest = segment;
+                            }
+                        if (ascii)
+                        {
+                            content = cast(int)(widest < int.max ? widest : int.max);
+                            break;
+                        }
+                    }
                 // Tables/source views already committed these projections.
                 // Replanning their emitted bytes would destroy source relations.
                 frames[idx].spanLines = retained ? [node.spans.dup]
