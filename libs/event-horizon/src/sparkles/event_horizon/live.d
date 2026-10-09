@@ -23,6 +23,7 @@ import sparkles.event_horizon.cause : Cause;
 import sparkles.event_horizon.errors : ioError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 import sparkles.event_horizon.io : Listener, Stream, accept, connect;
 import sparkles.event_horizon.sys.descriptor : BorrowedFd, OwnedFd;
+import sparkles.event_horizon.vfs : RingVfs;
 import sparkles.event_horizon.net : SockAddr;
 import sparkles.event_horizon.op : OpWaitid, OpOpenAt;
 import sparkles.event_horizon.errors : ioError, IoError;
@@ -1173,19 +1174,15 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
 
 
     /// The default live capability row handed to the root fiber (SPEC §11).
-    static if (canSubmitOp!(DefaultBackend, OpOpenAt))
-    {
-        import sparkles.event_horizon.fs : RingFs;
-        alias Env = CtxOf!(RingClock, RingNet, RingProc, RingFs);
-    }
-    else
-        alias Env = CtxOf!(RingClock, RingNet, RingProc);
+    /// `fs` is on every backend: `RingVfs` needs no ring file operations
+    /// (SPEC §10.5).
+    alias Env = CtxOf!(RingClock, RingNet, RingProc, RingVfs);
 }
 else
 {
     /// On a backend without a `WAITID` lowering (kqueue/IOCP until their
     /// O26 reap refinements land) the row carries no proc capability.
-    alias Env = CtxOf!(RingClock, RingNet);
+    alias Env = CtxOf!(RingClock, RingNet, RingVfs);
 }
 
 /// Builds the live capability row for a scheduler — the one place that
@@ -1194,14 +1191,9 @@ else
 Env liveEnv(Sched* sched) @safe pure nothrow @nogc
 {
     static if (canSubmitOp!(DefaultBackend, OpWaitid))
-    {
-        static if (canSubmitOp!(DefaultBackend, OpOpenAt))
-            return Env(RingClock(sched), RingFs(sched), RingNet(sched), RingProc(sched));
-        else
-            return Env(RingClock(sched), RingNet(sched), RingProc(sched));
-    }
+        return Env(RingClock(sched), RingVfs(), RingNet(sched), RingProc(sched));
     else
-        return Env(RingClock(sched), RingNet(sched));
+        return Env(RingClock(sched), RingVfs(), RingNet(sched));
 }
 
 // ── spawn plumbing ──────────────────────────────────────────────────────────

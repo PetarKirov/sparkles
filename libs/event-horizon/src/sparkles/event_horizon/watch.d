@@ -16,6 +16,7 @@ import sparkles.event_horizon.buffer : Buf, BufferPool;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op;
 import sparkles.event_horizon.sched : Sched;
+import sparkles.base.vfs.handles : AmbientAuthority;
 
 /// One delivered file-system event.
 struct WatchEvent
@@ -47,8 +48,16 @@ struct Watcher
         return ioOk();
     }
 
-    /// Watches `path` for `mask` events; the watch descriptor.
-    IoResult!int addWatch(scope const(char)[] path, uint mask) @trusted nothrow @nogc
+    /**
+    Watches `path` for `mask` events; the watch descriptor.
+
+    `inotify_add_watch` has no form relative to a directory handle, so
+    this resolves `path` from the process's ambient authority, and says so
+    by taking the token (SPEC §10.5).
+    */
+    IoResult!int addWatch(scope const(char)[] path, uint mask, AmbientAuthority authority)
+        @trusted nothrow @nogc
+    in (authority.granted, "AmbientAuthority must come from ambientAuthority()")
     {
         char[4096] zpath = void;
         if (path.length >= zpath.length)
@@ -58,8 +67,12 @@ struct Watcher
         zpath[path.length] = '\0';
         int wd = inotify_add_watch(_fd, zpath.ptr, mask);
         if (wd < 0)
-            return ioErr!int(2 /* ENOENT */, OpKind.none, IoErrorStage.submit,
+        {
+            import core.stdc.errno : errno;
+
+            return ioErr!int(errno, OpKind.none, IoErrorStage.submit,
                 "inotify_add_watch failed");
+        }
         return ioOk(wd);
     }
 
@@ -128,6 +141,7 @@ version (unittest)
 @safe
 unittest
 {
+    import sparkles.base.vfs : ambientAuthority;
     import sparkles.event_horizon.io : yieldNow;
 
     Sched s;
@@ -147,22 +161,19 @@ unittest
     Watcher w;
     assert(!Watcher.create(w).hasError);
 
-    auto wd = w.addWatch(dir, IN_CREATE);
+    auto wd = w.addWatch(dir, IN_CREATE, ambientAuthority());
     assert(wd.hasValue);
 
     bool sawCreate;
     auto r = s.run(() {
         // A sibling fiber creates a file while we park on the watch.
         cast(void) s.spawn(() {
-            import core.sys.posix.fcntl : O_CREAT, O_WRONLY;
-            import std.conv : octal;
+            import sparkles.base.vfs : OpenMode, Rights, openRoot;
+            import sparkles.event_horizon.vfs : RingVfs;
 
-            import sparkles.event_horizon.fs : closeFile, openFile;
-
-            auto f = openFile(s, dir ~ "/hello.txt", O_CREAT | O_WRONLY, octal!600);
-            assert(f.hasValue);
-            auto handle = f.value;
-            assert(!closeFile(s, handle).hasError);
+            auto fs = new RingVfs;
+            auto root = openRoot!(Rights.all)(fs, dir, ambientAuthority());
+            assert(!root.value.openFile!(OpenMode.createNew)("hello.txt").hasError);
         });
 
         auto ev = w.nextEvent(s);

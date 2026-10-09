@@ -7,21 +7,30 @@
         buildOptions "optimize" "inline" "debugInfo"
     }
 +/
+import std.file : remove, tempDir, write;
+import std.path : buildPath;
+import std.process : thisProcessID;
 import std.conv : to;
-import std.stdio : File, writeln, stderr;
+import std.stdio : writeln, stderr;
 import expected : andThen;
-import sparkles.event_horizon : runApplication, RootScope, Env, ioOk;
+import sparkles.base.vfs : OpenMode, Rights, ambientAuthority, openRoot;
+import sparkles.event_horizon : runApplication, RootScope, Env, ioErr, ioOk, readText;
 
 int main() @system
 {
-    // An anonymous temporary file keeps this Linux example self-contained.
-    auto fixture = File.tmpfile();
-    fixture.write("hello from a file\n");
-    fixture.flush();
-    auto path = "/proc/self/fd/" ~ fixture.fileno.to!string;
+    const name = "eh-tutorial-" ~ thisProcessID.to!string ~ ".txt";
+    write(buildPath(tempDir, name), "hello from a file\n");
+    scope (exit) remove(buildPath(tempDir, name));
 
     auto result = runApplication((ref RootScope root, ref Env env) {
-        return env.fs.readText(path, 1024).andThen!((text) {
+        // `env.fs` opens a directory as a capability; the file is named in it.
+        auto dir = openRoot!(Rights.readOnly)(&env.fs(), tempDir, ambientAuthority());
+        if (dir.hasError)
+            return ioErr!void(dir);
+        auto file = dir.value.openFile!(OpenMode.read)(name);
+        if (file.hasError)
+            return ioErr!void(file);
+        return readText(file.value, 1024).andThen!((text) {
             writeln("read ", text.length, " bytes: ", text);
             return ioOk();
         });
