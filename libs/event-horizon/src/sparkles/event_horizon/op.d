@@ -230,6 +230,17 @@ struct OpStatx
     void* statxBuf;
 }
 
+/// Resolves `path` under `dirFd` with `openat2(2)`; `how` points at a kernel-stable
+/// `open_how` (`flags`, `mode`, `resolve`, three `ulong`s). The completion's `res` is
+/// the new descriptor.
+struct OpOpenAt2
+{
+    enum kind = OpKind.resolve;
+    int dirFd;
+    const(char)* path;
+    const(void)* how;
+}
+
 /// Creates the directory `path` relative to `dirFd`. `path` is NUL-terminated
 /// and kernel-stable.
 struct OpMkdirAt

@@ -24,8 +24,9 @@ import sparkles.base.vfs.concept : isVfs;
 import sparkles.base.vfs.types : EntryKind, MountCheck, OpenMode, ResolvePolicy, Sharing,
     Stat, StatMask;
 import sparkles.base.io.errors : OpKind;
-import sparkles.base.vfs.types : maxNameLength, maxSplicedPathLength;
-import sparkles.event_horizon.op : OpMkdirAt, OpRenameAt, OpSymlinkAt, OpUnlinkAt;
+import sparkles.base.vfs.types : maxNameLength, maxSplicedPathLength, raceRetries;
+import sparkles.event_horizon.op : OpMkdirAt, OpOpenAt2, OpRenameAt, OpStatx, OpSymlinkAt,
+    OpUnlinkAt;
 import sparkles.event_horizon.sys : BlockingVfs, BorrowedFd, OwnedFd;
 
 version (Posix)
@@ -33,6 +34,10 @@ version (Posix)
     import sparkles.event_horizon.blocking_pool : BlockingPool, sharedBlockingPool;
     import sparkles.event_horizon.sched : currentScheduler, onScheduler;
     import sparkles.event_horizon.sys.vfs : terminate;
+}
+version (linux)
+{
+    import sparkles.event_horizon.sys.posix : AT_EMPTY_PATH, STATX_BASIC_STATS, Statx;
 }
 
 /// The capability VFS backend the loop exposes as `env.fs`.
@@ -98,9 +103,36 @@ struct RingVfs
     }
     /// See `BlockingVfs.statAt`.
     IoResult!Stat statAt(Handle dir, scope const(char)[] name, StatMask mask)
-        => offload(() => inner.statAt(dir, name, mask));
+    {
+        static if (canRing!OpStatx)
+            if (onRing!OpStatx)
+            {
+                import core.sys.posix.fcntl : AT_SYMLINK_NOFOLLOW;
+
+                char[maxNameLength + 1] z;
+                if (!terminate(name, z))
+                    return ioErr!Stat(ErrorKind.nameTooLong, OpKind.statAt);
+                Statx sx;
+                const e = ringErrno((() @trusted => OpStatx(BlockingVfs.fdOf(dir), &z[0],
+                    AT_SYMLINK_NOFOLLOW, STATX_BASIC_STATS, &sx))());
+                return inner.statxOutcome(e, sx, mask);
+            }
+        return offload(() => inner.statAt(dir, name, mask));
+    }
     /// See `BlockingVfs.fstat`.
-    IoResult!Stat fstat(Handle h, StatMask mask) => offload(() => inner.fstat(h, mask));
+    IoResult!Stat fstat(Handle h, StatMask mask)
+    {
+        static if (canRing!OpStatx)
+            if (onRing!OpStatx)
+            {
+                static immutable char[1] empty = "\0";
+                Statx sx;
+                const e = ringErrno((() @trusted => OpStatx(BlockingVfs.fdOf(h), &empty[0],
+                    AT_EMPTY_PATH, STATX_BASIC_STATS, &sx))());
+                return inner.statxOutcome(e, sx, mask);
+            }
+        return offload(() => inner.fstat(h, mask));
+    }
     /// See `BlockingVfs.readlinkAt`.
     IoResult!size_t readlinkAt(Handle dir, scope const(char)[] name, scope char[] buffer)
         => offload(() => inner.readlinkAt(dir, name, buffer));
@@ -198,7 +230,32 @@ struct RingVfs
         /// See `BlockingVfs.resolveWhole`.
         IoResult!Handle resolveWhole(Handle start, scope const(char)[] path,
             ResolvePolicy policy)
-            => offload(() => inner.resolveWhole(start, path, policy));
+        {
+            static if (canRing!OpOpenAt2)
+                if (onRing!OpOpenAt2)
+                {
+                    // BlockingVfs's loop, with the call on the ring: the same
+                    // retries (VFN4) and the same classification.
+                    import core.stdc.errno : EAGAIN, EINTR;
+
+                    char[maxSplicedPathLength + 1] z;
+                    if (!terminate(path.length ? path : ".", z))
+                        return ioErr!Handle(ErrorKind.nameTooLong, OpKind.resolve);
+                    const how = BlockingVfs.resolveHow(policy);
+                    foreach (attempt; 0 .. raceRetries + 1)
+                    {
+                        const res = ringResult((() @trusted => OpOpenAt2(BlockingVfs.fdOf(start),
+                            &z[0], &how))());
+                        if (res >= 0)
+                            return ioOk(BlockingVfs.handleOf(res));
+                        if (-res == EAGAIN || -res == EINTR)
+                            continue;
+                        return ioErr!Handle(inner.classifyOpenat2(start, z, how, -res, policy));
+                    }
+                    return ioErr!Handle(ErrorKind.raceRetryExhausted, OpKind.resolve, EAGAIN);
+                }
+            return offload(() => inner.resolveWhole(start, path, policy));
+        }
     }
     static if (__traits(hasMember, BlockingVfs, "wholePathWithdrawn"))
         /// See `BlockingVfs.wholePathWithdrawn`.
@@ -218,8 +275,10 @@ struct RingVfs
         /// Calls this instance's thread completed on the pool; a test reads it
         /// to tell the pool path from the inline fallback.
         static uint poolCalls;
-        /// Calls submitted to the ring instead (VFB5).
+        /// Calls submitted to the ring instead (VFB5), in all and per operation.
         static uint ringCalls;
+        /// ditto
+        static uint[OpKind.max + 1] ringCallsOf;
     }
 
 private:
@@ -247,12 +306,22 @@ private:
     /// errno, 0 for success; the same value the system call would leave.
     static int ringErrno(Op)(Op op) @trusted
     {
+        const res = ringResult(op);
+        return res < 0 ? -res : 0;
+    }
+
+    /// Submits `op` and returns the completion's raw `res`: a payload such as a new
+    /// descriptor, or `-errno`.
+    static int ringResult(Op)(Op op) @trusted
+    {
         version (Posix)
         {
             version (unittest)
+            {
                 ringCalls++;
-            const o = currentScheduler().await(op);
-            return o.res < 0 ? -o.res : 0;
+                ringCallsOf[Op.kind]++;
+            }
+            return currentScheduler().await(op).res;
         }
         else
             assert(0, "no ring on this platform");

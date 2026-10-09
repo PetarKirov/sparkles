@@ -173,6 +173,7 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
                 OpKind.openAt: Operation.OPENAT,
                 OpKind.close: Operation.CLOSE,
                 OpKind.statAt: Operation.STATX,
+                OpKind.resolve: Operation.OPENAT2,
                 OpKind.mkdirAt: Operation.MKDIRAT,
                 OpKind.unlinkAt: Operation.UNLINKAT,
                 OpKind.renameAt: Operation.RENAMEAT,
