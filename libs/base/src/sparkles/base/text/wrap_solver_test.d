@@ -754,6 +754,38 @@ version (unittest)
         assert(styled.lines[0].contentAdvance == 2
             && styled.lines[1].contentAdvance == 1 && styled.lines[2].contentAdvance == 1);
     }
+
+    // Debug builds realize every counted plain ASCII candidate as well and
+    // assert the two projections agree; this sweep drives that comparison
+    // through each whitespace policy, overflow policy, solver and geometry.
+    @("text.wrap.plainAsciiCountMatchesRealizedProjection") unittest
+    {
+        import std.random : Random, uniform;
+        import std.string : replace;
+
+        string content(string text) => text.replace(" ", "").replace("\n", "");
+
+        static immutable alphabet = "ab  -/.,(x)\"!?";
+        auto rng = Random(611);
+        foreach (round; 0 .. 120)
+        {
+            auto bytes = new char[](uniform(0, 24, rng));
+            foreach (ref c; bytes) c = alphabet[uniform(0, alphabet.length, rng)];
+            const source = bytes.idup;
+            foreach (whitespace; [WhitespaceMode.preserve, WhitespaceMode.collapse, WhitespaceMode.trimAroundBreak])
+                foreach (overflow; [CellOverflowPolicy.overflowUnit, CellOverflowPolicy.graphemeEmergency])
+                    foreach (solver; [WrapSolver.greedy, WrapSolver.balanced])
+                        foreach (width; [0UL, 1, 3, 7, 40])
+                        {
+                            CellGeometry[2] geometry = [CellGeometry(CellWidth.bounded(width)),
+                                CellGeometry(CellWidth.bounded(width > 2 ? width - 2 : 0))];
+                            const plan = cellWrapPlan(source, WrapOptions(width: CellWidth.bounded(width),
+                                whitespace: whitespace, overflow: overflow, solver: solver,
+                                geometry: geometry[], repeatLastGeometry: true));
+                            assert(content(render(plan)) == content(source));
+                        }
+        }
+    }
 }
 version (OwnedWrapSmoke)
 {
