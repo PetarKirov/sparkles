@@ -240,10 +240,11 @@ Contract examples: [Node.js](./snippets/node_tcp_echo.mjs) · [event-horizon](./
 ## Files: bounded whole-file reads
 
 Node's async file I/O is a thread pool because `epoll` cannot express a file read.
-`io_uring` can: `env.fs.readText` composes open, reads and protected close over
-the ring-backed file operations. Its explicit byte limit prevents unbounded
-accumulation, and the returned string is GC-allocated without Unicode validation.
-The anonymous temporary fixture makes this Linux D program self-contained.
+`io_uring` can. A program opens a directory as a capability with
+`openRoot(&env.fs(), …)`, names the file in it, and `readText` reads it through
+the ring; the file closes itself. The explicit byte limit prevents unbounded
+accumulation, and the returned string is GC-allocated without Unicode
+validation.
 
 ::: code-group
 
@@ -427,7 +428,7 @@ Contract examples: [Node.js](./snippets/node_retry.mjs) · [event-horizon](./sni
 | Node.js                           | `event-horizon`                                                                                     |
 | --------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `throw` / rejected promise        | `IoResult!T` = `Expected!(T, IoError)`: `hasValue`, `value`, `error`                                |
-| `err.code === 'ECONNRESET'`       | `error.errnoValue == ECONNRESET`, plus `op` and `stage`                                             |
+| `err.code === 'ECONNRESET'`       | `error.kind == ErrorKind.connectionReset`, plus the raw `code`, `op` and `stage`                    |
 | `AbortError` / `TimeoutError`     | `Outcome` with a `Cause`: `isTimeout`, `Interrupt` kind                                             |
 | uncaught exception                | a defect: the scope fails with `Cause.die`, the `Throwable` travels to the joiner                   |
 | `process.exit(1)` on a hard fault | the loop's `FatalHook` — a backend that can no longer make progress ends the process, never returns |

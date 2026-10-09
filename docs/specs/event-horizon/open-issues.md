@@ -226,7 +226,9 @@ vocabulary. They are no longer _exactly_ identical: event-horizon's hook adds
 `onAccessEmptyValue`); (B) accept duplication so the future
 `sparkles:effects` split carries no base coupling.
 
-**Leaning:** (A) — `base` is already a dependency everywhere that matters.
+**Decided: (A).** `sparkles.base.text.errors.NoGcHook` carries
+`onAccessEmptyValue`, and event-horizon re-exports the shared I/O vocabulary,
+hook included, from `sparkles.base.io.errors` (SPEC §9.1).
 
 ## O14 — Spawn ordering
 
@@ -845,5 +847,22 @@ once. Either `FileHandle` survives as a borrowed, non-closing view of a `File`,
 in line with §16's decision to retain copyable low-level handle views, or the
 verbs take a `FileRef`.
 
-**Decide by:** the capability VFS's asynchronous-backend milestone
+**Decided: dedicated kinds only for codes a caller branches on, and cap-std's
+ownership split for descriptors.** Both parts were settled for the capability
+VFS's asynchronous-backend milestone
 ([VFS PLAN M3](../base/vfs/PLAN.md#m3-the-asynchronous-backend-and-event-horizon-s-migration)).
+
+- **Kinds.** `cancelled`, `wouldBlock`, `connectionReset` (which also covers a
+  broken pipe), `connectionRefused`, `invalidArgument` and `noProcess`; every
+  other code stays `other`. SPEC §9.1 holds the POSIX and Win32 tables. A kind
+  for a code nobody branches on would be vocabulary without a reader.
+- **Files and the `io` verbs.** Neither option as posed. A `FileHandle` was
+  also a pipe end, a pty master and an input descriptor, none of which comes
+  from a directory capability, so verbs taking a `FileRef` would have needed a
+  second type for those; and a copyable handle with `close()` lets one copy
+  close a descriptor out from under another. cap-std's shape answers both:
+  per-kind owners (`OwnedFd`), one copyable borrow with no `close`
+  (`BorrowedFd`), and verbs generic over anything that lends one
+  (`isFdBorrowable`). A VFS `File` lends its descriptor, `FileHandle` is removed,
+  and a child process's ends are owners (SPEC §7.3, §13.2). Socket handles keep
+  their copyable form for now.

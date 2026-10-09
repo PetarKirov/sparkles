@@ -81,7 +81,7 @@ and how to own related work.
 | `eventDriver.core.processEvents`   | `DefaultLoop.run` / `runOnce`            | `LoopGroup.run` drives the scheduler |
 | Timer `set` plus one-shot `wait`   | `submitAfter` followed by explicit rearm | A loop around `env.clock.sleep`      |
 | Socket read/write callbacks        | `submit(OpRecv/OpSend, callback, ctx)`   | Sequential receive/send verbs        |
-| File open/read/close callbacks     | `OpOpenAt`, `OpRead`, `OpClose`          | `openFile`, `read`, `closeFile`      |
+| File open/read/close callbacks     | `OpOpenAt`, `OpRead`, `OpClose`          | `openRoot`, `openFile`, `read`       |
 | Application-owned completion count | Context with a pending count             | Scoped child handles and `join`      |
 
 The table below describes the higher-level, fiber-oriented migration specifically.
@@ -89,7 +89,7 @@ The table below describes the higher-level, fiber-oriented migration specificall
 | eventcore concept                | Event Horizon counterpart                     | What changes                                                     |
 | -------------------------------- | --------------------------------------------- | ---------------------------------------------------------------- |
 | `eventDriver.core.processEvents` | `LoopGroup.run`                               | The group owns dispatch while the root scope runs.               |
-| Typed handles and callbacks      | `Stream`, `FileHandle`, direct-style verbs    | A waiting fiber carries the continuation and local state.        |
+| Typed handles and callbacks      | `Stream`, `OwnedFd`, direct-style verbs       | A waiting fiber carries the continuation and local state.        |
 | `eventDriver.timers`             | `env.clock.sleep`, `Ticker`                   | Check a returned result instead of updating state in a callback. |
 | Handle reference management      | Explicit handle cleanup and owned I/O buffers | Moving a buffer does not make TCP message-oriented.              |
 | Operation-specific result enums  | `IoResult!T`                                  | Failure includes errno, operation, and stage.                    |

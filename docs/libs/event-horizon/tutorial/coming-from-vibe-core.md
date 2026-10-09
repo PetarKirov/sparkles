@@ -328,7 +328,8 @@ The callback tutorial reads an anonymous temporary fixture through positioned
 `OpRead` operations until zero-byte EOF, using a fixed bound. Fixture creation
 and final close are synchronous setup/teardown. The contract version separately
 tests asynchronous open/close, missing-file errors and tiny pooled buffers.
-The fiber tutorial uses bounded `env.fs.readText`, which owns open/read/close.
+The fiber tutorial opens the file through `env.fs` and reads it with bounded
+`readText`; the file closes itself.
 
 ::: code-group
 

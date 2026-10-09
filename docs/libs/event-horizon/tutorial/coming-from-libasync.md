@@ -21,14 +21,14 @@ backend or workload behaves identically.
 
 ## Translate notification semantics carefully
 
-| libasync concept             | Event Horizon counterpart           | Caveat                                                                   |
-| ---------------------------- | ----------------------------------- | ------------------------------------------------------------------------ |
-| `EventLoop` and its dispatch | `LoopGroup.run`                     | The default group owns one calling-thread scheduler.                     |
-| Socket callback              | `accept`, `recv`, `send` in a fiber | Partial transfers still need loops.                                      |
-| `AsyncTimer`                 | `env.clock.sleep`, `Ticker`         | Choose a delay or absolute cadence.                                      |
-| Thread-pool file callback    | `openFile`, `read`, `closeFile`     | Linux io_uring performs file operations; other backends may use workers. |
-| `AsyncSignal`                | A cross-thread notification design  | It is **not** equivalent to `SignalFd`.                                  |
-| Callback status              | `IoResult!T`                        | Check errors explicitly instead of treating all failures as EOF.         |
+| libasync concept             | Event Horizon counterpart           | Caveat                                                                                             |
+| ---------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `EventLoop` and its dispatch | `LoopGroup.run`                     | The default group owns one calling-thread scheduler.                                               |
+| Socket callback              | `accept`, `recv`, `send` in a fiber | Partial transfers still need loops.                                                                |
+| `AsyncTimer`                 | `env.clock.sleep`, `Ticker`         | Choose a delay or absolute cadence.                                                                |
+| Thread-pool file callback    | `openRoot`, `openFile`, `read`      | Files are reached through a directory capability; `env.fs` runs each call on the ring or a worker. |
+| `AsyncSignal`                | A cross-thread notification design  | It is **not** equivalent to `SignalFd`.                                                            |
+| Callback status              | `IoResult!T`                        | Check errors explicitly instead of treating all failures as EOF.                                   |
 
 The distinction in the signal row matters: [libasync's `AsyncSignal`][signal]
 enqueues a callback on its owner's loop when triggered from another thread.
