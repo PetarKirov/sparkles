@@ -44,18 +44,17 @@ version (linux)  :
 import core.lifetime : move;
 import core.stdc.errno : EAGAIN, EINVAL, ENOENT, errno;
 import core.stdc.stdio : snprintf;
-import core.sys.posix.fcntl : O_CLOEXEC, O_DIRECTORY, O_PATH, O_RDONLY, O_RDWR,
-    O_WRONLY, open, openat;
 import core.sys.posix.unistd : close, getpid, pread, write;
 import core.time : Duration, MonoTime, msecs;
 
 import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.vfs : EntryKind, OpenMode, PosixMode, Rights, ambientAuthority,
+    openRoot;
 import sparkles.event_horizon.blocking_pool : BlockingPool;
 import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
 import sparkles.event_horizon.sched : Sched;
-
-extern (C) int mkdirat(int dirfd, const(char)* path, uint mode) nothrow @nogc;
+import sparkles.event_horizon.sys : BlockingVfs;
 
 /// What the run directory can do (see the module table).
 enum CgroupTier : ubyte
@@ -84,7 +83,6 @@ struct CgroupRun
     bool dirCreated;  /// the run directory exists and cleanup is ours
     IoError degradedBy; /// the first failure that lowered the tier
 
-    int dirFd = -1;        /// `O_PATH` handle of the run directory
     int killFd = -1;       /// `cgroup.kill`, write
     int eventsFd = -1;     /// `cgroup.events`, read
     int procsFd = -1;      /// `cgroup.procs`, read + write
@@ -118,7 +116,6 @@ struct CgroupRun
         drop(cpuStatFd);
         drop(memoryPeakFd);
         drop(pidsPeakFd);
-        drop(dirFd);
     }
 }
 
@@ -128,15 +125,18 @@ struct CgroupRun
 /// `/proc/self/cgroup`) into `into`; `false` on a v1-only or unreadable host.
 private bool ownCgroupPath(ref SharedBuffer!(char, 256) into) @trusted nothrow
 {
+    BlockingVfs vfs;
+    auto self = openRoot!(Rights.readOnly)(&vfs, "/proc/self", ambientAuthority());
+    if (self.hasError)
+        return false;
+    auto file = self.value.openFile!(OpenMode.read)("cgroup");
+    if (file.hasError)
+        return false;
     char[4096] buf = void;
-    const fd = open("/proc/self/cgroup", O_RDONLY | O_CLOEXEC);
-    if (fd < 0)
+    auto n = file.value.read(cast(ubyte[]) buf[]);
+    if (n.hasError || n.value == 0)
         return false;
-    scope (exit) close(fd);
-    auto n = pread(fd, buf.ptr, buf.length, 0);
-    if (n <= 0)
-        return false;
-    const(char)[] text = buf[0 .. n];
+    const(char)[] text = buf[0 .. n.value];
     while (text.length)
     {
         size_t eol;
@@ -154,9 +154,18 @@ private bool ownCgroupPath(ref SharedBuffer!(char, 256) into) @trusted nothrow
     return false;
 }
 
-/// Opens `name` under `dirFd`; -1 with `errno` set on failure.
-private int openUnder(int dirFd, const(char)* name, int flags) @trusted nothrow @nogc
-    => openat(dirFd, name, flags | O_CLOEXEC);
+/// Opens the control file `name` in `dir` and keeps its descriptor for the
+/// run's lifetime; -1 with `err` set on failure.
+private int openControl(OpenMode mode, D)(ref D dir, string name, out int err)
+{
+    auto file = dir.openFile!mode(name);
+    if (file.hasError)
+    {
+        err = file.error.code;
+        return -1;
+    }
+    return file.value.intoOwnedFd().release();
+}
 
 /**
 Creates the run cgroup and probes its tier (the pre-spawn job; public
@@ -181,59 +190,58 @@ package void createRun(ref CgroupRun run, uint runId,
     run.sysPath.length = 0;
     run.sysPath ~= "/sys/fs/cgroup";
     run.sysPath ~= own[];
-    run.sysPath ~= '\0';
-    const parentFd = open(run.sysPath[].ptr, O_PATH | O_DIRECTORY | O_CLOEXEC);
-    run.sysPath.length = run.sysPath.length - 1;
-    if (parentFd < 0)
-        return degrade(run, errno, "cgroup: cannot open the process's own cgroup");
-    scope (exit) close(parentFd);
+    BlockingVfs vfs;
+    auto parent = openRoot!(Rights.all)(&vfs, run.sysPath[], ambientAuthority());
+    if (parent.hasError)
+        return degrade(run, parent.error.code, "cgroup: cannot open the process's own cgroup");
 
     char[64] name = void;
     const nameLen = snprintf(name.ptr, name.length, "eh-run-%d-%u",
         cast(int) getpid(), runId);
     if (nameLen <= 0 || nameLen >= name.length)
         return degrade(run, EINVAL, "cgroup: run name overflow");
+    const runName = name[0 .. nameLen];
 
-    if (mkdirat(parentFd, name.ptr, 493 /* 0o755 */) != 0)
-        return degrade(run, errno, "cgroup: mkdir of the run directory refused");
+    auto made = parent.value.mkdirAt(runName, PosixMode(493 /* 0o755 */));
+    if (made.hasError)
+        return degrade(run, made.error.code, "cgroup: mkdir of the run directory refused");
     // From here the directory exists and its cleanup is the caller's.
     run.dirCreated = true;
     run.path.length = 0;
     run.path ~= own[];
     run.path ~= '/';
-    run.path ~= name[0 .. nameLen];
+    run.path ~= runName;
     run.sysPath ~= '/';
-    run.sysPath ~= name[0 .. nameLen];
+    run.sysPath ~= runName;
 
-    run.dirFd = openUnder(parentFd, name.ptr, O_PATH | O_DIRECTORY);
-    if (run.dirFd < 0)
-        return degrade(run, errno, "cgroup: cannot open the run directory");
+    auto dir = parent.value.openDir(runName);
+    if (dir.hasError)
+        return degrade(run, dir.error.code, "cgroup: cannot open the run directory");
 
     // Fault injection (tests): the "dirCreated but degraded" state.
     if (injectControlOpenFailure)
         return degrade(run, 5 /* EIO */, "cgroup: injected control-open failure");
-    run.killFd = openUnder(run.dirFd, "cgroup.kill", O_WRONLY);
+    int err;
+    run.killFd = openControl!(OpenMode.write)(dir.value, "cgroup.kill", err);
     if (run.killFd < 0)
-        return degrade(run, errno, "cgroup: cgroup.kill unavailable");
-    run.eventsFd = openUnder(run.dirFd, "cgroup.events", O_RDONLY);
+        return degrade(run, err, "cgroup: cgroup.kill unavailable");
+    run.eventsFd = openControl!(OpenMode.read)(dir.value, "cgroup.events", err);
     if (run.eventsFd < 0)
     {
-        const err = errno;
         run.closeAll();
         return degrade(run, err, "cgroup: cgroup.events unavailable");
     }
-    run.procsFd = openUnder(run.dirFd, "cgroup.procs", O_RDWR);
+    run.procsFd = openControl!(OpenMode.readWrite)(dir.value, "cgroup.procs", err);
     if (run.procsFd < 0)
     {
-        const err = errno;
         run.closeAll();
         return degrade(run, err, "cgroup: cgroup.procs unavailable");
     }
     run.tier = CgroupTier.owned;
 
-    run.cpuStatFd = openUnder(run.dirFd, "cpu.stat", O_RDONLY); // optional
-    run.memoryPeakFd = openUnder(run.dirFd, "memory.peak", O_RDONLY);
-    run.pidsPeakFd = openUnder(run.dirFd, "pids.peak", O_RDONLY);
+    run.cpuStatFd = openControl!(OpenMode.read)(dir.value, "cpu.stat", err); // optional
+    run.memoryPeakFd = openControl!(OpenMode.read)(dir.value, "memory.peak", err);
+    run.pidsPeakFd = openControl!(OpenMode.read)(dir.value, "pids.peak", err);
     if (run.memoryPeakFd >= 0 && run.pidsPeakFd >= 0)
         run.tier = CgroupTier.accounted;
     else
@@ -376,9 +384,7 @@ package void cleanupRun(ref CgroupRun run, Duration populatedDeadline,
     if (run.eventsFd >= 0)
         waitUnpopulated(run.eventsFd, populatedDeadline);
 
-    run.sysPath ~= '\0';
-    scope (exit) run.sysPath.length = run.sysPath.length - 1;
-    failure = removeTree(run.sysPath[], 0);
+    failure = removeRunDirectory(run.sysPath[]);
     leaked = failure != 0;
     if (!leaked)
         run.dirCreated = false;
@@ -432,42 +438,47 @@ private void waitUnpopulated(int eventsFd, Duration deadline) @trusted nothrow @
     }
 }
 
-/// Removes `dirZ` (NUL-terminated) and its nested cgroups, deepest first;
-/// 0 or the errno of the final `rmdir`. Bounded depth and fan-out.
-private int removeTree(scope const(char)[] dirZ, uint depth) @trusted nothrow
+/// Removes the run directory at `sysPath` and its nested cgroups, deepest
+/// first; 0 or the errno of the final `rmdir`. A cgroup's control files cannot
+/// be unlinked, so only its child directories are removed, never `removeTree`'s
+/// files.
+private int removeRunDirectory(scope const(char)[] sysPath) @trusted nothrow
 {
-    import core.stdc.string : strlen;
-    import core.sys.posix.dirent : DT_DIR, closedir, dirent, opendir, readdir;
-    import core.sys.posix.unistd : rmdir;
+    size_t slash = sysPath.length;
+    while (slash > 0 && sysPath[slash - 1] != '/')
+        --slash;
+    if (slash <= 1 || slash == sysPath.length)
+        return EINVAL;
+    BlockingVfs vfs;
+    auto parent = openRoot!(Rights.all)(&vfs, sysPath[0 .. slash - 1], ambientAuthority());
+    if (parent.hasError)
+        return parent.error.code;
+    return removeCgroupAt(parent.value, sysPath[slash .. $], 0);
+}
 
+/// ditto, for the child `name` of `parent`. Bounded depth and fan-out.
+private int removeCgroupAt(D)(ref D parent, scope const(char)[] name, uint depth)
+{
     enum maxDepth = 16;
     enum maxEntries = 1024;
     if (depth < maxDepth)
     {
-        auto dir = opendir(dirZ.ptr);
-        if (dir !is null)
+        auto dir = parent.openDir(name);
+        if (dir.hasValue)
         {
-            scope (exit) closedir(dir);
-            uint seen;
-            for (dirent* ent = readdir(dir); ent !is null && seen < maxEntries;
-                ent = readdir(dir))
+            auto listing = dir.value.list();
+            for (uint seen; listing.hasValue && seen < maxEntries; ++seen)
             {
-                ++seen;
-                if (ent.d_type != DT_DIR)
-                    continue;
-                const name = ent.d_name.ptr[0 .. strlen(ent.d_name.ptr)];
-                if (name == "." || name == "..")
-                    continue;
-                SharedBuffer!(char, 512) child;
-                child ~= dirZ[0 .. $ - 1];
-                child ~= '/';
-                child ~= name;
-                child ~= '\0';
-                cast(void) removeTree(child[], depth + 1);
+                auto more = listing.value.next();
+                if (more.hasError || !more.value)
+                    break;
+                if (listing.value.front.kind == EntryKind.directory)
+                    removeCgroupAt(dir.value, listing.value.front.name, depth + 1);
             }
         }
     }
-    return rmdir(dirZ.ptr) == 0 ? 0 : errno;
+    auto removed = parent.rmdirAt(name);
+    return removed.hasError ? removed.error.code : 0;
 }
 
 // ── the lane-assigned fiber surface ─────────────────────────────────────────
@@ -719,7 +730,7 @@ unittest
     auto r = s.run(() {
         CgroupRun run;
         auto pool = createOrSkip(s, run, 900_001);
-        assert(run.dirCreated && run.dirFd >= 0 && run.canKill);
+        assert(run.dirCreated && run.canKill);
         assert(run.eventsFd >= 0 && run.procsFd >= 0);
         assert(runDirExists(run), "the run directory exists");
         assert(run.path[].length > 8 && run.sysPath[][0 .. 14] == "/sys/fs/cgroup");
@@ -728,7 +739,7 @@ unittest
 
         auto cleaned = cgroupCleanup(s, pool, run, 100.msecs);
         assert(!cleaned.hasError && !cleaned.value, "an empty run is removed");
-        assert(!run.dirCreated && run.dirFd < 0 && run.killFd < 0);
+        assert(!run.dirCreated && run.killFd < 0);
         assert(!runDirExists(run), "the directory is gone");
     });
     assert(!r.hasError);
@@ -813,17 +824,19 @@ unittest
         auto pool = createOrSkip(s, run, 900_004);
         // A descendant that made itself a nested cgroup: the run's own
         // procs file lists nothing, populated still says 1.
-        assert(mkdirat(run.dirFd, "nested", 493) == 0);
+        BlockingVfs vfs;
+        auto runDir = openRoot!(Rights.all)(&vfs, run.sysPath[], ambientAuthority());
+        assert(!runDir.value.mkdirAt("nested", PosixMode(493)).hasError);
         auto spawned = spawnProcess(["sleep", "30"]);
         assert(spawned.hasValue);
         auto child = move(spawned.value);
         {
-            const nestedProcs = openat(run.dirFd, "nested/cgroup.procs", O_WRONLY | O_CLOEXEC);
-            assert(nestedProcs >= 0);
-            scope (exit) close(nestedProcs);
+            auto nested = runDir.value.walk("nested");
+            auto procs = nested.value.openFile!(OpenMode.write)("cgroup.procs");
+            assert(procs.hasValue);
             char[24] buf = void;
             const n = snprintf(buf.ptr, buf.length, "%d\n", child.pid);
-            assert(write(nestedProcs, buf.ptr, n) == n);
+            assert(procs.value.write(cast(const(ubyte)[]) buf[0 .. n]).value == n);
         }
         bool seen, truncated;
         listMembers(run, (int pid) nothrow { seen |= pid == child.pid; }, truncated);
