@@ -46,7 +46,7 @@ import std.json : JSONValue, parseJSON;
 import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, relativePath;
 import std.process : environment, execute;
 import std.regex : ctRegex, matchAll, replaceAll;
-import std.stdio : stderr, writefln, writeln;
+import std.stdio : File, stderr, writefln, writeln;
 import std.string : indexOf, lineSplitter, strip, stripRight;
 
 import sparkles.shaders.compute_mode : ComputeMode, computeModeOf;
@@ -199,7 +199,14 @@ Unit unitOf(in DeviceBuild build)
 // `dub test` builds this package as a library and takes its `main` from the
 // generated `dub_test_root`, so the CLI entry point steps aside for that build.
 version (unittest) {} else
-int main(string[] args)
+int main(string[] args) => cli(args, stderr);
+
+/**
+The command line, with the stream every diagnostic goes to: `main` passes
+standard error, and a test a file it reads back — each non-zero outcome must
+say why (`SHP10`).
+*/
+int cli(string[] args, File err)
 {
     import std.getopt : config, defaultGetoptPrinter, getopt;
 
@@ -225,12 +232,12 @@ int main(string[] args)
     }
     if (args.length > 1)
     {
-        stderr.writeln("shader-compile: unexpected argument `", args[1], "`; see --help");
+        err.writeln("shader-compile: unexpected argument `", args[1], "`; see --help");
         return 2;
     }
     if (!outDir.length)
     {
-        stderr.writeln("shader-compile: --out is required; see --help");
+        err.writeln("shader-compile: --out is required; see --help");
         return 2;
     }
 
@@ -241,7 +248,7 @@ int main(string[] args)
 
     if (tryExecute([ldc, "--version"]).status == 127)
     {
-        stderr.writefln("shader-compile: no dcompute-enabled LDC (`%s`). Enter the dev shell " ~
+        err.writefln("shader-compile: no dcompute-enabled LDC (`%s`). Enter the dev shell " ~
             "(`nix develop`), use `nix run .#shader-compile`, or pass --ldc a " ~
             "`sparkles/vulkan-shaders` build.", ldc);
         return 3;
@@ -255,39 +262,42 @@ int main(string[] args)
         env: withoutHostFlags(environment.toAA));
     if (described.status != 0)
     {
-        stderr.writeln(described.output);
-        stderr.writefln("shader-compile: `dub describe --config=%s` failed in %s",
+        err.writeln(described.output);
+        err.writefln("shader-compile: `dub describe --config=%s` failed in %s",
             configuration, packageDir);
         return 1;
     }
     const build = parseDescribe(described.output);
     if (!build.target.length)
     {
-        stderr.writefln("shader-compile: %s's configuration `%s` names no dcompute target " ~
+        err.writefln("shader-compile: %s's configuration `%s` names no dcompute target " ~
             "(`-mdcompute-targets=`), so it is not a device build", build.packageName, configuration);
         return 2;
     }
     const unit = unitOf(build);
     if (!unit.deviceOnly.length)
     {
-        stderr.writefln("shader-compile: %s (`%s`) has no `@compute(CompileFor.deviceOnly)` " ~
+        err.writefln("shader-compile: %s (`%s`) has no `@compute(CompileFor.deviceOnly)` " ~
             "module, so there is no entry point to compile", build.packageName, configuration);
         return 1;
     }
-    return run(build, unit, outDir, ldc, keep, quiet);
+    return run(build, unit, outDir, ldc, keep, quiet, err);
 }
 
 /// The outcome: 0 ok, 1 failure, 3 toolchain unusable.
-int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep, bool quiet)
+int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep, bool quiet,
+    File err)
 {
     import std.conv : to;
-    import std.process : thisProcessID;
+    import std.process : thisProcessID, thisThreadID;
 
-    // Per process: concurrent builds of several dependents each run this step,
-    // and a shared scratch directory would be deleted under a sibling.
+    // Per run: the builds of several dependents run this step concurrently,
+    // and a test runs several in one process; a shared scratch directory
+    // would be deleted under a sibling.
     const name = build.packageName.replace(":", "-");
     const scratch = buildPath(tempDir,
-        "sparkles-shader-compile-" ~ name ~ "-" ~ thisProcessID.to!string);
+        "sparkles-shader-compile-" ~ name ~ "-" ~ thisProcessID.to!string
+        ~ "-" ~ (cast(ulong) thisThreadID).to!string);
     if (scratch.exists)
         scratch.rmdirRecurse;
     scratch.mkdirRecurse;
@@ -308,41 +318,56 @@ int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep
     const compiled = tryExecute(cmd);
     if (compiled.status != 0)
     {
-        stderr.writeln(compiled.output);
+        err.writeln(compiled.output);
         if (isStockLdc(compiled))
-            stderr.writefln("shader-compile: `%s` is not a dcompute-enabled LDC with the " ~
+            err.writefln("shader-compile: `%s` is not a dcompute-enabled LDC with the " ~
                 "`@fragment` stage (`sparkles/vulkan-shaders`)", ldc);
-        stderr.writefln("shader-compile: %s: LDC failed (%s)", build.packageName, compiled.status);
+        err.writefln("shader-compile: %s: LDC failed (%s)", build.packageName, compiled.status);
         return isStockLdc(compiled) ? 3 : 1;
     }
     if (!spv.exists)
     {
-        stderr.writefln("shader-compile: %s: LDC produced no %s", build.packageName, spv);
+        err.writefln("shader-compile: %s: LDC produced no %s", build.packageName, spv);
         return 1;
     }
 
     // 2. Validate what the compiler emitted, before anything rewrites it.
     //    Universal rules: the plain uniforms are GL's shape, not Vulkan's.
-    if (!step(["spirv-val", "--target-env", "spv1.4", spv], name ~ ": spirv-val"))
+    if (!step(["spirv-val", "--target-env", "spv1.4", spv], name ~ ": spirv-val", err))
         return 1;
+
+    //    And the interface contract, which neither the compiler nor the
+    //    universal rules enforce: what crosses it, and where handles live.
+    const raw = tryExecute(["spirv-dis", spv]);
+    if (raw.status != 0)
+    {
+        err.writeln(raw.output);
+        return 1;
+    }
+    if (const violations = interfaceViolations(raw.output))
+    {
+        foreach (v; violations)
+            err.writefln("shader-compile: %s: %s", build.packageName, v);
+        return 1;
+    }
 
     // 3. Optimise: folds the name-string constants and dead helpers away, so
     //    the GLSL carries no `uint8_t` arrays and no Int8 extension request.
     const opt = buildPath(scratch, prefix ~ ".opt.spv");
-    if (!step(["spirv-opt", "-O", spv, "-o", opt], name ~ ": spirv-opt"))
+    if (!step(["spirv-opt", "-O", spv, "-o", opt], name ~ ": spirv-opt", err))
         return 1;
 
     // 4. The entry points, from the disassembly — one shader file per entry.
     const dis = tryExecute(["spirv-dis", opt]);
     if (dis.status != 0)
     {
-        stderr.writeln(dis.output);
+        err.writeln(dis.output);
         return 1;
     }
     const entries = entryPoints(dis.output);
     if (entries.length == 0)
     {
-        stderr.writefln("shader-compile: %s: no fragment entry points in %s", name, spv);
+        err.writefln("shader-compile: %s: no fragment entry points in %s", name, spv);
         return 1;
     }
 
@@ -358,8 +383,8 @@ int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep
                 "--remove-unused-variables"] ~ dialect.flags ~ [opt]);
             if (cross.status != 0)
             {
-                stderr.writeln(cross.output);
-                stderr.writefln("shader-compile: %s/%s: spirv-cross failed", name, entry);
+                err.writeln(cross.output);
+                err.writefln("shader-compile: %s/%s: spirv-cross failed", name, entry);
                 return 1;
             }
             // One trailing newline, exactly, as every text file here has.
@@ -368,7 +393,7 @@ int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep
             const file = entry ~ dialect.suffix;
             const path = buildPath(scratch, file);
             path.write(glsl);
-            if (!step(["glslangValidator", path], name ~ "/" ~ file ~ ": glslang"))
+            if (!step(["glslangValidator", path], name ~ "/" ~ file ~ ": glslang", err))
                 return 1;
             produced[file] = glsl;
         }
@@ -400,9 +425,9 @@ private void writeAtomically(string path, string contents)
 {
     import std.conv : to;
     import std.file : rename;
-    import std.process : thisProcessID;
+    import std.process : thisProcessID, thisThreadID;
 
-    const tmp = path ~ ".tmp-" ~ thisProcessID.to!string;
+    const tmp = path ~ ".tmp-" ~ thisProcessID.to!string ~ "-" ~ (cast(ulong) thisThreadID).to!string;
     tmp.write(contents);
     tmp.rename(path);
 }
@@ -597,6 +622,145 @@ string[] entryPoints(string disassembly)
     return names;
 }
 
+/**
+What the compiler's module puts across the shader interface that the contract
+forbids, one diagnostic per offence, from the disassembly of the module as the
+compiler emitted it (before `spirv-opt` drops anything unused).
+
+`SHF5`: every input, output and uniform is a `float`, a `vec2` or a `vec4`
+(or, for a `Sampler2D`, an image or the shared sampler). A `vec3` is
+rejected because the host and the device lay it out differently, and so is
+anything else — a struct, an array, an integer — that would change shape
+between the two. The compiler accepts all of these, and the universal-rules
+validator does not object, so this step is the only check.
+
+`SHF6`: an image or sampler handle never sits inside a struct, an array, or
+function-local memory, which the universal rules allow and a driver need not.
+*/
+string[] interfaceViolations(string disassembly)
+{
+    import std.array : split;
+
+    string[][string] defs; // result id -> the instruction's words
+    string[string] names;
+    foreach (line; disassembly.lineSplitter)
+    {
+        auto words = line.strip.split;
+        if (words.length >= 3 && words[1] == "=")
+            defs[words[0]] = words[2 .. $];
+        else if (words.length >= 3 && words[0] == "OpName")
+            names[words[1]] = words[2].strip(`"`);
+    }
+
+    static bool opaque(in string[] t)
+        => t.length && (t[0] == "OpTypeImage" || t[0] == "OpTypeSampler"
+            || t[0] == "OpTypeSampledImage");
+
+    string shapeOf(string id)
+    {
+        const t = defs.get(id, null);
+        if (!t.length)
+            return id;
+        switch (t[0])
+        {
+            case "OpTypeFloat": return t.length > 1 && t[1] == "32" ? "float" : "float" ~ t[1];
+            case "OpTypeVector":
+                return (shapeOf(t[1]) == "float" ? "vec" : shapeOf(t[1]) ~ "vec") ~ t[2];
+            case "OpTypeStruct": return "struct " ~ names.get(id, id);
+            case "OpTypeArray", "OpTypeRuntimeArray": return "array of " ~ shapeOf(t[1]);
+            case "OpTypeInt": return "integer";
+            case "OpTypeBool": return "bool";
+            default: return t[0];
+        }
+    }
+
+    bool holdsOpaque(string id)
+    {
+        const t = defs.get(id, null);
+        if (opaque(t))
+            return true;
+        if (t.length && t[0] == "OpTypeStruct")
+            return t[1 .. $].canFind!(m => holdsOpaque(m));
+        if (t.length > 1 && (t[0] == "OpTypeArray" || t[0] == "OpTypeRuntimeArray"))
+            return holdsOpaque(t[1]);
+        return false;
+    }
+
+    string[] found;
+    foreach (id; defs.keys.sort)
+    {
+        const d = defs[id];
+        if (d.length < 3 || d[0] != "OpVariable")
+            continue;
+        const ptr = defs.get(d[1], null);
+        if (ptr.length < 3 || ptr[0] != "OpTypePointer")
+            continue;
+        const storage = d[2], pointee = ptr[2];
+        const name = names.get(id, id);
+        const shape = shapeOf(pointee);
+        if (storage == "Input" || storage == "Output" || storage == "Uniform"
+            || storage == "UniformConstant")
+        {
+            const allowed = shape == "float" || shape == "vec2" || shape == "vec4"
+                || opaque(defs.get(pointee, null));
+            if (!allowed)
+                found ~= format("`%s` crosses the shader interface as %s; an input, " ~
+                    "output or uniform must be a float, vec2 or vec4 (SHF5)", name, shape);
+            else if (storage != "UniformConstant" && opaque(defs.get(pointee, null)))
+                found ~= format("`%s` is an image or sampler outside UniformConstant " ~
+                    "storage (SHF6)", name);
+        }
+        if (storage == "Function" && holdsOpaque(pointee))
+            found ~= format("`%s` keeps an image or sampler in function-local memory (SHF6)", name);
+    }
+    foreach (id; defs.keys.sort)
+        if (defs[id][0] == "OpTypeStruct" && defs[id][1 .. $].canFind!(m => holdsOpaque(m)))
+            found ~= format("`%s` is a struct holding an image or sampler (SHF6)", shapeOf(id));
+    return found;
+}
+
+///
+@("shaderCompile.interfaceViolations.flagsWhatTheContractForbids")
+@system unittest
+{
+    const types = "%float = OpTypeFloat 32\n" ~
+        "%v2float = OpTypeVector %float 2\n" ~
+        "%v3float = OpTypeVector %float 3\n" ~
+        "%v4float = OpTypeVector %float 4\n" ~
+        "%int = OpTypeInt 32 1\n" ~
+        "%img = OpTypeImage %float 2D 0 0 0 1 Unknown\n" ~
+        "%smp = OpTypeSampler\n";
+    string var(string name, string storage, string type)
+        => format("%%%1$s_ptr = OpTypePointer %2$s %3$s\n%%%1$s = OpVariable %%%1$s_ptr %2$s\n" ~
+            "OpName %%%1$s \"%1$s\"\n", name, storage, type);
+
+    // The interface `bloomComposite` has: clean.
+    const ok = types ~ var("uv", "Input", "%v2float") ~ var("tint", "Input", "%v4float")
+        ~ var("amount", "UniformConstant", "%float") ~ var("texture0", "UniformConstant", "%img")
+        ~ var("sampler", "UniformConstant", "%smp") ~ var("finalColor", "Output", "%v4float")
+        ~ var("local", "Function", "%v4float");
+    assert(interfaceViolations(ok) == [], interfaceViolations(ok).text);
+
+    // Each forbidden shape, named after the parameter it came from.
+    const bad = types ~ "%Pair = OpTypeStruct %float %float\nOpName %Pair \"fx.Pair\"\n"
+        ~ "%arr = OpTypeArray %float %two\n"
+        ~ var("colour", "Input", "%v3float") ~ var("pair", "UniformConstant", "%Pair")
+        ~ var("weights", "UniformConstant", "%arr") ~ var("count", "UniformConstant", "%int");
+    const found = interfaceViolations(bad);
+    assert(found.length == 4, found.text);
+    assert(found.canFind!(f => f.canFind("`colour`") && f.canFind("vec3")));
+    assert(found.canFind!(f => f.canFind("`pair`") && f.canFind("struct fx.Pair")));
+    assert(found.canFind!(f => f.canFind("`weights`") && f.canFind("array of float")));
+    assert(found.canFind!(f => f.canFind("`count`") && f.canFind("integer")));
+
+    // SHF6: a handle inside a struct, and in function-local memory.
+    const handles = types ~ "%Combined = OpTypeStruct %img %smp\nOpName %Combined \"Combined\"\n"
+        ~ var("copy", "Function", "%img");
+    const h = interfaceViolations(handles);
+    assert(h.canFind!(f => f.canFind("struct Combined") && f.canFind("SHF6")), h.text);
+    assert(h.canFind!(f => f.canFind("`copy`") && f.canFind("function-local")), h.text);
+}
+
 ///
 @("shaderCompile.entryPoints.readsFragmentEntriesInOrder")
 @system unittest
@@ -667,13 +831,13 @@ private Run tryExecute(string[] cmd, bool captureStderr = true,
         return Run(127, e.msg);
 }
 
-private bool step(string[] cmd, string what)
+private bool step(string[] cmd, string what, File err)
 {
     const r = tryExecute(cmd);
     if (r.status == 0)
         return true;
-    stderr.writeln(r.output);
-    stderr.writefln("shader-compile: %s failed (%s)", what, r.status);
+    err.writeln(r.output);
+    err.writefln("shader-compile: %s failed (%s)", what, r.status);
     return false;
 }
 
@@ -681,7 +845,10 @@ private bool step(string[] cmd, string what)
 private bool isStockLdc(in Run r)
     => r.output.canFind("not built with Vulkan DCompute support")
     || r.output.canFind("Unrecognised or invalid DCompute targets")
-    || r.output.canFind("undefined identifier `fragment`");
+    || r.output.canFind("undefined identifier `fragment`")
+    // A current stock LDC: its `ldc.dcompute` has no `fragment` for the
+    // vocabulary to import.
+    || r.output.canFind("import `fragment` not found");
 
 @("shaderCompile.unitOf.repositoryUi")
 @system unittest
