@@ -72,7 +72,10 @@ import tui : PreviewTui;
 import sparkles.doc_view.viewer_model : ScrollAnchorMode;
 
 version (linux)
+{
+    import sparkles.base.vfs.handles : ambientAuthority;
     import sparkles.event_horizon.watch : Watcher;
+}
 
 /// One loaded document, as the viewer pane consumes it — the pipeline's
 /// `Document` Whole itself, so the transport loses nothing at the pane
@@ -2010,7 +2013,7 @@ struct WorkspaceTui
                     if (dir != watchedDir)
                     {
                         auto ar = docWatcher.addWatch(dir,
-                            IN_CLOSE_WRITE | IN_MOVED_TO);
+                            IN_CLOSE_WRITE | IN_MOVED_TO, ambientAuthority());
                         if (!ar.hasError)
                         {
                             watchedDir = dir;

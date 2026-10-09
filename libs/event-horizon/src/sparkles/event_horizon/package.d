@@ -19,6 +19,7 @@ public import sparkles.event_horizon.effect;
 public import sparkles.event_horizon.op;
 public import sparkles.event_horizon.raw_pool;
 public import sparkles.event_horizon.transfer;
+public import sparkles.event_horizon.vfs;
 
 version (Windows)
 {
@@ -58,7 +59,6 @@ version (linux)
     public import sparkles.event_horizon.io;
     public import sparkles.event_horizon.group;
     public import sparkles.event_horizon.pool;
-    public import sparkles.event_horizon.fs;
     public import sparkles.event_horizon.signals;
     public import sparkles.event_horizon.watch;
 

@@ -8,13 +8,12 @@
     platforms "linux"
 +/
 import core.lifetime : move;
-import core.stdc.errno : ENOENT;
-import core.sys.posix.fcntl : O_RDONLY;
 import core.sys.posix.stdlib : mkdtemp;
 import std.file : remove, rmdir, tempDir, write;
 import std.path : buildPath;
 import std.stdio : writeln;
 import sparkles.base.buffer : UniqueBuffer;
+import sparkles.base.vfs : ErrorKind, OpenMode, Rights, ambientAuthority, openRoot;
 import sparkles.event_horizon;
 
 void main()
@@ -33,13 +32,15 @@ void main()
     scope (exit) group.shutdown();
 
     auto run = group.run((ref RootScope sc, ref Env env) {
-        ref Sched s = currentScheduler();
-        auto missing = openFile(s, buildPath(dir, "missing"), O_RDONLY);
-        assert(missing.hasError && missing.error.code == ENOENT);
-        auto opened = openFile(s, path, O_RDONLY);
+        // Files are reached through a directory capability, and close
+        // themselves; `read` borrows the file's descriptor.
+        auto root = openRoot!(Rights.readOnly)(&env.fs(), dir, ambientAuthority());
+        assert(root.hasValue);
+        auto missing = root.value.openFile!(OpenMode.read)("missing");
+        assert(missing.hasError && missing.error.kind == ErrorKind.notFound);
+        auto opened = root.value.openFile!(OpenMode.read)("input.txt");
         assert(opened.hasValue);
         auto f = move(opened.value);
-        scope (exit) assert(!closeFile(s, f).hasError);
         UniqueBuffer!(ubyte, 128) buf;
         string contents;
         for (;;)

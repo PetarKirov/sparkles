@@ -32,7 +32,11 @@ searching for that name finds every place that creates authority from a path.
 */
 struct AmbientAuthority
 {
-    private bool granted;
+    private bool _granted;
+
+    /// Whether this token came from `ambientAuthority()`, which an API that
+    /// takes one checks in its contract. A default-initialized token is not.
+    bool granted() const @safe pure nothrow @nogc => _granted;
 }
 
 /// ditto
