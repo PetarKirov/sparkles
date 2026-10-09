@@ -358,6 +358,9 @@ struct ViewerModel
         => scroll.h;
     FoldMarker[] foldMarkers;       /// gutter markers, derived with the rows
     int widthCols = -1;             /// the width the pipeline is laid out for
+    // Built at least once; until then `held` is the position to show.
+    private bool built;
+    private ScrollAnchor held;
 
     // Source-anchored identity bases (disjoint id spaces — see the md view).
     enum size_t tableVBarHitBase = size_t.max / 128 + 1;
@@ -829,6 +832,8 @@ struct ViewerModel
     */
     ScrollAnchor captureAnchor() const @safe pure nothrow @nogc
     {
+        if (!built)
+            return held;
         if (rows.length == 0 || top < 0)
             return ScrollAnchor.init;
         auto from = cast(size_t) top;
@@ -914,6 +919,12 @@ struct ViewerModel
     */
     void restoreAnchor(in ScrollAnchor a) @safe pure nothrow @nogc
     {
+        // No rows yet: the first build lays out around this position.
+        if (!built)
+        {
+            held = a;
+            return;
+        }
         const row = rowForAnchor(a);
         if (row < 0)
         {
@@ -1035,7 +1046,15 @@ struct ViewerModel
     /// goto, a diff jump) set `top` *after* the rebuild and win.
     void rebuild()
     {
+        // Not laid out yet (`widthCols < 0`): a document set and themed
+        // before its pane has a width is built once, by the first
+        // `relayout`, not at a width nothing will show. Restoring a session
+        // built every document two or three times before its first frame.
+        if (widthCols < 0)
+            return;
         const anchor = captureAnchor();
+        built = true;
+        held = ScrollAnchor.init;
         rebuildTree();
         restoreAnchor(anchor);
     }
@@ -1376,11 +1395,13 @@ struct ViewerModel
         curMatch = 0;
     }
 
+    // Before the first build there is no tree to find a match in; that build
+    // derives the rects.
     private void rebuildMatchRects()
     {
         matchRects.length = matches.length;
         foreach (i, ref const m; matches)
-            matchRects[i] = selectionRects(tree, frames, m.start, m.end);
+            matchRects[i] = built ? selectionRects(tree, frames, m.start, m.end) : null;
     }
 
     // ── The inspector's extent tint (`TSI2` / `INS6`) ───────────────────────
@@ -1417,7 +1438,7 @@ struct ViewerModel
 
     private void rebuildInspectRects()
     {
-        inspectRects = inspStart != size_t.max && inspEnd > inspStart
+        inspectRects = built && inspStart != size_t.max && inspEnd > inspStart
             ? selectionRects(tree, frames, inspStart, inspEnd) : null;
     }
 
@@ -3736,4 +3757,38 @@ unittest
     // from a stale diagnostic must not take the pane down.
     vm.gotoSrcLine(9_999);
     assert(vm.top >= 0);
+}
+
+@("viewer_model.scrollAnchor.aPositionRestoredBeforeTheFirstLayoutHolds")
+@system unittest
+{
+    import sparkles.syntax : extractMarkdown, GrammarRegistry;
+    import std.array : appender;
+    import std.conv : text;
+    import std.process : environment;
+    import std.string : indexOf;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    // A restored session hands the pane its position before the pane has a
+    // width, so before there are rows to find it in.
+    auto a = appender!string;
+    foreach (i; 0 .. 40)
+        a ~= text("paragraph ", i, "\n\n");
+    const src = a[];
+    auto registry = GrammarRegistry.fromEnvironment();
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.applyTheme(0);
+    vm.setDocument("t.md", "", src, [HighlightEvent.sourceSpan(0, src.length)],
+        PreviewModel(present: true, doc: extractMarkdown(registry, src)), TwoslashReturn.init, "markdown");
+    const keep = ScrollAnchor(src.indexOf("paragraph 30"), 0);
+    vm.restoreAnchor(keep);
+    assert(vm.captureAnchor() == keep);
+    vm.relayout(40);
+    assert(vm.rows[cast(size_t) vm.top].srcStart == keep.src);
 }
