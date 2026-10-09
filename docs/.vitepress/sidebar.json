@@ -1320,6 +1320,10 @@
           {
             "text": "Decisions",
             "link": "/specs/shaders/decisions"
+          },
+          {
+            "text": "Adversarial Review",
+            "link": "/specs/shaders/adversarial-review"
           }
         ]
       },

@@ -33,6 +33,11 @@ a two-entry unit, a stale stamp, a configuration without a target, a leaked
 selection — and its findings dispositioned. Acceptance is recorded by the
 project owner, not implied by merging.
 
+**Progress.** The [adversarial review](./adversarial-review.md) is written:
+28 findings, two of them blockers (`R1`, entries sharing interface variables,
+and `R2`, stamp inputs missing what the compile reads). Its findings await
+dispositions.
+
 ## M0: Baseline
 
 The system this specification describes, as it exists: the vocabulary, the
