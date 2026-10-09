@@ -26,7 +26,7 @@ import core.time : Duration;
 import sparkles.event_horizon.cause : Cause, InterruptKind, Interrupt, Outcome,
     outcomeErr, outcomeOk;
 import sparkles.event_horizon.clock : isClock;
-import sparkles.event_horizon.errors : IoError, NoGcHook;
+import sparkles.event_horizon.errors : ioError, IoError, NoGcHook;
 import sparkles.event_horizon.schedule : isSchedule, retry, timeout;
 import sparkles.event_horizon.scope_ : isScope, JoinHandle;
 
@@ -264,7 +264,7 @@ private import expected : Expected;
 private Expected!(T, E, NoGcHook) okExpected(T, E)()
 if (is(T == void))
 {
-    import sparkles.event_horizon.errors : ioOk;
+    import sparkles.event_horizon.errors : ioError, ioOk;
 
     return Expected!(void, E, NoGcHook)();
 }
@@ -316,7 +316,7 @@ version (linux)  :  // parity tests drive the live Sched
 
 version (unittest)
 {
-    import sparkles.event_horizon.errors : IoResult, ioErr, ioOk, OpKind;
+    import sparkles.event_horizon.errors : ioError, IoResult, ioErr, ioOk, OpKind;
     import sparkles.event_horizon.sched : Sched, schedOrSkip;
     import sparkles.event_horizon.scope_ : withScope;
 }
@@ -364,12 +364,12 @@ unittest
         cast(void) withScope!((ref sc) {
             EmptyCtx ctx;
             bool mapRan;
-            auto eff = fail!int(IoError(5, OpKind.none))
+            auto eff = fail!int(ioError(5, OpKind.none))
                 .map!((int x) { return x; });
             auto outcome = run(eff, sc, ctx);
             assert(outcome.hasError);
             assert(outcome.error.kind == Cause!IoError.Kind.fail);
-            assert(outcome.error.failure.errnoValue == 5);
+            assert(outcome.error.failure.code == 5);
         })(s);
     });
     assert(!r.hasError);

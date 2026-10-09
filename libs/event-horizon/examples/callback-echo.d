@@ -65,7 +65,7 @@ void submitOrDie(T)(T result, string what)
     if (result.hasError)
     {
         stderr.writefln("%s failed: errno %d (%s)", what,
-            result.error.errnoValue, result.error.context);
+            result.error.code, result.error.context);
         assert(0);
     }
 }
@@ -140,7 +140,7 @@ int main()
     if (created.hasError)
     {
         writefln("SKIP: io_uring unavailable (stage %s, errno %d) — %s",
-            created.error.stage, created.error.errnoValue, created.error.context);
+            created.error.stage, created.error.code, created.error.context);
         return 0;
     }
     scope (exit) loop.destroy();

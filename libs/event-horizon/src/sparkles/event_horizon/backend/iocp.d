@@ -31,6 +31,7 @@ import core.sys.windows.winbase : CreateIoCompletionPort, GetQueuedCompletionSta
 import core.sys.windows.windef : DWORD, FALSE, TRUE;
 import core.sys.windows.winnt : HANDLE;
 import core.sys.windows.basetsd : ULONG_PTR;
+import core.stdc.errno : ECONNREFUSED, EIO;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
@@ -697,7 +698,7 @@ private:
         final switch (op.kind)
         {
             case IoKind.data:
-                res = ok ? cast(int) bytes : -5 /* EIO */;
+                res = ok ? cast(int) bytes : -EIO;
                 break;
             case IoKind.accept:
                 if (ok)
@@ -710,7 +711,7 @@ private:
                 else
                 {
                     closesocket(op.sock);
-                    res = -5;
+                    res = -EIO;
                 }
                 break;
             case IoKind.connect:
@@ -720,7 +721,9 @@ private:
                     res = 0;
                 }
                 else
-                    res = -111 /* ECONNREFUSED */;
+                    // The C runtime's value, which `errnoKind` reads; it is not
+                    // Linux's 111.
+                    res = -ECONNREFUSED;
                 break;
             case IoKind.wake:
                 // Persistent (SPEC §5.6): the op context is the posting

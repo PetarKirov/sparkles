@@ -399,7 +399,7 @@ version (unittest)
         assert(!s.spawn(() {
             auto r = pool.run(*sp, &sleepCall, job);
             if (errnoOut !is null)
-                *errnoOut = r.hasError ? r.error.errnoValue : 0;
+                *errnoOut = r.hasError ? r.error.code : 0;
         }).hasError);
     }
 
@@ -497,7 +497,7 @@ unittest
             SleepJob never = {ms: 1};
             auto refused = pool.run(s, &sleepCall, &never);
             refusedAtEntry = refused.hasError
-                && refused.error.errnoValue == ECANCELED && never.ran == 0;
+                && refused.error.code == ECANCELED && never.ran == 0;
         }).hasError);
         assert(!s.spawn(() {
             s.yieldNow();
@@ -538,7 +538,7 @@ unittest
             assert(!pool.shutdown().hasError);
             SleepJob late = {ms: 1};
             auto refused = pool.run(s, &sleepCall, &late);
-            refusedAfter = refused.hasError && refused.error.errnoValue == EPIPE;
+            refusedAfter = refused.hasError && refused.error.code == EPIPE;
         }).hasError);
     });
     assert(!r.hasError);

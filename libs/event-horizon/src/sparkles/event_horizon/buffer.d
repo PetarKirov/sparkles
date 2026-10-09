@@ -580,7 +580,7 @@ unittest
 
     auto second = pool.acquire();
     assert(second.hasError);
-    assert(second.error.errnoValue == ENOBUFS);
+    assert(second.error.code == ENOBUFS);
 
     held.release();
     assert(pool.available == 1);

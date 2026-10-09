@@ -32,7 +32,7 @@ void finished(ref State state, ref Completion done) nothrow @nogc
     state.result = done.res;
     // Cleanup starts only after terminal completion, not after cancel().
     auto armed = state.loop.submitAfter!cleaned(5.msecs, state);
-    if (armed.hasError) state.error = -armed.error.errnoValue;
+    if (armed.hasError) state.error = -armed.error.code;
 }
 void deadline(ref State state, ref Completion done) nothrow @nogc
 {
@@ -41,7 +41,7 @@ void deadline(ref State state, ref Completion done) nothrow @nogc
     if (state.finished) return;
     state.timedOut = true;
     auto cancelled = state.loop.cancel(state.operation);
-    if (cancelled.hasError) state.error = -cancelled.error.errnoValue;
+    if (cancelled.hasError) state.error = -cancelled.error.code;
 }
 
 int main() @system

@@ -27,7 +27,7 @@ void readNext(ref Reader reader) nothrow @nogc
     if (reader.used == reader.bytes.length) { reader.error = EFBIG; return; }
     auto window = Buf.fromForeign(reader.bytes[reader.used .. $], null);
     auto submitted = reader.loop.submit!readDone(OpRead(reader.fd, move(window), reader.used), reader);
-    if (submitted.hasError) reader.error = submitted.error.errnoValue;
+    if (submitted.hasError) reader.error = submitted.error.code;
 }
 void readDone(ref Reader reader, ref Completion done) nothrow @nogc
 {

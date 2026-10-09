@@ -58,7 +58,7 @@ noreturn defaultFatalHook(in IoError why) nothrow @nogc @trusted
         static immutable prefix = "event-horizon: fatal backend failure, errno ";
         char[16] digits = void;
         size_t n;
-        uint v = why.errnoValue < 0 ? -why.errnoValue : why.errnoValue;
+        uint v = why.code < 0 ? -why.code : why.code;
         if (v == 0)
             digits[n++] = '0';
         char[16] rev = void;
@@ -478,7 +478,7 @@ if (isCompletionBackend!Backend)
         // interrupted the wait), not a failure; EAGAIN/EBUSY are ring
         // backpressure: drain whatever did arrive and report the iteration;
         // callers loop anyway. Anything else is a hard backend fault.
-        if (waited.hasError && !isBackpressure(waited.error.errnoValue))
+        if (waited.hasError && !isBackpressure(waited.error.code))
             fatal(waited.error);
 
         uint n;
@@ -508,10 +508,10 @@ if (isCompletionBackend!Backend)
     {
         version (unittest)
             if (testFlushErrno != 0)
-                fatal(IoError(testFlushErrno, OpKind.none, IoErrorStage.submit,
+                fatal(ioError(testFlushErrno, OpKind.none, IoErrorStage.submit,
                     "injected flush failure"));
         auto flushed = _backend.flush();
-        if (flushed.hasError && !isBackpressure(flushed.error.errnoValue))
+        if (flushed.hasError && !isBackpressure(flushed.error.code))
             fatal(flushed.error);
     }
 
@@ -972,7 +972,7 @@ version (linux)  :  // tests drive the uring backend directly
 
 version (unittest)
 {
-    import sparkles.event_horizon.errors : skipReason;
+    import sparkles.event_horizon.errors : ioError, skipReason;
     import sparkles.test_runner.skip : skipTest;
 
     /// Creates a loop for a test, or SKIPs it (no io_uring / old kernel).
@@ -1808,7 +1808,7 @@ unittest
             hs[i] = h.value;
         }
         auto full = loop.submitAfter(1.minutes, &onSeen, &seen[0]);
-        assert(full.hasError && full.error.errnoValue == ENOBUFS);
+        assert(full.hasError && full.error.code == ENOBUFS);
         foreach (h; hs)
             assert(!loop.cancel(h).hasError, "cancel is admitted with a full slab");
         assert(!loop.run().hasError);
@@ -1918,7 +1918,7 @@ unittest
     DefaultLoop loop;
     createOrSkip(loop, cfg);
     if (mode == "hook")
-        loop.fatal(IoError(5, OpKind.none, IoErrorStage.submit, "test"));
+        loop.fatal(ioError(5, OpKind.none, IoErrorStage.submit, "test"));
 
     // "flush": the next implicit retry flush fails hard. Two unflushed
     // submissions fill the tiny SQ; the third takes the retry path.

@@ -56,7 +56,7 @@ int main()
     if (created.hasError)
     {
         writefln("SKIP: io_uring unavailable (errno %d) — %s",
-            created.error.errnoValue, created.error.context);
+            created.error.code, created.error.context);
         return 0;
     }
     scope (exit) sched.destroy();

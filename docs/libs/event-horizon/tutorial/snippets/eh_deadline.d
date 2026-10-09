@@ -25,7 +25,7 @@ void main()
         auto outcome = withDeadline!((ref sc) {
             auto slept = env.clock.sleep(10.seconds); // interrupted at 50 ms
             writeln("sleep returned: ", slept.hasError ? "ECANCELED" : "ok");
-            assert(slept.hasError && slept.error.errnoValue == ECANCELED);
+            assert(slept.hasError && slept.error.code == ECANCELED);
             // Cleanup runs to completion even though the fiber is cancelled.
             cast(void) protect!(() {
                 assert(!env.clock.sleep(5.msecs).hasError);

@@ -519,12 +519,12 @@ version (unittest)
     // Over the slot size refuses up front.
     ubyte[65] big;
     auto tooBig = s.submit(big[]);
-    assert(tooBig.hasError && tooBig.error.errnoValue == EMSGSIZE);
+    assert(tooBig.hasError && tooBig.error.code == EMSGSIZE);
 
     // One slot: the second submit refuses with EAGAIN until a release.
     assert(!s.submit(cast(const(ubyte)[]) "a").hasError);
     auto refused = s.submit(cast(const(ubyte)[]) "b");
-    assert(refused.hasError && refused.error.errnoValue == EAGAIN);
+    assert(refused.hasError && refused.error.code == EAGAIN);
     auto done = s.wait();
     assert(!done.hasError);
     s.release(done.value);

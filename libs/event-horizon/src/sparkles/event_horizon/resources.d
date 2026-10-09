@@ -63,7 +63,7 @@ if (is(H == Stream) || is(H == Listener) || is(H == DgramSocket))
         assert(stream.fd == fds[0]);
         return ioErr!int(EIO, OpKind.recv);
     });
-    assert(result.error.errnoValue == EIO);
+    assert(result.error.code == EIO);
     assert(fcntl(fds[0], F_GETFD) == -1);
     bool called;
     auto rejected = withSocket(ioErr!Stream(EIO, OpKind.connect), (ref Stream stream) {

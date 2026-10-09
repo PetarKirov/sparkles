@@ -17,7 +17,7 @@ runs only when both agree.
 */
 module sparkles.event_horizon.backend.probe;
 
-import sparkles.event_horizon.errors : IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
+import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 
 /// Which backend implementation a loop runs on.
 enum BackendId : ubyte
@@ -48,7 +48,7 @@ enum LoopMode : ubyte
 /// What mode negotiation does when the requested mode is unavailable.
 enum ModePolicy : ubyte
 {
-    exact,         /// requested mode unavailable → `IoError(stage: probe)`
+    exact,         /// requested mode unavailable → `ioError(stage: probe)`
     bestAvailable, /// degrade `exclusive` → `cooperative`; result recorded in caps
 }
 
@@ -172,7 +172,7 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
                 OpKind.shutdown: Operation.SHUTDOWN,
                 OpKind.openAt: Operation.OPENAT,
                 OpKind.close: Operation.CLOSE,
-                OpKind.statx: Operation.STATX,
+                OpKind.statAt: Operation.STATX,
                 OpKind.fsync: Operation.FSYNC,
                 OpKind.timeout: Operation.TIMEOUT,
                 OpKind.linkTimeout: Operation.LINK_TIMEOUT,
@@ -208,8 +208,8 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
     Linux hard-error semantics (SPEC §3.4): if `io_uring_setup` fails —
     `ENOSYS` (kernel too old or compiled out), `EPERM`/`EACCES` (seccomp,
     the `io_uring_disabled` sysctl, container lockdown) — this returns
-    `IoError(errno, OpKind.none, IoErrorStage.setup)`. If the kernel is
-    below the 6.1 floor, `IoError(0, OpKind.none, IoErrorStage.probe)`.
+    `ioError(errno, OpKind.none, IoErrorStage.setup)`. If the kernel is
+    below the 6.1 floor, `ioError(0, OpKind.none, IoErrorStage.probe)`.
     There is no epoll fallback.
     */
     IoResult!BackendCaps probeSystem(
@@ -273,7 +273,7 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
 {
     version (unittest)
     {
-        import sparkles.event_horizon.errors : skipReason;
+        import sparkles.event_horizon.errors : ioError, skipReason;
         import sparkles.test_runner.skip : skipTest;
     }
 

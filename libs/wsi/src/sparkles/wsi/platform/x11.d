@@ -967,7 +967,7 @@ struct X11Wsi
             auto cancelled = loop_.cancelAndWait(pollHandle_);
             if (cancelled.hasError)
                 return x11Failure!void(WsiOperation.attach,
-                    cancelled.error.errnoValue,
+                    cancelled.error.code,
                     "failed to cancel and reap X11 display poll");
         }
         pollArmed_ = false;
@@ -1059,7 +1059,7 @@ struct X11Wsi
             PollEvents.readable, false), &onPollReady, &this);
         if (submitted.hasError)
             return x11Failure!void(WsiOperation.attach,
-                submitted.error.errnoValue, "OpPollAdd(XCB fd) failed");
+                submitted.error.code, "OpPollAdd(XCB fd) failed");
         pollHandle_ = submitted.value;
         pollArmed_ = true;
         return wsiOk();

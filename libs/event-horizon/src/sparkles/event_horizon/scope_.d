@@ -18,7 +18,7 @@ import expected : Expected;
 
 import sparkles.event_horizon.capability : SpawnOptions, hasDeadlineTimer, isFiberExecutor;
 import sparkles.event_horizon.cause;
-import sparkles.event_horizon.errors : IoError, IoErrorStage, IoResult, NoGcHook, OpKind, ioErr, ioOk;
+import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult, NoGcHook, OpKind, ioErr, ioOk;
 
 /// What the scope does when a child records a cause.
 enum OnChildFailure : ubyte
@@ -90,7 +90,7 @@ if (isFiberExecutor!X)
         if (child is null)
         {
             handle._cause = Cause!E.fromFailure(
-                E(ENOBUFS, OpKind.none, IoErrorStage.submit,
+                ioError(ENOBUFS, OpKind.none, IoErrorStage.submit,
                     "fiber slab exhausted"));
             handle._isErr = true;
             handle._done = true;
@@ -182,7 +182,7 @@ package:
         auto child = _exec.spawnFiber(under, opts, body_);
         if (child is null)
         {
-            fail(Cause!E.fromFailure(E(ENOBUFS, OpKind.none,
+            fail(Cause!E.fromFailure(ioError(ENOBUFS, OpKind.none,
                 IoErrorStage.submit, "fiber slab exhausted")));
             return false;
         }
@@ -599,16 +599,16 @@ unittest
                 // sweep can end this quickly (cancel-wins race).
                 auto slept = sleep(s, 1.minutes);
                 assert(slept.hasError);
-                siblingErrno = slept.error.errnoValue;
+                siblingErrno = slept.error.code;
             });
             sc.spawn(() {
                 sc.fail(Cause!IoError.fromFailure(
-                    IoError(5, OpKind.none, IoErrorStage.completion, "boom")));
+                    ioError(5, OpKind.none, IoErrorStage.completion, "boom")));
             });
         })(s);
         assert(outcome.hasError);
         assert(outcome.error.kind == Cause!IoError.Kind.fail);
-        assert(outcome.error.failure.errnoValue == 5);
+        assert(outcome.error.failure.code == 5);
     });
     assert(!r.hasError);
     assert(siblingErrno == ECANCELED,
@@ -1197,7 +1197,7 @@ unittest
             assert(sc.spawnShielded(() {
                 worker = s.currentContext();
                 auto slept = sleep(s, 10.seconds);
-                workerErrno = slept.hasError ? slept.error.errnoValue : 0;
+                workerErrno = slept.hasError ? slept.error.code : 0;
             }, &shield));
             s.yieldNow(); // the worker parks on its timer
             sc.cancel(); // the ordinary sweep: the body, not the shield
@@ -1237,7 +1237,7 @@ unittest
             assert(sc.spawnShielded(() {
                 worker = s.currentContext();
                 auto slept = sleep(s, 10.seconds);
-                workerErrno = slept.hasError ? slept.error.errnoValue : 0;
+                workerErrno = slept.hasError ? slept.error.code : 0;
             }, &shield));
             sc.spawn(() { throw new Exception("sibling defect"); });
             // The defect's sweep lands on the body at this checkpoint …
@@ -1313,7 +1313,7 @@ unittest
             admitted = sc.spawnShielded(() {}, &shield);
         })(s);
         assert(outcome.hasError && outcome.error.kind == Cause!IoError.Kind.fail
-            && outcome.error.failure.errnoValue == ENOBUFS);
+            && outcome.error.failure.code == ENOBUFS);
     });
     assert(!r.hasError);
     assert(!admitted);

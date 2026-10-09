@@ -30,7 +30,7 @@ int main() @system
             auto next = items.take(scheduler); // Parks when empty.
             if (next.hasError)
             {
-                if (next.error.errnoValue != EPIPE) return ioErr!void(next.error);
+                if (next.error.code != EPIPE) return ioErr!void(next.error);
                 break; // Closed and drained.
             }
             sum += next.value;

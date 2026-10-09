@@ -10,6 +10,8 @@ targetType "library"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
+// The loop-free layer: error classification and the blocking VFS backend.
+dependency "sparkles:event-horizon-sys" path="../.."
 dependency "expected" version="~>0.4.1"
 dependency "during" version="~>0.5.0" platform="linux"
 

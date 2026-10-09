@@ -19,7 +19,7 @@ int main() @system
         bool cleaned;
         auto timed = withDeadline!((ref scope_) {
             auto slept = env.clock.sleep(10.seconds);
-            if (slept.hasError && slept.error.errnoValue != ECANCELED)
+            if (slept.hasError && slept.error.code != ECANCELED)
                 scope_.fail(Cause!IoError.fromFailure(slept.error));
             writeln("sleep returned: ", slept.hasError ? "ECANCELED" : "ok");
             // Cleanup is allowed to finish even with cancellation latched.

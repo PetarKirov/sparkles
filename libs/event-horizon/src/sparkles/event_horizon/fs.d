@@ -133,15 +133,15 @@ struct RingFs
     auto ran = sched.run(() {
         auto fs = RingFs(&sched);
         assert(fs.readText(path, 5).value == "hello");
-        assert(fs.readText(path, 4).error.errnoValue == EFBIG);
-        assert(fs.readText(path, 0).error.errnoValue == EFBIG);
+        assert(fs.readText(path, 4).error.code == EFBIG);
+        assert(fs.readText(path, 0).error.code == EFBIG);
         assert(fs.readText(path ~ "-missing", 5).hasError);
         int borrowed = -1;
         auto failed = fs.withFile(path, (ref FileHandle file) {
             borrowed = file.fd;
             return ioErr!void(EIO, OpKind.read);
         });
-        assert(failed.error.errnoValue == EIO);
+        assert(failed.error.code == EIO);
         assert(fcntl(borrowed, F_GETFD) == -1);
     });
     assert(!ran.hasError);
@@ -236,13 +236,13 @@ IoResult!void statxPath(ref Sched s, scope const(char)[] path, ref Statx out_,
 {
     CString!4096 zpath;
     if (!tryToCString(zpath, [path]))
-        return ioErr!void(36 /* ENAMETOOLONG */, OpKind.statx,
+        return ioErr!void(36 /* ENAMETOOLONG */, OpKind.statAt,
             IoErrorStage.submit, "path too long");
 
     auto o = s.await(OpStatx(atFdCwd, zpath.ptr, 0, mask,
         (() @trusted => cast(void*) &out_)()));
     if (o.res < 0)
-        return ioErr!void(-o.res, OpKind.statx);
+        return ioErr!void(-o.res, OpKind.statAt);
     return ioOk();
 }
 
