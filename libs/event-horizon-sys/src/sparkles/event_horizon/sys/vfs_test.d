@@ -19,92 +19,12 @@ import std.string : indexOf, toStringz;
 
 import sparkles.base.vfs;
 import sparkles.base.vfs.testing : runAttackTable;
+import sparkles.event_horizon.sys.testing : NativeFixture, differentialLog,
+    differentialMemVfs, scratchDir;
 import sparkles.event_horizon.sys.vfs;
 
-/// A fresh directory under the system temp dir, removed by `cleanup`.
-string scratchDir(string tag) @safe
-{
-    import std.random : uniform;
-
-    auto dir = buildPath(tempDir, "vfs-" ~ tag ~ "-" ~ uniform(0, uint.max).to!string);
-    mkdirRecurse(dir);
-    return dir;
-}
-
-/// The `BlockingVfs` fixture for the attack table.
-struct NativeFixture
-{
-    alias Backend = BlockingVfs;
-    BlockingVfs* backend;
-    string top;
-
-    static NativeFixture make() @safe => NativeFixture(new BlockingVfs, scratchDir("attack"));
-
-    BlockingVfs* vfs() @safe => backend;
-    string rootPath() @safe => buildPath(top, "r");
-
-    bool build(in string[] tree) @safe
-    {
-        foreach (e; tree)
-            if (e[0] == 'm')
-                return false; // mounts need privileges; the mount test covers them
-        mkdirRecurse(buildPath(top, "outside"));
-        write(buildPath(top, "outside", "secret"), "secret");
-        mkdirRecurse(buildPath(top, "r"));
-        foreach (e; tree)
-        {
-            const spec = e[2 .. $];
-            final switch (e[0])
-            {
-                case 'd': mkdirRecurse(buildPath(top, "r", spec)); break;
-                case 'f':
-                    mkdirRecurse(dirName(buildPath(top, "r", spec)));
-                    write(buildPath(top, "r", spec), "");
-                    break;
-                case 'l':
-                    const gt = spec.indexOf('>');
-                    const link = buildPath(top, "r", spec[0 .. gt]);
-                    mkdirRecurse(dirName(link));
-                    symlink(spec[gt + 1 .. $], link);
-                    break;
-                case 'm': assert(0);
-            }
-        }
-        return true;
-    }
-
-    bool isAt(BlockingVfs.Handle h, string path) @safe
-    {
-        import core.sys.posix.sys.stat : stat, stat_t;
-
-        auto st = backend.fstat(h, StatMask.basic);
-        stat_t want;
-        if (st.hasError || (() @trusted => stat(buildPath(top, path).toStringz, &want))() != 0)
-            return false;
-        // Device alone is not identity; compare the inode through a second fstat.
-        return st.value.device == want.st_dev && inodeOf(h) == want.st_ino;
-    }
-
-    ulong inodeOf(BlockingVfs.Handle h) @trusted
-    {
-        import core.sys.posix.sys.stat : fstat, stat_t;
-
-        stat_t st;
-        fstat(*cast(int*)&h, &st);
-        return st.st_ino;
-    }
-
-    bool exists(string path) @safe
-    {
-        import core.sys.posix.sys.stat : lstat, stat_t;
-
-        stat_t st;
-        return (() @trusted => lstat(buildPath(top, path).toStringz, &st))() == 0;
-    }
-
-    const(ubyte)[] contents(string path) @safe => cast(const(ubyte)[]) read(buildPath(top, path));
-    string linkTarget(string path) @safe => readLink(buildPath(top, path));
-}
+/// The attack-table fixture over this backend.
+alias Fixture = NativeFixture!BlockingVfs;
 
 private void expectNoFailures(string[] failures, string what) @safe
 {
@@ -120,7 +40,7 @@ private void expectNoFailures(string[] failures, string what) @safe
 @safe unittest
 {
     size_t skipped;
-    auto failures = runAttackTable!NativeFixture(() => NativeFixture.make(), skipped);
+    auto failures = runAttackTable!Fixture(() => Fixture.make(), skipped);
     expectNoFailures(failures, "attack table, default resolver");
     assert(skipped == 2 * 8, "only the two mount rows are skipped");
 }
@@ -131,7 +51,7 @@ private void expectNoFailures(string[] failures, string what) @safe
     // The same rows forced onto the component walk: with oracle 1 above, both
     // resolvers meet the same expectations, so they agree (VFR1).
     size_t skipped;
-    auto failures = runAttackTable!NativeFixture(() => NativeFixture.make(), skipped,
+    auto failures = runAttackTable!Fixture(() => Fixture.make(), skipped,
         (BlockingVfs* v) { v.forceComponentWalk = true; });
     expectNoFailures(failures, "attack table, component walk");
 }
@@ -321,50 +241,16 @@ private enum uint octal111 = 73, octal755 = 493, octal777 = 511, octal666 = 438,
 @("vfs.blocking.oracle4.differential")
 @safe unittest
 {
-    // One scenario on both backends; the trees and every result must match.
-    static string run(R)(ref R root)
-    {
-        string log;
-        void note(string what, ErrorKind k) { log ~= what ~ "=" ~ k.to!string ~ ";"; }
-        void ok(string what, bool failed, ErrorKind k) { log ~= what ~ "=" ~ (failed ? k.to!string : "ok") ~ ";"; }
-        auto a = root.walkAll("a/b");
-        ok("walkAll", a.hasError, a.hasError ? a.error.kind : ErrorKind.other);
-        auto w = a.value.writeFileAtomic("f", "content");
-        ok("write", w.hasError, w.hasError ? w.error.kind : ErrorKind.other);
-        auto again = root.mkdirAt("a");
-        ok("mkdirExisting", again.hasError, again.hasError ? again.error.kind : ErrorKind.other);
-        auto link = root.symlinkAt("l", "a");
-        ok("symlink", link.hasError, link.hasError ? link.error.kind : ErrorKind.other);
-        auto viaLink = root.walk("l/b");
-        ok("walkThroughLink", viaLink.hasError, viaLink.hasError ? viaLink.error.kind : ErrorKind.other);
-        auto ren = a.value.renameAt("f", a.value, "g");
-        ok("rename", ren.hasError, ren.hasError ? ren.error.kind : ErrorKind.other);
-        auto st = a.value.statAt("g");
-        log ~= "size=" ~ (st.hasError ? "x" : st.value.size.to!string) ~ ";";
-        auto rd = root.rmdirAt("a");
-        ok("rmdirNonEmpty", rd.hasError, rd.hasError ? rd.error.kind : ErrorKind.other);
-        auto rt = root.removeTree("a");
-        ok("removeTree", rt.hasError, rt.hasError ? rt.error.kind : ErrorKind.other);
-        auto l = root.list();
-        string entries;
-        while (l.value.next().value)
-            entries ~= l.value.front.name.idup ~ ",";
-        log ~= "entries=" ~ entries;
-        return log;
-    }
-
-    auto mem = testVfsForOtherPackages();
+    // One scenario on both backends; every result and the final tree match.
+    auto mem = differentialMemVfs();
     mem.mkdirs("r");
     auto memRoot = openRoot!(Rights.all)(mem, "r", ambientAuthority());
-    const memLog = run(memRoot.value);
+    const memLog = differentialLog(memRoot.value);
 
     auto dir = scratchDir("diff");
     scope (exit) rmdirRecurse(dir);
     auto v = new BlockingVfs;
     auto nativeRoot = openRoot!(Rights.all)(v, dir, ambientAuthority());
-    const nativeLog = run(nativeRoot.value);
+    const nativeLog = differentialLog(nativeRoot.value);
     assert(memLog == nativeLog, "\nMemVfs:      " ~ memLog ~ "\nBlockingVfs: " ~ nativeLog);
 }
-
-// MemVfs over GC arenas; `testVfs` is package-private to sparkles.base.vfs.
-MemVfs* testVfsForOtherPackages() @safe => new MemVfs(new MemNode[256], new ubyte[1 << 16]);
