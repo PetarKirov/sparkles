@@ -23,7 +23,7 @@ import sparkles.base.io.errors : ErrorKind, IoError, IoResult, NoGcHook, ioErr, 
 import sparkles.base.vfs.concept : isVfs;
 import sparkles.base.vfs.types : EntryKind, MountCheck, OpenMode, ResolvePolicy, Sharing,
     Stat, StatMask;
-import sparkles.event_horizon.sys : BlockingVfs, BorrowedFd;
+import sparkles.event_horizon.sys : BlockingVfs, BorrowedFd, OwnedFd;
 
 version (Posix)
 {
@@ -147,6 +147,9 @@ struct RingVfs
     static if (__traits(hasMember, BlockingVfs, "borrowFd"))
         /// See `BlockingVfs.borrowFd`.
         BorrowedFd borrowFd(Handle h) const @nogc => inner.borrowFd(h);
+    static if (__traits(hasMember, BlockingVfs, "ownedFd"))
+        /// See `BlockingVfs.ownedFd`.
+        OwnedFd ownedFd(Handle h) const @nogc => inner.ownedFd(h);
 
     version (unittest)
     {
