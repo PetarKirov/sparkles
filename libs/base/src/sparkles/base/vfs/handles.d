@@ -144,6 +144,15 @@ if (isVfs!V)
     /// Whether this is an open handle rather than an empty `.init`.
     bool alive() const scope => core.open;
 
+    /// Gives the directory's descriptor to a new owner, where the backend has
+    /// one, and leaves this handle empty; see `File.intoOwnedFd`.
+    static if (__traits(hasMember, V, "ownedFd"))
+        auto intoOwnedFd()
+        {
+            core.open = false;
+            return core.vfs.ownedFd(core.handle);
+        }
+
     private ref inout(DirCore!V) self() inout return => core;
 
     mixin DirOperations!(V, R);
@@ -583,6 +592,18 @@ if (isVfs!V)
     /// with.
     static if (__traits(hasMember, V, "borrowFd"))
         auto borrowFd() scope => vfs.borrowFd(handle);
+
+    /// Gives the descriptor to a new owner, where the backend has one, and
+    /// leaves this `File` empty: cap-std's `OwnedFd::from(File)`. For a
+    /// descriptor that must outlive any one `File`, such as a control file
+    /// held open for a run's lifetime. The owner has no rights at all at
+    /// compile time; the operating system enforces the open's access.
+    static if (__traits(hasMember, V, "ownedFd"))
+        auto intoOwnedFd()
+        {
+            open = false;
+            return vfs.ownedFd(handle);
+        }
 
     /// The rights of this handle's type.
     enum Rights rights = R;
