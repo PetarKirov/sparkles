@@ -1097,7 +1097,8 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
     // Conventional-commit type breakdown (only non-zero rows), with a
     // count-proportional bar per row.
     import std.algorithm.comparison : max;
-    import sparkles.ui.components.meter : meter;
+    import sparkles.base.text.writers : formatted;
+    import sparkles.ui.components.meter : writeMeter;
 
     size_t maxTypeCount = 0;
     foreach (count; rs.typeCounts)
@@ -1108,7 +1109,8 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
         if (rs.typeCounts[__traits(getMember, CommitType, t)] > 0)
             types ~= [t,
                 rs.typeCounts[__traits(getMember, CommitType, t)].text,
-                meter(rs.typeCounts[__traits(getMember, CommitType, t)], maxTypeCount, 12)];
+                formatted!writeMeter(rs.typeCounts[__traits(getMember, CommitType, t)],
+                    maxTypeCount, 12).toString];
     if (types.length > 1)
     {
         writeln();

@@ -234,7 +234,10 @@ private string spliceIntoRule(string rule, string label, in TableProps p)
         return rule; // too narrow for any label; keep the plain border
 
     const maxLabel = chars.length - lead - decoration - trail;
-    const clamped = truncateField(label, maxLabel);
+    // Written into its own buffer: its width decides the fill around it.
+    auto clampedText = appender!string;
+    truncateField(clampedText, label, maxLabel);
+    const clamped = clampedText[];
     const labelWidth = visibleWidth(clamped);
 
     auto out_ = appender!string;

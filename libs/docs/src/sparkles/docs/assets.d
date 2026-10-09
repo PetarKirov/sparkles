@@ -34,7 +34,7 @@ import sparkles.ui.dtcg : DtcgResult;
 import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, Slot;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.theme_file : ThemeFile;
-import sparkles.ui.tokens : ColorChannel, cssName;
+import sparkles.ui.tokens : ColorChannel, writeCssName;
 
 /// What goes into the shared stylesheet.
 struct StylesheetContent
@@ -129,15 +129,16 @@ private string calloutCss() @safe pure
     import std.format : format;
 
     const pal = defaultTwoslashPalette(ColorScheme.dark);
-    string s;
+    auto w = appender!string;
     foreach (kind; ["note", "tip", "important", "warning", "caution"])
     {
         const slot = calloutSlots[kind];
         const c = pal.fg[slot].rgb;
-        s ~= format(".callout-%s { border-color: var(%s, #%02x%02x%02x); }\n",
-            kind, cssName(slot, ColorChannel.foreground), c.r, c.g, c.b);
+        w ~= ".callout-" ~ kind ~ " { border-color: var(";
+        writeCssName(w, slot, ColorChannel.foreground);
+        w ~= format(", #%02x%02x%02x); }\n", c.r, c.g, c.b);
     }
-    return s;
+    return w[];
 }
 
 /// Where a token stylesheet's dark values apply (`WEB2`).
@@ -156,7 +157,7 @@ struct TokenSheetOptions
 The design system's custom properties for a theme pair (`WEB1`, `WEB2`): the
 light theme's values on `:root`, the dark theme's under `o.darkScope` (and
 `prefers-color-scheme: dark` when `o.followSystem`). Every name comes from
-$(REF cssPropertyName, sparkles,ui,css); nothing here names a token. `T` is a
+$(REF writeCssPropertyName, sparkles,ui,css); nothing here names a token. `T` is a
 $(REF Theme, sparkles,ui,theme) or a loaded
 $(REF ThemeFile, sparkles,ui,theme_file), whose own tokens come along.
 */

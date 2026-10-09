@@ -11,7 +11,7 @@
 /**
  * The whole thing as an ADAPTER over the existing components:
  * `TreeData!PropNode` + `TreeViewState!string` + `activate`/`collapseOrUp` +
- * `treeText`. No new interaction machinery.
+ * `writeTreeText`. No new interaction machinery.
  *
  * Under test:
  *   C20. A property tree needs NOTHING new from the tree component except a
@@ -33,7 +33,8 @@ module property_tree_tree_adapter;
 import std.conv : text, to;
 import std.traits : hasUDA, isAggregateType, isArray, isSomeString;
 
-import sparkles.ui.components.inspector : treeText;
+import sparkles.base.text.writers : formatted;
+import sparkles.ui.components.inspector : writeTreeText;
 import sparkles.ui.components.tree_view : activate, collapseOrUp,
     measureContent, TreeStep, TreeViewState;
 import sparkles.ui.components.tree_widget : flatten, TreeData, TreeGlyphs;
@@ -147,7 +148,7 @@ void main()
     {
         writefln("\n── %s  (cursor=%s, rows=%s) ─────────", what, t.state.sel,
             t.state.rows.length);
-        write(treeText(t.data, t.state.rows));
+        write(formatted!writeTreeText(t.data, t.state.rows));
     }
 
     show("closed");

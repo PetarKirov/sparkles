@@ -36,7 +36,7 @@ module pages.property_page;
 import std.conv : text;
 
 import sparkles.input : Key, KeyEvent;
-import sparkles.ui.components.property_view : matchedFieldsText, propertyText,
+import sparkles.ui.components.property_view : matchedFieldsText,
     propertyView, PropertyViewOptions, refusalText, valueText;
 import sparkles.ui.components.tree_view : treeActivate = activate,
     treeCollapseOrUp = collapseOrUp, TreeStep;

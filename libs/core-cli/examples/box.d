@@ -83,7 +83,7 @@ void main()
                     port: 8080,
                     ssl: true,
                     endpoints: ["/api", "/health", "/metrics"],
-                ).prettyPrint(PrettyPrintOptions!void(softMaxWidth: 0)).drawBox("Config"),
+                ).prettyPrint(PrettyPrintOptions!void(softMaxWidth: 0)).toString.drawBox("Config"),
             ),
             Section(
                 header: "Dashboard Example",
@@ -121,7 +121,7 @@ void main()
                         Server("db-01", "192.168.1.20", 5432),
                     ],
                     active: true,
-                ).prettyPrint(PrettyPrintOptions!void(softMaxWidth: 60)).drawBox("Cluster"),
+                ).prettyPrint(PrettyPrintOptions!void(softMaxWidth: 60)).toString.drawBox("Cluster"),
             ),
             Section(
                 header: "Box with Footer",

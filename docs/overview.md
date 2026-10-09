@@ -444,13 +444,14 @@ ASCII fallback, and the composed `ProgressBar` (determinate) / `ProgressLine`
 +/
 import core.time : msecs;
 import std.stdio : writeln;
-import sparkles.ui.components.meter : meter, meterGlyphs, ProgressBar;
+import sparkles.base.text.writers : formatted;
+import sparkles.ui.components.meter : meterGlyphs, ProgressBar, writeMeter;
 import sparkles.ui.components.progress : ProgressLine;
 
 void main()
 {
-    writeln("|", meter(0.33, 16), "|");
-    writeln("|", meter(7, 9, 16, meterGlyphs(false)), "|"); // ASCII fallback
+    writeln("|", formatted!writeMeter(0.33, 16), "|");
+    writeln("|", formatted!writeMeter(7, 9, 16, meterGlyphs(false)), "|"); // ASCII fallback
     writeln(ProgressBar(done: 5, total: 40, barWidth: 16));
     writeln(ProgressLine(frame: 3, done: 12, total: 40, elapsed: 1500.msecs));
 }

@@ -317,7 +317,8 @@ version (unittest)
 @system unittest
 {
     import std.algorithm.searching : canFind;
-    import sparkles.ui.components.property_view : propertyText;
+    import sparkles.base.text.writers : formatted;
+    import sparkles.ui.components.property_view : writePropertyText;
 
     auto cfg = new Fixture;
     SettingsPaneT!Fixture p;
@@ -339,7 +340,7 @@ version (unittest)
 
     // The plain-text twin renders the same rows both canvases paint — the
     // affordances the pane relies on are visible in it.
-    const textView = propertyText(p.tree.data, p.tv.rows, p.tv, p.edits);
+    const textView = formatted!writePropertyText(p.tree.data, p.tv.rows, p.tv, p.edits).toString;
     assert(textView.canFind("dark"), textView);
     assert(textView.canFind("[x]") || textView.canFind("[ ]"), textView);
     assert(textView.canFind("⏎ edit") || textView.canFind("needs EDT")

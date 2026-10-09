@@ -232,17 +232,6 @@ ref Writer alignField(Writer)(
     return w;
 }
 
-/// Convenience overload returning a freshly GC-allocated `string`. Prefer the
-/// output-range form in `@nogc` code.
-string alignField(scope const(char)[] content, size_t width, Align align_) @safe
-{
-    import std.array : appender;
-
-    auto w = appender!string;
-    alignField(w, content, width, align_);
-    return w[];
-}
-
 @("width.alignField.horizontal")
 @safe pure nothrow @nogc unittest
 {
@@ -308,7 +297,7 @@ string alignField(scope const(char)[] content, size_t width, Align align_) @safe
     {
         SharedBuffer!(char, 64) b;
         alignField(b, "abc", 7, a);
-        assert(alignField("abc", 7, a) == b[]);
+        assert(b[].length == 7);
     }
 }
 
@@ -356,18 +345,6 @@ ref Writer truncateField(Writer)(
     if (withEllipsis)
         put(w, ellipsis);
     return w;
-}
-
-/// Convenience overload returning a freshly GC-allocated `string`. Prefer the
-/// output-range form in `@nogc` code.
-string truncateField(scope const(char)[] content, size_t width,
-    scope const(char)[] ellipsis = "…") @safe
-{
-    import std.array : appender;
-
-    auto w = appender!string;
-    truncateField(w, content, width, ellipsis);
-    return w[];
 }
 
 @("width.truncateField.stylesCannotSplitClusterBudget")
@@ -436,14 +413,11 @@ string truncateField(scope const(char)[] content, size_t width,
     assert(b[] == "\x1b[31mred r\x1b[0m…");
 }
 
-@("width.truncateField.customEllipsisAndStringForm")
+@("width.truncateField.customEllipsis")
 @safe unittest
 {
-    assert(truncateField("hello world", 8, "...") == "hello...");
-    assert(truncateField("hello", 8, "...") == "hello");
+    import sparkles.base.buffer : checkWriter;
 
-    import sparkles.base.buffer : SharedBuffer;
-    SharedBuffer!(char, 64) b;
-    truncateField(b, "hello world", 8, "...");
-    assert(truncateField("hello world", 8, "...") == b[]);
+    checkWriter!((ref b) => truncateField(b, "hello world", 8, "..."))("hello...");
+    checkWriter!((ref b) => truncateField(b, "hello", 8, "..."))("hello");
 }

@@ -26,6 +26,7 @@ module pages.terminal_page;
 import std.conv : text, to;
 
 import sparkles.base.text.width : truncateField;
+import sparkles.base.text.writers : formatted;
 import sparkles.input : Key, KeyEvent, PointerEvent;
 import sparkles.ui.components.chrome : actionBar;
 import sparkles.ui.geometry : SizeSpec;
@@ -250,9 +251,9 @@ private uint termRow(ref Builder b, in GalleryState s, size_t i)
     const hot = s.pointerAffordances
         && (s.hover.isHot(tabHit(t.id)) || s.hover.isHot(closeHit(t.id)));
 
-    const caption = truncateField(
+    const caption = formatted!truncateField(
         t.labelText.idup ~ (t.exited ? text(" (", t.exitStatus, ")") : ""),
-        labelCells);
+        labelCells).toString;
     uint[] children;
     children ~= b.add(Widget(
         kind: WidgetKind.text,

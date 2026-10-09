@@ -126,9 +126,10 @@ public import sparkles.base.term_color : ColorChannel;
 
 /**
 Writes the CSS custom property of one color leaf (`WEB1`, D60): `--spk-`, then
-the leaf's theme-file path `<slot path>[.<state>].<channel>` with `.` → `-`. The
-GC-free form; $(LREF cssName) is the convenience wrapper, and
-`sparkles.ui.css.cssPropertyName` the same rule over any token path.
+the leaf's theme-file path `<slot path>[.<state>].<channel>` with `.` → `-`;
+`sparkles.ui.css.writeCssPropertyName` is the same rule over any token path.
+Where a value is needed before the sink exists, pass
+`formatted!writeCssName(slot, channel)` (`sparkles.base.text.writers`).
 */
 void writeCssName(W)(ref W w, Slot slot, ColorChannel channel,
     InteractionState state = InteractionState.rest)
@@ -148,17 +149,6 @@ in (channel != ColorChannel.underline, "a slot has no underline leaf")
     }
     put(w, '-');
     writeEnumMemberName!Dtcg(w, channel);
-}
-
-/// ditto — allocating.
-string cssName(Slot slot, ColorChannel channel,
-    InteractionState state = InteractionState.rest) @safe pure
-{
-    import std.array : appender;
-
-    auto w = appender!string;
-    writeCssName(w, slot, channel, state);
-    return w[];
 }
 
 // ── component slot declarations (TOK6) ──────────────────────────────────────
@@ -574,19 +564,23 @@ unittest
     assert(tierOf(Slot.chip) == TokenTier.component);
 }
 
-@("ui.tokens.cssName.derivedFromPath")
-@safe pure
+@("ui.tokens.writeCssName.derivedFromPath")
+@safe pure nothrow @nogc
 unittest
 {
+    import sparkles.base.buffer : checkWriter;
+
     with (ColorChannel)
     {
-        assert(cssName(Slot.muted, foreground) == "--spk-text-muted-fg");
-        assert(cssName(Slot.highlightBorder, background) == "--spk-twoslash-highlight-border-bg");
-        // The state sits before the channel, as in the theme file.
-        assert(cssName(Slot.thumb, background, InteractionState.hover)
-            == "--spk-scrollbar-thumb-hover-bg");
-        assert(cssName(Slot.thumb, foreground, InteractionState.rest)
-            == cssName(Slot.thumb, foreground));
+        checkWriter!((ref w) => writeCssName(w, Slot.muted, foreground))("--spk-text-muted-fg");
+        checkWriter!((ref w) => writeCssName(w, Slot.highlightBorder, background))
+            ("--spk-twoslash-highlight-border-bg");
+        // The state sits before the channel, as in the theme file; `rest` is
+        // no state at all.
+        checkWriter!((ref w) => writeCssName(w, Slot.thumb, background, InteractionState.hover))
+            ("--spk-scrollbar-thumb-hover-bg");
+        checkWriter!((ref w) => writeCssName(w, Slot.thumb, foreground, InteractionState.rest))
+            ("--spk-scrollbar-thumb-fg");
     }
 }
 

@@ -31,6 +31,8 @@ module ts_inspect;
 
 import std.conv : text;
 
+import sparkles.base.text.writers : formatted;
+
 import sparkles.syntax.ts.highlighter : ParsedLayer;
 import sparkles.tree_sitter : nodeChild, nodeChildCount,
     nodeFieldNameForChild, nodeIsError, nodeIsExtra, nodeIsMissing,
@@ -317,16 +319,6 @@ void writeQueryText(Writer)(ref Writer w, in CstInspect ci,
     }
 }
 
-/// ditto — as one `string`.
-string queryText(in CstInspect ci, in FlatTreeRow[] rows)
-{
-    import std.array : appender;
-
-    auto w = appender!string;
-    writeQueryText(w, ci, rows);
-    return w[];
-}
-
 // The badge is authoritative for points; re-deriving rows/cols from bytes
 // would need the source. Parse them back out of the stored badge instead of
 // carrying four more fields per node.
@@ -523,7 +515,7 @@ version (unittest)
     auto ci = inspectCst(layers, source);
     auto rows = flatten(ci.data, (uint) => true);
 
-    const dump = queryText(ci, rows);
+    const dump = formatted!writeQueryText(ci, rows).toString;
     // The reference line shape: parens, field prefixes, range comments.
     assert(dump.canFind("(document ; [0, 0] - [0, 8]"), dump);
     assert(dump.canFind("key: (string ; "), dump);

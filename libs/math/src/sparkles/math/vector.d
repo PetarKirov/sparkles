@@ -389,10 +389,10 @@ unittest
     checkToString(Vec3f(1, 2, 3), "(1, 2, 3)");
     checkToString(Vec4f(1, 2, 3, 4), "(1, 2, 3, 4)");
 
-    assert(prettyPrint(Vec2f(1, 2), PrettyPrintOptions!void.plainText) == "(1, 2)");
-    assert(prettyPrint(Vec3f(1, 2, 3), PrettyPrintOptions!void.plainText) == "(1, 2, 3)");
+    assert(prettyPrint(Vec2f(1, 2), PrettyPrintOptions!void.plainText).toString == "(1, 2)");
+    assert(prettyPrint(Vec3f(1, 2, 3), PrettyPrintOptions!void.plainText).toString == "(1, 2, 3)");
     // Colored output has blue numbers (\x1b[34m)
-    assert(prettyPrint(Vec2f(1, 2)) == "(\x1b[34m1\x1b[39m, \x1b[34m2\x1b[39m)");
+    assert(prettyPrint(Vec2f(1, 2)).toString == "(\x1b[34m1\x1b[39m, \x1b[34m2\x1b[39m)");
 }
 
 /// Swizzle read access supports arbitrary ordering and duplication.

@@ -19,6 +19,7 @@ import sparkles.ui.components.tree_view : TreeViewState;
 import sparkles.ui.components.tree_widget : FlatTreeRow, Guide, nodeExpandable,
     TreeData, TreeGlyphs;
 import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.base.text.writers : formatted;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.property_tree : ByteSpan, LeafKind, MatchedField,
     PropertyEditState, PropertyNode, Refusal, RefusalKind, SearchRole;
@@ -380,18 +381,6 @@ void writePropertyText(Writer)(ref Writer w, in TreeData!PropertyNode data,
     }
 }
 
-/// ditto — as one `string`.
-string propertyText(in TreeData!PropertyNode data, in FlatTreeRow[] rows,
-    in TreeViewState!string s, in PropertyEditState edits,
-    in PropertyViewOptions opt = PropertyViewOptions.init)
-{
-    import std.array : appender;
-
-    auto w = appender!string;
-    writePropertyText(w, data, rows, s, edits, opt);
-    return w[];
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -495,14 +484,14 @@ version (UiPropertyFixtures)
     // The plain-text target shows the same refusal (PRT26).
     import std.algorithm.searching : canFind;
 
-    const txt = propertyText(f.pt.data, f.tv.rows, f.tv, f.es);
+    const txt = formatted!writePropertyText(f.pt.data, f.tv.rows, f.tv, f.es).toString;
     assert(txt.canFind("⚠ out of range"));
 
     // Success clears it everywhere.
     assert(editProperty(f.subject, Edit("stroke.width", EditValue.of(2.0)),
         f.es).ok);
     f.pt.rebuild(f.subject, f.tv);
-    assert(!propertyText(f.pt.data, f.tv.rows, f.tv, f.es)
+    assert(!formatted!writePropertyText(f.pt.data, f.tv.rows, f.tv, f.es).toString
         .canFind("out of range"));
 }
 
@@ -530,7 +519,7 @@ version (UiPropertyFixtures)
     assert(sawMatchSpan && sawMarker);
 
     // …and the text target says WHICH field matched, without color (PRT33).
-    const txt = propertyText(f.pt.data, f.tv.rows, f.tv, f.es);
+    const txt = formatted!writePropertyText(f.pt.data, f.tv.rows, f.tv, f.es).toString;
     assert(txt.canFind("● "), "direct-match marker");
     assert(txt.canFind("(matched: label)"), "accessibility text");
     assert(txt.canFind("▾ "),
