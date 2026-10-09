@@ -38,7 +38,7 @@ twoslash.
 
 Every member carries its design-system $(B token path) as `@WireName` data
 (`TOK2`): the one spelling wired resolves for JSON and the DTCG theme file, and
-from which `sparkles.ui.tokens.cssName` derives the CSS custom property. The
+from which `sparkles.ui.tokens.writeCssName` derives the CSS custom property. The
 semantic groups (`text`, `status`, `surface`, `border`, `accent`, `link`,
 `selection`, `focus`, `shadow`) and the component namespaces (`chrome`,
 `gutter`, `scrollbar`, `completion`, `input`, `twoslash`, `diff`, `coverage`)

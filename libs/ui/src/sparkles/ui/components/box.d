@@ -813,11 +813,14 @@ private const(char)[] stripTrailingSpaces(const(char)[] s)
 /// old word-boundary cut); the `width == 0` case keeps the historical bare `…`.
 private string ellipsizeTitle(string title, size_t width)
 {
+    import std.array : appender;
     import sparkles.base.text.width : truncateField;
 
     if (width == 0)
         return "…";
-    return truncateField(title, width);
+    auto w = appender!string;
+    truncateField(w, title, width);
+    return w[];
 }
 
 /// The top region for a wrapped title inside a nested box joined to the frame's top by

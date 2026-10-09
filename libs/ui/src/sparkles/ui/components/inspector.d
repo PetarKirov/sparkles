@@ -40,6 +40,7 @@ import std.conv : text;
 import sparkles.ui.components.tree_view : TreeViewState, viewSlice;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, Guide,
     nodeExpandable, TreeData, TreeGlyphs;
+import sparkles.base.text.writers : formatted;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.style : Slot, TextStyle;
@@ -315,18 +316,6 @@ void writeTreeText(Writer, T)(ref Writer w, in TreeData!T data,
     }
 }
 
-/// ditto — as one `string`.
-string treeText(T)(in TreeData!T data, in FlatTreeRow[] rows,
-    in TreeGlyphs glyphs = TreeGlyphs.init,
-    scope bool delegate(uint) @safe isOpen = null)
-{
-    import std.array : appender;
-
-    auto w = appender!string;
-    writeTreeText(w, data, rows, glyphs, isOpen);
-    return w[];
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -443,7 +432,7 @@ version (unittest)
     auto wi = inspectWidgets(subject, frames);
     auto rows = flatten(wi.data, (uint) => true);
 
-    const dump = treeText(wi.data, rows);
+    const dump = formatted!writeTreeText(wi.data, rows).toString;
     assert(dump.canFind("└─ box #99  4×2"), dump);
     assert(dump.canFind("├─ text"), dump);
     assert(dump[$ - 1] == '\n');

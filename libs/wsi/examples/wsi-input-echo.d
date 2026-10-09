@@ -296,17 +296,17 @@ private Expected!(void, string) echoLoop(Backend)(ref Backend wsi, ref DefaultLo
                 state.metrics = value.metrics;
                 state.repaint = true;
                 report.readyEvents++;
-                info(i"#$(event.sequence) ready $(prettyPrint(value, opt))");
+                info(i"#$(event.sequence) ready $(prettyPrint(value, opt).toString)");
             },
             (in SurfaceMetricsChangedEvent value) {
                 state.metrics = value.metrics;
                 state.repaint = true;
                 report.metricsEvents++;
-                info(i"#$(event.sequence) metrics $(prettyPrint(value, opt))");
+                info(i"#$(event.sequence) metrics $(prettyPrint(value, opt).toString)");
             },
             (in KeyboardEvent value) {
                 report.keyEvents++;
-                info(i"#$(event.sequence) key $(prettyPrint(value, opt))");
+                info(i"#$(event.sequence) key $(prettyPrint(value, opt).toString)");
                 if (value.action != KeyAction.release)
                     return;
                 if (value.logical.kind == LogicalKeyKind.character)
@@ -314,26 +314,26 @@ private Expected!(void, string) echoLoop(Backend)(ref Backend wsi, ref DefaultLo
             },
             (in TextCommittedEvent value) {
                 report.textEvents++;
-                info(i"#$(event.sequence) text $(prettyPrint(value, opt))");
+                info(i"#$(event.sequence) text $(prettyPrint(value, opt).toString)");
             },
             (in CompositionEvent value) {
                 report.compositionEvents++;
-                info(i"#$(event.sequence) composition $(prettyPrint(value, opt))");
+                info(i"#$(event.sequence) composition $(prettyPrint(value, opt).toString)");
             },
             (in PointerEvent value) {
                 report.pointerEvents++;
-                info(i"#$(event.sequence) pointer $(prettyPrint(value, opt))");
+                info(i"#$(event.sequence) pointer $(prettyPrint(value, opt).toString)");
                 if (value.phase == PointerPhase.pressed
                     && value.button == PointerButton.left)
                     handleLeftPress(wsi, state, value);
             },
             (in ScrollEvent value) {
                 report.scrollEvents++;
-                info(i"#$(event.sequence) scroll $(prettyPrint(value, opt))");
+                info(i"#$(event.sequence) scroll $(prettyPrint(value, opt).toString)");
             },
             (in FocusChangedEvent value) {
                 report.focusEvents++;
-                info(i"#$(event.sequence) focus $(prettyPrint(value, opt))");
+                info(i"#$(event.sequence) focus $(prettyPrint(value, opt).toString)");
             },
             (in CloseRequestedEvent _) {
                 info(i"#$(event.sequence) close requested — quitting");
@@ -346,7 +346,7 @@ private Expected!(void, string) echoLoop(Backend)(ref Backend wsi, ref DefaultLo
                 report.exitedBecause = "destroyed";
             },
             (other) {
-                info(i"#$(event.sequence) $(prettyPrint(other, opt))");
+                info(i"#$(event.sequence) $(prettyPrint(other, opt).toString)");
             });
     }
 
@@ -655,7 +655,7 @@ private Expected!(RunReport, string) runBackend(Backend)(ref Backend wsi, ref De
         return err!RunReport("failed to set window title");
     config.logicalSize = LogicalSize(options.width, options.height);
 
-    info(i"creating window with config: $(prettyPrint(config, opt))");
+    info(i"creating window with config: $(prettyPrint(config, opt).toString)");
     auto created = wsi.createWindow(config);
     if (created.hasError)
         return err!RunReport("createWindow failed: " ~ cast(string) created.error.diagnostic[]);

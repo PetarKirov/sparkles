@@ -61,17 +61,6 @@ void writeApiVersion(Writer)(ref Writer w, uint packed)
     writeInteger(w, apiVersionPatch(packed));
 }
 
-/// ditto, as a `string`, for a caller that is not holding a buffer.
-string formatApiVersion(uint packed) @safe pure nothrow
-{
-    import sparkles.base.buffer : SharedBuffer;
-
-    // 7-, 10- and 12-bit fields: `127.1023.4095` is the longest possible.
-    SharedBuffer!(char, 16) buf;
-    writeApiVersion(buf, packed);
-    return buf[].idup;
-}
-
 @("vulkan.api.writeApiVersionIsNogc")
 @safe pure nothrow @nogc unittest
 {
@@ -89,20 +78,22 @@ string formatApiVersion(uint packed) @safe pure nothrow
     assert(widest[] == "127.1023.4095");
 }
 
-@("vulkan.api.formatApiVersionRendersTheThreeParts")
-@safe pure nothrow unittest
+@("vulkan.api.writeApiVersionRendersTheThreeParts")
+@safe pure nothrow @nogc unittest
 {
-    assert(formatApiVersion(apiVersion10) == "1.0.0");
-    assert(formatApiVersion(apiVersion13) == "1.3.0");
-    assert(formatApiVersion(makeApiVersion(0, 1, 3, 290)) == "1.3.290");
+    import sparkles.base.buffer : checkWriter;
+
+    checkWriter!((ref b) => writeApiVersion(b, apiVersion10))("1.0.0");
+    checkWriter!((ref b) => writeApiVersion(b, apiVersion13))("1.3.0");
+    checkWriter!((ref b) => writeApiVersion(b, makeApiVersion(0, 1, 3, 290)))("1.3.290");
 
     // Round-trips against the accessors it is built from, including the patch
     // field's full 12-bit range.
     const v = makeApiVersion(0, 1, 4, 4095);
-    assert(formatApiVersion(v) == "1.4.4095");
+    checkWriter!((ref b) => writeApiVersion(b, v))("1.4.4095");
 
     // The variant is deliberately absent from the rendering.
-    assert(formatApiVersion(makeApiVersion(1, 1, 0, 0)) == "1.0.0");
+    checkWriter!((ref b) => writeApiVersion(b, makeApiVersion(1, 1, 0, 0)))("1.0.0");
 }
 
 /**

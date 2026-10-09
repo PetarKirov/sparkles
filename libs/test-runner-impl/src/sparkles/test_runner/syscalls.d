@@ -24,6 +24,7 @@
  */
 module sparkles.test_runner.syscalls;
 
+import sparkles.base.text.writers : formatted, writeText;
 import sparkles.test_runner.capability : Capability, CapabilityAbsence,
     CapabilityReport, has, hasNamedColumns, hasSnapshot, isCounterBackend,
     probeParanoid, reasonFor;
@@ -140,10 +141,8 @@ version (linux)
             if (!p.ok)
                 return "perf_event_open refused tracepoints — perf_event_paranoid? (needs ≤ 1)";
             if (p.value > 1)
-                return "perf_event_open refused tracepoints — perf_event_paranoid="
-                    ~ longToString(p.value) ~ " (needs ≤ 1)";
-            return "perf_event_open refused tracepoints (seccomp or kernel policy — "
-                ~ "perf_event_paranoid=" ~ longToString(p.value) ~ " is permissive)";
+                return formatted!writeText(i"perf_event_open refused tracepoints — perf_event_paranoid=$(p.value) (needs ≤ 1)").toString;
+            return formatted!writeText(i"perf_event_open refused tracepoints (seccomp or kernel policy — perf_event_paranoid=$(p.value) is permissive)").toString;
         }
 
         /// What this backend can deliver: OS-event gating via tracepoints.
@@ -413,28 +412,6 @@ else
     struct SyscallSnapshot
     {
     }
-}
-
-/// A signed decimal rendered without GC formatting machinery, for `nothrow`
-/// reason strings (`perf_event_paranoid=2`).
-private string longToString(long v) @safe pure nothrow
-{
-    import sparkles.base.buffer : SharedBuffer;
-    import sparkles.base.text.writers : writeInteger;
-
-    SharedBuffer!(char, 24) buf;
-    writeInteger(buf, v);
-    return buf[].idup;
-}
-
-@("syscalls.longToString.fixtures")
-@safe pure nothrow
-unittest
-{
-    assert(longToString(-1) == "-1");
-    assert(longToString(0) == "0");
-    assert(longToString(4) == "4");
-    assert(longToString(1234) == "1234");
 }
 
 // Whichever body the platform built (real or stub) satisfies the backend

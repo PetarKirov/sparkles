@@ -34,7 +34,7 @@ import expected : Expected, ok, err;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.styled_template : styledWriteln;
-import sparkles.base.text.writers : writeDuration, writeFixedPoint, writeInteger;
+import sparkles.base.text.writers : formatted, writeDuration, writeFixedPoint, writeInteger;
 
 import sparkles.base.term_caps : detectTermCaps;
 import sparkles.ui.components.live : stdoutLiveRegion;
@@ -486,21 +486,13 @@ if (isInputRange!R && is(ElementType!R == Job))
 //
 // See the direct buffer usage in the header stats and some task outputs below.
 
-string fmtDur(Duration d)
-{
-    SharedBuffer!(char, 32) buf;
-    writeDuration(buf, d);
-    return buf[].idup;
-}
+/// A table cell: `write`'s text for `args`, materialized because the table
+/// stores finished strings.
+private string cell(alias write, Args...)(Args args) => formatted!write(args).toString;
 
-string fmtCount(size_t n)
-{
-    SharedBuffer!(char, 16) buf;
-    writeInteger(buf, n);
-    return buf[].idup;
-}
-
-string fmtMinutesFromTotal(Duration total)
+/// Writes `total` as minutes with one decimal: a bare number, since the column
+/// header carries the unit.
+void writeMinutes(W)(ref W w, Duration total)
 {
     // Derive display minutes from Duration *only* at render time.
     // We never store double minutes in RunnerAggregate / aggregates.
@@ -508,9 +500,7 @@ string fmtMinutesFromTotal(Duration total)
     // (the table column header already provides the "Minutes" unit).
     double m = total.total!"seconds" / 60.0;
     ulong scaled = cast(ulong)(m * 10.0 + 0.5);
-    SharedBuffer!(char, 16) buf;
-    writeFixedPoint(buf, scaled, 1);
-    return buf[].idup;
+    writeFixedPoint(w, scaled, 1);
 }
 
 string[string] makeAuthHeaders(string authHeader)
@@ -539,28 +529,30 @@ if (isInputRange!R && is(ElementType!R == Job))
 
 /// A signed percentage with an explicit sign and one decimal (`+34.2%`), or
 /// `n/a` when there is no baseline to compare against.
-string fmtDeltaPercent(double pct)
+void writeDeltaPercent(W)(ref W w, double pct)
 {
     import std.math : isNaN, abs;
+    import std.range.primitives : put;
 
     if (pct.isNaN)
-        return "n/a";
+    {
+        put(w, "n/a");
+        return;
+    }
     ulong scaled = cast(ulong)(pct.abs * 10.0 + 0.5);
-    SharedBuffer!(char, 24) buf;
-    buf ~= pct < 0 ? '-' : '+';
-    writeFixedPoint(buf, scaled, 1);
-    buf ~= '%';
-    return buf[].idup;
+    put(w, pct < 0 ? '-' : '+');
+    writeFixedPoint(w, scaled, 1);
+    put(w, '%');
 }
 
 /// A signed duration (`+2.4m`). `writeDuration` renders magnitudes, so the
 /// sign is carried explicitly and the value passed as its absolute.
-string fmtDeltaDuration(Duration d)
+void writeDeltaDuration(W)(ref W w, Duration d)
 {
-    SharedBuffer!(char, 32) buf;
-    buf ~= d < Duration.zero ? '-' : '+';
-    writeDuration(buf, d < Duration.zero ? -d : d);
-    return buf[].idup;
+    import std.range.primitives : put;
+
+    put(w, d < Duration.zero ? '-' : '+');
+    writeDuration(w, d < Duration.zero ? -d : d);
 }
 
 void renderByLabel(in NamedAggregate[] rows, string title)
@@ -574,11 +566,11 @@ void renderByLabel(in NamedAggregate[] rows, string title)
     foreach (r; rows)
         table ~= [
             r.label,
-            fmtCount(r.stats.count),
-            fmtDur(r.stats.total),
-            fmtDur(r.stats.median),
-            fmtDur(r.stats.min),
-            fmtDur(r.stats.max),
+            cell!writeInteger(r.stats.count),
+            cell!writeDuration(r.stats.total),
+            cell!writeDuration(r.stats.median),
+            cell!writeDuration(r.stats.min),
+            cell!writeDuration(r.stats.max),
         ];
 
     writeln();
@@ -600,12 +592,12 @@ void renderComparison(in Comparison[] rows, string baselineLabel, string candida
     foreach (r; rows)
         table ~= [
             r.label,
-            fmtCount(r.baseline.count),
-            r.baseline.count ? fmtDur(r.baseline.median) : "-",
-            fmtCount(r.candidate.count),
-            r.candidate.count ? fmtDur(r.candidate.median) : "-",
-            (r.baseline.count && r.candidate.count) ? fmtDeltaDuration(r.delta) : "-",
-            (r.baseline.count && r.candidate.count) ? fmtDeltaPercent(r.deltaPercent) : "-",
+            cell!writeInteger(r.baseline.count),
+            r.baseline.count ? cell!writeDuration(r.baseline.median) : "-",
+            cell!writeInteger(r.candidate.count),
+            r.candidate.count ? cell!writeDuration(r.candidate.median) : "-",
+            (r.baseline.count && r.candidate.count) ? cell!writeDeltaDuration(r.delta) : "-",
+            (r.baseline.count && r.candidate.count) ? cell!writeDeltaPercent(r.deltaPercent) : "-",
         ];
 
     writeln();
@@ -642,12 +634,12 @@ void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slow
         auto s = r.stats;
         runnerRows ~= [
             r.runnerType,
-            fmtCount(s.count),
-            fmtDur(s.total),
-            fmtDur(s.mean),
-            fmtDur(s.min),
-            fmtDur(s.max),
-            fmtMinutesFromTotal(r.stats.total)
+            cell!writeInteger(s.count),
+            cell!writeDuration(s.total),
+            cell!writeDuration(s.mean),
+            cell!writeDuration(s.min),
+            cell!writeDuration(s.max),
+            cell!writeMinutes(r.stats.total)
         ];
     }
 
@@ -660,10 +652,10 @@ void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slow
         foreach (i, j; slowJobs)
         {
             slowRows ~= [
-                fmtCount(i + 1),
+                cell!writeInteger(i + 1),
                 j.name,
                 j.workflow,
-                fmtDur(j.duration),
+                cell!writeDuration(j.duration),
                 j.runnerName.length ? j.runnerName : "-"
             ];
         }

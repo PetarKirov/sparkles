@@ -33,7 +33,7 @@ import std.traits : EnumMembers, FieldNameTuple;
 import expected : Expected, err, ok;
 
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
-import sparkles.base.text : writeBytes;
+import sparkles.base.text : formatted, writeBytes;
 import sparkles.core_cli.args;
 import sparkles.vulkan;
 import sparkles.wired;
@@ -197,14 +197,6 @@ string[] extractFeatures(in VkPhysicalDeviceFeatures feat) pure @safe
     return result;
 }
 
-/// Format bytes into human-readable memory size using sparkles:base writeBytes.
-string formatBytes(ulong bytes) pure @safe
-{
-    auto app = appender!string;
-    writeBytes(app, bytes);
-    return app.data;
-}
-
 // -----------------------------------------------------------------------------
 // Engine / Query Core
 // -----------------------------------------------------------------------------
@@ -220,10 +212,10 @@ GpuReport queryGpu(in InstanceCommands inst, size_t index, VkPhysicalDevice gpuD
         id: cast(uint) index,
         name: props.deviceName.fromStringz.to!string,
         type: deviceTypeName(props.deviceType),
-        apiVersion: formatApiVersion(props.apiVersion),
+        apiVersion: formatted!writeApiVersion(props.apiVersion).toString,
         // Only `apiVersion` is guaranteed to use this packing — NVIDIA and
         // Intel encode a driver version differently, so this is approximate.
-        driverVersion: formatApiVersion(props.driverVersion),
+        driverVersion: formatted!writeApiVersion(props.driverVersion).toString,
         vendorID: cast(VendorId) props.vendorID,
         deviceID: format("0x%04x", props.deviceID),
     };
@@ -249,7 +241,7 @@ GpuReport queryGpu(in InstanceCommands inst, size_t index, VkPhysicalDevice gpuD
         gpu.memory = MemoryReport(
             heaps: iota(mem.memoryHeapCount).map!(h => MemoryHeapReport(
                 index: cast(uint) h,
-                size: formatBytes(mem.memoryHeaps[h].size),
+                size: formatted!writeBytes(mem.memoryHeaps[h].size).toString,
                 flags: flagNames!VkMemoryHeapFlagBits(mem.memoryHeaps[h].flags),
             )).array,
             types: iota(mem.memoryTypeCount).map!(t => MemoryTypeReport(
@@ -327,7 +319,7 @@ Expected!(VulkanReport, string) queryVulkan(in VulkanInfo cli) @system
     VulkanReport report;
     report.instance = InstanceSummary(
         headerVersion: headerVersion,
-        loaderVersion: formatApiVersion(rawLoaderVersion),
+        loaderVersion: formatted!writeApiVersion(rawLoaderVersion).toString,
         extensions: (cli.summary && !cli.extensions)
             ? [format("%d extensions available (run with --extensions to list)", instExtProps.length)]
             : instExtProps.map!(e => format("%s (v%d)", e.extensionName.fromStringz, e.specVersion)).array,
@@ -338,7 +330,7 @@ Expected!(VulkanReport, string) queryVulkan(in VulkanInfo cli) @system
         report.layers = instLayerProps.map!(l => LayerReport(
             name: l.layerName.fromStringz.to!string,
             description: l.description.fromStringz.to!string,
-            specVersion: formatApiVersion(l.specVersion),
+            specVersion: formatted!writeApiVersion(l.specVersion).toString,
             implementationVersion: l.implementationVersion,
         )).array;
     }

@@ -28,6 +28,7 @@ import sparkles.syntax.ts.highlighter : highlightInjected;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.syntax.ts.registry : canonicalLanguage;
 import sparkles.ui.canvas : RuleEdge;
+import sparkles.base.text.writers : formatted;
 import sparkles.ui.components.chrome : scrollbar, ScrollbarGlyphs,
     ScrollbarSpec;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
@@ -798,7 +799,7 @@ private uint collapsedFace(ref Builder b, ref const MdBlock blk,
         // A face never wraps: the wrap engine re-derives sliced fragments'
         // srcEnd, which would clip the region identity back to the text.
         w.wrap = TextWrap.none;
-        w.spans ~= TextSpan("  " ~ foldChip(src, start, clampedEnd),
+        w.spans ~= TextSpan(formatted!writeFoldChip(src, start, clampedEnd).toString,
             Slot.gutter, opt.baseStyle, noBreak: true);
         foreach_reverse (ref sp; w.spans)
             if (sp.srcStart != size_t.max)
@@ -824,19 +825,16 @@ private uint collapsedFace(ref Builder b, ref const MdBlock blk,
     return foldPlaceholder(b, start, end, src, opt);
 }
 
-// The `⋯ N lines` chip text for a folded region.
-private string foldChip(const(char)[] src, size_t start, size_t end) @safe
+// Writes the `  ⋯ N lines` chip text for a folded region.
+private void writeFoldChip(W)(ref W w, const(char)[] src, size_t start, size_t end)
 {
-    import sparkles.base.buffer : SharedBuffer;
-    import sparkles.base.text.writers : writeInteger;
+    import sparkles.base.text.writers : writeText;
 
     size_t lines = 1;
     foreach (char ch; src[start .. end])
         if (ch == '\n')
             ++lines;
-    SharedBuffer!(char, 32) n;
-    writeInteger(n, lines);
-    return "\u22EF " ~ n[].idup ~ " lines";
+    writeText(w, i"  \u22EF $(lines) lines");
 }
 
 // A rule-glyph text span in the fence chrome's colors.

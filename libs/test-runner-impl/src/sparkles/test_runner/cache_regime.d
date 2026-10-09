@@ -29,6 +29,7 @@
  */
 module sparkles.test_runner.cache_regime;
 
+import core.interpolation : InterpolationFooter, InterpolationHeader;
 import std.math : isNaN;
 
 import sparkles.test_runner.attributes : CacheRegime;
@@ -366,16 +367,14 @@ CacheRegimeStamp resolveStamp(CacheRegime requested, FsKind kind,
         if (requested == CacheRegime.cold && residentAfter > coldResidentMax)
         {
             s.effective = CacheRegime.steadyState;
-            appendNote(s.note, "posix_fadvise did not evict ("
-                ~ percentString(residentAfter)
-                ~ " resident — another process's mapping?) — ran steady-state");
+            const pct = cast(long)(residentAfter * 100);
+            appendNote(s.note, i"posix_fadvise did not evict ($(pct)% resident — another process's mapping?) — ran steady-state");
         }
         else if (requested == CacheRegime.warm && residentAfter < warmResidentMin)
         {
             s.effective = CacheRegime.steadyState;
-            appendNote(s.note, "preload did not stick ("
-                ~ percentString(residentAfter)
-                ~ " resident) — memory pressure or file > RAM?");
+            const pct = cast(long)(residentAfter * 100);
+            appendNote(s.note, i"preload did not stick ($(pct)% resident) — memory pressure or file > RAM?");
         }
         break;
     }
@@ -384,20 +383,37 @@ CacheRegimeStamp resolveStamp(CacheRegime requested, FsKind kind,
     return s;
 }
 
-private void appendNote(ref string note, string add) @safe pure nothrow
+/// Joins disclosure notes with `"; "`.
+package void appendNote(ref string note, string add) @safe pure nothrow
 {
     note = note.length ? note ~ "; " ~ add : add;
 }
 
-/// A fraction as integral percent, for `nothrow` note text.
-private string percentString(double fraction) @safe pure nothrow
+/// ditto, an interpolated note, written through `writeText` into the note
+/// itself, so a number in it needs no `string` of its own.
+package void appendNote(Args...)(ref string note, InterpolationHeader, Args args,
+    InterpolationFooter)
 {
-    import sparkles.base.buffer : SharedBuffer;
-    import sparkles.base.text.writers : writeInteger;
+    import std.array : appender;
+    import sparkles.base.text.writers : writeText;
 
-    SharedBuffer!(char, 8) buf;
-    writeInteger(buf, cast(long)(fraction * 100));
-    return buf[].idup ~ "%";
+    auto w = appender!string;
+    if (note.length)
+    {
+        w ~= note;
+        w ~= "; ";
+    }
+    writeText(w, InterpolationHeader(), args, InterpolationFooter());
+    note = w[];
+}
+
+@("cache_regime.appendNote.joinsAndInterpolates")
+@safe pure nothrow unittest
+{
+    string note;
+    appendNote(note, "first");
+    appendNote(note, i"$(42)% resident");
+    assert(note == "first; 42% resident");
 }
 
 @("cacheRegime.resolveStamp.matrix")

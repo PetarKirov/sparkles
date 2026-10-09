@@ -20,18 +20,19 @@ module meter_example;
 import core.time : msecs;
 import std.stdio : writefln, writeln;
 
-import sparkles.ui.components.meter : meter, meterGlyphs, ProgressBar;
+import sparkles.base.text.writers : formatted;
+import sparkles.ui.components.meter : meterGlyphs, ProgressBar, writeMeter;
 import sparkles.ui.components.progress : ProgressLine, spinnerFrame;
 
 void main()
 {
     // Fractions at eighth-cell precision (▏▎▍▌▋▊▉█).
     foreach (pct; [0.0, 0.125, 0.33, 0.5, 0.66, 0.875, 1.0])
-        writefln!"%5.1f%% |%s|"(pct * 100, meter(pct, 16));
+        writefln!"%5.1f%% |%s|"(pct * 100, formatted!writeMeter(pct, 16));
 
     // Count/max form + the ASCII fallback charset.
-    writeln("7 of 9:  |", meter(7, 9, 16), "|");
-    writeln("ascii:   |", meter(7, 9, 16, meterGlyphs(false)), "|");
+    writeln("7 of 9:  |", formatted!writeMeter(7, 9, 16), "|");
+    writeln("ascii:   |", formatted!writeMeter(7, 9, 16, meterGlyphs(false)), "|");
 
     // The determinate progress bar: meter + right-justified counter.
     writeln(ProgressBar(done: 5, total: 40, barWidth: 20));

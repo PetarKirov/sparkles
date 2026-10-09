@@ -36,6 +36,7 @@ import std.range.primitives : put;
 import expected : err, Expected, ok;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.base.text.writers : formatted;
 
 @safe:
 
@@ -106,7 +107,7 @@ struct DtcgJson
     static DtcgJson num(string lexeme) pure nothrow => DtcgJson(Kind.number, false, lexeme);
     /// ditto
     static DtcgJson num(double v)
-        => DtcgJson(Kind.number, false, formatNumber(v));
+        => DtcgJson(Kind.number, false, formatted!writeNumber(v).toString);
     /// ditto
     static DtcgJson boolean_(bool b) pure nothrow => DtcgJson(Kind.bool_, b);
     /// ditto
@@ -217,29 +218,32 @@ package double numberOf(string lexeme)
     return r.hasValue && rest.length == 0 ? r.value : double.nan;
 }
 
-/// The shortest lexeme of `v` that reads back as the same `double`: wired's
-/// JSON writer, which owns that algorithm rather than trusting the C
-/// runtime's `%g`, whose round trip differs between platforms.
-string formatNumber(double v)
+/// Writes the shortest lexeme of `v` that reads back as the same `double`:
+/// an integral value as an integer, else wired's JSON writer, which owns that
+/// algorithm rather than trusting the C runtime's `%g`, whose round trip
+/// differs between platforms.
+void writeNumber(W)(ref W w, double v)
 {
+    import sparkles.base.text.writers : writeInteger;
     import sparkles.wired.json.writer : writeJsonDouble;
 
     if (v == cast(long) v && v > -1e15 && v < 1e15)
-        return (cast(long) v).to!string;
-    auto w = appender!string;
-    writeJsonDouble(w, v);
-    return w[];
+        writeInteger(w, cast(long) v);
+    else
+        writeJsonDouble(w, v);
 }
 
-@("dtcg.formatNumber.shortest")
+@("dtcg.writeNumber.shortest")
 @safe unittest
 {
-    assert(formatNumber(4) == "4");
-    assert(formatNumber(0.5) == "0.5");
+    import sparkles.base.buffer : checkWriter;
+
+    checkWriter!((ref b) => writeNumber(b, 4))("4");
+    checkWriter!((ref b) => writeNumber(b, 0.5))("0.5");
     // A runtime double: a constant-folded one may carry extra precision.
     double v = 0x1e;
     v /= 255;
-    assert(numberOf(formatNumber(v)) == v);
+    assert(numberOf(formatted!writeNumber(v).toString) == v);
 }
 
 // ── parsing and writing ─────────────────────────────────────────────────────
@@ -957,14 +961,14 @@ private DtcgResult!DtcgColor parseHex(string s, string where)
 DtcgJson colorValue(const DtcgColor c)
 {
     // Four decimals: channels are 1/255 apart, so rounding back is exact.
-    DtcgJson comp(ubyte x) => DtcgJson.num(formatNumber(round(x / 255.0 * 1e4) / 1e4));
+    DtcgJson comp(ubyte x) => DtcgJson.num(formatted!writeNumber(round(x / 255.0 * 1e4) / 1e4).toString);
     auto o = DtcgJson.object([
         DtcgMember("colorSpace", DtcgJson.str("srgb")),
         DtcgMember("components", DtcgJson.array([comp(c.rgb.r), comp(c.rgb.g), comp(c.rgb.b)])),
         DtcgMember("hex", DtcgJson.str(format("#%02x%02x%02x", c.rgb.r, c.rgb.g, c.rgb.b))),
     ]);
     if (c.alpha != 0xFF)
-        o.set("alpha", DtcgJson.num(formatNumber(c.alpha / 255.0)));
+        o.set("alpha", DtcgJson.num(formatted!writeNumber(c.alpha / 255.0).toString));
     return o;
 }
 

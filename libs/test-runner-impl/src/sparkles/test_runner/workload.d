@@ -43,8 +43,9 @@ import std.typecons : Nullable;
 // The `workload` attribute struct shares its name with this module; the
 // rename keeps the dogfood test's UDA unambiguous (discovery matches the
 // UDA by type, not name).
+import sparkles.base.text.writers : formatted, writeText;
 import sparkles.test_runner.attributes : CacheRegime, workloadUda = workload;
-import sparkles.test_runner.cache_regime : applyCold, applyWarm,
+import sparkles.test_runner.cache_regime : appendNote, applyCold, applyWarm,
     CacheRegimeStamp, FsKind, fsKind, probeResidency, resolveStamp;
 import sparkles.test_runner.bench : BenchConfig, CounterGroups, elapsedNs, errorCell;
 import sparkles.test_runner.capability : BackendCapabilities, Capability,
@@ -386,8 +387,10 @@ WallDecomposition assembleDecomposition(long wallNs,
         // a tick is noise); cross-thread anomalies have their own disclosure.
         const budget = 4_000_000.0 + double(wallNs) / 100;
         if (-other > budget)
-            appendNote(d.note, "on-CPU + runqueue exceed wall by "
-                ~ microsString(-other) ~ " µs (clamped)");
+        {
+            const us = cast(long)(-other / 1000);
+            appendNote(d.note, i"on-CPU + runqueue exceed wall by $(us) µs (clamped)");
+        }
         other = 0;
     }
     d.offCpuOtherNs = other;
@@ -405,28 +408,14 @@ WallDecomposition assembleDecomposition(long wallNs,
         const crossNs = double(procCpuUs - threadCpuUs) * 1000;
         const threshold = wallNs / 10 > 1_000_000 ? double(wallNs) / 10 : 1_000_000.0;
         if (crossNs > threshold)
-            appendNote(d.note, "process used " ~ microsString(crossNs)
-                ~ " µs CPU on other threads — decomposition covers the driving thread");
+        {
+            const us = cast(long)(crossNs / 1000);
+            appendNote(d.note, i"process used $(us) µs CPU on other threads — decomposition covers the driving thread");
+        }
     }
     return d;
 }
 
-/// Joins disclosure notes with `"; "`.
-private void appendNote(ref string note, string add) @safe pure nothrow
-{
-    note = note.length ? note ~ "; " ~ add : add;
-}
-
-/// A nanosecond quantity as integral microseconds, for `nothrow` note text.
-private string microsString(double ns) @safe pure nothrow
-{
-    import sparkles.base.buffer : SharedBuffer;
-    import sparkles.base.text.writers : writeInteger;
-
-    SharedBuffer!(char, 24) buf;
-    writeInteger(buf, cast(long)(ns / 1000));
-    return buf[].idup;
-}
 
 @("workload.assembleDecomposition.fullAttribution")
 @safe pure nothrow
@@ -673,7 +662,7 @@ if (is(typeof(run()) == void))
     }
     const base = name.length ? ctx.testName ~ "/" ~ name : ctx.testName;
     const n = ++ctx.nameCounts.require(base, 0);
-    const windowName = n == 1 ? base : base ~ "#" ~ uintString(n);
+    const windowName = n == 1 ? base : formatted!writeText(i"$(base)#$(n)").toString;
     measureWindow(ctx, windowName, run);
 }
 
@@ -800,16 +789,6 @@ private void workloadFilesImpl(WorkloadContext* ctx, CacheRegime regime,
         ctx.candidate = WindowEdges.open(*ctx.counters, *ctx.wall, *ctx.psi);
         ctx.candidateRefreshes++;
     }
-}
-
-private string uintString(uint v) @safe pure nothrow
-{
-    import sparkles.base.buffer : SharedBuffer;
-    import sparkles.base.text.writers : writeInteger;
-
-    SharedBuffer!(char, 12) buf;
-    writeInteger(buf, v);
-    return buf[].idup;
 }
 
 /// The edge snapshots of one window, in the fixed nesting order (outer →

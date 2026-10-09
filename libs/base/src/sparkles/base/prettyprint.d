@@ -35,13 +35,18 @@ ref Writer writePretty(T, Writer, Hook = void)(
     return writer;
 }
 
-/// Convenience overload that returns a string.
-string prettyPrint(T, Hook = void)(in T value, in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook())
+/**
+`value` pretty-printed, rendered when a consumer asks: `writeln(prettyPrint(x))`
+and `format("%s", prettyPrint(x))` write straight into their own sink, and
+`prettyPrint(x).toString` materializes a `string` where one is stored. The
+value and options are held by copy until then.
+*/
+auto prettyPrint(T, Hook = void)(const T value,
+    const PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook())
 {
-    import std.array : appender;
-    auto w = appender!string;
-    writePretty(w, value, opt);
-    return w[];
+    import sparkles.base.text.writers : formatted;
+
+    return formatted!writePretty(value, opt);
 }
 
 private void prettyPrintImpl(T, Writer, Hook)(

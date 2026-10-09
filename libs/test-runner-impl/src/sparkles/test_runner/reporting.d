@@ -10,6 +10,7 @@ import core.interpolation : InterpolationFooter, InterpolationHeader;
 import core.time : Duration;
 
 import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
+import sparkles.base.text.writers : formatted, writeDuration;
 import sparkles.base.text.width : Align;
 
 import sparkles.test_runner.bench : BenchStats;
@@ -70,27 +71,6 @@ package string render(Args...)(
     return colored
         ? styledText(header, args, footer)
         : plainText(header, args, footer);
-}
-
-/// A duration rendered with `sparkles.base.text.writers` (`1.5ms`, `12ms`, …).
-string formatDuration(Duration duration) @safe
-{
-    import sparkles.base.buffer : SharedBuffer;
-    import sparkles.base.text.writers : writeDuration;
-
-    SharedBuffer!(char, 32) buf;
-    buf.writeDuration(duration);
-    return buf[].idup;
-}
-
-@("formatDuration.units")
-@safe
-unittest
-{
-    import core.time : msecs, usecs;
-
-    assert(formatDuration(1500.usecs) == "1.5ms");
-    assert(formatDuration(12.msecs) == "12ms");
 }
 
 /// A `file:line` reference; an editor-aware OSC 8 hyperlink when `colored`.
@@ -239,7 +219,7 @@ string formatResultLine(in TestResult result, bool colored, bool verbose, uint w
 
     if (verbose)
     {
-        const duration = formatDuration(result.duration);
+        const duration = formatted!writeDuration(result.duration);
         line ~= render(colored, i" {dim ($(duration))}");
         if (const location = formatLocation(test.location, colored))
             line ~= render(colored, i" {dim $(location)}");
@@ -553,7 +533,7 @@ struct RunTotals
 /// The final summary line.
 string formatSummary(in RunTotals totals, Duration elapsed, bool colored) @safe
 {
-    const duration = formatDuration(elapsed);
+    const duration = formatted!writeDuration(elapsed);
     auto line = render(colored, i"{bold Summary:} {green $(totals.passed) passed}");
 
     line ~= totals.failed
@@ -2029,7 +2009,7 @@ private string benchNs(double value) @safe
 
     return value < 1_000
         ? format!"%.2fns"(value)
-        : formatDuration(nsecs(value.lrint));
+        : formatted!writeDuration(nsecs(value.lrint)).toString;
 }
 
 /// The `--ctfe-trace` report: compile-time cost of each `@ctfe` test.
@@ -2052,14 +2032,14 @@ string formatCtfeTraceTable(in CtfeTestCost[] costs, bool colored) @system // re
             location,
             cost.durUs < 0
                 ? render(colored, i"{dim n/a}")
-                : formatDuration(cost.durUs.usecs),
+                : formatted!writeDuration(cost.durUs.usecs).toString,
         ];
         if (cost.durUs > 0)
             totalUs += cost.durUs;
     }
     // The CTFE-time column is numeric; the test name and location are textual.
     return renderCells(cells, [Align.left, Align.left, Align.right], headerRows: 1)
-        ~ render(colored, i"{bold total CTFE time attributed to @ctfe tests:} $(formatDuration(totalUs.usecs))\n");
+        ~ render(colored, i"{bold total CTFE time attributed to @ctfe tests:} $(formatted!writeDuration(totalUs.usecs))\n");
 }
 
 /// Fallback tabular rendering: two-space-separated columns, left-aligned by

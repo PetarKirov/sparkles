@@ -34,6 +34,7 @@ built, which is what M2's engine needs as input).
 */
 module sparkles.dmd_fmt.groups;
 
+import sparkles.base.text.writers : formatted;
 import sparkles.dmd_fmt.oracle : containsOffset, containsOffsetIn, StructuralFacts;
 import sparkles.dmd_fmt.spine : SpineToken, TokenSpine;
 
@@ -376,26 +377,16 @@ Render the tree's shape as an s-expression — the golden format the S2 tests
 compare (`(doc (decl (tparams) (params) (if (paren)) …))`). Structure only;
 leaf tokens are elided.
 */
-void writeSexpr(Writer)(in TokenSpine spine, in Group g, ref Writer w)
+void writeSexpr(Writer)(ref Writer w, in TokenSpine spine, in Group g)
 {
     w.put('(');
     w.put(label(spine, g));
     foreach (ref child; g.children)
     {
         w.put(' ');
-        writeSexpr(spine, child, w);
+        writeSexpr(w, spine, child);
     }
     w.put(')');
-}
-
-/// Convenience: [writeSexpr] into a string.
-string sexpr(in TokenSpine spine, in Group g) @safe
-{
-    import std.array : appender;
-
-    auto w = appender!string;
-    writeSexpr(spine, g, w);
-    return w[];
 }
 
 private string label(in TokenSpine spine, in Group g) @safe pure nothrow @nogc
@@ -430,7 +421,7 @@ version (unittest)
     {
         auto spine = lexSpine(source);
         auto facts = collectFacts(source);
-        return sexpr(spine, buildGroups(spine, facts));
+        return formatted!writeSexpr(spine, buildGroups(spine, facts)).toString;
     }
 }
 
@@ -506,7 +497,7 @@ version (unittest)
         ~ "    return null;\n"
         ~ "}\n";
     auto spine = lexSpine(src);
-    assert(sexpr(spine, buildGroups(spine, StructuralFacts.init)) ==
+    assert(formatted!writeSexpr(spine, buildGroups(spine, StructuralFacts.init)).toString ==
         "(doc (paren) (paren) (paren (paren)) (paren) (paren) "
         ~ "(brace (paren) (brace (paren))))");
 }
@@ -517,7 +508,7 @@ version (unittest)
     enum src = "void f( {\n int x = ;\n";
     auto spine = lexSpine(src);
     auto facts = collectFacts(src);
-    const shape = sexpr(spine, buildGroups(spine, facts));
+    const shape = formatted!writeSexpr(spine, buildGroups(spine, facts)).toString;
     assert(shape.length >= "(doc)".length);
     assert(shape[0 .. 4] == "(doc");
 }

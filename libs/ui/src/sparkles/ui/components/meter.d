@@ -61,28 +61,6 @@ void writeMeter(Writer)(
         width, glyphs);
 }
 
-/// Convenience overloads returning a GC string. Prefer the writer forms in
-/// `@nogc` code.
-string meter(double fraction, size_t width, in MeterGlyphs glyphs = MeterGlyphs.init) @safe
-{
-    import std.array : appender;
-
-    auto w = appender!string;
-    writeMeter(w, fraction, width, glyphs);
-    return w[];
-}
-
-/// ditto
-string meter(size_t value, size_t max, size_t width,
-    in MeterGlyphs glyphs = MeterGlyphs.init) @safe
-{
-    import std.array : appender;
-
-    auto w = appender!string;
-    writeMeter(w, value, max, width, glyphs);
-    return w[];
-}
-
 /// A determinate progress bar: `████▌     12/40` — a meter plus the counter,
 /// with `done` right-justified in `total`'s digit width. Renders into any
 /// output range via `toString` (the `ProgressLine` pattern), so it stays
@@ -119,31 +97,37 @@ struct ProgressBar
 // ---------------------------------------------------------------------------
 
 @("meter.fractions")
-@safe unittest
+@safe pure nothrow @nogc unittest
 {
-    assert(meter(0.0, 4) == "    ");
-    assert(meter(1.0, 4) == "████");
-    assert(meter(0.5, 4) == "██  ");
-    assert(meter(2.0, 4) == "████");  // clamped
-    assert(meter(-1.0, 4) == "    "); // clamped
+    import sparkles.base.buffer : checkWriter;
+
+    checkWriter!((ref b) => writeMeter(b, 0.0, 4))("    ");
+    checkWriter!((ref b) => writeMeter(b, 1.0, 4))("████");
+    checkWriter!((ref b) => writeMeter(b, 0.5, 4))("██  ");
+    checkWriter!((ref b) => writeMeter(b, 2.0, 4))("████");  // clamped
+    checkWriter!((ref b) => writeMeter(b, -1.0, 4))("    "); // clamped
 }
 
 @("meter.eighthPrecision")
-@safe unittest
+@safe pure nothrow @nogc unittest
 {
+    import sparkles.base.buffer : checkWriter;
+
     // 0.4375 * 4 cells = 1.75 cells -> one full block + a 6/8 block + padding.
-    assert(meter(0.4375, 4) == "█▊  ");
+    checkWriter!((ref b) => writeMeter(b, 0.4375, 4))("█▊  ");
     // A remainder that rounds to 8/8 carries into a full block.
-    assert(meter(0.999, 4) == "████");
+    checkWriter!((ref b) => writeMeter(b, 0.999, 4))("████");
 }
 
 @("meter.countsAndAscii")
-@safe unittest
+@safe pure nothrow @nogc unittest
 {
-    assert(meter(3, 4, 8) == "██████  ");
-    assert(meter(0, 0, 4) == "    "); // max == 0 -> empty, no division
-    assert(meter(3, 4, 8, meterGlyphs(false)) == "######--");
-    assert(meter(1, 1, 4, meterGlyphs(false)) == "####");
+    import sparkles.base.buffer : checkWriter;
+
+    checkWriter!((ref b) => writeMeter(b, 3, 4, 8))("██████  ");
+    checkWriter!((ref b) => writeMeter(b, 0, 0, 4))("    "); // max == 0 -> empty, no division
+    checkWriter!((ref b) => writeMeter(b, 3, 4, 8, meterGlyphs(false)))("######--");
+    checkWriter!((ref b) => writeMeter(b, 1, 1, 4, meterGlyphs(false)))("####");
 }
 
 @("meter.progressBar")
