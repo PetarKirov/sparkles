@@ -1615,9 +1615,75 @@ WrapResult tryFitCellsWithReplacement(SourceSnapshot source, CellExtent budget,
     return WrapResult.init;
 }
 
+/// Scratch and publication arenas one thread's `cellWrapPlan` calls reuse.
+/// They only grow, and each call slices them to the lengths it would have
+/// allocated: `tryWrapCells` writes every record before reading it, so a
+/// reused arena plans exactly as a fresh one.
+private struct CellWrapPool
+{
+    CellWrapScratch scratch;
+    WrapPlanStorage storage;
+    bool busy;
+
+    CellWrapScratch slice(size_t records, size_t states, size_t fragments, size_t styles,
+        size_t geometryRecords, bool words) @safe
+    {
+        static T[] take(T)(ref T[] array, size_t length) @safe
+        {
+            if (array.length < length) array = new T[](length);
+            return array[0 .. length];
+        }
+        CellWrapScratch s;
+        s.tokens = take(scratch.tokens, records);
+        s.atoms = take(scratch.atoms, records);
+        s.clusters = take(scratch.clusters, records);
+        s.opportunities = take(scratch.opportunities, records);
+        if (words)
+        {
+            s.words = take(scratch.words, records);
+            s.wordWorkspace = take(scratch.wordWorkspace, records);
+        }
+        s.lineWorkspace = take(scratch.lineWorkspace, records);
+        s.primitives = take(scratch.primitives, records);
+        s.endpoints = take(scratch.endpoints, records);
+        s.sourceRecords = take(scratch.sourceRecords, records);
+        s.solver.selected = take(scratch.solver.selected, records);
+        s.solver.ranked = take(scratch.solver.ranked, 1);
+        s.solver.ids = take(scratch.solver.ids, records);
+        s.solver.temporaryIds = take(scratch.solver.temporaryIds, records);
+        s.geometry = take(scratch.geometry, geometryRecords);
+        s.indentStyles = take(scratch.indentStyles, geometryRecords);
+        s.indentStyleStarts = take(scratch.indentStyleStarts, geometryRecords);
+        s.styles = take(scratch.styles, styles);
+        s.solver.states = take(scratch.solver.states, states);
+        s.solver.ordering = take(scratch.solver.ordering, states);
+        s.solver.temporary = take(scratch.solver.temporary, states);
+        s.styleTransitions = take(scratch.styleTransitions, styles * 2);
+        s.candidateFragments = take(scratch.candidateFragments, fragments);
+        s.realizedFragments = take(scratch.realizedFragments, fragments);
+        s.solver.projection = WrapProjectionScratch(take(scratch.solver.projection.lines, records),
+            take(scratch.solver.projection.fragments, fragments),
+            take(scratch.solver.projection.sourceRecords, records),
+            take(scratch.solver.projection.styles, styles));
+        return s;
+    }
+    WrapPlanStorage sliceStorage(size_t records, size_t fragments, size_t styles) @safe
+    {
+        static T[] take(T)(ref T[] array, size_t length) @safe
+        {
+            if (array.length < length) array = new T[](length);
+            return array[0 .. length];
+        }
+        return WrapPlanStorage(take(storage.lines, records), take(storage.fragments, fragments),
+            take(storage.sourceRecords, records), take(storage.styles, styles));
+    }
+}
+private CellWrapPool cellWrapPool;
+
 /// Explicitly allocating adapter. Retried scratch allocation does not relax
 /// exactness, policies, or measurements; the caller-bounded operation above is
-/// the allocation-free authority.
+/// the allocation-free authority. Planning reuses this thread's arenas; the
+/// returned plan owns copies of exactly its own records.
 WrapPlan cellWrapPlan(const(char)[] text, WrapOptions options = WrapOptions.init,
     scope void delegate() @safe measurePending = null) @safe
 {
@@ -1638,41 +1704,20 @@ WrapPlan cellWrapPlan(const(char)[] text, WrapOptions options = WrapOptions.init
         enforce(indent.length <= size_t.max - styleCapacity, "cell wrapping indent storage exhausted");
         styleCapacity += indent.length;
     }
-    CellWrapScratch scratch;
-    scratch.tokens = new UtfToken[](records);
-    scratch.atoms = new CellAtom[](records);
-    scratch.clusters = new CellCluster[](records);
-    scratch.opportunities = new UnicodeBoundary[](records);
-    if (options.opportunities == CellOpportunityPolicy.wordPreserving)
-    {
-        scratch.words = new UnicodeBoundary[](records);
-        scratch.wordWorkspace = new WordBoundaryWorkspace[](records);
-    }
-    scratch.lineWorkspace = new LineBreakWorkspaceEntry[](records);
-    scratch.primitives = new WrapPrimitive[](records);
-    scratch.endpoints = new WrapEndpoint[](records);
-    scratch.sourceRecords = new SourceRecord[](records);
-    scratch.solver.selected = new size_t[](records);
-    scratch.solver.ranked = new size_t[](1);
-    scratch.solver.ids = new ulong[](records);
-    scratch.solver.temporaryIds = new ulong[](records);
-    scratch.geometry = new WrapGeometry[](geometryRecords);
-    scratch.indentStyles = new CellStyleSnapshot[](geometryRecords);
-    scratch.indentStyleStarts = new size_t[](geometryRecords);
+    // A measurer may wrap text of its own; a nested call plans in fresh
+    // arenas. So does a paragraph past 4 KiB: its arenas (some 600 bytes
+    // per source byte) are not worth keeping for the thread's lifetime.
+    enum retainedRecords = 4 * 1024;
+    CellWrapPool transient;
+    CellWrapPool* pool = cellWrapPool.busy || records > retainedRecords ? &transient : &cellWrapPool;
+    pool.busy = true;
+    scope (exit) pool.busy = false;
     for (;;)
     {
-        scratch.styles = new CellStyleSnapshot[](styleCapacity);
-        scratch.solver.states = new WrapSearchState[](stateCapacity);
-        scratch.solver.ordering = new size_t[](stateCapacity);
-        scratch.solver.temporary = new size_t[](stateCapacity);
         enforce(styleCapacity <= size_t.max / 2, "cell wrapping style transition storage exhausted");
-        scratch.styleTransitions = new size_t[](styleCapacity * 2);
-        scratch.candidateFragments = new WrapFragment[](fragmentCapacity);
-        scratch.realizedFragments = new WrapFragment[](fragmentCapacity);
-        scratch.solver.projection = WrapProjectionScratch(new WrapLine[](records),
-            new WrapFragment[](fragmentCapacity), new SourceRecord[](records), new CellStyleSnapshot[](styleCapacity));
-        WrapPlanStorage storage = WrapPlanStorage(new WrapLine[](records),
-            new WrapFragment[](fragmentCapacity), new SourceRecord[](records), new CellStyleSnapshot[](styleCapacity));
+        CellWrapScratch scratch = pool.slice(records, stateCapacity, fragmentCapacity, styleCapacity,
+            geometryRecords, options.opportunities == CellOpportunityPolicy.wordPreserving);
+        WrapPlanStorage storage = pool.sliceStorage(records, fragmentCapacity, styleCapacity);
         WrapLimits limits = WrapLimits(size_t.max, size_t.max, size_t.max, size_t.max,
             size_t.max, size_t.max, size_t.max, size_t.max);
         WrapPlan plan;
@@ -1691,6 +1736,10 @@ WrapPlan cellWrapPlan(const(char)[] text, WrapOptions options = WrapOptions.init
             continue;
         }
         enforce(r.succeeded, "cell wrapping failed: " ~ r.status.to!string);
+        plan.lines = plan.lines.dup;
+        plan.fragments = plan.fragments.dup;
+        plan.sourceRecords = plan.sourceRecords.dup;
+        plan.styles = plan.styles.dup;
         return plan;
     }
 }
