@@ -23,6 +23,7 @@ import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpK
 import sparkles.base.vfs.types : Access, Disposition, EntryKind, MountCheck, OpenMode,
     ResolvePolicy, Sharing, Stat, StatMask, SymlinkPolicy, DotDotPolicy, maxNameLength,
     maxSplicedPathLength, raceRetries;
+import sparkles.event_horizon.sys.error_kinds : errnoKind;
 import sparkles.event_horizon.sys.posix;
 
 /// The context a backend gives when its kernel resolver turned out to be
@@ -560,24 +561,10 @@ IoError failure(OpKind op, int e) @safe nothrow @nogc => errnoError(e, op);
 IoError failure(OpKind op) @safe nothrow @nogc => errnoError(errno, op);
 
 /// The portable kind of an `errno` (VFN1).
+/// Every open here refuses to follow a link, so `ELOOP` means the link was
+/// refused, not that a chain of them ran too long.
 IoError errnoError(int e, OpKind op) @safe pure nothrow @nogc
-{
-    ErrorKind k;
-    switch (e)
-    {
-        case ENOENT: k = ErrorKind.notFound; break;
-        case EEXIST: k = ErrorKind.exists; break;
-        case ENOTDIR: k = ErrorKind.notADirectory; break;
-        case EISDIR: k = ErrorKind.isADirectory; break;
-        case ENOTEMPTY: k = ErrorKind.notEmpty; break;
-        case EACCES, EPERM: k = ErrorKind.permission; break;
-        case EBUSY: k = ErrorKind.busy; break;
-        case ENAMETOOLONG: k = ErrorKind.nameTooLong; break;
-        case ELOOP: k = ErrorKind.symlinkRefused; break;
-        default: k = ErrorKind.other; break;
-    }
-    return IoError(k, e, op);
-}
+    => IoError(e == ELOOP ? ErrorKind.symlinkRefused : errnoKind(e), e, op);
 
 Stat toStat(ref const stat_t st, StatMask mask) @safe pure nothrow @nogc
 {
