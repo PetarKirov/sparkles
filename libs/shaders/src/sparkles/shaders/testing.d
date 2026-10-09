@@ -73,3 +73,46 @@ import sparkles.shaders.types;
     assert(luma(v3(1)) > 0.999f && luma(v3(1)) < 1.001f);
     assert(luma(v3(0, 0, 1)) > 0, "blue text must not vanish");
 }
+
+@("shaders.types.representationPerCompiler")
+@safe pure nothrow @nogc unittest
+{
+    // `SHV2`: under LDC the power-of-two vectors are the compiler's own; the
+    // host's `vec3` is three floats under every compiler, never a 16-byte
+    // native vector. (The device side, `__vector(float[3])`, is compiled by
+    // every generated-shader build: `crtTube` and the bloom passes use it.)
+    version (LDC)
+    {
+        static assert(is(vec2 == __vector(float[2])));
+        static assert(is(vec4 == __vector(float[4])));
+    }
+    else
+    {
+        static assert(is(vec2 == Vec!2) && is(vec4 == Vec!4));
+    }
+    static assert(is(vec3 == Vec!3));
+    static assert(vec3.sizeof == 3 * float.sizeof);
+}
+
+@("shaders.math.transcendentalsMatchTheirDefinitions")
+@safe pure nothrow @nogc unittest
+{
+    import std.math : PI;
+
+    // `SHV5`: hand-derived values — the identities that pin each function,
+    // not the host library's own output read back. One part in a million is
+    // far inside single precision at these arguments.
+    static bool near(float a, float b) => a - b < 1e-6f && b - a < 1e-6f;
+
+    assert(sin(0.0f) == 0 && near(sin(cast(float) PI / 2), 1) && near(sin(cast(float) PI / 6), 0.5f));
+    assert(near(sin(-cast(float) PI / 2), -1), "odd");
+    assert(cos(0.0f) == 1 && near(cos(cast(float) PI / 3), 0.5f) && near(cos(cast(float) PI), -1));
+    assert(near(cos(-cast(float) PI / 3), 0.5f), "even");
+    assert(pow(2.0f, 10.0f) == 1024 && pow(9.0f, 0.5f) == 3 && pow(5.0f, 0.0f) == 1);
+    assert(near(pow(8.0f, 1.0f / 3.0f), 2));
+    // Per component on every vector type, and the same as the scalar form.
+    const angles = v3(0, cast(float) PI / 2, cast(float) PI);
+    assert(near(sin(angles).y, 1) && near(cos(angles).z, -1));
+    assert(pow(v2(2, 3), v2(3, 2)).array == [8, 9]);
+    assert(pow(v4(4), v4(0.5f)).array == [2, 2, 2, 2]);
+}
