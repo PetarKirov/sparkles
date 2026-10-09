@@ -3,11 +3,11 @@ Tier B — the direct-style I/O verbs (SPEC §7.3): blocking-looking shims over
 the scheduler's await seam. Every verb parks the calling fiber at most once
 and resumes only at the op's terminal completion.
 
-`Stream`/`Listener`/`DgramSocket`/`FileHandle` are small copyable
-fd-carrying handles with an explicit `close()` — they own no memory and
+`read` and `write` take anything that lends a descriptor
+(`isFdBorrowable`): an `OwnedFd`, a `BorrowedFd`, or a capability VFS `File`
+whose backend has descriptors. `Stream`/`Listener`/`DgramSocket` are small
+copyable socket handles with an explicit `close()` — they own no memory and
 carry no ring state; the verbs resolve the scheduler from the current fiber.
-Handles are created by the net/fs capabilities (M6/M7); until those land,
-tier-B code wraps raw fds directly.
 
 Buffer genericity (SPEC §6.5): the verbs accept any owned buffer type whose
 memory is stable while the value is not moved (`isOwnedIoBuf`) — including
@@ -32,7 +32,7 @@ import sparkles.event_horizon.buffer : Buf, isOwnedIoBuf;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op;
 import sparkles.event_horizon.sched : AwaitOutcome, FiberTask, Sched;
-import sparkles.event_horizon.sys.descriptor : BorrowedFd, isFdBorrowable;
+import sparkles.event_horizon.sys.descriptor : BorrowedFd, OwnedFd, isFdBorrowable;
 
 /// The owned-transfer result shape (SPEC §6.2): the buffer always comes
 /// back, success or failure.
@@ -90,23 +90,6 @@ struct Listener
 struct DgramSocket
 {
     int fd = -1;
-
-    /// ditto
-    void close() @trusted nothrow @nogc
-    {
-        Stream s = {fd: fd};
-        s.close();
-        fd = -1;
-    }
-}
-
-/// An open file.
-struct FileHandle
-{
-    int fd = -1;
-
-    /// Lends the descriptor to the verbs.
-    BorrowedFd borrowFd() const @safe pure nothrow @nogc => BorrowedFd(fd);
 
     /// ditto
     void close() @trusted nothrow @nogc
@@ -397,8 +380,8 @@ unittest
     })() != 0)
         return;
 
-    auto rd = FileHandle(fds[0]);
-    auto wr = FileHandle(fds[1]);
+    auto rd = OwnedFd(fds[0]);
+    auto wr = OwnedFd(fds[1]);
     scope (exit)
     {
         rd.close();
@@ -630,8 +613,8 @@ unittest
         return pipe(fds);
     })() != 0)
         return;
-    auto rd = FileHandle(fds[0]);
-    auto wr = FileHandle(fds[1]);
+    auto rd = OwnedFd(fds[0]);
+    auto wr = OwnedFd(fds[1]);
     scope (exit)
     {
         rd.close();
@@ -791,8 +774,8 @@ unittest
         return socketpair_(fds);
     })() != 0)
         return;
-    auto rd = FileHandle(fds[0]);
-    auto wr = FileHandle(fds[1]);
+    auto rd = OwnedFd(fds[0]);
+    auto wr = OwnedFd(fds[1]);
     scope (exit)
     {
         rd.close();
