@@ -7,28 +7,12 @@ license "BSL-1.0"
 targetType "library"
 targetPath "build"
 
-dflags "-preview=in" "-preview=dip1000"
+dflags "-preview=in" "-preview=dip1000" "-checkaction=context" "-allinst"
 
 dependency "sparkles:wired" path="../../../.."
-// Build wired with cross-module inlining scoped to that package (its scan→
-// reader seams inline into the hot loop) — this reproduces the pre-rebase
-// executable baseline's codegen exactly (retired ins/byte parity). Scoped
-// here, not via the `bench` build type, so mir-ion never sees CMI (which would
-// cull its template-nested function). The codegen-parity matrix lives in
-// `libs/wired/dub.sdl`; override for A/B measurement with e.g.
-// `--override-config sparkles:wired/library` (stock) or `.../library-singleobj`.
 subConfiguration "sparkles:wired" "library-inline"
-// Top-level, not just under `configuration "unittest"`: runner.d imports
-// sparkles.test_runner.* at module scope (and the non-template `bytes()` returns
-// its `Metric`), so it's an unconditional dependency of the package — declaring
-// it here keeps the manifest honest instead of relying on `dub` defaulting a
-// dep-less config to the unittest one.
 dependency "sparkles:test-runner" path="../../../.."
 
-// D engines (pure-D dub packages; pinned in dub.selections.json). Each adapter
-// sits behind its `versions` gate so a frontend incompatibility is one line
-// away from off. Foreign engines (yyjson/C++/Rust) need nix-built shims and are
-// off by default — re-add their `versions` + path deps to run them under nix.
 dependency "mir-ion" version="~>2.3"
 versions "BenchMirIon"
 dependency "asdf" version="~>0.8.0"
@@ -37,54 +21,16 @@ dependency "jsoniopipe" version="~>0.2.7"
 versions "BenchJsoniopipe"
 
 configuration "unittest" {
-    // The benchmark is a set of `@benchmark unittest`s run through
-    // sparkles:test-runner (`dub test -- --bench`, with `--perf` for hardware
-    // counters). Corpora load from `$WIRED_BENCH_DATA` at run time. This
-    // default config is the D-engine field only (std.json, wired-native,
-    // mir-ion, asdf, jsoniopipe) — pure-D deps that build anywhere, for fast
-    // off-nix iteration.
-    dflags "-checkaction=context" "-allinst"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
-    lflags "--export-dynamic" platform="linux-ldc"
 }
 
-// The full competitive field: the D engines plus the foreign engines
-// (yyjson, simdjson DOM/On-Demand, rapidjson, serde_json, simd-json,
-// sonic-rs) reached through their ImportC/`extern(C)` shims. Those shims
-// resolve via pkg-config (`yyjson.pc`, `wired-bench-cpp-shim.pc`,
-// `wired-bench-rs.pc`) on the devshell's `PKG_CONFIG_PATH`, so this config
-// is nix-only. Run the full field with:
-//   dub test -b bench -c unittest-foreign -- --bench --perf
 configuration "unittest-foreign" {
-    // yyjson: ImportC binding; the ISA-preset build's yyjson.pc provides both
-    // cflags and -lyyjson.
     dependency "yyjson" path="bindings/yyjson"
     versions "BenchYyjson"
-
-    // simdjson (DOM + On-Demand) and rapidjson via the extern "C" shim, and
-    // serde_json + simd-json + sonic-rs via the Rust staticlib.
     dependency "wired-bench-shim" path="bindings/shim"
     versions "BenchCpp" "BenchRust"
-
-    dflags "-checkaction=context" "-allinst"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
-    lflags "--export-dynamic" platform="linux-ldc"
 }
 
-// Real numbers need release codegen: dub's stock `unittest` build type is a
-// debug build (the runner prints an assert-build warning under --bench), so
-// benchmarks run via `dub test -b bench -- --bench …`. `unittests` is the
-// load-bearing option — without it `dub test` registers zero tests.
 buildType "bench" {
     buildOptions "unittests" "releaseMode" "optimize" "inline"
-    // NB vs the old executable harness's flags: `-enable-cross-module-inlining`
-    // is OFF — build types propagate to dependencies, and mir-ion's -unittest +
-    // releaseMode build culls a template-nested function its inlined code still
-    // references (undefined `printElement…quote`; `-linkonce-templates` ICEs).
-    // Costs ~15% on wired's number-heavy hot loops vs the old `-b bench`
-    // executable baselines — compare new numbers only against baselines
-    // regenerated under this build type.
     dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
 }
