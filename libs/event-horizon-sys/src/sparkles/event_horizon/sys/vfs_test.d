@@ -254,3 +254,40 @@ private enum uint octal111 = 73, octal755 = 493, octal777 = 511, octal666 = 438,
     const nativeLog = differentialLog(nativeRoot.value);
     assert(memLog == nativeLog, "\nMemVfs:      " ~ memLog ~ "\nBlockingVfs: " ~ nativeLog);
 }
+
+version (linux)
+{
+    import sparkles.event_horizon.sys.posix : Statx;
+
+    // glibc's wrapper (2.28+); druntime does not declare it.
+    extern (C) int statx(int dirfd, const(char)* path, int flags, uint mask, Statx* buf)
+        nothrow @nogc;
+}
+
+/// `statx` and `fstatat` give the same `Stat`, device number included, so the
+/// ring's statx path and the blocking path compare equal (VFB5).
+version (linux)
+@("vfs.blocking.statxMatchesFstatat")
+@system unittest
+{
+    import core.sys.posix.fcntl : AT_FDCWD, AT_SYMLINK_NOFOLLOW;
+    import core.sys.posix.sys.stat : fstatat, stat_t;
+    import sparkles.event_horizon.sys.posix : STATX_BASIC_STATS, Statx;
+    import sparkles.event_horizon.sys.vfs : statxToStat, toStat;
+
+    auto dir = scratchDir("statx");
+    scope (exit) rmdirRecurse(dir);
+    write(buildPath(dir, "f"), "twelve bytes");
+    mkdirRecurse(buildPath(dir, "d"));
+    symlink("f", buildPath(dir, "l"));
+    // /proc sits on a different device from the scratch directory.
+    foreach (path; [buildPath(dir, "f"), buildPath(dir, "d"), buildPath(dir, "l"), "/proc/self"])
+    {
+        stat_t st;
+        Statx sx;
+        assert(fstatat(AT_FDCWD, path.toStringz, &st, AT_SYMLINK_NOFOLLOW) == 0);
+        assert(statx(AT_FDCWD, path.toStringz, AT_SYMLINK_NOFOLLOW, STATX_BASIC_STATS, &sx) == 0);
+        foreach (mask; [StatMask.basic, StatMask.mtime])
+            assert(statxToStat(sx, mask) == toStat(st, mask), path);
+    }
+}
