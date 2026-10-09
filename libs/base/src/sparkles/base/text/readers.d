@@ -247,6 +247,66 @@ if (is(E == enum))
 }
 
 /**
+ditto, the names of format `F` (`sparkles.base.text.wire_names`): the inverse
+of `writeEnumMemberName!F`, so a value written in a format reads back from it.
+*/
+ParseExpected!E readEnumString(E, F)(ref scope const(char)[] s)
+if (is(E == enum))
+{
+    import sparkles.base.text.wire_names : enumNames;
+
+    if (s.length == 0)
+        return parseErr!E(ParseErrorCode.emptyInput, 0);
+
+    size_t bestLen = 0;
+    E best;
+    bool matched = false;
+
+    static foreach (i, memberName; __traits(allMembers, E))
+    {{
+        const name = enumNames!(F, E)[i];
+        if (name.length > bestLen && s.length >= name.length && s[0 .. name.length] == name)
+        {
+            bestLen = name.length;
+            best = __traits(getMember, E, memberName);
+            matched = true;
+        }
+    }}
+
+    if (!matched)
+    {
+        enum string msg = () {
+            string m = "expected one of: ";
+            foreach (i, name; enumNames!(F, E))
+                m ~= (i ? ", " : "") ~ name;
+            return m;
+        }();
+        return parseErr!E(ParseErrorCode.unknownValue, 0, msg);
+    }
+
+    s = s[bestLen .. $]; // advance only on success
+    return parseOk(best);
+}
+
+///
+@("text.readers.readEnumString.inAFormat")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.text.wire_names : AnyFormat, Pretty, WireName;
+
+    enum Channel { @WireName("fg") foreground, @WireName("bg") background }
+
+    const(char)[] s = "bg rest";
+    assert(readEnumString!(Channel, AnyFormat)(s).value == Channel.background);
+    assert(s == " rest");
+    // An identifier format reads the identifiers, not the wire names.
+    const(char)[] t = "foreground";
+    assert(readEnumString!(Channel, Pretty)(t).value == Channel.foreground);
+    const(char)[] u = "fg";
+    assert(readEnumString!(Channel, Pretty)(u).hasError && u == "fg");
+}
+
+/**
 Reads a quoted string literal (backticks `` `...` ``, double quotes `"..."`, or single quotes `'...'`)
 from the front of `s`, writing unescaped characters into output range `w` and advancing `s` past the literal.
 

@@ -128,7 +128,7 @@ Digits     := [0-9]+
 
 - **Member Access**: `pointer.phase`, `keyboard.logical.character`,
   `ready.metrics.logicalSize.width`. A segment is the field's identifier, or
-  the name an `@Name` attribute gives it; `@Aliases` adds further spellings.
+  the name a `@WireName` attribute gives it; `@Aliases` adds further spellings.
 - **SumType Unrolling**: an alternative's fields are addressed under the
   alternative's name, its type name with the schema's suffix (`Event` by
   default) stripped and recased to camelCase. In a `WindowEvent`,

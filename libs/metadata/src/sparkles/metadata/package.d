@@ -7,11 +7,11 @@ visibility, and mutation deliberately remains in its owning package.
 */
 module sparkles.metadata;
 
-/// Canonical machine-readable name, independent of a serialization format.
-struct Name
-{
-    string name;
-}
+/// The format vocabulary: `@WireName`, `@WireCase`, `@WireRepr` and the
+/// format tags; a member's canonical name is `@WireName` under `AnyFormat`.
+public import sparkles.metadata.wire;
+/// ditto
+public import sparkles.metadata.case_style : CaseStyle;
 
 /// Additional accepted names, in preference order.
 struct Aliases
@@ -62,13 +62,11 @@ enum colorValue;
 @safe pure nothrow @nogc
 unittest
 {
-    enum N = Name("canonical");
     enum A = Aliases("short", "legacy");
     enum L = Label("Display");
     enum D = Description("Details");
     enum R = Range(1, 4);
 
-    static assert(N.name == "canonical");
     static assert(A.names == ["short", "legacy"]);
     static assert(L.text == "Display" && L.name == "Display");
     static assert(D.text == "Details");

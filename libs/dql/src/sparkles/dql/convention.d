@@ -14,7 +14,11 @@ module sparkles.dql.convention;
 import std.traits : getUDAs, hasUDA;
 
 import sparkles.base.text.case_style : CaseStyle, convertCase;
-import sparkles.metadata : Aliases, Description, Name;
+import sparkles.metadata : Aliases, AnyFormat, Description, WireNameAttr;
+
+// A member's canonical query spelling is its format-neutral `@WireName`: the
+// one tagged `AnyFormat`, the same name every wire format uses.
+private alias CanonicalName = WireNameAttr!AnyFormat;
 
 /// The mechanical query spelling of a variant type name: the schema's
 /// declared suffix stripped (when the name is longer than it), the rest
@@ -30,13 +34,13 @@ package(sparkles.dql) string mechanicalVariantName(string raw,
 }
 
 /// The query segment of a `SumType` alternative: the mechanical spelling of
-/// its type name, unless a `@Name` UDA on the variant type overrides it.
+/// its type name, unless a `@WireName` UDA on the variant type overrides it.
 /// `suffix` is the subject vocabulary's declared type-name suffix
 /// (`DqlSchema`'s `strippedSuffix` parameter).
 package(sparkles.dql) template variantNameOf(V, string suffix = "Event")
 {
-    static if (hasUDA!(V, Name))
-        enum string variantNameOf = getUDAs!(V, Name)[0].name;
+    static if (hasUDA!(V, CanonicalName))
+        enum string variantNameOf = getUDAs!(V, CanonicalName)[0].name;
     else
         enum string variantNameOf = mechanicalVariantName(V.stringof, suffix);
 }
@@ -60,24 +64,24 @@ package(sparkles.dql) template includeField(T, size_t i)
     enum bool includeField = isPublic!(T.tupleof[i]);
 }
 
-/// The query segment of a declared field: `@Name` on the field, else its
+/// The query segment of a declared field: `@WireName` on the field, else its
 /// declared identifier.
 package(sparkles.dql) template fieldSegmentName(T, size_t i)
 {
     import sparkles.reflection.member : fieldIdentifier;
 
-    static if (hasUDA!(T.tupleof[i], Name))
-        enum string fieldSegmentName = getUDAs!(T.tupleof[i], Name)[0].name;
+    static if (hasUDA!(T.tupleof[i], CanonicalName))
+        enum string fieldSegmentName = getUDAs!(T.tupleof[i], CanonicalName)[0].name;
     else
         enum string fieldSegmentName = fieldIdentifier!(T, i);
 }
 
-/// The query segment of a `@property` getter: `@Name` on the getter, else
+/// The query segment of a `@property` getter: `@WireName` on the getter, else
 /// its declared identifier — the one spelling both walks answer to.
 package(sparkles.dql) template getterName(alias getter)
 {
-    static if (hasUDA!(getter, Name))
-        enum string getterName = getUDAs!(getter, Name)[0].name;
+    static if (hasUDA!(getter, CanonicalName))
+        enum string getterName = getUDAs!(getter, CanonicalName)[0].name;
     else
         enum string getterName = __traits(identifier, getter);
 }
@@ -130,19 +134,19 @@ package(sparkles.dql) template getterAliasesOf(alias getter)
         enum string[] getterAliasesOf = [];
 }
 
-/// The canonical query spelling of an enum member: `@Name`, else the
+/// The canonical query spelling of an enum member: `@WireName`, else the
 /// declared identifier.
 package(sparkles.dql) template enumValueName(E, string member)
 {
-    static if (hasUDA!(__traits(getMember, E, member), Name))
+    static if (hasUDA!(__traits(getMember, E, member), CanonicalName))
         enum string enumValueName
-            = getUDAs!(__traits(getMember, E, member), Name)[0].name;
+            = getUDAs!(__traits(getMember, E, member), CanonicalName)[0].name;
     else
         enum string enumValueName = member;
 }
 
 /// `true` when `name` addresses `value` under its declared identifier, its
-/// `@Name`, or one of its `@Aliases`.
+/// `@WireName`, or one of its `@Aliases`.
 package(sparkles.dql) bool enumValueMatches(E)(E value, scope const(char)[] name)
     @safe pure nothrow @nogc
 if (is(E == enum))
@@ -154,8 +158,8 @@ if (is(E == enum))
         {
             if (name == member)
                 return true;
-            static if (hasUDA!(M, Name))
-                if (name == getUDAs!(M, Name)[0].name)
+            static if (hasUDA!(M, CanonicalName))
+                if (name == getUDAs!(M, CanonicalName)[0].name)
                     return true;
             static if (hasUDA!(M, Aliases))
                 static foreach (aliasName; getUDAs!(M, Aliases)[0].names)
