@@ -777,39 +777,82 @@ private ubyte rankDigit(scope const ref MeasurableInput input,
 private void rankPrefixes(scope const ref MeasurableInput input, scope WrapSearchState[] states,
     scope size_t[] ordering, scope size_t[] temporary, size_t maximumDepth)
 {
-    foreach (depth; 1 .. maximumDepth + 1)
+    // The states grouped by depth once (a stable counting sort into
+    // `ordering`), not a scan of every state per depth. A depth too deep for
+    // the stack table keeps the scan.
+    size_t[64] starts;
+    if (maximumDepth + 2 > starts.length)
     {
-        size_t count;
-        foreach (i, ref const state; states)
-            if (state.objective.lines == depth) ordering[count++] = i;
-        foreach (kind; 0U .. 3U)
+        foreach (depth; 1 .. maximumDepth + 1)
         {
-            foreach (digit; 0U .. 16U)
+            size_t count;
+            foreach (i, ref const state; states)
+                if (state.objective.lines == depth) ordering[count++] = i;
+            rankGroup(input, states, ordering[0 .. count], temporary[0 .. count]);
+        }
+        return;
+    }
+    foreach (ref const state; states)
+        if (state.objective.lines >= 1 && state.objective.lines <= maximumDepth)
+            ++starts[state.objective.lines + 1];
+    foreach (d; 1 .. maximumDepth + 2)
+        starts[d] += starts[d - 1];
+    {
+        size_t[64] cursor = starts;
+        foreach (i, ref const state; states)
+            if (state.objective.lines >= 1 && state.objective.lines <= maximumDepth)
+                ordering[cursor[state.objective.lines]++] = i;
+    }
+    foreach (depth; 1 .. maximumDepth + 1)
+        rankGroup(input, states, ordering[starts[depth] .. starts[depth + 1]],
+            temporary[starts[depth] .. starts[depth + 1]]);
+}
+
+// Ranks one depth's states on each key: a radix sort of `group` (with
+// `temporary` its scratch), then equal keys share a rank.
+private void rankGroup(scope const ref MeasurableInput input, scope WrapSearchState[] states,
+    scope size_t[] group, scope size_t[] temporary)
+{
+    const count = group.length;
+    // A lone state ranks first on every key: nothing to sort. The greedy
+    // solver keeps one state a line, so this is nearly every depth.
+    if (count <= 1)
+    {
+        foreach (i; group)
+        {
+            states[i].sourceRank = 0;
+            states[i].alternativeRank = 0;
+            states[i].ordinalRank = 0;
+        }
+        return;
+    }
+    foreach (kind; 0U .. 3U)
+    {
+        foreach (digit; 0U .. 16U)
+        {
+            size_t[256] bins;
+            foreach (i; group) ++bins[rankDigit(input, states, i, kind, digit)];
+            size_t cursor;
+            foreach (ref bin; bins) { const n = bin; bin = cursor; cursor += n; }
+            foreach (i; group)
+                temporary[bins[rankDigit(input, states, i, kind, digit)]++] = i;
+            group[] = temporary[0 .. count];
+        }
+        size_t rank;
+        foreach (position; 0 .. count)
+        {
+            if (position)
             {
-                size_t[256] bins;
-                foreach (i; ordering[0 .. count]) ++bins[rankDigit(input, states, i, kind, digit)];
-                size_t cursor;
-                foreach (ref bin; bins) { const n = bin; bin = cursor; cursor += n; }
-                foreach (i; ordering[0 .. count])
-                    temporary[bins[rankDigit(input, states, i, kind, digit)]++] = i;
-                ordering[0 .. count] = temporary[0 .. count];
+                bool same = true;
+                foreach (digit; 0U .. 16U)
+                    same &= rankDigit(input, states, group[position], kind, digit)
+                        == rankDigit(input, states, group[position - 1], kind, digit);
+                if (!same) ++rank;
             }
-            size_t rank;
-            foreach (position; 0 .. count)
-            {
-                if (position)
-                {
-                    bool same = true;
-                    foreach (digit; 0U .. 16U)
-                        same &= rankDigit(input, states, ordering[position], kind, digit)
-                            == rankDigit(input, states, ordering[position - 1], kind, digit);
-                    if (!same) ++rank;
-                }
-                ref state = states[ordering[position]];
-                if (kind == 0) state.sourceRank = rank;
-                else if (kind == 1) state.alternativeRank = rank;
-                else state.ordinalRank = rank;
-            }
+            ref state = states[group[position]];
+            if (kind == 0) state.sourceRank = rank;
+            else if (kind == 1) state.alternativeRank = rank;
+            else state.ordinalRank = rank;
         }
     }
 }
