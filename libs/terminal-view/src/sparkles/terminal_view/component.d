@@ -1960,14 +1960,15 @@ struct TerminalView
         import core.stdc.errno : EAGAIN, EINTR, errno, EIO, EWOULDBLOCK;
 
         import sparkles.base.buffer : SharedBuffer;
-        import sparkles.event_horizon.io : FileHandle, ringRead = read;
+        import sparkles.event_horizon.io : ringRead = read;
+        import sparkles.event_horizon.sys.descriptor : BorrowedFd;
 
         bool hangup = false;
         while (!hangup && tv.opened && !tv.s.childExited)
         {
             SharedBuffer!(ubyte, 4096) chunk;
             chunk.length = 4096;
-            auto got = ringRead(FileHandle(tv.s.pty_fd), move(chunk));
+            auto got = ringRead(BorrowedFd(tv.s.pty_fd), move(chunk));
             chunk = move(got.buf);
             if (got.res.hasError)
             {
