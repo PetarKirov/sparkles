@@ -188,11 +188,65 @@ made on one machine is valid on another.
 **Trade-offs.** `SHB4` waits for two prerequisites that are not delivered;
 until then a new device module is seen only when another input changes.
 
+### D12: Agreement is judged by the Vulkan precision table
+
+**Question.** What difference between a host result and a device result does
+the agreement oracle accept (`SHV7`, `SHF4`), where GLSL leaves precision to
+the implementation? This resolves open question Q3.
+
+**Alternatives.** A single loose tolerance for everything; the GLSL 4.60
+precision table, which leaves `sin` and `cos` unspecified; or the precision
+the Vulkan specification requires of the SPIR-V `GLSL.std.450` instructions
+the shaders are compiled to.
+
+**Choice.** The Vulkan table, at full single precision, over argument ranges
+where it states a bound:
+
+| Operations                                                           | Bound                                                   |
+| -------------------------------------------------------------------- | ------------------------------------------------------- |
+| `floor`, `abs`, `min`, `max`, `clamp`, `step`, sampling              | exact                                                   |
+| `fract`, `mod`, `mix`, `smoothstep`, `dot`, `length`, `luma`, `sqrt` | 8 ULP of the largest of the result, the arguments and 1 |
+| `sin`, `cos`                                                         | absolute 2⁻¹¹, for arguments in [−π, π]                 |
+| `exp`                                                                | (3 + 2·\|x\|) ULP                                       |
+| `pow`                                                                | relative 2⁻¹⁷, for x in [0.5, 4] and y in [−2, 2]       |
+
+The compound bounds allow for the few correctly rounded operations each is
+defined by, contracted or not. `mod` samples whose quotient lies within
+rounding of an integer are excluded: there one rounding moves `floor` by a
+whole step on either side.
+
+**Why.** It is the one table that bounds every operation the vocabulary
+offers on the code path the shaders actually take. The bounds are checked
+both ways in `ui_raylib.shader_readback.boundsAcceptTheirLimitAndNoMore`.
+
+**Trade-offs.** It is evidence on one driver at a time, the software
+rasterizer in CI, and for the desktop dialect only: the GLSL ES output's
+`mediump` bound is not read back (Q4 stays open). Arguments outside the
+stated ranges are not tested, because no bound exists there to test against.
+
+### D13: The build step enforces the interface contract
+
+**Question.** Where are `SHF5` (no `vec3` or aggregate at the interface) and
+`SHF6` (handles stay scalar) enforced?
+
+**Alternatives.** In the compiler's fragment stage, or in the build step.
+
+**Choice.** The build step (`SHP4`), from the disassembly of the module as
+the compiler emitted it.
+
+**Why.** The compiler accepts a `vec3` input, a struct or array uniform, and
+a `vec3` return, and the universal-rules validator accepts all of them. A
+check in the build step needs no compiler change and holds for any compiler
+the pin moves to. A diagnostic in the fork can be added later, and the build
+step's check would then never fire.
+
+**Trade-offs.** The diagnostic names the SPIR-V variable, which carries the
+parameter's name, but not the D source line.
+
 ## Open questions
 
-| ID  | Question                                                                                                                                                  | Affects        | Decision point             |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | -------------------------- |
-| Q1  | Which further platforms get a device toolchain, and how? Windows needs LLVM and LDC cross-built for MSVC, or built natively, and published as an archive. | `SHT4`         | A consumer needing it (M5) |
-| Q2  | Does the output variable keep the name `finalColor`, a convention of one OpenGL framework, when the fragment stage is proposed upstream?                  | `SHF3`         | Upstreaming the stage      |
-| Q3  | What tolerance does the agreement oracle accept where GLSL leaves precision to the implementation, as for `sin` and `pow` at large arguments?             | `SHV7`, `SHF4` | Start of M3                |
-| Q4  | Should the GLSL ES output request `highp` float where the device supports it, instead of `mediump`, so the ES bound matches the desktop one?              | `SHV7`, `SHP5` | Start of M3                |
+| ID  | Question                                                                                                                                                                                                                                                                                                                                                                                                      | Affects        | Decision point             |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | -------------------------- |
+| Q1  | Which further platforms get a device toolchain, and how? Windows needs LLVM and LDC cross-built for MSVC, or built natively, and published as an archive.                                                                                                                                                                                                                                                     | `SHT4`         | A consumer needing it (M5) |
+| Q2  | Does the output variable keep the name `finalColor`, a convention of one OpenGL framework, when the fragment stage is proposed upstream?                                                                                                                                                                                                                                                                      | `SHF3`         | Upstreaming the stage      |
+| Q4  | The GLSL ES output declares `precision mediump float` but qualifies its variables `highp`, which OpenGL ES 2.0 fragment shaders need not support. Keep `highp`, or drop to `mediump`? Evidence: on a phone whose `mediump` is half precision (Adreno), the hand-written tube showed artifacts (rows that should be uniform alternated; a 1-pixel line moved), and the generated `highp` tube matched desktop. | `SHV7`, `SHP5` | Start of M3                |
