@@ -102,3 +102,47 @@ private void expectNoFailures(string[] failures, string what) @safe
     assert(!r.hasError);
     assert(RingVfs.poolCalls == before + 2, "both calls ran on the pool");
 }
+
+/// Every `Dir` and `File` operation has an `Effect!T` form, generated from the
+/// direct one, with the same result (SPEC §10.5).
+@("vfs.ring.effectForms")
+@safe unittest
+{
+    import core.lifetime : move;
+    import sparkles.event_horizon.effect : effects, map, run;
+    import sparkles.event_horizon.scope_ : withScope;
+
+    auto dir = scratchDir("effects");
+    scope (exit) rmdirRecurse(dir);
+
+    Sched s;
+    schedOrSkip(s);
+    static struct EmptyCtx { }
+    auto r = s.run(() {
+        cast(void) withScope!((ref sc) {
+            EmptyCtx ctx;
+            auto ring = new RingVfs;
+            auto root = openRoot!(Rights.all)(ring, dir, ambientAuthority());
+
+            // mkdirAt, then a stat of what it made through a pipeline.
+            assert(!run(root.value.effects.mkdirAt("out"), sc, ctx).hasError);
+            auto kind = run(root.value.effects.statAt("out").map!(st => st.kind), sc, ctx);
+            assert(!kind.hasError && kind.value == EntryKind.directory);
+
+            // The same failure the direct form returns.
+            auto again = run(root.value.effects.mkdirAt("out"), sc, ctx);
+            assert(again.hasError);
+            assert(again.error.failure.kind == root.value.mkdirAt("out").error.kind);
+
+            // An operation with template arguments, and a File operation.
+            auto created = run(root.value.effects.call!("openFile", OpenMode.createNew)("f"),
+                sc, ctx);
+            assert(!created.hasError);
+            auto file = move(created.value);
+            auto wrote = run(file.effects.write(cast(const(ubyte)[]) "effect"), sc, ctx);
+            assert(!wrote.hasError && wrote.value == 6);
+            assert(root.value.statAt("f").value.size == 6);
+        })(s);
+    });
+    assert(!r.hasError);
+}
