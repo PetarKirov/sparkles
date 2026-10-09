@@ -19,7 +19,9 @@ module sparkles.docs.site_tree;
 
 import std.array : appender;
 
+import sparkles.docs.breakpoints : atLeast, Columns, columns;
 import sparkles.docs.options : ChromePalette, escapeInto, SiteOptions;
+import sparkles.docs.sidebar : sidebarToggleHtml;
 import sparkles.docs.source_set : SourceEntry;
 
 /// One row of a directory index: a link, its text, and its summary.
@@ -181,6 +183,7 @@ string directoryIndex(in DirNode dir, in SiteOptions opt = SiteOptions.init) @sa
     w ~= "</style></head><body>\n";
     if (sidebar)
     {
+        w ~= sidebarToggleHtml;
         w ~= opt.sidebarHtml;
         w ~= "\n<div class=\"content\"><div class=\"content-inner\">\n";
     }
@@ -272,6 +275,9 @@ private string indexCss(in SiteOptions opt) @safe pure
         w ~= "  .content { flex: 1; min-width: 0; overflow-y: auto; }\n";
         w ~= "  .content-inner { max-width: 48em; margin: 0 auto; padding: 2em 1.5em; }\n";
         w ~= sidebarCss(c, opt.hasDarkChrome ? opt.darkChrome : ChromePalette.init);
+        // From 160 columns the content column widens to 100 of them (`WEB5`).
+        w ~= atLeast(Columns.wide);
+        w ~= "    .content-inner { max-width: " ~ columns(100) ~ "; }\n  }\n";
     }
     else
     {
@@ -316,6 +322,12 @@ unittest
     assert(idx.canFind("<div class=\"content\"><div class=\"content-inner\">"), idx);
     assert(idx.canFind(".content-inner { max-width: 48em;"), idx);
     assert(idx.canFind("</ul>\n</div></div>\n</body>"), idx);
+    // Below 80 columns the sidebar is a drawer behind its toggle, which sits
+    // just before it; from 160 the content column widens (`WEB5`).
+    assert(idx.canFind(sidebarToggleHtml ~ aside), idx);
+    assert(idx.canFind("@container spk-page (width < 80ch)"), idx);
+    assert(idx.canFind("@container spk-page (width >= 160ch) {\n"
+        ~ "    .content-inner { max-width: calc(100 * var(--spk-col)); }"), idx);
 
     // The empty-set page closes the same wrappers.
     const empty = directoryIndex(DirNode.init, opt);
@@ -325,6 +337,7 @@ unittest
     // Without a sidebar the index is untouched (the centered body of old).
     const plain = directoryIndex(DirNode.init);
     assert(!plain.canFind("site-sidebar"), plain);
+    assert(!plain.canFind("sb-toggle"), plain);
     assert(plain.canFind("body { margin: 0 auto; max-width: 48em;"), plain);
 }
 

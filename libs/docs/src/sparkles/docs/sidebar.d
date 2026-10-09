@@ -25,11 +25,13 @@ module sparkles.docs.sidebar;
 import std.algorithm.searching : canFind;
 import std.array : Appender, appender;
 import std.regex : matchFirst, regex;
+import std.string : indexOf;
 
 import expected : Expected;
 import sparkles.wired.json : JsonError, readJSONFile;
 import sparkles.wired.policy : WireOptional;
 
+import sparkles.docs.breakpoints : below, Columns, containerCss;
 import sparkles.docs.options : ChromePalette, escapeInto;
 
 /// Path of the sidebar data file, relative to the repository root.
@@ -320,7 +322,52 @@ string sidebarCss(in ChromePalette c, in ChromePalette dark = ChromePalette.init
         w ~= text("  html.dark .site-sidebar .sb-text { color: ", dark.muted, "; }\n");
         w ~= text("  html.dark .site-sidebar a.sb-link.active { color: ", dark.link, "; }\n");
     }
+
+    // Below 80 columns the sidebar yields its width (`WEB5`, the TUI's
+    // `UGL15`): the page becomes one column and the sidebar a drawer under a
+    // "Pages" toggle — a checkbox and its label, so no script (tier 0).
+    w ~= containerCss;
+    w ~= "  .sb-toggle-input, .sb-toggle { display: none; }\n";
+    w ~= below(Columns.compact);
+    w ~= "    .shell, body:has(> .site-sidebar) { flex-direction: column; }\n";
+    w ~= "    .sb-toggle-input { display: block; position: absolute; width: 1px; height: 1px;\n";
+    w ~= "                       opacity: 0; }\n";
+    w ~= text("    .sb-toggle { display: block; cursor: pointer; font-weight: 600;\n",
+        "                 padding: 0.5em 1.1em; background: ", c.surface, ";\n",
+        "                 border-bottom: 1px solid ", c.border, "; }\n");
+    w ~= text("    .sb-toggle-input:focus-visible + .sb-toggle { outline: 2px solid ", c.link,
+        "; outline-offset: -2px; }\n");
+    w ~= "    .site-sidebar { display: none; width: auto; border-right: none; }\n";
+    w ~= "    .sb-toggle-input:checked ~ .site-sidebar { display: block; }\n";
+    if (dark.background.length)
+        w ~= text("    html.dark .sb-toggle { background: ", dark.surface,
+            "; border-bottom-color: ", dark.border, "; }\n");
+    w ~= "  }\n";
     return w[];
+}
+
+/++
+The sidebar's toggle (`WEB5`): a checkbox and its label, placed just before
+the `<aside>` so the drawer rules in $(LREF sidebarCss) can open it. Shown only
+below 80 columns; wider, the sidebar is always there and this is hidden.
++/
+enum string sidebarToggleHtml =
+    "<input type=\"checkbox\" id=\"sb-toggle\" class=\"sb-toggle-input\">"
+    ~ "<label for=\"sb-toggle\" class=\"sb-toggle\">☰ Pages</label>\n";
+
+/// Below 80 columns the sidebar is a drawer; wider, nothing changes.
+@("sidebar.sidebarCss.drawerBelowEightyColumns")
+@safe pure unittest
+{
+    const css = sidebarCss(ChromePalette(surface: "#eee", border: "#ccc", link: "#06c"));
+    const drawer = css[css.indexOf(below(Columns.compact)) .. $];
+    assert(css.canFind(containerCss), css);
+    assert(drawer.canFind(".site-sidebar { display: none;"), drawer);
+    assert(drawer.canFind(".sb-toggle-input:checked ~ .site-sidebar { display: block; }"), drawer);
+    // Outside the query the toggle is hidden and the sidebar keeps its width.
+    const wide = css[0 .. css.indexOf(below(Columns.compact))];
+    assert(wide.canFind(".sb-toggle-input, .sb-toggle { display: none; }"), wide);
+    assert(wide.canFind(".site-sidebar { flex: none; width: 16.5em;"), wide);
 }
 
 // ── unittests ──────────────────────────────────────────────────────────────

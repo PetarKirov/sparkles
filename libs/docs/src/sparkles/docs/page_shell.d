@@ -22,7 +22,7 @@ import sparkles.syntax;
 
 import sparkles.docs.fragment : withLineNumbers;
 import sparkles.docs.options;
-import sparkles.docs.sidebar : SidebarItem;
+import sparkles.docs.sidebar : SidebarItem, sidebarToggleHtml;
 import sparkles.docs.site_tree : DirNode;
 import sparkles.docs.source_set : SourceEntry, SourceSet;
 
@@ -175,6 +175,7 @@ string pageShell(scope const(char)[] name, scope const(char)[] summary, string f
     if (sidebar)
     {
         w ~= "<div class=\"shell\">\n";
+        w ~= sidebarToggleHtml;
         w ~= opt.sidebarHtml;
         w ~= "\n<div class=\"content\">\n";
     }
