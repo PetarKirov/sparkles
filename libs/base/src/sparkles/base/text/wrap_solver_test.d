@@ -786,6 +786,18 @@ version (unittest)
                         }
         }
     }
+
+    // `cellWrapPlan` plans in arenas its thread reuses; a plan it returned
+    // owns its records, so the next call cannot rewrite them.
+    @("text.wrap.cellWrapPlanOwnsItsRecordsAcrossCalls") unittest
+    {
+        const options = WrapOptions(width: CellWidth.bounded(4), whitespace: WhitespaceMode.collapse);
+        const first = cellWrapPlan("aaa bb cc", options);
+        const rendered = render(first);
+        const lines = first.lines.length;
+        cellWrapPlan("zzzzzzzzzz yyyy xx w", options);
+        assert(first.lines.length == lines && render(first) == rendered && rendered == "aaa\nbb\ncc");
+    }
 }
 version (OwnedWrapSmoke)
 {
