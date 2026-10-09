@@ -11,7 +11,9 @@ module. DV19–DV22 were accepted in an editorial review held from October 3 to
 5, 2026, which reshaped the specification for its readers. DV23 was decided on
 October 6, 2026. DV24–DV26 record what implementing the base milestone
 changed, and DV27–DV28, decided on October 8, 2026, close the questions the
-blocking backend needed answered, and DV29 records what writing it changed._
+blocking backend needed answered, and DV29 records what writing it changed.
+DV30 records what the asynchronous backend and event-horizon's migration
+changed, after event-horizon's O32 was decided on October 9, 2026._
 
 ## Accepted
 
@@ -387,6 +389,36 @@ Writing the blocking backend changed three things.
 - **Handles have an escape hatch.** `backendHandle()` gives backend tests and
   descriptor-taking code the raw handle, the same capability in an honest
   name ([`VFH1`](./SPEC.md#vfh1-owning-handles)).
+
+### DV30: What the asynchronous backend changed
+
+Writing `RingVfs` and moving event-horizon onto the VFS changed six things.
+
+- **`RingVfs` wraps `BlockingVfs`.** Every primitive is the blocking backend's
+  own, so the results match by construction ([`VFB5`](./backends.md#vfb5-the-asynchronous-backend)).
+  A mutation the kernel has a ring opcode for (`mkdirat`, `unlinkat`, `renameat`,
+  `symlinkat`) is submitted to the ring, and both paths end in one errno
+  classification; every other call runs on the blocking pool, or inline off a
+  scheduler, when the pool's queue is full, and on Windows, whose pool is not
+  ported yet. `RingVfs` is copyable, because the capability row copies its
+  members: it holds only `BlockingVfs`'s test switches and makes the blocking
+  backend per call.
+- **The pool costs `@nogc`.** `RingVfs`'s operations are `@safe nothrow` but not
+  `@nogc`: the pool allocates once when it starts, and its locking is not
+  annotated. This departs from invariant 5 for this backend alone.
+- **A handle can become its descriptor's owner.** `File.intoOwnedFd` and
+  `Dir.intoOwnedFd`, where the backend has descriptors, follow cap-std's
+  `OwnedFd::from(File)`. Event-horizon's cgroup run keeps its control files
+  open for the run's lifetime, so it opens them through the run's `Dir` and
+  keeps the descriptors; the sampler keeps each `/proc/<pid>` anchor the same way.
+- **Cgroup removal is not `removeTree`.** A cgroup's control files cannot be
+  unlinked; only its child cgroups can be removed. Event-horizon removes a run
+  bottom-up with `list` and `rmdirAt`.
+- **Effect forms are one generic node.** `handle.effects.op(args)` records the
+  handle's address, the operation's name and its arguments; running it calls
+  the direct form, so the `Effect!T` forms need no per-operation code.
+- **`AmbientAuthority` is readable.** `granted()` lets an API outside base, such
+  as event-horizon's `Watcher.addWatch`, check the token in its contract.
 
 ## Open
 
