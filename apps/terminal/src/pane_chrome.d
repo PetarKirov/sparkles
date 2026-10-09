@@ -235,7 +235,7 @@ WidgetTree paneToolbar(PaneId pane, string title, string detail, ButtonLabels la
 
     // A pane of 50 columns in a long directory: "bash" stays whole, the
     // directory takes the cut.
-    enum dir = "/data/user/0/dev.petar_kirov.sparkles.terminal.nix/files/home";
+    enum dir = "/data/user/0/dev.petar_kirov.sparkles.terminal/files/home";
     const l = place(paneToolbar(1, "bash", dir, ButtonLabels.iconText, 1, 50), 50, 3,
         0, 0, 1, 1, Place.top);
     foreach (i, ref n; l.tree.nodes)

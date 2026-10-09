@@ -319,7 +319,7 @@ final class AboutPage : Page
     AboutFacts f = {version_: "0.1.0", commit: "e1385e6f", buildType: "checked",
         vtVersion: "0.1.0-dev+4749c4e", vtSimd: true, vtOptimize: "ReleaseFast",
         renderer: "raylib 6.0 · OpenGL ES 3.0", platform: "android arm64-v8a",
-        packageName: "dev.petar_kirov.sparkles.terminal.nix", versionCode: 20261002,
+        packageName: "dev.petar_kirov.sparkles.terminal", versionCode: 20261002,
         apiLevel: 34};
     assert(f.summary == "0.1.0 · e1385e6f · checked · android arm64-v8a · API 34");
     const t = f.text;
@@ -328,7 +328,7 @@ final class AboutPage : Page
     assert(t.canFind("libghostty-vt: 0.1.0-dev+4749c4e\n"));
     assert(t.canFind("VT build: ReleaseFast, SIMD on\n"));
     assert(t.canFind("versionCode: 20261002\n"));
-    assert(t.canFind("Package: dev.petar_kirov.sparkles.terminal.nix\n"));
+    assert(t.canFind("Package: dev.petar_kirov.sparkles.terminal\n"));
 
     // On the desktop the Android rows are absent; an unstamped build says so.
     AboutFacts d = {buildType: "debug", platform: "linux x86_64"};
