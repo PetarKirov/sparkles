@@ -18,7 +18,7 @@ evidence ledger live in [`testing.md`](./testing.md).
 | [M0 Baseline](#m0-baseline)                                                 | done        |
 | [M1 Rename](#m1-rename-to-sparkles-shaders)                                 | done        |
 | [M2 Unit membership](#m2-unit-membership)                                   | deferred    |
-| [M3 Interface and agreement evidence](#m3-interface-and-agreement-evidence) | not started |
+| [M3 Interface and agreement evidence](#m3-interface-and-agreement-evidence) | in progress |
 | [M4 Multi-pass effects](#m4-multi-pass-effects-in-single-source-d)          | done        |
 | [M5 Further platforms](#m5-further-device-platforms)                        | not started |
 
@@ -97,6 +97,23 @@ and a comparison of generated output across platforms.
 **Gate.** Every listed row of the ledger is `verified`, and each new test has
 been shown to fail on a deliberately broken input: a swapped location, a
 wrong uniform name, a tolerance violated on purpose.
+
+**Progress.**
+
+- Verified: `SHV2`, `SHV5`, `SHF1`–`SHF3`, `SHF5`–`SHF7`, `SHP1`, `SHP4`,
+  `SHP8`–`SHP10`, `SHB7` and `SHT3` (the Linux and macOS GLSL agreed in CI).
+- The readback ran on the CI runner's software rasterizer and agreed
+  (`SHV7`, `SHF4` for the GLSL 3.30 output).
+- Each new test was shown to fail on a broken input: a disabled interface
+  check, stale files kept, a wrong host function, bounds tightened to zero,
+  and an unrecognised stock compiler. That last case was a real bug, and it
+  is fixed.
+- `SHF5` turned out to be unenforced by the compiler; the build step now
+  enforces it, with `SHF6` (`D13`). The tolerances are `D12`, which resolves
+  open question Q3.
+- Remaining:
+  - `SHV7` and `SHF4` for the GLSL ES output (Q4);
+  - a negative case for `SHP6`.
 
 ## M4: Multi-pass effects in single-source D
 

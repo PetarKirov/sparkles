@@ -337,11 +337,15 @@ package's own.
 
 **SHP4: Validation.** The compiled SPIR-V **must** pass `spirv-val` under the
 universal SPIR-V 1.4 rules before anything else reads it, and is then
-optimised with `spirv-opt -O`.
+optimised with `spirv-opt -O`. Before optimising, the build step **must**
+also reject a module that breaks `SHF5` or `SHF6`, naming the offending
+variable.
 
 _Rationale:_ Universal rules, not Vulkan's: uniforms outside a block
 (`SHF2`) are valid SPIR-V that Vulkan rejects, and they are what an OpenGL
-consumer needs.
+consumer needs. The same rules accept a `vec3` or a struct at the interface
+and a handle in function-local memory, and the compiler does not object to
+either, so the build step is the only place those are caught.
 
 **SHP5: Translation.** For each fragment entry point of the optimised module,
 the build step **must** produce `<entry>.frag` in GLSL 3.30 and

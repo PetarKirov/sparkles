@@ -77,7 +77,8 @@ An entry point may read several textures. Name the parameters `texture0`,
 SPIR-V requires structured control flow, and the pinned compiler's SPIR-V
 backend gets two common shapes wrong. Each comes out as code `spirv-val`
 rejects ("branches to the selection construct, but not to the selection
-header"). It is a build failure, never a wrong picture:
+header"). It is a build failure, never a wrong picture (issue #618 tracks the
+upstream report). The two shapes are:
 
 - an `if … else if (a && b)` chain;
 - early returns interleaved with long `&&`/`||` chains, such as a function
