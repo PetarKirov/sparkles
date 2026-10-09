@@ -154,9 +154,10 @@ private vec4 renderCursor(vec2 p, float shape) @safe pure nothrow @nogc
 {
     // Masks combined with `&`/`|` and one select per shape, never an early
     // return or a short-circuit chain: the pinned SPIR-V backend emits
-    // unstructured control flow for those here, which spirv-val rejects. The
-    // masks are the hand-written shader's, unchanged; a fill wins over the
-    // outline, and anything outside a shape's box is transparent.
+    // unstructured control flow for those here, which spirv-val rejects
+    // (sparkles#618). The masks are the hand-written shader's, unchanged; a
+    // fill wins over the outline, and anything outside a shape's box is
+    // transparent.
     const ax = abs(p.x), ay = abs(p.y);
     const clear = v4(0.0f), white = v4(1.0f, 1.0f, 1.0f, 1.0f), black = v4(0.0f, 0.0f, 0.0f, 1.0f);
 
@@ -310,7 +311,7 @@ private vec4 renderCursor(vec2 p, float shape) @safe pure nothrow @nogc
                     v2(uSplitDivider.z, uSplitDivider.w) * res);
                 // Two independent tests rather than `if … else if (a && b)`:
                 // the pinned SPIR-V backend emits unstructured control flow
-                // for that shape here, which spirv-val rejects.
+                // for that shape here, which spirv-val rejects (sparkles#618).
                 const seam = abs(dist) < 2.5f;
                 const halo = !seam & (dist >= 0.0f) & (dist < 6.0f);
                 if (seam)
