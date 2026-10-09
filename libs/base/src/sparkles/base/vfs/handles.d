@@ -572,6 +572,14 @@ if (isVfs!V)
         return vfs.sync(handle);
     }
 
+    /// Lends the operating-system descriptor, where the backend has one, so
+    /// the event loop's I/O verbs can use this file. The borrow must not
+    /// outlive the `File`. It also bypasses this type's compile-time rights;
+    /// the operating system still enforces the access the file was opened
+    /// with.
+    static if (__traits(hasMember, V, "borrowFd"))
+        auto borrowFd() scope => vfs.borrowFd(handle);
+
     /// The rights of this handle's type.
     enum Rights rights = R;
 }

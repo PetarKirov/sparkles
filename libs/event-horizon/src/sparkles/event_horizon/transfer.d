@@ -15,6 +15,11 @@ import sparkles.base.buffer : UniqueBuffer, HeapBuffer;
 import sparkles.event_horizon.buffer : Buf, isOwnedIoBuf;
 import sparkles.event_horizon.errors : IoResult, IoErrorStage, OpKind, ioErr, ioOk;
 import sparkles.event_horizon.io : FileHandle, Stream, read, recv;
+import sparkles.event_horizon.sys.descriptor : isFdBorrowable;
+
+/// A handle the file verbs take: anything lending a descriptor, except a
+/// `Stream`, which has its own overloads.
+private enum isFileLike(H) = isFdBorrowable!H && !is(H == Stream);
 import sparkles.event_horizon.sched : currentScheduler;
 import sparkles.event_horizon.op : OpRead, OpWrite, OpRecv, OpSend;
 
@@ -35,9 +40,9 @@ TransferResult!B sendAll(B)(ref Stream stream, B buf) if (isOwnedIoBuf!B)
     => complete!OpSend(stream.fd, move(buf));
 
 /// Writes all valid bytes. `ulong.max` uses the current file position.
-TransferResult!B writeAll(B)(FileHandle file, B buf, ulong offset = ulong.max)
-if (isOwnedIoBuf!B)
-    => complete!OpWrite(file.fd, move(buf), offset);
+TransferResult!B writeAll(H, B)(auto ref H file, B buf, ulong offset = ulong.max)
+if (isFileLike!H && isOwnedIoBuf!B)
+    => complete!OpWrite(file.borrowFd().fd, move(buf), offset);
 
 /// Fills the valid-length window (`buf[]`), not spare capacity. Set the buffer
 /// length to the requested frame size first. Premature EOF is EIO; the completed
@@ -46,9 +51,9 @@ TransferResult!B readExactly(B)(ref Stream stream, B buf) if (isOwnedIoBuf!B)
     => complete!OpRecv(stream.fd, move(buf));
 
 /// ditto, for a file.
-TransferResult!B readExactly(B)(FileHandle file, B buf, ulong offset = ulong.max)
-if (isOwnedIoBuf!B)
-    => complete!OpRead(file.fd, move(buf), offset);
+TransferResult!B readExactly(H, B)(auto ref H file, B buf, ulong offset = ulong.max)
+if (isFileLike!H && isOwnedIoBuf!B)
+    => complete!OpRead(file.borrowFd().fd, move(buf), offset);
 
 /// Single-transfer in-place adapter. Temporarily moves the owner into `recv`
 /// and restores it after terminal completion, on success or ordinary failure.
@@ -61,8 +66,8 @@ IoResult!uint recvInto(B)(ref Stream stream, ref B buf) if (isOwnedIoBuf!B)
 }
 
 /// ditto, for file reads (same spare-capacity semantics as `read`).
-IoResult!uint readInto(B)(FileHandle file, ref B buf, ulong offset = ulong.max)
-if (isOwnedIoBuf!B)
+IoResult!uint readInto(H, B)(auto ref H file, ref B buf, ulong offset = ulong.max)
+if (isFileLike!H && isOwnedIoBuf!B)
 {
     auto result = read(file, move(buf), offset);
     buf = move(result.buf);
@@ -104,7 +109,7 @@ private TransferResult!B complete(Op, B)(int fd, B buf, ulong offset = ulong.max
 /// additional byte is consumed to distinguish exact-size EOF from EFBIG.
 /// File reads use and advance the current file position.
 IoResult!(HeapBuffer!ubyte) readToEnd(H)(ref H handle, size_t maxBytes)
-if (is(H == FileHandle) || is(H == Stream))
+if (isFdBorrowable!H)
 {
     alias Bytes = HeapBuffer!ubyte;
     Bytes result;
@@ -118,17 +123,17 @@ if (is(H == FileHandle) || is(H == Stream))
         // until terminal completion, so the limit probe consumes only one byte.
         auto window = (() @trusted => Buf.fromForeign(chunk[], null))();
         window.length = cast(uint) chunk.length;
-        static if (is(H == FileHandle))
-            auto got = read(handle, move(window));
-        else
+        static if (is(H == Stream))
             auto got = recv(handle, move(window));
+        else
+            auto got = read(handle, move(window));
         if (got.res.hasError)
             return ioErr!Bytes(got.res.error);
         const n = got.res.value;
         if (n == 0)
             return ioOk(move(result));
         if (n > remaining)
-            return ioErr!Bytes(EFBIG, is(H == FileHandle) ? OpKind.read : OpKind.recv);
+            return ioErr!Bytes(EFBIG, is(H == Stream) ? OpKind.recv : OpKind.read);
         result ~= chunk[][0 .. n];
     }
 }
@@ -136,7 +141,7 @@ if (is(H == FileHandle) || is(H == Stream))
 /// GC-allocating byte-preserving text convenience. No Unicode validation or
 /// normalization is performed; use a decoder when input validity matters.
 IoResult!string readText(H)(ref H handle, size_t maxBytes)
-if (is(H == FileHandle) || is(H == Stream))
+if (isFdBorrowable!H)
 {
     auto bytes = readToEnd(handle, maxBytes);
     if (bytes.hasError)

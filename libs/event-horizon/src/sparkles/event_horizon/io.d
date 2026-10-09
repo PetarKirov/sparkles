@@ -32,6 +32,7 @@ import sparkles.event_horizon.buffer : Buf, isOwnedIoBuf;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op;
 import sparkles.event_horizon.sched : AwaitOutcome, FiberTask, Sched;
+import sparkles.event_horizon.sys.descriptor : BorrowedFd, isFdBorrowable;
 
 /// The owned-transfer result shape (SPEC §6.2): the buffer always comes
 /// back, success or failure.
@@ -45,6 +46,9 @@ struct BufResult(B)
 struct Stream
 {
     int fd = -1;
+
+    /// Lends the descriptor to the verbs.
+    BorrowedFd borrowFd() const @safe pure nothrow @nogc => BorrowedFd(fd);
 
     /// Explicit close (handles are copyable views; exactly one owner
     /// should close). Winsock sockets close via `closesocket`.
@@ -101,6 +105,9 @@ struct FileHandle
 {
     int fd = -1;
 
+    /// Lends the descriptor to the verbs.
+    BorrowedFd borrowFd() const @safe pure nothrow @nogc => BorrowedFd(fd);
+
     /// ditto
     void close() @trusted nothrow @nogc
     {
@@ -113,15 +120,17 @@ struct FileHandle
 // ── the verbs ───────────────────────────────────────────────────────────────
 
 /// Positioned read into the buffer's view (`offset == ulong.max` reads at
-/// the current file position — pipes and sockets require it).
-BufResult!B read(B)(FileHandle f, B buf, ulong offset = ulong.max)
-if (isOwnedIoBuf!B)
-    => rw!(OpRead, No.sized)(f.fd, move(buf), offset);
+/// the current file position — pipes and sockets require it). `h` is
+/// anything that lends a descriptor (`isFdBorrowable`): an `OwnedFd`, a
+/// `BorrowedFd`, or a capability VFS `File` whose backend has one.
+BufResult!B read(H, B)(auto ref H h, B buf, ulong offset = ulong.max)
+if (isFdBorrowable!H && isOwnedIoBuf!B)
+    => rw!(OpRead, No.sized)(h.borrowFd().fd, move(buf), offset);
 
-/// Positioned write of the buffer's view.
-BufResult!B write(B)(FileHandle f, B buf, ulong offset = ulong.max)
-if (isOwnedIoBuf!B)
-    => rw!(OpWrite, Yes.sized)(f.fd, move(buf), offset);
+/// Positioned write of the buffer's view; `h` as for $(LREF read).
+BufResult!B write(H, B)(auto ref H h, B buf, ulong offset = ulong.max)
+if (isFdBorrowable!H && isOwnedIoBuf!B)
+    => rw!(OpWrite, Yes.sized)(h.borrowFd().fd, move(buf), offset);
 
 /// Receives into the buffer's view.
 BufResult!B recv(B)(ref Stream s, B buf) if (isOwnedIoBuf!B)
@@ -415,6 +424,56 @@ unittest
         assert(!got.res.hasError);
         assert(got.res.value == payload.length);
         verified = got.buf[][0 .. got.res.value] == payload[];
+    });
+    assert(!r.hasError);
+    assert(verified);
+}
+
+/// The verbs take anything that lends a descriptor: here a capability VFS
+/// `File` read through the ring, and a pipe owned by an `OwnedFd`.
+version (Posix)
+@("io.verbs.takeAnyBorrowableHandle")
+@system
+unittest
+{
+    import core.sys.posix.unistd : pipe;
+    import sparkles.base.buffer : SharedBuffer;
+    import sparkles.base.vfs : OpenMode, Rights, ambientAuthority, openRoot;
+    import sparkles.event_horizon.sys : BlockingVfs, OwnedFd;
+    import sparkles.test_utils.tmpfs : TmpFS;
+
+    Sched s;
+    schedOrSkip(s);
+
+    auto tmp = TmpFS.create();
+    tmp.writeFileAt("f", "through the ring");
+    auto vfs = new BlockingVfs;
+    auto root = openRoot!(Rights.readOnly)(vfs, tmp.dir, ambientAuthority());
+    auto file = root.value.openFile!(OpenMode.read)("f");
+    assert(!file.hasError);
+
+    int[2] fds;
+    assert(pipe(fds) == 0);
+    auto rd = OwnedFd(fds[0]);
+    auto wr = OwnedFd(fds[1]);
+
+    bool verified;
+    auto r = s.run(() {
+        SharedBuffer!(ubyte, 64) in_;
+        in_.length = 64;
+        auto got = read(file.value, move(in_), 0);
+        assert(!got.res.hasError);
+        const text = cast(const(char)[]) got.buf[][0 .. got.res.value];
+        assert(text == "through the ring");
+
+        SharedBuffer!(ubyte, 64) out_;
+        out_ ~= cast(const(ubyte)[]) "piped";
+        assert(!write(wr, move(out_)).res.hasError);
+        SharedBuffer!(ubyte, 64) back;
+        back.length = 64;
+        auto echoed = read(rd, move(back));
+        verified = !echoed.res.hasError
+            && cast(const(char)[]) echoed.buf[][0 .. echoed.res.value] == "piped";
     });
     assert(!r.hasError);
     assert(verified);

@@ -23,6 +23,7 @@ import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpK
 import sparkles.base.vfs.types : Access, Disposition, EntryKind, MountCheck, OpenMode,
     ResolvePolicy, Sharing, Stat, StatMask, SymlinkPolicy, DotDotPolicy, maxNameLength,
     maxSplicedPathLength, raceRetries;
+import sparkles.event_horizon.sys.descriptor : BorrowedFd;
 import sparkles.event_horizon.sys.error_kinds : errnoKind;
 import sparkles.event_horizon.sys.posix;
 
@@ -148,6 +149,9 @@ struct BlockingVfs
         const r = (() @trusted => fstatat(dir.fd, z.ptr, &st, AT_SYMLINK_NOFOLLOW))();
         return r < 0 ? ioErr!Stat(failure(OpKind.statAt)) : ioOk(toStat(st, mask));
     }
+
+    /// Lends the descriptor behind `h`; `File.borrowFd` forwards here.
+    BorrowedFd borrowFd(Handle h) const @safe pure nothrow @nogc => BorrowedFd(h.fd);
 
     /// Stats an open handle.
     IoResult!Stat fstat(Handle h, StatMask mask) @safe nothrow @nogc

@@ -8,6 +8,7 @@ classifies native error codes into the shared `ErrorKind`.
 */
 module sparkles.event_horizon.sys;
 
+public import sparkles.event_horizon.sys.descriptor;
 public import sparkles.event_horizon.sys.error_kinds;
 
 version (Windows)
