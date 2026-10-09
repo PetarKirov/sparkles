@@ -23,12 +23,16 @@ import sparkles.base.io.errors : ErrorKind, IoError, IoResult, NoGcHook, ioErr, 
 import sparkles.base.vfs.concept : isVfs;
 import sparkles.base.vfs.types : EntryKind, MountCheck, OpenMode, ResolvePolicy, Sharing,
     Stat, StatMask;
+import sparkles.base.io.errors : OpKind;
+import sparkles.base.vfs.types : maxNameLength, maxSplicedPathLength;
+import sparkles.event_horizon.op : OpMkdirAt, OpRenameAt, OpSymlinkAt, OpUnlinkAt;
 import sparkles.event_horizon.sys : BlockingVfs, BorrowedFd, OwnedFd;
 
 version (Posix)
 {
     import sparkles.event_horizon.blocking_pool : BlockingPool, sharedBlockingPool;
     import sparkles.event_horizon.sched : currentScheduler, onScheduler;
+    import sparkles.event_horizon.sys.vfs : terminate;
 }
 
 /// The capability VFS backend the loop exposes as `env.fs`.
@@ -80,7 +84,18 @@ struct RingVfs
         => offload(() => inner.openFileAt(dir, name, mode, sharing));
     /// See `BlockingVfs.mkdirAt`.
     IoResult!void mkdirAt(Handle dir, scope const(char)[] name, Sharing sharing)
-        => offload(() => inner.mkdirAt(dir, name, sharing));
+    {
+        static if (canRing!OpMkdirAt)
+            if (onRing!OpMkdirAt)
+            {
+                char[maxNameLength + 1] z;
+                if (!terminate(name, z))
+                    return ioErr!void(ErrorKind.nameTooLong, OpKind.mkdirAt);
+                return inner.mkdirOutcome(ringErrno((() @trusted => OpMkdirAt(
+                    BlockingVfs.fdOf(dir), &z[0], sharing.modeBits(true, false)))()));
+            }
+        return offload(() => inner.mkdirAt(dir, name, sharing));
+    }
     /// See `BlockingVfs.statAt`.
     IoResult!Stat statAt(Handle dir, scope const(char)[] name, StatMask mask)
         => offload(() => inner.statAt(dir, name, mask));
@@ -91,17 +106,64 @@ struct RingVfs
         => offload(() => inner.readlinkAt(dir, name, buffer));
     /// See `BlockingVfs.symlinkAt`.
     IoResult!void symlinkAt(Handle dir, scope const(char)[] name, scope const(char)[] target)
-        => offload(() => inner.symlinkAt(dir, name, target));
+    {
+        static if (canRing!OpSymlinkAt)
+            if (onRing!OpSymlinkAt)
+            {
+                char[maxNameLength + 1] z;
+                char[maxSplicedPathLength + 1] tz;
+                if (!terminate(name, z) || !terminate(target, tz))
+                    return ioErr!void(ErrorKind.nameTooLong, OpKind.symlinkAt);
+                return inner.symlinkOutcome(ringErrno((() @trusted => OpSymlinkAt(
+                    &tz[0], BlockingVfs.fdOf(dir), &z[0]))()));
+            }
+        return offload(() => inner.symlinkAt(dir, name, target));
+    }
     /// See `BlockingVfs.unlinkAt`.
     IoResult!void unlinkAt(Handle dir, scope const(char)[] name)
-        => offload(() => inner.unlinkAt(dir, name));
+    {
+        static if (canRing!OpUnlinkAt)
+            if (onRing!OpUnlinkAt)
+            {
+                char[maxNameLength + 1] z;
+                if (!terminate(name, z))
+                    return ioErr!void(ErrorKind.nameTooLong, OpKind.unlinkAt);
+                const e = ringErrno((() @trusted => OpUnlinkAt(BlockingVfs.fdOf(dir), &z[0], 0))());
+                return inner.unlinkOutcome(dir, z, e);
+            }
+        return offload(() => inner.unlinkAt(dir, name));
+    }
     /// See `BlockingVfs.rmdirAt`.
     IoResult!void rmdirAt(Handle dir, scope const(char)[] name)
-        => offload(() => inner.rmdirAt(dir, name));
+    {
+        static if (canRing!OpUnlinkAt)
+            if (onRing!OpUnlinkAt)
+            {
+                import core.sys.posix.fcntl : AT_REMOVEDIR;
+
+                char[maxNameLength + 1] z;
+                if (!terminate(name, z))
+                    return ioErr!void(ErrorKind.nameTooLong, OpKind.rmdirAt);
+                return inner.rmdirOutcome(ringErrno((() @trusted => OpUnlinkAt(
+                    BlockingVfs.fdOf(dir), &z[0], AT_REMOVEDIR))()));
+            }
+        return offload(() => inner.rmdirAt(dir, name));
+    }
     /// See `BlockingVfs.renameAt`.
     IoResult!void renameAt(Handle dir, scope const(char)[] name, Handle dstDir,
         scope const(char)[] dstName)
-        => offload(() => inner.renameAt(dir, name, dstDir, dstName));
+    {
+        static if (canRing!OpRenameAt)
+            if (onRing!OpRenameAt)
+            {
+                char[maxNameLength + 1] z, d;
+                if (!terminate(name, z) || !terminate(dstName, d))
+                    return ioErr!void(ErrorKind.nameTooLong, OpKind.renameAt);
+                return inner.renameOutcome(ringErrno((() @trusted => OpRenameAt(
+                    BlockingVfs.fdOf(dir), &z[0], BlockingVfs.fdOf(dstDir), &d[0]))()));
+            }
+        return offload(() => inner.renameAt(dir, name, dstDir, dstName));
+    }
     /// See `BlockingVfs.openListing`.
     IoResult!Listing openListing(Handle dir) => offload(() => inner.openListing(dir));
     /// See `BlockingVfs.nextEntry`.
@@ -156,9 +218,46 @@ struct RingVfs
         /// Calls this instance's thread completed on the pool; a test reads it
         /// to tell the pool path from the inline fallback.
         static uint poolCalls;
+        /// Calls submitted to the ring instead (VFB5).
+        static uint ringCalls;
     }
 
 private:
+    // ------------------------------------------------------- the ring path
+
+    /// Whether this build's backend lowers `Op` at all.
+    enum bool canRing(Op) = is(typeof(() {
+        import sparkles.event_horizon.backend.concept : canSubmitOp;
+        import sparkles.event_horizon.backend.select : DefaultBackend;
+
+        static assert(canSubmitOp!(DefaultBackend, Op));
+    }));
+
+    /// Whether this call can go to the ring: on a scheduler fiber, whose
+    /// kernel the probe found to support `Op`.
+    static bool onRing(Op)() @trusted nothrow @nogc
+    {
+        version (Posix)
+            return onScheduler() && currentScheduler().loop.caps().supports(Op.kind);
+        else
+            return false;
+    }
+
+    /// Submits `op`, parks the fiber until it completes, and returns its
+    /// errno, 0 for success; the same value the system call would leave.
+    static int ringErrno(Op)(Op op) @trusted
+    {
+        version (Posix)
+        {
+            version (unittest)
+                ringCalls++;
+            const o = currentScheduler().await(op);
+            return o.res < 0 ? -o.res : 0;
+        }
+        else
+            assert(0, "no ring on this platform");
+    }
+
     /// Runs `call` on the blocking pool when the caller is a scheduler fiber,
     /// otherwise inline. See the module comment for the fallbacks.
     static R offload(R)(scope R delegate() @safe nothrow @nogc call) @trusted nothrow
