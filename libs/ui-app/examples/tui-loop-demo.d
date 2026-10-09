@@ -113,7 +113,7 @@ int parentMain(string self)
             skipped = true;
             return;
         }
-        auto child = spawned.value;
+        auto child = move(spawned.value);
 
         // Drain the child's terminal output; type only AFTER its first frame
         // appears. Raw-mode entry uses TCSAFLUSH, which discards input queued

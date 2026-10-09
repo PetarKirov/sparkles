@@ -76,7 +76,8 @@ import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
 import sparkles.event_horizon.channel : Channel;
 import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
-import sparkles.event_horizon.io : FileHandle, read, sleep, write;
+import sparkles.event_horizon.io : read, sleep, write;
+import sparkles.event_horizon.sys.descriptor : BorrowedFd;
 import sparkles.event_horizon.live : ChildProcess, observeExit, spawnProcess,
     wait, waitPidOnLane;
 import sparkles.event_horizon.op : OpWaitid;
@@ -571,7 +572,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
         result.spawnError = spawned.error;
         return ioOk(move(result));
     }
-    auto child = spawned.value;
+    auto child = move(spawned.value);
     version (unittest)
         testLastSupervisedPid = child.pid;
     run.child = &child;
@@ -656,23 +657,23 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
 
         if (!admissionFailed)
         {
-            if (childP.stdoutR.fd >= 0)
+            if (childP.stdoutR.borrowFd().fd >= 0)
                 spawnWorker(&rp.stdoutCtx,
-                    &(new DrainWorker(rp, schedP, childP.stdoutR, ProcessStream.stdout_)).run);
+                    &(new DrainWorker(rp, schedP, childP.stdoutR.borrowFd(), ProcessStream.stdout_)).run);
             else
                 rp.stdoutFinished = true;
         }
         if (!admissionFailed)
         {
-            if (childP.stderrR.fd >= 0)
+            if (childP.stderrR.borrowFd().fd >= 0)
                 spawnWorker(&rp.stderrCtx,
-                    &(new DrainWorker(rp, schedP, childP.stderrR, ProcessStream.stderr_)).run);
+                    &(new DrainWorker(rp, schedP, childP.stderrR.borrowFd(), ProcessStream.stderr_)).run);
             else
                 rp.stderrFinished = true;
         }
 
         // The stdin worker: sole owner of the descriptor while it lives.
-        if (childP.stdinW.fd >= 0 && !admissionFailed)
+        if (childP.stdinW.borrowFd().fd >= 0 && !admissionFailed)
             spawnWorker(&rp.stdinCtx, &(new StdinWorker(rp, schedP, childP)).run);
 
         // The clock: six one-shot alarms, armed on request, ring-free.
@@ -1740,10 +1741,10 @@ private final class DrainWorker
 {
     Run* rp;
     Sched* s;
-    FileHandle f;
+    BorrowedFd f;
     ProcessStream stream;
 
-    this(Run* rp, Sched* s, FileHandle f, ProcessStream stream)
+    this(Run* rp, Sched* s, BorrowedFd f, ProcessStream stream)
     {
         this.rp = rp;
         this.s = s;

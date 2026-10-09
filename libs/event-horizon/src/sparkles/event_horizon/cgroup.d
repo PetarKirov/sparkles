@@ -41,6 +41,7 @@ module sparkles.event_horizon.cgroup;
 
 version (linux)  :
 
+import core.lifetime : move;
 import core.stdc.errno : EAGAIN, EINVAL, ENOENT, errno;
 import core.stdc.stdio : snprintf;
 import core.sys.posix.fcntl : O_CLOEXEC, O_DIRECTORY, O_PATH, O_RDONLY, O_RDWR,
@@ -745,7 +746,7 @@ unittest
 
         auto spawned = spawnProcess(["sleep", "30"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         assert(!cgroupMigrate(s, pool, run, child.pid).hasError);
         assert(readPopulated(run) == TreeEvidence.populated);
         bool seen, truncated;
@@ -775,7 +776,7 @@ unittest
         auto pool = createOrSkip(s, run, 900_003);
         auto spawned = spawnProcess(["sleep", "30"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         assert(!cgroupMigrate(s, pool, run, child.pid).hasError);
 
         // A deadline-bounded wait that expires reports the truth: the
@@ -815,7 +816,7 @@ unittest
         assert(mkdirat(run.dirFd, "nested", 493) == 0);
         auto spawned = spawnProcess(["sleep", "30"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         {
             const nestedProcs = openat(run.dirFd, "nested/cgroup.procs", O_WRONLY | O_CLOEXEC);
             assert(nestedProcs >= 0);

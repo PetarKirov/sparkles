@@ -33,6 +33,7 @@ a fiber can call.
 */
 module sparkles.event_horizon.sampling;
 
+import core.lifetime : move;
 import core.time : Duration, msecs, seconds, usecs;
 
 import sparkles.event_horizon.proc : MetricQuality, MetricSource,
@@ -1217,7 +1218,7 @@ version (linux)
         auto spawned = spawnProcess(["sh", "-c",
             "sleep 0.3 & sleep 0.3 & sleep 0.8"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         scope (exit)
         {
             cast(void) child.kill(SIGKILL);
@@ -1260,7 +1261,7 @@ version (linux)
     {
         auto spawned = spawnProcess(["sh", "-c", "sleep 0.5 & sleep 2"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         TreeSampler sampler;
         sampler.anchor(child.pid, null);
         assert(sampler.anchored);
@@ -1296,7 +1297,7 @@ version (linux)
     {
         auto spawned = spawnProcess(["sh", "-c", "sleep 0.5 & sleep 0.5 & sleep 1"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         scope (exit)
         {
             cast(void) child.kill(SIGKILL);
@@ -1341,7 +1342,7 @@ version (linux)
         // cgroup (the pgid still covers it — SPEC §13.7).
         auto spawned = spawnProcess(["sh", "-c", "sleep 0.1; sleep 3 & sleep 4"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         assert(migrateInto(run, child.pid) == 0);
 
         TreeSampler sampler;
@@ -1382,7 +1383,7 @@ version (linux)
         // shortage on the re-probe and keep accumulating once reads work.
         auto spawned = spawnProcess(["sh", "-c", "while :; do :; done"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         scope (exit)
         {
             cast(void) child.kill(SIGKILL);
@@ -1435,7 +1436,7 @@ version (linux)
         auto spawned = spawnProcess(["sh", "-c",
             "sleep 0.05; (while :; do :; done) >/dev/null 2>&1 & exit 0"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         assert(migrateInto(run, child.pid) == 0);
         TreeSampler sampler;
         sampler.anchor(child.pid, &run);

@@ -210,7 +210,8 @@ private:
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon.channel : Channel;
-import sparkles.event_horizon.io : FileHandle, read;
+import sparkles.event_horizon.io : read;
+import sparkles.event_horizon.sys.descriptor : BorrowedFd;
 import sparkles.event_horizon.sched : Sched;
 import sparkles.event_horizon.scope_ : withDeadline;
 
@@ -231,7 +232,8 @@ void pumpTerminalInput(ref Sched sched, ref EventChannel events, int fd,
 
     import sparkles.event_horizon.errors : IoResult, ioOk;
 
-    auto handle = FileHandle(fd);
+    // `fd` belongs to the caller; the pump only borrows it.
+    auto handle = BorrowedFd(fd);
     EscapeAssembler assembler;
 
     void emit(Event e)

@@ -62,7 +62,7 @@ int main()
             skipped = true; // no PTY available in this sandbox
             return;
         }
-        auto child = spawned.value;
+        auto child = move(spawned.value);
 
         // Drain the master through the loop until the child's output ends
         // (the master reports EIO once the slave side is gone).

@@ -94,7 +94,7 @@ int main()
         auto spawned = spawnProcess(["sh", "-c",
             "echo tool starting; echo 41+1 > " ~ dir ~ "/result.txt; echo tool done"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
 
         // Fiber 1: stream the child's stdout through the ring until EOF.
         cast(void) sched.spawn(() {

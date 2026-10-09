@@ -21,7 +21,8 @@ import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.capability : CtxOf;
 import sparkles.event_horizon.cause : Cause;
 import sparkles.event_horizon.errors : ioError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
-import sparkles.event_horizon.io : FileHandle, Listener, Stream, accept, connect;
+import sparkles.event_horizon.io : Listener, Stream, accept, connect;
+import sparkles.event_horizon.sys.descriptor : BorrowedFd, OwnedFd;
 import sparkles.event_horizon.net : SockAddr;
 import sparkles.event_horizon.op : OpWaitid, OpOpenAt;
 import sparkles.event_horizon.errors : ioError, IoError;
@@ -399,15 +400,15 @@ struct RingNet
 // ── subprocesses (SPEC §13.2–§13.3) ─────────────────────────────────────────
 
 /// A spawned child (SPEC §13.2): its pid and the parent ends of whichever
-/// streams were piped (`FileHandle(-1)` otherwise). A PTY child's master
+/// streams were piped (an invalid `OwnedFd` otherwise). A PTY child's master
 /// rides `ptyMaster`.
 struct ChildProcess
 {
     int pid = -1;       /// -1 after a successful `wait`
-    FileHandle stdinW;  /// write end of the child's stdin  (piped only)
-    FileHandle stdoutR; /// read end of the child's stdout  (piped only)
-    FileHandle stderrR; /// read end of the child's stderr  (piped only)
-    FileHandle ptyMaster; /// the PTY master (`spawnPty` only)
+    OwnedFd stdinW;     /// write end of the child's stdin  (piped only)
+    OwnedFd stdoutR;    /// read end of the child's stdout  (piped only)
+    OwnedFd stderrR;    /// read end of the child's stderr  (piped only)
+    OwnedFd ptyMaster;    /// the PTY master (`spawnPty` only)
 
     /// `true` while the child is reapable.
     bool opCast(T : bool)() const @safe pure nothrow @nogc => pid > 0;
@@ -613,9 +614,9 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
 
     ChildProcess child;
     child.pid = pid;
-    child.stdinW = FileHandle(inPipe[1]);
-    child.stdoutR = FileHandle(outPipe[0]);
-    child.stderrR = FileHandle(errPipe[0]);
+    child.stdinW = OwnedFd(inPipe[1]);
+    child.stdoutR = OwnedFd(outPipe[0]);
+    child.stderrR = OwnedFd(errPipe[0]);
     inPipe[1] = outPipe[0] = errPipe[0] = -1;
     return ioOk(child);
 }
@@ -843,7 +844,7 @@ IoResult!ChildProcess spawnPty(scope const(char[])[] argv,
 
     ChildProcess child;
     child.pid = pid;
-    child.ptyMaster = FileHandle(master);
+    child.ptyMaster = OwnedFd(master);
     master = -1;
     return ioOk(child);
 }
@@ -854,11 +855,11 @@ IoResult!void resizePty(ref ChildProcess child, ushort cols, ushort rows)
 {
     import core.stdc.errno : errno;
 
-    if (child.ptyMaster.fd < 0)
+    if (child.ptyMaster.borrowFd().fd < 0)
         return ioErr!void(9 /* EBADF */, OpKind.none, IoErrorStage.submit,
             "not a PTY child");
     winsize ws = {ws_row: rows, ws_col: cols};
-    if (ioctl(child.ptyMaster.fd, TIOCSWINSZ, &ws) != 0)
+    if (ioctl(child.ptyMaster.borrowFd().fd, TIOCSWINSZ, &ws) != 0)
         return ioErr!void(errno, OpKind.none, IoErrorStage.submit,
             "TIOCSWINSZ failed");
     return ioOk();
@@ -925,7 +926,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         auto spawned = spawnProcess(argv, effective);
         if (spawned.hasError)
             return ioErr!CapturedOutput(spawned.error);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         version (unittest)
             testLastCapturePid = child.pid;
         scope (exit)
@@ -947,9 +948,9 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         auto outP = &out_;
         auto stdinP = &stdinCopy;
         auto drainP = &drainState;
-        const feedStdin = stdinBytes !is null && child.stdinW.fd >= 0;
+        const feedStdin = stdinBytes !is null && child.stdinW.borrowFd().fd >= 0;
 
-        static void drain(CaptureDrainState* st, FileHandle from,
+        static void drain(CaptureDrainState* st, BorrowedFd from,
             SharedBuffer!(ubyte, 256)* into)
         {
             for (;;)
@@ -986,17 +987,17 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         auto joined = withScope!((ref sc) {
             // A rejected drain is a failed run, not a silently missing
             // stream: the scope records ENOBUFS and cancels its siblings.
-            if (childP.stdoutR.fd >= 0
-                && !sc.spawn(() { drain(drainP, childP.stdoutR, &outP.stdout_); }))
+            if (childP.stdoutR.borrowFd().fd >= 0
+                && !sc.spawn(() { drain(drainP, childP.stdoutR.borrowFd(), &outP.stdout_); }))
                 return;
-            if (childP.stderrR.fd >= 0
-                && !sc.spawn(() { drain(drainP, childP.stderrR, &outP.stderr_); }))
+            if (childP.stderrR.borrowFd().fd >= 0
+                && !sc.spawn(() { drain(drainP, childP.stderrR.borrowFd(), &outP.stderr_); }))
                 return;
             // The body is a member fiber: feed stdin concurrently with the
             // drains, then signal EOF.
             if (feedStdin)
                 cast(void) write(childP.stdinW, move(*stdinP));
-            if (childP.stdinW.fd >= 0)
+            if (childP.stdinW.borrowFd().fd >= 0)
                 childP.stdinW.close();
         })(s);
 
@@ -1378,7 +1379,7 @@ version (unittest)
     import sparkles.event_horizon.sched : schedOrSkip;
 
     /// Ring-reads `f` to EOF (or EIO — a drained PTY master) into `into`.
-    private void drainInto(ref Sched s, FileHandle f,
+    private void drainInto(ref Sched s, BorrowedFd f,
         ref SharedBuffer!(ubyte, 512) into) @safe
     {
         SharedBuffer!(ubyte, 128) buf;
@@ -1412,12 +1413,12 @@ unittest
     auto r = s.run(() {
         auto spawned = spawnProcess(["echo", "event", "horizon"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
-        assert(child.stdinW.fd < 0 && child.stderrR.fd < 0,
+        auto child = move(spawned.value);
+        assert(child.stdinW.borrowFd().fd < 0 && child.stderrR.borrowFd().fd < 0,
             "only stdout is piped by default");
 
         SharedBuffer!(ubyte, 512) collected;
-        drainInto(s, child.stdoutR, collected);
+        drainInto(s, child.stdoutR.borrowFd(), collected);
         assert(collected[] == cast(const(ubyte)[]) "event horizon\n");
 
         auto st = wait(s, child);
@@ -1441,7 +1442,7 @@ unittest
     auto r = s.run(() {
         auto spawned = spawnProcess(["sh", "-c", "exit 7"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         const pid = child.pid;
         child.pid = -1; // the handle forgets it; only the raw pid remains
         child.stdoutR.close();
@@ -1467,8 +1468,8 @@ unittest
         cfg.stdinSpec = StdioSpec(StdioMode.pipe);
         auto spawned = spawnProcess(["cat"], cfg);
         assert(spawned.hasValue);
-        auto child = spawned.value;
-        assert(child.stdinW.fd >= 0, "stdin piped on request");
+        auto child = move(spawned.value);
+        assert(child.stdinW.borrowFd().fd >= 0, "stdin piped on request");
 
         SharedBuffer!(ubyte, 64) ping;
         ping ~= cast(const(ubyte)[]) "ping through the ring";
@@ -1477,7 +1478,7 @@ unittest
         child.stdinW.close(); // EOF: cat exits after echoing
 
         SharedBuffer!(ubyte, 512) back;
-        drainInto(s, child.stdoutR, back);
+        drainInto(s, child.stdoutR.borrowFd(), back);
         assert(back[] == cast(const(ubyte)[]) "ping through the ring");
 
         auto st = wait(s, child);
@@ -1517,11 +1518,11 @@ unittest
         cfg.cwd = "/tmp";
         auto spawned = spawnProcess(["sh", "-c", "pwd; pwd >&2"], cfg);
         assert(spawned.hasValue);
-        auto child = spawned.value;
-        assert(child.stdoutR.fd < 0 && child.stderrR.fd >= 0);
+        auto child = move(spawned.value);
+        assert(child.stdoutR.borrowFd().fd < 0 && child.stderrR.borrowFd().fd >= 0);
 
         SharedBuffer!(ubyte, 512) err;
-        drainInto(s, child.stderrR, err);
+        drainInto(s, child.stderrR.borrowFd(), err);
         // `pwd` reports the PHYSICAL directory, and the requested cwd need not
         // be one: /tmp is a symlink to /private/tmp on macOS. Resolving the
         // request is what makes this an assertion about `cfg.cwd` rather than
@@ -1551,10 +1552,10 @@ unittest
         cfg.env = env;
         auto spawned = spawnProcess(["sh", "-c", "echo $SPARKLES_PROBE"], cfg);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
 
         SharedBuffer!(ubyte, 512) out_;
-        drainInto(s, child.stdoutR, out_);
+        drainInto(s, child.stdoutR.borrowFd(), out_);
         assert(out_[] == cast(const(ubyte)[]) "42\n");
 
         auto st = wait(s, child);
@@ -1734,7 +1735,7 @@ unittest
         cfg.stdoutSpec = StdioSpec(StdioMode.inherit);
         auto spawned = spawnProcess(["sleep", "30"], cfg);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
 
         assert(!child.kill().hasError);
         auto st = wait(s, child);
@@ -1763,7 +1764,7 @@ unittest
         cfg.stdoutSpec = StdioSpec(StdioMode.inherit);
         auto spawned = spawnProcess(["true"], cfg);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         auto status = wait(s, child);
         assert(status.hasValue && status.value.ok);
         auto killed = child.killGroup();
@@ -1793,11 +1794,11 @@ unittest
             // only when stdin is a tty, and the winsize preset is observable.
             auto spawned = spawnPty(["sh", "-c", "stty size"], 80, 24);
             assert(spawned.hasValue);
-            auto child = spawned.value;
-            assert(child.ptyMaster.fd >= 0);
+            auto child = move(spawned.value);
+            assert(child.ptyMaster.borrowFd().fd >= 0);
 
             SharedBuffer!(ubyte, 512) out_;
-            drainInto(s, child.ptyMaster, out_);
+            drainInto(s, child.ptyMaster.borrowFd(), out_);
             assert(out_[] == cast(const(ubyte)[]) "24 80\r\n",
                 "the child ran on the slave with the preset winsize");
 
