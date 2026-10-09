@@ -18,7 +18,7 @@ import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
 import sparkles.ui.theme : Theme;
 version (unittest) import sparkles.ui.themes : builtinDark;
 import sparkles.syntax.md.model : codeLineCount, fenceBody, MdBlock,
-    MdBlockKind, Span;
+    MdBlockKind, MdDoc, Span;
 import sparkles.source_view.code : CodeViewOptions, viewCodeDocumentInto;
 import sparkles.source_view.markdown : FenceScroll, isWrap, OverflowPolicy,
     TableScroll,
@@ -358,6 +358,17 @@ struct ViewerModel
         => scroll.h;
     FoldMarker[] foldMarkers;       /// gutter markers, derived with the rows
     int widthCols = -1;             /// the width the pipeline is laid out for
+    /// A markdown preview's first build lays out only what the pane shows
+    /// (`viewRows` past the anchor); a host that sets this calls
+    /// `completeLayout` on its next frame.
+    bool visibleFirst;
+    /// The tree holds a prefix of the document's blocks: its first build
+    /// laid out only what the pane shows, and `completeLayout` lays out the
+    /// rest.
+    bool partial;
+    /// The first build lays out at most this many blocks past the anchor's
+    /// before checking the pane is full.
+    enum size_t progressivePrefix = 16;
     // Built at least once; until then `held` is the position to show.
     private bool built;
     private ScrollAnchor held;
@@ -1052,15 +1063,33 @@ struct ViewerModel
         // built every document two or three times before its first frame.
         if (widthCols < 0)
             return;
+        // That first build may lay out only what the pane shows.
+        const first = !built;
         const anchor = captureAnchor();
         built = true;
         held = ScrollAnchor.init;
-        rebuildTree();
+        rebuildTree(first, anchor);
         restoreAnchor(anchor);
     }
 
-    private void rebuildTree()
+    /**
+    Lays out the rest of a document whose first build covered only its
+    visible part (`partial`). Hosts call it on the frame after that first
+    one; true when it rebuilt.
+    */
+    bool completeLayout()
     {
+        if (!partial)
+            return false;
+        const anchor = captureAnchor();
+        rebuildTree(false, anchor);
+        restoreAnchor(anchor);
+        return true;
+    }
+
+    private void rebuildTree(bool progressive = false, ScrollAnchor anchor = ScrollAnchor.init)
+    {
+        partial = false;
         // The outgoing tree dies here: from this point on `tree` aliases
         // storage the builder is about to overwrite.
         arena_.reset();
@@ -1223,13 +1252,45 @@ struct ViewerModel
         mdLinkTable = MdLinkTable.init;
         opt.linkTable = &mdLinkTable;
         mdLinks = mdLinkRanges(preview.doc);
-        alias mb = arena_;
-        const mdRoot = viewMarkdownInto(mb, preview.doc, opt);
-        tree = gutter(mb, mdRoot);
-        frames = layout(tree, Constraints(maxW: widthCols));
-        ops = buildDisplayList(tree, frames,
-            palette, pageFg, pageBg);
-        derive(withTargets: true);
+        void build(const MdDoc doc)
+        {
+            arena_.reset();
+            mdLinkTable = MdLinkTable.init;
+            alias mb = arena_;
+            const mdRoot = viewMarkdownInto(mb, doc, opt);
+            tree = gutter(mb, mdRoot);
+            frames = layout(tree, Constraints(maxW: widthCols));
+            ops = buildDisplayList(tree, frames,
+                palette, pageFg, pageBg);
+            derive(withTargets: true);
+        }
+        // A document's first build only has to fill the pane: lay out a
+        // prefix of its blocks reaching past the anchor by a screen,
+        // doubling it until it does, and leave the rest to
+        // `completeLayout` once that first frame is up.
+        const blocks = preview.doc.root.children;
+        size_t count = blocks.length;
+        if (progressive && visibleFirst && viewRows > 0 && blocks.length > progressivePrefix)
+        {
+            size_t through;
+            if (anchor.valid)
+                foreach (i, ref const blk; blocks)
+                    if (blk.span.start <= anchor.src)
+                        through = i;
+            for (count = through + progressivePrefix; count < blocks.length; count *= 2)
+            {
+                MdDoc prefix = preview.doc;
+                prefix.root.children = preview.doc.root.children[0 .. count];
+                build(prefix);
+                const anchorRow = rowForAnchor(anchor);
+                const shown = cast(long) rows.length - (anchorRow < 0 ? 0 : anchorRow);
+                if (shown > viewRows + anchor.rowsAbove)
+                    break;
+            }
+        }
+        partial = count < blocks.length;
+        if (!partial)
+            build(preview.doc);
         cells = keyedRects(tree, frames);
         collectStructure();
     }
@@ -3757,6 +3818,65 @@ unittest
     // from a stale diagnostic must not take the pane down.
     vm.gotoSrcLine(9_999);
     assert(vm.top >= 0);
+}
+
+@("viewer_model.visibleFirst.layOutTheScreenThenTheRest")
+@system unittest
+{
+    import sparkles.syntax : extractMarkdown, GrammarRegistry;
+    import std.array : appender;
+    import std.conv : text;
+    import std.process : environment;
+    import std.string : indexOf;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    auto a = appender!string;
+    foreach (i; 0 .. 300)
+        a ~= text("paragraph ", i, " with enough words to wrap twice at forty columns wide\n\n");
+    const src = a[];
+    auto registry = GrammarRegistry.fromEnvironment();
+    auto doc = extractMarkdown(registry, src);
+
+    ViewerModel open(bool visibleFirst, ScrollAnchor keep)
+    {
+        ViewerModel vm;
+        vm.names = ["dark"];
+        vm.themes = [builtinDark];
+        vm.labels = LabelSet.standard();
+        vm.visibleFirst = visibleFirst;
+        vm.viewRows = 12;
+        vm.applyTheme(0);
+        vm.setDocument("t.md", "", src, [HighlightEvent.sourceSpan(0, src.length)],
+            PreviewModel(present: true, doc: doc), TwoslashReturn.init, "markdown");
+        // A restored position arrives before the pane has a width.
+        vm.restoreAnchor(keep);
+        vm.relayout(40);
+        return vm;
+    }
+
+    // Deep in the document: the first build reaches the anchor and a screen
+    // past it, not the end.
+    const keep = ScrollAnchor(src.indexOf("paragraph 200 "), 0);
+    auto whole = open(false, keep);
+    auto quick = open(true, keep);
+    assert(!whole.partial && quick.partial);
+    assert(quick.rows.length < whole.rows.length);
+    assert(quick.rows.length >= quick.top + quick.viewRows, "the screen is laid out");
+    assert(quick.rows[cast(size_t) quick.top].srcStart == keep.src);
+    assert(whole.rows[cast(size_t) whole.top].srcStart == keep.src);
+
+    // The next frame lays out the rest; the position does not move.
+    assert(quick.completeLayout());
+    assert(!quick.partial && !quick.completeLayout());
+    assert(quick.rows == whole.rows && quick.top == whole.top);
+
+    // Only the first build is partial: a relayout lays the whole document out.
+    auto resized = open(true, keep);
+    resized.relayout(50);
+    assert(!resized.partial);
 }
 
 @("viewer_model.scrollAnchor.aPositionRestoredBeforeTheFirstLayoutHolds")

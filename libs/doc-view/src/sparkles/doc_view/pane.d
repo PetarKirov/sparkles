@@ -145,6 +145,7 @@ struct DocViewPane
         vm.names = ["chrome"];
         vm.themes = [theme];
         vm.labels = env.labels;
+        vm.visibleFirst = true;
         vm.cache = &env.cache;
         vm.themeIdx = 0;
         static if (__traits(compiles, { import sparkles.doc_view.ansi_decode : decodeAnsi; }))
@@ -596,6 +597,12 @@ struct DocViewPane
             vm.relayout(width);
             vm.restoreAnchor(keep);
         }
+        else
+            // The frame after a first build that laid out only this screen.
+            vm.completeLayout();
+        // Ask for that next frame.
+        if (vm.partial)
+            dirty = true;
         vm.clampView();
 
         // The document: two passes when scrolled sideways past a pinned
