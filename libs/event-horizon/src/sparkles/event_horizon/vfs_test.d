@@ -102,17 +102,23 @@ private void expectNoFailures(string[] failures, string what) @safe
         import sparkles.base.io.errors : OpKind;
         import sparkles.event_horizon.sched : currentScheduler;
 
-        ringable = currentScheduler().loop.caps().supports(OpKind.mkdirAt);
+        const caps = currentScheduler().loop.caps();
+        ringable = caps.supports(OpKind.mkdirAt) && caps.supports(OpKind.statAt)
+            && caps.supports(OpKind.symlinkAt);
         assert(!root.value.mkdirAt("on-a-fiber").hasError);
         assert(root.value.mkdirAt("on-a-fiber").error.kind == ErrorKind.exists);
         assert(root.value.statAt("inline").value.kind == EntryKind.directory);
+        assert(!root.value.symlinkAt("link", "inline").hasError);
+        // No ring opcode reads a link, so this one goes to the pool.
+        char[16] target;
+        assert(root.value.readlinkAt("link", target[]).value == "inline");
     });
     assert(!r.hasError);
     if (ringable)
-        assert(RingVfs.ringCalls == ringed + 2 && RingVfs.poolCalls == pooled + 1,
-            "the two mkdirs went to the ring, the stat to the pool");
+        assert(RingVfs.ringCalls == ringed + 4 && RingVfs.poolCalls == pooled + 1,
+            "the mkdirs, the stat and the symlink went to the ring, the readlink to the pool");
     else
-        assert(RingVfs.poolCalls == pooled + 3, "every call went to the pool");
+        assert(RingVfs.poolCalls == pooled + 5, "every call went to the pool");
 }
 
 /// Every `Dir` and `File` operation has an `Effect!T` form, generated from the
@@ -157,4 +163,35 @@ private void expectNoFailures(string[] failures, string what) @safe
         })(s);
     });
     assert(!r.hasError);
+}
+
+/// The whole-path resolver on the ring tells a mount crossing from an escape
+/// exactly as the blocking backend does (VFP8, VFN2): `/proc` is a real mount.
+version (linux)
+@("vfs.ring.VFP8.realMountPoint")
+@safe unittest
+{
+    Sched s;
+    schedOrSkip(s);
+    auto ring = new RingVfs;
+    import sparkles.base.io.errors : OpKind;
+
+    const resolved = RingVfs.ringCallsOf[OpKind.resolve];
+    bool ringable;
+    auto r = s.run(() {
+        import sparkles.event_horizon.sched : currentScheduler;
+
+        ringable = currentScheduler().loop.caps().supports(OpKind.resolve);
+        ResolvePolicy refuse, allow;
+        allow.crossMounts = true;
+        auto strict = openRoot!(Rights.readOnly)(ring, "/", ambientAuthority(), refuse);
+        assert(strict.value.resolution == Resolution.kernelWholePath);
+        assert(strict.value.walk("proc").error.kind == ErrorKind.crossesMount);
+        assert(strict.value.walk("proc/../..").error.kind == ErrorKind.dotDotRefused);
+        auto open = openRoot!(Rights.readOnly)(ring, "/", ambientAuthority(), allow);
+        assert(!open.value.walk("proc").hasError);
+    });
+    assert(!r.hasError);
+    if (ringable)
+        assert(RingVfs.ringCallsOf[OpKind.resolve] > resolved, "openat2 ran on the ring");
 }

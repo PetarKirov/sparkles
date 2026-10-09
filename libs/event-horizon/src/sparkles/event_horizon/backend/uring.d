@@ -44,7 +44,7 @@ import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Wa
 import sparkles.event_horizon.backend.probe;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : CompletionFlags, KernelTimespec, OpAccept,
-    OpAcceptMultishot, OpClose, OpConnect, OpFsync, OpMkdirAt, OpNop, OpOpenAt, OpPollAdd,
+    OpAcceptMultishot, OpClose, OpConnect, OpFsync, OpMkdirAt, OpNop, OpOpenAt, OpOpenAt2, OpPollAdd,
     OpRead,
     OpRecv, OpRecvFrom, OpRecvSelect, OpRenameAt, OpSend, OpSendTo, OpSlot, OpStatx,
     OpSymlinkAt, OpUnlinkAt,
@@ -396,6 +396,23 @@ struct UringBackend
         _io.putWith!((ref SubmissionEntry e, in OpStatx o, ulong ud) {
             e.prepStatx(o.dirFd, o.path, o.flags, o.mask,
                 *cast(ubyte[256]*) o.statxBuf);
+            e.user_data = ud;
+        })(op, token.raw);
+        return true;
+    }
+
+    /// Lowers an openat2 (the path and `open_how` must be kernel-stable).
+    bool trySubmit(in OpOpenAt2 op, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        import during : prepOpenat2;
+        import during.openat2 : DuringOpenHow = OpenHow;
+
+        static assert(DuringOpenHow.sizeof == 3 * ulong.sizeof, "open_how is three ulongs");
+
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpOpenAt2 o, ulong ud) {
+            e.prepOpenat2(o.dirFd, o.path, *cast(DuringOpenHow*) o.how);
             e.user_data = ud;
         })(op, token.raw);
         return true;
