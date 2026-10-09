@@ -207,6 +207,6 @@ finds no normative text duplicating this one.
 | M0        | delivered; reshaped for readers and for creation sharing | #535, #594   |
 | M1        | in review                                                | —            |
 | M2        | implemented locally; Windows leg pending                 | —            |
-| M3        | implemented locally; opens and stats not yet on the ring | —            |
+| M3        | implemented locally                                      | —            |
 | M4        | implemented locally                                      | —            |
 | M5        | written locally                                          | —            |

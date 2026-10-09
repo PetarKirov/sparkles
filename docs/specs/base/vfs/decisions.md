@@ -396,9 +396,11 @@ Writing `RingVfs` and moving event-horizon onto the VFS changed six things.
 
 - **`RingVfs` wraps `BlockingVfs`.** Every primitive is the blocking backend's
   own, so the results match by construction ([`VFB5`](./backends.md#vfb5-the-asynchronous-backend)).
-  A mutation the kernel has a ring opcode for (`mkdirat`, `unlinkat`, `renameat`,
-  `symlinkat`) is submitted to the ring, and both paths end in one errno
-  classification; every other call runs on the blocking pool, or inline off a
+  Every call the kernel has a ring opcode for (`openat2`, `statx`, `mkdirat`,
+  `unlinkat`, `renameat`, `symlinkat`) is submitted to the ring, and both paths
+  end in one classification: the errno, and for `statx` a conversion that
+  encodes the device as `fstatat` does. Listing, `readlinkAt` and the
+  single-name opens run on the blocking pool, or inline off a
   scheduler, when the pool's queue is full, and on Windows, whose pool is not
   ported yet. `RingVfs` is copyable, because the capability row copies its
   members: it holds only `BlockingVfs`'s test switches and makes the blocking
