@@ -39,6 +39,17 @@ import sparkles.base.term_color : RgbColor;
 
 @safe:
 
+// ── the format ──────────────────────────────────────────────────────────────
+
+/**
+The DTCG format tag: a theme file and the CSS properties emitted from it spell
+an enum member by its wire name (`ColorChannel.foreground` is `fg`), resolved
+by `sparkles.base.text.wire_names` like every other format.
+*/
+struct Dtcg
+{
+}
+
 // ── errors ──────────────────────────────────────────────────────────────────
 
 /// A failure, located: `path` is a JSON path (`$.text.primary.fg.$value`) or,

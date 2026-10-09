@@ -202,15 +202,15 @@ private string fontStack(const DtcgJson v) @safe
     foreach (i; 0 .. Slot.max + 1)
     {
         if (p.fg[i].kind == Color.Kind.rgb)
-            assert(css.canFind("  " ~ cssName(cast(Slot) i, ColorChannel.fg) ~ ": "),
-                cssName(cast(Slot) i, ColorChannel.fg));
+            assert(css.canFind("  " ~ cssName(cast(Slot) i, ColorChannel.foreground) ~ ": "),
+                cssName(cast(Slot) i, ColorChannel.foreground));
         if (p.bg[i].kind == Color.Kind.rgb)
-            assert(css.canFind("  " ~ cssName(cast(Slot) i, ColorChannel.bg) ~ ": "),
-                cssName(cast(Slot) i, ColorChannel.bg));
+            assert(css.canFind("  " ~ cssName(cast(Slot) i, ColorChannel.background) ~ ": "),
+                cssName(cast(Slot) i, ColorChannel.background));
     }
     // A state aliased to another slot stays a reference to it.
-    assert(css.canFind(cssName(Slot.inherit, ColorChannel.bg, InteractionState.selected)
-        ~ ": var(" ~ cssName(Slot.selection, ColorChannel.bg) ~ ");\n"), css);
+    assert(css.canFind(cssName(Slot.inherit, ColorChannel.background, InteractionState.selected)
+        ~ ": var(" ~ cssName(Slot.selection, ColorChannel.background) ~ ");\n"), css);
 }
 
 @("ui.css.themeProperties.aFilesOwnTokensAndAliases")
