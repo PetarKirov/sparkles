@@ -126,6 +126,109 @@ TextSpan[][] wrapSpans(F = typeof(null))(const(TextSpan)[] spans, int width, int
     bool clipToWidth = false, scope F measure = null, TextStyle inheritedStyle = TextStyle.init,
     bool measureMonotone = false)
 {
+    // The cell path is a pure function of the authored spans and the wrap
+    // parameters, and a document lays the same rows out several times (a
+    // gutter pass, then the final one; again after a theme change): planning
+    // costs far more than a lookup. A measurer's results depend on its faces,
+    // so a measured wrap is never cached.
+    static if (is(F == typeof(null)))
+    {
+        const authored = !(spans.length && spans[0].wrapPlan !is null);
+        if (authored)
+        {
+            const key = WrapCacheKey(width, hangIndent, algorithm, whitespace, clipToWidth,
+                inheritedStyle);
+            if (auto hit = wrapCache.find(key, spans))
+                return copyRows(hit);
+            auto lines = wrapSpansUncached(spans, width, hangIndent, algorithm, whitespace,
+                clipToWidth, measure, inheritedStyle, measureMonotone);
+            wrapCache.store(key, spans, lines);
+            return copyRows(lines);
+        }
+    }
+    return wrapSpansUncached(spans, width, hangIndent, algorithm, whitespace, clipToWidth,
+        measure, inheritedStyle, measureMonotone);
+}
+
+// The wrap parameters a cached result was planned for.
+private struct WrapCacheKey
+{
+    int width, hangIndent;
+    TextWrap algorithm;
+    WhitespaceMode whitespace;
+    bool clipToWidth;
+    TextStyle inheritedStyle;
+}
+
+// The planned rows for recently wrapped spans, per thread (layout runs on
+// one). Keyed by a hash, confirmed by comparing every authored field, text
+// by content; cleared whole when it grows past its bound.
+private struct WrapCache
+{
+    private static struct Entry
+    {
+        WrapCacheKey key;
+        TextSpan[] spans; // the authored spans, texts copied
+        TextSpan[][] lines;
+    }
+
+    private Entry[][size_t] entries;
+    private size_t count;
+    enum size_t bound = 16_384;
+
+    private static size_t hashOfInput(in WrapCacheKey key, scope const(TextSpan)[] spans)
+        @safe nothrow
+    {
+        size_t h = hashOf(key.width, hashOf(key.hangIndent, hashOf(key.algorithm,
+            hashOf(key.whitespace, hashOf(key.clipToWidth)))));
+        foreach (ref const s; spans)
+            h = hashOf(s.text, hashOf(s.slot, hashOf(s.srcStart, h)));
+        return h;
+    }
+
+    TextSpan[][] find(in WrapCacheKey key, scope const(TextSpan)[] spans) @safe nothrow
+    {
+        if (auto bucket = hashOfInput(key, spans) in entries)
+            foreach (ref e; *bucket)
+                if (e.key == key && e.spans == spans)
+                    return e.lines;
+        return null;
+    }
+
+    void store(in WrapCacheKey key, scope const(TextSpan)[] spans, TextSpan[][] lines) @safe nothrow
+    {
+        if (count >= bound)
+        {
+            entries = null;
+            count = 0;
+        }
+        auto copy = new TextSpan[](spans.length);
+        foreach (i, ref const s; spans)
+        {
+            copy[i] = s;
+            copy[i].text = s.text.idup;
+        }
+        entries[hashOfInput(key, spans)] ~= Entry(key, copy, lines);
+        ++count;
+    }
+}
+
+private WrapCache wrapCache; // thread-local, as module variables are
+
+// Fresh rows over the same spans: a caller may adjust a row's spans (a
+// measured layout commits their advances) without touching the cache.
+private TextSpan[][] copyRows(TextSpan[][] lines) @safe nothrow
+{
+    auto rows = new TextSpan[][](lines.length);
+    foreach (i, row; lines)
+        rows[i] = row.dup;
+    return rows;
+}
+
+private TextSpan[][] wrapSpansUncached(F)(const(TextSpan)[] spans, int width, int hangIndent,
+    TextWrap algorithm, WhitespaceMode whitespace, bool clipToWidth, scope F measure,
+    TextStyle inheritedStyle, bool measureMonotone)
+{
     import std.exception : enforce;
     if (algorithm == TextWrap.none && spans.length && spans[0].wrapPlan !is null)
     {
@@ -780,4 +883,24 @@ unittest
         }
         assert(visible == ["ab", "cd"]);
     }
+}
+
+@("ui.wrap.cacheReturnsTheSamePlanAsAFreshWrap")
+@safe unittest
+{
+    // A repeat of the same spans and parameters is served from the cache:
+    // the rows equal a fresh plan's, and they are the caller's own.
+    const spans = [TextSpan("a long line that will wrap at ten cells", srcStart: 3)];
+    auto first = wrapSpans(spans, 10);
+    auto second = wrapSpans(spans, 10);
+    assert(first.length == second.length && first.length > 1);
+    foreach (i; 0 .. first.length)
+        assert(first[i] == second[i]);
+    second[0][0].paintAdvance = 7; // a measured layout commits advances
+    assert(wrapSpans(spans, 10)[0][0].paintAdvance != 7, "the cache is not the caller's rows");
+
+    // Any authored field takes part: another source range is another key.
+    const moved = [TextSpan("a long line that will wrap at ten cells", srcStart: 9)];
+    assert(wrapSpans(moved, 10)[0][0].srcStart != first[0][0].srcStart);
+    assert(wrapSpans(spans, 12).length != 0, "another width is planned anew");
 }
