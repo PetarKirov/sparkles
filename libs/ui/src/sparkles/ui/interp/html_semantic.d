@@ -100,21 +100,21 @@ if (isOutputRange!(Writer, char))
         put(w, ".");
         writeSlotClass(w, s);
         put(w, "{color:var(");
-        writeCssName(w, s, ColorChannel.fg);
+        writeCssName(w, s, ColorChannel.foreground);
         put(w, ");background-color:var(");
-        writeCssName(w, s, ColorChannel.bg);
+        writeCssName(w, s, ColorChannel.background);
         put(w, ")}");
 
         put(w, ".spk-hit.");
         writeSlotClass(w, s);
         put(w, ":hover{color:var(");
-        writeCssName(w, s, ColorChannel.fg, InteractionState.hover);
+        writeCssName(w, s, ColorChannel.foreground, InteractionState.hover);
         put(w, ",var(");
-        writeCssName(w, s, ColorChannel.fg);
+        writeCssName(w, s, ColorChannel.foreground);
         put(w, "));background-color:var(");
-        writeCssName(w, s, ColorChannel.bg, InteractionState.hover);
+        writeCssName(w, s, ColorChannel.background, InteractionState.hover);
         put(w, ",var(");
-        writeCssName(w, s, ColorChannel.bg);
+        writeCssName(w, s, ColorChannel.background);
         put(w, "))}");
     }
 }

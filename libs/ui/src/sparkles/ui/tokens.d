@@ -120,16 +120,9 @@ static foreach (i, m; EnumMembers!InteractionState)
 
 // ── CSS custom-property names (TOK2, WEB1) ──────────────────────────────────
 
-/// A slot's two color channels: the `fg` and `bg` leaves of its theme-file group.
-enum ColorChannel : ubyte
-{
-    fg, /// foreground
-    bg, /// background
-}
-
-/// The leaf names of $(LREF ColorChannel), in declaration order.
-alias channelNames = wireNames!(AnyFormat, ColorChannel,
-    resolveCaseStyle!(AnyFormat, ColorChannel));
+/// A slot's color channels are the terminal's: `foreground` and `background`,
+/// spelled `fg` and `bg` in the theme file and in CSS.
+public import sparkles.base.term_color : ColorChannel;
 
 /**
 Writes the CSS custom property of one color leaf (`WEB1`, D60): `--spk-`, then
@@ -139,8 +132,11 @@ GC-free form; $(LREF cssName) is the convenience wrapper, and
 */
 void writeCssName(W)(ref W w, Slot slot, ColorChannel channel,
     InteractionState state = InteractionState.rest)
+in (channel != ColorChannel.underline, "a slot has no underline leaf")
 {
     import std.range.primitives : put;
+    import sparkles.base.text.writers : writeEnumMemberName;
+    import sparkles.ui.dtcg : Dtcg;
 
     put(w, "--spk-");
     foreach (c; tokenPath(slot))
@@ -148,10 +144,10 @@ void writeCssName(W)(ref W w, Slot slot, ColorChannel channel,
     if (state != InteractionState.rest)
     {
         put(w, '-');
-        put(w, stateNames[state]);
+        writeEnumMemberName!Dtcg(w, state);
     }
     put(w, '-');
-    put(w, channelNames[channel]);
+    writeEnumMemberName!Dtcg(w, channel);
 }
 
 /// ditto — allocating.
@@ -584,11 +580,13 @@ unittest
 {
     with (ColorChannel)
     {
-        assert(cssName(Slot.muted, fg) == "--spk-text-muted-fg");
-        assert(cssName(Slot.highlightBorder, bg) == "--spk-twoslash-highlight-border-bg");
+        assert(cssName(Slot.muted, foreground) == "--spk-text-muted-fg");
+        assert(cssName(Slot.highlightBorder, background) == "--spk-twoslash-highlight-border-bg");
         // The state sits before the channel, as in the theme file.
-        assert(cssName(Slot.thumb, bg, InteractionState.hover) == "--spk-scrollbar-thumb-hover-bg");
-        assert(cssName(Slot.thumb, fg, InteractionState.rest) == cssName(Slot.thumb, fg));
+        assert(cssName(Slot.thumb, background, InteractionState.hover)
+            == "--spk-scrollbar-thumb-hover-bg");
+        assert(cssName(Slot.thumb, foreground, InteractionState.rest)
+            == cssName(Slot.thumb, foreground));
     }
 }
 
@@ -598,7 +596,7 @@ unittest
 {
     import sparkles.base.buffer : checkWriter;
 
-    checkWriter!((ref w) => writeCssName(w, Slot.chromeAccent, ColorChannel.fg,
+    checkWriter!((ref w) => writeCssName(w, Slot.chromeAccent, ColorChannel.foreground,
         InteractionState.disabled))("--spk-chrome-accent-disabled-fg");
 }
 

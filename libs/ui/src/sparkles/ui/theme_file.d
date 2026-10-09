@@ -36,15 +36,16 @@ import std.traits : getUDAs, hasUDA;
 
 import expected : err, ok;
 
-import sparkles.base.term_color : Color, RgbColor, xterm256ToRgb;
-import sparkles.ui.dtcg : collectTokens, colorValue, dimensionValue, DtcgColor,
+import sparkles.base.term_color : Color, ColorChannel, RgbColor, xterm256ToRgb;
+import sparkles.base.text.wire_names : enumNames;
+import sparkles.ui.dtcg : collectTokens, colorValue, dimensionValue, Dtcg, DtcgColor,
     DtcgError, DtcgJson, DtcgMember, DtcgResult, DtcgToken, DtcgTokens, parseColor,
     numberOf, parseDimension, parseDtcg, aliasTarget;
 import sparkles.ui.style : InteractionState, Palette, Slot;
 import sparkles.ui.theme : FontFace, FontRole, GlyphSet, StyleSpec, TextAttr, Theme,
     ThemeRule, UnderlineStyle;
 import sparkles.ui.tokens : stateNames, tokenPath;
-import sparkles.wired.policy : AnyFormat, resolveCaseStyle, WireNameAttr, wireNames;
+import sparkles.wired.policy : AnyFormat, WireNameAttr;
 
 @safe:
 
@@ -72,14 +73,22 @@ private enum string[6] attrNames = ["bold", "dim", "italic", "strikethrough", "i
 private enum TextAttr[6] attrBits = [TextAttr.bold, TextAttr.dim, TextAttr.italic,
     TextAttr.strikethrough, TextAttr.inverse, TextAttr.hidden];
 
-private alias underlineNames = wireNames!(AnyFormat, UnderlineStyle,
-    resolveCaseStyle!(AnyFormat, UnderlineStyle));
+// Every enum the file spells, spelled in the DTCG format.
+private alias underlineNames = enumNames!(Dtcg, UnderlineStyle);
 
 // The glyph families (`GLY1`), by their wire names: the `glyphs` object in the
 // root extension, which names only the families a theme changes.
-private alias familyNames(E) = wireNames!(AnyFormat, E, resolveCaseStyle!(AnyFormat, E));
+private alias familyNames(E) = enumNames!(Dtcg, E);
 
 private enum glyphFamilies = ["frame", "treeGuide", "thumb", "marks"];
+
+// The color leaves of a slot, a state or a rule group: the channels' names in
+// the DTCG format (`fg`, `bg`), so the file and the CSS emitter cannot disagree.
+private enum string fgLeaf = enumNames!(Dtcg, ColorChannel)[ColorChannel.foreground];
+private enum string bgLeaf = enumNames!(Dtcg, ColorChannel)[ColorChannel.background];
+private enum string fgPath = "." ~ fgLeaf;
+private enum string bgPath = "." ~ bgLeaf;
+private static immutable string[2] colorLeaves = [fgLeaf, bgLeaf];
 
 // The font channel's path segments (`WEB6`): `font.family.<face>`, `font.<role>`.
 private alias faceNames = familyNames!FontFace;
@@ -112,7 +121,7 @@ private string metricPath(string field)()
 // A slot's or a state's group must never collide with a channel leaf.
 static foreach (s; 0 .. slotCount)
 {
-    static assert(!tokenPath(cast(Slot) s).endsWith(".fg", ".bg"),
+    static assert(!tokenPath(cast(Slot) s).endsWith(fgPath, bgPath),
         "a slot path must not end in a channel: " ~ tokenPath(cast(Slot) s));
 }
 
@@ -213,9 +222,9 @@ DtcgJson exportTheme(const Theme t, bool resolvedPalette = false)
         seen ~= r.selector;
         auto g = group("syntax." ~ r.selector);
         if (auto tok = colorToken(r.style.fg))
-            g.set("fg", *tok);
+            g.set(fgLeaf, *tok);
         if (auto tok = colorToken(r.style.bg))
-            g.set("bg", *tok);
+            g.set(bgLeaf, *tok);
         auto e = styleExtension(r.style);
         if (e.members.length)
             g.set("$extensions", DtcgJson.object([DtcgMember(extensionKey, e)]));
@@ -233,21 +242,21 @@ private void exportPalette(const Palette p, DtcgJson* delegate(string) @safe gro
     {
         const path = tokenPath(cast(Slot) i);
         if (auto tok = colorToken(p.fg[i], p.fgAlpha[i]))
-            put(path ~ ".fg", *tok);
+            put(path ~ fgPath, *tok);
         if (auto tok = colorToken(p.bg[i], p.bgAlpha[i]))
-            put(path ~ ".bg", *tok);
+            put(path ~ bgPath, *tok);
         foreach (st; 1 .. stateNames.length)
         {
             const o = p.states[st - 1];
             const sp = path ~ "." ~ stateNames[st];
             if (o.fgAliased[i])
-                put(sp ~ ".fg", aliasToken(tokenPath(o.fgFrom[i]) ~ ".fg"));
+                put(sp ~ fgPath, aliasToken(tokenPath(o.fgFrom[i]) ~ fgPath));
             else if (auto tok = colorToken(o.fg[i], o.fgAlpha[i]))
-                put(sp ~ ".fg", *tok);
+                put(sp ~ fgPath, *tok);
             if (o.bgAliased[i])
-                put(sp ~ ".bg", aliasToken(tokenPath(o.bgFrom[i]) ~ ".bg"));
+                put(sp ~ bgPath, aliasToken(tokenPath(o.bgFrom[i]) ~ bgPath));
             else if (auto tok = colorToken(o.bg[i], o.bgAlpha[i]))
-                put(sp ~ ".bg", *tok);
+                put(sp ~ bgPath, *tok);
             if (o.attrs[i])
                 group(sp).set("$extensions", DtcgJson.object([DtcgMember(extensionKey,
                     DtcgJson.object([DtcgMember("attrs",
@@ -599,13 +608,13 @@ private struct Mapper
     DtcgError* run(const DtcgJson doc)
     {
         // Page colors.
-        foreach (which; ["fg", "bg"])
+        foreach (which; colorLeaves)
         {
             auto c = color("page." ~ which);
             if (c.hasError)
                 return boxed(c.error);
             if (c.value !is null)
-                (which == "fg" ? theme.defaultFg : theme.defaultBg) = toColor("page." ~ which, *c.value);
+                (which == fgLeaf ? theme.defaultFg : theme.defaultBg) = toColor("page." ~ which, *c.value);
         }
 
         // The root extension.
@@ -717,7 +726,7 @@ private struct Mapper
     {
         foreach (ref m; node.members)
         {
-            if (m.key.startsWith("$") || m.key == "fg" || m.key == "bg" || !m.value.isObject)
+            if (m.key.startsWith("$") || m.key == fgLeaf || m.key == bgLeaf || !m.value.isObject)
                 continue;
             const p = path ~ "." ~ m.key;
             if (auto e = rules(m.value, p))
@@ -727,7 +736,7 @@ private struct Mapper
             return null;
         StyleSpec style;
         bool any;
-        foreach (which; ["fg", "bg"])
+        foreach (which; colorLeaves)
         {
             auto c = color(path ~ "." ~ which);
             if (c.hasError)
@@ -735,10 +744,10 @@ private struct Mapper
             if (c.value is null)
                 continue;
             any = true;
-            if (which == "fg")
-                style = StyleSpec(fg: toColor(path ~ ".fg", *c.value), bg: style.bg);
+            if (which == fgLeaf)
+                style = StyleSpec(fg: toColor(path ~ fgPath, *c.value), bg: style.bg);
             else
-                style = StyleSpec(fg: style.fg, bg: toColor(path ~ ".bg", *c.value));
+                style = StyleSpec(fg: style.fg, bg: toColor(path ~ bgPath, *c.value));
         }
         TextAttr attrs;
         auto ul = UnderlineStyle.none;
@@ -794,17 +803,17 @@ private struct Mapper
         foreach (i; 0 .. slotCount)
         {
             const path = tokenPath(cast(Slot) i);
-            foreach (which; ["fg", "bg"])
+            foreach (which; colorLeaves)
             {
                 auto c = color(path ~ "." ~ which);
                 if (c.hasError)
                     return boxed(c.error);
                 if (c.value is null)
                     continue;
-                if (which == "fg")
-                    p.fg[i] = toColor(path ~ ".fg", *c.value), p.fgAlpha[i] = c.value.alpha;
+                if (which == fgLeaf)
+                    p.fg[i] = toColor(path ~ fgPath, *c.value), p.fgAlpha[i] = c.value.alpha;
                 else
-                    p.bg[i] = toColor(path ~ ".bg", *c.value), p.bgAlpha[i] = c.value.alpha;
+                    p.bg[i] = toColor(path ~ bgPath, *c.value), p.bgAlpha[i] = c.value.alpha;
             }
             foreach (st; 1 .. stateNames.length)
                 if (auto e = state(p, cast(Slot) i, st))
@@ -835,7 +844,7 @@ private struct Mapper
     {
         const sp = tokenPath(slot) ~ "." ~ stateNames[st];
         auto o = &p.states[st - 1];
-        foreach (which; ["fg", "bg"])
+        foreach (which; colorLeaves)
         {
             const path = sp ~ "." ~ which;
             auto t = path in *toks;
@@ -848,7 +857,7 @@ private struct Mapper
                     if (auto from = slotOf(a.text[0 .. $ - which.length - 1]))
                     {
                         used[path] = true;
-                        if (which == "fg")
+                        if (which == fgLeaf)
                             o.fgAliased[slot] = true, o.fgFrom[slot] = *from;
                         else
                             o.bgAliased[slot] = true, o.bgFrom[slot] = *from;
@@ -857,7 +866,7 @@ private struct Mapper
             auto c = color(path);
             if (c.hasError)
                 return boxed(c.error);
-            if (which == "fg")
+            if (which == fgLeaf)
                 o.fg[slot] = toColor(path, *c.value), o.fgAlpha[slot] = c.value.alpha;
             else
                 o.bg[slot] = toColor(path, *c.value), o.bgAlpha[slot] = c.value.alpha;

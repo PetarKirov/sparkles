@@ -135,7 +135,7 @@ private string calloutCss() @safe pure
         const slot = calloutSlots[kind];
         const c = pal.fg[slot].rgb;
         s ~= format(".callout-%s { border-color: var(%s, #%02x%02x%02x); }\n",
-            kind, cssName(slot, ColorChannel.fg), c.r, c.g, c.b);
+            kind, cssName(slot, ColorChannel.foreground), c.r, c.g, c.b);
     }
     return s;
 }

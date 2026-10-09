@@ -31,6 +31,7 @@ module sparkles.base.term_color;
 
 import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr, parseOk;
 import sparkles.base.text.readers : hexNibble, isHexDigit;
+import sparkles.metadata.wire : WireName;
 
 @safe:
 
@@ -483,13 +484,18 @@ unittest
 // SGR color-parameter emission
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The SGR color channel a $(LREF Color) applies to. The numbers differ per
-/// channel: foreground `38`/`39`, background `48`/`49`, underline `58`/`59`.
+/**
+The color channel a $(LREF Color) applies to. On a terminal the SGR numbers
+differ per channel: foreground `38`/`39`, background `48`/`49`, underline
+`58`/`59`. A wire format spells a channel by its `@WireName`, the leaf a
+design-system theme file and its CSS properties use (`text.muted.fg`,
+`--spk-text-muted-fg`); a pretty-printed one stays `foreground`.
+*/
 enum ColorChannel : ubyte
 {
-    foreground, /// text foreground (38/39; classic 30–37, 90–97)
-    background, /// text background (48/49; classic 40–47, 100–107)
-    underline,  /// underline color (58/59; 256/truecolor only — no classic form)
+    @WireName("fg") foreground, /// text foreground (38/39; classic 30–37, 90–97)
+    @WireName("bg") background, /// text background (48/49; classic 40–47, 100–107)
+    underline, /// underline color (58/59; 256/truecolor only — no classic form)
 }
 
 /**
