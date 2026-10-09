@@ -136,7 +136,7 @@ struct BlockingVfs
             return ioErr!void(ErrorKind.nameTooLong, OpKind.mkdirAt);
         const bits = sharing.modeBits(true, false);
         const r = (() @trusted => retry(() => mkdirat(dir.fd, z.ptr, cast(ushort) bits)))();
-        return r < 0 ? ioErr!void(failure(OpKind.mkdirAt)) : ioOk();
+        return mkdirOutcome(r < 0 ? errno : 0);
     }
 
     /// Stats the entry `name` in `dir` itself.
@@ -196,7 +196,7 @@ struct BlockingVfs
         if (!terminate(name, z) || !terminate(target, t))
             return ioErr!void(ErrorKind.nameTooLong, OpKind.symlinkAt);
         const r = (() @trusted => symlinkat(t.ptr, dir.fd, z.ptr))();
-        return r < 0 ? ioErr!void(failure(OpKind.symlinkAt)) : ioOk();
+        return symlinkOutcome(r < 0 ? errno : 0);
     }
 
     /// Removes the non-directory `name` in `dir`.
@@ -206,13 +206,7 @@ struct BlockingVfs
         if (!terminate(name, z))
             return ioErr!void(ErrorKind.nameTooLong, OpKind.unlinkAt);
         const r = (() @trusted => unlinkat(dir.fd, z.ptr, 0))();
-        if (r == 0)
-            return ioOk();
-        const e = errno;
-        // Linux says EISDIR for a directory; macOS says EPERM.
-        if (e == EISDIR || (e == EPERM && isDirectoryAt(dir, z)))
-            return ioErr!void(ErrorKind.isADirectory, OpKind.unlinkAt, e);
-        return ioErr!void(failure(OpKind.unlinkAt, e));
+        return unlinkOutcome(dir, z, r < 0 ? errno : 0);
     }
 
     /// Removes the empty directory `name` in `dir`.
@@ -222,12 +216,7 @@ struct BlockingVfs
         if (!terminate(name, z))
             return ioErr!void(ErrorKind.nameTooLong, OpKind.rmdirAt);
         const r = (() @trusted => unlinkat(dir.fd, z.ptr, AT_REMOVEDIR))();
-        if (r == 0)
-            return ioOk();
-        const e = errno;
-        if (e == ENOTEMPTY || e == EEXIST)
-            return ioErr!void(ErrorKind.notEmpty, OpKind.rmdirAt, e);
-        return ioErr!void(failure(OpKind.rmdirAt, e));
+        return rmdirOutcome(r < 0 ? errno : 0);
     }
 
     /// Renames `name` in `dir` to `dstName` in `dstDir`.
@@ -238,13 +227,53 @@ struct BlockingVfs
         if (!terminate(name, z) || !terminate(dstName, d))
             return ioErr!void(ErrorKind.nameTooLong, OpKind.renameAt);
         const r = (() @trusted => renameat(dir.fd, z.ptr, dstDir.fd, d.ptr))();
-        if (r == 0)
+        return renameOutcome(r < 0 ? errno : 0);
+    }
+
+    // The errno classification of each mutation, shared with `RingVfs`, which
+    // submits the same calls to the ring: the same errno, the same result.
+    // `e` is 0 for success.
+package(sparkles.event_horizon):
+
+    IoResult!void mkdirOutcome(int e) const @safe nothrow @nogc
+        => e == 0 ? ioOk() : ioErr!void(failure(OpKind.mkdirAt, e));
+
+    IoResult!void symlinkOutcome(int e) const @safe nothrow @nogc
+        => e == 0 ? ioOk() : ioErr!void(failure(OpKind.symlinkAt, e));
+
+    IoResult!void unlinkOutcome(Handle dir, scope ref const char[maxNameLength + 1] z, int e)
+        @safe nothrow @nogc
+    {
+        if (e == 0)
             return ioOk();
-        const e = errno;
+        // Linux says EISDIR for a directory; macOS says EPERM.
+        if (e == EISDIR || (e == EPERM && isDirectoryAt(dir, z)))
+            return ioErr!void(ErrorKind.isADirectory, OpKind.unlinkAt, e);
+        return ioErr!void(failure(OpKind.unlinkAt, e));
+    }
+
+    IoResult!void rmdirOutcome(int e) const @safe nothrow @nogc
+    {
+        if (e == 0)
+            return ioOk();
+        if (e == ENOTEMPTY || e == EEXIST)
+            return ioErr!void(ErrorKind.notEmpty, OpKind.rmdirAt, e);
+        return ioErr!void(failure(OpKind.rmdirAt, e));
+    }
+
+    IoResult!void renameOutcome(int e) const @safe nothrow @nogc
+    {
+        if (e == 0)
+            return ioOk();
         if (e == ENOTEMPTY || e == EEXIST)
             return ioErr!void(ErrorKind.notEmpty, OpKind.renameAt, e);
         return ioErr!void(failure(OpKind.renameAt, e));
     }
+
+    /// The raw descriptor behind a handle, for a ring submission.
+    static int fdOf(Handle h) @safe pure nothrow @nogc => h.fd;
+
+public:
 
     /// Starts a listing over a fresh descriptor for `dir` (VFN10).
     IoResult!Listing openListing(Handle dir) @safe nothrow @nogc
@@ -529,7 +558,8 @@ private:
 private:
 
 /// Copies `s` with a NUL into `z`; false if it does not fit or holds a NUL.
-bool terminate(size_t N)(scope const(char)[] s, ref char[N] z) @safe pure nothrow @nogc
+package(sparkles.event_horizon) bool terminate(size_t N)(scope const(char)[] s, ref char[N] z)
+    @safe pure nothrow @nogc
 {
     if (s.length >= N)
         return false;

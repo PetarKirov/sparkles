@@ -79,9 +79,10 @@ private void expectNoFailures(string[] failures, string what) @safe
         "\nMemVfs:      " ~ memLog ~ "\nBlockingVfs: " ~ blockingLog ~ "\nRingVfs:     " ~ ringLog);
 }
 
-/// On a scheduler fiber a call goes to the blocking pool; off one it runs
-/// inline, with the same result.
-@("vfs.ring.poolOnlyOnAFiber")
+/// On a scheduler fiber a mutation the kernel has a ring opcode for goes to
+/// the ring, and any other call to the blocking pool; off a fiber every call
+/// runs inline. The result is the same on every path (VFB5).
+@("vfs.ring.pathPerCall")
 @safe unittest
 {
     auto dir = scratchDir("pool");
@@ -89,18 +90,29 @@ private void expectNoFailures(string[] failures, string what) @safe
     auto ring = new RingVfs;
     auto root = openRoot!(Rights.all)(ring, dir, ambientAuthority());
 
-    const before = RingVfs.poolCalls;
+    const pooled = RingVfs.poolCalls, ringed = RingVfs.ringCalls;
     assert(!root.value.mkdirAt("inline").hasError);
-    assert(RingVfs.poolCalls == before, "no scheduler, no pool");
+    assert(RingVfs.poolCalls == pooled && RingVfs.ringCalls == ringed,
+        "no scheduler: inline");
 
     Sched s;
     schedOrSkip(s);
+    bool ringable;
     auto r = s.run(() {
-        assert(!root.value.mkdirAt("pooled").hasError);
+        import sparkles.base.io.errors : OpKind;
+        import sparkles.event_horizon.sched : currentScheduler;
+
+        ringable = currentScheduler().loop.caps().supports(OpKind.mkdirAt);
+        assert(!root.value.mkdirAt("on-a-fiber").hasError);
+        assert(root.value.mkdirAt("on-a-fiber").error.kind == ErrorKind.exists);
         assert(root.value.statAt("inline").value.kind == EntryKind.directory);
     });
     assert(!r.hasError);
-    assert(RingVfs.poolCalls == before + 2, "both calls ran on the pool");
+    if (ringable)
+        assert(RingVfs.ringCalls == ringed + 2 && RingVfs.poolCalls == pooled + 1,
+            "the two mkdirs went to the ring, the stat to the pool");
+    else
+        assert(RingVfs.poolCalls == pooled + 3, "every call went to the pool");
 }
 
 /// Every `Dir` and `File` operation has an `Effect!T` form, generated from the

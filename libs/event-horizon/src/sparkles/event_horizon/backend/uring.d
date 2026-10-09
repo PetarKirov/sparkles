@@ -33,9 +33,10 @@ import during : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags
     MsgFlags, Operation,
     SetupFlags, SubmissionEntry, TimeoutFlags, Uring, io_uring_getevents_arg,
     prepAccept, prepClose, prepConnect, prepFsync, prepFutexWait, prepMultishotAccept, prepNop,
-    prepOpenat, prepPollAdd, prepPollMultishot, prepRW, prepRead, prepReadFixed,
-    prepRecv, prepRecvMsg, prepSend,
-    prepSendMsg, prepStatx, prepTimeout, prepWaitid, prepWrite, prepWriteFixed,
+    prepMkdirat, prepOpenat, prepPollAdd, prepPollMultishot, prepRW, prepRead, prepReadFixed,
+    prepRecv, prepRecvMsg, prepRenameat, prepSend,
+    prepSendMsg, prepStatx, prepSymlinkat, prepTimeout, prepUnlinkat, prepWaitid, prepWrite,
+    prepWriteFixed,
     setup;
 import during : DuringTimespec = KernelTimespec, DuringPollEvents = PollEvents;
 
@@ -43,9 +44,10 @@ import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Wa
 import sparkles.event_horizon.backend.probe;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : CompletionFlags, KernelTimespec, OpAccept,
-    OpAcceptMultishot, OpClose, OpConnect, OpFsync, OpNop, OpOpenAt, OpPollAdd,
+    OpAcceptMultishot, OpClose, OpConnect, OpFsync, OpMkdirAt, OpNop, OpOpenAt, OpPollAdd,
     OpRead,
-    OpRecv, OpRecvFrom, OpRecvSelect, OpSend, OpSendTo, OpSlot, OpStatx,
+    OpRecv, OpRecvFrom, OpRecvSelect, OpRenameAt, OpSend, OpSendTo, OpSlot, OpStatx,
+    OpSymlinkAt, OpUnlinkAt,
     OpTimeout, OpToken, OpWaitid, OpWrite, SockAddr;
 
 import core.stdc.errno : ETIME;
@@ -394,6 +396,54 @@ struct UringBackend
         _io.putWith!((ref SubmissionEntry e, in OpStatx o, ulong ud) {
             e.prepStatx(o.dirFd, o.path, o.flags, o.mask,
                 *cast(ubyte[256]*) o.statxBuf);
+            e.user_data = ud;
+        })(op, token.raw);
+        return true;
+    }
+
+    /// Lowers a mkdirat (the path must be kernel-stable).
+    bool trySubmit(in OpMkdirAt op, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpMkdirAt o, ulong ud) {
+            e.prepMkdirat(o.dirFd, o.path, o.mode);
+            e.user_data = ud;
+        })(op, token.raw);
+        return true;
+    }
+
+    /// Lowers an unlinkat (the path must be kernel-stable).
+    bool trySubmit(in OpUnlinkAt op, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpUnlinkAt o, ulong ud) {
+            e.prepUnlinkat(o.dirFd, o.path, o.flags);
+            e.user_data = ud;
+        })(op, token.raw);
+        return true;
+    }
+
+    /// Lowers a renameat (both paths must be kernel-stable).
+    bool trySubmit(in OpRenameAt op, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpRenameAt o, ulong ud) {
+            e.prepRenameat(o.oldDirFd, o.oldPath, o.newDirFd, o.newPath, 0);
+            e.user_data = ud;
+        })(op, token.raw);
+        return true;
+    }
+
+    /// Lowers a symlinkat (both strings must be kernel-stable).
+    bool trySubmit(in OpSymlinkAt op, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpSymlinkAt o, ulong ud) {
+            e.prepSymlinkat(o.target, o.newDirFd, o.linkPath);
             e.user_data = ud;
         })(op, token.raw);
         return true;

@@ -230,6 +230,45 @@ struct OpStatx
     void* statxBuf;
 }
 
+/// Creates the directory `path` relative to `dirFd`. `path` is NUL-terminated
+/// and kernel-stable.
+struct OpMkdirAt
+{
+    enum kind = OpKind.mkdirAt;
+    int dirFd;
+    const(char)* path;
+    uint mode;
+}
+
+/// Removes `path` relative to `dirFd`; `flags` is 0 for a file and
+/// `AT_REMOVEDIR` for an empty directory.
+struct OpUnlinkAt
+{
+    enum kind = OpKind.unlinkAt;
+    int dirFd;
+    const(char)* path;
+    int flags;
+}
+
+/// Renames `oldPath` under `oldDirFd` to `newPath` under `newDirFd`.
+struct OpRenameAt
+{
+    enum kind = OpKind.renameAt;
+    int oldDirFd;
+    const(char)* oldPath;
+    int newDirFd;
+    const(char)* newPath;
+}
+
+/// Creates the symbolic link `linkPath` under `newDirFd`, holding `target`.
+struct OpSymlinkAt
+{
+    enum kind = OpKind.symlinkAt;
+    const(char)* target;
+    int newDirFd;
+    const(char)* linkPath;
+}
+
 /// Reaps a child process (`WAITID`); the kernel writes the caller-owned
 /// `siginfo_t`.
 struct OpWaitid
