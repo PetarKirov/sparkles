@@ -252,6 +252,32 @@ private enum uint octal111 = 73, octal755 = 493, octal777 = 511, octal666 = 438,
     }
 }
 
+/// A file lends the descriptor it holds, so the loop's verbs can use it; a
+/// backend without descriptors offers no borrow at all.
+@("vfs.blocking.borrowFd")
+@system unittest
+{
+    import core.sys.posix.unistd : read;
+    import sparkles.base.vfs.mem : MemVfs;
+    import sparkles.event_horizon.sys.descriptor : isFdBorrowable;
+
+    auto dir = scratchDir("borrow");
+    scope (exit) rmdirRecurse(dir);
+    write(buildPath(dir, "f"), "lent");
+    auto v = new BlockingVfs;
+    auto root = openRoot!(Rights.all)(v, dir, ambientAuthority());
+    auto file = root.value.openFile!(OpenMode.read)("f");
+    static assert(isFdBorrowable!(typeof(file.value)));
+
+    char[8] buf;
+    const n = read(file.value.borrowFd().fd, buf.ptr, buf.length);
+    assert(buf[0 .. n] == "lent");
+
+    alias MemFile = typeof(openRoot!(Rights.all)(new MemVfs, "", ambientAuthority())
+        .value.openFile!(OpenMode.read)("f").value);
+    static assert(!isFdBorrowable!MemFile);
+}
+
 @("vfs.blocking.VFN2.classification")
 @safe unittest
 {
