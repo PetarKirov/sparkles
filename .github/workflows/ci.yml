@@ -187,6 +187,19 @@ jobs:
           fi
           ci --example-files --fail-fast
 
+      # sparkles:shaders' agreement evidence (SHV7, SHF4): a probe unit compiled
+      # by shader-compile runs on Mesa's software rasterizer under Xvfb, and its
+      # results are read back against the host's. The runner is not NixOS, so
+      # the Nix-built raylib is pointed at the flake's Mesa explicitly. Opted
+      # into, the test fails rather than skips when it cannot run.
+      - name: Read back generated shaders on a GL driver
+        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
+        run: |
+          mesa="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa)"
+          export LIBGL_DRIVERS_PATH="$mesa/lib/dri"
+          export LD_LIBRARY_PATH="$mesa/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          SPARKLES_GPU_READBACK=1 xvfb-run -a dub test :ui-raylib -- -i shader_readback
+
       # OS-API research examples (docs/research/.../os-apis). These are multi-file
       # dub packages (ImportC), not single-file, so they are outside `ci
       # --example-files`; build/run the Linux ones here in the devshell. X11 opens a
@@ -438,6 +451,40 @@ jobs:
 
       - name: Run all runnable examples
         run: nix run .#run-all-examples
+
+      # sparkles:shaders SHT3: the same sources and toolchain must generate the
+      # same GLSL on every platform. Each runner records the content hash of
+      # its `ui-shaders` (names, bytes, modes), and `shader-reproducibility`
+      # compares them.
+      - name: Hash the generated shaders
+        run: |
+          out="$(nix build --no-link --print-out-paths .#ui-shaders)"
+          ls -A "$out"
+          nix hash path --type sha256 "$out" | tee "ui-shaders-${{ runner.os }}.hash"
+
+      - name: Upload the generated shaders' hash
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-shaders-${{ runner.os }}
+          path: ui-shaders-${{ runner.os }}.hash
+
+  shader-reproducibility:
+    name: Generated shaders agree across platforms
+    needs: nix-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download every platform's hash
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ui-shaders-*
+          merge-multiple: true
+
+      - name: Compare
+        run: |
+          for f in ui-shaders-*.hash; do echo "$f: $(cat "$f")"; done
+          hashes=(ui-shaders-*.hash)
+          [ "${#hashes[@]}" -ge 2 ] || { echo "::error::fewer than two platforms reported"; exit 1; }
+          [ "$(sort -u ui-shaders-*.hash | wc -l)" -eq 1 ] || { echo "::error::the generated GLSL differs between platforms (SHT3)"; exit 1; }
 
   # The Android APK pipeline (nix/packages/android/): builds `.#all-android`
   # — the repo-embedded hue APK, whose dependency chain covers the entire
@@ -818,6 +865,7 @@ jobs:
       - sanitize
       - nix-build
       - nix-build-android
+      - shader-reproducibility
       - lint
       - docs
       - cloud-env
