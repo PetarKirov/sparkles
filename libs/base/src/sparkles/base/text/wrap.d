@@ -774,7 +774,87 @@ private struct CellMeasureContext
         count = bytes * 4 + 4;
         return WrapResult.init;
     }
+    /// Every atom is printable ASCII (a space included, a tab not): each one
+    /// is its own one-cell cluster, so a candidate's projection is a count.
+    bool plainAscii;
+
+    /// The projection `build` would realize for a plain ASCII candidate with
+    /// no indent or hyphen, counted instead of realized: one cell per
+    /// retained character, the whitespace policy deciding which spaces stay.
+    /// `written` stays zero; nothing reads the fragments without a target
+    /// measurer, and the fast path requires none.
+    void countPlain(size_t start, size_t end, ref RealizedCellProjection projection) @safe nothrow @nogc
+    {
+        const first = start < end ? clusters[start].atomStart : 0;
+        const last = start < end ? clusters[end - 1].atomEnd : first;
+        bool white(size_t index) => atoms[index].token.scalar == ' ';
+        size_t firstContent = last, lastContent = first;
+        foreach (a; first .. last)
+            if (!white(a)) { if (firstContent == last) firstContent = a; lastContent = a + 1; }
+        // `content` drops a whitespace run when the policy omits it; a
+        // collapsed run strictly inside the content emits one space.
+        size_t emittedFirst = size_t.max, emittedLast;
+        ulong cells;
+        for (size_t cursor = first; cursor < last;)
+        {
+            if (white(cursor) && (options.whitespace == WhitespaceMode.collapse
+                || options.whitespace == WhitespaceMode.trimAroundBreak
+                    && (cursor < firstContent || cursor >= lastContent)))
+            {
+                size_t runEnd = cursor + 1;
+                while (runEnd < last && white(runEnd)) ++runEnd;
+                if (cursor > firstContent && runEnd < lastContent)
+                {
+                    if (emittedFirst == size_t.max) emittedFirst = cursor;
+                    emittedLast = cursor;
+                    ++cells;
+                }
+                cursor = runEnd;
+                continue;
+            }
+            if (emittedFirst == size_t.max) emittedFirst = cursor;
+            emittedLast = cursor;
+            ++cells;
+            ++cursor;
+        }
+        projection = RealizedCellProjection.init;
+        projection.advance = cast(long) cells;
+        projection.bodyClusters = cells;
+        if (!cells) return;
+        projection.hasText = projection.hasSourceText = true;
+        projection.first = UtfToken(scalar: atoms[emittedFirst].token.scalar);
+        // An ASCII scalar ends every earlier cluster and starts no joining
+        // sequence, so the state after it does not depend on what preceded it.
+        projection.trailing.push(atoms[emittedLast].token.scalar);
+    }
+
     WrapResult build(size_t start, size_t end, WrapGeometry geometry, bool hyphen,
+        const(char)[] indent, ref RealizedCellProjection projection, size_t indentStyle = 0) @safe nothrow @nogc
+    {
+        if (plainAscii && !hyphen && !indent.length && options.selectionMeasure is null)
+        {
+            countPlain(start, end, projection);
+            debug
+            {
+                RealizedCellProjection realized;
+                auto r = buildRealized(start, end, geometry, hyphen, indent, realized, indentStyle);
+                assert(r.succeeded && realized.advance == projection.advance
+                    && realized.indentAdvance == projection.indentAdvance
+                    && realized.trailing.identity == projection.trailing.identity
+                    && realized.trailingOpaque == projection.trailingOpaque
+                    && realized.first.kind == projection.first.kind
+                    && realized.first.scalar == projection.first.scalar
+                    && realized.hasText == projection.hasText
+                    && realized.hasSourceText == projection.hasSourceText
+                    && realized.bodyClusters == projection.bodyClusters,
+                    "plain ASCII count disagrees with the realized projection");
+            }
+            return WrapResult.init;
+        }
+        return buildRealized(start, end, geometry, hyphen, indent, projection, indentStyle);
+    }
+
+    WrapResult buildRealized(size_t start, size_t end, WrapGeometry geometry, bool hyphen,
         const(char)[] indent, ref RealizedCellProjection projection, size_t indentStyle = 0) @safe nothrow @nogc
     {
         CellProjector builder = CellProjector(source, options, atoms, clusters, styles, raw, null);
@@ -1213,6 +1293,11 @@ WrapResult tryWrapCells(SourceSnapshot source, WrapOptions options, WrapLimits l
     context.monotoneContent = options.selectionMeasure is null || options.selectionMeasureMonotone;
     foreach (ref const cluster; context.clusters)
         if (cluster.softHyphen) { context.monotoneContent = false; break; }
+    context.plainAscii = true;
+    foreach (ref const atom; context.atoms)
+        if (atom.formatting || atom.token.kind != UtfTokenKind.scalar
+            || atom.token.scalar < ' ' || atom.token.scalar > '~')
+        { context.plainAscii = false; break; }
     WrapProvider provider = WrapProvider(exact: true, measure: &context.measure, geometry: &context.geometry);
     MeasurableInput input = MeasurableInput(source, scratch.primitives[0 .. clusters],
         scratch.endpoints[0 .. endpoints], scratch.sourceRecords[0 .. atoms], WrapDimension.cells);
