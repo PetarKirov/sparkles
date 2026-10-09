@@ -2047,3 +2047,80 @@ unittest
     check(-dur!"days"(2), 2, "in 2 days");             // negative → future
     check(-dur!"hours"(50), 2, "in 2 days and 2 hours");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deferred rendering
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+Holds `args` and renders them when a consumer calls `toString`, by forwarding
+to `write(writer, args)`.
+
+Use it where a value is required now and the output range arrives later, such
+as a `std.format` argument or an interpolated `writeText` segment: the writer
+renders straight into the consumer's sink. Where a `string` is genuinely
+needed — a data model that stores finished text — the argument-less
+`toString` materializes one. This replaces a `string X(…)` twin beside every
+`writeX(ref W, …)`. Attributes follow `write`.
+
+The arguments are stored by value and the writer sees them `const`, so it must
+take them by value, `in` or `const`.
+*/
+auto formatted(alias write, Args...)(Args args)
+{
+    static struct Formatted
+    {
+        Args stored;
+
+        void toString(Writer)(ref Writer writer) const
+        {
+            write(writer, stored);
+        }
+
+        /// The rendered text, as a new `string`.
+        string toString() const
+        {
+            import std.array : appender;
+
+            auto w = appender!string;
+            write(w, stored);
+            return w[];
+        }
+    }
+
+    return Formatted(args);
+}
+
+///
+@("formatted.forwardsWriterAndFormat")
+@safe pure
+unittest
+{
+    import std.conv : text;
+    import std.format : format;
+
+    import sparkles.base.buffer : UniqueBuffer;
+
+    UniqueBuffer!(char, 32) buf;
+    formatted!writeBytes(1024UL).toString(buf);
+    assert(buf[] == "1.0KiB");
+
+    buf.clear();
+    formatted!writeFixedPoint(160, 1).toString(buf);
+    assert(buf[] == "16.0", "multiple arguments reach the writer");
+
+    assert(format("%s", formatted!writeBytes(512UL)) == "512B");
+    assert(format("size %s", formatted!writeFixedPoint(15, 1)) == "size 1.5");
+
+    // A data model that stores finished text materializes it.
+    assert(formatted!writeBytes(2048UL).toString == "2.0KiB");
+    assert(text(i"took $(formatted!writeFixedPoint(25, 1))s") == "took 2.5s");
+}
+
+@("formatted.isAWriteTextSegment")
+@safe pure nothrow @nogc
+unittest
+{
+    // Rendered into the same sink as the text around it: no intermediate string.
+    checkWriter!((ref b) => b.writeText(i"size $(formatted!writeBytes(1024UL)) ok"))("size 1.0KiB ok");
+}
