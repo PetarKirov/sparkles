@@ -64,8 +64,8 @@ struct UringBackend
     capabilities on the real ring (one setup, not two).
 
     Linux hard-error semantics (SPEC §3.4): no epoll fallback — a host
-    without a working `io_uring` gets `IoError(stage: setup)`; a pre-6.1
-    kernel or a rejected exact mode gets `IoError(stage: probe)`.
+    without a working `io_uring` gets `ioError(stage: setup)`; a pre-6.1
+    kernel or a rejected exact mode gets `ioError(stage: probe)`.
     */
     IoResult!void open(in BackendConfig cfg) @safe nothrow @nogc
     {
@@ -631,7 +631,7 @@ private:
 version (unittest)
 {
     import sparkles.event_horizon.backend.concept : canSubmitOp, hasNativeWake, isCompletionBackend;
-    import sparkles.event_horizon.errors : skipReason;
+    import sparkles.event_horizon.errors : ioError, skipReason;
     import sparkles.event_horizon.op : OpClass;
     import sparkles.test_runner.skip : skipTest;
 

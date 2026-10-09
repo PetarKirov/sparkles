@@ -610,7 +610,7 @@ struct Sched
 
         auto submitted = _loop.submit(move(op), &onCqe, cast(void*) task);
         if (submitted.hasError)
-            return AwaitOutcome(-submitted.error.errnoValue);
+            return AwaitOutcome(-submitted.error.code);
 
         // Arm the one-shot in-flight cancel function (SPEC §8.4): it submits
         // ASYNC_CANCEL for this op; the single wake stays the terminal CQE.

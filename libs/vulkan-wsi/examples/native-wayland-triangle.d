@@ -565,5 +565,5 @@ private string describe(in VulkanWsiError error)
         ", ", describeResult(error.vkResult), "): ", error.diagnostic[]);
 
 private string describe(in IoError error)
-    => text(error.op, "/", error.stage, " errno=", error.errnoValue,
+    => text(error.op, "/", error.stage, " errno=", error.code,
         ": ", error.context);

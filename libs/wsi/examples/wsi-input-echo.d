@@ -362,7 +362,7 @@ private Expected!(void, string) echoLoop(Backend)(ref Backend wsi, ref DefaultLo
             auto ticked = loop.runHostedOnce(wsi, 250.msecs);
         if (ticked.hasError)
         {
-            error(i"loop error: $(ticked.error.context) (errno=$(ticked.error.errnoValue) stage=$(ticked.error.stage))");
+            error(i"loop error: $(ticked.error.context) (errno=$(ticked.error.code) stage=$(ticked.error.stage))");
             auto sticky = wsi.drain((WindowEvent _) @safe {});
             if (sticky.hasError)
                 error(i"backend diagnostic: $(sticky.error.diagnostic[]) (kind=$(sticky.error.kind) native=$(sticky.error.nativeCode))");

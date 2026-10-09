@@ -1978,7 +1978,7 @@ struct TerminalView
                 // such error also hands the drain back to the sync path:
                 // a dead pump with `ringPump` still set would freeze the
                 // terminal, and during teardown the flag no longer matters.
-                if (got.res.error.errnoValue != EIO)
+                if (got.res.error.code != EIO)
                 {
                     tv.ringPump = false;
                     h.wake();

@@ -174,7 +174,7 @@ version (Posix)
         UniqueBuffer!(ubyte, 8) bytes;
         bytes.length = 8;
         auto got = readExactly(input, move(bytes));
-        assert(got.res.hasError && got.res.error.errnoValue == EIO);
+        assert(got.res.hasError && got.res.error.code == EIO);
         assert(got.transferred == 5 && got.buf[][0 .. 5] == cast(const(ubyte)[]) "hello");
     });
     assert(!ran.hasError);
@@ -188,7 +188,7 @@ version (Posix)
     bytes = move(empty.buf);
     bytes.length = 8;
     auto overflow = writeAll(FileHandle(-1), move(bytes), ulong.max - 4);
-    assert(overflow.res.error.errnoValue == EOVERFLOW);
+    assert(overflow.res.error.code == EOVERFLOW);
     assert(overflow.transferred == 0 && overflow.buf.length == 8);
 }
 
@@ -215,7 +215,7 @@ version (Posix)
             UniqueBuffer!(ubyte, 8) bytes;
             bytes.length = 8;
             auto got = readExactly(input, move(bytes));
-            assert(got.res.hasError && got.res.error.errnoValue == ECANCELED);
+            assert(got.res.hasError && got.res.error.code == ECANCELED);
             assert(got.transferred == 0 && got.buf.length == 8);
         })(sched, 1.msecs);
         assert(timed.error.isTimeout);

@@ -74,7 +74,7 @@ import sparkles.event_horizon.blocking_pool : BlockingPool, sharedBlockingPool;
 import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
     InterruptKind, cancelTree, interruptFiber, interruptRequested;
 import sparkles.event_horizon.channel : Channel;
-import sparkles.event_horizon.errors : IoError, IoErrorStage, IoResult, OpKind,
+import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
 import sparkles.event_horizon.io : FileHandle, read, sleep, write;
 import sparkles.event_horizon.live : ChildProcess, observeExit, spawnProcess,
@@ -390,11 +390,11 @@ private void decideEnd(ref Run run, ProcessEnd which) @safe pure nothrow @nogc
 }
 
 private bool waitLostReapRight(in IoError error) @safe pure nothrow @nogc
-    => error.errnoValue == ECHILD;
+    => error.code == ECHILD;
 
 private bool transientProcessError(in IoError error) @safe pure nothrow @nogc
-    => error.errnoValue == EINTR || error.errnoValue == EAGAIN
-        || error.errnoValue == ENOBUFS;
+    => error.code == EINTR || error.code == EAGAIN
+        || error.code == ENOBUFS;
 
 private bool retryProcessError(in IoError error, uint attempts) @safe pure nothrow @nogc
     => transientProcessError(error) && attempts < 8;
@@ -417,14 +417,14 @@ private void combineKill(in KillOutcome pgid, in KillOutcome cgroup,
     if (bad(pgid))
     {
         degraded = true;
-        error = IoError(pgid.errnoValue, OpKind.none, IoErrorStage.submit,
+        error = ioError(pgid.errnoValue, OpKind.none, IoErrorStage.submit,
             "process-group SIGKILL failed");
         return;
     }
     if (cgroupOwned && bad(cgroup))
     {
         degraded = true;
-        error = IoError(cgroup.errnoValue, OpKind.none, IoErrorStage.submit,
+        error = ioError(cgroup.errnoValue, OpKind.none, IoErrorStage.submit,
             "cgroup.kill failed");
     }
 }
@@ -598,7 +598,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
             if (err != 0 && cfg.residualPolicy == ResidualPolicy.wait)
             {
                 run.residualDegraded = true;
-                run.residualError = IoError(err, OpKind.none, IoErrorStage.submit,
+                run.residualError = ioError(err, OpKind.none, IoErrorStage.submit,
                     "cgroup: migration into the run cgroup failed");
             }
         }
@@ -785,7 +785,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                         // has not latched the loop's protection yet.
                         auto killed = protect!(() => cgroupKill(*schedP, rp.pool, rp.cgroup))(*schedP);
                         rp.cgroupKillOutcome = killed.hasError
-                            ? KillOutcome(KillResult.failed, killed.error.errnoValue)
+                            ? KillOutcome(KillResult.failed, killed.error.code)
                             : KillOutcome(KillResult.delivered, 0);
                     }
                     combineKill(rp.pgidKill, rp.cgroupKillOutcome, rp.cgroupOwned,
@@ -914,7 +914,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                             if (rp.residualDegraded || !rp.migrated)
                             {
                                 fallbackEdge(rp.residualDegraded ? rp.residualError
-                                    : IoError(EOPNOTSUPP, OpKind.none, IoErrorStage.setup,
+                                    : ioError(EOPNOTSUPP, OpKind.none, IoErrorStage.setup,
                                         "the root never entered the run cgroup"));
                                 break;
                             }
@@ -1024,7 +1024,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                         stopEvidenceWorker();
                     }
                     if ((bits & Pending.evidenceFailed) && rp.tree == TreeState.waitPopulated)
-                        fallbackEdge(IoError(5 /* EIO */, OpKind.none, IoErrorStage.completion,
+                        fallbackEdge(ioError(5 /* EIO */, OpKind.none, IoErrorStage.completion,
                             "cgroup populated evidence unavailable"));
                     if (bits & Pending.sampleReady)
                     {
@@ -1336,7 +1336,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
                         rp.processGroup = -1;
                         return;
                     case ProbeKind.fatal:
-                        schedP.fatal(IoError(job.errnoValue, OpKind.waitid,
+                        schedP.fatal(ioError(job.errnoValue, OpKind.waitid,
                             IoErrorStage.completion, "root probe failed"));
                     case ProbeKind.pending:
                     case ProbeKind.retry:
@@ -1477,7 +1477,7 @@ package IoResult!SupervisedProcessResult superviseImpl(ref Sched s,
 
     // ── the shared post-join finalization, under protect ──────────────────
     if (admissionFailed)
-        admissionError = IoError(ENOBUFS, OpKind.none, IoErrorStage.submit,
+        admissionError = ioError(ENOBUFS, OpKind.none, IoErrorStage.submit,
             "supervision worker unavailable");
 
     auto ctx = s.currentContext();
@@ -1698,7 +1698,7 @@ private final class LaneObserverWorker
             auto ran = rp.pool.runMandatory(*s, &probeCall, &job);
             if (ran.hasError)
             {
-                if (ran.error.errnoValue == ECANCELED)
+                if (ran.error.code == ECANCELED)
                     return; // the owner ended the run
                 s.fatal(ran.error);
             }
@@ -1715,12 +1715,12 @@ private final class LaneObserverWorker
             case ProbeKind.lost:
                 rp.observer = RootObserverState.lost;
                 msg.kind = RelayKind.rootLost;
-                msg.error = IoError(ECHILD, OpKind.waitid, IoErrorStage.completion,
+                msg.error = ioError(ECHILD, OpKind.waitid, IoErrorStage.completion,
                     "root reaped elsewhere");
                 cast(void) rp.publish(*s, move(msg));
                 return;
             case ProbeKind.fatal:
-                s.fatal(IoError(job.errnoValue, OpKind.waitid,
+                s.fatal(ioError(job.errnoValue, OpKind.waitid,
                     IoErrorStage.completion, "root probe failed"));
             case ProbeKind.pending:
             case ProbeKind.retry:
@@ -1764,7 +1764,7 @@ private final class DrainWorker
             msg.stream = stream;
             if (got.res.hasError)
             {
-                if (got.res.error.errnoValue == ECANCELED)
+                if (got.res.error.code == ECANCELED)
                     return; // an owner interrupt: forced EOF or teardown
                 if (retryProcessError(got.res.error, retries++))
                 {
@@ -1990,7 +1990,7 @@ private final class EvidenceWorker
             auto ran = rp.pool.run(*s, &evidenceCall, &job);
             if (ran.hasError)
             {
-                if (ran.error.errnoValue != EAGAIN || ++refusals > 8)
+                if (ran.error.code != EAGAIN || ++refusals > 8)
                     break; // finite budget → the fallback edge
                 // An alarm-parked backoff: the owner's stop is a plain wake,
                 // which an in-ring sleep could not take.
@@ -2678,7 +2678,7 @@ unittest
             SupervisedProcessConfig(), null, log.sink());
         assert(got.hasValue);
         assert(got.value.end == ProcessEnd.spawnFailed);
-        assert(got.value.spawnError.errnoValue == 2 /* ENOENT */);
+        assert(got.value.spawnError.code == 2 /* ENOENT */);
         assert(log.events.length == 0, "no child, no exited event");
     });
     assert(!r.hasError);
@@ -2837,7 +2837,7 @@ unittest
         const before = MonoTime.currTime;
         auto got = supervise(s, ["sh", "-c", "sleep 30 & exit 0"], cfg);
         bounded = MonoTime.currTime - before < 2.seconds;
-        preservedEchild = got.hasError && got.error.errnoValue == 10;
+        preservedEchild = got.hasError && got.error.code == 10;
     });
     const restored = sigaction(SIGCHLD, &previous, null);
 
@@ -3007,7 +3007,7 @@ unittest
         cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
         auto got = supervise(s,
             ["sh", "-c", "echo out; echo err >&2; sleep 30"], cfg);
-        assert(got.hasError && got.error.errnoValue == ENOBUFS);
+        assert(got.hasError && got.error.code == ENOBUFS);
     });
     assert(!r.hasError);
     assert(MonoTime.currTime - before < 2.seconds,
@@ -3018,9 +3018,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    const transient = IoError(5, OpKind.waitid, IoErrorStage.completion);
-    const interrupted = IoError(4, OpKind.waitid, IoErrorStage.completion);
-    const noChild = IoError(10, OpKind.waitid, IoErrorStage.completion);
+    const transient = ioError(5, OpKind.waitid, IoErrorStage.completion);
+    const interrupted = ioError(4, OpKind.waitid, IoErrorStage.completion);
+    const noChild = ioError(10, OpKind.waitid, IoErrorStage.completion);
     assert(!waitLostReapRight(transient),
         "transient errors retain the reap right and must retry");
     assert(waitLostReapRight(noChild), "ECHILD is terminal but not success");
@@ -3042,9 +3042,9 @@ unittest
     assert(canPublishExited(ReapOutcome.lostToExternalReaper, true, true),
         "a lost reap right still publishes the terminal-child event");
 
-    const interrupted = IoError(4, OpKind.read, IoErrorStage.completion);
-    const again = IoError(11, OpKind.read, IoErrorStage.submit);
-    const badFd = IoError(9, OpKind.read, IoErrorStage.completion);
+    const interrupted = ioError(4, OpKind.read, IoErrorStage.completion);
+    const again = ioError(11, OpKind.read, IoErrorStage.submit);
+    const badFd = ioError(9, OpKind.read, IoErrorStage.completion);
     assert(transientProcessError(interrupted));
     assert(transientProcessError(again));
     assert(!transientProcessError(badFd),
@@ -3391,7 +3391,7 @@ unittest
         auto got = supervise(s, ["sh", "-c",
             `{ i=0; while [ $i -lt 150000 ]; do i=$((i+1)); done; sleep 0.2; } & exit 0`],
             cfg, null, log.sink());
-        assert(got.hasValue, got.hasError ? text(got.error.errnoValue, " ", got.error.context) : "");
+        assert(got.hasValue, got.hasError ? text(got.error.code, " ", got.error.context) : "");
 
         Duration lastUser, lastSystem;
         foreach (ev; log.events)
@@ -3465,15 +3465,15 @@ unittest
         SupervisedProcessConfig negative;
         negative.outputGrace = -1.msecs;
         auto a = supervise(s, ["true"], negative);
-        assert(a.hasError && a.error.errnoValue == EINVAL);
+        assert(a.hasError && a.error.code == EINVAL);
         SupervisedProcessConfig infinite;
         infinite.killDrainWindow = Duration.max;
         auto b = supervise(s, ["true"], infinite);
-        assert(b.hasError && b.error.errnoValue == EINVAL);
+        assert(b.hasError && b.error.code == EINVAL);
         SupervisedProcessConfig bad;
         bad.residualPolicy = cast(ResidualPolicy) 7;
         auto c = supervise(s, ["true"], bad);
-        assert(c.hasError && c.error.errnoValue == EINVAL);
+        assert(c.hasError && c.error.code == EINVAL);
     });
     assert(!r.hasError);
 }
@@ -3603,7 +3603,7 @@ unittest
             ["sh", "-c", "sleep 0.05; sleep 0.3 >/dev/null 2>&1 & exit 0"], cfg);
         if (got.hasError)
         {
-            assert(got.error.errnoValue == EOPNOTSUPP,
+            assert(got.error.code == EOPNOTSUPP,
                 "without an owned cgroup, wait is refused at negotiation");
             return;
         }
@@ -3634,11 +3634,11 @@ unittest
     combineKill(ok, none, false, degraded, error);
     assert(!degraded, "cgroup not owned is not a failure");
     combineKill(ok, failed, true, degraded, error);
-    assert(degraded && error.errnoValue == 1, "cgroup failure is degradation");
+    assert(degraded && error.code == 1, "cgroup failure is degradation");
     combineKill(failed, ok, true, degraded, error);
-    assert(degraded && error.errnoValue == 1, "pgid failure degrades even when cgroup.kill worked");
+    assert(degraded && error.code == 1, "pgid failure degrades even when cgroup.kill worked");
     combineKill(absent, none, false, degraded, error);
-    assert(degraded && error.errnoValue == ESRCH, "ESRCH under a pinned zombie is a failure");
+    assert(degraded && error.code == ESRCH, "ESRCH under a pinned zombie is a failure");
 }
 
 @("supervise.sampling.finalSampleBeforeReapSeesTheRootAndItsTier")
@@ -3801,7 +3801,7 @@ unittest
             ["sh", "-c", "sleep 0.05; sleep 5 >/dev/null 2>&1 & exit 0"], cfg);
         if (got.hasError)
         {
-            assert(got.error.errnoValue == EOPNOTSUPP);
+            assert(got.error.code == EOPNOTSUPP);
             return;
         }
         assert(got.value.end == ProcessEnd.timedOut, "the timeout overrode the wait");
@@ -3829,7 +3829,7 @@ unittest
         SupervisedProcessConfig cfg;
         cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
         auto got = supervise(s, ["sh", "-c", "echo out; echo err >&2; sleep 30"], cfg);
-        assert(got.hasError && got.error.errnoValue == ENOBUFS);
+        assert(got.hasError && got.error.code == ENOBUFS);
         assert(reapRightConsumed(testLastSupervisedPid), "the emergency phase reaped");
         // The scope's own admission sweep was consumed: the caller's next
         // cancellable operation is not poisoned.
@@ -3911,7 +3911,7 @@ unittest
         auto got = supervise(s, ["sleep", "30"], cfg);
         if (got.hasError)
         {
-            assert(got.error.errnoValue == EOPNOTSUPP);
+            assert(got.error.code == EOPNOTSUPP);
             return;
         }
         assert(got.value.end == ProcessEnd.timedOut);
@@ -3940,7 +3940,7 @@ unittest
         // The trap precedes "ready", and the injected failure waits for it.
         auto got = superviseImpl(s, ["sh", "-c", "trap '' TERM; echo ready; sleep 0.4"], cfg,
             null, null, null, null, EINVAL);
-        assert(got.hasError && got.error.errnoValue == EINVAL,
+        assert(got.hasError && got.error.code == EINVAL,
             "the observer's failure is the reported operation error");
         assert(reapRightConsumed(testLastSupervisedPid), "the root was reaped exactly once");
         const elapsed = MonoTime.currTime - before;
@@ -4134,7 +4134,7 @@ unittest
         cfg.process.stdinSpec = StdioSpec(StdioMode.nullDev);
         auto got = superviseImpl(s, ["sh", "-c", "trap '' TERM; echo ready; sleep 30"], cfg,
             null, null, null, null, EINVAL);
-        assert(got.hasError && got.error.errnoValue == ENOBUFS);
+        assert(got.hasError && got.error.code == ENOBUFS);
         assert(reapRightConsumed(testLastSupervisedPid), "the root was killed and reaped");
     });
     assert(!r.hasError);

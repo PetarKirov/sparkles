@@ -35,7 +35,7 @@ void main()
     auto run = group.run((ref RootScope sc, ref Env env) {
         ref Sched s = currentScheduler();
         auto missing = openFile(s, buildPath(dir, "missing"), O_RDONLY);
-        assert(missing.hasError && missing.error.errnoValue == ENOENT);
+        assert(missing.hasError && missing.error.code == ENOENT);
         auto opened = openFile(s, path, O_RDONLY);
         assert(opened.hasValue);
         auto f = move(opened.value);

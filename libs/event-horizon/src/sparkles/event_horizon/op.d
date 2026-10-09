@@ -222,7 +222,7 @@ struct OpFsync
 /// `struct statx` mirror, see `fs.Statx`).
 struct OpStatx
 {
-    enum kind = OpKind.statx;
+    enum kind = OpKind.statAt;
     int dirFd;
     const(char)* path;
     int flags;

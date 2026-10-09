@@ -269,7 +269,7 @@ unittest
 
         assert(!ch.tryPut(3), "put after close is refused");
         auto p = ch.put(sched, 3);
-        assert(p.hasError && p.error.errnoValue == EPIPE);
+        assert(p.hasError && p.error.code == EPIPE);
 
         // Buffered items survive the close; only then EPIPE.
         auto a = ch.take(sched);
@@ -277,7 +277,7 @@ unittest
         assert(a.hasValue && a.value == 1);
         assert(b.hasValue && b.value == 2);
         auto end = ch.take(sched);
-        sawDrainThenClose = end.hasError && end.error.errnoValue == EPIPE;
+        sawDrainThenClose = end.hasError && end.error.code == EPIPE;
     });
     assert(sawDrainThenClose);
 }
@@ -295,7 +295,7 @@ unittest
     sched.run(() {
         cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
             auto r = ch.take(sched); // parks: nothing buffered
-            takerEnded = r.hasError && r.error.errnoValue == EPIPE;
+            takerEnded = r.hasError && r.error.code == EPIPE;
         });
         cast(void) sched.spawnFiber(null, SpawnOptions.init, () {
             ch.close(); // wakes the parked taker

@@ -20,11 +20,11 @@ import sparkles.event_horizon.backend.concept : canSubmitOp;
 import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.capability : CtxOf;
 import sparkles.event_horizon.cause : Cause;
-import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr, ioOk;
+import sparkles.event_horizon.errors : ioError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 import sparkles.event_horizon.io : FileHandle, Listener, Stream, accept, connect;
 import sparkles.event_horizon.net : SockAddr;
 import sparkles.event_horizon.op : OpWaitid, OpOpenAt;
-import sparkles.event_horizon.errors : IoError;
+import sparkles.event_horizon.errors : ioError, IoError;
 import sparkles.event_horizon.proc : EnvironmentChange, ExitStatus,
     ProcessConfig, StdioMode, StdioSpec;
 import sparkles.event_horizon.sched : Sched;
@@ -1019,7 +1019,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
             // Only ECHILD proves the reap right is gone; anything else
             // (a cancellation landing on the reap itself) leaves the child
             // ours to end and consume.
-            if (st.error.errnoValue != ECHILD)
+            if (st.error.code != ECHILD)
                 killAndReapProtected(s, child);
             return ioErr!CapturedOutput(st.error);
         }
@@ -1047,7 +1047,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
 
         return cause.kind == Cause!IoError.Kind.fail
             ? cause.failure
-            : IoError(ECANCELED, OpKind.none, IoErrorStage.completion,
+            : ioError(ECANCELED, OpKind.none, IoErrorStage.completion,
                 "capture scope interrupted");
     }
 
@@ -1070,7 +1070,7 @@ static if (canSubmitOp!(DefaultBackend, OpWaitid))
         protect!(() {
             cast(void) childP.kill(SIGKILL);
             auto reaped = waitPidOnLane(*sP, childP.pid);
-            if (!reaped.hasError || reaped.error.errnoValue == ECHILD)
+            if (!reaped.hasError || reaped.error.code == ECHILD)
                 childP.pid = -1;
             return 0;
         })(s);
@@ -1389,7 +1389,7 @@ version (unittest)
             buf = move(got.buf);
             if (got.res.hasError)
             {
-                assert(got.res.error.errnoValue == 5 /* EIO: pty master EOF */,
+                assert(got.res.error.code == 5 /* EIO: pty master EOF */,
                     "unexpected read error");
                 break;
             }
@@ -1639,7 +1639,7 @@ unittest
         // reads: the failed read must end it, not pose as EOF.
         const started = MonoTime.currTime;
         auto got = capture(s, ["sh", "-c", "while :; do echo chatter; done"]);
-        assert(got.hasError && got.error.errnoValue == EIO,
+        assert(got.hasError && got.error.code == EIO,
             "the read error is reported, not truncated output");
         assert(MonoTime.currTime - started < 10.seconds);
         assert(reapRightConsumed(testLastCapturePid), "no zombie");
@@ -1665,7 +1665,7 @@ unittest
         bool sawCancel;
         auto outcome = withDeadline!((ref sc) {
             auto got = capture(s, ["sleep", "30"]);
-            sawCancel = got.hasError && got.error.errnoValue == ECANCELED;
+            sawCancel = got.hasError && got.error.code == ECANCELED;
             pid = testLastCapturePid;
             // The interrupt is delivered here, after the reap.
             return 0;
@@ -1698,7 +1698,7 @@ unittest
         ProcessConfig cfg;
         cfg.stderrSpec = StdioSpec(StdioMode.pipe);
         auto got = capture(s, ["sh", "-c", "while :; do echo chatter; done"], cfg);
-        assert(got.hasError && got.error.errnoValue == ENOBUFS,
+        assert(got.hasError && got.error.code == ENOBUFS,
             "the admission failure is the reported error");
         assert(reapRightConsumed(testLastCapturePid), "no zombie");
     });
@@ -1717,7 +1717,7 @@ unittest
         cfg.stdoutSpec = StdioSpec(StdioMode.mergeStdout);
         auto spawned = spawnProcess(["true"], cfg);
         assert(spawned.hasError, "mergeStdout on stdout must be rejected");
-        assert(spawned.error.errnoValue == 22 /* EINVAL */);
+        assert(spawned.error.code == 22 /* EINVAL */);
     });
     assert(!r.hasError);
 }
@@ -1744,7 +1744,7 @@ unittest
         assert(!st.value.ok);
 
         auto again = child.kill();
-        assert(again.hasError && again.error.errnoValue == 3 /* ESRCH */,
+        assert(again.hasError && again.error.code == 3 /* ESRCH */,
             "kill after reap is refused by the handle");
     });
     assert(!r.hasError);
@@ -1767,7 +1767,7 @@ unittest
         auto status = wait(s, child);
         assert(status.hasValue && status.value.ok);
         auto killed = child.killGroup();
-        assert(killed.hasError && killed.error.errnoValue == 3 /* ESRCH */,
+        assert(killed.hasError && killed.error.code == 3 /* ESRCH */,
             "a reaped low-level handle never signals a reusable PGID");
     });
     assert(!r.hasError);
@@ -1920,7 +1920,7 @@ unittest
         cfg.envOverlay = edits;
         const bad = effectiveEnvironment(cfg);
         assert(bad.hasError);
-        assert(bad.error.errnoValue == 22 /* EINVAL */);
+        assert(bad.error.code == 22 /* EINVAL */);
         assert(bad.error.stage == IoErrorStage.submit,
             "a pre-spawn rejection is a submit-stage failure");
     }
@@ -1936,7 +1936,7 @@ unittest
         ProcessConfig replacement;
         replacement.env = [entry];
         const bad = effectiveEnvironment(replacement);
-        assert(bad.hasError && bad.error.errnoValue == 22,
+        assert(bad.hasError && bad.error.code == 22,
             "malformed replacement entries fail before spawn");
     }
 
@@ -1944,7 +1944,7 @@ unittest
     ProcessConfig cfg;
     cfg.envOverlay = [EnvironmentChange("bad=name", "v", false)];
     const refused = spawnProcess(["true"], cfg);
-    assert(refused.hasError && refused.error.errnoValue == 22);
+    assert(refused.hasError && refused.error.code == 22);
 }
 
 @("live.spawn.rejectsNulInArgvAndCwdBeforeChild")
@@ -1953,11 +1953,11 @@ unittest
 {
     ProcessConfig cfg;
     auto badArg = spawnProcess(["true", "bad\0tail"], cfg);
-    assert(badArg.hasError && badArg.error.errnoValue == 22);
+    assert(badArg.hasError && badArg.error.code == 22);
 
     cfg.cwd = "/tmp\0ignored";
     auto badCwd = spawnProcess(["true"], cfg);
-    assert(badCwd.hasError && badCwd.error.errnoValue == 22);
+    assert(badCwd.hasError && badCwd.error.code == 22);
 
     cfg.cwd = "";
     auto emptyCwd = validateSpawnStrings(["true"], cfg.cwd);
@@ -2131,7 +2131,7 @@ unittest
         ProcessConfig excluded;
         excluded.env = cast(const(char[])[]) ["PATH=/definitely/not/here"];
         auto missing = capture(s, ["sh", "-c", "exit 0"], excluded);
-        assert(missing.hasError && missing.error.errnoValue == 2,
+        assert(missing.hasError && missing.error.code == 2,
             "a custom PATH miss must not retry through the parent PATH");
 
         // The cwd contains an executable with this bare name, but PATH does
@@ -2141,7 +2141,7 @@ unittest
         cwdExcluded.env = cast(const(char[])[]) ["PATH=/definitely/not/here"];
         cwdExcluded.cwd = root;
         auto cwdMiss = capture(s, ["emptyprobe"], cwdExcluded);
-        assert(cwdMiss.hasError && cwdMiss.error.errnoValue == 2,
+        assert(cwdMiss.hasError && cwdMiss.error.code == 2,
             "a PATH miss is ENOENT with no child left behind, even when cwd matches");
 
         ProcessConfig relative;
@@ -2205,9 +2205,9 @@ unittest
         sticky.env = cast(const(char[])[])(
             ["PATH=" ~ unexec ~ ":/definitely/not/here"]);
         auto denied = capture(s, ["ehprobe"], sticky);
-        assert(denied.hasError && denied.error.errnoValue == EACCES,
+        assert(denied.hasError && denied.error.code == EACCES,
             denied.hasError
-                ? text("unexecutable PATH match: errno=", denied.error.errnoValue,
+                ? text("unexecutable PATH match: errno=", denied.error.code,
                     " ", denied.error.context)
                 : "spawned the nonexecutable fixture");
 
@@ -2216,7 +2216,7 @@ unittest
         later.env = cast(const(char[])[])(["PATH=" ~ unexec ~ ":" ~ exec]);
         auto found = capture(s, ["ehprobe"], later);
         assert(found.hasValue, found.hasError
-            ? text("later executable PATH match: errno=", found.error.errnoValue,
+            ? text("later executable PATH match: errno=", found.error.code,
                 " ", found.error.context, " candidate=", execProbe)
             : "");
         assert(found.value.stdout_[] == cast(const(ubyte)[]) "right");
@@ -2225,17 +2225,17 @@ unittest
         ProcessConfig none;
         none.env = cast(const(char[])[]) ["PATH=/definitely/not/here"];
         auto missing = capture(s, ["ehprobe"], none);
-        assert(missing.hasError && missing.error.errnoValue == ENOENT);
+        assert(missing.hasError && missing.error.code == ENOENT);
 
         // No /bin/sh retry: an unrecognised format is ENOEXEC, in a custom
         // and in the inherited environment alike.
         ProcessConfig unrecognised;
         unrecognised.env = cast(const(char[])[])(["PATH=" ~ garbage]);
         auto format = capture(s, ["ehprobe"], unrecognised);
-        assert(format.hasError && format.error.errnoValue == ENOEXEC,
+        assert(format.hasError && format.error.code == ENOEXEC,
             format.hasError ? format.error.context : "spawned garbage");
         auto direct = capture(s, [buildPath(garbage, "ehprobe")]);
-        assert(direct.hasError && direct.error.errnoValue == ENOEXEC,
+        assert(direct.hasError && direct.error.code == ENOEXEC,
             "a name with a slash is spawned as spelled, still without a shell");
     });
     assert(!r.hasError);

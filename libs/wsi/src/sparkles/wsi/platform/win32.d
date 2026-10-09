@@ -324,7 +324,7 @@ struct Win32Wsi
         if (progressed.hasError)
             remember(wsiError(WsiErrorKind.nativeFailure,
                 WsiOperation.dispatch, BackendKind.win32,
-                progressed.error.errnoValue,
+                progressed.error.code,
                 "Event Horizon drain failed inside a modal loop"));
     }
 

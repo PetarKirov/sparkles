@@ -50,7 +50,7 @@ import core.time : Duration, MonoTime, msecs;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.event_horizon.blocking_pool : BlockingPool;
-import sparkles.event_horizon.errors : IoError, IoErrorStage, IoResult, OpKind,
+import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
 import sparkles.event_horizon.sched : Sched;
 
@@ -169,8 +169,8 @@ package void createRun(ref CgroupRun run, uint runId,
     static void degrade(ref CgroupRun run, int err, string why) nothrow @nogc
     {
         run.tier = CgroupTier.none;
-        if (run.degradedBy.errnoValue == 0 && run.degradedBy.context is null)
-            run.degradedBy = IoError(err, OpKind.none, IoErrorStage.setup, why);
+        if (run.degradedBy.code == 0 && run.degradedBy.context is null)
+            run.degradedBy = ioError(err, OpKind.none, IoErrorStage.setup, why);
     }
 
     SharedBuffer!(char, 256) own;
@@ -535,7 +535,7 @@ package IoResult!void cgroupCreate(ref Sched s, BlockingPool* pool,
     CreateJob job = {run: &run, runId: runId,
         injectControlOpenFailure: injectControlOpenFailure};
     auto r = pool.run(s, &createCall, &job);
-    if (r.hasError && r.error.errnoValue == EAGAIN)
+    if (r.hasError && r.error.code == EAGAIN)
     {
         run.tier = CgroupTier.none;
         run.degradedBy = r.error;
@@ -857,7 +857,7 @@ unittest
             skipTest("no owned cgroup v2 directory on this host");
         assert(run.tier == CgroupTier.none && !run.canKill,
             "the failed control opens lowered the tier");
-        assert(run.degradedBy.errnoValue == 5);
+        assert(run.degradedBy.code == 5);
         assert(runDirExists(run), "…but the directory is ours");
         auto cleaned = cgroupCleanup(s, pool.value, run, 100.msecs);
         assert(!cleaned.hasError && !cleaned.value);

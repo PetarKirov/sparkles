@@ -20,7 +20,7 @@ import std.typecons : Flag, No, Yes;
 import sparkles.base.hw_caps : hwParallelism, nthAllowedCpu;
 import sparkles.event_horizon.cause : Cause, Interrupt, InterruptKind, Outcome,
     outcomeErr, outcomeOk;
-import sparkles.event_horizon.errors : IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
+import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 import sparkles.event_horizon.live : Env, liveEnv;
 import sparkles.event_horizon.sched : Sched, SchedOptions;
 import sparkles.event_horizon.scope_ : Scope, ScopeOptions, withScope;
@@ -142,7 +142,7 @@ struct LoopGroup
             if (!root._failed && context.interrupted)
                 root.fail(Cause!IoError.fromInterrupt(context.pendingInterrupt));
             if (body.hasError && !(context.interrupted
-                && body.error.errnoValue == ECANCELED))
+                && body.error.code == ECANCELED))
                 root.fail(Cause!IoError.fromFailure(body.error));
             else if (!body.hasError)
             {
@@ -415,7 +415,7 @@ auto runApplication(F)(scope F main)
     assert(owned.value[] == [7]);
     auto failure = group.runResult((ref RootScope root, ref Env env) => ioErr!int(EIO, OpKind.none));
     assert(failure.error.kind == Cause!IoError.Kind.fail);
-    assert(failure.error.failure.errnoValue == EIO);
+    assert(failure.error.failure.code == EIO);
 }
 
 @("group.runResult.interruptionAndDefect") @system unittest
@@ -458,17 +458,17 @@ auto runApplication(F)(scope F main)
     bool cleaned;
     auto result = group.runResult((ref RootScope root, ref Env env) {
         root.onExit(() nothrow { cleaned = true; });
-        root.fail(Cause!IoError.fromFailure(IoError(EINVAL)));
+        root.fail(Cause!IoError.fromFailure(ioError(EINVAL)));
         return ioErr!int(EIO, OpKind.none);
     });
     assert(cleaned);
-    assert(result.error.failure.errnoValue == EINVAL);
+    assert(result.error.failure.code == EINVAL);
     assert(result.error.suppressedCount == 1);
 }
 
 version (unittest)
 {
-    import sparkles.event_horizon.errors : skipReason;
+    import sparkles.event_horizon.errors : ioError, skipReason;
     import sparkles.event_horizon.sched : schedOrSkip;
     import sparkles.test_runner.skip : skipTest;
 

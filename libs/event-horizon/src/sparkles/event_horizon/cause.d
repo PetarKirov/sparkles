@@ -12,7 +12,7 @@ import core.time : MonoTime;
 
 import expected : Expected, err, ok;
 
-import sparkles.event_horizon.errors : IoError, NoGcHook;
+import sparkles.event_horizon.errors : ioError, IoError, NoGcHook;
 
 /// Why an interrupt was delivered.
 enum InterruptKind : ubyte
@@ -316,9 +316,9 @@ bool interruptRequested(in FiberContext f) @safe pure nothrow @nogc
 @safe pure nothrow @nogc
 unittest
 {
-    auto f = Cause!IoError.fromFailure(IoError(11));
+    auto f = Cause!IoError.fromFailure(ioError(11));
     assert(f.kind == Cause!IoError.Kind.fail);
-    assert(f.failure.errnoValue == 11);
+    assert(f.failure.code == 11);
     assert(!f.isTimeout);
 
     auto i = Cause!IoError.fromInterrupt(Interrupt(InterruptKind.deadline));
@@ -330,8 +330,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.event_horizon.errors : IoResult, ioErr, ioOk;
-    import sparkles.event_horizon.errors : OpKind;
+    import sparkles.event_horizon.errors : ioError, IoResult, ioErr, ioOk;
+    import sparkles.event_horizon.errors : ioError, OpKind;
 
     auto good = widen(ioOk(7));
     assert(!good.hasError && good.value == 7);
@@ -339,7 +339,7 @@ unittest
     auto bad = widen(ioErr!int(104, OpKind.recv));
     assert(bad.hasError);
     assert(bad.error.kind == Cause!IoError.Kind.fail);
-    assert(bad.error.failure.errnoValue == 104);
+    assert(bad.error.failure.code == 104);
 }
 
 @("cause.cancelTree.oneShotAndProtect")

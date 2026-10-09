@@ -124,7 +124,9 @@ static if (conceptHasKevent)
 
 version (linux)
 {
-    private extern (C) int syscall(int sysno, ...) nothrow @nogc;
+    // druntime's declaration, not a private one: a whole-program build that also
+    // compiles event-horizon-sys sees both, and one C symbol cannot have two types.
+    import core.sys.linux.unistd : syscall;
 }
 
 /**

@@ -200,7 +200,7 @@ unittest
     assert(fst.hasValue && !fst.value.ok && fst.value.code == 1);
 
     auto missing = proc.spawn(["not-scripted"]);
-    assert(missing.hasError && missing.error.errnoValue == 2);
+    assert(missing.hasError && missing.error.code == 2);
 }
 
 @("proc.ExitStatus.okSemantics")
