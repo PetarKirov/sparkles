@@ -22,6 +22,35 @@ starts. A negative answer changes the specification first.
 | S3    | Does `-preview=dip1000` stop a `DirRef` from outliving its `Dir`?                                                                      | the compile-fail case from oracle 5, against a move-only owner like `sparkles.base.unique`                                              | the escape does not compile: keep `VFH2` as written. It compiles: `VFH2` becomes a documented rule plus a runtime check in debug builds                                  | M1             |
 | S4    | Can rights be a compile-time flag set with readable errors, including the sharing tags?                                                | `Dir!(V, Rights.readOnly).removeTree`, `attenuate!(Rights.all)`, and `Shared()` without `createShared`, reading the compiler's messages | the messages name the missing right: proceed. Otherwise add a `static assert` with a message per operation                                                               | M1             |
 
+### Results
+
+Both M1 spikes ran on DMD 2.112.1 and LDC 1.42.0 with `-preview=dip1000
+-preview=in`, against probes that model the handle types.
+
+- **S3: positive; `VFH2` stands.** With `borrow()` declared `return` on the
+  owner and every `DirRef` member declared `scope`, all four escapes fail to
+  compile on both compilers: returning a borrow of a local, assigning one to
+  a global, assigning one to a variable in an enclosing scope, and returning
+  one from a non-`return` `ref` parameter. Using a borrow locally, passing it
+  down as a `scope` parameter, and returning one from a `return ref`
+  parameter all compile. Moving the owner while a borrow is alive is not
+  caught, but the borrow then sees the moved-from owner's closed handle, so
+  an operation through it fails rather than touching freed memory.
+- **S1: positive; the macOS row of `VFN5` stands.** On macOS 27.0.1 arm64,
+  `openat` with `O_NOFOLLOW_ANY` refuses a symlinked intermediate and a
+  symlinked final component with `ELOOP`, and does not confine `..`, which
+  is why the row needs `dotDot = reject`. The same machine showed that
+  `O_SEARCH` opens a directory with mode `0111` where `O_RDONLY` fails with
+  `EACCES`, which settled O5 (DV28).
+- **S4: positive, with messages from `static assert`.** A template constraint
+  per operation rejects every missing right on both compilers, and quotes
+  the failed constraint (`R & Rights.remove`) rather than naming the right.
+  A combined rights value prints as `cast(Rights)33u`. A `static assert` per
+  operation instead reports, for example, "removeTree needs Rights.remove;
+  this handle has Rights.readOnly". `__traits(compiles, …)` is false either
+  way, so oracle 5 works with both. M1 uses the `static assert` form, with a
+  compile-time formatter that lists a combined value's members.
+
 The io_uring opcodes `VFB5` needs (`openat2`, `statx`, `mkdirat`, `unlinkat`,
 `renameat`, `symlinkat`) are all exposed by the `during` binding the
 repository pins; no spike is needed for them. `during` has no
@@ -43,9 +72,9 @@ independent-review item stays unmet until a second reviewer reads it.
 ## M1: base vocabulary, algorithms and MemVfs
 
 **Obligations.** `VFE1` (the base types), `VFE2`, `VFE4`; `VFP1`–`VFP8`;
-`VFR1`, `VFR2`, `VFR4` (with a backend double); `VFO1`–`VFO9` on `MemVfs`;
+`VFR2`, `VFR4` (with a backend double); `VFO1`–`VFO10` on `MemVfs`;
 `VFH1`–`VFH6`; `VFD1`–`VFD5`; `VFB1`–`VFB3`; `VFM1`–`VFM5`.
-**Prerequisites.** S3, S4. Decide open question O1.
+**Prerequisites.** S3, S4 (both passed).
 **Deliverable.** `sparkles.base.io.errors`; `sparkles.base.vfs` and its
 `.walk`, `.remove`, `.write` and `.mem` modules, with unit tests in feature
 modules, not `package.d`.
@@ -57,16 +86,21 @@ dub test :base -- -i "vfs|io.errors"
 
 Oracles 1 (the `MemVfs` columns), 2, 5 and the allocation check pass on the
 Linux, macOS and Windows legs; the run reports a non-zero count of discovered
-`vfs` tests.
+`vfs` tests. On Linux the allocation audit also passes:
+
+```bash
+dub test :base -c allocation-audit -- -i "vfs.allocation"
+```
+
 **Excludes.** Native backends. Event-horizon keeps its own `IoError` until M3,
 so this milestone adds `sparkles.base.io.errors` beside it.
 
 ## M2: the blocking backend
 
-**Obligations.** `VFE3`; `VFR3`, `VFR5`, `VFR6`; `VFH7`, `VFH8`;
-`VFN1`–`VFN13`; `VFB4`, `VFB6`; `VFO1`–`VFO9` and `VFD1`–`VFD5` on
+**Obligations.** `VFE3`; `VFR1`, `VFR3`, `VFR5`, `VFR6`; `VFH7`, `VFH8`;
+`VFN1`–`VFN14`; `VFB4`, `VFB6`; `VFO1`–`VFO10` and `VFD1`–`VFD5` on
 `BlockingVfs`.
-**Prerequisites.** M1; S1; S2. Decide open question O2.
+**Prerequisites.** M1; S1 (passed); S2.
 **Deliverable.** The `sparkles:event-horizon-sys` package with `BlockingVfs`
 for Linux, macOS, Windows and a generic POSIX arm; the test-only switches for
 forcing the component walk and forcing probe absence.
@@ -161,5 +195,6 @@ finds no normative text duplicating this one.
 
 | Milestone | State                                                    | Pull request |
 | --------- | -------------------------------------------------------- | ------------ |
-| M0        | delivered; reshaped for readers and for creation sharing | #535, —      |
-| M1–M5     | not started                                              | —            |
+| M0        | delivered; reshaped for readers and for creation sharing | #535, #594   |
+| M1        | in review                                                | —            |
+| M2–M5     | not started                                              | —            |

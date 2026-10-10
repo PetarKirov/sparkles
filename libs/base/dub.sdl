@@ -41,6 +41,22 @@ configuration "unittest" {
     lflags "--export-dynamic" platform="linux-ldc"
 }
 
+// Linux allocation audit for the capability VFS (testing.md § allocation): the
+// audit module wraps the libc allocation family and compares druntime's
+// per-thread GC counter around the VFS operations. Separate, so GNU ld's --wrap
+// is never imposed on library consumers.
+configuration "allocation-audit" {
+    targetType "library"
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    versions "VfsAllocationAudit"
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+    lflags "--wrap=malloc" "--wrap=calloc" "--wrap=realloc" platform="linux"
+}
+
 // Real numbers need release codegen: dub's stock `unittest` build type is a
 // debug build (the runner prints an assert-build warning under --bench), so
 // benchmarks run via `dub test :base -b bench -- --bench …`. `unittests` is

@@ -140,7 +140,7 @@ IoResult!void publishReport(BlockingVfs* vfs, in char[] outDir, in char[] text)
     // A helper gets a narrowed handle: it may look up, list, stat and read.
     // Calling view.removeTree("x") would not compile.
     auto view = dir.value.attenuate!(Rights.readOnly);
-    auto file = view.openFile("summary.txt", OpenMode.read);
+    auto file = view.openFile!(OpenMode.read)("summary.txt");
     if (file.hasError && file.error.kind == ErrorKind.symlinkRefused)
         return ioErr!void(file.error); // replaced by a link since the write
     return ioOk();
@@ -240,9 +240,15 @@ type states which operations. Each requirement's check is listed in
 <a id="vfh1-owning-handles"></a>
 **VFH1: Owning handles.** `Dir!(V, R)` and `File!(V, R)` **must** hold a
 `V.Handle` and a pointer to the backend instance `V`, be move-only
-(`@disable this(this)`) and not default-constructible, and close their handle
-exactly once: in `close()` if it is called, otherwise in the destructor.
-`close()` **must** return a close failure; the destructor drops it.
+(`@disable this(this)`), and close their handle exactly once: in `close()` if
+it is called, otherwise in the destructor. `close()` **must** return a close
+failure; the destructor drops it. A default-initialized handle is empty:
+every operation on it **must** fail with `other` and the context
+`"empty handle"`, and closing it does nothing.
+
+_Rationale:_ The `expected` library cannot hold a payload without a default
+constructor, and every operation returns its handle in an `IoResult`
+([DV24](./decisions.md#dv24-empty-handles-instead-of-no-default-constructor)).
 
 <a id="vfh2-borrowed-handles"></a>
 **VFH2: Borrowed handles.** `DirRef!(V, R)` and `FileRef!(V, R)` borrow an
@@ -338,11 +344,11 @@ optional argument of [`VFO5`](#vfo5-sharing-of-created-entries); passing
 | Operation                               | Right(s)                                            | Result                                                       |
 | --------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------ |
 | `openDir(name)`                         | `lookup`                                            | a child `Dir` with the same rights                           |
-| `openFile(name, mode, sharing)`         | `read` and/or `write`; `create` for a creating mode | a `File`                                                     |
+| `openFile!mode(name, sharing)`          | `read` and/or `write`; `create` for a creating mode | a `File`                                                     |
 | `mkdirAt(name, sharing)`                | `create`                                            | nothing; `exists` if present                                 |
 | `statAt(name, mask)`                    | `stat`                                              | a `Stat` of the entry itself                                 |
 | `readlinkAt(name, buffer)`              | `stat`                                              | the target bytes, as a slice of `buffer`                     |
-| `symlinkAt(name, target)`               | `create`                                            | nothing; `target` stored verbatim                            |
+| `symlinkAt(name, target)`               | `create`                                            | nothing; see [`VFO10`](#vfo10-symbolic-link-targets)         |
 | `unlinkAt(name)`                        | `remove`                                            | nothing; `isADirectory` for a directory                      |
 | `rmdirAt(name)`                         | `remove`                                            | nothing; `notEmpty` if it has entries                        |
 | `renameAt(name, dst, dstName)`          | `rename` on both                                    | nothing; replaces a non-directory target                     |
@@ -356,8 +362,10 @@ A `File` **must** provide `read(buffer)`, `write(bytes)`, `stat(mask)`,
 `sync()` and `close()`, gated by the rights it was opened with.
 
 <a id="vfo4-open-modes"></a>
-**VFO4: Open modes.** `openFile` **must** accept `read`, `write`, `readWrite`
-or `append` access, combined with `existing` (fail with `notFound` if
+**VFO4: Open modes.** `openFile` **must** take its mode as a template
+argument, so the rights the mode needs are checked at compile time
+([`VFH6`](#vfh6-rights-are-checked-at-compile-time)). A mode combines `read`,
+`write`, `readWrite` or `append` access combined with `existing` (fail with `notFound` if
 absent), `createNew` (fail with `exists` if present) or `createOrTruncate`. A
 creating mode **may** add `executable`, which marks the created file
 executable for everyone its sharing admits.
@@ -422,6 +430,20 @@ either the complete old content or the complete new content. The replacement
 does not take the replaced file's permissions; a caller who wants them reads
 them with `statAt` and passes them as `PosixMode`.
 
+<a id="vfo10-symbolic-link-targets"></a>
+**VFO10: Symbolic link targets.** `symlinkAt` **must** fail with `escapesRoot`,
+before any backend call, if `target` is absolute by the rules of
+[`VFP3`](#vfp3-path-syntax): it begins with `/`, or on Windows with `\`, a
+drive letter, a UNC prefix or an NT prefix. It **must** fail with
+`invalidName` if `target` is empty or contains NUL. Any other target is stored
+verbatim, including one whose `..` components climb above the root.
+
+_Rationale:_ No walk through this interface can follow an absolute target
+([`VFP5`](#vfp5-beneath)), so such a link only ever misleads other tools, as
+cap-std also judges. A relative target's escape depends on where the link
+ends up, which renames can change, so it is not checked
+([DV23](./decisions.md#dv23-symbolic-link-targets)).
+
 ## 7. Paths and resolution policy (`VFP`)
 
 `walk` and `walkAll` are the only operations that take a path. A root's
@@ -469,7 +491,8 @@ continue by splicing the link's target into the remaining path, resolved
 relative to the directory holding the link. An absolute target, or a target
 whose `..` climbs above the root, fails with `escapesRoot`. A walk that
 follows more links than the [symlink hop limit](#_11-limits) fails with
-`symlinkLoop`. A `..` inside a link target is always resolved in scope,
+`symlinkLoop`. A walk whose remaining path, with a target spliced in, exceeds
+the [spliced path limit](#_11-limits) fails with `nameTooLong`. A `..` inside a link target is always resolved in scope,
 whatever `dotDot` says.
 
 _Rationale:_ The kernel's `RESOLVE_BENEATH` resolves `..` in targets the same
@@ -580,7 +603,9 @@ every policy.
 **VFD3: Listing until empty.** `removeTree` **must** list each directory
 through its own handle ([`VFO7`](#vfo7-listing)) and list it again until a
 listing yields no entries, because removing entries during a listing can make
-the listing skip some.
+the listing skip some. When removing an emptied directory finds new entries in
+it, `removeTree` lists it again, up to the [re-listing limit](#_11-limits),
+and then fails with `notEmpty`.
 
 <a id="vfd4-vanished-entries"></a>
 **VFD4: Vanished entries.** An entry that is gone when `removeTree` removes or
@@ -631,7 +656,7 @@ event-horizon's specification defines.
 | `notEmpty`           | a directory removal found entries                                                                                 |
 | `permission`         | the operating system denied access                                                                                |
 | `busy`               | the entry is in use in a way that blocks the operation                                                            |
-| `invalidName`        | a name failed [`VFO1`](#vfo1-names)                                                                               |
+| `invalidName`        | a name failed [`VFO1`](#vfo1-names), or a link target failed [`VFO10`](#vfo10-symbolic-link-targets)              |
 | `escapesRoot`        | the operation would leave the root: an absolute path, an absolute symbolic-link target, or a climb above the root |
 | `dotDotRefused`      | a `..` component under the `reject` policy                                                                        |
 | `symlinkRefused`     | a symbolic link or name-surrogate reparse point where the policy forbids one                                      |
@@ -667,6 +692,8 @@ errno so callers need one error model
 | Walk depth             | 64 entered directories, shared with the `..` handle stack  | `depthExceeded`      |
 | Removal depth          | 64 directories                                             | `depthExceeded`      |
 | Symlink hops           | 40 per walk                                                | `symlinkLoop`        |
+| Spliced path           | 4096 bytes of remaining path per walk                      | `nameTooLong`        |
+| Removal re-listing     | 16 per directory                                           | `notEmpty`           |
 | Race retries           | 128 per whole-path call                                    | `raceRetryExhausted` |
 | Windows delete retries | 50 per entry                                               | `busy` or `notEmpty` |
 

@@ -24,8 +24,9 @@ is listed in [testing.md](./testing.md#backends-vfb); delivery order is in
 <a id="vfb1-the-concept"></a>
 **VFB1: The concept.** `isVfs!V` **must** be true exactly when `V` provides a
 `Handle` type and, over `(V.Handle, name)`, the single-name primitives of
-[`VFO3`](./SPEC.md#vfo3-the-operation-set), plus `close`, `read`, `write`,
-`sync` and the listing primitives, each returning `IoResult`. The algorithms
+[`VFO3`](./SPEC.md#vfo3-the-operation-set), plus `reopen` (a new handle to a
+directory, by opening `.`), `close`, `read`, `write`, `sync` and the listing
+primitives, each returning `IoResult`. The algorithms
 (`walk`, `walkAll`, `removeTree`, `writeFileAtomic`) are written once, over
 the concept, in `sparkles:base`.
 
@@ -208,6 +209,21 @@ entry with no security descriptor, so it inherits its parent's access control,
 and an `OwnerOnly()` entry with a security descriptor whose protected access
 control list grants access to the creating user's token owner only. The
 Windows backend has no `PosixMode` form.
+
+<a id="vfn14-intermediate-directories-are-opened-for-search"></a>
+**VFN14: Intermediate directories are opened for search.** A native backend
+**should** provide `openSearchAt(dir, name)`, which opens a directory without
+following it and with only the access needed to look up entries in it:
+`O_PATH` on Linux, `O_SEARCH` on macOS and FreeBSD, and `FILE_TRAVERSE` on
+Windows. When it does, the component walk **must** open every directory it
+passes through with it and open the directory it returns with `reopen`, so a
+walk needs search permission on intermediate directories, as the kernel
+resolver does ([`VFR1`](./SPEC.md#vfr1-two-resolvers-one-result)). A backend
+without it uses `openDirAt` throughout.
+
+_Rationale:_ Otherwise a directory the program may search but not read stops
+the component walk and not the kernel resolver
+([DV28](./decisions.md#dv28-intermediate-directories-are-opened-for-search-was-o5)).
 
 ## 5. Deletion on Windows
 

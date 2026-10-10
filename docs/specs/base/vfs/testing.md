@@ -52,32 +52,38 @@ Policy columns: **N** = `symlinks none, dotDot reject` (the default);
 **B** = `beneath, reject`; **BI** = `beneath, inScope`; **NI** =
 `none, inScope`. `crossMounts` is `false` except where a row says otherwise.
 
-| #   | Tree                                     | Operation              | N                | NI               | B                | BI               |
-| --- | ---------------------------------------- | ---------------------- | ---------------- | ---------------- | ---------------- | ---------------- |
-| 1   | `a/b/f`                                  | `walk("a/b")`          | ok               | ok               | ok               | ok               |
-| 2   | `a/b/f`                                  | `walk("./a//b/.")`     | ok               | ok               | ok               | ok               |
-| 3   | —                                        | `walk("/etc")`         | escapesRoot      | escapesRoot      | escapesRoot      | escapesRoot      |
-| 4   | —                                        | `walk("..")`           | dotDotRefused    | escapesRoot      | dotDotRefused    | escapesRoot      |
-| 5   | `a/`, `c/`                               | `walk("a/../c")`       | dotDotRefused    | ok (`c`)         | dotDotRefused    | ok (`c`)         |
-| 6   | `a/`                                     | `walk("a/../../x")`    | dotDotRefused    | escapesRoot      | dotDotRefused    | escapesRoot      |
-| 7   | `a/b/`, `s -> a`                         | `walk("s/b")`          | symlinkRefused   | symlinkRefused   | ok (`a/b`)       | ok (`a/b`)       |
-| 8   | `s -> /`                                 | `walk("s")`            | symlinkRefused   | symlinkRefused   | escapesRoot      | escapesRoot      |
-| 9   | `s -> ../outside`                        | `walk("s")`            | symlinkRefused   | symlinkRefused   | escapesRoot      | escapesRoot      |
-| 10  | chain `s1 -> a/s2`, `a/s2 -> ../b`, `b/` | `walk("s1")`           | symlinkRefused   | symlinkRefused   | ok (`b`)         | ok (`b`)         |
-| 11  | chain as 10 with `a/s2 -> ../../outside` | `walk("s1")`           | symlinkRefused   | symlinkRefused   | escapesRoot      | escapesRoot      |
-| 12  | cycle `s1 -> s2`, `s2 -> s1`             | `walk("s1")`           | symlinkRefused   | symlinkRefused   | symlinkLoop      | symlinkLoop      |
-| 13  | `a/b/`, `a/f/`, `s -> a/b`               | `walk("s/../f")`       | dotDotRefused    | symlinkRefused   | dotDotRefused    | ok (`a/f`)       |
-| 14  | `d/`, `d/d -> ..`                        | `walk("d/d")`          | symlinkRefused   | symlinkRefused   | ok (root)        | ok (root)        |
-| 15  | `f` (a file)                             | `walk("f/x")`          | notADirectory    | notADirectory    | notADirectory    | notADirectory    |
-| 16  | `a/`                                     | `walk("a/missing")`    | notFound         | notFound         | notFound         | notFound         |
-| 17  | `m/` on another device                   | `walk("m")`            | crossesMount     | crossesMount     | crossesMount     | crossesMount     |
-| 18  | as 17, `crossMounts = true`              | `walk("m")`            | ok               | ok               | ok               | ok               |
-| 19  | 41-link chain inside the root            | `walk("s1")`           | symlinkRefused   | symlinkRefused   | symlinkLoop      | symlinkLoop      |
-| 20  | 65 nested directories                    | `walkAll` of them      | depthExceeded    | depthExceeded    | depthExceeded    | depthExceeded    |
-| 21  | —                                        | `openDir("a\0b")`      | invalidName      | invalidName      | invalidName      | invalidName      |
-| 22  | —                                        | `openDir` of 256 bytes | nameTooLong      | nameTooLong      | nameTooLong      | nameTooLong      |
-| 23  | `s -> outside/secret` (a file)           | `openFile("s", read)`  | symlinkRefused   | symlinkRefused   | symlinkRefused   | symlinkRefused   |
-| 24  | `s -> outside/`                          | `removeTree("s")`      | ok, link removed | ok, link removed | ok, link removed | ok, link removed |
+| #   | Tree                                     | Operation                                | N                   | NI                  | B                   | BI                  |
+| --- | ---------------------------------------- | ---------------------------------------- | ------------------- | ------------------- | ------------------- | ------------------- |
+| 1   | `a/b/f`                                  | `walk("a/b")`                            | ok                  | ok                  | ok                  | ok                  |
+| 2   | `a/b/f`                                  | `walk("./a//b/.")`                       | ok                  | ok                  | ok                  | ok                  |
+| 3   | —                                        | `walk("/etc")`                           | escapesRoot         | escapesRoot         | escapesRoot         | escapesRoot         |
+| 4   | —                                        | `walk("..")`                             | dotDotRefused       | escapesRoot         | dotDotRefused       | escapesRoot         |
+| 5   | `a/`, `c/`                               | `walk("a/../c")`                         | dotDotRefused       | ok (`c`)            | dotDotRefused       | ok (`c`)            |
+| 6   | `a/`                                     | `walk("a/../../x")`                      | dotDotRefused       | escapesRoot         | dotDotRefused       | escapesRoot         |
+| 7   | `a/b/`, `s -> a`                         | `walk("s/b")`                            | symlinkRefused      | symlinkRefused      | ok (`a/b`)          | ok (`a/b`)          |
+| 8   | `s -> /`                                 | `walk("s")`                              | symlinkRefused      | symlinkRefused      | escapesRoot         | escapesRoot         |
+| 9   | `s -> ../outside`                        | `walk("s")`                              | symlinkRefused      | symlinkRefused      | escapesRoot         | escapesRoot         |
+| 10  | chain `s1 -> a/s2`, `a/s2 -> ../b`, `b/` | `walk("s1")`                             | symlinkRefused      | symlinkRefused      | ok (`b`)            | ok (`b`)            |
+| 11  | chain as 10 with `a/s2 -> ../../outside` | `walk("s1")`                             | symlinkRefused      | symlinkRefused      | escapesRoot         | escapesRoot         |
+| 12  | cycle `s1 -> s2`, `s2 -> s1`             | `walk("s1")`                             | symlinkRefused      | symlinkRefused      | symlinkLoop         | symlinkLoop         |
+| 13  | `a/b/`, `a/f/`, `s -> a/b`               | `walk("s/../f")`                         | dotDotRefused       | symlinkRefused      | dotDotRefused       | ok (`a/f`)          |
+| 14  | `d/`, `d/d -> ..`                        | `walk("d/d")`                            | symlinkRefused      | symlinkRefused      | ok (root)           | ok (root)           |
+| 15  | `f` (a file)                             | `walk("f/x")`                            | notADirectory       | notADirectory       | notADirectory       | notADirectory       |
+| 16  | `a/`                                     | `walk("a/missing")`                      | notFound            | notFound            | notFound            | notFound            |
+| 17  | `m/` on another device                   | `walk("m")`                              | crossesMount        | crossesMount        | crossesMount        | crossesMount        |
+| 18  | as 17, `crossMounts = true`              | `walk("m")`                              | ok                  | ok                  | ok                  | ok                  |
+| 19  | 41-link chain inside the root            | `walk("s1")`                             | symlinkRefused      | symlinkRefused      | symlinkLoop         | symlinkLoop         |
+| 20  | 65 nested directories                    | `walkAll` of them                        | depthExceeded       | depthExceeded       | depthExceeded       | depthExceeded       |
+| 21  | —                                        | `openDir("a\0b")`                        | invalidName         | invalidName         | invalidName         | invalidName         |
+| 22  | —                                        | `openDir` of 256 bytes                   | nameTooLong         | nameTooLong         | nameTooLong         | nameTooLong         |
+| 23  | `s -> outside/secret` (a file)           | `openFile("s", read)`                    | symlinkRefused      | symlinkRefused      | symlinkRefused      | symlinkRefused      |
+| 24  | `s -> outside/`                          | `removeTree("s")`                        | ok, link removed    | ok, link removed    | ok, link removed    | ok, link removed    |
+| 25  | —                                        | `symlinkAt("s", "/etc")`                 | escapesRoot         | escapesRoot         | escapesRoot         | escapesRoot         |
+| 26  | `a/`                                     | `symlinkAt("s", "../../outside")` on `a` | ok, stored verbatim | ok, stored verbatim | ok, stored verbatim | ok, stored verbatim |
+
+Rows 25 and 26 check that only absolute link targets are refused
+([`VFO10`](./SPEC.md#vfo10-symbolic-link-targets)); on Windows, row 25 also
+runs with `C:\x`, `\\server\share` and `\??\C:`.
 
 Rows 23 and 24 check that the named entry is never followed
 ([`VFO2`](./SPEC.md#vfo2-the-named-entry-is-never-followed),
@@ -115,6 +121,10 @@ forbidden effect it must not produce.
 | R7  | root `r/a/`; `walk("a")` on a `Dir` for `r`                         | before the call, move `r` to `elsewhere/r`              | ok: the held root handle still names the moved directory                                                                   |
 | R8  | `a/b/`; **N**, `walk("a/b")`                                        | after `a` is opened, mount a device on `a/b`            | `crossesMount`                                                                                                             |
 | R9  | `f`; `writeFileAtomic("f", new)`                                    | at every call index in turn, read `f`                   | each read sees the complete old or the complete new content                                                                |
+
+The suite runs each scenario once for every call the unraced operation
+makes, firing the hook before that call, which covers every single-point
+interleaving rather than one chosen index.
 
 The hook proves the resolver's _logic_ under each interleaving. It does not
 prove that a real kernel's interleavings are covered; that evidence comes
@@ -178,11 +188,11 @@ intended reason and not a typo.
 
 ## Oracle 6: native legs
 
-| Leg                     | Additionally covers                                                                                                                                                                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Linux (x86_64, aarch64) | `openat2` flags, `RESOLVE_NO_XDEV` against a bind mount where the runner permits one, R1/R4 with a real renaming thread, created mode bits under a fixed umask                                                                           |
-| macOS                   | the `O_NOFOLLOW_ANY` probe and its reported `resolution`; `crossesMount` by device comparison, labelled racy; created mode bits under a fixed umask                                                                                      |
-| Windows                 | junctions, the forced `OBJ_DONT_REPARSE` downgrade, removal of a git repository's read-only objects ([`VFN13`](./backends.md#vfn13-windows-deletion)), non-inheritable handles, the access control list of owner-only and shared entries |
+| Leg                     | Additionally covers                                                                                                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Linux (x86_64, aarch64) | a search-only directory (mode `0111`) walked through by both resolvers (`VFN14`); `openat2` flags, `RESOLVE_NO_XDEV` against a bind mount where the runner permits one, R1/R4 with a real renaming thread, created mode bits under a fixed umask |
+| macOS                   | a search-only directory walked through by both resolvers; the `O_NOFOLLOW_ANY` probe and its reported `resolution`; `crossesMount` by device comparison, labelled racy; created mode bits under a fixed umask                                    |
+| Windows                 | junctions, the forced `OBJ_DONT_REPARSE` downgrade, removal of a git repository's read-only objects ([`VFN13`](./backends.md#vfn13-windows-deletion)), non-inheritable handles, the access control list of owner-only and shared entries         |
 
 A leg that cannot create a bind mount records the row as not run.
 
@@ -191,6 +201,14 @@ A leg that cannot create a bind mount records the row as not run.
 Every operation and algorithm runs under the libc allocation wrapper and the
 GC counter that `sparkles:fuzzy` uses, on each backend. The expected count is
 zero for every operation, including `MemVfs` with a pre-sized arena.
+
+```bash
+dub test :base -- -i "vfs.check.allocation"                    # GC counter
+dub test :base -c allocation-audit -- -i "vfs.allocation"     # Linux: libc wrapped too
+```
+
+The audit configuration first calls `malloc` once and requires the wrapper to
+count it, so a build without the `--wrap` flags fails instead of passing.
 
 ## Requirement checks
 
@@ -201,7 +219,7 @@ that observation is made.
 
 | Requirement                                                 | Check                                                                                                             | Oracle           |
 | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ---------------- |
-| [`VFH1`](./SPEC.md#vfh1-owning-handles)                     | a backend double counts closes; every test ends with one close per open                                           | 4                |
+| [`VFH1`](./SPEC.md#vfh1-owning-handles)                     | the backend counts open handles; every test ends with none; an empty `.init` handle fails every operation         | 4                |
 | [`VFH2`](./SPEC.md#vfh2-borrowed-handles)                   | a `@safe` function that returns a `DirRef` to a local `Dir` does not compile                                      | 5                |
 | [`VFH3`](./SPEC.md#vfh3-the-backend-is-part-of-the-type)    | passing a `DirRef!(MemVfs, R)` as `renameAt`'s destination on a `Dir!(BlockingVfs, R)` does not compile           | 5                |
 | [`VFH4`](./SPEC.md#vfh4-rights)                             | the presets' members are pinned by a `static assert`                                                              | unit             |
@@ -223,6 +241,7 @@ that observation is made.
 | [`VFO7`](./SPEC.md#vfo7-listing)                           | listing a directory twice through the same `Dir`, concurrently, yields the full set both times                                                                       | 4, 6    |
 | [`VFO8`](./SPEC.md#vfo8-rename-stays-in-one-root)          | two roots over one directory; a rename between them fails and neither tree changes                                                                                   | 4       |
 | [`VFO9`](./SPEC.md#vfo9-atomic-write)                      | R9; a reader loop concurrent with 1000 writes never sees a mixed or empty file on the Linux and Windows legs; the replacement has the requested sharing              | 2, 6    |
+| [`VFO10`](./SPEC.md#vfo10-symbolic-link-targets)           | rows 25 and 26, with the operation counter unchanged after row 25                                                                                                    | 1       |
 
 ### Paths and resolution policy (`VFP`)
 
@@ -254,7 +273,7 @@ that observation is made.
 | -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------ |
 | [`VFD1`](./SPEC.md#vfd1-bounded-explicit-stack)                | a tree one level deeper than the removal limit fails with `depthExceeded`; a sentinel beside it survives  | 4      |
 | [`VFD2`](./SPEC.md#vfd2-never-descend-a-link)                  | row 24 and R4: a link to a sentinel directory outside the tree; the sentinel's contents survive           | 1, 2   |
-| [`VFD3`](./SPEC.md#vfd3-listing-until-empty)                   | a directory of 5000 entries is emptied in one call                                                        | 4, 6   |
+| [`VFD3`](./SPEC.md#vfd3-listing-until-empty)                   | a directory of 5000 entries is emptied in one call; R4 plants entries after a directory was emptied       | 4, 6   |
 | [`VFD4`](./SPEC.md#vfd4-vanished-entries)                      | R5: entries removed from under the removal; the call succeeds                                             | 2      |
 | [`VFD5`](./SPEC.md#vfd5-partial-progress-is-the-failure-state) | a directory made unremovable mid-tree; the error reports `unlinkAt` or `rmdirAt`, and a sentinel survives | 6      |
 
@@ -280,21 +299,22 @@ that observation is made.
 
 ### Native backends (`VFN`)
 
-| Requirement                                                   | Check                                                                                   | Oracle |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------ |
-| [`VFN1`](./backends.md#vfn1-kind-is-computed-once)            | oracle 3 compares kinds across resolvers                                                | 3      |
-| [`VFN2`](./backends.md#vfn2-ambiguous-native-results)         | one fixture per table row asserts the kind                                              | 6      |
-| [`VFN3`](./backends.md#vfn3-availability-is-cached-one-way)   | the forced-absence switch, as for `VFR5`                                                | 3      |
-| [`VFN4`](./backends.md#vfn4-race-retries)                     | the `EAGAIN` double, as for `VFR6`                                                      | 3      |
-| [`VFN5`](./backends.md#vfn5-platform-accelerators)            | each leg's reported `resolution` per policy matches the table; oracle 3 passes on Linux | 3, 6   |
-| [`VFN6`](./backends.md#vfn6-the-mount-check)                  | the bind-mount row on Linux where permitted; macOS reports `racy`                       | 6      |
-| [`VFN7`](./backends.md#vfn7-the-windows-component-walk)       | the Windows leg with real junctions and directory symlinks, the downgrade forced        | 6      |
-| [`VFN8`](./backends.md#vfn8-windows-dot-dot)                  | the **NI** and **BI** rows with `..` on the Windows leg, junctions in place of links    | 1, 6   |
-| [`VFN9`](./backends.md#vfn9-no-follow)                        | the `VFO2` check on every native leg                                                    | 1, 6   |
-| [`VFN10`](./backends.md#vfn10-listing-through-a-fresh-handle) | the `VFO7` check on every native leg                                                    | 6      |
-| [`VFN11`](./backends.md#vfn11-rights-reach-the-os)            | on Windows, a read-only `File`'s queried access mask excludes `FILE_WRITE_DATA`         | 6      |
-| [`VFN12`](./backends.md#vfn12-sharing-on-each-platform)       | mode bits under a fixed umask on POSIX; the queried access control list on Windows      | 6      |
-| [`VFN13`](./backends.md#vfn13-windows-deletion)               | the Windows leg removes a tree containing a git repository's read-only object files     | 6      |
+| Requirement                                                                   | Check                                                                                              | Oracle |
+| ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ------ |
+| [`VFN1`](./backends.md#vfn1-kind-is-computed-once)                            | oracle 3 compares kinds across resolvers                                                           | 3      |
+| [`VFN2`](./backends.md#vfn2-ambiguous-native-results)                         | one fixture per table row asserts the kind                                                         | 6      |
+| [`VFN3`](./backends.md#vfn3-availability-is-cached-one-way)                   | the forced-absence switch, as for `VFR5`                                                           | 3      |
+| [`VFN4`](./backends.md#vfn4-race-retries)                                     | the `EAGAIN` double, as for `VFR6`                                                                 | 3      |
+| [`VFN5`](./backends.md#vfn5-platform-accelerators)                            | each leg's reported `resolution` per policy matches the table; oracle 3 passes on Linux            | 3, 6   |
+| [`VFN6`](./backends.md#vfn6-the-mount-check)                                  | the bind-mount row on Linux where permitted; macOS reports `racy`                                  | 6      |
+| [`VFN7`](./backends.md#vfn7-the-windows-component-walk)                       | the Windows leg with real junctions and directory symlinks, the downgrade forced                   | 6      |
+| [`VFN8`](./backends.md#vfn8-windows-dot-dot)                                  | the **NI** and **BI** rows with `..` on the Windows leg, junctions in place of links               | 1, 6   |
+| [`VFN9`](./backends.md#vfn9-no-follow)                                        | the `VFO2` check on every native leg                                                               | 1, 6   |
+| [`VFN10`](./backends.md#vfn10-listing-through-a-fresh-handle)                 | the `VFO7` check on every native leg                                                               | 6      |
+| [`VFN11`](./backends.md#vfn11-rights-reach-the-os)                            | on Windows, a read-only `File`'s queried access mask excludes `FILE_WRITE_DATA`                    | 6      |
+| [`VFN12`](./backends.md#vfn12-sharing-on-each-platform)                       | mode bits under a fixed umask on POSIX; the queried access control list on Windows                 | 6      |
+| [`VFN13`](./backends.md#vfn13-windows-deletion)                               | the Windows leg removes a tree containing a git repository's read-only object files                | 6      |
+| [`VFN14`](./backends.md#vfn14-intermediate-directories-are-opened-for-search) | a walk through a directory with mode `0111` succeeds on both resolvers on the Linux and macOS legs | 3, 6   |
 
 ### The in-memory backend (`VFM`)
 
@@ -333,9 +353,10 @@ without a backend call ([`VFP7`](./SPEC.md#vfp7-in-scope-dot-dot)).
 
 ## Evidence ledger
 
-| Requirements      | State      | Evidence | Gap                      |
-| ----------------- | ---------- | -------- | ------------------------ |
-| every requirement | unverified | —        | no implementation exists |
+| Requirements                                                                                                                      | State                | Evidence                                                                                                                                                                                                                                               | Gap                                                                                                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `VFE1`, `VFE2`, `VFE4`; `VFP1`–`VFP8`; `VFR2`, `VFR4`; `VFO1`–`VFO10`; `VFH1`–`VFH6`; `VFD1`–`VFD5`; `VFB1`–`VFB3`; `VFM1`–`VFM5` | verified on `MemVfs` | oracles 1, 2, 5, the requirement checks and the allocation audit: `dub test :base`, 50 tests, on Linux x86_64 (LDC 1.42.0, DMD 2.112.1) and macOS 27 arm64 (LDC 1.42.0); the same tests cross-built for `x86_64-pc-windows-msvc` and run under Wine 11 | Windows itself runs only in CI; Wine is not Windows; on `MemVfs`, `VFP8` exercises only the device comparison, and `VFR4` a backend double |
+| every other requirement, `VFR1` included                                                                                          | unverified           | —                                                                                                                                                                                                                                                      | needs a native backend; `VFR1` needs a kernel resolver to compare with (oracle 3)                                                          |
 
 The independent-review item of the specification's acceptance gate is
 **unmet**: the specification was written by the same agent that ran the
