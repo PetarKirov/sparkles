@@ -209,6 +209,13 @@ a kind a driver does not implement, and the driver must answer with a typed
 _Detection:_ a scheme declaring a need no driver satisfies fails with that
 error, naming the kind.
 
+Each kind is one capability-VFS operation on a held directory handle:
+`readDir` is `list`, `stat` is `statAt`, `readlink` is `readlinkAt`, and
+`readFile` is `openFile` with read access followed by `read`
+([`VFO3`](../../base/vfs/SPEC.md#vfo3-the-operation-set)). A backend that
+cannot perform one answers with the VFS's `unsupported` kind, which the
+driver reports as `unsupportedRequest`.
+
 **`FSM3` — Requests are batched per directory.** All requests arising from one
 directory's entries must be emitted as one batch. _Rationale:_ a
 request-at-a-time coroutine serializes the fan-out the design exists for, and a
@@ -342,74 +349,85 @@ returns a digest; neither type mentions the other.
 
 ## 11. Drivers (`FSD`)
 
-**`FSD1` — Three drivers, one machine.** An in-memory driver, a synchronous
-driver, and an `sparkles:event-horizon` driver must satisfy the same request
-vocabulary. _Detection:_ the differential gate in [§12](#12-evidence-and-oracles)
-runs all three over one fixture set and compares results byte for byte.
+The machine's requests are answered through the
+[capability VFS](../../base/vfs/SPEC.md). That specification owns how a
+directory is opened, how a name is resolved beneath it, which links and mounts
+a lookup may cross, and how a failure is classified. This section states only
+what the fileset library adds on top.
+
+**`FSD1` — One adapter, three backends.** The fileset driver is one generic
+adapter over any backend satisfying the VFS's
+[`isVfs`](../../base/vfs/backends.md#vfb1-the-concept) concept. The in-memory,
+synchronous and `sparkles:event-horizon` drivers are that adapter instantiated
+over `MemVfs`, `BlockingVfs` and `RingVfs`. No driver performs a file-system
+operation the adapter does not route through a `Dir`. _Detection:_ the
+differential gate in [§12](#12-evidence-and-oracles) runs the adapter over all
+three backends on one fixture set and compares results byte for byte; the
+fileset modules declare no system call.
 
 **`FSD2` — The in-memory driver ships.** It is a supported, documented driver
-and not a test double: it answers from a declared tree literal with no
-filesystem. _Rationale:_ it makes the whole contract testable `@nogc`,
-deterministically, on every platform, with no temp directories.
-_Detection:_ the acceptance suite runs entirely against it on Windows and macOS.
+and not a test double: the adapter over `MemVfs`, answering from a declared
+tree literal with no file system. _Rationale:_ it makes the whole contract
+testable `@nogc`, deterministically, on every platform, with no temporary
+directories. _Detection:_ the acceptance suite runs entirely against it on
+Windows and macOS.
 
-**`FSD3` — The synchronous driver is test and documentation only.** It is not a
-shipped production path. _Detection:_ it is not reachable from the library's
-public configuration.
+**`FSD3` — The synchronous driver is test and documentation only.** The
+adapter over `BlockingVfs` is not a shipped production path of this library.
+_Detection:_ it is not reachable from the library's public configuration.
 
-**`FSD5` — A reference is a handle, not a path, where the platform offers
-one.** The `FsoRef` a driver hands a scheme is opaque, and on Linux the
-event-horizon driver must materialize it as a **directory descriptor plus a
-name**, not an absolute path. Three properties follow, and none is available
-to a path-based reference:
+**`FSD5` — A reference is a handle, not a path.** The `FsoRef` a driver hands
+a scheme is opaque: a borrowed directory handle of the VFS
+([`VFH1`](../../base/vfs/SPEC.md#vfh1-owning-handles)) plus a name, never an
+absolute path. Three properties follow, and none is available to a path-based
+reference:
 
 - **Resolution is `O(1)` per entry, not `O(depth)`.** An absolute path is
-  re-walked by the kernel on every `openat`/`statx`; a relative open against a
-  held descriptor is not. On a deep tree that difference is the walk.
+  re-walked on every operation; a single name against a held handle is not. On
+  a deep tree that difference is the walk.
 - **The reference cannot be invalidated by a rename above it.** A path
   re-resolved after an ancestor moves names a different file, or nothing.
   [`FSE3`](#10-errors-and-partial-results-fse) admits that entries vanish
-  mid-walk; a descriptor makes "this is the directory I enumerated" true
-  rather than hopeful.
-- **Escape becomes checkable.** See `FSD6`.
+  mid-walk; a handle makes "this is the directory I enumerated" true rather
+  than hopeful.
+- **Escape is the VFS's to refuse.** See `FSD6`.
 
-_Detection:_ the Linux driver issues no absolute-path `openat` below the
-roots; a fixture that renames a directory mid-walk still resolves the entries
-already enumerated beneath it.
+_Detection:_ a fixture that renames a directory mid-walk still resolves the
+entries already enumerated beneath it.
 
-**`FSD6` — `openat2` resolution flags are a declared driver capability, and
-their absence is reported, not silently ignored.** Where `openat2` is
-available (Linux 5.6+), the driver must use it with:
+**`FSD6` — Confinement is the root's resolution policy.** The driver opens
+each fileset root with `openRoot` and the VFS's default policy: no symbolic
+link is followed, `..` is refused, and mounts are not crossed
+([`VFP6`](../../base/vfs/SPEC.md#vfp6-reject-dot-dot),
+[`VFP8`](../../base/vfs/SPEC.md#vfp8-mount-boundaries)). Every request is a
+single-name operation on a handle the walk already holds. Reading a link's
+target is `readlinkAt`, which never follows the link
+([`VFO2`](../../base/vfs/SPEC.md#vfo2-the-named-entry-is-never-followed)).
+Which resolver serves the root is reported by the root
+([`VFR2`](../../base/vfs/SPEC.md#vfr2-the-root-reports-its-resolver)). A
+consumer that requires the kernel's guarantee opens the root with
+`requireKernel`, and gets `unsupported` where it is absent
+([`VFR3`](../../base/vfs/SPEC.md#vfr3-a-root-may-require-the-kernel-resolver)).
+_Detection:_ a fixture whose root contains a symbolic link to `/etc` resolves
+no entry outside the root, on every backend.
 
-| Flag                    | Enforces                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| `RESOLVE_BENEATH`       | the walk cannot leave the root it was given, whatever symlinks or `..` it meets |
-| `RESOLVE_NO_MAGICLINKS` | `/proc/*/fd` entries cannot teleport the walk elsewhere                         |
-| `RESOLVE_NO_XDEV`       | the walk does not cross a mount boundary                                        |
-
-`RESOLVE_NO_SYMLINKS` is **not** set: [`FSO2`](#3-the-file-system-object-vocabulary-fso)
-already forbids following a symlink to decide membership, and the flag would
-also reject opening a symlink to _read its target_, which the node model
-requires.
-
-A driver on a platform or kernel without `openat2` must report the capability
-as absent through the same typed channel
-[`FSM2`](#7-the-resolution-machine-fsm) uses for an unsupported request, so a
-consumer that requires the guarantee can refuse rather than assume it.
-_Detection:_ a fixture whose root contains a symlink to `/etc` resolves no
-entry outside the root; on a kernel without `openat2` the same fixture reports
-the capability as unavailable.
+_Superseded:_ this requirement formerly required `openat2` with
+`RESOLVE_BENEATH`, `RESOLVE_NO_MAGICLINKS` and `RESOLVE_NO_XDEV`, and forbade
+`RESOLVE_NO_SYMLINKS` because the flag would refuse opening a link to read its
+target. `VFO2` makes that reason void: no request resolves a path through a
+link, and reading a target is a single-name call on the link's directory.
 
 **`FSD7` — Crossing a mount boundary is a declared choice, defaulting to
-"do not".** A walk that follows a bind mount, a network filesystem or a
+"do not".** A walk that follows a bind mount, a network file system or a
 container overlay silently changes what a fileset means, and can make it
-unbounded. The default is to stop at the boundary and record the directory as
-skipped per [`FSE2`](#10-errors-and-partial-results-fse), not to descend
-silently. A consumer may opt in. On Linux this is `RESOLVE_NO_XDEV`;
-elsewhere it is a `statx` device-number comparison against the root's, which
-is weaker (it races) and must be documented as such where it is the only
-mechanism. _Detection:_ a fixture with a bind mount beneath the root yields no
-entry from the mounted filesystem by default, and reports the boundary.
+unbounded. The default is the VFS's: a lookup that would cross fails with
+`crossesMount`, and the machine records the directory as skipped per
+[`FSE2`](#10-errors-and-partial-results-fse), rather than descending. A
+consumer may opt in, which opens the root with `crossMounts` set. How each
+platform detects the crossing, and where that detection races, is the VFS's
+([`VFN6`](../../base/vfs/backends.md#vfn6-the-mount-check)). _Detection:_ a
+fixture with a mount beneath the root yields no entry from the mounted file
+system by default, and reports the boundary.
 
 **`FSD4` — Descriptor policy is the driver's.** Any `RLIMIT_NOFILE` strategy
 belongs to a driver, never to the machine or the seam. _Detection:_ the machine
@@ -423,7 +441,7 @@ The trace required for acceptance is
 | Oracle                                                                                                       | Independence                                                | Establishes                                                 |
 | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------- |
 | **Brute-force resolution** — evaluate the predicate against every file under the root, ignoring all verdicts | A different algorithm, not a second instance of the planner | `FSA1` widening soundness; `FSA3` and `FSA5` verdicts       |
-| **Three-driver differential** — in-memory, synchronous, event-horizon over one fixture set                   | Three independent effect implementations                    | `FSD1`; `FSM1`'s claim that the machine is effect-free      |
+| **Three-backend differential** — the adapter over `MemVfs`, `BlockingVfs` and `RingVfs` on one fixture set   | Three independent effect implementations                    | `FSD1`; `FSM1`'s claim that the machine is effect-free      |
 | **`git check-ignore -v`**                                                                                    | An independent implementation of the semantics being copied | `FSI3` provenance, `FSI4` precedence                        |
 | **The old walker** — retained until M9                                                                       | The implementation being replaced                           | M4's behaviour-preservation gate; the `FSG2` divergence set |
 | **`a` versus `a.b` fixture**                                                                                 | A published, reproducible ordering divergence               | `FSS1`'s two orderings are not one function                 |
@@ -441,17 +459,17 @@ need native concurrent tests, not model-level ones.
 
 ## 13. Requirement index
 
-| Group                                                     | Covers                                                                                |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| [`FSO1`–`FSO4`](#3-the-file-system-object-vocabulary-fso) | Node kinds, symlinks, excluded metadata, requested metadata                           |
-| [`FSV1`–`FSV5`](#4-the-fileset-value-fsv)                 | Algebra, no complement, directories, empty directories, fallibility                   |
-| [`FSG1`–`FSG4`](#5-matching-fsg)                          | Anchoring, the `globAny` replacement, case policy, bounds                             |
-| [`FSA1`–`FSA6`](#6-analysis-and-planning-fsa)             | Widening, roots, verdicts, forced entry, static emptiness                             |
-| [`FSM1`–`FSM7`](#7-the-resolution-machine-fsm)            | Sans-I/O, requests, batching, no content, emission, budget, bounds                    |
-| [`FSS1`–`FSS8`](#8-the-scheme-seam-fss)                   | Ordering, metadata, traversal mode, scheme-owned I/O, budget, join, out-of-band trees |
-| [`FSI1`–`FSI4`](#9-ignore-scopes-fsi)                     | Immutable scopes, arena lifetime, provenance, precedence                              |
-| [`FSE1`–`FSE4`](#10-errors-and-partial-results-fse)       | Fatal versus incomplete, observability, vanishing entries, result type                |
-| [`FSD1`–`FSD4`](#11-drivers-fsd)                          | Three drivers, in-memory ships, synchronous is test-only, descriptors                 |
+| Group                                                     | Covers                                                                                                                  |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| [`FSO1`–`FSO4`](#3-the-file-system-object-vocabulary-fso) | Node kinds, symlinks, excluded metadata, requested metadata                                                             |
+| [`FSV1`–`FSV5`](#4-the-fileset-value-fsv)                 | Algebra, no complement, directories, empty directories, fallibility                                                     |
+| [`FSG1`–`FSG4`](#5-matching-fsg)                          | Anchoring, the `globAny` replacement, case policy, bounds                                                               |
+| [`FSA1`–`FSA6`](#6-analysis-and-planning-fsa)             | Widening, roots, verdicts, forced entry, static emptiness                                                               |
+| [`FSM1`–`FSM7`](#7-the-resolution-machine-fsm)            | Sans-I/O, requests, batching, no content, emission, budget, bounds                                                      |
+| [`FSS1`–`FSS8`](#8-the-scheme-seam-fss)                   | Ordering, metadata, traversal mode, scheme-owned I/O, budget, join, out-of-band trees                                   |
+| [`FSI1`–`FSI4`](#9-ignore-scopes-fsi)                     | Immutable scopes, arena lifetime, provenance, precedence                                                                |
+| [`FSE1`–`FSE4`](#10-errors-and-partial-results-fse)       | Fatal versus incomplete, observability, vanishing entries, result type                                                  |
+| [`FSD1`–`FSD7`](#11-drivers-fsd)                          | One adapter over the VFS backends, in-memory ships, synchronous is test-only, handles, confinement, mounts, descriptors |
 
 Consumers of this contract: `apps/hue`'s picker ([`PKS1`, `PKC4`](../../hue/picker.md)),
 `libs/docs`' source set, and `apps/ci`.

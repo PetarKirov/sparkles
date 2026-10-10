@@ -164,23 +164,24 @@ underneath still returns the error as a value. The string check
 **Acceptance.** `refusesAPathThatLeavesTheFixture` passes, and the twelve
 consumer suites keep their test counts:
 
-| Package          | Tests at the checked revision |
-| ---------------- | ----------------------------- |
-| test-utils       | 11                            |
-| build-primitives | 24                            |
-| docs             | 64                            |
-| wired            | 200                           |
-| dmd-fmt          | 107, 1 skipped                |
-| dmd-lsp          | 82                            |
-| event-horizon    | 243, 7 skipped                |
-| core-cli         | 101                           |
-| raylib-text      | 18                            |
-| ci               | 123                           |
-| diagram          | 107                           |
-| hue              | 432, 3 skipped                |
+| Package          | Tests before and after M4 |
+| ---------------- | ------------------------- |
+| test-utils       | 12                        |
+| build-primitives | 30                        |
+| docs             | 70                        |
+| wired            | 243                       |
+| dmd-fmt          | 108, 1 skipped            |
+| dmd-lsp          | 96                        |
+| event-horizon    | 243, 7 skipped            |
+| core-cli         | 101                       |
+| raylib-text      | 20                        |
+| ci               | 150                       |
+| diagram          | 110                       |
+| hue              | 314, 3 skipped            |
 
-The counts must be re-measured at the start of M4, since other work lands in
-between; the gate is "unchanged from that measurement".
+The counts were measured on the branch just before the change and again
+after it, on Linux x86_64; the gate is that they match. On macOS 27 arm64,
+`test-utils` passes 11, its Linux-only exec test excluded.
 **Excludes.** Any change to `TmpFS`'s public surface.
 
 ## M5: the fileset specification
@@ -206,4 +207,6 @@ finds no normative text duplicating this one.
 | M0        | delivered; reshaped for readers and for creation sharing | #535, #594   |
 | M1        | in review                                                | —            |
 | M2        | implemented locally; Windows leg pending                 | —            |
-| M3–M5     | not started                                              | —            |
+| M3        | blocked on event-horizon's O32                           | —            |
+| M4        | implemented locally                                      | —            |
+| M5        | written locally                                          | —            |
