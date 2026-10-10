@@ -766,6 +766,10 @@
               {
                 "text": "Skip tests at runtime",
                 "link": "/libs/test-runner/how-to/skip-tests"
+              },
+              {
+                "text": "Run tests on Android",
+                "link": "/libs/test-runner/how-to/run-tests-on-android"
               }
             ]
           },
