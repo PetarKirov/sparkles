@@ -148,7 +148,20 @@ CliExpected!(ParsedCommand!Cli) parseKnownCli(Cli)(
  */
 int reportCliError(in CliError e)
 {
-    import std.stdio : stderr, writeln;
+    import std.file : thisExePath;
+    import std.stdio : stderr, stdout, write, writeln;
+
+    import sparkles.core_cli.build_info : buildInfoSection, versionReport;
+
+    if (e.isVersion)
+    {
+        auto report = versionReport(buildInfoSection(thisExePath));
+        if (report.stdoutText.length)
+            stdout.write(report.stdoutText);
+        if (report.stderrText.length)
+            stderr.writeln(report.stderrText);
+        return report.code;
+    }
 
     // Pure help requests carry no error message; everything else surfaces the
     // diagnostic before any accompanying help text, so the cause stays visible
@@ -315,6 +328,14 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
             ));
         }
 
+        if (!namedArgsEnded && isVersionToken(arg))
+        {
+            return error!(string[])(CliError(
+                kind: CliError.Kind.version_,
+                exitCode: 0,
+            ));
+        }
+
         static if (hasChildren)
         {
             if (!namedArgsEnded && !arg.startsWith("-"))
@@ -341,7 +362,7 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                 if (selected)
                     return selected;
 
-                if (selected.error.isHelp || selected.error.message.length)
+                if (selected.error.isHelp || selected.error.isVersion || selected.error.message.length)
                     return error!(string[])(selected.error);
 
                 // No variant matched the given subcommand name. If a default
@@ -360,17 +381,21 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                         receiver.commandSelected = true;
                         return parsedDefault;
                     }
-                    if (parsedDefault.error.isHelp || parsedDefault.error.message.length)
+                    if (parsedDefault.error.isHelp || parsedDefault.error.isVersion || parsedDefault.error.message.length)
                         return error!(string[])(parsedDefault.error);
                 }
 
                 // In a subcommand-bearing context without a default child this is
-                // an unknown command, not a stray positional argument.
-                return error!(string[])(CliError(
-                    kind: CliError.Kind.parse,
-                    message: "Unknown command: " ~ arg,
-                    help: formatHelp!(Root, Cli)(helpInfo),
-                ));
+                // an unknown command, not a stray positional argument. A rest
+                // positional takes the word instead, and the tokens after it.
+                static if (!hasRestPositional!Cli)
+                {
+                    return error!(string[])(CliError(
+                        kind: CliError.Kind.parse,
+                        message: "Unknown command: " ~ arg,
+                        help: formatHelp!(Root, Cli)(helpInfo),
+                    ));
+                }
             }
         }
 
@@ -418,7 +443,7 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                         receiver.commandSelected = true;
                         return parsedDefault;
                     }
-                    if (parsedDefault.error.isHelp || parsedDefault.error.message.length)
+                    if (parsedDefault.error.isHelp || parsedDefault.error.isVersion || parsedDefault.error.message.length)
                         return error!(string[])(parsedDefault.error);
                 }
 
@@ -438,6 +463,14 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                 return error!(string[])(parsed.error);
         }
 
+        static if (hasRestPositional!Cli)
+        {
+            if (positionals.length >= leadingPositionals!Cli)
+            {
+                positionals ~= args[index .. $];
+                break;
+            }
+        }
         positionals ~= arg;
         index++;
     }
@@ -454,7 +487,11 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
     {
         if (!receiver.commandSelected)
         {
-            static if (!is(defaultChild!Cli == void))
+            // A rest positional is the other mode: `tool vim -R` is not a
+            // missing subcommand, and neither is `tool` with no arguments.
+            static if (hasRestPositional!Cli)
+                return ok(unknown);
+            else static if (!is(defaultChild!Cli == void))
             {
                 alias DefaultType = defaultChild!Cli;
                 CommandNode!DefaultType defaultCmd;
@@ -478,7 +515,7 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                     receiver.commandSelected = true;
                     return ok(unknown);
                 }
-                if (parsedDefault.error.isHelp || parsedDefault.error.message.length)
+                if (parsedDefault.error.isHelp || parsedDefault.error.isVersion || parsedDefault.error.message.length)
                     return error!(string[])(parsedDefault.error);
             }
             else static if (commandInfoRaw!Cli().isDefault_)
@@ -1124,6 +1161,48 @@ private OptionMatch matchesOption(Option optionInfo, string field, string name, 
 private bool isHelpToken(string arg) @safe pure nothrow @nogc
 {
     return arg.among("-h", "--help") != 0;
+}
+
+private bool isVersionToken(string arg) @safe pure nothrow @nogc
+{
+    return arg.among("-V", "--version") != 0;
+}
+
+/// `Cli` has an `@(Argument).rest` positional.
+private template hasRestPositional(Cli)
+{
+    enum bool hasRestPositional = {
+        bool found;
+        static foreach (field; FieldNameTuple!Cli)
+        {{
+            alias symbol = __traits(getMember, Cli, field);
+            enum args = getUDAs!(symbol, Argument);
+            static if (args.length && args[0].rest_)
+                found = true;
+        }}
+        return found;
+    }();
+}
+
+/// How many ordinary positionals precede the rest argument.
+private template leadingPositionals(Cli)
+{
+    enum size_t leadingPositionals = {
+        size_t n;
+        static foreach (field; FieldNameTuple!Cli)
+        {{
+            alias symbol = __traits(getMember, Cli, field);
+            enum args = getUDAs!(symbol, Argument);
+            static if (args.length)
+            {
+                static if (args[0].rest_)
+                    return n;
+                else
+                    n++;
+            }
+        }}
+        return n;
+    }();
 }
 
 package enum isSumType(T) = __traits(compiles, AliasSeq!(T.Types));
@@ -1911,6 +1990,99 @@ unittest
     auto afterLogged = sharedCoreLog;
     assert(runCli!Silent(["silent"]) == 3);
     assert(sharedCoreLog is afterLogged, "no logLevel field: do not re-init");
+}
+
+@("args.runCli.versionAndRest")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.file : readText, tempDir;
+    import std.path : buildPath;
+    import std.stdio : File, stdout;
+
+    import core.sys.posix.unistd : close, dup, dup2;
+
+    @(Command("app"))
+    static struct App
+    {
+        int run() => 9;
+    }
+
+    auto ver = parseCli!App(["app", "--version"]);
+    assert(!ver);
+    assert(ver.error.isVersion);
+    assert(ver.error.exitCode == 0);
+
+    auto shortVer = parseCli!App(["app", "-V"]);
+    assert(!shortVer && shortVer.error.isVersion);
+
+    auto help = parseCli!App(["app", "--help"]);
+    assert(!help && help.error.isHelp);
+    assert(help.error.help.canFind("--version"));
+
+    const saved = dup(stdout.fileno);
+    scope (exit)
+    {
+        stdout.flush();
+        dup2(saved, stdout.fileno);
+        close(saved);
+    }
+    stdout.flush();
+    auto path = buildPath(tempDir(), "sparkles-version-report.txt");
+    auto captured = File(path, "w+");
+    dup2(captured.fileno, stdout.fileno);
+    const rc = runCli!App(["app", "--version"]);
+    stdout.flush();
+    dup2(saved, stdout.fileno);
+    close(saved);
+    captured.close();
+    assert(rc == 0);
+    assert(readText(path).canFind(`"version":"dev"`));
+
+    @(Command("config"))
+    static struct Config
+    {
+        @(Argument("action", optional: true))
+        string action;
+
+        int run() => 2;
+    }
+
+    @(Command("tool"))
+    static struct Tool
+    {
+        @(Option("font|f", description: "Font."))
+        string font;
+
+        @Subcommands
+        SumType!Config sub;
+
+        @(Argument("command", optional: true, rest: true))
+        string[] command;
+
+        int run() => 0;
+    }
+
+    auto shell = parseCli!Tool(["tool", "vim", "-R"]);
+    assert(shell, shell.error.message);
+    assert(shell.value.value.command == ["vim", "-R"]);
+    assert(!shell.value.commandSelected);
+
+    auto dashed = parseCli!Tool(["tool", "--", "config"]);
+    assert(dashed, dashed.error.message);
+    assert(dashed.value.value.command == ["config"]);
+    assert(!dashed.value.commandSelected);
+
+    auto sub = parseCli!Tool(["tool", "config", "show"]);
+    assert(sub, sub.error.message);
+    assert(sub.value.commandSelected);
+    assert(sub.value.value.command.length == 0);
+
+    auto font = parseCli!Tool(["tool", "--font", "Fira", "vim", "-R"]);
+    assert(font, font.error.message);
+    assert(font.value.font == "Fira");
+    assert(font.value.value.command == ["vim", "-R"]);
 }
 
 @("args.runCli.installsAssertHandlerWhenPresent")
