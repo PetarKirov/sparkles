@@ -478,7 +478,17 @@ struct BlockingVfs
         const s = ntOpen(start.raw, w[0 .. n], directoryAccess, directoryOptions,
             OBJ_DONT_REPARSE, FILE_OPEN, null, h);
         if (ntSuccess(s))
+        {
+            // OBJ_DONT_REPARSE refuses links among the intermediates only:
+            // FILE_OPEN_REPARSE_POINT opens a final link itself rather than
+            // following it, so refuse it here, as the component walk does.
+            if (isLinkHandle(h))
+            {
+                close(Handle(h));
+                return ioErr!Handle(ErrorKind.symlinkRefused, OpKind.resolve);
+            }
             return ioOk(Handle(h));
+        }
         if (s == STATUS_INVALID_PARAMETER && !probe())
         {
             atomicStore(resolverAbsent, true);
@@ -486,9 +496,11 @@ struct BlockingVfs
                 kernelWithdrawnContext);
         }
         // VFN2: the kernel says only that the path was not found when an
-        // intermediate is a file; step through to tell which, opening nothing
-        // that is returned. The kernel's refusal stays the result (VFR4).
-        if (s == STATUS_OBJECT_PATH_NOT_FOUND)
+        // intermediate is a file, and only that the last step is not a
+        // directory when it is a link to a file; step through to tell which,
+        // opening nothing that is returned. The kernel's refusal stays the
+        // result (VFR4).
+        if (s == STATUS_OBJECT_PATH_NOT_FOUND || s == STATUS_NOT_A_DIRECTORY)
             return ioErr!Handle(classifyPath(start, path, s));
         return ioErr!Handle(ntError(s, OpKind.resolve));
     }
