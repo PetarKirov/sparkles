@@ -490,9 +490,18 @@ void writeEscapedChar(Writer, C)(ref Writer w, C c) if (isSomeChar!C)
                 put(w, base16.digits[(c >> 4) & 0xF]);
                 put(w, base16.digits[c & 0xF]);
             }
+            else static if (is(C == char))
+            {
+                put(w, c); // one code unit of a multi-byte sequence
+            }
             else
             {
-                put(w, c);
+                // `put` would encode through the throwing `std.utf.encode`;
+                // an invalid code point becomes U+FFFD instead.
+                import sparkles.base.text.utf : encodeScalar, UtfMode;
+
+                char[4] units;
+                put(w, units[0 .. encodeScalar(c, units[], UtfMode.replacement).written]);
             }
     }
 }
@@ -504,6 +513,17 @@ unittest
     SharedBuffer!(char, 32) buf;
     writeEscapedChar(buf, '\n');
     assert(buf[] == `\n`);
+}
+
+@("writeEscapedChar.wideChars")
+@safe pure nothrow @nogc
+unittest
+{
+    SharedBuffer!(char, 32) buf;
+    writeEscapedChar(buf, 'é');
+    writeEscapedChar(buf, '😀');
+    writeEscapedChar(buf, cast(dchar) 0xD800); // a lone surrogate
+    assert(buf[] == "é😀�");
 }
 
 /// Writes an escaped string to an output range (with double quotes). @nogc-compatible.
