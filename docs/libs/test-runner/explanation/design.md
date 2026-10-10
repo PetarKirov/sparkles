@@ -10,6 +10,10 @@ same seam silly used. That `shared static this` is `@standalone`: under the
 in-tree integration `dub_test_root` imports the shim's modules back, and
 without the attribute druntime rejects the module-constructor cycle.
 
+Builds without dub write the same module themselves: the Android test builder
+generates `dub_test_root` from the tested directories
+([Run tests on Android](../how-to/run-tests-on-android.md)).
+
 ## Two packages: a thin shim and a prebuilt impl
 
 The runner renders through `sparkles.base` (styled templates, `@nogc`
