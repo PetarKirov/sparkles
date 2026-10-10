@@ -37,9 +37,10 @@ ref Writer writePretty(T, Writer, Hook = void)(
 
 /**
 `value` pretty-printed, rendered when a consumer asks: `writeln(prettyPrint(x))`
-and `format("%s", prettyPrint(x))` write straight into their own sink, and
-`prettyPrint(x).toString` materializes a `string` where one is stored. The
-value and options are held by copy until then.
+and `format("%s", prettyPrint(x))` write straight into their own sink, `@nogc`
+ones such as the logger included, and `prettyPrint(x).toString` materializes a
+`string` where one is stored. The value and options are held by copy until
+then.
 */
 auto prettyPrint(T, Hook = void)(const T value,
     const PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook())
@@ -196,30 +197,10 @@ void prettyPrintAA(T, Writer, Hook = void)(
     // Try single-line format first
     if (opt.softMaxWidth > 0 && aa.length <= opt.maxItems)
     {
-        auto singleLineOpt = PrettyPrintOptions!void(
-            indentStep: opt.indentStep,
-            maxDepth: opt.maxDepth,
-            maxItems: opt.maxItems,
-            softMaxWidth: 0,
-            colored: false
-        );
-        string singleLine = prettyPrintAAInline!T(aa, singleLineOpt, depth);
-        if (singleLine.length <= opt.softMaxWidth)
-        {
-            put(w, "[");
-            bool first = true;
-            foreach (key, val; aa)
-            {
-                if (!first)
-                    put(w, ", ");
-                first = false;
-                prettyPrintImpl(w, key, opt, cast(ushort)(depth + 1));
-                put(w, ": ");
-                prettyPrintImpl(w, val, opt, cast(ushort)(depth + 1));
-            }
-            put(w, "]");
-            return;
-        }
+        LineWidth width;
+        writeAALine!T(width, aa, measureOptions(opt), depth);
+        if (width.length <= opt.softMaxWidth)
+            return writeAALine!T(w, aa, opt, depth);
     }
 
     put(w, "[");
@@ -268,69 +249,6 @@ void prettyPrintAA(T, Writer)(
     prettyPrintAA(w, aa, PrettyPrintOptions!void(), 0);
 }
 
-private string prettyPrintAAInline(T)(in T aa, in PrettyPrintOptions!void opt, ushort depth)
-{
-    import std.array : appender;
-    auto w = appender!string;
-    w.put("[");
-    bool first = true;
-    foreach (key, val; aa)
-    {
-        if (!first)
-            w.put(", ");
-        first = false;
-        prettyPrintImpl(w, key, opt, cast(ushort)(depth + 1));
-        w.put(": ");
-        prettyPrintImpl(w, val, opt, cast(ushort)(depth + 1));
-    }
-    w.put("]");
-    return w.data;
-}
-
-private string prettyPrintRangeInline(R)(R range, in PrettyPrintOptions!void opt, ushort depth)
-{
-    import std.array : appender;
-    auto w = appender!string;
-    w.put("[");
-    bool first = true;
-    foreach (elem; range)
-    {
-        if (!first)
-            w.put(", ");
-        first = false;
-        prettyPrintImpl(w, elem, opt, cast(ushort)(depth + 1));
-    }
-    w.put("]");
-    return w.data;
-}
-
-private string prettyPrintAggregateInline(T)(auto ref const T value, in PrettyPrintOptions!void opt, ushort depth)
-{
-    import std.array : appender;
-    import std.traits : FieldNameTuple;
-
-    auto w = appender!string;
-    w.put(T.stringof);
-    w.put("(");
-
-    alias fieldNames = FieldNameTuple!T;
-    bool first = true;
-    static foreach (i, fieldName; fieldNames)
-    {{
-        static if (fieldName.length > 0)
-        {
-            if (!first)
-                w.put(", ");
-            first = false;
-            w.put(fieldName);
-            w.put(": ");
-            prettyPrintImpl(w, value.tupleof[i], opt, cast(ushort)(depth + 1));
-        }
-    }}
-    w.put(")");
-    return w.data;
-}
-
 void prettyPrintRange(R, Writer, Hook = void)(
     ref Writer w,
     R range,
@@ -360,28 +278,10 @@ void prettyPrintRange(R, Writer, Hook = void)(
     {
         if (opt.softMaxWidth > 0 && len <= opt.maxItems)
         {
-            auto singleLineOpt = PrettyPrintOptions!void(
-                indentStep: opt.indentStep,
-                maxDepth: opt.maxDepth,
-                maxItems: opt.maxItems,
-                softMaxWidth: 0,
-                colored: false
-            );
-            string singleLine = prettyPrintRangeInline(range, singleLineOpt, depth);
-            if (singleLine.length <= opt.softMaxWidth)
-            {
-                put(w, "[");
-                bool first = true;
-                foreach (elem; range)
-                {
-                    if (!first)
-                        put(w, ", ");
-                    first = false;
-                    prettyPrintImpl(w, elem, opt, cast(ushort)(depth + 1));
-                }
-                put(w, "]");
-                return;
-            }
+            LineWidth width;
+            writeRangeLine(width, range, measureOptions(opt), depth);
+            if (width.length <= opt.softMaxWidth)
+                return writeRangeLine(w, range, opt, depth);
         }
     }
 
@@ -459,34 +359,10 @@ void prettyPrintAggregate(T, Writer, Hook = void)(
     // Try single-line format first
     if (opt.softMaxWidth > 0)
     {
-        auto singleLineOpt = PrettyPrintOptions!void(
-            indentStep: opt.indentStep,
-            maxDepth: opt.maxDepth,
-            maxItems: opt.maxItems,
-            softMaxWidth: 0,
-            colored: false
-        );
-        string singleLine = prettyPrintAggregateInline(value, singleLineOpt, depth);
-        if (singleLine.length <= opt.softMaxWidth)
-        {
-            writeTypeName!T(w, opt);
-            put(w, "(");
-            bool first = true;
-            static foreach (i, fieldName; fieldNames)
-            {{
-                static if (fieldName.length > 0)
-                {
-                    if (!first)
-                        put(w, ", ");
-                    first = false;
-                    writeStylized(w, fieldName, opt.colored ? Style.brightCyan : Style.none);
-                    put(w, ": ");
-                    prettyPrintImpl(w, value.tupleof[i], opt, cast(ushort)(depth + 1));
-                }
-            }}
-            put(w, ")");
-            return;
-        }
+        LineWidth width;
+        writeAggregateLine!T(width, value, measureOptions(opt), depth);
+        if (width.length <= opt.softMaxWidth)
+            return writeAggregateLine!T(w, value, opt, depth);
     }
 
     writeTypeName!T(w, opt);
@@ -528,6 +404,110 @@ void prettyPrintAggregate(T, Writer)(
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper functions
 // ─────────────────────────────────────────────────────────────────────────────
+
+// The single-line forms below are written twice: once into a `LineWidth`
+// under `measureOptions` to decide whether the value fits, then into the
+// real writer. Measuring by writing keeps both passes the same layout and
+// allocates nothing.
+
+private void writeAALine(T, Writer, Hook)(
+    ref Writer w,
+    auto ref const T aa,
+    in PrettyPrintOptions!Hook opt,
+    ushort depth
+)
+{
+    import std.range.primitives : put;
+
+    put(w, "[");
+    bool first = true;
+    foreach (key, val; aa)
+    {
+        if (!first)
+            put(w, ", ");
+        first = false;
+        prettyPrintImpl(w, key, opt, cast(ushort)(depth + 1));
+        put(w, ": ");
+        prettyPrintImpl(w, val, opt, cast(ushort)(depth + 1));
+    }
+    put(w, "]");
+}
+
+private void writeRangeLine(R, Writer, Hook)(
+    ref Writer w,
+    R range,
+    in PrettyPrintOptions!Hook opt,
+    ushort depth
+)
+{
+    import std.range.primitives : put;
+
+    put(w, "[");
+    bool first = true;
+    foreach (elem; range)
+    {
+        if (!first)
+            put(w, ", ");
+        first = false;
+        prettyPrintImpl(w, elem, opt, cast(ushort)(depth + 1));
+    }
+    put(w, "]");
+}
+
+private void writeAggregateLine(T, Writer, Hook)(
+    ref Writer w,
+    auto ref const T value,
+    in PrettyPrintOptions!Hook opt,
+    ushort depth
+)
+{
+    import std.range.primitives : put;
+    import std.traits : FieldNameTuple;
+
+    writeTypeName!T(w, opt);
+    put(w, "(");
+    bool first = true;
+    static foreach (i, fieldName; FieldNameTuple!T)
+    {{
+        // Skip context pointer for nested types
+        static if (fieldName.length > 0)
+        {
+            if (!first)
+                put(w, ", ");
+            first = false;
+            writeStylized(w, fieldName, opt.colored ? Style.brightCyan : Style.none);
+            put(w, ": ");
+            prettyPrintImpl(w, value.tupleof[i], opt, cast(ushort)(depth + 1));
+        }
+    }}
+    put(w, ")");
+}
+
+/// `opt` for measuring a single-line candidate: uncolored, unlinked, and with
+/// nested values laid out multi-line, as the width check has always assumed.
+private PrettyPrintOptions!void measureOptions(Hook)(in PrettyPrintOptions!Hook opt)
+    => PrettyPrintOptions!void(
+        indentStep: opt.indentStep,
+        maxDepth: opt.maxDepth,
+        maxItems: opt.maxItems,
+        softMaxWidth: 0,
+        colored: false,
+    );
+
+/// An output range that only counts the UTF-8 code units put into it.
+private struct LineWidth
+{
+    size_t length;
+
+    void put(in char[] s) @safe pure nothrow @nogc { length += s.length; }
+
+    void put(dchar c) @safe pure nothrow @nogc
+    {
+        import std.utf : codeLength;
+
+        length += codeLength!char(c);
+    }
+}
 
 /// DbI hook for `writeStyledValue` that encodes prettyPrint's leaf rendering
 /// rules: escaped strings/chars with quotes, enum member names, and
@@ -683,6 +663,7 @@ unittest
     check('a', "'a'");
     check('\n', `'\n'`);
     check('\t', `'\t'`);
+    check(cast(dchar) 'é', "'é'");
 }
 
 @("prettyPrint.string")
@@ -706,10 +687,12 @@ unittest
 }
 
 @("prettyPrint.array")
+@safe pure nothrow @nogc
 unittest
 {
     const opts = PrettyPrintOptions!void(softMaxWidth: 0, colored: false);
-    int[] arr = [1, 2, 3];
+    int[3] numbers = [1, 2, 3];
+    int[] arr = numbers[];
     check(arr, "[\n  1,\n  2,\n  3\n]", opts);
 
     int[] nullSlice;
@@ -721,6 +704,7 @@ unittest
 }
 
 @("prettyPrint.staticArray")
+@safe pure nothrow @nogc
 unittest
 {
     const opts = PrettyPrintOptions!void(softMaxWidth: 0, colored: false);
@@ -729,6 +713,7 @@ unittest
 }
 
 @("prettyPrint.aa")
+@safe pure nothrow @nogc
 unittest
 {
     int[string] empty;
@@ -736,6 +721,7 @@ unittest
 }
 
 @("prettyPrint.struct")
+@safe pure nothrow @nogc
 unittest
 {
     struct Point { int x; int y; }
@@ -745,6 +731,7 @@ unittest
 }
 
 @("prettyPrint.nestedStruct")
+@safe pure nothrow @nogc
 unittest
 {
     struct Inner { int value; }
@@ -756,6 +743,7 @@ unittest
 }
 
 @("prettyPrint.tuple")
+@safe pure nothrow @nogc
 unittest
 {
     auto t1 = tuple(1, "hello", 3.14);
@@ -766,6 +754,7 @@ unittest
 }
 
 @("prettyPrint.pointer")
+@safe pure nothrow @nogc
 unittest
 {
     int* nullPtr = null;
@@ -777,13 +766,17 @@ unittest
 }
 
 @("prettyPrint.maxItems")
+@safe pure nothrow @nogc
 unittest
 {
     const opts = PrettyPrintOptions!void(maxItems: 3, colored: false);
-    int[] arr = [1, 2, 3, 4, 5];
+    int[5] backing = [1, 2, 3, 4, 5];
+    int[] arr = backing[];
     check(arr, "[\n  1,\n  2,\n  3,\n  ... 2 more\n]", opts);
 }
 
+// Unannotated: printing a self-referential type instantiates `prettyPrintImpl`
+// recursively, and D infers no attributes through such a cycle.
 @("prettyPrint.maxDepth")
 unittest
 {
@@ -816,10 +809,46 @@ unittest
 }
 
 @("prettyPrint.withColors")
+@safe pure nothrow @nogc
 unittest
 {
     // Integer 42 with blue color code prefix and reset to default foreground
     check(42, "\x1b[34m42\x1b[39m", PrettyPrintOptions!void(colored: true));
+}
+
+@("prettyPrint.softMaxWidth.measuresWithoutAllocating")
+@safe pure nothrow @nogc
+unittest
+{
+    struct Span { string name; int[] stops; }
+
+    int[3] stops = [1, 2, 3];
+    const span = Span("gradient", stops[]);
+
+    // Fits: measured uncolored, then written with color on one line.
+    check(span, `Span(name: "gradient", stops: [1, 2, 3])`);
+    check(span,
+        "\x1b[35mSpan\x1b[39m(\x1b[96mname\x1b[39m: \x1b[32m\"gradient\"\x1b[39m, "
+        ~ "\x1b[96mstops\x1b[39m: [\x1b[34m1\x1b[39m, \x1b[34m2\x1b[39m, \x1b[34m3\x1b[39m])",
+        PrettyPrintOptions!void(colored: true));
+
+    // Too narrow: the outer struct breaks, and the array, measured on its own,
+    // still fits.
+    check(span, "Span(\n  name: \"gradient\",\n  stops: [1, 2, 3]\n)",
+        PrettyPrintOptions!void(softMaxWidth: 30, colored: false));
+}
+
+/// The lazy value renders through any sink, `@nogc` ones included.
+@("prettyPrint.lazyValue.nogc")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.buffer : checkToString;
+
+    struct Point { int x; int y; }
+
+    checkToString(prettyPrint(Point(1, 2), PrettyPrintOptions!void.plainText),
+        "Point(x: 1, y: 2)");
 }
 
 @("prettyPrint.class")
