@@ -52,7 +52,7 @@ int main()
     auto created = DefaultLoop.create(loop, cfg);
     if (created.hasError)
     {
-        writefln("SKIP: io_uring unavailable (errno %d)", created.error.errnoValue);
+        writefln("SKIP: io_uring unavailable (errno %d)", created.error.code);
         return 0;
     }
     scope (exit) loop.destroy();

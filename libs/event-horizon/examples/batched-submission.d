@@ -101,7 +101,7 @@ int main()
     auto created = DefaultLoop.create(loop);
     if (created.hasError)
     {
-        warning(i"SKIP: $(backend) unavailable (errno $(created.error.errnoValue)) — $(created.error.context)");
+        warning(i"SKIP: $(backend) unavailable (errno $(created.error.code)) — $(created.error.context)");
         return 0;
     }
     scope (exit) loop.destroy();

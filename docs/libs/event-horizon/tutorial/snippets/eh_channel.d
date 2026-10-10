@@ -47,7 +47,7 @@ void main()
                 auto next = items.take(s); // parks while empty
                 if (next.hasError)
                 {
-                    assert(next.error.errnoValue == EPIPE);
+                    assert(next.error.code == EPIPE);
                     break; // closed and drained: EPIPE
                 }
                 assert(next.value == expected++);

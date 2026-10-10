@@ -222,12 +222,62 @@ struct OpFsync
 /// `struct statx` mirror, see `fs.Statx`).
 struct OpStatx
 {
-    enum kind = OpKind.statx;
+    enum kind = OpKind.statAt;
     int dirFd;
     const(char)* path;
     int flags;
     uint mask;
     void* statxBuf;
+}
+
+/// Resolves `path` under `dirFd` with `openat2(2)`; `how` points at a kernel-stable
+/// `open_how` (`flags`, `mode`, `resolve`, three `ulong`s). The completion's `res` is
+/// the new descriptor.
+struct OpOpenAt2
+{
+    enum kind = OpKind.resolve;
+    int dirFd;
+    const(char)* path;
+    const(void)* how;
+}
+
+/// Creates the directory `path` relative to `dirFd`. `path` is NUL-terminated
+/// and kernel-stable.
+struct OpMkdirAt
+{
+    enum kind = OpKind.mkdirAt;
+    int dirFd;
+    const(char)* path;
+    uint mode;
+}
+
+/// Removes `path` relative to `dirFd`; `flags` is 0 for a file and
+/// `AT_REMOVEDIR` for an empty directory.
+struct OpUnlinkAt
+{
+    enum kind = OpKind.unlinkAt;
+    int dirFd;
+    const(char)* path;
+    int flags;
+}
+
+/// Renames `oldPath` under `oldDirFd` to `newPath` under `newDirFd`.
+struct OpRenameAt
+{
+    enum kind = OpKind.renameAt;
+    int oldDirFd;
+    const(char)* oldPath;
+    int newDirFd;
+    const(char)* newPath;
+}
+
+/// Creates the symbolic link `linkPath` under `newDirFd`, holding `target`.
+struct OpSymlinkAt
+{
+    enum kind = OpKind.symlinkAt;
+    const(char)* target;
+    int newDirFd;
+    const(char)* linkPath;
 }
 
 /// Reaps a child process (`WAITID`); the kernel writes the caller-owned

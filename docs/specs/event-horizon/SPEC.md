@@ -236,11 +236,11 @@ _Loop-side_ modules may import anything.
 | `backend.uring`    | loop-side    | `UringBackend` over `during` (§3.5); `backend.kqueue` / `backend.iocp` follow in M10/M11                                                                                |
 | `loop`             | loop-side    | `EventLoop!Backend`, `LoopConfig`, `DefaultLoop` — tier A (§5)                                                                                                          |
 | `sched`            | loop-side    | `Sched`, `SchedOptions`, `FiberTask`, `currentTask`, `RootScope` — tier B scheduler (§7)                                                                                |
-| `io`               | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`FileHandle` handles (§7.3)                                    |
+| `io`               | loop-side    | direct-style verbs (`read`/`write`/`recv`/`send`/`accept`/`connect`/`sleep`) and the `Stream`/`Listener`/`DgramSocket` handles (§7.3)                                   |
 | `live`             | loop-side    | ring-backed capability implementations (`RingClock`, `RingNet`, `RingProc`), the process spawn machinery (§13), and the `Env` row                                       |
 | `proc`             | effects-side | process vocabulary (`StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`), `isProc`, `SimProc` (§13)                                                                 |
 | `channel`          | effects-side | `Channel!T` — bounded intra-worker fiber channel (§14)                                                                                                                  |
-| `fs`               | loop-side    | `RingVfs`, the capability VFS backend over the loop, and the `fs` member of the row (§10.5)                                                                             |
+| `vfs`              | loop-side    | `RingVfs`, the capability VFS backend over the loop, and the `fs` member of the row (§10.5)                                                                             |
 | `signals`, `watch` | loop-side    | concrete ring-driven modules (M7): `SignalFd`, `Watcher`; concept seams follow demand (§10.3)                                                                           |
 | `group`            | loop-side    | `LoopGroup`, `LoopGroupConfig`, `Topology` (§11)                                                                                                                        |
 | `raw_pool`         | loop-side    | persistent fixed-capacity closure-free CPU jobs (`RawCpuPool`, §11.1)                                                                                                   |
@@ -386,7 +386,7 @@ agree.
 If `io_uring_setup` fails — `ENOSYS` (kernel too old or compiled out),
 `EPERM`/`EACCES` (seccomp, the `io_uring_disabled` sysctl, container
 lockdown) — or the kernel is below the 6.1 floor, loop creation returns
-`IoError(errnoValue, OpKind.none, IoErrorStage.setup, "io_uring unavailable")`
+`ioError(errno, OpKind.none, IoErrorStage.setup, "io_uring unavailable")`
 (or `stage: probe` for the floor). **There is no epoll fallback.** Tests for
 this path call `skipTest` (`sparkles:test-runner`) on hosts where the condition
 cannot be produced, so a degraded host reports skips rather than passes.
@@ -901,20 +901,27 @@ Every I/O verb funnels through one choke point:
    `res` through `fromRes`, surface a latched interrupt after the result is
    delivered (no silently lost bytes).
 
-The verbs (module `io`) are thin shims over this seam. `Stream`, `Listener`,
-`DgramSocket`, and `FileHandle` (module `io`) are small **copyable
-fd-carrying handles with an explicit `close()`** — they own no memory and
-carry no ring state; the verbs resolve the scheduler from the current fiber,
-which is why only the fiber-level verbs (`sleep`, `yieldNow`) name `Sched`
-explicitly. Sockets, listeners, and files are **created only through
-capabilities** (`env.net`, `env.fs`, §10.3); the `io` verbs operate on the
-handles those capabilities return.
+The verbs (module `io`) are thin shims over this seam; they resolve the
+scheduler from the current fiber, which is why only the fiber-level verbs
+(`sleep`, `yieldNow`) name `Sched` explicitly.
+
+`read` and `write` **must** accept any handle that lends a descriptor
+(`isFdBorrowable`, module `sparkles.event_horizon.sys.descriptor`). Ownership follows
+cap-std: an `OwnedFd` is the move-only owner of a descriptor and closes it
+exactly once; a `BorrowedFd` is a copyable lend with no `close` at all, so no
+copy can close a descriptor out from under another. A pipe end, a pty master
+and a capability VFS `File` whose backend has descriptors all lend one, so a
+file opened through a directory capability reads through the ring with no
+copy of its descriptor. `Stream`, `Listener` and `DgramSocket` are small copyable
+socket handles with an explicit `close()`; they own no memory and carry no ring
+state. Sockets, listeners and files are **created only through
+capabilities** (`env.net`, `env.fs`, §10.3).
 
 ```d
-BufResult!Buf read(Buf)(FileHandle f, Buf buf, ulong offset = ulong.max)
-if (isOwnedIoBuf!Buf);
-BufResult!Buf write(Buf)(FileHandle f, Buf buf, ulong offset = ulong.max)
-if (isOwnedIoBuf!Buf);
+BufResult!Buf read(H, Buf)(auto ref H h, Buf buf, ulong offset = ulong.max)
+if (isFdBorrowable!H && isOwnedIoBuf!Buf);
+BufResult!Buf write(H, Buf)(auto ref H h, Buf buf, ulong offset = ulong.max)
+if (isFdBorrowable!H && isOwnedIoBuf!Buf);
 BufResult!Buf recv(Buf)(ref Stream s, Buf buf) if (isOwnedIoBuf!Buf);
 BufResult!Buf send(Buf)(ref Stream s, Buf buf, size_t offset = 0,
     size_t len = size_t.max) if (isOwnedIoBuf!Buf);
@@ -1190,11 +1197,17 @@ alias IoResult(T) = Expected!(T, IoError, NoGcHook);
 IoResult!T ioOk(T)(T value) @safe pure nothrow @nogc;
 IoResult!void ioOk() @safe pure nothrow @nogc;
 IoResult!T ioErr(T)(IoError error) @safe pure nothrow @nogc;
-IoResult!T ioErr(T)(int errnoValue, OpKind op,
+IoResult!T ioErr(T)(ErrorKind kind, OpKind op, int code = 0,
     IoErrorStage stage = IoErrorStage.completion, string context = null)
-    @safe pure nothrow @nogc;   // classifies errnoValue into kind
+    @safe pure nothrow @nogc;
 
-// Added by this library:
+// Added by this library, each classifying an errno through `errnoKind`:
+IoError ioError(int code, OpKind op = OpKind.none,
+    IoErrorStage stage = IoErrorStage.completion, string context = null)
+    @safe pure nothrow @nogc;
+IoResult!T ioErr(T)(int code, OpKind op,
+    IoErrorStage stage = IoErrorStage.completion, string context = null)
+    @safe pure nothrow @nogc;
 /// The single point where a raw CQE res becomes typed.
 IoResult!uint fromRes(int res, OpKind op) @safe pure nothrow @nogc;
 ```
@@ -1203,10 +1216,24 @@ A failure's `kind` **must** be set where the raw result first becomes typed,
 in `fromRes` or `ioErr`, and never recomputed by a caller. File-system kinds
 and their mapping belong to the capability VFS
 ([VFE2](../base/vfs/SPEC.md#vfe2-error-kinds),
-[VFN2](../base/vfs/backends.md#vfn2-ambiguous-native-results)). The network
-and process kinds, and the errno mapping `fromRes` applies to them, are open
-question [O32](./open-issues.md#o32-network-and-process-error-kinds); an errno
-with no dedicated kind maps to `other`, with the errno in `code`.
+[VFN2](../base/vfs/backends.md#vfn2-ambiguous-native-results)). This library
+defines the network and process kinds. Only a code some caller branches on
+has a kind of its own; every other code **must** map to `other`, with the raw
+value in `code`.
+
+| Kind                | POSIX errno             | Win32 and Winsock                                                        |
+| ------------------- | ----------------------- | ------------------------------------------------------------------------ |
+| `cancelled`         | `ECANCELED`             | `ERROR_OPERATION_ABORTED`, `ERROR_CANCELLED`                             |
+| `wouldBlock`        | `EAGAIN`, `EWOULDBLOCK` | `WSAEWOULDBLOCK`                                                         |
+| `connectionReset`   | `ECONNRESET`, `EPIPE`   | `WSAECONNRESET`, `WSAECONNABORTED`, `ERROR_BROKEN_PIPE`, `ERROR_NO_DATA` |
+| `connectionRefused` | `ECONNREFUSED`          | `WSAECONNREFUSED`, `ERROR_CONNECTION_REFUSED`                            |
+| `invalidArgument`   | `EINVAL`                | `WSAEINVAL`, `ERROR_INVALID_PARAMETER`                                   |
+| `noProcess`         | `ESRCH`, `ECHILD`       | —                                                                        |
+
+The two tables are `errnoKind` and `win32Kind` in
+`sparkles.event_horizon.sys.error_kinds`, shared with the blocking VFS backend.
+A backend that reports a native code **must** report it as the host's
+`errno` value, or classify it with `win32Kind` where it holds a Win32 code.
 
 Move-only payloads (an `expected` 0.4.x constraint): the hook's
 `onAccessEmptyValue` makes `IoResult!T` _instantiable_ for non-copyable `T`
@@ -1215,9 +1242,8 @@ Move-only payloads (an `expected` 0.4.x constraint): the hook's
 and friends) still require copyable `T`. Factories for non-copyable _owners_
 (`EventLoop.create`, `LoopGroup.start`) therefore use the out-parameter shape
 (`IoResult!void create(out EventLoop loop, …)` — the `during`
-`setup(ref Uring, …)` precedent). This hook member is a deliberate divergence
-from `sparkles.base.text.errors.NoGcHook`
-([open-issues](./open-issues.md) O13).
+`setup(ref Uring, …)` precedent). The hook is
+`sparkles.base.text.errors.NoGcHook` itself, which defines this member.
 
 ### 9.2 `Cause` and `Outcome`
 
@@ -1418,6 +1444,9 @@ library states what it adds:
 - **Effect forms.** The `Dir` and `File` operations **must** have `Effect!T`
   forms (§12), generated from the direct-style operations rather than written
   separately; each produces the result of its direct form.
+  `handle.effects.op(args)` describes `handle.op(args)`, and
+  `handle.effects.call!("op", ct...)(args)` covers an operation with template
+  arguments.
 - **The library's own file access.** The library's own reads of the file
   system, such as the cgroup and `/proc` access of §13.7 and §13.8, **must**
   go through handles obtained from `openRoot`, and the library **must not**
@@ -1431,9 +1460,10 @@ library states what it adds:
   ([VFO5](../base/vfs/SPEC.md#vfo5-sharing-of-created-entries)), whose
   default is the platform's ordinary sharing less the umask.
 
-How the `io` verbs of §7.3 reach a capability VFS `File`, and whether
-`FileHandle` survives as a borrowed view of one, is part of open question
-[O32](./open-issues.md#o32-network-and-process-error-kinds).
+A capability VFS `File` reaches the `io` verbs of §7.3 by lending its descriptor.
+A descriptor that must outlive any one handle, such as a control file a run
+holds open, is obtained through a directory capability and handed to an
+`OwnedFd` with `File.intoOwnedFd` or `Dir.intoOwnedFd`.
 
 ## 11. Scheduler topologies
 
@@ -1723,10 +1753,10 @@ struct ExitStatus
 struct ChildProcess
 {
     int pid = -1;          /// -1 after a successful wait
-    FileHandle stdinW;     /// write end of the child's stdin  (piped only)
-    FileHandle stdoutR;    /// read end of the child's stdout  (piped only)
-    FileHandle stderrR;    /// read end of the child's stderr  (piped only)
-    FileHandle ptyMaster;  /// the PTY master (spawnPty only, §13.3)
+    OwnedFd stdinW;        /// write end of the child's stdin  (piped only)
+    OwnedFd stdoutR;       /// read end of the child's stdout  (piped only)
+    OwnedFd stderrR;       /// read end of the child's stderr  (piped only)
+    OwnedFd ptyMaster;     /// the PTY master (spawnPty only, §13.3)
 
     bool opCast(T : bool)() const;              /// true while reapable
     IoResult!void kill(int sig = SIGTERM);      /// signal the child
@@ -1740,8 +1770,8 @@ IoResult!ChildProcess spawnProcess(scope const(char[])[] argv,
 IoResult!ExitStatus wait(ref Sched s, ref ChildProcess child);
 ```
 
-Piped ends the caller does not use must still be closed (`FileHandle.close`
-— handles are copyable views; exactly one owner closes). `wait` is the only
+`ChildProcess` is move-only: its ends are owners, so an end the caller never
+touches is closed with it, and an explicit `close()` is idempotent. `wait` is the only
 reap path: there is no `SIGCHLD` handler and no blocking `waitpid` anywhere
 in the library. `kill` after a successful `wait` returns `ESRCH` — the pid
 is gone and never reused through this handle (no wrap-around hazard: the
@@ -1798,8 +1828,8 @@ The child becomes a session leader (`POSIX_SPAWN_SETSID`) and acquires the
 slave as its controlling terminal by **opening it inside the child** (a
 spawn file action, ordered after the setsid attribute) — the reason this is
 `posix_spawn`-expressible at all. `stdinSpec`/`stdoutSpec`/`stderrSpec`
-are ignored for a PTY spawn: all three point at the slave. The master is a
-`FileHandle` like any other — `apps/terminal`'s per-frame `EAGAIN` drain
+are ignored for a PTY spawn: all three point at the slave. The master is an
+`OwnedFd` like any other — `apps/terminal`'s per-frame `EAGAIN` drain
 becomes one parked ring read (the `pty-drain` example, completed by the
 in-ring reap that `forkpty` could not offer).
 
@@ -2475,7 +2505,7 @@ Re-exported from `sparkles.event_horizon` (`package.d`):
 | Tier A            | `EventLoop` (`runOnce`, conditional `runHostedOnce`), `DefaultLoop`, `LoopConfig`, `RunStatus`, `OpHandle`, `OpClass`, `Completion`, `CompletionFlags`, `OpCallback`, op descriptors, `SockAddr`, `KernelTimespec`, `BackendConfig`, `Waker`, `LoopHandle`                                                                      |
 | Buffers           | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf`                                                                                                                                                                                                                                          |
 | Probing           | `BackendCaps`, `BackendId`, `LoopMode`, `ModePolicy`, `probeSystem`                                                                                                                                                                                                                                                             |
-| Tier B            | `Sched` (including conditional `tickHosted`), `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `FileHandle`, `currentTask`                                                                                                      |
+| Tier B            | `Sched` (including conditional `tickHosted`), `SchedOptions`, `RootScope`, the `io` verbs (incl. `sleepUntil`, `waitReadable`, `waitWritable`), `Ticker`, `Stream`, `Listener`, `DgramSocket`, `OwnedFd`, `BorrowedFd`, `isFdBorrowable`, `currentTask`                                                                         |
 | Subprocesses      | `StdioMode`, `StdioSpec`, `ProcessConfig`, `ExitStatus`, `isProc`, `SimProc`, `ChildProcess`, `spawnProcess`, `spawnPty`, `resizePty`, `wait`, `RingProc`                                                                                                                                                                       |
 | Supervision (M19) | `EnvironmentChange`, `ProcessStream`, `ProcessLine`, `ProcessEventKind`, `ProcessEvent`, `ProcessEnd`, `ProcessResourceUsage`, `SampleSource`, `MetricSource`, `MetricQuality`, `ResidualPolicy`, `ReapOutcome`, `KillOutcome`, `KillResult`, `SupervisedProcessConfig`, `SupervisedProcessResult`, `supervise`, `BlockingPool` |
 | Channels          | `Channel`                                                                                                                                                                                                                                                                                                                       |
@@ -2558,9 +2588,11 @@ repeated application code without changing the raw completion ownership model:
 | `withSocket`                              | Linux lexical socket owner with checked, non-retried close; same borrowed-body discipline. No cleanup slot or asynchronous destructor.                                                                                                                                                       |
 | Typed `submit`, `submitAfter`, `submitAt` | Generate a function-pointer trampoline for `(ref State, ref Completion)`. Handler remains nothrow/@nogc. Context remains caller-owned and pinned through terminal completion or detach; cancel submission alone does not discharge its lifetime.                                             |
 | `scope.join(handle)`                      | Uses the scope's executor and rejects handles belonging to another scope. The handle remains caller-owned and pinned.                                                                                                                                                                        |
+| `handle.effects`                          | The `Effect!T` form of every operation of a capability VFS handle, generated from the direct form: `effects.op(args)`, or `effects.call!("op", ct...)(args)` for an operation with template arguments (§10.5).                                                                               |
 | Inferred `effectOf!fn()`                  | Infers value/error types for concretely typed bodies, reusing the existing interpreter and `zipPar`. Generic bodies retain the explicit type form.                                                                                                                                           |
 
-Design decisions: retain copyable low-level handle views, address-pinned join
+Design decisions: retain copyable socket handle views (descriptors of files,
+pipes and ptys follow the owner and borrow split of §7.3), address-pinned join
 slots and explicit raw callback registrations. A general managed callback owner
 would add storage and dispatch-time destruction rules; typed-context prototypes
 do not justify that additional layer yet. No new task DSL or hidden fiber wrapper

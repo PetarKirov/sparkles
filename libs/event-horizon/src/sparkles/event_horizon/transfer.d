@@ -14,9 +14,14 @@ import core.stdc.errno : EIO, EOVERFLOW, EFBIG;
 import sparkles.base.buffer : UniqueBuffer, HeapBuffer;
 import sparkles.event_horizon.buffer : Buf, isOwnedIoBuf;
 import sparkles.event_horizon.errors : IoResult, IoErrorStage, OpKind, ioErr, ioOk;
-import sparkles.event_horizon.io : FileHandle, Stream, read, recv;
+import sparkles.event_horizon.io : Stream, read, recv;
+import sparkles.event_horizon.sys.descriptor : BorrowedFd, OwnedFd, isFdBorrowable;
 import sparkles.event_horizon.sched : currentScheduler;
 import sparkles.event_horizon.op : OpRead, OpWrite, OpRecv, OpSend;
+
+/// A handle the file verbs take: anything lending a descriptor, except a
+/// `Stream`, which has its own overloads.
+private enum isFileLike(H) = isFdBorrowable!H && !is(H == Stream);
 
 /// Ownership and completed prefix are returned even on failure. `res` describes
 /// completion of the whole request, not only the last system call.
@@ -35,9 +40,9 @@ TransferResult!B sendAll(B)(ref Stream stream, B buf) if (isOwnedIoBuf!B)
     => complete!OpSend(stream.fd, move(buf));
 
 /// Writes all valid bytes. `ulong.max` uses the current file position.
-TransferResult!B writeAll(B)(FileHandle file, B buf, ulong offset = ulong.max)
-if (isOwnedIoBuf!B)
-    => complete!OpWrite(file.fd, move(buf), offset);
+TransferResult!B writeAll(H, B)(auto ref H file, B buf, ulong offset = ulong.max)
+if (isFileLike!H && isOwnedIoBuf!B)
+    => complete!OpWrite(file.borrowFd().fd, move(buf), offset);
 
 /// Fills the valid-length window (`buf[]`), not spare capacity. Set the buffer
 /// length to the requested frame size first. Premature EOF is EIO; the completed
@@ -46,9 +51,9 @@ TransferResult!B readExactly(B)(ref Stream stream, B buf) if (isOwnedIoBuf!B)
     => complete!OpRecv(stream.fd, move(buf));
 
 /// ditto, for a file.
-TransferResult!B readExactly(B)(FileHandle file, B buf, ulong offset = ulong.max)
-if (isOwnedIoBuf!B)
-    => complete!OpRead(file.fd, move(buf), offset);
+TransferResult!B readExactly(H, B)(auto ref H file, B buf, ulong offset = ulong.max)
+if (isFileLike!H && isOwnedIoBuf!B)
+    => complete!OpRead(file.borrowFd().fd, move(buf), offset);
 
 /// Single-transfer in-place adapter. Temporarily moves the owner into `recv`
 /// and restores it after terminal completion, on success or ordinary failure.
@@ -61,8 +66,8 @@ IoResult!uint recvInto(B)(ref Stream stream, ref B buf) if (isOwnedIoBuf!B)
 }
 
 /// ditto, for file reads (same spare-capacity semantics as `read`).
-IoResult!uint readInto(B)(FileHandle file, ref B buf, ulong offset = ulong.max)
-if (isOwnedIoBuf!B)
+IoResult!uint readInto(H, B)(auto ref H file, ref B buf, ulong offset = ulong.max)
+if (isFileLike!H && isOwnedIoBuf!B)
 {
     auto result = read(file, move(buf), offset);
     buf = move(result.buf);
@@ -104,7 +109,7 @@ private TransferResult!B complete(Op, B)(int fd, B buf, ulong offset = ulong.max
 /// additional byte is consumed to distinguish exact-size EOF from EFBIG.
 /// File reads use and advance the current file position.
 IoResult!(HeapBuffer!ubyte) readToEnd(H)(ref H handle, size_t maxBytes)
-if (is(H == FileHandle) || is(H == Stream))
+if (isFdBorrowable!H)
 {
     alias Bytes = HeapBuffer!ubyte;
     Bytes result;
@@ -118,17 +123,17 @@ if (is(H == FileHandle) || is(H == Stream))
         // until terminal completion, so the limit probe consumes only one byte.
         auto window = (() @trusted => Buf.fromForeign(chunk[], null))();
         window.length = cast(uint) chunk.length;
-        static if (is(H == FileHandle))
-            auto got = read(handle, move(window));
-        else
+        static if (is(H == Stream))
             auto got = recv(handle, move(window));
+        else
+            auto got = read(handle, move(window));
         if (got.res.hasError)
             return ioErr!Bytes(got.res.error);
         const n = got.res.value;
         if (n == 0)
             return ioOk(move(result));
         if (n > remaining)
-            return ioErr!Bytes(EFBIG, is(H == FileHandle) ? OpKind.read : OpKind.recv);
+            return ioErr!Bytes(EFBIG, is(H == Stream) ? OpKind.recv : OpKind.read);
         result ~= chunk[][0 .. n];
     }
 }
@@ -136,7 +141,7 @@ if (is(H == FileHandle) || is(H == Stream))
 /// GC-allocating byte-preserving text convenience. No Unicode validation or
 /// normalization is performed; use a decoder when input validity matters.
 IoResult!string readText(H)(ref H handle, size_t maxBytes)
-if (is(H == FileHandle) || is(H == Stream))
+if (isFdBorrowable!H)
 {
     auto bytes = readToEnd(handle, maxBytes);
     if (bytes.hasError)
@@ -155,14 +160,14 @@ version (Posix)
     scope(exit) sched.destroy();
     int[2] fds;
     assert(pipe(fds) == 0);
-    auto input = FileHandle(fds[0]);
-    auto output = FileHandle(fds[1]);
+    auto input = OwnedFd(fds[0]);
+    auto output = OwnedFd(fds[1]);
     scope(exit) input.close();
     scope(exit) output.close();
     auto ran = sched.run(() {
         UniqueBuffer!(ubyte, 8) invalid;
         invalid ~= cast(ubyte) 42;
-        auto rejected = readInto(FileHandle(-1), invalid);
+        auto rejected = readInto(BorrowedFd(-1), invalid);
         assert(rejected.hasError && invalid.length == 1 && invalid[0] == 42);
         assert(sched.spawn(() {
             UniqueBuffer!(ubyte, 8) bytes;
@@ -174,7 +179,7 @@ version (Posix)
         UniqueBuffer!(ubyte, 8) bytes;
         bytes.length = 8;
         auto got = readExactly(input, move(bytes));
-        assert(got.res.hasError && got.res.error.errnoValue == EIO);
+        assert(got.res.hasError && got.res.error.code == EIO);
         assert(got.transferred == 5 && got.buf[][0 .. 5] == cast(const(ubyte)[]) "hello");
     });
     assert(!ran.hasError);
@@ -183,12 +188,12 @@ version (Posix)
 @("transfer.emptyAndOverflowDoNotSubmit") @system unittest
 {
     UniqueBuffer!(ubyte, 8) bytes;
-    auto empty = writeAll(FileHandle(-1), move(bytes));
+    auto empty = writeAll(BorrowedFd(-1), move(bytes));
     assert(!empty.res.hasError && empty.transferred == 0);
     bytes = move(empty.buf);
     bytes.length = 8;
-    auto overflow = writeAll(FileHandle(-1), move(bytes), ulong.max - 4);
-    assert(overflow.res.error.errnoValue == EOVERFLOW);
+    auto overflow = writeAll(BorrowedFd(-1), move(bytes), ulong.max - 4);
+    assert(overflow.res.error.code == EOVERFLOW);
     assert(overflow.transferred == 0 && overflow.buf.length == 8);
 }
 
@@ -206,8 +211,8 @@ version (Posix)
     scope(exit) sched.destroy();
     int[2] fds;
     assert(pipe(fds) == 0);
-    auto input = FileHandle(fds[0]);
-    auto output = FileHandle(fds[1]);
+    auto input = OwnedFd(fds[0]);
+    auto output = OwnedFd(fds[1]);
     scope(exit) input.close();
     scope(exit) output.close();
     auto ran = sched.run(() {
@@ -215,7 +220,7 @@ version (Posix)
             UniqueBuffer!(ubyte, 8) bytes;
             bytes.length = 8;
             auto got = readExactly(input, move(bytes));
-            assert(got.res.hasError && got.res.error.errnoValue == ECANCELED);
+            assert(got.res.hasError && got.res.error.code == ECANCELED);
             assert(got.transferred == 0 && got.buf.length == 8);
         })(sched, 1.msecs);
         assert(timed.error.isTimeout);

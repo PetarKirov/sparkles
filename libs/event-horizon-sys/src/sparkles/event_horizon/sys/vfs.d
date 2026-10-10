@@ -23,6 +23,8 @@ import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpK
 import sparkles.base.vfs.types : Access, Disposition, EntryKind, MountCheck, OpenMode,
     ResolvePolicy, Sharing, Stat, StatMask, SymlinkPolicy, DotDotPolicy, maxNameLength,
     maxSplicedPathLength, raceRetries;
+import sparkles.event_horizon.sys.descriptor : BorrowedFd, OwnedFd;
+import sparkles.event_horizon.sys.error_kinds : errnoKind;
 import sparkles.event_horizon.sys.posix;
 
 /// The context a backend gives when its kernel resolver turned out to be
@@ -134,7 +136,7 @@ struct BlockingVfs
             return ioErr!void(ErrorKind.nameTooLong, OpKind.mkdirAt);
         const bits = sharing.modeBits(true, false);
         const r = (() @trusted => retry(() => mkdirat(dir.fd, z.ptr, cast(ushort) bits)))();
-        return r < 0 ? ioErr!void(failure(OpKind.mkdirAt)) : ioOk();
+        return mkdirOutcome(r < 0 ? errno : 0);
     }
 
     /// Stats the entry `name` in `dir` itself.
@@ -147,6 +149,13 @@ struct BlockingVfs
         const r = (() @trusted => fstatat(dir.fd, z.ptr, &st, AT_SYMLINK_NOFOLLOW))();
         return r < 0 ? ioErr!Stat(failure(OpKind.statAt)) : ioOk(toStat(st, mask));
     }
+
+    /// Lends the descriptor behind `h`; `File.borrowFd` forwards here.
+    BorrowedFd borrowFd(Handle h) const @safe pure nothrow @nogc => BorrowedFd(h.fd);
+
+    /// Hands the descriptor behind `h` to a new owner; `File.intoOwnedFd` and
+    /// `Dir.intoOwnedFd` forward here.
+    OwnedFd ownedFd(Handle h) const @safe nothrow @nogc => OwnedFd(h.fd);
 
     /// Stats an open handle.
     IoResult!Stat fstat(Handle h, StatMask mask) @safe nothrow @nogc
@@ -187,7 +196,7 @@ struct BlockingVfs
         if (!terminate(name, z) || !terminate(target, t))
             return ioErr!void(ErrorKind.nameTooLong, OpKind.symlinkAt);
         const r = (() @trusted => symlinkat(t.ptr, dir.fd, z.ptr))();
-        return r < 0 ? ioErr!void(failure(OpKind.symlinkAt)) : ioOk();
+        return symlinkOutcome(r < 0 ? errno : 0);
     }
 
     /// Removes the non-directory `name` in `dir`.
@@ -197,13 +206,7 @@ struct BlockingVfs
         if (!terminate(name, z))
             return ioErr!void(ErrorKind.nameTooLong, OpKind.unlinkAt);
         const r = (() @trusted => unlinkat(dir.fd, z.ptr, 0))();
-        if (r == 0)
-            return ioOk();
-        const e = errno;
-        // Linux says EISDIR for a directory; macOS says EPERM.
-        if (e == EISDIR || (e == EPERM && isDirectoryAt(dir, z)))
-            return ioErr!void(ErrorKind.isADirectory, OpKind.unlinkAt, e);
-        return ioErr!void(failure(OpKind.unlinkAt, e));
+        return unlinkOutcome(dir, z, r < 0 ? errno : 0);
     }
 
     /// Removes the empty directory `name` in `dir`.
@@ -213,12 +216,7 @@ struct BlockingVfs
         if (!terminate(name, z))
             return ioErr!void(ErrorKind.nameTooLong, OpKind.rmdirAt);
         const r = (() @trusted => unlinkat(dir.fd, z.ptr, AT_REMOVEDIR))();
-        if (r == 0)
-            return ioOk();
-        const e = errno;
-        if (e == ENOTEMPTY || e == EEXIST)
-            return ioErr!void(ErrorKind.notEmpty, OpKind.rmdirAt, e);
-        return ioErr!void(failure(OpKind.rmdirAt, e));
+        return rmdirOutcome(r < 0 ? errno : 0);
     }
 
     /// Renames `name` in `dir` to `dstName` in `dstDir`.
@@ -229,13 +227,65 @@ struct BlockingVfs
         if (!terminate(name, z) || !terminate(dstName, d))
             return ioErr!void(ErrorKind.nameTooLong, OpKind.renameAt);
         const r = (() @trusted => renameat(dir.fd, z.ptr, dstDir.fd, d.ptr))();
-        if (r == 0)
+        return renameOutcome(r < 0 ? errno : 0);
+    }
+
+    // The errno classification of each mutation, shared with `RingVfs`, which
+    // submits the same calls to the ring: the same errno, the same result.
+    // `e` is 0 for success.
+package(sparkles.event_horizon):
+
+    IoResult!void mkdirOutcome(int e) const @safe nothrow @nogc
+        => e == 0 ? ioOk() : ioErr!void(failure(OpKind.mkdirAt, e));
+
+    IoResult!void symlinkOutcome(int e) const @safe nothrow @nogc
+        => e == 0 ? ioOk() : ioErr!void(failure(OpKind.symlinkAt, e));
+
+    IoResult!void unlinkOutcome(Handle dir, scope ref const char[maxNameLength + 1] z, int e)
+        @safe nothrow @nogc
+    {
+        if (e == 0)
             return ioOk();
-        const e = errno;
+        // Linux says EISDIR for a directory; macOS says EPERM.
+        if (e == EISDIR || (e == EPERM && isDirectoryAt(dir, z)))
+            return ioErr!void(ErrorKind.isADirectory, OpKind.unlinkAt, e);
+        return ioErr!void(failure(OpKind.unlinkAt, e));
+    }
+
+    IoResult!void rmdirOutcome(int e) const @safe nothrow @nogc
+    {
+        if (e == 0)
+            return ioOk();
+        if (e == ENOTEMPTY || e == EEXIST)
+            return ioErr!void(ErrorKind.notEmpty, OpKind.rmdirAt, e);
+        return ioErr!void(failure(OpKind.rmdirAt, e));
+    }
+
+    IoResult!void renameOutcome(int e) const @safe nothrow @nogc
+    {
+        if (e == 0)
+            return ioOk();
         if (e == ENOTEMPTY || e == EEXIST)
             return ioErr!void(ErrorKind.notEmpty, OpKind.renameAt, e);
         return ioErr!void(failure(OpKind.renameAt, e));
     }
+
+    /// The raw descriptor behind a handle, for a ring submission.
+    static int fdOf(Handle h) @safe pure nothrow @nogc => h.fd;
+
+    /// The handle for a descriptor a ring completion returned.
+    static Handle handleOf(int fd) @safe pure nothrow @nogc => Handle(fd);
+
+    version (linux)
+    {
+        /// The result of a `statx` that failed with `e` or, for 0, filled `sx`:
+        /// the same `Stat` `statAt` and `fstat` return.
+        IoResult!Stat statxOutcome(int e, ref const Statx sx, StatMask mask)
+            const @safe nothrow @nogc
+            => e == 0 ? ioOk(statxToStat(sx, mask)) : ioErr!Stat(failure(OpKind.statAt, e));
+    }
+
+public:
 
     /// Starts a listing over a fresh descriptor for `dir` (VFN10).
     IoResult!Listing openListing(Handle dir) @safe nothrow @nogc
@@ -357,13 +407,7 @@ struct BlockingVfs
             return ioErr!Handle(ErrorKind.nameTooLong, OpKind.resolve);
         version (linux)
         {
-            OpenHow how;
-            how.flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
-            how.resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS;
-            if (policy.symlinks == SymlinkPolicy.none)
-                how.resolve |= RESOLVE_NO_SYMLINKS;
-            if (!policy.crossMounts)
-                how.resolve |= RESOLVE_NO_XDEV;
+            const how = resolveHow(policy);
             foreach (attempt; 0 .. raceRetries + 1)
             {
                 const fd = (() @trusted => openat2(start.fd, z.ptr, how))();
@@ -436,6 +480,23 @@ private:
 
     version (linux)
     {
+        /// The `open_how` the whole-path resolver uses for `policy`.
+        package(sparkles.event_horizon) static OpenHow resolveHow(ResolvePolicy policy)
+            @safe pure nothrow @nogc
+        {
+            OpenHow how;
+            how.flags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
+            how.resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS;
+            if (policy.symlinks == SymlinkPolicy.none)
+                how.resolve |= RESOLVE_NO_SYMLINKS;
+            if (!policy.crossMounts)
+                how.resolve |= RESOLVE_NO_XDEV;
+            return how;
+        }
+
+        /// The classification of a failed `openat2` with errno `e`, shared with
+        /// `RingVfs`, which submits the same call to the ring.
+        package(sparkles.event_horizon)
         IoError classifyOpenat2(Handle start, scope ref const char[maxSplicedPathLength + 1] z,
             ref const OpenHow how, int e, ResolvePolicy policy) @safe nothrow @nogc
         {
@@ -520,7 +581,8 @@ private:
 private:
 
 /// Copies `s` with a NUL into `z`; false if it does not fit or holds a NUL.
-bool terminate(size_t N)(scope const(char)[] s, ref char[N] z) @safe pure nothrow @nogc
+package(sparkles.event_horizon) bool terminate(size_t N)(scope const(char)[] s, ref char[N] z)
+    @safe pure nothrow @nogc
 {
     if (s.length >= N)
         return false;
@@ -560,26 +622,13 @@ IoError failure(OpKind op, int e) @safe nothrow @nogc => errnoError(e, op);
 IoError failure(OpKind op) @safe nothrow @nogc => errnoError(errno, op);
 
 /// The portable kind of an `errno` (VFN1).
+/// Every open here refuses to follow a link, so `ELOOP` means the link was
+/// refused, not that a chain of them ran too long.
 IoError errnoError(int e, OpKind op) @safe pure nothrow @nogc
-{
-    ErrorKind k;
-    switch (e)
-    {
-        case ENOENT: k = ErrorKind.notFound; break;
-        case EEXIST: k = ErrorKind.exists; break;
-        case ENOTDIR: k = ErrorKind.notADirectory; break;
-        case EISDIR: k = ErrorKind.isADirectory; break;
-        case ENOTEMPTY: k = ErrorKind.notEmpty; break;
-        case EACCES, EPERM: k = ErrorKind.permission; break;
-        case EBUSY: k = ErrorKind.busy; break;
-        case ENAMETOOLONG: k = ErrorKind.nameTooLong; break;
-        case ELOOP: k = ErrorKind.symlinkRefused; break;
-        default: k = ErrorKind.other; break;
-    }
-    return IoError(k, e, op);
-}
+    => IoError(e == ELOOP ? ErrorKind.symlinkRefused : errnoKind(e), e, op);
 
-Stat toStat(ref const stat_t st, StatMask mask) @safe pure nothrow @nogc
+package(sparkles.event_horizon) Stat toStat(ref const stat_t st, StatMask mask)
+    @safe pure nothrow @nogc
 {
     Stat s;
     switch (st.st_mode & S_IFMT)
@@ -604,6 +653,32 @@ Stat toStat(ref const stat_t st, StatMask mask) @safe pure nothrow @nogc
             s.mtimeNs = st.st_mtime * 1_000_000_000L;
     }
     return s;
+}
+
+version (linux)
+{
+    /**
+    The `Stat` `toStat` makes from `fstatat`, made from `statx` instead. The
+    device is encoded as 64-bit Linux's `stat` encodes it (`new_encode_dev`), so a
+    device compared across the two paths compares equal.
+    */
+    package(sparkles.event_horizon)
+    Stat statxToStat(ref const Statx sx, StatMask mask) @safe pure nothrow @nogc
+    {
+        stat_t st;
+        st.st_mode = sx.stx_mode;
+        st.st_size = sx.stx_size;
+        const ulong major = sx.stx_dev_major, minor = sx.stx_dev_minor;
+        st.st_dev = cast(typeof(st.st_dev))((minor & 0xff) | (major << 8) | ((minor & ~0xffUL) << 12));
+        static if (__traits(compiles, st.st_mtim))
+        {
+            st.st_mtim.tv_sec = sx.stx_mtime.tv_sec;
+            st.st_mtim.tv_nsec = sx.stx_mtime.tv_nsec;
+        }
+        else
+            st.st_mtime = sx.stx_mtime.tv_sec;
+        return toStat(st, mask);
+    }
 }
 
 enum uint octal100 = 64, octal7777 = 4095;

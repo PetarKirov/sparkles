@@ -32,7 +32,11 @@ searching for that name finds every place that creates authority from a path.
 */
 struct AmbientAuthority
 {
-    private bool granted;
+    private bool _granted;
+
+    /// Whether this token came from `ambientAuthority()`, which an API that
+    /// takes one checks in its contract. A default-initialized token is not.
+    bool granted() const @safe pure nothrow @nogc => _granted;
 }
 
 /// ditto
@@ -139,6 +143,15 @@ if (isVfs!V)
 
     /// Whether this is an open handle rather than an empty `.init`.
     bool alive() const scope => core.open;
+
+    /// Gives the directory's descriptor to a new owner, where the backend has
+    /// one, and leaves this handle empty; see `File.intoOwnedFd`.
+    static if (__traits(hasMember, V, "ownedFd"))
+        auto intoOwnedFd()
+        {
+            core.open = false;
+            return core.vfs.ownedFd(core.handle);
+        }
 
     private ref inout(DirCore!V) self() inout return => core;
 
@@ -571,6 +584,26 @@ if (isVfs!V)
                 IoErrorStage.completion, "empty handle");
         return vfs.sync(handle);
     }
+
+    /// Lends the operating-system descriptor, where the backend has one, so
+    /// the event loop's I/O verbs can use this file. The borrow must not
+    /// outlive the `File`. It also bypasses this type's compile-time rights;
+    /// the operating system still enforces the access the file was opened
+    /// with.
+    static if (__traits(hasMember, V, "borrowFd"))
+        auto borrowFd() scope => vfs.borrowFd(handle);
+
+    /// Gives the descriptor to a new owner, where the backend has one, and
+    /// leaves this `File` empty: cap-std's `OwnedFd::from(File)`. For a
+    /// descriptor that must outlive any one `File`, such as a control file
+    /// held open for a run's lifetime. The owner has no rights at all at
+    /// compile time; the operating system enforces the open's access.
+    static if (__traits(hasMember, V, "ownedFd"))
+        auto intoOwnedFd()
+        {
+            open = false;
+            return vfs.ownedFd(handle);
+        }
 
     /// The rights of this handle's type.
     enum Rights rights = R;

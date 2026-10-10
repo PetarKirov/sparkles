@@ -33,6 +33,7 @@ a fiber can call.
 */
 module sparkles.event_horizon.sampling;
 
+import core.lifetime : move;
 import core.time : Duration, msecs, seconds, usecs;
 
 import sparkles.event_horizon.proc : MetricQuality, MetricSource,
@@ -229,8 +230,10 @@ private ulong saturatingAdd(ulong a, ulong b) @safe pure nothrow @nogc
 version (linux)
 {
     import core.stdc.errno : EMFILE, ENOENT, ESRCH, errno;
-    import core.sys.posix.fcntl : O_CLOEXEC, O_DIRECTORY, O_PATH, O_RDONLY,
-        open, openat;
+    import core.sys.posix.fcntl : O_CLOEXEC, O_RDONLY, openat;
+
+    import sparkles.base.vfs : OpenMode, Rights, ambientAuthority, openRoot;
+    import sparkles.event_horizon.sys : BlockingVfs;
     import core.sys.posix.unistd : close, pread;
 
     import sparkles.event_horizon.cgroup : CgroupRun, CgroupTier, listMembers,
@@ -406,7 +409,7 @@ version (linux)
     private bool errnoMeansGone(int err) @safe pure nothrow @nogc
         => err == ENOENT || err == ESRCH;
 
-    /// Reads `/proc/<pid>/stat` through a per-sample `O_PATH` handle of the
+    /// Reads `/proc/<pid>/stat` through a per-sample handle of the
     /// process directory.
     private ProbeRead readStatUnder(int dirFd, out ProcStat st, ref Spent spent)
         @trusted nothrow
@@ -425,15 +428,23 @@ version (linux)
         return parseProcStat(buf[0 .. n], st) ? ProbeRead.ok : ProbeRead.unreadable;
     }
 
-    /// Opens `/proc/<pid>` as an `O_PATH` directory handle; -1 with `errno`
-    /// set when it cannot be opened.
+    /// Opens `/proc/<pid>` as a root (SPEC §10.5) and keeps its descriptor as
+    /// the sample's identity anchor; -1 with `errno` set when it cannot be
+    /// opened. The reads beneath it are relative to that descriptor.
     private int openProcDir(int pid) @trusted nothrow @nogc
     {
         import core.stdc.stdio : snprintf;
 
         char[32] path = void;
-        snprintf(path.ptr, path.length, "/proc/%d", pid);
-        return open(path.ptr, O_PATH | O_DIRECTORY | O_CLOEXEC);
+        const n = snprintf(path.ptr, path.length, "/proc/%d", pid);
+        BlockingVfs vfs;
+        auto dir = openRoot!(Rights.readOnly)(&vfs, path[0 .. n], ambientAuthority());
+        if (dir.hasError)
+        {
+            errno = dir.error.code;
+            return -1;
+        }
+        return dir.value.intoOwnedFd().release();
     }
 
     /// Whether `/proc/<pid>/cgroup` (read through `dirFd`) places the
@@ -773,9 +784,6 @@ version (linux)
         /// descent from the root (ppid chain) or the root's process group.
         void discoverByScan(ref Scratch scratch, ref Spent spent) @trusted nothrow
         {
-            import core.stdc.string : strlen;
-            import core.sys.posix.dirent : closedir, dirent, opendir, readdir;
-
             struct Seen
             {
                 ProcStat st;
@@ -783,18 +791,24 @@ version (linux)
             }
 
             Seen[int] seen;
-            auto dir = opendir("/proc");
-            if (dir is null)
+            BlockingVfs vfs;
+            auto proc = openRoot!(Rights.readOnly)(&vfs, "/proc", ambientAuthority());
+            if (proc.hasError)
                 return;
-            scope (exit) closedir(dir);
-            for (dirent* ent = readdir(dir); ent !is null; ent = readdir(dir))
+            auto listing = proc.value.list();
+            if (listing.hasError)
+                return;
+            for (;;)
             {
+                auto more = listing.value.next();
+                if (more.hasError || !more.value)
+                    break;
                 if (spent.exhausted(budget))
                 {
                     scratch.budgetHit = true;
                     break;
                 }
-                const name = ent.d_name.ptr[0 .. strlen(ent.d_name.ptr)];
+                const name = listing.value.front.name;
                 ulong pidU;
                 if (name.length == 0 || name.length > 7 || !parseUlong(name, pidU))
                     continue;
@@ -844,8 +858,6 @@ version (linux)
         void discoverByChildren(ref Scratch scratch, ref Spent spent) @trusted nothrow
         {
             import core.stdc.stdio : snprintf;
-            import core.stdc.string : strlen;
-            import core.sys.posix.dirent : closedir, dirent, opendir, readdir;
 
             int[] frontier = [_rootPid];
             uint visited;
@@ -860,28 +872,35 @@ version (linux)
                 }
                 // Every task of the process may have forked.
                 char[64] taskDir = void;
-                snprintf(taskDir.ptr, taskDir.length, "/proc/%d/task", pid);
-                auto dir = opendir(taskDir.ptr);
-                if (dir is null)
+                const taskLen = snprintf(taskDir.ptr, taskDir.length, "/proc/%d/task", pid);
+                BlockingVfs vfs;
+                auto tasks = openRoot!(Rights.readOnly)(&vfs, taskDir[0 .. taskLen],
+                    ambientAuthority());
+                if (tasks.hasError)
                     continue;
-                scope (exit) closedir(dir);
-                for (dirent* ent = readdir(dir); ent !is null; ent = readdir(dir))
+                auto listing = tasks.value.list();
+                if (listing.hasError)
+                    continue;
+                for (;;)
                 {
-                    const name = ent.d_name.ptr[0 .. strlen(ent.d_name.ptr)];
+                    auto more = listing.value.next();
+                    if (more.hasError || !more.value)
+                        break;
+                    const name = listing.value.front.name;
                     ulong tid;
                     if (!parseUlong(name, tid))
                         continue;
-                    char[96] path = void;
-                    snprintf(path.ptr, path.length, "/proc/%d/task/%.*s/children",
-                        pid, cast(int) name.length, name.ptr);
-                    const fd = open(path.ptr, O_RDONLY | O_CLOEXEC);
-                    if (fd < 0)
+                    auto task = tasks.value.openDir(name);
+                    if (task.hasError)
                         continue;
-                    scope (exit) close(fd);
+                    auto children = task.value.openFile!(OpenMode.read)("children");
+                    if (children.hasError)
+                        continue;
                     char[4096] buf = void;
-                    const n = pread(fd, buf.ptr, buf.length, 0);
-                    if (n <= 0)
+                    auto got = children.value.read(cast(ubyte[]) buf[]);
+                    if (got.hasError || got.value == 0)
                         continue;
+                    const n = got.value;
                     spent.bytes += n;
                     // Space-separated pids.
                     size_t i;
@@ -1217,7 +1236,7 @@ version (linux)
         auto spawned = spawnProcess(["sh", "-c",
             "sleep 0.3 & sleep 0.3 & sleep 0.8"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         scope (exit)
         {
             cast(void) child.kill(SIGKILL);
@@ -1260,7 +1279,7 @@ version (linux)
     {
         auto spawned = spawnProcess(["sh", "-c", "sleep 0.5 & sleep 2"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         TreeSampler sampler;
         sampler.anchor(child.pid, null);
         assert(sampler.anchored);
@@ -1296,7 +1315,7 @@ version (linux)
     {
         auto spawned = spawnProcess(["sh", "-c", "sleep 0.5 & sleep 0.5 & sleep 1"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         scope (exit)
         {
             cast(void) child.kill(SIGKILL);
@@ -1341,7 +1360,7 @@ version (linux)
         // cgroup (the pgid still covers it — SPEC §13.7).
         auto spawned = spawnProcess(["sh", "-c", "sleep 0.1; sleep 3 & sleep 4"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         assert(migrateInto(run, child.pid) == 0);
 
         TreeSampler sampler;
@@ -1382,7 +1401,7 @@ version (linux)
         // shortage on the re-probe and keep accumulating once reads work.
         auto spawned = spawnProcess(["sh", "-c", "while :; do :; done"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         scope (exit)
         {
             cast(void) child.kill(SIGKILL);
@@ -1435,7 +1454,7 @@ version (linux)
         auto spawned = spawnProcess(["sh", "-c",
             "sleep 0.05; (while :; do :; done) >/dev/null 2>&1 & exit 0"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
         assert(migrateInto(run, child.pid) == 0);
         TreeSampler sampler;
         sampler.anchor(child.pid, &run);

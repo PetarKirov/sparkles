@@ -131,8 +131,8 @@ decided.
 - Event-horizon's `errors.d` reduced to re-exports plus `fromRes`; its
   `OpKind.statx` member renamed `statAt`.
 - `RingFs`, its path-string functions (`openFile`, `statxPath`, `readText` by
-  path) removed; the copyable `FileHandle` removed or reduced to a borrowed
-  view of a `File`, as O32 decides.
+  path) and the copyable `FileHandle` removed; the `io` verbs take any handle
+  that lends a descriptor, as O32 decided.
 - `cgroup.d` and `sampling.d` opening their `/sys/fs/cgroup` and `/proc` roots
   with `openRoot` and performing their relative operations through the
   resulting `Dir`.
@@ -207,6 +207,6 @@ finds no normative text duplicating this one.
 | M0        | delivered; reshaped for readers and for creation sharing | #535, #594   |
 | M1        | in review                                                | —            |
 | M2        | implemented locally; Windows leg pending                 | —            |
-| M3        | blocked on event-horizon's O32                           | —            |
+| M3        | implemented locally                                      | —            |
 | M4        | implemented locally                                      | —            |
 | M5        | written locally                                          | —            |

@@ -33,12 +33,12 @@ void next(ref Transfer transfer) nothrow @nogc
     if (transfer.sending)
     {
         auto sent = transfer.loop.submit!completed(OpSend(transfer.fd, move(window)), transfer);
-        if (sent.hasError) transfer.error = sent.error.errnoValue;
+        if (sent.hasError) transfer.error = sent.error.code;
     }
     else
     {
         auto received = transfer.loop.submit!completed(OpRecv(transfer.fd, move(window)), transfer);
-        if (received.hasError) transfer.error = received.error.errnoValue;
+        if (received.hasError) transfer.error = received.error.code;
     }
     if (transfer.error) { *transfer.stopping = true; transfer.loop.stop(); }
 }

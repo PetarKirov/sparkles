@@ -26,7 +26,10 @@ import core.time : Duration;
 import sparkles.event_horizon.cause : Cause, InterruptKind, Interrupt, Outcome,
     outcomeErr, outcomeOk;
 import sparkles.event_horizon.clock : isClock;
-import sparkles.event_horizon.errors : IoError, NoGcHook;
+import expected : Expected;
+import std.traits : TemplateArgsOf;
+
+import sparkles.event_horizon.errors : ioError, IoError, NoGcHook;
 import sparkles.event_horizon.schedule : isSchedule, retry, timeout;
 import sparkles.event_horizon.scope_ : isScope, JoinHandle;
 
@@ -57,6 +60,58 @@ struct Lifted(alias fn, T, E = IoError)
 {
     alias Value = T;
     alias Error = E;
+}
+
+/**
+An operation of a handle, described but not yet performed: running it calls
+`handle.op(args)`, so it produces exactly the direct form's result. Made by
+$(LREF effects); `CT` are the operation's own template arguments, if any. The
+handle is held by address and must outlive the run.
+*/
+struct Invoked(H, string op, CT, Args...)
+{
+    /// The call, spelled as the direct form is: `h.op(args)` or `h.op!(ct)(args)`.
+    package enum string call(string handle, string args) = handle ~ "." ~ op
+        ~ (CT.Values.length ? "!(CT.Values)" : "") ~ "(" ~ args ~ ")";
+
+    private alias Call = typeof(mixin(call!("(*cast(H*) null)", "Args.init")));
+    // As in `effectOf`: deduce through `TemplateArgsOf`, then check the shape.
+    alias Value = TemplateArgsOf!Call[0];
+    alias Error = TemplateArgsOf!Call[1];
+    static assert(is(Call == Expected!(Value, Error, NoGcHook)),
+        op ~ " must return an Expected!(T, E, NoGcHook) to have an Effect form");
+    H* handle;
+    Args args;
+}
+
+/// The compile-time arguments an $(LREF Invoked) operation was named with.
+struct CTArgs(Vs...)
+{
+    alias Values = Vs;
+}
+
+/// The `Effect!T` form of every operation of `handle` (SPEC §10.5):
+/// `dir.effects.mkdirAt("out")` describes `dir.mkdirAt("out")` as an effect, and an
+/// operation with template arguments goes through `call`:
+/// `dir.effects.call!("openFile", OpenMode.read)("f")`. Generated from the
+/// direct-style operations, never written separately.
+auto effects(H)(ref H handle) @trusted => Effects!H(&handle);
+
+/// ditto
+struct Effects(H)
+{
+    private H* handle;
+
+    /// An operation without template arguments.
+    auto opDispatch(string op, Args...)(auto ref Args args)
+        => Invoked!(H, op, CTArgs!(), Args)(handle, args);
+
+    /// An operation with template arguments `CT`.
+    template call(string op, CT...)
+    {
+        auto call(Args...)(auto ref Args args)
+            => Invoked!(H, op, CTArgs!CT, Args)(handle, args);
+    }
 }
 
 /// `map`: transform the success value.
@@ -197,6 +252,16 @@ if (isEffect!Eff && isScope!Sc)
         else
             return outcomeOk!F(move(r.value));
     }
+    else static if (is(Eff == Invoked!(H, op, CT, Args), H, string op, CT, Args...))
+    {
+        auto r = mixin(Eff.call!("(*eff.handle)", "eff.args"));
+        if (r.hasError)
+            return outcomeErr!(Eff.Value, Eff.Error)(Cause!(Eff.Error).fromFailure(r.error));
+        static if (is(Eff.Value == void))
+            return outcomeOk!(Eff.Error)();
+        else
+            return outcomeOk!(Eff.Error)(move(r.value));
+    }
     else static if (is(Eff == Mapped!(Up, f), Up, alias f))
     {
         auto inner = run(eff.up, sc, ctx);
@@ -264,7 +329,7 @@ private import expected : Expected;
 private Expected!(T, E, NoGcHook) okExpected(T, E)()
 if (is(T == void))
 {
-    import sparkles.event_horizon.errors : ioOk;
+    import sparkles.event_horizon.errors : ioError, ioOk;
 
     return Expected!(void, E, NoGcHook)();
 }
@@ -316,7 +381,7 @@ version (linux)  :  // parity tests drive the live Sched
 
 version (unittest)
 {
-    import sparkles.event_horizon.errors : IoResult, ioErr, ioOk, OpKind;
+    import sparkles.event_horizon.errors : ioError, IoResult, ioErr, ioOk, OpKind;
     import sparkles.event_horizon.sched : Sched, schedOrSkip;
     import sparkles.event_horizon.scope_ : withScope;
 }
@@ -364,12 +429,12 @@ unittest
         cast(void) withScope!((ref sc) {
             EmptyCtx ctx;
             bool mapRan;
-            auto eff = fail!int(IoError(5, OpKind.none))
+            auto eff = fail!int(ioError(5, OpKind.none))
                 .map!((int x) { return x; });
             auto outcome = run(eff, sc, ctx);
             assert(outcome.hasError);
             assert(outcome.error.kind == Cause!IoError.Kind.fail);
-            assert(outcome.error.failure.errnoValue == 5);
+            assert(outcome.error.failure.code == 5);
         })(s);
     });
     assert(!r.hasError);

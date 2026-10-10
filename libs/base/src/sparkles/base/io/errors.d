@@ -42,6 +42,14 @@ enum ErrorKind : ubyte
     depthExceeded,      /// a walk or removal exceeded its depth limit
     raceRetryExhausted, /// the kernel reported a race on every retry
     unsupported,        /// the backend or platform cannot provide what was asked
+
+    // Network and process kinds, defined by event-horizon (SPEC §9.1).
+    cancelled,          /// the operation was cancelled before it completed
+    wouldBlock,         /// a non-blocking operation found nothing to do yet
+    connectionReset,    /// the peer reset or closed the connection, or a pipe broke
+    connectionRefused,  /// nothing accepted the connection
+    invalidArgument,    /// the operating system rejected an argument
+    noProcess,          /// the named process or child does not exist
 }
 
 /**

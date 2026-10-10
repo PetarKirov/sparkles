@@ -56,6 +56,50 @@ version (linux)
 
     /// The flag that opens a directory for search only (VFN14).
     enum int searchOnlyFlag = O_PATH | O_DIRECTORY;
+
+    /// A `struct statx` mirror (kernel UAPI layout, 256 bytes).
+    struct Statx
+    {
+        uint stx_mask;             /// which fields the kernel filled
+        uint stx_blksize;          /// preferred I/O block size
+        ulong stx_attributes;      /// file attributes
+        uint stx_nlink;            /// hard links
+        uint stx_uid;              /// owner
+        uint stx_gid;              /// group
+        ushort stx_mode;           /// type and permissions
+        ushort[1] __spare0;
+        ulong stx_ino;             /// inode
+        ulong stx_size;            /// size in bytes
+        ulong stx_blocks;          /// 512-byte blocks allocated
+        ulong stx_attributes_mask; /// which attributes are supported
+        StatxTimestamp stx_atime;  /// access
+        StatxTimestamp stx_btime;  /// birth
+        StatxTimestamp stx_ctime;  /// change
+        StatxTimestamp stx_mtime;  /// modification
+        uint stx_rdev_major;       /// device, for special files
+        uint stx_rdev_minor;       /// ditto
+        uint stx_dev_major;        /// the containing device
+        uint stx_dev_minor;        /// ditto
+        ulong stx_mnt_id;          /// mount id
+        uint stx_dio_mem_align;    /// direct-I/O alignment
+        uint stx_dio_offset_align; /// ditto
+        ulong[12] __spare3;
+    }
+
+    static assert(Statx.sizeof == 256);
+
+    /// One `statx` timestamp.
+    struct StatxTimestamp
+    {
+        long tv_sec;  ///
+        uint tv_nsec; ///
+        int __reserved;
+    }
+
+    /// `STATX_BASIC_STATS`: every field `fstatat` fills.
+    enum uint STATX_BASIC_STATS = 0x7FF;
+    /// `statx` of the descriptor itself rather than a name under it.
+    enum int AT_EMPTY_PATH = 0x1000;
 }
 else version (Darwin)
 {

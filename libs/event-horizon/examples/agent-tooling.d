@@ -34,13 +34,13 @@ module event_horizon_agent_tooling;
 
 import core.lifetime : move;
 import core.sys.linux.sys.inotify : IN_CLOSE_WRITE;
-import core.sys.posix.fcntl : O_RDONLY;
 
 import std.conv : octal;
 import std.stdio : writefln;
 
 import sparkles.base.buffer : SharedBuffer;
-import sparkles.event_horizon.fs;
+import sparkles.base.vfs : OpenMode, Rights, ambientAuthority, openRoot;
+import sparkles.event_horizon.vfs : RingVfs;
 import sparkles.event_horizon.io : read;
 import sparkles.event_horizon.live : spawnProcess, wait;
 import sparkles.event_horizon.proc;
@@ -56,7 +56,7 @@ int main()
     if (created.hasError)
     {
         writefln("SKIP: io_uring unavailable (errno %d) — %s",
-            created.error.errnoValue, created.error.context);
+            created.error.code, created.error.context);
         return 0;
     }
     scope (exit) sched.destroy();
@@ -81,7 +81,7 @@ int main()
     const watcherCreated = Watcher.create(watcher);
     assert(!watcherCreated.hasError);
     scope (exit) watcher.close();
-    const watchAdded = watcher.addWatch(dir, IN_CLOSE_WRITE);
+    const watchAdded = watcher.addWatch(dir, IN_CLOSE_WRITE, ambientAuthority());
     assert(watchAdded.hasValue);
 
     SharedBuffer!(char, 256) streamed;
@@ -94,7 +94,7 @@ int main()
         auto spawned = spawnProcess(["sh", "-c",
             "echo tool starting; echo 41+1 > " ~ dir ~ "/result.txt; echo tool done"]);
         assert(spawned.hasValue);
-        auto child = spawned.value;
+        auto child = move(spawned.value);
 
         // Fiber 1: stream the child's stdout through the ring until EOF.
         cast(void) sched.spawn(() {
@@ -126,19 +126,19 @@ int main()
         exitCode = st_.value.code;
         child.stdoutR.close();
 
-        auto f = openFile(sched, dir ~ "/result.txt", O_RDONLY);
-        assert(f.hasValue);
-        auto handle = f.value;
-        Statx st;
-        const statted = statxPath(sched, dir ~ "/result.txt", st);
-        assert(!statted.hasError);
+        // The artifact is reached through a directory capability; the file
+        // lends its descriptor to the ring's read verb and closes itself.
+        auto fs = new RingVfs;
+        auto artifacts = openRoot!(Rights.readOnly)(fs, dir, ambientAuthority());
+        assert(artifacts.hasValue);
+        auto file = artifacts.value.openFile!(OpenMode.read)("result.txt");
+        assert(file.hasValue);
+        const size = file.value.stat().value.size;
         SharedBuffer!(ubyte, 64) content;
         content.length = 64;
-        auto got = read(handle, move(content), 0);
-        assert(!got.res.hasError && got.res.value == st.stx_size);
+        auto got = read(file.value, move(content), 0);
+        assert(!got.res.hasError && got.res.value == size);
         assert(got.buf[][0 .. got.res.value] == cast(const(ubyte)[]) "41+1\n");
-        const closed = closeFile(sched, handle);
-        assert(!closed.hasError);
     });
     assert(!r.hasError);
 

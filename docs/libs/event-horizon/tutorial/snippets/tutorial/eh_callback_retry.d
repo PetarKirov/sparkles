@@ -24,10 +24,10 @@ void attempt(ref State state, ref Completion done) nothrow @nogc
     if (done.res < 0) { state.error = done.res; return; }
     auto result = request(++state.attempts);
     if (!result.hasError) return;
-    if (result.error.errnoValue != EAGAIN || state.attempts >= 5)
-    { state.error = -result.error.errnoValue; return; }
+    if (result.error.code != EAGAIN || state.attempts >= 5)
+    { state.error = -result.error.code; return; }
     auto timer = state.loop.submitAfter!attempt((5 << (state.attempts - 1)).msecs, state);
-    if (timer.hasError) state.error = -timer.error.errnoValue;
+    if (timer.hasError) state.error = -timer.error.code;
 }
 
 int main() @system

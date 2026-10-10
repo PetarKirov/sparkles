@@ -495,7 +495,7 @@ struct WaylandWsi
             repeatInFlight_ = false;
             if (reaped.hasError)
                 return waylandFailure!void(WsiOperation.attach,
-                    reaped.error.errnoValue,
+                    reaped.error.code,
                     "failed to cancel and reap the key-repeat timer");
         }
         auto paused = pausePoll();
@@ -542,7 +542,7 @@ struct WaylandWsi
             auto cancelled = loop_.cancelAndWait(pollHandle_);
             if (cancelled.hasError)
                 return waylandFailure!void(WsiOperation.attach,
-                    cancelled.error.errnoValue,
+                    cancelled.error.code,
                     "failed to cancel and reap Wayland display poll");
         }
         if (preparedRead_)
@@ -596,7 +596,7 @@ struct WaylandWsi
             wl_display_cancel_read(display_);
             preparedRead_ = false;
             return waylandFailure!void(WsiOperation.attach,
-                submitted.error.errnoValue,
+                submitted.error.code,
                 "OpPollAdd(Wayland fd) failed");
         }
         pollHandle_ = submitted.value;
