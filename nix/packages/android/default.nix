@@ -19,6 +19,8 @@ in
     ./build-aab.nix
     ./build-apk.nix
     ./build-d-android-lib.nix
+    ./build-d-android-tests.nix
+    ./font-tests.nix
     ./hello.nix
     ./hue.nix
     ./icon.nix
@@ -75,6 +77,9 @@ in
         hue-apk-unsigned = config.packages.hue-apk-unsigned;
         hue-aab-unsigned = config.packages.hue-aab-unsigned;
         hello-apk = config.packages.hello-apk;
+        # sparkles:font's unit tests per ABI (FTA7), run by sparkles:test-runner;
+        # building them keeps the library and the runner cross-compiling.
+        font-android-tests = config.packages.font-android-tests;
         # The terminal's plain-shell APK; the nix-on-droid variant is the same
         # closure with a different session.conf, built in that flake.
         terminal-apk = config.packages.terminal-apk;
@@ -92,6 +97,7 @@ in
       # contain it either.
       legacyPackages.androidPackageNames = [
         "all-android"
+        "font-android-tests"
         "freetype-android"
         "harfbuzz-android"
         "hello-apk"
