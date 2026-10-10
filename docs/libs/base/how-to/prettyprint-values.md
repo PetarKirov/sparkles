@@ -2,9 +2,9 @@
 
 Use `prettyPrint` to format nested structures, arrays, associative arrays, pointers, and tuples into structured, easy-to-read text with customizable styling and indentation.
 
-## Print to string
+## Print a value
 
-To quickly convert any type to a formatted string, use the convenience overload of `prettyPrint` that returns a `string`:
+`prettyPrint(value)` returns a value that renders when something consumes it: `writeln`, `format`, an interpolated string passed to `writeText` or the logger. It writes straight into the consumer's sink, so no intermediate `string` is built, and `@nogc` consumers such as `info(i"got $(prettyPrint(event))")` accept it. Call `.toString` on it when you need to store a `string`:
 
 ```d
 #!/usr/bin/env dub
@@ -35,7 +35,7 @@ void main()
 
 ## Print into custom buffers
 
-For memory-conscious or `@nogc` code, pass a `Writer` reference (such as `UniqueBuffer`) to `writePretty` to write the output directly into the buffer without allocating memory:
+To render into a buffer you own, pass a `Writer` reference (such as `UniqueBuffer`) to `writePretty`. Pretty-printing itself never allocates; the layout check that decides between one line and several measures the candidate line instead of building it:
 
 ```d
 #!/usr/bin/env dub
