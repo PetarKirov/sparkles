@@ -86,6 +86,14 @@
       url = "github:PetarKirov/glfw/wayland-cursor-shape-v1";
       flake = false;
     };
+    # Upstream nixpkgs at the commit the `nixpkgs` fork branches from. The
+    # fork bumps glfw3 to 3.5.1; Darwin takes this tree's glfw3 recipe
+    # instead, so raylib's GLFW (and every other consumer's) stays the one
+    # cache.nixos.org already built. Keep it at the fork's merge base.
+    nixpkgs-upstream-glfw = {
+      url = "github:NixOS/nixpkgs/05eca18e9c130fa5288b1fa3d250065c0cd1de66";
+      flake = false;
+    };
     tree-sitter-d-src = {
       url = "github:PetarKirov/tree-sitter-d/feat/dub-single-file-injections";
       flake = false;

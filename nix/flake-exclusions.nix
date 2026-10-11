@@ -9,10 +9,12 @@ let
   datasets = import ./packages/wired-bench-datasets.nix;
 in
 {
-  # The external dataset catalog's inputs, and nix-on-droid (read only by the
-  # `terminal-nix-*` outputs, nix/packages/android/terminal-nix.nix):
+  # The external dataset catalog's inputs, nix-on-droid (read only by the
+  # `terminal-nix-*` outputs, nix/packages/android/terminal-nix.nix), and the
+  # upstream nixpkgs tree (read only by Darwin's glfw3, nix/d-toolchain.nix):
   excludedFlakeInputs = map (d: d.input) (builtins.filter (d: d ? input) datasets.external) ++ [
     "nix-on-droid"
+    "nixpkgs-upstream-glfw"
   ];
 
   # Packages excluded from the desktop CI build aggregate:
