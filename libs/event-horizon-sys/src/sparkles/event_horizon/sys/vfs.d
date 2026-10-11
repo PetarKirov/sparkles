@@ -408,19 +408,10 @@ public:
         version (linux)
         {
             const how = resolveHow(policy);
-            foreach (attempt; 0 .. raceRetries + 1)
-            {
-                const fd = (() @trusted => openat2(start.fd, z.ptr, how))();
-                if (fd >= 0)
-                    return ioOk(Handle(fd));
-                const e = errno;
-                if (e == EAGAIN)
-                    continue; // VFN4
-                if (e == EINTR)
-                    continue;
-                return ioErr!Handle(classifyOpenat2(start, z, how, e, policy));
-            }
-            return ioErr!Handle(ErrorKind.raceRetryExhausted, OpKind.resolve, EAGAIN);
+            return retryRaces(() @trusted {
+                const fd = openat2(start.fd, z.ptr, how);
+                return fd >= 0 ? fd : -errno;
+            }, start, z, how, policy);
         }
         else version (OSX)
         {
@@ -492,6 +483,55 @@ private:
             if (!policy.crossMounts)
                 how.resolve |= RESOLVE_NO_XDEV;
             return how;
+        }
+
+        /**
+        The whole-path resolver's loop, shared with `RingVfs`: `attempt` makes
+        one `openat2` call and returns the descriptor or `-errno`. A reported
+        race (`EAGAIN`) is retried up to the race retry limit (VFN4); an
+        interruption (`EINTR`) is retried without counting against it.
+        */
+        package(sparkles.event_horizon)
+        IoResult!Handle retryRaces(Attempt)(scope Attempt attempt, Handle start,
+            scope ref const char[maxSplicedPathLength + 1] z, ref const OpenHow how,
+            ResolvePolicy policy)
+        {
+            for (uint races = 0; races <= raceRetries;)
+            {
+                version (unittest)
+                    if (injectedRaces() > 0)
+                    {
+                        --injectedRaces();
+                        ++races;
+                        continue;
+                    }
+                const res = attempt();
+                if (res >= 0)
+                    return ioOk(Handle(res));
+                if (-res == EINTR)
+                    continue; // an interruption is not a race (VFN4)
+                if (-res == EAGAIN)
+                {
+                    ++races;
+                    continue;
+                }
+                return ioErr!Handle(classifyOpenat2(start, z, how, -res, policy));
+            }
+            return ioErr!Handle(ErrorKind.raceRetryExhausted, OpKind.resolve, EAGAIN);
+        }
+
+        version (unittest)
+        {
+            /// The test double of VFN4: this many of the calling thread's next
+            /// `openat2` attempts report `EAGAIN` without being made. A template,
+            /// so a dependent package's test build, which compiles this module
+            /// without `-unittest`, still emits it. Attempts made on another
+            /// thread, such as `RingVfs`'s offloaded ones, do not see it.
+            package(sparkles.event_horizon) static ref int injectedRaces()() @safe nothrow @nogc
+            {
+                static int count;
+                return count;
+            }
         }
 
         /// The classification of a failed `openat2` with errno `e`, shared with

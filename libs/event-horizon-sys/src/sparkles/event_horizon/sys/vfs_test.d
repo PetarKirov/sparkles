@@ -238,6 +238,58 @@ private enum uint octal111 = 73, octal755 = 493, octal777 = 511, octal666 = 438,
         "a root that requires the kernel resolver fails");
 }
 
+/// A reported race is retried up to the limit, and then fails (VFN4, VFR6).
+version (linux)
+@("vfs.blocking.VFN4.raceRetries")
+@safe unittest
+{
+    auto dir = scratchDir("races");
+    scope (exit) rmdirRecurse(dir);
+    mkdirRecurse(buildPath(dir, "a"));
+    auto v = new BlockingVfs;
+    auto root = openRoot!(Rights.all)(v, dir, ambientAuthority());
+    assert(root.value.resolution == Resolution.kernelWholePath);
+    scope (exit) BlockingVfs.injectedRaces() = 0;
+
+    BlockingVfs.injectedRaces() = raceRetries;
+    assert(!root.value.walk("a").hasError, "the last permitted attempt still runs");
+    assert(BlockingVfs.injectedRaces() == 0);
+
+    BlockingVfs.injectedRaces() = raceRetries + 1;
+    const exhausted = root.value.walk("a");
+    assert(exhausted.error.kind == ErrorKind.raceRetryExhausted);
+    assert(BlockingVfs.injectedRaces() == 0, "no attempt beyond the limit");
+}
+
+/// An interruption is retried without counting as a race (VFN4).
+version (linux)
+@("vfs.blocking.VFN4.interruptionIsNotARace")
+@system unittest
+{
+    import core.stdc.errno : EAGAIN, EINTR;
+    import core.sys.posix.fcntl : AT_FDCWD, O_DIRECTORY, O_RDONLY, open;
+    import sparkles.base.vfs.types : maxSplicedPathLength;
+
+    BlockingVfs v;
+    char[maxSplicedPathLength + 1] z;
+    z[0 .. 2] = ".\0";
+    const policy = ResolvePolicy.init;
+    const how = BlockingVfs.resolveHow(policy);
+    const start = BlockingVfs.Handle(AT_FDCWD);
+
+    uint calls;
+    auto interrupted = v.retryRaces(() => ++calls <= raceRetries + 5 ? -EINTR
+        : open("/", O_RDONLY | O_DIRECTORY), start, z, how, policy);
+    assert(!interrupted.hasError, "interruptions never exhaust the race budget");
+    assert(calls == raceRetries + 6);
+    v.close(interrupted.value);
+
+    calls = 0;
+    auto raced = v.retryRaces(() { ++calls; return -EAGAIN; }, start, z, how, policy);
+    assert(raced.error.kind == ErrorKind.raceRetryExhausted);
+    assert(calls == raceRetries + 1, "exactly the permitted attempts");
+}
+
 @("vfs.blocking.oracle4.differential")
 @safe unittest
 {
