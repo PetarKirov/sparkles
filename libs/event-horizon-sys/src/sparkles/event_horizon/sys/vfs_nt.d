@@ -23,7 +23,7 @@ import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpK
 import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16;
 import sparkles.base.vfs.names : pathComponents;
 import sparkles.base.vfs.types : Access, Disposition, DotDotPolicy, EntryKind, MountCheck,
-    OpenMode, ResolvePolicy, Sharing, Stat, StatMask, SymlinkPolicy, maxSplicedPathLength,
+    OpenMode, ResolvePolicy, Rights, Sharing, Stat, StatMask, SymlinkPolicy, maxSplicedPathLength,
     windowsDeleteRetries;
 import sparkles.event_horizon.sys.nt;
 
@@ -58,8 +58,10 @@ struct BlockingVfs
 
     // ------------------------------------------------------------ primitives
 
-    /// The ambient open behind `openRoot`: follows reparse points (VFH7).
-    IoResult!Handle openRootDir(scope const(char)[] path) @safe nothrow @nogc
+    /// The ambient open behind `openRoot`: follows reparse points (VFH7). The
+    /// handle has the access `rights` need (VFN11).
+    IoResult!Handle openRootDir(scope const(char)[] path, Rights rights = Rights.all)
+        @safe nothrow @nogc
     {
         import core.sys.windows.winbase : CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, OPEN_EXISTING;
         import core.sys.windows.winbase : INVALID_HANDLE_VALUE;
@@ -69,28 +71,45 @@ struct BlockingVfs
         if (n == size_t.max)
             return ioErr!Handle(ErrorKind.nameTooLong, OpKind.resolve);
         w[n] = 0;
-        auto h = (() @trusted => CreateFileW(w.ptr, directoryAccess, FILE_SHARE_ALL, null,
+        const access = directoryAccessFor(rights);
+        auto h = (() @trusted => CreateFileW(w.ptr, access, FILE_SHARE_ALL, null,
             OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, null))();
         if (h == INVALID_HANDLE_VALUE)
             return ioErr!Handle(win32Error(OpKind.resolve));
         return ioOk(Handle(cast(size_t) h));
     }
 
-    /// Opens the directory `name` in `dir` without following it.
-    IoResult!Handle openDirAt(Handle dir, scope const(char)[] name) @safe nothrow @nogc
-        => openDirectory(dir, name, directoryAccess);
+    /// Opens the directory `name` in `dir` without following it, with the
+    /// access `rights` need (VFN11).
+    IoResult!Handle openDirAt(Handle dir, scope const(char)[] name, Rights rights = Rights.all)
+        @safe nothrow @nogc
+        => openDirectory(dir, name, directoryAccessFor(rights));
 
     /// Opens the directory `name` in `dir` for traversal only (VFN14).
     IoResult!Handle openSearchAt(Handle dir, scope const(char)[] name) @safe nothrow @nogc
         => openDirectory(dir, name, FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE);
 
-    /// A new handle to the directory `dir` names, with full access.
-    IoResult!Handle reopen(Handle dir) @safe nothrow @nogc
+    /// A new handle to the directory `dir` names, with the access `rights`
+    /// need (VFN11).
+    IoResult!Handle reopen(Handle dir, Rights rights = Rights.all) @safe nothrow @nogc
     {
         size_t h;
-        const s = ntOpen(dir.raw, null, directoryAccess, directoryOptions, 0, FILE_OPEN, null, h);
+        const s = ntOpen(dir.raw, null, directoryAccessFor(rights), directoryOptions, 0,
+            FILE_OPEN, null, h);
         return ntSuccess(s) ? ioOk(Handle(h)) : ioErr!Handle(ntError(s, OpKind.openAt));
     }
+
+    /**
+    The access mask a directory handle with `rights` holds (VFN11): `lookup`
+    gives `FILE_TRAVERSE`, `list` gives `FILE_LIST_DIRECTORY`. Read-attributes
+    access stays whatever the rights, because the backend reads attributes to
+    refuse links (VFN2), and so does `SYNCHRONIZE`, which synchronous I/O on
+    the handle waits on.
+    */
+    static ULONG directoryAccessFor(Rights rights) @safe pure nothrow @nogc
+        => FILE_READ_ATTRIBUTES | SYNCHRONIZE
+            | (rights & Rights.lookup ? FILE_TRAVERSE : 0)
+            | (rights & Rights.list ? FILE_LIST_DIRECTORY : 0);
 
     /// Opens or creates the file `name` in `dir` without following it.
     IoResult!Handle openFileAt(Handle dir, scope const(char)[] name, OpenMode mode,
@@ -325,7 +344,7 @@ struct BlockingVfs
     /// Starts a listing over a fresh handle for `dir` (VFN10).
     IoResult!Listing openListing(Handle dir) @safe nothrow @nogc
     {
-        auto fresh = reopen(dir);
+        auto fresh = reopen(dir, Rights.list);
         if (fresh.hasError)
         {
             IoError e = fresh.error;
@@ -453,9 +472,10 @@ struct BlockingVfs
         return wholePathFor(policy) ? MountCheck.kernel : MountCheck.racy;
     }
 
-    /// Resolves `path` from `start` in one call with `OBJ_DONT_REPARSE`.
-    IoResult!Handle resolveWhole(Handle start, scope const(char)[] path, ResolvePolicy policy)
-        @safe nothrow @nogc
+    /// Resolves `path` from `start` in one call with `OBJ_DONT_REPARSE`, opening
+    /// the result with the access `rights` need (VFN11).
+    IoResult!Handle resolveWhole(Handle start, scope const(char)[] path, ResolvePolicy policy,
+        Rights rights = Rights.all) @safe nothrow @nogc
     {
         wchar[maxSplicedPathLength] w;
         size_t n;
@@ -473,9 +493,9 @@ struct BlockingVfs
             n += m;
         }
         if (n == 0)
-            return reopen(start);
+            return reopen(start, rights);
         size_t h;
-        const s = ntOpen(start.raw, w[0 .. n], directoryAccess, directoryOptions,
+        const s = ntOpen(start.raw, w[0 .. n], directoryAccessFor(rights), directoryOptions,
             OBJ_DONT_REPARSE, FILE_OPEN, null, h);
         if (ntSuccess(s))
         {
@@ -534,8 +554,6 @@ struct BlockingVfs
 
 private:
 
-    enum ULONG directoryAccess = FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES
-        | SYNCHRONIZE;
     enum ULONG directoryOptions = FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT
         | FILE_OPEN_FOR_BACKUP_INTENT | FILE_SYNCHRONOUS_IO_NONALERT;
     enum ULONG deleteAccess = DELETE | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE;

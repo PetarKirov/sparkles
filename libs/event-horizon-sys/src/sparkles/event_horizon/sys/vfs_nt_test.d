@@ -305,3 +305,122 @@ private void expectNoFailures(string[] failures, string what) @safe
         ~ (cast(uint) r.error.code).to!string(16) : ""));
     assert(!exists(buildPath(dir, "t")));
 }
+
+extern (Windows) int NtQueryObject(HANDLE, int, void*, ULONG, ULONG*) nothrow @nogc;
+
+/// The access a handle was granted (`OBJECT_BASIC_INFORMATION.GrantedAccess`).
+ULONG grantedAccess(BlockingVfs.Handle h) @trusted
+{
+    ULONG[14] info; // OBJECT_BASIC_INFORMATION
+    const s = NtQueryObject(cast(HANDLE) *cast(size_t*) &h, 0, info.ptr, info.sizeof, null);
+    assert(s >= 0, "NtQueryObject failed");
+    return info[1];
+}
+
+/// A handle holds only the operating-system access its rights need (VFN11).
+@("vfs.nt.VFN11.accessFollowsRights")
+@system unittest
+{
+    auto dir = scratchDir("rights");
+    scope (exit) rmdirRecurse(dir);
+    mkdirRecurse(buildPath(dir, "d"));
+    write(buildPath(dir, "f"), "x");
+    auto v = new BlockingVfs;
+
+    auto readOnly = openRoot!(Rights.readOnly)(v, dir, ambientAuthority());
+    assert(grantedAccess(readOnly.value.backendHandle) & FILE_LIST_DIRECTORY);
+    auto file = readOnly.value.openFile!(OpenMode.read)("f");
+    const fileAccess = grantedAccess(file.value.backendHandle);
+    assert(fileAccess & FILE_READ_DATA);
+    assert(!(fileAccess & (FILE_WRITE_DATA | FILE_APPEND_DATA)), "a read-only file cannot write");
+
+    auto lookOnly = openRoot!(Rights.lookup)(v, dir, ambientAuthority());
+    const rootAccess = grantedAccess(lookOnly.value.backendHandle);
+    assert(rootAccess & FILE_TRAVERSE);
+    assert(!(rootAccess & FILE_LIST_DIRECTORY), "a root without `list` cannot list");
+    auto opened = lookOnly.value.openDir("d");
+    auto walked = lookOnly.value.walk("d");
+    foreach (access; [grantedAccess(opened.value.backendHandle),
+            grantedAccess(walked.value.backendHandle)])
+        assert(access & FILE_TRAVERSE && !(access & FILE_LIST_DIRECTORY),
+            "a derived directory keeps its rights' access");
+}
+
+pragma(lib, "advapi32");
+pragma(mangle, "ConvertStringSecurityDescriptorToSecurityDescriptorW")
+extern (Windows) BOOL sddlToDescriptor(LPCWSTR, DWORD, PSECURITY_DESCRIPTOR*, ULONG*) nothrow @nogc;
+
+/// Gives `path` the DACL the SDDL string `dacl` describes.
+void setDacl(string path, string dacl) @trusted
+{
+    PSECURITY_DESCRIPTOR sd;
+    assert(sddlToDescriptor(dacl.toUTF16z, 1, &sd, null), "SDDL conversion failed");
+    scope (exit) LocalFree(sd);
+    assert(SetFileSecurityW(path.toUTF16z, DACL_SECURITY_INFORMATION, sd), "SetFileSecurityW failed");
+}
+
+/// Sets whether the privilege `name` is enabled in the process token, and
+/// returns whether it was.
+bool enablePrivilege(string name, bool enable) @trusted
+{
+    HANDLE token;
+    assert(OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token));
+    scope (exit) CloseHandle(token);
+    TOKEN_PRIVILEGES set, old;
+    set.PrivilegeCount = 1;
+    if (!LookupPrivilegeValueW(null, name.toUTF16z, &set.Privileges[0].Luid))
+        return false;
+    set.Privileges[0].Attributes = enable ? SE_PRIVILEGE_ENABLED : 0;
+    DWORD length;
+    if (!AdjustTokenPrivileges(token, FALSE, &set, old.sizeof, &old, &length))
+        return false;
+    return old.PrivilegeCount == 1 && (old.Privileges[0].Attributes & SE_PRIVILEGE_ENABLED) != 0;
+}
+
+/// A directory opens with only the access its rights need, so a directory that
+/// grants traversal but not listing opens as a `lookup` handle (VFN11).
+@("vfs.nt.VFN11.traverseOnlyDirectory")
+@system unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+
+    if (underWine)
+        skipTest("Wine does not enforce a directory's DACL; the Windows leg checks it");
+    // An enabled backup or restore privilege, as an elevated runner may hold,
+    // would let backup-intent opens past the DACL under test.
+    const backup = enablePrivilege("SeBackupPrivilege", false);
+    const restore = enablePrivilege("SeRestorePrivilege", false);
+    scope (exit)
+    {
+        if (backup)
+            enablePrivilege("SeBackupPrivilege", true);
+        if (restore)
+            enablePrivilege("SeRestorePrivilege", true);
+    }
+    auto dir = scratchDir("traverse");
+    auto d = buildPath(dir, "d");
+    mkdirRecurse(buildPath(d, "e"));
+    // Everyone: FILE_TRAVERSE | FILE_READ_ATTRIBUTES | SYNCHRONIZE, nothing inherited.
+    setDacl(d, "D:P(A;;0x1000A0;;;WD)");
+    scope (exit)
+    {
+        setDacl(d, "D:(A;OICI;FA;;;WD)");
+        rmdirRecurse(dir);
+    }
+    auto v = new BlockingVfs;
+
+    auto direct = openRoot!(Rights.lookup)(v, d, ambientAuthority());
+    assert(!direct.hasError, "a lookup root opens on a traverse-only directory");
+    assert(!(grantedAccess(direct.value.backendHandle) & FILE_LIST_DIRECTORY));
+    assert(!direct.value.openDir("e").hasError, "and passes through it");
+
+    auto parent = openRoot!(Rights.lookup)(v, dir, ambientAuthority());
+    assert(!parent.value.openDir("d").hasError, "openDir requests only traversal");
+    assert(!parent.value.walk("d").hasError, "the walk's result requests only traversal");
+    assert(!parent.value.walk("d/e").hasError, "and so does each directory it passes");
+
+    auto listing = openRoot!(Rights.list)(v, d, ambientAuthority());
+    assert(listing.hasError, "listing is still refused (backup privilege was "
+        ~ (backup ? "enabled" : "disabled") ~ ", restore " ~ (restore ? "enabled" : "disabled") ~ ")");
+    assert(listing.error.kind == ErrorKind.permission);
+}

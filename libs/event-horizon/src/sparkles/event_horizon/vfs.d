@@ -20,8 +20,8 @@ import core.lifetime : move, moveEmplace;
 import expected : Expected;
 
 import sparkles.base.io.errors : ErrorKind, IoError, IoResult, NoGcHook, ioErr, ioOk;
-import sparkles.base.vfs.concept : isVfs;
-import sparkles.base.vfs.types : EntryKind, MountCheck, OpenMode, ResolvePolicy, Sharing,
+import sparkles.base.vfs.concept : isVfs, openDirAtFor, openRootDirFor, reopenFor, resolveWholeFor;
+import sparkles.base.vfs.types : EntryKind, MountCheck, OpenMode, ResolvePolicy, Rights, Sharing,
     Stat, StatMask;
 import sparkles.base.io.errors : OpKind;
 import sparkles.base.vfs.types : maxNameLength, maxSplicedPathLength;
@@ -72,17 +72,19 @@ struct RingVfs
 // locking is not annotated. Everything else here is.
 @safe nothrow:
 
-    /// See `BlockingVfs.openRootDir`.
-    IoResult!Handle openRootDir(scope const(char)[] path)
-        => offload(() => inner.openRootDir(path));
+    /// See `BlockingVfs.openRootDir`; `rights` reach a backend that takes them
+    /// (VFN11).
+    IoResult!Handle openRootDir(scope const(char)[] path, Rights rights = Rights.all)
+        => offload(() => openRootDirFor(inner, path, rights));
     /// See `BlockingVfs.openDirAt`.
-    IoResult!Handle openDirAt(Handle dir, scope const(char)[] name)
-        => offload(() => inner.openDirAt(dir, name));
+    IoResult!Handle openDirAt(Handle dir, scope const(char)[] name, Rights rights = Rights.all)
+        => offload(() => openDirAtFor(inner, dir, name, rights));
     /// See `BlockingVfs.openSearchAt`.
     IoResult!Handle openSearchAt(Handle dir, scope const(char)[] name)
         => offload(() => inner.openSearchAt(dir, name));
     /// See `BlockingVfs.reopen`.
-    IoResult!Handle reopen(Handle dir) => offload(() => inner.reopen(dir));
+    IoResult!Handle reopen(Handle dir, Rights rights = Rights.all)
+        => offload(() => reopenFor(inner, dir, rights));
     /// See `BlockingVfs.openFileAt`.
     IoResult!Handle openFileAt(Handle dir, scope const(char)[] name, OpenMode mode,
         Sharing sharing)
@@ -229,7 +231,7 @@ struct RingVfs
         bool wholePathFor(ResolvePolicy policy) @nogc => inner.wholePathFor(policy);
         /// See `BlockingVfs.resolveWhole`.
         IoResult!Handle resolveWhole(Handle start, scope const(char)[] path,
-            ResolvePolicy policy)
+            ResolvePolicy policy, Rights rights = Rights.all)
         {
             static if (canRing!OpOpenAt2)
                 if (onRing!OpOpenAt2)
@@ -244,7 +246,7 @@ struct RingVfs
                         => OpOpenAt2(BlockingVfs.fdOf(start), &z[0], &how))()),
                         start, z, how, policy);
                 }
-            return offload(() => inner.resolveWhole(start, path, policy));
+            return offload(() => resolveWholeFor(inner, start, path, policy, rights));
         }
     }
     static if (__traits(hasMember, BlockingVfs, "wholePathWithdrawn"))

@@ -16,22 +16,24 @@ on success and on failure alike.
 module sparkles.base.vfs.walk;
 
 import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
-import sparkles.base.vfs.concept : hasSearchOpen, hasWholePathResolver, isVfs, resolverWithdrawn;
+import sparkles.base.vfs.concept : hasSearchOpen, hasWholePathResolver, isVfs, reopenFor,
+    resolveWholeFor, resolverWithdrawn;
 import sparkles.base.vfs.names : checkName, checkWalkPath, isAbsolutePath, isSeparator,
     lexicalError;
-import sparkles.base.vfs.types : ResolvePolicy, Resolution, Sharing, StatMask, SymlinkPolicy,
+import sparkles.base.vfs.types : ResolvePolicy, Resolution, Rights, Sharing, StatMask, SymlinkPolicy,
     maxSplicedPathLength, maxSymlinkHops, maxWalkDepth;
 
 /**
 Resolves `path` from `start`, which the walk does not own, and returns an
 owned handle to the directory it names. With `createMissing`, a component
-that does not exist is created with `sharing` (`walkAll`).
+that does not exist is created with `sharing` (`walkAll`). The result is
+opened with the access `rights` need, where the backend takes them (VFN11).
 */
 // `H` rather than `V.Handle`: a backend whose `Handle` aliases another
 // backend's would otherwise make `V` deduce two ways.
 IoResult!(V.Handle) walkFrom(V, H)(ref V vfs, H start, scope const(char)[] path,
     ResolvePolicy policy, Resolution resolution, bool createMissing, Sharing sharing,
-    bool requireKernel = false)
+    bool requireKernel = false, Rights rights = Rights.all)
 if (isVfs!V && is(H == V.Handle))
 {
     const lexical = checkWalkPath(path, policy);
@@ -52,7 +54,7 @@ if (isVfs!V && is(H == V.Handle))
             {
                 // VFR4: a kernel refusal is the result; the walk never runs for it.
                 // Only a withdrawal found during this very call falls through.
-                auto r = vfs.resolveWhole(start, path, policy);
+                auto r = resolveWholeFor(vfs, start, path, policy, rights);
                 if (!r.hasError || requireKernel || r.error.kind != ErrorKind.unsupported
                     || r.error.stage != IoErrorStage.probe)
                     return r;
@@ -60,7 +62,7 @@ if (isVfs!V && is(H == V.Handle))
         }
     }
 
-    Walk!V w = Walk!V(&vfs, start, policy, createMissing, sharing);
+    Walk!V w = Walk!V(&vfs, start, policy, createMissing, sharing, rights);
     return w.run(path);
 }
 
@@ -71,6 +73,7 @@ private struct Walk(V)
     ResolvePolicy policy;
     bool createMissing;
     Sharing sharing;
+    Rights rights;
 
     // stack[0 .. depth] holds the directories entered before `cur`; stack[0]
     // is `start` once anything is entered. `cur` is owned exactly when
@@ -86,13 +89,15 @@ private struct Walk(V)
 
     @disable this(this);
 
-    this(V* vfs, V.Handle start, ResolvePolicy policy, bool createMissing, Sharing sharing)
+    this(V* vfs, V.Handle start, ResolvePolicy policy, bool createMissing, Sharing sharing,
+        Rights rights)
     {
         this.vfs = vfs;
         this.start = start;
         this.policy = policy;
         this.createMissing = createMissing;
         this.sharing = sharing;
+        this.rights = rights;
         cur = start;
     }
 
@@ -191,11 +196,12 @@ private struct Walk(V)
         }
 
         if (depth == 0)
-            return vfs.reopen(start); // VFP3: an empty path yields a new handle
+            return reopenFor(*vfs, start, rights); // VFP3: an empty path yields a new handle
         static if (hasSearchOpen!V)
         {
-            // The result was opened for search only; reopen it with full access.
-            auto full = vfs.reopen(cur);
+            // The result was opened for search only; reopen it with the
+            // access its rights need (VFN11).
+            auto full = reopenFor(*vfs, cur, rights);
             if (full.hasError)
                 return fail(full.error);
             vfs.close(cur);
