@@ -455,7 +455,7 @@ void log(Args...)(
     string funcName = __FUNCTION__,
     string prettyFuncName = __PRETTY_FUNCTION__,
     string moduleName = __MODULE__,
-) @safe nothrow @nogc
+)
 {
     import sparkles.base.buffer : SharedBuffer;
     import sparkles.base.styled_template : writeStyled;
@@ -489,7 +489,7 @@ void log(Args...)(
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
-) @safe nothrow @nogc
+)
 {
     log!Args(level, header, args, footer, loc.line, loc.file, loc.funcName, loc.prettyFuncName, loc.moduleName);
 }
@@ -504,7 +504,7 @@ void trace(Args...)(
     string funcName = __FUNCTION__,
     string prettyFuncName = __PRETTY_FUNCTION__,
     string moduleName = __MODULE__,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.trace, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
 }
@@ -515,7 +515,7 @@ void trace(Args...)(
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.trace, loc, header, args, footer);
 }
@@ -530,7 +530,7 @@ void info(Args...)(
     string funcName = __FUNCTION__,
     string prettyFuncName = __PRETTY_FUNCTION__,
     string moduleName = __MODULE__,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.info, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
 }
@@ -541,7 +541,7 @@ void info(Args...)(
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.info, loc, header, args, footer);
 }
@@ -556,7 +556,7 @@ void warning(Args...)(
     string funcName = __FUNCTION__,
     string prettyFuncName = __PRETTY_FUNCTION__,
     string moduleName = __MODULE__,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.warning, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
 }
@@ -567,7 +567,7 @@ void warning(Args...)(
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.warning, loc, header, args, footer);
 }
@@ -582,7 +582,7 @@ void error(Args...)(
     string funcName = __FUNCTION__,
     string prettyFuncName = __PRETTY_FUNCTION__,
     string moduleName = __MODULE__,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.error, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
 }
@@ -593,7 +593,7 @@ void error(Args...)(
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.error, loc, header, args, footer);
 }
@@ -608,7 +608,7 @@ void critical(Args...)(
     string funcName = __FUNCTION__,
     string prettyFuncName = __PRETTY_FUNCTION__,
     string moduleName = __MODULE__,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.critical, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
 }
@@ -619,7 +619,7 @@ void critical(Args...)(
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.critical, loc, header, args, footer);
 }
@@ -634,7 +634,7 @@ void fatal(Args...)(
     string funcName = __FUNCTION__,
     string prettyFuncName = __PRETTY_FUNCTION__,
     string moduleName = __MODULE__,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.fatal, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
 }
@@ -645,7 +645,7 @@ void fatal(Args...)(
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
-) @safe nothrow @nogc
+)
 {
     log!Args(LogLevel.fatal, loc, header, args, footer);
 }
@@ -1093,6 +1093,42 @@ unittest
     coreGlobalLogLevel = LogLevel.fatal;
     error(i"globally filtered");
     assert(logger.writeCount == 2);
+}
+
+/// The wrappers infer their attributes from the arguments: a value whose
+/// rendering allocates is accepted outside `@nogc` code.
+@("logger.coreWrappers.inferFromArguments")
+@safe
+unittest
+{
+    lockLoggerGlobalTests();
+    auto oldLogger = sharedCoreLog;
+    auto oldLevel = coreGlobalLogLevel;
+    scope (exit)
+    {
+        sharedCoreLog = oldLogger;
+        coreGlobalLogLevel = oldLevel;
+        unlockLoggerGlobalTests();
+    }
+
+    auto logger = new RecordingCoreLogger(LogLevel.trace);
+    sharedCoreLog = () @trusted { return cast(shared) logger; }();
+    coreGlobalLogLevel = LogLevel.trace;
+
+    static struct Allocating
+    {
+        int n;
+        string toString() const @safe pure
+        {
+            import std.conv : text;
+
+            return text("Allocating(", n, ")");
+        }
+    }
+
+    static assert(!__traits(compiles, () @nogc { info(i"$(Allocating(1))"); }));
+    info(i"got $(Allocating(7))");
+    assert(logger.message == "got Allocating(7)");
 }
 
 private shared uint fatalHandlerCallCount;

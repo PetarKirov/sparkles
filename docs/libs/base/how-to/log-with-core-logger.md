@@ -60,6 +60,10 @@ void main()
 [90m[ 15:22:40[39m | Δt [33m361.1µs[39m | Δtᵢ [33m45.9µs[39m | [33mWRN[39m | [2mbase_core_logger.d:26[22m ]: [1mLatency spike: [33m[1m230ms[22m[39m on [2mdb-01.prod[22m[22m
 ```
 
+## Log from `@nogc` code
+
+The level functions are templates and take their attributes from what you pass. A message whose values render without allocating (numbers, strings, enums, `prettyPrint(x)`, a type with a `@nogc` `toString(Writer)`) makes the call `@safe nothrow @nogc`, so it works inside `@nogc` code. A value whose rendering allocates, such as a `toString` returning a new `string`, is still accepted, but only outside `@nogc` code, and the compiler reports the problem at your call.
+
 ## Tracing (`--log-level=trace`)
 
 `trace()`, `traceCall`, and `traceSpan` are no-ops when the process is above TRACE — they return before formatting. Enable them with `--log-level=trace` (apps that go through `runCli` and declare a `LogLevel logLevel` field get `initLogger` once after parse).
@@ -119,7 +123,7 @@ dirty tree as `<rev>-dirty` (`commitLabel`: `<rev> + uncommitted changes`).
 
 ## Advanced Customization: Fatal Handlers
 
-`fatal` log calls are also `@safe nothrow @nogc`. By default, the fatal handler throws a thread-local, recycled `FatalLogError` to avoid GC allocation.
+`fatal` calls follow the same rule. By default, the fatal handler throws a thread-local, recycled `FatalLogError` to avoid GC allocation.
 
 If you want the process to exit immediately or panic instead of throwing, you can customize the handler by setting `coreFatalHandler` to `assertingFatalHandler` or `abortingFatalHandler`:
 
