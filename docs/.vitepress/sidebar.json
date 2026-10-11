@@ -3306,6 +3306,177 @@
         ]
       },
       {
+        "text": "Fine-Grained Locking",
+        "link": "/research/fine-grained-locking/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Concepts & Vocabulary",
+            "link": "/research/fine-grained-locking/concepts"
+          },
+          {
+            "text": "Thread Locks",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Rust std::sync",
+                "link": "/research/fine-grained-locking/rust-std-sync"
+              },
+              {
+                "text": "Zig std.Io sync",
+                "link": "/research/fine-grained-locking/zig-std-sync"
+              },
+              {
+                "text": "glibc NPTL",
+                "link": "/research/fine-grained-locking/glibc-nptl"
+              },
+              {
+                "text": "parking_lot",
+                "link": "/research/fine-grained-locking/parking-lot"
+              },
+              {
+                "text": "WebKit WTF::Lock",
+                "link": "/research/fine-grained-locking/webkit-wtf-lock"
+              },
+              {
+                "text": "Go sync",
+                "link": "/research/fine-grained-locking/go-sync"
+              },
+              {
+                "text": "Abseil Mutex",
+                "link": "/research/fine-grained-locking/abseil-mutex"
+              },
+              {
+                "text": "nsync",
+                "link": "/research/fine-grained-locking/nsync"
+              },
+              {
+                "text": "Folly synchronization",
+                "link": "/research/fine-grained-locking/folly-sync"
+              },
+              {
+                "text": "Java AQS",
+                "link": "/research/fine-grained-locking/java-aqs"
+              },
+              {
+                "text": "os_unfair_lock",
+                "link": "/research/fine-grained-locking/apple-os-unfair-lock"
+              },
+              {
+                "text": "Windows SRWLOCK",
+                "link": "/research/fine-grained-locking/windows-srwlock"
+              },
+              {
+                "text": "Queue Locks",
+                "link": "/research/fine-grained-locking/queue-locks"
+              }
+            ]
+          },
+          {
+            "text": "OS Wait Primitives",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Linux Futexes",
+                "link": "/research/fine-grained-locking/linux-futex"
+              },
+              {
+                "text": "Windows WaitOnAddress",
+                "link": "/research/fine-grained-locking/windows-wait-on-address"
+              },
+              {
+                "text": "Darwin ulock & os_sync",
+                "link": "/research/fine-grained-locking/darwin-ulock"
+              },
+              {
+                "text": "FreeBSD umtx",
+                "link": "/research/fine-grained-locking/freebsd-umtx"
+              }
+            ]
+          },
+          {
+            "text": "Async & Fiber Primitives",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "tokio sync",
+                "link": "/research/fine-grained-locking/tokio-sync"
+              },
+              {
+                "text": "smol event-listener",
+                "link": "/research/fine-grained-locking/smol-event-listener"
+              },
+              {
+                "text": "Seastar",
+                "link": "/research/fine-grained-locking/seastar-sync"
+              },
+              {
+                "text": "Trio",
+                "link": "/research/fine-grained-locking/trio-sync"
+              }
+            ]
+          },
+          {
+            "text": "Papers",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Reppy 1991 (CML)",
+                "link": "/research/fine-grained-locking/reppy-1991-cml"
+              },
+              {
+                "text": "von Behren 2003 (Capriccio)",
+                "link": "/research/fine-grained-locking/von-behren-2003-capriccio"
+              },
+              {
+                "text": "Li & Zdancewic 2007",
+                "link": "/research/fine-grained-locking/li-zdancewic-2007"
+              },
+              {
+                "text": "Ziarek 2011",
+                "link": "/research/fine-grained-locking/ziarek-2011-async-events"
+              },
+              {
+                "text": "Tardieu 2012",
+                "link": "/research/fine-grained-locking/tardieu-2012-x10-work-stealing"
+              },
+              {
+                "text": "Seo 2018 (Argobots)",
+                "link": "/research/fine-grained-locking/seo-2018-argobots"
+              },
+              {
+                "text": "Enberg 2019",
+                "link": "/research/fine-grained-locking/enberg-2019"
+              },
+              {
+                "text": "Karsten & Barghi 2020",
+                "link": "/research/fine-grained-locking/karsten-barghi-2020"
+              },
+              {
+                "text": "Koval 2023 (CQS)",
+                "link": "/research/fine-grained-locking/koval-2023-cqs"
+              },
+              {
+                "text": "Skazhenik 2025",
+                "link": "/research/fine-grained-locking/skazhenik-2025-lightweight-locks"
+              },
+              {
+                "text": "Skazhenik 2026",
+                "link": "/research/fine-grained-locking/skazhenik-2026-coroutine-sync"
+              },
+              {
+                "text": "König 2025 (CES)",
+                "link": "/research/fine-grained-locking/koenig-2025-combine-and-exchange"
+              }
+            ]
+          },
+          {
+            "text": "Comparison & Synthesis",
+            "link": "/research/fine-grained-locking/comparison"
+          }
+        ]
+      },
+      {
         "text": "Code Formatting",
         "link": "/research/code-formatting/",
         "collapsed": true,
