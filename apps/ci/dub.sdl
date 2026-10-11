@@ -14,6 +14,7 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "sparkles:base" path="../.."
 dependency "sparkles:code-instrumentation" path="../.."
 dependency "sparkles:core-cli" path="../.."
+dependency "sparkles:event-horizon" path="../.."
 dependency "expected" version="~>0.4.1"
 dependency "sparkles:wired" path="../.."
 // The fence audit (`--audit-fences`) folds fence labels through
