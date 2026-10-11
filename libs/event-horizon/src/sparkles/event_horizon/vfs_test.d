@@ -195,3 +195,46 @@ version (linux)
     if (ringable)
         assert(RingVfs.ringCallsOf[OpKind.resolve] > resolved, "openat2 ran on the ring");
 }
+
+/// The ring's resolver retries a reported race exactly as the blocking
+/// backend does (VFN4).
+version (linux)
+@("vfs.ring.VFN4.raceRetries")
+@safe unittest
+{
+    import std.file : mkdirRecurse;
+    import std.path : buildPath;
+
+    import sparkles.base.vfs.types : raceRetries;
+
+    Sched s;
+    schedOrSkip(s);
+    auto dir = scratchDir("ring-races");
+    scope (exit) rmdirRecurse(dir);
+    mkdirRecurse(buildPath(dir, "a"));
+    auto ring = new RingVfs;
+    bool ringable;
+    auto r = s.run(() {
+        import sparkles.base.io.errors : OpKind;
+        import sparkles.event_horizon.sched : currentScheduler;
+
+        // The double counts per thread, so it needs the call on this fiber.
+        ringable = currentScheduler().loop.caps().supports(OpKind.resolve);
+        if (!ringable)
+            return;
+        auto root = openRoot!(Rights.all)(ring, dir, ambientAuthority());
+        assert(root.value.resolution == Resolution.kernelWholePath);
+        scope (exit) BlockingVfs.injectedRaces() = 0;
+        BlockingVfs.injectedRaces() = raceRetries;
+        assert(!root.value.walk("a").hasError, "the last permitted attempt still runs");
+        BlockingVfs.injectedRaces() = raceRetries + 1;
+        assert(root.value.walk("a").error.kind == ErrorKind.raceRetryExhausted);
+    });
+    assert(!r.hasError);
+    if (!ringable)
+    {
+        import sparkles.test_runner.skip : skipTest;
+
+        skipTest("this kernel has no openat2 on the ring");
+    }
+}

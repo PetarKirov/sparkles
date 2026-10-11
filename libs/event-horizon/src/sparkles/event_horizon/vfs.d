@@ -24,7 +24,7 @@ import sparkles.base.vfs.concept : isVfs;
 import sparkles.base.vfs.types : EntryKind, MountCheck, OpenMode, ResolvePolicy, Sharing,
     Stat, StatMask;
 import sparkles.base.io.errors : OpKind;
-import sparkles.base.vfs.types : maxNameLength, maxSplicedPathLength, raceRetries;
+import sparkles.base.vfs.types : maxNameLength, maxSplicedPathLength;
 import sparkles.event_horizon.op : OpMkdirAt, OpOpenAt2, OpRenameAt, OpStatx, OpSymlinkAt,
     OpUnlinkAt;
 import sparkles.event_horizon.sys : BlockingVfs, BorrowedFd, OwnedFd;
@@ -236,23 +236,13 @@ struct RingVfs
                 {
                     // BlockingVfs's loop, with the call on the ring: the same
                     // retries (VFN4) and the same classification.
-                    import core.stdc.errno : EAGAIN, EINTR;
-
                     char[maxSplicedPathLength + 1] z;
                     if (!terminate(path.length ? path : ".", z))
                         return ioErr!Handle(ErrorKind.nameTooLong, OpKind.resolve);
                     const how = BlockingVfs.resolveHow(policy);
-                    foreach (attempt; 0 .. raceRetries + 1)
-                    {
-                        const res = ringResult((() @trusted => OpOpenAt2(BlockingVfs.fdOf(start),
-                            &z[0], &how))());
-                        if (res >= 0)
-                            return ioOk(BlockingVfs.handleOf(res));
-                        if (-res == EAGAIN || -res == EINTR)
-                            continue;
-                        return ioErr!Handle(inner.classifyOpenat2(start, z, how, -res, policy));
-                    }
-                    return ioErr!Handle(ErrorKind.raceRetryExhausted, OpKind.resolve, EAGAIN);
+                    return inner.retryRaces(() => ringResult((() @trusted
+                        => OpOpenAt2(BlockingVfs.fdOf(start), &z[0], &how))()),
+                        start, z, how, policy);
                 }
             return offload(() => inner.resolveWhole(start, path, policy));
         }
