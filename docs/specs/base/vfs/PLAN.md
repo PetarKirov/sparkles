@@ -205,8 +205,8 @@ finds no normative text duplicating this one.
 | Milestone | State                                                    | Pull request |
 | --------- | -------------------------------------------------------- | ------------ |
 | M0        | delivered; reshaped for readers and for creation sharing | #535, #594   |
-| M1        | in review                                                | —            |
-| M2        | implemented locally; Windows leg pending                 | —            |
-| M3        | implemented locally                                      | —            |
-| M4        | implemented locally                                      | —            |
-| M5        | written locally                                          | —            |
+| M1        | delivered                                                | #626         |
+| M2        | delivered                                                | #627         |
+| M3        | delivered                                                | #629         |
+| M4        | delivered                                                | #628         |
+| M5        | delivered                                                | #628         |
