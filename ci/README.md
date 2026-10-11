@@ -61,6 +61,7 @@ PR — which gets no secrets — still run the pipeline.
 | `prepare-cloud-env.sh`       | One-line setup for an ephemeral agent container: Nix, reachable inputs, toolchain        |
 | `with-cachix.sh`             | Runs a command under `cachix watch-exec`, pushing paths as they are built                |
 | `release-pin.sh`             | Highest-tag guard, then `cachix push` + `cachix pin --keep-revisions`                    |
+| `toolchain-pin.d`            | Pushes and pins toolchains, heavy libraries, and Android cross libraries to Cachix       |
 | `notify-dub-registry.sh`     | Pokes code.dlang.org to ingest a new tag                                                 |
 | `deploy-cloudflare-pages.sh` | `wrangler pages deploy`, then upserts the preview-URL comment                            |
 | `pr-comment.sh`              | Marker-keyed comment upsert, so re-runs edit instead of appending                        |
@@ -75,6 +76,48 @@ Lint them with `shellcheck -x -s bash ci/*.sh ci/lib/common.sh`.
 Cloud setup verification prints the complete `ldc2 --version` output. Do not
 pipe it into an early-exiting reader: LLVM treats a closed stdout pipe as an
 error, so `head` can turn successful toolchain setup into a failed CI check.
+
+### `toolchain-pin.d` — supervised derivation pinning
+
+Run the D launcher directly from the repository root:
+
+```bash
+dub run --single ci/toolchain-pin.d -- --help
+dub run --single ci/toolchain-pin.d -b checked -- --dry-run --all -j 4
+dub run --single ci/toolchain-pin.d -b checked -- --libs
+```
+
+The implementation lives in `apps/ci/src/derivation_pin*.d`. One Event Horizon
+scheduler runs at most `--jobs` pin pipelines concurrently; each command is
+supervised with separate stdout/stderr capture and joined cleanup. An ordinary
+target failure does not stop the other targets. SIGINT or SIGTERM cancels the
+run, stops new targets, and waits for supervised children to terminate and reap
+before the summary is printed. Cancellation does not undo a completed push or
+pin, and a Nix daemon's work is outside the client's process group.
+
+`--token` overrides `CACHIX_AUTH_TOKEN` in child environments only. Without a
+token, the tool defaults to dry-run; `CI_DRY_RUN=1` also selects dry-run.
+`--revisions` and `CI_PIN_REVISIONS` must be positive. `--cache` overrides
+`CACHIX_CACHE`, with `sparkles` as the final default.
+
+Storage is the deduplicated NAR size of the closure outside `cache.nixos.org`,
+not compressed upload size or additional space relative to the target cache.
+Remote measurements follow transitive references. A `*` marks a partial row;
+the footer says **Partial** when any measurement is partial or unavailable.
+Failed upstream queries can leave unclassified paths in that estimate. Unknown
+size is reported as unavailable, rather than claiming the path is unbuilt.
+
+The launcher targets POSIX hosts: Linux requires a working io_uring backend;
+macOS uses kqueue. Native macOS validation is required before claiming parity.
+Captured output is bounded to 64 MiB per stream; incomplete output is rejected
+before parsing. No command deadline is imposed by default.
+
+Tests are discovered through the `ci` package, rather than the single-file
+launcher:
+
+```bash
+dub test :ci -- -i 'derivation_pin' -v
+```
 
 ## Job mapping
 
