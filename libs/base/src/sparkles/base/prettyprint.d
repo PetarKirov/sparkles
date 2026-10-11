@@ -197,10 +197,8 @@ void prettyPrintAA(T, Writer, Hook = void)(
     // Try single-line format first
     if (opt.softMaxWidth > 0 && aa.length <= opt.maxItems)
     {
-        LineWidth width;
-        writeAALine!T(width, aa, measureOptions(opt), depth);
-        if (width.length <= opt.softMaxWidth)
-            return writeAALine!T(w, aa, opt, depth);
+        if (fitsOnLine!writeAALine(aa, opt, depth))
+            return writeAALine(w, aa, opt, depth);
     }
 
     put(w, "[");
@@ -278,9 +276,7 @@ void prettyPrintRange(R, Writer, Hook = void)(
     {
         if (opt.softMaxWidth > 0 && len <= opt.maxItems)
         {
-            LineWidth width;
-            writeRangeLine(width, range, measureOptions(opt), depth);
-            if (width.length <= opt.softMaxWidth)
+            if (fitsOnLine!writeRangeLine(range, opt, depth))
                 return writeRangeLine(w, range, opt, depth);
         }
     }
@@ -359,10 +355,8 @@ void prettyPrintAggregate(T, Writer, Hook = void)(
     // Try single-line format first
     if (opt.softMaxWidth > 0)
     {
-        LineWidth width;
-        writeAggregateLine!T(width, value, measureOptions(opt), depth);
-        if (width.length <= opt.softMaxWidth)
-            return writeAggregateLine!T(w, value, opt, depth);
+        if (fitsOnLine!writeAggregateLine(value, opt, depth))
+            return writeAggregateLine(w, value, opt, depth);
     }
 
     writeTypeName!T(w, opt);
@@ -406,9 +400,33 @@ void prettyPrintAggregate(T, Writer)(
 // ─────────────────────────────────────────────────────────────────────────────
 
 // The single-line forms below are written twice: once into a `LineWidth`
-// under `measureOptions` to decide whether the value fits, then into the
-// real writer. Measuring by writing keeps both passes the same layout and
+// to decide whether the value fits (`fitsOnLine`), then into the real
+// writer. Measuring by writing keeps both passes the same layout and
 // allocates nothing.
+
+/// Whether `writeLine`'s rendering of `value` fits in `opt.softMaxWidth`.
+/// The candidate is measured uncolored and unlinked, with nested values on
+/// one line too: measuring under `softMaxWidth: uint.max`, which every line
+/// fits, lays them out flat without measuring them again, so each level
+/// costs one pass over its subtree.
+private bool fitsOnLine(alias writeLine, V, Hook)(
+    auto ref V value,
+    in PrettyPrintOptions!Hook opt,
+    ushort depth
+)
+{
+    if (opt.softMaxWidth == uint.max)
+        return true;
+    LineWidth width;
+    writeLine(width, value, PrettyPrintOptions!void(
+        indentStep: opt.indentStep,
+        maxDepth: opt.maxDepth,
+        maxItems: opt.maxItems,
+        softMaxWidth: uint.max,
+        colored: false,
+    ), depth);
+    return width.length <= opt.softMaxWidth;
+}
 
 private void writeAALine(T, Writer, Hook)(
     ref Writer w,
@@ -482,17 +500,6 @@ private void writeAggregateLine(T, Writer, Hook)(
     }}
     put(w, ")");
 }
-
-/// `opt` for measuring a single-line candidate: uncolored, unlinked, and with
-/// nested values laid out multi-line, as the width check has always assumed.
-private PrettyPrintOptions!void measureOptions(Hook)(in PrettyPrintOptions!Hook opt)
-    => PrettyPrintOptions!void(
-        indentStep: opt.indentStep,
-        maxDepth: opt.maxDepth,
-        maxItems: opt.maxItems,
-        softMaxWidth: 0,
-        colored: false,
-    );
 
 /// An output range that only counts the UTF-8 code units put into it.
 private struct LineWidth
@@ -832,10 +839,13 @@ unittest
         ~ "\x1b[96mstops\x1b[39m: [\x1b[34m1\x1b[39m, \x1b[34m2\x1b[39m, \x1b[34m3\x1b[39m])",
         PrettyPrintOptions!void(colored: true));
 
-    // Too narrow: the outer struct breaks, and the array, measured on its own,
+    // The single-line form is 40 columns, nested array included: at 40 it
+    // fits; at 39 the outer struct breaks and the array, measured on its own,
     // still fits.
+    check(span, `Span(name: "gradient", stops: [1, 2, 3])`,
+        PrettyPrintOptions!void(softMaxWidth: 40, colored: false));
     check(span, "Span(\n  name: \"gradient\",\n  stops: [1, 2, 3]\n)",
-        PrettyPrintOptions!void(softMaxWidth: 30, colored: false));
+        PrettyPrintOptions!void(softMaxWidth: 39, colored: false));
 }
 
 /// The lazy value renders through any sink, `@nogc` ones included.
