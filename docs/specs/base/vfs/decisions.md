@@ -142,8 +142,10 @@ the no-symlinks policy with mount crossing allowed.
 
 Rights are a compile-time set on the handle type
 ([`VFH4`](./SPEC.md#vfh4-rights)–[`VFH6`](./SPEC.md#vfh6-rights-are-checked-at-compile-time)).
-A child never has more rights than its parent. On Windows the set is also the
-handle's real access mask ([`VFN11`](./backends.md#vfn11-rights-reach-the-os)).
+A child never has more rights than its parent. On Windows the set of every
+opened handle is also its real access mask
+([`VFN11`](./backends.md#vfn11-rights-reach-the-os)); an attenuated borrow
+shares its owner's handle, so the type, not the mask, is what narrows it.
 The policy is a runtime value fixed at the root rather than a type parameter,
 because it is a per-tree decision.
 

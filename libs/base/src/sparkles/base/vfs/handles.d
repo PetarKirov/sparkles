@@ -19,7 +19,8 @@ import core.lifetime : move;
 import std.traits : isInstanceOf;
 
 import sparkles.base.io.errors : ErrorKind, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
-import sparkles.base.vfs.concept : hasWholePathResolver, isVfs, mountCheckOf, resolverWithdrawn;
+import sparkles.base.vfs.concept : hasWholePathResolver, isVfs, mountCheckOf, openDirAtFor,
+    openRootDirFor, resolverWithdrawn;
 import sparkles.base.vfs.names : checkLinkTarget, checkName, lexicalError;
 import sparkles.base.vfs.remove : removeTreeAt;
 import sparkles.base.vfs.types;
@@ -90,7 +91,7 @@ in (authority.granted, "AmbientAuthority must come from ambientAuthority()")
         return ioErr!(Dir!(V, R))(ErrorKind.unsupported, OpKind.resolve, 0,
             IoError.init.stage, "the kernel resolver is unavailable for this policy");
 
-    auto h = vfs.openRootDir(path);
+    auto h = openRootDirFor(*vfs, path, R); // VFN11
     if (h.hasError)
         return ioErr!(Dir!(V, R))(h);
     return ioOk(Dir!(V, R)(DirCore!V(vfs, h.value, info, true)));
@@ -133,7 +134,8 @@ if (isVfs!V)
     /// A borrow with the same rights (VFH2).
     DirRef!(V, R) borrow() return => DirRef!(V, R)(&core);
 
-    /// A borrow with fewer rights (VFH5).
+    /// A borrow with fewer rights (VFH5). It shares this handle, so its
+    /// operating-system access is this handle's (VFN11).
     DirRef!(V, R2) attenuate(Rights R2)() return
     {
         static assert(hasRights(R, R2), "attenuate cannot widen rights: this handle has "
@@ -168,7 +170,8 @@ if (isVfs!V)
 
     private DirCore!V* core;
 
-    /// A borrow with fewer rights (VFH5).
+    /// A borrow with fewer rights (VFH5). It shares the owner's handle, so its
+    /// operating-system access is the owner's (VFN11).
     DirRef!(V, R2) attenuate(Rights R2)() return scope
     {
         static assert(hasRights(R, R2), "attenuate cannot widen rights: this handle has "
@@ -247,7 +250,7 @@ mixin template DirOperations(V, Rights R)
         const k = checkName(name);
         if (k != ErrorKind.other)
             return ioErr!(Dir!(V, R))(lexicalError(k, OpKind.openAt));
-        auto h = self.vfs.openDirAt(self.handle, name);
+        auto h = openDirAtFor(*self.vfs, self.handle, name, R); // VFN11
         if (h.hasError)
             return ioErr!(Dir!(V, R))(h);
         return ioOk(Dir!(V, R)(DirCore!V(self.vfs, h.value, self.root, true)));
@@ -402,7 +405,7 @@ mixin template DirOperations(V, Rights R)
         if (!alive)
             return emptyHandle!(Dir!(V, R))();
         auto h = walkFrom(*self.vfs, self.handle, path, self.root.policy,
-            self.root.resolution, false, Sharing.init, self.root.requireKernel);
+            self.root.resolution, false, Sharing.init, self.root.requireKernel, R);
         if (h.hasError)
             return ioErr!(Dir!(V, R))(h);
         return ioOk(Dir!(V, R)(DirCore!V(self.vfs, h.value, self.root, true)));
@@ -415,7 +418,7 @@ mixin template DirOperations(V, Rights R)
         if (!alive)
             return emptyHandle!(Dir!(V, R))();
         auto h = walkFrom(*self.vfs, self.handle, path, self.root.policy,
-            self.root.resolution, true, resolveSharing(sharing), self.root.requireKernel);
+            self.root.resolution, true, resolveSharing(sharing), self.root.requireKernel, R);
         if (h.hasError)
             return ioErr!(Dir!(V, R))(h);
         return ioOk(Dir!(V, R)(DirCore!V(self.vfs, h.value, self.root, true)));
@@ -535,6 +538,9 @@ if (isVfs!V)
             vfs.close(handle);
         }
     }
+
+    /// The backend's handle, as `Dir.backendHandle`. Using it bypasses rights.
+    V.Handle backendHandle() const scope => handle;
 
     /// Closes the file, returning any failure.
     IoResult!void close()

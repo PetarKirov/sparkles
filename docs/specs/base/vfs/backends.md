@@ -197,10 +197,17 @@ duplicate would share its offset with the directory handle
 **VFN11: Rights reach the OS.** A backend **must not** open a handle with
 more operating-system access than its rights need. On Windows the rights map
 to the handle's access mask: `lookup` to `FILE_TRAVERSE`, `list` to
-`FILE_LIST_DIRECTORY`, `stat` to `FILE_READ_ATTRIBUTES`, `read` and `write`
-to the data rights, and `remove` to `DELETE` on the child. On POSIX,
-directories are opened read-only, and a file opens with `O_WRONLY` or `O_RDWR`
-only when `write` is present.
+`FILE_LIST_DIRECTORY`, `read` and `write` to the data rights, and `remove` to
+`DELETE` on the child. Every handle keeps `FILE_READ_ATTRIBUTES` and
+`SYNCHRONIZE` whatever its rights, because the backend reads a handle's
+attributes to refuse a link ([`VFN2`](#vfn2-ambiguous-native-results)). A
+directory **must** be opened with that mask, not opened wider and narrowed,
+so that a directory whose access control grants traversal but not listing
+still opens as a `lookup` handle. An attenuated borrow
+([`VFH5`](./SPEC.md#vfh5-attenuation-only)) opens nothing and shares its owner's
+handle, so its operating-system access is its owner's. On POSIX, directories are opened
+read-only, and a file opens with `O_WRONLY` or `O_RDWR` only when `write` is
+present.
 
 <a id="vfn12-sharing-on-each-platform"></a>
 **VFN12: Sharing on each platform.** A POSIX backend **must** pass the mode of

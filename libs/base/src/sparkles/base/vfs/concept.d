@@ -30,14 +30,17 @@ $(TR $(TD `sync`, `close`) $(TD nothing))
 )
 
 Optional: `bool wholePathFor(ResolvePolicy)` with
-`resolveWhole(dir, path, policy)`, a kernel resolver (VFB3); and
-`MountCheck mountCheckFor(ResolvePolicy)`.
+`resolveWhole(dir, path, policy)`, a kernel resolver (VFB3);
+`MountCheck mountCheckFor(ResolvePolicy)`; and, for a backend whose handles
+carry their own access, a trailing `Rights` argument to `openRootDir`,
+`openDirAt`, `reopen` and `resolveWhole`, which opens the directory with only
+the operating-system access those rights need (VFN11).
 */
 module sparkles.base.vfs.concept;
 
 import sparkles.base.io.errors : IoResult;
-import sparkles.base.vfs.types : EntryKind, MountCheck, OpenMode, ResolvePolicy, Sharing,
-    Stat, StatMask;
+import sparkles.base.vfs.types : EntryKind, MountCheck, OpenMode, ResolvePolicy, Rights,
+    Sharing, Stat, StatMask;
 
 /// Whether `V` is a capability VFS backend (VFB1).
 enum isVfs(V) = is(V.Handle) && is(V.Listing) && __traits(compiles, (
@@ -89,6 +92,54 @@ MountCheck mountCheckOf(V)(ref V vfs, ResolvePolicy policy)
 enum hasSearchOpen(V) = __traits(compiles, (ref V v, V.Handle h, scope const(char)[] n) {
     IoResult!(V.Handle) r = v.openSearchAt(h, n);
 });
+
+/// Whether `V` opens a directory with only the access its rights need
+/// (VFN11): `openRootDir`, `openDirAt` and `reopen` take a trailing `Rights`.
+enum opensWithRights(V) = __traits(compiles, (ref V v, V.Handle h, scope const(char)[] n,
+        Rights r) {
+    IoResult!(V.Handle) root = v.openRootDir(n, r);
+    IoResult!(V.Handle) dir = v.openDirAt(h, n, r);
+    IoResult!(V.Handle) again = v.reopen(h, r);
+});
+
+/// `vfs.openRootDir(path)`, with `rights` where the backend takes them (VFN11).
+IoResult!(V.Handle) openRootDirFor(V)(auto ref V vfs, scope const(char)[] path, Rights rights)
+{
+    static if (opensWithRights!V)
+        return vfs.openRootDir(path, rights);
+    else
+        return vfs.openRootDir(path);
+}
+
+/// `vfs.openDirAt(dir, name)`, with `rights` where the backend takes them (VFN11).
+IoResult!(V.Handle) openDirAtFor(V, H)(auto ref V vfs, H dir, scope const(char)[] name,
+    Rights rights)
+{
+    static if (opensWithRights!V)
+        return vfs.openDirAt(dir, name, rights);
+    else
+        return vfs.openDirAt(dir, name);
+}
+
+/// `vfs.reopen(dir)`, with `rights` where the backend takes them (VFN11).
+IoResult!(V.Handle) reopenFor(V, H)(auto ref V vfs, H dir, Rights rights)
+{
+    static if (opensWithRights!V)
+        return vfs.reopen(dir, rights);
+    else
+        return vfs.reopen(dir);
+}
+
+/// `vfs.resolveWhole(dir, path, policy)`, with `rights` where the backend
+/// takes them (VFN11).
+IoResult!(V.Handle) resolveWholeFor(V, H)(auto ref V vfs, H dir, scope const(char)[] path,
+    ResolvePolicy policy, Rights rights)
+{
+    static if (__traits(compiles, vfs.resolveWhole(dir, path, policy, rights)))
+        return vfs.resolveWhole(dir, path, policy, rights);
+    else
+        return vfs.resolveWhole(dir, path, policy);
+}
 
 /// Whether the kernel resolver `vfs` chose for a root has since been found
 /// withdrawn (VFR5): the backend's `wholePathWithdrawn()`, or false.
