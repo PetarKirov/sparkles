@@ -219,10 +219,24 @@
 
               # GNOME/Adwaita dropped XCursor files. Stock GLFW 3.5.1 still
               # uploads pixmap cursors, so hue's ew/ns resize shapes fail.
-              # inputs.glfw — glfw#2679 rewritten on 3.5.1.
-              glfw3 = prev.glfw3.overrideAttrs (_old: {
-                src = inputs.glfw;
-              });
+              # inputs.glfw — glfw#2679 rewritten on 3.5.1. The fix is
+              # Wayland's, so only Linux raylib gets it: a global `glfw3`
+              # override would rebuild every other GLFW consumer too.
+              raylib =
+                if isDarwin then
+                  prev.raylib
+                else
+                  prev.raylib.override {
+                    glfw = prev.glfw3.overrideAttrs (_old: {
+                      src = inputs.glfw;
+                    });
+                  };
+            }
+            // lib.optionalAttrs isDarwin {
+              # The fork's glfw 3.5.1 bump buys Darwin nothing, yet makes
+              # raylib, tracy and every other GLFW consumer a cache miss. Use
+              # upstream's glfw3 recipe, whose builds cache.nixos.org has.
+              glfw3 = final.callPackage "${inputs.nixpkgs-upstream-glfw}/pkgs/by-name/gl/glfw3/package.nix" { };
               glfw = final.glfw3;
             }
           )

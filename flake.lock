@@ -570,6 +570,23 @@
         "type": "github"
       }
     },
+    "nixpkgs-upstream-glfw": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786611599,
+        "narHash": "sha256-lL1HQG3q/TsFjvhOcEJRP9UqkvSkD+KrWM1z/1G/AW0=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "05eca18e9c130fa5288b1fa3d250065c0cd1de66",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "05eca18e9c130fa5288b1fa3d250065c0cd1de66",
+        "type": "github"
+      }
+    },
     "nixpkgs-wasm": {
       "locked": {
         "lastModified": 1777954456,
@@ -710,6 +727,7 @@
         "nix": "nix",
         "nix-on-droid": "nix-on-droid",
         "nixpkgs": "nixpkgs_3",
+        "nixpkgs-upstream-glfw": "nixpkgs-upstream-glfw",
         "phobos-src": "phobos-src",
         "roboto-src": "roboto-src",
         "simdjson-src": "simdjson-src",
