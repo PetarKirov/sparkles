@@ -1034,6 +1034,17 @@
                 "link": "/specs/base/vfs/decisions"
               }
             ]
+          },
+          {
+            "text": "Synchronization primitives",
+            "collapsed": true,
+            "items": [
+              { "text": "SPEC", "link": "/specs/base/sync/SPEC" },
+              { "text": "Primitives", "link": "/specs/base/sync/primitives" },
+              { "text": "PLAN", "link": "/specs/base/sync/PLAN" },
+              { "text": "Testing", "link": "/specs/base/sync/testing" },
+              { "text": "Decisions", "link": "/specs/base/sync/decisions" }
+            ]
           }
         ]
       },

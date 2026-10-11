@@ -1545,5 +1545,58 @@
     ],
     "owner": "sparkles:text-layout",
     "seeAlso": ["typography-profile", "grid-cell"]
+  },
+  {
+    "id": "parking-lot",
+    "term": "parking lot",
+    "aliases": ["parking table"],
+    "summary": "A table of waiter queues keyed by address, in which a lock or other primitive parks its waiters so that the primitive itself needs only a few bits of state.",
+    "definition": "A user-space table mapping an address, the key, to a FIFO queue of waiting threads or fibers. A primitive parks a waiter only after validating its own state with the key's bucket locked, and decides under that lock whether to wake, requeue or hand over. WebKit's `ParkingLot` introduced the design; `sparkles.base.sync` uses a fixed, statically allocated table. Trio's `ParkingLot` is a different thing: one object's own FIFO, not a table keyed by address.",
+    "authority": [
+      {
+        "text": "Synchronization primitives specification §3",
+        "link": "/specs/base/sync/SPEC#_3-the-parking-lot"
+      },
+      {
+        "text": "Fine-grained locking research: parking_lot",
+        "link": "/research/fine-grained-locking/parking-lot"
+      }
+    ],
+    "owner": "sparkles:base",
+    "seeAlso": ["parker", "designated-waker"]
+  },
+  {
+    "id": "parker",
+    "term": "parker",
+    "aliases": ["thread parker", "fiber parker"],
+    "summary": "The part of a parking lot that decides how a parked waiter sleeps and is woken: a sleeping thread by default, or a suspended fiber when a scheduler installs its own.",
+    "definition": "The operations a parked waiter record supplies: prepare, sleep, commit and deliver a wake, and relax while spinning. The thread parker sleeps on the operating system's wait-on-address primitive; a scheduler installs a fiber parker so that a fiber suspends instead of blocking its thread. The name follows `parking_lot`'s `ThreadParker` and Java's `LockSupport.park`.",
+    "authority": [
+      {
+        "text": "Synchronization primitives specification §4",
+        "link": "/specs/base/sync/SPEC#_4-parkers"
+      }
+    ],
+    "owner": "sparkles:base",
+    "seeAlso": ["parking-lot"]
+  },
+  {
+    "id": "designated-waker",
+    "term": "designated waker",
+    "aliases": [],
+    "summary": "The one waiter a lock has woken that has not yet acquired the lock or parked again; while it exists, unlocking wakes no one else.",
+    "definition": "A waiter woken by an unlock and marked in the lock's state until it acquires the lock or parks again. Allowing at most one per lock stops a contended lock from waking a waiter on every release, the convoy that otherwise forms once the cores are saturated. nsync and Abseil use the same bit.",
+    "authority": [
+      {
+        "text": "Synchronization primitives: the mutex",
+        "link": "/specs/base/sync/primitives#_3-mutex"
+      },
+      {
+        "text": "Fine-grained locking research: convoys",
+        "link": "/research/fine-grained-locking/concepts#convoys"
+      }
+    ],
+    "owner": "sparkles:base",
+    "seeAlso": ["parking-lot"]
   }
 ]
