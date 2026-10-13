@@ -1253,11 +1253,23 @@ struct WorkspaceHost
             if (s.titlePin.length)
                 return s.titlePin;
         if (auto v = viewer(id))
-            return v.title.idup;
+            return owned(titles, id, v.title);
         if (auto tv = pool.byId(id))
             if (tv.title.length)
-                return tv.title.idup;
+                return owned(titles, id, tv.title);
         return programName(id);
+    }
+
+    // The tab tree asks for every pane's title and icon on each frame it
+    // builds; a pane's text rarely changes between them, so the last copy is
+    // reused until it does.
+    private string[PaneId] titles, icons;
+    private static string owned(ref string[PaneId] copies, PaneId id, scope const(char)[] now) @safe
+    {
+        if (auto last = id in copies)
+            if (*last == now)
+                return *last;
+        return copies[id] = now.idup;
     }
 
     /// The line under a pane's title: how it ended, or where it is.
@@ -1277,7 +1289,15 @@ struct WorkspaceHost
     {
         import std.process : environment;
 
-        const home = environment.get("HOME");
+        // Read once: every frame that builds the tab tree shortens each
+        // pane's directory.
+        static string home;
+        static bool read;
+        if (!read)
+        {
+            home = environment.get("HOME");
+            read = true;
+        }
         if (home.length && path.length >= home.length && path[0 .. home.length] == home)
             return "~" ~ path[home.length .. $];
         return path;
@@ -1297,7 +1317,7 @@ struct WorkspaceHost
                 p.id = id;
                 p.title = paneTitle(id);
                 auto tv = pool.byId(id);
-                p.icon = tv !is null && tv.icon.length ? tv.icon.idup : "❯";
+                p.icon = tv !is null && tv.icon.length ? owned(icons, id, tv.icon) : "❯";
                 p.detail = paneDetail(id);
                 p.focused = tab.current && id == ws.focused;
                 p.failed = tv !is null && tv.s.childExited && tv.s.childStatus != 0;
