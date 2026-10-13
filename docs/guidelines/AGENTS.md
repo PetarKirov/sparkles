@@ -231,11 +231,19 @@ workflow. Rehearse it with
 `nix run .#ci-minimal -- --mirror-checks --repo PetarKirov/sparkles --sha "$(git rev-parse origin/main)" --dry-run`
 (`--ci-stats --merges` measures the split). Before touching the workflows:
 
+- **The workflows are generated.** Edit `nix/ci/workflows/*.nix`, then
+  `nix run .#render-workflows` (the `ci-workflows` hook does it on commit);
+  `checks.<system>.ci-workflows` fails on drift. Every Nix step's `run` is a
+  store path — build steps with the `nix/ci/tools.nix` factories, never a
+  string. Jobs are lazy: they run only the units (`nix/ci/lib/graph.nix`)
+  whose inputs are new, so a test that reads a file outside its package must
+  list it in the graph's `testReads`, or it passes stale.
+  [`nix/ci/README.md`](../../nix/ci/README.md).
 - **Jobs that only talk to an API use `.#ci-minimal`** — the same binary without
   the compiler toolchain in its runtime closure (121 MiB vs 2.4 GiB).
   `--test`, `--test-extracted`, and `--example-files` need `.#ci`.
 - **Every `ci.yml` job runs on every trigger; select work through the trigger
-  list.** A called workflow sees the _caller's_ event (`push` on the rebuild
+  list** (laziness, which is keyed by content, is the only thing that skips). A called workflow sees the _caller's_ event (`push` on the rebuild
   path), and the merge-queue run is the only one that sees the batched result —
   an `if:` guard on either silently builds nothing and reports green.
 - **The networked link sweep is `link-check.yml`**, nightly, reconciling one

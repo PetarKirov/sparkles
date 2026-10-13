@@ -1,8 +1,10 @@
 # `ci/` — provider-neutral CI scripts
 
 Everything both CI providers do that is more than "run this one command" lives
-here. `.github/workflows/` and `.circleci/config.yml` are the two thin YAML
-front-ends; a behaviour change belongs in this directory so it lands on both.
+here. `.circleci/config.yml` is a thin YAML front-end; `.github/workflows/` is
+generated from Nix ([`nix/ci`](../nix/ci/README.md)), whose steps run these
+scripts from the store. A behaviour change belongs in this directory so it lands
+on both.
 
 > [!NOTE]
 > Do not confuse this with `apps/ci`, the repository's D helper (`ci --test`,
@@ -25,9 +27,10 @@ subcommand and have the script shell out to `nix run .#ci`.
 
 ## Environment contract
 
-Provider-neutral names. GitHub Actions maps its `inputs`/`vars`/`secrets` onto
-these in `.github/actions/setup-nix/action.yml` and at the step level; CircleCI
-supplies them from the `sparkles-ci` context.
+Provider-neutral names. GitHub Actions sets them at the job or step level in
+`nix/ci/workflows/*.nix` (it installs Nix with `cachix/install-nix-action`, so
+`nix-install.sh`, `nix-configure.sh` and `nix-devshell.sh` are CircleCI's);
+CircleCI supplies them from the `sparkles-ci` context.
 
 | Variable                  | Used by                                       | Purpose                                            |
 | ------------------------- | --------------------------------------------- | -------------------------------------------------- |
@@ -78,29 +81,35 @@ error, so `head` can turn successful toolchain setup into a failed CI check.
 
 ## Job mapping
 
-| GitHub Actions job                  | CircleCI job                         | Notes                                                                    |
-| ----------------------------------- | ------------------------------------ | ------------------------------------------------------------------------ |
-| `test` (ubuntu × ldc2/dmd)          | `test-linux-ldc2`, `test-linux-dmd`  | Matrix over the `dc` parameter                                           |
-| `test` (macos × ldc2)               | `test-macos`                         | Separate job — different executor                                        |
-| `extracted-tests`                   | `extracted-tests`                    |                                                                          |
-| `sanitize`                          | `sanitize-tests`                     | Linux LDC only: ASan + stackovf; own `asan-dub` cache key                |
-| `test` (windows × ldc2)             | `test-windows`                       | No Nix: `setup-dlang` / `install-ldc-windows.sh`, then `test-windows.sh` |
-| `nix-build` (ubuntu, macos)         | `nix-build-linux`, `nix-build-macos` |                                                                          |
-| `nix-build-android`                 | `nix-build-android`                  |                                                                          |
-| `lint`                              | `lint`                               |                                                                          |
-| `docs` (build)                      | —                                    | GitHub Actions only (see below)                                          |
-| `docs.yml` `deploy`                 | —                                    | GitHub Actions only (see below)                                          |
-| `release.yml` `notify-dub-registry` | `notify-dub-registry`                |                                                                          |
-| `release.yml` `nix-build-pin`       | `nix-build-pin-linux/-macos`         |                                                                          |
-| `cloud-env` (native, restricted)    | —                                    | Bootstraps its own toolchain, so it deliberately skips `setup-nix`       |
-| `ci` (fan-in)                       | `ci`                                 | CircleCI will not start it unless every `requires:` passed               |
+GitHub's jobs are generated (`nix/ci/workflows/ci.nix`) and lazy: each runs only
+the units whose inputs are new, so on a given run most of them are skipped.
+
+| GitHub Actions job (`ci.yml`)                   | CircleCI job                         | Notes                                                                    |
+| ----------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------ |
+| `test-<system>-<dc>-<shard>`                    | `test-linux-ldc2`, `test-linux-dmd`  | Static LPT shards per leg; each tests its stale packages                 |
+| `test-aarch64-darwin-ldc2-<shard>`              | `test-macos`                         |                                                                          |
+| `extracted-tests`                               | `extracted-tests`                    |                                                                          |
+| `sanitize-<shard>`                              | `sanitize-tests`                     | Linux LDC only: ASan + stackovf                                          |
+| `test-windows`, `wsi-windows`                   | `test-windows`                       | No Nix: `setup-dlang` / `install-ldc-windows.sh`, then `test-windows.sh` |
+| `examples-<system>`, `wsi-demos`, `md-examples` | (inside the test and lint jobs)      | One unit per example / markdown file                                     |
+| `nix-build-<system>`                            | `nix-build-linux`, `nix-build-macos` | Keyed by the aggregate's derivation                                      |
+| `nix-build-android`                             | `nix-build-android`                  |                                                                          |
+| `lint`                                          | `lint`                               |                                                                          |
+| `docs` (build)                                  | —                                    | GitHub Actions only (see below)                                          |
+| `docs.yml` `deploy`                             | —                                    | GitHub Actions only (see below)                                          |
+| `release.yml` `notify-dub-registry`             | `notify-dub-registry`                |                                                                          |
+| `release.yml` `nix-build-pin-<system>`          | `nix-build-pin-linux/-macos`         |                                                                          |
+| `cloud-env-native`, `cloud-env-restricted`      | —                                    | Bootstraps its own toolchain, so it deliberately runs without Nix        |
+| `plan`, `ci` (fan-in)                           | `ci`                                 | `ci` also records the stamps of the work that passed                     |
 
 ### GitHub test-job budgets
 
-The test matrix declares the whole-job timeout per leg: 75 minutes for x86-64
-Linux LDC, 40 for Linux DMD and Windows LDC, 90 for macOS LDC, and 120 for native
-ARM Linux LDC. These are cold-build allowances, not expected runtimes. They
-include Nix setup, both test-runner modes, the enabled example sweeps, and cleanup.
+Each test leg is split into static shards (`nix/ci/workflows/ci.nix`), and each
+shard declares the whole-job timeout of its leg: 60 minutes for x86-64 Linux LDC,
+45 for Linux DMD, 90 for macOS LDC, 120 for native ARM Linux LDC, and 40 for
+Windows. These are cold-build allowances, not expected runtimes: after a
+`flake.lock` bump every shard of a leg may compile the uncached toolchain at
+once, before its first test. The history below is from the unsharded legs.
 
 In run `37375104839`, x86-64 Linux LDC passed the full test sweep in about
 45 minutes and the example sweep in about ten minutes, then exceeded the

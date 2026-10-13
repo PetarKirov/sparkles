@@ -1,98 +1,164 @@
+# Generated from nix/ci/workflows/release.nix — do not edit by hand.
+# Regenerate with `nix run .#render-workflows` (also a pre-commit hook).
 name: Release
-
-# Runs when a GitHub Release is published:
-#
-#   * pokes code.dlang.org to ingest the new tag immediately, and
-#   * builds `.#all-desktop`, pushes it to the binary cache, and pins the release
-#     closure there so it survives cache garbage collection.
-on:
-  # Trigger on a *published* GitHub Release, not a bare tag push. This leaves a
-  # grace window between pushing the `vX.Y.Z` tag and publishing the Release in
-  # which a mistaken tag can be deleted before we nudge the registry. (Best
-  # effort: the registry's background scan can still ingest a pushed tag on its
-  # own — pushing the tag is the real point of no return.)
+"on":
   release:
-    types: [published]
-
-  # Allow re-running by hand: re-notify if the release-time call failed, or
-  # re-push/re-pin the cache (dispatching from a tag ref moves the pin;
-  # dispatching from a branch only warms the cache).
-  workflow_dispatch:
-
+    types:
+      - published
+  workflow_dispatch: {}
 concurrency:
-  group: release-${{ github.ref }}
   cancel-in-progress: false
-
+  group: "release-${{ github.ref }}"
 jobs:
-  # Pokes code.dlang.org to ingest the new release immediately. The registry
-  # also background-scans registered repos on its own schedule, so this only
-  # *speeds up* ingestion — it is not what makes a tag public.
+  nix-build-pin-aarch64-darwin:
+    name: "Nix build, push & pin (aarch64-darwin)"
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: "/nix/store/gdbxd0zh7a4ag9b880wabjb87pzb5pgg-bash-interactive-5.3p15/bin/bash --noprofile --norc -eo pipefail {0}"
+    env:
+      CACHIX_AUTH_TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      CACHIX_CACHE: sparkles
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://sparkles.cachix.org https://dlang-community.cachix.org
+            extra-trusted-public-keys = sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ=
+            fallback = true
+            connect-timeout = 5
+            download-attempts = 2
+            auto-optimise-store = false
+          github_access_token: "${{ github.token }}"
+      - name: Use the project cache
+        uses: cachix/cachix-action@v17
+        with:
+          name: sparkles
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: "Realise the job's closure"
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=/nix/store/549ss7pixmaqdbfbvxy48gkinv3qgi4v-ci-job-nix-build-pin-aarch64-darwin
+          nix=/nix/var/nix/profiles/default/bin
+          if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
+            echo "Substituted $bundle"
+            exit 0
+          fi
+          echo "::group::Building the job's closure (not in the binary cache yet)"
+          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.release.nix-build-pin-aarch64-darwin')
+          echo "::endgroup::"
+          if [ "$built" != "$bundle" ]; then
+            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
+            exit 1
+          fi
+      - name: "Build devShells.full, all packages, and all examples"
+        run: "/nix/store/w40r9s931h0acyqirip8717cbv84v8cy-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#all-desktop"
+      - name: "Push & pin the release closure"
+        env:
+          CI_SYSTEM: aarch64-darwin
+        run: /nix/store/c48qkl4c1irwq2669fdd41jr64dx9kkr-ci-release-pin/bin/ci-release-pin
+  nix-build-pin-x86_64-linux:
+    name: "Nix build, push & pin (x86_64-linux)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: "/nix/store/90nk33c4fkyg4x4dfk5cykqiryf2nlqq-bash-interactive-5.3p15/bin/bash --noprofile --norc -eo pipefail {0}"
+    env:
+      CACHIX_AUTH_TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      CACHIX_CACHE: sparkles
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://sparkles.cachix.org https://dlang-community.cachix.org
+            extra-trusted-public-keys = sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ=
+            fallback = true
+            connect-timeout = 5
+            download-attempts = 2
+            auto-optimise-store = false
+          github_access_token: "${{ github.token }}"
+      - name: Use the project cache
+        uses: cachix/cachix-action@v17
+        with:
+          name: sparkles
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: "Realise the job's closure"
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=/nix/store/3gcm9gjms016mk81lvx25jmklagsjj0j-ci-job-nix-build-pin-x86_64-linux
+          nix=/nix/var/nix/profiles/default/bin
+          if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
+            echo "Substituted $bundle"
+            exit 0
+          fi
+          echo "::group::Building the job's closure (not in the binary cache yet)"
+          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.release.nix-build-pin-x86_64-linux')
+          echo "::endgroup::"
+          if [ "$built" != "$bundle" ]; then
+            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
+            exit 1
+          fi
+      - name: "Build devShells.full, all packages, and all examples"
+        run: "/nix/store/nalxb2cs4xb16c2rf90jjvhwbfzm5n3c-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#all-desktop"
+      - name: "Push & pin the release closure"
+        env:
+          CI_SYSTEM: x86_64-linux
+        run: /nix/store/px0r6szj7aj4lvl95dwzbcndzh2ygkwc-ci-release-pin/bin/ci-release-pin
   notify-dub-registry:
+    name: notify the DUB registry
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Trigger code.dlang.org update
-        env:
-          # Optional. Set this repo secret only if the package was registered
-          # with an update secret; otherwise the empty default is accepted.
-          DUB_REGISTRY_SECRET: ${{ secrets.DUB_REGISTRY_SECRET }}
-        run: ci/notify-dub-registry.sh
-
-  # Build `.#all-desktop` (the aggregate from nix/packages/all.nix: the full dev
-  # shell, every package, and every standalone example), push it to the binary
-  # cache, and pin the closure under a stable per-system name so it survives
-  # cache garbage collection. Cachix has no unpin command (the public API only
-  # creates pins), so retention works by re-pinning: each release adds a new
-  # revision of the same pin and --keep-revisions drops the oldest, whose
-  # closure becomes garbage-collectable.
-  nix-build-pin:
-    name: Nix build, push & pin (${{ matrix.runner }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            system: x86_64-linux
-          - runner: macos-latest
-            system: aarch64-darwin
-    runs-on: ${{ matrix.runner }}
-    # Usually cache hits (~2-4m); allow margin for a cold-cache `.#all-desktop` rebuild.
-    timeout-minutes: 20
+    defaults:
+      run:
+        shell: "/nix/store/90nk33c4fkyg4x4dfk5cykqiryf2nlqq-bash-interactive-5.3p15/bin/bash --noprofile --norc -eo pipefail {0}"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
-          # Full history so the highest-tag guard below sees every tag.
-          fetch-depth: 0
-
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+          fetch-depth: 1
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
         with:
-          push-to-cache: true
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
-          substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
-          nix-cache-key: nix-${{ runner.os }}-nixbuild-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-${{ runner.os }}-nixbuild-
-            nix-${{ runner.os }}-
-
-      # Usually all cache hits: CI's nix-build job already built and pushed
-      # this commit's outputs before it reached main.
-      - name: Build devShells.full, all packages, and all examples
+          extra_nix_config: |
+            extra-substituters = https://sparkles.cachix.org https://dlang-community.cachix.org
+            extra-trusted-public-keys = sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ=
+            fallback = true
+            connect-timeout = 5
+            download-attempts = 2
+            auto-optimise-store = false
+          github_access_token: "${{ github.token }}"
+      - name: "Realise the job's closure"
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=/nix/store/0m0gg3qxx3x40wy7x3zmy7g0bsp45v4r-ci-job-notify-dub-registry
+          nix=/nix/var/nix/profiles/default/bin
+          if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
+            echo "Substituted $bundle"
+            exit 0
+          fi
+          echo "::group::Building the job's closure (not in the binary cache yet)"
+          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.release.notify-dub-registry')
+          echo "::endgroup::"
+          if [ "$built" != "$bundle" ]; then
+            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
+            exit 1
+          fi
+      - name: Trigger the code.dlang.org update
         env:
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: ci/with-cachix.sh nix build --print-build-logs .#all-desktop
-
-      - name: Push & pin the release closure
-        env:
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
-          CI_SYSTEM: ${{ matrix.system }}
-        run: ci/release-pin.sh
+          DUB_REGISTRY_SECRET: "${{ secrets.DUB_REGISTRY_SECRET }}"
+        run: /nix/store/0z2mppixmz05dynay176akjm47pgpygf-ci-notify-dub-registry/bin/ci-notify-dub-registry

@@ -1,111 +1,85 @@
-# The full networked link sweep, over every link in the repository.
-#
-# This used to be a step inside the `lint` job of `ci.yml`, which made it a
-# dependency of the `CI` fan-in — so a dead third-party URL turned the default
-# branch red and that red cross became the first thing a visitor saw. The
-# links are worth checking and worth fixing; they are not a verdict on the
-# code, and 15k URLs on other people's servers will always contain a few that
-# are down, moved, or rate-limiting today.
-#
-# So the sweep lives here instead: on a timer, on demand, and reporting into
-# an issue rather than onto a commit. Rot appears with nobody committing, so a
-# timer is where it belongs regardless. Pull requests still check the links
-# they touch (`ci.yml`'s diff-scoped lychee), and `lychee-offline` still
-# covers every relative link in the tree on every pull request — the half that
-# can actually be broken by a change here.
+# Generated from nix/ci/workflows/link-check.nix — do not edit by hand.
+# Regenerate with `nix run .#render-workflows` (also a pre-commit hook).
 name: Link check
-
-on:
+"on":
   schedule:
-    - cron: '17 4 * * *'
-  workflow_dispatch:
-
+    - cron: "17 4 * * *"
+  workflow_dispatch: {}
 permissions:
   contents: read
-  # The sweep files its findings as an issue rather than as a failing check.
   issues: write
-
 concurrency:
-  group: link-check
   cancel-in-progress: false
-
+  group: link-check
 jobs:
   sweep:
     name: Check every link
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    defaults:
+      run:
+        shell: "/nix/store/90nk33c4fkyg4x4dfk5cykqiryf2nlqq-bash-interactive-5.3p15/bin/bash --noprofile --norc -eo pipefail {0}"
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
-          push-to-cache: true
-          nix-github-token: ${{ github.token }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
-          substituters: ${{ vars.SUBSTITUTERS }}
-          devshell: pre-commit
-          use-nix-cache: true
-          nix-cache-key: nix-v2-${{ runner.os }}-lint-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-v2-${{ runner.os }}-lint-
-            nix-v2-${{ runner.os }}-
-
-      - name: Restore lychee cache
+          fetch-depth: 1
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://sparkles.cachix.org https://dlang-community.cachix.org
+            extra-trusted-public-keys = sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ=
+            fallback = true
+            connect-timeout = 5
+            download-attempts = 2
+            auto-optimise-store = false
+          github_access_token: "${{ github.token }}"
+      - name: Use the project cache
+        uses: cachix/cachix-action@v17
+        with:
+          name: sparkles
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: "Realise the job's closure"
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=/nix/store/i75lr940wyxrs2hqbib8v5scbvvnxswp-ci-job-sweep
+          nix=/nix/var/nix/profiles/default/bin
+          if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
+            echo "Substituted $bundle"
+            exit 0
+          fi
+          echo "::group::Building the job's closure (not in the binary cache yet)"
+          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.link-check.sweep')
+          echo "::endgroup::"
+          if [ "$built" != "$bundle" ]; then
+            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
+            exit 1
+          fi
+      - name: Restore the lychee cache
         uses: actions/cache/restore@v6
         with:
-          path: .lycheecache
           enableCrossOsArchive: true
-          key: cache-lychee-v4-${{ github.run_id }}
-          restore-keys: |
-            cache-lychee-v4-
-
-      # `tee` rather than a plain redirect so the log still shows the failures
-      # in place; `pipefail` so the pipe does not swallow lychee's exit code.
-      # `continue-on-error`, because a scheduled run attaches its check runs to
-      # the default branch's head commit. A failing job here therefore files a
-      # red `Check every link` against whatever is on `main` — which is exactly
-      # the thing moving this sweep out of `ci.yml` was meant to stop, arriving
-      # by a different route. The verdict still reaches a person: the step's
-      # `outcome` (unaffected by this) drives the standing issue below, and the
-      # issue is this sweep's failure channel. The job's own status is not.
+          key: "cache-lychee-v4-${{ github.run_id }}"
+          path: .lycheecache
+          restore-keys: cache-lychee-v4-
       - name: Check every link
         id: sweep
         continue-on-error: true
-        shell: bash
-        run: |
-          set -o pipefail
-          prek run lychee --all-files --show-diff-on-failure --color never \
-            | tee lychee-report.txt
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-      # Same key-per-run reasoning as the lint job: neither provider overwrites
-      # an existing key, so a fixed key freezes the cache at its first contents.
-      - name: Save lychee cache
-        if: always()
+          GITHUB_TOKEN: "${{ github.token }}"
+        run: /nix/store/626bf2yn5xyk107d21xd2m0yg0p6vsvc-ci-link-sweep/bin/ci-link-sweep
+      - name: Save the lychee cache
+        if: "${{ always() }}"
         uses: actions/cache/save@v6
         with:
-          path: .lycheecache
           enableCrossOsArchive: true
-          key: cache-lychee-v4-${{ github.run_id }}
-
-      # The issue upsert is a decision, not glue, so it lives in the D `ci`
-      # tool (AGENTS.md) rather than as two near-duplicate shell blocks. It uses
-      # `.#ci-minimal` (121 MiB) rather than `.#ci` (2.4 GiB): this job already
-      # has Nix for the `pre-commit` shell, but that shell carries no D
-      # toolchain, so `.#ci` would drag one in for four API calls. It runs
-      # whether the sweep passed or failed: a passing sweep is what closes a
-      # stale issue, and only the tool knows which of the two writes to make.
+          key: "cache-lychee-v4-${{ github.run_id }}"
+          path: .lycheecache
       - name: Reconcile the standing link-rot issue
-        if: always() && steps.sweep.conclusion != 'skipped'
+        if: "${{ always() && steps.sweep.conclusion != 'skipped' }}"
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          nix run .#ci-minimal -- --report-link-rot \
-            --repo "$GITHUB_REPOSITORY" \
-            --report lychee-report.txt \
-            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            ${{ steps.sweep.outcome == 'failure' && '--rotten' || '' }}
+          GITHUB_TOKEN: "${{ github.token }}"
+          ROTTEN: "${{ steps.sweep.outcome == 'failure' && '--rotten' || '' }}"
+        run: /nix/store/cz0mxck93z3dbvllhffs6z6dma0rcs91-ci-report-link-rot/bin/ci-report-link-rot

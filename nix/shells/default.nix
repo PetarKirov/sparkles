@@ -137,172 +137,179 @@
       # The rule for moving something up: it belongs in `ciPackages` if a CI
       # job links it, execs it, or degrades to a skip without it.
 
-      ciPackages = [
-        # Used by :test-utils for diff output on a failing assertion.
-        pkgs.delta
+      ciPackages =
+        ciTool:
+        [
+          # Used by :test-utils for diff output on a failing assertion.
+          pkgs.delta
 
-        # `shader-compile`, which sparkles:ui's `gpu-effects` configuration runs
-        # as a pre-generate step — so every build on `ui-raylib`, `ci --test`
-        # included, needs it: the dcompute-enabled LDC compiles a package's
-        # `@compute` modules to SPIR-V, spirv-tools validate and optimise it,
-        # spirv-cross turns it into GLSL and glslang proves each file. (glslang
-        # also regenerates the committed `.spv` under `libs/vulkan-wsi/src/shaders/`.)
-        pkgs.glslang
-        pkgs.spirv-tools
-        pkgs.spirv-cross
-      ]
-      # The dcompute-enabled LDC itself, as `ldc2-vulkan` — the name
-      # `shader-compile` looks for, and one that cannot shadow the shell's own
-      # `ldc2`. Wherever dlang.nix defines it (Linux, macOS).
-      ++ lib.optional (config.packages ? ldc2-vulkan) config.packages.ldc2-vulkan
-      ++ [
-        # wasm-ld, for the test runner's `--wasm` mode: nixpkgs' LDC is
-        # built without -link-internally, so the wasm32 link needs an
-        # external linker. Without it the mode skips rather than runs
-        # (and `--require-toolchain` turns that skip into a failure).
-        # The wasm runtime it hands off to is `pkgs.nodejs` below.
-        pkgs.lld
-        pkgs.nodejs
-        # Yarn Berry 4 for the VitePress site (`yarn docs:build`) and the
-        # twoslash fixture generator. `package.json#packageManager` selects
-        # the release. `corepack enable` cannot write shims into the Nix
-        # store, so this is a Corepack passthrough named `yarn`.
-        (pkgs.writeShellScriptBin "yarn" ''
-          export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-          exec ${pkgs.nodejs}/bin/corepack yarn "$@"
-        '')
+          # `shader-compile`, which sparkles:ui's `gpu-effects` configuration runs
+          # as a pre-generate step — so every build on `ui-raylib`, `ci --test`
+          # included, needs it: the dcompute-enabled LDC compiles a package's
+          # `@compute` modules to SPIR-V, spirv-tools validate and optimise it,
+          # spirv-cross turns it into GLSL and glslang proves each file. (glslang
+          # also regenerates the committed `.spv` under `libs/vulkan-wsi/src/shaders/`.)
+          pkgs.glslang
+          pkgs.spirv-tools
+          pkgs.spirv-cross
+        ]
+        # The dcompute-enabled LDC itself, as `ldc2-vulkan` — the name
+        # `shader-compile` looks for, and one that cannot shadow the shell's own
+        # `ldc2`. Wherever dlang.nix defines it (Linux, macOS).
+        ++ lib.optional (config.packages ? ldc2-vulkan) config.packages.ldc2-vulkan
+        ++ [
+          # wasm-ld, for the test runner's `--wasm` mode: nixpkgs' LDC is
+          # built without -link-internally, so the wasm32 link needs an
+          # external linker. Without it the mode skips rather than runs
+          # (and `--require-toolchain` turns that skip into a failure).
+          # The wasm runtime it hands off to is `pkgs.nodejs` below.
+          pkgs.lld
+          pkgs.nodejs
+          # Yarn Berry 4 for the VitePress site (`yarn docs:build`) and the
+          # twoslash fixture generator. `package.json#packageManager` selects
+          # the release. `corepack enable` cannot write shims into the Nix
+          # store, so this is a Corepack passthrough named `yarn`.
+          (pkgs.writeShellScriptBin "yarn" ''
+            export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+            exec ${pkgs.nodejs}/bin/corepack yarn "$@"
+          '')
 
-        # CI helper — the `ci --test` / `ci --example-files` the jobs invoke.
-        pkgs.curl # libcurl, linked by its --ci-stats subcommand
-        config.packages.ci
+          # CI helper — the `ci --test` / `ci --example-files` the jobs invoke.
+          pkgs.curl # libcurl, linked by its --ci-stats subcommand
+          ciTool
 
-        # ghostty — the slim repack (shared lib + headers + .pc), NOT the
-        # upstream `.dev` output: its static archive embeds zig store
-        # paths in debug info, dragging a 1.5 GiB toolchain closure into
-        # the shell. See nix/packages/libghostty-vt.nix.
-        # `libs "ghostty-vt"` in libs/ghostty/dub.sdl.
-        pkgs.pkg-config
-        config.packages.libghostty-vt
+          # Tests, `ci --build-each-commit` and dub's version detection all
+          # exec git. CI used to find the runner image's; CI steps now run with
+          # this shell's PATH and nothing else. Minimal, so no second Python.
+          pkgs.gitMinimal
 
-        # Nix C API — bound by `sparkles:nix` via ImportC. Only the `out`
-        # outputs (the .so's) go here, for linking; headers come via
-        # PKG_CONFIG_PATH (see nixCApiPkgConfigPath above) so the patched
-        # nix-expr-c headers are used and the unpatched ones never reach
-        # NIX_CFLAGS_COMPILE. `ci --test` links `:nix`, so this is the CI
-        # floor, not the interactive tier.
-        inputs'.nix.packages.nix-util-c
-        inputs'.nix.packages.nix-store-c
-        inputs'.nix.packages.nix-expr-c
-        inputs'.nix.packages.nix-fetchers-c
-        inputs'.nix.packages.nix-flake-c
-        inputs'.nix.packages.nix-main-c
+          # ghostty — the slim repack (shared lib + headers + .pc), NOT the
+          # upstream `.dev` output: its static archive embeds zig store
+          # paths in debug info, dragging a 1.5 GiB toolchain closure into
+          # the shell. See nix/packages/libghostty-vt.nix.
+          # `libs "ghostty-vt"` in libs/ghostty/dub.sdl.
+          pkgs.pkg-config
+          config.packages.libghostty-vt
 
-        # tree-sitter runtime for sparkles:tree-sitter / sparkles:syntax
-        # (single-output: headers + .so + .pc all in `out`). Grammars come
-        # from the ts-grammars bundle via $SPARKLES_TS_GRAMMAR_PATH below.
-        # `libs "tree-sitter"` in libs/tree-sitter/dub.sdl.
-        pkgs.tree-sitter
+          # Nix C API — bound by `sparkles:nix` via ImportC. Only the `out`
+          # outputs (the .so's) go here, for linking; headers come via
+          # PKG_CONFIG_PATH (see nixCApiPkgConfigPath above) so the patched
+          # nix-expr-c headers are used and the unpatched ones never reach
+          # NIX_CFLAGS_COMPILE. `ci --test` links `:nix`, so this is the CI
+          # floor, not the interactive tier.
+          inputs'.nix.packages.nix-util-c
+          inputs'.nix.packages.nix-store-c
+          inputs'.nix.packages.nix-expr-c
+          inputs'.nix.packages.nix-fetchers-c
+          inputs'.nix.packages.nix-flake-c
+          inputs'.nix.packages.nix-main-c
 
-        # `libs "raylib"` in libs/raylib-text and apps/terminal.
-        pkgs.raylib
-        # raylib-text's ImportC shaping bridge and native runtime.
-        pkgs.freetype
-        pkgs.freetype.dev
-        pkgs.harfbuzz
-        pkgs.harfbuzz.dev
+          # tree-sitter runtime for sparkles:tree-sitter / sparkles:syntax
+          # (single-output: headers + .so + .pc all in `out`). Grammars come
+          # from the ts-grammars bundle via $SPARKLES_TS_GRAMMAR_PATH below.
+          # `libs "tree-sitter"` in libs/tree-sitter/dub.sdl.
+          pkgs.tree-sitter
 
-        # `libs "vulkan"` in libs/vulkan. The `.dev` output carries
-        # `vulkan.pc`, whose `includedir` points at vulkan-headers — so one
-        # pkg-config entry supplies both the ImportC include path and the link
-        # flags. The headers alone would not be discoverable: vulkan-headers
-        # ships no `.pc` of its own.
-        pkgs.vulkan-loader
-        pkgs.vulkan-loader.dev
+          # `libs "raylib"` in libs/raylib-text and apps/terminal.
+          pkgs.raylib
+          # raylib-text's ImportC shaping bridge and native runtime.
+          pkgs.freetype
+          pkgs.freetype.dev
+          pkgs.harfbuzz
+          pkgs.harfbuzz.dev
 
-        # `libs "sdl3"` in libs/ui-sdl3: the window, the input source, and the
-        # Vulkan surface. `.dev` carries `sdl3.pc`; `.lib` is what the built
-        # binary loads at runtime.
-        pkgs.sdl3
-        pkgs.sdl3.dev
-      ]
-      # OS-API research examples (docs/research/.../os-apis): the X11 and Wayland
-      # ImportC examples are **Linux-only**, so gate these on Linux — `wayland`,
-      # `libx11`, etc. refuse to evaluate on darwin. pkg-config (above) resolves
-      # the headers via the `.dev` outputs (dub#3085 feeds `--cflags` to ImportC);
-      # `xvfb-run` lets the X11 example open a real window on a headless runner.
-      ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-        pkgs.libx11
-        pkgs.libx11.dev
-        pkgs.xorgproto
-        pkgs.wayland
-        pkgs.wayland.dev
-        pkgs.xvfb-run
+          # `libs "vulkan"` in libs/vulkan. The `.dev` output carries
+          # `vulkan.pc`, whose `includedir` points at vulkan-headers — so one
+          # pkg-config entry supplies both the ImportC include path and the link
+          # flags. The headers alone would not be discoverable: vulkan-headers
+          # ships no `.pc` of its own.
+          pkgs.vulkan-loader
+          pkgs.vulkan-loader.dev
 
-        # CPU-PMU research probes (docs/research/cpu-pmu/examples): the
-        # symbolization/unwind probes link `libs "dw" "elf"` and the
-        # event-naming probe links `libs "pfm"`. Neither library is found
-        # by `nix shell` alone (no setup hooks run), so they're shell
-        # packages here with LIBRARY_PATH/LD_LIBRARY_PATH exports below.
-        # `ci --example-files` builds these, so a missing library is a
-        # link error, not a skip.
-        pkgs.elfutils
-        pkgs.libpfm
+          # `libs "sdl3"` in libs/ui-sdl3: the window, the input source, and the
+          # Vulkan surface. `.dev` carries `sdl3.pc`; `.lib` is what the built
+          # binary loads at runtime.
+          pkgs.sdl3
+          pkgs.sdl3.dev
+        ]
+        # OS-API research examples (docs/research/.../os-apis): the X11 and Wayland
+        # ImportC examples are **Linux-only**, so gate these on Linux — `wayland`,
+        # `libx11`, etc. refuse to evaluate on darwin. pkg-config (above) resolves
+        # the headers via the `.dev` outputs (dub#3085 feeds `--cflags` to ImportC);
+        # `xvfb-run` lets the X11 example open a real window on a headless runner.
+        ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+          pkgs.libx11
+          pkgs.libx11.dev
+          pkgs.xorgproto
+          pkgs.wayland
+          pkgs.wayland.dev
+          pkgs.xvfb-run
 
-        # Sanitizers research probes (docs/research/sanitizers/examples):
-        # the valgrind-*.d probes exec `valgrind` from PATH (never link it)
-        # and print a SKIP line when it is absent. `ci --example-files`
-        # runs them, so this is here to keep three examples from silently
-        # degrading to SKIP in CI — the `nix run .#ci` wrapper deliberately
-        # omits it to keep the .#ci closure small.
-        pkgs.valgrind
+          # CPU-PMU research probes (docs/research/cpu-pmu/examples): the
+          # symbolization/unwind probes link `libs "dw" "elf"` and the
+          # event-naming probe links `libs "pfm"`. Neither library is found
+          # by `nix shell` alone (no setup hooks run), so they're shell
+          # packages here with LIBRARY_PATH/LD_LIBRARY_PATH exports below.
+          # `ci --example-files` builds these, so a missing library is a
+          # link error, not a skip.
+          pkgs.elfutils
+          pkgs.libpfm
 
-        # mheily/libkqueue for event-horizon's `libkqueue` config
-        # (`libs "kqueue"`; fiber-echo `-c libkqueue`). Same package the
-        # Android build cross-compiles the source of.
-        pkgs.libkqueue
+          # Sanitizers research probes (docs/research/sanitizers/examples):
+          # the valgrind-*.d probes exec `valgrind` from PATH (never link it)
+          # and print a SKIP line when it is absent. `ci --example-files`
+          # runs them, so this is here to keep three examples from silently
+          # degrading to SKIP in CI — the `nix run .#ci` wrapper deliberately
+          # omits it to keep the .#ci closure small.
+          pkgs.valgrind
 
-        # Windowing feature demos (os-apis/<platform>/examples/): the CI job
-        # builds and RUNS these (xvfb for X11, a headless weston for Wayland),
-        # so they are the ci tier, not dev: without weston the Wayland demos
-        # print SKIP and the job goes green having verified nothing.
-        pkgs.weston
-        pkgs.wayland-protocols
-        pkgs.wayland-scanner
-        pkgs.libxkbcommon
-        pkgs.libxkbcommon.dev
-        pkgs.libxext
-        pkgs.libxext.dev
-        pkgs.libxi
-        pkgs.libxi.dev
-        pkgs.libxfixes
-        pkgs.libxfixes.dev
-        pkgs.libxcursor
-        pkgs.libxcursor.dev
-        pkgs.libxrandr
-        pkgs.libxrandr.dev
-        pkgs.libxcb
-        pkgs.libxcb.dev
+          # mheily/libkqueue for event-horizon's `libkqueue` config
+          # (`libs "kqueue"`; fiber-echo `-c libkqueue`). Same package the
+          # Android build cross-compiles the source of.
+          pkgs.libkqueue
 
-        # fcitx's XIM-over-XCB library: `libs "xcb-imdkit"` in libs/wsi —
-        # the X11 backend's XIM client, and the lane's test XIM server,
-        # both over the backend's single XCB connection. Its .pc requires
-        # xcb-util, so pkg-config needs that too.
-        pkgs.xcb-imdkit
-        pkgs.xorg.xcbutil
-        pkgs.xorg.xcbutil.dev
+          # Windowing feature demos (os-apis/<platform>/examples/): the CI job
+          # builds and RUNS these (xvfb for X11, a headless weston for Wayland),
+          # so they are the ci tier, not dev: without weston the Wayland demos
+          # print SKIP and the job goes green having verified nothing.
+          pkgs.weston
+          pkgs.wayland-protocols
+          pkgs.wayland-scanner
+          pkgs.libxkbcommon
+          pkgs.libxkbcommon.dev
+          pkgs.libxext
+          pkgs.libxext.dev
+          pkgs.libxi
+          pkgs.libxi.dev
+          pkgs.libxfixes
+          pkgs.libxfixes.dev
+          pkgs.libxcursor
+          pkgs.libxcursor.dev
+          pkgs.libxrandr
+          pkgs.libxrandr.dev
+          pkgs.libxcb
+          pkgs.libxcb.dev
 
-        # `dbus-daemon`, exec'd by apps/terminal's D-Bus tests (`dbus_conn`,
-        # `desktop_bus`) as a private bus with a fake notification server
-        # and portal. Without it they skip, so `ci --test` needs it.
-        pkgs.dbus
-      ]
-      ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
-        # MoltenVK is Darwin's Vulkan ICD (Vulkan-on-Metal). The loader
-        # above is only dispatch; without this, vkCreateInstance fails
-        # with VK_ERROR_INCOMPATIBLE_DRIVER / an empty device list.
-        # `VK_DRIVER_FILES` in the hook points the loader at the ICD json.
-        pkgs.moltenvk
-      ];
+          # fcitx's XIM-over-XCB library: `libs "xcb-imdkit"` in libs/wsi —
+          # the X11 backend's XIM client, and the lane's test XIM server,
+          # both over the backend's single XCB connection. Its .pc requires
+          # xcb-util, so pkg-config needs that too.
+          pkgs.xcb-imdkit
+          pkgs.xorg.xcbutil
+          pkgs.xorg.xcbutil.dev
+
+          # `dbus-daemon`, exec'd by apps/terminal's D-Bus tests (`dbus_conn`,
+          # `desktop_bus`) as a private bus with a fake notification server
+          # and portal. Without it they skip, so `ci --test` needs it.
+          pkgs.dbus
+        ]
+        ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
+          # MoltenVK is Darwin's Vulkan ICD (Vulkan-on-Metal). The loader
+          # above is only dispatch; without this, vkCreateInstance fails
+          # with VK_ERROR_INCOMPATIBLE_DRIVER / an empty device list.
+          # `VK_DRIVER_FILES` in the hook points the loader at the ICD json.
+          pkgs.moltenvk
+        ];
 
       devPackages = [
         # Pre-commit hooks
@@ -367,11 +374,11 @@
 
       # ── Shell hooks, split on the same seam ────────────────────────────
 
-      ciShellHook = ''
+      ciShellHook = ciTool: ''
         # Seed writable sources, preserving any existing user versions. The
         # packaged helper retains the bundle through its runtime closure.
         export SPARKLES_DUB_SOURCES=${config.packages.dub-sources}
-        ${lib.getExe config.packages.ci} --seed-dub-cache >/dev/null 2>&1 || {
+        ${lib.getExe ciTool} --seed-dub-cache >/dev/null 2>&1 || {
           echo 'Failed to seed DUB sources; run ci --seed-dub-cache for details.' >&2
           return 1
         }
@@ -486,20 +493,24 @@
         ''}
       '';
 
+      # `ciTool` is a parameter so the CI module (nix/ci) can evaluate the same
+      # shell around a stub `ci`: a job's laziness key must not change every
+      # time one of the 23 libraries the helper links does.
       mkSparklesShell =
         {
           greeting ? false,
           tier ? "dev",
+          ciTool ? config.packages.ci,
         }:
         pkgs.mkShell {
           packages =
-            ciPackages
+            ciPackages ciTool
             ++ lib.optionals (tier == "dev") devPackages
             ++ lib.optional greeting pkgs.figlet
             ++ d-toolchain.packages;
 
           shellHook =
-            ciShellHook
+            ciShellHook ciTool
             + lib.optionalString (tier == "dev") devShellHook
             + lib.optionalString greeting "figlet 'sparkles : *'\n"
             # Installs the git hooks into .git/. Wanted on a developer's
@@ -518,5 +529,8 @@
         # oracle libraries, no pre-commit tooling. See `ciPackages` above.
         ci = mkSparklesShell { tier = "ci"; };
       };
+
+      # For nix/ci, which runs the `ci` tier's environment as CI steps.
+      legacyPackages.mkSparklesShell = mkSparklesShell;
     };
 }

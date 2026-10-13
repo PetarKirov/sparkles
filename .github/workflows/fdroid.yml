@@ -1,124 +1,73 @@
+# Generated from nix/ci/workflows/fdroid.nix — do not edit by hand.
+# Regenerate with `nix run .#render-workflows` (also a pre-commit hook).
 name: F-Droid
-
-# Builds the release artifacts for a tag and pushes them to the binary cache. It
-# does NOT sign or publish: the signing keys live on hardware tokens that a
-# GitHub-hosted runner cannot reach, so signing and publication happen on the
-# maintainer's workstation. See docs/specs/hue/fdroid.md.
-#
-# Uses `.#release` — the LEAN package (~48 MB: the binary alone, taking its
-# tools from PATH). The publishing configuration `.#release-full` pins
-# fdroidserver, a JDK, rclone and bundletool and weighs ~3.2 GiB; none of that
-# is needed to run `nix build`, and CI should not download it.
-#
-# The split is the point, not a workaround. No signing key material — not a
-# passphrase, not a base64 keystore — exists anywhere in this workflow or in
-# this repository's secrets, so a compromised runner or a leaked Actions token
-# cannot produce something users would install.
-#
-# What connects the halves is the store path. This job builds a *pure*
-# derivation and pushes it to Cachix; the workstation evaluates the same
-# expression, gets the same path, and substitutes the bytes instead of
-# repeating a ~90-minute cross build. `release publish` refuses to build the
-# artifact locally by default, so an accidental local rebuild cannot quietly
-# replace what CI produced.
-on:
+"on":
   release:
-    types: [published]
-
+    types:
+      - published
   workflow_dispatch:
     inputs:
       tag:
         description: Release tag to build (e.g. v0.4.0)
         required: true
         type: string
-
 concurrency:
-  group: fdroid-build-${{ github.event.release.tag_name || inputs.tag }}
   cancel-in-progress: false
-
+  group: "fdroid-build-${{ github.event.release.tag_name || inputs.tag }}"
 jobs:
   build:
     name: Build the unsigned release APK
-    if: github.repository == 'PetarKirov/sparkles'
-    # x86_64-linux is the only host the NDK and SDK exist for.
+    if: "${{ github.repository == 'PetarKirov/sparkles' }}"
     runs-on: ubuntu-latest
-    # A cold cross closure (dual-ABI druntimes, raylib/tree-sitter/ghostty,
-    # every grammar, the Maple font build) is the same shape as
-    # nix-build-android's.
     timeout-minutes: 90
-
+    defaults:
+      run:
+        shell: "/nix/store/90nk33c4fkyg4x4dfk5cykqiryf2nlqq-bash-interactive-5.3p15/bin/bash --noprofile --norc -eo pipefail {0}"
+    env:
+      CACHIX_AUTH_TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      CACHIX_CACHE: sparkles
+      TAG: "${{ github.event.release.tag_name || inputs.tag }}"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
-          substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
-          # Share the Android job's cache key: this builds the same closure.
-          nix-cache-key: nix-${{ runner.os }}-nixandroid-${{ hashFiles('**/flake.lock') }}
-          nix-cache-restore-prefixes: |
-            nix-${{ runner.os }}-nixandroid-
-            nix-${{ runner.os }}-
-
-      # `--no-require-cached` because this job is the thing that fills the
-      # cache; the default (refuse to build locally) is for the signing machine.
+          fetch-depth: 1
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            extra-substituters = https://sparkles.cachix.org https://dlang-community.cachix.org
+            extra-trusted-public-keys = sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ=
+            fallback = true
+            connect-timeout = 5
+            download-attempts = 2
+            auto-optimise-store = false
+          github_access_token: "${{ github.token }}"
+      - name: Use the project cache
+        uses: cachix/cachix-action@v17
+        with:
+          name: sparkles
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: "Realise the job's closure"
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=/nix/store/7jmq264rkbbr1nzl0d5yxa6ay6mxqmhk-ci-job-build
+          nix=/nix/var/nix/profiles/default/bin
+          if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
+            echo "Substituted $bundle"
+            exit 0
+          fi
+          echo "::group::Building the job's closure (not in the binary cache yet)"
+          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.fdroid.build')
+          echo "::endgroup::"
+          if [ "$built" != "$bundle" ]; then
+            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
+            exit 1
+          fi
       - name: Build and push
-        env:
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: |
-          ci/with-cachix.sh nix run .#release -- publish \
-            --tag "$TAG" \
-            --stage build \
-            --no-require-cached \
-            --workdir "$RUNNER_TEMP/fdroid-build"
-
-      # Pushing is not enough: an unpinned path is garbage-collectable, and the
-      # whole point of the split is that this artifact is still substitutable
-      # when the maintainer sits down with the signing tokens — which may be
-      # hours or days later. A rolling pin keeps the last few releases' APKs and
-      # collects the rest on its own.
-      #
-      # CI_PIN_ANY_TAG, unlike the `latest-*` release pin: `release --split`
-      # creates a chain of tags whose APKs are each signed in turn, so every
-      # release needs retaining, not just the highest.
+        run: "/nix/store/nalxb2cs4xb16c2rf90jjvhwbfzm5n3c-ci-with-cachix/bin/ci-with-cachix nix run .#release -- publish --tag \"$TAG\" --stage build --no-require-cached --workdir \"$RUNNER_TEMP/fdroid-build\""
       - name: Pin the unsigned APK
-        env:
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
-          CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
-          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          CI_PIN_NAME: hue-apk-unsigned
-          CI_PIN_ANY_TAG: '1'
-        run: |
-          set -euo pipefail
-          CI_TAG="$TAG" CI_PIN_PATH=$(nix run .#release -- path --tag "$TAG") \
-            ci/release-pin.sh
-
-      # The store path is the handoff. Printing it here lets the maintainer
-      # confirm the workstation resolved the same derivation before signing —
-      # if the two differ, the local tree is not what CI built.
+        run: /nix/store/mfdp07dlvibnv1qn0vls5k1z97cknyap-ci-fdroid-pin/bin/ci-fdroid-pin
       - name: Report the handoff
-        env:
-          TAG: ${{ github.event.release.tag_name || inputs.tag }}
-        run: |
-          set -euo pipefail
-          path=$(nix run .#release -- path --tag "$TAG")
-          {
-            echo "## Ready to sign"
-            echo
-            echo '```console'
-            echo "\$ nix run .#release-full -- publish --tag $TAG --stage deploy"
-            echo '```'
-            echo
-            echo "Expected store path — the workstation must resolve the same one,"
-            echo "or it is about to sign something other than what was built here:"
-            echo
-            echo "    $path"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: /nix/store/4wa1pbyjv49kdf5k9m4zcsc6z2pipyw7-ci-fdroid-handoff/bin/ci-fdroid-handoff

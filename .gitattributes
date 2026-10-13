@@ -1,0 +1,2 @@
+# Rendered from nix/ci (`nix run .#render-workflows`).
+.github/workflows/*.yml linguist-generated=true
