@@ -1,8 +1,9 @@
 # `.github/workflows/ci.yml` — the pull-request, merge-queue and rebuild
 # pipeline.
 #
-# Every job is lazy (see ../default.nix): it covers a set of units and runs
-# only for those whose closure is new. A docs-only change runs the docs, the
+# The work is tasks (../tasks.nix); this file places them on runners. Every
+# job is lazy (see ../default.nix): its tasks cover units, and it runs only
+# for those whose closure is new. A docs-only change runs the docs, the
 # markdown it touched and the whole-tree checks; it does not run the D test
 # suite, because no package's closure contains a markdown file. An edit to
 # `libs/base` re-runs every package that reaches `base`, every example and
@@ -73,25 +74,29 @@ let
       weight = p: weights.${p} or 10;
     } graph.packageNames;
 
-  # `<prefix>-1` … `<prefix>-<n>`, each covering one shard's packages.
+  # `<prefix>-1` … `<prefix>-<n>`, each running `task` over one shard's
+  # packages.
   shardedJobs =
     {
       prefix,
       label,
       shards,
+      task,
       job,
     }:
     lib.listToAttrs (
       lib.imap1 (
         i: members:
         lib.nameValuePair "${prefix}-${toString i}" (
-          lib.recursiveUpdate job {
+          job
+          // {
             name = "${label} (${toString i}/${toString shards})";
-            lazy = {
-              units = map pkgUnit members;
-              granular = true;
-              common = [ "harness" ];
-            };
+            steps = _: [
+              {
+                inherit task;
+                units = map pkgUnit members;
+              }
+            ];
           }
         )
       ) (shardsOf shards)
@@ -104,23 +109,14 @@ let
       prefix = "test-${leg.system}-${leg.dc}";
       label = "test ${leg.system} ${leg.dc}";
       inherit (leg) shards;
+      task = "test";
       job = {
         inherit (leg) system;
         timeout-minutes = leg.timeout;
         # dub derives a package's version from `git describe`.
         checkout.fetch-depth = 0;
-        # `ci` embeds its own compiler for examples; the suite honours the
-        # matrix compiler, so the ldc2/dmd dimension is real.
+        # The matrix compiler: the ldc2/dmd dimension is real.
         env.DC = leg.dc;
-        steps = t: [
-          {
-            name = "dub test the packages whose closure is new";
-            run = t.inShell "ci-test" ''
-              # shellcheck disable=SC2086 # a word list, one package per word
-              ci --test --fail-fast --packages $CI_UNITS
-            '';
-          }
-        ];
       };
     };
 
@@ -131,19 +127,11 @@ let
     prefix = "sanitize";
     label = "sanitize";
     shards = 4;
+    task = "test-sanitize";
     job = {
       # Every package rebuilt with ASan, plus a cold toolchain after a bump.
       timeout-minutes = 45;
       env.DC = "ldc2";
-      steps = t: [
-        {
-          name = "Run the tests under ASan and stackovf";
-          run = t.inShell "ci-test-sanitize" ''
-            # shellcheck disable=SC2086
-            ci --test-sanitize --fail-fast --packages $CI_UNITS
-          '';
-        }
-      ];
     };
   };
 
@@ -281,51 +269,16 @@ let
       timeout,
       runAfter ? null,
     }:
-    withSystem system (
-      { config, ... }:
-      {
-        inherit system;
-        timeout-minutes = timeout;
-        lazy.drvs = [
-          config.packages.${installable}
-        ]
-        ++ lib.optional (runAfter != null) config.packages.${runAfter};
-        env = {
-          CACHIX_CACHE = "sparkles";
-          CACHIX_AUTH_TOKEN = "\${{ secrets.CACHIX_AUTH_TOKEN }}";
-        };
-        steps =
-          t:
-          [
-            {
-              name = "Build and push .#${installable}";
-              # `with-cachix.sh` pushes each path as it completes, so a run
-              # that hits the cap still leaves its progress in the cache.
-              run = t.ciScript "with-cachix.sh" [
-                t.pkgs.cachix
-                t.nix
-                t.pkgs.gitMinimal
-              ];
-              args = [
-                "nix"
-                "build"
-                "--print-build-logs"
-                ".#${installable}"
-              ];
-            }
-          ]
-          ++ lib.optional (runAfter != null) {
-            name = "Run .#${runAfter}";
-            run = t.script "ci-${runAfter}" {
-              runtimeInputs = [
-                t.nix
-                t.pkgs.gitMinimal
-              ];
-              text = "nix ${t.nixFlags} run .#${runAfter}";
-            };
-          };
-      }
-    );
+    {
+      inherit system;
+      timeout-minutes = timeout;
+      env = {
+        CACHIX_CACHE = "sparkles";
+        CACHIX_AUTH_TOKEN = "\${{ secrets.CACHIX_AUTH_TOKEN }}";
+      };
+      steps =
+        _: [ { task = "build-${installable}"; } ] ++ lib.optional (runAfter != null) { task = runAfter; };
+    };
 in
 {
   ci.workflows.ci = {
@@ -440,20 +393,7 @@ in
           name = "extracted test modes (--better-c, --wasm)";
           timeout-minutes = 20;
           env.DC = "ldc2";
-          lazy = {
-            units = map pkgUnit graph.packageNames;
-            granular = true;
-            common = [ "harness" ];
-          };
-          steps = t: [
-            {
-              name = "--better-c and --wasm for the packages that use them";
-              run = t.inShell "ci-test-extracted" ''
-                # shellcheck disable=SC2086
-                ci --test-extracted --fail-fast --packages $CI_UNITS
-              '';
-            }
-          ];
+          steps = _: [ { task = "test-extracted"; } ];
         };
 
         # The OS-API windowing example and per-feature demos: multi-file
@@ -463,75 +403,23 @@ in
           name = "wsi x86_64-linux (X11, Wayland)";
           timeout-minutes = 30;
           env.WSI_AUTO_EXIT = "1";
-          lazy.units = [
-            "os-api/x11"
-            "os-api/wayland"
-          ];
-          steps = t: [
-            {
-              name = "Build and run the X11 and Wayland examples and demos";
-              run = t.inShell "ci-wsi-demos" ''
-                base=${osApis}
-                xvfb-run -a dub run --compiler=ldc2 --root="$base/x11/example"
-                dub run --compiler=ldc2 --root="$base/wayland/example"
-                # An interactive probe: compile only, running it would wait forever.
-                dub build --single --compiler=ldc2 \
-                  docs/research/window-system-integration/cursor-shapes/cursor-shapes.d
-                for d in "$base"/x11/examples/*/; do
-                  [ -f "$d/dub.sdl" ] || continue
-                  echo "::group::x11 $d"
-                  xvfb-run -a dub run --compiler=ldc2 --root="$d"
-                  echo "::endgroup::"
-                done
-                XDG_RUNTIME_DIR=$(mktemp -d)
-                export XDG_RUNTIME_DIR
-                weston --backend=headless --socket=wsi-ci --idle-time=0 &
-                weston_pid=$!
-                sleep 3
-                for d in "$base"/wayland/examples/*/; do
-                  [ -f "$d/dub.sdl" ] || continue
-                  echo "::group::wayland $d"
-                  WAYLAND_DISPLAY=wsi-ci dub run --compiler=ldc2 --root="$d"
-                  echo "::endgroup::"
-                done
-                kill "$weston_pid"
-              '';
-            }
-          ];
+          steps = _: [ { task = "wsi-demos"; } ];
         };
 
-        # Runnable markdown: each file is its own unit, depending on the
-        # packages its fences' recipes name.
         md-examples = {
           name = "markdown examples";
           timeout-minutes = 35;
           # The 1-minute load average after Nix setup once picked one worker
           # for every example; pin the fan-out.
           env.SPARKLES_CI_JOBS = "2";
-          lazy = {
-            units = map (f: "md/${f}") graph.runnableMarkdown;
-            granular = true;
-            common = [ "harness" ];
-          };
-          steps = t: [
-            {
-              name = "Verify the runnable markdown whose closure is new";
-              run = t.inShell "ci-md-examples" ''
-                dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
-                # shellcheck disable=SC2086
-                ci --verify --fail-fast --files $CI_UNITS
-              '';
-            }
-          ];
+          steps = _: [ { task = "md-examples"; } ];
         };
 
-        # The tree-wide checks: their honest input is the whole tree.
         lint = {
           name = "lint & local links";
           timeout-minutes = 20;
           checkout.fetch-depth = 0;
-          lazy.units = [ "repo" ];
-          steps = t: [
+          steps = _: [
             {
               name = "Restore the lychee cache";
               uses = config.ci.settings.actions.cache-restore;
@@ -542,43 +430,8 @@ in
                 restore-keys = "cache-lychee-v4-";
               };
             }
-            {
-              # Everything except the networked link check (which runs over
-              # the diff below), the markdown examples (their own job), the
-              # workflow drift hook (the flake check covers it) and the
-              # don't-commit-to-main developer guard.
-              name = "Every pre-commit hook over the whole tree";
-              run = t.preCommit "ci-lint" {
-                skip = [
-                  "verify-md-examples"
-                  "lychee"
-                  "no-commit-to-branch"
-                  "ci-workflows"
-                ];
-                text = ''
-                  prek run --config "$PRE_COMMIT_CONFIG" --all-files --show-diff-on-failure --color always
-                '';
-              };
-              env.GITHUB_TOKEN = "\${{ github.token }}";
-            }
-            {
-              # A pull request can only add a dead URL in a file it touched;
-              # rot elsewhere is `link-check.yml`'s nightly business.
-              name = "Check the links this pull request added or changed";
-              "if" = "github.event_name == 'pull_request'";
-              run = t.preCommit "ci-lint-diff-links" {
-                only = [ "lychee" ];
-                text = ''
-                  git fetch --no-tags --depth=1 origin "$BASE_REF"
-                  prek run --config "$PRE_COMMIT_CONFIG" lychee --from-ref "origin/$BASE_REF" --to-ref HEAD \
-                    --show-diff-on-failure --color always
-                '';
-              };
-              env = {
-                GITHUB_TOKEN = "\${{ github.token }}";
-                BASE_REF = "\${{ github.base_ref }}";
-              };
-            }
+            { task = "lint"; }
+            { task = "lint-diff-links"; }
             {
               # Never overwritten under one key, so the key changes every run
               # while the restore prefix stays stable.
@@ -599,9 +452,8 @@ in
           # The build sits near node's default heap; the wasm toolchain may
           # need building when the cache lacks it.
           timeout-minutes = 40;
-          lazy.units = [ "repo" ];
           env.COREPACK_ENABLE_DOWNLOAD_PROMPT = "0";
-          steps = t: [
+          steps = _: [
             {
               name = "Cache Yarn";
               uses = config.ci.settings.actions.cache;
@@ -611,10 +463,7 @@ in
                 restore-keys = "yarn-\${{ runner.os }}-";
               };
             }
-            {
-              name = "Build the VitePress site";
-              run = import ./docs-build.nix t;
-            }
+            { task = "docs-build"; }
           ];
         };
 
@@ -622,48 +471,16 @@ in
           name = "spec evidence & credits";
           timeout-minutes = 15;
           cachix.push = false;
-          lazy = {
-            units = [ "repo" ];
-            common = [ "harness" ];
-          };
-          steps = t: [
-            {
-              name = "Every cited symbol resolves";
-              run = t.script "ci-spec-evidence" {
-                runtimeInputs = [ t.pkgs.gitMinimal ];
-                text = "${lib.getExe t.ciMinimal} --check-spec-evidence";
-              };
-            }
-            {
-              name = "Every shipped component is credited";
-              run = t.script "ci-check-credits" {
-                runtimeInputs = [ t.pkgs.gitMinimal ];
-                text = "${lib.getExe t.ciMinimal} --check-credits";
-              };
-            }
+          steps = _: [
+            { task = "spec-evidence"; }
+            { task = "check-credits"; }
           ];
         };
 
-        # The complete authenticated Unicode corpora, offline in the sandbox.
-        text-conformance = withSystem "x86_64-linux" (
-          { config, ... }:
-          {
-            name = "Unicode conformance";
-            lazy.drvs = [ config.checks.text-conformance ];
-            steps = t: [
-              {
-                name = "Run the official corpora";
-                run = t.script "ci-text-conformance" {
-                  runtimeInputs = [
-                    t.nix
-                    t.pkgs.gitMinimal
-                  ];
-                  text = "nix ${t.nixFlags} build -L .#checks.x86_64-linux.text-conformance";
-                };
-              }
-            ];
-          }
-        );
+        text-conformance = {
+          name = "Unicode conformance";
+          steps = _: [ { task = "text-conformance"; } ];
+        };
 
         nix-build-x86_64-linux = nixBuild {
           system = "x86_64-linux";
@@ -694,51 +511,17 @@ in
             inherit system;
             timeout-minutes = 60;
             env.SPARKLES_CI_JOBS = if system == "aarch64-darwin" then "3" else "4";
-            lazy = {
-              units = map (f: "example/${f}") graph.exampleFiles;
-              granular = true;
-              common = [ "harness" ];
-            };
-            steps = t: [
-              {
-                name = "Build and run the examples whose closure is new";
-                run = t.inShell "ci-examples" ''
-                  if [ "$(uname -s)" = Linux ]; then
-                    dub run --single apps/ci/tools/prepare-event-horizon-comparisons.d --temp-build -b checked
-                  fi
-                  # shellcheck disable=SC2086
-                  ci --example-files --fail-fast --files $CI_UNITS
-                '';
-              }
-            ];
+            steps = _: [ { task = "examples"; } ];
           };
 
           # Evaluates every output and builds this system's checks — the
           # workflow drift check among them.
-          "flake-check-${system}" = withSystem system (
-            { config, ... }:
-            {
-              name = "nix flake check ${system}";
-              inherit system;
-              timeout-minutes = 45;
-              lazy = {
-                units = [ "nix" ];
-                drvs = builtins.attrValues config.checks;
-              };
-              steps = t: [
-                {
-                  name = "nix flake check";
-                  run = t.script "ci-flake-check" {
-                    runtimeInputs = [
-                      t.nix
-                      t.pkgs.gitMinimal
-                    ];
-                    text = "nix ${t.nixFlags} flake check -L";
-                  };
-                }
-              ];
-            }
-          );
+          "flake-check-${system}" = {
+            name = "nix flake check ${system}";
+            inherit system;
+            timeout-minutes = 45;
+            steps = _: [ { task = "flake-check"; } ];
+          };
         })
       )
       // lib.mapAttrs' (mode: force: lib.nameValuePair "cloud-env-${mode}" (cloudEnv mode force)) {

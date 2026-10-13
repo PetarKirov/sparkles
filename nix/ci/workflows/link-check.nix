@@ -4,7 +4,7 @@
 # making it a dependency of `CI` turned this repository red for it. It
 # reconciles one standing issue instead (`ci --report-link-rot`). Pull
 # requests check the links in their own diff (`ci.yml`, job `lint`).
-{ lib, config, ... }:
+{ config, ... }:
 let
   cacheWith = {
     path = ".lycheecache";
@@ -30,7 +30,7 @@ in
     jobs.sweep = {
       name = "Check every link";
       timeout-minutes = 35;
-      steps = t: [
+      steps = _: [
         {
           name = "Restore the lychee cache";
           uses = config.ci.settings.actions.cache-restore;
@@ -39,17 +39,9 @@ in
           };
         }
         {
-          name = "Check every link";
+          task = "link-sweep";
           id = "sweep";
           continue-on-error = true;
-          run = t.preCommit "ci-link-sweep" {
-            only = [ "lychee" ];
-            text = ''
-              prek run --config "$PRE_COMMIT_CONFIG" lychee --all-files --show-diff-on-failure --color never \
-                | tee lychee-report.txt
-            '';
-          };
-          env.GITHUB_TOKEN = "\${{ github.token }}";
         }
         {
           name = "Save the lychee cache";
@@ -58,23 +50,9 @@ in
           "with" = cacheWith;
         }
         {
-          name = "Reconcile the standing link-rot issue";
+          task = "report-link-rot";
           "if" = "always() && steps.sweep.conclusion != 'skipped'";
-          run = t.script "ci-report-link-rot" {
-            runtimeInputs = [ t.pkgs.gitMinimal ];
-            text = ''
-              # shellcheck disable=SC2086 # ROTTEN is one optional flag or empty
-              ${lib.getExe t.ciMinimal} --report-link-rot \
-                --repo "$GITHUB_REPOSITORY" \
-                --report lychee-report.txt \
-                --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-                $ROTTEN
-            '';
-          };
-          env = {
-            GITHUB_TOKEN = "\${{ github.token }}";
-            ROTTEN = "\${{ steps.sweep.outcome == 'failure' && '--rotten' || '' }}";
-          };
+          env.ROTTEN = "\${{ steps.sweep.outcome == 'failure' && '--rotten' || '' }}";
         }
       ];
     };

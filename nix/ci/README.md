@@ -15,7 +15,45 @@ resolved by re-rendering, never by hand.
 The shape follows [nialov/actions.nix](https://github.com/nialov/actions.nix/blob/25d2104c420cceacbf5b3935e2dd1dbfabe01d8c/README.md):
 workflows, jobs and steps are a flake-parts option tree
 (`ci.workflows.<name>.jobs.<id>.steps`), with `ci.defaultValues` for job
-defaults. Two things are added.
+defaults. Three things are added.
+
+## The work is tasks; jobs place them
+
+What CI does is declared once, in [`tasks.nix`](./tasks.nix), as
+`ci.tasks.<name>`. The model is
+[devenv's tasks](https://devenv.sh/tasks/), built to store paths. A task is:
+
+- a program, built by one of the factories below;
+- the units it covers, which are its laziness;
+- the dev-shell features it needs beyond what those units need;
+- the tasks it runs `after`.
+
+A workflow only places tasks: `steps = _: [ { task = "test"; units = shard; } ]`
+puts a shard of `test` on a runner with that job's env (`DC=dmd`), and the
+`after` tasks go before it, each once per job. `uses:` steps (caches)
+interleave freely.
+
+Run a task locally exactly as a job does. Unit args default to all the task's
+units; the job's env (`DC`, tokens) is yours to set:
+
+```bash
+nix run .#ciTasks.test -- base core-cli
+nix run .#ciTasks.examples -- docs/libs/event-horizon/tutorial/snippets/collie_channel.d
+nix eval --json .#ci.tasks         # each task's units, features and `after`
+```
+
+A pass is remembered per (task, unit), and keyed by:
+
+- the task's program;
+- the system;
+- the step and job env;
+- the checkout depth;
+- the `after` programs;
+- the unit closure's sources.
+
+So two jobs that place the same task on the same unit, in the same
+environment, share the pass. Jobs without Nix (Windows, cloud-env) cannot run
+a task. They keep a job-level `lazy`, keyed by their rendered YAML.
 
 ## Every step is a store path
 
@@ -45,9 +83,9 @@ in the YAML fails the job as stale workflows.
 The `ci` tier of the dev shell is a set of named _features_ (`ciFeatures` in
 [`nix/shells/default.nix`](../shells/default.nix)): `base` (compilers, dub, the
 helper, git, node), `sdl3`, `vulkan`, `shaders`, `nix-c-api`, `weston`, the
-corpora, …. The dev shells take all of them. A job's `t.inShell` steps get
-only the features its units' closures need (`graph.needsOf`), plus any it
-lists in `features`:
+corpora, …. The dev shells take all of them. A task's `t.inShell` program
+gets only the features its placed units' closures need (`graph.needsOf`),
+plus any it lists in `features`:
 
 - linked libraries are read from the recipes — each `libs` name maps to a
   feature (`libFeatures` in [`lib/graph.nix`](./lib/graph.nix)), and selecting
@@ -72,22 +110,27 @@ few inputs instead of a shell.
 [`lib/graph.nix`](./lib/graph.nix) partitions the repository into units: each
 dub sub-package (`pkg/<name>`, edges read from the recipes), each standalone
 example (`example/<path>`), each runnable markdown file (`md/<path>`), the
-OS-API demo trees, and a few coarse units (`repo`, `nix`, `harness`). A job
-declares the units it covers (`lazy.units`) and the derivations it builds
-(`lazy.drvs`).
+OS-API demo trees, and a few coarse units (`repo`, `nix`, `harness`). A task
+declares the units it covers (`units`) and the derivations it builds
+(`drvs`).
 
-For every (job, unit) pair the planner computes a key — a hash of the job's
-rendered YAML, the store paths of the unit closure's filesets and the
-derivations' `drvPath`s — and turns it into a _stamp_, a flat fixed-output
-store path ([`lib/stamps.nix`](./lib/stamps.nix)). The `plan` job asks the
-cache which stamps exist; a job whose units all have one is skipped, and a
-`granular` job receives just its stale units in `$CI_UNITS`. The fan-in job
+For every (task, unit) a job places, the planner computes a key, a hash of:
+
+- what the task's outcome depends on (see above);
+- the store paths of the unit closure's filesets;
+- the derivations' `drvPath`s.
+
+It turns that key into a _stamp_, a flat fixed-output store path
+([`lib/stamps.nix`](./lib/stamps.nix)). The `plan` job asks the cache which
+stamps exist. A job whose stamps all exist is skipped, and a job placing a
+`granular` task receives just its stale units in `$CI_UNITS`. The fan-in job
 (`CI`, the one required check) records the stamps of every job that passed.
+A job with `lazy.enable = false` (a release) always runs.
 
 So a docs edit runs the docs, the whole-tree checks and the markdown it
 touched; an edit to `libs/x` re-runs everything whose closure reaches it.
 
-`lazy.common = [ "harness" ]` keeps the `ci` helper's store path out of the
+`common = [ "harness" ]` keeps the `ci` helper's store path out of the
 key: its steps are evaluated a second time against a stub `ci` (`ciTools.key`),
 and `apps/ci`'s own sources join the key instead. Without that, an edit to any
 of the 23 libraries the helper links would re-run every job.

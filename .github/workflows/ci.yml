@@ -324,7 +324,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/qxxzx20s9dxrx0xci1ka89x3ks5gsc8w-ci-job-examples-aarch64-darwin
+          bundle=/nix/store/00k22sm424fw9s8hbyfi2768c3afp7gf-ci-job-examples-aarch64-darwin
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -337,8 +337,10 @@ jobs:
             echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
             exit 1
           fi
+      - name: Prepare the event-horizon comparison checkouts
+        run: /nix/store/cky42v1cnal4ai6l9wlj2cn12q199mbj-ci-eh-comparisons/bin/ci-eh-comparisons
       - name: Build and run the examples whose closure is new
-        run: /nix/store/qg3r8rqahplmn1kjjd3bjq57vvivi5nq-ci-examples/bin/ci-examples
+        run: /nix/store/2ahhnk263y9ysiqp0l27xz44qbz6k202-ci-examples/bin/ci-examples
   examples-x86_64-linux:
     name: examples x86_64-linux
     needs:
@@ -377,7 +379,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/n62mwcflbx3ayzml09dzmp521s6yqry9-ci-job-examples-x86_64-linux
+          bundle=/nix/store/frzkgl9vvc17psfdas8zaf7dch4maqyf-ci-job-examples-x86_64-linux
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -390,8 +392,10 @@ jobs:
             echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
             exit 1
           fi
+      - name: Prepare the event-horizon comparison checkouts
+        run: /nix/store/g55b6cs7xgla1wr0z51man0kw1z40wxh-ci-eh-comparisons/bin/ci-eh-comparisons
       - name: Build and run the examples whose closure is new
-        run: /nix/store/wg7pvvb63d32afak063xz8s7vq3yqvqa-ci-examples/bin/ci-examples
+        run: /nix/store/mvkg2zz9ijagk356hm2r5805f8jyqiz7-ci-examples/bin/ci-examples
   extracted-tests:
     name: "extracted test modes (--better-c, --wasm)"
     needs:
@@ -655,7 +659,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/y89vhclkblmgjf8k0m5cv0w6mzz750jw-ci-job-md-examples
+          bundle=/nix/store/klib2qy7igc91g33cmldlnrb6s8ipx3v-ci-job-md-examples
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -668,8 +672,10 @@ jobs:
             echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
             exit 1
           fi
+      - name: Prepare the event-horizon comparison checkouts
+        run: /nix/store/g55b6cs7xgla1wr0z51man0kw1z40wxh-ci-eh-comparisons/bin/ci-eh-comparisons
       - name: Verify the runnable markdown whose closure is new
-        run: /nix/store/5h3s8iagz668kdx8pr9v0lqdpn9y1fax-ci-md-examples/bin/ci-md-examples
+        run: /nix/store/y5n0w6k4qvh9kgy18mxkdbvfl5kavf2y-ci-md-examples/bin/ci-md-examples
   nix-build-aarch64-darwin:
     needs:
       - plan

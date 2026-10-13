@@ -2,7 +2,7 @@
 # Pages: a preview per pull request (its URL commented on the PR), production
 # from `main`. Not lazy: a deploy is a side effect per target, and the build
 # itself is gated lazily in `ci.yml`.
-{ lib, config, ... }:
+{ config, ... }:
 let
   paths = [
     "docs/**"
@@ -36,7 +36,7 @@ in
         deployments = "write";
         pull-requests = "write";
       };
-      steps = t: [
+      steps = _: [
         {
           name = "Cache Yarn";
           uses = config.ci.settings.actions.cache;
@@ -47,41 +47,11 @@ in
           };
         }
         {
-          # Best-effort: the badges are a nicety, never a reason not to deploy.
-          name = "Refresh the merge badges";
+          task = "merge-badges";
           continue-on-error = true;
-          run = t.script "ci-merge-badges" {
-            runtimeInputs = [ t.pkgs.gitMinimal ];
-            text = ''
-              ${lib.getExe t.ciMinimal} --ci-stats --merges \
-                --repo "$GITHUB_REPOSITORY" --limit 1000 --badge-dir docs/public/badges
-            '';
-          };
-          env.GITHUB_TOKEN = "\${{ github.token }}";
         }
-        {
-          name = "Build the VitePress site";
-          run = import ./docs-build.nix t;
-        }
-        {
-          name = "Deploy to Cloudflare Pages & comment the preview URL";
-          # bash: the script execs `pr-comment.sh` through `env bash`.
-          run = t.ciScript "deploy-cloudflare-pages.sh" [
-            t.pkgs.bash
-            t.pkgs.nodejs
-            t.yarn
-            t.pkgs.gh
-            t.pkgs.gitMinimal
-            t.pkgs.gnugrep
-            t.pkgs.gnused
-            t.pkgs.jq
-          ];
-          env = {
-            CLOUDFLARE_API_TOKEN = "\${{ secrets.CLOUDFLARE_API_TOKEN }}";
-            CLOUDFLARE_ACCOUNT_ID = "\${{ secrets.CLOUDFLARE_ACCOUNT_ID }}";
-            GITHUB_TOKEN = "\${{ github.token }}";
-          };
-        }
+        # Builds the site first (its `after`).
+        { task = "docs-deploy"; }
       ];
     };
   };

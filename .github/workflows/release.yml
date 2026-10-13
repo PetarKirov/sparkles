@@ -58,7 +58,7 @@ jobs:
             echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
             exit 1
           fi
-      - name: "Build devShells.full, all packages, and all examples"
+      - name: "Build and push .#all-desktop"
         run: "/nix/store/w40r9s931h0acyqirip8717cbv84v8cy-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#all-desktop"
       - name: "Push & pin the release closure"
         env:
@@ -112,7 +112,7 @@ jobs:
             echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
             exit 1
           fi
-      - name: "Build devShells.full, all packages, and all examples"
+      - name: "Build and push .#all-desktop"
         run: "/nix/store/nalxb2cs4xb16c2rf90jjvhwbfzm5n3c-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#all-desktop"
       - name: "Push & pin the release closure"
         env:

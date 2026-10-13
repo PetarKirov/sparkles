@@ -8,7 +8,7 @@
 # real `CI` workflow — whose laziness then skips whatever an earlier run
 # already proved on the same inputs. Measured over 333 merged pull requests
 # (`ci --ci-stats --merges`): 75.7% mirrorable.
-{ lib, ... }:
+{ ... }:
 {
   ci.workflows.main-checks = {
     name = "Main branch checks";
@@ -47,21 +47,11 @@
         timeout-minutes = 10;
         cachix.push = false;
         outputs.mirrored = "\${{ steps.mirror.outputs.mirrored }}";
-        steps = t: [
+        steps = _: [
           {
-            # `--skip-check deploy`: `Deploy Docs` files its own on this push.
-            name = "Mirror, if the landed tree is the tree that was built";
+            task = "mirror-checks";
             id = "mirror";
-            run = t.script "ci-mirror-checks" {
-              runtimeInputs = [ t.pkgs.gitMinimal ];
-              text = ''
-                # shellcheck disable=SC2086 # DRY_RUN is one optional flag or empty
-                ${lib.getExe t.ciMinimal} --mirror-checks \
-                  --repo "$GITHUB_REPOSITORY" --sha "$SHA" --skip-check deploy $DRY_RUN
-              '';
-            };
             env = {
-              GITHUB_TOKEN = "\${{ github.token }}";
               SHA = "\${{ inputs.sha || github.sha }}";
               DRY_RUN = "\${{ inputs.dry_run && '--dry-run' || '' }}";
             };

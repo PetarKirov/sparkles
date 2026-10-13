@@ -23,13 +23,7 @@ in
         name = "notify the DUB registry";
         timeout-minutes = 10;
         cachix.push = false;
-        steps = t: [
-          {
-            name = "Trigger the code.dlang.org update";
-            run = t.ciScript "notify-dub-registry.sh" [ t.pkgs.curl ];
-            env.DUB_REGISTRY_SECRET = "\${{ secrets.DUB_REGISTRY_SECRET }}";
-          }
-        ];
+        steps = _: [ { task = "notify-dub-registry"; } ];
       };
     }
     // lib.listToAttrs (
@@ -42,29 +36,13 @@ in
             timeout-minutes = 30;
             # `release-pin.sh` compares the tag with the highest one.
             checkout.fetch-depth = 0;
+            # A release pins what it built: never skipped as already proven.
+            lazy.enable = false;
             env = cachixEnv;
-            steps = t: [
+            steps = _: [
+              { task = "build-all-desktop"; }
               {
-                name = "Build devShells.full, all packages, and all examples";
-                run = t.ciScript "with-cachix.sh" [
-                  t.pkgs.cachix
-                  t.nix
-                  t.pkgs.gitMinimal
-                ];
-                args = [
-                  "nix"
-                  "build"
-                  "--print-build-logs"
-                  ".#all-desktop"
-                ];
-              }
-              {
-                name = "Push & pin the release closure";
-                run = t.ciScript "release-pin.sh" [
-                  t.pkgs.cachix
-                  t.nix
-                  t.pkgs.gitMinimal
-                ];
+                task = "release-pin";
                 env.CI_SYSTEM = system;
               }
             ];
