@@ -162,11 +162,14 @@ string sourceRootOf(string file, string moduleName) @safe pure nothrow
     import std.array : replace;
     import std.string : endsWith, chomp;
 
+    // Windows compilers report `libs\base\src\…`; match on `/` either way
+    // and slice the path as it was given.
+    const normalized = file.replace("\\", "/");
     foreach (suffix; [
         "/" ~ moduleName.replace(".", "/") ~ ".d",
         "/" ~ moduleName.replace(".", "/") ~ "/package.d",
     ])
-        if (file.endsWith(suffix))
+        if (normalized.endsWith(suffix))
             return file[0 .. $ - suffix.length];
     return null;
 }
@@ -180,6 +183,16 @@ unittest
     assert(sourceRootOf("src/sparkles/base/text/package.d",
         "sparkles.base.text") == "src");
     assert(sourceRootOf("unrelated.d", "sparkles.base") is null);
+}
+
+@("sourceRootOf.windowsSeparators")
+@safe pure
+unittest
+{
+    assert(sourceRootOf(`libs\base\src\sparkles\base\text\utf.d`,
+        "sparkles.base.text.utf") == `libs\base\src`);
+    assert(sourceRootOf(`C:\r\src\sparkles\base\text\package.d`,
+        "sparkles.base.text") == `C:\r\src`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
