@@ -2055,7 +2055,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/pg83dyylarbd9v8046620pjzxpqqwvq9-ci-job-wsi-demos
+          bundle=/nix/store/3xwwiinbnhdgcpqj2jcfva83nw6d8i52-ci-job-wsi-demos
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -2069,7 +2069,7 @@ jobs:
             exit 1
           fi
       - name: Build and run the X11 and Wayland examples and demos
-        run: /nix/store/3jf0m806nrs724ky9dfdzq8wrrwlf37r-ci-wsi-demos/bin/ci-wsi-demos
+        run: /nix/store/hs0hvnapdpypncmz0n169s81a31i6dx0-ci-wsi-demos/bin/ci-wsi-demos
   wsi-windows:
     name: wsi x86_64-windows
     needs:

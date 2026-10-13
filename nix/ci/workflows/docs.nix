@@ -65,7 +65,9 @@ in
         }
         {
           name = "Deploy to Cloudflare Pages & comment the preview URL";
+          # bash: the script execs `pr-comment.sh` through `env bash`.
           run = t.ciScript "deploy-cloudflare-pages.sh" [
+            t.pkgs.bash
             t.pkgs.nodejs
             t.yarn
             t.pkgs.gh

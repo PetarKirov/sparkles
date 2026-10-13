@@ -127,9 +127,17 @@ let
       lib.optionals (m != null) (matchAll ''"([^"]+)"'' (builtins.head m))
     ) (lib.splitString "\n" text);
 
+  # Registry packages whose own recipe links a system library.
+  dubFeatures = {
+    raylib-d = "raylib";
+  };
+
   recipeNeeds =
     text:
     builtins.filter (f: f != null) (map (l: libFeatures.${l} or null) (libsIn text))
+    ++ builtins.filter (f: f != null) (
+      map (d: dubFeatures.${d} or null) (matchAll ''dependency "([^"]+)"'' text)
+    )
     ++ lib.optional (contains ''subConfiguration "sparkles:ui" "gpu-effects"'' text) "shaders";
 
   # What tests exec or read at run time, which no recipe says. Missing an
@@ -305,6 +313,8 @@ let
   # The OS-API windowing examples and demos: dub packages outside the root
   # recipe, one unit per platform directory.
   osApis = "docs/research/window-system-integration/os-apis";
+  # The interactive cursor probe the x11 job compiles (a single-file recipe).
+  cursorShapes = "docs/research/window-system-integration/cursor-shapes/cursor-shapes.d";
   osApiUnits = lib.listToAttrs (
     map
       (
@@ -315,10 +325,7 @@ let
         in
         lib.nameValuePair "os-api/${platform}" {
           files = fs.unions (
-            [ (fromRoot dir) ]
-            ++ lib.optional (platform == "x11") (
-              fromRoot "docs/research/window-system-integration/cursor-shapes"
-            )
+            [ (fromRoot dir) ] ++ lib.optional (platform == "x11") (fromRoot (dirOf cursorShapes))
           );
           deps = [
             "dub-manifests"
@@ -326,7 +333,7 @@ let
           ++ lib.unique (lib.concatMap (r: depsOf (read r)) recipes);
           # The demos run for real: X11 under Xvfb, Wayland under weston.
           needs =
-            lib.concatMap (r: recipeNeeds (read r)) recipes
+            lib.concatMap (r: recipeNeeds (read r)) (recipes ++ lib.optional (platform == "x11") cursorShapes)
             ++ {
               x11 = [ "xvfb" ];
               wayland = [ "weston" ];

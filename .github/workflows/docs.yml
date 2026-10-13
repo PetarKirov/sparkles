@@ -61,7 +61,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/fjyi0kx8gxrf6zg92kgjih2gcwv7r431-ci-job-deploy
+          bundle=/nix/store/5sld0cjrycljhmc1446cp9hyxgvm6fpp-ci-job-deploy
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -92,4 +92,4 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           CLOUDFLARE_API_TOKEN: "${{ secrets.CLOUDFLARE_API_TOKEN }}"
           GITHUB_TOKEN: "${{ github.token }}"
-        run: /nix/store/4b3qrzwsgrn2rciahfkcjkykh2xdx89n-ci-deploy-cloudflare-pages/bin/ci-deploy-cloudflare-pages
+        run: /nix/store/gaygkzl9844aqa7zkfwli15zw88njwds-ci-deploy-cloudflare-pages/bin/ci-deploy-cloudflare-pages
