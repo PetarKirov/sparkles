@@ -1166,53 +1166,34 @@ private string[] trackedMarkdownFiles()
         .array;
 }
 
-/// Git pathspecs for the repository's standalone example `.d` files — the
-/// defaults `--example-files` uses when no `--include-files` selection is
-/// given: the `base`, `build-primitives`, and `core-cli` library demos plus the
-/// worked examples that accompany the research docs
-/// (`docs/research/async-io/io-uring/`, `docs/research/async-io/gcd/`,
-/// `docs/research/units-of-measure/`,
-/// `docs/research/cpu-pmu/`, `docs/research/sanitizers/`, `docs/research/manim/`,
-/// `docs/research/anchored-overlays/`, `docs/research/property-tree/`, and the four
-/// per-subject `examples/`
-/// directories under `docs/research/platform-ui-guidelines/`).
-@safe pure nothrow
+/// The git pathspecs `--example-files` defaults to: the library demos plus
+/// the worked examples that accompany the research docs. They live in
+/// `apps/ci/example-globs.json` because the Nix CI graph
+/// (`nix/ci/lib/graph.nix`) reads the same list to give every example its own
+/// CI unit.
 private string[] standaloneExampleGlobs()
 {
-    return [
-        "libs/base/examples/*.d",
-        "libs/build-primitives/examples/*.d",
-        "libs/core-cli/examples/*.d",
-        "libs/event-horizon/examples/*.d",
-        "docs/libs/event-horizon/tutorial/snippets/*.d",
-        "libs/wired/examples/*.d",
-        "libs/http/examples/*.d",
-        "docs/research/async-io/io-uring/examples/*.d",
-        "docs/research/async-io/gcd/examples/*.d",
-        "docs/research/units-of-measure/examples/*.d",
-        "docs/research/cpu-pmu/examples/*.d",
-        "docs/research/sanitizers/examples/*.d",
-        "docs/research/manim/examples/*.d",
-        "docs/research/anchored-overlays/examples/*.d",
-        "docs/research/property-tree/examples/*.d",
-        "docs/research/algebraic-effects/durable-execution/examples/*.d",
-        "docs/research/platform-ui-guidelines/color-derivation/examples/*.d",
-        "docs/research/platform-ui-guidelines/gnome/examples/*.d",
-        "docs/research/platform-ui-guidelines/kde/examples/*.d",
-        "docs/research/platform-ui-guidelines/terminal/examples/*.d",
-        "docs/research/autological-artifacts/cosmopolitan-ape/examples/*.d",
-        "docs/research/autological-artifacts/self-selfdb/examples/*.d",
-        "docs/research/linux-on-macos/examples/*.d",
-        "docs/research/android-dev-env/concepts/examples/*.d",
-        "docs/research/android-dev-env/device-validation/examples/*.d",
-        "docs/research/safe-path-traversal/examples/*.d",
-        "docs/research/font-libraries/examples/*.d",
-    ];
+    import std.json : parseJSON;
+    import std.file : readText;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+        return [];
+    return parseJSON(readText(buildPath(repoRoot, "apps", "ci", "example-globs.json")))["globs"]
+        .array
+        .map!(g => g.str)
+        .array;
 }
 
 private string[] trackedStandaloneExampleFiles()
 {
-    const result = execute(["git", "ls-files", "--"] ~ standaloneExampleGlobs());
+    const globs = standaloneExampleGlobs();
+    if (globs.length == 0)
+    {
+        error(i"No standalone example globs found in apps/ci/example-globs.json");
+        return [];
+    }
+    const result = execute(["git", "ls-files", "--"] ~ globs);
     if (result.status != 0)
     {
         error(i"Failed to enumerate standalone example files with git ls-files");
