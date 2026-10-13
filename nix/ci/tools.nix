@@ -105,7 +105,6 @@ in
             runtimeInputs = [
               nix
               pkgs.jq
-              pkgs.findutils
               pkgs.gitMinimal
             ];
             text = ''
@@ -115,19 +114,30 @@ in
               echo "::endgroup::"
 
               # Only presence matters, and through a file: hundreds of narinfo
-              # objects overflow an argument list.
+              # objects overflow an argument list. Batches of 100, each retried
+              # once: a batch that still fails reads as "missing", so an
+              # unreachable cache re-runs work, never skips it.
               echo '{}' > present.json
               if [ "''${CI_FORCE:-0}" = 1 ]; then
                 echo "Forced: every unit runs."
               else
-                # One narinfo lookup per stamp; a lookup that fails reads as
-                # "missing", so an unreachable cache re-runs work, never skips it.
-                jq -r '.[].units[].path' raw.json \
-                  | xargs -r nix ${nixFlags} path-info --json --store '${cachixUrl}' 2> /dev/null \
-                  | jq -s 'add // {} | with_entries(select(.value != null)) | map_values(true)' \
-                    > present.next.json \
-                  && mv present.next.json present.json \
-                  || echo "::warning::Could not ask the cache for stamps; everything runs."
+                jq -r '.[].units[].path' raw.json | split -l 100 - batch.
+                for batch in batch.*; do
+                  for attempt in 1 2; do
+                    # shellcheck disable=SC2046 # one store path per word
+                    if nix ${nixFlags} path-info --json --store '${cachixUrl}' $(cat "$batch") \
+                        > "$batch.json" 2> "$batch.err"; then
+                      break
+                    fi
+                    echo "::warning::stamp lookup failed (attempt $attempt): $(tail -n 3 "$batch.err")"
+                    echo '{}' > "$batch.json"
+                    sleep 5
+                  done
+                done
+                jq -s 'add // {} | with_entries(select(.value != null)) | map_values(true)' \
+                  batch.*.json > present.json
+                rm -f batch.*
+                echo "$(jq length present.json) of $(jq '[.[].units[]] | length' raw.json) stamps already pass."
               fi
 
               jq --slurpfile present present.json \
