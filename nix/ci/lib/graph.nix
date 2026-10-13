@@ -61,6 +61,111 @@ let
   pkgUnit = name: "pkg/${name}";
   depsOf = text: map pkgUnit (refsIn text);
 
+  # ── what a unit needs from its environment ──────────────────────────
+  #
+  # A unit's *needs* are feature names of the dev shell's `ci` tier
+  # (`ciFeatures` in nix/shells/default.nix); a job's shell carries the
+  # features its units' closures need, and nothing else. Linking needs are
+  # read from the recipes: each `libs` name through this table (a name not
+  # in it — `imm32`, `pthread` — needs nothing beyond the toolchain), and
+  # `subConfiguration "sparkles:ui" "gpu-effects"` for the shader toolchain.
+  libFeatures =
+    lib.genAttrs [
+      "raylib"
+      "freetype"
+      "freetype2"
+      "harfbuzz"
+    ] (_: "raylib")
+    // lib.genAttrs [
+      "nix-util-c"
+      "nix-store-c"
+      "nix-expr-c"
+      "nix-fetchers-c"
+      "nix-flake-c"
+      "nix-main-c"
+    ] (_: "nix-c-api")
+    // lib.genAttrs [
+      "wayland-client"
+      "wayland-cursor"
+      "x11"
+      "x11-xcb"
+      "xext"
+      "xi"
+      "xfixes"
+      "xcursor"
+      "xrandr"
+      "xcb"
+      "xcb-xkb"
+      "xcb-xtest"
+      "xcb-xinput"
+      "xcb-present"
+      "xcb-imdkit"
+      "xkbcommon"
+      "xkbcommon-x11"
+    ] (_: "wsi-linux")
+    // lib.genAttrs [ "dw" "elf" "pfm" ] (_: "perf-probes")
+    // {
+      "ghostty-vt" = "ghostty";
+      "tree-sitter" = "tree-sitter";
+      SDL3 = "sdl3";
+      vulkan = "vulkan";
+      kqueue = "kqueue";
+    };
+
+  # `lib.hasInfix` is a `.*x.*` match, which overflows the regex engine's
+  # stack on a large file (a 149 KB spec); `split` scans instead.
+  contains = needle: text: builtins.length (builtins.split (lib.escapeRegex needle) text) > 1;
+
+  # Line by line, for the same reason.
+  libsIn =
+    text:
+    lib.concatMap (
+      line:
+      let
+        m = builtins.match ''[[:space:]]*libs(( "[^"]+")+).*'' line;
+      in
+      lib.optionals (m != null) (matchAll ''"([^"]+)"'' (builtins.head m))
+    ) (lib.splitString "\n" text);
+
+  recipeNeeds =
+    text:
+    builtins.filter (f: f != null) (map (l: libFeatures.${l} or null) (libsIn text))
+    ++ lib.optional (contains ''subConfiguration "sparkles:ui" "gpu-effects"'' text) "shaders";
+
+  # What tests exec or read at run time, which no recipe says. Missing an
+  # entry degrades the test to a skip (or fails it), so over-listing is the
+  # safe side. A unit's needs reach its dependents: a test that drives a
+  # dependency's code needs what that code reads.
+  testNeeds = {
+    ci = [
+      "nerd-font-glyphnames"
+      "tree-sitter"
+    ];
+    dmd-fmt = [ "flake-input:dmd-src" ];
+    dmd-lsp = [ "d-import-paths" ];
+    doc-view = [ "tree-sitter" ];
+    event-horizon = [ "util-linux" ];
+    font = [ "fonts" ];
+    font-oracle = [ "fonts" ];
+    hue = [
+      "d-import-paths"
+      "tree-sitter"
+    ];
+    shader-compile = [ "shaders" ];
+    source-view = [ "tree-sitter" ];
+    syntax = [ "tree-sitter" ];
+    terminal = [ "dbus" ];
+    test-runner-impl = [ "wasm" ];
+    twoslash = [ "tree-sitter" ];
+    twoslash-d = [ "d-import-paths" ];
+    twoslash-extract = [ "d-import-paths" ];
+    ui = [ "nerd-font-glyphnames" ];
+    wired = [ "json-test-suite" ];
+  };
+
+  # Examples and markdown by path prefix: the probes that exec a tool.
+  fileNeeds = file: lib.optional (lib.hasPrefix "docs/research/sanitizers/" file) "valgrind";
+
   # A sub-package nested inside another (`libs/base/tools/text-conformance`
   # inside `libs/base`) is its own unit, so it is cut out of its parent's.
   nestedIn = dir: builtins.filter (d: d != dir && lib.hasPrefix "${dir}/" d) subPackageDirs;
@@ -70,6 +175,7 @@ let
     lib.nameValuePair (pkgUnit name) {
       files = fs.difference (fromRoot dir) (fs.unions (map fromRoot (nestedIn dir)));
       deps = [ "dub-manifests" ] ++ depsOf (read "${dir}/dub.sdl");
+      needs = recipeNeeds (read "${dir}/dub.sdl") ++ testNeeds.${name} or [ ];
       arg = name;
     }
   ) packageDirs;
@@ -148,6 +254,7 @@ let
           in
           lib.optionals (refs != [ ]) ([ "dub-manifests" ] ++ refs)
           ++ lib.optional (lib.hasPrefix "docs/libs/event-horizon/tutorial/snippets/" file) "eh-comparisons";
+        needs = recipeNeeds (read file) ++ fileNeeds file;
         arg = file;
       }
     ) exampleFiles
@@ -187,6 +294,7 @@ let
       lib.nameValuePair "md/${file}" {
         files = fromRoot file;
         deps = [ "dub-manifests" ] ++ depsOf (read file);
+        needs = recipeNeeds (read file) ++ fileNeeds file;
         arg = file;
       }
     ) runnableMarkdown
@@ -216,6 +324,14 @@ let
             "dub-manifests"
           ]
           ++ lib.unique (lib.concatMap (r: depsOf (read r)) recipes);
+          # The demos run for real: X11 under Xvfb, Wayland under weston.
+          needs =
+            lib.concatMap (r: recipeNeeds (read r)) recipes
+            ++ {
+              x11 = [ "xvfb" ];
+              wayland = [ "weston" ];
+            }
+            .${platform} or [ ];
         }
       )
       (
@@ -292,11 +408,15 @@ let
           { key }: map (d: { key = d; }) (units.${key}.deps or (throw "ci: unknown unit `${key}`"));
       }
     );
+
+  # The features a set of units needs: every need in their closures.
+  needsOf = names: lib.unique (lib.concatMap (u: units.${u}.needs or [ ]) (closure names));
 in
 {
   inherit
     units
     closure
+    needsOf
     packageDirs
     subPackageDirs
     exampleFiles

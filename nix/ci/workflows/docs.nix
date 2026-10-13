@@ -61,11 +61,19 @@ in
         }
         {
           name = "Build the VitePress site";
-          run = t.inShell "ci-docs-build" (import ./docs-build.nix t);
+          run = import ./docs-build.nix t;
         }
         {
           name = "Deploy to Cloudflare Pages & comment the preview URL";
-          run = t.inShellWith [ t.pkgs.gh ] "ci-docs-deploy" "bash ${t.ciScripts}/deploy-cloudflare-pages.sh";
+          run = t.ciScript "deploy-cloudflare-pages.sh" [
+            t.pkgs.nodejs
+            t.yarn
+            t.pkgs.gh
+            t.pkgs.gitMinimal
+            t.pkgs.gnugrep
+            t.pkgs.gnused
+            t.pkgs.jq
+          ];
           env = {
             CLOUDFLARE_API_TOKEN = "\${{ secrets.CLOUDFLARE_API_TOKEN }}";
             CLOUDFLARE_ACCOUNT_ID = "\${{ secrets.CLOUDFLARE_ACCOUNT_ID }}";

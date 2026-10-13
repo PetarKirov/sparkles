@@ -42,9 +42,13 @@ in
           name = "Check every link";
           id = "sweep";
           continue-on-error = true;
-          run = t.inPreCommit "ci-link-sweep" ''
-            prek run lychee --all-files --show-diff-on-failure --color never | tee lychee-report.txt
-          '';
+          run = t.preCommit "ci-link-sweep" {
+            only = [ "lychee" ];
+            text = ''
+              prek run --config "$PRE_COMMIT_CONFIG" lychee --all-files --show-diff-on-failure --color never \
+                | tee lychee-report.txt
+            '';
+          };
           env.GITHUB_TOKEN = "\${{ github.token }}";
         }
         {

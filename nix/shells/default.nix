@@ -125,198 +125,363 @@
             export WIRED_BENCH_ISA=${only.isa}
             export PKG_CONFIG_PATH=${benchPcPath only}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
           '';
-      # ── Package tiers ──────────────────────────────────────────────────
+      # Yarn Berry 4: `package.json#packageManager` selects the release.
+      # `corepack enable` cannot write shims into the Nix store, so this is a
+      # Corepack passthrough named `yarn`.
+      yarn = pkgs.writeShellScriptBin "yarn" ''
+        export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+        exec ${pkgs.nodejs}/bin/corepack yarn "$@"
+      '';
+
+      # ── The `ci` tier, as features ─────────────────────────────────────
       #
-      # `ciPackages` is the floor: exactly what `ci --test`,
+      # The `ci` tier is the floor: exactly what `ci --test`,
       # `ci --example-files` and `ci --test-extracted` need in order to *run*
       # rather than skip. Everything else is interactive-only and lives in
       # `devPackages`, because CI pays for it in download time on every cold
       # runner — chromium alone is a 1.7 GiB closure, and nothing in CI opens
       # a browser.
       #
-      # The rule for moving something up: it belongs in `ciPackages` if a CI
-      # job links it, execs it, or degrades to a skip without it.
-
-      ciPackages =
+      # The floor is split into named features, each the packages and the
+      # shell-hook lines of one capability. The dev shells take all of them;
+      # a CI job takes only those its units need (`nix/ci/lib/graph.nix` says
+      # which, from the recipes' `libs` and a table of what tests exec or
+      # read), so a job's closure is what it runs, not the union.
+      #
+      # The rule for adding to a feature: it belongs here if a CI job links
+      # it, execs it, or degrades to a skip without it. Every name exists on
+      # every system — a feature with nothing to offer there is empty — so
+      # the graph, which is system-independent, can name any of them.
+      ciFeatures =
         ciTool:
-        [
-          # Used by :test-utils for diff output on a failing assertion.
-          pkgs.delta
+        let
+          inherit (pkgs.stdenv.hostPlatform) isLinux isDarwin;
+          linux = lib.optionals isLinux;
+          feature =
+            {
+              packages ? [ ],
+              hook ? "",
+            }:
+            {
+              inherit packages hook;
+            };
+          libraryPath = paths: ''
+            export LIBRARY_PATH="${lib.makeLibraryPath paths}''${LIBRARY_PATH:+:$LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${lib.makeLibraryPath paths}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          '';
+        in
+        {
+          # What every job compiling D needs: the compilers and dub, the
+          # helper, and the tools `dub test` itself execs.
+          base = feature {
+            packages = d-toolchain.packages ++ [
+              # CI helper — the `ci --test` / `ci --example-files` the jobs
+              # invoke. libcurl is linked by its --ci-stats subcommand (and by
+              # hue).
+              ciTool
+              pkgs.curl
 
-          # `shader-compile`, which sparkles:ui's `gpu-effects` configuration runs
-          # as a pre-generate step — so every build on `ui-raylib`, `ci --test`
-          # included, needs it: the dcompute-enabled LDC compiles a package's
-          # `@compute` modules to SPIR-V, spirv-tools validate and optimise it,
-          # spirv-cross turns it into GLSL and glslang proves each file. (glslang
-          # also regenerates the committed `.spv` under `libs/vulkan-wsi/src/shaders/`.)
-          pkgs.glslang
-          pkgs.spirv-tools
-          pkgs.spirv-cross
-        ]
-        # The dcompute-enabled LDC itself, as `ldc2-vulkan` — the name
-        # `shader-compile` looks for, and one that cannot shadow the shell's own
-        # `ldc2`. Wherever dlang.nix defines it (Linux, macOS).
-        ++ lib.optional (config.packages ? ldc2-vulkan) config.packages.ldc2-vulkan
-        ++ [
+              # Tests, `ci --build-each-commit` and dub's version detection
+              # all exec git. Minimal, so no second Python.
+              pkgs.gitMinimal
+              # dub resolves every `libs` through it.
+              pkgs.pkg-config
+              # Used by :test-utils for diff output on a failing assertion.
+              pkgs.delta
+              # `unzip -l`, the cross-check of the cosmopolitan-ape ZIP example.
+              pkgs.unzip
+
+              # Tests exec node (the wasm runtime of `--wasm`, and fixture
+              # generators); it is in the helper's closure regardless.
+              pkgs.nodejs
+              # Yarn, for the VitePress site and the twoslash fixture generator.
+              yarn
+            ];
+            hook = ''
+              # Seed writable sources, preserving any existing user versions.
+              # The packaged helper retains the bundle through its runtime
+              # closure.
+              export SPARKLES_DUB_SOURCES=${config.packages.dub-sources}
+              ${lib.getExe ciTool} --seed-dub-cache >/dev/null 2>&1 || {
+                echo 'Failed to seed DUB sources; run ci --seed-dub-cache for details.' >&2
+                return 1
+              }
+
+              # Keep D's std.process child setup inside the signed-int range.
+              # Phobos casts RLIMIT_NOFILE from rlim_t to int before closing
+              # inherited descriptors; an unlimited soft limit overflows, and
+              # a low macOS default can also starve parallel dub/ldc builds.
+              ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true
+
+              ${envExports}
+            '';
+          };
+
+          # `shader-compile`, which sparkles:ui's `gpu-effects` configuration
+          # runs as a pre-generate step — so every build selecting it needs
+          # this: the dcompute-enabled LDC compiles a package's `@compute`
+          # modules to SPIR-V, spirv-tools validate and optimise it,
+          # spirv-cross turns it into GLSL and glslang proves each file.
+          # (glslang also regenerates the committed `.spv` under
+          # `libs/vulkan-wsi/src/shaders/`.) The LDC is `ldc2-vulkan` — the
+          # name `shader-compile` looks for, and one that cannot shadow the
+          # shell's own `ldc2` — wherever dlang.nix defines it.
+          shaders = feature {
+            packages = [
+              pkgs.glslang
+              pkgs.spirv-tools
+              pkgs.spirv-cross
+            ]
+            ++ lib.optional (config.packages ? ldc2-vulkan) config.packages.ldc2-vulkan;
+          };
+
           # wasm-ld, for the test runner's `--wasm` mode: nixpkgs' LDC is
           # built without -link-internally, so the wasm32 link needs an
-          # external linker. Without it the mode skips rather than runs
-          # (and `--require-toolchain` turns that skip into a failure).
-          # The wasm runtime it hands off to is `pkgs.nodejs` below.
-          pkgs.lld
-          pkgs.nodejs
-          # Yarn Berry 4 for the VitePress site (`yarn docs:build`) and the
-          # twoslash fixture generator. `package.json#packageManager` selects
-          # the release. `corepack enable` cannot write shims into the Nix
-          # store, so this is a Corepack passthrough named `yarn`.
-          (pkgs.writeShellScriptBin "yarn" ''
-            export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-            exec ${pkgs.nodejs}/bin/corepack yarn "$@"
-          '')
-
-          # CI helper — the `ci --test` / `ci --example-files` the jobs invoke.
-          pkgs.curl # libcurl, linked by its --ci-stats subcommand
-          ciTool
-
-          # Tests, `ci --build-each-commit` and dub's version detection all
-          # exec git. CI used to find the runner image's; CI steps now run with
-          # this shell's PATH and nothing else. Minimal, so no second Python.
-          pkgs.gitMinimal
-          # `unzip -l`, the cross-check of the cosmopolitan-ape ZIP example.
-          pkgs.unzip
+          # external linker. Without it the mode skips rather than runs (and
+          # `--require-toolchain` turns that skip into a failure). The wasm
+          # runtime it hands off to is `base`'s node.
+          wasm = feature { packages = [ pkgs.lld ]; };
 
           # ghostty — the slim repack (shared lib + headers + .pc), NOT the
-          # upstream `.dev` output: its static archive embeds zig store
-          # paths in debug info, dragging a 1.5 GiB toolchain closure into
-          # the shell. See nix/packages/libghostty-vt.nix.
-          # `libs "ghostty-vt"` in libs/ghostty/dub.sdl.
-          pkgs.pkg-config
-          config.packages.libghostty-vt
+          # upstream `.dev` output: its static archive embeds zig store paths
+          # in debug info, dragging a 1.5 GiB toolchain closure into the
+          # shell. See nix/packages/libghostty-vt.nix.
+          ghostty = feature { packages = [ config.packages.libghostty-vt ]; };
 
           # Nix C API — bound by `sparkles:nix` via ImportC. Only the `out`
-          # outputs (the .so's) go here, for linking; headers come via
-          # PKG_CONFIG_PATH (see nixCApiPkgConfigPath above) so the patched
-          # nix-expr-c headers are used and the unpatched ones never reach
-          # NIX_CFLAGS_COMPILE. `ci --test` links `:nix`, so this is the CI
-          # floor, not the interactive tier.
-          inputs'.nix.packages.nix-util-c
-          inputs'.nix.packages.nix-store-c
-          inputs'.nix.packages.nix-expr-c
-          inputs'.nix.packages.nix-fetchers-c
-          inputs'.nix.packages.nix-flake-c
-          inputs'.nix.packages.nix-main-c
+          # outputs (the .so's) are packages, for linking; the headers come
+          # via PKG_CONFIG_PATH (see nixCApiPkgConfigPath above) so the
+          # patched nix-expr-c headers are used and the unpatched ones never
+          # reach NIX_CFLAGS_COMPILE.
+          nix-c-api = feature {
+            packages = [
+              inputs'.nix.packages.nix-util-c
+              inputs'.nix.packages.nix-store-c
+              inputs'.nix.packages.nix-expr-c
+              inputs'.nix.packages.nix-fetchers-c
+              inputs'.nix.packages.nix-flake-c
+              inputs'.nix.packages.nix-main-c
+            ];
+            hook = ''
+              export PKG_CONFIG_PATH="${nixCApiPkgConfigPath}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+            '';
+          };
 
           # tree-sitter runtime for sparkles:tree-sitter / sparkles:syntax
-          # (single-output: headers + .so + .pc all in `out`). Grammars come
-          # from the ts-grammars bundle via $SPARKLES_TS_GRAMMAR_PATH below.
-          # `libs "tree-sitter"` in libs/tree-sitter/dub.sdl.
-          pkgs.tree-sitter
+          # (single-output: headers + .so + .pc all in `out`), and the
+          # grammar bundle (one dir per language: parser + queries/). Tests
+          # skip when the path is unset.
+          tree-sitter = feature {
+            packages = [ pkgs.tree-sitter ];
+            hook = ''
+              export SPARKLES_TS_GRAMMAR_PATH=${config.packages.ts-grammars}
+            '';
+          };
 
-          # `libs "raylib"` in libs/raylib-text and apps/terminal.
-          pkgs.raylib
-          # raylib-text's ImportC shaping bridge and native runtime.
-          pkgs.freetype
-          pkgs.freetype.dev
-          pkgs.harfbuzz
-          pkgs.harfbuzz.dev
+          # `libs "raylib"`, and raylib-text's ImportC shaping bridge.
+          raylib = feature {
+            packages = [
+              pkgs.raylib
+              pkgs.freetype
+              pkgs.freetype.dev
+              pkgs.harfbuzz
+              pkgs.harfbuzz.dev
+            ];
+          };
 
-          # `libs "vulkan"` in libs/vulkan. The `.dev` output carries
-          # `vulkan.pc`, whose `includedir` points at vulkan-headers — so one
-          # pkg-config entry supplies both the ImportC include path and the link
-          # flags. The headers alone would not be discoverable: vulkan-headers
-          # ships no `.pc` of its own.
-          pkgs.vulkan-loader
-          pkgs.vulkan-loader.dev
+          # `libs "vulkan"`. The `.dev` output carries `vulkan.pc`, whose
+          # `includedir` points at vulkan-headers — so one pkg-config entry
+          # supplies both the ImportC include path and the link flags.
+          # MoltenVK is Darwin's Vulkan ICD (Vulkan-on-Metal): the loader is
+          # only dispatch; without it vkCreateInstance fails with
+          # VK_ERROR_INCOMPATIBLE_DRIVER / an empty device list.
+          vulkan = feature {
+            packages = [
+              pkgs.vulkan-loader
+              pkgs.vulkan-loader.dev
+            ]
+            ++ lib.optional isDarwin pkgs.moltenvk;
+            hook = lib.optionalString isDarwin ''
+              # Defaulted rather than assigned: testing against a locally
+              # built MoltenVK is the reason someone would set it first.
+              export VK_DRIVER_FILES="''${VK_DRIVER_FILES:-${pkgs.moltenvk}/share/vulkan/icd.d/MoltenVK_icd.json}"
+              # The pre-1.3.207 spelling, for a system loader older than the
+              # rename; the nixpkgs one reads VK_DRIVER_FILES.
+              export VK_ICD_FILENAMES="$VK_DRIVER_FILES"
+            '';
+          };
 
-          # `libs "sdl3"` in libs/ui-sdl3: the window, the input source, and the
-          # Vulkan surface. `.dev` carries `sdl3.pc`; `.lib` is what the built
-          # binary loads at runtime.
-          pkgs.sdl3
-          pkgs.sdl3.dev
-        ]
-        # OS-API research examples (docs/research/.../os-apis): the X11 and Wayland
-        # ImportC examples are **Linux-only**, so gate these on Linux — `wayland`,
-        # `libx11`, etc. refuse to evaluate on darwin. pkg-config (above) resolves
-        # the headers via the `.dev` outputs (dub#3085 feeds `--cflags` to ImportC);
-        # `xvfb-run` lets the X11 example open a real window on a headless runner.
-        ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
-          pkgs.libx11
-          pkgs.libx11.dev
-          pkgs.xorgproto
-          pkgs.wayland
-          pkgs.wayland.dev
-          pkgs.xvfb-run
+          # `libs "sdl3"` in libs/ui-sdl3. `.dev` carries `sdl3.pc`; `.lib` is
+          # what the built binary loads at runtime.
+          sdl3 = feature {
+            packages = [
+              pkgs.sdl3
+              pkgs.sdl3.dev
+            ];
+          };
 
-          # CPU-PMU research probes (docs/research/cpu-pmu/examples): the
-          # symbolization/unwind probes link `libs "dw" "elf"` and the
-          # event-naming probe links `libs "pfm"`. Neither library is found
-          # by `nix shell` alone (no setup hooks run), so they're shell
-          # packages here with LIBRARY_PATH/LD_LIBRARY_PATH exports below.
-          # `ci --example-files` builds these, so a missing library is a
-          # link error, not a skip.
-          pkgs.elfutils
-          pkgs.libpfm
+          # libs/wsi's Linux backends: XCB (with XTEST, XInput, XKB and
+          # fcitx's XIM-over-XCB client), Wayland and xkbcommon, plus what
+          # the OS-API research examples link. pkg-config resolves the
+          # headers via the `.dev` outputs (dub#3085 feeds `--cflags` to
+          # ImportC). xcb-imdkit's .pc requires xcb-util.
+          wsi-linux = feature {
+            packages = linux [
+              pkgs.libx11
+              pkgs.libx11.dev
+              pkgs.xorgproto
+              pkgs.wayland
+              pkgs.wayland.dev
+              pkgs.wayland-protocols
+              pkgs.wayland-scanner
+              pkgs.libxkbcommon
+              pkgs.libxkbcommon.dev
+              pkgs.libxext
+              pkgs.libxext.dev
+              pkgs.libxi
+              pkgs.libxi.dev
+              pkgs.libxfixes
+              pkgs.libxfixes.dev
+              pkgs.libxcursor
+              pkgs.libxcursor.dev
+              pkgs.libxrandr
+              pkgs.libxrandr.dev
+              pkgs.libxcb
+              pkgs.libxcb.dev
+              pkgs.xcb-imdkit
+              pkgs.xorg.xcbutil
+              pkgs.xorg.xcbutil.dev
+            ];
+          };
+
+          # The windowing demos run for real: X11 under Xvfb, Wayland under a
+          # headless weston. Without them the demos print SKIP and the job
+          # goes green having verified nothing.
+          xvfb = feature { packages = linux [ pkgs.xvfb-run ]; };
+          weston = feature { packages = linux [ pkgs.weston ]; };
+
+          # CPU-PMU research probes (docs/research/cpu-pmu/examples): `libs
+          # "dw" "elf"` and `libs "pfm"`. Neither is found by `nix shell`
+          # alone (no setup hooks run), hence the explicit library paths.
+          perf-probes = feature {
+            packages = linux [
+              pkgs.elfutils
+              pkgs.libpfm
+            ];
+            hook = lib.optionalString isLinux (libraryPath [
+              pkgs.elfutils.out
+              pkgs.libpfm
+            ]);
+          };
+
+          # mheily/libkqueue for event-horizon's `libkqueue` config (`libs
+          # "kqueue"`; fiber-echo `-c libkqueue`). Same package the Android
+          # build cross-compiles the source of.
+          kqueue = feature {
+            packages = linux [ pkgs.libkqueue ];
+            hook = lib.optionalString isLinux (libraryPath [ pkgs.libkqueue ]);
+          };
 
           # Sanitizers research probes (docs/research/sanitizers/examples):
-          # the valgrind-*.d probes exec `valgrind` from PATH (never link it)
-          # and print a SKIP line when it is absent. `ci --example-files`
-          # runs them, so this is here to keep three examples from silently
-          # degrading to SKIP in CI — the `nix run .#ci` wrapper deliberately
+          # the valgrind-*.d probes exec `valgrind` from PATH and print a SKIP
+          # line when it is absent. The `nix run .#ci` wrapper deliberately
           # omits it to keep the .#ci closure small.
-          pkgs.valgrind
-
-          # mheily/libkqueue for event-horizon's `libkqueue` config
-          # (`libs "kqueue"`; fiber-echo `-c libkqueue`). Same package the
-          # Android build cross-compiles the source of.
-          pkgs.libkqueue
-
-          # Windowing feature demos (os-apis/<platform>/examples/): the CI job
-          # builds and RUNS these (xvfb for X11, a headless weston for Wayland),
-          # so they are the ci tier, not dev: without weston the Wayland demos
-          # print SKIP and the job goes green having verified nothing.
-          pkgs.weston
-          pkgs.wayland-protocols
-          pkgs.wayland-scanner
-          pkgs.libxkbcommon
-          pkgs.libxkbcommon.dev
-          pkgs.libxext
-          pkgs.libxext.dev
-          pkgs.libxi
-          pkgs.libxi.dev
-          pkgs.libxfixes
-          pkgs.libxfixes.dev
-          pkgs.libxcursor
-          pkgs.libxcursor.dev
-          pkgs.libxrandr
-          pkgs.libxrandr.dev
-          pkgs.libxcb
-          pkgs.libxcb.dev
-
-          # fcitx's XIM-over-XCB library: `libs "xcb-imdkit"` in libs/wsi —
-          # the X11 backend's XIM client, and the lane's test XIM server,
-          # both over the backend's single XCB connection. Its .pc requires
-          # xcb-util, so pkg-config needs that too.
-          pkgs.xcb-imdkit
-          pkgs.xorg.xcbutil
-          pkgs.xorg.xcbutil.dev
+          valgrind = feature { packages = linux [ pkgs.valgrind ]; };
 
           # `setsid`, exec'd by event-horizon's supervision tests (a
-          # descendant in its own session). CI found the runner image's copy;
-          # its steps now see only this shell's PATH.
-          pkgs.util-linux
+          # descendant in its own session).
+          util-linux = feature { packages = linux [ pkgs.util-linux ]; };
 
-          # `dbus-daemon`, exec'd by apps/terminal's D-Bus tests (`dbus_conn`,
-          # `desktop_bus`) as a private bus with a fake notification server
-          # and portal. Without it they skip, so `ci --test` needs it.
-          pkgs.dbus
-        ]
-        ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
-          # MoltenVK is Darwin's Vulkan ICD (Vulkan-on-Metal). The loader
-          # above is only dispatch; without this, vkCreateInstance fails
-          # with VK_ERROR_INCOMPATIBLE_DRIVER / an empty device list.
-          # `VK_DRIVER_FILES` in the hook points the loader at the ICD json.
-          pkgs.moltenvk
-        ];
+          # `dbus-daemon`, exec'd by apps/terminal's D-Bus tests as a private
+          # bus with a fake notification server and portal.
+          dbus = feature { packages = linux [ pkgs.dbus ]; };
+
+          # ── corpora: tests skip when their variable is unset ──
+
+          # Raw flake-input store paths (`SPARKLES_FLAKE_INPUT_*` plus the
+          # `$SPARKLES_ALL_FLAKE_INPUTS` JSON map). dmd-fmt corpus tests
+          # assert `$SPARKLES_FLAKE_INPUT_DMD_SRC` exists.
+          flake-inputs = feature { hook = flakeInputExports; };
+
+          # Nerd Fonts glyphnames.json for the icon table (GLY4).
+          nerd-font-glyphnames = feature {
+            hook = ''
+              export SPARKLES_NERD_FONT_GLYPHNAMES=${config.packages.nerd-font-glyphnames}
+            '';
+          };
+
+          # JSONTestSuite conformance corpora for the wired JSON reader.
+          json-test-suite = feature {
+            hook = ''
+              export JSON_TEST_SUITE=${config.packages.json-test-suite}
+              export NATIVEJSON_TEST_SUITE=${config.packages.nativejson-test-suite}
+            '';
+          };
+
+          # The bundled fonts, the corpus for sparkles:font and its HarfBuzz
+          # oracle.
+          fonts = feature {
+            hook = ''
+              export SPARKLES_FONTS_PATH=${config.packages.sparkles-fonts}/fonts
+            '';
+          };
+
+          # druntime/phobos sources matching the pinned dmd:frontend, for
+          # sparkles:dmd-lsp semantic analysis (BLD3), and the dcompute LDC's,
+          # for its LDC profiles — shader (device) code imports
+          # `ldc.dcompute` (TGT3).
+          d-import-paths = feature {
+            hook = ''
+              export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
+            ''
+            + lib.optionalString (config.packages ? ldc-import-paths) ''
+              export SPARKLES_LDC_IMPORT_PATH=${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos
+            '';
+          };
+        };
+
+      # A feature subset as packages and a hook. `names` is a list of feature
+      # names, or null for all of them.
+      ciTier =
+        {
+          ciTool,
+          names ? null,
+        }:
+        let
+          all = ciFeatures ciTool;
+          # `flake-input:<name>` is one input of `flake-inputs`: a test that
+          # reads one checkout need not download every input's source.
+          oneInput =
+            n:
+            let
+              input = lib.removePrefix "flake-input:" n;
+            in
+            if lib.hasPrefix "flake-input:" n && flakeInputPaths ? ${input} then
+              {
+                packages = [ ];
+                hook = "export ${flakeInputEnvName input}=${lib.escapeShellArg flakeInputPaths.${input}}";
+              }
+            else
+              null;
+          lookup = n: all.${n} or (oneInput n);
+          unknown = builtins.filter (n: lookup n == null) (if names == null then [ ] else names);
+          chosen =
+            if unknown != [ ] then
+              throw "mkSparklesShell: unknown feature(s) ${lib.concatStringsSep ", " unknown}"
+            else
+              # `base` first: its hook seeds the dub cache the others' users
+              # read. The rest sorted, so a shell is a function of the *set*.
+              map lookup (
+                [ "base" ]
+                ++ lib.sort (a: b: a < b) (
+                  lib.remove "base" (lib.unique (if names == null then builtins.attrNames all else names))
+                )
+              );
+        in
+        {
+          packages = lib.concatMap (f: f.packages) chosen;
+          hook = lib.concatMapStrings (f: f.hook + "\n") chosen;
+        };
 
       devPackages = [
         # Pre-commit hooks
@@ -379,89 +544,9 @@
         pkgs.perf
       ];
 
-      # ── Shell hooks, split on the same seam ────────────────────────────
+      # ── Shell hooks ────────────────────────────────────────────────────
 
-      ciShellHook = ciTool: ''
-        # Seed writable sources, preserving any existing user versions. The
-        # packaged helper retains the bundle through its runtime closure.
-        export SPARKLES_DUB_SOURCES=${config.packages.dub-sources}
-        ${lib.getExe ciTool} --seed-dub-cache >/dev/null 2>&1 || {
-          echo 'Failed to seed DUB sources; run ci --seed-dub-cache for details.' >&2
-          return 1
-        }
-
-        # Keep D's std.process child setup inside the signed-int range.
-        # Phobos casts RLIMIT_NOFILE from rlim_t to int before closing
-        # inherited descriptors; an unlimited soft limit overflows, and a
-        # low macOS default can also starve parallel dub/ldc builds. This
-        # was part of the original Darwin toolchain workaround but was
-        # lost when the dev shell moved behind the shared toolchain module.
-        ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true
-
-        ${envExports}
-
-        # Raw flake-input store paths (`SPARKLES_FLAKE_INPUT_*` plus the
-        # `$SPARKLES_ALL_FLAKE_INPUTS` JSON map). dmd-fmt corpus tests assert
-        # `$SPARKLES_FLAKE_INPUT_DMD_SRC` exists — dropping this fails them.
-        ${flakeInputExports}
-
-        # Supply the Nix C API headers via pkg-config only (patched expr
-        # first); see nixCApiPkgConfigPath. Must live in the CI hook so
-        # `dub test :nix` ImportC sees the headers.
-        export PKG_CONFIG_PATH="${nixCApiPkgConfigPath}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-
-        # tree-sitter grammar bundle for sparkles:syntax (one dir per
-        # language: parser + queries/). Tests skip when unset.
-        export SPARKLES_TS_GRAMMAR_PATH=${config.packages.ts-grammars}
-
-        # Nerd Fonts glyphnames.json for the icon table (GLY4); the
-        # sparkles:ui check skips when unset.
-        export SPARKLES_NERD_FONT_GLYPHNAMES=${config.packages.nerd-font-glyphnames}
-
-        # JSONTestSuite conformance corpus for the wired native JSON
-        # reader (dub test :wired skips those tests when unset).
-        export JSON_TEST_SUITE=${config.packages.json-test-suite}
-        export NATIVEJSON_TEST_SUITE=${config.packages.nativejson-test-suite}
-
-        # The bundled fonts, the corpus for sparkles:font and its HarfBuzz
-        # oracle (dub test :font / :font-oracle skip those tests when unset).
-        export SPARKLES_FONTS_PATH=${config.packages.sparkles-fonts}/fonts
-
-        # druntime/phobos sources matching the pinned dmd:frontend, for
-        # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
-        export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
-
-        ${lib.optionalString (config.packages ? ldc-import-paths) ''
-          # The dcompute LDC's druntime/phobos sources, for sparkles:dmd-lsp's
-          # LDC profiles — shader (device) code imports `ldc.dcompute` (TGT3).
-          # Where dlang.nix defines `ldc-vulkan`; tests skip when unset.
-          export SPARKLES_LDC_IMPORT_PATH=${config.packages.ldc-import-paths}/druntime:${config.packages.ldc-import-paths}/phobos
-        ''}
-
-        ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
-          # libdw/libelf (elfutils), libpfm, libkqueue — for `dub run --single`
-          # linking (`libs "dw" "elf"` / `libs "pfm"` / `libs "kqueue"`).
-          export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
-          export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib:${pkgs.libkqueue}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-        ''}
-
-        ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
-          # Khronos loader looks here for ICDs. The json's library_path is
-          # already the absolute nix store path of libMoltenVK.dylib.
-          #
-          # Defaulted rather than assigned: every other export in this hook is
-          # a store path a developer has no reason to override, but this one
-          # they do — testing against a locally built MoltenVK is the whole
-          # reason someone would set it before entering the shell.
-          export VK_DRIVER_FILES="''${VK_DRIVER_FILES:-${pkgs.moltenvk}/share/vulkan/icd.d/MoltenVK_icd.json}"
-
-          # The pre-1.3.207 spelling of the same variable, kept for a system
-          # loader older than the rename; the nixpkgs one reads VK_DRIVER_FILES.
-          export VK_ICD_FILENAMES="$VK_DRIVER_FILES"
-        ''}
-      '';
-
-      # Deliberately NOT in ciShellHook:
+      # Deliberately NOT in the `ci` tier's hooks:
       #
       #   * `GITHUB_TOKEN` — `gh auth token` has no logged-in gh on a runner,
       #     so this resolves to the empty string and *overwrites* the token the
@@ -502,22 +587,30 @@
 
       # `ciTool` is a parameter so the CI module (nix/ci) can evaluate the same
       # shell around a stub `ci`: a job's laziness key must not change every
-      # time one of the 23 libraries the helper links does.
+      # time one of the 23 libraries the helper links does. `features` picks
+      # a subset of the `ci` tier (null: all of it) — what a CI job's units
+      # need, and nothing else.
       mkSparklesShell =
         {
           greeting ? false,
           tier ? "dev",
           ciTool ? config.packages.ci,
+          features ? null,
         }:
+        let
+          ci = ciTier {
+            inherit ciTool;
+            names = features;
+          };
+        in
         pkgs.mkShell {
           packages =
-            ciPackages ciTool
-            ++ lib.optionals (tier == "dev") devPackages
-            ++ lib.optional greeting pkgs.figlet
-            ++ d-toolchain.packages;
+            ci.packages
+            ++ lib.optionals (tier == "dev") (devPackages ++ d-toolchain.devPackages)
+            ++ lib.optional greeting pkgs.figlet;
 
           shellHook =
-            ciShellHook ciTool
+            ci.hook
             + lib.optionalString (tier == "dev") devShellHook
             + lib.optionalString greeting "figlet 'sparkles : *'\n"
             # Installs the git hooks into .git/. Wanted on a developer's
@@ -533,11 +626,14 @@
         # Full shell for interactive use — adds the figlet greeting on entry.
         full = mkSparklesShell { greeting = true; };
         # The CI floor: no browser, no profilers, no benchmark corpora, no
-        # oracle libraries, no pre-commit tooling. See `ciPackages` above.
+        # oracle libraries, no pre-commit tooling. See `ciFeatures` above.
         ci = mkSparklesShell { tier = "ci"; };
       };
 
-      # For nix/ci, which runs the `ci` tier's environment as CI steps.
+      # For nix/ci, which runs a subset of the `ci` tier as each CI job's
+      # environment.
       legacyPackages.mkSparklesShell = mkSparklesShell;
+      # The same Yarn, for CI steps that need node and nothing of the tier.
+      legacyPackages.yarn = yarn;
     };
 }

@@ -24,23 +24,34 @@ in
         '';
 
       mkTools =
-        { ci, ciMinimal }:
+        {
+          ci,
+          ciMinimal,
+          features ? [ ],
+        }:
         rec {
           inherit pkgs ci ciMinimal;
           inherit (config) packages checks;
           inherit (pkgs.stdenv.hostPlatform) system;
 
-          # The `ci` dev shell's environment, captured at build time.
+          # The same tools around a shell of these features: a job's shell
+          # holds what its units need (`graph.needsOf`), not the whole tier.
+          withFeatures =
+            fs:
+            mkTools {
+              inherit ci ciMinimal;
+              features = fs;
+            };
+
+          # The `ci` dev shell's environment, cut to `features` and captured
+          # at build time.
           env = shellEnv.capture (
             config.legacyPackages.mkSparklesShell {
               tier = "ci";
               ciTool = ci;
+              inherit features;
             }
           );
-          # The pre-commit hooks' shell (prek and every hook's tool); its hook
-          # links `.pre-commit-config.yaml`, which prek reads.
-          preCommitEnv = shellEnv.capture config.devShells.pre-commit;
-
           # A step that runs inside the `ci` dev shell.
           inShell =
             name: text:
@@ -48,25 +59,38 @@ in
               inherit name text;
               inherit env;
             };
-          # The same, with extra tools ahead of the shell's own.
-          inShellWith =
-            path: name: text:
-            shellEnv.script {
-              inherit
-                name
-                text
-                env
-                path
-                ;
-            };
-          # A step that runs inside the pre-commit shell (plus git, which the
-          # hooks and `--from-ref` need and the shell does not carry).
-          inPreCommit =
-            name: text:
-            shellEnv.script {
-              inherit name text;
-              env = preCommitEnv;
-              path = [ pkgs.gitMinimal ];
+          # A step that runs prek over a cut of the repository's hook
+          # config: `only` the named hooks, or all but `skip`. The config is
+          # the git-hooks one, filtered here, so the step's closure holds the
+          # hooks it runs and not the others (`verify-md-examples` alone
+          # brings the whole toolchain). `$PRE_COMMIT_CONFIG` names the file.
+          preCommit =
+            name:
+            {
+              only ? null,
+              skip ? [ ],
+              text,
+            }:
+            let
+              settings = config.pre-commit.settings;
+              keep = id: (only == null || builtins.elem id only) && !builtins.elem id skip;
+              raw = settings.rawConfig // {
+                repos = map (r: r // { hooks = builtins.filter (h: keep h.id) r.hooks; }) settings.rawConfig.repos;
+              };
+              kept = lib.filterAttrs (id: h: h.enable && keep id) settings.hooks;
+            in
+            script name {
+              # The hooks' own tools, as the pre-commit shell would put them
+              # on PATH, plus git, which prek and `--from-ref` need.
+              runtimeInputs = [
+                settings.package
+                pkgs.gitMinimal
+              ]
+              ++ lib.concatMap (h: lib.optional (h.package != null) h.package) (builtins.attrValues kept);
+              text = ''
+                export PRE_COMMIT_CONFIG=${pkgs.writeText "pre-commit-config.json" (builtins.toJSON raw)}
+                ${text}
+              '';
             };
           # A step whose PATH is its declared inputs and nothing else.
           script =
@@ -94,6 +118,7 @@ in
               text = ''exec ${pkgs.bash}/bin/bash ${ciScripts}/${name} "$@"'';
             };
 
+          inherit (config.legacyPackages) yarn;
           nix = pkgs.nix;
           nixFlags = "--extra-experimental-features 'nix-command flakes'";
 

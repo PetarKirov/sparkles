@@ -548,24 +548,32 @@ in
               # workflow drift hook (the flake check covers it) and the
               # don't-commit-to-main developer guard.
               name = "Every pre-commit hook over the whole tree";
-              run = t.inPreCommit "ci-lint" ''
-                prek run --all-files --show-diff-on-failure --color always
-              '';
-              env = {
-                GITHUB_TOKEN = "\${{ github.token }}";
-                SKIP = "verify-md-examples,lychee,no-commit-to-branch,ci-workflows";
+              run = t.preCommit "ci-lint" {
+                skip = [
+                  "verify-md-examples"
+                  "lychee"
+                  "no-commit-to-branch"
+                  "ci-workflows"
+                ];
+                text = ''
+                  prek run --config "$PRE_COMMIT_CONFIG" --all-files --show-diff-on-failure --color always
+                '';
               };
+              env.GITHUB_TOKEN = "\${{ github.token }}";
             }
             {
               # A pull request can only add a dead URL in a file it touched;
               # rot elsewhere is `link-check.yml`'s nightly business.
               name = "Check the links this pull request added or changed";
               "if" = "github.event_name == 'pull_request'";
-              run = t.inPreCommit "ci-lint-diff-links" ''
-                git fetch --no-tags --depth=1 origin "$BASE_REF"
-                prek run lychee --from-ref "origin/$BASE_REF" --to-ref HEAD \
-                  --show-diff-on-failure --color always
-              '';
+              run = t.preCommit "ci-lint-diff-links" {
+                only = [ "lychee" ];
+                text = ''
+                  git fetch --no-tags --depth=1 origin "$BASE_REF"
+                  prek run --config "$PRE_COMMIT_CONFIG" lychee --from-ref "origin/$BASE_REF" --to-ref HEAD \
+                    --show-diff-on-failure --color always
+                '';
+              };
               env = {
                 GITHUB_TOKEN = "\${{ github.token }}";
                 BASE_REF = "\${{ github.base_ref }}";
@@ -605,7 +613,7 @@ in
             }
             {
               name = "Build the VitePress site";
-              run = t.inShell "ci-docs-build" (import ./docs-build.nix t);
+              run = import ./docs-build.nix t;
             }
           ];
         };

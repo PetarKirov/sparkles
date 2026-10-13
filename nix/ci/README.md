@@ -25,8 +25,8 @@ is built by one of the factories in [`tools.nix`](./tools.nix):
 
 | Factory                                  | PATH inside the step                                                 |
 | ---------------------------------------- | -------------------------------------------------------------------- |
-| `t.inShell name text`                    | the `ci` dev shell's, captured at build time (`lib/shell-env.nix`)   |
-| `t.inPreCommit name text`                | the pre-commit shell's, plus git                                     |
+| `t.inShell name text`                    | the `ci` dev shell's, cut to the job's features (below)              |
+| `t.preCommit name { only/skip; text; }`  | prek, git and the kept hooks' tools; `$PRE_COMMIT_CONFIG` is the cut |
 | `t.script name { runtimeInputs; text; }` | exactly `runtimeInputs` (`writeShellApplication`, no inherited PATH) |
 | `t.ciScript "x.sh" inputs`               | a `ci/x.sh` from the store, with `inputs`                            |
 
@@ -39,6 +39,33 @@ Each Nix job's first own step realises one store path, the job's _bundle_
 (every step program). It is substituted from the cache when it is there, and
 built from the flake when it is not; a built path that differs from the one
 in the YAML fails the job as stale workflows.
+
+## A job's shell is what its units need
+
+The `ci` tier of the dev shell is a set of named _features_ (`ciFeatures` in
+[`nix/shells/default.nix`](../shells/default.nix)): `base` (compilers, dub, the
+helper, git, node), `sdl3`, `vulkan`, `shaders`, `nix-c-api`, `weston`, the
+corpora, …. The dev shells take all of them. A job's `t.inShell` steps get
+only the features its units' closures need (`graph.needsOf`), plus any it
+lists in `features`:
+
+- linked libraries are read from the recipes — each `libs` name maps to a
+  feature (`libFeatures` in [`lib/graph.nix`](./lib/graph.nix)), and selecting
+  `sparkles:ui`'s `gpu-effects` configuration needs `shaders`;
+- what a test execs or reads at run time is listed in `testNeeds` (packages)
+  and `fileNeeds` (examples and markdown by path), as `testReads` lists the
+  files. A missing entry turns a test into a skip, or a failure.
+
+A unit's needs reach its dependents. To see a job's set:
+
+```bash
+nix eval --json .#ci.features.ci
+```
+
+So a shard without the SDL3 backend does not download SDL3, only `wsi-demos`
+gets weston, and a shard's key changes only when one of _its_ features does.
+Jobs that run no D build (`docs`, the link sweeps) use `t.script` with their
+few inputs instead of a shell.
 
 ## The pipeline is lazy
 

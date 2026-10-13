@@ -88,8 +88,9 @@ adds the `figlet` greeting for interactive use; `ci` is the CI floor (no
 browser, profilers, corpora, oracle libraries, or pre-commit tooling). `direnv`
 picks `${DEV_SHELL:-default}`, settable in a git-ignored `.env`.
 
-Adding a tool means choosing a tier: `ciPackages` is built on every CI run, so
-put a tool there only if a CI job runs it; everything else goes in `devPackages`.
+Adding a tool means choosing a tier: put it in a `ciFeatures` feature only if
+a CI job runs it (the jobs whose units need that feature download it);
+everything else goes in `devPackages`.
 
 ### Offline dub
 
@@ -237,7 +238,9 @@ workflow. Rehearse it with
   store path — build steps with the `nix/ci/tools.nix` factories, never a
   string. Jobs are lazy: they run only the units (`nix/ci/lib/graph.nix`)
   whose inputs are new, so a test that reads a file outside its package must
-  list it in the graph's `testReads`, or it passes stale.
+  list it in the graph's `testReads`, or it passes stale. A job's shell holds
+  only the dev-shell features its units need, so a test that execs a tool or
+  reads a corpus variable must list it in `testNeeds`, or it skips.
   The design is in `nix/ci/README.md`.
 - **Jobs that only talk to an API use `.#ci-minimal`** — the same binary without
   the compiler toolchain in its runtime closure (121 MiB vs 2.4 GiB).

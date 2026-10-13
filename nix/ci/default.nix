@@ -198,6 +198,15 @@ let
             description = "Derivations whose `drvPath`s join the key (a job that builds them).";
           };
         };
+        features = mkOption {
+          type = types.listOf types.str;
+          default = [ ];
+          description = ''
+            Dev-shell features (`ciFeatures` in nix/shells/default.nix) the
+            job's `t.inShell` steps need beyond those its units' closures need
+            (`graph.needsOf`). The shell holds exactly their union.
+          '';
+        };
         steps = mkOption {
           type = types.functionTo (types.listOf (types.submodule stepModule));
           default = _: [ ];
@@ -350,7 +359,9 @@ let
     }:
     let
       onNix = job.system != null;
-      tools = if onNix then toolsFor variant job.system else null;
+      # The job's shell holds what its units need, and no more.
+      features = graph.needsOf (job.lazy.units ++ job.lazy.common) ++ job.features;
+      tools = if onNix then (toolsFor variant job.system).withFeatures features else null;
       steps = job.steps tools;
       lazy = wf.plan.enable && job.lazy.enable;
       bundle = bundleOf tools id steps;
@@ -392,6 +403,7 @@ let
     in
     {
       inherit bundle;
+      features = lib.sort (a: b: a < b) (lib.unique features);
       attrs =
         dropEmpty {
           inherit (job)
@@ -599,12 +611,12 @@ let
           variant = "real";
         }
       ) wf.jobs;
+      nixJobs = lib.filterAttrs (id: _: wf.jobs.${id}.system != null) jobs;
     in
     {
       inherit (wf) file;
-      bundles = lib.mapAttrs (_: j: j.bundle) (
-        lib.filterAttrs (id: _: wf.jobs.${id}.system != null) jobs
-      );
+      bundles = lib.mapAttrs (_: j: j.bundle) nixJobs;
+      features = lib.mapAttrs (_: j: j.features) nixJobs;
       text =
         yaml.toYAML
           {
@@ -705,6 +717,8 @@ in
       inherit files;
       plan = lib.mapAttrs (_: r: r.plan) rendered;
       bundles = lib.mapAttrs (_: r: r.bundles) rendered;
+      # The dev-shell features each job's `t.inShell` steps get.
+      features = lib.mapAttrs (_: r: r.features) rendered;
       units = lib.mapAttrs (_: u: u.deps) graph.units;
     };
 

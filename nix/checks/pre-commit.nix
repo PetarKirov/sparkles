@@ -251,7 +251,7 @@ in
                 name = "fix-markdown-reference-links";
                 require_serial = false;
                 pass_filenames = true;
-                entry = lib.getExe config.packages.ci;
+                entry = lib.getExe config.packages.ci-minimal;
                 args = [
                   "--fix-reference-links"
                   "--files"
@@ -281,6 +281,8 @@ in
                 # bounded, predictable parallelism rather than correctness.
                 require_serial = true;
                 pass_filenames = true;
+                # The one hook that compiles, so the one on the full helper;
+                # the others take `ci-minimal`, without the toolchain closure.
                 entry = lib.getExe config.packages.ci;
                 args = [
                   "--verify"
@@ -375,7 +377,7 @@ in
                 enable = true;
                 name = "check-vcs-urls";
                 files = "\\.md$";
-                entry = lib.getExe config.packages.ci;
+                entry = lib.getExe config.packages.ci-minimal;
                 args = [
                   "--check-vcs-urls"
                   "--files"
@@ -395,7 +397,7 @@ in
                 enable = true;
                 name = "check-docs-sidebar";
                 files = "^docs/";
-                entry = lib.getExe config.packages.ci;
+                entry = lib.getExe config.packages.ci-minimal;
                 args = [ "--check-docs-sidebar" ];
                 language = "system";
                 pass_filenames = false;
@@ -409,7 +411,7 @@ in
                 enable = true;
                 name = "check-glossary";
                 files = "^docs/";
-                entry = lib.getExe config.packages.ci;
+                entry = lib.getExe config.packages.ci-minimal;
                 args = [ "--check-glossary" ];
                 language = "system";
                 pass_filenames = false;
@@ -426,7 +428,7 @@ in
                 enable = true;
                 name = "check-credits";
                 files = "(^docs/credits/|dub\\.sdl$|dub\\.selections\\.json$|^nix/)";
-                entry = lib.getExe config.packages.ci;
+                entry = lib.getExe config.packages.ci-minimal;
                 args = [ "--check-credits" ];
                 language = "system";
                 pass_filenames = false;
@@ -443,7 +445,7 @@ in
                 enable = true;
                 name = "check-spec-evidence";
                 files = "(^docs/specs/|\\.d$|dub\\.sdl$)";
-                entry = lib.getExe config.packages.ci;
+                entry = lib.getExe config.packages.ci-minimal;
                 args = [ "--check-spec-evidence" ];
                 language = "system";
                 pass_filenames = false;
@@ -464,7 +466,7 @@ in
                 {
                   id = "detailed-scope";
                   name = "detailed commit scope";
-                  entry = lib.getExe config.packages.ci;
+                  entry = lib.getExe config.packages.ci-minimal;
                   args = [ "--check-commit-scope" ];
                   language = "system";
                   pass_filenames = false;

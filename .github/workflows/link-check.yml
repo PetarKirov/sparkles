@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/i75lr940wyxrs2hqbib8v5scbvvnxswp-ci-job-sweep
+          bundle=/nix/store/2sdkikrxbs5d57r8khic07rjhz6vw43q-ci-job-sweep
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -69,7 +69,7 @@ jobs:
         continue-on-error: true
         env:
           GITHUB_TOKEN: "${{ github.token }}"
-        run: /nix/store/626bf2yn5xyk107d21xd2m0yg0p6vsvc-ci-link-sweep/bin/ci-link-sweep
+        run: /nix/store/l7z65wnrmwhz3pr0paslpjmmljss24lc-ci-link-sweep/bin/ci-link-sweep
       - name: Save the lychee cache
         if: "${{ always() }}"
         uses: actions/cache/save@v6
