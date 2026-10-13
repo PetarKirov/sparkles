@@ -237,7 +237,9 @@ struct CliParams
     string base;
 
     @(Option(`packages`,
-        description: "With --build-each-commit: the sub-packages to build, by name."))
+        description: "With --build-each-commit: the sub-packages to build, by name. "
+            ~ "With --test, --test-sanitize or --test-extracted: test only these "
+            ~ "sub-packages (default: every one the root dub.sdl declares)."))
     string[] packages;
 
     @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
@@ -654,13 +656,13 @@ int ciMain(string[] args)
         return runBuildEachCommitMode(cli.base, cli.packages, cli.failFast);
 
     if (mode == ProgramMode.runDubTests)
-        return runDubTestsMode(cli.failFast, coverage);
+        return runDubTestsMode(cli.failFast, coverage, cli.packages);
 
     if (mode == ProgramMode.runSanitizeTests)
-        return runDubTestsMode(cli.failFast, coverage, sanitize: true);
+        return runDubTestsMode(cli.failFast, coverage, cli.packages, sanitize: true);
 
     if (mode == ProgramMode.runExtractedTests)
-        return runExtractedTestsMode(cli.failFast);
+        return runExtractedTestsMode(cli.failFast, cli.packages);
 
     if (mode == ProgramMode.ciStats)
         return runCiStatsMode(cli);
@@ -3445,7 +3447,40 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
     return 0;
 }
 
-private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
+/**
+The sub-packages a test mode covers: every one the root `dub.sdl` declares, or
+— when `--packages` names some — just those, in request order. A name no
+sub-package has is an error rather than a smaller run: CI computes the list
+(the stale packages of a shard) and a typo there would otherwise pass having
+tested nothing.
+*/
+private bool requestedSubPackages(string repoRoot, in string[] requested, out string[] chosen)
+{
+    import each_commit : selectPackages;
+
+    const all = parseSubPackages(repoRoot);
+    if (all.length == 0)
+    {
+        error(i"No sub-packages found in dub.sdl");
+        return false;
+    }
+    if (requested.length == 0)
+    {
+        chosen = all.dup;
+        return true;
+    }
+    string[] unknown;
+    chosen = selectPackages(requested, all, unknown);
+    if (unknown.length)
+    {
+        error(i"--packages: no sub-package named $(unknown.join(", "))");
+        return false;
+    }
+    return true;
+}
+
+private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
+    bool sanitize = false)
 {
     if (sanitize)
     {
@@ -3471,12 +3506,9 @@ private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
-    auto subPackages = parseSubPackages(repoRoot);
-    if (subPackages.length == 0)
-    {
-        error(i"No sub-packages found in dub.sdl");
+    string[] subPackages;
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
         return 1;
-    }
     info(i"$(subPackages.length) sub-package(s) to test");
     if (compilerIsLdc(environment.get("DC", "")))
         info(i"ldc codegen threads capped at $(hwParallelism())");
@@ -3752,7 +3784,7 @@ private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
 /// wasm-ld, no wasm runtime), which is right for a contributor's machine and
 /// exactly wrong here — without it a missing linker would leave this reporting
 /// success having run nothing.
-private int runExtractedTestsMode(bool failFast)
+private int runExtractedTestsMode(bool failFast, in string[] requested)
 {
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
@@ -3764,12 +3796,9 @@ private int runExtractedTestsMode(bool failFast)
     info(i"repository root: $(repoRoot)");
 
     info(i"scanning sub-packages for @betterC / @wasm");
-    auto subPackages = parseSubPackages(repoRoot);
-    if (subPackages.length == 0)
-    {
-        error(i"No sub-packages found in dub.sdl");
+    string[] subPackages;
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
         return 1;
-    }
 
     struct Job
     {
