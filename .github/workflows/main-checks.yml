@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/xvysbjr8haip41ska9f28hjphyvamn0r-ci-job-mirror
+          bundle=/nix/store/axl7fvn78gjmcgsb33wh6c7b8syjl7ri-ci-job-mirror
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -71,7 +71,7 @@ jobs:
           DRY_RUN: "${{ inputs.dry_run && '--dry-run' || '' }}"
           GITHUB_TOKEN: "${{ github.token }}"
           SHA: "${{ inputs.sha || github.sha }}"
-        run: /nix/store/p1sk5rj6hlhxi3rpahl79mm99gp6s2kx-ci-mirror-checks/bin/ci-mirror-checks
+        run: /nix/store/q0ccwhbzqiyngcjw5774v4p1zzafclh0-ci-mirror-checks/bin/ci-mirror-checks
   rebuild:
     name: Build the commit for real
     needs:

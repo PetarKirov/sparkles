@@ -265,7 +265,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/n1swp1nd8ymk08dr289yp1z87ddh8lkf-ci-job-docs
+          bundle=/nix/store/mab88vssb8ijdplhckr13mlc3j8cy9sd-ci-job-docs
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -285,7 +285,7 @@ jobs:
           path: "~/.yarn/berry/cache"
           restore-keys: "yarn-${{ runner.os }}-"
       - name: Build the VitePress site
-        run: /nix/store/c7cj9kmvr8x0xbff1cdlmx3caj6jxvqc-ci-docs-build/bin/ci-docs-build
+        run: /nix/store/n9v01ln122cw58rk55pi4hphr9v5sbm4-ci-docs-build/bin/ci-docs-build
   examples-aarch64-darwin:
     name: examples aarch64-darwin
     needs:
@@ -324,7 +324,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/00k22sm424fw9s8hbyfi2768c3afp7gf-ci-job-examples-aarch64-darwin
+          bundle=/nix/store/chsn2sa885g9hs2w1ba8a9r5f0s8psgb-ci-job-examples-aarch64-darwin
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -338,9 +338,9 @@ jobs:
             exit 1
           fi
       - name: Prepare the event-horizon comparison checkouts
-        run: /nix/store/cky42v1cnal4ai6l9wlj2cn12q199mbj-ci-eh-comparisons/bin/ci-eh-comparisons
+        run: /nix/store/fbw2vwjvjrxljfpslwj0ds7xpv3gcsyh-ci-eh-comparisons/bin/ci-eh-comparisons
       - name: Build and run the examples whose closure is new
-        run: /nix/store/2ahhnk263y9ysiqp0l27xz44qbz6k202-ci-examples/bin/ci-examples
+        run: /nix/store/4ajj96g0slfnsbbs8mkvfxp5lwsj8mp1-ci-examples/bin/ci-examples
   examples-x86_64-linux:
     name: examples x86_64-linux
     needs:
@@ -379,7 +379,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/frzkgl9vvc17psfdas8zaf7dch4maqyf-ci-job-examples-x86_64-linux
+          bundle=/nix/store/p3wbhhfna133b9gkigbz057p0nzd0v41-ci-job-examples-x86_64-linux
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -393,9 +393,9 @@ jobs:
             exit 1
           fi
       - name: Prepare the event-horizon comparison checkouts
-        run: /nix/store/g55b6cs7xgla1wr0z51man0kw1z40wxh-ci-eh-comparisons/bin/ci-eh-comparisons
+        run: /nix/store/3p07j61hhwg0fakhy4wgdn2hvzyynv3n-ci-eh-comparisons/bin/ci-eh-comparisons
       - name: Build and run the examples whose closure is new
-        run: /nix/store/mvkg2zz9ijagk356hm2r5805f8jyqiz7-ci-examples/bin/ci-examples
+        run: /nix/store/7x7lpkwbfvzm8qfw805mp4r4dq14sbrs-ci-examples/bin/ci-examples
   extracted-tests:
     name: "extracted test modes (--better-c, --wasm)"
     needs:
@@ -434,7 +434,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/h6h2p5782wsahxrx9zicmvhvy2ksxbmv-ci-job-extracted-tests
+          bundle=/nix/store/bdr38jnv4i7hbkcwkykhc3gsl8n7yn64-ci-job-extracted-tests
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -448,7 +448,7 @@ jobs:
             exit 1
           fi
       - name: "--better-c and --wasm for the packages that use them"
-        run: /nix/store/r4biakdxpbx74d9821yywhyw1a3rg7iz-ci-test-extracted/bin/ci-test-extracted
+        run: /nix/store/malbphdc0zq7hcic5h1a6ksva66chcjf-ci-test-extracted/bin/ci-test-extracted
   flake-check-aarch64-darwin:
     name: nix flake check aarch64-darwin
     needs:
@@ -584,7 +584,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/3acbibrcf1wlpyblz78zd7gkh4n9916r-ci-job-lint
+          bundle=/nix/store/dsrx9ni2qlpypy9jj63s01nn3v3270zk-ci-job-lint
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -607,7 +607,7 @@ jobs:
       - name: Every pre-commit hook over the whole tree
         env:
           GITHUB_TOKEN: "${{ github.token }}"
-        run: /nix/store/j7bsqkd37hpnh51pxb6hi762wg6msmca-ci-lint/bin/ci-lint
+        run: /nix/store/fv51fz608xq81yis301r3m50nrpc4sb7-ci-lint/bin/ci-lint
       - name: Check the links this pull request added or changed
         if: "${{ github.event_name == 'pull_request' }}"
         env:
@@ -659,7 +659,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/klib2qy7igc91g33cmldlnrb6s8ipx3v-ci-job-md-examples
+          bundle=/nix/store/60p6c7ikfrj22l3g7d4fv366bsrk09fa-ci-job-md-examples
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -673,9 +673,9 @@ jobs:
             exit 1
           fi
       - name: Prepare the event-horizon comparison checkouts
-        run: /nix/store/g55b6cs7xgla1wr0z51man0kw1z40wxh-ci-eh-comparisons/bin/ci-eh-comparisons
+        run: /nix/store/3p07j61hhwg0fakhy4wgdn2hvzyynv3n-ci-eh-comparisons/bin/ci-eh-comparisons
       - name: Verify the runnable markdown whose closure is new
-        run: /nix/store/y5n0w6k4qvh9kgy18mxkdbvfl5kavf2y-ci-md-examples/bin/ci-md-examples
+        run: /nix/store/95mpr27nvjs1mn5bhdxd296ijkfli5js-ci-md-examples/bin/ci-md-examples
   nix-build-aarch64-darwin:
     needs:
       - plan
@@ -927,7 +927,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/4lyb8prdy0dv54krq617849vqaxbh0v6-ci-job-sanitize-1
+          bundle=/nix/store/vx61c9qf4q4mfqj8w0ip06lgg0n59r1h-ci-job-sanitize-1
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -941,7 +941,7 @@ jobs:
             exit 1
           fi
       - name: Run the tests under ASan and stackovf
-        run: /nix/store/qbd0nry134s7cbl3fddnk9n5a89z6y21-ci-test-sanitize/bin/ci-test-sanitize
+        run: /nix/store/43qmrh1lqcmyjsc4kisnhks0kj7b0ccp-ci-test-sanitize/bin/ci-test-sanitize
   sanitize-2:
     name: sanitize (2/4)
     needs:
@@ -980,7 +980,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/15nzfb22lnp4j0bwf6dkcjpscrf1gk0y-ci-job-sanitize-2
+          bundle=/nix/store/9imq6jvgxri0bgjrdcdrxwdhwxb42kbn-ci-job-sanitize-2
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -994,7 +994,7 @@ jobs:
             exit 1
           fi
       - name: Run the tests under ASan and stackovf
-        run: /nix/store/c3p4hnnk392savavipz1xh3va3ix35nw-ci-test-sanitize/bin/ci-test-sanitize
+        run: /nix/store/f8b6hk3vqdif3vqsyia1qy7l71fi6aig-ci-test-sanitize/bin/ci-test-sanitize
   sanitize-3:
     name: sanitize (3/4)
     needs:
@@ -1033,7 +1033,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/yxxsmzlc8gp4x8y7ys6hxwsq4dnf3m6w-ci-job-sanitize-3
+          bundle=/nix/store/qwalalssn6jys0yfkqg0495fp6cs2c42-ci-job-sanitize-3
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1047,7 +1047,7 @@ jobs:
             exit 1
           fi
       - name: Run the tests under ASan and stackovf
-        run: /nix/store/hc854235688msj09fzaanassnqcicfyn-ci-test-sanitize/bin/ci-test-sanitize
+        run: /nix/store/crqngwc7iz8dwbznl2b8wczg6zypcf3k-ci-test-sanitize/bin/ci-test-sanitize
   sanitize-4:
     name: sanitize (4/4)
     needs:
@@ -1086,7 +1086,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/6w33ymlqp2jyjkslpp6in02220s9af90-ci-job-sanitize-4
+          bundle=/nix/store/nv3nfhz4m70qi4x2zrgxw89amq8nm66f-ci-job-sanitize-4
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1100,7 +1100,7 @@ jobs:
             exit 1
           fi
       - name: Run the tests under ASan and stackovf
-        run: /nix/store/8x7q5ngrd1j24ndfn6sgkzwq8di35h8k-ci-test-sanitize/bin/ci-test-sanitize
+        run: /nix/store/2kk4hlm1q28f5w4332k7vvbz8ks9ri4n-ci-test-sanitize/bin/ci-test-sanitize
   spec-evidence:
     name: "spec evidence & credits"
     needs:
@@ -1131,7 +1131,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/zlnrj1b5zmy964h8ngydrzyklffabf3s-ci-job-spec-evidence
+          bundle=/nix/store/ps1dzrdqbpkn7jxpl11vyv9k564a4pmg-ci-job-spec-evidence
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1145,9 +1145,9 @@ jobs:
             exit 1
           fi
       - name: Every cited symbol resolves
-        run: /nix/store/rkmh62bj00f769pffk5k8c1bvxvcipgx-ci-spec-evidence/bin/ci-spec-evidence
+        run: /nix/store/1fwxdxy7ny7w68i29hl2jis98mz0ijaz-ci-spec-evidence/bin/ci-spec-evidence
       - name: Every shipped component is credited
-        run: /nix/store/fjfp0bgr58005jf5yijw5p6i5za2pgkz-ci-check-credits/bin/ci-check-credits
+        run: /nix/store/xyg9s1nzlda940lpl20hmxgb9zrf5w8a-ci-check-credits/bin/ci-check-credits
   test-aarch64-darwin-ldc2-1:
     name: test aarch64-darwin ldc2 (1/3)
     needs:
@@ -1186,7 +1186,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/xd9flvk7fh6z5j4jjaqafxz21h49fav0-ci-job-test-aarch64-darwin-ldc2-1
+          bundle=/nix/store/k5fcn6qmmcarj89d7cfqs6d0rdxb7cn5-ci-job-test-aarch64-darwin-ldc2-1
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1200,7 +1200,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/92bplfl7jypbdsf0jcynl5lh16xyppkz-ci-test/bin/ci-test
+        run: /nix/store/n6f5xxli8za2l7q16bffavfky44pb87p-ci-test/bin/ci-test
   test-aarch64-darwin-ldc2-2:
     name: test aarch64-darwin ldc2 (2/3)
     needs:
@@ -1239,7 +1239,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/54gcj2lrldnpjxidamj6si0vkw7769rm-ci-job-test-aarch64-darwin-ldc2-2
+          bundle=/nix/store/blc64byp64l0v0mn20b61jwa0jif7cjw-ci-job-test-aarch64-darwin-ldc2-2
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1253,7 +1253,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/gsw8546ccrvhbza4ycxqakw70xdwww54-ci-test/bin/ci-test
+        run: /nix/store/6rzbymxjsphmx1v43ssn0rvmz5riq1sg-ci-test/bin/ci-test
   test-aarch64-darwin-ldc2-3:
     name: test aarch64-darwin ldc2 (3/3)
     needs:
@@ -1292,7 +1292,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/qj2jd8ch9diy7x33b8437p6a1ckahyzb-ci-job-test-aarch64-darwin-ldc2-3
+          bundle=/nix/store/g6vhr7028fng97fy4n5fysxdkyrbl5d4-ci-job-test-aarch64-darwin-ldc2-3
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1306,7 +1306,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/pcxyfk0viqqsrcs696scrkflxn9vxfg8-ci-test/bin/ci-test
+        run: /nix/store/hmw0svjq460wjgc932cn04jn456029bc-ci-test/bin/ci-test
   test-aarch64-linux-ldc2-1:
     name: test aarch64-linux ldc2 (1/4)
     needs:
@@ -1345,7 +1345,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/bmy3l3gbgvfsddl8f5rdn9wi8m9gr15m-ci-job-test-aarch64-linux-ldc2-1
+          bundle=/nix/store/3hizc3681mr5z9bh9k8r3ggn94msq2i7-ci-job-test-aarch64-linux-ldc2-1
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1359,7 +1359,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/qaxa9jp2dw03ahcksawflik9lnci94nc-ci-test/bin/ci-test
+        run: /nix/store/i16lfvcaq2x3jp5y817ihafvylpkky83-ci-test/bin/ci-test
   test-aarch64-linux-ldc2-2:
     name: test aarch64-linux ldc2 (2/4)
     needs:
@@ -1398,7 +1398,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/2mli4chchnky17mcsm34s1calds4pdjp-ci-job-test-aarch64-linux-ldc2-2
+          bundle=/nix/store/vjsbzanfdgb5z5imjpssfab295phjz5s-ci-job-test-aarch64-linux-ldc2-2
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1412,7 +1412,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/rfnyfy0rnd0hc1laz8f6hqxzmzzb8q9s-ci-test/bin/ci-test
+        run: /nix/store/ijn72npp7vlv4nw1g9id8fvdj1ia6mam-ci-test/bin/ci-test
   test-aarch64-linux-ldc2-3:
     name: test aarch64-linux ldc2 (3/4)
     needs:
@@ -1451,7 +1451,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/z2igrppg9646iqhr8w8bix5bfmmd287q-ci-job-test-aarch64-linux-ldc2-3
+          bundle=/nix/store/x9j4bh8jql0k0j98fq26blwc67wcyvmh-ci-job-test-aarch64-linux-ldc2-3
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1465,7 +1465,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/wvg5m6rpsmjrphf8k5s7myd3dshxgdq7-ci-test/bin/ci-test
+        run: /nix/store/871kskbf2v4snk85rcfmnf9vk4yry9vz-ci-test/bin/ci-test
   test-aarch64-linux-ldc2-4:
     name: test aarch64-linux ldc2 (4/4)
     needs:
@@ -1504,7 +1504,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/39n4b4333p0dmnkw90s2vbwdr76156as-ci-job-test-aarch64-linux-ldc2-4
+          bundle=/nix/store/0d2p4qbk52qjg0bkp9l4j88lp5q5vljj-ci-job-test-aarch64-linux-ldc2-4
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1518,7 +1518,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/d7p5w1rxnpnwbvh24ybakhf2wkcllsxw-ci-test/bin/ci-test
+        run: /nix/store/zkl99bqm2ynyj9izig82csvaprb6bqry-ci-test/bin/ci-test
   test-windows:
     name: test x86_64-windows ldc2
     needs:
@@ -1588,7 +1588,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/j9xhypa5mh2asirkfnzl9plngri0ln12-ci-job-test-x86_64-linux-dmd-1
+          bundle=/nix/store/xz48p936lk9zk5zplxllilxliclqwkf4-ci-job-test-x86_64-linux-dmd-1
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1602,7 +1602,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/bafyv68blrg6vwra0440h7f14lgxjpds-ci-test/bin/ci-test
+        run: /nix/store/rb711jc3cq0xvc1qh9jnki4b6kfw6wq5-ci-test/bin/ci-test
   test-x86_64-linux-dmd-2:
     name: test x86_64-linux dmd (2/4)
     needs:
@@ -1641,7 +1641,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/33zd4xg03hi26i0j7havml0afnkv1j6k-ci-job-test-x86_64-linux-dmd-2
+          bundle=/nix/store/nhvcx9rfbm9fhrycssi77s1h2c47q3bi-ci-job-test-x86_64-linux-dmd-2
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1655,7 +1655,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/vvidh0w61rw50zsh9fx3mfkblqvg7ivg-ci-test/bin/ci-test
+        run: /nix/store/1v2ckamh6hp47vs7hzl7jhnxmzg1xa3a-ci-test/bin/ci-test
   test-x86_64-linux-dmd-3:
     name: test x86_64-linux dmd (3/4)
     needs:
@@ -1694,7 +1694,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/fapx8amib5rljp3d38dg7kz31kdwwxww-ci-job-test-x86_64-linux-dmd-3
+          bundle=/nix/store/5qvg44171icf8s9hqgdglcs8c67sqjdw-ci-job-test-x86_64-linux-dmd-3
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1708,7 +1708,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/sasi1xi5h216dxk65rjaw6rqim99iasf-ci-test/bin/ci-test
+        run: /nix/store/8spxx83a232hypli9fs10hvc5zv9g4hd-ci-test/bin/ci-test
   test-x86_64-linux-dmd-4:
     name: test x86_64-linux dmd (4/4)
     needs:
@@ -1747,7 +1747,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/0451lrmp96gdllmhl34h4b3zkmyddvlp-ci-job-test-x86_64-linux-dmd-4
+          bundle=/nix/store/h8z71rsq7pvfm03vg4801j6bh8xzpxdd-ci-job-test-x86_64-linux-dmd-4
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1761,7 +1761,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/rr0anxhdib1ccanfdiszhp1d2i8mmzs4-ci-test/bin/ci-test
+        run: /nix/store/7m2wl3lmr1589dg6jgypkpxslzg2bgbl-ci-test/bin/ci-test
   test-x86_64-linux-ldc2-1:
     name: test x86_64-linux ldc2 (1/4)
     needs:
@@ -1800,7 +1800,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/685xf3qh1zf75n36qipxvbzf9m7lwz40-ci-job-test-x86_64-linux-ldc2-1
+          bundle=/nix/store/7sqpvq1k6gxdamiw59mb7d0njdyng649-ci-job-test-x86_64-linux-ldc2-1
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1814,7 +1814,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/bafyv68blrg6vwra0440h7f14lgxjpds-ci-test/bin/ci-test
+        run: /nix/store/rb711jc3cq0xvc1qh9jnki4b6kfw6wq5-ci-test/bin/ci-test
   test-x86_64-linux-ldc2-2:
     name: test x86_64-linux ldc2 (2/4)
     needs:
@@ -1853,7 +1853,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/1fw27kq2rj59k8430iygdjqd5pxdpab5-ci-job-test-x86_64-linux-ldc2-2
+          bundle=/nix/store/rmazs08zcqc02sb7n94b6iglqdbk8njc-ci-job-test-x86_64-linux-ldc2-2
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1867,7 +1867,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/vvidh0w61rw50zsh9fx3mfkblqvg7ivg-ci-test/bin/ci-test
+        run: /nix/store/1v2ckamh6hp47vs7hzl7jhnxmzg1xa3a-ci-test/bin/ci-test
   test-x86_64-linux-ldc2-3:
     name: test x86_64-linux ldc2 (3/4)
     needs:
@@ -1906,7 +1906,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/hv6hfnzni0bnyrg5xyjqwm0w3b1y6yv1-ci-job-test-x86_64-linux-ldc2-3
+          bundle=/nix/store/1ypj9q6kalh0pyif7121sdl9vmi6nksw-ci-job-test-x86_64-linux-ldc2-3
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1920,7 +1920,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/sasi1xi5h216dxk65rjaw6rqim99iasf-ci-test/bin/ci-test
+        run: /nix/store/8spxx83a232hypli9fs10hvc5zv9g4hd-ci-test/bin/ci-test
   test-x86_64-linux-ldc2-4:
     name: test x86_64-linux ldc2 (4/4)
     needs:
@@ -1959,7 +1959,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/576bzlh91p5mbvdg7frikcxn9wwh0ilx-ci-job-test-x86_64-linux-ldc2-4
+          bundle=/nix/store/16n1hwzqkf4nwf0vx0kqsx8nlb6r8mkh-ci-job-test-x86_64-linux-ldc2-4
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -1973,7 +1973,7 @@ jobs:
             exit 1
           fi
       - name: dub test the packages whose closure is new
-        run: /nix/store/rr0anxhdib1ccanfdiszhp1d2i8mmzs4-ci-test/bin/ci-test
+        run: /nix/store/7m2wl3lmr1589dg6jgypkpxslzg2bgbl-ci-test/bin/ci-test
   text-conformance:
     name: Unicode conformance
     needs:
@@ -2061,7 +2061,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/3xwwiinbnhdgcpqj2jcfva83nw6d8i52-ci-job-wsi-demos
+          bundle=/nix/store/cqgx01djgn7vrm7bx67lf42n16fzzgfp-ci-job-wsi-demos
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -2075,7 +2075,7 @@ jobs:
             exit 1
           fi
       - name: Build and run the X11 and Wayland examples and demos
-        run: /nix/store/hs0hvnapdpypncmz0n169s81a31i6dx0-ci-wsi-demos/bin/ci-wsi-demos
+        run: /nix/store/044kihgkp1q56b1rfsnmz34jyk7jy5li-ci-wsi-demos/bin/ci-wsi-demos
   wsi-windows:
     name: wsi x86_64-windows
     needs:
