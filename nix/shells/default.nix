@@ -182,6 +182,8 @@
           # exec git. CI used to find the runner image's; CI steps now run with
           # this shell's PATH and nothing else. Minimal, so no second Python.
           pkgs.gitMinimal
+          # `unzip -l`, the cross-check of the cosmopolitan-ape ZIP example.
+          pkgs.unzip
 
           # ghostty — the slim repack (shared lib + headers + .pc), NOT the
           # upstream `.dev` output: its static archive embeds zig store
@@ -297,6 +299,11 @@
           pkgs.xcb-imdkit
           pkgs.xorg.xcbutil
           pkgs.xorg.xcbutil.dev
+
+          # `setsid`, exec'd by event-horizon's supervision tests (a
+          # descendant in its own session). CI found the runner image's copy;
+          # its steps now see only this shell's PATH.
+          pkgs.util-linux
 
           # `dbus-daemon`, exec'd by apps/terminal's D-Bus tests (`dbus_conn`,
           # `desktop_bus`) as a private bus with a fake notification server

@@ -358,6 +358,9 @@ in
           system = null;
           runs-on = "windows-latest";
           timeout-minutes = 40;
+          # As on the Nix legs: dub names its build directories after
+          # `git describe`, which a shallow clone cannot answer.
+          checkout.fetch-depth = 0;
           env.DC = "ldc2";
           lazy = {
             units = map pkgUnit windowsPackages;
@@ -388,6 +391,7 @@ in
           system = null;
           runs-on = "windows-latest";
           timeout-minutes = 30;
+          checkout.fetch-depth = 0;
           env.WSI_AUTO_EXIT = "1";
           lazy.units = [
             "pkg/wsi"

@@ -519,6 +519,13 @@
       # non-zero exit is collected into the final status.
       packages.run-all-examples = pkgs.writeShellApplication {
         name = "run-all-examples";
+        # What the examples exec (`sh -c` in agent-tooling and live-tasklist),
+        # so the run does not depend on the caller's PATH — CI's has nothing
+        # but the step's own inputs.
+        runtimeInputs = [
+          pkgs.bash
+          pkgs.coreutils
+        ];
         text = ''
           failures=0
           ${lib.concatMapStrings (

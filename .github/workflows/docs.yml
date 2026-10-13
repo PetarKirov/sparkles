@@ -61,7 +61,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/mzsca8l6dyqzf4zrdb713q1qad3aiv3n-ci-job-deploy
+          bundle=/nix/store/q82qniarj5xv5ypfjv9xfk4bb9h8q94s-ci-job-deploy
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -86,10 +86,10 @@ jobs:
           GITHUB_TOKEN: "${{ github.token }}"
         run: /nix/store/13d5g12xqd6mjjimr45h9r4g9f0wsys7-ci-merge-badges/bin/ci-merge-badges
       - name: Build the VitePress site
-        run: /nix/store/lxvicvwzr4chcgq1x2mphnjdxigna6pw-ci-docs-build/bin/ci-docs-build
+        run: /nix/store/d7w9aavbjna4pmsy1zfcfpx1a0kcprns-ci-docs-build/bin/ci-docs-build
       - name: "Deploy to Cloudflare Pages & comment the preview URL"
         env:
           CLOUDFLARE_ACCOUNT_ID: "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           CLOUDFLARE_API_TOKEN: "${{ secrets.CLOUDFLARE_API_TOKEN }}"
           GITHUB_TOKEN: "${{ github.token }}"
-        run: /nix/store/26l2ack5i50ca38gfk48kp2ajb51skjw-ci-docs-deploy/bin/ci-docs-deploy
+        run: /nix/store/s99qjj0ls7530c3gvyhwsf52zrzciyl9-ci-docs-deploy/bin/ci-docs-deploy

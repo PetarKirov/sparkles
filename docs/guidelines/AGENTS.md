@@ -238,7 +238,7 @@ workflow. Rehearse it with
   string. Jobs are lazy: they run only the units (`nix/ci/lib/graph.nix`)
   whose inputs are new, so a test that reads a file outside its package must
   list it in the graph's `testReads`, or it passes stale.
-  [`nix/ci/README.md`](../../nix/ci/README.md).
+  The design is in `nix/ci/README.md`.
 - **Jobs that only talk to an API use `.#ci-minimal`** — the same binary without
   the compiler toolchain in its runtime closure (121 MiB vs 2.4 GiB).
   `--test`, `--test-extracted`, and `--example-files` need `.#ci`.
