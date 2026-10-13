@@ -724,9 +724,16 @@ struct WorkspaceHost
             }
         }
 
-        // A viewer reloads its file when it changed on disk (`TDV8`).
+        // A viewer reloads its file when it changed on disk (`TDV8`). Only a
+        // shown one asks for a frame: a hidden tab's viewer is never painted,
+        // so it would want one on every tick, and the window would redraw
+        // continuously. Showing it changes the arrangement, which repaints.
         foreach (id, p; viewers)
-            any |= p.poll() || p.needsPaint;
+        {
+            const changed = p.poll();
+            if (boxOf(id) !is null)
+                any |= changed || p.needsPaint;
+        }
 
         applyExits();
         placeChrome();
