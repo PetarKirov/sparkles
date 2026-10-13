@@ -173,8 +173,7 @@ Layer place(WidgetTree tree, int cols, int rows, int x, int y, int cellW, int ce
     l.tree = tree;
     if (!tree.nodes.length || cols <= 0 || rows <= 0)
         return l;
-    l.frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
-    l.hits = hoverTargets(tree, l.frames);
+    placedLayout(tree, cols, rows, l.frames, l.hits);
     l.cellW = cellW > 0 ? cellW : 1;
     l.cellH = cellH > 0 ? cellH : 1;
     const b = l.frames[tree.root].rect;
@@ -194,6 +193,64 @@ Layer place(WidgetTree tree, int cols, int rows, int x, int y, int cellW, int ce
             break;
     }
     return l;
+}
+
+// Surfaces are rebuilt on every tick but change only when what they show
+// does, and laying one out wraps every run of its text in the host's faces.
+// So the last few layouts are kept: the same tree in the same size and the
+// same faces reuses its frames and hit rects. The faces are told apart by
+// what the measurer answers, since the host republishes it every frame.
+private struct Placed
+{
+    WidgetTree tree;
+    int cols, rows;
+    int[2] faces;
+    Frame[] frames;
+    HoverTarget[] hits;
+}
+private Placed[8] placed;
+private size_t placedNext;
+
+private void placedLayout(WidgetTree tree, int cols, int rows,
+    out Frame[] frames, out HoverTarget[] hits) @safe
+{
+    int[2] faces;
+    if (haveChromeMeasure)
+        faces = [chromeMeasure.width("Mg", TextStyle.init), chromeMeasure.rows(TextStyle.init)];
+    foreach (ref p; placed)
+        if (p.frames.length && p.cols == cols && p.rows == rows && p.faces == faces
+            && p.tree == tree)
+        {
+            frames = p.frames;
+            hits = p.hits;
+            return;
+        }
+    frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
+    hits = hoverTargets(tree, frames);
+    placed[placedNext] = Placed(tree, cols, rows, faces, frames, hits);
+    placedNext = (placedNext + 1) % placed.length;
+}
+
+@("chrome.place.reusesTheLayoutOfAnUnchangedTree")
+@safe unittest
+{
+    WidgetTree build(string label)
+    {
+        Builder b;
+        const t = b.add(Widget(kind: WidgetKind.text, text: label, slot: Slot.code));
+        return b.finish(b.add(Widget(kind: WidgetKind.column, children: [t])));
+    }
+
+    const first = place(build("same"), 20, 3, 0, 0, 1, 1, Place.top);
+    const again = place(build("same"), 20, 3, 0, 40, 1, 1, Place.top);
+    assert(again.frames is first.frames && again.hits is first.hits);
+    assert(again.y == 40, "the position is still the caller's");
+
+    const narrower = place(build("same"), 10, 3, 0, 0, 1, 1, Place.top);
+    assert(narrower.frames !is first.frames);
+    const changed = place(build("other text"), 20, 3, 0, 0, 1, 1, Place.top);
+    assert(changed.frames !is first.frames);
+    assert(changed.frames[changed.tree.root].rect.width > first.frames[first.tree.root].rect.width);
 }
 
 /**
