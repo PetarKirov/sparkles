@@ -358,10 +358,9 @@ in
           system = null;
           runs-on = "windows-latest";
           timeout-minutes = 40;
-          # As on the Nix legs: dub names its build directories after
-          # `git describe`, which a shallow clone cannot answer.
+          # As on the Nix test legs: dub derives a package's version from
+          # `git describe`.
           checkout.fetch-depth = 0;
-          env.DC = "ldc2";
           lazy = {
             units = map pkgUnit windowsPackages;
             granular = true;
@@ -374,6 +373,12 @@ in
               {
                 name = "dub test the packages whose closure is new";
                 shell = "bash";
+                # On the step, not the job: setup-dlang exports `DC` as a full
+                # path through GITHUB_ENV, which overrides a job-level `env`.
+                # Given the full path the `@ctfe` probe runs, and on Windows it
+                # cannot yet find its import roots; given `ldc2` it skips, as
+                # it always has on this leg.
+                env.DC = "ldc2";
                 run = ''
                   # shellcheck disable=SC2086 # a word list, one package per word
                   ci/test-windows.sh $CI_UNITS

@@ -1523,7 +1523,6 @@ jobs:
     timeout-minutes: 40
     env:
       CI_UNITS: "${{ join(fromJSON(needs.plan.outputs.stale)['test-windows'], ' ') }}"
-      DC: ldc2
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -1541,6 +1540,8 @@ jobs:
           restore-keys: x86_64-windows-dub-
       - name: dub test the packages whose closure is new
         shell: bash
+        env:
+          DC: ldc2
         run: |
           # shellcheck disable=SC2086 # a word list, one package per word
           ci/test-windows.sh $CI_UNITS
