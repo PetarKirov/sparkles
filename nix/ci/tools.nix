@@ -114,21 +114,24 @@ in
               nix ${nixFlags} eval --json ".#ci.plan.$wf" > raw.json
               echo "::endgroup::"
 
-              present='{}'
+              # Only presence matters, and through a file: hundreds of narinfo
+              # objects overflow an argument list.
+              echo '{}' > present.json
               if [ "''${CI_FORCE:-0}" = 1 ]; then
                 echo "Forced: every unit runs."
               else
                 # One narinfo lookup per stamp; a lookup that fails reads as
                 # "missing", so an unreachable cache re-runs work, never skips it.
-                if found=$(jq -r '.[].units[].path' raw.json \
-                    | xargs -r nix ${nixFlags} path-info --json --store '${cachixUrl}' 2> /dev/null \
-                    | jq -s 'add // {}'); then
-                  present=$found
-                fi
+                jq -r '.[].units[].path' raw.json \
+                  | xargs -r nix ${nixFlags} path-info --json --store '${cachixUrl}' 2> /dev/null \
+                  | jq -s 'add // {} | with_entries(select(.value != null)) | map_values(true)' \
+                    > present.next.json \
+                  && mv present.next.json present.json \
+                  || echo "::warning::Could not ask the cache for stamps; everything runs."
               fi
 
-              jq --argjson present "$present" \
-                '{ jobs: ., stale: map_values([.units[] | select($present[.path] == null) | .arg]) }' \
+              jq --slurpfile present present.json \
+                '{ jobs: ., stale: map_values([.units[] | select($present[0][.path] | not) | .arg]) }' \
                 raw.json > plan.json
               echo "stale=$(jq -c .stale plan.json)" >> "''${GITHUB_OUTPUT:-/dev/null}"
 

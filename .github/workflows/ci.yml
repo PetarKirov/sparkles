@@ -860,7 +860,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/r9isj3ha6fm3f9vx0ckdc7b1nlwj1r7h-ci-job-plan
+          bundle=/nix/store/qq076sgh4pys58l6l3d683zw37fz54ym-ci-job-plan
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -877,7 +877,7 @@ jobs:
         id: plan
         env:
           CI_FORCE: "${{ inputs.force && '1' || '0' }}"
-        run: /nix/store/afay622b0alc3xrmhkgy2s2ca9bbd8w1-ci-plan/bin/ci-plan ci
+        run: /nix/store/2mi29ny489md2wlgziq06950k4snszlc-ci-plan/bin/ci-plan ci
       - name: Keep the plan for the fan-in
         uses: actions/upload-artifact@v7
         with:
