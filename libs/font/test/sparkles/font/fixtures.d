@@ -494,3 +494,39 @@ ubyte[] mvarTable(const(MvarRecord)[] records, const(ubyte)[] store, uint record
     }
     return t ~ store;
 }
+
+/// A `vhea` of 16.16 `version_` (36 bytes), with `numOfLongVerMetrics` last.
+ubyte[] vheaTable(uint numOfLongVerMetrics, int ascender = 500, int descender = -500, int lineGap = 0,
+    uint version_ = 0x0001_0000)
+{
+    auto t = u32(version_) ~ u16(cast(uint) ascender) ~ u16(cast(uint) descender) ~ u16(cast(uint) lineGap);
+    t.length = 34;
+    return t ~ u16(numOfLongVerMetrics);
+}
+
+/// `vmtx` with long metrics `(advanceHeight, tsb)` then trailing top side bearings.
+ubyte[] vmtxTable(const(uint[2])[] longMetrics, const(int)[] trailingTsb = null)
+    => hmtx(longMetrics, trailingTsb);
+
+/// A `VORG` of `major.minor` with `defaultY` and `[glyph, vertOriginY]` records in the given order.
+ubyte[] vorgTable(int defaultY, const(int[2])[] records, uint major = 1, uint minor = 0)
+{
+    ubyte[] t = u16(major) ~ u16(minor) ~ u16(cast(uint) defaultY) ~ u16(cast(uint) records.length);
+    foreach (r; records) t ~= u16(r[0]) ~ u16(cast(uint) r[1]);
+    return t;
+}
+
+/**
+A `VVAR` table of major version `major` holding `store`, the advance-height
+map `advanceMap` and the vertical-origin map `originMap` (offsets 0 when
+null); no side-bearing maps.
+*/
+ubyte[] vvarTable(const(ubyte)[] store, const(ubyte)[] advanceMap = null, const(ubyte)[] originMap = null,
+    uint major = 1)
+{
+    const storeAt = store is null ? 0 : 24;
+    const mapAt = advanceMap is null ? 0 : 24 + store.length;
+    const originAt = originMap is null ? 0 : 24 + store.length + advanceMap.length;
+    return u16(major) ~ u16(0) ~ u32(storeAt) ~ u32(cast(uint) mapAt) ~ u32(0) ~ u32(0)
+        ~ u32(cast(uint) originAt) ~ store ~ advanceMap ~ originMap;
+}

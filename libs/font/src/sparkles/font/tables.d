@@ -16,13 +16,13 @@ import sparkles.font.variations : DeltaSetIndexMap, ItemVariationStore;
 @safe pure nothrow @nogc:
 
 /// The bytes of `tag` and its absolute start, or the lookup error.
-private struct Located
+package struct Located
 {
     const(ubyte)[] data;
     ulong start;
 }
 
-private FontResult!Located locate(return scope const Face face, Tag tag)
+package FontResult!Located locate(return scope const Face face, Tag tag)
 {
     auto t = face.table(tag);
     if (t.hasError)
@@ -30,7 +30,7 @@ private FontResult!Located locate(return scope const Face face, Tag tag)
     return fontOk(Located(t.value, face.record(face.find(tag)).offset));
 }
 
-private FontResult!T shortTable(T)(Tag tag, in Located at, ulong needed)
+package FontResult!T shortTable(T)(Tag tag, in Located at, ulong needed)
     => fontErr!T(tableError(FontErrorKind.truncated, tag, at.start, at.data.length < needed
         ? at.data.length : needed));
 
