@@ -1362,3 +1362,70 @@ ubyte[] reverseChainSubst(const(ubyte)[] coverage, const(ubyte[])[] backtrack, c
         ~ coverageArray(lookahead, headerLength, body) ~ u16Array(substitutes);
     return t ~ body;
 }
+
+// ---------------------------------------------------------------------------
+// Colour tables
+// ---------------------------------------------------------------------------
+
+/**
+A `COLR` of `version_` with `baseGlyphs` base glyph records and `layers`
+layer records (zero-filled), and from version 1 a BaseGlyphList of
+`paintRecords` records (offset 0 when `paintRecords` is `uint.max`).
+*/
+ubyte[] colrTable(uint version_, uint baseGlyphs, uint layers, uint paintRecords = uint.max)
+{
+    const headerLength = version_ >= 1 ? 34 : 14;
+    const baseAt = headerLength, layerAt = baseAt + 6 * baseGlyphs, listAt = layerAt + 4 * layers;
+    ubyte[] t = u16(version_) ~ u16(baseGlyphs) ~ u32(baseAt) ~ u32(layerAt) ~ u16(layers);
+    if (version_ >= 1)
+        t ~= u32(paintRecords == uint.max ? 0 : listAt) ~ u32(0) ~ u32(0) ~ u32(0) ~ u32(0);
+    t.length += 6 * baseGlyphs + 4 * layers;
+    if (version_ >= 1 && paintRecords != uint.max)
+    {
+        t ~= u32(paintRecords);
+        t.length += 6 * paintRecords;
+    }
+    return t;
+}
+
+/// A `CPAL` of `version_` with `palettes` palettes of `entries` entries each (all black).
+ubyte[] cpalTable(uint palettes, uint entries = 2, uint version_ = 0)
+{
+    const records = palettes * entries;
+    ubyte[] t = u16(version_) ~ u16(entries) ~ u16(palettes) ~ u16(records)
+        ~ u32(cast(uint)(12 + 2 * palettes + (version_ >= 1 ? 12 : 0)));
+    foreach (p; 0 .. palettes) t ~= u16(p * entries);
+    if (version_ >= 1)
+        t ~= u32(0) ~ u32(0) ~ u32(0);
+    t.length += 4 * records;
+    return t;
+}
+
+/// A `CBDT` header of `major.0` and no glyph data.
+ubyte[] cbdtTable(uint major = 3) => u16(major) ~ u16(0);
+
+/// A `CBLC` of `major.0` with `sizes` zero-filled BitmapSize records.
+ubyte[] cblcTable(uint sizes, uint major = 3)
+{
+    ubyte[] t = u16(major) ~ u16(0) ~ u32(sizes);
+    t.length += 48 * sizes;
+    return t;
+}
+
+/// An `sbix` of `version_` with `strikes` empty strikes.
+ubyte[] sbixTable(uint strikes, uint version_ = 1)
+{
+    ubyte[] t = u16(version_) ~ u16(1) ~ u32(strikes);
+    foreach (_; 0 .. strikes) t ~= u32(cast(uint)(8 + 4 * strikes));
+    foreach (_; 0 .. strikes) t ~= u16(72) ~ u16(72);
+    return t;
+}
+
+/// An `SVG ` of `version_` with `entries` document records over one shared document.
+ubyte[] svgTable(uint entries, uint version_ = 0)
+{
+    ubyte[] t = u16(version_) ~ u32(10) ~ u32(0) ~ u16(entries);
+    const docAt = 2 + 12 * entries;
+    foreach (i; 0 .. entries) t ~= u16(i) ~ u16(i) ~ u32(docAt) ~ u32(5);
+    return t ~ cast(const(ubyte)[]) "<svg/";
+}

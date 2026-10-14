@@ -316,3 +316,27 @@ malformed subtable, a coverage index past its subtable's array, or a record
 past the table is one error element, and the walk continues; an extension of
 an extension, or of a type differing from the lookup's first extension, is
 its subtable's `badValue`.
+
+## Colour — `sparkles.font.colour`
+
+`face.colourCapability` reports which colour formats a face holds,
+independent of which the library renders, reading each table's header in
+O(1). The result has one `ColourSupport` per format: `present` when the face
+has the table, and `has`, a `FontResult!bool` that is `false` for a table
+holding no data for the format and the table's error when its header cannot
+be verified (`usable` is `has` being `true`). Support is never claimed for
+data that was not checked.
+
+| Entry        | `has` is true for                                                                     |
+| ------------ | ------------------------------------------------------------------------------------- |
+| `colrLayers` | `COLR` version 0 or 1 with base glyph records, whose base glyph and layer arrays fit  |
+| `colrPaint`  | `COLR` version 1 with a non-empty BaseGlyphList (offset at byte 14) whose records fit |
+| `cpal`       | `CPAL` version 0 or 1 with palettes, whose index array and colour records fit         |
+| `cbdt`       | `CBDT` with a `CBLC` holding at least one bitmap size, both of major version 2 or 3   |
+| `sbix`       | `sbix` version 1 with strikes                                                         |
+| `svg`        | `SVG ` version 0 with a non-empty document list                                       |
+
+A `COLR` version above 1 is `unsupportedVersion` for both `COLR` entries,
+where HarfBuzz reads it as version 1; a `CBDT` without `CBLC` is
+`missingTable` naming `CBLC`, where HarfBuzz counts it. A truncated header,
+or an offset outside its table, is that entry's error.
