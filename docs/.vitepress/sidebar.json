@@ -998,6 +998,10 @@
             "link": "/specs/base/buffer"
           },
           {
+            "text": "Generational pool spec",
+            "link": "/specs/base/pool"
+          },
+          {
             "text": "CustomFloat spec",
             "link": "/specs/base/custom-float"
           },
