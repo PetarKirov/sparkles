@@ -535,3 +535,10 @@ M2 adds the `callerStorage` limit that the amended `FTP14` requires.
 
 The owner accepted these contracts on 2026-10-14 (PR #634 merged), and M2
 implementation began against them.
+
+Implementation amended two details of the accepted page. `FTP38` called the
+assembly's italics correction absent when null, but it is a MathValueRecord
+stored inline: it is always present, and only its Device table can be absent.
+And § 9 now lists a divergence the review missed: for math-kern heights that do
+not ascend, HarfBuzz's binary search and `FTP37`'s stored-order scan can choose
+different steps.
