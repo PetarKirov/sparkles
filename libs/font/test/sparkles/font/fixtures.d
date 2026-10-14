@@ -530,3 +530,176 @@ ubyte[] vvarTable(const(ubyte)[] store, const(ubyte)[] advanceMap = null, const(
     return u16(major) ~ u16(0) ~ u32(storeAt) ~ u32(cast(uint) mapAt) ~ u32(0) ~ u32(0)
         ~ u32(cast(uint) originAt) ~ store ~ advanceMap ~ originMap;
 }
+
+/**
+A BaseCoord: format 1 (`coordinate`), 2 (plus `glyph` and `point`) or 3
+(plus `device`, a Device or VariationIndex table placed after it, offset 0
+when null). Any other format is written as format and coordinate only.
+*/
+struct BaseCoordSpec
+{
+    uint format = 1;
+    int coordinate;
+    uint glyph, point;
+    const(ubyte)[] device;
+}
+
+/// The bytes of a BaseCoord.
+ubyte[] baseCoord(const BaseCoordSpec c)
+{
+    auto t = u16(c.format) ~ u16(cast(uint) c.coordinate);
+    if (c.format == 2)
+        return t ~ u16(c.glyph) ~ u16(c.point);
+    if (c.format == 3)
+        return t ~ u16(c.device is null ? 0 : 6) ~ c.device;
+    return t;
+}
+
+/// A minimum and maximum, each optional (a null offset when `has…` is false).
+struct MinMaxPair
+{
+    bool hasMin;
+    BaseCoordSpec min;
+    bool hasMax;
+    BaseCoordSpec max;
+}
+
+/// A FeatMinMaxRecord.
+struct FeatMinMaxSpec
+{
+    string tag;
+    MinMaxPair values;
+}
+
+/// A MinMax table: its own minimum and maximum, then feature records in the given order.
+struct MinMaxSpec
+{
+    MinMaxPair values;
+    const(FeatMinMaxSpec)[] features;
+}
+
+/// The bytes of a MinMax table; children follow the header in order.
+ubyte[] minMaxTable(const MinMaxSpec m)
+{
+    const headerLength = 6 + 8 * m.features.length;
+    ubyte[] body;
+    uint place(bool has, const BaseCoordSpec c)
+    {
+        if (!has)
+            return 0;
+        const at = cast(uint)(headerLength + body.length);
+        body ~= baseCoord(c);
+        return at;
+    }
+    const minAt = place(m.values.hasMin, m.values.min), maxAt = place(m.values.hasMax, m.values.max);
+    ubyte[] t = u16(minAt) ~ u16(maxAt) ~ u16(cast(uint) m.features.length);
+    foreach (f; m.features)
+    {
+        const fMin = place(f.values.hasMin, f.values.min), fMax = place(f.values.hasMax, f.values.max);
+        t ~= cast(const(ubyte)[]) f.tag ~ u16(fMin) ~ u16(fMax);
+    }
+    return t ~ body;
+}
+
+/// A BaseLangSysRecord: a language tag and its MinMax.
+struct LangSysSpec
+{
+    string tag;
+    MinMaxSpec minMax;
+}
+
+/// A BaseScript: optional BaseValues and default MinMax, and language records in the given order.
+struct BaseScriptSpec
+{
+    string tag;
+    bool hasValues;
+    uint defaultIndex;
+    const(BaseCoordSpec)[] coords;
+    bool hasDefaultMinMax;
+    MinMaxSpec defaultMinMax;
+    const(LangSysSpec)[] langSys;
+}
+
+/// The bytes of a BaseScript table.
+ubyte[] baseScriptTable(const BaseScriptSpec s)
+{
+    const headerLength = 6 + 6 * s.langSys.length;
+    ubyte[] body;
+    uint valuesAt, defaultAt;
+    if (s.hasValues)
+    {
+        valuesAt = cast(uint) headerLength;
+        ubyte[] values = u16(s.defaultIndex) ~ u16(cast(uint) s.coords.length);
+        ubyte[] coords;
+        foreach (c; s.coords)
+        {
+            values ~= u16(cast(uint)(4 + 2 * s.coords.length + coords.length));
+            coords ~= baseCoord(c);
+        }
+        body ~= values ~ coords;
+    }
+    if (s.hasDefaultMinMax)
+    {
+        defaultAt = cast(uint)(headerLength + body.length);
+        body ~= minMaxTable(s.defaultMinMax);
+    }
+    ubyte[] t = u16(valuesAt) ~ u16(defaultAt) ~ u16(cast(uint) s.langSys.length);
+    foreach (l; s.langSys)
+    {
+        t ~= cast(const(ubyte)[]) l.tag ~ u16(cast(uint)(headerLength + body.length));
+        body ~= minMaxTable(l.minMax);
+    }
+    return t ~ body;
+}
+
+/// A `BASE` axis: baseline tags and scripts, each in the given order.
+struct BaseAxisSpec
+{
+    const(string)[] tags;
+    const(BaseScriptSpec)[] scripts;
+}
+
+/// The bytes of an Axis table with its tag list and script list.
+ubyte[] baseAxisTable(const BaseAxisSpec a)
+{
+    ubyte[] tagList = u16(cast(uint) a.tags.length);
+    foreach (tag; a.tags) tagList ~= cast(const(ubyte)[]) tag;
+    ubyte[] scriptList = u16(cast(uint) a.scripts.length), scripts;
+    foreach (s; a.scripts)
+    {
+        scriptList ~= cast(const(ubyte)[]) s.tag ~ u16(cast(uint)(2 + 6 * a.scripts.length + scripts.length));
+        scripts ~= baseScriptTable(s);
+    }
+    return u16(4) ~ u16(cast(uint)(4 + tagList.length)) ~ tagList ~ scriptList ~ scripts;
+}
+
+/**
+A `BASE` table of `major.minor` with optional axes and, from minor 1, an item
+variation store after them (offset 0 when null).
+*/
+ubyte[] baseTable(const(BaseAxisSpec)[] horizontal, const(BaseAxisSpec)[] vertical,
+    const(ubyte)[] store = null, uint minor = 0, uint major = 1)
+{
+    const headerLength = minor >= 1 ? 12 : 8;
+    ubyte[] body;
+    uint hAt, vAt, storeAt;
+    if (horizontal.length)
+    {
+        hAt = cast(uint)(headerLength + body.length);
+        body ~= baseAxisTable(horizontal[0]);
+    }
+    if (vertical.length)
+    {
+        vAt = cast(uint)(headerLength + body.length);
+        body ~= baseAxisTable(vertical[0]);
+    }
+    if (store !is null)
+    {
+        storeAt = cast(uint)(headerLength + body.length);
+        body ~= store;
+    }
+    auto t = u16(major) ~ u16(minor) ~ u16(hAt) ~ u16(vAt);
+    if (minor >= 1)
+        t ~= u32(storeAt);
+    return t ~ body;
+}
