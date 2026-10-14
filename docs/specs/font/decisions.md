@@ -532,3 +532,6 @@ The reviewer's gate verdict on the recheck: with the two majors and the minors
 applied, these contracts meet the bar `parsing.md` set for M1. Delivered M1
 code reports a short caller array as `limitExceeded` without a named limit;
 M2 adds the `callerStorage` limit that the amended `FTP14` requires.
+
+The owner accepted these contracts on 2026-10-14 (PR #634 merged), and M2
+implementation began against them.

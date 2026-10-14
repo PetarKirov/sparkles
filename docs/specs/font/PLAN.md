@@ -16,7 +16,7 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | ------------------------------------------------------------------------- | ----------- |
 | [Stage 0](#stage-0-specification-and-spikes)                              | done        |
 | [M1 Parse](#m1-parse)                                                     | done        |
-| [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | not started |
+| [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | in progress |
 | [M3 Outlines](#m3-outlines)                                               | not started |
 | [M4 Shaping](#m4-shaping)                                                 | not started |
 | [M5 Grayscale raster](#m5-grayscale-raster)                               | not started |
@@ -100,7 +100,7 @@ contract. Borrowed table-query/result contracts and error distinctions for `MATH
 `BASE` and vertical metrics refined before implementation. The owner accepted
 base's unit contract on 2026-10-14; the contracts are drafted, their adversarial
 review is dispositioned ([`decisions.md`](./decisions.md#m2-operation-contract-review)),
-and they await the owner's acceptance.
+and the owner accepted them on 2026-10-14.
 
 **Deliverable.** `FontInstance`, normalization, `HVAR`/`MVAR`, physical/design
 and pixel measurements, line and cell metrics, baseline/vertical metrics, `MATH`
@@ -232,5 +232,5 @@ an x86_64 Android emulator and an arm64-v8a phone. The open M1 gap is in the
 evidence ledger: a race-detector run of the concurrency test
 (`FTA2`). Next action: M2. Base's unit contract is accepted, and the M2
 operation contracts are drafted in [`variation-metrics.md`](./variation-metrics.md);
-their adversarial review is dispositioned, and implementation starts once the
-owner accepts them.
+their adversarial review is dispositioned, and the owner accepted them on
+2026-10-14; implementation is in progress.
