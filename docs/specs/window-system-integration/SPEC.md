@@ -347,8 +347,10 @@ round outward; suggested native rectangles remain exact physical values.
 
 ### 5.2 Identity and errors
 
-`WindowId`, `OutputId`, `SeatId`, `PointerId`, and `OfferId` carry an index plus a
-generation. The all-zero value is invalid. Stale identifiers return
+`WindowId`, `OutputId`, `SeatId`, `PointerId`, and `OfferId` are
+[`sparkles.base.pool`](../base/pool.md) handles: a 0-based index plus a generation
+that starts at 1. The all-zero value is invalid. Each backend keeps its windows in a
+fixed `Pool`, whose records never move, so a native callback may hold one's address. Stale identifiers return
 `WsiErrorKind.staleId`, never address a recycled native object.
 
 Every fallible synchronous API returns `Expected!(T, WsiError)`. `WsiError` records:

@@ -17,6 +17,7 @@ import core.sys.windows.imm : ATTR_CONVERTED, ATTR_FIXEDCONVERTED,
     ISC_SHOWUICOMPOSITIONWINDOW, WM_IME_CHAR, WM_IME_COMPOSITION,
     WM_IME_ENDCOMPOSITION, WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION;
 
+import sparkles.base.pool.pool : Pool, PoolError;
 import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16z;
 import sparkles.base.text.utf : decodeToken, encodeScalar, UtfMode, UtfStatus, scalarUnits;
 import sparkles.base.text.source_map : SourceByteOffset, Utf16Offset,
@@ -82,14 +83,14 @@ struct Win32Wsi
     {
         Win32Wsi* owner;
         HWND hwnd;
-        uint generation;
-        bool live;
         bool ready;
         bool composing;
         bool pointerInside;
         bool cursorVisible = true;
         ubyte buttonsDown;
-        wchar pendingHighSurrogate;
+        // 0 = none pending. Explicit, because `wchar.init` is 0xFFFF and a
+        // removed record resets to `.init`.
+        wchar pendingHighSurrogate = 0;
         HCURSOR cursor;
         SurfaceMetrics metrics;
         PhysicalPosition lastPointer;
@@ -101,7 +102,7 @@ struct Win32Wsi
     private DWORD ownerThread_;
     private DefaultLoop* hostLoop_;
     private bool modalPumping_;
-    private Slot[maxWindows] windows_;
+    private Pool!(WindowId, Slot, maxWindows) windows_;
     private EventQueue!maxEvents events_;
     private ulong nextSequence_ = 1;
     private bool open_;
@@ -158,14 +159,7 @@ struct Win32Wsi
                 "requested Win32 startup configuration is not implemented",
                 WsiErrorKind.unsupported);
 
-        size_t index = size_t.max;
-        foreach (i, ref slot; windows_)
-            if (!slot.live)
-            {
-                index = i;
-                break;
-            }
-        if (index == size_t.max)
+        if (windows_.full)
             return win32Failure!WindowId(WsiOperation.createWindow, 0,
                 "Win32 window capacity reached", WsiErrorKind.capacity);
 
@@ -194,23 +188,23 @@ struct Win32Wsi
             return win32Failure!WindowId(WsiOperation.createWindow,
                 GetLastError(), "AdjustWindowRectEx failed");
 
-        ref slot = windows_[index];
-        ++slot.generation;
-        if (slot.generation == 0)
-            ++slot.generation;
+        // The id exists before the window: `CreateWindowExW` sends messages
+        // synchronously, and the window procedure finds this record by the
+        // address it is given.
+        auto reserved = windows_.reserve();
+        assert(reserved.hasValue, "capacity was checked above");
+        WindowId id = reserved.value;
+        ref slot = windows_[id];
         slot.owner = &this;
-        slot.live = true;
-        slot.ready = false;
-        slot.hwnd = null;
-        auto id = WindowId(cast(uint) index + 1, slot.generation);
 
         HWND hwnd = CreateWindowExW(0, className.ptr, title.ptr, style,
             CW_USEDEFAULT, CW_USEDEFAULT, outer.right - outer.left,
             outer.bottom - outer.top, parent.value, null, instance_, &slot);
         if (hwnd is null)
         {
-            slot.live = false;
-            slot.owner = null;
+            // Stale already if the procedure saw `WM_NCDESTROY`; either way
+            // the id is retired.
+            windows_.cancel(id);
             return win32Failure!WindowId(WsiOperation.createWindow,
                 GetLastError(), "CreateWindowExW failed");
         }
@@ -254,7 +248,7 @@ struct Win32Wsi
         auto slot = checkedSlot(id, WsiOperation.close);
         if (slot.hasError)
             return wsiErr!void(slot.error);
-        if (!DestroyWindow(windows_[slot.value].hwnd))
+        if (!DestroyWindow(windows_.at(slot.value).hwnd))
             return win32Failure!void(WsiOperation.close, GetLastError(),
                 "DestroyWindow failed");
         return wsiOk();
@@ -269,7 +263,7 @@ struct Win32Wsi
         NativeHandles handles;
         handles.display = DisplayHandle(Win32DisplayHandle(cast(void*) instance_));
         handles.window = WindowHandle(Win32WindowHandle(
-            cast(void*) windows_[slot.value].hwnd));
+            cast(void*) windows_.at(slot.value).hwnd));
         return wsiOk(handles);
     }
 
@@ -371,9 +365,11 @@ struct Win32Wsi
     {
         if (closed_ || !open_)
             return;
-        foreach (ref slot; windows_)
-            if (slot.live && slot.hwnd !is null)
-                DestroyWindow(slot.hwnd);
+        // `WM_NCDESTROY` removes each record as its window goes, which the
+        // live iteration allows.
+        foreach (h; windows_.byLive)
+            if (windows_[h].hwnd !is null)
+                DestroyWindow(windows_[h].hwnd);
         closed_ = true;
         open_ = false;
     }
@@ -390,7 +386,7 @@ struct Win32Wsi
         auto slot = checkedSlot(id, WsiOperation.createWindow);
         if (slot.hasError)
             return wsiErr!HWND(slot.error);
-        return wsiOk(windows_[slot.value].hwnd);
+        return wsiOk(windows_.at(slot.value).hwnd);
     }
 
     private WsiResult!size_t checkedSlot(WindowId id, WsiOperation operation)
@@ -398,15 +394,14 @@ struct Win32Wsi
         auto owner = requireOwner!size_t(operation);
         if (owner.hasError)
             return owner;
-        if (!id.valid || id.slot > maxWindows)
-            return win32Failure!size_t(operation, 0, "invalid Win32 window id",
+        auto index = windows_.resolve(id);
+        if (index.hasError)
+            return win32Failure!size_t(operation, 0,
+                index.error == PoolError.invalid
+                    ? "invalid Win32 window id" : "stale Win32 window id",
                 WsiErrorKind.staleId);
-        size_t index = cast(size_t) id.slot - 1;
-        const slot = windows_[index];
-        if (!slot.live || slot.generation != id.generation)
-            return win32Failure!size_t(operation, 0, "stale Win32 window id",
-                WsiErrorKind.staleId);
-        return wsiOk(index);
+        size_t slot = index.value;
+        return wsiOk(slot);
     }
 
     private WsiResult!T requireOwner(T)(WsiOperation operation)
@@ -740,7 +735,7 @@ struct Win32Wsi
         if (cursor is null)
             return win32Failure!void(WsiOperation.command, GetLastError(),
                 "LoadCursorW failed for a stock cursor");
-        windows_[checked.value].cursor = cursor;
+        windows_.at(checked.value).cursor = cursor;
         return wsiOk();
     }
 
@@ -751,7 +746,7 @@ struct Win32Wsi
         auto checked = checkedSlot(id, WsiOperation.command);
         if (checked.hasError)
             return wsiErr!void(checked.error);
-        windows_[checked.value].cursorVisible = visible;
+        windows_.at(checked.value).cursorVisible = visible;
         return wsiOk();
     }
 
@@ -771,7 +766,7 @@ struct Win32Wsi
         auto checked = checkedSlot(id, WsiOperation.command);
         if (checked.hasError)
             return wsiErr!void(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         if (slot.captureMode == PointerCaptureMode.capture
             && mode != PointerCaptureMode.capture)
         {
@@ -808,7 +803,7 @@ struct Win32Wsi
         auto checked = checkedSlot(id, WsiOperation.command);
         if (checked.hasError)
             return wsiErr!void(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         if (slot.relativePointer == enabled)
             return wsiOk();
         if (!registerRawMouse(slot.hwnd, enabled))
@@ -880,7 +875,7 @@ struct Win32Wsi
     }
 
     /// One pointer per User32 message queue.
-    private enum queuePointer = PointerId(1, 1);
+    private enum queuePointer = PointerId(0, 1);
 
     private static PhysicalPosition pointFrom(LPARAM lParam)
         pure nothrow @nogc
@@ -1059,8 +1054,8 @@ struct Win32Wsi
 
     private static WindowId idOf(ref Slot slot) nothrow
     {
-        const index = cast(size_t)(&slot - slot.owner.windows_.ptr);
-        return WindowId(cast(uint) index + 1, slot.generation);
+        // Only a live record has an owner, so the slot is live here.
+        return slot.owner.windows_.handleAt(slot.owner.windows_.indexOf(&slot));
     }
 
     private extern (Windows) static LRESULT windowProcedure(HWND hwnd, UINT message,
@@ -1256,14 +1251,11 @@ struct Win32Wsi
                     registerRawMouse(hwnd, false);
                 slot.captureMode = PointerCaptureMode.none;
                 slot.relativePointer = false;
-                if (slot.live)
-                    owner.emit(id, DestroyedEvent());
-                slot.live = false;
-                slot.ready = false;
-                slot.composing = false;
-                slot.pendingHighSurrogate = 0;
-                slot.hwnd = null;
+                owner.emit(id, DestroyedEvent());
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA_, 0);
+                // Resets the record, owner included: a late message for
+                // this `hwnd` finds no record.
+                owner.windows_.remove(id);
                 return DefWindowProcW(hwnd, message, wParam, lParam);
             case WM_ENTERSIZEMOVE:
             case WM_ENTERMENULOOP:

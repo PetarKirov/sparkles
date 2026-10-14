@@ -11,6 +11,7 @@ import expected : Expected, err, ok;
 import std.math : isFinite;
 
 import sparkles.base.buffer : InlineBuffer;
+import sparkles.base.pool.handle : Handle;
 import sparkles.base.text.cstring : hasInteriorNul;
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.math : ScreenPosition, ScreenSize;
@@ -51,15 +52,12 @@ struct SurfaceMetrics
         => physicalSize.width == 0 || physicalSize.height == 0;
 }
 
-/// Generation-checked public identity. The all-zero value is invalid.
-struct ObjectId(Tag)
-{
-    uint slot;
-    uint generation;
-
-    bool valid() const pure nothrow @nogc
-        => slot != 0 && generation != 0;
-}
+/**
+Generation-checked public identity: a `sparkles.base.pool` handle, a 0-based
+slot index plus the generation the slot was issued at. Generations start at
+1, so the all-zero value is invalid; a removed object's ids are stale.
+*/
+alias ObjectId(Tag) = Handle!Tag;
 
 struct WindowTag {}
 struct OutputTag {}
@@ -336,13 +334,14 @@ WsiError wsiError(WsiErrorKind kind, WsiOperation operation,
     return result;
 }
 
-@("wsi.types.idsRequireSlotAndGeneration")
+@("wsi.types.idsRequireAGeneration")
 pure nothrow @nogc
 unittest
 {
     assert(!WindowId.init.valid);
-    assert(WindowId(1, 1).valid);
+    assert(WindowId(0, 1).valid);
     assert(!WindowId(1, 0).valid);
+    static assert(!is(OutputId : WindowId));
 }
 
 @("wsi.types.metricsKeepUnitsTogether")

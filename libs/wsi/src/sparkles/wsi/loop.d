@@ -9,6 +9,7 @@ handle.
 module sparkles.wsi.loop;
 
 import std.math : isFinite;
+import sparkles.base.pool.pool : Pool, PoolError;
 
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
@@ -258,14 +259,12 @@ unittest
 struct RecordingWsi(size_t MaxWindows = 8, size_t MaxEvents = 64)
 if (MaxWindows > 0 && MaxEvents > 0)
 {
-    private struct Slot
+    private struct Window
     {
-        uint generation;
-        bool live;
         SurfaceMetrics metrics;
     }
 
-    private Slot[MaxWindows] windows_;
+    private Pool!(WindowId, Window, MaxWindows) windows_;
     private EventQueue!MaxEvents events_;
     private ulong nextSequence_ = 1;
     private bool closed_;
@@ -286,29 +285,20 @@ if (MaxWindows > 0 && MaxEvents > 0)
             return failure!WindowId(WsiErrorKind.capacity,
                 WsiOperation.createWindow, "WSI event queue is full");
 
-        foreach (i, ref slot; windows_)
-        {
-            if (slot.live)
-                continue;
+        const metrics = SurfaceMetrics(
+            config.logicalSize,
+            PhysicalSize(cast(uint) config.logicalSize.width,
+                cast(uint) config.logicalSize.height),
+            ScaleFactor(1));
+        auto inserted = windows_.insert(Window(metrics));
+        if (inserted.hasError)
+            return failure!WindowId(WsiErrorKind.capacity,
+                WsiOperation.createWindow, "WSI window capacity reached");
 
-            ++slot.generation;
-            if (slot.generation == 0)
-                ++slot.generation;
-            slot.live = true;
-            slot.metrics = SurfaceMetrics(
-                config.logicalSize,
-                PhysicalSize(cast(uint) config.logicalSize.width,
-                    cast(uint) config.logicalSize.height),
-                ScaleFactor(1));
-
-            auto id = WindowId(cast(uint) i + 1, slot.generation);
-            auto queued = emit(id, ReadyEvent(slot.metrics));
-            assert(!queued.hasError, "capacity was checked before allocation");
-            return wsiOk(id);
-        }
-
-        return failure!WindowId(WsiErrorKind.capacity,
-            WsiOperation.createWindow, "WSI window capacity reached");
+        WindowId id = inserted.value;
+        auto queued = emit(id, ReadyEvent(metrics));
+        assert(!queued.hasError, "capacity was checked before allocation");
+        return wsiOk(id);
     }
 
     WsiResult!void requestClose(WindowId id)
@@ -326,7 +316,7 @@ if (MaxWindows > 0 && MaxEvents > 0)
         auto queued = emit(id, SurfaceMetricsChangedEvent(metrics));
         if (queued.hasError)
             return queued;
-        windows_[slot.value].metrics = metrics;
+        windows_.at(slot.value).metrics = metrics;
         return wsiOk();
     }
 
@@ -339,7 +329,7 @@ if (MaxWindows > 0 && MaxEvents > 0)
             return failure!void(WsiErrorKind.capacity, WsiOperation.close,
                 "WSI event queue is full");
 
-        windows_[slot.value].live = false;
+        windows_.remove(id);
         return emit(id, DestroyedEvent());
     }
 
@@ -353,13 +343,7 @@ if (MaxWindows > 0 && MaxEvents > 0)
             "recording windows have no native handle");
     }
 
-    bool isLive(WindowId id) pure nothrow @nogc
-    {
-        if (!id.valid || id.slot > MaxWindows)
-            return false;
-        const slot = windows_[id.slot - 1];
-        return slot.live && slot.generation == id.generation;
-    }
+    bool isLive(WindowId id) const pure nothrow @nogc => windows_.isLive(id);
 
     size_t pendingEvents() const pure nothrow @nogc => events_.length;
 
@@ -368,22 +352,18 @@ if (MaxWindows > 0 && MaxEvents > 0)
     void close() pure nothrow @nogc
     {
         closed_ = true;
-        foreach (ref slot; windows_)
-            slot.live = false;
+        windows_.clear();
     }
 
     private WsiResult!size_t checkedSlot(WindowId id) pure nothrow @nogc
     {
-        if (!id.valid || id.slot > MaxWindows)
-            return failure!size_t(WsiErrorKind.staleId,
-                WsiOperation.command, "invalid WSI window id");
-
-        size_t index = cast(size_t) id.slot - 1;
-        const slot = windows_[index];
-        if (!slot.live || slot.generation != id.generation)
-            return failure!size_t(WsiErrorKind.staleId,
-                WsiOperation.command, "stale WSI window id");
-        return wsiOk(index);
+        auto index = windows_.resolve(id);
+        if (index.hasError)
+            return failure!size_t(WsiErrorKind.staleId, WsiOperation.command,
+                index.error == PoolError.invalid
+                    ? "invalid WSI window id" : "stale WSI window id");
+        size_t slot = index.value;
+        return wsiOk(slot);
     }
 
     private WsiResult!void checkedEmit(Payload)(WindowId id, Payload payload)
@@ -449,7 +429,7 @@ unittest
         (in DestroyedEvent event) => true, _ => false));
 
     const second = wsi.createWindow(config).value;
-    assert(second.slot == first.slot && second.generation != first.generation);
+    assert(second.index == first.index && second.generation != first.generation);
     assert(wsi.requestClose(first).error.kind == WsiErrorKind.staleId);
 }
 

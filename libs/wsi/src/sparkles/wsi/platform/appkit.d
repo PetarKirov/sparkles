@@ -13,6 +13,7 @@ version (OSX):
 import core.attribute : selector;
 
 import sparkles.base.buffer : InlineBuffer;
+import sparkles.base.pool.pool : Pool, PoolError;
 import sparkles.base.text.cstring : toTempStringz;
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus, scalarUnits;
@@ -532,8 +533,6 @@ struct AppKitWsi
     {
         SparklesWsiWindow window;
         SparklesWsiView view;
-        uint generation;
-        bool live;
         bool ready;
         SurfaceMetrics metrics;
         InlineBuffer!(char, 512) marked;
@@ -542,7 +541,7 @@ struct AppKitWsi
     }
 
     private NSApplication application_;
-    private Slot[maxWindows] windows_;
+    private Pool!(WindowId, Slot, maxWindows) windows_;
     private EventQueue!maxEvents events_;
     private ulong nextSequence_ = 1;
     private bool open_;
@@ -618,14 +617,7 @@ struct AppKitWsi
                 "AppKit parent windows are not implemented",
                 WsiErrorKind.unsupported);
 
-        size_t index = size_t.max;
-        foreach (i, ref slot; windows_)
-            if (!slot.live && slot.window is null)
-            {
-                index = i;
-                break;
-            }
-        if (index == size_t.max)
+        if (windows_.full)
             return appKitFailure!WindowId(WsiOperation.createWindow, 0,
                 "AppKit window capacity reached", WsiErrorKind.capacity);
 
@@ -662,13 +654,13 @@ struct AppKitWsi
                 "NSView initialization failed");
         }
 
-        ref slot = windows_[index];
-        ++slot.generation;
-        if (slot.generation == 0)
-            ++slot.generation;
+        auto reserved = windows_.reserve();
+        assert(reserved.hasValue, "capacity was checked above");
+        WindowId id = reserved.value;
+        const index = id.index;
+        ref slot = windows_[id];
         slot.window = window;
         slot.view = view;
-        slot.live = true;
         slot.ready = false;
 
         // Terminated at the seam. The array this used to copy into was one byte
@@ -692,7 +684,6 @@ struct AppKitWsi
 
         slot.metrics = metricsOf(slot);
         slot.ready = true;
-        auto id = idAt(index);
         const hadSticky = hasStickyError_;
         emit(id, ReadyEvent(slot.metrics));
         if (!hadSticky && hasStickyError_)
@@ -725,7 +716,7 @@ struct AppKitWsi
         auto checked = checkedSlot(id, WsiOperation.queryHandle);
         if (checked.hasError)
             return wsiErr!NativeHandles(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
 
         NativeHandles handles;
         handles.display = DisplayHandle(AppKitDisplayHandle(
@@ -831,9 +822,8 @@ struct AppKitWsi
     {
         if (closed_ || !open_)
             return;
-        foreach (i; 0 .. windows_.length)
-            if (windows_[i].window !is null)
-                destroySlot(i, windows_[i].live);
+        foreach (h; windows_.byLive)
+            destroySlot(h.index, true);
         removeKqueueBridge();
         if (cursorHidden_)
         {
@@ -857,15 +847,14 @@ struct AppKitWsi
         auto owner = requireOwner!size_t(operation);
         if (owner.hasError)
             return owner;
-        if (!id.valid || id.slot > maxWindows)
+        auto index = windows_.resolve(id);
+        if (index.hasError)
             return appKitFailure!size_t(operation, 0,
-                "invalid AppKit window id", WsiErrorKind.staleId);
-        size_t index = cast(size_t) id.slot - 1;
-        const slot = windows_[index];
-        if (!slot.live || slot.generation != id.generation)
-            return appKitFailure!size_t(operation, 0,
-                "stale AppKit window id", WsiErrorKind.staleId);
-        return wsiOk(index);
+                index.error == PoolError.invalid
+                    ? "invalid AppKit window id" : "stale AppKit window id",
+                WsiErrorKind.staleId);
+        size_t slot = index.value;
+        return wsiOk(slot);
     }
 
     private WsiResult!T requireOwner(T)(WsiOperation operation)
@@ -908,23 +897,23 @@ struct AppKitWsi
     }
 
     private WindowId idAt(size_t index) const pure nothrow @nogc
-        => WindowId(cast(uint) index + 1, windows_[index].generation);
+        => windows_.handleAt(index);
 
     private size_t indexOfWindow(SparklesWsiWindow window) const
         pure nothrow @nogc
     {
-        foreach (i, const ref slot; windows_)
-            if (slot.live && slot.window is window)
-                return i;
+        foreach (h; windows_.byLive)
+            if (windows_[h].window is window)
+                return h.index;
         return size_t.max;
     }
 
     private size_t indexOfView(SparklesWsiView view) const
         pure nothrow @nogc
     {
-        foreach (i, const ref slot; windows_)
-            if (slot.live && slot.view is view)
-                return i;
+        foreach (h; windows_.byLive)
+            if (windows_[h].view is view)
+                return h.index;
         return size_t.max;
     }
 
@@ -960,7 +949,7 @@ struct AppKitWsi
 
     private void updateMetrics(size_t index)
     {
-        ref slot = windows_[index];
+        ref slot = windows_.at(index);
         const metrics = metricsOf(slot);
         if (slot.ready && metrics != slot.metrics)
             emit(idAt(index),
@@ -971,9 +960,9 @@ struct AppKitWsi
     private void onInsertText(SparklesWsiView view, scope const(char)[] bytes)
     {
         const index = indexOfView(view);
-        if (index == size_t.max || !windows_[index].ready)
+        if (index == size_t.max || !windows_.at(index).ready)
             return;
-        ref slot = windows_[index];
+        ref slot = windows_.at(index);
         const id = idAt(index);
         if (bytes.length != 0 && !validateUtf8(bytes).hasError)
         {
@@ -996,9 +985,9 @@ struct AppKitWsi
         scope const(char)[] bytes, NSRange selectedRange)
     {
         const index = indexOfView(view);
-        if (index == size_t.max || !windows_[index].ready)
+        if (index == size_t.max || !windows_.at(index).ready)
             return;
-        ref slot = windows_[index];
+        ref slot = windows_.at(index);
         const id = idAt(index);
         if (bytes.length == 0 || validateUtf8(bytes).hasError)
         {
@@ -1018,9 +1007,9 @@ struct AppKitWsi
     private void onUnmarkText(SparklesWsiView view)
     {
         const index = indexOfView(view);
-        if (index == size_t.max || !windows_[index].ready)
+        if (index == size_t.max || !windows_.at(index).ready)
             return;
-        ref slot = windows_[index];
+        ref slot = windows_.at(index);
         if (slot.marked.empty)
             return;
         slot.marked.clear();
@@ -1031,13 +1020,13 @@ struct AppKitWsi
     private ulong markedUtf16Length(SparklesWsiView view)
     {
         const index = indexOfView(view);
-        return index == size_t.max ? 0 : windows_[index].markedUnits16;
+        return index == size_t.max ? 0 : windows_.at(index).markedUnits16;
     }
 
     private void onKey(SparklesWsiView view, NSEvent event, bool pressed)
     {
         const index = indexOfView(view);
-        if (index == size_t.max || !windows_[index].ready)
+        if (index == size_t.max || !windows_.at(index).ready)
             return;
         KeyboardEvent keyboard;
         keyboard.physical = PhysicalKey(event.keyCode, 0);
@@ -1133,7 +1122,7 @@ struct AppKitWsi
         auto checked = checkedSlot(id, WsiOperation.command);
         if (checked.hasError)
             return wsiErr!void(checked.error);
-        windows_[checked.value].relativePointer = enabled;
+        windows_.at(checked.value).relativePointer = enabled;
         return wsiOk();
     }
 
@@ -1171,7 +1160,7 @@ struct AppKitWsi
     }
 
     /// One pointer per NSApplication event stream.
-    private enum viewPointer = PointerId(1, 1);
+    private enum viewPointer = PointerId(0, 1);
 
     /// Window coordinates are bottom-left; the toolkit contract is
     /// top-left, so the view's own coordinate space flips y.
@@ -1186,9 +1175,9 @@ struct AppKitWsi
         PointerPhase phase)
     {
         const index = indexOfView(view);
-        if (index == size_t.max || !windows_[index].ready)
+        if (index == size_t.max || !windows_.at(index).ready)
             return;
-        ref slot = windows_[index];
+        ref slot = windows_.at(index);
         const at = pointerPositionOf(slot, event);
         double scale = slot.window.backingScaleFactor();
         if (scale <= 0)
@@ -1219,9 +1208,9 @@ struct AppKitWsi
     private void onScrollWheel(SparklesWsiView view, NSEvent event)
     {
         const index = indexOfView(view);
-        if (index == size_t.max || !windows_[index].ready)
+        if (index == size_t.max || !windows_.at(index).ready)
             return;
-        ref slot = windows_[index];
+        ref slot = windows_.at(index);
         const at = pointerPositionOf(slot, event);
         double scale = slot.window.backingScaleFactor();
         if (scale <= 0)
@@ -1266,7 +1255,7 @@ struct AppKitWsi
     private void onFlagsChanged(SparklesWsiView view, NSEvent event)
     {
         const index = indexOfView(view);
-        if (index == size_t.max || !windows_[index].ready)
+        if (index == size_t.max || !windows_.at(index).ready)
             return;
         const flag = appKitModifierFlagFor(event.keyCode);
         if (flag == 0)
@@ -1341,7 +1330,7 @@ struct AppKitWsi
     private void onViewDraw(SparklesWsiView view)
     {
         const index = indexOfView(view);
-        if (index == size_t.max || !windows_[index].ready)
+        if (index == size_t.max || !windows_.at(index).ready)
             return;
         emit(idAt(index), ExposedEvent());
         emit(idAt(index), FrameReadyEvent());
@@ -1357,16 +1346,15 @@ struct AppKitWsi
     private void onFocus(SparklesWsiWindow window, bool focused)
     {
         const index = indexOfWindow(window);
-        if (index != size_t.max && windows_[index].ready)
+        if (index != size_t.max && windows_.at(index).ready)
             emit(idAt(index), FocusChangedEvent(focused));
     }
 
     private void destroySlot(size_t index, bool notify)
     {
-        ref slot = windows_[index];
+        ref slot = windows_.at(index);
         const id = idAt(index);
         slot.ready = false;
-        slot.live = false;
         if (slot.window !is null)
         {
             slot.window.setDelegate(null);
@@ -1379,8 +1367,8 @@ struct AppKitWsi
             slot.view.release();
         if (slot.window !is null)
             slot.window.release();
-        slot.view = null;
-        slot.window = null;
+        // Resets the record: the window and view are released above.
+        windows_.remove(id);
     }
 
     private bool installKqueueBridge(int descriptor)

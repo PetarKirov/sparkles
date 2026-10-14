@@ -20,6 +20,7 @@ import core.time : Duration, msecs;
 import std.traits : Parameters;
 
 import sparkles.base.buffer : InlineBuffer;
+import sparkles.base.pool.pool : Pool, PoolError;
 import sparkles.base.text.cstring : toTempStringz;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
@@ -57,8 +58,6 @@ struct WaylandWsi
         xdg_surface* xdgSurface;
         xdg_toplevel* toplevel;
         wl_callback* frameCallback;
-        uint generation;
-        bool live;
         bool ready;
         int pendingWidth;
         int pendingHeight;
@@ -122,7 +121,7 @@ struct WaylandWsi
     private uint repeatKey_ = noRepeatKey;
     private wl_callback* bootstrapSync_;
     private pthread_t ownerThread_;
-    private Slot[maxWindows] windows_;
+    private Pool!(WindowId, Slot, maxWindows) windows_;
     private EventQueue!maxEvents events_;
     private ulong nextSequence_ = 1;
     private ulong nextFrameToken_ = 1;
@@ -219,14 +218,7 @@ struct WaylandWsi
                 "requested Wayland startup configuration is not implemented",
                 WsiErrorKind.unsupported);
 
-        size_t index = size_t.max;
-        foreach (i, ref slot; windows_)
-            if (!slot.live && slot.surface is null)
-            {
-                index = i;
-                break;
-            }
-        if (index == size_t.max)
+        if (windows_.full)
             return waylandFailure!WindowId(WsiOperation.createWindow, 0,
                 "Wayland window capacity reached", WsiErrorKind.capacity);
 
@@ -234,12 +226,13 @@ struct WaylandWsi
         if (paused.hasError)
             return wsiErr!WindowId(paused.error);
 
-        ref slot = windows_[index];
-        ++slot.generation;
-        if (slot.generation == 0)
-            ++slot.generation;
+        // The id exists before the object tree: its listeners may fire
+        // during construction, and they find their window by this record.
+        auto reserved = windows_.reserve();
+        assert(reserved.hasValue, "capacity was checked before the pause");
+        WindowId id = reserved.value;
+        ref slot = windows_[id];
         slot.owner = &this;
-        slot.live = true;
         slot.ready = false;
         slot.requestedSize = config.logicalSize;
         // Each step returns the moment it fails, so no later call runs against
@@ -270,6 +263,7 @@ struct WaylandWsi
         if (!buildObjectTree())
         {
             destroyNative(slot);
+            windows_.cancel(id);
             // Re-arm on the failure path; its own error must not shadow the
             // construction failure being reported, so it goes to the sticky
             // slot instead.
@@ -304,9 +298,10 @@ struct WaylandWsi
         if (rearmed.hasError)
         {
             destroyNative(slot);
+            windows_.cancel(id);
             return wsiErr!WindowId(rearmed.error);
         }
-        return wsiOk(idAt(index));
+        return wsiOk(id);
     }
 
     /*
@@ -330,7 +325,7 @@ struct WaylandWsi
         auto paused = pausePoll();
         if (paused.hasError)
             return paused;
-        xdg_toplevel_move(windows_[checked.value].toplevel, seat_,
+        xdg_toplevel_move(windows_.at(checked.value).toplevel, seat_,
             pointerButtonSerial_);
         return prepareAndArm();
     }
@@ -352,7 +347,7 @@ struct WaylandWsi
         auto paused = pausePoll();
         if (paused.hasError)
             return paused;
-        xdg_toplevel_resize(windows_[checked.value].toplevel, seat_,
+        xdg_toplevel_resize(windows_.at(checked.value).toplevel, seat_,
             pointerButtonSerial_, edge);
         return prepareAndArm();
     }
@@ -365,7 +360,7 @@ struct WaylandWsi
         auto paused = pausePoll();
         if (paused.hasError)
             return paused;
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         if (maximized)
             xdg_toplevel_set_maximized(slot.toplevel);
         else
@@ -381,8 +376,8 @@ struct WaylandWsi
         auto paused = pausePoll();
         if (paused.hasError)
             return paused;
-        ref slot = windows_[checked.value];
-        destroyNative(slot);
+        destroyNative(windows_.at(checked.value));
+        windows_.remove(id);
         const hadSticky = hasStickyError_;
         emit(id, DestroyedEvent());
         auto rearmed = prepareAndArm();
@@ -396,7 +391,7 @@ struct WaylandWsi
         auto checked = checkedSlot(id, WsiOperation.queryHandle);
         if (checked.hasError)
             return wsiErr!NativeHandles(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         if (!slot.ready)
             return waylandFailure!NativeHandles(WsiOperation.queryHandle, 0,
                 "wl_surface is not configured yet",
@@ -522,9 +517,9 @@ struct WaylandWsi
         auto detached = detach();
         if (detached.hasError)
             remember(detached.error);
-        foreach (ref slot; windows_)
-            if (slot.live)
-                destroyNative(slot);
+        foreach (h; windows_.byLive)
+            destroyNative(windows_[h]);
+        windows_.clear();
         closeConnectionOnly();
         closed_ = true;
         open_ = false;
@@ -788,9 +783,7 @@ struct WaylandWsi
             xdg_surface_destroy(slot.xdgSurface);
         if (slot.surface !is null)
             wl_surface_destroy(slot.surface);
-        const generation = slot.generation;
         slot = Slot.init;
-        slot.generation = generation;
     }
 
     private WsiResult!size_t checkedSlot(WindowId id,
@@ -799,24 +792,23 @@ struct WaylandWsi
         auto owner = requireOwner!size_t(operation);
         if (owner.hasError)
             return owner;
-        if (!id.valid || id.slot > maxWindows)
+        auto index = windows_.resolve(id);
+        if (index.hasError)
             return waylandFailure!size_t(operation, 0,
-                "invalid Wayland window id", WsiErrorKind.staleId);
-        size_t index = cast(size_t) id.slot - 1;
-        const slot = windows_[index];
-        if (!slot.live || slot.generation != id.generation)
-            return waylandFailure!size_t(operation, 0,
-                "stale Wayland window id", WsiErrorKind.staleId);
-        return wsiOk(index);
+                index.error == PoolError.invalid
+                    ? "invalid Wayland window id" : "stale Wayland window id",
+                WsiErrorKind.staleId);
+        size_t slot = index.value;
+        return wsiOk(slot);
     }
 
     private WindowId idAt(size_t index) const pure nothrow @nogc
-        => WindowId(cast(uint) index + 1, windows_[index].generation);
+        => windows_.handleAt(index);
 
     private size_t indexOfSlot(const Slot* slot) const pure nothrow @nogc
     {
-        foreach (i; 0 .. windows_.length)
-            if (&windows_[i] is slot)
+        foreach (i; 0 .. windows_.slotCapacity)
+            if (&windows_.at(i) is slot)
                 return i;
         return size_t.max;
     }
@@ -826,9 +818,9 @@ struct WaylandWsi
     {
         if (surface is null)
             return size_t.max;
-        foreach (i, const ref slot; windows_)
-            if (slot.live && slot.surface is surface)
-                return i;
+        foreach (h; windows_.byLive)
+            if (windows_[h].surface is surface)
+                return h.index;
         return size_t.max;
     }
 
@@ -1018,12 +1010,15 @@ struct WaylandWsi
                 continue;
             wl_output_destroy(slot.output);
             slot = Output.init;
-            foreach (windowIndex, ref window; owner.windows_)
-                if (window.live && (window.enteredOutputs & (1 << i)) != 0)
+            foreach (h; owner.windows_.byLive)
+            {
+                ref window = owner.windows_[h];
+                if ((window.enteredOutputs & (1 << i)) != 0)
                 {
                     window.enteredOutputs &= ~cast(ubyte)(1 << i);
-                    owner.refreshWindowScale(windowIndex);
+                    owner.refreshWindowScale(h.index);
                 }
+            }
             break;
         }
     }
@@ -1060,10 +1055,9 @@ struct WaylandWsi
                 if (slot.scale != slot.pendingScale)
                 {
                     slot.scale = slot.pendingScale;
-                    foreach (windowIndex, ref window; owner.windows_)
-                        if (window.live
-                            && (window.enteredOutputs & (1 << i)) != 0)
-                            owner.refreshWindowScale(windowIndex);
+                    foreach (h; owner.windows_.byLive)
+                        if ((owner.windows_[h].enteredOutputs & (1 << i)) != 0)
+                            owner.refreshWindowScale(h.index);
                 }
                 break;
             }
@@ -1119,7 +1113,7 @@ struct WaylandWsi
             else
                 slot.enteredOutputs &= ~bit;
             emit(idAt(windowIndex), OutputEnteredEvent(
-                OutputId(cast(uint) i + 1, 1), entered));
+                OutputId(cast(uint) i, 1), entered));
             refreshWindowScale(windowIndex);
             return;
         }
@@ -1133,7 +1127,7 @@ struct WaylandWsi
     */
     private void refreshWindowScale(size_t windowIndex) nothrow @nogc
     {
-        ref slot = windows_[windowIndex];
+        ref slot = windows_.at(windowIndex);
         int scale = 1;
         foreach (i, const ref output; outputs_)
             if ((slot.enteredOutputs & (1 << i)) != 0
@@ -1229,7 +1223,7 @@ struct WaylandWsi
             return waylandFailure!void(WsiOperation.command, 0,
                 "compositor lacks wp_cursor_shape_manager_v1",
                 WsiErrorKind.unsupported);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         slot.cursorShape = shape;
         auto paused = pausePoll();
         if (paused.hasError)
@@ -1256,7 +1250,7 @@ struct WaylandWsi
         auto checked = checkedSlot(id, WsiOperation.command);
         if (checked.hasError)
             return wsiErr!void(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         if (mode == PointerCaptureMode.capture)
             return waylandFailure!void(WsiOperation.command, 0,
                 "Wayland has no explicit pointer capture: the compositor owns grabs",
@@ -1314,10 +1308,10 @@ struct WaylandWsi
         if (enabled && pointer_ is null)
             return waylandFailure!void(WsiOperation.command, 0,
                 "the seat has no pointer", WsiErrorKind.unavailable);
-        windows_[checked.value].relative = enabled;
+        windows_.at(checked.value).relative = enabled;
         bool anyRelative;
-        foreach (ref slot; windows_)
-            anyRelative |= slot.live && slot.relative;
+        foreach (h; windows_.byLive)
+            anyRelative |= windows_[h].relative;
         if (anyRelative == (relativePointer_ !is null))
             return wsiOk();
         auto paused = pausePoll();
@@ -1352,7 +1346,7 @@ struct WaylandWsi
     {
         auto owner = cast(WaylandWsi*) data;
         const index = owner.indexOfSurface(owner.pointerFocus_);
-        if (index == size_t.max || !owner.windows_[index].relative)
+        if (index == size_t.max || !owner.windows_.at(index).relative)
             return;
         owner.emit(owner.idAt(index), RelativePointerEvent(seatPointer,
             wl_fixed_to_double(dxUnaccel), wl_fixed_to_double(dyUnaccel),
@@ -1366,7 +1360,7 @@ struct WaylandWsi
         auto checked = checkedSlot(id, WsiOperation.command);
         if (checked.hasError)
             return wsiErr!void(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         slot.cursorVisible = visible;
         auto paused = pausePoll();
         if (paused.hasError)
@@ -1423,11 +1417,11 @@ struct WaylandWsi
             zwp_relative_pointer_v1_destroy(relativePointer_);
             relativePointer_ = null;
         }
-        foreach (ref slot; windows_)
-            if (slot.confined !is null)
+        foreach (h; windows_.byLive)
+            if (windows_[h].confined !is null)
             {
-                zwp_confined_pointer_v1_destroy(slot.confined);
-                slot.confined = null;
+                zwp_confined_pointer_v1_destroy(windows_[h].confined);
+                windows_[h].confined = null;
             }
         if (cursorShapeDevice_ !is null)
         {
@@ -1443,7 +1437,7 @@ struct WaylandWsi
     }
 
     /// The seat exposes one pointer.
-    private enum seatPointer = PointerId(1, 1);
+    private enum seatPointer = PointerId(0, 1);
 
     private void emitPointer(PointerPhase phase,
         PointerButton button = PointerButton.none) nothrow @nogc
@@ -1476,7 +1470,7 @@ struct WaylandWsi
         // focused window's stored shape and visibility.
         const index = owner.indexOfSurface(surface);
         if (index != size_t.max)
-            owner.applyCursor(owner.windows_[index]);
+            owner.applyCursor(owner.windows_.at(index));
     }
 
     private extern (C) static void onPointerLeave(void* data, wl_pointer*,
@@ -2028,7 +2022,7 @@ struct WaylandWsi
         wl_callback_destroy(callback);
         slot.frameCallback = null;
         const index = owner.indexOfSlot(slot);
-        if (index == size_t.max || !slot.live)
+        if (index == size_t.max || !owner.windows_.liveAt(index))
             return;
         owner.emit(owner.idAt(index), FrameReadyEvent(
             owner.nextFrameToken_++, 0));
@@ -2037,8 +2031,7 @@ struct WaylandWsi
 
     private void armFrameCallback(ref Slot slot) nothrow @nogc
     {
-        if (!slot.live || slot.surface is null
-            || slot.frameCallback !is null)
+        if (slot.surface is null || slot.frameCallback !is null)
             return;
         slot.frameCallback = wl_surface_frame(slot.surface);
         if (slot.frameCallback is null
