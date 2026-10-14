@@ -138,7 +138,8 @@ and each such precondition is documented on its operation.
 worst-case cost in terms of input sizes and these fixed limits: composite
 glyph depth 8 and 512 components per glyph; `CFF` subroutine depth 10 and
 65,536 charstring operations per glyph; 1,024 `COLR` layers per glyph; 4,096
-table records per face; 64 `cmap` subtables per face. Exceeding a limit
+table records per face; 64 `cmap` subtables per face; 64 variation axes per
+instance. Exceeding a limit
 **must** produce an error that names it, never a silent truncation.
 
 **FTB4: Declared allocation.** Parsing, metrics and outline decoding **must
@@ -338,6 +339,9 @@ scripts, stretching assemblies, formula breaks or math-page placement.
 
 ## 8. Variation
 
+[`variation-metrics.md`](./variation-metrics.md) refines this section to
+operation level.
+
 **FTV1: Axes and instances.** The `fvar` axes **must** be enumerable with tag,
 user-space minimum, default and maximum, the hidden flag and name ID. Named
 instances **must** be enumerable with subfamily name ID, optional PostScript
@@ -365,6 +369,9 @@ corpus, normalized values **must** equal an independent reference to the
 F2Dot14 unit.
 
 ## 9. Metrics
+
+[`variation-metrics.md`](./variation-metrics.md) refines this section to
+operation level.
 
 **FTM1: All vertical sets.** The `hhea` ascender, descender and line gap,
 the `OS/2` typographic set and the `OS/2` Windows set **must** each be
@@ -680,6 +687,9 @@ and shaping safety. No usable face **must** be an explicit outcome with the
 unresolved source span, not a fabricated successful shape.
 
 ## 14. Inspection
+
+[`variation-metrics.md`](./variation-metrics.md) refines this section to
+operation level.
 
 **FTI1: Reflectable tables.** Every typed table of `FTP7` **must** be a plain
 struct, so a `sparkles:reflection` walk enumerates its fields under their

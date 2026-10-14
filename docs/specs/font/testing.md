@@ -145,7 +145,9 @@ non-identity segment and a clamp beyond the axis range.
 ### Metrics and publication data (`FTM1`–`FTM7`, `FTP13`)
 
 For every bundled face, the three vertical sets, x-height, cap height, underline
-and strikeout equal `hb_ot_metrics_get_position` at upem scale; at a variable
+and strikeout equal the oracles of [`variation-metrics.md` § 9](./variation-metrics.md#_9-oracles)
+(FreeType for line metrics, skrifa for decorations, HarfBuzz where they agree)
+at upem scale; at a variable
 face's extreme instances, advances equal `hb_font_get_glyph_h_advance` within
 1/64 unit. `FTM5`'s cell metrics are checked against hand-computed values for
 DejaVu Sans Mono and Maple Mono at 14, 16 and 18 px. Pixel convenience outputs
