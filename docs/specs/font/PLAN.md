@@ -230,7 +230,15 @@ delivery authority.
 glyph names, checked against HarfBuzz over the bundle, and passes its tests on
 an x86_64 Android emulator and an arm64-v8a phone. The open M1 gap is in the
 evidence ledger: a race-detector run of the concurrency test
-(`FTA2`). Next action: M2. Base's unit contract is accepted, and the M2
-operation contracts are drafted in [`variation-metrics.md`](./variation-metrics.md);
-their adversarial review is dispositioned, and the owner accepted them on
-2026-10-14; implementation is in progress.
+(`FTA2`).
+
+M2 is implemented against the contracts the owner accepted on 2026-10-14
+([`variation-metrics.md`](./variation-metrics.md)): instances and
+normalization, variation deltas, design, physical and pixel measurements, line,
+decoration, cell and vertical metrics, `BASE`, `MATH`, layout inspection and
+colour capability, checked against HarfBuzz over the bundle and run on an
+arm64-v8a phone. Its gate stays open until these, recorded in the evidence
+ledger, are met: fontations' exact delta oracle; a verified `BASE` face and a
+math face with kerns, under the pinned corpus manifest; and the reference-point
+and `glyf` vertical-origin resolution, which need M3's outline points. Next
+action: M3, whose outline points also close M2's `FTM7` gate.

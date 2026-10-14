@@ -5,16 +5,15 @@ Milestone M1: faces and collections over borrowed bytes, the table
 directory, typed views of the fixed tables, character maps, `name` records
 and glyph names. Every operation reads only inside the caller's buffer,
 reports malformed data as a `FontError` rather than asserting, and does not
-allocate. Milestone M2 begins with design values and their exact physical and
-pixel conversions, the variation deltas of item variation stores, delta-set
-index maps and Device tables, instances with normalized coordinates, and the
-metrics of an instance (line metrics, decorations, advances, cell metrics, and
-vertical line metrics, advances and origins), its `BASE` baselines and
-extents, and its `MATH` data: constants, glyph information, math kerns,
-variants and assemblies; and layout inspection: the scripts, language systems,
-features and lookups of `GSUB` and `GPOS`, feature variations at an instance,
-and the substitution records of `GSUB` lookups; and which colour formats
-(`COLR` layers and paint, `CPAL`, `CBDT`, `sbix`, `SVG `) a face holds.
+allocate.
+
+Milestone M2: instances of variable faces and their normalized coordinates;
+variation deltas; exact design values with one rounding into physical
+`LayoutUnit` and explicit pixel conversion; line, decoration, cell and
+vertical metrics; `BASE` baselines and extents; `MATH` data; the scripts,
+features, feature variations and substitutions of `GSUB` and `GPOS`; and which
+colour formats a face holds. A value the font does not supply is reported as
+absent, never invented.
 
 $(UL
     $(LI `sparkles.font.face` — `openFace`, `openCollection`, `Face`, table lookup and inspection.)
