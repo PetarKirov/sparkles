@@ -173,26 +173,26 @@ text of `id` into `dst`, carrying the truncation flag, and return the new id or
 
 ## 6. Requirements and evidence
 
-| ID     | Requirement                   | Status                  | Traces to                                                                                            |
-| ------ | ----------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| POOL1  | default handle invalid        | full                    | `Handle.valid`, `SlotTable.resolve`, test `pool.handle.initIsInvalid`                                |
-| POOL2  | tags separate handle types    | full                    | `isHandle`, test `pool.handle.tagsSeparateTypes`                                                     |
-| POOL3  | removed handles are stale     | full                    | `SlotTable.remove`, test `pool.slot_table.removedHandlesAreStale`                                    |
-| POOL4  | error precedence              | full                    | `SlotTable.resolve`, test `pool.slot_table.errorPrecedence`                                          |
-| POOL5  | advance and retire            | full                    | `Wrap`, tests `pool.slot_table.retireAtTheGenerationLimit`, `pool.slot_table.skipZeroWrapsAndReuses` |
-| POOL6  | reuse order                   | full                    | `Reuse`, tests `pool.slot_table.reuseOrder`, `pool.slot_table.fifoIssuesFreshSlotsFirst`             |
-| POOL7  | handles are pool-local        | full (documented limit) | `Handle`                                                                                             |
-| POOL8  | records never move            | full                    | `Pool.get`, test `pool.pool.recordsNeverMove`                                                        |
-| POOL9  | identity before construction  | full                    | `Pool.reserve`, `Pool.commit`, `Pool.cancel`, test `pool.pool.reserveCommitCancel`                   |
-| POOL10 | removal destroys exactly once | full                    | `Pool.remove`, tests `pool.pool.removalDestroysExactlyOnce`, `pool.pool.moveOnlyRecords`             |
-| POOL11 | checked access is scoped      | full                    | `Pool.get`, `Pool.withRecord`, test `pool.pool.withRecordAndEscape`                                  |
-| POOL12 | per-text bound truncation     | planned                 | `text_pool.d`                                                                                        |
-| POOL13 | pressure fails                | planned                 | `text_pool.d`                                                                                        |
-| POOL14 | read only inside a borrow     | planned                 | `text_pool.d`                                                                                        |
-| POOL15 | compaction preserves text     | planned                 | `text_pool.d`                                                                                        |
-| POOL16 | aliased input                 | planned                 | `text_pool.d`                                                                                        |
-| POOL17 | release reclaims              | planned                 | `text_pool.d`                                                                                        |
-| POOL18 | text copies between pools     | planned                 | `text_pool.d`                                                                                        |
+| ID     | Requirement                   | Status                  | Traces to                                                                                                                                 |
+| ------ | ----------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| POOL1  | default handle invalid        | full                    | `Handle.valid`, `SlotTable.resolve`, test `pool.handle.initIsInvalid`                                                                     |
+| POOL2  | tags separate handle types    | full                    | `isHandle`, test `pool.handle.tagsSeparateTypes`                                                                                          |
+| POOL3  | removed handles are stale     | full                    | `SlotTable.remove`, test `pool.slot_table.removedHandlesAreStale`                                                                         |
+| POOL4  | error precedence              | full                    | `SlotTable.resolve`, test `pool.slot_table.errorPrecedence`                                                                               |
+| POOL5  | advance and retire            | full                    | `Wrap`, tests `pool.slot_table.retireAtTheGenerationLimit`, `pool.slot_table.skipZeroWrapsAndReuses`                                      |
+| POOL6  | reuse order                   | full                    | `Reuse`, tests `pool.slot_table.reuseOrder`, `pool.slot_table.fifoIssuesFreshSlotsFirst`                                                  |
+| POOL7  | handles are pool-local        | full (documented limit) | `Handle`                                                                                                                                  |
+| POOL8  | records never move            | full                    | `Pool.get`, test `pool.pool.recordsNeverMove`                                                                                             |
+| POOL9  | identity before construction  | full                    | `Pool.reserve`, `Pool.commit`, `Pool.cancel`, test `pool.pool.reserveCommitCancel`                                                        |
+| POOL10 | removal destroys exactly once | full                    | `Pool.remove`, tests `pool.pool.removalDestroysExactlyOnce`, `pool.pool.moveOnlyRecords`                                                  |
+| POOL11 | checked access is scoped      | full                    | `Pool.get`, `Pool.withRecord`, test `pool.pool.withRecordAndEscape`                                                                       |
+| POOL12 | per-text bound truncation     | full                    | `TextPool.intern`, tests `pool.text_pool.truncatesOnlyAtTheBound`, `pool.text_pool.invalidUtf8IsStoredAsGiven`                            |
+| POOL13 | pressure fails                | full                    | `TextPool.intern`, test `pool.text_pool.pressureFailsNeverTruncates`                                                                      |
+| POOL14 | read only inside a borrow     | full                    | `TextPool.withText`, `TextPool.borrow`, tests `pool.text_pool.noCompactionWhileBorrowed`, `pool.text_pool.callbackSliceSurvivesInterning` |
+| POOL15 | compaction preserves text     | full                    | test `pool.text_pool.compactionPreservesTextInOffsetOrder`                                                                                |
+| POOL16 | aliased input                 | full                    | test `pool.text_pool.aliasedInput`                                                                                                        |
+| POOL17 | release reclaims              | full                    | `TextPool.release`, test `pool.text_pool.internReadRelease`                                                                               |
+| POOL18 | text copies between pools     | full                    | `retain`, test `pool.text_pool.retainCopiesBetweenPools`                                                                                  |
 
 ## 7. Later layers
 
