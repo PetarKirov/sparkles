@@ -127,9 +127,9 @@ record's destructor once and leave `Record.init` in the slot, so a move-only
 member (a `UniqueBuffer`) releases its storage at removal, not at the next
 reuse. A `commit` must destroy the value it overwrites.
 
-**POOL11: Checked access is scoped.** `get(h)` must return a reference only for
-a live handle, and must not let that reference escape the pool under
-`-preview=dip1000`.
+**POOL11: Checked access is scoped.** `get(h)` must return a pointer to the record only
+for a live handle (`null` otherwise), and under `-preview=dip1000` that pointer
+must not outlive the pool. `withRecord(h, fn)` is the callback form.
 
 ## 5. The text pool
 
@@ -182,10 +182,10 @@ text of `id` into `dst`, carrying the truncation flag, and return the new id or
 | POOL5  | advance and retire            | full                    | `Wrap`, tests `pool.slot_table.retireAtTheGenerationLimit`, `pool.slot_table.skipZeroWrapsAndReuses` |
 | POOL6  | reuse order                   | full                    | `Reuse`, tests `pool.slot_table.reuseOrder`, `pool.slot_table.fifoIssuesFreshSlotsFirst`             |
 | POOL7  | handles are pool-local        | full (documented limit) | `Handle`                                                                                             |
-| POOL8  | records never move            | planned                 | `pool.d`                                                                                             |
-| POOL9  | identity before construction  | planned                 | `pool.d`                                                                                             |
-| POOL10 | removal destroys exactly once | planned                 | `pool.d`                                                                                             |
-| POOL11 | checked access is scoped      | planned                 | `pool.d`                                                                                             |
+| POOL8  | records never move            | full                    | `Pool.get`, test `pool.pool.recordsNeverMove`                                                        |
+| POOL9  | identity before construction  | full                    | `Pool.reserve`, `Pool.commit`, `Pool.cancel`, test `pool.pool.reserveCommitCancel`                   |
+| POOL10 | removal destroys exactly once | full                    | `Pool.remove`, tests `pool.pool.removalDestroysExactlyOnce`, `pool.pool.moveOnlyRecords`             |
+| POOL11 | checked access is scoped      | full                    | `Pool.get`, `Pool.withRecord`, test `pool.pool.withRecordAndEscape`                                  |
 | POOL12 | per-text bound truncation     | planned                 | `text_pool.d`                                                                                        |
 | POOL13 | pressure fails                | planned                 | `text_pool.d`                                                                                        |
 | POOL14 | read only inside a borrow     | planned                 | `text_pool.d`                                                                                        |

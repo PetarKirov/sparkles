@@ -8,3 +8,4 @@ module sparkles.base.pool;
 
 public import sparkles.base.pool.handle;
 public import sparkles.base.pool.slot_table;
+public import sparkles.base.pool.pool;
