@@ -1,5 +1,5 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:font
 reviewed: 2026-10-14
 ---
