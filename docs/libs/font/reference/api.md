@@ -182,3 +182,31 @@ is `unsupportedVersion`; a face without `VORG` but with `vmtx` and `glyf` is
 face has no origin, and a layout that needs one chooses its own fallback. A
 caller's glyph ID past `numGlyphs` is `indexOutOfRange` for both glyph
 queries. At all-zero coordinates neither `VVAR` nor `MVAR` is read.
+
+## Baselines — `sparkles.font.baseline`
+
+`BASE` major version 1 is read; minor 0 or 1, a later minor as 1, with the item
+variation store from 1.1. Each axis (`BaselineAxis.horizontal`, `vertical`) is
+optional. A coordinate is a `BaseCoord`: its `format`, its `coordinate` as a
+`Measurement` (VariationIndex delta included), a format-2 `referenceGlyph` and
+`pointIndex` with `unresolvedPoint` set until outlines resolve the point, and a
+format-3 `device` adjustment whose whole-pixel delta only `BaseCoord.pixels`
+adds, at an instance sized in pixels at an integer ppem inside the table's range.
+
+| Operation                                       | Result                                                                                                                                                        |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `face.base(axes)`, `base.axis(which)`           | the `BASE` view and one `BaseAxis` (`present` false when its offset is null)                                                                                  |
+| `axis.tags`, `axis.scripts`                     | the tag list as `BaselineTags`; the script records as `FontResult!Tag` entries, `badOffset` for a record pointing outside the table                           |
+| `inst.baselineTags(axis)`                       | `BaselineTags`, a random-access range of `Tag`; empty with `axisPresent` false without the axis                                                               |
+| `inst.baseline(axis, script, tag)`              | `Baseline`: which `script` record answered (`requested` or `defaultScript`), `defaultIndex`, and `present` with the `BaseCoord` when one is found             |
+| `inst.extents(axis, script, language, feature)` | `Extents`: the script, the MinMax `record` (`language` or `scriptDefault`), `fromFeature`, and a `min` and `max` `Extent`, each `absent`, a value or an error |
+
+`baseline` follows the specification's table: no `BASE` is `missingTable`; no
+axis, no script or `DFLT` record, no BaseValues, or a tag outside the tag list
+is absent; a tag index past the coordinates is `badValue`; a coordinate format
+other than 1–3 is `unsupportedVersion`. `defaultIndex` is reported but never
+answers another tag, and a zero coordinate is a value. `extents` takes the
+language's MinMax record, else the script's default, then the feature's record
+within it, else the record's own values; a null minimum or maximum is absent,
+and an offset outside the table is that value's `badOffset`. Pass `Tag.init`
+for no language or feature. At all-zero coordinates the store is not read.
