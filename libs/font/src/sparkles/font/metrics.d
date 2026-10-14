@@ -121,7 +121,7 @@ unittest
     assert(px.physical.error.kind == FontErrorKind.unsupportedCapability);
 }
 
-private Measurement measured(in Instance inst, DesignValue d) => Measurement(d, inst.size);
+package Measurement measured(in Instance inst, DesignValue d) => Measurement(d, inst.size);
 
 // ---------------------------------------------------------------------------
 // MVAR (FTV14)
@@ -141,6 +141,9 @@ enum MvarTag : Tag
     underlineSize = Tag("unds"),
     strikeoutOffset = Tag("stro"),
     strikeoutSize = Tag("strs"),
+    verticalAscender = Tag("vasc"),
+    verticalDescender = Tag("vdsc"),
+    verticalLineGap = Tag("vlgp"),
 }
 
 /**
@@ -230,7 +233,7 @@ FontResult!Mvar mvar(return scope const Face face, ushort fvarAxisCount)
 every delta is zero and nothing more is read (FTM14); an unreadable table makes
 every delta its error.
 */
-private struct MvarAt
+package struct MvarAt
 {
     @safe pure nothrow @nogc:
 

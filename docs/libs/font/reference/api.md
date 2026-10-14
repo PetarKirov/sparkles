@@ -158,3 +158,27 @@ to nearest with ties to even and at least 1; ascent up; descent (the negated
 descender) up and at least 0; line gap to nearest even and at least 0; the
 baseline at ascent + ⌊gap / 2⌋; the underline at `baseline − position`
 rounded to nearest even, its thickness at least 1.
+
+## Vertical metrics — `sparkles.font.vertical`
+
+Vertical queries take an `Instance` and return `Measurement`s, like the
+horizontal ones. Without the tables a result is absent (`present` false), not
+an error and never a synthesized value; a stored zero is a value.
+
+| Operation                                        | Result                                                                                                                                                                    |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `face.vhea`                                      | `Vhea`, version 1.0 or 1.1 (fields as stored), at least 36 bytes; another version `unsupportedVersion`                                                                    |
+| `face.vmtx`, `vmtx.metric(gid)`                  | `VerticalMetric` (advance height, top side bearing) with `hmtx`'s leniency: `numOfLongVerMetrics` capped at `numGlyphs`, the last advance repeated, `truncated` per glyph |
+| `face.vorg`, `vorg.originY(gid)`                 | `VORG` 1.0; a glyph's record by binary search, else `defaultVertOriginY`, with `fromRecord`                                                                               |
+| `face.vvar(axes)`, `advanceDelta`, `originDelta` | the `VVAR` view (major 1): advance-height map (null is the identity) and vertical-origin map; side-bearing maps are not read                                              |
+| `inst.verticalLineMetrics`                       | `vhea` ascender, descender and line gap plus the `vasc`, `vdsc`, `vlgp` deltas; absent without `vhea`                                                                     |
+| `inst.verticalAdvance(gid)`                      | the `vmtx` advance plus the `VVAR` delta; absent without `vhea` or `vmtx`; `unsupportedCapability` at nonzero coordinates without `VVAR`                                  |
+| `inst.verticalOrigin(gid)`                       | `VerticalOrigin`: `y`, its `source` (`vorgRecord`, `vorgDefault`, or `none` when absent) and whether a `VVAR` origin delta was added (`varied`)                           |
+
+`verticalOrigin` follows the specification's table: `VORG` 1.0 answers, plus
+the `VVAR` origin delta when `VVAR` has an origin map; another `VORG` version
+is `unsupportedVersion`; a face without `VORG` but with `vmtx` and `glyf` is
+`unsupportedCapability` until outlines give each glyph's `yMax`; any other
+face has no origin, and a layout that needs one chooses its own fallback. A
+caller's glyph ID past `numGlyphs` is `indexOutOfRange` for both glyph
+queries. At all-zero coordinates neither `VVAR` nor `MVAR` is read.
