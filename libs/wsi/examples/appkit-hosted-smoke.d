@@ -64,26 +64,27 @@ private extern class NSString : NSObject
 
 private extern class NSEvent : NSObject
 {
+    // Each selector is one string literal. The frontend hands a `@selector`
+    // argument to a NUL-scanning lookup (`dmd/objc.d`: `peekString().ptr`). A
+    // lexed literal is NUL-terminated in the compiler's memory; a `~`
+    // concatenated at CTFE need not be, and the scan baked whatever followed
+    // into the selector itself (`keyCode:sparkles.math.vector...`).
     static NSEvent mouseEventWithType(ulong type, NSPoint location,
         ulong modifierFlags, double timestamp, long windowNumber,
         NSObject context, long eventNumber, long clickCount, float pressure)
-        @selector("mouseEventWithType:location:modifierFlags:timestamp:"
-            ~ "windowNumber:context:eventNumber:clickCount:pressure:");
+        @selector("mouseEventWithType:location:modifierFlags:timestamp:windowNumber:context:eventNumber:clickCount:pressure:");
     static NSEvent otherEventWithType(ulong type, NSPoint location,
         ulong modifierFlags, double timestamp, long windowNumber,
         NSObject context, short subtype, long data1, long data2)
         nothrow @nogc
-        @selector("otherEventWithType:location:modifierFlags:timestamp:"
-            ~ "windowNumber:context:subtype:data1:data2:");
+        @selector("otherEventWithType:location:modifierFlags:timestamp:windowNumber:context:subtype:data1:data2:");
     static NSEvent eventWithCGEvent(void* cgEvent)
         @selector("eventWithCGEvent:");
     static NSEvent keyEventWithType(ulong type, NSPoint location,
         ulong modifierFlags, double timestamp, long windowNumber,
         NSObject context, NSString characters,
         NSString charactersIgnoringModifiers, bool isARepeat, ushort keyCode)
-        @selector("keyEventWithType:location:modifierFlags:timestamp:"
-            ~ "windowNumber:context:characters:charactersIgnoringModifiers:"
-            ~ "isARepeat:keyCode:");
+        @selector("keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:");
 }
 
 private extern class NSApplication : NSObject
