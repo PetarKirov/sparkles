@@ -71,7 +71,8 @@ the table being read or none, and the absolute byte offset in the buffer
 where the problem was found. An error inside a readable table **must** also
 carry the offset relative to that table's start. A `limitExceeded` error
 **must** identify which limit of [`FTB3`](./SPEC.md#_4-trust-boundary) was
-exceeded and its value.
+exceeded and its value; a caller array that is too short is reported as the
+limit `callerStorage`, with the length needed.
 
 **FTP15: Caller arguments versus data.** A glyph ID, record index, codepoint
 or tag supplied by the caller is data, not a precondition: an out-of-range

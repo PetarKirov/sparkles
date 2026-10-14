@@ -91,15 +91,16 @@ AddressSanitizer, as `ci --test-sanitize` builds it.
 
 ## M2 Variation, metrics and inspection
 
-**Obligations.** `FTA3`, `FTV1`–`FTV14`, `FTM1`–`FTM22`, `FTP13`, `FTP34`–`FTP38`,
+**Obligations.** `FTA3`, `FTV1`–`FTV14`, `FTM1`–`FTM24`, `FTP13`, `FTP34`–`FTP38`,
 `FTI2`–`FTI4`, `FTI7`–`FTI10`. The operation contracts are in
 [`variation-metrics.md`](./variation-metrics.md).
 
 **Prerequisites.** M1; base's accepted physical-unit arithmetic and conversion
 contract. Borrowed table-query/result contracts and error distinctions for `MATH`,
 `BASE` and vertical metrics refined before implementation. The owner accepted
-base's unit contract on 2026-10-14; the contracts are drafted and await an
-adversarial review and the owner's acceptance.
+base's unit contract on 2026-10-14; the contracts are drafted, their adversarial
+review is dispositioned ([`decisions.md`](./decisions.md#m2-operation-contract-review)),
+and they await the owner's acceptance.
 
 **Deliverable.** `FontInstance`, normalization, `HVAR`/`MVAR`, physical/design
 and pixel measurements, line and cell metrics, baseline/vertical metrics, `MATH`
@@ -231,5 +232,5 @@ an x86_64 Android emulator and an arm64-v8a phone. The open M1 gap is in the
 evidence ledger: a race-detector run of the concurrency test
 (`FTA2`). Next action: M2. Base's unit contract is accepted, and the M2
 operation contracts are drafted in [`variation-metrics.md`](./variation-metrics.md);
-implementation starts once an adversarial review is dispositioned and the owner
-accepts them.
+their adversarial review is dispositioned, and implementation starts once the
+owner accepts them.
