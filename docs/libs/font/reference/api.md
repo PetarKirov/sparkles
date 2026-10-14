@@ -210,3 +210,61 @@ language's MinMax record, else the script's default, then the feature's record
 within it, else the record's own values; a null minimum or maximum is absent,
 and an offset outside the table is that value's `badOffset`. Pass `Tag.init`
 for no language or feature. At all-zero coordinates the store is not read.
+
+## Coverage — `sparkles.font.coverage`
+
+`Coverage.read(table, tag, tableStart, offset)` views a Coverage table inside
+`MATH`, `GDEF`, `GSUB` or `GPOS`. Format 1 (a sorted glyph array) and format 2
+(sorted glyph ranges) are read; another format is `unsupportedVersion`, an
+array past the table `truncated`, and an offset past it `badOffset`. These are
+recorded at `read` (`broken`, `error`) and returned by the lookups.
+
+| Operation             | Result                                                                                                                                         |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `coverage.index(gid)` | a `CoverageIndex`: `covered`, and the format-1 position or format-2 `startCoverageIndex + gid − start`; binary search, O(log n)                |
+| `coverage.glyphs`     | `CoveredGlyphs`, a forward range of `CoveredGlyph` (glyph and coverage index) in coverage order; a range whose end precedes its start is empty |
+
+## GDEF — `sparkles.font.gdef`
+
+`face.gdef(fvarAxes)` reads the `GDEF` header (major version 1; the item
+variation store from 1.3). `face.gdefVariationStore(fvarAxes)` is the store
+`MATH` and `GPOS` VariationIndex tables resolve against: not `present` without
+`GDEF`, before 1.3, or with a null offset; any other `GDEF` problem is recorded
+as a `broken` store, so only a delta that reads it at nonzero coordinates
+reports it.
+
+## Math — `sparkles.font.math_table`
+
+The module is `math_table` so that it never reads as `std.math`. `MATH` major
+version 1 is read, any minor; another major is `unsupportedVersion`, and
+without the table every query is `missingTable`. Values are `MathValue`s:
+`present` false when the font has no record (a stored zero is present), a
+`kind` of `percentage` (signed, never scaled), `length` (a design value with no
+device: the two minimum heights) or `record` (a MathValueRecord). A record's
+`value` is a `Measurement` including its VariationIndex delta from `GDEF`'s
+store (`badValue` without one, at nonzero coordinates); a Device table's
+whole-pixel delta stays in `device` and only `MathValue.pixels` adds it, at an
+instance sized in pixels at an integer ppem inside the table's range.
+
+| Operation                                    | Result                                                                                                                                                                                                         |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `face.mathTable`                             | the `MATH` header, with `majorVersion` and `minorVersion`                                                                                                                                                      |
+| `inst.mathConstants`                         | `MathConstants`, indexed by `MathConstant` (56, in table order); each constant its own `FontResult!MathValue`, `truncated` past a short table; `present` false without a MathConstants table                   |
+| `inst.italicsCorrection(gid)`                | the glyph's MathValueRecord; absent when not covered, `badValue` when its coverage index is past the value array                                                                                               |
+| `inst.topAccentAttachment(gid)`              | as `italicsCorrection`; an uncovered glyph is absent, never half its advance                                                                                                                                   |
+| `inst.isExtendedShape(gid)`                  | whether the extended-shape coverage holds the glyph; `false` without one                                                                                                                                       |
+| `inst.mathKernTable(gid, corner)`            | `MathKernTable` for a `MathKernCorner`: `heightCount`, `height(i)`, `value(i)`, `heightsAscending` and `lookup(h)`; `present` false when not covered or the corner is null, `badValue` past the record array   |
+| `inst.mathKern(gid, corner, h)`              | the kern value at index `k`, the first height (stored order) greater than `h`, else `heightCount`                                                                                                              |
+| `inst.mathVariants(gid, direction)`          | `MathVariants`, a random-access range of `MathVariant` (glyph and advance) for a `MathDirection`, with `minConnectorOverlap`; empty without a construction, `badValue` for a construction index past its array |
+| `inst.mathAssemblyLength(gid, direction)`    | `MathAssemblyLength`: `present` and `partCount`                                                                                                                                                                |
+| `inst.mathAssembly(gid, direction, parts[])` | `MathAssembly`: `present`, the written slice of `GlyphPart`s (glyph, connector lengths, full advance, `flags`, `extender`) and the assembly's `italicsCorrection`                                              |
+
+`mathKern` resolves heights with their variation deltas and no device delta,
+in stored order, until one is greater than `h`; a height equal to `h` selects
+the value above it, a ppem never changes the step, and the first error met is
+the result. Unsorted heights are not reordered; `heightsAscending` reports
+them. `h` is a `DesignValue` in the face's units per em, else `badValue`. A
+`parts` array shorter than the part count is `limitExceeded` naming
+`callerStorage` with the count as `needed`, and is left unchanged, as on every
+other error. `flags` keeps reserved bits as stored. No assembly is composed.
+At all-zero coordinates the store is not read.
