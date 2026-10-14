@@ -122,3 +122,39 @@ of them. An `avar` whose axis count differs from `fvar`'s, or that is
 unreadable, is left out and recorded; a decreasing segment map leaves only its
 axis unmapped. Version 2 evaluates its item variation store on the mapped
 coordinates and clamps each result to ±1.
+
+## Metrics — `sparkles.font.metrics`
+
+Every value is a `Measurement`: the exact `design` value and the instance's
+size. `m.physical` is a `LayoutUnit` at a physically sized instance;
+`m.pixels` is fractional pixels at a pixel-sized one, and `m.pixels(dpi)` at a
+physically sized one on a device of `dpi` (`ppem = em · dpi / 72`), so the
+device scale never changes the physical value. A query in a form the instance
+cannot give is `unsupportedCapability`. `m.pixelsAt(ppem)` takes an explicit
+ppem.
+
+| Operation                                      | Result                                                                                                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `inst.verticalSets`                            | the `hhea`, typographic and Windows sets as stored plus `MVAR` deltas, and `useTypoMetrics`; a missing table's sets absent (`hasHhea`, `hasOs2`) |
+| `inst.lineMetrics`                             | ascender, descender, line gap and the `source` set, chosen on stored values in FTM2's order; `present` is false when no set remains              |
+| `inst.decorations`                             | x-height and cap height (`OS/2` v2+), underline (`post`), strikeout (`OS/2`), each with a `has…` flag; a stored zero is a value                  |
+| `inst.advance(gid)`                            | the `hmtx` advance plus the `HVAR` delta; `unsupportedCapability` at nonzero coordinates without `HVAR`; negative results kept                   |
+| `inst.measureRun(gids)`                        | the checked design-value sum of the run's advances, converted once by the caller; the first error, `arithmeticExhausted` on overflow             |
+| `inst.cellMetrics(cmap, ppem)`                 | `CellMetrics` in whole pixels: width (and `widthSource`), ascent, descent, line gap, height, baseline, underline                                 |
+| `face.hvar(axes)`, `hvar.advanceDelta(gid, …)` | the `HVAR` view (major 1; a null advance map is the identity on the glyph ID) and one advance delta                                              |
+| `face.mvar(axes)`, `mvar.delta(tag, …)`        | the `MVAR` view (major 1, `valueRecordSize` ≥ 8) and one value's delta by binary search; a tag with no record is zero                            |
+
+The `hhea` and typographic sets take the `hasc`, `hdsc` and `hlgp` deltas;
+the Windows set takes `hcla` and `hcld` only. At all-zero coordinates neither
+`HVAR` nor `MVAR` is read, so a malformed one cannot fail a query there; at
+nonzero coordinates an unreadable `MVAR` fails every value that takes a delta,
+and an unreadable `HVAR` every varied advance.
+
+`cellMetrics` takes the face's `CharMap`, built once by the caller, in
+addition to the integer ppem of the specification's `cellMetrics(ppem)`: the
+library keeps no hidden cache, and building a character map is not O(1). It
+rounds by FTM19's table: width (U+0030's advance, else `OS/2.xAvgCharWidth`)
+to nearest with ties to even and at least 1; ascent up; descent (the negated
+descender) up and at least 0; line gap to nearest even and at least 0; the
+baseline at ascent + ⌊gap / 2⌋; the underline at `baseline − position`
+rounded to nearest even, its thickness at least 1.

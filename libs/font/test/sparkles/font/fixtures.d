@@ -98,9 +98,10 @@ ubyte[] maxp(uint numGlyphs)
 ubyte[] maxp05(uint numGlyphs) => u32(0x0000_5000) ~ u16(numGlyphs);
 
 /// A version-1 `hhea`.
-ubyte[] hhea(uint numberOfHMetrics, int ascender = 800, int descender = -200)
+ubyte[] hhea(uint numberOfHMetrics, int ascender = 800, int descender = -200, int lineGap = 0)
 {
-    auto t = u32(0x0001_0000) ~ u16(cast(uint) ascender) ~ u16(cast(uint) descender);
+    auto t = u32(0x0001_0000) ~ u16(cast(uint) ascender) ~ u16(cast(uint) descender)
+        ~ u16(cast(uint) lineGap);
     t.length = 34;
     return t ~ u16(numberOfHMetrics);
 }
@@ -412,4 +413,84 @@ ubyte[] avarTable(const(int[2][])[] maps, bool version2 = false, const(ubyte)[] 
     t ~= u32(axisIndexMap is null ? 0 : cast(uint) tail)
         ~ u32(varStore is null ? 0 : cast(uint)(tail + axisIndexMap.length));
     return t ~ axisIndexMap ~ varStore;
+}
+
+/// The `OS/2` fields metrics read; the rest stay zero.
+struct Os2Fields
+{
+    uint version_ = 4;
+    int xAvgCharWidth = 500;
+    int yStrikeoutSize = 50, yStrikeoutPosition = 250;
+    uint fsSelection;
+    int sTypoAscender = 750, sTypoDescender = -250, sTypoLineGap = 100;
+    uint usWinAscent = 900, usWinDescent = 300;
+    int sxHeight = 450, sCapHeight = 650;
+}
+
+/// An `OS/2` table of `f.version_`, as long as that version needs.
+ubyte[] os2Table(const Os2Fields f)
+{
+    auto t = new ubyte[](f.version_ >= 5 ? 100 : f.version_ >= 2 ? 96 : f.version_ == 1 ? 86 : 78);
+    void put(size_t at, uint v) { t[at] = cast(ubyte)(v >> 8); t[at + 1] = cast(ubyte) v; }
+    put(0, f.version_);
+    put(2, f.xAvgCharWidth);
+    put(26, f.yStrikeoutSize);
+    put(28, f.yStrikeoutPosition);
+    put(62, f.fsSelection);
+    put(68, f.sTypoAscender);
+    put(70, f.sTypoDescender);
+    put(72, f.sTypoLineGap);
+    put(74, f.usWinAscent);
+    put(76, f.usWinDescent);
+    if (f.version_ >= 2)
+    {
+        put(86, f.sxHeight);
+        put(88, f.sCapHeight);
+    }
+    return t;
+}
+
+/// A version-3 `post` header with the underline position and thickness.
+ubyte[] postHeader(int underlinePosition, int underlineThickness)
+{
+    auto t = postTable(0x0003_0000);
+    t[8 .. 10] = u16(underlinePosition);
+    t[10 .. 12] = u16(underlineThickness);
+    return t;
+}
+
+/**
+An `HVAR` table of major version `major` holding `store` and, when given, the
+advance map `advanceMap` (offsets 0 when null); no side-bearing maps.
+*/
+ubyte[] hvarTable(const(ubyte)[] store, const(ubyte)[] advanceMap = null, uint major = 1)
+{
+    const storeAt = store is null ? 0 : 20;
+    const mapAt = advanceMap is null ? 0 : 20 + store.length;
+    return u16(major) ~ u16(0) ~ u32(storeAt) ~ u32(cast(uint) mapAt) ~ u32(0) ~ u32(0) ~ store ~ advanceMap;
+}
+
+/// One `MVAR` value record: a tag and its `[outer, inner]` delta-set index.
+struct MvarRecord
+{
+    string tag;
+    uint outer, inner;
+}
+
+/**
+An `MVAR` table of major version `major` with `records` (in the given order,
+each padded to `recordSize` bytes) and `store` after them (offset 0 when null).
+*/
+ubyte[] mvarTable(const(MvarRecord)[] records, const(ubyte)[] store, uint recordSize = 8, uint major = 1)
+{
+    const storeAt = store is null ? 0 : 12 + recordSize * records.length;
+    ubyte[] t = u16(major) ~ u16(0) ~ u16(0) ~ u16(recordSize) ~ u16(cast(uint) records.length)
+        ~ u16(cast(uint) storeAt);
+    foreach (r; records)
+    {
+        auto record = cast(const(ubyte)[]) r.tag ~ u16(r.outer) ~ u16(r.inner);
+        record.length = recordSize;
+        t ~= record;
+    }
+    return t ~ store;
 }
