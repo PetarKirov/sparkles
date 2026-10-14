@@ -7,7 +7,8 @@ and glyph names. Every operation reads only inside the caller's buffer,
 reports malformed data as a `FontError` rather than asserting, and does not
 allocate. Milestone M2 begins with design values and their exact physical and
 pixel conversions, the variation deltas of item variation stores, delta-set
-index maps and Device tables, and instances with normalized coordinates.
+index maps and Device tables, instances with normalized coordinates, and the
+metrics of an instance: line metrics, decorations, advances and cell metrics.
 
 $(UL
     $(LI `sparkles.font.face` — `openFace`, `openCollection`, `Face`, table lookup and inspection.)
@@ -18,6 +19,7 @@ $(UL
     $(LI `sparkles.font.units` — design values, `Ppem`, and their physical and pixel conversions.)
     $(LI `sparkles.font.variations` — item variation stores, delta-set index maps, Device and VariationIndex deltas.)
     $(LI `sparkles.font.instance` — axes, named instances, and `Instance`: normalized coordinates with `avar` 1 and 2.)
+    $(LI `sparkles.font.metrics` — `Measurement`, `HVAR` and `MVAR`, vertical sets, line metrics, decorations, advances, runs and cell metrics.)
     $(LI `sparkles.font.errors` — `FontError`, `FontResult` and `Tag`.)
 )
 */
@@ -28,6 +30,7 @@ public import sparkles.font.errors;
 public import sparkles.font.face;
 public import sparkles.font.glyph_names;
 public import sparkles.font.instance;
+public import sparkles.font.metrics;
 public import sparkles.font.names;
 public import sparkles.font.tables;
 public import sparkles.font.units;
