@@ -3798,10 +3798,16 @@ private int runExtractedTestsMode(bool failFast, in string[] requested)
             jobs ~= Job(pkg, pkg.baseName, "--wasm");
     }
 
+    if (jobs.length == 0 && requested.length != 0)
+    {
+        // A chosen subset (CI's stale packages, say) may well hold none.
+        info(i"None of the requested packages uses @betterC or @wasm — nothing to run");
+        return 0;
+    }
     if (jobs.length == 0)
     {
         // Not a pass: the repo is supposed to have such tests, so an empty
-        // sweep means the scan (or the attributes) regressed.
+        // sweep of all of it means the scan (or the attributes) regressed.
         error(i"No sub-package uses @betterC or @wasm — nothing to run");
         return 1;
     }

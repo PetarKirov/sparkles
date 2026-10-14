@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/3myhwgph410qk3gccjgnwrrhmf553zyq-ci-job-sweep
+          bundle=/nix/store/j97izwyjh4pbyxvryr2jxvzmk60myixk-ci-job-sweep
           nix=/nix/var/nix/profiles/default/bin
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
@@ -82,4 +82,4 @@ jobs:
         env:
           GITHUB_TOKEN: "${{ github.token }}"
           ROTTEN: "${{ steps.sweep.outcome == 'failure' && '--rotten' || '' }}"
-        run: /nix/store/2dg1sk270nh023cbkk0i83bcm4ba9c2q-ci-report-link-rot/bin/ci-report-link-rot
+        run: /nix/store/xv8c6hxiwq9386d18nmc2dzgx5dfxh14-ci-report-link-rot/bin/ci-report-link-rot
