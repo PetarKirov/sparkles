@@ -15,6 +15,7 @@ echo ">> building sparkles:wsi AppKit hosted-loop smoke ..."
 ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/wsi/src" \
   -I"$repo/libs/event-horizon/src" \
+  -I"$repo/libs/event-horizon-sys/src" \
   -I"$repo/libs/input/src" \
   -I"$repo/libs/metadata/src" \
   -I"$repo/libs/reflection/src" \

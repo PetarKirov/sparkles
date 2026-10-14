@@ -12,6 +12,12 @@ during="$(find "$HOME/.dub/packages/during" -path '*/source/during/package.d' | 
 during_src="$(dirname "$(dirname "$during")")"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+
+# `during` declares `syscall(int, ...)` and druntime (reached through
+# event-horizon-sys) `syscall(long, ...)`; one ldc2 invocation rejects the
+# pair, so `during` is built on its own and linked.
+ldc2 -lib -preview=in -preview=dip1000 -g -I"$during_src" \
+  $(find "$during_src/during" -name '*.d') -of="$work/libduring.a"
 chmod 700 "$work"
 
 echo ">> building sparkles:wsi Wayland keys smoke ..."
@@ -19,6 +25,7 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/wsi/src" \
   -I"$repo/libs/wsi/examples" \
   -I"$repo/libs/event-horizon/src" \
+  -I"$repo/libs/event-horizon-sys/src" \
   -I"$repo/libs/input/src" \
   -I"$repo/libs/metadata/src" \
   -I"$repo/libs/reflection/src" \
@@ -26,7 +33,9 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/base/src" \
   -I"$repo/libs/test-runner/src" \
   -I"$expected_src" \
+  -i=-during \
   -I"$during_src" \
+  "$work/libduring.a" \
   "$repo/libs/wsi/examples/wayland-hosted-smoke.d" \
   "$repo/libs/wsi/src/wayland_native.c" \
   -L-lwayland-client -L-lxkbcommon \
