@@ -85,7 +85,7 @@ compile.
 
 **POOL3: A removed object's handles are stale.** After `remove(h)` succeeds,
 `resolve(h)`, `isLive(h)` and a second `remove(h)` must report the handle as
-stale (`PoolError.stale`, `false`, `false` respectively), including after the
+stale (`PoolError.stale`, `false` and `PoolError.stale`), including after the
 slot has been reused by a later `insert`.
 
 **POOL4: Error precedence.** `resolve` must report `invalid` for generation 0
@@ -173,26 +173,26 @@ text of `id` into `dst`, carrying the truncation flag, and return the new id or
 
 ## 6. Requirements and evidence
 
-| ID     | Requirement                   | Status  | Traces to      |
-| ------ | ----------------------------- | ------- | -------------- |
-| POOL1  | default handle invalid        | planned | `handle.d`     |
-| POOL2  | tags separate handle types    | planned | `handle.d`     |
-| POOL3  | removed handles are stale     | planned | `slot_table.d` |
-| POOL4  | error precedence              | planned | `slot_table.d` |
-| POOL5  | advance and retire            | planned | `slot_table.d` |
-| POOL6  | reuse order                   | planned | `slot_table.d` |
-| POOL7  | handles are pool-local        | planned | `handle.d`     |
-| POOL8  | records never move            | planned | `pool.d`       |
-| POOL9  | identity before construction  | planned | `pool.d`       |
-| POOL10 | removal destroys exactly once | planned | `pool.d`       |
-| POOL11 | checked access is scoped      | planned | `pool.d`       |
-| POOL12 | per-text bound truncation     | planned | `text_pool.d`  |
-| POOL13 | pressure fails                | planned | `text_pool.d`  |
-| POOL14 | read only inside a borrow     | planned | `text_pool.d`  |
-| POOL15 | compaction preserves text     | planned | `text_pool.d`  |
-| POOL16 | aliased input                 | planned | `text_pool.d`  |
-| POOL17 | release reclaims              | planned | `text_pool.d`  |
-| POOL18 | text copies between pools     | planned | `text_pool.d`  |
+| ID     | Requirement                   | Status                  | Traces to                                                                                            |
+| ------ | ----------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------- |
+| POOL1  | default handle invalid        | full                    | `Handle.valid`, `SlotTable.resolve`, test `pool.handle.initIsInvalid`                                |
+| POOL2  | tags separate handle types    | full                    | `isHandle`, test `pool.handle.tagsSeparateTypes`                                                     |
+| POOL3  | removed handles are stale     | full                    | `SlotTable.remove`, test `pool.slot_table.removedHandlesAreStale`                                    |
+| POOL4  | error precedence              | full                    | `SlotTable.resolve`, test `pool.slot_table.errorPrecedence`                                          |
+| POOL5  | advance and retire            | full                    | `Wrap`, tests `pool.slot_table.retireAtTheGenerationLimit`, `pool.slot_table.skipZeroWrapsAndReuses` |
+| POOL6  | reuse order                   | full                    | `Reuse`, tests `pool.slot_table.reuseOrder`, `pool.slot_table.fifoIssuesFreshSlotsFirst`             |
+| POOL7  | handles are pool-local        | full (documented limit) | `Handle`                                                                                             |
+| POOL8  | records never move            | planned                 | `pool.d`                                                                                             |
+| POOL9  | identity before construction  | planned                 | `pool.d`                                                                                             |
+| POOL10 | removal destroys exactly once | planned                 | `pool.d`                                                                                             |
+| POOL11 | checked access is scoped      | planned                 | `pool.d`                                                                                             |
+| POOL12 | per-text bound truncation     | planned                 | `text_pool.d`                                                                                        |
+| POOL13 | pressure fails                | planned                 | `text_pool.d`                                                                                        |
+| POOL14 | read only inside a borrow     | planned                 | `text_pool.d`                                                                                        |
+| POOL15 | compaction preserves text     | planned                 | `text_pool.d`                                                                                        |
+| POOL16 | aliased input                 | planned                 | `text_pool.d`                                                                                        |
+| POOL17 | release reclaims              | planned                 | `text_pool.d`                                                                                        |
+| POOL18 | text copies between pools     | planned                 | `text_pool.d`                                                                                        |
 
 ## 7. Later layers
 

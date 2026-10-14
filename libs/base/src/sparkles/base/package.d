@@ -11,6 +11,7 @@ public import sparkles.base.logger;
 public import sparkles.base.log_sinks;
 public import sparkles.base.assert_handler;
 public import sparkles.base.meta;
+public import sparkles.base.pool;
 public import sparkles.base.prettyprint;
 public import sparkles.base.buffer;
 public import sparkles.base.build_stamp;
