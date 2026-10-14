@@ -279,3 +279,89 @@ ubyte[] cffTable(const(string)[] strings, const(ubyte)[] charset, uint predefine
     assert(top.length == topIndexLength);
     return (header ~ names ~ top ~ stringIndex ~ globalSubrs ~ charset).dup;
 }
+
+/// One variation region axis: F2Dot14 `[start, peak, end]`.
+alias RegionAxis = int[3];
+
+/// An ItemVariationData subtable: its region indices, word-delta count and rows.
+struct VarData
+{
+    const(uint)[] regionIndexes;
+    uint wordCount;
+    bool longWords;
+    const(int[])[] rows;
+    /// Overrides the stored item count when not `uint.max`.
+    uint itemCount = uint.max;
+}
+
+/// The bytes of one ItemVariationData subtable.
+ubyte[] itemVariationData(const VarData d)
+{
+    ubyte[] t = u16(d.itemCount == uint.max ? cast(uint) d.rows.length : d.itemCount)
+        ~ u16(d.wordCount | (d.longWords ? 0x8000 : 0)) ~ u16(cast(uint) d.regionIndexes.length);
+    foreach (r; d.regionIndexes) t ~= u16(r);
+    foreach (row; d.rows)
+        foreach (j, v; row)
+        {
+            const word = j < (d.wordCount & 0x7FFF);
+            t ~= d.longWords ? (word ? u32(v) : u16(v)) : (word ? u16(v) : u8(v));
+        }
+    return t;
+}
+
+/**
+An item variation store: header, region list of `axisCount` axes, then the
+data subtables in order, every offset from the store's start.
+*/
+ubyte[] itemVariationStore(uint axisCount, const(RegionAxis[])[] regions, const(VarData)[] data,
+    uint format = 1)
+{
+    const headerLength = 8 + 4 * data.length;
+    ubyte[] regionList = u16(axisCount) ~ u16(cast(uint) regions.length);
+    foreach (region; regions)
+        foreach (a; region) regionList ~= u16(a[0]) ~ u16(a[1]) ~ u16(a[2]);
+    ubyte[] header = u16(format) ~ u32(cast(uint) headerLength) ~ u16(cast(uint) data.length);
+    ubyte[] body;
+    foreach (d; data)
+    {
+        header ~= u32(cast(uint)(headerLength + regionList.length + body.length));
+        body ~= itemVariationData(d);
+    }
+    return header ~ regionList ~ body;
+}
+
+/**
+A DeltaSetIndexMap of `format` (0 or 1) mapping each item to `[outer, inner]`,
+with `innerBits` (1–16) inner bits in `entrySize`-byte (1–4) entries.
+*/
+ubyte[] deltaSetIndexMap(const(uint[2])[] map, uint innerBits, uint entrySize, uint format = 0)
+{
+    ubyte[] t = u8(format) ~ u8(((entrySize - 1) << 4) | (innerBits - 1))
+        ~ (format == 0 ? u16(cast(uint) map.length) : u32(cast(uint) map.length));
+    foreach (m; map)
+    {
+        const entry = (m[0] << innerBits) | m[1];
+        t ~= entrySize == 1 ? u8(entry) : entrySize == 2 ? u16(entry)
+            : entrySize == 3 ? u32(entry)[1 .. $] : u32(entry);
+    }
+    return t;
+}
+
+/// A Device table of delta `format` 1–3 for sizes `start` to `end`, packing `values`.
+ubyte[] deviceTable(uint start, uint end, uint format, const(int)[] values)
+{
+    ubyte[] t = u16(start) ~ u16(end) ~ u16(format);
+    const bits = 1u << format, perWord = 16 / bits;
+    for (size_t i = 0; i < values.length; i += perWord)
+    {
+        uint word;
+        foreach (k; 0 .. perWord)
+            word |= (i + k < values.length ? values[i + k] & ((1u << bits) - 1) : 0)
+                << (16 - (k + 1) * bits);
+        t ~= u16(word);
+    }
+    return t;
+}
+
+/// A VariationIndex table (delta format 0x8000) naming `[outer, inner]`.
+ubyte[] variationIndexTable(uint outer, uint inner) => u16(outer) ~ u16(inner) ~ u16(0x8000);
