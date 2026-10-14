@@ -959,3 +959,406 @@ ubyte[] mathTableData(const(ubyte)[] constants, const(ubyte)[] glyphInfo, const(
     }
     return t ~ body;
 }
+
+// ---------------------------------------------------------------------------
+// GSUB and GPOS
+// ---------------------------------------------------------------------------
+
+/// A layout LangSys: its tag (unused for a default), required feature and feature indices.
+struct LayoutLangSysSpec
+{
+    string tag;
+    uint required = 0xFFFF;
+    const(uint)[] features;
+}
+
+/// The bytes of a LangSys table.
+ubyte[] layoutLangSys(const LayoutLangSysSpec s)
+{
+    ubyte[] t = u16(0) ~ u16(s.required) ~ u16(cast(uint) s.features.length);
+    foreach (f; s.features) t ~= u16(f);
+    return t;
+}
+
+/// A layout Script: an optional default LangSys and language systems in the given order.
+struct LayoutScriptSpec
+{
+    string tag;
+    bool hasDefault;
+    LayoutLangSysSpec defaultLangSys;
+    const(LayoutLangSysSpec)[] languages;
+    /// Overrides the offset of language `badLanguage` (when not `uint.max`) with `badOffset`.
+    uint badLanguage = uint.max;
+    uint badOffset;
+}
+
+/// The bytes of a Script table.
+ubyte[] layoutScript(const LayoutScriptSpec s)
+{
+    const headerLength = 4 + 6 * s.languages.length;
+    ubyte[] body;
+    uint defaultAt;
+    if (s.hasDefault)
+    {
+        defaultAt = cast(uint) headerLength;
+        body ~= layoutLangSys(s.defaultLangSys);
+    }
+    ubyte[] t = u16(defaultAt) ~ u16(cast(uint) s.languages.length);
+    foreach (i, l; s.languages)
+    {
+        const at = i == s.badLanguage ? s.badOffset : cast(uint)(headerLength + body.length);
+        t ~= cast(const(ubyte)[]) l.tag ~ u16(at);
+        body ~= layoutLangSys(l);
+    }
+    return t ~ body;
+}
+
+/// A ScriptList; script `badScript` (when not `uint.max`) gets offset `badOffset`.
+ubyte[] scriptList(const(LayoutScriptSpec)[] scripts, uint badScript = uint.max, uint badOffset = 0)
+{
+    const headerLength = 2 + 6 * scripts.length;
+    ubyte[] t = u16(cast(uint) scripts.length), body;
+    foreach (i, s; scripts)
+    {
+        const at = i == badScript ? badOffset : cast(uint)(headerLength + body.length);
+        t ~= cast(const(ubyte)[]) s.tag ~ u16(at);
+        body ~= layoutScript(s);
+    }
+    return t ~ body;
+}
+
+/// A Feature table's bytes: a null FeatureParams offset and its lookup indices.
+ubyte[] featureTable(const(uint)[] lookups)
+{
+    ubyte[] t = u16(0) ~ u16(cast(uint) lookups.length);
+    foreach (l; lookups) t ~= u16(l);
+    return t;
+}
+
+/// A feature: its tag and lookup indices.
+struct FeatureSpec
+{
+    string tag;
+    const(uint)[] lookups;
+}
+
+/// A FeatureList; feature `badFeature` (when not `uint.max`) gets offset `badOffset`.
+ubyte[] featureList(const(FeatureSpec)[] features, uint badFeature = uint.max, uint badOffset = 0)
+{
+    const headerLength = 2 + 6 * features.length;
+    ubyte[] t = u16(cast(uint) features.length), body;
+    foreach (i, f; features)
+    {
+        const at = i == badFeature ? badOffset : cast(uint)(headerLength + body.length);
+        t ~= cast(const(ubyte)[]) f.tag ~ u16(at);
+        body ~= featureTable(f.lookups);
+    }
+    return t ~ body;
+}
+
+/// A lookup: its type, flag, subtables (each offset 0 when null) and mark filtering set.
+struct LookupSpec
+{
+    uint type;
+    uint flag;
+    const(ubyte[])[] subtables;
+    uint markFilteringSet;
+}
+
+/// The bytes of a Lookup table; subtables follow the header in order.
+ubyte[] lookupTable(const LookupSpec l)
+{
+    const headerLength = 6 + 2 * l.subtables.length + ((l.flag & 0x10) ? 2 : 0);
+    ubyte[] t = u16(l.type) ~ u16(l.flag) ~ u16(cast(uint) l.subtables.length), body;
+    foreach (s; l.subtables)
+    {
+        t ~= u16(s is null ? 0 : cast(uint)(headerLength + body.length));
+        body ~= s;
+    }
+    if (l.flag & 0x10)
+        t ~= u16(l.markFilteringSet);
+    return t ~ body;
+}
+
+/// A LookupList; lookup `badLookup` (when not `uint.max`) gets offset `badOffset`.
+ubyte[] lookupList(const(LookupSpec)[] lookups, uint badLookup = uint.max, uint badOffset = 0)
+{
+    const headerLength = 2 + 2 * lookups.length;
+    ubyte[] t = u16(cast(uint) lookups.length), body;
+    foreach (i, l; lookups)
+    {
+        t ~= u16(i == badLookup ? badOffset : cast(uint)(headerLength + body.length));
+        body ~= lookupTable(l);
+    }
+    return t ~ body;
+}
+
+/// A format-1 condition: `min ≤ coord(axis) ≤ max` in F2Dot14.
+ubyte[] condition1(uint axis, int min, int max)
+    => u16(1) ~ u16(axis) ~ u16(cast(uint) min) ~ u16(cast(uint) max);
+
+/// A FeatureTableSubstitution record: a feature index and its alternate lookups.
+struct FeatureSubstitutionSpec
+{
+    uint featureIndex;
+    const(uint)[] lookups;
+}
+
+/// A FeatureVariations record: a condition set (null when `nullConditions`) and substitutions.
+struct FeatureVariationSpec
+{
+    const(ubyte[])[] conditions;
+    const(FeatureSubstitutionSpec)[] substitutions;
+    bool nullConditions;
+    bool nullSubstitutions;
+    /// The FeatureTableSubstitution's major version.
+    uint substitutionMajor = 1;
+}
+
+/// The bytes of a FeatureVariations table: header, records, then each record's tables.
+ubyte[] featureVariations(const(FeatureVariationSpec)[] records)
+{
+    const headerLength = 8 + 8 * records.length;
+    ubyte[] t = u16(1) ~ u16(0) ~ u32(cast(uint) records.length), body;
+    foreach (r; records)
+    {
+        uint setAt, substAt;
+        if (!r.nullConditions)
+        {
+            setAt = cast(uint)(headerLength + body.length);
+            ubyte[] set = u16(cast(uint) r.conditions.length), conds;
+            const setHeader = 2 + 4 * r.conditions.length;
+            foreach (c; r.conditions)
+            {
+                set ~= u32(cast(uint)(setHeader + conds.length));
+                conds ~= c;
+            }
+            body ~= set ~ conds;
+        }
+        if (!r.nullSubstitutions)
+        {
+            substAt = cast(uint)(headerLength + body.length);
+            ubyte[] sub = u16(r.substitutionMajor) ~ u16(0) ~ u16(cast(uint) r.substitutions.length), alts;
+            const subHeader = 6 + 6 * r.substitutions.length;
+            foreach (s; r.substitutions)
+            {
+                sub ~= u16(s.featureIndex) ~ u32(cast(uint)(subHeader + alts.length));
+                alts ~= featureTable(s.lookups);
+            }
+            body ~= sub ~ alts;
+        }
+        t ~= u32(setAt) ~ u32(substAt);
+    }
+    return t ~ body;
+}
+
+/**
+A `GSUB` or `GPOS` table of `1.minor` with its lists after the header (offset 0
+for a null list); from 1.1 the FeatureVariations table follows them.
+*/
+ubyte[] layoutTable(const(ubyte)[] scripts, const(ubyte)[] features, const(ubyte)[] lookups,
+    const(ubyte)[] variations = null, uint minor = 0, uint major = 1)
+{
+    const headerLength = minor >= 1 ? 14 : 10;
+    ubyte[] t = u16(major) ~ u16(minor), body;
+    foreach (sub; [scripts, features, lookups])
+    {
+        t ~= u16(sub is null ? 0 : cast(uint)(headerLength + body.length));
+        body ~= sub;
+    }
+    if (minor >= 1)
+    {
+        t ~= u32(variations is null ? 0 : cast(uint)(headerLength + body.length));
+        body ~= variations;
+    }
+    return t ~ body;
+}
+
+/**
+`fixed` followed by `offsetCount` 16-bit offsets to `items` (null for a null
+offset), then the items and finally `coverage`, whose offset is written at
+`coverageField` (0 when `coverage` is null). Offsets are from the start.
+*/
+private ubyte[] withItems(const(ubyte)[] fixed, size_t coverageField, const(ubyte[])[] items,
+    const(ubyte)[] coverage)
+{
+    const headerLength = fixed.length + 2 + 2 * items.length;
+    ubyte[] t = fixed.dup ~ u16(cast(uint) items.length), body;
+    foreach (item; items)
+    {
+        t ~= u16(item is null ? 0 : cast(uint)(headerLength + body.length));
+        body ~= item;
+    }
+    if (coverage !is null)
+    {
+        const at = headerLength + body.length;
+        t[coverageField] = cast(ubyte)(at >> 8);
+        t[coverageField + 1] = cast(ubyte) at;
+        body ~= coverage;
+    }
+    return t ~ body;
+}
+
+/// A count-prefixed array of 16-bit values.
+ubyte[] u16Array(const(uint)[] values)
+{
+    ubyte[] t = u16(cast(uint) values.length);
+    foreach (v; values) t ~= u16(v);
+    return t;
+}
+
+/// SingleSubst format 1: `coverage` and a delta.
+ubyte[] singleSubst1(const(ubyte)[] coverage, int delta)
+    => u16(1) ~ u16(6) ~ u16(cast(uint) delta) ~ coverage;
+
+/// SingleSubst format 2: `coverage` and one substitute per coverage index.
+ubyte[] singleSubst2(const(ubyte)[] coverage, const(uint)[] substitutes)
+    => u16(2) ~ u16(cast(uint)(6 + 2 * substitutes.length)) ~ u16Array(substitutes) ~ coverage;
+
+/// A substitution subtable of format 1 whose per-coverage-index items are sets (null for a null offset).
+ubyte[] setSubst(uint format, const(ubyte)[] coverage, const(ubyte[])[] sets)
+    => withItems(u16(format) ~ u16(0), 2, sets, coverage);
+
+/// MultipleSubst format 1: one sequence per coverage index.
+ubyte[] multipleSubst(const(ubyte)[] coverage, const(uint[])[] sequences)
+{
+    ubyte[][] sets;
+    foreach (s; sequences) sets ~= u16Array(s);
+    return setSubst(1, coverage, sets);
+}
+
+/// AlternateSubst format 1: one alternate set per coverage index.
+ubyte[] alternateSubst(const(ubyte)[] coverage, const(uint[])[] alternates) => multipleSubst(coverage, alternates);
+
+/// A ligature: its glyph and its components after the first.
+struct LigatureSpec
+{
+    uint glyph;
+    const(uint)[] components;
+}
+
+/// LigatureSubst format 1: one ligature set per coverage index.
+ubyte[] ligatureSubst(const(ubyte)[] coverage, const(LigatureSpec[])[] sets)
+{
+    ubyte[][] built;
+    foreach (s; sets)
+    {
+        ubyte[][] ligs;
+        foreach (l; s)
+        {
+            ubyte[] lig = u16(l.glyph) ~ u16(cast(uint)(l.components.length + 1));
+            foreach (c; l.components) lig ~= u16(c);
+            ligs ~= lig;
+        }
+        built ~= withItems(null, 0, ligs, null);
+    }
+    return setSubst(1, coverage, built);
+}
+
+/// A contextual rule: input after the first position, backtrack and lookahead (type 6), and `[sequence, lookup]` records.
+struct RuleSpec
+{
+    const(uint)[] input;
+    const(uint[2])[] lookups;
+    const(uint)[] backtrack;
+    const(uint)[] lookahead;
+}
+
+private ubyte[] seqLookupRecords(const(uint[2])[] records)
+{
+    ubyte[] t;
+    foreach (r; records) t ~= u16(r[0]) ~ u16(r[1]);
+    return t;
+}
+
+/// A SequenceRule (type 5) or ChainedSequenceRule (`chained`).
+ubyte[] ruleTable(const RuleSpec r, bool chained)
+{
+    if (!chained)
+    {
+        ubyte[] t = u16(cast(uint)(r.input.length + 1)) ~ u16(cast(uint) r.lookups.length);
+        foreach (g; r.input) t ~= u16(g);
+        return t ~ seqLookupRecords(r.lookups);
+    }
+    ubyte[] t = u16Array(r.backtrack) ~ u16(cast(uint)(r.input.length + 1));
+    foreach (g; r.input) t ~= u16(g);
+    return t ~ u16Array(r.lookahead) ~ u16(cast(uint) r.lookups.length) ~ seqLookupRecords(r.lookups);
+}
+
+/// Rule sets: each a list of rules, or null for a null offset.
+private ubyte[][] ruleSets(const(RuleSpec[])[] sets, bool chained)
+{
+    ubyte[][] built;
+    foreach (s; sets)
+    {
+        if (s is null)
+        {
+            built ~= null;
+            continue;
+        }
+        ubyte[][] rules;
+        foreach (r; s) rules ~= ruleTable(r, chained);
+        built ~= withItems(null, 0, rules, null);
+    }
+    return built;
+}
+
+/// ContextSubst or ChainContextSubst format 1: one rule set per coverage index.
+ubyte[] contextSubst1(const(ubyte)[] coverage, const(RuleSpec[])[] sets, bool chained = false)
+    => setSubst(1, coverage, ruleSets(sets, chained));
+
+/// ContextSubst or ChainContextSubst format 2: one rule set per class; class definitions are null.
+ubyte[] contextSubst2(const(ubyte)[] coverage, const(RuleSpec[])[] sets, bool chained = false)
+    => withItems(u16(2) ~ u16(0) ~ (chained ? u16(0) ~ u16(0) ~ u16(0) : u16(0)), 2, ruleSets(sets, chained),
+        coverage);
+
+/// ContextSubst format 3: one coverage per input position, then the lookup records.
+ubyte[] contextSubst3(const(ubyte[])[] coverages, const(uint[2])[] lookups)
+{
+    const headerLength = 6 + 2 * coverages.length + 4 * lookups.length;
+    ubyte[] t = u16(3) ~ u16(cast(uint) coverages.length) ~ u16(cast(uint) lookups.length), body;
+    foreach (c; coverages)
+    {
+        t ~= u16(cast(uint)(headerLength + body.length));
+        body ~= c;
+    }
+    return t ~ seqLookupRecords(lookups) ~ body;
+}
+
+/// Coverage offset arrays, each count-prefixed, pointing into `body` after a header of `headerLength`.
+private ubyte[] coverageArray(const(ubyte[])[] coverages, size_t headerLength, ref ubyte[] body)
+{
+    ubyte[] t = u16(cast(uint) coverages.length);
+    foreach (c; coverages)
+    {
+        t ~= u16(cast(uint)(headerLength + body.length));
+        body ~= c;
+    }
+    return t;
+}
+
+/// ChainContextSubst format 3: backtrack, input and lookahead coverages, then the lookup records.
+ubyte[] chainContextSubst3(const(ubyte[])[] backtrack, const(ubyte[])[] input, const(ubyte[])[] lookahead,
+    const(uint[2])[] lookups)
+{
+    const headerLength = 2 + 2 * 4 + 2 * (backtrack.length + input.length + lookahead.length) + 4 * lookups.length;
+    ubyte[] body;
+    ubyte[] t = u16(3) ~ coverageArray(backtrack, headerLength, body) ~ coverageArray(input, headerLength, body)
+        ~ coverageArray(lookahead, headerLength, body) ~ u16(cast(uint) lookups.length) ~ seqLookupRecords(lookups);
+    return t ~ body;
+}
+
+/// ExtensionSubst format 1 wrapping `subtable` of `type`.
+ubyte[] extensionSubst(uint type, const(ubyte)[] subtable, uint format = 1)
+    => u16(format) ~ u16(type) ~ u32(8) ~ subtable;
+
+/// ReverseChainSingleSubst format 1.
+ubyte[] reverseChainSubst(const(ubyte)[] coverage, const(ubyte[])[] backtrack, const(ubyte[])[] lookahead,
+    const(uint)[] substitutes)
+{
+    const headerLength = 4 + 2 + 2 * backtrack.length + 2 + 2 * lookahead.length + 2 + 2 * substitutes.length;
+    ubyte[] body = coverage.dup;
+    ubyte[] t = u16(1) ~ u16(cast(uint) headerLength) ~ coverageArray(backtrack, headerLength, body)
+        ~ coverageArray(lookahead, headerLength, body) ~ u16Array(substitutes);
+    return t ~ body;
+}

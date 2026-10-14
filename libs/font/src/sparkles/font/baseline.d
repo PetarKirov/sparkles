@@ -18,7 +18,7 @@ instance whose coordinates are all zero, no item variation store is read
 */
 module sparkles.font.baseline;
 
-import sparkles.font.bytes : be16, be32, bes16, fits;
+import sparkles.font.bytes : be16, be32, bes16, fits, searchTag;
 import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag, tableError;
 import sparkles.font.face : Face;
 import sparkles.font.instance : Instance, InstanceSize;
@@ -36,24 +36,6 @@ enum BaselineAxis : ubyte
 {
     horizontal,
     vertical,
-}
-
-/// The index of `tag` among `count` records `stride` bytes apart from `at`, or -1 (binary search).
-private ptrdiff_t searchTag(scope const(ubyte)[] data, ulong at, size_t count, size_t stride, Tag tag)
-{
-    size_t lo = 0, hi = count;
-    while (lo < hi)
-    {
-        const mid = lo + (hi - lo) / 2;
-        const value = be32(data, cast(size_t)(at + stride * mid));
-        if (value == tag.value)
-            return mid;
-        if (value < tag.value)
-            lo = mid + 1;
-        else
-            hi = mid;
-    }
-    return -1;
 }
 
 // ---------------------------------------------------------------------------

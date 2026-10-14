@@ -7,6 +7,8 @@ Offsets are `ulong`, so an offset plus a length taken from a font cannot wrap.
 */
 module sparkles.font.bytes;
 
+import sparkles.font.errors : Tag;
+
 @safe pure nothrow @nogc:
 
 /// Whether `size` bytes at `offset` lie inside a buffer of `length` bytes.
@@ -43,6 +45,28 @@ in (fits(data.length, offset, 4))
 int bes32(scope const(ubyte)[] data, size_t offset)
 in (fits(data.length, offset, 4))
     => cast(int) be32(data, offset);
+
+/**
+The index of `tag` among `count` records `stride` bytes apart from `at`, each
+starting with its packed tag, or -1 (binary search, O(log count)); callers
+check that the records fit first.
+*/
+package ptrdiff_t searchTag(scope const(ubyte)[] data, ulong at, size_t count, size_t stride, Tag tag)
+{
+    size_t lo = 0, hi = count;
+    while (lo < hi)
+    {
+        const mid = lo + (hi - lo) / 2;
+        const value = be32(data, cast(size_t)(at + stride * mid));
+        if (value == tag.value)
+            return mid;
+        if (value < tag.value)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return -1;
+}
 
 ///
 @("bytes.readsAndBounds")
