@@ -349,7 +349,8 @@ name ID and user coordinates.
 
 **FTV2: Normalization.** Building an instance from user coordinates **must**
 normalize them exactly once: clamp to the axis range, map piecewise-linearly
-to −1…0…+1, then apply the `avar` segment maps if present. The result is
+to −1…0…+1, then apply the `avar` segment maps if present and usable
+([`FTV9`](./variation-metrics.md#_2-instances)). The result is
 stored as F2Dot14 values. An axis left unspecified takes its default.
 
 **FTV3: One vector for every consumer.** Metrics, outlines, shaping and glyph
@@ -379,7 +380,8 @@ reported in font units, together with the `USE_TYPO_METRICS` flag.
 
 **FTM2: One line-metric rule.** The library's line metrics **must** use the
 typographic set when `USE_TYPO_METRICS` is set; otherwise `hhea` when its
-ascender or descender is non-zero; otherwise the typographic set; otherwise
+ascender or descender is non-zero; otherwise the typographic set when its
+ascender or descender is non-zero; otherwise
 the Windows set with the descent negated. The result names the set it used.
 
 **FTM3: Absent, not zero.** x-height, cap height, underline position and
@@ -397,7 +399,8 @@ metrics](../../glossary.md#cell-metrics) in whole device pixels. The cell width 
 U+0030 DIGIT ZERO, or `OS/2.xAvgCharWidth` when the face does not map it. The
 rounding rule is documented on the operation and is part of the contract.
 
-**FTM6: Device-independent scalable measurements.** At an instance, advances,
+**FTM6: Device-independent scalable measurements.** At a physically sized
+instance, advances,
 offsets, line metrics, baselines and dimensional math values **must** be available in
 fractional design units and in base's
 [physical `LayoutUnit`](../base/text/wrapping.md), with the instance's physical

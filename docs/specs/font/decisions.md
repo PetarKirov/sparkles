@@ -484,3 +484,51 @@ The HarfBuzz oracle later overturned one disposition. The first review's
 `post` finding treated name indices of 32,768 and above as reserved, an older
 TrueType reading; current OpenType allows 258–65,535, and Maple Mono NF CN
 uses them for 875 glyphs. `FTP30` now accepts them.
+
+## M2 operation-contract review
+
+On 2026-10-14 an independent read-only reviewer walked the first draft of
+[`variation-metrics.md`](./variation-metrics.md) against `SPEC.md`,
+`parsing.md`, base's accepted `LayoutUnit` contract and the HarfBuzz,
+FreeType, fontTools, fontations and ttf-parser sources, with twenty traces:
+four successes (an `avar` map hit, an `HVAR` advance converted at 12 points
+for upem 1,000 and 2,048, a math kern at exactly a correction height, a
+`BASE` 1.1 VariationIndex coordinate with and without ppem), ten failures (an
+`avar` axis count unlike `fvar`'s, a decreasing segment map, a region list of
+the wrong axis count, an inner index past the item data, `MVAR` with
+6-byte records, a baseline index past its coordinates, a `MATH` coverage index
+past its array, an extension of an extension, a malformed `HVAR` on a `gvar`
+font, `CBDT` without `CBLC`) and six boundaries (64 and 65 axes, user values at
+the axis extremes and a default equal to the minimum, a design sum and a
+conversion at the 64-bit edge, an `avar` 2 delta past +1, a delta-set index
+map of count 0 and an index past it, a cell width of exactly x.5 px). It found
+2 blockers, 17 major and 13 minor defects; traces 9 and 14 had no single
+outcome. Its findings and their dispositions:
+
+| Finding                                                                                                                                                                                      | Disposition                                                                                                                                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Blocker: HarfBuzz rounds an `HVAR` delta to a whole unit and clamps at zero, so it cannot check fractional advances to 1/64 unit                                                             | fontations' `compute_delta` is the exact oracle; HarfBuzz checks advances within 0.5 unit where it does not clamp (§ 9; `testing.md`, which gains a fontations oracle row).                                                               |
+| Blocker: 24 operations had no worst-case cost (`FTB3`)                                                                                                                                       | Every operation states one.                                                                                                                                                                                                               |
+| Major: the `avar` map rule and the `avar` 2 rounding were not HarfBuzz's                                                                                                                     | `FTV9` states HarfBuzz's algorithm step by step, end-cap trimming included; `FTV10` evaluates the store on rounded coordinates and adds the clamped, rounded delta to the unrounded F16.16 value.                                         |
+| Major: line metrics contradicted `FTM2` and invented zero sets for a missing table                                                                                                           | `SPEC.md` `FTM2` amended (the typographic set only when non-zero); `FTM16` skips absent sets and is absent when none remains.                                                                                                             |
+| Major: `MVAR` tags misattributed, a short record size and other versions undefined                                                                                                           | `FTV14`: the Windows set takes `hcla`/`hcld` only; another version is `unsupportedVersion`, a short record `badValue`; the FreeType divergence is listed.                                                                                 |
+| Major: a VariationIndex in a static face failed every query                                                                                                                                  | `FTM14`: at all-zero coordinates no store is read and every delta is zero.                                                                                                                                                                |
+| Major: overlapping scalar rows and unstated rounding; dangling indices given three different error kinds                                                                                     | `FTV12` rows apply in order with fontations' rounding; `FTM13`: an index from font data past its array is `badValue`, `indexOutOfRange` stays for caller indices.                                                                         |
+| Major: extents, the kern step on unsorted or varied heights, the ppem type and device-delta applicability, duplicated axis tags, feature-variation condition formats were undefined          | `FTM24` case table; `FTP37` linear first-greater-than search on resolved heights; `FTM10` rational ppem, device deltas only at an integer ppem; `FTV7` every axis with the tag; `FTI8` format 1 only.                                     |
+| Major: substitution walks were not linear and glyph sequences could not all borrow; `MATH` constants failed together; two oracle claims were wrong                                           | `FTI9` states the shared-offset cost and a lazy sequence view; `FTP35` gives each constant its own result; § 9 corrected (fontations adds zero for dangling outer and inner indices; HarfBuzz's `MATH` variation deltas are always zero). |
+| Minor: `FTV2`, `FTM6` and `FTP14` wording, an unreachable overflow fixture, versions and absences left unstated, `measureRun`'s error policy, the cell width's source, `CBDT` without `CBLC` | `SPEC.md` `FTV2` and `FTM6`, `parsing.md` `FTP14` (`callerStorage`) and `testing.md` amended; each other point stated on the page.                                                                                                        |
+
+The same reviewer then rechecked the repaired draft. All twenty traces now
+have exactly one outcome and no contradiction with `SPEC.md`, `parsing.md` or
+`testing.md` remains. Its remaining findings and their dispositions:
+
+| Finding                                                                                                                                                                                                                                         | Disposition                                                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Major: `avar` end caps are trimmed on the neighbour's `from`, and a zero value compares the first and last matches, the last winning a tie                                                                                                      | `FTV9` steps 1 and 3 corrected to HarfBuzz's code.                                                  |
+| Major: rounding each factor and then the product differs from fontations' one rounding per axis                                                                                                                                                 | `FTV12`: the scalar is updated as `round(scalar · numerator / denominator)` per axis.               |
+| Minor: line-metric choice on varied values, the FreeType `MVAR` claim, the axis limit's origin, region-count divergences, assembly absence and cost, `vhea`-only line metrics, `VVAR` absence, the kern height at `k`, the `avar` 2 delta clamp | Each fixed on the page; the region-count divergences are listed in § 9 with fixtures as substitute. |
+
+The reviewer's gate verdict on the recheck: with the two majors and the minors
+applied, these contracts meet the bar `parsing.md` set for M1. Delivered M1
+code reports a short caller array as `limitExceeded` without a named limit;
+M2 adds the `callerStorage` limit that the amended `FTP14` requires.

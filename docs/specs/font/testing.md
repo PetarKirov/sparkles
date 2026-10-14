@@ -16,13 +16,14 @@ The library's correctness claims are checked against implementations that share
 no code with it. The table says which oracle backs which requirements and why it
 is independent.
 
-| Oracle                                  | Independent because                                                                               | Checks                                                                                                                                                                                                                                                                |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **HarfBuzz's own OpenType parsers**     | A separate C++ implementation, reached from D tests by `extern(C)`                                | upem and glyph count; `name` strings (`hb_ot_name_get_utf8`); coverage (`hb_face_collect_unicodes`); `cmap` lookups; axes and normalization; advances and metrics; outlines; layout features; resolved `MATH`, `BASE`, vertical metrics and GDEF carets where exposed |
-| **FreeType**                            | A separate C implementation of parsing and rasterization                                          | per-pixel coverage of unhinted renders (`FTR3`); `CFF` outlines as a second opinion                                                                                                                                                                                   |
-| **fontTools** (developer machines only) | A separate Python implementation; the reference most tools copy                                   | raw fields HarfBuzz does not expose, including `MATH` assemblies, `BASE` records, vertical tables and `JSTF`; committed goldens record the generating command and font hash                                                                                           |
-| **Hand-derived traces**                 | Worked from the OpenType and CSS specifications by hand                                           | normalization arithmetic; `cmap` selection; line-metric rule; physical conversion and arithmetic exhaustion; cluster source partitions in both directions; math-kern height selection and connector constraints; CSS matching; PNG filter reversal                    |
-| **Hostile-input fixtures**              | Built by a test-only byte builder, with expectations from the trust contract, not from the parser | every `FTB*` limit and failure kind                                                                                                                                                                                                                                   |
+| Oracle                                   | Independent because                                                                                                          | Checks                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **HarfBuzz's own OpenType parsers**      | A separate C++ implementation, reached from D tests by `extern(C)`                                                           | upem and glyph count; `name` strings (`hb_ot_name_get_utf8`); coverage (`hb_face_collect_unicodes`); `cmap` lookups; axes and normalization; advances and metrics; outlines; layout features; resolved `MATH`, `BASE`, vertical metrics and GDEF carets where exposed |
+| **FreeType**                             | A separate C implementation of parsing and rasterization                                                                     | per-pixel coverage of unhinted renders (`FTR3`); `CFF` outlines as a second opinion; line metrics, vertical-metric presence, `avar` axis-count and colour-table rules (`variation-metrics.md` § 9)                                                                    |
+| **fontTools** (developer machines only)  | A separate Python implementation; the reference most tools copy                                                              | raw fields HarfBuzz does not expose, including `MATH` assemblies, `BASE` records, vertical tables and `JSTF`; committed goldens record the generating command and font hash                                                                                           |
+| **fontations** (developer machines only) | A separate Rust implementation (`read-fonts`, `skrifa`) that, like this library, evaluates variations in integer fixed point | item variation store deltas and normalization where HarfBuzz rounds or uses floating point; uncovered `MATH` glyphs; line-metric decorations (skrifa); committed goldens record the generating command, crate revision and font hash                                  |
+| **Hand-derived traces**                  | Worked from the OpenType and CSS specifications by hand                                                                      | normalization arithmetic; `cmap` selection; line-metric rule; physical conversion and arithmetic exhaustion; cluster source partitions in both directions; math-kern height selection and connector constraints; CSS matching; PNG filter reversal                    |
+| **Hostile-input fixtures**               | Built by a test-only byte builder, with expectations from the trust contract, not from the parser                            | every `FTB*` limit and failure kind                                                                                                                                                                                                                                   |
 
 HarfBuzz is also the shaping engine (`FTX1`), so it cannot be an independent
 oracle for shaping itself. Recorded `hb-shape` output through a separate call
@@ -148,8 +149,9 @@ For every bundled face, the three vertical sets, x-height, cap height, underline
 and strikeout equal the oracles of [`variation-metrics.md` § 9](./variation-metrics.md#_9-oracles)
 (FreeType for line metrics, skrifa for decorations, HarfBuzz where they agree)
 at upem scale; at a variable
-face's extreme instances, advances equal `hb_font_get_glyph_h_advance` within
-1/64 unit. `FTM5`'s cell metrics are checked against hand-computed values for
+face's extreme instances, advance deltas equal fontations' `compute_delta` exactly,
+and advances equal `hb_font_get_glyph_h_advance` within 0.5 unit wherever
+HarfBuzz does not clamp them at zero. `FTM5`'s cell metrics are checked against hand-computed values for
 DejaVu Sans Mono and Maple Mono at 14, 16 and 18 px. Pixel convenience outputs
 remain fractional and their cell-rounding behavior remains separately checked.
 
@@ -164,7 +166,9 @@ remain fractional and their cell-rounding behavior remains separately checked.
   and independently measured ink extent for each pinned face/glyph; no
   `ink.width == advance` assumption is admissible.
 - Conversion fixtures reach positive and negative half-unit ties, the largest
-  representable result and one-unit overflow, and intermediate product overflow.
+  representable result and one-unit overflow, and a design sum that overflows
+  64 bits (`FTM8`); the conversion product itself cannot overflow base's
+  128-bit intermediate.
   Assert ties-to-even and structured exhaustion with no result publication.
   Device adjustments apply only under explicit ppem; an identical design query
   without ppem must not inherit a previous device-size query's delta.
