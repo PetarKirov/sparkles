@@ -48,7 +48,8 @@ platform requires synchronously and append an event to a bounded queue. The
 application drains that queue when it chooses, so application code never runs
 inside a native callback. Events, identifiers and commands are
 [Regular](../../glossary.md#regular-type) values that can be recorded and
-replayed. Events are lossless: they keep the physical and logical key,
+replayed; an event's text lives beside the queue in a pool, and recording an
+event copies its text into a pool the recorder owns. Events are lossless: they keep the physical and logical key,
 composition spans, logical and pixel geometry, and timestamps the platform
 reported. Converting them into the toolkit's cell-based input vocabulary is
 left to the application host. Other threads reach the library only through
@@ -169,7 +170,10 @@ through that handle. Destroying `Wsi` invalidates every `WindowId` and handle vi
 
 `Wsi` is neither shared nor movable after attachment because native callbacks retain
 its address. `WindowId`, configuration values, events, and raw-handle values are
-Regular values.
+Regular values. An event's text is not part of that value: a payload names it by a
+pool-local `TextId`, readable through the delivering `Wsi` only during the drain
+callback (`ED8`). Keeping, replaying, or sending an event to another thread therefore
+starts with `retain`, which copies its text into a `TextPool` the consumer owns.
 
 ## 4. The single integrated loop
 
@@ -283,6 +287,10 @@ and it is delivered last carrying the sequence of the last dropped event: every
 dropped sequence is above every queued one, so any earlier position would contradict
 `ED6`. It is not attributable to one window and carries `WindowId.init`. Overflow must
 never set a sticky error, and must never be reported as a dispatch or loop failure.
+From the first drop until the drain that delivers the notice, every arriving event is
+dropped and counted, even one that would fit: an event refused for want of text space
+(`ED8`) can leave a free slot, and admitting a later event into it would put a queued
+sequence above a dropped one.
 
 **ED6: Drain order.** Sequence numbers delivered by one drain must be strictly
 increasing. Contiguity is explicitly not promised: merging and `ED5` both leave gaps.
@@ -291,16 +299,20 @@ increasing. Contiguity is explicitly not promised: merging and `ED5` both leave 
 converted once by the backend into the loop's monotonic clock. An event the platform
 supplies no time for carries the time it was observed.
 
-**ED8 (provisional): Text storage and its lifetime.** Event text is held in a copy-on-write buffer
-that stores up to 16 bytes inline and allocates beyond that, so `WindowEvent` stays a
-Regular value that may be copied, compared and replayed. Its reference count is not
-atomic: an event's text is confined to the WSI thread, and handing an event to another
-thread requires a deep copy. Text is bounded at 64 KiB; a backend receiving more must
-truncate at a UTF-8 boundary and set the event's `truncated` flag rather than grow.
-This requirement is provisional: a reference-counted payload makes `SumType`
-assignment `@system`, and `sparkles:input`'s `PasteEvent` carries unbounded text
-through a `@safe` sum type by chunking instead. See
-[event-delivery.md](./event-delivery.md) `EQ14`.
+**ED8: Text storage and its lifetime.** Event text — committed text, pre-edit, and
+an offer's MIME type — is stored in a fixed-capacity
+[`TextPool`](../base/pool.md#_5-the-text-pool) owned by the queue, and a payload
+names it by a pool-local `TextId`. `WindowEvent` therefore holds no pointer and is
+`@safe` to assign. The text is readable only through the delivering WSI's
+`withText(id, fn)`, and only while the drain callback that delivered the event runs;
+once that callback returns the id is stale, and reading it returns `staleId`. A
+consumer that keeps an event longer, records or replays it, or hands it to another
+thread copies its text into a `TextPool` of its own with `retain`, which returns the
+same event naming the copy. One text holds at most 65,535 bytes; longer text is cut at
+a UTF-8 boundary and its id reports `truncated`. A MIME type longer than 255 bytes is
+never shortened: the offer is dropped and counted under `ED5`. When the queue's text
+pool cannot hold an event's text, the event is dropped and counted under `ED5`; arena
+pressure never truncates.
 
 **ED9: What is configurable.** Queue capacity and ring depth are compile-time
 parameters because they size inline storage. Motion coalescing and relative summing
@@ -378,7 +390,8 @@ accept or a configured default destroys the window. Destruction produces exactly
 
 ## 7. Event vocabulary
 
-`WindowEvent` is a sum type whose payloads own their small text and metadata. It is a
+`WindowEvent` is a sum type whose payloads own their metadata and name their text by
+`TextId` (`ED8`). It is a
 lossless platform boundary, not an alias for `sparkles.input.Event`: the latter is a
 toolkit-facing vocabulary whose coordinates are already converted to cells and whose
 wheel values are already policy-normalized.
@@ -406,8 +419,9 @@ produce no text. UTF-8 is the public encoding. Shared UTF-8/UTF-16 conversion be
 in `sparkles:base`, is allocation-conscious, and rejects ill-formed input without
 silently replacing it at a system boundary.
 
-All composition cursor, selection, and segment offsets are byte offsets into the
-event's owned UTF-8 pre-edit value. A backend converts native UTF-16 code-unit or
+All composition cursor, selection, and segment offsets are `uint` byte offsets into
+the event's UTF-8 pre-edit text as stored (`ED8`): when the text was truncated, each
+is clamped to the kept length at a code-point boundary. A backend converts native UTF-16 code-unit or
 platform-string indices before enqueueing the event; consumers never reinterpret
 those fields as code points or native indices. Segments are ordered, non-overlapping,
 and may be coalesced when adjacent native spans have the same public style.
