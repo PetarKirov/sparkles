@@ -463,7 +463,7 @@ jobs:
           nix hash path --type sha256 "$out" | tee "ui-shaders-${{ runner.os }}.hash"
 
       - name: Upload the generated shaders' hash
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ui-shaders-${{ runner.os }}
           path: ui-shaders-${{ runner.os }}.hash
