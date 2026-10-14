@@ -195,7 +195,7 @@ ConformanceOutcome checkWsiConformance(Backend, Hooks)(ref Backend wsi,
                 (in DestroyedEvent _) { seen.destroyed = true; },
                 (in KeyboardEvent value) { observeKey(hooks, seen, value); },
                 (in TextCommittedEvent value) {
-                    observeCommit(hooks, seen, value);
+                    observeCommit(wsi, hooks, seen, value);
                 },
                 (in PointerEvent value) { observePointer(seen, value); },
                 (in RelativePointerEvent value) {
@@ -862,11 +862,14 @@ private void observeKey(Hooks)(ref Hooks hooks, ref Observed seen,
     }
 }
 
-private void observeCommit(Hooks)(ref Hooks hooks, ref Observed seen,
-    in TextCommittedEvent event)
+// Called from inside the drain: event text is readable only there (`ED8`).
+private void observeCommit(Backend, Hooks)(ref Backend wsi, ref Hooks hooks,
+    ref Observed seen, in TextCommittedEvent event)
 {
     static if (is(typeof(Hooks.imeCommittedText)))
-        seen.imeCommitted |= event.text[] == Hooks.imeCommittedText;
+        assert(!wsi.withText(event.text, (scope const(char)[] text) {
+            seen.imeCommitted |= text == Hooks.imeCommittedText;
+        }).hasError, "committed text is readable during its drain");
 }
 
 @("wsi.conformance.recordingBackendPassesTheValueContract")

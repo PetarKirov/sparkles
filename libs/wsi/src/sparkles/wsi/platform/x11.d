@@ -885,9 +885,8 @@ struct X11Wsi
         const bytes = str[0 .. length];
         if (validateUtf8(bytes).hasError)
             return;
-        TextCommittedEvent committed;
-        if (committed.text.assign(bytes))
-            owner.emit(owner.idAt(index), committed);
+        owner.emitText(owner.idAt(index), bytes,
+            (TextId text, size_t kept) => TextCommittedEvent(text));
     }
 
     private size_t indexOfIc(ushort ic) const nothrow @nogc
@@ -1402,6 +1401,29 @@ struct X11Wsi
         }
         ++nextSequence_;
     }
+
+    /// Queues an event carrying `text`; see `EventQueue.pushText` (`ED8`).
+    private void emitText(Make)(WindowId id, scope const(char)[] text,
+        scope Make make) nothrow
+    {
+        auto result = events_.pushText(nextSequence_, id, text, make);
+        if (result.hasError)
+        {
+            remember(result.error);
+            return;
+        }
+        ++nextSequence_;
+    }
+
+    /// Calls `fn` with the text a delivered event names, during the drain
+    /// that delivers it (`ED8`). See `EventQueue.withText`.
+    WsiResult!void withText(Fn)(TextId id, scope Fn fn)
+        => events_.withText(id, fn);
+
+    /// Copies an event's text into a `TextPool` the caller owns (`ED8`).
+    /// See `EventQueue.retain`.
+    WsiResult!WindowEvent retain(P)(WindowEvent event, ref P pool)
+        => events_.retain(event, pool);
 
     private void remember(WsiError error) nothrow @nogc
     {

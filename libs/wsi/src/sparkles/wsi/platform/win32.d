@@ -17,6 +17,7 @@ import core.sys.windows.imm : ATTR_CONVERTED, ATTR_FIXEDCONVERTED,
     ISC_SHOWUICOMPOSITIONWINDOW, WM_IME_CHAR, WM_IME_COMPOSITION,
     WM_IME_ENDCOMPOSITION, WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION;
 
+import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.pool.pool : Pool, PoolError;
 import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16z;
 import sparkles.base.text.utf : decodeToken, encodeScalar, UtfMode, UtfStatus, scalarUnits;
@@ -433,6 +434,29 @@ struct Win32Wsi
         ++nextSequence_;
     }
 
+    /// Queues an event carrying `text`; see `EventQueue.pushText` (`ED8`).
+    private void emitText(Make)(WindowId id, scope const(char)[] text,
+        scope Make make) nothrow
+    {
+        auto result = events_.pushText(nextSequence_, id, text, make);
+        if (result.hasError)
+        {
+            remember(result.error);
+            return;
+        }
+        ++nextSequence_;
+    }
+
+    /// Calls `fn` with the text a delivered event names, during the drain
+    /// that delivers it (`ED8`). See `EventQueue.withText`.
+    WsiResult!void withText(Fn)(TextId id, scope Fn fn)
+        => events_.withText(id, fn);
+
+    /// Copies an event's text into a `TextPool` the caller owns (`ED8`).
+    /// See `EventQueue.retain`.
+    WsiResult!WindowEvent retain(P)(WindowEvent event, ref P pool)
+        => events_.retain(event, pool);
+
     private void remember(WsiError error) nothrow
     {
         if (!hasStickyError_)
@@ -451,58 +475,67 @@ struct Win32Wsi
             diagnostic));
     }
 
+    /**
+    The prefix of `wide` that can reach `maxEventText` UTF-8 bytes: every
+    UTF-16 unit is at least one byte, so more units than that are never
+    needed, and the queue truncates what they produce (`ED8`). The cut never
+    separates a surrogate pair.
+    */
+    private static const(wchar)[] boundedUnits(return scope const(wchar)[] wide)
+        @safe pure nothrow @nogc
+    {
+        if (wide.length <= maxEventText)
+            return wide;
+        size_t cut = maxEventText;
+        if (wide[cut - 1] >= 0xD800 && wide[cut - 1] <= 0xDBFF)
+            --cut;
+        return wide[0 .. cut];
+    }
+
+    /// A UTF-8 offset into converted text, held where a composition field can
+    /// represent it; `CompositionEvent.clampTo` then bounds it by what was kept.
+    private static ushort boundedOffset(size_t offset) @safe pure nothrow @nogc
+        => cast(ushort)(offset < maxEventText ? offset : maxEventText);
+
     private void emitCommittedText(WindowId id,
         scope const(wchar)[] wide) nothrow
     {
-        char[256] bytes;
+        wide = boundedUnits(wide);
+        UniqueBuffer!(char, 256) bytes;
+        bytes.length = wide.length * 3;
         auto converted = utf16ToUtf8(wide, bytes[]);
         if (converted.hasError)
         {
             rememberNative(WsiOperation.dispatch,
                 cast(long) converted.error.required,
-                "IMM32 commit exceeds bounded UTF-8 storage",
-                converted.error.required > bytes.length
-                    ? WsiErrorKind.capacity : WsiErrorKind.nativeFailure);
+                "IMM32 commit is not valid UTF-16");
             return;
         }
-
-        TextCommittedEvent committed;
-        if (!committed.text.assign(bytes[0 .. converted.value]))
-        {
-            rememberNative(WsiOperation.dispatch, cast(long) converted.value,
-                "IMM32 commit exceeds bounded event storage",
-                WsiErrorKind.capacity);
-            return;
-        }
-        emit(id, committed);
+        emitText(id, bytes[0 .. converted.value],
+            (TextId text, size_t kept) => TextCommittedEvent(text));
     }
 
     private void emitComposition(WindowId id, scope const(wchar)[] wide,
         scope const(ubyte)[] attributes, size_t cursorUnits) nothrow
     {
-        char[512] bytes;
+        wide = boundedUnits(wide);
+        if (cursorUnits > wide.length)
+            cursorUnits = wide.length;
+        UniqueBuffer!(char, 512) bytes;
+        bytes.length = wide.length * 3;
         auto converted = utf16ToUtf8(wide, bytes[]);
         if (converted.hasError)
         {
             rememberNative(WsiOperation.dispatch,
                 cast(long) converted.error.required,
-                "IMM32 preedit exceeds bounded UTF-8 storage",
-                converted.error.required > bytes.length
-                    ? WsiErrorKind.capacity : WsiErrorKind.nativeFailure);
+                "IMM32 preedit is not valid UTF-16");
             return;
         }
 
         CompositionEvent composition;
-        if (!composition.preedit.assign(bytes[0 .. converted.value]))
-        {
-            rememberNative(WsiOperation.dispatch, cast(long) converted.value,
-                "IMM32 preedit exceeds bounded event storage",
-                WsiErrorKind.capacity);
-            return;
-        }
         // utf16ToUtf8 above validated the complete source, not just this prefix.
-        composition.cursor = cast(ushort) mapValidatedUtf16Offset(wide,
-            Utf16Offset(cursorUnits), MapAffinity.before).value.value;
+        composition.cursor = boundedOffset(mapValidatedUtf16Offset(wide,
+            Utf16Offset(cursorUnits), MapAffinity.before).value.value);
 
         const attributeCount = attributes.length < wide.length
             ? attributes.length : wide.length;
@@ -523,8 +556,9 @@ struct Win32Wsi
             const endByte = mapValidatedUtf16Offset(wide,
                 Utf16Offset(end), MapAffinity.after).value.value;
             composition.segments[composition.segmentCount++] =
-                CompositionSegment(cast(ushort) startByte,
-                    cast(ushort)(endByte - startByte), style);
+                CompositionSegment(boundedOffset(startByte),
+                    cast(ushort)(boundedOffset(endByte) - boundedOffset(startByte)),
+                    style);
             if (style == CompositionSegmentStyle.selected)
             {
                 if (firstTarget == size_t.max)
@@ -535,10 +569,17 @@ struct Win32Wsi
         }
         if (firstTarget != size_t.max)
         {
-            composition.selectionStart = cast(ushort) firstTarget;
-            composition.selectionLength = cast(ushort)(targetEnd - firstTarget);
+            composition.selectionStart = boundedOffset(firstTarget);
+            composition.selectionLength = cast(ushort)(
+                boundedOffset(targetEnd) - boundedOffset(firstTarget));
         }
-        emit(id, composition);
+        emitText(id, bytes[0 .. converted.value],
+            (TextId text, size_t kept) {
+                auto event = composition;
+                event.preedit = text;
+                event.clampTo(kept);
+                return event;
+            });
     }
 
     private void handleImeComposition(ref Slot slot, WindowId id,
@@ -555,41 +596,36 @@ struct Win32Wsi
 
         if ((flags & GCS_RESULTSTR) != 0)
         {
-            wchar[256] result;
-            size_t resultUnits;
+            UniqueBuffer!(wchar, 256) result;
             if (readImeString(context, GCS_RESULTSTR, result,
-                resultUnits, "ImmGetCompositionStringW result failed"))
-                emitCommittedText(id, result[0 .. resultUnits]);
+                "ImmGetCompositionStringW result failed"))
+                emitCommittedText(id, result[]);
         }
 
         if ((flags & GCS_COMPSTR) != 0)
         {
-            wchar[256] preedit;
-            size_t preeditUnits;
+            UniqueBuffer!(wchar, 256) preedit;
             if (!readImeString(context, GCS_COMPSTR, preedit,
-                preeditUnits, "ImmGetCompositionStringW preedit failed"))
+                "ImmGetCompositionStringW preedit failed"))
                 return;
 
-            ubyte[256] attributes;
-            size_t attributeCount;
+            // One attribute byte per UTF-16 unit; only the units kept above
+            // need one.
+            UniqueBuffer!(ubyte, 256) attributes;
             if ((flags & GCS_COMPATTR) != 0)
             {
-                const bytes = ImmGetCompositionStringW(context, GCS_COMPATTR,
-                    attributes.ptr, cast(DWORD) attributes.length);
+                attributes.length = preedit.length;
+                const bytes = attributes.length == 0 ? 0
+                    : ImmGetCompositionStringW(context, GCS_COMPATTR,
+                        attributes[].ptr, cast(DWORD) attributes.length);
                 if (bytes < 0)
                 {
                     rememberNative(WsiOperation.dispatch, bytes,
                         "ImmGetCompositionStringW attributes failed");
                     return;
                 }
-                attributeCount = cast(size_t) bytes;
-                if (attributeCount > attributes.length)
-                {
-                    rememberNative(WsiOperation.dispatch, bytes,
-                        "IMM32 attributes exceed bounded storage",
-                        WsiErrorKind.capacity);
-                    return;
-                }
+                if (cast(size_t) bytes < attributes.length)
+                    attributes.length = cast(size_t) bytes;
             }
 
             size_t cursorUnits;
@@ -600,13 +636,18 @@ struct Win32Wsi
                 if (cursor >= 0)
                     cursorUnits = cast(size_t) cursor;
             }
-            emitComposition(id, preedit[0 .. preeditUnits],
-                attributes[0 .. attributeCount], cursorUnits);
+            emitComposition(id, preedit[], attributes[], cursorUnits);
         }
     }
 
-    private bool readImeString(size_t N)(HIMC context, DWORD kind,
-        ref wchar[N] destination, out size_t units,
+    /**
+    Reads an IMM32 string into `destination`, keeping at most the UTF-16
+    units that can reach `maxEventText` UTF-8 bytes: the queue truncates
+    beyond that anyway (`ED8`), so a longer composition is cut here rather
+    than refused.
+    */
+    private bool readImeString(Units)(HIMC context, DWORD kind,
+        ref Units destination,
         scope const(char)[] diagnostic) nothrow
     {
         const requiredBytes = ImmGetCompositionStringW(context, kind, null, 0);
@@ -615,24 +656,20 @@ struct Win32Wsi
             rememberNative(WsiOperation.dispatch, requiredBytes, diagnostic);
             return false;
         }
-        if (requiredBytes > destination.length * wchar.sizeof)
+        const units = cast(size_t) requiredBytes / wchar.sizeof;
+        destination.length = units < maxEventText ? units : maxEventText;
+        if (destination.length != 0)
         {
-            rememberNative(WsiOperation.dispatch, requiredBytes,
-                "IMM32 UTF-16 string exceeds bounded storage",
-                WsiErrorKind.capacity);
-            return false;
-        }
-        if (requiredBytes != 0)
-        {
+            const wanted = cast(DWORD)(destination.length * wchar.sizeof);
             const copied = ImmGetCompositionStringW(context, kind,
-                destination.ptr, cast(DWORD) requiredBytes);
-            if (copied != requiredBytes)
+                destination[].ptr, wanted);
+            if (copied != wanted)
             {
                 rememberNative(WsiOperation.dispatch, copied, diagnostic);
                 return false;
             }
         }
-        units = cast(size_t) requiredBytes / wchar.sizeof;
+        destination.length = boundedUnits(destination[]).length;
         return true;
     }
 
