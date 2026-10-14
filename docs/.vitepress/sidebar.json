@@ -1292,6 +1292,10 @@
             "link": "/specs/font/parsing"
           },
           {
+            "text": "Variation, Metrics, Inspection (M2)",
+            "link": "/specs/font/variation-metrics"
+          },
+          {
             "text": "Delivery Plan",
             "link": "/specs/font/PLAN"
           },
