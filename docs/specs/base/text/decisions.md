@@ -375,7 +375,7 @@ shaping, tabs, and negative kerns falsify them. Optimization evidence must cover
 contextual edges and the exact declared geometry, not only ASCII additive fixtures.
 
 **WRAP-D4 — Physical fixed point, distinct grid cells.**
-_State:_ proposed.
+_State:_ accepted (owner, 2026-10-14), with requirements WRAP-UNIT1–WRAP-UNIT6.
 _Revisit when:_ a consumer needs a physical range or resolution the
 1/65536-point tick cannot represent; a physical-scale or range change requires joint
 review by the base, font, and text-layout owners.

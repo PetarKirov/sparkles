@@ -95,7 +95,9 @@ and evidence in [testing](./testing.md).
 
 ### LayoutUnit
 
-This section is the sole owner of the shared physical length contract.
+This section is the sole owner of the shared physical length contract. Its
+requirements, WRAP-UNIT1–WRAP-UNIT6, were accepted by the owner on 2026-10-14
+under [WRAP-D4](./decisions.md); the rest of this page remains a draft.
 
 **WRAP-UNIT1: Physical representation.** `LayoutUnit` **must** be a distinct signed
 64-bit fixed-point value with one raw tick equal to 1/65536 typographic point and
