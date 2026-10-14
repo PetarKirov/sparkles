@@ -19,7 +19,7 @@ import core.sys.posix.unistd : posixClose = close;
 import core.time : Duration, msecs;
 import std.traits : Parameters;
 
-import sparkles.base.buffer : InlineBuffer;
+import sparkles.base.buffer : InlineBuffer, UniqueBuffer;
 import sparkles.base.pool.pool : Pool, PoolError;
 import sparkles.base.text.cstring : toTempStringz;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
@@ -852,6 +852,29 @@ struct WaylandWsi
         }
         ++nextSequence_;
     }
+
+    /// Queues an event carrying `text`; see `EventQueue.pushText` (`ED8`).
+    private void emitText(Make)(WindowId id, scope const(char)[] text,
+        scope Make make) nothrow @nogc
+    {
+        auto result = events_.pushText(nextSequence_, id, text, make);
+        if (result.hasError)
+        {
+            remember(result.error);
+            return;
+        }
+        ++nextSequence_;
+    }
+
+    /// Calls `fn` with the text a delivered event names, during the drain
+    /// that delivers it (`ED8`). See `EventQueue.withText`.
+    WsiResult!void withText(Fn)(TextId id, scope Fn fn)
+        => events_.withText(id, fn);
+
+    /// Copies an event's text into a `TextPool` the caller owns (`ED8`).
+    /// See `EventQueue.retain`.
+    WsiResult!WindowEvent retain(P)(WindowEvent event, ref P pool)
+        => events_.retain(event, pool);
 
     private WsiResult!void connectionFailure(WsiOperation operation,
         scope const(char)[] diagnostic) nothrow @nogc
@@ -1860,7 +1883,7 @@ struct WaylandWsi
         }
         if (owner.textInputFocus_ is surface)
             owner.textInputFocus_ = null;
-        owner.pendingText_ = PendingTextInput();
+        owner.pendingText_.reset();
     }
 
     private extern (C) static void onTextInputPreedit(void* data,
@@ -1868,16 +1891,7 @@ struct WaylandWsi
         int cursorEnd) nothrow @nogc
     {
         auto owner = cast(WaylandWsi*) data;
-        // An oversized pre-edit degrades to none rather than to a cut
-        // multi-byte sequence; `assign` rejects overflow whole.
-        owner.pendingText_.preedit.clear();
-        if (text !is null)
-        {
-            const assigned =
-                owner.pendingText_.preedit.assign(text.spanFromZ);
-            if (!assigned)
-                owner.pendingText_.preedit.clear();
-        }
+        stage(owner.pendingText_.preedit, text);
         owner.pendingText_.cursorBegin = cursorBegin;
         owner.pendingText_.cursorEnd = cursorEnd;
     }
@@ -1886,14 +1900,7 @@ struct WaylandWsi
         zwp_text_input_v3*, const(char)* text) nothrow @nogc
     {
         auto owner = cast(WaylandWsi*) data;
-        owner.pendingText_.commit.clear();
-        if (text !is null)
-        {
-            const assigned =
-                owner.pendingText_.commit.assign(text.spanFromZ);
-            if (!assigned)
-                owner.pendingText_.commit.clear();
-        }
+        stage(owner.pendingText_.commit, text);
     }
 
     private extern (C) static void onTextInputDelete(void* data,
@@ -1913,16 +1920,24 @@ struct WaylandWsi
         auto owner = cast(WaylandWsi*) data;
         const batch = textInputBatch(owner.pendingText_,
             owner.compositionActive_);
-        owner.pendingText_ = PendingTextInput();
         owner.compositionActive_ = batch.compositionActiveAfter;
+        scope (exit)
+            owner.pendingText_.reset();
         const index = owner.indexOfSurface(owner.textInputFocus_);
         if (index == size_t.max)
             return;
         const id = owner.idAt(index);
         if (batch.emitCommit)
-            owner.emit(id, batch.committed);
+            owner.emitText(id, owner.pendingText_.commit[],
+                (TextId text, size_t kept) => TextCommittedEvent(text));
         if (batch.emitComposition)
-            owner.emit(id, batch.composition);
+            owner.emitText(id, owner.pendingText_.preedit[],
+                (TextId text, size_t kept) {
+                    CompositionEvent event = batch.composition;
+                    event.preedit = text;
+                    event.clampTo(kept);
+                    return event;
+                });
     }
 
     private extern (C) static void onBootstrapDone(void* data,
@@ -2103,15 +2118,43 @@ private immutable wl_keyboard_listener keyboardListener = {
     &WaylandWsi.onKeyboardModifiers, &WaylandWsi.onKeyboardRepeatInfo
 };
 
-/// One text-input-v3 batch, stashed between events and applied on `done`.
+/**
+One text-input-v3 batch, stashed between events and applied on `done`. The
+texts are owned copies: the compositor's strings are borrowed only for the
+event that carries them, and `done` arrives later.
+*/
 struct PendingTextInput
 {
-    InlineBuffer!(char, 512) preedit;
-    InlineBuffer!(char, 256) commit;
+    UniqueBuffer!(char, 512) preedit;
+    UniqueBuffer!(char, 256) commit;
     int cursorBegin = -1;
     int cursorEnd = -1;
     uint deleteBefore;
     uint deleteAfter;
+
+    /// Back to the empty batch, keeping any storage already grown.
+    void reset() @safe pure nothrow @nogc
+    {
+        preedit.clear(releaseStorage: false);
+        commit.clear(releaseStorage: false);
+        cursorBegin = cursorEnd = -1;
+        deleteBefore = deleteAfter = 0;
+    }
+}
+
+/**
+Copies a compositor string into `staged`, keeping one byte more than
+`maxEventText`: enough for the queue to see the text was longer, cut it at a
+code-point boundary and flag it (`ED8`), without staging an unbounded string.
+*/
+private void stage(Staged)(ref Staged staged,
+    const(char)* text) nothrow @nogc
+{
+    staged.clear(releaseStorage: false);
+    if (text is null)
+        return;
+    const span = text.spanFromZ;
+    staged ~= span[0 .. span.length <= maxEventText ? span.length : maxEventText + 1];
 }
 
 /// Borrow a NUL-terminated C string as a span (never null).
@@ -2124,37 +2167,39 @@ Maps one applied pre-edit batch to the shared composition vocabulary:
 the cursor — mapped to the end, where new text lands), an ordered non-empty
 range is the selection, and the whole pre-edit carries the conventional
 underline segment (text-input-v3 has no per-segment attributes).
+
+The text itself is not in the result: the queue stores it and names it in
+`preedit` (`ED8`), clamping these offsets to what it kept.
 */
 CompositionEvent compositionFromPreedit(scope const(char)[] preedit,
     int cursorBegin, int cursorEnd) @safe pure nothrow @nogc
 {
     CompositionEvent event;
-    if (!event.preedit.assign(preedit))
-        return event;
-    const length = cast(int) preedit.length;
+    const int length = cast(int)(preedit.length < maxEventText
+        ? preedit.length : maxEventText);
     const begin = cursorBegin >= 0
         ? (cursorBegin < length ? cursorBegin : length) : length;
     event.cursor = cast(ushort) begin;
-    if (cursorBegin >= 0 && cursorEnd > cursorBegin)
+    if (cursorBegin >= 0 && cursorEnd > cursorBegin && cursorBegin < length)
     {
         const end = cursorEnd < length ? cursorEnd : length;
         event.selectionStart = cast(ushort) cursorBegin;
         event.selectionLength = cast(ushort) (end - cursorBegin);
     }
-    if (preedit.length != 0)
+    if (length != 0)
     {
         event.segments[0] = CompositionSegment(0,
-            cast(ushort) preedit.length, CompositionSegmentStyle.underline);
+            cast(ushort) length, CompositionSegmentStyle.underline);
         event.segmentCount = 1;
     }
     return event;
 }
 
-/// What one applied `done` batch emits, in protocol order.
+/// What one applied `done` batch emits, in protocol order. The texts stay in
+/// the pending batch until they are queued.
 struct TextInputBatch
 {
     bool emitCommit;
-    TextCommittedEvent committed;
     bool emitComposition;
     CompositionEvent composition;
     bool compositionActiveAfter;
@@ -2171,12 +2216,8 @@ TextInputBatch textInputBatch(in PendingTextInput pending,
     bool compositionActive) @safe pure nothrow @nogc
 {
     TextInputBatch batch;
-    if (!pending.commit.empty)
-    {
-        batch.emitCommit = true;
-        batch.committed.text = pending.commit;
-    }
-    if (!pending.preedit.empty)
+    batch.emitCommit = pending.commit.length != 0;
+    if (pending.preedit.length != 0)
     {
         batch.emitComposition = true;
         batch.composition = compositionFromPreedit(pending.preedit[],
@@ -2194,7 +2235,7 @@ unittest
 {
     // Mid-composition batch: pre-edit only.
     PendingTextInput typing;
-    assert(typing.preedit.assign("に"));
+    typing.preedit ~= "に";
     typing.cursorBegin = 3;
     typing.cursorEnd = 3;
     const mid = textInputBatch(typing, false);
@@ -2204,15 +2245,18 @@ unittest
     // Conversion accepted: commit lands and the composition ends in the
     // same batch — the empty composition event tells the window so.
     PendingTextInput accepted;
-    assert(accepted.commit.assign("日本"));
+    accepted.commit ~= "日本";
     const done = textInputBatch(accepted, true);
-    assert(done.emitCommit && done.committed.text[] == "日本");
-    assert(done.emitComposition && done.composition.preedit.empty);
+    assert(done.emitCommit);
+    assert(done.emitComposition && done.composition.segmentCount == 0);
     assert(!done.compositionActiveAfter);
 
     // A done with nothing pending and no active composition is silent.
     const idle = textInputBatch(PendingTextInput(), false);
     assert(!idle.emitCommit && !idle.emitComposition);
+
+    accepted.reset();
+    assert(accepted.commit.length == 0 && accepted.cursorBegin == -1);
 }
 
 @("wsi.wayland.compositionFromPreedit.cursorSelectionAndUnderline")
@@ -2221,7 +2265,6 @@ unittest
 {
     // A visible cursor between the bytes of a multi-byte pre-edit.
     const plain = compositionFromPreedit("にほん", 3, 3);
-    assert(plain.preedit[] == "にほん");
     assert(plain.cursor == 3 && plain.selectionLength == 0);
     assert(plain.segmentCount == 1);
     assert(plain.segments[0] == CompositionSegment(0, 9,
@@ -2237,7 +2280,7 @@ unittest
 
     // An empty pre-edit is the composition-ended shape: no segments.
     const ended = compositionFromPreedit("", 0, 0);
-    assert(ended.preedit.empty && ended.segmentCount == 0);
+    assert(ended.segmentCount == 0);
 }
 
 /**

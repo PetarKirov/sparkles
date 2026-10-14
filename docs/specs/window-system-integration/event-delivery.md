@@ -11,7 +11,7 @@ between September 13 and 17, 2026 and is now [SPEC.md](./SPEC.md) §4.5
 (`ED1`–`ED10`); this page keeps the reasoning, the measurements and the rejected
 alternatives. `EQ12` is deferred to `F04`. `EQ14` was reopened on September 29, 2026
 before implementation and answered again on October 6, 2026: text moves into a
-generational [text pool](../base/pool.md), and `ED8` is rewritten to match. `ED5` and
+generational [text pool](../base/pool.md), and `ED8` is rewritten to match. `ED5`, `ED8` and
 half of `ED2` are implemented; the rest is not. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
 the four backends' pumps). **Consumers in scope:** ordinary GUI applications,
 drawing applications that need every sample, and games that need per-frame sums and
@@ -413,8 +413,10 @@ findings changed the contract rather than the code:
    text-free event still fits, which would deliver a queued sequence above a dropped
    one. `ED5` therefore closes admission from the first drop until the notice is
    delivered.
-3. **Composition offsets were `ushort`.** A 64 KiB pre-edit wraps them, so they widen
-   to `uint` and the per-text bound becomes 65,535 bytes.
+3. **Composition offsets are `ushort`.** A 64 KiB pre-edit would wrap them. The
+   per-text bound is therefore 65,535 bytes, the largest offset a `ushort` holds,
+   rather than a wider field in every composition event; offsets into a truncated
+   pre-edit are clamped to what was kept.
 4. **A shortened MIME type means a different type.** Oversized ones drop the offer
    instead.
 5. **The queue needs `Capacity + 1` text slots.** A drain pops an event before
@@ -448,8 +450,8 @@ corrected `ED5`, which had said the notice arrives first. The rest is outstandin
 | `ED2`, `ED3` | done for the three latest-observation kinds; still owed for pointer motion: a per-(window, pointer) slot index and the sample ring |
 | `ED5`        | **done**: an `EventsDropped` payload, a counter on the queue, and a drain that reports it last                                     |
 | `ED7`        | a timestamp on `WindowEvent`, and the four backends' clock conversions                                                             |
-| `ED5`        | the admission latch from the first drop until the notice is delivered                                                              |
-| `ED8`        | a `TextPool` on the queue, `TextId` in three payloads, `withText`/`retain` on every backend, `uint` composition offsets            |
+| `ED5`        | **done**: the admission latch from the first drop until the notice is delivered                                                    |
+| `ED8`        | **done**: a `TextPool` on the queue, `TextId` in three payloads, `withText`/`retain` on every backend; `WindowEvent` 600 to 88 B   |
 | `ED9`        | capacity and depth as template parameters; two per-window switches                                                                 |
 | `ED10`       | an accumulator in `sparkles:input`, and a `wsi-input-echo` mode that exercises it                                                  |
 

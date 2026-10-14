@@ -314,11 +314,19 @@ private Expected!(void, string) echoLoop(Backend)(ref Backend wsi, ref DefaultLo
             },
             (in TextCommittedEvent value) {
                 report.textEvents++;
-                info(i"#$(event.sequence) text $(prettyPrint(value, opt))");
+                // The payload names its text; it is read here, during the
+                // drain that delivers it (`ED8`).
+                wsi.withText(value.text,
+                    (scope const(char)[] text, bool truncated) {
+                        info(i"#$(event.sequence) text $(prettyPrint(text, opt))$(truncated ? " (truncated)" : "")");
+                    });
             },
             (in CompositionEvent value) {
                 report.compositionEvents++;
-                info(i"#$(event.sequence) composition $(prettyPrint(value, opt))");
+                wsi.withText(value.preedit,
+                    (scope const(char)[] text, bool truncated) {
+                        info(i"#$(event.sequence) composition $(prettyPrint(text, opt))$(truncated ? " (truncated)" : "") $(prettyPrint(value, opt))");
+                    });
             },
             (in PointerEvent value) {
                 report.pointerEvents++;

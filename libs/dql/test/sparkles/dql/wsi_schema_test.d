@@ -3,8 +3,8 @@ Integration schema: `sparkles.wsi.WindowEvent` through the reflection kernel.
 
 The lossless WSI event is plain data; the schema inside DQL reads it via
 `sparkles.reflection` — transparent `payload`, the envelope's `ulong`
-sequence, inline UTF-8 as a value-like leaf, and the composition's static
-segment array with enumerated indices.
+sequence, text named by its pool id (`ED8`: the bytes live in a pool), and
+the composition's static segment array with enumerated indices.
 */
 module sparkles.dql.wsi_schema_test;
 
@@ -15,8 +15,10 @@ import sparkles.dql.schema : DqlSchema, DqlResolution, isDqlCategory,
     isDqlPath;
 import sparkles.dql.resolve : resolveDqlPath;
 import sparkles.dql.testing : parseAndEvalDql;
-import sparkles.wsi : CompositionEvent, CompositionSegmentStyle, FrameReadyEvent,
-    KeyboardEvent, ScrollEvent, TextCommittedEvent, WindowEvent,
+import sparkles.base.pool.text_pool : TextPool;
+import sparkles.wsi : CompositionEvent, CompositionSegmentStyle, EventTextTag,
+    FrameReadyEvent, KeyboardEvent, ScrollEvent, TextCommittedEvent, textOf,
+    WindowEvent,
     WindowEventPayload, WindowId;
 import std.sumtype : SumType;
 
@@ -30,13 +32,13 @@ alias parseAndEval = parseAndEvalDql!WindowSchema;
         "sequence", "window.index", "window.generation",
         "keyboard.action", "keyboard.location", "keyboard.composing",
         "keyboard.modifiers.ctrl",
-        "textCommitted.text",
-        "composition.preedit", "composition.cursor",
+        "textCommitted.text.index", "textCommitted.text.generation",
+        "composition.preedit.index", "composition.cursor",
         "composition.segments[0].style", "composition.segments[7].length",
         "pointer.phase", "pointer.logicalPosition.x", "pointer.pressure",
         "scroll.dy", "scroll.source", "scroll.inverted",
         "touch.pressure", "output.refreshMilliHertz",
-        "dataOffer.mimeType",
+        "dataOffer.mimeType.generation",
         "popupConfigured.repositionToken",
         "frameReady.token", "frameReady.predictedPresentationNanoseconds",
         "focusChanged.focused", "occluded.occluded",
@@ -80,17 +82,25 @@ alias parseAndEval = parseAndEvalDql!WindowSchema;
         assert(parseAndEval(engine, query, event), query);
 }
 
-@("dql.wsi-schema: inline text, segments, and presence")
+@("dql.wsi-schema: text ids, segments, and presence")
 @safe unittest
 {
     DqlEngine engine;
 
-    TextCommittedEvent committed;
-    assert(committed.text.assign("hello"));
-    WindowEvent text = WindowEvent(1, WindowId(1, 1),
-        WindowEventPayload(committed));
+    // An event names its text (`ED8`): the bytes live in a pool, so a query
+    // addresses the id, and the content is read through the pool that holds
+    // it — a recorder `retain`s delivered events into one like this.
+    TextPool!(EventTextTag, 2, 64) pool;
+    const hello = pool.intern("hello").value;
+    WindowEvent text = WindowEvent(1, WindowId(0, 1),
+        WindowEventPayload(TextCommittedEvent(hello)));
 
-    assert(parseAndEval(engine, "textCommitted.text == `hello`", text));
+    assert(parseAndEval(engine, "textCommitted.text.generation == 1", text));
+    bool same;
+    assert(pool.withText(textOf(text), (scope const(char)[] content) {
+        same = content == "hello";
+    }).hasValue);
+    assert(same);
 
     CompositionEvent composition;
     composition.segments[7].style = CompositionSegmentStyle.selected;

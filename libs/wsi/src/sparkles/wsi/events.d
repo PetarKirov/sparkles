@@ -8,9 +8,10 @@ and physical coordinates and the source metadata needed to make that policy.
 module sparkles.wsi.events;
 
 import std.sumtype : SumType;
+import std.traits : EnumMembers;
 public import std.sumtype : match;
 
-import sparkles.base.buffer : InlineBuffer;
+import sparkles.base.pool.handle : Handle;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
 import sparkles.wsi.types;
@@ -93,7 +94,27 @@ struct KeyboardEvent
     bool composing;
 }
 
-struct TextCommittedEvent { InlineBuffer!(char, 256) text; }
+/**
+Names an event's text: a handle into the delivering queue's `TextPool`
+(`ED8`). Read it with the WSI's `withText` during the drain callback that
+delivered the event; afterwards it is stale. `TextId.init` names the empty
+text.
+*/
+struct EventTextTag {}
+
+/// ditto
+alias TextId = Handle!EventTextTag;
+
+/// The most bytes one event text keeps (`ED8`): longer text is cut at a UTF-8
+/// boundary and reported truncated. It is also the largest offset a
+/// composition field holds, which is why those fit a `ushort`.
+enum size_t maxEventText = ushort.max;
+
+/// The longest MIME type an offer may name. A longer one drops the offer
+/// instead of shortening it into a different type (`ED8`).
+enum size_t maxMimeType = 255;
+
+struct TextCommittedEvent { TextId text; }
 
 enum CompositionSegmentStyle : ubyte
 {
@@ -110,14 +131,48 @@ struct CompositionSegment
     CompositionSegmentStyle style;
 }
 
+/**
+A pre-edit update. Offsets are UTF-8 byte offsets into the pre-edit text
+(`preedit`); an event whose `preedit` is `TextId.init` ends the composition.
+*/
 struct CompositionEvent
 {
-    InlineBuffer!(char, 512) preedit;
+    TextId preedit;
     ushort selectionStart;
     ushort selectionLength;
     ushort cursor;
     CompositionSegment[8] segments;
     ubyte segmentCount;
+
+    /**
+    Clamps every offset to the first `kept` bytes of the pre-edit — what the
+    queue stored when the native text was longer than `maxEventText`.
+    `kept` lies on a code-point boundary, so a clamped offset does too; a
+    segment that starts at or past it is dropped, one that crosses it is
+    shortened.
+    */
+    void clampTo(size_t kept) @safe pure nothrow @nogc
+    {
+        static ushort at(size_t offset, size_t kept)
+            => cast(ushort)(offset < kept ? offset : kept);
+
+        const selectionEnd = at(selectionStart + selectionLength, kept);
+        selectionStart = at(selectionStart, kept);
+        selectionLength = cast(ushort)(selectionEnd - selectionStart);
+        cursor = at(cursor, kept);
+
+        ubyte count;
+        foreach (segment; segments[0 .. segmentCount])
+        {
+            if (segment.start >= kept)
+                continue;
+            const end = at(segment.start + segment.length, kept);
+            segments[count++] = CompositionSegment(segment.start,
+                cast(ushort)(end - segment.start), segment.style);
+        }
+        segments[count .. segmentCount] = CompositionSegment.init;
+        segmentCount = count;
+    }
 }
 
 enum PointerPhase : ubyte
@@ -245,7 +300,7 @@ struct DataOfferEvent
 {
     OfferId offer;
     DataOfferAction action;
-    InlineBuffer!(char, 128) mimeType;
+    TextId mimeType; /// at most `maxMimeType` bytes
     LogicalPosition logicalPosition;
 }
 
@@ -257,7 +312,28 @@ struct PopupConfiguredEvent
 }
 
 struct PopupDismissedEvent {}
-struct CursorChangedEvent { PointerShape shape; }
+/**
+The pointer shape a window now shows. Stored as the shape's position in
+`PointerShape`: that enum is a `string`, and holding one would put a pointer
+in every `WindowEvent` (`ED8` keeps events pointer-free).
+*/
+struct CursorChangedEvent
+{
+    private ubyte shape_;
+
+    this(PointerShape shape) @safe pure nothrow @nogc
+    {
+        static foreach (i, member; EnumMembers!PointerShape)
+            if (shape == member)
+                shape_ = cast(ubyte) i;
+    }
+
+    PointerShape shape() const @safe pure nothrow @nogc
+    {
+        static immutable PointerShape[] shapes = [EnumMembers!PointerShape];
+        return shapes[shape_];
+    }
+}
 
 alias WindowEventPayload = SumType!(NoWindowEvent, ReadyEvent, ExposedEvent,
     CloseRequestedEvent, DestroyedEvent, OccludedEvent, FocusChangedEvent,
@@ -297,6 +373,25 @@ bool supersedes(in WindowEvent tail, in WindowEvent next)
         || bothAre!ExposedEvent(tail, next);
 }
 
+/// The text `event` carries, or `TextId.init` if its kind carries none.
+TextId textOf(in WindowEvent event) @safe pure nothrow @nogc
+    => event.payload.match!(
+        (in TextCommittedEvent e) => e.text,
+        (in CompositionEvent e) => e.preedit,
+        (in DataOfferEvent e) => e.mimeType,
+        _ => TextId.init);
+
+/// Makes `event` name `id` as its text; an event that carries none is left
+/// unchanged.
+void setTextOf(ref WindowEvent event, TextId id) @safe pure nothrow @nogc
+{
+    event.payload.match!(
+        (ref TextCommittedEvent e) { e.text = id; },
+        (ref CompositionEvent e) { e.preedit = id; },
+        (ref DataOfferEvent e) { e.mimeType = id; },
+        (ref _) {});
+}
+
 // match, not std.sumtype.has: `has!T` on a const sum answers for `const T`
 // only, and these events arrive through `in` parameters.
 private bool isKind(Payload)(in WindowEvent event) @safe pure nothrow @nogc
@@ -330,19 +425,44 @@ unittest
         WindowEvent(2, window, WindowEventPayload(KeyboardEvent()))));
 }
 
-@("wsi.events.textAndCompositionOwnTheirBytes")
-@safe
-pure nothrow @nogc
+@("wsi.events.eventsHoldNoPointerAndFitTwoCacheLines")
+@safe pure nothrow @nogc
 unittest
 {
-    TextCommittedEvent committed;
-    assert(committed.text.assign("λ"));
-    auto a = WindowEvent(1, WindowId(1, 1), WindowEventPayload(committed));
-    auto b = a;
+    import std.traits : hasIndirections;
+
+    // `ED8`: text lives in the queue's pool, so an event is plain data and
+    // assigning one is `@safe` — no `@trusted` copy, no reference count.
+    static assert(!hasIndirections!WindowEvent);
+    static assert(WindowEvent.sizeof <= 128);
+
+    auto a = WindowEvent(1, WindowId(1, 1),
+        WindowEventPayload(TextCommittedEvent(TextId(3, 1))));
+    WindowEvent b;
+    b = a;
     assert(a == b);
-    assert(b.payload.match!(
-        (in TextCommittedEvent t) => t.text[] == "λ",
-        _ => false));
+}
+
+@("wsi.events.compositionClampsToTheKeptText")
+@safe pure nothrow @nogc
+unittest
+{
+    CompositionEvent e;
+    e.selectionStart = 4;
+    e.selectionLength = 8;
+    e.cursor = 20;
+    e.segments[0] = CompositionSegment(0, 6, CompositionSegmentStyle.underline);
+    e.segments[1] = CompositionSegment(6, 6, CompositionSegmentStyle.selected);
+    e.segments[2] = CompositionSegment(12, 9, CompositionSegmentStyle.none);
+    e.segmentCount = 3;
+
+    e.clampTo(9);
+    assert(e.selectionStart == 4 && e.selectionLength == 5);
+    assert(e.cursor == 9);
+    assert(e.segmentCount == 2);
+    assert(e.segments[0] == CompositionSegment(0, 6, CompositionSegmentStyle.underline));
+    assert(e.segments[1] == CompositionSegment(6, 3, CompositionSegmentStyle.selected));
+    assert(e.segments[2] == CompositionSegment.init);
 }
 
 @("wsi.events.scrollDoesNotNormalizeAwaySource")
@@ -433,4 +553,13 @@ unittest
     assert(evdevKeyLocation(30) == KeyLocation.standard);
     assert(xkbRealMods(0x1 | 0x40) == Mods(shift: true, super_: true));
     assert(xkbRealMods(0x2 | 0x10) == Mods());
+}
+
+@("wsi.events.cursorChangedRoundTripsEveryShape")
+@safe pure nothrow @nogc
+unittest
+{
+    static foreach (member; EnumMembers!PointerShape)
+        assert(CursorChangedEvent(member).shape == member);
+    static assert(CursorChangedEvent.sizeof == 1);
 }

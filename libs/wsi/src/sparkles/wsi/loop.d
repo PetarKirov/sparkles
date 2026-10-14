@@ -10,6 +10,8 @@ module sparkles.wsi.loop;
 
 import std.math : isFinite;
 import sparkles.base.pool.pool : Pool, PoolError;
+import sparkles.base.pool.text_pool : TextPool;
+static import sparkles.base.pool.text_pool;
 
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
@@ -17,8 +19,20 @@ import sparkles.wsi.types;
 
 @safe:
 
-struct EventQueue(size_t Capacity)
-if (Capacity > 0)
+/**
+A backend's bounded event queue (`ED1`), with its text beside it (`ED8`).
+
+Events are plain values; the text they carry lives in a `TextPool` the queue
+owns and is named in the payload by a `TextId`. Text is readable through
+`withText` while the drain that delivers its event runs, and is released when
+that event's sink call returns.
+
+Params:
+    Capacity = event slots
+    TextBytes = the text arena shared by every queued event's text
+*/
+struct EventQueue(size_t Capacity, size_t TextBytes = maxEventText + 1)
+if (Capacity > 0 && TextBytes > 0)
 {
     private WindowEvent[Capacity] events_;
     private size_t head_;
@@ -26,6 +40,11 @@ if (Capacity > 0)
     private bool draining_;
     private uint dropped_;
     private ulong droppedSequence_;
+    // One text slot more than there are event slots: a drain pops an event
+    // before its sink runs, so the event in flight still holds its text while
+    // the sink enqueues a full queue's worth.
+    private TextPool!(EventTextTag, Capacity + 1, TextBytes,
+        TextBytes < maxEventText ? TextBytes : maxEventText) texts_;
 
     bool full() const pure nothrow @nogc => count_ == Capacity;
     bool empty() const pure nothrow @nogc => count_ == 0;
@@ -35,26 +54,68 @@ if (Capacity > 0)
     /// clears it.
     uint dropped() const pure nothrow @nogc => dropped_;
 
+    /// Whether arrivals are refused until the next drain reports the loss.
+    bool admissionClosed() const pure nothrow @nogc => full || dropped_ != 0;
+
     /**
     `ED5`: a full queue drops the arriving event and counts it rather than
     failing. A consumer that stops draining must not be able to fail a
     dispatch, and through it the loop. The loss is reported by the next
     drain and is visible in the delivered sequence numbers as a gap.
+
+    From the first drop until that report, every arrival is dropped, even one
+    that would fit: an event refused for want of text space (`pushText`) can
+    leave a slot free, and admitting a later event into it would queue a
+    sequence above a dropped one, which no position of the notice could then
+    order (`ED6`).
     */
     WsiResult!void push(WindowEvent event) pure nothrow @nogc
     {
-        if (full)
+        if (admissionClosed)
         {
-            if (dropped_ != uint.max)
-                ++dropped_;
-            if (event.sequence > droppedSequence_)
-                droppedSequence_ = event.sequence;
+            drop(event.sequence);
             return wsiOk();
         }
 
-        assignEvent(events_[(head_ + count_) % Capacity], event);
+        events_[(head_ + count_) % Capacity] = event;
         ++count_;
         return wsiOk();
+    }
+
+    /**
+    Stores `text` in the queue's text pool and pushes the event that
+    `make(id, kept)` builds around it: `id` names the stored text and `kept`
+    is how many of its bytes were kept, so a payload with offsets into the
+    text can clamp them (`CompositionEvent.clampTo`). Empty text takes no
+    pool slot and is named by `TextId.init`.
+
+    When the queue refuses arrivals, or the pool cannot hold the text, the
+    event is dropped and counted (`ED5`, `ED8`); text is truncated only at
+    `maxEventText`, never for want of space.
+    */
+    WsiResult!void pushText(Make)(ulong sequence, WindowId window,
+        scope const(char)[] text, scope Make make)
+    {
+        if (admissionClosed)
+        {
+            drop(sequence);
+            return wsiOk();
+        }
+
+        TextId id;
+        size_t kept;
+        if (text.length != 0)
+        {
+            auto interned = texts_.intern(text);
+            if (interned.hasError)
+            {
+                drop(sequence);
+                return wsiOk();
+            }
+            id = interned.value;
+            kept = texts_.lengthOf(id).value;
+        }
+        return push(WindowEvent(sequence, window, WindowEventPayload(make(id, kept))));
     }
 
     /**
@@ -84,7 +145,7 @@ if (Capacity > 0)
                 // dropped one, which is what lets `ED5`'s notice go last
                 // and still increase.
                 const keptSequence = candidate.sequence;
-                assignEvent(candidate, event);
+                candidate = event;
                 candidate.sequence = keptSequence;
                 return wsiOk();
             }
@@ -100,6 +161,11 @@ if (Capacity > 0)
     /**
     Drain the events present at entry. Events appended by the sink are deferred
     to the next drain, and a recursive drain is rejected.
+
+    The text pool is held borrowed for the whole drain, so the slice a sink
+    reads through `withText` stays put even if the sink causes more text to be
+    queued. Each event's text is released once its sink call returns, also
+    when the sink throws.
     */
     WsiResult!size_t drain(Sink)(scope Sink sink)
     {
@@ -109,14 +175,17 @@ if (Capacity > 0)
 
         draining_ = true;
         scope (exit) draining_ = false;
+        auto borrowed = texts_.borrow();
 
         size_t available = count_;
         foreach (_; 0 .. available)
         {
             auto event = events_[head_];
-            clearEvent(events_[head_]);
+            events_[head_] = WindowEvent.init;
             head_ = (head_ + 1) % Capacity;
             --count_;
+            scope (exit)
+                releaseText(event);
             sink(event);
         }
         if (dropped_ != 0)
@@ -133,6 +202,69 @@ if (Capacity > 0)
             sink(notice);
         }
         return wsiOk(available);
+    }
+
+    /**
+    Calls `fn(text, truncated)` — or `fn(text)` — with the text `id` names
+    (`ED8`). Valid while the drain that delivered the event runs; afterwards
+    the id is stale and this returns `WsiErrorKind.staleId`. `TextId.init`
+    names the empty text.
+    */
+    WsiResult!void withText(Fn)(in TextId id, scope Fn fn)
+    {
+        if (id == TextId.init)
+        {
+            static if (__traits(compiles, fn("", false)))
+                fn("", false);
+            else
+                fn("");
+            return wsiOk();
+        }
+        if (texts_.withText(id, fn).hasError)
+            return wsiErr!void(wsiError(WsiErrorKind.staleId,
+                WsiOperation.command,
+                diagnostic: "event text is read during the drain that delivers it"));
+        return wsiOk();
+    }
+
+    /**
+    Copies `event`'s text into `pool`, which the caller owns, and returns the
+    same event naming the copy — for an event kept past its drain callback,
+    recorded, replayed or handed to another thread (`ED8`). An event with no
+    text is returned unchanged.
+    */
+    WsiResult!WindowEvent retain(Pool)(WindowEvent event, ref Pool pool)
+    if (is(Pool.Id == TextId))
+    {
+        const id = textOf(event);
+        if (id == TextId.init)
+            return wsiOk(event);
+        auto copied = sparkles.base.pool.text_pool.retain(texts_, id, pool);
+        if (copied.hasError)
+            return wsiErr!WindowEvent(wsiError(
+                copied.error == PoolError.full
+                    ? WsiErrorKind.capacity : WsiErrorKind.staleId,
+                WsiOperation.command,
+                diagnostic: copied.error == PoolError.full
+                    ? "the destination text pool is full"
+                    : "event text is retained during the drain that delivers it"));
+        setTextOf(event, copied.value);
+        return wsiOk(event);
+    }
+
+    private void drop(ulong sequence) pure nothrow @nogc
+    {
+        if (dropped_ != uint.max)
+            ++dropped_;
+        if (sequence > droppedSequence_)
+            droppedSequence_ = sequence;
+    }
+
+    private void releaseText(in WindowEvent event) pure nothrow @nogc
+    {
+        const id = textOf(event);
+        if (id != TextId.init)
+            texts_.release(id);
     }
 }
 
@@ -211,6 +343,157 @@ unittest
     assert(!result.hasError && result.value == 5 && delivered == 5);
     assert(reported == 6 && noticeSequence == 10);
     assert(queue.dropped == 0, "the loss is reported once");
+}
+
+@("wsi.loop.aTextPoolMissClosesAdmissionUntilTheNotice")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.sumtype : match;
+
+    // `ED5` with `ED8`: an event refused for want of text space leaves its
+    // slot free. Admitting the next arrival into it would queue sequence 3
+    // above dropped sequence 2, and no position of the notice could then
+    // keep the drained order increasing.
+    EventQueue!(4, 8) queue;
+    const window = WindowId(0, 1);
+    static TextCommittedEvent committed(TextId text, size_t)
+        => TextCommittedEvent(text);
+
+    assert(!queue.pushText(1, window, "12345678", &committed).hasError);
+    assert(!queue.pushText(2, window, "x", &committed).hasError);
+    assert(queue.dropped == 1 && queue.length == 1, "no text space for 2");
+    assert(!queue.push(WindowEvent(3, window,
+        WindowEventPayload(KeyboardEvent()))).hasError);
+    assert(queue.dropped == 2 && queue.length == 1, "3 is refused too");
+
+    ulong last;
+    ulong[2] seen;
+    size_t n;
+    uint reported;
+    assert(!queue.drain((WindowEvent event) @safe pure nothrow @nogc {
+        assert(event.sequence > last, "drained order stays increasing");
+        last = event.sequence;
+        seen[n++] = event.sequence;
+        event.payload.match!(
+            (in EventsDroppedEvent e) { reported = e.count; },
+            (_) {});
+    }).hasError);
+    assert(seen == [1, 3] && reported == 2);
+
+    // The notice reopened admission.
+    assert(!queue.pushText(4, window, "y", &committed).hasError);
+    assert(queue.length == 1 && queue.dropped == 0);
+}
+
+@("wsi.loop.textIsReadableDuringItsDrainAndStaleAfter")
+@safe unittest
+{
+    RecordingWsi!(1, 8) wsi;
+    WindowConfig config;
+    config.logicalSize = LogicalSize(10, 10);
+    const id = wsi.createWindow(config).value;
+    assert(!wsi.commitText(id, "héllo").hasError);
+    assert(!wsi.commitText(id, "").hasError);
+
+    TextId kept;
+    bool read;
+    size_t empties;
+    assert(!wsi.drain((WindowEvent event) {
+        event.payload.match!(
+            (in TextCommittedEvent e) {
+                if (e.text == TextId.init)
+                {
+                    // Empty text takes no slot and reads as "".
+                    assert(!wsi.withText(e.text, (scope const(char)[] text) {
+                        assert(text.length == 0);
+                    }).hasError);
+                    ++empties;
+                    return;
+                }
+                kept = e.text;
+                assert(!wsi.withText(e.text,
+                    (scope const(char)[] text, bool truncated) {
+                        read = text == "héllo" && !truncated;
+                    }).hasError);
+            },
+            (_) {});
+    }).hasError);
+    assert(read && empties == 1);
+
+    // `ED8`: the drain is over, so the id is stale.
+    const late = wsi.withText(kept, (scope const(char)[]) {
+        assert(false, "a stale id must not be read");
+    });
+    assert(late.hasError && late.error.kind == WsiErrorKind.staleId);
+}
+
+@("wsi.loop.retainCopiesTextPastTheDrain")
+@safe unittest
+{
+    RecordingWsi!(1, 8) wsi;
+    WindowConfig config;
+    config.logicalSize = LogicalSize(10, 10);
+    const id = wsi.createWindow(config).value;
+    assert(!wsi.commitText(id, "kept").hasError);
+
+    TextPool!(EventTextTag, 4, 64) log;
+    WindowEvent recorded;
+    assert(!wsi.drain((WindowEvent event) {
+        if (textOf(event) != TextId.init)
+            recorded = wsi.retain(event, log).value;
+    }).hasError);
+
+    // The recorded event names the copy, readable through the consumer's pool.
+    bool same;
+    assert(log.withText(textOf(recorded), (scope const(char)[] text) {
+        same = text == "kept";
+    }).hasValue);
+    assert(same && recorded.window == id);
+}
+
+@("wsi.loop.theEventInFlightKeepsItsTextWhileTheSinkEnqueues")
+@safe nothrow
+unittest
+{
+    // `ED8`: drain pops an event before its sink runs, so the queue holds one
+    // text slot more than it has event slots. A sink refilling the queue
+    // must not find the text pool full.
+    EventQueue!2 queue;
+    const window = WindowId(0, 1);
+    static TextCommittedEvent committed(TextId text, size_t)
+        => TextCommittedEvent(text);
+    ulong sequence = 1;
+    assert(!queue.pushText(sequence++, window, "a", &committed).hasError);
+    assert(!queue.pushText(sequence++, window, "b", &committed).hasError);
+
+    bool refilled;
+    assert(!queue.drain((WindowEvent event) {
+        if (!refilled)
+        {
+            refilled = true;
+            assert(!queue.pushText(sequence++, window, "c", &committed).hasError);
+        }
+    }).hasError);
+    assert(queue.dropped == 0 && queue.length == 1);
+}
+
+@("wsi.loop.aThrowingSinkStillReleasesItsText")
+@safe unittest
+{
+    EventQueue!2 queue;
+    const window = WindowId(0, 1);
+    static TextCommittedEvent committed(TextId text, size_t)
+        => TextCommittedEvent(text);
+    assert(!queue.pushText(1, window, "boom", &committed).hasError);
+
+    try
+        queue.drain((WindowEvent event) { throw new Exception("sink failed"); });
+    catch (Exception)
+    {
+    }
+    assert(queue.texts_.liveCount == 0 && !queue.texts_.borrowed);
+    assert(!queue.drain((WindowEvent event) {}).hasError, "draining_ was reset");
 }
 
 @("wsi.loop.eventQueueSurvivesAResizeFloodByCoalescing")
@@ -349,6 +632,31 @@ if (MaxWindows > 0 && MaxEvents > 0)
 
     WsiResult!size_t drain(Sink)(scope Sink sink) => events_.drain(sink);
 
+    /// Calls `fn` with the text a delivered event names, during the drain
+    /// that delivers it (`ED8`). See `EventQueue.withText`.
+    WsiResult!void withText(Fn)(TextId id, scope Fn fn)
+        => events_.withText(id, fn);
+
+    /// Copies an event's text into a `TextPool` the caller owns (`ED8`).
+    WsiResult!WindowEvent retain(P)(WindowEvent event, ref P pool)
+        => events_.retain(event, pool);
+
+    /**
+    Queues a `TextCommittedEvent` for `id`, as a native input method would
+    on commit: the recording counterpart of a backend's text path.
+    */
+    WsiResult!void commitText(WindowId id, scope const(char)[] text)
+    {
+        auto slot = checkedSlot(id);
+        if (slot.hasError)
+            return wsiErr!void(slot.error);
+        auto result = events_.pushText(nextSequence_, id, text,
+            (TextId committed, size_t kept) => TextCommittedEvent(committed));
+        if (!result.hasError)
+            ++nextSequence_;
+        return result;
+    }
+
     void close() pure nothrow @nogc
     {
         closed_ = true;
@@ -388,21 +696,6 @@ if (MaxWindows > 0 && MaxEvents > 0)
         => wsiErr!T(wsiError(kind, operation, diagnostic: diagnostic));
 }
 
-// `SumType.opAssign` is conservatively `@system` under DIP1000. Every WSI
-// alternative owns only value storage (no borrowed slices), so copying it into
-// the fixed queue cannot escape a reference. Keep that trust in one place.
-private void assignEvent(ref WindowEvent destination, ref WindowEvent source)
-    @trusted pure nothrow @nogc
-{
-    destination = source;
-}
-
-private void clearEvent(ref WindowEvent destination)
-    @trusted pure nothrow @nogc
-{
-    destination = WindowEvent.init;
-}
-
 @("wsi.loop.lifecycleIsOrderedAndGenerationSafe")
 unittest
 {
@@ -418,7 +711,7 @@ unittest
     WindowEvent[3] seen;
     size_t count;
     assert(wsi.drain((WindowEvent e) {
-        assignEvent(seen[count++], e);
+        seen[count++] = e;
     }).value == 3);
     assert(seen[0].sequence == 1 && seen[1].sequence == 2
         && seen[2].sequence == 3);

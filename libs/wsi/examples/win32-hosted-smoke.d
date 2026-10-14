@@ -273,6 +273,16 @@ private bool checkTextAndComposition(ref Win32Wsi wsi)
         (_) => cast(HWND) null);
     assert(hwnd !is null);
 
+    // Event text is read through the WSI while the drain delivers it (`ED8`).
+    bool textIs(TextId id, string expected)
+    {
+        bool same;
+        assert(!wsi.withText(id, (scope const(char)[] text) {
+            same = text == expected;
+        }).hasError);
+        return same;
+    }
+
     // Physical-key and UTF-16 commit channels, independent of Wine's
     // installed keyboard layouts.
     SendMessageW(hwnd, WM_KEYDOWN, 'A', 0x001E_0001);
@@ -292,7 +302,7 @@ private bool checkTextAndComposition(ref Win32Wsi wsi)
                 keyReleased |= key.action == KeyAction.release;
             },
             (in TextCommittedEvent text) {
-                charCommitted |= text.text[] == "a";
+                charCommitted |= textIs(text.text, "a");
             },
             (_) {});
     });
@@ -317,7 +327,7 @@ private bool checkTextAndComposition(ref Win32Wsi wsi)
         lastSequence = event.sequence;
         event.payload.match!(
             (in CompositionEvent composition) {
-                if (composition.preedit[] == "nihao")
+                if (textIs(composition.preedit, "nihao"))
                 {
                     sawPreedit = true;
                     assert(composition.cursor == 5);
@@ -325,11 +335,11 @@ private bool checkTextAndComposition(ref Win32Wsi wsi)
                     assert(composition.segments[0].style
                         == CompositionSegmentStyle.underline);
                 }
-                else if (sawPreedit && composition.preedit.empty)
+                else if (sawPreedit && composition.preedit == TextId.init)
                     sawCompositionEnd = true;
             },
             (in TextCommittedEvent text) {
-                sawImeCommit |= text.text[] == "nihao";
+                sawImeCommit |= textIs(text.text, "nihao");
             },
             (_) {});
     });

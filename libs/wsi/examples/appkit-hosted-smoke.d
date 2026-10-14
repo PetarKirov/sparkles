@@ -432,6 +432,16 @@ private void checkMarkedText(ref AppKitWsi wsi)
         (_) => cast(NSView) null);
     assert(view !is null);
 
+    // Event text is read through the WSI while the drain delivers it (`ED8`).
+    bool textIs(TextId id, string expected)
+    {
+        bool same;
+        assert(!wsi.withText(id, (scope const(char)[] text) {
+            same = text == expected;
+        }).hasError);
+        return same;
+    }
+
     // Composition: three kana with the middle one selected — UTF-16 units
     // in, byte offsets out.
     auto kana = NSString.alloc().initWithUTF8String("にほん");
@@ -443,7 +453,7 @@ private void checkMarkedText(ref AppKitWsi wsi)
         lastSequence = event.sequence;
         event.payload.match!(
             (in CompositionEvent composition) {
-                assert(composition.preedit[] == "にほん");
+                assert(textIs(composition.preedit, "にほん"));
                 assert(composition.cursor == 3);
                 assert(composition.selectionStart == 3
                     && composition.selectionLength == 3);
@@ -466,11 +476,11 @@ private void checkMarkedText(ref AppKitWsi wsi)
         lastSequence = event.sequence;
         event.payload.match!(
             (in TextCommittedEvent text) {
-                assert(text.text[] == "日本");
+                assert(textIs(text.text, "日本"));
                 sawCommit = true;
             },
             (in CompositionEvent composition) {
-                assert(composition.preedit.empty);
+                assert(composition.preedit == TextId.init);
                 sawEnd = true;
             },
             (_) {});

@@ -535,7 +535,7 @@ struct AppKitWsi
         SparklesWsiView view;
         bool ready;
         SurfaceMetrics metrics;
-        InlineBuffer!(char, 512) marked;
+        bool hasMarked; // a composition is in progress
         ulong markedUnits16;
         bool relativePointer;
     }
@@ -886,6 +886,29 @@ struct AppKitWsi
         ++nextSequence_;
     }
 
+    /// Queues an event carrying `text`; see `EventQueue.pushText` (`ED8`).
+    private void emitText(Make)(WindowId id, scope const(char)[] text,
+        scope Make make) nothrow
+    {
+        auto result = events_.pushText(nextSequence_, id, text, make);
+        if (result.hasError)
+        {
+            remember(result.error);
+            return;
+        }
+        ++nextSequence_;
+    }
+
+    /// Calls `fn` with the text a delivered event names, during the drain
+    /// that delivers it (`ED8`). See `EventQueue.withText`.
+    WsiResult!void withText(Fn)(TextId id, scope Fn fn)
+        => events_.withText(id, fn);
+
+    /// Copies an event's text into a `TextPool` the caller owns (`ED8`).
+    /// See `EventQueue.retain`.
+    WsiResult!WindowEvent retain(P)(WindowEvent event, ref P pool)
+        => events_.retain(event, pool);
+
     private void remember(WsiError error) nothrow
     {
         if (!hasStickyError_)
@@ -965,17 +988,11 @@ struct AppKitWsi
         ref slot = windows_.at(index);
         const id = idAt(index);
         if (bytes.length != 0 && !validateUtf8(bytes).hasError)
-        {
-            TextCommittedEvent committed;
-            // An oversized commit degrades to none rather than to a cut
-            // multi-byte sequence.
-            if (committed.text.assign(bytes))
-                emit(id, committed);
-        }
+            emitText(id, bytes, (TextId text, size_t kept) => TextCommittedEvent(text));
         // insertText replaces any marked text: the composition is over.
-        if (!slot.marked.empty)
+        if (slot.hasMarked)
         {
-            slot.marked.clear();
+            slot.hasMarked = false;
             slot.markedUnits16 = 0;
             emit(id, CompositionEvent());
         }
@@ -994,14 +1011,16 @@ struct AppKitWsi
             onUnmarkText(view);
             return;
         }
-        if (!slot.marked.assign(bytes))
-        {
-            onUnmarkText(view);
-            return;
-        }
+        slot.hasMarked = true;
         slot.markedUnits16 = measureConversion!wchar(bytes).value.payload;
-        emit(id, appKitComposition(bytes, selectedRange.location,
-            selectedRange.length));
+        const composition = appKitComposition(bytes, selectedRange.location,
+            selectedRange.length);
+        emitText(id, bytes, (TextId text, size_t kept) {
+            CompositionEvent event = composition;
+            event.preedit = text;
+            event.clampTo(kept);
+            return event;
+        });
     }
 
     private void onUnmarkText(SparklesWsiView view)
@@ -1010,9 +1029,9 @@ struct AppKitWsi
         if (index == size_t.max || !windows_.at(index).ready)
             return;
         ref slot = windows_.at(index);
-        if (slot.marked.empty)
+        if (!slot.hasMarked)
             return;
-        slot.marked.clear();
+        slot.hasMarked = false;
         slot.markedUnits16 = 0;
         emit(idAt(index), CompositionEvent());
     }
@@ -1503,9 +1522,14 @@ whole-pre-edit underline.
 extern (D) CompositionEvent appKitComposition(scope const(char)[] preedit,
     ulong selLocation16, ulong selLength16) @safe pure nothrow @nogc
 {
+    // Offsets are held where a composition field can represent them; the
+    // queue then clamps them to the text it kept (`ED8`).
+    static ushort bounded(size_t offset)
+        => cast(ushort)(offset < maxEventText ? offset : maxEventText);
+
     CompositionEvent event;
     // A strict map must never certify a prefix while ignoring a malformed suffix.
-    if (measureConversion!wchar(preedit).hasError || !event.preedit.assign(preedit))
+    if (measureConversion!wchar(preedit).hasError)
         return event;
     if (preedit.length == 0)
         return event;
@@ -1520,16 +1544,16 @@ extern (D) CompositionEvent appKitComposition(scope const(char)[] preedit,
         ? preedit.length
         : mapValidatedUtf16Offset(preedit, Utf16Offset(cast(size_t) endUnits),
             selLength16 ? MapAffinity.after : MapAffinity.before).value.value;
-    event.cursor = cast(ushort) selStart;
-    event.segments[0] = CompositionSegment(0, cast(ushort) preedit.length,
+    event.cursor = bounded(selStart);
+    event.segments[0] = CompositionSegment(0, bounded(preedit.length),
         CompositionSegmentStyle.underline);
     event.segmentCount = 1;
     if (selEnd > selStart)
     {
-        event.selectionStart = cast(ushort) selStart;
-        event.selectionLength = cast(ushort) (selEnd - selStart);
-        event.segments[1] = CompositionSegment(cast(ushort) selStart,
-            cast(ushort) (selEnd - selStart), CompositionSegmentStyle.selected);
+        event.selectionStart = bounded(selStart);
+        event.selectionLength = cast(ushort)(bounded(selEnd) - bounded(selStart));
+        event.segments[1] = CompositionSegment(event.selectionStart,
+            event.selectionLength, CompositionSegmentStyle.selected);
         event.segmentCount = 2;
     }
     return event;
@@ -1541,7 +1565,6 @@ unittest
 {
     // Selection over the second of three kana (3 bytes each, 1 unit each).
     const kana = appKitComposition("にほん", 1, 1);
-    assert(kana.preedit[] == "にほん");
     assert(kana.cursor == 3);
     assert(kana.selectionStart == 3 && kana.selectionLength == 3);
     assert(kana.segmentCount == 2);
@@ -1571,7 +1594,7 @@ unittest
         MapAffinity.exact).status == MapStatus.notBoundary);
     // The caller cannot accept a valid-prefix coordinate with an invalid suffix.
     const invalidSuffix = appKitComposition("a\xFF", 0, 0);
-    assert(invalidSuffix.preedit.empty && invalidSuffix.segmentCount == 0);
+    assert(invalidSuffix.segmentCount == 0);
     const overflow = appKitComposition("a😀b", ulong.max - 1, 8);
     assert(overflow.cursor == 6 && overflow.selectionLength == 0);
 }

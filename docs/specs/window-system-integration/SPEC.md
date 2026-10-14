@@ -421,9 +421,10 @@ produce no text. UTF-8 is the public encoding. Shared UTF-8/UTF-16 conversion be
 in `sparkles:base`, is allocation-conscious, and rejects ill-formed input without
 silently replacing it at a system boundary.
 
-All composition cursor, selection, and segment offsets are `uint` byte offsets into
-the event's UTF-8 pre-edit text as stored (`ED8`): when the text was truncated, each
-is clamped to the kept length at a code-point boundary. A backend converts native UTF-16 code-unit or
+All composition cursor, selection, and segment offsets are byte offsets into the
+event's UTF-8 pre-edit text as stored (`ED8`), each held in a `ushort`: one text
+holds at most 65,535 bytes. When the text was truncated, each offset is clamped to the
+kept length, which lies on a code-point boundary. A backend converts native UTF-16 code-unit or
 platform-string indices before enqueueing the event; consumers never reinterpret
 those fields as code points or native indices. Segments are ordered, non-overlapping,
 and may be coalesced when adjacent native spans have the same public style.
