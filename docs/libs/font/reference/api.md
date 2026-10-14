@@ -268,3 +268,51 @@ them. `h` is a `DesignValue` in the face's units per em, else `badValue`. A
 `callerStorage` with the count as `needed`, and is left unchanged, as on every
 other error. `flags` keeps reserved bits as stored. No assembly is composed.
 At all-zero coordinates the store is not read.
+
+## Layout — `sparkles.font.layout`
+
+`GSUB` and `GPOS` (a `LayoutTable`, `gsub` or `gpos`) major version 1 are read,
+any minor; the FeatureVariations table from 1.1. Another major is
+`unsupportedVersion`, and without the table every query is `missingTable`. A
+null script, feature or lookup list is empty. Every list reports a malformed
+entry as that entry's error and keeps the others readable, rather than
+rejecting the whole table as HarfBuzz does: an index read from the font past
+the array it indexes is `badValue`, an offset outside the table `badOffset`,
+and a caller's index past a list `indexOutOfRange`.
+
+| Operation                                              | Result                                                                                                                                                                                                                      |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `face.layout(table)`                                   | the header: `majorVersion`, `minorVersion`, `scriptCount`, `featureCount`, `lookupCount`, `hasFeatureVariations`                                                                                                            |
+| `face.layoutScripts(table)`                            | `LayoutScripts`, a random-access range of `FontResult!LayoutScript` with `tag(i)` readable even for a broken entry                                                                                                          |
+| `script.defaultLanguage`, `languages`, `language(tag)` | a `LangSys` (`present` false when absent; `Tag.init` names the default), the language systems as a random-access range, and a binary search by tag                                                                          |
+| `langSys.featureIndices`                               | `LayoutIndices`: each feature index, `badValue` past the feature list; `hasRequiredFeature` and `requiredFeatureIndex` (`0xFFFF` is none)                                                                                   |
+| `face.features(table, script, language)`               | `Features`, a random-access range of `FontResult!Feature` (tag, index, `required`, `substituted`, `lookups` as `LayoutIndices`), the required feature first; `found` false when the script or language system is not listed |
+| `inst.features(table, script, language)`               | as on the face, with the first FeatureVariations record whose condition set holds applied; `variation` names it as a `VariationChoice`                                                                                      |
+| `face.featureVariationCount(table)`                    | the number of FeatureVariations records; 0 before 1.1 or for a null offset                                                                                                                                                  |
+| `inst.featureVariation(table, r)`                      | `FeatureVariationRecord`: whether record `r`'s condition set `holds`; `unsupportedVersion` for a condition of a format other than 1                                                                                         |
+| `face.featureSubstitutions(table, r)`                  | `FeatureSubstitutions`, a random-access range of `FontResult!FeatureSubstitution` (feature index and alternate lookups); `badValue` for a feature index past the list                                                       |
+| `face.lookup(table, index)`                            | `Lookup`: `type`, `flag`, `subtableCount`, and `markFilteringSet` when the flag has `useMarkFilteringSet`; O(1)                                                                                                             |
+| `face.substitutions(lookupIndex)`                      | `Substitutions`, a lazy forward range of `FontResult!Substitution` for a `GSUB` lookup                                                                                                                                      |
+
+A format-1 condition holds when `min ≤ coord ≤ max` on the F2Dot14
+coordinate, an axis past the instance's reading 0; an empty or null condition
+set holds; any other format never holds. A substitution naming a feature past
+the list leaves that feature its default lookups. When the FeatureVariations
+table, or the chosen record's substitution table, cannot be read, every
+feature at the instance returns that error.
+
+A `Substitution` has the effective `lookupType` (never 7; `extension` says it
+was wrapped), `format`, `subtable`, and `input` and `output` as
+`GlyphSequence`s: an optional leading glyph followed by a borrowed run of
+big-endian glyph IDs (`UInt16Run`). Types 1–3 give one glyph in, and its
+substitute (format 1 as `(g + delta) mod 65,536`), sequence, or one alternate
+(`alternateIndex`) out; type 4 the coverage glyph and its components in, the
+ligature out. Types 5 and 6 give `lookups`, the `SequenceLookup`s the rule
+invokes, never followed, with `contextInput` saying whether the input holds
+glyphs (format 1), classes led by the rule set's class (format 2) or only its
+count (format 3, coverages); type 6 adds `backtrack` and `lookahead`. Type 8
+gives one glyph in and out with `backtrackCount` and `lookaheadCount`. A
+malformed subtable, a coverage index past its subtable's array, or a record
+past the table is one error element, and the walk continues; an extension of
+an extension, or of a type differing from the lookup's first extension, is
+its subtable's `badValue`.
