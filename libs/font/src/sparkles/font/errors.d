@@ -80,10 +80,17 @@ enum FontLimit : ubyte
     colrLayers,
     tableRecords,
     cmapSubtables,
+    /// More `fvar` axes than an instance carries (FTM13).
+    variationAxes,
+    /**
+    A caller-supplied array too short for the result (FTP14, FTM13). It has no
+    fixed value: the error's `needed` says how long the array must be.
+    */
+    callerStorage,
 }
 
-/// The value of each limit, indexed by `FontLimit`.
-immutable ulong[FontLimit.max + 1] fontLimitValue = [0, 8, 512, 10, 65_536, 1_024, 4_096, 64];
+/// The value of each limit, indexed by `FontLimit`; 0 for `none` and `callerStorage`.
+immutable ulong[FontLimit.max + 1] fontLimitValue = [0, 8, 512, 10, 65_536, 1_024, 4_096, 64, 64, 0];
 
 /// A problem in font data, with its location (FTP14).
 struct FontError
@@ -102,6 +109,8 @@ struct FontError
     ulong tableOffset = noTableOffset;
     /// For `limitExceeded`, the limit that was exceeded.
     FontLimit limit;
+    /// For `callerStorage`, the array length the operation needs; otherwise 0.
+    ulong needed;
 
     /// The exceeded limit's value, or 0.
     ulong limitValue() const => fontLimitValue[limit];
@@ -127,6 +136,15 @@ FontError tableError(FontErrorKind kind, Tag tag, ulong tableStart, ulong relati
 FontError limitError(FontLimit limit, Tag tag, ulong offset)
     => FontError(FontErrorKind.limitExceeded, tag, offset, FontError.noTableOffset, limit);
 
+/**
+A `limitExceeded` error naming `callerStorage`: the caller's array is shorter
+than the `needed` length. The location is that of the data being read, when
+there is one.
+*/
+FontError callerStorageError(ulong needed, Tag tag = Tag.init, ulong offset = 0,
+    ulong tableOffset = FontError.noTableOffset)
+    => FontError(FontErrorKind.limitExceeded, tag, offset, tableOffset, FontLimit.callerStorage, needed);
+
 ///
 @("errors.FontError.locations")
 unittest
@@ -138,4 +156,14 @@ unittest
     const r = fontErr!int(l);
     assert(r.hasError && r.error.limit == FontLimit.tableRecords);
     assert(fontOk(3).value == 3);
+}
+
+///
+@("errors.callerStorageError.needed")
+unittest
+{
+    const e = callerStorageError(12, Tag("name"), 40, 6);
+    assert(e.kind == FontErrorKind.limitExceeded && e.limit == FontLimit.callerStorage);
+    assert(e.needed == 12 && e.limitValue == 0 && e.offset == 40 && e.tableOffset == 6);
+    assert(limitError(FontLimit.variationAxes, Tag("fvar"), 4).limitValue == 64);
 }

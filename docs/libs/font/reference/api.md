@@ -8,9 +8,9 @@ a face are free functions callable as methods (`face.charMap`).
 
 | Symbol          | Meaning                                                                                                                                                                                                |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `FontError`     | `kind`, `tag` (or none), `offset` (absolute), `tableOffset` (inside `tag`, when readable), `limit` and `limitValue`                                                                                    |
+| `FontError`     | `kind`, `tag` (or none), `offset` (absolute), `tableOffset` (inside `tag`, when readable), `limit`, `limitValue` and `needed`                                                                          |
 | `FontErrorKind` | `notAFont`, `truncated`, `badOffset`, `badValue`, `unsupportedVersion`, `missingTable`, `limitExceeded`, `indexOutOfRange`, `invalidEncoding`, `unsupportedCapability`, and kinds later milestones use |
-| `FontLimit`     | the limits of `FTB3`: `tableRecords` (4,096), `cmapSubtables` (64), and the outline and colour limits; `none` for caller storage                                                                       |
+| `FontLimit`     | the limits of `FTB3`: `tableRecords` (4,096), `cmapSubtables` (64), `variationAxes` (64), and the outline and colour limits; `callerStorage` with `needed`                                             |
 | `Tag`           | a four-byte table tag: `Tag("head")`, `.chars`                                                                                                                                                         |
 
 ## Faces — `sparkles.font.face`
@@ -65,3 +65,18 @@ const name = index[gid]; // constant time
 ```
 
 The index borrows the face's bytes and `scratch`.
+
+## Units — `sparkles.font.units`
+
+A `DesignValue` is a signed count of 1/65,536 font units with the face's
+`unitsPerEm`; `DesignValue.fromUnits(n, upem)` holds a stored field exactly.
+
+| Operation                                      | Result                                                                                              |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `checkedAdd(a, b)`, `checkedSum(values, upem)` | the exact sum; `arithmeticExhausted` on 64-bit overflow                                             |
+| `toLayoutUnit(d, em)`                          | `d · em / (upem · 65,536)` rounded once to a tick, ties to even; `arithmeticExhausted` out of range |
+| `Ppem.fromInteger(n)`, `fromRational(r)`       | a positive rational ppem; `badValue` when not positive                                              |
+| `Ppem.fromPhysical(em, dpi)`                   | `em · dpi / 72` for `em` in points, exactly; `ppem.isInteger` for Device tables                     |
+| `toPixels(d, ppem)`                            | the exact `d · ppem / (upem · 65,536)` rounded once to the nearest `double`                         |
+
+Sum a run's design values before converting it, so the run rounds once.

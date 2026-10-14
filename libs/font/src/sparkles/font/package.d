@@ -5,7 +5,8 @@ Milestone M1: faces and collections over borrowed bytes, the table
 directory, typed views of the fixed tables, character maps, `name` records
 and glyph names. Every operation reads only inside the caller's buffer,
 reports malformed data as a `FontError` rather than asserting, and does not
-allocate.
+allocate. Milestone M2 begins with design values and their exact physical and
+pixel conversions.
 
 $(UL
     $(LI `sparkles.font.face` — `openFace`, `openCollection`, `Face`, table lookup and inspection.)
@@ -13,6 +14,7 @@ $(UL
     $(LI `sparkles.font.cmap` — `charMap`, lookups, coverage ranges and variation sequences.)
     $(LI `sparkles.font.names` — `name` records and their text.)
     $(LI `sparkles.font.glyph_names` — glyph names from `post` and `CFF`.)
+    $(LI `sparkles.font.units` — design values, `Ppem`, and their physical and pixel conversions.)
     $(LI `sparkles.font.errors` — `FontError`, `FontResult` and `Tag`.)
 )
 */
@@ -24,3 +26,4 @@ public import sparkles.font.face;
 public import sparkles.font.glyph_names;
 public import sparkles.font.names;
 public import sparkles.font.tables;
+public import sparkles.font.units;

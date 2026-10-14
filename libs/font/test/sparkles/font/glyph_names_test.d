@@ -1,7 +1,7 @@
 module sparkles.font.glyph_names_test;
 
 import sparkles.font.corpus : bundled, fontsPath;
-import sparkles.font.errors : FontErrorKind;
+import sparkles.font.errors : FontErrorKind, FontLimit;
 import sparkles.font.face : Face, openFace;
 import sparkles.font.fixtures;
 import sparkles.font.glyph_names;
@@ -26,7 +26,14 @@ private void assertIndexMatches(const Face face) @safe pure nothrow
             assert(direct.error.kind == fast.error.kind);
     }
     if (length)
-        assert(face.glyphNameIndex(scratch[0 .. length - 1]).error.kind == FontErrorKind.limitExceeded);
+    {
+        scratch[] = 0xA5A5_A5A5;
+        const short_ = face.glyphNameIndex(scratch[0 .. length - 1]);
+        assert(short_.error.kind == FontErrorKind.limitExceeded && short_.error.limit == FontLimit.callerStorage);
+        assert(short_.error.needed == length);
+        foreach (e; scratch)
+            assert(e == 0xA5A5_A5A5);
+    }
 }
 
 @("glyphNames.post1And3")
