@@ -474,7 +474,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download every platform's hash
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: ui-shaders-*
           merge-multiple: true
