@@ -80,3 +80,21 @@ A `DesignValue` is a signed count of 1/65,536 font units with the face's
 | `toPixels(d, ppem)`                            | the exact `d · ppem / (upem · 65,536)` rounded once to the nearest `double`                         |
 
 Sum a run's design values before converting it, so the run rounds once.
+
+## Variations — `sparkles.font.variations`
+
+`NormalizedCoords` is a slice of F2Dot14 coordinates, one per `fvar` axis;
+`allZero(coords)` is the default instance, where no store is read and every
+delta is zero. Views borrow the containing table's bytes and report errors
+with its tag; a malformed header is recorded at `read` and returned by every
+lookup at nonzero coordinates.
+
+| Operation                                                                | Result                                                                                                                                |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `ItemVariationStore.read(table, tag, tableStart, offset, fvarAxes)`      | the store view; `broken` and `error` when its header, format or region axis count is wrong                                            |
+| `store.delta(DeltaSetIndex(outer, inner), coords, upem)`                 | the exact `DesignValue` delta, scalars rounded per axis as fontations does; `badValue` for a dangling outer, inner or region index    |
+| `DeltaSetIndexMap.read(table, tag, tableStart, offset)`, `map.map(i)`    | the `DeltaSetIndex` of item `i`: past the count the last entry, count 0 the identity; another format `unsupportedVersion`             |
+| `deviceDelta(table, tag, tableStart, offset, store, coords, upem, ppem)` | a `DeviceDelta`: the VariationIndex `variation`, and `devicePixels` with `deviceApplied` only at an integer ppem in the table's range |
+
+`DeltaSetIndex.noVariation` (`0xFFFF`, `0xFFFF`) has delta zero. Design and
+physical queries pass no ppem, so a Device table never applies to them.
