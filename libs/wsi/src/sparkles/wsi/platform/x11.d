@@ -15,6 +15,7 @@ import core.stdc.string : strlen;
 import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
 import core.time : Duration;
 
+import sparkles.base.pool.pool : Pool, PoolError;
 import sparkles.base.text.utf8 : validateUtf8;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
@@ -40,8 +41,6 @@ struct X11Wsi
     private struct Slot
     {
         uint window;
-        uint generation;
-        bool live;
         bool ready;
         SurfaceMetrics metrics;
         uint cursor;
@@ -69,7 +68,7 @@ struct X11Wsi
     private xkb_keymap* xkbKeymap_;
     private xkb_state* xkbState_;
     private pthread_t ownerThread_;
-    private Slot[maxWindows] windows_;
+    private Pool!(WindowId, Slot, maxWindows) windows_;
     private EventQueue!maxEvents events_;
     private ulong nextSequence_ = 1;
     private bool open_;
@@ -86,7 +85,7 @@ struct X11Wsi
     private ulong[4] pressedKeys_;
     private xcb_xim_t* xim_;
     private bool ximConnected_;
-    private size_t pendingIcSlot_ = size_t.max;
+    private WindowId pendingIc_; // the window whose input context is in flight
     private ubyte xiOpcode_;
     private bool xiRawSelected_;
     // Per XInput device id: 0 unknown, 1 relative x/y axes, 2 anything
@@ -260,14 +259,7 @@ struct X11Wsi
                 "requested X11 startup configuration is not implemented",
                 WsiErrorKind.unsupported);
 
-        size_t index = size_t.max;
-        foreach (i, ref slot; windows_)
-            if (!slot.live && slot.window == 0)
-            {
-                index = i;
-                break;
-            }
-        if (index == size_t.max)
+        if (windows_.full)
             return x11Failure!WindowId(WsiOperation.createWindow, 0,
                 "X11 window capacity reached", WsiErrorKind.capacity);
 
@@ -305,28 +297,22 @@ struct X11Wsi
             return x11Failure!WindowId(WsiOperation.createWindow, error,
                 "XCB window request batch failed to flush");
 
-        ref slot = windows_[index];
-        ++slot.generation;
-        if (slot.generation == 0)
-            ++slot.generation;
-        slot.xic = 0;
-        slot.xicReady = false;
+        auto reserved = windows_.reserve();
+        assert(reserved.hasValue, "capacity was checked before the request");
+        WindowId id = reserved.value;
+        ref slot = windows_[id];
         slot.window = window;
-        slot.live = true;
         slot.ready = true;
         slot.metrics = SurfaceMetrics(
             LogicalSize(width, height), PhysicalSize(width, height),
             ScaleFactor(1));
-        auto id = idAt(index);
         requestNextIc();
         const hadSticky = hasStickyError_;
         emit(id, ReadyEvent(slot.metrics));
         if (!hadSticky && hasStickyError_)
         {
             destroyNative(window);
-            slot.live = false;
-            slot.ready = false;
-            slot.window = 0;
+            windows_.remove(id);
             return wsiErr!WindowId(stickyError_);
         }
         return wsiOk(id);
@@ -337,7 +323,7 @@ struct X11Wsi
         auto checked = checkedSlot(id, WsiOperation.close);
         if (checked.hasError)
             return wsiErr!void(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         if (slot.captureMode != PointerCaptureMode.none)
         {
             xcb_ungrab_pointer(connection_, XCB_CURRENT_TIME);
@@ -352,9 +338,9 @@ struct X11Wsi
         if (error != 0)
             return x11Failure!void(WsiOperation.close, error,
                 "xcb_destroy_window failed");
-        slot.live = false;
-        slot.ready = false;
-        slot.window = 0;
+        if (slot.cursor != 0)
+            xcb_free_cursor(connection_, slot.cursor);
+        windows_.remove(id);
         emit(id, DestroyedEvent());
         return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
     }
@@ -388,7 +374,7 @@ struct X11Wsi
         auto checked = checkedSlot(id, WsiOperation.command);
         if (checked.hasError)
             return wsiErr!void(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         if (mode == PointerCaptureMode.none)
         {
             if (slot.captureMode != PointerCaptureMode.none)
@@ -430,10 +416,10 @@ struct X11Wsi
             return x11Failure!void(WsiOperation.command, 0,
                 "XInput 2 raw motion is not available on this server",
                 WsiErrorKind.unsupported);
-        windows_[checked.value].relativePointer = enabled;
+        windows_.at(checked.value).relativePointer = enabled;
         bool anyRelative;
-        foreach (ref slot; windows_)
-            anyRelative |= slot.live && slot.relativePointer;
+        foreach (h; windows_.byLive)
+            anyRelative |= windows_[h].relativePointer;
         if (anyRelative == xiRawSelected_)
             return wsiOk();
         auto selected = selectRawMotion(anyRelative);
@@ -527,9 +513,9 @@ struct X11Wsi
             }
         if (dx == 0 && dy == 0)
             return;
-        foreach (i, ref slot; windows_)
-            if (slot.live && slot.relativePointer)
-                emit(idAt(i), RelativePointerEvent(corePointer, dx, dy, true));
+        foreach (h; windows_.byLive)
+            if (windows_[h].relativePointer)
+                emit(h, RelativePointerEvent(corePointer, dx, dy, true));
     }
 
     /// Whether a device's x and y valuators (0 and 1) are relative axes,
@@ -586,7 +572,7 @@ struct X11Wsi
         auto checked = checkedSlot(id, WsiOperation.command);
         if (checked.hasError)
             return wsiErr!void(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         if (cursorFont_ == 0)
         {
             cursorFont_ = xcb_generate_id(connection_);
@@ -620,7 +606,7 @@ struct X11Wsi
         auto checked = checkedSlot(id, WsiOperation.command);
         if (checked.hasError)
             return wsiErr!void(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
         if (visible)
         {
             const none = 0u;
@@ -717,7 +703,7 @@ struct X11Wsi
         auto checked = checkedSlot(id, WsiOperation.queryHandle);
         if (checked.hasError)
             return wsiErr!NativeHandles(checked.error);
-        ref slot = windows_[checked.value];
+        ref slot = windows_.at(checked.value);
 
         NativeHandles handles;
         handles.display = DisplayHandle(X11DisplayHandle(connection_, null,
@@ -803,7 +789,7 @@ struct X11Wsi
         auto checked = checkedSlot(id, WsiOperation.command);
         if (checked.hasError)
             return false;
-        return ximConnected_ && windows_[checked.value].xicReady;
+        return ximConnected_ && windows_.at(checked.value).xicReady;
     }
 
     private extern (C) static void onXimOpened(xcb_xim_t*, void* data)
@@ -819,11 +805,11 @@ struct X11Wsi
     {
         auto owner = cast(X11Wsi*) data;
         owner.ximConnected_ = false;
-        owner.pendingIcSlot_ = size_t.max;
-        foreach (ref slot; owner.windows_)
+        owner.pendingIc_ = WindowId.init;
+        foreach (h; owner.windows_.byLive)
         {
-            slot.xic = 0;
-            slot.xicReady = false;
+            owner.windows_[h].xic = 0;
+            owner.windows_[h].xicReady = false;
         }
     }
 
@@ -833,13 +819,14 @@ struct X11Wsi
     */
     private void requestNextIc() nothrow @nogc
     {
-        if (!ximConnected_ || pendingIcSlot_ != size_t.max)
+        if (!ximConnected_ || pendingIc_.valid)
             return;
-        foreach (i, ref slot; windows_)
+        foreach (h; windows_.byLive)
         {
-            if (!slot.live || slot.xicReady || slot.xic != 0)
+            ref slot = windows_[h];
+            if (slot.xicReady || slot.xic != 0)
                 continue;
-            pendingIcSlot_ = i;
+            pendingIc_ = h;
             uint style = XCB_IM_PreeditNothing | XCB_IM_StatusNothing;
             uint window = slot.window;
             // Attribute names are XCB_XIM_XNInputStyle etc.; spelled out
@@ -849,7 +836,7 @@ struct X11Wsi
                 "clientWindow".ptr, &window,
                 "focusWindow".ptr, &window,
                 cast(void*) null))
-                pendingIcSlot_ = size_t.max;
+                pendingIc_ = WindowId.init;
             return;
         }
     }
@@ -858,12 +845,14 @@ struct X11Wsi
         void* data) nothrow @nogc
     {
         auto owner = cast(X11Wsi*) data;
-        const index = owner.pendingIcSlot_;
-        owner.pendingIcSlot_ = size_t.max;
-        if (index < owner.windows_.length && owner.windows_[index].live)
+        // The reply names no window; the pending id does, and its generation
+        // rejects a window destroyed (and its slot reused) while it waited.
+        const pending = owner.pendingIc_;
+        owner.pendingIc_ = WindowId.init;
+        if (auto slot = owner.windows_.get(pending))
         {
-            owner.windows_[index].xic = ic;
-            owner.windows_[index].xicReady = true;
+            slot.xic = ic;
+            slot.xicReady = true;
         }
         owner.requestNextIc();
     }
@@ -905,9 +894,9 @@ struct X11Wsi
     {
         if (ic == 0)
             return size_t.max;
-        foreach (i, ref slot; windows_)
-            if (slot.live && slot.xicReady && slot.xic == ic)
-                return i;
+        foreach (h; windows_.byLive)
+            if (windows_[h].xicReady && windows_[h].xic == ic)
+                return h.index;
         return size_t.max;
     }
 
@@ -997,19 +986,13 @@ struct X11Wsi
         auto detached = detach();
         if (detached.hasError)
             remember(detached.error);
-        foreach (i; 0 .. windows_.length)
-            if (windows_[i].live)
-            {
-                if (windows_[i].cursor != 0)
-                {
-                    xcb_free_cursor(connection_, windows_[i].cursor);
-                    windows_[i].cursor = 0;
-                }
-                destroyNative(windows_[i].window);
-                windows_[i].live = false;
-                windows_[i].ready = false;
-                windows_[i].window = 0;
-            }
+        foreach (h; windows_.byLive)
+        {
+            if (windows_[h].cursor != 0)
+                xcb_free_cursor(connection_, windows_[h].cursor);
+            destroyNative(windows_[h].window);
+        }
+        windows_.clear();
         if (cursorFont_ != 0)
         {
             xcb_close_font(connection_, cursorFont_);
@@ -1108,7 +1091,7 @@ struct X11Wsi
     }
 
     /// The core protocol exposes one pointer per connection.
-    private enum corePointer = PointerId(1, 1);
+    private enum corePointer = PointerId(0, 1);
 
     private void emitPointerAt(size_t index, PointerPhase phase, int x,
         int y, uint state) nothrow
@@ -1192,7 +1175,7 @@ struct X11Wsi
                 const index = indexOfWindow(event.window);
                 if (index == size_t.max)
                     return;
-                ref slot = windows_[index];
+                ref slot = windows_.at(index);
                 auto metrics = SurfaceMetrics(
                     LogicalSize(event.width, event.height),
                     PhysicalSize(event.width, event.height), ScaleFactor(1));
@@ -1221,9 +1204,9 @@ struct X11Wsi
                 // With a live input context the IM sees every key first:
                 // it either commits text or bounces the key back through
                 // onXimForwardEvent, which delivers it unchanged.
-                if (ximConnected_ && windows_[index].xicReady)
+                if (ximConnected_ && windows_.at(index).xicReady)
                 {
-                    xcb_xim_forward_event(xim_, windows_[index].xic,
+                    xcb_xim_forward_event(xim_, windows_.at(index).xic,
                         cast(xcb_key_press_event_t*) event);
                     return;
                 }
@@ -1298,7 +1281,7 @@ struct X11Wsi
                 if (index != size_t.max)
                 {
                     const focused = responseType == XCB_FOCUS_IN;
-                    ref slot = windows_[index];
+                    ref slot = windows_.at(index);
                     if (ximConnected_ && slot.xicReady)
                     {
                         if (focused)
@@ -1325,11 +1308,10 @@ struct X11Wsi
                 const index = indexOfWindow(event.window);
                 if (index == size_t.max)
                     return;
-                ref slot = windows_[index];
                 auto id = idAt(index);
-                slot.live = false;
-                slot.ready = false;
-                slot.window = 0;
+                if (windows_[id].cursor != 0)
+                    xcb_free_cursor(connection_, windows_[id].cursor);
+                windows_.remove(id);
                 emit(id, DestroyedEvent());
                 break;
             default:
@@ -1367,14 +1349,14 @@ struct X11Wsi
 
     private size_t indexOfWindow(uint window) const pure nothrow @nogc
     {
-        foreach (i, const ref slot; windows_)
-            if (slot.live && slot.window == window)
-                return i;
+        foreach (h; windows_.byLive)
+            if (windows_[h].window == window)
+                return h.index;
         return size_t.max;
     }
 
     private WindowId idAt(size_t index) const pure nothrow @nogc
-        => WindowId(cast(uint) index + 1, windows_[index].generation);
+        => windows_.handleAt(index);
 
     private WsiResult!size_t checkedSlot(WindowId id,
         WsiOperation operation)
@@ -1382,15 +1364,14 @@ struct X11Wsi
         auto owner = requireOwner!size_t(operation);
         if (owner.hasError)
             return owner;
-        if (!id.valid || id.slot > maxWindows)
+        auto index = windows_.resolve(id);
+        if (index.hasError)
             return x11Failure!size_t(operation, 0,
-                "invalid X11 window id", WsiErrorKind.staleId);
-        size_t index = cast(size_t) id.slot - 1;
-        const slot = windows_[index];
-        if (!slot.live || slot.generation != id.generation)
-            return x11Failure!size_t(operation, 0,
-                "stale X11 window id", WsiErrorKind.staleId);
-        return wsiOk(index);
+                index.error == PoolError.invalid
+                    ? "invalid X11 window id" : "stale X11 window id",
+                WsiErrorKind.staleId);
+        size_t slot = index.value;
+        return wsiOk(slot);
     }
 
     private WsiResult!T requireOwner(T)(WsiOperation operation)

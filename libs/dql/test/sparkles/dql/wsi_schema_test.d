@@ -27,7 +27,7 @@ alias parseAndEval = parseAndEvalDql!WindowSchema;
 @safe unittest
 {
     foreach (path; [
-        "sequence", "window.slot", "window.generation",
+        "sequence", "window.index", "window.generation",
         "keyboard.action", "keyboard.location", "keyboard.composing",
         "keyboard.modifiers.ctrl",
         "textCommitted.text",
@@ -73,7 +73,7 @@ alias parseAndEval = parseAndEvalDql!WindowSchema;
 
     foreach (query; [
         "sequence == 18446744073709551615",
-        "window.slot == 4",
+        "window.index == 4",
         "frameReady.token == 9007199254740993",
         "frameReady.predictedPresentationNanoseconds == 42",
     ])
