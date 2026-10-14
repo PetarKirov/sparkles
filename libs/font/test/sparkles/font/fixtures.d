@@ -365,3 +365,51 @@ ubyte[] deviceTable(uint start, uint end, uint format, const(int)[] values)
 
 /// A VariationIndex table (delta format 0x8000) naming `[outer, inner]`.
 ubyte[] variationIndexTable(uint outer, uint inner) => u16(outer) ~ u16(inner) ~ u16(0x8000);
+
+/// One `fvar` axis: tag and F16.16 minimum, default and maximum.
+struct FvarAxis
+{
+    string tag;
+    int minValue, defaultValue, maxValue;
+    uint flags;
+    uint nameID = 256;
+}
+
+/// An `fvar` 1.0 table of `axes` and named instances of F16.16 `instances` coordinates.
+ubyte[] fvarTable(const(FvarAxis)[] axes, const(int[])[] instances = null)
+{
+    const axisCount = cast(uint) axes.length;
+    ubyte[] t = u16(1) ~ u16(0) ~ u16(16) ~ u16(2) ~ u16(axisCount) ~ u16(20)
+        ~ u16(cast(uint) instances.length) ~ u16(4 * axisCount + 4);
+    foreach (a; axes)
+        t ~= cast(const(ubyte)[]) a.tag ~ u32(a.minValue) ~ u32(a.defaultValue) ~ u32(a.maxValue)
+            ~ u16(a.flags) ~ u16(a.nameID);
+    foreach (i, coords; instances)
+    {
+        t ~= u16(cast(uint)(258 + i)) ~ u16(0);
+        foreach (c; coords) t ~= u32(c);
+    }
+    return t;
+}
+
+/**
+An `avar` table of F2Dot14 `[from, to]` segment maps, one per axis. With
+`version2`, the axis index map and item variation store follow, each at a
+nonzero offset when given.
+*/
+ubyte[] avarTable(const(int[2][])[] maps, bool version2 = false, const(ubyte)[] axisIndexMap = null,
+    const(ubyte)[] varStore = null)
+{
+    ubyte[] t = u16(version2 ? 2 : 1) ~ u16(0) ~ u16(0) ~ u16(cast(uint) maps.length);
+    foreach (map; maps)
+    {
+        t ~= u16(cast(uint) map.length);
+        foreach (pair; map) t ~= u16(pair[0]) ~ u16(pair[1]);
+    }
+    if (!version2)
+        return t;
+    const tail = t.length + 8;
+    t ~= u32(axisIndexMap is null ? 0 : cast(uint) tail)
+        ~ u32(varStore is null ? 0 : cast(uint)(tail + axisIndexMap.length));
+    return t ~ axisIndexMap ~ varStore;
+}

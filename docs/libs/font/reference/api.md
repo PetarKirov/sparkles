@@ -98,3 +98,27 @@ lookup at nonzero coordinates.
 
 `DeltaSetIndex.noVariation` (`0xFFFF`, `0xFFFF`) has delta zero. Design and
 physical queries pass no ppem, so a Device table never applies to them.
+
+## Instances — `sparkles.font.instance`
+
+An `Instance` is a copyable value: the face, a unit-tagged `InstanceSize`, a
+`Synthesis`, and per `fvar` axis the F16.16 user value and the normalized
+F2Dot14 coordinate. It holds at most 64 axes and allocates nothing.
+
+| Operation                                                  | Result                                                                                                                                    |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `face.axes`, `face.namedInstances`                         | random-access ranges of `FontResult!VariationAxis` and `NamedInstance`; empty without `fvar`, empty with `hasError` when it is unreadable |
+| `InstanceSize.physical(em)`, `InstanceSize.pixels(ppem)`   | a size in `LayoutUnit` or `Ppem`; `unit`, `em`, `ppem`                                                                                    |
+| `Synthesis(emboldenStrength, obliqueSlant)`                | F16.16, zero by default; stored, not applied                                                                                              |
+| `face.instance(size, [UserCoordinate(tag, value)], synth)` | an `Instance`; `badValue` for a size that is not positive or a value for a `badValue` axis, `limitExceeded` past 64 axes                  |
+| `inst.coords`, `userValue(i)`, `axisCount`, `allZero`      | the F2Dot14 coordinates (a `NormalizedCoords` slice), the user value given or the default                                                 |
+| `inst.ignoredCoordinates`                                  | coordinates whose tag no axis has, or all of them for a face without `fvar`                                                               |
+| `inst.avarApplied`, `recordedErrors`, `firstRecordedError` | whether `avar` was used, and the problems the instance was built around                                                                   |
+| `normalizeAxisValue(axis, user)`, `mapCoordinate(map, v)`  | the F16.16 steps: clamp and divide, ties away from zero; one `avar` segment map with HarfBuzz's rules                                     |
+| `toF2Dot14(x)`                                             | `(x + 2) >> 2`, saturated                                                                                                                 |
+
+Of a tag given twice the last value wins; a tag several axes share sets each
+of them. An `avar` whose axis count differs from `fvar`'s, or that is
+unreadable, is left out and recorded; a decreasing segment map leaves only its
+axis unmapped. Version 2 evaluates its item variation store on the mapped
+coordinates and clamps each result to ±1.

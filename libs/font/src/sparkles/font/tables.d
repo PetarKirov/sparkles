@@ -11,6 +11,7 @@ module sparkles.font.tables;
 import sparkles.font.bytes : be16, be32, bes16, bes32, fits, slice;
 import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag, tableError;
 import sparkles.font.face : Face;
+import sparkles.font.variations : DeltaSetIndexMap, ItemVariationStore;
 
 @safe pure nothrow @nogc:
 
@@ -418,13 +419,24 @@ struct Fvar
     FontResult!VariationAxis axis(size_t i) const scope
     in (i < axisCount)
     {
-        const at = axesOffset_ + 20 * i;
-        const a = VariationAxis(Tag(be32(data_, at)), bes32(data_, at + 4), bes32(data_, at + 8),
-            bes32(data_, at + 12), be16(data_, at + 16), be16(data_, at + 18));
+        const a = axisRecord(i);
         if (a.minValue > a.defaultValue || a.defaultValue > a.maxValue)
-            return fontErr!VariationAxis(tableError(FontErrorKind.badValue, Tag("fvar"), start_, at + 4));
+            return fontErr!VariationAxis(tableError(FontErrorKind.badValue, Tag("fvar"), start_,
+                axesOffset_ + 20 * i + 4));
         return fontOk!VariationAxis(a);
     }
+
+    /// Axis `i` as stored, without `axis`'s order check.
+    VariationAxis axisRecord(size_t i) const scope
+    in (i < axisCount)
+    {
+        const at = axesOffset_ + 20 * i;
+        return VariationAxis(Tag(be32(data_, at)), bes32(data_, at + 4), bes32(data_, at + 8),
+            bes32(data_, at + 12), be16(data_, at + 16), be16(data_, at + 18));
+    }
+
+    /// The absolute offset of the table in the face's buffer.
+    ulong tableStart() const scope => start_;
 
     /// Named instance `i`, `i < instanceCount`.
     NamedInstance instance(size_t i) const return scope
@@ -484,17 +496,42 @@ struct SegmentMap
         => [bes16(pairs_, 4 * i), bes16(pairs_, 4 * i + 2)];
 }
 
-/// The `avar` view: version 1.0, its own axis count (FTP23).
+/**
+The `avar` view: versions 1.0 and 2.0, its own axis count (FTP23, FTV10).
+Version 2 adds, after the segment maps, the offsets of an axis index map and
+an item variation store; both are 0 in version 1 or when absent.
+*/
 struct Avar
 {
     @safe pure nothrow @nogc:
 
     ushort majorVersion, minorVersion, axisCount;
+    /// Version 2: offsets from the table's start, 0 when absent (and in version 1).
+    uint axisIndexMapOffset, varStoreOffset;
     private const(ubyte)[] data_;
     private ulong start_;
 
     /// The segment maps in axis order, as a forward range of results.
     AvarMaps maps() const return scope => AvarMaps(data_, start_, 8, axisCount);
+
+    /// The absolute offset of the table in the face's buffer.
+    ulong tableStart() const scope => start_;
+
+    /**
+    Version 2's axis index map; with no offset, the empty map, which is the
+    identity (outer 0, inner `i` for axis `i`). Costs O(1).
+    */
+    DeltaSetIndexMap axisIndexMap() const return scope
+        => axisIndexMapOffset == 0 ? DeltaSetIndexMap.init
+            : DeltaSetIndexMap.read(data_, Tag("avar"), start_, axisIndexMapOffset);
+
+    /**
+    Version 2's item variation store for a face of `fvarAxisCount` axes;
+    `ItemVariationStore.init` (not `present`) with no offset. Costs O(1).
+    */
+    ItemVariationStore varStore(ushort fvarAxisCount) const return scope
+        => varStoreOffset == 0 ? ItemVariationStore.init
+            : ItemVariationStore.read(data_, Tag("avar"), start_, varStoreOffset, fvarAxisCount);
 }
 
 /// The segment maps of `avar`; a map past the table ends the range with `truncated`.
@@ -525,7 +562,7 @@ struct AvarMaps
         return fontOk!SegmentMap(map);
     }
 
-    void popFront()
+    void popFront() scope
     {
         if (!fits(data_.length, at_, 2)
             || !fits(data_.length, at_ + 2, 4UL * be16(data_, cast(size_t) at_)))
@@ -548,9 +585,25 @@ FontResult!Avar avar(return scope const Face face)
     if (d.length < 8)
         return shortTable!Avar(Tag("avar"), at.value, 8);
     const major = be16(d, 0);
-    if (major != 1)
+    if (major != 1 && major != 2)
         return fontErr!Avar(tableError(FontErrorKind.unsupportedVersion, Tag("avar"), at.value.start, 0));
-    return fontOk(Avar(major, be16(d, 2), be16(d, 6), d, at.value.start));
+    auto a = Avar(major, be16(d, 2), be16(d, 6), 0, 0, d, at.value.start);
+    if (major == 2)
+    {
+        // The version-2 offsets follow the segment maps: walk them once.
+        ulong p = 8;
+        foreach (_; 0 .. a.axisCount)
+        {
+            if (!fits(d.length, p, 2))
+                return shortTable!Avar(Tag("avar"), at.value, p + 2);
+            p += 2 + 4UL * be16(d, cast(size_t) p);
+        }
+        if (!fits(d.length, p, 8))
+            return shortTable!Avar(Tag("avar"), at.value, p + 8);
+        a.axisIndexMapOffset = be32(d, cast(size_t) p);
+        a.varStoreOffset = be32(d, cast(size_t) p + 4);
+    }
+    return fontOk(a);
 }
 
 /// One `STAT` design axis.
