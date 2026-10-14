@@ -1,7 +1,7 @@
 module sparkles.font.names_test;
 
 import sparkles.font.corpus : bundled, fontsPath;
-import sparkles.font.errors : FontErrorKind, Tag;
+import sparkles.font.errors : FontErrorKind, FontLimit, Tag;
 import sparkles.font.face : openFace;
 import sparkles.font.fixtures;
 import sparkles.font.names;
@@ -64,7 +64,10 @@ unittest
     const r = table.record(0).value;
     assert(r.encoding == NameEncoding.macRoman && r.decodedLength.value == 6);
     assert(r.decode(out_[]).value == "A€ä");
-    assert(r.decode(out_[0 .. 5]).error.kind == FontErrorKind.limitExceeded);
+    out_[] = 'x';
+    const short_ = r.decode(out_[0 .. 5]);
+    assert(short_.error.kind == FontErrorKind.limitExceeded && short_.error.limit == FontLimit.callerStorage);
+    assert(short_.error.needed == 6 && out_[] == "xxxxxxxxxxxxxxxx");
     // Icelandic Mac Roman and Windows Big5 are not decoded.
     assert(table.record(1).value.decode(out_[]).error.kind == FontErrorKind.unsupportedCapability);
     assert(table.record(2).value.decode(out_[]).error.kind == FontErrorKind.unsupportedCapability);

@@ -10,7 +10,8 @@ Names are borrowed from the font or from static standard tables (FTP16).
 module sparkles.font.glyph_names;
 
 import sparkles.font.bytes : be16, be32, fits, slice;
-import sparkles.font.errors : FontError, FontErrorKind, FontLimit, FontResult, fontErr, fontOk, Tag, tableError;
+import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag,
+    tableError;
 import sparkles.font.face : Face, OutlineFormat;
 import sparkles.font.std_names : cffStandardStrings, expertCharset, expertSubsetCharset, macGlyphNames;
 
@@ -471,7 +472,8 @@ FontResult!size_t glyphNameIndexLength(scope const Face face)
 
 /**
 Builds a `GlyphNameIndex` in `scratch` (FTP30, FTP31). `scratch` must hold at
-least `glyphNameIndexLength` entries, or the result is `limitExceeded`. One
+least `glyphNameIndexLength` entries, or the result is `limitExceeded` naming
+`callerStorage` with that length as `needed`, and `scratch` is unchanged. One
 pass over the `post` strings and one walk of the `CFF` charset fill every
 entry, so the cost is linear in those tables and the glyph count; it never
 allocates.
@@ -480,8 +482,7 @@ FontResult!GlyphNameIndex glyphNameIndex(return scope const Face face, return sc
 {
     const needed = glyphNameIndexLength(face);
     if (scratch.length < needed.value)
-        return fontErr!GlyphNameIndex(FontError(FontErrorKind.limitExceeded, postTag, 0,
-            FontError.noTableOffset, FontLimit.none));
+        return fontErr!GlyphNameIndex(callerStorageError(needed.value, postTag));
     const n = face.numGlyphs;
     const hasPost = face.has(postTag);
     const p = hasPost ? postNames(face) : fontOk(PostNames.init);

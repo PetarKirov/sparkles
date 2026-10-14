@@ -14,7 +14,8 @@ import sparkles.base.text.utf16 : UtfConversionErrorCode;
 import sparkles.base.text.utf16_bytes : ByteOrder, measureUtf16BytesToUtf8, utf16BytesToUtf8;
 
 import sparkles.font.bytes : be16, fits, slice;
-import sparkles.font.errors : FontError, FontErrorKind, FontLimit, FontResult, fontErr, fontOk, Tag, tableError;
+import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag,
+    tableError;
 import sparkles.font.face : Face;
 import sparkles.font.mac_roman : macRomanToUnicode;
 
@@ -88,7 +89,8 @@ struct NameRecord
     /**
     Writes the text into `destination` and returns the written slice. The
     record is validated first; on any error `destination` is unchanged, and a
-    destination shorter than `decodedLength` is `limitExceeded`.
+    destination shorter than `decodedLength` is `limitExceeded` naming
+    `callerStorage`, with `decodedLength` as `needed`.
     */
     FontResult!(char[]) decode(return scope char[] destination) const scope
     {
@@ -96,8 +98,8 @@ struct NameRecord
         if (length.hasError)
             return fontErr!(char[])(length.error);
         if (destination.length < length.value)
-            return fontErr!(char[])(FontError(FontErrorKind.limitExceeded, nameTag,
-                tableStart_ + stringOffset_, stringOffset_, FontLimit.none));
+            return fontErr!(char[])(callerStorageError(length.value, nameTag,
+                tableStart_ + stringOffset_, stringOffset_));
         if (encoding == NameEncoding.utf16be)
         {
             // Validated and measured above, so the conversion succeeds.
