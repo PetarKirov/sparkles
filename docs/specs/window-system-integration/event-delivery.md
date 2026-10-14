@@ -10,8 +10,9 @@ force each one and a recommended answer. Accepted answers move into
 between September 13 and 17, 2026 and is now [SPEC.md](./SPEC.md) §4.5
 (`ED1`–`ED10`); this page keeps the reasoning, the measurements and the rejected
 alternatives. `EQ12` is deferred to `F04`. `EQ14` was reopened on September 29, 2026
-before implementation, so `ED8` is provisional. `ED5` and half of `ED2` are
-implemented; the rest is not. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
+before implementation and answered again on October 6, 2026: text moves into a
+generational [text pool](../base/pool.md), and `ED8` is rewritten to match. `ED5` and
+half of `ED2` are implemented; the rest is not. **Owner:** `sparkles:wsi` (`sparkles.wsi.loop`, `sparkles.wsi.events`,
 the four backends' pumps). **Consumers in scope:** ordinary GUI applications,
 drawing applications that need every sample, and games that need per-frame sums and
 raw deltas at device rate. A decision that serves only one of the three is not
@@ -377,7 +378,51 @@ for composition alone.
 _Recommendation:_ chunking, on the evidence above. It is the shape the repository
 already ships elsewhere, and the only one of the three that keeps the sum type
 `@safe`.
-_Answer:_ open.
+
+**Answered 2026-10-06: pooled text, a fourth option.** The question that settled it
+was whether `DqlEngine.intern`'s design — text appended to one arena, addressed by a
+`TextSpan` — fits a queue. Not as dql has it: dql's pool never frees, and a caller
+holding a raw span cannot tell a stale one from a live one. With one level of
+indirection it does. A payload holds a `TextId`, a generational handle into a pool of
+spans; the bytes live in one fixed arena beside the queue. Because callers hold ids
+and never offsets, the arena may reset when it empties and compact when it fragments,
+and a stale id is detected rather than read. That is `sparkles.base.pool`'s
+`TextPool` ([spec](../base/pool.md)), built for this and for the repository's other
+generational tables.
+
+Against the three options above:
+
+- **Against `SharedBuffer`:** the payload is 8 bytes of plain integers, so `SumType`
+  assignment stays `@safe` and nothing allocates on the dispatch path.
+- **Against chunking:** one commit or pre-edit stays one event, and no consumer
+  reassembles text.
+- **What it gives up** is the self-contained event: text is readable only through
+  the delivering `Wsi`, during the drain callback. Keeping an event longer, recording
+  it, replaying it, querying it or sending it to another thread starts with `retain`,
+  which copies the text into a `TextPool` the consumer owns. [SPEC.md](./SPEC.md) §3
+  and §7 say so alongside `ED8`. That trade was chosen deliberately over the
+  alternatives.
+
+The design was reviewed by a second model before implementation. Five of its
+findings changed the contract rather than the code:
+
+1. **A returned slice is not safe against compaction.** `return scope` does not stop
+   a later `intern` from moving bytes. So text is read only inside `withText`, and
+   the queue holds the pool borrowed for the whole drain.
+2. **A text-pool miss breaks `ED5`'s ordering.** It can drop an event while a later,
+   text-free event still fits, which would deliver a queued sequence above a dropped
+   one. `ED5` therefore closes admission from the first drop until the notice is
+   delivered.
+3. **Composition offsets were `ushort`.** A 64 KiB pre-edit wraps them, so they widen
+   to `uint` and the per-text bound becomes 65,535 bytes.
+4. **A shortened MIME type means a different type.** Oversized ones drop the offer
+   instead.
+5. **The queue needs `Capacity + 1` text slots.** A drain pops an event before
+   calling the sink, so the event in flight still holds its text while the sink
+   enqueues.
+
+_Answer:_ pooled text — `TextId` payloads over a queue-owned `TextPool`, read through
+`withText` during the drain, copied out with `retain`. See `ED8`.
 
 ## 5. Dependencies between answers
 
@@ -403,7 +448,8 @@ corrected `ED5`, which had said the notice arrives first. The rest is outstandin
 | `ED2`, `ED3` | done for the three latest-observation kinds; still owed for pointer motion: a per-(window, pointer) slot index and the sample ring |
 | `ED5`        | **done**: an `EventsDropped` payload, a counter on the queue, and a drain that reports it last                                     |
 | `ED7`        | a timestamp on `WindowEvent`, and the four backends' clock conversions                                                             |
-| `ED8`        | `InlineBuffer` to `SharedBuffer` in three payloads, a `truncated` flag, and the 64 KiB bound                                       |
+| `ED5`        | the admission latch from the first drop until the notice is delivered                                                              |
+| `ED8`        | a `TextPool` on the queue, `TextId` in three payloads, `withText`/`retain` on every backend, `uint` composition offsets            |
 | `ED9`        | capacity and depth as template parameters; two per-window switches                                                                 |
 | `ED10`       | an accumulator in `sparkles:input`, and a `wsi-input-echo` mode that exercises it                                                  |
 
