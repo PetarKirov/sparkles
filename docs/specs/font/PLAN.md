@@ -223,8 +223,8 @@ delivery authority.
 **Handoff.** Stage 0 and M1 are done: the owner accepted the specification on
 2026-10-06, and `libs/font` parses faces, tables, character maps, names and
 glyph names, checked against HarfBuzz over the bundle, and passes its tests on
-an x86_64 Android emulator. Open M1 gaps are in the evidence ledger: running
-the arm64-v8a tests (`FTA7`) and a race-detector run of the concurrency test
+an x86_64 Android emulator and an arm64-v8a phone. The open M1 gap is in the
+evidence ledger: a race-detector run of the concurrency test
 (`FTA2`). Next action: M2. It waits for base's accepted
 physical-unit arithmetic and conversion contract, and for its `MATH`, `BASE`
 and vertical-metric query contracts to be refined first.
