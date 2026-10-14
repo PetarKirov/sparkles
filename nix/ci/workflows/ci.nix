@@ -268,6 +268,8 @@ let
       installable,
       timeout,
       runAfter ? null,
+      # Push `ui-shaders`, for `shader-reproducibility`.
+      shaders ? false,
     }:
     {
       inherit system;
@@ -277,7 +279,10 @@ let
         CACHIX_AUTH_TOKEN = "\${{ secrets.CACHIX_AUTH_TOKEN }}";
       };
       steps =
-        _: [ { task = "build-${installable}"; } ] ++ lib.optional (runAfter != null) { task = runAfter; };
+        _:
+        [ { task = "build-${installable}"; } ]
+        ++ lib.optional (runAfter != null) { task = runAfter; }
+        ++ lib.optional shaders { task = "build-ui-shaders"; };
     };
 in
 {
@@ -482,16 +487,39 @@ in
           steps = _: [ { task = "text-conformance"; } ];
         };
 
+        shader-readback = {
+          name = "shader readback (x86_64-linux, Mesa)";
+          timeout-minutes = 30;
+          env.DC = "ldc2";
+          steps = _: [ { task = "shader-readback"; } ];
+        };
+
+        # After both desktop builds have pushed their `ui-shaders` — or been
+        # skipped, the shaders then being in the cache already.
+        shader-reproducibility = {
+          name = "Generated shaders agree across platforms";
+          timeout-minutes = 15;
+          cachix.push = false;
+          needs = [
+            "nix-build-x86_64-linux"
+            "nix-build-aarch64-darwin"
+          ];
+          "if" = "!cancelled() && !failure()";
+          steps = _: [ { task = "shader-reproducibility"; } ];
+        };
+
         nix-build-x86_64-linux = nixBuild {
           system = "x86_64-linux";
           installable = "all-desktop";
           runAfter = "run-all-examples";
+          shaders = true;
           timeout = 60;
         };
         nix-build-aarch64-darwin = nixBuild {
           system = "aarch64-darwin";
           installable = "all-desktop";
           runAfter = "run-all-examples";
+          shaders = true;
           timeout = 90;
         };
         # The APK closure: dual-ABI druntimes, the cross C libraries, every

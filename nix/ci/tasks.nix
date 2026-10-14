@@ -5,12 +5,24 @@
 #
 #   nix run .#ciTasks.test -- base core-cli     # what a test shard runs
 #   nix eval --json .#ci.tasks                  # what each covers and needs
-{ lib, config, ... }:
+{
+  lib,
+  config,
+  withSystem,
+  ...
+}:
 let
   inherit (config.ci) graph;
   pkgUnit = n: "pkg/${n}";
   packages = map pkgUnit graph.packageNames;
   osApis = "docs/research/window-system-integration/os-apis";
+
+  # The systems whose generated shaders must agree, and where their builds land.
+  shaderSystems = [
+    "x86_64-linux"
+    "aarch64-darwin"
+  ];
+  cachixUrl = "https://${config.ci.settings.cachix.name}.cachix.org";
 
   # `nix build` an installable with every path pushed as it completes, so a
   # run that hits the cap still leaves its progress in the cache.
@@ -173,6 +185,67 @@ in
         '';
     };
 
+    # ── sparkles:shaders' evidence ────────────────────────────────
+
+    # Agreement (SHV7, SHF4): a probe unit compiled by shader-compile runs on
+    # Mesa's software rasterizer under Xvfb, and its results are read back
+    # against the host's. The runner is not NixOS, so the Nix-built raylib is
+    # pointed at this Mesa explicitly. Opted into, the test fails rather than
+    # skips when it cannot run.
+    shader-readback = {
+      description = "Read back generated shaders on a GL driver";
+      units = [ "pkg/ui-raylib" ];
+      common = [ "harness" ];
+      features = [ "xvfb" ];
+      run =
+        t:
+        t.inShell "ci-shader-readback" ''
+          export LIBGL_DRIVERS_PATH=${t.pkgs.mesa}/lib/dri
+          export LD_LIBRARY_PATH=${t.pkgs.mesa}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+          SPARKLES_GPU_READBACK=1 xvfb-run -a dub test :ui-raylib -- -i shader_readback
+        '';
+    };
+
+    # Reproducibility (SHT3): the same sources and toolchain must generate the
+    # same GLSL on every platform. The `nix-build` jobs push each system's
+    # `ui-shaders`, so the cache already holds the content hash of each
+    # (its NAR hash): compare those, with no artifact to hand over — and no
+    # rebuild when an earlier run already proved both.
+    shader-reproducibility = {
+      description = "The generated shaders agree across platforms";
+      drvs =
+        _: map (system: withSystem system ({ config, ... }: config.packages.ui-shaders)) shaderSystems;
+      run =
+        t:
+        t.script "ci-shader-reproducibility" {
+          runtimeInputs = [
+            t.nix
+            t.pkgs.jq
+            t.pkgs.gitMinimal
+          ];
+          text = ''
+            hashes=()
+            for system in ${lib.concatStringsSep " " shaderSystems}; do
+              path=$(nix ${t.nixFlags} eval --raw ".#packages.$system.ui-shaders.outPath")
+              # No negative caching: a path pushed minutes ago must be found.
+              hash=$(nix ${t.nixFlags} path-info --json --option narinfo-cache-negative-ttl 0 \
+                --store '${cachixUrl}' "$path" \
+                | jq -r 'if type == "array" then .[0].narHash else (to_entries[0].value.narHash // empty) end')
+              if [ -z "$hash" ] || [ "$hash" = null ]; then
+                echo "::error::$system's ui-shaders ($path) is not in the cache; its nix-build job pushes it"
+                exit 1
+              fi
+              echo "$system: $hash  $path"
+              hashes+=("$hash")
+            done
+            if [ "$(printf '%s\n' "''${hashes[@]}" | sort -u | wc -l)" -ne 1 ]; then
+              echo "::error::the generated GLSL differs between platforms (SHT3)"
+              exit 1
+            fi
+          '';
+        };
+    };
+
     # ── the tree-wide checks: their honest input is the whole tree ──
 
     # Everything except the networked link check (which runs over the diff),
@@ -311,6 +384,10 @@ in
     # ── whole derivations ─────────────────────────────────────────
 
     build-all-desktop = nixBuild "all-desktop";
+    # A build-time input of the GUI apps, so a run that substitutes them never
+    # fetches or pushes it; built (and pushed) on its own for the
+    # cross-platform comparison.
+    build-ui-shaders = nixBuild "ui-shaders";
     build-all-android = nixBuild "all-android";
 
     run-all-examples = {
