@@ -703,3 +703,259 @@ ubyte[] baseTable(const(BaseAxisSpec)[] horizontal, const(BaseAxisSpec)[] vertic
         t ~= u32(storeAt);
     return t ~ body;
 }
+
+// ---------------------------------------------------------------------------
+// Coverage, GDEF and MATH
+// ---------------------------------------------------------------------------
+
+/// A format-1 Coverage of `glyphs`, in the given order.
+ubyte[] coverage1(const(uint)[] glyphs)
+{
+    ubyte[] t = u16(1) ~ u16(cast(uint) glyphs.length);
+    foreach (g; glyphs) t ~= u16(g);
+    return t;
+}
+
+/// A format-2 Coverage of `[start, end, startCoverageIndex]` ranges, in the given order.
+ubyte[] coverage2(const(uint[3])[] ranges)
+{
+    ubyte[] t = u16(2) ~ u16(cast(uint) ranges.length);
+    foreach (r; ranges) t ~= u16(r[0]) ~ u16(r[1]) ~ u16(r[2]);
+    return t;
+}
+
+/**
+A `GDEF` header of `major.minor` (12 bytes; 14 from 1.2; 18 from 1.3) with
+every subtable offset null except, from 1.3, the item variation store, placed
+after the header (offset 0 when null).
+*/
+ubyte[] gdefTable(const(ubyte)[] store, uint minor = 3, uint major = 1)
+{
+    const headerLength = minor >= 3 ? 18 : minor == 2 ? 14 : 12;
+    ubyte[] t = u16(major) ~ u16(minor) ~ u16(0) ~ u16(0) ~ u16(0) ~ u16(0);
+    if (minor >= 2)
+        t ~= u16(0);
+    if (minor >= 3)
+        t ~= u32(store is null ? 0 : headerLength);
+    return t ~ (minor >= 3 ? store : null);
+}
+
+/// A MathValueRecord: a value and a Device or VariationIndex table (offset 0 when null).
+struct MathValueSpec
+{
+    int value;
+    const(ubyte)[] device;
+}
+
+/**
+`records` laid out at `recordsAt` inside a parent whose fixed part is
+`fixedLength` bytes; their device tables are appended to `tail`, which
+starts at `fixedLength` from the parent.
+*/
+ubyte[] mathValueRecords(const(MathValueSpec)[] records, size_t fixedLength, ref ubyte[] tail)
+{
+    ubyte[] t;
+    foreach (r; records)
+    {
+        uint deviceAt;
+        if (r.device !is null)
+        {
+            deviceAt = cast(uint)(fixedLength + tail.length);
+            tail ~= r.device;
+        }
+        t ~= u16(cast(uint) r.value) ~ u16(deviceAt);
+    }
+    return t;
+}
+
+/// The MathConstants fields, in table order.
+struct MathConstantsSpec
+{
+    int[2] percentScaleDown;
+    uint[2] minHeight;
+    MathValueSpec[51] records;
+    int radicalDegreeBottomRaisePercent;
+}
+
+/// The bytes of a MathConstants table (214 bytes, then device tables).
+ubyte[] mathConstantsTable(const MathConstantsSpec c)
+{
+    ubyte[] tail;
+    auto t = u16(cast(uint) c.percentScaleDown[0]) ~ u16(cast(uint) c.percentScaleDown[1])
+        ~ u16(c.minHeight[0]) ~ u16(c.minHeight[1]) ~ mathValueRecords(c.records.dup, 214, tail)
+        ~ u16(cast(uint) c.radicalDegreeBottomRaisePercent);
+    return t ~ tail;
+}
+
+/// A coverage and its MathValueRecords (MathItalicsCorrectionInfo, MathTopAccentAttachment).
+struct MathValueTableSpec
+{
+    const(ubyte)[] coverage;
+    const(MathValueSpec)[] values;
+    /// Overrides the stored value count when not `uint.max`.
+    uint count = uint.max;
+}
+
+/// The bytes of a MathItalicsCorrectionInfo or MathTopAccentAttachment.
+ubyte[] mathValueTable(const MathValueTableSpec s)
+{
+    const fixedLength = 4 + 4 * s.values.length;
+    ubyte[] tail;
+    const records = mathValueRecords(s.values, fixedLength, tail);
+    const covAt = s.coverage is null ? 0 : cast(uint)(fixedLength + tail.length);
+    return u16(covAt) ~ u16(s.count == uint.max ? cast(uint) s.values.length : s.count) ~ records ~ tail
+        ~ s.coverage;
+}
+
+/// A MathKern: correction heights and kern values (normally one more).
+struct MathKernSpec
+{
+    bool present;
+    const(MathValueSpec)[] heights;
+    const(MathValueSpec)[] values;
+}
+
+/// The bytes of a MathKern; the stored height count is `heights.length`.
+ubyte[] mathKernData(const MathKernSpec k)
+{
+    const fixedLength = 2 + 4 * (k.heights.length + k.values.length);
+    ubyte[] tail;
+    auto t = u16(cast(uint) k.heights.length) ~ mathValueRecords(k.heights, fixedLength, tail);
+    t ~= mathValueRecords(k.values, fixedLength, tail);
+    return t ~ tail;
+}
+
+/// A MathKernInfo: a coverage and, per record, the four corners (top right, top left, bottom right, bottom left).
+struct MathKernInfoSpec
+{
+    const(ubyte)[] coverage;
+    const(MathKernSpec[4])[] records;
+    /// Overrides the stored record count when not `uint.max`.
+    uint count = uint.max;
+}
+
+/// The bytes of a MathKernInfo.
+ubyte[] mathKernInfoTable(const MathKernInfoSpec s)
+{
+    const fixedLength = 4 + 8 * s.records.length;
+    ubyte[] body, t;
+    foreach (r; s.records)
+        foreach (k; r)
+        {
+            if (!k.present)
+            {
+                t ~= u16(0);
+                continue;
+            }
+            t ~= u16(cast(uint)(fixedLength + body.length));
+            body ~= mathKernData(k);
+        }
+    const covAt = s.coverage is null ? 0 : cast(uint)(fixedLength + body.length);
+    return u16(covAt) ~ u16(s.count == uint.max ? cast(uint) s.records.length : s.count) ~ t ~ body
+        ~ s.coverage;
+}
+
+/// MathGlyphInfo's four subtables, each null when its bytes are.
+struct MathGlyphInfoSpec
+{
+    const(ubyte)[] italics;
+    const(ubyte)[] topAccent;
+    const(ubyte)[] extendedShapes;
+    const(ubyte)[] kernInfo;
+}
+
+/// The bytes of a MathGlyphInfo; subtables follow in field order.
+ubyte[] mathGlyphInfoTable(const MathGlyphInfoSpec s)
+{
+    ubyte[] t, body;
+    foreach (sub; [s.italics, s.topAccent, s.extendedShapes, s.kernInfo])
+    {
+        t ~= u16(sub is null ? 0 : cast(uint)(8 + body.length));
+        body ~= sub;
+    }
+    return t ~ body;
+}
+
+/// A GlyphPart.
+struct GlyphPartSpec
+{
+    uint glyph, startConnector, endConnector, fullAdvance, flags;
+}
+
+/// A MathGlyphConstruction: an optional assembly (italics correction and parts) and `[glyph, advance]` variants.
+struct ConstructionSpec
+{
+    bool hasAssembly;
+    MathValueSpec italics;
+    const(GlyphPartSpec)[] parts;
+    const(uint[2])[] variants;
+    /// Write a null offset for this construction.
+    bool isNull;
+}
+
+/// The bytes of a GlyphAssembly.
+ubyte[] glyphAssemblyTable(MathValueSpec italics, const(GlyphPartSpec)[] parts)
+{
+    const fixedLength = 6 + 10 * parts.length;
+    ubyte[] tail;
+    auto t = mathValueRecords([italics], fixedLength, tail) ~ u16(cast(uint) parts.length);
+    foreach (p; parts)
+        t ~= u16(p.glyph) ~ u16(p.startConnector) ~ u16(p.endConnector) ~ u16(p.fullAdvance) ~ u16(p.flags);
+    return t ~ tail;
+}
+
+/// The bytes of a MathGlyphConstruction; the assembly follows the variant records.
+ubyte[] constructionTable(const ConstructionSpec c)
+{
+    const fixedLength = 4 + 4 * c.variants.length;
+    ubyte[] t = u16(c.hasAssembly ? cast(uint) fixedLength : 0) ~ u16(cast(uint) c.variants.length);
+    foreach (v; c.variants) t ~= u16(v[0]) ~ u16(v[1]);
+    return t ~ (c.hasAssembly ? glyphAssemblyTable(c.italics, c.parts) : null);
+}
+
+/// MathVariants: the overlap, a coverage and constructions per direction.
+struct MathVariantsSpec
+{
+    uint minConnectorOverlap;
+    const(ubyte)[] vertCoverage;
+    const(ConstructionSpec)[] vertical;
+    const(ubyte)[] horizCoverage;
+    const(ConstructionSpec)[] horizontal;
+}
+
+/// The bytes of a MathVariants table: header, offsets, constructions, then coverages.
+ubyte[] mathVariantsTable(const MathVariantsSpec s)
+{
+    const fixedLength = 10 + 2 * (s.vertical.length + s.horizontal.length);
+    ubyte[] offsets, body;
+    foreach (c; s.vertical ~ s.horizontal)
+    {
+        offsets ~= u16(c.isNull ? 0 : cast(uint)(fixedLength + body.length));
+        if (!c.isNull)
+            body ~= constructionTable(c);
+    }
+    uint place(const(ubyte)[] coverage)
+    {
+        if (coverage is null)
+            return 0;
+        const at = cast(uint)(fixedLength + body.length);
+        body ~= coverage;
+        return at;
+    }
+    const vAt = place(s.vertCoverage), hAt = place(s.horizCoverage);
+    return u16(s.minConnectorOverlap) ~ u16(vAt) ~ u16(hAt) ~ u16(cast(uint) s.vertical.length)
+        ~ u16(cast(uint) s.horizontal.length) ~ offsets ~ body;
+}
+
+/// A `MATH` table of `major.minor` with its three subtables after the header (offset 0 when null).
+ubyte[] mathTableData(const(ubyte)[] constants, const(ubyte)[] glyphInfo, const(ubyte)[] variants,
+    uint major = 1, uint minor = 0)
+{
+    ubyte[] t = u16(major) ~ u16(minor), body;
+    foreach (sub; [constants, glyphInfo, variants])
+    {
+        t ~= u16(sub is null ? 0 : cast(uint)(10 + body.length));
+        body ~= sub;
+    }
+    return t ~ body;
+}

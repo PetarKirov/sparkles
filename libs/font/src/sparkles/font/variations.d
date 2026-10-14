@@ -123,6 +123,20 @@ struct ItemVariationStore
         return s;
     }
 
+    /**
+    A store whose containing table could not be read: `present` and
+    `broken`, so every delta at nonzero coordinates is `error` (`GDEF`'s
+    header problem for `MATH` and `GPOS`).
+    */
+    package static ItemVariationStore failed(FontError error)
+    {
+        ItemVariationStore s;
+        s.present_ = true;
+        s.broken_ = true;
+        s.error_ = error;
+        return s;
+    }
+
     private ItemVariationStore fail(FontErrorKind kind, ulong relative) return scope
     {
         broken_ = true;
