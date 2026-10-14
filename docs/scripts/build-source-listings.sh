@@ -8,13 +8,16 @@
 # Reproducible build artifact, NOT committed to git (see .gitignore). Rebuilt
 # automatically before `docs:dev` / `docs:build` (see package.json); regenerate
 # by hand with this script (needs Nix on PATH).
+#
+# CI passes the tools as store paths (SPARKLES_HUE / SPARKLES_TWOSLASH_EXTRACT / SPARKLES_TS_GRAMMAR_PATH), so the
+# build does not evaluate the flake again; unset, they are built from it.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out_rel="docs/public/src"
 out="$repo_root/$out_rel"
 
-if ! command -v nix >/dev/null 2>&1; then
+if [ -z "${SPARKLES_HUE:-}" ] && ! command -v nix >/dev/null 2>&1; then
     if [ -f "$out/manifest.json" ]; then
         echo "build-source-listings: nix not found; reusing existing $out_rel" >&2
         exit 0
@@ -25,9 +28,9 @@ if ! command -v nix >/dev/null 2>&1; then
 fi
 
 echo "build-source-listings: building .#hue, .#twoslash-extract and .#ts-grammars ..." >&2
-hue="$(nix build "$repo_root#hue" --no-link --print-out-paths)/bin/hue"
-SPARKLES_TWOSLASH_EXTRACT="$(nix build "$repo_root#twoslash-extract" --no-link --print-out-paths)/bin/twoslash-extract"
-SPARKLES_TS_GRAMMAR_PATH="$(nix build "$repo_root#ts-grammars" --no-link --print-out-paths)"
+hue="${SPARKLES_HUE:-$(nix build "$repo_root#hue" --no-link --print-out-paths)/bin/hue}"
+SPARKLES_TWOSLASH_EXTRACT="${SPARKLES_TWOSLASH_EXTRACT:-$(nix build "$repo_root#twoslash-extract" --no-link --print-out-paths)/bin/twoslash-extract}"
+SPARKLES_TS_GRAMMAR_PATH="${SPARKLES_TS_GRAMMAR_PATH:-$(nix build "$repo_root#ts-grammars" --no-link --print-out-paths)}"
 export SPARKLES_TWOSLASH_EXTRACT SPARKLES_TS_GRAMMAR_PATH
 
 # Clean stale pages (a source file may have been removed) then render fresh.

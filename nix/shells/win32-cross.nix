@@ -119,7 +119,8 @@
           clangCl
           win32Ldc2
         ]
-        ++ d-toolchain.packages;
+        ++ d-toolchain.packages
+        ++ d-toolchain.devPackages;
         shellHook = ''
           ${lib.concatStringsSep "\n" (
             lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") d-toolchain.env

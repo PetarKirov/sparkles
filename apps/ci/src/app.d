@@ -237,7 +237,9 @@ struct CliParams
     string base;
 
     @(Option(`packages`,
-        description: "With --build-each-commit: the sub-packages to build, by name."))
+        description: "With --build-each-commit: the sub-packages to build, by name. "
+            ~ "With --test, --test-sanitize or --test-extracted: test only these "
+            ~ "sub-packages (default: every one the root dub.sdl declares)."))
     string[] packages;
 
     @(Option(`t|test`, description: "Run dub test for each sub-package defined in the root dub.sdl."))
@@ -654,13 +656,13 @@ int ciMain(string[] args)
         return runBuildEachCommitMode(cli.base, cli.packages, cli.failFast);
 
     if (mode == ProgramMode.runDubTests)
-        return runDubTestsMode(cli.failFast, coverage);
+        return runDubTestsMode(cli.failFast, coverage, cli.packages);
 
     if (mode == ProgramMode.runSanitizeTests)
-        return runDubTestsMode(cli.failFast, coverage, sanitize: true);
+        return runDubTestsMode(cli.failFast, coverage, cli.packages, sanitize: true);
 
     if (mode == ProgramMode.runExtractedTests)
-        return runExtractedTestsMode(cli.failFast);
+        return runExtractedTestsMode(cli.failFast, cli.packages);
 
     if (mode == ProgramMode.ciStats)
         return runCiStatsMode(cli);
@@ -1164,53 +1166,34 @@ private string[] trackedMarkdownFiles()
         .array;
 }
 
-/// Git pathspecs for the repository's standalone example `.d` files — the
-/// defaults `--example-files` uses when no `--include-files` selection is
-/// given: the `base`, `build-primitives`, and `core-cli` library demos plus the
-/// worked examples that accompany the research docs
-/// (`docs/research/async-io/io-uring/`, `docs/research/async-io/gcd/`,
-/// `docs/research/units-of-measure/`,
-/// `docs/research/cpu-pmu/`, `docs/research/sanitizers/`, `docs/research/manim/`,
-/// `docs/research/anchored-overlays/`, `docs/research/property-tree/`, and the four
-/// per-subject `examples/`
-/// directories under `docs/research/platform-ui-guidelines/`).
-@safe pure nothrow
+/// The git pathspecs `--example-files` defaults to: the library demos plus
+/// the worked examples that accompany the research docs. They live in
+/// `apps/ci/example-globs.json` because the Nix CI graph
+/// (`nix/ci/lib/graph.nix`) reads the same list to give every example its own
+/// CI unit.
 private string[] standaloneExampleGlobs()
 {
-    return [
-        "libs/base/examples/*.d",
-        "libs/build-primitives/examples/*.d",
-        "libs/core-cli/examples/*.d",
-        "libs/event-horizon/examples/*.d",
-        "docs/libs/event-horizon/tutorial/snippets/*.d",
-        "libs/wired/examples/*.d",
-        "libs/http/examples/*.d",
-        "docs/research/async-io/io-uring/examples/*.d",
-        "docs/research/async-io/gcd/examples/*.d",
-        "docs/research/units-of-measure/examples/*.d",
-        "docs/research/cpu-pmu/examples/*.d",
-        "docs/research/sanitizers/examples/*.d",
-        "docs/research/manim/examples/*.d",
-        "docs/research/anchored-overlays/examples/*.d",
-        "docs/research/property-tree/examples/*.d",
-        "docs/research/algebraic-effects/durable-execution/examples/*.d",
-        "docs/research/platform-ui-guidelines/color-derivation/examples/*.d",
-        "docs/research/platform-ui-guidelines/gnome/examples/*.d",
-        "docs/research/platform-ui-guidelines/kde/examples/*.d",
-        "docs/research/platform-ui-guidelines/terminal/examples/*.d",
-        "docs/research/autological-artifacts/cosmopolitan-ape/examples/*.d",
-        "docs/research/autological-artifacts/self-selfdb/examples/*.d",
-        "docs/research/linux-on-macos/examples/*.d",
-        "docs/research/android-dev-env/concepts/examples/*.d",
-        "docs/research/android-dev-env/device-validation/examples/*.d",
-        "docs/research/safe-path-traversal/examples/*.d",
-        "docs/research/font-libraries/examples/*.d",
-    ];
+    import std.json : parseJSON;
+    import std.file : readText;
+
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+        return [];
+    return parseJSON(readText(buildPath(repoRoot, "apps", "ci", "example-globs.json")))["globs"]
+        .array
+        .map!(g => g.str)
+        .array;
 }
 
 private string[] trackedStandaloneExampleFiles()
 {
-    const result = execute(["git", "ls-files", "--"] ~ standaloneExampleGlobs());
+    const globs = standaloneExampleGlobs();
+    if (globs.length == 0)
+    {
+        error(i"No standalone example globs found in apps/ci/example-globs.json");
+        return [];
+    }
+    const result = execute(["git", "ls-files", "--"] ~ globs);
     if (result.status != 0)
     {
         error(i"Failed to enumerate standalone example files with git ls-files");
@@ -3445,7 +3428,40 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
     return 0;
 }
 
-private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
+/**
+The sub-packages a test mode covers: every one the root `dub.sdl` declares, or
+— when `--packages` names some — just those, in request order. A name no
+sub-package has is an error rather than a smaller run: CI computes the list
+(the stale packages of a shard) and a typo there would otherwise pass having
+tested nothing.
+*/
+private bool requestedSubPackages(string repoRoot, in string[] requested, out string[] chosen)
+{
+    import each_commit : selectPackages;
+
+    const all = parseSubPackages(repoRoot);
+    if (all.length == 0)
+    {
+        error(i"No sub-packages found in dub.sdl");
+        return false;
+    }
+    if (requested.length == 0)
+    {
+        chosen = all.dup;
+        return true;
+    }
+    string[] unknown;
+    chosen = selectPackages(requested, all, unknown);
+    if (unknown.length)
+    {
+        error(i"--packages: no sub-package named $(unknown.join(", "))");
+        return false;
+    }
+    return true;
+}
+
+private int runDubTestsMode(bool failFast, bool coverage, in string[] requested,
+    bool sanitize = false)
 {
     if (sanitize)
     {
@@ -3471,12 +3487,9 @@ private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
     info(i"repository root: $(repoRoot)");
 
     info(i"parsing dub.sdl sub-packages");
-    auto subPackages = parseSubPackages(repoRoot);
-    if (subPackages.length == 0)
-    {
-        error(i"No sub-packages found in dub.sdl");
+    string[] subPackages;
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
         return 1;
-    }
     info(i"$(subPackages.length) sub-package(s) to test");
     if (compilerIsLdc(environment.get("DC", "")))
         info(i"ldc codegen threads capped at $(hwParallelism())");
@@ -3752,7 +3765,7 @@ private ExtractedModes extractedModesOf(string repoRoot, string packagePath)
 /// wasm-ld, no wasm runtime), which is right for a contributor's machine and
 /// exactly wrong here — without it a missing linker would leave this reporting
 /// success having run nothing.
-private int runExtractedTestsMode(bool failFast)
+private int runExtractedTestsMode(bool failFast, in string[] requested)
 {
     info(i"resolving repository root");
     const repoRoot = detectRepoRoot();
@@ -3764,12 +3777,9 @@ private int runExtractedTestsMode(bool failFast)
     info(i"repository root: $(repoRoot)");
 
     info(i"scanning sub-packages for @betterC / @wasm");
-    auto subPackages = parseSubPackages(repoRoot);
-    if (subPackages.length == 0)
-    {
-        error(i"No sub-packages found in dub.sdl");
+    string[] subPackages;
+    if (!requestedSubPackages(repoRoot, requested, subPackages))
         return 1;
-    }
 
     struct Job
     {
@@ -3788,10 +3798,16 @@ private int runExtractedTestsMode(bool failFast)
             jobs ~= Job(pkg, pkg.baseName, "--wasm");
     }
 
+    if (jobs.length == 0 && requested.length != 0)
+    {
+        // A chosen subset (CI's stale packages, say) may well hold none.
+        info(i"None of the requested packages uses @betterC or @wasm — nothing to run");
+        return 0;
+    }
     if (jobs.length == 0)
     {
         // Not a pass: the repo is supposed to have such tests, so an empty
-        // sweep means the scan (or the attributes) regressed.
+        // sweep of all of it means the scan (or the attributes) regressed.
         error(i"No sub-package uses @betterC or @wasm — nothing to run");
         return 1;
     }

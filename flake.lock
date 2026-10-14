@@ -16,16 +16,16 @@
         "wasm-component-ld": "wasm-component-ld"
       },
       "locked": {
-        "lastModified": 1790674105,
-        "narHash": "sha256-obwZjsHzu8c/H9ldLYIS3bDO/i8PhHh0HRVQI1bNTm4=",
+        "lastModified": 1791938484,
+        "narHash": "sha256-SAC4KvDCT+g1xKMLfJ9VS5/FExZfmaLg/J9ImHPCVv4=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "2b16d17ead38d3bbfcba2aa3ddfc24c6b58d2584",
+        "rev": "ec3529d40de0fabde439b3f782e5723fa44914d8",
         "type": "github"
       },
       "original": {
         "owner": "PetarKirov",
-        "ref": "feat/ldc-android-darwin",
+        "ref": "fix/ldc-strip-bootstrap-reference",
         "repo": "dlang.nix",
         "type": "github"
       }

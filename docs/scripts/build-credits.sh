@@ -7,12 +7,15 @@
 # derivation the APKs bundle (`.#credits`, nix/packages/credits.nix), so the
 # site and the apps cannot disagree (TPG16). They are NOT committed (see
 # .gitignore); this runs before `docs:dev` / `docs:build` (see package.json).
+#
+# CI passes the tools as store paths (SPARKLES_CREDITS), so the
+# build does not evaluate the flake again; unset, they are built from it.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out="$repo_root/docs/credits/licenses"
 
-if ! command -v nix >/dev/null 2>&1; then
+if [ -z "${SPARKLES_CREDITS:-}" ] && ! command -v nix >/dev/null 2>&1; then
     if [ -d "$out" ]; then
         echo "build-credits: nix not found on PATH; reusing existing $out" >&2
         exit 0
@@ -24,7 +27,7 @@ if ! command -v nix >/dev/null 2>&1; then
 fi
 
 echo "build-credits: building .#credits ..." >&2
-store="$(nix build "$repo_root#credits" --no-link --print-out-paths)"
+store="${SPARKLES_CREDITS:-$(nix build "$repo_root#credits" --no-link --print-out-paths)}"
 rm -rf "$out"
 cp -r "$store/licenses" "$out"
 chmod -R u+w "$out"

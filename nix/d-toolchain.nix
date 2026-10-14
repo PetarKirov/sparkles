@@ -254,11 +254,15 @@
           packages = [
             pkgs.ldc
             pkgs.dub
-            pkgs.dtools
-            pkgs.dub-to-nix
           ]
           ++ lib.optionals (isx86_64) [
             pkgs.dmd
+          ];
+          # Interactive only: no CI job runs rdmd/dustmite or regenerates the
+          # dub lock, and dtools alone closes over a second LDC (~340 MiB).
+          devPackages = [
+            pkgs.dtools
+            pkgs.dub-to-nix
           ];
 
           env = lib.optionalAttrs isDarwin {

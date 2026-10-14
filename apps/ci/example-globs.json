@@ -1,0 +1,32 @@
+{
+  "description": "Standalone example .d files `ci --example-files` runs by default, as git pathspecs. Also read by nix/ci/lib/graph.nix, which gives each example its own CI unit; every entry must stay a `<dir>/*.d` glob.",
+  "globs": [
+    "libs/base/examples/*.d",
+    "libs/build-primitives/examples/*.d",
+    "libs/core-cli/examples/*.d",
+    "libs/event-horizon/examples/*.d",
+    "docs/libs/event-horizon/tutorial/snippets/*.d",
+    "libs/wired/examples/*.d",
+    "libs/http/examples/*.d",
+    "docs/research/async-io/io-uring/examples/*.d",
+    "docs/research/async-io/gcd/examples/*.d",
+    "docs/research/units-of-measure/examples/*.d",
+    "docs/research/cpu-pmu/examples/*.d",
+    "docs/research/sanitizers/examples/*.d",
+    "docs/research/manim/examples/*.d",
+    "docs/research/anchored-overlays/examples/*.d",
+    "docs/research/property-tree/examples/*.d",
+    "docs/research/algebraic-effects/durable-execution/examples/*.d",
+    "docs/research/platform-ui-guidelines/color-derivation/examples/*.d",
+    "docs/research/platform-ui-guidelines/gnome/examples/*.d",
+    "docs/research/platform-ui-guidelines/kde/examples/*.d",
+    "docs/research/platform-ui-guidelines/terminal/examples/*.d",
+    "docs/research/autological-artifacts/cosmopolitan-ape/examples/*.d",
+    "docs/research/autological-artifacts/self-selfdb/examples/*.d",
+    "docs/research/linux-on-macos/examples/*.d",
+    "docs/research/android-dev-env/concepts/examples/*.d",
+    "docs/research/android-dev-env/device-validation/examples/*.d",
+    "docs/research/safe-path-traversal/examples/*.d",
+    "docs/research/font-libraries/examples/*.d"
+  ]
+}

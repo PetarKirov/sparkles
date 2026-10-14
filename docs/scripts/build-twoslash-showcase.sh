@@ -11,13 +11,16 @@
 # automatically before `docs:dev` / `docs:build` (see package.json); regenerate by
 # hand with this script (needs Nix on PATH — no Node: this used to shell out to
 # `libs/twoslash/examples/render-html.mjs`, now retired into `sparkles.docs.page_shell`).
+#
+# CI passes the tools as store paths (SPARKLES_HUE / SPARKLES_TS_GRAMMAR_PATH), so the
+# build does not evaluate the flake again; unset, they are built from it.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out_rel="docs/public/apps/hue/twoslash"
 out="$repo_root/$out_rel"
 
-if ! command -v nix >/dev/null 2>&1; then
+if [ -z "${SPARKLES_HUE:-}" ] && ! command -v nix >/dev/null 2>&1; then
     if [ -f "$out/index.html" ]; then
         echo "build-twoslash-showcase: nix not found; reusing existing $out_rel" >&2
         exit 0
@@ -29,8 +32,8 @@ if ! command -v nix >/dev/null 2>&1; then
 fi
 
 echo "build-twoslash-showcase: building .#hue and .#ts-grammars ..." >&2
-hue="$(nix build "$repo_root#hue" --no-link --print-out-paths)/bin/hue"
-SPARKLES_TS_GRAMMAR_PATH="$(nix build "$repo_root#ts-grammars" --no-link --print-out-paths)"
+hue="${SPARKLES_HUE:-$(nix build "$repo_root#hue" --no-link --print-out-paths)/bin/hue}"
+SPARKLES_TS_GRAMMAR_PATH="${SPARKLES_TS_GRAMMAR_PATH:-$(nix build "$repo_root#ts-grammars" --no-link --print-out-paths)}"
 export SPARKLES_TS_GRAMMAR_PATH
 
 # Clean stale pages (a fixture may have been removed) then render fresh.

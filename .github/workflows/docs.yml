@@ -1,127 +1,95 @@
+# Generated from nix/ci/workflows/docs.nix — do not edit by hand.
+# Regenerate with `nix run .#render-workflows` (also a pre-commit hook).
 name: Deploy Docs
-
-on:
-  push:
-    branches: [main]
-    paths:
-      - 'docs/**'
-      # The twoslash showcase gallery is rendered from these at docs-build time
-      # (docs/scripts/build-twoslash-showcase.sh), so a fixture/renderer change
-      # must redeploy the docs too.
-      - 'libs/twoslash/**'
-      - 'package.json'
-      - 'yarn.lock'
-      - '.yarnrc.yml'
-  # No `branches` filter: a stacked PR's base is a feature branch, and its
-  # preview matters as much as a PR against main. The deploy is a preview
-  # either way — `ci/deploy-cloudflare-pages.sh` keys it on the PR's head
-  # branch (`GITHUB_HEAD_REF`), never on the base — so only the push to main
-  # above is a production deploy.
+"on":
   pull_request:
     paths:
-      - 'docs/**'
-      # The twoslash showcase gallery is rendered from these at docs-build time
-      # (docs/scripts/build-twoslash-showcase.sh), so a fixture/renderer change
-      # must redeploy the docs too.
-      - 'libs/twoslash/**'
-      - 'package.json'
-      - 'yarn.lock'
-      - '.yarnrc.yml'
-  workflow_dispatch:
-
+      - "docs/**"
+      - "libs/twoslash/**"
+      - package.json
+      - yarn.lock
+      - .yarnrc.yml
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - "libs/twoslash/**"
+      - package.json
+      - yarn.lock
+      - .yarnrc.yml
+  workflow_dispatch: {}
 concurrency:
-  group: docs-${{ github.ref }}
   cancel-in-progress: true
-
+  group: "docs-${{ github.ref }}"
 jobs:
   deploy:
+    name: deploy
     runs-on: ubuntu-latest
-    env:
-      # Corepack asks before downloading the packageManager pin. CI must not.
-      COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
-    # yarn install + the wasm nix build + VitePress build + Cloudflare deploy run ~5m
-    # uncontended; runner contention during stacked-PR storms stretches the
-    # nix setup/teardown past 15m, cancelling after the deploy had succeeded.
-    timeout-minutes: 30
-
+    timeout-minutes: 40
     permissions:
       contents: read
       deployments: write
       pull-requests: write
-
+    defaults:
+      run:
+        shell: "/nix/store/90nk33c4fkyg4x4dfk5cykqiryf2nlqq-bash-interactive-5.3p15/bin/bash --noprofile --norc -eo pipefail {0}"
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      # `yarn docs:build` first runs `build:wasm`, which invokes
-      # `nix build .#table-wasm` to compile the drawTable playground module.
-      # Install Nix and wire up the binary cache so the ldc-wasm toolchain is
-      # pulled from the cache rather than built from source.
-      - name: Setup Nix
-        uses: ./.github/actions/setup-nix
         with:
-          push-to-cache: true
-          cachix-cache: ${{ vars.CACHIX_CACHE }}
-          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
-          substituters: ${{ vars.SUBSTITUTERS }}
-          use-nix-cache: true
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+          fetch-depth: 1
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
         with:
-          node-version: 24
-
-      # setup-node's `cache: yarn` calls `yarn --version` while the action
-      # runs, before Corepack has put Yarn on PATH. Enable Corepack first,
-      # then cache the folder Yarn itself reports.
-      - name: Enable Corepack
-        env:
-          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
-        run: corepack enable
-
-      - name: Get Yarn cache directory
-        id: yarn-cache
-        run: echo "dir=$(yarn config get cacheFolder)" >> "$GITHUB_OUTPUT"
-
+          extra_nix_config: |
+            extra-substituters = https://sparkles.cachix.org https://dlang-community.cachix.org
+            extra-trusted-public-keys = sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ=
+            fallback = true
+            connect-timeout = 5
+            download-attempts = 2
+            auto-optimise-store = false
+          github_access_token: "${{ github.token }}"
+      - name: Use the project cache
+        uses: cachix/cachix-action@v17
+        with:
+          name: sparkles
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: "Realise the job's closure"
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle=/nix/store/bamqjpv2c4bmd11fwa8mxpa1vkm82m89-ci-job-deploy
+          nix=/nix/var/nix/profiles/default/bin
+          if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
+            echo "Substituted $bundle"
+            exit 0
+          fi
+          echo "::group::Building the job's closure (not in the binary cache yet)"
+          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.docs.deploy')
+          echo "::endgroup::"
+          if [ "$built" != "$bundle" ]; then
+            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
+            exit 1
+          fi
       - name: Cache Yarn
         uses: actions/cache@v6
         with:
-          path: ${{ steps.yarn-cache.outputs.dir }}
-          key: yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
-          restore-keys: yarn-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: yarn install --immutable
-
-      # The README badges read these from the deployed site. Regenerating them
-      # here rather than committing them keeps the number honest: it is
-      # computed from the same aggregate `ci --ci-stats --merges` prints, and a
-      # committed JSON would be stale from the merge after the one that wrote
-      # it. A failure here is not worth failing a docs deploy over -- the
-      # previously deployed badge simply stays up.
+          key: "yarn-${{ runner.os }}-${{ hashFiles('yarn.lock') }}"
+          path: "~/.yarn/berry/cache"
+          restore-keys: "yarn-${{ runner.os }}-"
       - name: Refresh the merge badges
         continue-on-error: true
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          nix run .#ci-minimal -- --ci-stats --merges \
-            --repo "$GITHUB_REPOSITORY" --limit 1000 \
-            --badge-dir docs/public/badges
-
-      # Same headroom as the CI job's build — see the note there.
-      - name: Build VitePress site
+          GITHUB_TOKEN: "${{ github.token }}"
+        run: /nix/store/h2jmij0wiwxq39y2jirgph87p3vrq6h6-ci-merge-badges/bin/ci-merge-badges
+      - name: Build the VitePress site
+        run: /nix/store/n9v01ln122cw58rk55pi4hphr9v5sbm4-ci-docs-build/bin/ci-docs-build
+      - name: "Deploy to Cloudflare Pages & comment the preview URL"
         env:
-          NODE_OPTIONS: --max-old-space-size=8192
-        run: yarn docs:build
-
-      # Shared with CircleCI — see ci/README.md. The script wraps the same two
-      # calls `cloudflare/wrangler-action` and `actions/github-script` made:
-      # `wrangler pages deploy`, then a marker-keyed upsert of the preview
-      # comment (so a re-run edits its own comment rather than appending).
-      - name: Deploy to Cloudflare Pages & comment the preview URL
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: ci/deploy-cloudflare-pages.sh
+          CLOUDFLARE_ACCOUNT_ID: "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
+          CLOUDFLARE_API_TOKEN: "${{ secrets.CLOUDFLARE_API_TOKEN }}"
+          GITHUB_TOKEN: "${{ github.token }}"
+        run: /nix/store/gaygkzl9844aqa7zkfwli15zw88njwds-ci-deploy-cloudflare-pages/bin/ci-deploy-cloudflare-pages

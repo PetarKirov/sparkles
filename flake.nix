@@ -44,7 +44,10 @@
       # `feat/ldc-android-darwin` is that plus `ldc-vulkan` and `ldc-android`
       # on macOS hosts (nix/packages/android/host.nix) and unstripped Android
       # runtimes.
-      url = "github:PetarKirov/dlang.nix/feat/ldc-android-darwin";
+      # `fix/ldc-strip-bootstrap-reference` is that plus LDC without the
+      # bootstrap compiler in its runtime closure (~540 MiB less in every
+      # job and shell that has `ldc`).
+      url = "github:PetarKirov/dlang.nix/fix/ldc-strip-bootstrap-reference";
       inputs = {
         flake-compat.follows = "flake-compat";
         flake-parts.follows = "flake-parts";
@@ -250,6 +253,7 @@
         ./nix/packages/wired-bench-cpp-shim.nix
         ./nix/packages/wired-bench-rs.nix
         ./nix/checks/pre-commit.nix
+        ./nix/ci
         ./nix/shells/default.nix
         ./nix/shells/android.nix
         ./nix/shells/win32-cross.nix
