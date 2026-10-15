@@ -160,6 +160,8 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
                 req.targetFps = cfg.targetFps;
                 req.fontSizePxOverride = cfg.fontSizePxOverride;
                 req.uiFollowsCellFont = cfg.uiFollowsCellFont;
+                req.launchBackground = cfg.launchBackground;
+                req.hasLaunchBackground = cfg.hasLaunchBackground;
                 // `in` makes the config const; the request owns a mutable slice.
                 req.extraFontSources = cfg.extraFontSources.dup;
                 req.traceSink = cfg.traceSink;

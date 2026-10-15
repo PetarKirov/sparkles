@@ -33,6 +33,7 @@ import core.stdc.stdarg : va_list;
 import core.time : Duration;
 
 import sparkles.base.buffer : SharedBuffer;
+import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.input : Event, InputCapabilities, Mods;
 import sparkles.ui.arena : FrameArena;
@@ -156,6 +157,16 @@ struct RunConfig
     chrome sits beside a user-sized monospace grid, such as a terminal.
     */
     bool uiFollowsCellFont;
+
+    /**
+    Painted as the window's first frame the moment it opens, before the
+    fonts load: a slow first real frame then shows the application's
+    background, not what the window held — on Android, the home screen seen
+    through a surface nothing has drawn yet. Off unless `hasLaunchBackground`.
+    */
+    RgbColor launchBackground;
+    /// ditto
+    bool hasLaunchBackground;
 
     /// Extra directories to resolve faces from, ahead of fontconfig. An
     /// Android build passes its extracted asset directory and `/system/fonts`.
