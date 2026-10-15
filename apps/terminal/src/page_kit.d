@@ -28,7 +28,7 @@ import sparkles.ui.style : Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 
-import chrome : button, chromeLayout, squareCols;
+import chrome : button, cachedChromeLayout, chromeLayout, squareCols;
 import settings : ButtonLabels;
 import surfaces : Placement, Scrollable, Surface, SurfaceContext;
 
@@ -483,7 +483,7 @@ int bodyRowsFor(ref Builder b, uint[] top, uint[] bottom, int cols, int rows) @s
     const empty = probe.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow(),
         height: SizeSpec.grow()));
     auto tree = probe.finish(pageColumn(probe, top ~ empty ~ bottom));
-    const frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
+    const frames = cachedChromeLayout(tree, cols, rows);
     const h = frames[empty].rect.height;
     return h > 0 ? h : 1;
 }
@@ -567,7 +567,9 @@ WidgetTree finishPage(ref Builder b, uint[] top, uint content, uint[] bottom, in
 {
     const v = scrollViewport(b, content, bodyRows, body);
     auto tree = b.finish(pageColumn(b, top ~ v.view ~ bottom));
-    const frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
+    // An unchanged page reuses its layout; the scroll goes into a copy.
+    const frames = cachedChromeLayout(tree, cols, rows);
+    tree.nodes = tree.nodes.dup;
     const contentTop = frames[content].rect.y;
     long y0 = -1, y1 = -1;
     if (reveal != uint.max && reveal < frames.length)

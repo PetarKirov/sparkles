@@ -49,7 +49,7 @@ import sparkles.ui.property_tree : EditValue, LeafKind, PropertyNode;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle, TypeStep;
 import sparkles.ui.widget : Alignment, Builder, TextSpan, Widget, WidgetKind, WidgetTree;
 
-import chrome : chromeLayout;
+import chrome : cachedChromeLayout;
 import keymap : Binding, isReserved, KeysConfig, leaderChord, leaderMark, TermCommand,
     TermScope, terminalBindings;
 import page_kit : header, ScrollBody;
@@ -215,6 +215,26 @@ final class SettingsPage : Surface, Scrollable
     private Toast toast;
     private bool touch;
     private SectionsOptions opts; // the last build's, so a hit reads the row as drawn
+    // The host asks for the tree on every tick, and building it allocates
+    // every row: an idle page hands back the last one. Input marks it stale;
+    // the rest of what it shows is the key.
+    private WidgetTree memoTree;
+    private BuildKey memoKey;
+    private bool stale = true;
+
+    private static struct BuildKey
+    {
+        SurfaceContext ctx;
+        int cols;
+        double pos;
+        ubyte expand, fade;
+        bool grabbed;
+    }
+
+    private BuildKey buildKey(in SurfaceContext ctx, int cols) const @safe
+        => BuildKey(ctx, cols, scrollBody.motion.pos,
+            scrollBody.bar.expandPercent(scrollBody.wide),
+            scrollBody.bar.anim.fadePercent, scrollBody.bar.grabbed);
 
     private static struct Item
     {
@@ -264,7 +284,12 @@ final class SettingsPage : Surface, Scrollable
             h = rows - 2 > 12 ? rows - 2 : rows;
         }
         if (toast.text.length && MonoTime.currTime > toast.until)
+        {
             toast = Toast.init;
+            stale = true;
+        }
+        if (!stale && memoTree.nodes.length && buildKey(ctx, cols) == memoKey)
+            return memoTree;
         items = buildItems();
         if (focus >= items.length)
             focus = items.length ? items.length - 1 : 0;
@@ -307,7 +332,11 @@ final class SettingsPage : Surface, Scrollable
             alignX: Alignment.center, alignY: Alignment.center,
             hitId: touch ? 0 : hitScrim));
         auto tree = b.finish(root);
-        auto frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
+        // Every row's text wraps here, which a phone takes most of a second
+        // over: an unchanged page reuses the last layout, and the scroll
+        // offsets below go into a copy, keeping the cached tree as built.
+        auto frames = cachedChromeLayout(tree, cols, rows);
+        tree.nodes = tree.nodes.dup;
         const view = frames[port].rect;
         int contentBottom = view.y;
         foreach (id; itemIds)
@@ -339,11 +368,15 @@ final class SettingsPage : Surface, Scrollable
             barOffsetFrac = fracByte(m.frac);
             barFadePercent = touch ? scrollBody.bar.anim.fadePercent : 100;
         }
+        memoTree = tree;
+        memoKey = buildKey(ctx, cols);
+        stale = false;
         return tree;
     }
 
     bool activate(size_t id) @system
     {
+        stale = true;
         if (id == hitScrim)
             return close();
         if (id == hitPanel)
@@ -406,17 +439,20 @@ final class SettingsPage : Surface, Scrollable
 
     bool confirm() @system
     {
+        stale = true;
         primary();
         return false;
     }
 
     void cancel() @system
     {
+        stale = true;
         cast(void) close();
     }
 
     bool key(in KeyEvent k) @system
     {
+        stale = true;
         if (k.action == KeyAction.release)
             return capture.open || pane.textEditing || pane.tv.searching;
 
@@ -554,6 +590,7 @@ final class SettingsPage : Surface, Scrollable
 
     void scroll(in WheelEvent w) @system
     {
+        stale = true;
         scrollBody.scroll(w);
     }
 
@@ -1383,4 +1420,19 @@ version (unittest)
     // The toast's Undo puts the overlay back.
     f.page.undo();
     assert(squeezed(f.file).canFind(`"space p d":"splitDown"`));
+}
+
+@("settings_page.build.idlePageReusesItsTree")
+@system unittest
+{
+    auto fs = TmpFS.create();
+    auto f = new PageFixture(fs.dir);
+    f.open();
+    auto a = f.page.build(phone(), 45);
+    auto b = f.page.build(phone(), 45);
+    assert(a.nodes is b.nodes, "nothing changed: the same tree");
+    assert(f.page.build(phone(), 44).nodes !is b.nodes, "another width rebuilds");
+    b = f.page.build(phone(), 44);
+    cast(void) f.page.key(KeyEvent(key: Key.down, action: KeyAction.press));
+    assert(f.page.build(phone(), 44).nodes !is b.nodes, "input rebuilds");
 }

@@ -211,20 +211,38 @@ private struct Placed
 private Placed[8] placed;
 private size_t placedNext;
 
+/**
+$(LREF chromeLayout) at most `cols` × `rows`, through the same cache as
+$(LREF place): a surface that measures its own content before placing it
+(a scrolled page) reuses the frames of an unchanged tree. The cache keeps
+`tree`, so the caller must not mutate its nodes afterwards — copy them first.
+*/
+Frame[] cachedChromeLayout(WidgetTree tree, int cols, int rows) @safe
+{
+    Frame[] frames;
+    HoverTarget[] hits;
+    placedLayout(tree, cols, rows, frames, hits);
+    return frames;
+}
+
 private void placedLayout(WidgetTree tree, int cols, int rows,
     out Frame[] frames, out HoverTarget[] hits) @safe
 {
     int[2] faces;
     if (haveChromeMeasure)
         faces = [chromeMeasure.width("Mg", TextStyle.init), chromeMeasure.rows(TextStyle.init)];
-    foreach (ref p; placed)
-        if (p.frames.length && p.cols == cols && p.rows == rows && p.faces == faces
-            && p.tree == tree)
-        {
-            frames = p.frames;
-            hits = p.hits;
-            return;
-        }
+    // The same nodes first: a surface that hands back its last tree must not
+    // pay a deep comparison against every other one of the same size.
+    static foreach (sameNodes; [true, false])
+        foreach (ref p; placed)
+            if (p.frames.length && p.cols == cols && p.rows == rows && p.faces == faces
+                && (sameNodes ? p.tree.nodes is tree.nodes && p.tree.root == tree.root
+                    : p.tree == tree))
+            {
+                frames = p.frames;
+                hits = p.hits;
+                return;
+            }
     frames = chromeLayout(tree, Constraints(maxW: cols, maxH: rows));
     hits = hoverTargets(tree, frames);
     placed[placedNext] = Placed(tree, cols, rows, faces, frames, hits);
