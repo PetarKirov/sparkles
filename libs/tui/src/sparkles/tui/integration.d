@@ -594,7 +594,7 @@ unittest
         assert(got.fenced && term.takeTypedAhead().length == 0, entry.name.baseName);
         ++terminals;
     }
-    assert(terminals == 11, "the whole corpus");
+    assert(terminals == 15, "the whole corpus");
 }
 
 @("integration.pty.colorSchemeReportsAreNegotiatedAndDecoded")

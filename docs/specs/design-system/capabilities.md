@@ -224,38 +224,39 @@ the clustered advance (base/text `TXT-CELL5`, `GLY6`, D50).
 ## Emulator presets
 
 Each preset is read by `fromReplies` (`CAP10`) from the rows recorded for it,
-through the mapping a live probe uses. Where the `O5` corpus reaches — kitty,
-Ghostty, foot, XTerm, Alacritty, and tmux and zellij under a bare pty, foot
-and Ghostty — a row is the battery's own replies as that terminal sent them
-(`libs/base/test/data/term_replies/`), generated from the recording and
-re-read against it by test. iTerm2, Apple Terminal and WezTerm keep their rows
-from the capability case study's
-[empirical response matrix (§16)](https://github.com/PetarKirov/sparkles/blob/9ee7df44ef8870dea57925c057ca939a0764b502/docs/research/tui-libraries/capability-detection-case-study.md),
-an earlier battery that did not ask about focus, the cell size or a cluster's
-width.
+through the mapping a live probe uses. Every row is the `O5` corpus: the
+battery's own replies as that terminal sent them
+(`libs/base/test/data/term_replies/`), recorded with
+`libs/base/examples/term-replies-capture.d` and re-read against the recording
+by test. kitty, Ghostty, foot, XTerm, Alacritty and WezTerm were recorded on
+Linux, iTerm2, Ghostty and Apple Terminal on macOS 27, and tmux and zellij
+under a bare pty, foot and Ghostty.
 
 Grapheme clustering is either answer (D38). kitty and tmux do not recognize mode
 2027 and lay a ZWJ family out in two cells all the same, while zellij lays it
-out in six under every host, clustering ones included. Every preset also has
+out in six under every host, clustering ones included, and Apple Terminal in
+eight. Every preset also has
 Unicode, the half blocks and an SGR cell mouse with hover (D32). No preset has
 braille, octants or Nerd Font icons, because no query answers them.
 
 Links, clipboard writes, notifications and the pointer shape come from the name
 a row's terminal answered `XTVERSION` with (D42). kitty, Ghostty and foot have
 all four, and XTerm the pointer shape; tmux and zellij answer for themselves,
-and Alacritty gives no name. Styled underlines are claimed only where
-`XTGETTCAP` answers both `Smulx` and `Setulc` (D41): kitty, Ghostty and foot.
+and Alacritty and Apple Terminal give no name. iTerm2 and WezTerm name
+themselves, but `knownTerminals` does not list them yet, so their presets claim
+none of the four. Styled underlines are claimed only where `XTGETTCAP` answers
+both `Smulx` and `Setulc` (D41): kitty, Ghostty, foot and WezTerm.
 
 | Preset           | Measured                               | Color | Sync (2026) | Graphemes (D38) | Scheme (2031) | Images | Paste (2004) | Focus (1004) | Cell size | Key release | Styled underline | By name (D42) |
 | ---------------- | -------------------------------------- | ----- | ----------- | --------------- | ------------- | ------ | ------------ | ------------ | --------- | ----------- | ---------------- | ------------- |
 | `xterm`          | XTerm 403, Linux                       | 24bit | —           | —               | —             | —      | ✓            | ✓            | ✓         | —           | —                | pointer shape |
-| `apple-terminal` | Apple Terminal, macOS 26.3             | 24bit | —           | —               | —             | —      | —            | not asked    | not asked | —           | not asked        | not asked     |
-| `iterm2`         | iTerm2 3.6.10                          | 24bit | ✓           | —               | ✓             | kitty  | ✓            | not asked    | not asked | ✓           | not asked        | not asked     |
+| `apple-terminal` | Apple Terminal 2.15, macOS 27.0.1      | 24bit | —           | —               | —             | —      | —            | —            | —         | —           | —                | —             |
+| `iterm2`         | iTerm2 3.6.10, macOS 27.0.1            | 24bit | ✓           | ✓               | ✓             | kitty  | ✓            | ✓            | —         | ✓           | —                | —             |
 | `alacritty`      | Alacritty 0.16.1                       | 24bit | ✓           | —               | —             | —      | ✓            | ✓            | —         | ✓           | —                | —             |
 | `foot`           | foot 1.25.0                            | 24bit | ✓           | ✓               | ✓             | sixel  | ✓            | ✓            | ✓         | ✓           | ✓                | all four      |
-| `wezterm`        | WezTerm 2025-10-14                     | 24bit | ✓           | ✓               | —             | kitty  | ✓            | not asked    | not asked | —           | not asked        | not asked     |
+| `wezterm`        | WezTerm 0-unstable-2025-10-14, Linux   | 24bit | ✓           | ✓               | —             | kitty  | ✓            | ✓            | ✓         | —           | ✓                | —             |
 | `kitty`          | kitty 0.48.2                           | 24bit | ✓           | ✓               | ✓             | kitty  | ✓            | ✓            | ✓         | ✓           | ✓                | all four      |
-| `ghostty`        | Ghostty 1.3.1                          | 24bit | ✓           | ✓               | ✓             | kitty  | ✓            | ✓            | ✓         | ✓           | ✓                | all four      |
+| `ghostty`        | Ghostty 1.3.1: Linux, macOS            | 24bit | ✓           | ✓               | ✓             | kitty  | ✓            | ✓            | ✓         | ✓           | ✓                | all four      |
 | `tmux`           | tmux 3.6a: bare pty, foot, Ghostty     | 24bit | —           | ✓               | ✓             | —      | ✓            | ✓            | ✓         | —           | —                | —             |
 | `zellij`         | zellij 0.45.1: bare pty, foot, Ghostty | 24bit | ✓           | —               | ✓             | —      | —            | —            | —         | ✓           | —                | —             |
 
