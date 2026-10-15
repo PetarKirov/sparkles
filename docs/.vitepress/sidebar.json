@@ -389,6 +389,10 @@
                 "link": "/libs/base/how-to/own-heap-values"
               },
               {
+                "text": "Initialize globals at run time",
+                "link": "/libs/base/how-to/initialize-statics"
+              },
+              {
                 "text": "Test @nogc code with check helpers",
                 "link": "/libs/base/how-to/test-with-check-helpers"
               }
