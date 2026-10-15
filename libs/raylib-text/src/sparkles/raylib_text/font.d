@@ -23,6 +23,38 @@ struct LoadedFont
     bool hasWhite;       /// whether whiteSrc is valid (full-block glyph present)
     const(char)* pathZ;
     bool present;
+    /// `pathZ` is resolved but no atlas is built yet: `realize` builds it
+    /// the first time the face is needed.
+    bool deferred;
+}
+
+/// Builds a `deferred` face's atlas at `fontSize` with `cps`; true when the
+/// face is present (now or already). A face that fails to load is dropped
+/// (`pathZ` cleared), as `loadVariantFile` drops one.
+bool realize(ref LoadedFont lf, int fontSize, const(int)[] cps) @system nothrow @nogc
+{
+    if (lf.deferred)
+    {
+        lf.deferred = false;
+        loadFontInto(lf, fontSize, cps);
+        if (!lf.present)
+            lf.pathZ = null;
+    }
+    return lf.present;
+}
+
+/// Resolves `lf` to the font at `path` without building its atlas: a face
+/// that may never draw (a bold, an italic, a fallback) costs nothing until
+/// `realize`. A missing file leaves `lf` empty.
+void deferVariantFile(ref LoadedFont lf, string path) @system
+{
+    import std.file : exists;
+    import std.string : toStringz;
+
+    if (path.length == 0 || !path.exists)
+        return;
+    lf.pathZ = path.toStringz;
+    lf.deferred = true;
 }
 
 /// (Re)load `lf` from `lf.pathZ` at `fontSize`, requesting `cps`, and rebuild its
@@ -152,4 +184,24 @@ unittest
     assert(rangesContain(lo, hi, 0xE0FF));      // last range end
     assert(!rangesContain(lo, hi, 0xE100));     // above all ranges
     assert(!rangesContain(null, null, 0x41));   // empty
+}
+
+@("raylib_text.font.deferVariantFile.resolvesWithoutBuilding")
+@system unittest
+{
+    import std.file : remove, tempDir, write;
+    import std.path : buildPath;
+
+    LoadedFont missing;
+    deferVariantFile(missing, buildPath(tempDir, "sparkles-no-such-font.ttf"));
+    assert(missing.pathZ is null && !missing.deferred && !missing.present);
+    assert(!realize(missing, 16, null), "an unresolved face stays absent");
+
+    // Resolving reads no bytes: an existing path is enough to defer.
+    const file = buildPath(tempDir, "sparkles-deferred-face.ttf");
+    write(file, "");
+    scope (exit) remove(file);
+    LoadedFont face;
+    deferVariantFile(face, file);
+    assert(face.pathZ !is null && face.deferred && !face.present);
 }
