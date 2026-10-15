@@ -901,7 +901,9 @@ Accepted forms:
 Resolution follows the `convert` axis in §5.2; exactly one converter applies.
 Field-level converters apply to the whole field value, not to elements inside
 wrappers. Type-level converters apply whenever that exact annotated type is
-encoded or decoded.
+encoded or decoded: as a field, and as an array or static-array element, a map
+value, a null-aware wrapper's content or a `SumType` variant. A map _key_ goes
+through the string-only key rule of §4.2 instead.
 
 On encode, the backend calls `toWire(value)` and then encodes the returned wire
 value normally under the active format. If `toWire` returns an

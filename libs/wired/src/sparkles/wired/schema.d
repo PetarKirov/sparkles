@@ -346,7 +346,7 @@ private WireSchema buildWireSchema(F, T)()
                 schema.nodes[index].kind = NodeKind.staticArray;
                 schema.nodes[index].staticLength = V.length;
                 const first = reserveEdges(index, 1);
-                const child = buildShape!(E, Ancestors, V)("", site,
+                const child = buildType!(E, Ancestors, V)("", site,
                     WireTarget.value, nextAncestors);
                 schema.edges[first] = child;
             }
@@ -361,7 +361,7 @@ private WireSchema buildWireSchema(F, T)()
                 alias E = typeof(V.init[0]);
                 schema.nodes[index].kind = NodeKind.sequence;
                 const first = reserveEdges(index, 1);
-                const child = buildShape!(E, Ancestors, V)("", site,
+                const child = buildType!(E, Ancestors, V)("", site,
                     WireTarget.value, nextAncestors);
                 schema.edges[first] = child;
             }
@@ -374,7 +374,7 @@ private WireSchema buildWireSchema(F, T)()
                 const keyChild = buildShape!(K, Ancestors, V)("", site,
                     WireTarget.key, nextAncestors);
                 schema.edges[first] = keyChild;
-                const valueChild = buildShape!(E, Ancestors, V)("", site,
+                const valueChild = buildType!(E, Ancestors, V)("", site,
                     WireTarget.value, nextAncestors);
                 schema.edges[first + 1] = valueChild;
             }
@@ -385,7 +385,7 @@ private WireSchema buildWireSchema(F, T)()
                 schema.nodes[index].kind = NodeKind.nullAware;
                 schema.nodes[index].nullAwareKind = NullAwareKind.nullable;
                 const first = reserveEdges(index, 1);
-                const child = buildShape!(N, Ancestors, V)("", site,
+                const child = buildType!(N, Ancestors, V)("", site,
                     WireTarget.value, nextAncestors);
                 schema.edges[first] = child;
             }
@@ -396,7 +396,7 @@ private WireSchema buildWireSchema(F, T)()
                 schema.nodes[index].kind = NodeKind.nullAware;
                 schema.nodes[index].nullAwareKind = NullAwareKind.optional;
                 const first = reserveEdges(index, 1);
-                const child = buildShape!(N, Ancestors, V)("", site,
+                const child = buildType!(N, Ancestors, V)("", site,
                     WireTarget.value, nextAncestors);
                 schema.edges[first] = child;
             }
@@ -412,7 +412,7 @@ private WireSchema buildWireSchema(F, T)()
                 const first = reserveEdges(index, Variants.length);
                 static foreach (i, Variant; Variants)
                 {{
-                    const child = buildShape!(Variant, Ancestors, V)(
+                    const child = buildType!(Variant, Ancestors, V)(
                         Variant.stringof, site, slot, nextAncestors);
                     schema.nodes[child].nameAffectsWire = false;
                     schema.edges[first + i] = child;
