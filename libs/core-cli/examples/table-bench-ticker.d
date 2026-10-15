@@ -41,13 +41,15 @@ import core.time : Duration, dur;
 import std.algorithm.comparison : max, min;
 import std.conv : text;
 import std.datetime.stopwatch : AutoStart, StopWatch;
-import std.format : format;
+import std.format : format, formattedWrite;
 import std.stdio : write;
 
 import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui.components.live : stdoutLiveRegion;
-import sparkles.ui.components.table : drawTable, drawTableLines, TableProps;
-import sparkles.base.styled_template : styledText;
+import sparkles.base.text.writers : formatted;
+import sparkles.ui.components.table : drawTable, drawTableLines, TableBuilder,
+    TableProps;
+import sparkles.base.styled_template : styledText, writeStyled;
 import sparkles.base.text.width : Align;
 
 struct CliParams
@@ -167,28 +169,27 @@ size_t[] stableMinWidths(Bench[] benches)
 }
 
 /// ditto
-string[][] resultCells(BenchResult[] results, string inflight, size_t spin)
+TableBuilder resultCells(BenchResult[] results, string inflight, size_t spin)
 {
     import std.algorithm.iteration : map;
     import std.algorithm.searching : minElement;
 
-    string[][] cells = [[
-        styledText(i"{bold benchmark}"),
-        styledText(i"{bold iterations}"),
-        styledText(i"{bold time/iter}"),
-        styledText(i"{bold relative}"),
-    ]];
+    TableBuilder cells;
+    cells.row.cell!writeStyled(i"{bold benchmark}")
+        .cell!writeStyled(i"{bold iterations}")
+        .cell!writeStyled(i"{bold time/iter}")
+        .cell!writeStyled(i"{bold relative}");
     const fastest = results.length
         ? results.map!(r => r.nsPerIter).minElement : double.nan;
     foreach (ref r; results)
-        cells ~= [r.name, text(r.iterations), fmtNanos(r.nsPerIter),
-            relativeBar(r.nsPerIter, fastest)];
+        cells.row(r.name, r.iterations, formatted!writeNanos(r.nsPerIter),
+            formatted!writeRelativeBar(r.nsPerIter, fastest));
     if (inflight.length)
     {
         static immutable dchar[] frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"d;
         const glyph = frames[spin % $];
-        cells ~= [styledText(i"{dim $(glyph) $(inflight)}"),
-            styledText(i"{dim measuring…}"), "", ""];
+        cells.row.cell!writeStyled(i"{dim $(glyph) $(inflight)}")
+            .cell!writeStyled(i"{dim measuring…}").cell("").cell("");
     }
     return cells;
 }
@@ -207,30 +208,39 @@ TableProps frameProps(int budgetMs, in size_t[] minWidths)
 
 /// `1234.5` → `1.23µs`: two decimals and a two-cell unit, so the decimal
 /// column's dots share a cell across ns/µs/ms results.
-string fmtNanos(double ns)
+void writeNanos(W)(ref W w, double ns)
 {
     if (ns < 1_000)
-        return format!"%.2fns"(ns);
-    if (ns < 1_000_000)
-        return format!"%.2fµs"(ns / 1_000);
-    return format!"%.2fms"(ns / 1_000_000);
+        w.formattedWrite!"%.2fns"(ns);
+    else if (ns < 1_000_000)
+        w.formattedWrite!"%.2fµs"(ns / 1_000);
+    else
+        w.formattedWrite!"%.2fms"(ns / 1_000_000);
 }
 
 /// A bar scaled against the fastest result (full bar = fastest, shorter =
 /// slower) plus the slowdown factor. Log-scaled: micro-benchmark spreads span
 /// several orders of magnitude, so a linear bar would collapse everything but
 /// the winner to one cell.
-string relativeBar(double ns, double fastest)
+void writeRelativeBar(W)(ref W w, double ns, double fastest)
 {
     import std.math.exponential : log2;
 
+    static immutable string bar = () {
+        string s;
+        foreach (_; 0 .. fullBar)
+            s ~= "█";
+        return s;
+    }();
     const slowdown = ns / fastest;
     const cells = max(1, fullBar - cast(int) (log2(slowdown) * 1.25 + 0.5));
-    string bar;
-    foreach (_; 0 .. cells)
-        bar ~= "█";
-    const label = format!"%.1f×"(slowdown);
-    return styledText(i"{cyan $(bar)} {dim $(label)}");
+    writeStyled(w, i"{cyan $(bar[0 .. cells * "█".length])} {dim $(formatted!writeSlowdown(slowdown))}");
+}
+
+/// `2.5×`: the slowdown factor, one decimal.
+void writeSlowdown(W)(ref W w, double slowdown)
+{
+    w.formattedWrite!"%.1f×"(slowdown);
 }
 
 /// The workload roster: small, self-contained Phobos ops over inputs built

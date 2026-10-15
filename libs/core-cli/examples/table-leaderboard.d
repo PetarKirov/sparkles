@@ -31,12 +31,14 @@ module table_leaderboard_example;
 import core.thread : Thread;
 import core.time : dur;
 import std.conv : text;
+import std.range.primitives : put;
 import std.stdio : writeln;
 
 import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui.components.live : stdoutLiveRegion;
-import sparkles.ui.components.table : drawTableLines, TableProps;
-import sparkles.base.styled_template : styledText;
+import sparkles.base.text.writers : writeInteger;
+import sparkles.ui.components.table : drawTableLines, TableBuilder, TableProps;
+import sparkles.base.styled_template : styledText, writeStyled;
 import sparkles.base.text.width : Align;
 
 struct CliParams
@@ -141,21 +143,14 @@ Team[] makeTeams(int n)
 
 /// One frame of the leaderboard as table cells: medals for the top three, the
 /// score, and a trend arrow showing how far the team moved since the last tick.
-string[][] frameCells(in Team[] teams, size_t[string] prevRank, int tick)
+TableBuilder frameCells(in Team[] teams, size_t[string] prevRank, int tick)
 {
-    string[][] cells = [[
-        styledText(i"{bold rank}"),
-        styledText(i"{bold team}"),
-        styledText(i"{bold score}"),
-        styledText(i"{bold trend}"),
-    ]];
+    TableBuilder cells;
+    cells.row.cell!writeStyled(i"{bold rank}").cell!writeStyled(i"{bold team}")
+        .cell!writeStyled(i"{bold score}").cell!writeStyled(i"{bold trend}");
     foreach (rank, ref t; teams)
-        cells ~= [
-            rankLabel(rank),
-            t.name,
-            text(t.score),
-            trendLabel(rank, t.name in prevRank ? prevRank[t.name] : rank, tick),
-        ];
+        cells.row.cell!writeRank(rank).cell(t.name).cell!writeInteger(t.score)
+            .cell!writeTrend(rank, t.name in prevRank ? prevRank[t.name] : rank, tick);
     return cells;
 }
 
@@ -171,18 +166,22 @@ TableProps frameProps(int tick, int ticks)
 }
 
 /// Medals for the podium, plain numbers below it.
-string rankLabel(size_t rank)
+void writeRank(W)(ref W w, size_t rank)
 {
     static immutable medals = ["🥇", "🥈", "🥉"];
-    return rank < medals.length ? medals[rank] : text(rank + 1);
+    if (rank < medals.length)
+        put(w, medals[rank]);
+    else
+        writeInteger(w, rank + 1);
 }
 
 /// How far a team moved since the previous tick: ↑n / ↓n / · (unchanged).
-string trendLabel(size_t rank, size_t prev, int tick)
+void writeTrend(W)(ref W w, size_t rank, size_t prev, int tick)
 {
     if (tick == 0 || rank == prev)
-        return styledText(i"{dim ·}");
-    return rank < prev
-        ? styledText(i"{green ↑$(prev - rank)}")
-        : styledText(i"{red ↓$(rank - prev)}");
+        writeStyled(w, i"{dim ·}");
+    else if (rank < prev)
+        writeStyled(w, i"{green ↑$(prev - rank)}");
+    else
+        writeStyled(w, i"{red ↓$(rank - prev)}");
 }
