@@ -965,6 +965,14 @@ Every verb is a cancellation checkpoint, parks at most once, and resumes only
 at its terminal completion (multishot consumption and its backpressure:
 [open-issues](./open-issues.md) O16).
 
+### 7.4 Waiting on `sparkles.base.sync` primitives
+
+The scheduler installs a fiber parker for `sparkles.base.sync`, so that a
+fiber that waits on a mutex, a condition or any other primitive there
+suspends instead of blocking its worker, and is resumed on its owner
+whichever thread wakes it. Its contract is
+[fiber-parker.md](./fiber-parker.md) (target M20).
+
 ## 8. Structured concurrency
 
 ### 8.1 Scopes
@@ -1482,6 +1490,7 @@ struct LoopGroupConfig
     uint sqEntries = 256;
     Flag!"pinToCpu" pinToCpu = Yes.pinToCpu;
     Flag!"futexPark" futexPark = Yes.futexPark;  // degrades below kernel 6.7
+    FiberPark fiberPark = FiberPark.auto;        // ring | inbox (fiber-parker.md)
     uint fiberStackPages = 16;
     uint recvBufRingEntries = 0;             // per-worker provided ring (0 = off)
 }

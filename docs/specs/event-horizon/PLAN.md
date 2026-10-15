@@ -379,3 +379,30 @@ Darwin sampler is a `sampled == false` stub), item 5 (Windows, §13.9), item 6
 (the `apps/ci` port), and a `clone3(CLONE_INTO_CGROUP)` spawn path so that a
 child forked before the post-spawn migration lands is contained by
 construction rather than by the process group alone (SPEC §13.7).
+
+## M20 — The fiber parker for `sparkles.base.sync`
+
+Deliver [fiber-parker.md](./fiber-parker.md) (EFP1–EFP21) once base.sync's S1
+has landed: the scheduler installs its parker, records and park words live in
+the task slab, and cancellation stays latched (§8.4). Two paths, both
+complete:
+
+1. **The ring path** (Linux 6.7+): the `OpFutexWait`, `OpFutexWaitv` and
+   `OpFutexWake` operations with uring lowering and probe gating; a park is
+   an `IORING_OP_FUTEX_WAIT` on the fiber's park word with a linked timeout,
+   written only at the tick's submission point; an interruptible park adds its
+   cancellation node's cancel word through `IORING_OP_FUTEX_WAITV`, so
+   `cancelTree` wakes a node's parked fibers with one wake; bucket waits wait
+   in the kernel.
+2. **The inbox path** (every other backend and kernel): a wake inbox beside
+   the blocking-completion inbox (§13.8) and the loop's `Waker`.
+
+`LoopGroupConfig.fiberPark` (`auto`, `ring`, `inbox`) selects the path. The
+fiber-facing address wait is base.sync's `waitWhile` through this parker, not
+a separate event-horizon type.
+
+Gate: the fiber-parker testing table passes on every backend and, on Linux,
+on both paths; benchmarks FB1–FB7 are recorded for both paths in
+[benchmarks.md](./benchmarks.md), and `auto`'s choice follows them; base.sync's
+S4 migration of event-horizon's own users (`blocking_pool`, `raw_pool`,
+`pool`) builds on it.

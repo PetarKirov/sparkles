@@ -280,7 +280,7 @@ B4 and B5; a change to any of them reruns all seven.
 | ---------------------------------------- | ------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | every requirement of this tree           | planned | —        | no implementation exists; see [PLAN.md](./PLAN.md)                                                                                               |
 | `SYF2` on FreeBSD; the portable fallback | planned | —        | the FreeBSD leg (a virtual machine on every pull request, within 15 minutes) and the Linux portable-parker configuration do not exist yet (DS24) |
-| `SYK5`                                   | planned | —        | depends on `sparkles:event-horizon` specifying and testing its fiber parker                                                                      |
+| `SYK5`                                   | planned | —        | specified by event-horizon's [fiber-parker.md](../../event-horizon/fiber-parker.md); delivered and tested in its M20                             |
 
 The specification's independent-review gate is **partly met**: a first
 independent review on 2026-10-15 raised twelve findings and three gaps

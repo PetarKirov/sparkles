@@ -74,10 +74,11 @@ the seam and the portable thread parker.
 
 ## Dependent work in other specifications
 
-`sparkles:event-horizon` specifies and delivers the fiber parker (SYK2, SYK5,
-SYK8, SYK9, SPEC §4a), the blocking
-pool on these primitives, and its use of the address wait. Its own plan owns
-those milestones and their acceptance.
+`sparkles:event-horizon` specifies the fiber parker (SYK2, SYK5, SYK8, SYK9,
+SPEC §4a) in its [fiber-parker.md](../../event-horizon/fiber-parker.md), with
+latched cancellation, and delivers it, the blocking pool on these primitives
+and its use of the address wait in its milestone M20, which owns their
+acceptance.
 
 ## Deferred
 
