@@ -33,6 +33,11 @@ let
 
   weights = import ./test-weights.nix;
   pkgUnit = n: "pkg/${n}";
+  # The systems that run the examples and the flake check.
+  desktopSystems = [
+    "x86_64-linux"
+    "aarch64-darwin"
+  ];
 
   # ── jobs over sub-packages, statically sharded ─────────────────────
 
@@ -531,7 +536,7 @@ in
         };
       }
       // lib.concatMapAttrs (system: jobs: jobs) (
-        lib.genAttrs [ "x86_64-linux" "aarch64-darwin" ] (system: {
+        lib.genAttrs desktopSystems (system: {
           # Single-file examples: each its own unit, depending on what its
           # inline recipe names.
           "examples-${system}" = {

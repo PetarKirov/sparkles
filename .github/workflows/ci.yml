@@ -89,19 +89,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/24acqqa7z4lc151i92n9zx5k2gp98068-ci-job-ci
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.ci'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['ci'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.ci')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Fetch the plan
         continue-on-error: true
         uses: actions/download-artifact@v8
@@ -114,12 +116,12 @@ jobs:
           CACHIX_AUTH_TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}"
           CACHIX_CACHE: sparkles
           RESULTS: "{\"cloud-env-native\":\"${{ needs.cloud-env-native.result }}\",\"cloud-env-restricted\":\"${{ needs.cloud-env-restricted.result }}\",\"docs\":\"${{ needs.docs.result }}\",\"examples-aarch64-darwin\":\"${{ needs.examples-aarch64-darwin.result }}\",\"examples-x86_64-linux\":\"${{ needs.examples-x86_64-linux.result }}\",\"extracted-tests\":\"${{ needs.extracted-tests.result }}\",\"flake-check-aarch64-darwin\":\"${{ needs.flake-check-aarch64-darwin.result }}\",\"flake-check-x86_64-linux\":\"${{ needs.flake-check-x86_64-linux.result }}\",\"lint\":\"${{ needs.lint.result }}\",\"md-examples\":\"${{ needs.md-examples.result }}\",\"nix-build-aarch64-darwin\":\"${{ needs.nix-build-aarch64-darwin.result }}\",\"nix-build-android\":\"${{ needs.nix-build-android.result }}\",\"nix-build-x86_64-linux\":\"${{ needs.nix-build-x86_64-linux.result }}\",\"plan\":\"${{ needs.plan.result }}\",\"sanitize-1\":\"${{ needs.sanitize-1.result }}\",\"sanitize-2\":\"${{ needs.sanitize-2.result }}\",\"sanitize-3\":\"${{ needs.sanitize-3.result }}\",\"sanitize-4\":\"${{ needs.sanitize-4.result }}\",\"shader-readback\":\"${{ needs.shader-readback.result }}\",\"shader-reproducibility\":\"${{ needs.shader-reproducibility.result }}\",\"spec-evidence\":\"${{ needs.spec-evidence.result }}\",\"test-aarch64-darwin-ldc2-1\":\"${{ needs.test-aarch64-darwin-ldc2-1.result }}\",\"test-aarch64-darwin-ldc2-2\":\"${{ needs.test-aarch64-darwin-ldc2-2.result }}\",\"test-aarch64-darwin-ldc2-3\":\"${{ needs.test-aarch64-darwin-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-1\":\"${{ needs.test-aarch64-linux-ldc2-1.result }}\",\"test-aarch64-linux-ldc2-2\":\"${{ needs.test-aarch64-linux-ldc2-2.result }}\",\"test-aarch64-linux-ldc2-3\":\"${{ needs.test-aarch64-linux-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-4\":\"${{ needs.test-aarch64-linux-ldc2-4.result }}\",\"test-windows\":\"${{ needs.test-windows.result }}\",\"test-x86_64-linux-dmd-1\":\"${{ needs.test-x86_64-linux-dmd-1.result }}\",\"test-x86_64-linux-dmd-2\":\"${{ needs.test-x86_64-linux-dmd-2.result }}\",\"test-x86_64-linux-dmd-3\":\"${{ needs.test-x86_64-linux-dmd-3.result }}\",\"test-x86_64-linux-dmd-4\":\"${{ needs.test-x86_64-linux-dmd-4.result }}\",\"test-x86_64-linux-ldc2-1\":\"${{ needs.test-x86_64-linux-ldc2-1.result }}\",\"test-x86_64-linux-ldc2-2\":\"${{ needs.test-x86_64-linux-ldc2-2.result }}\",\"test-x86_64-linux-ldc2-3\":\"${{ needs.test-x86_64-linux-ldc2-3.result }}\",\"test-x86_64-linux-ldc2-4\":\"${{ needs.test-x86_64-linux-ldc2-4.result }}\",\"text-conformance\":\"${{ needs.text-conformance.result }}\",\"wsi-demos\":\"${{ needs.wsi-demos.result }}\",\"wsi-windows\":\"${{ needs.wsi-windows.result }}\"}"
-        run: /nix/store/0xy9mnzkxcwdciw3aw6v73yn7wrqx0ba-ci-record/bin/ci-record
+        run: "$CI_BUNDLE/bin/02-ci-record"
       - name: Every job succeeded or was skipped
         if: "${{ always() }}"
         env:
           RESULTS: "{\"cloud-env-native\":\"${{ needs.cloud-env-native.result }}\",\"cloud-env-restricted\":\"${{ needs.cloud-env-restricted.result }}\",\"docs\":\"${{ needs.docs.result }}\",\"examples-aarch64-darwin\":\"${{ needs.examples-aarch64-darwin.result }}\",\"examples-x86_64-linux\":\"${{ needs.examples-x86_64-linux.result }}\",\"extracted-tests\":\"${{ needs.extracted-tests.result }}\",\"flake-check-aarch64-darwin\":\"${{ needs.flake-check-aarch64-darwin.result }}\",\"flake-check-x86_64-linux\":\"${{ needs.flake-check-x86_64-linux.result }}\",\"lint\":\"${{ needs.lint.result }}\",\"md-examples\":\"${{ needs.md-examples.result }}\",\"nix-build-aarch64-darwin\":\"${{ needs.nix-build-aarch64-darwin.result }}\",\"nix-build-android\":\"${{ needs.nix-build-android.result }}\",\"nix-build-x86_64-linux\":\"${{ needs.nix-build-x86_64-linux.result }}\",\"plan\":\"${{ needs.plan.result }}\",\"sanitize-1\":\"${{ needs.sanitize-1.result }}\",\"sanitize-2\":\"${{ needs.sanitize-2.result }}\",\"sanitize-3\":\"${{ needs.sanitize-3.result }}\",\"sanitize-4\":\"${{ needs.sanitize-4.result }}\",\"shader-readback\":\"${{ needs.shader-readback.result }}\",\"shader-reproducibility\":\"${{ needs.shader-reproducibility.result }}\",\"spec-evidence\":\"${{ needs.spec-evidence.result }}\",\"test-aarch64-darwin-ldc2-1\":\"${{ needs.test-aarch64-darwin-ldc2-1.result }}\",\"test-aarch64-darwin-ldc2-2\":\"${{ needs.test-aarch64-darwin-ldc2-2.result }}\",\"test-aarch64-darwin-ldc2-3\":\"${{ needs.test-aarch64-darwin-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-1\":\"${{ needs.test-aarch64-linux-ldc2-1.result }}\",\"test-aarch64-linux-ldc2-2\":\"${{ needs.test-aarch64-linux-ldc2-2.result }}\",\"test-aarch64-linux-ldc2-3\":\"${{ needs.test-aarch64-linux-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-4\":\"${{ needs.test-aarch64-linux-ldc2-4.result }}\",\"test-windows\":\"${{ needs.test-windows.result }}\",\"test-x86_64-linux-dmd-1\":\"${{ needs.test-x86_64-linux-dmd-1.result }}\",\"test-x86_64-linux-dmd-2\":\"${{ needs.test-x86_64-linux-dmd-2.result }}\",\"test-x86_64-linux-dmd-3\":\"${{ needs.test-x86_64-linux-dmd-3.result }}\",\"test-x86_64-linux-dmd-4\":\"${{ needs.test-x86_64-linux-dmd-4.result }}\",\"test-x86_64-linux-ldc2-1\":\"${{ needs.test-x86_64-linux-ldc2-1.result }}\",\"test-x86_64-linux-ldc2-2\":\"${{ needs.test-x86_64-linux-ldc2-2.result }}\",\"test-x86_64-linux-ldc2-3\":\"${{ needs.test-x86_64-linux-ldc2-3.result }}\",\"test-x86_64-linux-ldc2-4\":\"${{ needs.test-x86_64-linux-ldc2-4.result }}\",\"text-conformance\":\"${{ needs.text-conformance.result }}\",\"wsi-demos\":\"${{ needs.wsi-demos.result }}\",\"wsi-windows\":\"${{ needs.wsi-windows.result }}\"}"
-        run: /nix/store/bxdad07rv1ln056vwq2khp3ps9slpswc-ci-verdict/bin/ci-verdict
+        run: "$CI_BUNDLE/bin/03-ci-verdict"
   cloud-env-native:
     name: cloud-env (native)
     needs:
@@ -267,19 +269,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/mab88vssb8ijdplhckr13mlc3j8cy9sd-ci-job-docs
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.docs'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['docs'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.docs')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Cache Yarn
         uses: actions/cache@v6
         with:
@@ -287,7 +291,7 @@ jobs:
           path: "~/.yarn/berry/cache"
           restore-keys: "yarn-${{ runner.os }}-"
       - name: Build the VitePress site
-        run: /nix/store/n9v01ln122cw58rk55pi4hphr9v5sbm4-ci-docs-build/bin/ci-docs-build
+        run: "$CI_BUNDLE/bin/02-ci-docs-build"
   examples-aarch64-darwin:
     name: examples aarch64-darwin
     needs:
@@ -326,23 +330,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/b5irmzsq950z46xlbvj9zkidw8q2fpv8-ci-job-examples-aarch64-darwin
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.examples-aarch64-darwin'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['examples-aarch64-darwin'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.examples-aarch64-darwin')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Prepare the event-horizon comparison checkouts
-        run: /nix/store/26164jd9vfc46xaihpvmzv9a33kh6f1x-ci-eh-comparisons/bin/ci-eh-comparisons
+        run: "$CI_BUNDLE/bin/01-ci-eh-comparisons"
       - name: Build and run the examples whose closure is new
-        run: /nix/store/490fam2ac80yx7d24hbigl2if7lg0d6q-ci-examples/bin/ci-examples
+        run: "$CI_BUNDLE/bin/02-ci-examples"
   examples-x86_64-linux:
     name: examples x86_64-linux
     needs:
@@ -381,23 +387,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/7z29baprdakhjsj31r5ff1mycnv10rwi-ci-job-examples-x86_64-linux
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.examples-x86_64-linux'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['examples-x86_64-linux'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.examples-x86_64-linux')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Prepare the event-horizon comparison checkouts
-        run: /nix/store/5h5x8yhk1jvgcjmqhk8dg6sx3v6wwc2f-ci-eh-comparisons/bin/ci-eh-comparisons
+        run: "$CI_BUNDLE/bin/01-ci-eh-comparisons"
       - name: Build and run the examples whose closure is new
-        run: /nix/store/15f82644za4zpr3356ahihk1xhb4fv5h-ci-examples/bin/ci-examples
+        run: "$CI_BUNDLE/bin/02-ci-examples"
   extracted-tests:
     name: "extracted test modes (--better-c, --wasm)"
     needs:
@@ -436,21 +444,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/pnl7zvs135j1h8p80ka6rpsmk0436kjv-ci-job-extracted-tests
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.extracted-tests'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['extracted-tests'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.extracted-tests')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: "--better-c and --wasm for the packages that use them"
-        run: /nix/store/8vjfmj9004kyjlkkxlnxzhhynzpb7bak-ci-test-extracted/bin/ci-test-extracted
+        run: "$CI_BUNDLE/bin/01-ci-test-extracted"
   flake-check-aarch64-darwin:
     name: nix flake check aarch64-darwin
     needs:
@@ -486,21 +496,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/97aabslgk8hhgrj2rdfjbb7anr27s1ad-ci-job-flake-check-aarch64-darwin
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.flake-check-aarch64-darwin'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['flake-check-aarch64-darwin'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.flake-check-aarch64-darwin')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: nix flake check
-        run: /nix/store/kplmqkma49xv29axsjpz9a9zsyapn89c-ci-flake-check/bin/ci-flake-check
+        run: "$CI_BUNDLE/bin/01-ci-flake-check"
   flake-check-x86_64-linux:
     name: nix flake check x86_64-linux
     needs:
@@ -536,21 +548,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/f3lzpglwqqz2vs1f56wlym6d1rscry2f-ci-job-flake-check-x86_64-linux
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.flake-check-x86_64-linux'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['flake-check-x86_64-linux'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.flake-check-x86_64-linux')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: nix flake check
-        run: /nix/store/drfaynkmvzpax81vak7gqkd768nxcdb1-ci-flake-check/bin/ci-flake-check
+        run: "$CI_BUNDLE/bin/01-ci-flake-check"
   lint:
     name: "lint & local links"
     needs:
@@ -586,19 +600,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/whl4c1xrhwzximn4ak8ls5g957qqyjp9-ci-job-lint
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.lint'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['lint'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.lint')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Restore the lychee cache
         uses: actions/cache/restore@v6
         with:
@@ -609,13 +625,13 @@ jobs:
       - name: Every pre-commit hook over the whole tree
         env:
           GITHUB_TOKEN: "${{ github.token }}"
-        run: /nix/store/mac374zvmb4aly6k81xz2w3362jmjvwg-ci-lint/bin/ci-lint
+        run: "$CI_BUNDLE/bin/02-ci-lint"
       - name: Check the links this pull request added or changed
         if: "${{ github.event_name == 'pull_request' }}"
         env:
           BASE_REF: "${{ github.base_ref }}"
           GITHUB_TOKEN: "${{ github.token }}"
-        run: /nix/store/vfvj3yr0l15jp72q5qxkz9zfkbq0smz6-ci-lint-diff-links/bin/ci-lint-diff-links
+        run: "$CI_BUNDLE/bin/03-ci-lint-diff-links"
       - name: Save the lychee cache
         if: "${{ always() }}"
         uses: actions/cache/save@v6
@@ -661,23 +677,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/jw3z57vxy6h7aca8kxjv9jj5bh9zvs1c-ci-job-md-examples
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.md-examples'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['md-examples'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.md-examples')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Prepare the event-horizon comparison checkouts
-        run: /nix/store/5h5x8yhk1jvgcjmqhk8dg6sx3v6wwc2f-ci-eh-comparisons/bin/ci-eh-comparisons
+        run: "$CI_BUNDLE/bin/01-ci-eh-comparisons"
       - name: Verify the runnable markdown whose closure is new
-        run: /nix/store/0bcfrj9j23gkvgaak14xk7yi1qsl1pby-ci-md-examples/bin/ci-md-examples
+        run: "$CI_BUNDLE/bin/02-ci-md-examples"
   nix-build-aarch64-darwin:
     needs:
       - plan
@@ -715,25 +733,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/nq295xnpniz3k60m2wziznpnd9hkrfv7-ci-job-nix-build-aarch64-darwin
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.nix-build-aarch64-darwin'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['nix-build-aarch64-darwin'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.nix-build-aarch64-darwin')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: "Build and push .#all-desktop"
-        run: "/nix/store/w40r9s931h0acyqirip8717cbv84v8cy-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#all-desktop"
+        run: "$CI_BUNDLE/bin/01-ci-with-cachix nix build --print-build-logs .#all-desktop"
       - name: "Run .#run-all-examples"
-        run: /nix/store/6i4pah0jvasbv6j7zm19m61w29zvd2zi-ci-run-all-examples/bin/ci-run-all-examples
+        run: "$CI_BUNDLE/bin/02-ci-run-all-examples"
       - name: "Build and push .#ui-shaders"
-        run: "/nix/store/w40r9s931h0acyqirip8717cbv84v8cy-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#ui-shaders"
+        run: "$CI_BUNDLE/bin/03-ci-with-cachix nix build --print-build-logs .#ui-shaders"
   nix-build-android:
     needs:
       - plan
@@ -771,21 +791,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/hdpz5chdzvwpwmhdxw3wx7j9fqr2lqa7-ci-job-nix-build-android
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.nix-build-android'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['nix-build-android'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.nix-build-android')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: "Build and push .#all-android"
-        run: "/nix/store/nalxb2cs4xb16c2rf90jjvhwbfzm5n3c-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#all-android"
+        run: "$CI_BUNDLE/bin/01-ci-with-cachix nix build --print-build-logs .#all-android"
   nix-build-x86_64-linux:
     needs:
       - plan
@@ -823,30 +845,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/hmx9ba37r3b8bfdqn28cnsgbym000fb0-ci-job-nix-build-x86_64-linux
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.nix-build-x86_64-linux'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['nix-build-x86_64-linux'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.nix-build-x86_64-linux')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: "Build and push .#all-desktop"
-        run: "/nix/store/nalxb2cs4xb16c2rf90jjvhwbfzm5n3c-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#all-desktop"
+        run: "$CI_BUNDLE/bin/01-ci-with-cachix nix build --print-build-logs .#all-desktop"
       - name: "Run .#run-all-examples"
-        run: /nix/store/fkgmcdywxgxhbvbkwczhj4qjb1a366hg-ci-run-all-examples/bin/ci-run-all-examples
+        run: "$CI_BUNDLE/bin/02-ci-run-all-examples"
       - name: "Build and push .#ui-shaders"
-        run: "/nix/store/nalxb2cs4xb16c2rf90jjvhwbfzm5n3c-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#ui-shaders"
+        run: "$CI_BUNDLE/bin/03-ci-with-cachix nix build --print-build-logs .#ui-shaders"
   plan:
     name: plan
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
+      bundles: "${{ steps.plan.outputs.bundles }}"
       stale: "${{ steps.plan.outputs.stale }}"
     defaults:
       run:
@@ -871,24 +896,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/ldgbf690vzbl0vhqbim7k9mksh8syyi5-ci-job-plan
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.plan'
+          bundle=/nix/store/qg1if3m0z3hxl3p9z1pkkykm66a5sbqa-ci-job-plan
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.plan')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Find the work that is new
         id: plan
         env:
           CI_FORCE: "${{ inputs.force && '1' || '0' }}"
-        run: /nix/store/1gvscipf2jzkanbxk6ch84dr0b7r8zg0-ci-plan/bin/ci-plan ci
+        run: "$CI_BUNDLE/bin/01-ci-plan ci"
       - name: Keep the plan for the fan-in
         uses: actions/upload-artifact@v7
         with:
@@ -933,21 +960,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/jsnpraxpd07cv33q7f1flgyb2rdp4hyw-ci-job-sanitize-1
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.sanitize-1'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['sanitize-1'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.sanitize-1')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Run the tests under ASan and stackovf
-        run: /nix/store/lm694qnqs03qhi7lvwd2s4lzaf08m1nx-ci-test-sanitize/bin/ci-test-sanitize
+        run: "$CI_BUNDLE/bin/01-ci-test-sanitize"
   sanitize-2:
     name: sanitize (2/4)
     needs:
@@ -986,21 +1015,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/y4vkazbz14qkmhh1pq06364yr7bzhcl9-ci-job-sanitize-2
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.sanitize-2'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['sanitize-2'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.sanitize-2')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Run the tests under ASan and stackovf
-        run: /nix/store/pkl6r46r1676qy9d0vdfy6bmwb8zs30k-ci-test-sanitize/bin/ci-test-sanitize
+        run: "$CI_BUNDLE/bin/01-ci-test-sanitize"
   sanitize-3:
     name: sanitize (3/4)
     needs:
@@ -1039,21 +1070,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/28v56wfwck010i8ig7jwi3xqbsslml1g-ci-job-sanitize-3
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.sanitize-3'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['sanitize-3'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.sanitize-3')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Run the tests under ASan and stackovf
-        run: /nix/store/9w6055rma69127z17makzjlk8qfs784n-ci-test-sanitize/bin/ci-test-sanitize
+        run: "$CI_BUNDLE/bin/01-ci-test-sanitize"
   sanitize-4:
     name: sanitize (4/4)
     needs:
@@ -1092,21 +1125,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/1disxyp50w8jrz64rrlm2agknks0qa01-ci-job-sanitize-4
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.sanitize-4'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['sanitize-4'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.sanitize-4')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Run the tests under ASan and stackovf
-        run: /nix/store/drd58fd9kwa85bva070a6fsgk9h61zc5-ci-test-sanitize/bin/ci-test-sanitize
+        run: "$CI_BUNDLE/bin/01-ci-test-sanitize"
   shader-readback:
     name: "shader readback (x86_64-linux, Mesa)"
     needs:
@@ -1144,21 +1179,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/lnnf7rs1ar6bfds5zna048kv1689sw4i-ci-job-shader-readback
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.shader-readback'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['shader-readback'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.shader-readback')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Read back generated shaders on a GL driver
-        run: /nix/store/qcpidsf6k3c7wkiix2h67wgiwx2f2drw-ci-shader-readback/bin/ci-shader-readback
+        run: "$CI_BUNDLE/bin/01-ci-shader-readback"
   shader-reproducibility:
     name: Generated shaders agree across platforms
     needs:
@@ -1191,21 +1228,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/67harmslpwns5gbymxwmvfnsgvq39jkn-ci-job-shader-reproducibility
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.shader-reproducibility'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['shader-reproducibility'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.shader-reproducibility')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: The generated shaders agree across platforms
-        run: /nix/store/hi322kxqxh1w84wrk0sbdznlig7j325y-ci-shader-reproducibility/bin/ci-shader-reproducibility
+        run: "$CI_BUNDLE/bin/01-ci-shader-reproducibility"
   spec-evidence:
     name: "spec evidence & credits"
     needs:
@@ -1236,23 +1275,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/l1ym1jn2ahsfn1byf0whny0n5flxilfi-ci-job-spec-evidence
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.spec-evidence'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['spec-evidence'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.spec-evidence')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Every cited symbol resolves
-        run: /nix/store/rljqsbfq1j5l0bg78ygxxw0xm332znnp-ci-spec-evidence/bin/ci-spec-evidence
+        run: "$CI_BUNDLE/bin/01-ci-spec-evidence"
       - name: Every shipped component is credited
-        run: /nix/store/y2ypyf7v921cwi9vp6djmzaj2w64jk4y-ci-check-credits/bin/ci-check-credits
+        run: "$CI_BUNDLE/bin/02-ci-check-credits"
   test-aarch64-darwin-ldc2-1:
     name: test aarch64-darwin ldc2 (1/3)
     needs:
@@ -1291,21 +1332,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/qjidl8ib06wl5xkziwnccsxqzk2kkrgb-ci-job-test-aarch64-darwin-ldc2-1
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-aarch64-darwin-ldc2-1'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-aarch64-darwin-ldc2-1'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-aarch64-darwin-ldc2-1')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/2647h4qsm1bi9r1gncrvhw6masjqsfwm-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-aarch64-darwin-ldc2-2:
     name: test aarch64-darwin ldc2 (2/3)
     needs:
@@ -1344,21 +1387,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/jmcaha96cw3jdlnb3kvwdsrvfghawcvm-ci-job-test-aarch64-darwin-ldc2-2
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-aarch64-darwin-ldc2-2'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-aarch64-darwin-ldc2-2'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-aarch64-darwin-ldc2-2')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/34mblpxmw7fl4zx3xxhwzs5bsdcr5h6w-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-aarch64-darwin-ldc2-3:
     name: test aarch64-darwin ldc2 (3/3)
     needs:
@@ -1397,21 +1442,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/1xdkm6xq7shdsww6cd03hjza8ag56jyc-ci-job-test-aarch64-darwin-ldc2-3
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-aarch64-darwin-ldc2-3'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-aarch64-darwin-ldc2-3'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-aarch64-darwin-ldc2-3')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/d1sy5wz329waymjlrbayraw6xx45p3f8-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-aarch64-linux-ldc2-1:
     name: test aarch64-linux ldc2 (1/4)
     needs:
@@ -1450,21 +1497,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/gp8k2vni6p8l9ga6xz1f84vr3vcjw0h8-ci-job-test-aarch64-linux-ldc2-1
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-aarch64-linux-ldc2-1'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-aarch64-linux-ldc2-1'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-aarch64-linux-ldc2-1')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/5ys0sqlfd8jccsgy9sl5farsnmmbqww0-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-aarch64-linux-ldc2-2:
     name: test aarch64-linux ldc2 (2/4)
     needs:
@@ -1503,21 +1552,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/2yglnj8n27mamixlbgpprqd8h33kyv3z-ci-job-test-aarch64-linux-ldc2-2
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-aarch64-linux-ldc2-2'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-aarch64-linux-ldc2-2'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-aarch64-linux-ldc2-2')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/cfif5ni4k41xj2i5a2vfnj7gyxizrhx8-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-aarch64-linux-ldc2-3:
     name: test aarch64-linux ldc2 (3/4)
     needs:
@@ -1556,21 +1607,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/a9pw0jvgg51y3r3v57zjv7zy8rh172m1-ci-job-test-aarch64-linux-ldc2-3
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-aarch64-linux-ldc2-3'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-aarch64-linux-ldc2-3'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-aarch64-linux-ldc2-3')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/f0nc1qixlirwy6i06z3rpkxn14223l0r-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-aarch64-linux-ldc2-4:
     name: test aarch64-linux ldc2 (4/4)
     needs:
@@ -1609,21 +1662,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/v7cpk8mqx79d9abfz7kvqgmb6yzcw2m9-ci-job-test-aarch64-linux-ldc2-4
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-aarch64-linux-ldc2-4'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-aarch64-linux-ldc2-4'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-aarch64-linux-ldc2-4')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/x4nq17xqxqfn10wy9lz3yjrbas65mm4g-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-windows:
     name: test x86_64-windows ldc2
     needs:
@@ -1693,21 +1748,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/f02xl64wqr38vr50sl9p7wiym1j23kwx-ci-job-test-x86_64-linux-dmd-1
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-x86_64-linux-dmd-1'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-dmd-1'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-x86_64-linux-dmd-1')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/mv5r05gbd3ba5rg6yxa21592ymayi5ag-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-x86_64-linux-dmd-2:
     name: test x86_64-linux dmd (2/4)
     needs:
@@ -1746,21 +1803,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/b5dl0qdrasymkyx6ns9078a36s80ly95-ci-job-test-x86_64-linux-dmd-2
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-x86_64-linux-dmd-2'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-dmd-2'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-x86_64-linux-dmd-2')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/fl5624q3z26z4i6qkhi8f2kp2j0y4bvr-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-x86_64-linux-dmd-3:
     name: test x86_64-linux dmd (3/4)
     needs:
@@ -1799,21 +1858,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/dnax6rzw84b0457ymm4rwdn6y5s7l8kh-ci-job-test-x86_64-linux-dmd-3
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-x86_64-linux-dmd-3'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-dmd-3'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-x86_64-linux-dmd-3')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/9p741b6b4w66dyardhicqlfphqsdzw0i-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-x86_64-linux-dmd-4:
     name: test x86_64-linux dmd (4/4)
     needs:
@@ -1852,21 +1913,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/s02161dlvff3m8cc9hggbmb78dj9c2xz-ci-job-test-x86_64-linux-dmd-4
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-x86_64-linux-dmd-4'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-dmd-4'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-x86_64-linux-dmd-4')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/f2ry5i1w3c8gwhhjrz64nfpihc6vrnk1-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-x86_64-linux-ldc2-1:
     name: test x86_64-linux ldc2 (1/4)
     needs:
@@ -1905,21 +1968,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/ihrrcck7j554pknh4wy9k6q01mvxy6lh-ci-job-test-x86_64-linux-ldc2-1
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-x86_64-linux-ldc2-1'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-ldc2-1'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-x86_64-linux-ldc2-1')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/mv5r05gbd3ba5rg6yxa21592ymayi5ag-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-x86_64-linux-ldc2-2:
     name: test x86_64-linux ldc2 (2/4)
     needs:
@@ -1958,21 +2023,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/22h4m202vg9r8dr0qrz41wcx6q2nrgyx-ci-job-test-x86_64-linux-ldc2-2
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-x86_64-linux-ldc2-2'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-ldc2-2'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-x86_64-linux-ldc2-2')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/fl5624q3z26z4i6qkhi8f2kp2j0y4bvr-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-x86_64-linux-ldc2-3:
     name: test x86_64-linux ldc2 (3/4)
     needs:
@@ -2011,21 +2078,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/x0z1rn9vm14ch7s51fbv7vinsrasii9n-ci-job-test-x86_64-linux-ldc2-3
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-x86_64-linux-ldc2-3'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-ldc2-3'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-x86_64-linux-ldc2-3')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/9p741b6b4w66dyardhicqlfphqsdzw0i-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   test-x86_64-linux-ldc2-4:
     name: test x86_64-linux ldc2 (4/4)
     needs:
@@ -2064,21 +2133,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/ch0000gdq5axa1bz0kq97gx5k2p99nan-ci-job-test-x86_64-linux-ldc2-4
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.test-x86_64-linux-ldc2-4'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-ldc2-4'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.test-x86_64-linux-ldc2-4')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: dub test the packages whose closure is new
-        run: /nix/store/f2ry5i1w3c8gwhhjrz64nfpihc6vrnk1-ci-test/bin/ci-test
+        run: "$CI_BUNDLE/bin/01-ci-test"
   text-conformance:
     name: Unicode conformance
     needs:
@@ -2114,21 +2185,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/kclaspx26wap25ws886jkppdsa7kfw7i-ci-job-text-conformance
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.text-conformance'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['text-conformance'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.text-conformance')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Run the official corpora
-        run: /nix/store/xkp5qb8wscz0wdg668mlb9xmdb4g77h1-ci-text-conformance/bin/ci-text-conformance
+        run: "$CI_BUNDLE/bin/01-ci-text-conformance"
   wsi-demos:
     name: "wsi x86_64-linux (X11, Wayland)"
     needs:
@@ -2166,21 +2239,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/qbwhbq5axs72rp5qdv8h33n9znsd3lnl-ci-job-wsi-demos
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.ci.wsi-demos'
+          bundle='${{ fromJSON(needs.plan.outputs.bundles)['wsi-demos'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.ci.wsi-demos')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Build and run the X11 and Wayland examples and demos
-        run: /nix/store/9aw1dyglsv67cpcb43jrj5ppppbx2flg-ci-wsi-demos/bin/ci-wsi-demos
+        run: "$CI_BUNDLE/bin/01-ci-wsi-demos"
   wsi-windows:
     name: wsi x86_64-windows
     needs:

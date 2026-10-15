@@ -45,25 +45,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/549ss7pixmaqdbfbvxy48gkinv3qgi4v-ci-job-nix-build-pin-aarch64-darwin
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.release.nix-build-pin-aarch64-darwin'
+          bundle=$("$nix/nix" eval --raw "$attr.outPath")
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.release.nix-build-pin-aarch64-darwin')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: "Build and push .#all-desktop"
-        run: "/nix/store/w40r9s931h0acyqirip8717cbv84v8cy-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#all-desktop"
+        run: "$CI_BUNDLE/bin/01-ci-with-cachix nix build --print-build-logs .#all-desktop"
       - name: "Push & pin the release closure"
         env:
           CI_SYSTEM: aarch64-darwin
-        run: /nix/store/c48qkl4c1irwq2669fdd41jr64dx9kkr-ci-release-pin/bin/ci-release-pin
+        run: "$CI_BUNDLE/bin/02-ci-release-pin"
   nix-build-pin-x86_64-linux:
     name: "Nix build, push & pin (x86_64-linux)"
     runs-on: ubuntu-latest
@@ -99,25 +101,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/3gcm9gjms016mk81lvx25jmklagsjj0j-ci-job-nix-build-pin-x86_64-linux
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.release.nix-build-pin-x86_64-linux'
+          bundle=$("$nix/nix" eval --raw "$attr.outPath")
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.release.nix-build-pin-x86_64-linux')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: "Build and push .#all-desktop"
-        run: "/nix/store/nalxb2cs4xb16c2rf90jjvhwbfzm5n3c-ci-with-cachix/bin/ci-with-cachix nix build --print-build-logs .#all-desktop"
+        run: "$CI_BUNDLE/bin/01-ci-with-cachix nix build --print-build-logs .#all-desktop"
       - name: "Push & pin the release closure"
         env:
           CI_SYSTEM: x86_64-linux
-        run: /nix/store/px0r6szj7aj4lvl95dwzbcndzh2ygkwc-ci-release-pin/bin/ci-release-pin
+        run: "$CI_BUNDLE/bin/02-ci-release-pin"
   notify-dub-registry:
     name: notify the DUB registry
     runs-on: ubuntu-latest
@@ -145,20 +149,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/0m0gg3qxx3x40wy7x3zmy7g0bsp45v4r-ci-job-notify-dub-registry
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.release.notify-dub-registry'
+          bundle=$("$nix/nix" eval --raw "$attr.outPath")
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.release.notify-dub-registry')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Trigger the code.dlang.org update
         env:
           DUB_REGISTRY_SECRET: "${{ secrets.DUB_REGISTRY_SECRET }}"
-        run: /nix/store/0z2mppixmz05dynay176akjm47pgpygf-ci-notify-dub-registry/bin/ci-notify-dub-registry
+        run: "$CI_BUNDLE/bin/01-ci-notify-dub-registry"

@@ -235,8 +235,9 @@ workflow. Rehearse it with
 - **The workflows are generated.** Edit `nix/ci/workflows/*.nix`, then
   `nix run .#render-workflows` (the `ci-workflows` hook does it on commit);
   `checks.<system>.ci-workflows` fails on drift. Every Nix step's `run` is a
-  store path — build steps with the `nix/ci/tools.nix` factories, never a
-  string. The work is tasks (`nix/ci/tasks.nix`) that jobs place; run one
+  derivation — build steps with the `nix/ci/tools.nix` factories, never a
+  string. A job runs them from its bundle, resolved when it runs, so a
+  library edit changes no workflow file. The work is tasks (`nix/ci/tasks.nix`) that jobs place; run one
   locally with `nix run .#ciTasks.<name> -- [units…]`. Jobs are lazy: they run only the units (`nix/ci/lib/graph.nix`)
   whose inputs are new, so a test that reads a file outside its package must
   list it in the graph's `testReads`, or it passes stale. A job's shell holds

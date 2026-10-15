@@ -52,26 +52,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/35v77h31crsm4092vg8kwh4lbrnn63rj-ci-job-mirror
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.main-checks.mirror'
+          bundle=$("$nix/nix" eval --raw "$attr.outPath")
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.main-checks.mirror')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: "Mirror, if the landed tree is the tree that was built"
         id: mirror
         env:
           DRY_RUN: "${{ inputs.dry_run && '--dry-run' || '' }}"
           GITHUB_TOKEN: "${{ github.token }}"
           SHA: "${{ inputs.sha || github.sha }}"
-        run: /nix/store/h9bp8dkflmr89pvajz0460qal20x2igf-ci-mirror-checks/bin/ci-mirror-checks
+        run: "$CI_BUNDLE/bin/01-ci-mirror-checks"
   rebuild:
     name: Build the commit for real
     needs:

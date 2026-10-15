@@ -52,22 +52,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/7jmq264rkbbr1nzl0d5yxa6ay6mxqmhk-ci-job-build
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.fdroid.build'
+          bundle=$("$nix/nix" eval --raw "$attr.outPath")
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.fdroid.build')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Build and push
-        run: "/nix/store/nalxb2cs4xb16c2rf90jjvhwbfzm5n3c-ci-with-cachix/bin/ci-with-cachix nix run .#release -- publish --tag \"$TAG\" --stage build --no-require-cached --workdir \"$RUNNER_TEMP/fdroid-build\""
+        run: "$CI_BUNDLE/bin/01-ci-with-cachix nix run .#release -- publish --tag \"$TAG\" --stage build --no-require-cached --workdir \"$RUNNER_TEMP/fdroid-build\""
       - name: Pin the unsigned APK
-        run: /nix/store/mfdp07dlvibnv1qn0vls5k1z97cknyap-ci-fdroid-pin/bin/ci-fdroid-pin
+        run: "$CI_BUNDLE/bin/02-ci-fdroid-pin"
       - name: Report the handoff
-        run: /nix/store/4wa1pbyjv49kdf5k9m4zcsc6z2pipyw7-ci-fdroid-handoff/bin/ci-fdroid-handoff
+        run: "$CI_BUNDLE/bin/03-ci-fdroid-handoff"

@@ -8,9 +8,11 @@ nix run .#render-workflows        # rewrite .github/workflows/*.yml
 nix build .#checks.x86_64-linux.ci-workflows   # drift + actionlint/shellcheck
 ```
 
-The `ci-workflows` pre-commit hook re-renders on every commit that touches a
-source the steps are built from. A rebase conflict in a workflow file is
-resolved by re-rendering, never by hand.
+The `ci-workflows` pre-commit hook re-renders on every commit that touches
+`nix/ci`. The workflow files name no store path that the repository's sources
+decide (below), so a library edit leaves them alone. They change only when
+the pipeline's shape does. A rebase conflict in a workflow file is resolved
+by re-rendering, never by hand.
 
 The shape follows [nialov/actions.nix](https://github.com/nialov/actions.nix/blob/25d2104c420cceacbf5b3935e2dd1dbfabe01d8c/README.md):
 workflows, jobs and steps are a flake-parts option tree
@@ -57,9 +59,9 @@ a task. They keep a job-level `lazy`, keyed by their rendered YAML.
 
 ## Every step is a store path
 
-On a runner with Nix, a step's `run` is a derivation, rendered as its
-`/nix/store/…/bin/<name>`; the option's type rejects a string there. A step
-is built by one of the factories in [`tools.nix`](./tools.nix):
+On a runner with Nix, a step's `run` is a derivation; the option's type
+rejects a string there. A step is built by one of the factories in
+[`tools.nix`](./tools.nix):
 
 | Factory                                  | PATH inside the step                                                 |
 | ---------------------------------------- | -------------------------------------------------------------------- |
@@ -73,10 +75,22 @@ bootstrap (checkout, install Nix, realise the job's closure), and the jobs
 that run without Nix on purpose (`system = null`: the Windows leg, which has
 no Nix, and `cloud-env-*`, which tests a bootstrap from nothing).
 
-Each Nix job's first own step realises one store path, the job's _bundle_
-(every step program). It is substituted from the cache when it is there, and
-built from the flake when it is not; a built path that differs from the one
-in the YAML fails the job as stale workflows.
+A Nix job's steps are gathered into one store path, the job's _bundle_
+(`.#ci.bundles.<workflow>.<job>`): `bin/<NN>-<name>` links to each step's
+program. The YAML runs `$CI_BUNDLE/bin/02-ci-lint`, not the program's store
+path. The job's first own step resolves the bundle from the commit it runs:
+
+- a job that needs the planner takes the path from the plan, which keyed the
+  job's stamps from that same evaluation;
+- any other job evaluates it;
+- the planner's own bundle, made from nixpkgs alone, is written into the
+  YAML, to spare the critical path an evaluation.
+
+The step then substitutes the bundle from the cache, or builds it from the
+flake. So what runs is always what the flake says now, never what an older
+render committed. The only store paths left in the YAML (the planner's
+bundle and the default shell's `bash`) change with a nixpkgs bump, not with
+an edit to the repository.
 
 ## A job's shell is what its units need
 

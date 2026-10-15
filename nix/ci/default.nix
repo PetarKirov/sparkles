@@ -400,7 +400,7 @@ let
         if s.run == null then
           null
         else if lib.isDerivation s.run then
-          lib.concatStringsSep " " ([ (lib.getExe s.run) ] ++ s.args)
+          lib.concatStringsSep " " ([ "$CI_BUNDLE/bin/${s.slot}" ] ++ s.args)
         else
           s.run;
     };
@@ -418,38 +418,80 @@ let
       auto-optimise-store = false
     '';
 
+  # A job's store-path steps, each under a name that does not change when its
+  # program does: the YAML runs `"$CI_BUNDLE"/bin/<slot>`, so it names no
+  # store path that a library edit would change.
+  slotted = lib.imap1 (
+    i: s:
+    s
+    // {
+      slot =
+        if lib.isDerivation s.run then
+          "${lib.fixedWidthNumber 2 i}-${baseNameOf (builtins.unsafeDiscardStringContext (lib.getExe s.run))}"
+        else
+          null;
+    }
+  );
+
   # Everything a Nix job runs, in one store path: realising it fetches (or
-  # builds) the whole closure up front, and the path in the YAML pins it.
+  # builds) the whole closure up front, and `bin/` holds the steps.
   bundleOf =
     tools: id: steps:
-    tools.pkgs.writeText "ci-job-${id}" (
-      lib.concatLines (
-        map toString ([ tools.pkgs.bash ] ++ builtins.filter lib.isDerivation (map (s: s.run) steps))
-      )
+    tools.pkgs.linkFarm "ci-job-${id}" (
+      [
+        {
+          name = "bash";
+          path = "${tools.pkgs.bash}/bin/bash";
+        }
+      ]
+      ++ map (s: {
+        name = "bin/${s.slot}";
+        path = lib.getExe s.run;
+      }) (builtins.filter (s: s.slot != null) steps)
     );
 
-  realiseStep = wfName: id: system: bundle: {
+  # The bundle is resolved when the job runs, from the commit it runs
+  # (`source`): a job that needs the planner takes it from the plan, whose
+  # stamps were keyed by the same evaluation; any other job evaluates it. So
+  # what runs is what the flake says now, never what an older render
+  # committed — and a library edit changes no workflow file.
+  realiseStep = wfName: id: source: {
     name = "Realise the job's closure";
     # The one bootstrap seam: no store path can run before this step has
     # fetched them, so it uses the runner's bash and the installer's profile.
     shell = "bash";
     run = ''
       set -euo pipefail
-      bundle=${bundle}
       nix=/nix/var/nix/profiles/default/bin
+      attr='.#ci.bundles.${wfName}.${id}'
+      bundle=${
+        if source == "plan" then
+          "'${expr "fromJSON(needs.plan.outputs.bundles)['${id}']"}'"
+        else if source == "eval" then
+          ''$("$nix/nix" eval --raw "$attr.outPath")''
+        else
+          source
+      }
       if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
         echo "Substituted $bundle"
-        exit 0
+      else
+        echo "::group::Building the job's closure (not in the binary cache yet)"
+        built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+        echo "::endgroup::"
+        if [ "$built" != "$bundle" ]; then
+          echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+          exit 1
+        fi
       fi
-      echo "::group::Building the job's closure (not in the binary cache yet)"
-      built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.${wfName}.${id}')
-      echo "::endgroup::"
-      if [ "$built" != "$bundle" ]; then
-        echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-        exit 1
-      fi
+      echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
     '';
   };
+
+  # Whether a job takes its bundle from the planner: it needs it, and is not
+  # it.
+  fromPlan =
+    wf: id: job:
+    wf.plan.enable && id != "plan" && (isLazy job || builtins.elem "plan" job.needs);
 
   staleOf = id: "fromJSON(needs.plan.outputs.stale)['${id}']";
 
@@ -597,7 +639,8 @@ let
       features = graph.needsOf (job.lazy.units ++ job.lazy.common) ++ job.features;
       tools = if onNix then (toolsFor variant job.system).withFeatures features else null;
       expanded = expandSteps variant job (job.steps tools);
-      inherit (expanded) steps instances;
+      inherit (expanded) instances;
+      steps = slotted expanded.steps;
       lazy = wf.plan.enable && isLazy job;
       granularTasks = builtins.filter (i: i.task.granular) (lazyInstances instances);
       granular =
@@ -639,7 +682,19 @@ let
               authToken = expr "secrets.CACHIX_AUTH_TOKEN";
             };
           }
-          ++ [ (realiseStep wfName id job.system bundle) ]
+          ++ [
+            (realiseStep wfName id (
+              if fromPlan wf id job then
+                "plan"
+              # The planner's own tools come from nixpkgs alone, so naming
+              # them changes only with a nixpkgs bump, and spares the
+              # critical path an evaluation.
+              else if id == "plan" then
+                bundle
+              else
+                "eval"
+            ))
+          ]
         );
     in
     {
@@ -795,7 +850,10 @@ let
     system = cfg.settings.planSystem;
     timeout-minutes = 20;
     cachix.push = false;
-    outputs.stale = expr "steps.plan.outputs.stale";
+    outputs = {
+      stale = expr "steps.plan.outputs.stale";
+      bundles = expr "steps.plan.outputs.bundles";
+    };
     steps = tools: [
       {
         name = "Find the work that is new";
@@ -917,7 +975,14 @@ let
               ;
             jobs = lib.mapAttrs (_: j: j.attrs) jobs;
           });
-      plan = planOf wfName wf;
+      plan = {
+        jobs = planOf wfName wf;
+        # What the jobs that need the planner will run, from this same
+        # evaluation that keyed their stamps.
+        bundles = lib.mapAttrs (_: j: toString j.bundle) (
+          lib.filterAttrs (id: _: fromPlan wf id wf.jobs.${id}) nixJobs
+        );
+      };
     }
   ) cfg.workflows;
 

@@ -61,19 +61,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bundle=/nix/store/bamqjpv2c4bmd11fwa8mxpa1vkm82m89-ci-job-deploy
           nix=/nix/var/nix/profiles/default/bin
+          attr='.#ci.bundles.docs.deploy'
+          bundle=$("$nix/nix" eval --raw "$attr.outPath")
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
-            exit 0
+          else
+            echo "::group::Building the job's closure (not in the binary cache yet)"
+            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
+            echo "::endgroup::"
+            if [ "$built" != "$bundle" ]; then
+              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
+              exit 1
+            fi
           fi
-          echo "::group::Building the job's closure (not in the binary cache yet)"
-          built=$("$nix/nix" build --no-link --print-out-paths -L '.#ci.bundles.docs.deploy')
-          echo "::endgroup::"
-          if [ "$built" != "$bundle" ]; then
-            echo "::error::.github/workflows is stale: it names $bundle, the flake builds $built. Run: nix run .#render-workflows"
-            exit 1
-          fi
+          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
       - name: Cache Yarn
         uses: actions/cache@v6
         with:
@@ -84,12 +86,12 @@ jobs:
         continue-on-error: true
         env:
           GITHUB_TOKEN: "${{ github.token }}"
-        run: /nix/store/h2jmij0wiwxq39y2jirgph87p3vrq6h6-ci-merge-badges/bin/ci-merge-badges
+        run: "$CI_BUNDLE/bin/02-ci-merge-badges"
       - name: Build the VitePress site
-        run: /nix/store/n9v01ln122cw58rk55pi4hphr9v5sbm4-ci-docs-build/bin/ci-docs-build
+        run: "$CI_BUNDLE/bin/03-ci-docs-build"
       - name: "Deploy to Cloudflare Pages & comment the preview URL"
         env:
           CLOUDFLARE_ACCOUNT_ID: "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}"
           CLOUDFLARE_API_TOKEN: "${{ secrets.CLOUDFLARE_API_TOKEN }}"
           GITHUB_TOKEN: "${{ github.token }}"
-        run: /nix/store/gaygkzl9844aqa7zkfwli15zw88njwds-ci-deploy-cloudflare-pages/bin/ci-deploy-cloudflare-pages
+        run: "$CI_BUNDLE/bin/04-ci-deploy-cloudflare-pages"

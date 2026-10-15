@@ -146,7 +146,7 @@ in
               if [ "''${CI_FORCE:-0}" = 1 ]; then
                 echo "Forced: every unit runs."
               else
-                jq -r '.[].units[].path' raw.json | split -l 100 - batch.
+                jq -r '.jobs[].units[].path' raw.json | split -l 100 - batch.
                 for batch in batch.*; do
                   for attempt in 1 2; do
                     # shellcheck disable=SC2046 # one store path per word
@@ -162,13 +162,16 @@ in
                 jq -s 'add // {} | with_entries(select(.value != null)) | map_values(true)' \
                   batch.*.json > present.json
                 rm -f batch.*
-                echo "$(jq length present.json) of $(jq '[.[].units[]] | length' raw.json) stamps already pass."
+                echo "$(jq length present.json) of $(jq '[.jobs[].units[]] | length' raw.json) stamps already pass."
               fi
 
               jq --slurpfile present present.json \
-                '{ jobs: ., stale: map_values([.units[] | select($present[0][.path] | not) | .arg]) }' \
+                '.jobs as $jobs | { $jobs, bundles, stale: ($jobs | map_values([.units[] | select($present[0][.path] | not) | .arg])) }' \
                 raw.json > plan.json
-              echo "stale=$(jq -c .stale plan.json)" >> "''${GITHUB_OUTPUT:-/dev/null}"
+              {
+                echo "stale=$(jq -c .stale plan.json)"
+                echo "bundles=$(jq -c .bundles plan.json)"
+              } >> "''${GITHUB_OUTPUT:-/dev/null}"
 
               {
                 echo "### Work this run covers"
