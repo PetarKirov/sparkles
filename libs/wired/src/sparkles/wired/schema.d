@@ -457,11 +457,7 @@ private WireSchema buildWireSchema(F, T)()
     size_t buildConverted(alias Conv, U, Ancestors...)(string name,
         FieldPolicy site, size_t[] ancestorIndices)
     {
-        alias Raw = typeof(Conv.to(U.init));
-        static if (isExpectedLike!Raw)
-            alias WireType = typeof(Raw.init.value);
-        else
-            alias WireType = Raw;
+        alias WireType = ConvertedWire!(Conv, U);
         const index = appendNode(NodeKind.converted, U.stringof, name, site);
         const first = reserveEdges(index, 1);
         FieldPolicy wirePolicy;
@@ -719,6 +715,23 @@ version (unittest)
     enum wireNode = schema.edges[schema.nodes[converted].firstEdge];
     static assert(schema.nodes[wireNode].scalarKind == ScalarKind.signedInteger);
     static assert(schema.nodes[wireNode].typeName == "long");
+}
+
+@("wired.schema.converterBoundary.wireText")
+@safe pure unittest
+{
+    import sparkles.base.text.writers : formatted, writeInteger;
+
+    // Wire text (§8) is a string on the wire.
+    static struct Shape
+    {
+        @WireConvert!(v => formatted!writeInteger(v), (string s) => s.length)
+        size_t converted;
+    }
+    enum schema = wireSchemaOf!(Json, Shape);
+    enum converted = schema.edges[schema.nodes[0].firstEdge];
+    enum wireNode = schema.edges[schema.nodes[converted].firstEdge];
+    static assert(schema.nodes[wireNode].scalarKind == ScalarKind.string);
 }
 
 @("wired.schema.recursionUsesReferenceNode")

@@ -485,6 +485,14 @@ emitted as single slices.
 void writeJsonString(Writer)(ref Writer w, scope const(char)[] s)
 {
     put(w, '"');
+    writeJsonStringBody(w, s);
+    put(w, '"');
+}
+
+/// The inside of $(LREF writeJsonString): `s` escaped, without the quotes, so
+/// a string can be written in pieces.
+void writeJsonStringBody(Writer)(ref Writer w, scope const(char)[] s)
+{
     size_t runStart = 0;
     foreach (i, c; s)
     {
@@ -528,6 +536,31 @@ void writeJsonString(Writer)(ref Writer w, scope const(char)[] s)
     }
     if (s.length > runStart)
         put(w, s[runStart .. $]);
+}
+
+/**
+Writes `text`, any struct that renders itself through `toString(Writer)`, as
+a JSON string token, escaping its output as it streams. No intermediate
+string is built: `formatted!writeApiVersion(v)` is written straight into `w`.
+*/
+void writeJsonText(Writer, T)(ref Writer w, auto ref const T text)
+{
+    static struct Escaping
+    {
+        Writer* w;
+
+        void put(scope const(char)[] s) { writeJsonStringBody(*w, s); }
+
+        void put(char c)
+        {
+            char[1] one = c;
+            writeJsonStringBody(*w, one[]);
+        }
+    }
+
+    put(w, '"');
+    auto sink = Escaping(&w);
+    text.toString(sink);
     put(w, '"');
 }
 
