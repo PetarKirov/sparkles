@@ -96,9 +96,9 @@ _One section describing the state, updated at each interruption._
   scaled footprints (OQ5, D54); `LAY10`/`LAY14` evidence on base/text M5 (D51).
 - **Blockers:** none. M4 needs the brand design exercise (owner, D23, OQ2).
 - **Next executable actions**, in the owner's order: (1) `KBD5`'s Readline keys with the text-input
-  component. Beside them: iTerm2, WezTerm and Apple Terminal into the `O5`
-  corpus (macOS, and WezTerm headless), Windows Terminal and the Linux console
-  with a person at the machine; M4 once the owner's design session has
+  component. Beside them: Windows Terminal and the Linux console into the
+  `O5` corpus, with a person at the machine (iTerm2, Apple Terminal, macOS
+  Ghostty and WezTerm are in); M4 once the owner's design session has
   happened; `GLY7` once text-layout TL-M3 lands.
 
 → [Overview](./index.md) · [Testing](./testing.md)

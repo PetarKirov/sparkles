@@ -1,0 +1,6 @@
+terminal: Apple Terminal 2.15 (macOS 27.0.1)
+TERM: xterm-256color
+COLORTERM: truecolor
+TMUX:
+ZELLIJ:
+replies: ESC[7;9RESC[?1;2c

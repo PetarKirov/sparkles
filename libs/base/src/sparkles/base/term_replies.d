@@ -546,9 +546,10 @@ unittest
     import sparkles.base.term_color : classifyColorDepth;
 
     // `O5`: the battery's replies as real terminals sent them — captured
-    // with `queryBattery` itself, headless (kitty, Ghostty, XTerm and
-    // Alacritty under xvfb; foot under `cage`; tmux and zellij under each of
-    // foot, Ghostty and a bare pty), checked in under
+    // with `queryBattery` itself by `examples/term-replies-capture.d`
+    // (kitty, Ghostty, XTerm, Alacritty and WezTerm under xvfb; foot under
+    // `cage`; tmux and zellij under each of foot, Ghostty and a bare pty;
+    // iTerm2, Ghostty and Apple Terminal on macOS 27), checked in under
     // `libs/base/test/data/term_replies/` — through the parser a live probe
     // uses, row by row, then through the mapping.
     static struct Transcript { TerminalReplies replies; string terminal; }
@@ -605,6 +606,19 @@ unittest
             M.notRecognized, M.reset, X.valid, X.invalid, 6, 13, 6, false, P.none, "XTerm(403)"),
         Row("alacritty.txt", false, true,  M.reset, M.reset, M.notRecognized, M.notRecognized,
             M.reset, X.none, X.none, 0, 0, 6, false, P.none, ""),
+        // WezTerm leaves the kitty keyboard protocol off by default.
+        Row("wezterm.txt",   true,  false, M.reset, M.reset, M.permanentlySet, M.notRecognized,
+            M.reset, X.valid, X.valid, 10, 22, 2, true, P.kitty, "WezTerm 0-unstable-2025-10-14"),
+        // macOS: iTerm2 draws kitty graphics but vouches for no styled
+        // underline and gives no cell size; Ghostty answers as on Linux at a
+        // Retina cell; Apple Terminal answers only the cursor report and DA1,
+        // and lays the test cluster out as its code points.
+        Row("iterm2.txt",    true,  true,  M.reset, M.reset, M.permanentlyReset, M.reset,
+            M.reset, X.valid, X.invalid, 0, 0, 2, false, P.kitty, "iTerm2 3.6.10"),
+        Row("ghostty-macos.txt", true, true, M.reset, M.reset, M.set, M.reset, M.reset,
+            X.valid, X.valid, 16, 34, 2, true, P.kitty, "ghostty 1.3.1"),
+        Row("apple-terminal.txt", false, false, M.none, M.none, M.none, M.none, M.none,
+            X.none, X.none, 0, 0, 8, false, P.none, ""),
         // tmux answers for itself, under any host: no graphics or keyboard
         // reply relayed, DA1's sixel not believed under a multiplexer
         // (`CAP7`), a cell size of its own on a bare pty, and a cluster
@@ -647,14 +661,15 @@ unittest
         assert(caps.syncOutput == row.sync.available, row.file);
         assert(caps.cellPixelSize == (row.cellWidth != 0), row.file);
         assert(caps.graphemeClusters == (row.clusterWidth == 2 || row.graphemes.available), row.file);
-        // Styled underlines where `XTGETTCAP` vouches for them: kitty, Ghostty
-        // and foot; XTerm and zellij refuse, Alacritty and tmux do not answer.
+        // Styled underlines where `XTGETTCAP` vouches for them: kitty, Ghostty,
+        // foot and WezTerm; XTerm, iTerm2 and zellij refuse, Alacritty, tmux
+        // and Apple Terminal do not answer.
         assert(caps.extendedUnderline == row.styledUnderline, row.file);
         // Links by name (D42): the three terminals that call themselves
         // kitty, Ghostty and foot; not XTerm, the multiplexers, or Alacritty,
         // which gives no name.
         assert(caps.hyperlinks == (row.file == "kitty.txt" || row.file == "ghostty.txt"
-            || row.file == "foot.txt"), row.file);
+            || row.file == "ghostty-macos.txt" || row.file == "foot.txt"), row.file);
         // Every one of these can show 24-bit colour: from `$COLORTERM`, or —
         // XTerm, whose `$TERM` says 16 — from its `RGB` answer.
         assert(caps.colorDepth == ColorDepth.trueColor, row.file);

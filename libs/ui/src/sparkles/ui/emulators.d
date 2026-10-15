@@ -8,11 +8,8 @@ A preset is two things, kept apart so each can be checked on its own:
 $(LIST
     * the emulator's $(B recorded replies), onto the member as a
         $(LREF replies) UDA: the battery's own replies from the design
-        system's `O5` corpus (`libs/base/test/data/term_replies/`), where it
-        reaches, else a row of the capability-detection case study's
-        empirical response matrix (§16, collected with its `query-probe.d`,
-        an earlier battery; research branch `research/term-capabilities` at
-        `9ee7df44`);
+        system's `O5` corpus (`libs/base/test/data/term_replies/`), recorded
+        with `libs/base/examples/term-replies-capture.d`;
     * $(LREF fromReplies), which reads answers, never a name, through the one
         mapping a live probe feeds too
         ($(REF applyReplies, sparkles,base,term_replies); `CAP3`: capabilities
@@ -62,14 +59,13 @@ The measured emulators. Each member carries every row recorded for it — a
 multiplexer one per host it was attached to, since what it answers can
 follow the host — and its declaration is $(LREF capabilitiesOf).
 
-Where the design system's `O5` corpus reaches (kitty, Ghostty, foot, XTerm,
-Alacritty, and tmux and zellij under a bare pty, foot and Ghostty), a row is
-the battery's own replies as that terminal sent them, named by its file in
+Every row is the design system's `O5` corpus: the battery's own replies as
+that terminal sent them (kitty, Ghostty on Linux and macOS, foot, XTerm,
+Alacritty and WezTerm on Linux; iTerm2 and Apple Terminal on macOS; tmux and
+zellij under a bare pty, foot and Ghostty), named by its file in
 `libs/base/test/data/term_replies/` and re-read against it by test — so the
 preset is what a live probe declares there, its focus, paste and cell-size
-rows included. iTerm2, Apple Terminal and WezTerm keep their rows from the
-capability case study's matrix (`query-probe.d`, an earlier battery), which
-the corpus does not reach yet.
+rows included.
 */
 @WireCase(CaseStyle.kebabCase)
 enum Emulator : ubyte
@@ -83,15 +79,20 @@ enum Emulator : ubyte
         cellWidth: 6, cellHeight: 13, clusterWidth: 6, xtversion: "XTerm(403)"))
     xterm,
 
-    @replies("Apple Terminal (macOS 26.3)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
-        da1: "1;2"))
+    // apple-terminal.txt: it answers the cursor report and DA1, nothing
+    // else, and lays the test cluster out as its code points, 8 cells.
+    @replies("Apple Terminal 2.15 (macOS 27.0.1)", TerminalReplies(term: "xterm-256color",
+        colorterm: "truecolor", da1: "1;2", clusterWidth: 8))
     appleTerminal,
 
-    @replies("iTerm2 3.6.10 (macOS)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
-        da1: "64;1;2;4;6;17;18;21;22;52", kittyKeyboard: true,
+    // iterm2.txt
+    @replies("iTerm2 3.6.10 (macOS 27.0.1)", TerminalReplies(term: "xterm-256color",
+        colorterm: "truecolor", da1: "64;1;2;4;6;17;18;21;22;52", kittyKeyboard: true,
         paste: ModeReply.reset, sync: ModeReply.reset,
         graphemes: ModeReply.permanentlyReset, scheme: ModeReply.reset,
-        rgb: TcapReply.valid, tc: TcapReply.invalid, kittyGraphics: true))
+        focus: ModeReply.reset, rgb: TcapReply.valid, tc: TcapReply.invalid,
+        smulx: TcapReply.invalid, setulc: TcapReply.invalid, kittyGraphics: true,
+        clusterWidth: 2, xtversion: "iTerm2 3.6.10"))
     iterm2,
 
     // alacritty.txt
@@ -111,11 +112,15 @@ enum Emulator : ubyte
         xtversion: "foot(1.25.0)"))
     foot,
 
-    @replies("WezTerm 2025-10-14 (Linux)", TerminalReplies(term: "xterm-256color", colorterm: "truecolor",
-        da1: "65;4;6;18;22;52",
+    // wezterm.txt: the kitty keyboard protocol is off by default.
+    @replies("WezTerm 0-unstable-2025-10-14 (Linux, xvfb)", TerminalReplies(
+        term: "xterm-256color", colorterm: "truecolor", da1: "65;4;6;18;22;52",
         paste: ModeReply.reset, sync: ModeReply.reset,
         graphemes: ModeReply.permanentlySet, scheme: ModeReply.notRecognized,
-        rgb: TcapReply.valid, tc: TcapReply.valid, kittyGraphics: true))
+        focus: ModeReply.reset, rgb: TcapReply.valid, tc: TcapReply.valid,
+        smulx: TcapReply.valid, setulc: TcapReply.valid, kittyGraphics: true,
+        cellWidth: 10, cellHeight: 22, clusterWidth: 2,
+        xtversion: "WezTerm 0-unstable-2025-10-14"))
     wezterm,
 
     // kitty.txt
@@ -135,6 +140,14 @@ enum Emulator : ubyte
         scheme: ModeReply.reset, focus: ModeReply.reset, rgb: TcapReply.valid,
         tc: TcapReply.valid, smulx: TcapReply.valid, setulc: TcapReply.valid,
         kittyGraphics: true, cellWidth: 10, cellHeight: 21,
+        clusterWidth: 2, xtversion: "ghostty 1.3.1"))
+    // ghostty-macos.txt: the same answers, at a Retina cell size.
+    @replies("Ghostty 1.3.1 (macOS 27.0.1)", TerminalReplies(term: "xterm-ghostty",
+        colorterm: "truecolor", da1: "62;22;52", kittyKeyboard: true,
+        paste: ModeReply.reset, sync: ModeReply.reset, graphemes: ModeReply.set,
+        scheme: ModeReply.reset, focus: ModeReply.reset, rgb: TcapReply.valid,
+        tc: TcapReply.valid, smulx: TcapReply.valid, setulc: TcapReply.valid,
+        kittyGraphics: true, cellWidth: 16, cellHeight: 34,
         clusterWidth: 2, xtversion: "ghostty 1.3.1"))
     ghostty,
 
@@ -281,7 +294,7 @@ unittest
     static immutable Row[] rows = [
         Row(Emulator.xterm,         C.trueColor, false, false, false, I.none,  true,  false),
         Row(Emulator.appleTerminal, C.trueColor, false, false, false, I.none,  false, false),
-        Row(Emulator.iterm2,        C.trueColor, true,  false, true,  I.kitty, true,  true),
+        Row(Emulator.iterm2,        C.trueColor, true,  true,  true,  I.kitty, true,  true),
         Row(Emulator.alacritty,     C.trueColor, true,  false, false, I.none,  true,  true),
         Row(Emulator.foot,          C.trueColor, true,  true,  true,  I.sixel, true,  true),
         Row(Emulator.wezterm,       C.trueColor, true,  true,  false, I.kitty, true,  false),
@@ -466,6 +479,10 @@ unittest
         Evidence(Emulator.foot, 0, "foot.txt"),
         Evidence(Emulator.kitty, 0, "kitty.txt"),
         Evidence(Emulator.ghostty, 0, "ghostty.txt"),
+        Evidence(Emulator.ghostty, 1, "ghostty-macos.txt"),
+        Evidence(Emulator.appleTerminal, 0, "apple-terminal.txt"),
+        Evidence(Emulator.iterm2, 0, "iterm2.txt"),
+        Evidence(Emulator.wezterm, 0, "wezterm.txt"),
         Evidence(Emulator.tmux, 0, "tmux-bare.txt"),
         Evidence(Emulator.tmux, 1, "tmux-foot.txt"),
         Evidence(Emulator.tmux, 2, "tmux-ghostty.txt"),
@@ -510,22 +527,25 @@ unittest
         && capabilitiesOf(Emulator.alacritty).input.focusEvents);
     assert(!capabilitiesOf(Emulator.zellij).cellPixelSize
         && !capabilitiesOf(Emulator.zellij).input.focusEvents);
-    // The case-study rows never asked: no claim.
+    // iTerm2 answers focus but not its cell size; Apple Terminal neither.
     assert(!capabilitiesOf(Emulator.iterm2).cellPixelSize
-        && !capabilitiesOf(Emulator.iterm2).input.focusEvents);
+        && capabilitiesOf(Emulator.iterm2).input.focusEvents);
+    assert(!capabilitiesOf(Emulator.appleTerminal).cellPixelSize
+        && !capabilitiesOf(Emulator.appleTerminal).input.focusEvents);
 }
 
 @("ui.emulators.styledUnderlinesWhereTheTerminalVouches")
 @safe pure nothrow @nogc
 unittest
 {
-    // `XTGETTCAP` answers `Smulx` and `Setulc` in kitty, Ghostty and foot;
-    // XTerm and zellij refuse them, and Alacritty and tmux answer nothing,
-    // so no other preset claims a curly underline in its own colour. The
-    // case-study rows never asked.
+    // `XTGETTCAP` answers `Smulx` and `Setulc` in kitty, Ghostty, foot
+    // and WezTerm; XTerm, iTerm2 and zellij refuse them, and Alacritty, tmux
+    // and Apple Terminal answer nothing, so no other preset claims a curly
+    // underline in its own colour.
     static foreach (e; EnumMembers!Emulator)
         assert(capabilitiesOf(e).extendedUnderline
-            == (e == Emulator.kitty || e == Emulator.ghostty || e == Emulator.foot));
+            == (e == Emulator.kitty || e == Emulator.ghostty || e == Emulator.foot
+                || e == Emulator.wezterm));
 }
 
 @("ui.emulators.byNameWhereTheTerminalNamedItself")
