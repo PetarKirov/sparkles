@@ -437,6 +437,9 @@ struct WorkspaceHost
         // the viewer's proportional type (`TDV13`).
         p.vm.lineNumbers = viewerLineNumbers;
         p.vm.codeLineNumbers = viewerCodeLineNumbers;
+        // Read on the pane's second paint: never before the window's first
+        // frame, and a hidden tab's document only once its tab is shown.
+        p.deferLoad = true;
         cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
         viewers[id] = p;
         dirty = true;
