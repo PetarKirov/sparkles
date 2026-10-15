@@ -16,6 +16,7 @@ import sparkles.base.text.wrap : cellWrapPlan, CellWidth, CellExtent, WrapOption
 import sparkles.base.text.wrap_plan : WrapPlan, WrapAffinity, WrapStatus,
     WrapEmissionOptions, ProvenanceKind, tryMaterializeWrap, cellToSource;
 
+import sparkles.ui.components.table.builder : TableBuilder;
 import sparkles.ui.components.table.grid;
 import sparkles.ui.components.table.layout;
 
@@ -387,6 +388,17 @@ auto drawTableLines(Placement[] cells, TableProps props = TableProps.init)
 }
 
 /// ditto
+auto drawTableLines(in TableBuilder table, TableProps props = TableProps.init)
+{
+    auto cells = table.cells;
+    auto grid = resolveGrid(cells[]).grid;
+    // The lazy range outlives the snapshot: move its content to GC ownership.
+    foreach (ref anchor; grid.anchors)
+        anchor.content = anchor.content.idup;
+    return tableLineRange(grid, props);
+}
+
+/// ditto
 private TableLineRange tableLineRange(SlotGrid g, TableProps p)
 {
     auto lay = computeTableLayout(g, p);
@@ -449,6 +461,15 @@ ref Writer drawTable(Writer)(return ref Writer w, Placement[] cells,
 if (isOutputRange!(Writer, char))
 {
     return putTable(w, tableLineRange(resolveGrid(cells).grid, props));
+}
+
+/// ditto
+ref Writer drawTable(Writer)(return ref Writer w, ref TableBuilder table,
+    TableProps props = TableProps.init)
+if (isOutputRange!(Writer, char))
+{
+    auto cells = table.cells;
+    return putTable(w, tableLineRange(resolveGrid(cells[]).grid, props));
 }
 
 // ── screen ↔ cell mapping (hue `TBL3`) ────────────────────────────────────────

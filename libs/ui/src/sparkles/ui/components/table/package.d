@@ -17,6 +17,7 @@ its own module path where the widget view is actually wanted.
 +/
 module sparkles.ui.components.table;
 
+public import sparkles.ui.components.table.builder;
 public import sparkles.ui.components.table.grid;
 public import sparkles.ui.components.table.layout;
 public import sparkles.ui.components.table.render;
