@@ -211,23 +211,25 @@ This review did not examine:
   `docs/.vitepress/docs-config.json` (where the fuzzy review is listed), so
   `ci --check-docs-sidebar` will report it until one of them is.
 
-## Since the review
+## Proposed dispositions
 
-Work done in parallel with the review, in #620 (shaders M3), touches some
-findings. It disposes of none of them; each still needs its own record.
+Proposed by the follow-up work, one commit per concern; each awaits the
+owner's acceptance.
 
-- `R6`: the build step now rejects what `SHF5` forbids, naming the parameter,
-  and records that choice as `D13`, with `SHP4` amended to say so. The
-  compiler still accepts these inputs, and `SHF5` itself still has no failure
-  contract, so the spec half of `R6` stands.
-- `R15`: the step now recognises the current stock LDC's message ("import
-  `fragment` not found") and exits 3. Detection is still message matching,
-  and the misattributed invalid target is unchanged.
-- Under "Not covered": #620 adds a GPU readback against the host on the
-  software rasterizer, disassembly checks of handle storage and interface
-  decorations, and a concurrent-run test of the step on one output directory.
-  Its `fragment.interfaceFromTheSignature` test uses a single entry, so it
-  does not exercise `R1`.
+| ID  | Proposed disposition                                                                                                                                                                                                                                                                             | Evidence                                                                                                                                                                                                                           |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | Fixed. `SHF2` states that an interface name is one variable across the unit; the compiler rejects an entry that gives it another kind, location or binding, naming both entries.                                                                                                                 | `shaderCompile.cli.interfaceContractIsEnforced` (the P2 shape); [the fork's lit test](https://github.com/PetarKirov/ldc/blob/1a1de17ee7adde83cf5d237ac22099178276b3be/tests/fail_compilation/dcompute_vulkan_fragment_interface.d) |
+| R2  | Amended specification. The stamp is restated as an edit-loop shortcut over the unit's modules and recipes; freshness of output that ships is Nix's, whose inputs include the imports and the toolchain (`D14`, section 8, contract item 6).                                                      | `nix/packages/ui-shaders.nix`                                                                                                                                                                                                      |
+| R3  | Fixed. The inputs are hashed before compiling (`SHB1`).                                                                                                                                                                                                                                          | `shaderCompile.cli.anInputEditedDuringTheRunLeavesItStale`, failing before the fix                                                                                                                                                 |
+| R6  | Fixed. `SHF5` gains its failure contract, and the compiler enforces it, naming the parameter and the reason. What was rejected because it miscompiled (`int` as `uint`, members as `_m0`) is now translated correctly; a `vec3` may cross, as it occupies the same bytes on both sides (`SHV2`). | `shaderCompile.cli.interfaceContractIsEnforced`; `probeUniforms` in `ui_raylib.shader_readback.hostAndDeviceAgree`                                                                                                                 |
+| R8  | Amended specification. The ES output keeps `highp`, at the project's `VP_ANDROID_baseline_2022` floor (`D15`); `SHV7` names it. Q4 is closed.                                                                                                                                                    | the phone captures recorded in `D15`                                                                                                                                                                                               |
+| R14 | Fixed. `SHP10` states the order of the checks; every configuration error, dub's included, exits 2, and a configuration without a device-only module is one.                                                                                                                                      | `shaderCompile.cli.exitCodes`                                                                                                                                                                                                      |
+| R15 | Fixed. Exit 3 comes from what the compiler can compile (a minimal `@fragment` shader for the target), not from its messages; the target must be exactly one Vulkan target (exit 2).                                                                                                              | `shaderCompile.cli.exitCodes`, `shaderCompile.cli.stockCompilerIsAToolchainError`                                                                                                                                                  |
+| R21 | Fixed in part: exactly one Vulkan target is required (exit 2). The configuration is still selected by name with `--config`.                                                                                                                                                                      | `shaderCompile.cli.exitCodes`                                                                                                                                                                                                      |
+
+Outside the findings, `SHP6` gained its negative case
+(`shaderCompile.cli.aRejectedTranslationWritesNothing`). The other findings
+await dispositions.
 
 ## Acceptance
 

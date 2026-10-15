@@ -231,7 +231,7 @@ both ways in `ui_raylib.shader_readback.boundsAcceptTheirLimitAndNoMore`.
 
 **Trade-offs.** It is evidence on one driver at a time, the software
 rasterizer in CI, and for the desktop dialect only: the GLSL ES output's
-`mediump` bound is not read back (Q4 stays open). Arguments outside the
+output is not read back (`D15`). Arguments outside the
 stated ranges are not tested, because no bound exists there to test against.
 
 ### D13: The compiler enforces the interface contract
@@ -258,10 +258,58 @@ uniform struct, and the fork keeps handles in SSA form.
 **Trade-offs.** Each change to the contract is a compiler change, a pin
 bump (`SHT1`) and a rebuild of the device toolchain on every platform.
 
+### D14: Nix owns the output's freshness; the stamp is a shortcut
+
+**Question.** What must the build step's stamp record for `--if-stale` to
+be trusted (review `R2`)? The compilation also reads modules the unit imports
+without containing them, the compiler and its runtime, and the step's own
+pipeline, and the stamp records none of them.
+
+**Alternatives.** Record every file the compiler reports reading, and the
+identity of each tool, so the stamp is exact; or leave exactness to the
+system that already has it.
+
+**Choice.** Nix. The `ui-shaders` derivation's inputs are the source closure of
+the consumer and the toolchain derivations, so every artifact built from it
+(the apps, the APK, CI) is regenerated exactly when any of them changes, and
+placed with a `prebuilt` stamp. The stamp itself covers what a developer edits:
+the unit's modules and their recipes, hashed before compiling.
+
+**Why.** Exact dependency tracking is a build system's job, and one is
+already in charge of every output that ships. Re-implementing it in the step
+would mean parsing the compiler's dependency output and fingerprinting
+tools, for the edit loop alone.
+
+**Trade-offs.** In a developer's checkout, a change to a module the unit
+only imports (`sparkles.shaders.attributes`), or to the toolchain, leaves the
+output fresh until a run without `--if-stale`. Entering a new dev shell after a
+pin change is when that run is needed.
+
+### D15: The GLSL ES output requests `highp`
+
+**Question.** The ES output qualifies every variable `highp`, which a GLSL ES
+1.00 fragment shader need only support where `GL_FRAGMENT_PRECISION_HIGH` is
+defined (review `R8`, formerly Q4). Keep it, or drop to `mediump`?
+
+**Choice.** Keep `highp`. The project's Android floor is the
+`VP_ANDROID_baseline_2022` profile, which requires Vulkan 1.1.
+
+**Why.** At `mediump` the CRT tube rendered visibly wrong on a phone whose
+`mediump` is half precision (an Adreno GPU: rows that should be uniform
+alternated, a one-pixel line moved), and the generated `highp` tube matched the
+desktop. Every device at the floor has a GPU that computes fragment shaders
+in single precision for Vulkan.
+
+**Trade-offs.** That such a device's OpenGL ES driver exposes `highp` to a GLSL
+ES 1.00 shader follows from its GPU, not from a clause of the profile or of
+the Android compatibility definition that this specification has located;
+it is an assumption, checked on the devices tested. Translating to GLSL ES
+3.00, where fragment `highp` is mandatory, would make it a guarantee and needs
+an OpenGL ES 3 context.
+
 ## Open questions
 
-| ID  | Question                                                                                                                                                                                                                                                                                                                                                                                                      | Affects        | Decision point             |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | -------------------------- |
-| Q1  | Which further platforms get a device toolchain, and how? Windows needs LLVM and LDC cross-built for MSVC, or built natively, and published as an archive.                                                                                                                                                                                                                                                     | `SHT4`         | A consumer needing it (M5) |
-| Q2  | Does the output variable keep the name `finalColor`, a convention of one OpenGL framework, when the fragment stage is proposed upstream?                                                                                                                                                                                                                                                                      | `SHF3`         | Upstreaming the stage      |
-| Q4  | The GLSL ES output declares `precision mediump float` but qualifies its variables `highp`, which OpenGL ES 2.0 fragment shaders need not support. Keep `highp`, or drop to `mediump`? Evidence: on a phone whose `mediump` is half precision (Adreno), the hand-written tube showed artifacts (rows that should be uniform alternated; a 1-pixel line moved), and the generated `highp` tube matched desktop. | `SHV7`, `SHP5` | Start of M3                |
+| ID  | Question                                                                                                                                                  | Affects | Decision point             |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------- |
+| Q1  | Which further platforms get a device toolchain, and how? Windows needs LLVM and LDC cross-built for MSVC, or built natively, and published as an archive. | `SHT4`  | A consumer needing it (M5) |
+| Q2  | Does the output variable keep the name `finalColor`, a convention of one OpenGL framework, when the fragment stage is proposed upstream?                  | `SHF3`  | Upstreaming the stage      |
