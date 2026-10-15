@@ -83,6 +83,21 @@ import sparkles.shaders;
     const a = texture0.sample(fragTexCoord);
     return v4(luma(a.xyz), 0.0f, 0.0f, 1.0f);
 }
+
+struct Light
+{
+    float gain;
+    int bias;
+    vec3 tint;
+}
+
+@fragment vec4 probeUniforms(@input vec2 fragTexCoord, Sampler2D texture0, @uniform int count,
+    @uniform Light light)
+{
+    const a = texture0.sample(fragTexCoord);
+    return v4(a.x * light.gain + cast(float) (count + light.bias), a.y * light.tint.y,
+        light.tint.z, 1.0f);
+}
 `;
 
 /// What the host computes for one probe, from the sample `a`.
@@ -106,6 +121,26 @@ private struct Probe
     Bound[4] bounds;
     /// Fills sample `i` of `n` with this probe's arguments.
     float[] function(size_t i, size_t n) @safe pure nothrow input;
+    /// Sets the probe's uniforms, if it has any.
+    void function(Shader) @system uniforms;
+}
+
+/// `probeUniforms`' uniforms, set by name as a host binds them: an `int`, and
+/// the members of a struct holding an `int` and a `vec3` (`SHF2`, `SHF5`).
+private void setLight(Shader shader) @system
+{
+    void set(T)(string name, T value, ShaderUniformDataType type)
+    {
+        const at = GetShaderLocation(shader, name.toStringz);
+        assert(at >= 0, "probeUniforms has no uniform `" ~ name ~ "`");
+        SetShaderValue(shader, at, &value, type);
+    }
+
+    set("count", -3, ShaderUniformDataType.SHADER_UNIFORM_INT);
+    set("light.gain", 2.5f, ShaderUniformDataType.SHADER_UNIFORM_FLOAT);
+    set("light.bias", 7, ShaderUniformDataType.SHADER_UNIFORM_INT);
+    float[3] tint = [0.25f, 0.5f, 0.75f];
+    set("light.tint", tint, ShaderUniformDataType.SHADER_UNIFORM_VEC3);
 }
 
 private float lerp(float lo, float hi, size_t i, size_t n) @safe pure nothrow @nogc
@@ -139,6 +174,10 @@ private immutable Probe[] probes = [
     Probe("probeLuma", (a) => [luma(v3(a[0], a[1], a[2])), 0.0f, 0.0f, 1.0f],
         [Bound.ulps8, Bound.unused, Bound.unused, Bound.unused],
         (i, n) => [lerp(0, 1, i, n), lerp(1, 0, (i * 3) % n, n), lerp(0, 1, (i * 7) % n, n), 1.0f]),
+    // count + bias = 4; gain 2.5; tint (0.25, 0.5, 0.75)
+    Probe("probeUniforms", (a) => [a[0] * 2.5f + 4.0f, a[1] * 0.5f, 0.75f, 1.0f],
+        [Bound.ulps8, Bound.exact, Bound.exact, Bound.unused],
+        (i, n) => [lerp(-10, 10, i, n), lerp(-1, 1, (i * 3) % n, n), 0.0f, 0.0f], &setLight),
 ];
 
 /// The size of one unit in the last place at `x`.
@@ -263,6 +302,8 @@ configuration "shaders" {
         auto shader = LoadShaderFromMemory(null, source.toStringz);
         assert(IsShaderValid(shader), p.entry ~ ": the generated shader did not link");
         scope (exit) UnloadShader(shader);
+        if (p.uniforms !is null)
+            p.uniforms(shader);
 
         BeginTextureMode(rt);
         ClearBackground(Colors.BLANK);

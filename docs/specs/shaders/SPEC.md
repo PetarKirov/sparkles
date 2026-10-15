@@ -282,9 +282,20 @@ All images **must** be read through one sampler at binding 0 of descriptor
 set 0. A parameter that the platform calling convention would rewrite **must**
 be rejected with a diagnostic, not miscompiled.
 
+An interface name **must** denote one variable across the unit: every entry
+point that names it **must** give it the same kind and the same location or
+binding, or the compilation **must** fail with a diagnostic that names both
+entry points.
+
+_Rationale:_ The unit compiles to one module (`SHP3`), in which a name is one
+variable with one decoration. Two entry points that put it at different
+ordinals would otherwise share the first one's, and one of them would read
+through a location or binding it did not ask for, with no validator able to
+tell.
+
 **SHF3: Output.** The return value **must** be stored to one output
-interface variable named `finalColor`, at location 0, of the return type. A
-`void` `@fragment` function writes no output.
+interface variable named `finalColor`, at location 0, of the return type,
+which **must** be `vec4`. A `void` `@fragment` function writes no output.
 
 **SHF4: Sampling.** `sample(texture, uv)` on a `Sampler2D`, also callable as
 `texture.sample(uv)`, **must** return the `vec4` that GLSL's
@@ -292,12 +303,25 @@ interface variable named `finalColor`, at location 0, of the return type. A
 coordinate.
 
 **SHF5: Interface types.** Every input, uniform and output of an entry point
-**must** have a type whose representation is the same on host and device: a
-`float` or a `vec2` or `vec4`. A `vec3` **must not** cross the interface.
+**must** have a type that both generated dialects (`SHP5`) can declare at that
+end of the interface, with the same meaning:
 
-_Rationale:_ Nothing then depends on `vec3`'s differing layouts (`SHV2`), and
-GLSL links varyings by name and type, so a type the two sides disagree on
-would be a silent mismatch.
+- an input: `float`, `vec2`, `vec3` or `vec4`;
+- the output: `vec4` (`SHF3`);
+- a uniform: any of those, `int` or a vector of two to four `int`s, or a
+  struct or static array of uniform types.
+
+A uniform's declaration **must** carry its D type: an `int` is declared
+`int`, and a struct's members are named after its fields. Any other type
+**must** fail the compilation with a diagnostic that names the parameter and
+the reason.
+
+_Rationale:_ GLSL ES 1.00 has no unsigned or integer varyings, writes its one
+colour output through a `vec4`, and has no `uint`. The host binds a uniform
+by name and type, so a declaration that says `uint` for an `int`
+(`glUniform1i` then fails) or `_m0` for a field breaks the binding without a
+diagnostic. Every vector already occupies the same bytes on both sides
+(`SHV2`).
 
 **SHF6: Opaque handles.** A `Sampler2D` **must** stay a single scalar handle
 in the generated code: never a member of an aggregate, never stored in
@@ -346,9 +370,7 @@ package's own.
 
 **SHP4: Validation.** The compiled SPIR-V **must** pass `spirv-val` under the
 universal SPIR-V 1.4 rules before anything else reads it, and is then
-optimised with `spirv-opt -O`. Before optimising, the build step **must**
-also reject a module that breaks `SHF5` or `SHF6`, naming the offending
-variable.
+optimised with `spirv-opt -O`.
 
 _Rationale:_ Universal rules, not Vulkan's: uniforms outside a block
 (`SHF2`) are valid SPIR-V that Vulkan rejects, and they are what an OpenGL
