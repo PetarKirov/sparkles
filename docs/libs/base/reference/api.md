@@ -5,8 +5,8 @@ The public symbols of `sparkles:base`, by module.
 ## `sparkles.base`
 
 Package module re-exporting `buffer`, `custom_float`, `lifetime`, `logger`,
-`meta`, `prettyprint`, `source_uri`, `styled_template`, `term_caps`,
-`term_color`, `term_style`, `text`, and `unique`.
+`meta`, `prettyprint`, `source_uri`, `static_init`, `styled_template`,
+`term_caps`, `term_color`, `term_style`, `text`, and `unique`.
 
 ## `sparkles.base.buffer`
 
@@ -50,6 +50,15 @@ Modelled on Phobos' `CustomFloat` without its defects — see the
 | `isUniqueTarget!(T, Allocator)`          | Whether the pair is ownable — no interfaces, stateless allocators only.         |
 
 See [Own a heap value without the collector](../how-to/own-heap-values.md).
+
+## `sparkles.base.static_init`
+
+| Symbol                     | Description                                                                                  |
+| -------------------------- | -------------------------------------------------------------------------------------------- |
+| `staticVar!q{ T x = e; }`  | String mixin: one declaration with a run-time initializer, assigned in a module constructor. |
+| `mixin StaticBlock!q{ … }` | The same for several declarations, run in source order.                                      |
+
+See [Initialize globals at run time](../how-to/initialize-statics.md).
 
 ## `sparkles.base.lifetime`
 
