@@ -293,6 +293,9 @@ in
 {
   ci.workflows.ci = {
     name = "CI";
+    # The flake checks include the workflow drift check: a pass under a
+    # workflow that no longer renders from the flake is not recorded.
+    fanIn.gate = map (system: "flake-check-${system}") desktopSystems;
     on = {
       # The rebuild path: `main-checks.yml` calls this workflow when a merge
       # lands a tree no pull request built.

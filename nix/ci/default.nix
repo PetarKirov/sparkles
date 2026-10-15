@@ -370,6 +370,15 @@ let
             type = types.str;
             default = "CI";
           };
+          gate = mkOption {
+            type = types.listOf types.str;
+            default = [ ];
+            description = ''
+              Jobs that vouch for the workflow itself (the drift check). If one
+              of them failed, nothing is recorded: the other jobs' passes may
+              come from a workflow that no longer matches the flake.
+            '';
+          };
         };
         plan.enable = mkOption {
           type = types.bool;
@@ -898,6 +907,7 @@ let
           continue-on-error = true;
           env = {
             RESULTS = builtins.toJSON (lib.genAttrs ids (id: expr "needs.${id}.result"));
+            GATE = builtins.toJSON (lib.genAttrs wf.fanIn.gate (id: expr "needs.${id}.result"));
             CACHIX_AUTH_TOKEN = expr "secrets.CACHIX_AUTH_TOKEN";
             CACHIX_CACHE = cfg.settings.cachix.name;
           };

@@ -139,6 +139,9 @@ It turns that key into a _stamp_, a flat fixed-output store path
 stamps exist. A job whose stamps all exist is skipped, and a job placing a
 `granular` task receives just its stale units in `$CI_UNITS`. The fan-in job
 (`CI`, the one required check) records the stamps of every job that passed.
+Nothing is recorded when one of the workflow's `fanIn.gate` jobs (the flake
+checks, which hold the drift check) failed: a pass under a workflow that no
+longer renders from the flake is not evidence.
 A job with `lazy.enable = false` (a release) always runs.
 
 So a docs edit runs the docs, the whole-tree checks and the markdown it

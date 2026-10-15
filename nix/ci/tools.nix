@@ -185,7 +185,8 @@ in
           };
 
           # `record`: for every job that succeeded, add the stamps of the units
-          # it ran and push them, so the next run with these inputs skips them.
+          # it ran and push them, so the next run with these inputs skips them —
+          # unless a `$GATE` job (the drift check) failed.
           record = script "ci-record" {
             runtimeInputs = [
               nix
@@ -195,6 +196,12 @@ in
             text = ''
               if [ -z "''${CACHIX_AUTH_TOKEN:-}" ]; then
                 echo "::notice::No cache token (a fork's pull request?): nothing recorded."
+                exit 0
+              fi
+              gate=''${GATE:-'{}'}
+              failed=$(jq -r '[to_entries[] | select(.value != "success" and .value != "skipped") | .key] | join(" ")' <<< "$gate")
+              if [ -n "$failed" ]; then
+                echo "::notice::The workflow's gate did not pass ($failed): nothing recorded."
                 exit 0
               fi
               if [ ! -f plan.json ]; then
