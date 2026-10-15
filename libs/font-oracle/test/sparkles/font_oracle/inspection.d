@@ -13,7 +13,7 @@ import std.stdio : stderr;
 
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, Oracle;
-import sparkles.font_oracle.harfbuzz;
+import sparkles.font_oracle.harfbuzz_c;
 import sparkles.test_runner.skip : skipTest;
 
 /// The bundled faces with their HarfBuzz faces; `skipTest` when unset.

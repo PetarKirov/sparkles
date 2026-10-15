@@ -12,17 +12,8 @@ import std.string : fromStringz;
 
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, Oracle;
-import sparkles.font_oracle.harfbuzz;
+import sparkles.font_oracle.harfbuzz_c;
 import sparkles.test_runner.skip : skipTest;
-
-@("oracle.layout.nameEntry")
-@safe pure nothrow @nogc
-unittest
-{
-    // hb_ot_name_entry_t: uint, hb_var_int_t (4 bytes), pointer.
-    static assert(hb_ot_name_entry_t.sizeof == 8 + (void*).sizeof);
-    static assert(hb_ot_name_entry_t.language.offsetof == 8);
-}
 
 @("oracle.parsing.everyBundledFace")
 @system
@@ -69,7 +60,8 @@ unittest
             auto set = hb_set_create();
             scope (exit) hb_set_destroy(set);
             hb_face_collect_unicodes(hb.face, set);
-            hb_codepoint_t cp = HB_SET_VALUE_INVALID;
+            // HB_SET_VALUE_INVALID is a cast macro, which ImportC does not import.
+            hb_codepoint_t cp = hb_codepoint_t.max;
             while (hb_set_next(set, &cp))
                 assert(map.value.glyph(cp) == hbGlyph(cp), file);
         }
@@ -84,7 +76,9 @@ unittest
         {
             char[4096] hbText;
             uint size = hbText.length;
-            hb_ot_name_get_utf8(hb.face, e.name_id, e.language, &size, hbText.ptr);
+            // ImportC drops the parameter's `const`; HarfBuzz only reads it.
+            hb_language_t language = cast(hb_language_t) e.language;
+            hb_ot_name_get_utf8(hb.face, e.name_id, language, &size, hbText.ptr);
             const expected = hbText[0 .. size];
             bool found, macRecord;
             char[4096] buffer;

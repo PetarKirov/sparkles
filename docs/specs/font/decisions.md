@@ -94,6 +94,17 @@ instead of corrupting memory.
 
 **Trade-off.** Each further HarfBuzz function is declared by hand.
 
+**Scope (2026-10-15).** The choice covers the library's `engine`
+configuration. The test-only oracle, `libs/font-oracle`, declares HarfBuzz by
+ImportC of `hb.h` and `hb-ot.h` instead: nothing depends on it, so the
+`sourceLibrary` constraint stops at the oracle itself, and the real headers
+replace hand-written layouts that no header check covered. The switch also
+typed four enum parameters (metrics, math-constant, math-kern and baseline
+tags) that the hand-written prototypes declared as plain integers.
+`sparkles:raylib-text` already reaches HarfBuzz through
+ImportC, so whether the `engine` configuration should follow is revisited
+when M4 starts.
+
 ## FTX3: An own parser; FreeType is an oracle, not a dependency
 
 **State:** accepted 2026-10-06 · **Affects:** `FTP*`, `FTO*`, `FTR1`–`FTR3`, `FTA7`

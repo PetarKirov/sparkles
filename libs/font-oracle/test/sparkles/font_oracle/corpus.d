@@ -9,7 +9,7 @@ import std.array : array;
 import std.file : dirEntries, SpanMode;
 import std.process : environment;
 
-import sparkles.font_oracle.harfbuzz;
+import sparkles.font_oracle.harfbuzz_c;
 
 /// A HarfBuzz face and font over borrowed bytes.
 package struct Oracle

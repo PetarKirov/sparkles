@@ -20,7 +20,7 @@ import std.stdio : stderr;
 import sparkles.base.text.layout_units : LayoutUnit;
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, Oracle;
-import sparkles.font_oracle.harfbuzz;
+import sparkles.font_oracle.harfbuzz_c;
 import sparkles.test_runner.skip : skipTest;
 
 /// Every instance here is 12 points; the comparisons are in design units.
@@ -260,7 +260,7 @@ private bool hbOs2HasData(in Os2 o)
 private long hbMetric(ref Oracle hb, string tag)
 {
     hb_position_t p;
-    return hb_ot_metrics_get_position(hb.font, hbTag(tag), &p) ? long(p) * unit : long.min;
+    return hb_ot_metrics_get_position(hb.font, cast(hb_ot_metrics_tag_t) hbTag(tag), &p) ? long(p) * unit : long.min;
 }
 
 /// Whether `ours` (design) and HarfBuzz's whole-unit `theirs` agree: exactly at
@@ -461,16 +461,6 @@ unittest
 private hb_direction_t hbDirection(MathDirection d)
     => d == MathDirection.vertical ? hb_direction_t.HB_DIRECTION_TTB : hb_direction_t.HB_DIRECTION_LTR;
 
-@("oracle.math.structLayouts")
-@safe pure nothrow @nogc
-unittest
-{
-    // hb-ot-math.h: two, five (the flags an enum, so an int) and two 32-bit fields.
-    static assert(hb_ot_math_glyph_variant_t.sizeof == 8);
-    static assert(hb_ot_math_glyph_part_t.sizeof == 20 && hb_ot_math_glyph_part_t.flags.offsetof == 16);
-    static assert(hb_ot_math_kern_entry_t.sizeof == 8);
-}
-
 /**
 FTP34–FTP38 against `hb_ot_math_get_*` at the default instance and a scale
 of one unit per font unit, where no Device table applies. Every face's
@@ -508,7 +498,7 @@ unittest
         {
             const v = cs.value[cast(MathConstant) c];
             assert(v.hasValue && v.value.present, file);
-            const h = hb_ot_math_get_constant(hb.font, cast(int) c);
+            const h = hb_ot_math_get_constant(hb.font, cast(hb_ot_math_constant_t) c);
             if (v.value.kind == MathValueKind.percentage)
                 assert(v.value.percentage == h, file);
             else
@@ -560,7 +550,7 @@ unittest
                 const table = t.value;
                 hb_ot_math_kern_entry_t[64] entries;
                 uint count = entries.length;
-                const total = hb_ot_math_get_glyph_kernings(hb.font, gid, corner, 0, &count, entries.ptr);
+                const total = hb_ot_math_get_glyph_kernings(hb.font, gid, cast(hb_ot_math_kern_t) corner, 0, &count, entries.ptr);
                 if (!table.present)
                 {
                     assert(total == 0, file);
@@ -598,7 +588,7 @@ unittest
                     const k = table.lookup(DesignValue.fromUnits(h, face.unitsPerEm));
                     assert(k.hasValue && k.value.present, file);
                     assert(k.value.value.design.raw
-                        == long(hb_ot_math_get_glyph_kerning(hb.font, gid, corner, h)) * unit, file);
+                        == long(hb_ot_math_get_glyph_kerning(hb.font, gid, cast(hb_ot_math_kern_t) corner, h)) * unit, file);
                     ++kerns;
                 }
             }
@@ -682,7 +672,8 @@ unittest
                 const direction = axis == BaselineAxis.horizontal
                     ? hb_direction_t.HB_DIRECTION_LTR : hb_direction_t.HB_DIRECTION_TTB;
                 hb_position_t coord;
-                assert(!hb_ot_layout_get_baseline(hb.font, hbTag(c[0]), direction, hbTag(c[1]), 0, &coord),
+                assert(!hb_ot_layout_get_baseline(hb.font, cast(hb_ot_layout_baseline_tag_t) hbTag(c[0]), direction,
+                    hbTag(c[1]), 0, &coord),
                     file);
                 ++queries;
             }
