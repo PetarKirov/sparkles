@@ -422,6 +422,82 @@ if (hasConvert!(F, syms))
     static assert(convertOf!(Toml, S.both).to(3) == 4);
 }
 
+/**
+Whether `T`, a converter's result, is wire text: a struct that writes itself
+into an output range through `toString(Writer)`, such as
+`formatted!writeApiVersion(v)`. A backend encodes wire text as a string,
+streaming it where the format allows, and decodes the site from a string
+(§8).
+*/
+enum bool isWireText(T) = is(T == struct) && __traits(compiles, (const T t) {
+    static struct Sink
+    {
+        void put(scope const(char)[]) {}
+        void put(char) {}
+    }
+
+    Sink s;
+    t.toString(s);
+});
+
+/// The wire type converter `Conv` produces for `V`, as a decoder reads it:
+/// an `Expected` result's payload, and `string` for $(LREF isWireText) text.
+template ConvertedWire(alias Conv, V)
+{
+    alias Raw = typeof(Conv.to(V.init));
+    static if (__traits(hasMember, Raw, "hasError") && __traits(hasMember, Raw, "value"))
+        alias Payload = typeof(Raw.init.value);
+    else
+        alias Payload = Raw;
+    static if (isWireText!Payload)
+        alias ConvertedWire = string;
+    else
+        alias ConvertedWire = Payload;
+}
+
+version (unittest)
+{
+    // A wire-text fixture for the backends' tests: a packed `major << 16 |
+    // minor` written as `major.minor`, and read back.
+    package void writeTestVersion(W)(ref W w, uint packed)
+    {
+        import std.range.primitives : put;
+        import sparkles.base.text.writers : writeInteger;
+
+        writeInteger(w, packed >> 16);
+        put(w, '.');
+        writeInteger(w, packed & 0xFFFF);
+    }
+
+    package uint readTestVersion(string s) @safe pure nothrow @nogc
+    {
+        uint major, minor;
+        bool dot;
+        foreach (c; s)
+        {
+            if (c == '.')
+                dot = true;
+            else if (dot)
+                minor = minor * 10 + (c - '0');
+            else
+                major = major * 10 + (c - '0');
+        }
+        return major << 16 | minor;
+    }
+}
+
+@("wired.policy.convert.wireText")
+@safe pure unittest
+{
+    import sparkles.base.text.writers : formatted, writeInteger;
+
+    alias asText = WireConvert!(v => formatted!writeInteger(v), (string s) => s.length);
+    static assert(isWireText!(typeof(formatted!writeInteger(1))));
+    static assert(!isWireText!string && !isWireText!int);
+    static assert(is(ConvertedWire!(asText, int) == string));
+    static assert(is(ConvertedWire!(WireConvert!(x => x + 1), int) == int));
+}
+
 
 /// Compile-time check that enum `E`'s resolved member names are unique under
 /// format `F` (after `WireName` and `WireCase` resolution) — the requirement for

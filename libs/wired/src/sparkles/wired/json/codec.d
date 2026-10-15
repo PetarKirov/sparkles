@@ -302,7 +302,7 @@ import sparkles.wired.json.error : JsonError, JsonStage, kindText,
     parseStageError;
 import sparkles.wired.json.reader : parseJsonDocument;
 import sparkles.wired.json.writer : JsonWriteOptions, KeyOrder, lexicalLess,
-    newlineIndent, writeJsonString;
+    newlineIndent, writeJsonString, writeJsonText;
 
 /// Decodes JSON text straight into a `T` — parse (arena engine) + native
 /// view walk, no intermediate `JSONValue`. The `JsonError` renders the
@@ -927,11 +927,7 @@ private NRes!V decodeViaNative(alias Conv, V, Root, size_t nodeIndex)(
     static assert(!is(Conv.from == void),
         "wired: a serialize-only @WireConvert cannot decode " ~ V.stringof);
 
-    alias Raw = typeof(Conv.to(V.init));
-    static if (isExpectedLike!Raw)
-        alias WireT = typeof(Raw.init.value);
-    else
-        alias WireT = Raw;
+    alias WireT = ConvertedWire!(Conv, V);
 
     auto raw = decodeNative!(WireT, Root,
         WireWalk!(Json, Root).child!(nodeIndex, 0))(v, failure);
@@ -1441,11 +1437,24 @@ private EncRes encodeViaNative(alias Conv, V, JsonWriteOptions opts,
     {
         if (wire.hasError)
             return EncRes(true, encodeError!V(wire.error.msg));
-        return encodeNative!(opts, keyLess, typeof(wire.value), Writer, Root,
-            WireWalk!(Json, Root).child!(nodeIndex, 0))(wire.value, w, depth);
+        return encodeWire!(opts, keyLess, Root, nodeIndex)(wire.value, w, depth);
     }
     else
-        return encodeNative!(opts, keyLess, typeof(wire), Writer, Root,
+        return encodeWire!(opts, keyLess, Root, nodeIndex)(wire, w, depth);
+}
+
+// A converter's result: wire text streams as a string (§8), anything else
+// encodes normally.
+private EncRes encodeWire(JsonWriteOptions opts, alias keyLess, Root,
+    size_t nodeIndex, W, Writer)(auto ref W wire, ref Writer w, uint depth)
+{
+    static if (isWireText!W)
+    {
+        writeJsonText(w, wire);
+        return encOk();
+    }
+    else
+        return encodeNative!(opts, keyLess, W, Writer, Root,
             WireWalk!(Json, Root).child!(nodeIndex, 0))(wire, w, depth);
 }
 
@@ -2120,6 +2129,35 @@ version (unittest)
     const text = jsonText(t);
     assert(text == `{"timeout":1500}`); // Duration as its ms count
     assert(fromJSON!Timer(text).value == t);
+}
+
+/// A converter may return wire text, a value that writes itself through
+/// `toString(Writer)`: it is encoded as a JSON string, streamed and escaped
+/// on the way, and decoded from a string (§8).
+@("wired.json.wireConvert.text")
+@safe unittest
+{
+    import sparkles.base.text.writers : formatted;
+    import sparkles.wired.policy : readTestVersion, writeTestVersion;
+
+    static struct Device
+    {
+        @WireConvert!(v => formatted!writeTestVersion(v), s => readTestVersion(s))
+        uint api;
+    }
+
+    const d = Device(1 << 16 | 3);
+    const text = jsonText(d);
+    assert(text == `{"api":"1.3"}`);
+    assert(fromJSON!Device(text).value == d);
+
+    // The streamed text is escaped like any string.
+    static struct Quoted
+    {
+        @WireConvert!(s => formatted!writeJsonString(s)) string note;
+    }
+
+    assert(jsonText(Quoted("hi")) == `{"note":"\"hi\""}`);
 }
 
 @("wired.json.wireOptional")

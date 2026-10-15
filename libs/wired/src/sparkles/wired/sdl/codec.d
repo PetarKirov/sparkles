@@ -60,8 +60,9 @@ import sparkles.base.text.errors : valueOf;
 import sparkles.base.buffer : SharedBuffer;
 import std.experimental.allocator.mallocator : Mallocator;
 import sparkles.base.text.case_style : CaseStyle;
-import sparkles.wired.policy : Repr, WireInvalid, WireTarget, convertOf,
-    hasConvert, resolveCaseStyle, resolveRepr, resolvedFieldPolicies, wireNames;
+import sparkles.wired.policy : ConvertedWire, Repr, WireInvalid, WireTarget, convertOf,
+    hasConvert, isWireText, resolveCaseStyle, resolveRepr, resolvedFieldPolicies,
+    wireNames;
 import sparkles.wired.schema : NodeKind, ScalarKind;
 import sparkles.wired.sdl.config : SdlParserConfig, sdlFull;
 import sparkles.wired.sdl.document : OwnedSdlExtras, SdlDocument,
@@ -466,11 +467,7 @@ private DRes!Field decodeLeaf(Field, alias Conv = void,
 {
     static if (!is(Conv == void))
     {
-        alias Raw = typeof(Conv.to(Field.init));
-        static if (__traits(compiles, Raw.init.value))
-            alias Wire = typeof(Raw.init.value);
-        else
-            alias Wire = Raw;
+        alias Wire = ConvertedWire!(Conv, Field);
 
         auto raw = decodeScalar!(Wire, enumStyle, enumRepr)(s, failure);
         if (raw.failed)
@@ -1992,6 +1989,34 @@ private enum fullSource =
     assert(rejected.error.reason.length > 0);
 }
 
+/// Wire text (§8) becomes an SDL string, and decodes from one.
+@("wired.sdl.codec.converters.wireText")
+@system unittest
+{
+    import sparkles.base.text.writers : formatted;
+    import sparkles.wired.policy : readTestVersion, writeTestVersion;
+
+    static struct Device
+    {
+        @WireConvert!(v => formatted!writeTestVersion(v), s => readTestVersion(s))
+        @SdlAttribute() uint api;
+    }
+
+    static struct DeviceDoc
+    {
+        @SdlChild() Device d;
+    }
+
+    const doc = DeviceDoc(Device(1 << 16 | 3));
+    const encoded = toSDL(doc);
+    assert(encoded.hasValue, encoded.error.toString);
+    assert(encoded.value[] == "d api=\"1.3\"\n", encoded.value[].idup);
+
+    auto decoded = fromSDL!(DeviceDoc, sdlFull)(encoded.value[]);
+    assert(decoded.hasValue, decoded.error.toString);
+    assert(decoded.value == doc);
+}
+
 @("wired.sdl.codec.nullAwareMatrix")
 @system unittest
 {
@@ -2711,14 +2736,23 @@ private template ConvWire(alias Conv, V)
     static if (is(Conv == void))
         alias ConvWire = V;
     else
-    {
-        alias Raw = typeof(Conv.to(V.init));
-        static if (__traits(compiles, Raw.init.value))
-            alias ConvWire = typeof(Raw.init.value);
-        else
-            alias ConvWire = Raw;
-    }
+        alias ConvWire = ConvertedWire!(Conv, V);
 }
+
+// SDL scalars own their text, so wire text (§8) is rendered once here.
+private string ownWire(W)(auto ref W wire)
+if (isWireText!W)
+{
+    import std.array : appender;
+
+    auto a = appender!string;
+    wire.toString(a);
+    return a[];
+}
+
+private auto ownWire(W)(auto ref W wire)
+if (!isWireText!W)
+    => wire;
 
 /// Applies an optional field converter, funnelling throw- and Expected-style
 /// failures into the builder's structured channel.
@@ -2745,10 +2779,10 @@ private EncWire!(ConvWire!(Conv, V)) encConverted(alias Conv, V)(
                         ~ r.error.reason[].idup));
                     return EncWire!(R)(R.init, true);
                 }
-                return EncWire!(R)(r.value, false);
+                return EncWire!(R)(ownWire(r.value), false);
             }
             else
-                return EncWire!(R)(Conv.to(v), false);
+                return EncWire!(R)(ownWire(Conv.to(v)), false);
         }
         catch (Exception e)
         {

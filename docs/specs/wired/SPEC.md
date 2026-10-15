@@ -908,6 +908,19 @@ value normally under the active format. If `toWire` returns an
 `Expected!(Value, E)`, the wire type is `Value`; otherwise, the wire type is
 the plain return type of `toWire`.
 
+A `toWire` result (after `Expected` unwrapping) that is **wire text**, a struct
+that writes itself through `toString(Writer)` such as
+`formatted!writeApiVersion(v)` (`isWireText` in `sparkles.wired.policy`), is
+encoded as a string. JSON streams it through the string escaper with no
+intermediate `string` (`writeJsonText`); a backend whose document owns its
+scalars (SDL) renders it once. Its wire type is `string` for decoding and for
+the schema (`ConvertedWire`), so `fromWire` receives the text:
+
+```d
+@WireConvert!(v => formatted!writeApiVersion(v.packed), s => ApiVersion.parse(s))
+struct ApiVersion { uint packed; }
+```
+
 On decode, the backend infers the wire type from `toWire` for the annotated
 source type, decodes into that type, then returns `fromWire(raw)`. `fromWire` is
 checked for callability with the inferred wire type; its parameter type is not
