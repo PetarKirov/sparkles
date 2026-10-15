@@ -27,6 +27,7 @@ version (UiAppGui):
 
 import sparkles.raylib_text : displayMetrics, FontSet, pixelsForPoints, resolveUiFace,
     UiFonts, uiTypeSteps;
+import sparkles.base.term_color : RgbColor;
 import sparkles.ui_raylib.window : TraceLogSink, Window, WindowRequest;
 import sparkles.ui_app.gui_options : FontRequest, WindowCells;
 
@@ -78,6 +79,16 @@ struct GuiRequest
     bool uiFollowsCellFont;
 
     int targetFps = 60; ///
+
+    /**
+    Painted as the window's first frame the moment it opens, before the
+    fonts load: a slow first real frame then shows the application's
+    background, not what the window held — on Android, the home screen seen
+    through a surface nothing has drawn yet. Off unless `hasLaunchBackground`.
+    */
+    RgbColor launchBackground;
+    /// ditto
+    bool hasLaunchBackground;
 }
 
 /// An open window and the fonts drawn into it. Non-copyable: two handles to one
@@ -178,6 +189,12 @@ bool openGuiSession(in GuiRequest req, out GuiSession session) @system
     //    null texture — a SIGSEGV where an error message belongs.
     if (!session.window.ready)
         return false;
+    if (req.hasLaunchBackground)
+    {
+        session.window.beginFrame();
+        session.window.clear(req.launchBackground);
+        session.window.endFrame();
+    }
 
     // 2. The point size. An explicit pixel override wins and suppresses density
     //    scaling; otherwise the panel decides, which is not an Android special
