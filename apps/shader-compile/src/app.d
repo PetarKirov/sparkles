@@ -20,10 +20,13 @@ way this tool compiles it (`TGT6`).
 
 $(B It runs as a build step.) `sparkles:ui`'s `gpu-effects` configuration
 runs it with `--if-stale` before every build, into a git-ignored directory: a
-stamp there records the SHA-256 of every input (the unit's modules and their
-packages' recipes), so a build whose shaders are current pays a hash check
-and needs neither dub nor the compiler. A packager that builds the output
-elsewhere (Nix) writes a `prebuilt` stamp.
+stamp there records the SHA-256 of the unit's modules and their packages'
+recipes, so a build whose shaders are current pays a hash check and needs
+neither dub nor the compiler. The stamp is a shortcut for the edit loop, not
+a build system: it does not track the compiler, the tools, or a module the
+unit imports without being one of its own. Output that ships is built by Nix
+(`nix build .#ui-shaders`), whose inputs are all of those, and copied in
+with a `prebuilt` stamp.
 
 $(B The compiler) is `ldc2-vulkan` on `PATH` — dlang.nix's `ldc-vulkan` (LDC's
 `sparkles/vulkan-shaders` branch: stock LDC has no Vulkan target and no
@@ -56,6 +59,7 @@ import sparkles.shaders.compute_mode : ComputeMode, computeModeOf;
 struct DeviceBuild
 {
     string packageName;   /// the described package, e.g. `sparkles:ui`
+    bool hasTarget;       /// whether dub described a target for it (it omits one with no sources)
     string packageDir;    /// its directory (absolute)
     string target;        /// the dcompute target, e.g. `vulkan-130`
     string[] importPaths; /// `-I` roots: the package's and its dependencies'
@@ -96,6 +100,7 @@ DeviceBuild parseDescribe(string json)
         build.sources ~= strings(bs, "sourceFiles");
         if (t["rootPackage"].str != rootName)
             continue;
+        build.hasTarget = true;
         build.importPaths = strings(bs, "importPaths").dedup;
         build.versions = strings(bs, "versions").dedup;
         foreach (flag; strings(bs, "dflags").dedup)
@@ -239,6 +244,9 @@ int main(string[] args)
     if (ifStale && isFresh(outDir, packageDir))
         return 0;
 
+    // Then, in this order (`SHP10`): the tools exist (3) — `dub describe`
+    // itself runs the compiler; the configuration is a device build (2); the
+    // unit compiles (1), or the compiler lacks the fragment stage (3, `run`).
     if (tryExecute([ldc, "--version"]).status == 127)
     {
         stderr.writefln("shader-compile: no dcompute-enabled LDC (`%s`). Enter the dev shell " ~
@@ -246,6 +254,13 @@ int main(string[] args)
             "`sparkles/vulkan-shaders` build.", ldc);
         return 3;
     }
+    foreach (tool; ["dub", "spirv-val", "spirv-opt", "spirv-dis", "spirv-cross", "glslangValidator"])
+        if (tryExecute([tool, "--version"]).status == 127)
+        {
+            stderr.writefln("shader-compile: `%s` is not on PATH. The dev shell (`nix develop`) " ~
+                "and `nix run .#shader-compile` carry dub and the SPIR-V and GLSL tools.", tool);
+            return 3;
+        }
 
     // Without `$DFLAGS`: dub folds it into the dflags it reports, and it
     // tunes the host build that runs this step (`ci` adds `--threads=N`, the
@@ -256,15 +271,28 @@ int main(string[] args)
     if (described.status != 0)
     {
         stderr.writeln(described.output);
-        stderr.writefln("shader-compile: `dub describe --config=%s` failed in %s",
-            configuration, packageDir);
-        return 1;
+        stderr.writefln("shader-compile: `dub describe --config=%s` failed in %s, so there is " ~
+            "no device configuration to read", configuration, packageDir);
+        return 2;
     }
     const build = parseDescribe(described.output);
+    if (!build.hasTarget)
+    {
+        stderr.writefln("shader-compile: %s's configuration `%s` has no source files",
+            build.packageName, configuration);
+        return 2;
+    }
     if (!build.target.length)
     {
         stderr.writefln("shader-compile: %s's configuration `%s` names no dcompute target " ~
             "(`-mdcompute-targets=`), so it is not a device build", build.packageName, configuration);
+        return 2;
+    }
+    if (build.target.canFind(',') || !build.target.startsWith("vulkan-"))
+    {
+        stderr.writefln("shader-compile: %s's configuration `%s` must name exactly one Vulkan " ~
+            "target (`-mdcompute-targets=vulkan-<version>`), not `%s`", build.packageName,
+            configuration, build.target);
         return 2;
     }
     const unit = unitOf(build);
@@ -272,13 +300,16 @@ int main(string[] args)
     {
         stderr.writefln("shader-compile: %s (`%s`) has no `@compute(CompileFor.deviceOnly)` " ~
             "module, so there is no entry point to compile", build.packageName, configuration);
-        return 1;
+        return 2;
     }
-    return run(build, unit, outDir, ldc, keep, quiet);
+    // The stamp records the inputs as dub and the compiler read them, so one
+    // edited during the run leaves a stamp that does not match it.
+    return run(build, unit, hashInputs(build, unit), outDir, ldc, keep, quiet);
 }
 
-/// The outcome: 0 ok, 1 failure, 3 toolchain unusable.
-int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep, bool quiet)
+/// The outcome: 0 ok, 1 failure, 3 a compiler without the fragment stage.
+int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir, string ldc,
+    bool keep, bool quiet)
 {
     import std.conv : to;
     import std.process : thisProcessID;
@@ -309,11 +340,22 @@ int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep
     if (compiled.status != 0)
     {
         stderr.writeln(compiled.output);
-        if (isStockLdc(compiled))
-            stderr.writefln("shader-compile: `%s` is not a dcompute-enabled LDC with the " ~
-                "`@fragment` stage (`sparkles/vulkan-shaders`)", ldc);
+        // Whose failure is it? A compiler that cannot build even the smallest
+        // fragment shader for this target (a stock LDC: no Vulkan target, no
+        // `@fragment`) is a toolchain problem, whatever it said about the unit.
+        const probe = buildPath(scratch, "probe.d");
+        probe.write(capabilityProbe);
+        const probed = tryExecute([ldc, "-c", "-m64", "-mdcompute-targets=" ~ build.target,
+            "-mdcompute-file-prefix=probe", "-od=" ~ scratch, probe]);
+        if (probed.status != 0)
+        {
+            stderr.writefln("shader-compile: `%s` cannot compile a `@fragment` shader for `%s`: " ~
+                "it is not a dcompute-enabled LDC with the fragment stage " ~
+                "(`sparkles/vulkan-shaders`)", ldc, build.target);
+            return 3;
+        }
         stderr.writefln("shader-compile: %s: LDC failed (%s)", build.packageName, compiled.status);
-        return isStockLdc(compiled) ? 3 : 1;
+        return 1;
     }
     if (!spv.exists)
     {
@@ -389,7 +431,7 @@ int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep
     foreach (e; dirEntries(outDir, "*.frag", SpanMode.shallow).filter!(e => e.isFile).array)
         if (e.name.baseName !in produced)
             e.name.remove;
-    writeAtomically(buildPath(outDir, stampName), stampFor(build, unit, produced.keys.sort.array));
+    writeAtomically(buildPath(outDir, stampName), stampFor(inputs, produced.keys.sort.array));
     if (keep)
         writefln("shader-compile: scratch kept at %s", scratch);
     return 0;
@@ -415,20 +457,31 @@ enum stampName = ".stamp";
 enum stampVersion = "shader-compile stamp 1";
 
 /**
-The stamp for output generated from `unit`: every input the output depends
-on, with its SHA-256 — the unit's modules, and the recipe of each package
-that contributes one (flags, versions and the device target live there) —
-plus the files produced. Paths are relative to the package, so a checkout
-moved elsewhere stays fresh.
+The inputs a stamp records, each as its SHA-256 and its path: the unit's
+modules, and the recipe of each package that contributes one (flags,
+versions and the device target live there). Paths are relative to the
+package, so a checkout moved elsewhere stays fresh.
+*/
+string[2][] hashInputs(in DeviceBuild build, in Unit unit)
+{
+    string[2][] hashed;
+    foreach (input; stampInputs(build, unit))
+        hashed ~= [sha256Of(input), input.relativePath(build.packageDir)];
+    return hashed;
+}
+
+/**
+The stamp for output generated from `inputs` (`hashInputs`, taken before
+compiling): those inputs, then the files produced.
 
 A packager that supplies the output prebuilt (a Nix derivation) writes the
 single line `prebuilt` instead, which is always fresh.
 */
-string stampFor(in DeviceBuild build, in Unit unit, in string[] outputs)
+string stampFor(in string[2][] inputs, in string[] outputs)
 {
     string s = stampVersion ~ "\n";
-    foreach (input; stampInputs(build, unit))
-        s ~= "input " ~ sha256Of(input) ~ " " ~ input.relativePath(build.packageDir) ~ "\n";
+    foreach (input; inputs)
+        s ~= "input " ~ input[0] ~ " " ~ input[1] ~ "\n";
     foreach (output; outputs)
         s ~= "output " ~ output ~ "\n";
     return s;
@@ -523,7 +576,7 @@ bool isFresh(string outDir, string packageDir)
     assert(!isFresh(out_, pkg), "no stamp yet");
 
     out_.buildPath("fx.frag").write("glsl");
-    out_.buildPath(stampName).write(stampFor(build, unit, ["fx.frag"]));
+    out_.buildPath(stampName).write(stampFor(hashInputs(build, unit), ["fx.frag"]));
     assert(isFresh(out_, pkg));
 
     // A dependency's module, and a contributing package's recipe, are inputs.
@@ -677,14 +730,12 @@ private bool step(string[] cmd, string what)
     return false;
 }
 
-/// A stock LDC: no Vulkan target, or no `@fragment`.
-private bool isStockLdc(in Run r)
-    => r.output.canFind("not built with Vulkan DCompute support")
-    || r.output.canFind("Unrecognised or invalid DCompute targets")
-    || r.output.canFind("undefined identifier `fragment`")
-    // A current stock LDC: its `ldc.dcompute` has no `fragment` for the
-    // vocabulary to import.
-    || r.output.canFind("import `fragment` not found");
+/// The smallest fragment shader: what a compiler that can build the unit
+/// must be able to build.
+private enum capabilityProbe = `@compute(CompileFor.deviceOnly) module probe;
+import ldc.dcompute;
+@fragment __vector(float[4]) probe(@input __vector(float[4]) c) { return c; }
+`;
 
 @("shaderCompile.unitOf.repositoryUi")
 @system unittest

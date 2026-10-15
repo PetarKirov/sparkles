@@ -410,10 +410,29 @@ never a stamp that vouches for output not yet written.
 
 **SHP10: Outcomes.** The build step **must** exit 0 on success or when the
 output is fresh (`SHB2`), 1 when compilation, validation or translation
-fails, 2 for a usage or configuration error, and 3 when the device compiler
-is missing or lacks the dcompute Vulkan target or the fragment stage. Every
-non-zero exit **must** print the cause; exit 3 **must** say how to obtain the
-compiler.
+fails, 2 for a usage or configuration error, and 3 when the toolchain cannot
+do the work. It **must** decide them in this order, reporting the first that
+applies:
+
+1. the arguments are malformed: 2;
+2. with `--if-stale`, the output is fresh: 0;
+3. the device compiler, dub, or a SPIR-V or GLSL tool cannot be run: 3;
+4. the device configuration cannot be described, has no sources, names no
+   dcompute target, names anything but exactly one Vulkan target, or yields
+   no device-only module: 2;
+5. the unit fails to compile: 3 if the device compiler cannot compile a
+   minimal `@fragment` shader for that target either, 1 otherwise;
+6. the unit fails to validate or translate: 1.
+
+Every non-zero exit **must** print the cause; exit 3 **must** say how to
+obtain the toolchain.
+
+_Rationale:_ Describing the configuration runs the compiler, so a missing
+compiler comes before every configuration error. Whether a compiler has the
+fragment stage is decided by what it can compile, not by matching its
+messages about the unit, which name neither cause reliably; the minimal
+shader is tried only once the unit has failed, so a successful run pays
+nothing for it.
 
 ## 8. Build integration
 
@@ -424,7 +443,9 @@ before compiling. The freshness stamp is what makes that cheap.
 contain `.stamp`. Its first line names the stamp format version; then one
 line per input with its SHA-256 and its path relative to the package
 directory; then one line per output file. The inputs are the unit's modules
-and the build recipe of each package that contributes one.
+and the build recipe of each package that contributes one, and each hash is
+taken as soon as the configuration is described, before the compiler reads
+the file, so a file edited while the step runs leaves the stamp stale.
 
 **SHB2: Freshness.** With `--if-stale`, the build step **must** exit 0
 without running dub or the device compiler when the stamp's format version is
