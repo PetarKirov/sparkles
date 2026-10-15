@@ -237,22 +237,34 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
         return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
 
     auto f = Fixture.create("iface");
-    // `SHF5`: the compiler accepts each of these; the step must not.
+    // `SHF5`: what GLSL cannot declare at that end of the interface is the
+    // compiler's to reject, naming the parameter and the reason.
     foreach (bad; [
-        `@fragment vec4 e(@input vec3 colour) => v4(colour.x);`,
-        `@fragment vec3 e(@input vec2 uv) => v3(uv.x);`,
-        `struct Pair { float a, b; }
-@fragment vec4 e(@uniform Pair pair) => v4(pair.a);`,
-        `@fragment vec4 e(@uniform float[2] weights) => v4(weights[0]);`,
+        [`@fragment vec4 e(@input int n) => v4(cast(float) n);`, "parameter `n` cannot be `int`"],
+        [`@fragment vec4 e(@uniform uint n) => v4(cast(float) n);`, "has no unsigned integers"],
+        [`@fragment vec4 e(@input float[2] w) => v4(w[0]);`, "only a `@uniform` can be an array"],
+        [`@fragment vec3 e(@input vec3 c) => c;`, "the output is a vector of four `float`s"],
+        // `SHF6`: a handle never sits inside a uniform.
+        [`struct Pair { Sampler2D t; }
+@fragment vec4 e(@uniform Pair p) => v4(1.0f);`, "parameter `p` cannot be `Pair`"],
     ])
     {
-        f.entries("fx_entries", bad);
+        f.entries("fx_entries", bad[0]);
         const r = f.run();
-        assert(r.status == 1 && r.diagnostics.canFind("(SHF5)"), bad ~ "\n" ~ r.diagnostics);
+        assert(r.status == 1 && r.diagnostics.canFind(bad[1]), bad[0] ~ "\n" ~ r.diagnostics);
+        assert(!f.out_.exists, "nothing is written");
     }
-    // The diagnostic names the parameter.
-    f.entries("fx_entries", `@fragment vec4 e(@input vec3 colour) => v4(colour.x);`);
-    assert(f.run().diagnostics.canFind("`colour` crosses the shader interface as vec3"));
+
+    // `SHF2`: an interface name is one variable across the unit, so two
+    // entries that give it different ordinals fail, naming both entries.
+    f.entries("fx_entries", `@fragment vec4 first(@input vec4 fragColor, Sampler2D texB)
+    => texB.sample(v2(0.5f)) * fragColor;
+@fragment vec4 second(@input vec2 fragTexCoord, @input vec4 fragColor, Sampler2D texA, Sampler2D texB)
+    => texA.sample(fragTexCoord) * texB.sample(fragTexCoord) * fragColor;`);
+    const clash = f.run();
+    assert(clash.status == 1 && clash.diagnostics.canFind(
+        "shader input `fragColor` is at location 1 in `second` but location 0 in `first`"),
+        clash.diagnostics);
 
     // `SHF2`: an unmarked parameter is the compiler's to reject, naming it.
     f.entries("fx_entries", `@fragment vec4 e(vec2 plain) => v4(plain.x);`);
@@ -384,7 +396,7 @@ private string functionBody(string dis, string name)
     if (const tool = missingTool())
         return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
 
-    // `SHF1`–`SHF3`, `SHF6`, read off the module the compiler emits for an
+    // `SHF1`–`SHF3`, read off the module the compiler emits for an
     // entry whose parameters interleave every kind.
     auto f = Fixture.create("abi");
     const dis = disassemble(f, `@fragment vec4 interleaved(@input vec2 first, Sampler2D texA,
@@ -426,8 +438,7 @@ private string functionBody(string dis, string name)
         functionBody(dis, "interleaved"));
     assert(!functionBody(dis, "silent").canFind("%finalColor"), functionBody(dis, "silent"));
 
-    // SHF6: no handle inside an aggregate or function-local memory.
-    import app : interfaceViolations;
-
-    assert(interfaceViolations(dis) == [], interfaceViolations(dis).to!string);
+    // SHF6: no image or sampler in function-local memory.
+    assert(!dis.lineSplitter.canFind!(l => l.canFind("OpTypePointer Function")
+        && (l.canFind("Image") || l.canFind("Sampler"))), dis);
 }

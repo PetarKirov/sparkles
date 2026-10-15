@@ -150,8 +150,8 @@ and a forgotten one is caught only if the consumer asserts it at compile time.
 
 **Choice.** A native three-element vector on the device, a three-`float`
 struct on the host aligned to 16 bytes, so both occupy 16 (`SHV2`), with a
-packed 12-byte variant for host storage, and no `vec3` at the shader
-interface (`SHF5`).
+packed 12-byte variant for host storage. A `vec3` may then cross the shader
+interface like any other vector (`SHF5`).
 
 **Why.** The device needs a native vector: a struct `vec3` copied by memory
 is a load the SPIR-V backend cannot legalise. On the host, a released LDC
@@ -234,24 +234,29 @@ rasterizer in CI, and for the desktop dialect only: the GLSL ES output's
 `mediump` bound is not read back (Q4 stays open). Arguments outside the
 stated ranges are not tested, because no bound exists there to test against.
 
-### D13: The build step enforces the interface contract
+### D13: The compiler enforces the interface contract
 
-**Question.** Where are `SHF5` (no `vec3` or aggregate at the interface) and
-`SHF6` (handles stay scalar) enforced?
+**Question.** Where are `SHF2`'s one-variable-per-name rule, `SHF5` (what
+crosses the interface) and `SHF6` (handles stay scalar) enforced?
 
-**Alternatives.** In the compiler's fragment stage, or in the build step.
+**Alternatives.** In the compiler's fragment stage, or in the build step,
+from the disassembly of the module the compiler emitted.
 
-**Choice.** The build step (`SHP4`), from the disassembly of the module as
-the compiler emitted it.
+**Choice.** The compiler's fragment stage, which builds the interface from
+the signature and already rejects an unmarked parameter (`SHF2`) and another
+stage (`SHF7`).
 
-**Why.** The compiler accepts a `vec3` input, a struct or array uniform, and
-a `vec3` return, and the universal-rules validator accepts all of them. A
-check in the build step needs no compiler change and holds for any compiler
-the pin moves to. A diagnostic in the fork can be added later, and the build
-step's check would then never fire.
+**Why.** The diagnostic points at the D parameter and names both entry
+points of a clash, where a disassembly check can name only a SPIR-V
+variable. The types the build step could only reject, the compiler can
+declare correctly instead: a signed `int`, a struct with its member names.
+A disassembly scanner in the build step was a parser of another tool's text
+format, about a hundred lines with its own tests. `SHF6` holds by
+construction: a `Sampler2D` is accepted only as a parameter, never inside a
+uniform struct, and the fork keeps handles in SSA form.
 
-**Trade-offs.** The diagnostic names the SPIR-V variable, which carries the
-parameter's name, but not the D source line.
+**Trade-offs.** Each change to the contract is a compiler change, a pin
+bump (`SHT1`) and a rebuild of the device toolchain on every platform.
 
 ## Open questions
 

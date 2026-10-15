@@ -76,6 +76,22 @@ function body is ordinary D over this vocabulary — the same D the CPU runs.
 An entry point may read several textures. Name the parameters `texture0`,
 `texture1` and so on, in the order the renderer binds them.
 
+What may cross the interface is what both generated dialects can declare
+there:
+
+- an `@input` is a `float`, `vec2`, `vec3` or `vec4`;
+- the return value is a `vec4`;
+- a `@uniform` may also be an `int`, a vector of `int`s, or a struct or
+  static array of those. The GLSL says `int` for an `int`, and a struct keeps
+  its field names, so the host sets `light.gain` by name.
+
+Anything else is a compile error naming the parameter and the reason.
+
+All the entry points of a package compile to one module, where a name is one
+variable. A name used by two entry points must therefore be the same kind of
+parameter at the same position among its kind (`fragColor` the second
+`@input` in both, say), or the compiler rejects the second, naming both.
+
 ### Control flow the device compiler cannot structure
 
 SPIR-V requires structured control flow, and the pinned compiler's SPIR-V
