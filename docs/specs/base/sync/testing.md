@@ -121,14 +121,16 @@ concurrent automaton of those phases.
 The native stress suite is built with LDC's ThreadSanitizer on Linux. A data
 race report on data a primitive protects is a failure: it shows a missing
 ordering edge in a schedule the run reached. TSan sees the ordering that
-instrumented atomic operations establish, but not an ordering that passes
-through the kernel: a futex sleep and its wake. In ThreadSanitizer builds the
-primitives **must** annotate only those kernel-carried edges — `deliverWake`
-to the return of the `sleep` it ends — and **must not** annotate a release or
-an acquisition that an atomic operation already performs, since an
-annotation there would supply the very edge under test. A seeded fault, a
-mutex release weakened to relaxed, **must** produce a TSan report in this
-configuration, or its silence proves nothing. TSan says nothing about
+instrumented atomic operations establish. A futex sleep and its wake carry
+no memory-model edge of their own (SPEC SYF1 permits spurious returns), so
+every edge SYH1 and SYH2 require **must** come from an atomic operation: the
+waker's release store or read–modify–write of the word or park state, and
+the waiter's acquire load after its sleep. The primitives **must not**
+annotate happens-before edges for ThreadSanitizer at all, since an
+annotation would supply the very edge under test. Seeded faults **must** each
+produce a TSan report, or the configuration's silence proves nothing: a mutex
+release weakened to relaxed, a thread parker's wake store weakened to
+relaxed, and a fiber parker's park-state swap weakened to relaxed. TSan says nothing about
 whether the primitives' internal atomics are correct; oracle 1 owns that.
 
 ## Oracle 5: seam fault injection
@@ -172,9 +174,13 @@ semaphore and reader–writer protocols at the level of SPEC.md and
 primitives.md: buckets,
 queues, woken-waiter records, the lock bits, tokens, timeouts, cancellation
 and `fork`. TLC checks its safety invariants — those of oracle 1 — and the
-liveness properties oracle 1 cannot: under weak fairness, every waiter of a
-mutex acquires it (SYM8), no designation lasts forever (SYM6, SYP15), and
-every selected condition waiter returns (SYC7). The model is written from the
+liveness properties oracle 1 cannot. They assume that every holder
+eventually releases, that every committed wake is delivered, and that every
+loop keeps running, and they hold under weak fairness: every waiter of a mutex
+that neither times out nor is cancelled acquires it (SYM8), no designation
+lasts forever (SYM6, SYP15), and every selected condition waiter returns
+(SYC7). The model **must** accept a trace in which a waiter withdraws by
+timeout or cancellation, and **must** reject a seeded starvation fault. The model is written from the
 specification, not the code, so it also checks the specification; whether
 the code implements it is a manual review obligation, recorded with each
 result.
@@ -210,27 +216,29 @@ B4 and B5; a change to any of them reruns all seven.
 
 ### The seam and the parking lot
 
-| Requirement      | Check                                                                                                                                                                                                 | Oracle  |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| `SYF1`, `SYF4`   | a waiter sleeps while the value holds, returns on a wake and on a past deadline; a wake on an address whose storage was freed has no effect beyond a spurious return                                  | 3       |
-| `SYF2`           | each leg's build selects the table's mechanism; the macOS leg runs both mechanisms; the FreeBSD leg runs `_umtx_op`; the Linux leg also runs the portable fallback                                    | 3, 5, 6 |
-| `SYF3`           | the macOS selection is read once and cached                                                                                                                                                           | 5       |
-| `SYP1`           | the B5 workload with colliding keys gives the same outcomes as with distinct buckets                                                                                                                  | 1, 3    |
-| `SYP2`           | a park racing an unpark across the validation point is never stranded                                                                                                                                 | 1       |
-| `SYP3`           | an unpark issued from `beforeSleep` wakes a waiter enqueued before it                                                                                                                                 | 1       |
-| `SYP4`           | injected spurious seam returns never end a park                                                                                                                                                       | 1, 5    |
-| `SYP5`           | a deadline or cancellation racing a committed unpark returns `unparked` with its token                                                                                                                | 1       |
-| `SYP6`           | three waiters on one key are unparked in enqueue order                                                                                                                                                | 1       |
-| `SYP7`           | callback arguments match the queue the automaton predicts                                                                                                                                             | 2       |
-| `SYP8`           | requeued records keep their order, do not wake, and time out under their new key                                                                                                                      | 1, 2    |
-| `SYP9`           | a filter's wake, skip and stop answers select exactly the records it accepted                                                                                                                         | 1, 2    |
-| `SYP10`, `SYP12` | no system call, loop post or suspension happens with a bucket locked, checked by a model-platform assertion                                                                                           | 1       |
-| `SYP11`          | the table is a static array of `parkingBuckets` buckets; the allocation audit sees no allocation                                                                                                      | 6, 7    |
-| `SYP13`          | the bucket lock passes the mutual-exclusion and lost-wakeup checks; with a bucket holder stalled indefinitely, a fiber contending for the bucket yields and the other fibers on its loop keep running | 1, 3    |
-| `SYP14`          | a word used both as `LockBits` and as an address wait fails an assertion in a checked build                                                                                                           | 1, 3    |
-| `SYP15`          | a designated or parked bit left with no waiter behind it is cleared by the next contended operation, and a new waiter is then woken                                                                   | 1, 10   |
-| `SYP14`, `SYP8`  | `notifyOne` moving a condition waiter onto a mutex that already has waiters rewrites its tag and its interruptibility, with no assertion                                                              | 1       |
-| `SYP15`, `SYM6`  | a woken waiter loses to a barging locker, reaches its deadline and returns; its record is reused; its registration is gone and the next contended unlock wakes another waiter                         | 1       |
+| Requirement      | Check                                                                                                                                                                                                                                                                                            | Oracle  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| `SYF1`, `SYF4`   | a waiter sleeps while the value holds, returns on a wake and on a past deadline; a wake on an address whose storage was freed has no effect beyond a spurious return                                                                                                                             | 3       |
+| `SYF2`           | each leg's build selects the table's mechanism; the macOS leg runs both mechanisms; the FreeBSD leg runs `_umtx_op`; the Linux leg also runs the portable fallback                                                                                                                               | 3, 5, 6 |
+| `SYF3`           | the macOS selection is read once and cached                                                                                                                                                                                                                                                      | 5       |
+| `SYP1`           | the B5 workload with colliding keys gives the same outcomes as with distinct buckets                                                                                                                                                                                                             | 1, 3    |
+| `SYP2`           | a park racing an unpark across the validation point is never stranded                                                                                                                                                                                                                            | 1       |
+| `SYP3`           | an unpark issued from `beforeSleep` wakes a waiter enqueued before it                                                                                                                                                                                                                            | 1       |
+| `SYP4`           | injected spurious seam returns never end a park                                                                                                                                                                                                                                                  | 1, 5    |
+| `SYP5`           | a deadline or cancellation racing a committed unpark returns `unparked` with its token                                                                                                                                                                                                           | 1       |
+| `SYI3`, `SYI2`   | a semaphore release commits a permit, its delivery is delayed, and a cancellation wins the test parker's sleep: the acquire succeeds, `settle` is not called, and a consuming parker's request stays pending                                                                                     | 1       |
+| `SYP14`, `SYC7`  | notify, requeue onto a held mutex, then a cancellation and the old deadline fire before the unlock: the waiter sleeps again, stays queued, and reports a notification with the lock held                                                                                                         | 1       |
+| `SYP6`           | three waiters on one key are unparked in enqueue order                                                                                                                                                                                                                                           | 1       |
+| `SYP7`           | callback arguments match the queue the automaton predicts                                                                                                                                                                                                                                        | 2       |
+| `SYP8`           | requeued records keep their order, do not wake, and time out under their new key                                                                                                                                                                                                                 | 1, 2    |
+| `SYP9`           | a filter's wake, skip and stop answers select exactly the records it accepted                                                                                                                                                                                                                    | 1, 2    |
+| `SYP10`, `SYP12` | no system call, loop post or suspension happens with a bucket locked, checked by a model-platform assertion                                                                                                                                                                                      | 1       |
+| `SYP11`          | the table is a static array of `parkingBuckets` buckets; the allocation audit sees no allocation                                                                                                                                                                                                 | 6, 7    |
+| `SYP13`          | the bucket lock passes the mutual-exclusion and lost-wakeup checks; with a bucket holder stalled indefinitely, a fiber contending for the bucket yields and the other fibers on its loop keep running                                                                                            | 1, 3    |
+| `SYP14`          | a word used both as `LockBits` and as an address wait fails an assertion in a checked build                                                                                                                                                                                                      | 1, 3    |
+| `SYP15`          | a designated or parked bit left with no waiter behind it is cleared by the next contended operation, and a new waiter is then woken                                                                                                                                                              | 1, 10   |
+| `SYP14`, `SYP8`  | `notifyOne` moving a condition waiter onto a mutex that already has waiters rewrites its tag and its interruptibility, with no assertion                                                                                                                                                         | 1       |
+| `SYP15`, `SYM6`  | a woken waiter loses to a barging locker, reaches its deadline and returns; its record is reused; its registration is gone and its designation passes to a parked waiter Q; with Q still on its way, the next unlock wakes nobody; with Q parked again, the next contended unlock wakes a waiter | 1       |
 
 ### Parkers, cancellation, attributes, ordering and lifecycle
 
@@ -243,7 +251,7 @@ B4 and B5; a change to any of them reruns all seven.
 | `SYK6`                 | a queue of thread-parker and test-parker records is served in enqueue order                                                                                                                                                                                                                                                                                                                                                   | 1      |
 | `SYK7`                 | `relax` is called at most `spinSteps` times per park                                                                                                                                                                                                                                                                                                                                                                          | 1      |
 | `SYK8`                 | a delivery delayed past the waiter's return, the reuse of its record, its thread's exit and its fiber's destruction touches no record storage                                                                                                                                                                                                                                                                                 | 1, 3   |
-| `SYK9`                 | a park while pinned uses the thread parker; a test scheduler that suspends a pinned fiber fails an assertion                                                                                                                                                                                                                                                                                                                  | 1, 3   |
+| `SYK9`                 | a condition wait meets a contended bucket after choosing a fiber parker and before releasing the lock: its thread sleeps and the fiber does not yield; the pin is restored on every return path; a park while pinned uses the thread parker; a test scheduler that suspends a pinned fiber fails an assertion                                                                                                                 | 1, 3   |
 | `SYI1`–`SYI5`          | per interruptible operation: cancellation before selection reports cancelled with nothing held; cancellation after a grant succeeds and leaves the cancellation pending; inside a protected region the operation does not observe it; non-interruptible operations never observe it                                                                                                                                           | 1, 2   |
 | `SYA1`                 | the allocation audit                                                                                                                                                                                                                                                                                                                                                                                                          | 7      |
 | `SYA2`–`SYA6`          | the compile-time checks; `.init` values pass the stress suite from static storage                                                                                                                                                                                                                                                                                                                                             | 3, 6   |
@@ -284,5 +292,6 @@ B4 and B5; a change to any of them reruns all seven.
 
 The specification's independent-review gate is **partly met**: a first
 independent review on 2026-10-15 raised twelve findings and three gaps
-(DS13–DS22); a second review of that revision raised twelve more (DS23). The
-tree that resolves the second review has not yet been reviewed.
+(DS13–DS22); a second review of that revision raised twelve more (DS23); a
+third, of that revision and of event-horizon's fiber parker, raised fourteen
+(DS25). The tree that resolves the third review has not yet been reviewed.

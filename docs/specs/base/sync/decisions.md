@@ -13,7 +13,8 @@ The evidence base is the
 [fine-grained locking survey](../../../research/fine-grained-locking/index.md).
 The owner accepted DS1–DS7 and DS10–DS12 in review on 2026-10-12, and DS8,
 DS9 and DS13–DS22 on 2026-10-15, after an independent review whose findings
-DS13–DS22 resolve; DS23, resolving a second review, and DS24 were accepted on 2026-10-15.
+DS13–DS22 resolve; DS23, resolving a second review, and DS24 were accepted on
+2026-10-15; and DS25, resolving a third review, on 2026-10-16.
 
 ## DS1: A parking lot, not a futex word per lock
 
@@ -337,4 +338,33 @@ testing.md oracle 5).
 **Cost.** Two more CI configurations, one of them a virtual machine.
 
 **Revisit** if the FreeBSD leg exceeds 15 minutes: it moves to a nightly and
-on-demand schedule, and its gate is met by the latest such run.
+on-demand schedule, and a pull request that changes the seam, the thread
+parker or their build runs it on demand against its own tree; a nightly run
+of an older tree is history, not evidence for the change.
+
+## DS25: Resolutions of the third review
+
+A third independent review, of the tree that resolved the second and of
+event-horizon's [fiber parker](../../event-horizon/fiber-parker.md), found
+fourteen defects. The choices that are not forced:
+
+- **One arbitration point** (SYI3): a parker's sleep result is tentative and
+  the parking lot decides the outcome under the bucket lock; a parker learns
+  that a park ended cancelled only through `settle`, which is where a
+  consuming scheduler consumes the request.
+- **Requeue rewrites the deadline too** (SYP14), and a stale timeout or
+  cancellation of a requeued record is a spurious return that sleeps again in
+  the record's current mode.
+- **A condition wait keeps its lock's pin until it has released the lock**
+  (SYK9); only the parker for its sleep is chosen as if the pin were gone.
+- **No happens-before annotations** for ThreadSanitizer: futex wakes carry no
+  memory-model edge, so every edge comes from an atomic, and seeded faults
+  cover the parkers' publications too (testing.md oracle 4).
+- **Liveness is qualified** by its client and delivery assumptions, and
+  withdrawal is a legal trace (oracle 10).
+- **Nightly evidence is for its own tree** (DS24).
+- In event-horizon, a shield stops propagation but not cancellation aimed at
+  it; shutdown retains a scheduler that still has parked records; direct
+  interrupts and node cancellation take separate routes on the ring path;
+  parking reserves its resources; and `auto` follows a recorded decision
+  ([fiber-parker.md](../../event-horizon/fiber-parker.md)).
