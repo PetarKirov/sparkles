@@ -17,6 +17,16 @@ free functions: `v3(1, 0, 0)`, `v3(0.5f)` for a broadcast, `v4(rgb, 1)`.
 $(B Components read by name through UFCS): `p.x`, `p.y`, `c.xyz`, `c.w`.
 A `__vector` has no members, so these are functions, and they work on both
 representations.
+
+$(B One layout on both sides.) Every representation of a vector has the size
+and alignment the device gives it: `vec2` 8 bytes, `vec3` and `vec4` 16 — a
+`vec3` is three components and four bytes of padding, as the device compiler
+lays it out in memory. So a value, a struct or an array that holds vectors
+means the same bytes on the host as in the device's own memory layout. That
+is not GLSL's `std140`, which places a scalar that follows a `vec3` in the
+`vec3`'s padding: a uniform block declared `std140` needs its own layout. Dense host storage
+that never crosses to a shader uses the packed variants (`Vec3Packed`, 12
+bytes), converted with `packed` and `aligned`.
 */
 @compute(CompileFor.hostAndDevice)
 module sparkles.shaders.types;
@@ -47,24 +57,38 @@ version (LDC_DCompute)
 }
 else
 {
-    // On the host `vec3` is the struct on every compiler, on purpose. LDC
-    // accepts `__vector(float[3])`, but its frontend sizes it at 12 bytes
-    // while LLVM allocates 16, so a struct holding one is an ICE ("struct IR
-    // size does not match the frontend size") and a bare one asks for a
-    // non-power-of-two alignment that LLVM only tolerates with assertions
-    // off. The fix is in the compiler (`sparkles/vulkan-shaders`); until a
-    // release carries it, three floats it is — and nothing crosses the
-    // shader interface as a `vec3`, so the two sides still agree.
+    // On the host `vec3` is the struct on every compiler, on purpose: a
+    // released LDC sizes `__vector(float[3])` at 12 bytes while LLVM
+    // allocates 16 (a struct holding one is an ICE), and DMD has no such
+    // vector at all. The struct is aligned like the device's vector, so the
+    // two still occupy the same 16 bytes.
     alias vec3 = Vec!3; ///
 }
+
+/// How a `Vec` is laid out in memory.
+enum VecLayout
+{
+    /// As the device lays the vector out: size and alignment rounded up to a
+    /// power of two (`vec3`: 16 bytes). What crosses to a shader.
+    aligned,
+    /// The components back to back, as `float[N]` (`vec3`: 12 bytes): dense
+    /// host storage that never reaches a shader.
+    packed,
+}
+
+/// The size, and alignment, of an aligned `N`-component vector.
+enum size_t alignedVectorSize(size_t N) = N <= 1 ? 4 : N == 2 ? 8 : 16;
 
 /**
 The fallback vector for compilers without an `N`-wide `float` vector: the
 same surface as a `__vector(float[N])`, so shader code compiles the same.
+Aligned by default, so it occupies what the device's vector does.
 */
-struct Vec(size_t N)
+struct Vec(size_t N, VecLayout layout = VecLayout.aligned)
 {
-    float[N] array = 0; /// the components, as on a `__vector`
+    /// the components, as on a `__vector`
+    align(layout == VecLayout.aligned ? alignedVectorSize!N : float.alignof)
+    float[N] array = 0;
 
     /// Component-wise arithmetic against another vector.
     Vec opBinary(string op)(in Vec rhs) const @safe pure nothrow @nogc
@@ -180,3 +204,31 @@ enum isShaderVector(V) = is(V == vec2) || is(V == vec3) || is(V == vec4);
 
 /// The component count of a shader vector type.
 enum vectorLength(V) = V.init.array.length;
+
+/// Packed vectors: the components back to back, for dense host storage.
+alias Vec2Packed = Vec!(2, VecLayout.packed);
+alias Vec3Packed = Vec!(3, VecLayout.packed); /// ditto
+alias Vec4Packed = Vec!(4, VecLayout.packed); /// ditto
+
+/// `v`'s components in a packed vector.
+Vec!(vectorLength!V, VecLayout.packed) packed(V)(in V v) @safe pure nothrow @nogc
+if (isShaderVector!V)
+{
+    typeof(return) r;
+    r.array = v.array;
+    return r;
+}
+
+/// `p`'s components in the shader vector of its length.
+auto aligned(size_t N)(in Vec!(N, VecLayout.packed) p) @safe pure nothrow @nogc
+if (N >= 2 && N <= 4)
+{
+    static if (N == 2)
+        vec2 r;
+    else static if (N == 3)
+        vec3 r;
+    else
+        vec4 r;
+    r.array = p.array;
+    return r;
+}

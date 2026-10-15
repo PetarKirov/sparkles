@@ -23,7 +23,11 @@ vec3 phosphor(in vec2 at, in vec2 extent, in vec3 color) @safe pure nothrow @nog
 - **Types** — `vec2`, `vec3`, `vec4`: component-wise `+ - * /` against a vector
   or a scalar, unary `-`, `.array` for the components. Under LDC the
   power-of-two sizes are the compiler's own `__vector`s; `vec3`, and every size
-  under DMD, is a struct with the same surface.
+  under DMD, is a struct with the same surface. Every representation has the
+  GPU's size and alignment (`vec3` is 16 bytes, padding included), so a struct
+  or an array of vectors means the same bytes on both sides. For dense host
+  arrays, `Vec2Packed`/`Vec3Packed`/`Vec4Packed` hold the components back to
+  back; `packed(v)` and `aligned(p)` convert.
 - **Constructors** — `v2(x, y)`, `v3(x, y, z)`, `v4(x, y, z, w)`, `v4(rgb, a)`,
   and a broadcast from one scalar. A `__vector` alias cannot be called, and a
   device module may not spell an array literal, so these are functions.
