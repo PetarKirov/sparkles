@@ -40,6 +40,11 @@ let
   ];
 
   # ── jobs over sub-packages, statically sharded ─────────────────────
+  #
+  # The account runs 20 jobs at once, 5 of them on macOS, and a full run
+  # places more; the rest queue. So a leg gets the fewest shards that keep it
+  # under the long pole — the shard holding `hue`'s tests, about 35 minutes
+  # on the arm runners — and no more.
 
   testLegs = [
     {
@@ -48,14 +53,16 @@ let
       shards = 4;
       timeout = 60;
     }
+    # About 27 minutes of work in all.
     {
       system = "x86_64-linux";
       dc = "dmd";
-      shards = 4;
+      shards = 2;
       timeout = 45;
     }
-    # The macOS plan runs five jobs at once; three shards leave room for the
-    # examples and the Nix build.
+    # Three of the five macOS slots: the examples, the Nix build and the
+    # flake check share the rest, and the one that queues still finishes long
+    # before the `hue` shard does.
     {
       system = "aarch64-darwin";
       dc = "ldc2";
@@ -131,7 +138,8 @@ let
   sanitizeJobs = shardedJobs {
     prefix = "sanitize";
     label = "sanitize";
-    shards = 4;
+    # About 48 minutes of work in all.
+    shards = 3;
     task = "test-sanitize";
     job = {
       # Every package rebuilt with ASan, plus a cold toolchain after a bump.

@@ -40,7 +40,6 @@ jobs:
       - sanitize-1
       - sanitize-2
       - sanitize-3
-      - sanitize-4
       - shader-readback
       - shader-reproducibility
       - spec-evidence
@@ -54,8 +53,6 @@ jobs:
       - test-windows
       - test-x86_64-linux-dmd-1
       - test-x86_64-linux-dmd-2
-      - test-x86_64-linux-dmd-3
-      - test-x86_64-linux-dmd-4
       - test-x86_64-linux-ldc2-1
       - test-x86_64-linux-ldc2-2
       - test-x86_64-linux-ldc2-3
@@ -116,12 +113,12 @@ jobs:
           CACHIX_AUTH_TOKEN: "${{ secrets.CACHIX_AUTH_TOKEN }}"
           CACHIX_CACHE: sparkles
           GATE: "{\"flake-check-aarch64-darwin\":\"${{ needs.flake-check-aarch64-darwin.result }}\",\"flake-check-x86_64-linux\":\"${{ needs.flake-check-x86_64-linux.result }}\"}"
-          RESULTS: "{\"cloud-env-native\":\"${{ needs.cloud-env-native.result }}\",\"cloud-env-restricted\":\"${{ needs.cloud-env-restricted.result }}\",\"docs\":\"${{ needs.docs.result }}\",\"examples-aarch64-darwin\":\"${{ needs.examples-aarch64-darwin.result }}\",\"examples-x86_64-linux\":\"${{ needs.examples-x86_64-linux.result }}\",\"extracted-tests\":\"${{ needs.extracted-tests.result }}\",\"flake-check-aarch64-darwin\":\"${{ needs.flake-check-aarch64-darwin.result }}\",\"flake-check-x86_64-linux\":\"${{ needs.flake-check-x86_64-linux.result }}\",\"lint\":\"${{ needs.lint.result }}\",\"md-examples\":\"${{ needs.md-examples.result }}\",\"nix-build-aarch64-darwin\":\"${{ needs.nix-build-aarch64-darwin.result }}\",\"nix-build-android\":\"${{ needs.nix-build-android.result }}\",\"nix-build-x86_64-linux\":\"${{ needs.nix-build-x86_64-linux.result }}\",\"plan\":\"${{ needs.plan.result }}\",\"sanitize-1\":\"${{ needs.sanitize-1.result }}\",\"sanitize-2\":\"${{ needs.sanitize-2.result }}\",\"sanitize-3\":\"${{ needs.sanitize-3.result }}\",\"sanitize-4\":\"${{ needs.sanitize-4.result }}\",\"shader-readback\":\"${{ needs.shader-readback.result }}\",\"shader-reproducibility\":\"${{ needs.shader-reproducibility.result }}\",\"spec-evidence\":\"${{ needs.spec-evidence.result }}\",\"test-aarch64-darwin-ldc2-1\":\"${{ needs.test-aarch64-darwin-ldc2-1.result }}\",\"test-aarch64-darwin-ldc2-2\":\"${{ needs.test-aarch64-darwin-ldc2-2.result }}\",\"test-aarch64-darwin-ldc2-3\":\"${{ needs.test-aarch64-darwin-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-1\":\"${{ needs.test-aarch64-linux-ldc2-1.result }}\",\"test-aarch64-linux-ldc2-2\":\"${{ needs.test-aarch64-linux-ldc2-2.result }}\",\"test-aarch64-linux-ldc2-3\":\"${{ needs.test-aarch64-linux-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-4\":\"${{ needs.test-aarch64-linux-ldc2-4.result }}\",\"test-windows\":\"${{ needs.test-windows.result }}\",\"test-x86_64-linux-dmd-1\":\"${{ needs.test-x86_64-linux-dmd-1.result }}\",\"test-x86_64-linux-dmd-2\":\"${{ needs.test-x86_64-linux-dmd-2.result }}\",\"test-x86_64-linux-dmd-3\":\"${{ needs.test-x86_64-linux-dmd-3.result }}\",\"test-x86_64-linux-dmd-4\":\"${{ needs.test-x86_64-linux-dmd-4.result }}\",\"test-x86_64-linux-ldc2-1\":\"${{ needs.test-x86_64-linux-ldc2-1.result }}\",\"test-x86_64-linux-ldc2-2\":\"${{ needs.test-x86_64-linux-ldc2-2.result }}\",\"test-x86_64-linux-ldc2-3\":\"${{ needs.test-x86_64-linux-ldc2-3.result }}\",\"test-x86_64-linux-ldc2-4\":\"${{ needs.test-x86_64-linux-ldc2-4.result }}\",\"text-conformance\":\"${{ needs.text-conformance.result }}\",\"wsi-demos\":\"${{ needs.wsi-demos.result }}\",\"wsi-windows\":\"${{ needs.wsi-windows.result }}\"}"
+          RESULTS: "{\"cloud-env-native\":\"${{ needs.cloud-env-native.result }}\",\"cloud-env-restricted\":\"${{ needs.cloud-env-restricted.result }}\",\"docs\":\"${{ needs.docs.result }}\",\"examples-aarch64-darwin\":\"${{ needs.examples-aarch64-darwin.result }}\",\"examples-x86_64-linux\":\"${{ needs.examples-x86_64-linux.result }}\",\"extracted-tests\":\"${{ needs.extracted-tests.result }}\",\"flake-check-aarch64-darwin\":\"${{ needs.flake-check-aarch64-darwin.result }}\",\"flake-check-x86_64-linux\":\"${{ needs.flake-check-x86_64-linux.result }}\",\"lint\":\"${{ needs.lint.result }}\",\"md-examples\":\"${{ needs.md-examples.result }}\",\"nix-build-aarch64-darwin\":\"${{ needs.nix-build-aarch64-darwin.result }}\",\"nix-build-android\":\"${{ needs.nix-build-android.result }}\",\"nix-build-x86_64-linux\":\"${{ needs.nix-build-x86_64-linux.result }}\",\"plan\":\"${{ needs.plan.result }}\",\"sanitize-1\":\"${{ needs.sanitize-1.result }}\",\"sanitize-2\":\"${{ needs.sanitize-2.result }}\",\"sanitize-3\":\"${{ needs.sanitize-3.result }}\",\"shader-readback\":\"${{ needs.shader-readback.result }}\",\"shader-reproducibility\":\"${{ needs.shader-reproducibility.result }}\",\"spec-evidence\":\"${{ needs.spec-evidence.result }}\",\"test-aarch64-darwin-ldc2-1\":\"${{ needs.test-aarch64-darwin-ldc2-1.result }}\",\"test-aarch64-darwin-ldc2-2\":\"${{ needs.test-aarch64-darwin-ldc2-2.result }}\",\"test-aarch64-darwin-ldc2-3\":\"${{ needs.test-aarch64-darwin-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-1\":\"${{ needs.test-aarch64-linux-ldc2-1.result }}\",\"test-aarch64-linux-ldc2-2\":\"${{ needs.test-aarch64-linux-ldc2-2.result }}\",\"test-aarch64-linux-ldc2-3\":\"${{ needs.test-aarch64-linux-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-4\":\"${{ needs.test-aarch64-linux-ldc2-4.result }}\",\"test-windows\":\"${{ needs.test-windows.result }}\",\"test-x86_64-linux-dmd-1\":\"${{ needs.test-x86_64-linux-dmd-1.result }}\",\"test-x86_64-linux-dmd-2\":\"${{ needs.test-x86_64-linux-dmd-2.result }}\",\"test-x86_64-linux-ldc2-1\":\"${{ needs.test-x86_64-linux-ldc2-1.result }}\",\"test-x86_64-linux-ldc2-2\":\"${{ needs.test-x86_64-linux-ldc2-2.result }}\",\"test-x86_64-linux-ldc2-3\":\"${{ needs.test-x86_64-linux-ldc2-3.result }}\",\"test-x86_64-linux-ldc2-4\":\"${{ needs.test-x86_64-linux-ldc2-4.result }}\",\"text-conformance\":\"${{ needs.text-conformance.result }}\",\"wsi-demos\":\"${{ needs.wsi-demos.result }}\",\"wsi-windows\":\"${{ needs.wsi-windows.result }}\"}"
         run: "$CI_BUNDLE/bin/02-ci-record"
       - name: Every job succeeded or was skipped
         if: "${{ always() }}"
         env:
-          RESULTS: "{\"cloud-env-native\":\"${{ needs.cloud-env-native.result }}\",\"cloud-env-restricted\":\"${{ needs.cloud-env-restricted.result }}\",\"docs\":\"${{ needs.docs.result }}\",\"examples-aarch64-darwin\":\"${{ needs.examples-aarch64-darwin.result }}\",\"examples-x86_64-linux\":\"${{ needs.examples-x86_64-linux.result }}\",\"extracted-tests\":\"${{ needs.extracted-tests.result }}\",\"flake-check-aarch64-darwin\":\"${{ needs.flake-check-aarch64-darwin.result }}\",\"flake-check-x86_64-linux\":\"${{ needs.flake-check-x86_64-linux.result }}\",\"lint\":\"${{ needs.lint.result }}\",\"md-examples\":\"${{ needs.md-examples.result }}\",\"nix-build-aarch64-darwin\":\"${{ needs.nix-build-aarch64-darwin.result }}\",\"nix-build-android\":\"${{ needs.nix-build-android.result }}\",\"nix-build-x86_64-linux\":\"${{ needs.nix-build-x86_64-linux.result }}\",\"plan\":\"${{ needs.plan.result }}\",\"sanitize-1\":\"${{ needs.sanitize-1.result }}\",\"sanitize-2\":\"${{ needs.sanitize-2.result }}\",\"sanitize-3\":\"${{ needs.sanitize-3.result }}\",\"sanitize-4\":\"${{ needs.sanitize-4.result }}\",\"shader-readback\":\"${{ needs.shader-readback.result }}\",\"shader-reproducibility\":\"${{ needs.shader-reproducibility.result }}\",\"spec-evidence\":\"${{ needs.spec-evidence.result }}\",\"test-aarch64-darwin-ldc2-1\":\"${{ needs.test-aarch64-darwin-ldc2-1.result }}\",\"test-aarch64-darwin-ldc2-2\":\"${{ needs.test-aarch64-darwin-ldc2-2.result }}\",\"test-aarch64-darwin-ldc2-3\":\"${{ needs.test-aarch64-darwin-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-1\":\"${{ needs.test-aarch64-linux-ldc2-1.result }}\",\"test-aarch64-linux-ldc2-2\":\"${{ needs.test-aarch64-linux-ldc2-2.result }}\",\"test-aarch64-linux-ldc2-3\":\"${{ needs.test-aarch64-linux-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-4\":\"${{ needs.test-aarch64-linux-ldc2-4.result }}\",\"test-windows\":\"${{ needs.test-windows.result }}\",\"test-x86_64-linux-dmd-1\":\"${{ needs.test-x86_64-linux-dmd-1.result }}\",\"test-x86_64-linux-dmd-2\":\"${{ needs.test-x86_64-linux-dmd-2.result }}\",\"test-x86_64-linux-dmd-3\":\"${{ needs.test-x86_64-linux-dmd-3.result }}\",\"test-x86_64-linux-dmd-4\":\"${{ needs.test-x86_64-linux-dmd-4.result }}\",\"test-x86_64-linux-ldc2-1\":\"${{ needs.test-x86_64-linux-ldc2-1.result }}\",\"test-x86_64-linux-ldc2-2\":\"${{ needs.test-x86_64-linux-ldc2-2.result }}\",\"test-x86_64-linux-ldc2-3\":\"${{ needs.test-x86_64-linux-ldc2-3.result }}\",\"test-x86_64-linux-ldc2-4\":\"${{ needs.test-x86_64-linux-ldc2-4.result }}\",\"text-conformance\":\"${{ needs.text-conformance.result }}\",\"wsi-demos\":\"${{ needs.wsi-demos.result }}\",\"wsi-windows\":\"${{ needs.wsi-windows.result }}\"}"
+          RESULTS: "{\"cloud-env-native\":\"${{ needs.cloud-env-native.result }}\",\"cloud-env-restricted\":\"${{ needs.cloud-env-restricted.result }}\",\"docs\":\"${{ needs.docs.result }}\",\"examples-aarch64-darwin\":\"${{ needs.examples-aarch64-darwin.result }}\",\"examples-x86_64-linux\":\"${{ needs.examples-x86_64-linux.result }}\",\"extracted-tests\":\"${{ needs.extracted-tests.result }}\",\"flake-check-aarch64-darwin\":\"${{ needs.flake-check-aarch64-darwin.result }}\",\"flake-check-x86_64-linux\":\"${{ needs.flake-check-x86_64-linux.result }}\",\"lint\":\"${{ needs.lint.result }}\",\"md-examples\":\"${{ needs.md-examples.result }}\",\"nix-build-aarch64-darwin\":\"${{ needs.nix-build-aarch64-darwin.result }}\",\"nix-build-android\":\"${{ needs.nix-build-android.result }}\",\"nix-build-x86_64-linux\":\"${{ needs.nix-build-x86_64-linux.result }}\",\"plan\":\"${{ needs.plan.result }}\",\"sanitize-1\":\"${{ needs.sanitize-1.result }}\",\"sanitize-2\":\"${{ needs.sanitize-2.result }}\",\"sanitize-3\":\"${{ needs.sanitize-3.result }}\",\"shader-readback\":\"${{ needs.shader-readback.result }}\",\"shader-reproducibility\":\"${{ needs.shader-reproducibility.result }}\",\"spec-evidence\":\"${{ needs.spec-evidence.result }}\",\"test-aarch64-darwin-ldc2-1\":\"${{ needs.test-aarch64-darwin-ldc2-1.result }}\",\"test-aarch64-darwin-ldc2-2\":\"${{ needs.test-aarch64-darwin-ldc2-2.result }}\",\"test-aarch64-darwin-ldc2-3\":\"${{ needs.test-aarch64-darwin-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-1\":\"${{ needs.test-aarch64-linux-ldc2-1.result }}\",\"test-aarch64-linux-ldc2-2\":\"${{ needs.test-aarch64-linux-ldc2-2.result }}\",\"test-aarch64-linux-ldc2-3\":\"${{ needs.test-aarch64-linux-ldc2-3.result }}\",\"test-aarch64-linux-ldc2-4\":\"${{ needs.test-aarch64-linux-ldc2-4.result }}\",\"test-windows\":\"${{ needs.test-windows.result }}\",\"test-x86_64-linux-dmd-1\":\"${{ needs.test-x86_64-linux-dmd-1.result }}\",\"test-x86_64-linux-dmd-2\":\"${{ needs.test-x86_64-linux-dmd-2.result }}\",\"test-x86_64-linux-ldc2-1\":\"${{ needs.test-x86_64-linux-ldc2-1.result }}\",\"test-x86_64-linux-ldc2-2\":\"${{ needs.test-x86_64-linux-ldc2-2.result }}\",\"test-x86_64-linux-ldc2-3\":\"${{ needs.test-x86_64-linux-ldc2-3.result }}\",\"test-x86_64-linux-ldc2-4\":\"${{ needs.test-x86_64-linux-ldc2-4.result }}\",\"text-conformance\":\"${{ needs.text-conformance.result }}\",\"wsi-demos\":\"${{ needs.wsi-demos.result }}\",\"wsi-windows\":\"${{ needs.wsi-windows.result }}\"}"
         run: "$CI_BUNDLE/bin/03-ci-verdict"
   cloud-env-native:
     name: cloud-env (native)
@@ -924,7 +921,7 @@ jobs:
           path: plan.json
           retention-days: 7
   sanitize-1:
-    name: sanitize (1/4)
+    name: sanitize (1/3)
     needs:
       - plan
     if: "${{ fromJSON(needs.plan.outputs.stale)['sanitize-1'][0] != null }}"
@@ -979,7 +976,7 @@ jobs:
       - name: Run the tests under ASan and stackovf
         run: "$CI_BUNDLE/bin/01-ci-test-sanitize"
   sanitize-2:
-    name: sanitize (2/4)
+    name: sanitize (2/3)
     needs:
       - plan
     if: "${{ fromJSON(needs.plan.outputs.stale)['sanitize-2'][0] != null }}"
@@ -1034,7 +1031,7 @@ jobs:
       - name: Run the tests under ASan and stackovf
         run: "$CI_BUNDLE/bin/01-ci-test-sanitize"
   sanitize-3:
-    name: sanitize (3/4)
+    name: sanitize (3/3)
     needs:
       - plan
     if: "${{ fromJSON(needs.plan.outputs.stale)['sanitize-3'][0] != null }}"
@@ -1074,61 +1071,6 @@ jobs:
           nix=/nix/var/nix/profiles/default/bin
           attr='.#ci.bundles.ci.sanitize-3'
           bundle='${{ fromJSON(needs.plan.outputs.bundles)['sanitize-3'] }}'
-          if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
-            echo "Substituted $bundle"
-          else
-            echo "::group::Building the job's closure (not in the binary cache yet)"
-            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
-            echo "::endgroup::"
-            if [ "$built" != "$bundle" ]; then
-              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
-              exit 1
-            fi
-          fi
-          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
-      - name: Run the tests under ASan and stackovf
-        run: "$CI_BUNDLE/bin/01-ci-test-sanitize"
-  sanitize-4:
-    name: sanitize (4/4)
-    needs:
-      - plan
-    if: "${{ fromJSON(needs.plan.outputs.stale)['sanitize-4'][0] != null }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    defaults:
-      run:
-        shell: "/nix/store/90nk33c4fkyg4x4dfk5cykqiryf2nlqq-bash-interactive-5.3p15/bin/bash --noprofile --norc -eo pipefail {0}"
-    env:
-      CI_UNITS: "${{ join(fromJSON(needs.plan.outputs.stale)['sanitize-4'], ' ') }}"
-      DC: ldc2
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            extra-substituters = https://sparkles.cachix.org https://dlang-community.cachix.org
-            extra-trusted-public-keys = sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ=
-            fallback = true
-            connect-timeout = 5
-            download-attempts = 2
-            auto-optimise-store = false
-          github_access_token: "${{ github.token }}"
-      - name: Use the project cache
-        uses: cachix/cachix-action@v17
-        with:
-          name: sparkles
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-      - name: "Realise the job's closure"
-        shell: bash
-        run: |
-          set -euo pipefail
-          nix=/nix/var/nix/profiles/default/bin
-          attr='.#ci.bundles.ci.sanitize-4'
-          bundle='${{ fromJSON(needs.plan.outputs.bundles)['sanitize-4'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
           else
@@ -1712,7 +1654,7 @@ jobs:
           # shellcheck disable=SC2086 # a word list, one package per word
           ci/test-windows.sh $CI_UNITS
   test-x86_64-linux-dmd-1:
-    name: test x86_64-linux dmd (1/4)
+    name: test x86_64-linux dmd (1/2)
     needs:
       - plan
     if: "${{ fromJSON(needs.plan.outputs.stale)['test-x86_64-linux-dmd-1'][0] != null }}"
@@ -1767,7 +1709,7 @@ jobs:
       - name: dub test the packages whose closure is new
         run: "$CI_BUNDLE/bin/01-ci-test"
   test-x86_64-linux-dmd-2:
-    name: test x86_64-linux dmd (2/4)
+    name: test x86_64-linux dmd (2/2)
     needs:
       - plan
     if: "${{ fromJSON(needs.plan.outputs.stale)['test-x86_64-linux-dmd-2'][0] != null }}"
@@ -1807,116 +1749,6 @@ jobs:
           nix=/nix/var/nix/profiles/default/bin
           attr='.#ci.bundles.ci.test-x86_64-linux-dmd-2'
           bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-dmd-2'] }}'
-          if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
-            echo "Substituted $bundle"
-          else
-            echo "::group::Building the job's closure (not in the binary cache yet)"
-            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
-            echo "::endgroup::"
-            if [ "$built" != "$bundle" ]; then
-              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
-              exit 1
-            fi
-          fi
-          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
-      - name: dub test the packages whose closure is new
-        run: "$CI_BUNDLE/bin/01-ci-test"
-  test-x86_64-linux-dmd-3:
-    name: test x86_64-linux dmd (3/4)
-    needs:
-      - plan
-    if: "${{ fromJSON(needs.plan.outputs.stale)['test-x86_64-linux-dmd-3'][0] != null }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    defaults:
-      run:
-        shell: "/nix/store/90nk33c4fkyg4x4dfk5cykqiryf2nlqq-bash-interactive-5.3p15/bin/bash --noprofile --norc -eo pipefail {0}"
-    env:
-      CI_UNITS: "${{ join(fromJSON(needs.plan.outputs.stale)['test-x86_64-linux-dmd-3'], ' ') }}"
-      DC: dmd
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            extra-substituters = https://sparkles.cachix.org https://dlang-community.cachix.org
-            extra-trusted-public-keys = sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ=
-            fallback = true
-            connect-timeout = 5
-            download-attempts = 2
-            auto-optimise-store = false
-          github_access_token: "${{ github.token }}"
-      - name: Use the project cache
-        uses: cachix/cachix-action@v17
-        with:
-          name: sparkles
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-      - name: "Realise the job's closure"
-        shell: bash
-        run: |
-          set -euo pipefail
-          nix=/nix/var/nix/profiles/default/bin
-          attr='.#ci.bundles.ci.test-x86_64-linux-dmd-3'
-          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-dmd-3'] }}'
-          if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
-            echo "Substituted $bundle"
-          else
-            echo "::group::Building the job's closure (not in the binary cache yet)"
-            built=$("$nix/nix" build --no-link --print-out-paths -L "$attr")
-            echo "::endgroup::"
-            if [ "$built" != "$bundle" ]; then
-              echo "::error::the bundle resolved to $bundle, but the flake builds $built (an impure evaluation?)"
-              exit 1
-            fi
-          fi
-          echo "CI_BUNDLE=$bundle" >> "$GITHUB_ENV"
-      - name: dub test the packages whose closure is new
-        run: "$CI_BUNDLE/bin/01-ci-test"
-  test-x86_64-linux-dmd-4:
-    name: test x86_64-linux dmd (4/4)
-    needs:
-      - plan
-    if: "${{ fromJSON(needs.plan.outputs.stale)['test-x86_64-linux-dmd-4'][0] != null }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    defaults:
-      run:
-        shell: "/nix/store/90nk33c4fkyg4x4dfk5cykqiryf2nlqq-bash-interactive-5.3p15/bin/bash --noprofile --norc -eo pipefail {0}"
-    env:
-      CI_UNITS: "${{ join(fromJSON(needs.plan.outputs.stale)['test-x86_64-linux-dmd-4'], ' ') }}"
-      DC: dmd
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            extra-substituters = https://sparkles.cachix.org https://dlang-community.cachix.org
-            extra-trusted-public-keys = sparkles.cachix.org-1:CPQ+GG8UKQCNUyvCrgZj8p7P+7cYqpjmGAmUPlLwbZc= dlang-community.cachix.org-1:eAX1RqX4PjTDPCAp/TvcZP+DYBco2nJBackkAJ2BsDQ=
-            fallback = true
-            connect-timeout = 5
-            download-attempts = 2
-            auto-optimise-store = false
-          github_access_token: "${{ github.token }}"
-      - name: Use the project cache
-        uses: cachix/cachix-action@v17
-        with:
-          name: sparkles
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-      - name: "Realise the job's closure"
-        shell: bash
-        run: |
-          set -euo pipefail
-          nix=/nix/var/nix/profiles/default/bin
-          attr='.#ci.bundles.ci.test-x86_64-linux-dmd-4'
-          bundle='${{ fromJSON(needs.plan.outputs.bundles)['test-x86_64-linux-dmd-4'] }}'
           if "$nix/nix-store" --realise "$bundle" > /dev/null 2>&1; then
             echo "Substituted $bundle"
           else
