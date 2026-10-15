@@ -102,3 +102,19 @@ Close this when the HTML interpreter maps a fixed-size stack to a
 `position: relative` container and its positioned children to
 `position: absolute` offsets (the cell/em grid the page already uses), with
 a table-bearing tree in its round-trip tests.
+
+## HUE-O6 — hue has no about page for its build facts {#hue-o6}
+
+**Status:** open. **Requirements:** [`TPG1`–`TPG3`](../terminal/pages.md)
+(the terminal's about page, the model to follow).
+
+Desktop hue and the APK's `libhue.so` both carry the build-info section
+(`stampBuildInfo`, `stampAndroidLib`): the version, the commit, the build type
+and the linked components. Desktop `hue --version` prints it; on Android
+nothing reads it, because hue has no about page and a phone has no
+command line.
+
+Close this when hue shows the document on an about surface reachable on
+Android — identity, the read-only component tree, and the links — reading
+the section through `sparkles.core_cli.build_info` as the terminal does,
+with a test that drives it from a stamped document.
