@@ -506,11 +506,11 @@ private BaseResolver fileBases(string from, string[] chain)
 }
 
 /// Writes the file canonically (`FMT4`): its own document, not the overlay.
-string saveTheme(const ThemeFile f)
+void saveTheme(W)(ref W w, const ThemeFile f)
 {
     import sparkles.ui.dtcg : writeDtcg;
 
-    return writeDtcg(f.document);
+    writeDtcg(w, f.document);
 }
 
 private DtcgResult!T fail(T)(string path, string message)
@@ -967,6 +967,7 @@ private DtcgResult!TextAttr parseAttrs(const DtcgJson v, string where)
 
 version (unittest)
 {
+    import sparkles.base.text.writers : formatted;
     import sparkles.ui.dtcg : writeDtcg;
 
     // The effective style of every selector, last rule winning — what a
@@ -999,13 +1000,13 @@ version (unittest)
     // to the same theme, and exports to the same bytes again.
     foreach (name, ref t; builtinThemes)
     {
-        const text = writeDtcg(exportTheme(t));
+        const text = formatted!writeDtcg(exportTheme(t)).toString;
         auto loaded = loadTheme(text);
         assert(loaded.hasValue, name ~ ": " ~ (loaded.hasError ? loaded.error.message : ""));
         assertSameTheme(t, loaded.value.theme, name);
         assert(loaded.value.warnings.length == 0, name ~ ": " ~ loaded.value.warnings.join("; "));
-        assert(saveTheme(loaded.value) == text, name ~ ": save(load(x)) == x");
-        assert(writeDtcg(exportTheme(loaded.value.theme)) == text, name ~ ": export is a fixed point");
+        assert(formatted!saveTheme(loaded.value).toString == text, name ~ ": save(load(x)) == x");
+        assert(formatted!writeDtcg(exportTheme(loaded.value.theme)).toString == text, name ~ ": export is a fixed point");
     }
 }
 
@@ -1018,7 +1019,7 @@ version (unittest)
     t.fonts.faces[FontFace.sans] = ["Inter", "ui-sans-serif", "sans-serif"];
     t.fonts.faces[FontFace.mono] = ["Fira Code", "monospace"];
     t.fonts.roles[FontRole.heading] = FontFace.sans; // headings in the body face
-    const text = writeDtcg(exportTheme(t));
+    const text = formatted!writeDtcg(exportTheme(t)).toString;
     assert(text.canFind(`"$value": "{font.family.sans}"`), text);
     // The display face is empty, so nothing names it.
     assert(!text.canFind("display"), text);
@@ -1055,13 +1056,13 @@ version (unittest)
     t.palette.overlayPadX = 3;
     t.hasPalette = true;
 
-    const text = writeDtcg(exportTheme(t));
+    const text = formatted!writeDtcg(exportTheme(t)).toString;
     assert(text.canFind(`"hover": {`));
     assert(text.canFind(`"$value": "{accent.primary.fg}"`));
     auto loaded = loadTheme(text);
     assert(loaded.hasValue, loaded.hasError ? loaded.error.message : "");
     assert(loaded.value.theme.palette == t.palette);
-    assert(saveTheme(loaded.value) == text);
+    assert(formatted!saveTheme(loaded.value).toString == text);
 }
 
 @("theme_file.load.overlaysABase")
@@ -1090,8 +1091,8 @@ version (unittest)
     // The primitive is kept, and reported as unmapped.
     assert(f.value.warnings.length == 1 && f.value.warnings[0].startsWith("$.palette.rose"));
     // Saving writes the user's own document: the alias, not its value.
-    assert(saveTheme(f.value).canFind(`"$value": "{palette.rose}"`));
-    assert(!saveTheme(f.value).canFind(`"syntax"`));
+    assert(formatted!saveTheme(f.value).toString.canFind(`"$value": "{palette.rose}"`));
+    assert(!formatted!saveTheme(f.value).toString.canFind(`"syntax"`));
 }
 
 @("theme_file.load.attrsOnlyRulesAndDraftHex")
@@ -1171,7 +1172,7 @@ version (unittest)
 `;
     auto f = loadTheme(text);
     assert(f.hasValue);
-    const saved = saveTheme(f.value);
+    const saved = formatted!saveTheme(f.value).toString;
     assert(saved.canFind(`"com.figma"`) && saved.canFind(`"TEXT_FILL"`));
     assert(saved.canFind(`"$value": "#cdd6f4"`), "a draft value is kept as written");
 }
@@ -1233,7 +1234,7 @@ version (unittest)
     assert(nord.hasValue && nord.value is ("nord" in builtinThemes), "a built-in, not a copy");
 
     auto tmp = TmpFS.create();
-    const path = tmp.writeFile(writeDtcg(exportTheme(builtinThemes["dracula"])));
+    const path = tmp.writeFile(formatted!writeDtcg(exportTheme(builtinThemes["dracula"])).toString);
     auto fromFile = themeNamed(path);
     assert(fromFile.hasValue, fromFile.hasError ? fromFile.error.message : "");
     assertSameTheme(builtinThemes["dracula"], *fromFile.value, "dracula from a file");
@@ -1266,7 +1267,7 @@ version (unittest)
             continue; // an alias spelling of a theme already written
         names[t.name] = true;
         const path = buildPath(dir, t.name ~ ".tokens");
-        const text = writeDtcg(exportTheme(t));
+        const text = formatted!writeDtcg(exportTheme(t)).toString;
         if (update)
             write(path, text);
         // A Windows checkout may carry CRLF (no .gitattributes pins the data).
@@ -1294,12 +1295,12 @@ version (unittest)
     t.glyphs.treeGuide = GuideFamily.heavy;
     t.glyphs.thumb = ThumbFamily.shade;
     t.glyphs.marks = MarkCharset.nerdFont;
-    const text = writeDtcg(exportTheme(t));
+    const text = formatted!writeDtcg(exportTheme(t)).toString;
     assert(text.canFind(`"treeGuide": "heavy"`), text);
     auto f = loadTheme(text);
     assert(f.hasValue, f.hasError ? f.error.message : "");
     assert(f.value.theme.glyphs == t.glyphs);
-    assert(!writeDtcg(exportTheme(Theme(name: "plain"))).canFind(`"glyphs"`));
+    assert(!formatted!writeDtcg(exportTheme(Theme(name: "plain"))).toString.canFind(`"glyphs"`));
 
     auto bad = loadTheme(`{"$extensions": {"dev.petar-kirov.sparkles": {"glyphs": {"thumb": "zigzag"}}}}`);
     assert(bad.hasError && bad.error.path == "$.$extensions.dev.petar-kirov.sparkles.glyphs.thumb");

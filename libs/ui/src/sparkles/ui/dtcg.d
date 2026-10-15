@@ -27,7 +27,7 @@ assertion (`FMT3`).
 module sparkles.ui.dtcg;
 
 import std.algorithm.comparison : among;
-import std.array : appender, join;
+import std.array : join;
 import std.conv : ConvException, to;
 import std.format : format;
 import std.math : round;
@@ -331,14 +331,6 @@ void writeDtcg(W)(ref W w, const DtcgJson doc)
     put(w, "\n");
 }
 
-/// ditto
-string writeDtcg(const DtcgJson doc)
-{
-    auto w = appender!string;
-    writeDtcg(w, doc);
-    return w[];
-}
-
 private void writeValue(W)(ref W w, const DtcgJson v, uint depth)
 {
     import sparkles.wired.json.writer : writeJsonString;
@@ -425,10 +417,11 @@ private const(DtcgMember)[] sortedMembers(const DtcgJson v)
 @safe unittest
 {
     const doc = parseDtcg(`{"b": {"$value": 1.50, "$type": "number"}, "a": [1, 2]}`).value;
-    assert(writeDtcg(doc) == "{\n  \"a\": [1, 2],\n  \"b\": {\n    \"$type\": \"number\",\n"
+    const text = formatted!writeDtcg(doc).toString;
+    assert(text == "{\n  \"a\": [1, 2],\n  \"b\": {\n    \"$type\": \"number\",\n"
         ~ "    \"$value\": 1.50\n  }\n}\n");
     // Reading the canonical form back is a fixed point.
-    assert(writeDtcg(parseDtcg(writeDtcg(doc)).value) == writeDtcg(doc));
+    assert(formatted!writeDtcg(parseDtcg(text).value).toString == text);
 }
 
 @("dtcg.parse.rejectsWithALocation")
