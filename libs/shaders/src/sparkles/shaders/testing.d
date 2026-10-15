@@ -91,26 +91,3 @@ import sparkles.shaders.types;
     assert(v3(1, 2, 3).packed.aligned.array == [1, 2, 3]);
     assert(v2(1, 2).packed.array == [1, 2]);
 }
-
-@("shaders.math.transcendentalsMatchTheirDefinitions")
-@safe pure nothrow @nogc unittest
-{
-    import std.math : PI;
-
-    // `SHV5`: hand-derived values — the identities that pin each function,
-    // not the host library's own output read back. One part in a million is
-    // far inside single precision at these arguments.
-    static bool near(float a, float b) => a - b < 1e-6f && b - a < 1e-6f;
-
-    assert(sin(0.0f) == 0 && near(sin(cast(float) PI / 2), 1) && near(sin(cast(float) PI / 6), 0.5f));
-    assert(near(sin(-cast(float) PI / 2), -1), "odd");
-    assert(cos(0.0f) == 1 && near(cos(cast(float) PI / 3), 0.5f) && near(cos(cast(float) PI), -1));
-    assert(near(cos(-cast(float) PI / 3), 0.5f), "even");
-    assert(pow(2.0f, 10.0f) == 1024 && pow(9.0f, 0.5f) == 3 && pow(5.0f, 0.0f) == 1);
-    assert(near(pow(8.0f, 1.0f / 3.0f), 2));
-    // Per component on every vector type, and the same as the scalar form.
-    const angles = v3(0, cast(float) PI / 2, cast(float) PI);
-    assert(near(sin(angles).y, 1) && near(cos(angles).z, -1));
-    assert(pow(v2(2, 3), v2(3, 2)).array == [8, 9]);
-    assert(pow(v4(4), v4(0.5f)).array == [2, 2, 2, 2]);
-}

@@ -1,8 +1,9 @@
 /**
 Host/device agreement on a real GL driver (`sparkles:shaders` `SHV7`, `SHF4`).
 
-A probe unit — one fragment entry point per group of built-ins — is compiled
-by `shader-compile` exactly as a consumer's shaders are. Each probe reads its
+A probe package (`tests/shader-readback/`) — one fragment entry point per
+group of built-ins — is compiled by `shader-compile` exactly as a consumer's
+shaders are. Each probe reads its
 arguments from a float input texture, one sample per texel, so the device sees
 precisely the inputs the host does, and writes its results to a float render
 target. The host evaluates the same `sparkles.shaders` functions on the same
@@ -17,17 +18,16 @@ module sparkles.ui_raylib.shader_readback;
 
 version (unittest):
 
-import std.algorithm : canFind;
-import std.array : split;
-import std.file : exists, mkdirRecurse, readText, rmdirRecurse, tempDir, write;
+import std.file : exists, readText, rmdirRecurse, tempDir;
 import std.format : format;
-import std.math : abs, fabs, isFinite, nextUp, PI;
-import std.path : buildNormalizedPath, buildPath, dirName, pathSeparator;
+import std.math : abs, fabs, nextUp, PI;
+import std.path : buildNormalizedPath, buildPath, dirName;
 import std.process : environment, execute;
 
 import raylib;
 import raylib.rlgl;
 
+import sparkles.base.text.cstring : toTempStringz;
 import sparkles.shaders : clamp, cos, dot, exp, floor, fract, length, luma, max, min, mix,
     mod, pow, sin, smoothstep, sqrt, step, v2, v3;
 import sparkles.test_runner.skip : skipTest;
@@ -37,68 +37,6 @@ private enum repoRoot = __FILE_FULL_PATH__.dirName.buildNormalizedPath("..", "..
 /// Samples per probe: one texel each, in a single row, so the render
 /// target's vertical flip cannot reorder them.
 private enum size_t samples = 256;
-
-/// The probe unit: each entry reads `a = texture0[i]` and returns four results.
-private enum probeModule = `@compute(CompileFor.deviceOnly)
-module probe;
-
-import sparkles.shaders;
-
-@fragment vec4 probeSample(@input vec2 fragTexCoord, Sampler2D texture0)
-    => texture0.sample(fragTexCoord);
-
-@fragment vec4 probeTranscendental(@input vec2 fragTexCoord, Sampler2D texture0)
-{
-    const a = texture0.sample(fragTexCoord);
-    return v4(sin(a.x), cos(a.x), exp(a.y), sqrt(a.z));
-}
-
-@fragment vec4 probePow(@input vec2 fragTexCoord, Sampler2D texture0)
-{
-    const a = texture0.sample(fragTexCoord);
-    return v4(pow(a.x, a.y), pow(a.z, a.w), 0.0f, 1.0f);
-}
-
-@fragment vec4 probeRounding(@input vec2 fragTexCoord, Sampler2D texture0)
-{
-    const a = texture0.sample(fragTexCoord);
-    return v4(floor(a.x), fract(a.x), abs(a.x), mod(a.x, a.y));
-}
-
-@fragment vec4 probeSelect(@input vec2 fragTexCoord, Sampler2D texture0)
-{
-    const a = texture0.sample(fragTexCoord);
-    return v4(min(a.x, a.y), max(a.x, a.y), clamp(a.x, -1.0f, 1.0f), step(a.y, a.x));
-}
-
-@fragment vec4 probeCompound(@input vec2 fragTexCoord, Sampler2D texture0)
-{
-    const a = texture0.sample(fragTexCoord);
-    return v4(mix(a.x, a.y, a.z), smoothstep(-1.0f, 1.0f, a.x),
-        dot(v2(a.x, a.y), v2(a.z, a.w)), length(v2(a.x, a.y)));
-}
-
-@fragment vec4 probeLuma(@input vec2 fragTexCoord, Sampler2D texture0)
-{
-    const a = texture0.sample(fragTexCoord);
-    return v4(luma(a.xyz), 0.0f, 0.0f, 1.0f);
-}
-
-struct Light
-{
-    float gain;
-    int bias;
-    vec3 tint;
-}
-
-@fragment vec4 probeUniforms(@input vec2 fragTexCoord, Sampler2D texture0, @uniform int count,
-    @uniform Light light)
-{
-    const a = texture0.sample(fragTexCoord);
-    return v4(a.x * light.gain + cast(float) (count + light.bias), a.y * light.tint.y,
-        light.tint.z, 1.0f);
-}
-`;
 
 /// What the host computes for one probe, from the sample `a`.
 private alias HostFn = float[] function(float[4] a) @safe pure nothrow;
@@ -131,7 +69,7 @@ private void setLight(Shader shader) @system
 {
     void set(T)(string name, T value, ShaderUniformDataType type)
     {
-        const at = GetShaderLocation(shader, name.toStringz);
+        const at = GetShaderLocation(shader, name.toTempStringz.ptr);
         assert(at >= 0, "probeUniforms has no uniform `" ~ name ~ "`");
         SetShaderValue(shader, at, &value, type);
     }
@@ -159,9 +97,10 @@ private immutable Probe[] probes = [
             lerp(0.5f, 4, (i * 13) % n, n), lerp(-2, 2, i, n)]),
     Probe("probeRounding", (a) => [floor(a[0]), fract(a[0]), abs(a[0]), mod(a[0], a[1])],
         [Bound.exact, Bound.ulps8, Bound.exact, Bound.ulps8],
-        // mod's divisor keeps the quotient off an integer, where one rounding
-        // of x/y moves floor() by one and the result by a whole divisor.
-        (i, n) => [lerp(-10, 10, i, n), 1.75f, 0.0f, 0.0f]),
+        // x/y is at least a quarter away from an integer, where one rounding
+        // of the quotient would move floor() by one and mod by a whole y.
+        (i, n) => [(cast(int) (i % 12) - 6 + 0.25f + 0.5f * ((i * 7) % n) / n) * 1.75f, 1.75f,
+            0.0f, 0.0f]),
     Probe("probeSelect", (a) => [min(a[0], a[1]), max(a[0], a[1]), clamp(a[0], -1.0f, 1.0f),
             step(a[1], a[0])],
         [Bound.exact, Bound.exact, Bound.exact, Bound.exact],
@@ -216,41 +155,17 @@ private bool agrees(Bound b, float device, float host, float x, float scale = 1)
     assert(!agrees(Bound.exp, 100.0f + 24 * ulp(100.0f), 100.0f, 10));
 }
 
-/// The tool this environment lacks for a readback, or `null`.
-/// The device tool this environment lacks, or `null`.
-private string missing()
-{
-    foreach (tool; ["ldc2-vulkan", "dub", "spirv-val", "spirv-opt", "spirv-dis",
-            "spirv-cross", "glslangValidator"])
-        if (!environment.get("PATH", "").split(pathSeparator)
-                .canFind!(dir => dir.length && dir.buildPath(tool).exists))
-            return tool;
-    return null;
-}
-
-/// Compiles the probe unit with `shader-compile`; the directory holding
-/// `<entry>.frag`.
+/// Compiles the probe package (`tests/shader-readback/`) with `shader-compile`,
+/// in place; the directory holding `<entry>.frag`.
 private string compileProbes(string root)
 {
-    const pkg = root.buildPath("probe"), out_ = pkg.buildPath("generated");
-    pkg.buildPath("src", "probe").mkdirRecurse;
-    pkg.buildPath("shaders").mkdirRecurse;
-    pkg.buildPath("dub.sdl").write(format(`name "probe"
-dependency "sparkles:shaders" path="%s"
-configuration "library" {
-    targetType "library"
-}
-configuration "shaders" {
-    targetType "library"
-    sourcePaths "src" "shaders"
-    dflags "-mdcompute-targets=vulkan-130"
-}
-`, repoRoot));
-    pkg.buildPath("src", "probe", "host.d").write("module probe.host;\n");
-    pkg.buildPath("shaders", "probe.d").write(probeModule);
+    const out_ = root.buildPath("generated");
+    // Asked for, the readback must run: a missing tool is the step's to name
+    // (exit 3), and a failure here, not a skip.
     const r = execute(["dub", "run", "-q", "--temp-build", "--root=" ~ repoRoot.buildPath("apps", "shader-compile"),
-        "--", "--package=" ~ pkg, "--out=" ~ out_, "--quiet"]);
-    assert(r.status == 0, r.output);
+        "--", "--package=" ~ repoRoot.buildPath("libs", "ui-raylib", "tests", "shader-readback"),
+        "--out=" ~ out_, "--quiet"]);
+    assert(r.status == 0, "SPARKLES_GPU_READBACK=1, but the probes did not compile:\n" ~ r.output);
     return out_;
 }
 
@@ -262,11 +177,6 @@ configuration "shaders" {
 
     if (environment.get("SPARKLES_GPU_READBACK", "") != "1")
         return skipTest("a GPU readback is opt-in: SPARKLES_GPU_READBACK=1, under a display");
-    // Asked for, it must run: a readback that skipped in CI would leave the
-    // agreement claim with no evidence and a green check.
-    if (const what = missing())
-        assert(false, "SPARKLES_GPU_READBACK=1, but the toolchain lacks " ~ what);
-
     const root = buildPath(tempDir, format("sparkles-shader-readback-%s", thisProcessID));
     if (root.exists)
         root.rmdirRecurse;
@@ -299,7 +209,8 @@ configuration "shaders" {
         const inTex = rlLoadTexture(input.ptr, cast(int) samples, 1, fmt, 1);
         scope (exit) rlUnloadTexture(inTex);
         const source = glsl.buildPath(p.entry ~ ".frag").readText;
-        auto shader = LoadShaderFromMemory(null, source.toStringz);
+        const z = source.toTempStringz;
+        auto shader = LoadShaderFromMemory(null, z.ptr);
         assert(IsShaderValid(shader), p.entry ~ ": the generated shader did not link");
         scope (exit) UnloadShader(shader);
         if (p.uniforms !is null)
@@ -333,14 +244,6 @@ configuration "shaders" {
                 const got = pixels[i * 4 + c];
                 if (p.bounds[c] == Bound.unused)
                     continue;
-                // A quotient within rounding of an integer is ambiguous for
-                // `mod`: one rounding of x/y moves floor() by a whole step.
-                if (p.entry == "probeRounding" && c == 3)
-                {
-                    const q = a[0] / a[1];
-                    if (fabs(q - floor(q + 0.5f)) < 1e-4f)
-                        continue;
-                }
                 ++checked;
                 if (!agrees(p.bounds[c], got, want[c], a[1], scale) && failures.length < 20)
                     failures ~= format("%s[%s].%s: device %.9g host %.9g (args %s, bound %s)",
@@ -350,11 +253,4 @@ configuration "shaders" {
     }
     assert(failures.length == 0, format("%s disagreements of %s checked:\n%-(%s\n%)",
         failures.length, checked, failures));
-}
-
-private const(char)* toStringz(string s) @trusted
-{
-    import std.string : toStringz;
-
-    return s.toStringz;
 }
