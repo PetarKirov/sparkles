@@ -61,6 +61,25 @@
     "seeAlso": ["sans-io"]
   },
   {
+    "id": "generational-handle",
+    "term": "generational handle",
+    "aliases": ["generational id", "generational index"],
+    "summary": "An identity made of a slot index and the generation that slot had when the identity was issued, so a reference to a removed object is detected as stale instead of naming the slot's next occupant.",
+    "definition": "A slot index paired with the slot's generation at issue time. Removing the occupant advances the generation, so every handle issued before the removal stops resolving. Sparkles' form is `sparkles.base.pool`'s `Handle`; see [its specification](/specs/base/pool).",
+    "authority": [
+      {
+        "text": "slotmap crate documentation",
+        "link": "https://docs.rs/slotmap/latest/slotmap/"
+      },
+      {
+        "text": "Sparkles: `sparkles.base.pool` specification",
+        "link": "/specs/base/pool"
+      }
+    ],
+    "owner": "sparkles:base",
+    "seeAlso": ["regular-type"]
+  },
+  {
     "id": "sans-io",
     "term": "sans-I/O",
     "summary": "A design in which a protocol or state machine performs no I/O itself: the caller supplies bytes, time and events, and performs the actions it returns.",
