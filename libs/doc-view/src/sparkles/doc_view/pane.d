@@ -118,6 +118,13 @@ struct DocViewPane
     bool deleted;
     /// The content kind, for the embedder's icon (`TDV5`).
     ViewKind kind;
+    /**
+    `open` reads nothing: the pane's first paint shows it empty and asks for
+    another frame, and the next one reads, parses and lays the document out.
+    A pane that is never painted (a hidden tab's) never reads it. Set before
+    `open`.
+    */
+    bool deferLoad;
 
     private DocViewEnv* env;
     private SysTime mtime;
@@ -128,6 +135,9 @@ struct DocViewPane
     private int laidCols = -1;
     private int docRows = 1;
     private bool dirty = true;
+    // `deferLoad`: the document is still to be read, and the paints so far.
+    private bool loadPending;
+    private int pendingPaints;
     private SharedBuffer!(char, 4096) buf;
     private ImageTexture image;
 
@@ -177,6 +187,13 @@ struct DocViewPane
             vm.applyTheme(0);
             return false;
         }
+        if (deferLoad)
+        {
+            loadPending = true;
+            pendingPaints = 0;
+            dirty = true;
+            return true;
+        }
         return load(ScrollAnchor.init);
     }
 
@@ -225,7 +242,7 @@ struct DocViewPane
     bool poll() @system
     {
         const now = MonoTime.currTime;
-        if (now - lastPoll < 1000.msecs || path.length == 0 || isAsset(path))
+        if (loadPending || now - lastPoll < 1000.msecs || path.length == 0 || isAsset(path))
             return false;
         lastPoll = now;
         const m = modified(path);
@@ -269,6 +286,27 @@ struct DocViewPane
 
     /// Whether the pane changed since it last painted.
     bool needsPaint() const @safe pure nothrow @nogc => dirty;
+
+    /**
+    `deferLoad`'s step, once per paint: false on the first, which leaves the
+    pane to the host's background and asks for another frame; the second
+    reads the document, so the window's first frame never waits for it.
+    Nothing is laid out before then, so the document's first build is still
+    the one that lays out only the screen. True when the pane paints.
+    */
+    bool loadedForPaint() @system
+    {
+        if (!loadPending)
+            return true;
+        if (pendingPaints++ == 0)
+        {
+            dirty = true;
+            return false;
+        }
+        loadPending = false;
+        cast(void) load(ScrollAnchor.init);
+        return true;
+    }
 
     /// Frees the GPU texture of an image pane. Call while the window lives.
     void release() @system
@@ -665,6 +703,8 @@ struct DocViewPane
         if (pw <= 0 || ph <= 0)
             return;
         dirty = false;
+        if (!loadedForPaint())
+            return;
         const cw = host.cellW > 0 ? host.cellW : 1, ch = host.cellH > 0 ? host.cellH : 1;
         const cols = pw / cw, rows = ph / ch;
         auto c = RaylibCanvas(host.fonts, &buf, cw, ch, px, py);
@@ -1121,4 +1161,26 @@ version (unittest)
     foreach (w; [60, 40, 30, 20])
         pane.vm.relayout(w);
     assert(MonoTime.currTime - start < 20.seconds, "a few seconds at most, not minutes");
+}
+
+@("pane.open.deferLoad.readsOnTheSecondPaint")
+@system unittest
+{
+    import std.file : remove, tempDir, write;
+    import std.path : buildPath;
+
+    const file = buildPath(tempDir, "sparkles-pane-defer.md");
+    write(file, "# Deferred\n\nRead on the second paint.\n");
+    scope (exit) remove(file);
+    auto env = DocViewEnv.create(GrammarRegistry.fromEnvironment());
+    auto pane = new DocViewPane;
+    pane.deferLoad = true;
+    assert(pane.open(env, file, chromeTheme(RgbColor(200, 200, 200), RgbColor(20, 20, 20))));
+    assert(pane.vm.source.length == 0, "open reads nothing");
+    assert(pane.needsPaint && !pane.poll(), "it asks to be painted, and has nothing to reload");
+    assert(!pane.loadedForPaint() && pane.vm.source.length == 0, "the first paint draws nothing");
+    assert(pane.needsPaint, "and asks for the next");
+    assert(pane.loadedForPaint() && pane.vm.source.length > 0, "the second reads the document");
+    assert(pane.vm.widthCols < 0, "unlaid out, so its first build is the screen's");
+    assert(pane.loadedForPaint());
 }
