@@ -2160,6 +2160,40 @@ version (unittest)
     assert(jsonText(Quoted("hi")) == `{"note":"\"hi\""}`);
 }
 
+/// A type-level converter applies wherever its type is encoded or decoded,
+/// elements and wrapped values included (§8).
+@("wired.json.wireConvert.typeLevelInsideContainers")
+@safe unittest
+{
+    import std.typecons : Nullable;
+    import sparkles.base.text.writers : formatted;
+    import sparkles.wired.policy : readTestVersion, writeTestVersion;
+
+    @WireConvert!(v => formatted!writeTestVersion(v.packed),
+        s => Version(readTestVersion(s)))
+    static struct Version
+    {
+        uint packed;
+    }
+
+    static struct Shape
+    {
+        Version[] list;
+        Version[2] pair;
+        Version[string] byName;
+        Nullable!Version maybe;
+    }
+
+    const s = Shape([Version(1 << 16)], [Version(2 << 16), Version(3 << 16 | 1)],
+        ["x": Version(4 << 16)], Nullable!Version(Version(5 << 16)));
+    const text = jsonText(s);
+    assert(text == `{"list":["1.0"],"pair":["2.0","3.1"],"byName":{"x":"4.0"},`
+        ~ `"maybe":"5.0"}`, text);
+    const back = fromJSON!Shape(text).value;
+    assert(back.list == s.list && back.pair == s.pair && back.maybe == s.maybe);
+    assert(back.byName.length == 1 && back.byName["x"] == s.byName["x"]);
+}
+
 @("wired.json.wireOptional")
 @safe unittest
 {
