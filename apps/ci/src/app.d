@@ -3597,8 +3597,8 @@ private void reportCoverage(in string[] subPackages, in CoverageRun cov,
     in string[] failedPackages, in string[] uncovered)
 {
     import std.algorithm : sort;
-    import std.format : format;
-    import sparkles.ui.components.table : drawTable, TableProps;
+    import sparkles.base.text.writers : formatted;
+    import sparkles.ui.components.table : drawTable, TableBuilder, TableProps;
 
     if (!cov.enabled || !cov.dir.exists)
         return;
@@ -3608,27 +3608,31 @@ private void reportCoverage(in string[] subPackages, in CoverageRun cov,
         results ~= collectCoverage(cov.dir, pkg.baseName, pkg);
     results.sort!((a, b) => a.percent < b.percent);
 
-    string[][] rows = [["package", "files", "covered", "coverable", "%"]];
+    static void writePercent(W)(ref W w, double p)
+    {
+        import std.format : formattedWrite;
+
+        w.formattedWrite("%.1f", p);
+    }
+
+    TableBuilder rows;
+    rows.row("package", "files", "covered", "coverable", "%");
     size_t totalCovered, totalCoverable;
     foreach (r; results)
     {
         totalCovered += r.covered;
         totalCoverable += r.coverable;
-        rows ~= [
-            r.name,
-            r.files.length.to!string,
-            r.covered.to!string,
-            r.coverable.to!string,
-            r.coverable == 0 ? "—" : format("%.1f", r.percent),
-        ];
+        rows.row(r.name, r.files.length, r.covered, r.coverable);
+        if (r.coverable == 0)
+            rows.cell("—");
+        else
+            rows.cell!writePercent(r.percent);
     }
     const total = totalCoverable == 0 ? 100.0 : (100.0 * totalCovered) / totalCoverable;
-    rows ~= [
-        "TOTAL", "", totalCovered.to!string, totalCoverable.to!string, format("%.1f", total),
-    ];
+    rows.row("TOTAL", "", totalCovered, totalCoverable).cell!writePercent(total);
 
     writeln();
-    drawTable(rows, TableProps(headerRows: 1)).writeln;
+    writeln(drawTable(rows, TableProps(headerRows: 1)));
     styledText(i"{dim listings in} $(cov.dir) {dim — open one with} hue --cov").writeln;
 
     // The uncovered note goes to stderr; flush so it cannot land in the

@@ -316,47 +316,6 @@ private string renderLine(in TableLayout lay, in LineDesc d)
     }
 }
 
-/// Render a resolved grid eagerly: walk the line descriptors and join with
-/// newlines (every line, including the last, is terminated — drawTable's
-/// historical shape).
-private string drawGrid(SlotGrid g, TableProps p)
-{
-    auto lay = computeTableLayout(g, p);
-    auto out_ = appender!string;
-    foreach (d; lineDescs(lay.grid, lay.props, lay.rowHeights))
-    {
-        out_ ~= renderLine(lay, d);
-        out_ ~= '\n';
-    }
-    return out_[];
-}
-
-/// Render a rectangular `string[][]` as a boxed table. With the default
-/// `TableProps` the output is byte-identical to the pre-overhaul renderer.
-string drawTable(string[][] cells, TableProps props = TableProps.init)
-in (hasRectangularShape(cells))
-{
-    return drawGrid(resolveGrid(toCells(cells)).grid, props);
-}
-
-/// Render a dense `Cell[][]` (cells may carry `colSpan`/`rowSpan`) as a boxed table.
-/// Covered slots are omitted from the following cells (rows may be ragged); the
-/// placement cursor recovers their positions. Malformed tables (overlap, over-long
-/// rowspans) still render deterministically — use `validateTable` to detect them.
-/// See `Cell`.
-string drawTable(Cell[][] cells, TableProps props = TableProps.init)
-{
-    return drawGrid(resolveGrid(cells).grid, props);
-}
-
-/// Render a sparse `Placement[]` (order-independent cells naming their own
-/// `(row, col)` and extent) as a boxed table. Lowers to the same slot grid as the
-/// dense forms, so it renders identically. See `Placement`.
-string drawTable(Placement[] cells, TableProps props = TableProps.init)
-{
-    return drawGrid(resolveGrid(cells).grid, props);
-}
-
 /// The lazy line view of `drawTable`: **eager layout, lazy emission**. Table
 /// layout is two-pass (column widths scan all content), so unlike the
 /// fixed-width `drawBox` case the input can never be consumed lazily; what is
@@ -365,24 +324,24 @@ string drawTable(Placement[] cells, TableProps props = TableProps.init)
 ///
 /// A *forward* range of `string` lines **without** trailing newlines (ready for
 /// `LiveRegion.update`), with `.length`. Parity:
-/// `drawTableLines(c, p).map!(l => l ~ '\n').join == drawTable(c, p)`
+/// `drawTableLines(c, p).map!(l => l ~ '\n').join == drawTable(c, p).toString`
 /// byte-for-byte (drawTable terminates every line, including the last), i.e.
-/// `drawTableLines(c, p).array == drawTable(c, p).splitLines`. An empty grid is
-/// an empty range (drawTable's historical `""`).
-auto drawTableLines(string[][] cells, TableProps props = TableProps.init)
+/// `drawTableLines(c, p).array == drawTable(c, p).toString.splitLines`.
+/// An empty grid is an empty range (drawTable's historical `""`).
+auto drawTableLines(in string[][] cells, TableProps props = TableProps.init)
 in (hasRectangularShape(cells))
 {
     return tableLineRange(resolveGrid(toCells(cells)).grid, props);
 }
 
 /// ditto
-auto drawTableLines(Cell[][] cells, TableProps props = TableProps.init)
+auto drawTableLines(in Cell[][] cells, TableProps props = TableProps.init)
 {
     return tableLineRange(resolveGrid(cells).grid, props);
 }
 
 /// ditto
-auto drawTableLines(Placement[] cells, TableProps props = TableProps.init)
+auto drawTableLines(in Placement[] cells, TableProps props = TableProps.init)
 {
     return tableLineRange(resolveGrid(cells).grid, props);
 }
@@ -436,10 +395,14 @@ struct TableLineRange
     size_t length() const @safe pure nothrow @nogc => _descs.length - _i;
 }
 
-/// Output-range form: put exactly `drawTable`'s bytes into `w` (a composition
-/// convenience — internals still allocate during layout; this is not a `@nogc`
-/// path). Returns `w` for chaining.
-ref Writer drawTable(Writer)(return ref Writer w, string[][] cells,
+/**
+Renders a rectangular `string[][]` as a boxed table into `w`: every line, the
+last included, ends in `\n`. With the default `TableProps` the output is
+byte-identical to the pre-overhaul renderer. Layout allocates, so this is not a
+`@nogc` path. Returns `w` for chaining. Without a writer, `drawTable(cells,
+props)` is the table as a value.
+*/
+ref Writer drawTable(Writer)(return ref Writer w, in string[][] cells,
     TableProps props = TableProps.init)
 if (isOutputRange!(Writer, char))
 in (hasRectangularShape(cells))
@@ -447,29 +410,61 @@ in (hasRectangularShape(cells))
     return putTable(w, tableLineRange(resolveGrid(toCells(cells)).grid, props));
 }
 
-/// ditto
-ref Writer drawTable(Writer)(return ref Writer w, Cell[][] cells,
+/// A dense `Cell[][]`, whose cells may carry `colSpan`/`rowSpan`. Covered
+/// slots are omitted from the following cells (rows may be ragged); the
+/// placement cursor recovers their positions. Malformed tables (overlap,
+/// over-long rowspans) still render deterministically; use `validateTable` to
+/// detect them. See `Cell`.
+ref Writer drawTable(Writer)(return ref Writer w, in Cell[][] cells,
     TableProps props = TableProps.init)
 if (isOutputRange!(Writer, char))
 {
     return putTable(w, tableLineRange(resolveGrid(cells).grid, props));
 }
 
-/// ditto
-ref Writer drawTable(Writer)(return ref Writer w, Placement[] cells,
+/// A sparse `Placement[]`: order-independent cells naming their own
+/// `(row, col)` and extent. Lowers to the same slot grid as the dense forms, so
+/// it renders identically. See `Placement`.
+ref Writer drawTable(Writer)(return ref Writer w, in Placement[] cells,
     TableProps props = TableProps.init)
 if (isOutputRange!(Writer, char))
 {
     return putTable(w, tableLineRange(resolveGrid(cells).grid, props));
 }
 
-/// ditto
-ref Writer drawTable(Writer)(return ref Writer w, ref TableBuilder table,
+/// A `TableBuilder`'s cells, written in place (see `TableBuilder.cells`).
+ref Writer drawTable(Writer)(return ref Writer w, in TableBuilder table,
     TableProps props = TableProps.init)
 if (isOutputRange!(Writer, char))
 {
     auto cells = table.cells;
     return putTable(w, tableLineRange(resolveGrid(cells[]).grid, props));
+}
+
+/**
+The table as a value: `writeln(drawTable(cells))` writes it straight into
+stdout's sink, and `drawTable(cells).toString` makes a `string` where one is
+stored. Any of the four cell forms; the value holds them (and `props`) by copy
+and lays the table out each time it is written.
+*/
+auto drawTable(Cells)(Cells cells, TableProps props = TableProps.init)
+if (is(Cells : const(string[][])) || is(Cells : const(Cell[][]))
+    || is(Cells : const(Placement[])) || is(Cells : const(TableBuilder)))
+{
+    import sparkles.base.text.writers : formatted;
+
+    return formatted!drawTable(cells, props);
+}
+
+///
+@("drawTable.asValue")
+@system unittest
+{
+    import std.conv : text;
+
+    const table = drawTable([["x"]]);
+    assert(table.toString == "╭───╮\n│ x │\n╰───╯\n");
+    assert(text(table) == table.toString, "formats like the writer form");
 }
 
 // ── screen ↔ cell mapping (hue `TBL3`) ────────────────────────────────────────
@@ -649,6 +644,15 @@ private ref Writer putTable(Writer)(return ref Writer w, TableLineRange lines)
 }
 
 
+version (unittest)
+{
+
+    // The rendered table as a string, for the tests' comparisons.
+    package(sparkles.ui) string tableText(Cells)(in Cells cells,
+        TableProps props = TableProps.init)
+        => drawTable(cells, props).toString;
+}
+
 unittest
 {
     import sparkles.test_utils.string : outdent;
@@ -663,19 +667,19 @@ unittest
         }
     }
 
-    check(drawTable([["x"]]), `
+    check(tableText([["x"]]), `
         ╭───╮
         │ x │
         ╰───╯
         `.outdent(2));
 
-    check(drawTable([["123"]]), `
+    check(tableText([["123"]]), `
         ╭─────╮
         │ 123 │
         ╰─────╯
         `.outdent(2));
 
-    check(drawTable([["123", "ab"], ["c", "asdasd"]]), `
+    check(tableText([["123", "ab"], ["c", "asdasd"]]), `
         ╭─────┬────────╮
         │ 123 │ ab     │
         │ c   │ asdasd │
@@ -702,7 +706,7 @@ unittest
 
     // Test that styled content is properly aligned
     // "OK" styled with green should still align with "Warning"
-    check(drawTable([
+    check(tableText([
         ["Status", "Value"],
         ["OK".stylize(Style.green), "Good"],
         ["Warning".stylize(Style.yellow), "Check"],
@@ -731,7 +735,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     import sparkles.test_utils.string : outdent;
 
-    checkRender(drawTable([["ab", "c"], ["d", "ef"]], TableProps(glyphs: stylePresets["ascii"])),
+    checkRender(tableText([["ab", "c"], ["d", "ef"]], TableProps(glyphs: stylePresets["ascii"])),
         "+----+----+\n" ~
         "| ab | c  |\n" ~
         "| d  | ef |\n" ~
@@ -747,18 +751,18 @@ version (unittest) private void checkRender(string actual, string expected)
         assert(name in stylePresets);
 
     // Each style's own corner/junction glyphs reach the output.
-    assert(drawTable([["x", "y"]], TableProps(glyphs: stylePresets["double"]))
+    assert(tableText([["x", "y"]], TableProps(glyphs: stylePresets["double"]))
         == "╔═══╦═══╗\n║ x ║ y ║\n╚═══╩═══╝\n");
-    assert(drawTable([["x", "y"]], TableProps(glyphs: stylePresets["heavy"]))
+    assert(tableText([["x", "y"]], TableProps(glyphs: stylePresets["heavy"]))
         == "┏━━━┳━━━┓\n┃ x ┃ y ┃\n┗━━━┻━━━┛\n");
-    assert(drawTable([["x", "y"]], TableProps(glyphs: stylePresets["square"]))
+    assert(tableText([["x", "y"]], TableProps(glyphs: stylePresets["square"]))
         == "┌───┬───┐\n│ x │ y │\n└───┴───┘\n");
 }
 
 @("drawTable.separators.rowSeparators")
 @system unittest
 {
-    checkRender(drawTable([["ab", "c"], ["d", "ef"]], TableProps(rowSeparators: true)),
+    checkRender(tableText([["ab", "c"], ["d", "ef"]], TableProps(rowSeparators: true)),
         "╭────┬────╮\n" ~
         "│ ab │ c  │\n" ~
         "├────┼────┤\n" ~
@@ -771,7 +775,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // headerRows: 1 draws a distinct (heavy) rule after the first row only — no
     // other interior rules, and the header glyphs (┝━┿━┥) stand apart from the frame.
-    checkRender(drawTable([["ab", "c"], ["d", "ef"], ["g", "hi"]], TableProps(headerRows: 1)),
+    checkRender(tableText([["ab", "c"], ["d", "ef"], ["g", "hi"]], TableProps(headerRows: 1)),
         "╭────┬────╮\n" ~
         "│ ab │ c  │\n" ~
         "┝━━━━┿━━━━┥\n" ~
@@ -785,7 +789,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // headerCols: 1 with column separators off draws only the stub rule (heavy
     // vertical ┃, ┰/┸ ticks on the frame), width-budgeted so parity holds.
-    checkRender(drawTable([["ab", "c"], ["d", "ef"]],
+    checkRender(tableText([["ab", "c"], ["d", "ef"]],
             TableProps(headerCols: 1, columnSeparators: false)),
         "╭────┰────╮\n" ~
         "│ ab ┃ c  │\n" ~
@@ -798,7 +802,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // With column separators on, the stub boundary (after col 0) is heavy while the
     // remaining interior boundary stays light.
-    checkRender(drawTable([["a", "b", "c"], ["d", "e", "f"]], TableProps(headerCols: 1)),
+    checkRender(tableText([["a", "b", "c"], ["d", "e", "f"]], TableProps(headerCols: 1)),
         "╭───┰───┬───╮\n" ~
         "│ a ┃ b │ c │\n" ~
         "│ d ┃ e │ f │\n" ~
@@ -810,7 +814,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // Header row and stub column together: the crossing junction is the heavy-both
     // cross ╋, with heavy arms in each axis (┝/┥ ends, ┃ stub, ━ header fill).
-    checkRender(drawTable([["ab", "c"], ["d", "ef"]],
+    checkRender(tableText([["ab", "c"], ["d", "ef"]],
             TableProps(headerRows: 1, headerCols: 1)),
         "╭────┰────╮\n" ~
         "│ ab ┃ c  │\n" ~
@@ -823,7 +827,7 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // headerRows: 2 / headerCols: 2 place the rules after the second row / column.
-    checkRender(drawTable([["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]],
+    checkRender(tableText([["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]],
             TableProps(headerRows: 2, headerCols: 2)),
         "╭───┬───┰───╮\n" ~
         "│ a │ b ┃ c │\n" ~
@@ -837,7 +841,7 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // The header rule stays heavy (┝━┿━┥) even amid light ├─┼─┤ row separators.
-    checkRender(drawTable([["ab", "c"], ["d", "ef"], ["g", "hi"]],
+    checkRender(tableText([["ab", "c"], ["d", "ef"], ["g", "hi"]],
             TableProps(headerRows: 1, rowSeparators: true)),
         "╭────┬────╮\n" ~
         "│ ab │ c  │\n" ~
@@ -852,7 +856,7 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // The ascii preset uses the '===' convention for its header rule.
-    checkRender(drawTable([["ab", "c"], ["d", "ef"]],
+    checkRender(tableText([["ab", "c"], ["d", "ef"]],
             TableProps(glyphs: stylePresets["ascii"], headerRows: 1)),
         "+----+----+\n" ~
         "| ab | c  |\n" ~
@@ -868,11 +872,11 @@ version (unittest) private void checkRender(string actual, string expected)
     // (the rule would coincide with the bottom/right border), so the render equals
     // the default one.
     string[][] cells = [["ab", "c"], ["d", "ef"]];
-    const base = drawTable(cells);
-    assert(drawTable(cells, TableProps(headerRows: 2)) == base);
-    assert(drawTable(cells, TableProps(headerRows: 9)) == base);
-    assert(drawTable(cells, TableProps(headerCols: 2)) == base);
-    assert(drawTable(cells, TableProps(headerCols: 9)) == base);
+    const base = tableText(cells);
+    assert(tableText(cells, TableProps(headerRows: 2)) == base);
+    assert(tableText(cells, TableProps(headerRows: 9)) == base);
+    assert(tableText(cells, TableProps(headerCols: 2)) == base);
+    assert(tableText(cells, TableProps(headerCols: 9)) == base);
 }
 
 @("drawTable.separators.noColumnSeparators")
@@ -880,7 +884,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // No interior verticals: the boundary lattice is zero-width, so the frame rules
     // are solid and columns abut with their gutters. Every line stays the same width.
-    checkRender(drawTable([["ab", "c"], ["d", "ef"]], TableProps(columnSeparators: false)),
+    checkRender(tableText([["ab", "c"], ["d", "ef"]], TableProps(columnSeparators: false)),
         "╭────────╮\n" ~
         "│ ab  c  │\n" ~
         "│ d   ef │\n" ~
@@ -891,7 +895,7 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // No outer frame: only the interior column separators remain.
-    checkRender(drawTable([["ab", "c"], ["d", "ef"]], TableProps(border: false)),
+    checkRender(tableText([["ab", "c"], ["d", "ef"]], TableProps(border: false)),
         " ab │ c  \n" ~
         " d  │ ef \n");
 }
@@ -912,7 +916,7 @@ version (unittest) private void checkRender(string actual, string expected)
                 foreach (hRows; [0UL, 1UL])
                     foreach (hCols; [0UL, 1UL])
                     {
-                        const rendered = drawTable(cells, TableProps(
+                        const rendered = tableText(cells, TableProps(
                             border: border, columnSeparators: colSep, rowSeparators: rowSep,
                             headerRows: hRows, headerCols: hCols));
                         const lines = rendered.splitLines;
@@ -930,7 +934,7 @@ version (unittest) private void checkRender(string actual, string expected)
     auto glyphs = stylePresets["rounded"];
     glyphs.topLeft = '*';
     glyphs.topRight = '*';
-    assert(drawTable([["x"]], TableProps(glyphs: glyphs)) == "*───*\n│ x │\n╰───╯\n");
+    assert(tableText([["x"]], TableProps(glyphs: glyphs)) == "*───*\n│ x │\n╰───╯\n");
 }
 
 @("drawTable.wrap.columnMaxWidth")
@@ -938,7 +942,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // A cell over its column cap wraps to multiple lines; the row grows and the
     // shorter neighbour pads with blank lines.
-    checkRender(drawTable([["hello world", "x"]], TableProps(columnMaxWidths: [5, 0])),
+    checkRender(tableText([["hello world", "x"]], TableProps(columnMaxWidths: [5, 0])),
         "╭───────┬───╮\n" ~
         "│ hello │ x │\n" ~
         "│ world │   │\n" ~
@@ -951,17 +955,17 @@ version (unittest) private void checkRender(string actual, string expected)
     // A floor widens a narrow column (content aligns into the wider field);
     // natural width above the floor is untouched, and a short array leaves the
     // remaining columns natural.
-    checkRender(drawTable([["a", "b"]], TableProps(columnMinWidths: [5])),
+    checkRender(tableText([["a", "b"]], TableProps(columnMinWidths: [5])),
         "╭───────┬───╮\n" ~
         "│ a     │ b │\n" ~
         "╰───────┴───╯\n");
-    assert(drawTable([["abcdef", "b"]], TableProps(columnMinWidths: [3]))
-        == drawTable([["abcdef", "b"]]));
+    assert(tableText([["abcdef", "b"]], TableProps(columnMinWidths: [3]))
+        == tableText([["abcdef", "b"]]));
 
     // The floor keeps a live table's geometry stable: rendering the early rows
     // under the final widths matches the final table's column layout.
-    const wide = drawTable([["regex 200 e-mails", "1"]]);
-    const early = drawTable([["sort", "1"]],
+    const wide = tableText([["regex 200 e-mails", "1"]]);
+    const early = tableText([["sort", "1"]],
         TableProps(columnMinWidths: [17, 0]));
     import std.string : splitLines;
     import sparkles.base.text.grapheme : visibleWidth;
@@ -975,14 +979,14 @@ version (unittest) private void checkRender(string actual, string expected)
     import sparkles.base.text.grapheme : visibleWidth;
 
     // A columnMaxWidths entry below the floor still caps the column.
-    checkRender(drawTable([["ab"]],
+    checkRender(tableText([["ab"]],
             TableProps(columnMinWidths: [8], columnMaxWidths: [4])),
         "╭──────╮\n" ~
         "│ ab   │\n" ~
         "╰──────╯\n");
 
     // The total maxWidth shrink also beats the floor, so fit-to-width holds.
-    const rendered = drawTable([["ab"]],
+    const rendered = tableText([["ab"]],
         TableProps(columnMinWidths: [10], maxWidth: 9));
     foreach (l; rendered.splitLines)
         assert(l.visibleWidth == 9);
@@ -993,7 +997,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // An embedded '\n' splits a cell into lines, and sizes the column by its widest
     // line (1 here, not the newline-joined length).
-    checkRender(drawTable([["a\nb", "c"]]),
+    checkRender(tableText([["a\nb", "c"]]),
         "╭───┬───╮\n" ~
         "│ a │ c │\n" ~
         "│ b │   │\n" ~
@@ -1008,7 +1012,7 @@ version (unittest) private void checkRender(string actual, string expected)
 
     // maxWidth shrinks the widest columns (largest-first) until the whole table fits,
     // wrapping the trimmed content. No rendered line exceeds the cap.
-    const rendered = drawTable([["aaaa", "bbbb"]], TableProps(maxWidth: 11));
+    const rendered = tableText([["aaaa", "bbbb"]], TableProps(maxWidth: 11));
     checkRender(rendered,
         "╭────┬────╮\n" ~
         "│ aa │ bb │\n" ~
@@ -1032,7 +1036,7 @@ version (unittest) private void checkRender(string actual, string expected)
     ];
     foreach (cap; [40, 30, 24, 18])
     {
-        const rendered = drawTable(cells, TableProps(maxWidth: cap));
+        const rendered = tableText(cells, TableProps(maxWidth: cap));
         const lines = rendered.splitLines;
         foreach (l; lines)
         {
@@ -1048,7 +1052,7 @@ version (unittest) private void checkRender(string actual, string expected)
     import std.string : splitLines;
 
     // With no caps a long cell expands the column (no wrapping) — one body row.
-    const rendered = drawTable([["a fairly long single cell", "x"]]);
+    const rendered = tableText([["a fairly long single cell", "x"]]);
     assert(rendered.splitLines.length == 3); // top + one row + bottom
 }
 
@@ -1057,7 +1061,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // A colSpan-2 header wider than its two columns widens them evenly and drops the
     // top ┬ under the span (bottom keeps ┴ where the body row splits).
-    checkRender(drawTable([
+    checkRender(tableText([
             [Cell("Summary", colSpan: 2)],
             [Cell("a"), Cell("b")],
         ]),
@@ -1072,7 +1076,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // A colSpan-2 cell narrower than its columns does not widen them; the top ┬ is
     // still suppressed by the span, the bottom ┴ stays.
-    checkRender(drawTable([
+    checkRender(tableText([
             [Cell("hi", colSpan: 2)],
             [Cell("long"), Cell("wide")],
         ]),
@@ -1087,7 +1091,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // A rowSpan-2 cell fills both bands; its right neighbour keeps the interior │ in
     // both, and the ├/┤ only notch the right column when row separators are on.
-    checkRender(drawTable([
+    checkRender(tableText([
             [Cell("L", rowSpan: 2), Cell("top")],
             [Cell("bot")],
         ]),
@@ -1102,7 +1106,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // With row separators, the interior rule notches around the rowSpan cell (┤ … ├
     // become │ where the span crosses), leaving its column continuous.
-    checkRender(drawTable([
+    checkRender(tableText([
             [Cell("L", rowSpan: 2), Cell("top")],
             [Cell("bot")],
         ], TableProps(rowSeparators: true)),
@@ -1118,7 +1122,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // A 2×2 block anchored top-left, with two single cells filling the right column
     // and a fully-split final row (no row separators, so no interior rule).
-    checkRender(drawTable([
+    checkRender(tableText([
             [Cell("BB", colSpan: 2, rowSpan: 2), Cell("x")],
             [Cell("y")],
             [Cell("a"), Cell("b"), Cell("c")],
@@ -1134,7 +1138,7 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // Ragged rows: a short row's missing trailing cells become implicit blanks.
-    checkRender(drawTable([
+    checkRender(tableText([
             [Cell("a"), Cell("b"), Cell("c")],
             [Cell("d")],
         ]),
@@ -1149,17 +1153,17 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     // The same table authored sparsely renders identically to the dense form, and
     // placement order does not matter.
-    const dense = drawTable([
+    const dense = tableText([
             [Cell("Summary", colSpan: 2)],
             [Cell("a"), Cell("b")],
         ]);
-    assert(drawTable([
+    assert(tableText([
             Placement(0, 0, "Summary", colSpan: 2),
             Placement(1, 0, "a"),
             Placement(1, 1, "b"),
         ]) == dense);
     // Reordered placements resolve the same (order-independent).
-    assert(drawTable([
+    assert(tableText([
             Placement(1, 1, "b"),
             Placement(1, 0, "a"),
             Placement(0, 0, "Summary", colSpan: 2),
@@ -1170,7 +1174,7 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // A never-addressed slot becomes an implicit blank cell.
-    checkRender(drawTable([
+    checkRender(tableText([
             Placement(0, 0, "a"),
             Placement(1, 1, "d"),
         ]),
@@ -1184,7 +1188,7 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // Column 0 right-aligned, column 1 centered.
-    checkRender(drawTable([["a", "bb"], ["ccc", "d"]],
+    checkRender(tableText([["a", "bb"], ["ccc", "d"]],
             TableProps(columnAligns: [Align.right, Align.center])),
         "╭─────┬────╮\n" ~
         "│   a │ bb │\n" ~
@@ -1196,7 +1200,7 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // A short columnAligns array: column 0 uses its entry, column 1 the default.
-    checkRender(drawTable([["a", "bb"], ["ccc", "d"]],
+    checkRender(tableText([["a", "bb"], ["ccc", "d"]],
             TableProps(defaultAlign: Align.right, columnAligns: [Align.left])),
         "╭─────┬────╮\n" ~
         "│ a   │ bb │\n" ~
@@ -1208,7 +1212,7 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // A rowSpan cell bottom-aligned sits in its lower band.
-    checkRender(drawTable([
+    checkRender(tableText([
             [Cell("M", rowSpan: 2), Cell("x")],
             [Cell("y")],
         ], TableProps(columnVAligns: [VAlign.bottom])),
@@ -1222,7 +1226,7 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // A short cell middle-aligned within a row made 3 lines tall by a wrapped sibling.
-    checkRender(drawTable([[Cell("a\nb\nc"), Cell("mid")]],
+    checkRender(tableText([[Cell("a\nb\nc"), Cell("mid")]],
             TableProps(columnVAligns: [VAlign.top, VAlign.middle])),
         "╭───┬─────╮\n" ~
         "│ a │     │\n" ~
@@ -1253,7 +1257,7 @@ version (unittest) private void checkRender(string actual, string expected)
     assert(v.error.kind == TableErrorKind.overlap);
     assert(v.error.row == 0 && v.error.col == 1);
     // Rendering does not throw and keeps the first writer (A) in the shared slot.
-    const rendered = drawTable(placements);
+    const rendered = tableText(placements);
     assert(rendered.length > 0);
 }
 
@@ -1267,7 +1271,7 @@ version (unittest) private void checkRender(string actual, string expected)
     // Clamped to the two rows: renders without extra empty bands.
     import std.string : splitLines;
 
-    assert(drawTable([[Cell("x", rowSpan: 3)], [Cell("y")]]).splitLines.length == 4);
+    assert(tableText([[Cell("x", rowSpan: 3)], [Cell("y")]]).splitLines.length == 4);
 }
 
 @("drawTable.validate.allErrors")
@@ -1294,7 +1298,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     import sparkles.test_utils.string : outdent;
 
-    checkRender(drawTable([["alpha", "beta"], ["1", "2"]],
+    checkRender(tableText([["alpha", "beta"], ["1", "2"]],
         TableProps(title: "T")), `
         ╭──╼ T ╾┬──────╮
         │ alpha │ beta │
@@ -1313,7 +1317,7 @@ version (unittest) private void checkRender(string actual, string expected)
     // A title wider than the table truncates with '…' instead of widening the
     // frame; every line keeps the same width, and the footer is spliced with
     // the same decorations.
-    const t = drawTable([["alpha", "beta"]],
+    const t = tableText([["alpha", "beta"]],
         TableProps(title: "a very long table title", footer: "f"));
     const lines = t.splitLines;
     assert(lines[0].canFind("…"));
@@ -1323,7 +1327,7 @@ version (unittest) private void checkRender(string actual, string expected)
 
     // The ascii preset swaps the decorations to [ ] (a frame narrower than
     // the decorations keeps its plain border, so use wide-enough cells).
-    const ascii = drawTable([["alpha", "beta"]],
+    const ascii = tableText([["alpha", "beta"]],
         TableProps(title: "T", glyphs: presetGlyphs("ascii")));
     assert(ascii.splitLines[0].startsWith("+--[ T ]"));
 }
@@ -1333,7 +1337,7 @@ version (unittest) private void checkRender(string actual, string expected)
 {
     import std.string : splitLines;
 
-    const t = drawTable([["a", "b"]],
+    const t = tableText([["a", "b"]],
         TableProps(title: "Title", footer: "Footer", border: false));
     // The body row keeps its right gutter (a trailing space), so compare per
     // line rather than via an outdented literal.
@@ -1347,7 +1351,7 @@ version (unittest) private void checkRender(string actual, string expected)
 
     // Dots share a cell; the dotless value's last digit sits just left of the
     // dot column; the header (row 0) right-aligns plainly, exempt from padding.
-    checkRender(drawTable([["n", "value"], ["a", "1.5"], ["b", "12.25"], ["c", "3"]],
+    checkRender(tableText([["n", "value"], ["a", "1.5"], ["b", "12.25"], ["c", "3"]],
         TableProps(headerRows: 1,
             columnAligns: [Align.left, Align.decimal])), `
         ╭───┬───────╮
@@ -1364,9 +1368,9 @@ version (unittest) private void checkRender(string actual, string expected)
 @system unittest
 {
     // No dotted value in the column -> decimal degrades to plain right.
-    const t = drawTable([["1", "22"], ["333", "4"]],
+    const t = tableText([["1", "22"], ["333", "4"]],
         TableProps(columnAligns: [Align.decimal, Align.decimal]));
-    const plain = drawTable([["1", "22"], ["333", "4"]],
+    const plain = tableText([["1", "22"], ["333", "4"]],
         TableProps(columnAligns: [Align.right, Align.right]));
     assert(t == plain);
 }
@@ -1382,7 +1386,7 @@ version (unittest) private void checkRender(string actual, string expected)
     // The parity matrix: every layout feature the eager renderer covers.
     static void checkParity(T)(T cells, TableProps props)
     {
-        const eager = drawTable(cells, props);
+        const eager = tableText(cells, props);
         auto range = drawTableLines(cells, props);
         assert(range.map!(l => l ~ '\n').joiner.to!string == eager);
         assert(drawTableLines(cells, props).array == eager.splitLines);
@@ -1414,7 +1418,7 @@ version (unittest) private void checkRender(string actual, string expected)
 
     // Empty grid: drawTable's historical "" -> an empty range.
     string[][] none;
-    assert(drawTable(none) == "");
+    assert(tableText(none) == "");
     assert(drawTableLines(none).empty);
 }
 
@@ -1441,7 +1445,7 @@ version (unittest) private void checkRender(string actual, string expected)
     {
         SharedBuffer!(char, 1024) w;
         drawTable(w, cells, props);
-        assert(w[] == drawTable(cells, props));
+        assert(w[] == tableText(cells, props));
     }
 
     checkWriterParity([["a", "bb"], ["ccc", "d"]], TableProps.init);
@@ -1455,7 +1459,7 @@ version (unittest) private void checkRender(string actual, string expected)
     // Returns the writer by ref for chaining.
     SharedBuffer!(char, 256) w;
     drawTable(w, [["x"]]).put("tail");
-    assert(w[] == drawTable([["x"]]) ~ "tail");
+    assert(w[] == tableText([["x"]]) ~ "tail");
 }
 
 /// The chunk view of `drawTable` (the sibling of `drawBoxChunks`): chunks carry
@@ -1629,7 +1633,7 @@ private struct TableChunkRange(bool lineBuffered)
 
     static void checkChunksParity(T)(T cells, TableProps props)
     {
-        const eager = drawTable(cells, props);
+        const eager = tableText(cells, props);
         assert(drawTableChunks!true(cells, props).joiner.to!string == eager);
         assert(drawTableChunks!false(cells, props).joiner.to!string == eager);
     }
@@ -1684,13 +1688,13 @@ private struct TableChunkRange(bool lineBuffered)
     // No contentful field at all -> a single chunk carrying the whole frame.
     auto chunks = drawTableChunks!false([[""]]).array;
     assert(chunks.length == 1);
-    assert(chunks[0] == drawTable([[""]]));
+    assert(chunks[0] == tableText([[""]]));
 
     // A blank last row still flushes the bottom border onto the final content
     // chunk.
     auto tail = drawTableChunks!false([["x"], [""]]).array;
     assert(tail.length == 1);
-    assert(tail.joiner.to!string == drawTable([["x"], [""]]));
+    assert(tail.joiner.to!string == tableText([["x"], [""]]));
 }
 
 @("drawTable.align.perCellOverride")
@@ -1700,7 +1704,7 @@ private struct TableChunkRange(bool lineBuffered)
 
     // The canonical use: a centered colspan header over left columns; a
     // per-cell right override beats the column default.
-    checkRender(drawTable([
+    checkRender(tableText([
         [Cell("Totals", colSpan: 2, halign: Align.center)],
         [Cell("alpha"), Cell("1")],
         [Cell("beta"), Cell("2", halign: Align.right)],
@@ -1713,11 +1717,11 @@ private struct TableChunkRange(bool lineBuffered)
         `.outdent(2));
 
     // Sparse form carries the same overrides.
-    const sparse = drawTable([
+    const sparse = tableText([
         Placement(0, 0, "Totals", colSpan: 2, halign: Align.center),
         Placement(1, 0, "alpha"), Placement(1, 1, "1"),
     ]);
-    const dense = drawTable([
+    const dense = tableText([
         [Cell("Totals", colSpan: 2, halign: Align.center)],
         [Cell("alpha"), Cell("1")],
     ]);

@@ -38,7 +38,8 @@ import std.typecons : Nullable;
 import core.time : days, Duration;
 
 import sparkles.base.styled_template : styledWriteln;
-import sparkles.ui.components.table : drawTable, TableProps;
+import sparkles.base.text.writers : writeInteger, writeText;
+import sparkles.ui.components.table : drawTable, TableBuilder, TableProps;
 
 import sparkles.wired : fromJSON, WireName, WireOptional;
 
@@ -464,34 +465,30 @@ void renderMergeAudit(in MergedPr[] prs, in MergeAudit a)
     writeln(drawHeader("Merges landing on the default branch",
         HeaderProps(style: HeaderStyle.banner)));
 
-    string[][] rows = [["Landing", "PRs", "Share", "Commits"]];
+    TableBuilder rows;
+    rows.row("Landing", "PRs", "Share", "Commits");
     foreach (l; [Landing.mirrorable, Landing.rebuilt, Landing.unknown])
     {
         const bucket = prs.filter!(p => p.landing == l).array;
         if (bucket.empty)
             continue;
-        rows ~= [
-            landingText(l),
-            bucket.length.to!string,
-            pctText(a.pct(bucket.length)),
-            bucket.map!(p => cast(size_t) p.commits).sum.to!string,
-        ];
+        rows.row(landingText(l), bucket.length, pctText(a.pct(bucket.length)),
+            bucket.map!(p => cast(size_t) p.commits).sum);
     }
-    rows ~= ["total", a.pullRequests.to!string, "100%", a.commits.to!string];
+    rows.row("total", a.pullRequests, "100%", a.commits);
     writeln(drawTable(rows, TableProps(headerRows: 1, title: "By landing")));
 
     const rebuilt = prs.filter!(p => p.landing == Landing.rebuilt).array;
     if (!rebuilt.empty)
     {
-        string[][] detail = [["PR", "Commits", "Merged", "Rollup", "Title"]];
+        TableBuilder detail;
+        detail.row("PR", "Commits", "Merged", "Rollup", "Title");
         foreach (p; rebuilt)
-            detail ~= [
-                "#" ~ p.number.to!string,
-                p.commits.to!string,
-                p.mergedAt.length >= 10 ? p.mergedAt[0 .. 10] : p.mergedAt,
-                p.rollup,
-                p.title,
-            ];
+            detail.row.cell!writeText(i"#$(p.number)")
+                .cell!writeInteger(p.commits)
+                .cell(p.mergedAt.length >= 10 ? p.mergedAt[0 .. 10] : p.mergedAt)
+                .cell(p.rollup)
+                .cell(p.title);
         writeln();
         writeln(drawTable(detail, TableProps(headerRows: 1,
             title: "Would need a real run on the default branch")));

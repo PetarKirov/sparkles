@@ -1967,11 +1967,13 @@ package string renderCells(
 {
     static if (hasUiComponents)
     {
+        import sparkles.base.text.writers : formatted;
         import sparkles.ui.components.table : drawTable, TableProps;
 
-        return drawTable(cells, TableProps(
-            headerRows: headerRows, columnAligns: aligns.dup, title: title,
-            columnMinWidths: minWidths.dup, columnMaxWidths: maxWidths.dup));
+        // The report is assembled from strings, so the table is one too.
+        return formatted!drawTable(cells, TableProps(
+            headerRows: headerRows, columnAligns: aligns, title: title,
+            columnMinWidths: minWidths, columnMaxWidths: maxWidths)).toString;
     }
     else
     {

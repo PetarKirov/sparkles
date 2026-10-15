@@ -93,5 +93,5 @@ string renderSummary(in LayerOutcome[] outcomes)
 
     return "text-conformance"
         .drawHeader(HeaderProps(style: HeaderStyle.banner))
-        ~ "\n\n" ~ drawTable(rows);
+        ~ "\n\n" ~ drawTable(rows).toString;
 }

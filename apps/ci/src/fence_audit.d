@@ -35,9 +35,10 @@ import std.array : appender, array, join;
 import std.conv : to;
 import std.string : lineSplitter, strip, stripRight;
 
+import sparkles.base.text.writers : formatted;
 import sparkles.docs.sidebar : docsConfigPath, loadDocsConfig;
-
 import sparkles.syntax.ts.registry : canonicalLanguage, GrammarRegistry, isPlainTextLabel;
+import sparkles.ui.components.table : TableBuilder;
 
 // === Fence scanning ===
 
@@ -1016,71 +1017,60 @@ unittest
 
 // === Reporting ===
 
-/// A percentage of `total`, rendered with one decimal.
-private string fmtPercent(size_t part, size_t total) @safe
+/// Writes `part` as a percentage of `total`, with one decimal.
+private void writePercent(W)(ref W w, size_t part, size_t total)
 {
-    import sparkles.base.buffer : SharedBuffer;
+    import std.range.primitives : put;
     import sparkles.base.text.writers : writeFixedPoint;
-
-    if (total == 0)
-        return "0.0%";
 
     // Scaled fixed-point (tenths of a percent) so the rendering never goes
     // through a float formatter.
-    const scaled = (part * 1000 + total / 2) / total;
-    SharedBuffer!(char, 16) buf;
-    writeFixedPoint(buf, scaled, 1);
-    return buf[].idup ~ "%";
+    const scaled = total == 0 ? 0 : (part * 1000 + total / 2) / total;
+    writeFixedPoint(w, scaled, 1);
+    put(w, '%');
 }
 
-@("fence_audit.fmtPercent.rounding")
-@safe
+@("fence_audit.writePercent.rounding")
+@safe pure nothrow @nogc
 unittest
 {
-    assert(fmtPercent(1, 4) == "25.0%");
-    assert(fmtPercent(1, 3) == "33.3%");
-    assert(fmtPercent(0, 0) == "0.0%");
-    assert(fmtPercent(7, 7) == "100.0%");
+    import sparkles.base.buffer : checkWriter;
+
+    checkWriter!((ref b) => writePercent(b, 1, 4))("25.0%");
+    checkWriter!((ref b) => writePercent(b, 1, 3))("33.3%");
+    checkWriter!((ref b) => writePercent(b, 0, 0))("0.0%");
+    checkWriter!((ref b) => writePercent(b, 7, 7))("100.0%");
 }
 
 /// Rows of the per-classification summary table (header row included).
-string[][] classificationRows(in AuditResult r) @safe
+TableBuilder classificationRows(in AuditResult r) @safe
 {
-    string[][] rows = [["Classification", "Labels", "Fences", "Share"]];
+    TableBuilder rows;
+    rows.row("Classification", "Labels", "Fences", "Share");
     foreach (cls; [FenceClass.grammarBacked, FenceClass.plainText, FenceClass.uncovered])
     {
         const fences = r.fenceCount(cls);
-        rows ~= [
-            cls.name,
-            r.labelCount(cls).to!string,
-            fences.to!string,
-            fmtPercent(fences, r.fences),
-        ];
+        rows.row(cls.name, r.labelCount(cls), fences,
+            formatted!writePercent(fences, r.fences));
     }
-    rows ~= ["total", r.labels.length.to!string, r.fences.to!string, fmtPercent(r.fences, r.fences)];
+    rows.row("total", r.labels.length, r.fences, formatted!writePercent(r.fences, r.fences));
     return rows;
 }
 
 /// Rows of the per-label census table (header row included).
-string[][] labelRows(in AuditResult r) @safe
+TableBuilder labelRows(in AuditResult r) @safe
 {
-    string[][] rows = [["Label", "Canonical", "Classification", "Fences", "Share", "Files"]];
+    TableBuilder rows;
+    rows.row("Label", "Canonical", "Classification", "Fences", "Share", "Files");
     foreach (const ref l; r.labels)
-    {
-        rows ~= [
-            l.label.length ? l.label : "(none)",
-            l.canonical.length ? l.canonical : "(none)",
-            l.cls.name,
-            l.count.to!string,
-            fmtPercent(l.count, r.fences),
-            l.files.to!string,
-        ];
-    }
+        rows.row(l.label.length ? l.label : "(none)",
+            l.canonical.length ? l.canonical : "(none)", l.cls.name, l.count,
+            formatted!writePercent(l.count, r.fences), l.files);
     return rows;
 }
 
 /// Rows of the VitePress-feature inventory table (header row included).
-string[][] featureRows(in AuditResult r) @safe
+TableBuilder featureRows(in AuditResult r) @safe
 {
     size_t[string] counts;
     size_t[string] fileCounts;
@@ -1095,16 +1085,10 @@ string[][] featureRows(in AuditResult r) @safe
             firstSeen[h.kind] = h.file ~ ":" ~ h.line.to!string;
     }
 
-    string[][] rows = [["Feature", "Occurrences", "Files", "First occurrence"]];
+    TableBuilder rows;
+    rows.row("Feature", "Occurrences", "Files", "First occurrence");
     foreach (kind; counts.keys.sort)
-    {
-        rows ~= [
-            kind,
-            counts[kind].to!string,
-            filesByKind[kind].length.to!string,
-            firstSeen[kind],
-        ];
-    }
+        rows.row(kind, counts[kind], filesByKind[kind].length, firstSeen[kind]);
     return rows;
 }
 
@@ -1296,25 +1280,38 @@ unittest
 
 /// Rows of the per-occurrence feature table (header row included), capped at
 /// `limit` rows — the full list always goes to the JSON report.
-string[][] featureDetailRows(in AuditResult r, size_t limit) @safe
+TableBuilder featureDetailRows(in AuditResult r, size_t limit) @safe
 {
-    string[][] rows = [["Feature", "Detail", "Location"]];
+    TableBuilder rows;
+    rows.row("Feature", "Detail", "Location");
     foreach (const ref h; r.features)
     {
-        if (rows.length > limit)
+        if (rows.rowCount > limit)
             break;
-        rows ~= [h.kind, h.detail, h.file ~ ":" ~ h.line.to!string];
+        rows.row(h.kind, h.detail).cell!writeLocation(h.file, h.line);
     }
     return rows;
 }
 
+/// Writes `file:line`.
+private void writeLocation(W)(ref W w, string file, size_t line)
+{
+    import std.range.primitives : put;
+    import sparkles.base.text.writers : writeInteger;
+
+    put(w, file);
+    put(w, ':');
+    writeInteger(w, line);
+}
+
 /// Rows of the uncovered-label table (header row included): the labels that
 /// would lose their coloring, each with a place to look at.
-string[][] uncoveredRows(in AuditResult r) @safe
+TableBuilder uncoveredRows(in AuditResult r) @safe
 {
-    string[][] rows = [["Label", "Canonical", "Fences", "Files", "First occurrence"]];
+    TableBuilder rows;
+    rows.row("Label", "Canonical", "Fences", "Files", "First occurrence");
     foreach (const ref l; r.labels.filter!(l => l.cls == FenceClass.uncovered))
-        rows ~= [l.label, l.canonical, l.count.to!string, l.files.to!string, l.firstSeen];
+        rows.row(l.label, l.canonical, l.count, l.files, l.firstSeen);
     return rows;
 }
 
@@ -1403,12 +1400,13 @@ int runFenceAudit(in FenceAuditOptions opts)
     }
 
     writeln();
-    writeln(drawTable(classificationRows(result), TableProps(headerRows: 1, title: "Classification")));
+    writeln(drawTable(classificationRows(result),
+        TableProps(headerRows: 1, title: "Classification")));
     writeln();
     writeln(drawTable(labelRows(result), TableProps(headerRows: 1, title: "Fence Labels")));
 
     auto uncovered = uncoveredRows(result);
-    if (uncovered.length > 1)
+    if (uncovered.rowCount > 1)
     {
         writeln();
         writeln(drawTable(uncovered, TableProps(headerRows: 1,
@@ -1416,7 +1414,7 @@ int runFenceAudit(in FenceAuditOptions opts)
     }
 
     auto features = featureRows(result);
-    if (features.length > 1)
+    if (features.rowCount > 1)
     {
         writeln();
         writeln(drawTable(features, TableProps(headerRows: 1,

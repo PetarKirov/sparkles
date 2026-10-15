@@ -82,7 +82,9 @@ extern (C) export int spk_table_render(uint inPtr, uint inLen, uint outPtr, uint
     {
         auto input = (cast(const(char)*) cast(size_t) inPtr)[0 .. inLen];
         auto j = parseJSON(input);
-        return writeOut(render(j), outPtr, outCap);
+        auto output = OutputBuffer((cast(char*) cast(size_t) outPtr)[0 .. outCap]);
+        render(output, j);
+        return output.overflowed ? -2 : cast(int) output.length;
     }
     catch (Throwable t)
     {
@@ -102,15 +104,33 @@ void main()
 // JSON → drawTable
 // ---------------------------------------------------------------------------
 
-private int writeOut(string result, uint outPtr, uint outCap)
+// The host's output buffer as an output range: the table is written straight
+// into it, and anything past `outCap` marks the render as overflowed (-2).
+private struct OutputBuffer
 {
-    if (result.length > outCap)
-        return -2;
-    (cast(ubyte*) cast(size_t) outPtr)[0 .. result.length] = cast(const(ubyte)[]) result[];
-    return cast(int) result.length;
+    char[] buf;
+    size_t length;
+    bool overflowed;
+
+    void put(scope const(char)[] s)
+    {
+        if (overflowed || s.length > buf.length - length)
+        {
+            overflowed = true;
+            return;
+        }
+        buf[length .. length + s.length] = s[];
+        length += s.length;
+    }
+
+    void put(char c)
+    {
+        char[1] one = c;
+        put(one[]);
+    }
 }
 
-private string render(const JSONValue j)
+private void render(ref OutputBuffer w, const JSONValue j)
 {
     auto props = parseProps(field(j, "props"));
     const mode = asStr(j, "mode", "dense");
@@ -128,7 +148,8 @@ private string render(const JSONValue j)
             pl.rowSpan = asSize(pj, "rowSpan", 1);
             pls ~= pl;
         }
-        return drawTable(pls, props);
+        drawTable(w, pls, props);
+        return;
     }
 
     Cell[][] cells;
@@ -139,7 +160,7 @@ private string render(const JSONValue j)
             row ~= parseCell(cj);
         cells ~= row;
     }
-    return drawTable(cells, props);
+    drawTable(w, cells, props);
 }
 
 private Cell parseCell(const JSONValue j)
