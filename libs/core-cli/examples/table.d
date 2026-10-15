@@ -44,7 +44,7 @@ void main()
     // Preset helper: render `sample` under a named glyph set from `stylePresets`.
     Section preset(string name) => Section(
         header: `Preset: "` ~ name ~ `"`,
-        content: drawTable(sample, TableProps(glyphs: stylePresets[name])),
+        content: drawTable(sample, TableProps(glyphs: stylePresets[name])).toString,
     );
 
     // A deliberately malformed layout for the validation section: cell B lands on
@@ -71,7 +71,7 @@ void main()
                     ["api", "us-east", "up"],
                     ["web", "eu-west", "up"],
                     ["db", "ap-south", "down"],
-                ].drawTable,
+                ].drawTable.toString,
             ),
             Section(
                 header: "Styled + i18n content (ANSI SGR, CJK, emoji, flags)",
@@ -80,7 +80,7 @@ void main()
                     ["api 🚀", "us-east", styledText(i"{green ✅ up}")],
                     ["web", "日本 🇯🇵", styledText(i"{yellow ⚠ warn}")],
                     ["db", "eu-west", styledText(i"{red ✗ down}")],
-                ].drawTable,
+                ].drawTable.toString,
             ),
             //
             // 2. Column spans
@@ -92,7 +92,7 @@ void main()
                     [Cell("Region"), Cell("Q1"), Cell("Q2")],
                     [Cell("North 🌎"), Cell("1200"), Cell("1350")],
                     [Cell("日本"), Cell("980"), Cell("1100")],
-                ], TableProps(columnAligns: [Align.left, Align.right, Align.right])),
+                ], TableProps(columnAligns: [Align.left, Align.right, Align.right])).toString,
             ),
             //
             // 3. Row spans (with row separators)
@@ -102,7 +102,7 @@ void main()
                 content: drawTable([
                     [Cell("地域\nAsia", rowSpan: 2), Cell("Tokyo"), Cell(styledText(i"{green ✅ up}"))],
                     [Cell("Osaka"), Cell(styledText(i"{yellow ⚠ warn}"))],
-                ], TableProps(rowSeparators: true)),
+                ], TableProps(rowSeparators: true)).toString,
             ),
             //
             // 4. Row × column block span
@@ -113,7 +113,7 @@ void main()
                     [Cell(styledText(i"{bold.inverse CORE}"), colSpan: 2, rowSpan: 2), Cell("edge-1")],
                     [Cell("edge-2")],
                     [Cell("a"), Cell("b"), Cell("c 🚀")],
-                ]),
+                ]).toString,
             ),
             //
             // 5. Sparse Placement[] (order-independent)
@@ -124,7 +124,7 @@ void main()
                     Placement(2, 2, styledText(i"{cyan cells}")),
                     Placement(0, 0, "diagonal 🚀"),
                     Placement(1, 1, "日本語"),
-                ]),
+                ]).toString,
             ),
             //
             // 6. Horizontal alignment
@@ -135,7 +135,7 @@ void main()
                     ["left", "center", "right"],
                     ["a", styledText(i"{green ✅}"), "1"],
                     ["日本語", "mid", "4200"],
-                ], TableProps(columnAligns: [Align.left, Align.center, Align.right])),
+                ], TableProps(columnAligns: [Align.left, Align.center, Align.right])).toString,
             ),
             Section(
                 header: "defaultAlign: right, with a single Align.left override on col 0",
@@ -143,7 +143,7 @@ void main()
                     ["metric", "v1", "v2"],
                     ["cpu", "45", "80"],
                     ["mem 💾", "1200", "980"],
-                ], TableProps(defaultAlign: Align.right, columnAligns: [Align.left])),
+                ], TableProps(defaultAlign: Align.right, columnAligns: [Align.left])).toString,
             ),
             //
             // 7. Vertical alignment
@@ -157,7 +157,7 @@ void main()
                         Cell(styledText(i"{yellow ● middle}")),
                         Cell(styledText(i"{red ▼ bottom}")),
                     ],
-                ], TableProps(columnVAligns: [VAlign.top, VAlign.top, VAlign.middle, VAlign.bottom])),
+                ], TableProps(columnVAligns: [VAlign.top, VAlign.top, VAlign.middle, VAlign.bottom])).toString,
             ),
             //
             // 8. Glyph presets (all five)
@@ -180,37 +180,37 @@ void main()
                     topLeft: '·', topRight: '·', bottomLeft: '·', bottomRight: '·',
                     horizontalLine: '┈', verticalLine: '┊',
                     teeDown: '·', teeUp: '·', teeRight: '·', teeLeft: '·', cross: '·',
-                    cornerTL: '·', cornerTR: '·', cornerBL: '·', cornerBR: '·'))),
+                    cornerTL: '·', cornerTR: '·', cornerBL: '·', cornerBR: '·'))).toString,
             ),
             //
             // 10. Separator toggles
             //
             Section(
                 header: "Toggle: border off",
-                content: drawTable(toggleSample, TableProps(border: false)),
+                content: drawTable(toggleSample, TableProps(border: false)).toString,
             ),
             Section(
                 header: "Toggle: column separators off",
-                content: drawTable(toggleSample, TableProps(columnSeparators: false)),
+                content: drawTable(toggleSample, TableProps(columnSeparators: false)).toString,
             ),
             Section(
                 header: "Toggle: row separators on",
-                content: drawTable(toggleSample, TableProps(rowSeparators: true)),
+                content: drawTable(toggleSample, TableProps(rowSeparators: true)).toString,
             ),
             //
             // 10b. Header row & stub column separators (distinct emphasis rules)
             //
             Section(
                 header: "Header row separator (headerRows: 1 — distinct heavy rule under the header)",
-                content: drawTable(sample, TableProps(headerRows: 1)),
+                content: drawTable(sample, TableProps(headerRows: 1)).toString,
             ),
             Section(
                 header: "Stub column separator (headerCols: 1, columnSeparators off — heavy ┃ after the stub)",
-                content: drawTable(sample, TableProps(headerCols: 1, columnSeparators: false)),
+                content: drawTable(sample, TableProps(headerCols: 1, columnSeparators: false)).toString,
             ),
             Section(
                 header: "Header row + stub column (headerRows: 1, headerCols: 1 — ╋ where the rules cross)",
-                content: drawTable(sample, TableProps(headerRows: 1, headerCols: 1)),
+                content: drawTable(sample, TableProps(headerRows: 1, headerCols: 1)).toString,
             ),
             //
             // 11. Width caps & wrapping — sparkles.base.text robustness
@@ -220,28 +220,28 @@ void main()
                 content: drawTable([
                     ["id", "description"],
                     ["1", "A fairly long description that will not fit a narrow terminal and must wrap"],
-                ], TableProps(maxWidth: 40)),
+                ], TableProps(maxWidth: 40)).toString,
             ),
             Section(
                 header: "Wrap (b): per-column columnMaxWidths: [0, 20] — cap one column",
                 content: drawTable([
                     ["id", "note"],
                     ["1", "wrap this column at twenty cells while the id column stays untouched"],
-                ], TableProps(columnMaxWidths: [0, 20])),
+                ], TableProps(columnMaxWidths: [0, 20])).toString,
             ),
             Section(
                 header: "Width floor: columnMinWidths: [12, 0] — stable geometry for live re-renders",
                 content: drawTable([
                     ["name", "value"],
                     ["cpu", "45%"],
-                ], TableProps(columnMinWidths: [12, 0])),
+                ], TableProps(columnMinWidths: [12, 0])).toString,
             ),
             Section(
                 header: "Wrap (c): explicit \\n in content — hard break",
                 content: drawTable([
                     ["key", "value"],
                     ["PATH", "/usr/local/bin\n/opt/app/bin\n/home/user/bin"],
-                ]),
+                ]).toString,
             ),
             Section(
                 header: "Wrap (d): Unicode width — full-width CJK (2 cells each) + emoji graphemes",
@@ -249,7 +249,7 @@ void main()
                     ["lang", "sample"],
                     ["ja", "日本語のテキストは全角文字で構成されています"],
                     ["mix", "🚀 ✅ 🎉 🇯🇵 café résumé"],
-                ], TableProps(columnMaxWidths: [0, 14])),
+                ], TableProps(columnMaxWidths: [0, 14])).toString,
             ),
             Section(
                 header: "Wrap (e): ANSI-safe wrapping — SGR style re-opened on each line",
@@ -259,14 +259,14 @@ void main()
                         styledText(i"{red ERR}"),
                         styledText(i"{bold.green A long styled message whose bold-green SGR style must be re-emitted on every wrapped continuation line, never split mid-escape}"),
                     ],
-                ], TableProps(columnMaxWidths: [0, 26])),
+                ], TableProps(columnMaxWidths: [0, 26])).toString,
             ),
             //
             // 12. validateTable — detect + render anyway
             //
             Section(
                 header: "validateTable (overlap): reports the error AND still renders deterministically",
-                content: validationNote ~ "\n\n" ~ drawTable(overlapping),
+                content: validationNote ~ "\n\n" ~ drawTable(overlapping).toString,
             ),
             //
             // 13. Title & footer — spliced into the frame like drawBox's
@@ -279,7 +279,7 @@ void main()
                     ["bolts", "7"],
                 ], TableProps(title: styledText(i"{bold Inventory}"),
                     footer: "2 kinds", headerRows: 1,
-                    columnAligns: [Align.left, Align.right])),
+                    columnAligns: [Align.left, Align.right])).toString,
             ),
             //
             // 14. Align.decimal — a column of numbers sharing a dot position
@@ -292,7 +292,7 @@ void main()
                     ["render", "23.5µs"],
                     ["noop", "980ns"],
                 ], TableProps(headerRows: 1,
-                    columnAligns: [Align.left, Align.decimal])),
+                    columnAligns: [Align.left, Align.decimal])).toString,
             ),
             //
             // 15. Per-cell halign/valign — overrides beat the column default
@@ -303,7 +303,7 @@ void main()
                     [Cell("Quarterly totals", colSpan: 2, halign: Align.center)],
                     [Cell("north"), Cell("1200", halign: Align.right)],
                     [Cell("south"), Cell("98", halign: Align.right)],
-                ]),
+                ]).toString,
             ),
             //
             // 16. Streaming views — lazy line/chunk emission (eager layout)

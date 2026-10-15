@@ -91,7 +91,7 @@ struct TableProps
     /// Per-column max **content** width (excluding separators/gutters); a `0` entry or
     /// a short/empty array means that column is unbounded. Content over a column's cap
     /// wraps.
-    size_t[] columnMaxWidths = null;
+    const(size_t)[] columnMaxWidths = null;
 
     /// Per-column min **content** width (excluding separators/gutters); a `0` entry or
     /// a short/empty array leaves that column at its natural width. A layout floor —
@@ -99,7 +99,7 @@ struct TableProps
     /// content is still arriving. The caps win on conflict: a `columnMaxWidths` entry
     /// below the floor still caps the column, and the total `maxWidth` shrink still
     /// applies.
-    size_t[] columnMinWidths = null;
+    const(size_t)[] columnMinWidths = null;
 
     /// Optional title/footer, spliced into the top/bottom border like `drawBox`'s
     /// (`╭──╼ Title ╾─┬──╮`), truncated with `…` when the table is too narrow. May
@@ -111,11 +111,11 @@ struct TableProps
     /// Horizontal alignment. `columnAligns[c]` (when in range and not `inherit`)
     /// overrides `defaultAlign` for column `c`.
     Align    defaultAlign  = Align.left;
-    Align[]  columnAligns   = null; /// ditto
+    const(Align)[]  columnAligns   = null; /// ditto
     /// Vertical alignment (governs rowspan / multi-line cells). `columnVAligns[c]`
     /// (when in range and not `inherit`) overrides `defaultVAlign` for column `c`.
     VAlign   defaultVAlign = VAlign.top;
-    VAlign[] columnVAligns  = null; /// ditto
+    const(VAlign)[] columnVAligns  = null; /// ditto
 }
 
 /// The effective horizontal alignment for column `c`: the per-column override if set,

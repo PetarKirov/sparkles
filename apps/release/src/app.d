@@ -808,17 +808,14 @@ private void renderPlan(in ReleasePlan plan, in SegmentInput[] rows, in Theme th
     import std.conv : text;
     import sparkles.base.text.width : Align;
     import sparkles.base.term_caps : terminalSize;
-    import sparkles.ui.components.table : TableProps;
+    import sparkles.base.text.writers : formatted;
+    import sparkles.ui.components.table : TableBuilder, TableProps;
 
-    string[][] table = [["Version", "Commits", "PRs", "Theme", "Bump"]];
+    TableBuilder table;
+    table.row("Version", "Commits", "PRs", "Theme", "Bump");
     foreach (ref seg; plan.segments)
-        table ~= [
-            seg.tag,
-            (seg.end - seg.begin).text,
-            formatPrList(seg.prNumbers),
-            seg.theme,
-            formatBump(seg),
-        ];
+        table.row(seg.tag, seg.end - seg.begin, formatPrList(seg.prNumbers), seg.theme,
+            formatBump(seg));
 
     writeln();
     writeln(drawTable(table, TableProps(title: "Release plan", headerRows: 1,
@@ -1083,35 +1080,37 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
     writeln(drawHeader("Release range: " ~ rangeLabel,
         HeaderProps(style: HeaderStyle.banner)));
 
-    string[][] overview = [
-        ["Commits", rs.commitCount.text],
-        ["Files changed", rs.filesChanged.text],
-        ["Insertions", "+" ~ rs.insertions.text],
-        ["Deletions", "-" ~ rs.deletions.text],
-        ["Authors", rs.authors.length.text],
-        ["Breaking changes", rs.breakingCount.text],
-    ];
+    import std.algorithm.comparison : max;
+    import sparkles.base.text.writers : formatted, writeText;
+    import sparkles.ui.components.meter : writeMeter;
+    import sparkles.ui.components.table : TableBuilder;
+
+    TableBuilder overview;
+    overview.row("Commits", rs.commitCount)
+        .row("Files changed", rs.filesChanged)
+        .row.cell("Insertions").cell!writeText(i"+$(rs.insertions)")
+        .row.cell("Deletions").cell!writeText(i"-$(rs.deletions)")
+        .row("Authors", rs.authors.length)
+        .row("Breaking changes", rs.breakingCount);
     writeln(drawTable(overview,
-        TableProps(title: "Overview", columnAligns: numeric.dup, maxWidth: cap)));
+        TableProps(title: "Overview", columnAligns: numeric, maxWidth: cap)));
 
     // Conventional-commit type breakdown (only non-zero rows), with a
     // count-proportional bar per row.
-    import std.algorithm.comparison : max;
-    import sparkles.base.text.writers : formatted;
-    import sparkles.ui.components.meter : writeMeter;
 
     size_t maxTypeCount = 0;
     foreach (count; rs.typeCounts)
         maxTypeCount = max(maxTypeCount, count);
 
-    string[][] types = [["Type", "Count", ""]];
+    TableBuilder types;
+    types.row("Type", "Count", "");
     static foreach (t; __traits(allMembers, CommitType))
-        if (rs.typeCounts[__traits(getMember, CommitType, t)] > 0)
-            types ~= [t,
-                rs.typeCounts[__traits(getMember, CommitType, t)].text,
-                formatted!writeMeter(rs.typeCounts[__traits(getMember, CommitType, t)],
-                    maxTypeCount, 12).toString];
-    if (types.length > 1)
+    {{
+        const count = rs.typeCounts[__traits(getMember, CommitType, t)];
+        if (count > 0)
+            types.row(t, count, formatted!writeMeter(count, maxTypeCount, 12));
+    }}
+    if (types.rowCount > 1)
     {
         writeln();
         writeln(drawTable(types, TableProps(title: "Commits by type",
@@ -1129,15 +1128,14 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
         import sparkles.ui.components.tree : renderTree, TreeNode;
 
         const guides = renderTree(rs.areas.map!(a => TreeNode(a.label, a.depth)).array);
-        string[][] areaRows = [["Area", "Changed"]];
+        TableBuilder areaRows;
+        areaRows.row("Area", "Changed");
         foreach (i, a; rs.areas)
-            areaRows ~= [
-                guides[i],
-                "+" ~ a.insertions.text ~ " / -" ~ a.deletions.text,
-            ];
+            areaRows.row.cell(guides[i])
+                .cell!writeText(i"+$(a.insertions) / -$(a.deletions)");
         writeln();
         writeln(drawTable(areaRows, TableProps(title: "Changed by area",
-            headerRows: 1, columnAligns: numeric.dup, maxWidth: cap)));
+            headerRows: 1, columnAligns: numeric, maxWidth: cap)));
     }
 
     if (rs.authors.length)

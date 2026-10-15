@@ -74,7 +74,7 @@ void main()
                     ["Alice", "30", "Engineer"],
                     ["Bob", "25", "Designer"],
                     ["Carol", "35", "Manager"],
-                ].drawTable.drawBox("Team"),
+                ].drawTable.toString.drawBox("Team"),
             ),
             Section(
                 header: "Box with prettyPrint Output",
@@ -93,7 +93,7 @@ void main()
                     ["Memory", "2.1 GB", styledText(i"{green OK}")],
                     ["Disk", "89%", styledText(i"{yellow Warning}")],
                     ["Network", "1.2 Gbps", styledText(i"{green OK}")],
-                ].drawTable.drawBox("Metrics"),
+                ].drawTable.toString.drawBox("Metrics"),
             ),
             Section(
                 header: "Color Palette Box",
