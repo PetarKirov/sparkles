@@ -32,7 +32,7 @@ import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 
 import sparkles.raylib_text.atlas : baseCodepoints;
 import sparkles.raylib_text.font : LoadedFont, loadFontInto, loadVariantFile,
-    fontHasGlyph, glyphIndexFor, rangesContain;
+    fontHasGlyph, glyphIndexFor, rangesContain, realize, deferVariantFile;
 // The raylib-free half: name→path resolution, the sibling naming convention,
 // and charset parsing. Split out because this module needs a GL context and
 // that one does not (IXR29).
@@ -146,7 +146,7 @@ struct FontSet
     /// null when that face is absent. `UiFonts` rasterizes monospace chrome
     /// from it at its own sizes.
     const(char)* facePathZ(bool bold) const @safe pure nothrow @nogc
-        => bold ? (fontBold.present ? fontBold.pathZ : null)
+        => bold ? (fontBold.present || fontBold.deferred ? fontBold.pathZ : null)
             : (primary.present ? primary.pathZ : null);
 
     // ── loading ──────────────────────────────────────────────────────────────
@@ -234,12 +234,12 @@ struct FontSet
                 if (nerdPath.length != 0)
                 {
                     fs.nerdFallback.pathZ = nerdPath.toStringz;
-                    loadFontInto(fs.nerdFallback, fs.atlasPx, fs.codepoints);
+                    fs.nerdFallback.deferred = true;
                 }
                 if (regularPath.length != 0)
                 {
                     fs.regularFallback.pathZ = regularPath.toStringz;
-                    loadFontInto(fs.regularFallback, fs.atlasPx, fs.codepoints);
+                    fs.regularFallback.deferred = true;
                 }
             }
             else
@@ -256,19 +256,19 @@ struct FontSet
                             continue;
                         const isNerd = path.canFind("NerdFont")
                             || path.canFind("Nerd Font");
-                        if (isNerd && !fs.nerdFallback.present)
+                        if (isNerd && fs.nerdFallback.pathZ is null)
                         {
                             fs.nerdFallback.pathZ = path.toStringz;
-                            loadFontInto(fs.nerdFallback, fs.atlasPx, fs.codepoints);
+                            fs.nerdFallback.deferred = true;
                         }
-                        else if (!isNerd && !fs.regularFallback.present
+                        else if (!isNerd && fs.regularFallback.pathZ is null
                             && (path.canFind("DejaVu") || path.canFind("FreeMono")
                                 || path.canFind("LiberationMono")))
                         {
                             fs.regularFallback.pathZ = path.toStringz;
-                            loadFontInto(fs.regularFallback, fs.atlasPx, fs.codepoints);
+                            fs.regularFallback.deferred = true;
                         }
-                        if (fs.nerdFallback.present && fs.regularFallback.present)
+                        if (fs.nerdFallback.pathZ !is null && fs.regularFallback.pathZ !is null)
                             break;
                     }
                 }
@@ -297,11 +297,11 @@ struct FontSet
         fontSize_ = newSizePx < 1 ? 1 : newSizePx;
         clusters.reload(atlasPx);
         loadFontInto(primary, atlasPx, requestedCps[]);
-        if (fontBold.pathZ !is null) loadFontInto(fontBold, atlasPx, requestedCps[]);
-        if (fontItalic.pathZ !is null) loadFontInto(fontItalic, atlasPx, requestedCps[]);
-        if (fontBoldItalic.pathZ !is null) loadFontInto(fontBoldItalic, atlasPx, requestedCps[]);
-        if (regularFallback.pathZ !is null) loadFontInto(regularFallback, atlasPx, codepoints);
-        if (nerdFallback.pathZ !is null) loadFontInto(nerdFallback, atlasPx, codepoints);
+        if (fontBold.pathZ !is null && !fontBold.deferred) loadFontInto(fontBold, atlasPx, requestedCps[]);
+        if (fontItalic.pathZ !is null && !fontItalic.deferred) loadFontInto(fontItalic, atlasPx, requestedCps[]);
+        if (fontBoldItalic.pathZ !is null && !fontBoldItalic.deferred) loadFontInto(fontBoldItalic, atlasPx, requestedCps[]);
+        if (regularFallback.pathZ !is null && !regularFallback.deferred) loadFontInto(regularFallback, atlasPx, codepoints);
+        if (nerdFallback.pathZ !is null && !nerdFallback.deferred) loadFontInto(nerdFallback, atlasPx, codepoints);
         foreach (i; 0 .. codepointMapCount)
             loadFontInto(codepointMaps[i].font, atlasPx, codepointMaps[i].cps[]);
         measure();
@@ -348,8 +348,8 @@ struct FontSet
         {
             const cp = cast(int) cps[0];
             if (fontHasGlyph(*preferred, cp)
-                || (regularFallback.present && fontHasGlyph(regularFallback, cp))
-                || (nerdFallback.present && fontHasGlyph(nerdFallback, cp)))
+                || (realize(regularFallback, atlasPx, codepoints) && fontHasGlyph(regularFallback, cp))
+                || (realize(nerdFallback, atlasPx, codepoints) && fontHasGlyph(nerdFallback, cp)))
                 return false;
         }
         const scale = cast(float) fontSize_ / atlasPx;
@@ -384,9 +384,9 @@ struct FontSet
             requestedCps ~= cp;
         pending.clear();
         loadFontInto(primary, atlasPx, requestedCps[]);
-        if (fontBold.pathZ !is null) loadFontInto(fontBold, atlasPx, requestedCps[]);
-        if (fontItalic.pathZ !is null) loadFontInto(fontItalic, atlasPx, requestedCps[]);
-        if (fontBoldItalic.pathZ !is null) loadFontInto(fontBoldItalic, atlasPx, requestedCps[]);
+        if (fontBold.pathZ !is null && !fontBold.deferred) loadFontInto(fontBold, atlasPx, requestedCps[]);
+        if (fontItalic.pathZ !is null && !fontItalic.deferred) loadFontInto(fontItalic, atlasPx, requestedCps[]);
+        if (fontBoldItalic.pathZ !is null && !fontBoldItalic.deferred) loadFontInto(fontBoldItalic, atlasPx, requestedCps[]);
         return true;
     }
 
@@ -421,9 +421,9 @@ struct FontSet
 
         if (cp >= 128 && !fontHasGlyph(*active, cp))
         {
-            if (regularFallback.present && fontHasGlyph(regularFallback, cp))
+            if (realize(regularFallback, atlasPx, codepoints) && fontHasGlyph(regularFallback, cp))
                 active = &regularFallback;
-            else if (nerdFallback.present && fontHasGlyph(nerdFallback, cp))
+            else if (realize(nerdFallback, atlasPx, codepoints) && fontHasGlyph(nerdFallback, cp))
                 active = &nerdFallback;
             else if (faceHasCodepoint(cp))
                 requestGlyph(cp); // primary face has it; load it on demand
@@ -441,18 +441,21 @@ struct FontSet
         // No fake italic anywhere: a missing italic face renders the upright
         // regular (a synthetic slant/shift breaks grid alignment and made
         // tokens appear to move between themes). Bold still double-strikes.
+        // A styled face is resolved at load and built the first time a
+        // cell asks for it.
+        bool have(ref LoadedFont f) => realize(f, atlasPx, requestedCps[]);
         if (bold && italic)
         {
-            if (fontBoldItalic.present) return StyledFace(&fontBoldItalic, false, false);
-            if (fontItalic.present)     return StyledFace(&fontItalic, true, false); // real italic, fake bold
-            if (fontBold.present)       return StyledFace(&fontBold, false, false);  // real bold, upright
+            if (have(fontBoldItalic)) return StyledFace(&fontBoldItalic, false, false);
+            if (have(fontItalic))     return StyledFace(&fontItalic, true, false); // real italic, fake bold
+            if (have(fontBold))       return StyledFace(&fontBold, false, false);  // real bold, upright
             return StyledFace(&primary, true, false);
         }
         if (italic)
-            return fontItalic.present ? StyledFace(&fontItalic, false, false)
+            return have(fontItalic) ? StyledFace(&fontItalic, false, false)
                 : StyledFace(&primary, false, false);
         if (bold)
-            return fontBold.present ? StyledFace(&fontBold, false, false)
+            return have(fontBold) ? StyledFace(&fontBold, false, false)
                 : StyledFace(&primary, true, false);
         return StyledFace(&primary, false, false);
     }
@@ -580,11 +583,11 @@ struct FontSet
             string boldPath, italicPath, boldItalicPath;
             fontVariantPaths(fontPath, boldPath, italicPath, boldItalicPath);
             if (!fontBold.present)
-                loadVariantFile(fontBold, boldPath, atlasPx, requestedCps[]);
+                deferVariantFile(fontBold, boldPath);
             if (!fontItalic.present)
-                loadVariantFile(fontItalic, italicPath, atlasPx, requestedCps[]);
+                deferVariantFile(fontItalic, italicPath);
             if (!fontBoldItalic.present)
-                loadVariantFile(fontBoldItalic, boldItalicPath, atlasPx, requestedCps[]);
+                deferVariantFile(fontBoldItalic, boldItalicPath);
             return;
         }
 
@@ -630,11 +633,11 @@ struct FontSet
         }
 
         if (!fontBold.present)
-            loadVariantFile(fontBold, boldPath, atlasPx, requestedCps[]);
+            deferVariantFile(fontBold, boldPath);
         if (!fontItalic.present)
-            loadVariantFile(fontItalic, italicPath, atlasPx, requestedCps[]);
+            deferVariantFile(fontItalic, italicPath);
         if (!fontBoldItalic.present)
-            loadVariantFile(fontBoldItalic, boldItalicPath, atlasPx, requestedCps[]);
+            deferVariantFile(fontBoldItalic, boldItalicPath);
     }
 
     // The macOS half of `loadStyleVariants`, resolving by FAMILY rather than by
@@ -650,11 +653,11 @@ struct FontSet
         string boldPath, italicPath, boldItalicPath;
         variantPathsFor(fontPath, boldPath, italicPath, boldItalicPath);
         if (!fontBold.present)
-            loadVariantFile(fontBold, boldPath, atlasPx, requestedCps[]);
+            deferVariantFile(fontBold, boldPath);
         if (!fontItalic.present)
-            loadVariantFile(fontItalic, italicPath, atlasPx, requestedCps[]);
+            deferVariantFile(fontItalic, italicPath);
         if (!fontBoldItalic.present)
-            loadVariantFile(fontBoldItalic, boldItalicPath, atlasPx, requestedCps[]);
+            deferVariantFile(fontBoldItalic, boldItalicPath);
     }
 
     // Fallback faces without fontconfig: the best-ranked Nerd-Font file in
@@ -690,18 +693,18 @@ struct FontSet
         }
         // Keep trying on a failed load rather than giving up on the fallback
         // entirely — the fontconfig loop re-tests `present` for this reason.
-        if (bestNerd.length != 0 && !nerdFallback.present)
+        if (bestNerd.length != 0 && nerdFallback.pathZ is null)
         {
             nerdFallback.pathZ = bestNerd.toStringz;
-            loadFontInto(nerdFallback, atlasPx, codepoints);
+            nerdFallback.deferred = true;
         }
         const regular = resolveFontInDirs(
             "DejaVu Sans Mono,Roboto Mono,Droid Sans Mono,Liberation Mono,Cousine",
             dirs);
-        if (regular.length != 0 && regular != fontPath && !regularFallback.present)
+        if (regular.length != 0 && regular != fontPath && regularFallback.pathZ is null)
         {
             regularFallback.pathZ = regular.toStringz;
-            loadFontInto(regularFallback, atlasPx, codepoints);
+            regularFallback.deferred = true;
         }
     }
 
