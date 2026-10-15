@@ -97,6 +97,13 @@ private struct Fixture
             ~ "import ldc.dcompute : ShaderStage;\n\n" ~ body ~ "\n");
     }
 
+    /// Adds a configuration to the recipe: `name`, its `body`.
+    void configuration(string name, string body)
+    {
+        const recipe = pkg.buildPath("dub.sdl");
+        recipe.write(recipe.readText ~ format("configuration \"%s\" {\n%s\n}\n", name, body));
+    }
+
     /// Runs the tool with `args` after `--package`/`--out`.
     Outcome run(string[] args...)
     {
@@ -158,14 +165,29 @@ private struct Outcome
     const fresh = f.run("--if-stale", "--ldc=/nonexistent/ldc2-vulkan");
     assert(fresh.status == 0 && fresh.diagnostics == "", fresh.diagnostics);
 
-    // 2: a configuration error, saying what is wrong.
-    const hostConfig = f.run("--config=library");
-    assert(hostConfig.status == 2 && hostConfig.diagnostics.canFind("names no dcompute target"),
-        hostConfig.diagnostics);
+    // 2: a configuration that is not a device build, each saying why.
+    f.configuration("twoTargets", `sourcePaths "src" "shaders"
+dflags "-mdcompute-targets=vulkan-130,ocl-300"`);
+    f.configuration("hostOnly", `sourcePaths "src"
+dflags "-mdcompute-targets=vulkan-130"`);
+    foreach (bad; [
+        ["--config=nope", "failed in"],
+        ["--config=library", "names no dcompute target"],
+        ["--config=twoTargets", "must name exactly one Vulkan target"],
+        ["--config=hostOnly", "has no `@compute(CompileFor.deviceOnly)` module"],
+    ])
+    {
+        const r = f.run(bad[0]);
+        assert(r.status == 2 && r.diagnostics.canFind(bad[1]), bad[0] ~ "\n" ~ r.diagnostics);
+    }
 
-    // 3: no compiler, and the message says where to get one (`SHP9`).
-    const noLdc = f.run("--ldc=/nonexistent/ldc2-vulkan");
-    assert(noLdc.status == 3 && noLdc.diagnostics.canFind("nix develop"), noLdc.diagnostics);
+    // 3: no compiler, and the message says where to get one (`SHP9`) — even
+    // with a configuration error too, since describing needs the compiler.
+    foreach (args; [["--ldc=/nonexistent/ldc2-vulkan"], ["--ldc=/nonexistent/ldc2-vulkan", "--config=nope"]])
+    {
+        const noLdc = f.run(args);
+        assert(noLdc.status == 3 && noLdc.diagnostics.canFind("nix develop"), noLdc.diagnostics);
+    }
 
     // 1: a compile error, reported with the compiler's own message.
     f.entries(`@fragment vec4 tint(@input vec2 uv) => undefinedThing(uv);`);
@@ -184,10 +206,11 @@ private struct Outcome
         return skipTest("no stock `ldc2` on PATH to stand in for a wrong compiler");
 
     // An LDC without the Vulkan target or the fragment stage is a toolchain
-    // problem (3), not a broken shader (1) — `SHP10`.
+    // problem (3), not a broken shader (1) — `SHP10` — told by what it cannot
+    // compile, not by what it says about the unit.
     auto f = Fixture.create("stock");
     const stock = f.run("--ldc=ldc2");
-    assert(stock.status == 3 && stock.diagnostics.canFind("not a dcompute-enabled LDC"),
+    assert(stock.status == 3 && stock.diagnostics.canFind("cannot compile a `@fragment` shader"),
         stock.diagnostics);
 }
 
@@ -370,4 +393,29 @@ exit 0
             "OpDecorate %texA Binding 1", "OpDecorate %texB Binding 2",
             "OpDecorate %sampler Binding 0"])
         assert(dis.output.canFind(decoration), decoration ~ "\n" ~ dis.output);
+}
+
+@("shaderCompile.cli.anInputEditedDuringTheRunLeavesItStale")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHB1`: the stamp records the inputs as the compiler read them, so an
+    // edit landing while the run is under way leaves output its stamp does
+    // not vouch for. The compiler is wrapped to make that edit right after
+    // it compiles the unit.
+    auto f = Fixture.create("edited");
+    const module_ = f.pkg.buildPath("shaders", "fx_entries.d");
+    const wrapper = f.root.buildPath("ldc-then-edit");
+    wrapper.write(format(`#!/bin/sh
+ldc2-vulkan "$@" || exit $?
+case "$*" in *-mdcompute-file-prefix=unit*) echo '// edited during the run' >> '%s';; esac
+exit 0
+`, module_));
+    wrapper.setAttributes(octal!755);
+    const r = f.run("--ldc=" ~ wrapper);
+    assert(r.status == 0, r.diagnostics);
+    assert(module_.readText.canFind("edited during the run"));
+    assert(!isFresh(f.out_, f.pkg), "the stamp vouches for the edit the output never saw");
 }
