@@ -212,6 +212,12 @@ int androidMain()
         fractionalScroll: true, // scrolled between cells (`LAY7`)
         pointerUnit: PointerUnit.pixels, // the key row is not on the cell grid
         traceSink: &routeTraceLog, // raylib's own log joins ours (TPG7)
+        // The scheme's background the moment the surface exists: Android
+        // removes its launch splash once the window counts as drawn, which
+        // is before the first real frame, and showed the home screen
+        // through it until then.
+        launchBackground: app.chromeBg,
+        hasLaunchBackground: true,
     };
 
     // termux-am's server (NOD13): nix-on-droid's android-integration tools.
