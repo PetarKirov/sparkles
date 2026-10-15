@@ -17,6 +17,18 @@ let
   packages = map pkgUnit graph.packageNames;
   osApis = "docs/research/window-system-integration/os-apis";
 
+  # What a task that `ci` judges is keyed by beyond its units: the helper's
+  # own sources, and the libraries it spawns runs and reads their results
+  # with. A bug there that under-reports a failure would otherwise be
+  # recorded as a pass of every unit it judged. The helper's other libraries
+  # stay out (their edits would re-run everything for nothing); these two
+  # cost little, since almost every unit already reaches `base`'s closure.
+  judged = [
+    "harness"
+    "pkg/core-cli"
+    "pkg/build-primitives"
+  ];
+
   # The systems whose generated shaders must agree, and where their builds land.
   shaderSystems = [
     "x86_64-linux"
@@ -59,7 +71,7 @@ in
       description = "dub test the packages whose closure is new";
       units = packages;
       granular = true;
-      common = [ "harness" ];
+      common = judged;
       run =
         t:
         t.inShell "ci-test" ''
@@ -73,7 +85,7 @@ in
       description = "Run the tests under ASan and stackovf";
       units = packages;
       granular = true;
-      common = [ "harness" ];
+      common = judged;
       run =
         t:
         t.inShell "ci-test-sanitize" ''
@@ -89,7 +101,7 @@ in
       description = "--better-c and --wasm for the packages that use them";
       units = packages;
       granular = true;
-      common = [ "harness" ];
+      common = judged;
       run =
         t:
         t.inShell "ci-test-extracted" ''
@@ -119,7 +131,7 @@ in
       description = "Build and run the examples whose closure is new";
       units = map (f: "example/${f}") graph.exampleFiles;
       granular = true;
-      common = [ "harness" ];
+      common = judged;
       after = [ "eh-comparisons" ];
       run =
         t:
@@ -135,7 +147,7 @@ in
       description = "Verify the runnable markdown whose closure is new";
       units = map (f: "md/${f}") graph.runnableMarkdown;
       granular = true;
-      common = [ "harness" ];
+      common = judged;
       after = [ "eh-comparisons" ];
       run =
         t:
@@ -195,7 +207,7 @@ in
     shader-readback = {
       description = "Read back generated shaders on a GL driver";
       units = [ "pkg/ui-raylib" ];
-      common = [ "harness" ];
+      common = judged;
       features = [ "xvfb" ];
       run =
         t:

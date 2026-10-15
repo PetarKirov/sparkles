@@ -150,7 +150,11 @@ touched; an edit to `libs/x` re-runs everything whose closure reaches it.
 `common = [ "harness" ]` keeps the `ci` helper's store path out of the
 key: its steps are evaluated a second time against a stub `ci` (`ciTools.key`),
 and `apps/ci`'s own sources join the key instead. Without that, an edit to any
-of the 23 libraries the helper links would re-run every job.
+of the 23 libraries the helper links would re-run every job. The tasks whose
+pass `ci` judges (the tests, the examples, the markdown) also take
+`pkg/core-cli` and `pkg/build-primitives`, through which it spawns the runs and
+reads their results: a bug there that hid a failure would otherwise be
+recorded as a pass.
 
 To ignore every stamp, run the `CI` workflow by hand with `force`.
 

@@ -510,8 +510,9 @@ let
     name: cfg.tasks.${name} or (throw "ci: unknown task `${name}` (define it under `ci.tasks`)");
 
   # A task's units, its features and its tools: what one placement of it
-  # (all its units, or a shard) needs, and nothing else.
-  instanceFeatures = task: units: graph.needsOf (units ++ task.common) ++ task.features;
+  # (all its units, or a shard) needs, and nothing else. `common` units key
+  # the task but are not run by it, so they bring no features.
+  instanceFeatures = task: units: graph.needsOf units ++ task.features;
   instanceTools =
     variant: system: task: units:
     (toolsFor variant system).withFeatures (instanceFeatures task units);
