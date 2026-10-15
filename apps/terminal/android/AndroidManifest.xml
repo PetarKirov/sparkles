@@ -45,7 +45,7 @@
 
     <application
         android:label="@label@"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+        android:theme="@style/Terminal"
         android:icon="@mipmap/ic_launcher"
         android:hasCode="false"
         android:allowBackup="false"
