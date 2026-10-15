@@ -22,18 +22,18 @@
 module vulkaninfo_example;
 
 import std.algorithm : filter, map;
-import std.array : appender, array;
+import std.array : array;
 import std.conv : to;
-import std.format : format;
 import std.range : enumerate, iota;
-import std.stdio : writeln;
+import std.range.primitives : put;
+import std.stdio : stdout, writeln;
 import std.string : fromStringz, strip;
 import std.traits : EnumMembers, FieldNameTuple;
 
 import expected : Expected, err, ok;
 
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
-import sparkles.base.text : formatted, writeBytes;
+import sparkles.base.text : writeBytes, writeInteger, writeIntegerPadded;
 import sparkles.core_cli.args;
 import sparkles.vulkan;
 import sparkles.wired;
@@ -81,10 +81,10 @@ struct VulkanInfo
 
         if (json)
         {
-            auto buf = appender!string;
+            auto w = stdout.lockingTextWriter;
             enum opts = JsonWriteOptions(pretty: true);
-            writeJSON!opts(report.value, buf);
-            writeln(buf[]);
+            writeJSON!opts(report.value, w);
+            put(w, '\n');
         }
         else
         {
@@ -116,6 +116,78 @@ enum VendorId : uint
     @WireName("Mesa/llvmpipe") mesaLlvmpipe = 0x10005,
 }
 
+// -----------------------------------------------------------------------------
+// Report values: raw numbers that write themselves as text
+// -----------------------------------------------------------------------------
+
+/// A report value is its own wire text (wired encodes it as a JSON string,
+/// streamed from its `toString`), and prettyPrint writes the same text.
+alias AsText = WireConvert!(v => v);
+
+/// ditto
+mixin template PrettyAsText()
+{
+    void writePretty(Writer, Opts)(ref Writer w, in Opts, ushort = 0) const
+        => toString(w);
+}
+
+/// A packed Vulkan version, written `major.minor.patch`.
+@AsText
+struct ApiVersion
+{
+    uint packed;
+
+    void toString(Writer)(ref Writer w) const => writeApiVersion(w, packed);
+    mixin PrettyAsText;
+}
+
+/// A heap size, written in binary units (`8.0GiB`).
+@AsText
+struct ByteSize
+{
+    ulong bytes;
+
+    void toString(Writer)(ref Writer w) const => writeBytes(w, bytes);
+    mixin PrettyAsText;
+}
+
+/// A PCI device ID, written `0x1234`.
+@AsText
+struct DeviceId
+{
+    uint id;
+
+    void toString(Writer)(ref Writer w) const
+    {
+        put(w, "0x");
+        writeIntegerPadded!16(w, id, 4);
+    }
+
+    mixin PrettyAsText;
+}
+
+/// An extension and its spec version, written `VK_KHR_surface (v25)`.
+@AsText
+struct Extension
+{
+    string name;
+    uint specVersion;
+
+    void toString(Writer)(ref Writer w) const
+    {
+        put(w, name);
+        put(w, " (v");
+        writeInteger(w, specVersion);
+        put(w, ")");
+    }
+
+    mixin PrettyAsText;
+}
+
+/// The extension list of a `VkExtensionProperties` query.
+Extension[] extensionsOf(VkExtensionProperties[] props)
+    => props.map!(e => Extension(e.extensionName.fromStringz.idup, e.specVersion)).array;
+
 struct VulkanReport
 {
     InstanceSummary instance;
@@ -126,15 +198,16 @@ struct VulkanReport
 struct InstanceSummary
 {
     uint headerVersion;
-    string loaderVersion;
-    string[] extensions;
+    ApiVersion loaderVersion;
+    size_t extensionCount;
+    Extension[] extensions; /// empty under `--summary`
 }
 
 struct LayerReport
 {
     string name;
     string description;
-    string specVersion;
+    ApiVersion specVersion;
     uint implementationVersion;
 }
 
@@ -143,13 +216,13 @@ struct GpuReport
     uint id;
     string name;
     string type;
-    string apiVersion;
-    string driverVersion;
+    ApiVersion apiVersion;
+    ApiVersion driverVersion;
     VendorId vendorID;
-    string deviceID;
+    DeviceId deviceID;
     QueueFamilyReport[] queueFamilies;
     MemoryReport memory;
-    string[] extensions;
+    Extension[] extensions;
     string[] supportedFeatures;
 }
 
@@ -170,7 +243,7 @@ struct MemoryReport
 struct MemoryHeapReport
 {
     uint index;
-    string size;
+    ByteSize size;
     string[] flags;
 }
 
@@ -212,12 +285,12 @@ GpuReport queryGpu(in InstanceCommands inst, size_t index, VkPhysicalDevice gpuD
         id: cast(uint) index,
         name: props.deviceName.fromStringz.to!string,
         type: deviceTypeName(props.deviceType),
-        apiVersion: formatted!writeApiVersion(props.apiVersion).toString,
+        apiVersion: ApiVersion(props.apiVersion),
         // Only `apiVersion` is guaranteed to use this packing — NVIDIA and
         // Intel encode a driver version differently, so this is approximate.
-        driverVersion: formatted!writeApiVersion(props.driverVersion).toString,
+        driverVersion: ApiVersion(props.driverVersion),
         vendorID: cast(VendorId) props.vendorID,
-        deviceID: format("0x%04x", props.deviceID),
+        deviceID: DeviceId(props.deviceID),
     };
 
     if (showAll || cli.queues)
@@ -241,7 +314,7 @@ GpuReport queryGpu(in InstanceCommands inst, size_t index, VkPhysicalDevice gpuD
         gpu.memory = MemoryReport(
             heaps: iota(mem.memoryHeapCount).map!(h => MemoryHeapReport(
                 index: cast(uint) h,
-                size: formatted!writeBytes(mem.memoryHeaps[h].size).toString,
+                size: ByteSize(mem.memoryHeaps[h].size),
                 flags: flagNames!VkMemoryHeapFlagBits(mem.memoryHeaps[h].flags),
             )).array,
             types: iota(mem.memoryTypeCount).map!(t => MemoryTypeReport(
@@ -254,9 +327,8 @@ GpuReport queryGpu(in InstanceCommands inst, size_t index, VkPhysicalDevice gpuD
 
     if (showAll || cli.extensions)
     {
-        gpu.extensions = queryVkList!VkExtensionProperties(inst.enumerateDeviceExtensionProperties, gpuDev, null)
-            .map!(e => format("%s (v%d)", e.extensionName.fromStringz, e.specVersion))
-            .array;
+        gpu.extensions = queryVkList!VkExtensionProperties(
+            inst.enumerateDeviceExtensionProperties, gpuDev, null).extensionsOf;
     }
 
     if (showAll || cli.features)
@@ -319,10 +391,9 @@ Expected!(VulkanReport, string) queryVulkan(in VulkanInfo cli) @system
     VulkanReport report;
     report.instance = InstanceSummary(
         headerVersion: headerVersion,
-        loaderVersion: formatted!writeApiVersion(rawLoaderVersion).toString,
-        extensions: (cli.summary && !cli.extensions)
-            ? [format("%d extensions available (run with --extensions to list)", instExtProps.length)]
-            : instExtProps.map!(e => format("%s (v%d)", e.extensionName.fromStringz, e.specVersion)).array,
+        loaderVersion: ApiVersion(rawLoaderVersion),
+        extensionCount: instExtProps.length,
+        extensions: (cli.summary && !cli.extensions) ? null : instExtProps.extensionsOf,
     );
 
     if (cli.layers || (!cli.summary && !cli.features && !cli.memory && !cli.queues && !cli.extensions))
@@ -330,7 +401,7 @@ Expected!(VulkanReport, string) queryVulkan(in VulkanInfo cli) @system
         report.layers = instLayerProps.map!(l => LayerReport(
             name: l.layerName.fromStringz.to!string,
             description: l.description.fromStringz.to!string,
-            specVersion: formatted!writeApiVersion(l.specVersion).toString,
+            specVersion: ApiVersion(l.specVersion),
             implementationVersion: l.implementationVersion,
         )).array;
     }
