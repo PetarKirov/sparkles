@@ -1,0 +1,15 @@
+// The shader readback's probe unit (`sparkles.ui_raylib.shader_readback`), as
+// a consumer of `sparkles:shaders` with a device configuration. The readback
+// runs the build step on it in place; its output goes to a scratch directory.
+name "probe"
+dependency "sparkles:shaders" path="../../../.."
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "shaders" {
+    targetType "library"
+    sourcePaths "src" "shaders"
+    dflags "-mdcompute-targets=vulkan-130"
+}

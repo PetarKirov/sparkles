@@ -1,0 +1,16 @@
+// A consumer of `sparkles:shaders` with a device configuration, as the build
+// step's tests and the shader readback use it. They copy this directory to a
+// scratch one, point the dependency at the checkout, and rewrite
+// `shaders/fx_entries.d`; nothing runs in place.
+name "fx"
+dependency "sparkles:shaders" path="../../../.."
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "shaders" {
+    targetType "library"
+    sourcePaths "src" "shaders"
+    dflags "-mdcompute-targets=vulkan-130"
+}

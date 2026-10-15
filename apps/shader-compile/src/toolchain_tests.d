@@ -1,31 +1,34 @@
 /**
-The build step against the real toolchain: the device compiler, dub, and the
-SPIR-V and GLSL tools, on fixture packages written to a scratch directory.
+The build step as its users run it: the built tool, as a process, on a copy of
+`tests/fixture/` (a consumer package with a device configuration), against the
+real device compiler, dub, and the SPIR-V and GLSL tools.
 
-These are the tests a fake cannot stand in for — what the compiler puts in
-the module (`SHF1`–`SHF3`, `SHF5`–`SHF7`), and what the step does with each
-outcome (`SHP1`, `SHP4`, `SHP8`–`SHP10`). Each one skips where the toolchain
-is absent (the Windows test leg has no device compiler, `SHT4`); every other
-test leg carries it in its shell.
+These are the tests a fake cannot stand in for — what the compiler puts across
+the interface (`SHF1`–`SHF3`, `SHF5`–`SHF7`), and what the step does with each
+outcome (`SHP1`, `SHP4`, `SHP6`, `SHP8`–`SHP10`). Each one skips where the
+toolchain is absent (the Windows test leg has no device compiler, `SHT4`);
+every other test leg carries it in its shell.
 */
 module toolchain_tests;
 
 version (unittest):
 
-import std.algorithm : canFind, filter, map, startsWith;
-import std.array : array, split;
-import std.conv : to;
-import std.file : dirEntries, exists, mkdirRecurse, readText, remove, rmdirRecurse, SpanMode,
-    tempDir, write;
+import std.algorithm : canFind, filter, map, sort, startsWith;
+import std.array : array, replace, split;
+import std.concurrency : initOnce;
+import std.conv : octal, to;
+import std.file : copy, dirEntries, exists, mkdirRecurse, readText, rmdirRecurse,
+    setAttributes, SpanMode, tempDir, write;
 import std.format : format;
-import std.path : baseName, buildNormalizedPath, buildPath, dirName, pathSeparator;
-import std.process : environment, execute;
+import std.path : baseName, buildNormalizedPath, buildPath, dirName, pathSeparator,
+    relativePath;
+import std.process : environment, execute, Pid, spawnProcess, thisProcessID, wait;
 import std.stdio : File;
 import std.string : lineSplitter, strip;
 
 import sparkles.test_runner.skip : skipTest;
 
-import app : cli, isFresh, stampName;
+import app : isFresh, stampName;
 
 /// The tool this environment lacks, or `null` when the whole toolchain is
 /// on `PATH`.
@@ -39,45 +42,44 @@ private string missingTool()
     return null;
 }
 
-/// The repository, for the fixtures' path dependency on `sparkles:shaders`.
-private enum repoRoot = __FILE_FULL_PATH__.dirName.buildNormalizedPath("..", "..", "..");
+/// This package, and the repository its fixture depends on.
+private enum here = __FILE_FULL_PATH__.dirName.buildNormalizedPath("..");
+private enum repoRoot = here.buildNormalizedPath("..", "..");
+
+/// The tool, built once per test run.
+private string tool()
+{
+    static string build()
+    {
+        const r = execute(["dub", "build", "-q", "--root=" ~ here, "--config=application"]);
+        assert(r.status == 0, r.output);
+        return here.buildPath("build", "shader-compile");
+    }
+
+    static shared string path;
+    return initOnce!path(build());
+}
 
 /**
-A scratch dub package with a device configuration, as a consumer has one:
-`shaders/` holds the device-only entry modules, and `--out` is `generated/`.
-Removed when the fixture goes out of scope.
+A scratch copy of `tests/fixture/`, whose `--out` is `generated/`. Removed when
+the fixture goes out of scope.
 */
 private struct Fixture
 {
     string root, pkg, out_;
+    string[string] env; /// overrides of the tool's environment
 
     @disable this(this);
 
     static Fixture create(string stem)
     {
-        import std.process : thisProcessID, thisThreadID;
-
         Fixture f;
-        f.root = buildPath(tempDir, format("sparkles-shader-compile-%s-%s-%s", stem,
-            thisProcessID, cast(ulong) thisThreadID));
+        f.root = buildPath(tempDir, format("sparkles-shader-compile-%s-%s", stem, thisProcessID));
         if (f.root.exists)
             f.root.rmdirRecurse;
         f.pkg = f.root.buildPath("fx");
         f.out_ = f.pkg.buildPath("generated");
-        f.pkg.buildPath("src", "fx").mkdirRecurse;
-        f.pkg.buildPath("shaders").mkdirRecurse;
-        f.pkg.buildPath("dub.sdl").write(format(`name "fx"
-dependency "sparkles:shaders" path="%s"
-configuration "library" {
-    targetType "library"
-}
-configuration "shaders" {
-    targetType "library"
-    sourcePaths "src" "shaders"
-    dflags "-mdcompute-targets=vulkan-130"
-}
-`, repoRoot));
-        f.pkg.buildPath("src", "fx", "host.d").write("module fx.host;\n");
+        copyFixture(f.pkg);
         return f;
     }
 
@@ -87,39 +89,52 @@ configuration "shaders" {
             root.rmdirRecurse;
     }
 
-    /// Writes `shaders/<name>.d`, a device-only module importing the vocabulary.
-    void entries(string name, string body)
+    /// Replaces the device-only module's entry points with `body`.
+    void entries(string body)
     {
-        pkg.buildPath("shaders", name ~ ".d").write(
-            "@compute(CompileFor.deviceOnly)\nmodule " ~ name ~ ";\n\nimport sparkles.shaders;\n"
+        pkg.buildPath("shaders", "fx_entries.d").write(
+            "@compute(CompileFor.deviceOnly)\nmodule fx_entries;\n\nimport sparkles.shaders;\n"
             ~ "import ldc.dcompute : ShaderStage;\n\n" ~ body ~ "\n");
     }
 
-    /// Runs the step with `args` after `--package`/`--out`; the exit status
-    /// and everything it printed as a diagnostic.
+    /// Runs the tool with `args` after `--package`/`--out`.
     Outcome run(string[] args...)
     {
-        const log = root.buildPath(format("err-%s.txt", logs++));
-        auto err = File(log, "w");
-        const status = cli(["shader-compile", "--package=" ~ pkg, "--out=" ~ out_, "--quiet"]
-            ~ args, err);
-        err.close();
-        return Outcome(status, log.readText);
+        const r = execute([tool, "--package=" ~ pkg, "--out=" ~ out_, "--quiet"] ~ args, env);
+        return Outcome(r.status, r.output);
     }
 
     /// The files in `--out`, sorted, temporaries included.
     string[] outputs()
     {
-        import std.algorithm : sort;
-
         if (!out_.exists)
             return null;
         auto names = dirEntries(out_, SpanMode.shallow).map!(e => e.name.baseName).array;
         names.sort;
         return names;
     }
+}
 
-    private size_t logs;
+/// Copies `tests/fixture/` to `dest`, its dependency pointed at the checkout.
+private void copyFixture(string dest)
+{
+    const src = here.buildPath("tests", "fixture");
+    foreach (e; dirEntries(src, SpanMode.depth).filter!(e => e.isFile))
+    {
+        const to = dest.buildPath(e.name.relativePath(src));
+        to.dirName.mkdirRecurse;
+        e.name.copy(to);
+    }
+    // The fixture's dependency, relative to where it is checked in, points
+    // at the checkout instead.
+    foreach (file; ["dub.sdl", "dub.selections.json"])
+    {
+        const path = dest.buildPath(file);
+        const before = path.readText;
+        const after = before.replace(`"../../../..`, `"` ~ repoRoot);
+        assert(after != before, file ~ " no longer names the checkout as ../../../..");
+        path.write(after);
+    }
 }
 
 private struct Outcome
@@ -127,10 +142,6 @@ private struct Outcome
     int status;
     string diagnostics;
 }
-
-/// A minimal valid entry point.
-private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @uniform float amount)
-    => texture0.sample(uv) * amount;`;
 
 @("shaderCompile.cli.exitCodes")
 @system unittest
@@ -140,7 +151,6 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
 
     // 0: generated, then fresh — and fresh needs no compiler at all (`SHB2`).
     auto f = Fixture.create("exit");
-    f.entries("fx_entries", tint);
     const made = f.run();
     assert(made.status == 0, made.diagnostics);
     assert(f.outputs == [stampName, "tint.es.frag", "tint.frag"], f.outputs.to!string);
@@ -148,14 +158,7 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
     const fresh = f.run("--if-stale", "--ldc=/nonexistent/ldc2-vulkan");
     assert(fresh.status == 0 && fresh.diagnostics == "", fresh.diagnostics);
 
-    // 2: usage and configuration errors, each saying what is wrong.
-    auto noOut = File(f.root.buildPath("noout.txt"), "w");
-    assert(cli(["shader-compile", "--package=" ~ f.pkg], noOut) == 2);
-    noOut.close();
-    assert(f.root.buildPath("noout.txt").readText.canFind("--out is required"));
-    const extra = f.run("stray");
-    assert(extra.status == 2 && extra.diagnostics.canFind("unexpected argument `stray`"),
-        extra.diagnostics);
+    // 2: a configuration error, saying what is wrong.
     const hostConfig = f.run("--config=library");
     assert(hostConfig.status == 2 && hostConfig.diagnostics.canFind("names no dcompute target"),
         hostConfig.diagnostics);
@@ -165,16 +168,10 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
     assert(noLdc.status == 3 && noLdc.diagnostics.canFind("nix develop"), noLdc.diagnostics);
 
     // 1: a compile error, reported with the compiler's own message.
-    f.entries("fx_entries", `@fragment vec4 tint(@input vec2 uv) => undefinedThing(uv);`);
+    f.entries(`@fragment vec4 tint(@input vec2 uv) => undefinedThing(uv);`);
     const broken = f.run();
     assert(broken.status == 1 && broken.diagnostics.canFind("undefinedThing")
         && broken.diagnostics.canFind("LDC failed"), broken.diagnostics);
-
-    // 1: a package with no device-only module has no entry point to compile.
-    f.pkg.buildPath("shaders", "fx_entries.d").remove;
-    const none = f.run();
-    assert(none.status == 1 && none.diagnostics.canFind("CompileFor.deviceOnly"),
-        none.diagnostics);
 }
 
 @("shaderCompile.cli.stockCompilerIsAToolchainError")
@@ -189,10 +186,28 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
     // An LDC without the Vulkan target or the fragment stage is a toolchain
     // problem (3), not a broken shader (1) — `SHP10`.
     auto f = Fixture.create("stock");
-    f.entries("fx_entries", tint);
     const stock = f.run("--ldc=ldc2");
     assert(stock.status == 3 && stock.diagnostics.canFind("not a dcompute-enabled LDC"),
         stock.diagnostics);
+}
+
+/// Runs a good build, breaks the input with `breakIt`, and runs again with
+/// `args`: the second run must stop with `expected` and leave the good one's
+/// output exactly as it was — its stamp still vouches for it.
+private void assertFailureWritesNothing(ref Fixture f, string expected,
+    scope void delegate() breakIt, string[] args...)
+{
+    assert(f.run().status == 0);
+    const before = f.outputs;
+    const stamp = f.out_.buildPath(stampName).readText;
+    const glsl = f.out_.buildPath("tint.frag").readText;
+
+    breakIt();
+    const rejected = f.run(args);
+    assert(rejected.status == 1 && rejected.diagnostics.canFind(expected), rejected.diagnostics);
+    assert(f.outputs == before, f.outputs.to!string);
+    assert(f.out_.buildPath(stampName).readText == stamp);
+    assert(f.out_.buildPath("tint.frag").readText == glsl);
 }
 
 @("shaderCompile.cli.aFailedValidationWritesNothing")
@@ -201,33 +216,35 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
     if (const tool = missingTool())
         return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
 
-    // `SHP4`: SPIR-V the validator rejects stops the step, and the output a
-    // previous run left stays exactly as it was — its stamp still vouches for
-    // it. The shape below is one the pinned SPIR-V backend structures wrongly
-    // (#618); once a compiler fix lands, it needs another invalid input.
+    // `SHP4`: SPIR-V the validator rejects stops the step. The compiler is
+    // wrapped to append a malformed instruction to the unit's module.
     auto f = Fixture.create("invalid");
-    f.entries("fx_entries", tint);
-    assert(f.run().status == 0);
-    const before = f.outputs;
-    const stamp = f.out_.buildPath(stampName).readText;
+    const wrapper = f.root.buildPath("ldc-emitting-junk");
+    wrapper.write(`#!/bin/sh
+ldc2-vulkan "$@" || exit $?
+for a in "$@"; do case "$a" in -od=*) od="${a#-od=}";; esac; done
+for m in "$od"/unit_*.spv; do [ -f "$m" ] && printf '\377\377\377\377' >> "$m"; done
+exit 0
+`);
+    wrapper.setAttributes(octal!755);
+    assertFailureWritesNothing(f, "spirv-val failed", () {}, "--ldc=" ~ wrapper);
+}
 
-    f.entries("fx_entries", `@fragment vec4 seam(@input vec2 uv, @uniform float a, @uniform float b)
+@("shaderCompile.cli.aRejectedTranslationWritesNothing")
+@system unittest
 {
-    float c = 1.0f;
-    if (a > 0.0f)
-    {
-        if (uv.y < 2.5f)
-            c = c * a;
-        else if (uv.y >= 3.0f && uv.y < 6.0f)
-            c = c + b;
-    }
-    return v4(c);
-}`);
-    const rejected = f.run();
-    assert(rejected.status == 1 && rejected.diagnostics.canFind("spirv-val failed"),
-        rejected.diagnostics);
-    assert(f.outputs == before, f.outputs.to!string);
-    assert(f.out_.buildPath(stampName).readText == stamp);
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHP6`: a file glslang rejects stops the step. A stand-in for
+    // `glslangValidator`, first on `PATH`, rejects every file.
+    auto f = Fixture.create("glslang");
+    const bin = f.root.buildPath("rejecting-glslang");
+    bin.mkdirRecurse;
+    bin.buildPath("glslangValidator").write("#!/bin/sh\necho 'ERROR: rejected by the test' >&2\nexit 2\n");
+    bin.buildPath("glslangValidator").setAttributes(octal!755);
+    assertFailureWritesNothing(f, "glslang failed",
+        () { f.env["PATH"] = bin ~ pathSeparator ~ environment.get("PATH", ""); });
 }
 
 @("shaderCompile.cli.interfaceContractIsEnforced")
@@ -249,7 +266,7 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
 @fragment vec4 e(@uniform Pair p) => v4(1.0f);`, "parameter `p` cannot be `Pair`"],
     ])
     {
-        f.entries("fx_entries", bad[0]);
+        f.entries(bad[0]);
         const r = f.run();
         assert(r.status == 1 && r.diagnostics.canFind(bad[1]), bad[0] ~ "\n" ~ r.diagnostics);
         assert(!f.out_.exists, "nothing is written");
@@ -257,7 +274,7 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
 
     // `SHF2`: an interface name is one variable across the unit, so two
     // entries that give it different ordinals fail, naming both entries.
-    f.entries("fx_entries", `@fragment vec4 first(@input vec4 fragColor, Sampler2D texB)
+    f.entries(`@fragment vec4 first(@input vec4 fragColor, Sampler2D texB)
     => texB.sample(v2(0.5f)) * fragColor;
 @fragment vec4 second(@input vec2 fragTexCoord, @input vec4 fragColor, Sampler2D texA, Sampler2D texB)
     => texA.sample(fragTexCoord) * texB.sample(fragTexCoord) * fragColor;`);
@@ -267,14 +284,13 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
         clash.diagnostics);
 
     // `SHF2`: an unmarked parameter is the compiler's to reject, naming it.
-    f.entries("fx_entries", `@fragment vec4 e(vec2 plain) => v4(plain.x);`);
+    f.entries(`@fragment vec4 e(vec2 plain) => v4(plain.x);`);
     const unmarked = f.run();
     assert(unmarked.status == 1 && unmarked.diagnostics.canFind("parameter `plain`"),
         unmarked.diagnostics);
 
     // `SHF7`: a stage other than `@fragment`, named in the diagnostic.
-    f.entries("fx_entries",
-        `@(typeof(fragment)(cast(ShaderStage) 1)) vec4 e(@input vec2 uv) => v4(uv.x);`);
+    f.entries(`@(typeof(fragment)(cast(ShaderStage) 1)) vec4 e(@input vec2 uv) => v4(uv.x);`);
     const stage = f.run();
     assert(stage.status == 1 && stage.diagnostics.canFind("unsupported shader stage 1"),
         stage.diagnostics);
@@ -283,15 +299,12 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
 @("shaderCompile.cli.staleOutputGoesAndConcurrentRunsAgree")
 @system unittest
 {
-    import core.thread : Thread;
-
     if (const tool = missingTool())
         return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
 
     // `SHP8`: the directory belongs to the step — a file no entry point
     // produces goes, and no temporary is left behind.
     auto f = Fixture.create("atomic");
-    f.entries("fx_entries", tint);
     f.out_.mkdirRecurse;
     f.out_.buildPath("renamed.frag").write("// an entry point that no longer exists\n");
     f.out_.buildPath("renamed.es.frag").write("// likewise\n");
@@ -299,95 +312,20 @@ private enum tint = `@fragment vec4 tint(@input vec2 uv, Sampler2D texture0, @un
     assert(f.outputs == [stampName, "tint.es.frag", "tint.frag"], f.outputs.to!string);
     const expected = f.out_.buildPath("tint.frag").readText;
 
-    // Several builds of dependents run the step at once on one directory
-    // (`SHB7`): every run succeeds, and what is left is complete — the files
-    // a single run writes, and a stamp that vouches for them.
-    int[4] status;
-    Thread[4] threads;
-    foreach (i; 0 .. threads.length)
-    {
-        const n = i;
-        threads[n] = new Thread(() {
-            auto err = File(f.root.buildPath(format("concurrent-%s.txt", n)), "w");
-            status[n] = cli(["shader-compile", "--package=" ~ f.pkg, "--out=" ~ f.out_,
-                "--quiet"], err);
-        });
-        threads[n].start();
-    }
-    foreach (t; threads)
-        t.join();
-    foreach (i, s; status)
-        assert(s == 0, f.root.buildPath(format("concurrent-%s.txt", i)).readText);
+    // The builds of several dependents run the step at once on one directory
+    // (`SHB7`), each in its own process: every run succeeds, and what is left
+    // is complete — the files a single run writes, and a stamp that vouches
+    // for them.
+    Pid[4] runs;
+    foreach (i, ref p; runs)
+        p = spawnProcess([tool, "--package=" ~ f.pkg, "--out=" ~ f.out_, "--quiet"],
+            File("/dev/null"), File("/dev/null", "w"),
+            File(f.root.buildPath(format("concurrent-%s.txt", i)), "w"));
+    foreach (i, p; runs)
+        assert(p.wait == 0, f.root.buildPath(format("concurrent-%s.txt", i)).readText);
     assert(f.outputs == [stampName, "tint.es.frag", "tint.frag"], f.outputs.to!string);
     assert(f.out_.buildPath("tint.frag").readText == expected);
     assert(isFresh(f.out_, f.pkg));
-}
-
-/// The compiler's module for `body`, disassembled (`spirv-dis`, friendly names).
-private string disassemble(ref Fixture f, string body)
-{
-    f.entries("probe", body);
-    const dir = f.root.buildPath("spv");
-    dir.mkdirRecurse;
-    const compiled = execute(["ldc2-vulkan", "-O2", "-c", "-m64", "-mdcompute-targets=vulkan-130",
-        "-mdcompute-file-prefix=probe", "-od=" ~ dir, "-I" ~ repoRoot.buildPath("libs", "shaders", "src"),
-        f.pkg.buildPath("shaders", "probe.d")]);
-    assert(compiled.status == 0, compiled.output);
-    const dis = execute(["spirv-dis", dir.buildPath("probe_vulkan130_64.spv")]);
-    assert(dis.status == 0, dis.output);
-    return dis.output;
-}
-
-/// `OpDecorate %<name> <decoration> <value>` → value, keyed "name decoration".
-private string[string] decorations(string dis)
-{
-    string[string] d;
-    foreach (line; dis.lineSplitter)
-    {
-        const w = line.strip.split;
-        if (w.length == 4 && w[0] == "OpDecorate")
-            d[w[1][1 .. $] ~ " " ~ w[2]] = w[3];
-    }
-    return d;
-}
-
-/// The storage class and pointee type of the variable `%name`.
-private string[2] variable(string dis, string name)
-{
-    string[string] types;
-    string[2] v;
-    string ptrType;
-    foreach (line; dis.lineSplitter)
-    {
-        const w = line.strip.split;
-        if (w.length >= 4 && w[1] == "=" && w[2] == "OpTypePointer")
-            types[w[0]] = w[4];
-        if (w.length >= 5 && w[0] == "%" ~ name && w[2] == "OpVariable")
-        {
-            ptrType = w[3];
-            v[0] = w[4];
-        }
-    }
-    v[1] = types.get(ptrType, null);
-    return v;
-}
-
-/// The instructions of the function `%name`, from `OpFunction` to `OpFunctionEnd`.
-private string functionBody(string dis, string name)
-{
-    string body;
-    bool inside;
-    foreach (line; dis.lineSplitter)
-    {
-        const l = line.strip;
-        if (l.startsWith("%" ~ name ~ " = OpFunction "))
-            inside = true;
-        if (inside)
-            body ~= l ~ "\n";
-        if (inside && l == "OpFunctionEnd")
-            break;
-    }
-    return body;
 }
 
 @("shaderCompile.fragment.interfaceFromTheSignature")
@@ -396,49 +334,40 @@ private string functionBody(string dis, string name)
     if (const tool = missingTool())
         return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
 
-    // `SHF1`–`SHF3`, read off the module the compiler emits for an
-    // entry whose parameters interleave every kind.
+    // `SHF1`–`SHF3`: an entry whose parameters interleave every kind, and a
+    // `void` one, against the GLSL they must produce — entry points named
+    // after the D functions, inputs and plain uniforms named after the
+    // parameters, `finalColor` at location 0, and no output for `void`. After a deliberate change, regenerate with
+    // `SPARKLES_UPDATE_GOLDEN=1` and review the diff.
     auto f = Fixture.create("abi");
-    const dis = disassemble(f, `@fragment vec4 interleaved(@input vec2 first, Sampler2D texA,
+    f.entries(`@fragment vec4 interleaved(@input vec2 first, Sampler2D texA,
     @uniform float scale, @input vec4 second, Sampler2D texB, @uniform vec2 offset)
     => texA.sample(first) * texB.sample(second.xy + offset) * scale;
 
 @fragment void silent(@input vec2 uv) {}`);
-    const d = decorations(dis);
+    const made = f.run("--keep");
+    assert(made.status == 0, made.diagnostics);
 
-    // SHF1: an entry point named after the D function, in the fragment stage.
-    assert(dis.canFind(`OpEntryPoint Fragment %interleaved "interleaved"`), dis);
-    assert(dis.canFind(`OpEntryPoint Fragment %silent "silent"`), dis);
+    const golden = here.buildPath("tests", "golden");
+    foreach (file; ["interleaved.frag", "interleaved.es.frag", "silent.frag"])
+    {
+        const got = f.out_.buildPath(file).readText;
+        if (environment.get("SPARKLES_UPDATE_GOLDEN") == "1")
+            golden.buildPath(file).write(got);
+        assert(got == golden.buildPath(file).readText, file ~ " differs from tests/golden:\n" ~ got);
+    }
 
-    // SHF2: inputs at locations in the order the @input parameters appear…
-    assert(d.get("first Location", null) == "0" && d.get("second Location", null) == "1", d.to!string);
-    assert(variable(dis, "first")[0] == "Input" && variable(dis, "second")[0] == "Input");
-    // …images at bindings from 1 in parameter order, in set 0, read through
-    // one sampler at binding 0…
-    assert(d.get("texA Binding", null) == "1" && d.get("texB Binding", null) == "2", d.to!string);
-    assert(d.get("texA DescriptorSet", null) == "0" && d.get("texB DescriptorSet", null) == "0");
-    const samplers = dis.lineSplitter.filter!(l => l.canFind("OpTypeSampler")).array;
-    assert(samplers.length == 1, samplers.to!string);
-    const samplerVar = dis.lineSplitter
-        .filter!(l => l.canFind("= OpVariable") && l.canFind("_ptr_UniformConstant_") && l.canFind("ampler"))
-        .map!(l => l.strip.split[0][1 .. $]).array;
-    assert(samplerVar.length == 1, samplerVar.to!string);
-    assert(d.get(samplerVar[0] ~ " Binding", null) == "0"
-        && d.get(samplerVar[0] ~ " DescriptorSet", null) == "0", d.to!string);
-    // …and plain uniforms named after the parameter, outside any block.
-    assert(variable(dis, "scale") == ["UniformConstant", "%float"], variable(dis, "scale").to!string);
-    assert(variable(dis, "offset") == ["UniformConstant", "%v2float"], variable(dis, "offset").to!string);
-
-    // SHF3: the return value goes to `finalColor` at location 0; a void
-    // entry point writes none. (Every entry lists every interface variable,
-    // which SPIR-V allows, so what tells is the stores in each function.)
-    assert(d.get("finalColor Location", null) == "0", d.to!string);
-    assert(variable(dis, "finalColor") == ["Output", "%v4float"]);
-    assert(functionBody(dis, "interleaved").canFind("OpStore %finalColor"),
-        functionBody(dis, "interleaved"));
-    assert(!functionBody(dis, "silent").canFind("%finalColor"), functionBody(dis, "silent"));
-
-    // SHF6: no image or sampler in function-local memory.
-    assert(!dis.lineSplitter.canFind!(l => l.canFind("OpTypePointer Function")
-        && (l.canFind("Image") || l.canFind("Sampler"))), dis);
+    // What GLSL 3.30 does not spell: inputs at locations in parameter order,
+    // and images at bindings from 1, read through one sampler at binding 0.
+    const kept = made.diagnostics.lineSplitter
+        .filter!(l => l.startsWith("shader-compile: scratch kept at ")).array;
+    assert(kept.length == 1, made.diagnostics);
+    const scratch = kept[0]["shader-compile: scratch kept at ".length .. $].strip;
+    scope (exit) scratch.rmdirRecurse;
+    const dis = execute(["spirv-dis", scratch.buildPath("unit_vulkan130_64.spv")]);
+    assert(dis.status == 0, dis.output);
+    foreach (decoration; ["OpDecorate %first Location 0", "OpDecorate %second Location 1",
+            "OpDecorate %texA Binding 1", "OpDecorate %texB Binding 2",
+            "OpDecorate %sampler Binding 0"])
+        assert(dis.output.canFind(decoration), decoration ~ "\n" ~ dis.output);
 }

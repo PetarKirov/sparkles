@@ -46,7 +46,7 @@ import std.json : JSONValue, parseJSON;
 import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, relativePath;
 import std.process : environment, execute;
 import std.regex : ctRegex, matchAll, replaceAll;
-import std.stdio : File, stderr, writefln, writeln;
+import std.stdio : stderr, writefln, writeln;
 import std.string : indexOf, lineSplitter, strip, stripRight;
 
 import sparkles.shaders.compute_mode : ComputeMode, computeModeOf;
@@ -199,14 +199,7 @@ Unit unitOf(in DeviceBuild build)
 // `dub test` builds this package as a library and takes its `main` from the
 // generated `dub_test_root`, so the CLI entry point steps aside for that build.
 version (unittest) {} else
-int main(string[] args) => cli(args, stderr);
-
-/**
-The command line, with the stream every diagnostic goes to: `main` passes
-standard error, and a test a file it reads back — each non-zero outcome must
-say why (`SHP10`).
-*/
-int cli(string[] args, File err)
+int main(string[] args)
 {
     import std.getopt : config, defaultGetoptPrinter, getopt;
 
@@ -232,12 +225,12 @@ int cli(string[] args, File err)
     }
     if (args.length > 1)
     {
-        err.writeln("shader-compile: unexpected argument `", args[1], "`; see --help");
+        stderr.writeln("shader-compile: unexpected argument `", args[1], "`; see --help");
         return 2;
     }
     if (!outDir.length)
     {
-        err.writeln("shader-compile: --out is required; see --help");
+        stderr.writeln("shader-compile: --out is required; see --help");
         return 2;
     }
 
@@ -248,7 +241,7 @@ int cli(string[] args, File err)
 
     if (tryExecute([ldc, "--version"]).status == 127)
     {
-        err.writefln("shader-compile: no dcompute-enabled LDC (`%s`). Enter the dev shell " ~
+        stderr.writefln("shader-compile: no dcompute-enabled LDC (`%s`). Enter the dev shell " ~
             "(`nix develop`), use `nix run .#shader-compile`, or pass --ldc a " ~
             "`sparkles/vulkan-shaders` build.", ldc);
         return 3;
@@ -262,42 +255,39 @@ int cli(string[] args, File err)
         env: withoutHostFlags(environment.toAA));
     if (described.status != 0)
     {
-        err.writeln(described.output);
-        err.writefln("shader-compile: `dub describe --config=%s` failed in %s",
+        stderr.writeln(described.output);
+        stderr.writefln("shader-compile: `dub describe --config=%s` failed in %s",
             configuration, packageDir);
         return 1;
     }
     const build = parseDescribe(described.output);
     if (!build.target.length)
     {
-        err.writefln("shader-compile: %s's configuration `%s` names no dcompute target " ~
+        stderr.writefln("shader-compile: %s's configuration `%s` names no dcompute target " ~
             "(`-mdcompute-targets=`), so it is not a device build", build.packageName, configuration);
         return 2;
     }
     const unit = unitOf(build);
     if (!unit.deviceOnly.length)
     {
-        err.writefln("shader-compile: %s (`%s`) has no `@compute(CompileFor.deviceOnly)` " ~
+        stderr.writefln("shader-compile: %s (`%s`) has no `@compute(CompileFor.deviceOnly)` " ~
             "module, so there is no entry point to compile", build.packageName, configuration);
         return 1;
     }
-    return run(build, unit, outDir, ldc, keep, quiet, err);
+    return run(build, unit, outDir, ldc, keep, quiet);
 }
 
 /// The outcome: 0 ok, 1 failure, 3 toolchain unusable.
-int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep, bool quiet,
-    File err)
+int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep, bool quiet)
 {
     import std.conv : to;
-    import std.process : thisProcessID, thisThreadID;
+    import std.process : thisProcessID;
 
-    // Per run: the builds of several dependents run this step concurrently,
-    // and a test runs several in one process; a shared scratch directory
-    // would be deleted under a sibling.
+    // Per process: concurrent builds of several dependents each run this step,
+    // and a shared scratch directory would be deleted under a sibling.
     const name = build.packageName.replace(":", "-");
     const scratch = buildPath(tempDir,
-        "sparkles-shader-compile-" ~ name ~ "-" ~ thisProcessID.to!string
-        ~ "-" ~ (cast(ulong) thisThreadID).to!string);
+        "sparkles-shader-compile-" ~ name ~ "-" ~ thisProcessID.to!string);
     if (scratch.exists)
         scratch.rmdirRecurse;
     scratch.mkdirRecurse;
@@ -318,41 +308,41 @@ int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep
     const compiled = tryExecute(cmd);
     if (compiled.status != 0)
     {
-        err.writeln(compiled.output);
+        stderr.writeln(compiled.output);
         if (isStockLdc(compiled))
-            err.writefln("shader-compile: `%s` is not a dcompute-enabled LDC with the " ~
+            stderr.writefln("shader-compile: `%s` is not a dcompute-enabled LDC with the " ~
                 "`@fragment` stage (`sparkles/vulkan-shaders`)", ldc);
-        err.writefln("shader-compile: %s: LDC failed (%s)", build.packageName, compiled.status);
+        stderr.writefln("shader-compile: %s: LDC failed (%s)", build.packageName, compiled.status);
         return isStockLdc(compiled) ? 3 : 1;
     }
     if (!spv.exists)
     {
-        err.writefln("shader-compile: %s: LDC produced no %s", build.packageName, spv);
+        stderr.writefln("shader-compile: %s: LDC produced no %s", build.packageName, spv);
         return 1;
     }
 
     // 2. Validate what the compiler emitted, before anything rewrites it.
     //    Universal rules: the plain uniforms are GL's shape, not Vulkan's.
-    if (!step(["spirv-val", "--target-env", "spv1.4", spv], name ~ ": spirv-val", err))
+    if (!step(["spirv-val", "--target-env", "spv1.4", spv], name ~ ": spirv-val"))
         return 1;
 
     // 3. Optimise: folds the name-string constants and dead helpers away, so
     //    the GLSL carries no `uint8_t` arrays and no Int8 extension request.
     const opt = buildPath(scratch, prefix ~ ".opt.spv");
-    if (!step(["spirv-opt", "-O", spv, "-o", opt], name ~ ": spirv-opt", err))
+    if (!step(["spirv-opt", "-O", spv, "-o", opt], name ~ ": spirv-opt"))
         return 1;
 
     // 4. The entry points, from the disassembly — one shader file per entry.
     const dis = tryExecute(["spirv-dis", opt]);
     if (dis.status != 0)
     {
-        err.writeln(dis.output);
+        stderr.writeln(dis.output);
         return 1;
     }
     const entries = entryPoints(dis.output);
     if (entries.length == 0)
     {
-        err.writefln("shader-compile: %s: no fragment entry points in %s", name, spv);
+        stderr.writefln("shader-compile: %s: no fragment entry points in %s", name, spv);
         return 1;
     }
 
@@ -368,8 +358,8 @@ int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep
                 "--remove-unused-variables"] ~ dialect.flags ~ [opt]);
             if (cross.status != 0)
             {
-                err.writeln(cross.output);
-                err.writefln("shader-compile: %s/%s: spirv-cross failed", name, entry);
+                stderr.writeln(cross.output);
+                stderr.writefln("shader-compile: %s/%s: spirv-cross failed", name, entry);
                 return 1;
             }
             // One trailing newline, exactly, as every text file here has.
@@ -378,7 +368,7 @@ int run(in DeviceBuild build, in Unit unit, string outDir, string ldc, bool keep
             const file = entry ~ dialect.suffix;
             const path = buildPath(scratch, file);
             path.write(glsl);
-            if (!step(["glslangValidator", path], name ~ "/" ~ file ~ ": glslang", err))
+            if (!step(["glslangValidator", path], name ~ "/" ~ file ~ ": glslang"))
                 return 1;
             produced[file] = glsl;
         }
@@ -410,9 +400,9 @@ private void writeAtomically(string path, string contents)
 {
     import std.conv : to;
     import std.file : rename;
-    import std.process : thisProcessID, thisThreadID;
+    import std.process : thisProcessID;
 
-    const tmp = path ~ ".tmp-" ~ thisProcessID.to!string ~ "-" ~ (cast(ulong) thisThreadID).to!string;
+    const tmp = path ~ ".tmp-" ~ thisProcessID.to!string;
     tmp.write(contents);
     tmp.rename(path);
 }
@@ -677,13 +667,13 @@ private Run tryExecute(string[] cmd, bool captureStderr = true,
         return Run(127, e.msg);
 }
 
-private bool step(string[] cmd, string what, File err)
+private bool step(string[] cmd, string what)
 {
     const r = tryExecute(cmd);
     if (r.status == 0)
         return true;
-    err.writeln(r.output);
-    err.writefln("shader-compile: %s failed (%s)", what, r.status);
+    stderr.writeln(r.output);
+    stderr.writefln("shader-compile: %s failed (%s)", what, r.status);
     return false;
 }
 
