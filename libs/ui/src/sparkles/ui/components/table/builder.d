@@ -229,11 +229,11 @@ struct TableCells
 
 /// Lazy lines retain their text after both the builder and snapshot are destroyed.
 @("TableBuilder.linesOwnText")
-@system unittest
+@safe unittest
 {
     import sparkles.ui.components.table.render : drawTableLines;
 
-    static auto lines()
+    static auto lines() @safe
     {
         TableBuilder t;
         t.row("first");
@@ -246,7 +246,7 @@ struct TableCells
 }
 
 @("TableBuilder.drawTableMatchesStringRows")
-@system unittest
+@safe unittest
 {
     import std.array : appender;
     import sparkles.base.text.writers : formatted, writeInteger;
