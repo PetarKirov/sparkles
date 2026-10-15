@@ -35,6 +35,9 @@ let
     # shape, and the sorter's multiline-array style fights prettier's inline
     # one — the two can never both pass on a short array.
     "docs/hue-site.json"
+    # The comment first, then what is keyed before what is not; and the
+    # same short-array fight with prettier.
+    "nix/ci/test-reads.json"
     # Same story again, and these are not hand-edited at all: `ci --ci-stats
     # --merges --badge-dir` regenerates them during the docs deploy. The
     # committed copies only seed the first one.
@@ -447,6 +450,21 @@ in
                 files = "(^docs/specs/|\\.d$|dub\\.sdl$)";
                 entry = lib.getExe config.packages.ci-minimal;
                 args = [ "--check-spec-evidence" ];
+                language = "system";
+                pass_filenames = false;
+                require_serial = true;
+              };
+
+              # Every repository path a package's sources name is in what CI
+              # keys its tests by (apps/ci --check-test-reads): its closure,
+              # or nix/ci/test-reads.json. A read missing from both passes
+              # stale in CI. Runs there through the lint job.
+              check-test-reads = {
+                enable = true;
+                name = "check-test-reads";
+                files = "(\\.d$|dub\\.sdl$|^nix/ci/test-reads\\.json$)";
+                entry = lib.getExe config.packages.ci-minimal;
+                args = [ "--check-test-reads" ];
                 language = "system";
                 pass_filenames = false;
                 require_serial = true;

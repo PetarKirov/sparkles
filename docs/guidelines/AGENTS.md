@@ -240,7 +240,9 @@ workflow. Rehearse it with
   library edit changes no workflow file. The work is tasks (`nix/ci/tasks.nix`) that jobs place; run one
   locally with `nix run .#ciTasks.<name> -- [units…]`. Jobs are lazy: they run only the units (`nix/ci/lib/graph.nix`)
   whose inputs are new, so a test that reads a file outside its package must
-  list it in the graph's `testReads`, or it passes stale. A job's shell holds
+  list it under `reads` in `nix/ci/test-reads.json`, or it passes stale; the
+  `check-test-reads` hook fails on a path a package names that is in neither
+  its closure nor that file. A job's shell holds
   only the dev-shell features its units need, so a test that execs a tool or
   reads a corpus variable must list it in `testNeeds`, or it skips.
   The design is in `nix/ci/README.md`.

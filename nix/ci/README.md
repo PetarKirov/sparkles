@@ -105,8 +105,8 @@ plus any it lists in `features`:
   feature (`libFeatures` in [`lib/graph.nix`](./lib/graph.nix)), and selecting
   `sparkles:ui`'s `gpu-effects` configuration needs `shaders`;
 - what a test execs or reads at run time is listed in `testNeeds` (packages)
-  and `fileNeeds` (examples and markdown by path), as `testReads` lists the
-  files. A missing entry turns a test into a skip, or a failure.
+  and `fileNeeds` (examples and markdown by path). A missing entry turns a
+  test into a skip, or a failure.
 
 A unit's needs reach its dependents. To see a job's set:
 
@@ -146,6 +146,16 @@ A job with `lazy.enable = false` (a release) always runs.
 
 So a docs edit runs the docs, the whole-tree checks and the markdown it
 touched; an edit to `libs/x` re-runs everything whose closure reaches it.
+
+A test that opens a file outside its package's closure would pass stale, so
+the files a package's tests read are listed under `reads` in
+[`test-reads.json`](./test-reads.json), and join its closure. The list is
+checked, not trusted: `ci --check-test-reads` (a pre-commit hook, and part of
+the lint job) collects every tracked path a package's sources name, in a
+string literal or as `buildPath` segments, and fails on one that is neither
+in the closure nor listed. A path the package names without a test opening
+it goes under `ignore`, and an entry that no longer matches anything fails
+too.
 
 `common = [ "harness" ]` keeps the `ci` helper's store path out of the
 key: its steps are evaluated a second time against a stub `ci` (`ciTools.key`),

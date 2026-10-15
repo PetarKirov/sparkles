@@ -30,6 +30,7 @@ nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files
 nix run .#ci -- --check-docs-sidebar
 nix run .#ci -- --check-glossary
 nix run .#ci -- --check-credits
+nix run .#ci -- --check-test-reads
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
@@ -57,6 +58,7 @@ $(LIST
     $(ITEM `--check-docs-sidebar` — verify the VitePress sidebar in `docs/.vitepress/sidebar.json` is consistent with published `docs/**/*.md` pages: every page is linked, and every sidebar link resolves to a page (respects `srcExclude`; home page is implicit))
     $(ITEM `--check-glossary` — verify `docs/.vitepress/glossary.json` (ids, owners, plain-text summaries, cross-references) and that every docs link into the glossary names an existing entry; entries no page links to are reported, not failed)
     $(ITEM `--check-credits` — verify the credits document (`docs/credits/`) against the build inputs: every dub package, native library, static archive, bundled font and grammar bundle the applications link or ship has a part, every part names something shipped, and each application page includes exactly its own parts (see the `credits` module))
+    $(ITEM `--check-test-reads` — verify every repository file a package's sources name is in what CI keys the package's tests by: its unit closure, or `nix/ci/test-reads.json` (`reads` when a test opens it, `ignore` when the package only names it). A missing read is a stale pass in CI (see the `test_reads` module))
     $(ITEM `--check-blob-paths` — verify every SHA-pinned GitHub blob citation names a path that exists at that commit, using local clones under `--clone-root` (default `$REPOS`). Complements `--check-vcs-urls`, which only checks the ref; a wrong path is a 404 no ref check can see. $(B Local only) — a citation whose repository is not cloned is reported as unchecked, never failed, so this is not wired into CI or a pre-commit hook)
 )
 
@@ -330,6 +332,11 @@ struct CliParams
         ~ "every component an application links or ships has a part, every part names "
         ~ "something shipped, and each application page includes exactly its parts."))
     bool checkCredits;
+    @(Option(`check-test-reads`,
+        description: "Verify every repository file a package's sources name is in what CI keys "
+        ~ "the package's tests by: its closure, or nix/ci/test-reads.json (`reads` when a "
+        ~ "test opens it, `ignore` when the package only names it)."))
+    bool checkTestReads;
 
     @(Option(`check-blob-paths`,
         description: "Verify that every SHA-pinned GitHub blob citation names a path that "
@@ -476,6 +483,7 @@ enum ProgramMode
     checkSpecEvidence,
     checkGlossary,
     checkCredits,
+    checkTestReads,
     checkBlobPaths,
     ciStats,
     mirrorChecks,
@@ -630,6 +638,8 @@ int ciMain(string[] args)
         return runCheckGlossary();
     if (mode == ProgramMode.checkCredits)
         return runCheckCredits();
+    if (mode == ProgramMode.checkTestReads)
+        return runCheckTestReads();
 
     // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
     // so it must not fall through to the shared "no input files" usage error.
@@ -930,6 +940,8 @@ private ProgramMode resolveProgramMode(in CliParams cli)
         return ProgramMode.checkGlossary;
     if (cli.checkCredits)
         return ProgramMode.checkCredits;
+    if (cli.checkTestReads)
+        return ProgramMode.checkTestReads;
 
     if (cli.checkBlobPaths)
         return ProgramMode.checkBlobPaths;
@@ -959,6 +971,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkSpecEvidence:  return "--check-spec-evidence";
         case ProgramMode.checkGlossary:      return "--check-glossary";
         case ProgramMode.checkCredits:       return "--check-credits";
+        case ProgramMode.checkTestReads:     return "--check-test-reads";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.mirrorChecks:       return "--mirror-checks";
@@ -1518,6 +1531,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkSpecEvidence:
             case ProgramMode.checkGlossary:
             case ProgramMode.checkCredits:
+            case ProgramMode.checkTestReads:
             case ProgramMode.checkBlobPaths:
                 rc = 1;
                 break;
@@ -2286,6 +2300,99 @@ private int runCheckGlossary()
 
     info(i"✓ Glossary is consistent: $(entries.value.length) entries, $(refs.length) links from $(files) docs pages.");
     return 0;
+}
+
+/// `--check-test-reads`: the paths packages name against CI's keys (`test_reads`).
+private int runCheckTestReads()
+{
+    import dub_deps : parseSubPackages;
+    import test_reads : namedPaths, Package, parseTestReads, recipeRefs, sourceDirs,
+        testReadsFile, under, unkeyedReads;
+    import std.algorithm : sum;
+    import std.file : dirEntries, isDir, SpanMode;
+    import std.path : dirName, relativePath;
+    import std.stdio : stderr;
+    import std.string : lineSplitter;
+
+    const repoRoot = detectRepoRoot();
+    const dirs = parseSubPackages(repoRoot);
+    const names = dirs.map!(d => d.baseName).array;
+    const listsPath = buildPath(repoRoot, testReadsFile);
+    const lists = parseTestReads(listsPath.exists ? readText(listsPath) : `{}`);
+
+    Package[] packages;
+    foreach (dir; dirs)
+        packages ~= Package(dir.baseName, dir,
+            recipeRefs(readText(buildPath(repoRoot, dir, "dub.sdl")), names));
+
+    string[2][][string] named;
+    size_t files;
+    foreach (ref p; packages)
+        foreach (sub; sourceDirs)
+        {
+            const abs = buildPath(repoRoot, p.dir, sub);
+            if (!abs.exists || !abs.isDir)
+                continue;
+            foreach (e; dirEntries(abs, "*.d", SpanMode.depth))
+            {
+                const rel = relativePath(e.name, repoRoot);
+                // A nested package's sources are its own.
+                if (dirs.any!(d => d != p.dir && d.length > p.dir.length && rel.under(d)))
+                    continue;
+                files++;
+                foreach (path; namedPaths(readText(e.name), rel))
+                    if (!path.under(p.dir))
+                        named[p.name] ~= [rel, path];
+            }
+        }
+
+    // In the tree means tracked: a build output or `.git` is no input CI keys.
+    const tracked = execute(["git", "-C", repoRoot, "ls-files"]);
+    if (tracked.status != 0)
+    {
+        error(i"Failed to enumerate tracked files with git ls-files");
+        return 1;
+    }
+    bool[string] trackedPaths;
+    foreach (line; tracked.output.lineSplitter)
+        for (string p = line; p.length && p != "."; p = p.dirName)
+            trackedPaths[p] = true;
+    bool inTree(string rel) @safe => (rel in trackedPaths) !is null;
+    const unkeyed = unkeyedReads(packages, named, lists, &inTree);
+
+    // The lists only shrink to what is true: a `reads` path that is gone, or
+    // an `ignore` path nothing names any more, is a stale entry.
+    string[] stale;
+    foreach (pkg, paths; lists.reads)
+        foreach (path; paths)
+            if (!names.canFind(pkg) || !inTree(path))
+                stale ~= "reads." ~ pkg ~ ": " ~ path;
+    foreach (pkg, paths; lists.ignore)
+        foreach (path; paths)
+            if (!named.get(pkg, []).any!(n => n[1].under(path)))
+                stale ~= "ignore." ~ pkg ~ ": " ~ path;
+
+    if (!unkeyed.length && !stale.length)
+    {
+        info(i"{green ✓} Every repository path the packages name is keyed: $(files) source files, $(named.byValue.map!(v => v.length).sum) out-of-package paths.");
+        return 0;
+    }
+    if (unkeyed.length)
+    {
+        stderr.writefln("✗ Paths a package names outside what CI keys its tests by (%d):", unkeyed.length);
+        foreach (u; unkeyed)
+            stderr.writefln("  %s: %s  (named in %s)", u.pkg, u.path, u.file);
+        stderr.writefln("  Add each to %s: under `reads.<package>` if a test opens it (CI then re-runs "
+            ~ "the package when it changes), under `ignore.<package>` if the package only names it.\n",
+            testReadsFile);
+    }
+    if (stale.length)
+    {
+        stderr.writefln("✗ Stale entries in %s — remove them (%d):", testReadsFile, stale.length);
+        foreach (s; stale.sort)
+            stderr.writefln("  %s", s);
+    }
+    return 1;
 }
 
 /// `--check-credits`: the credits document against the build inputs (`credits`).

@@ -1,0 +1,94 @@
+{
+  "$comment": "Repository paths outside a package that its sources name. `reads`: a test opens it, so CI re-runs the package when it changes (nix/ci/lib/graph.nix). `ignore`: the package names it (a runtime default, a string a test parses), but no test opens it from the tree. Kept honest by `ci --check-test-reads`.",
+  "reads": {
+    "dmd-fmt": [
+      "docs/libs/dmd-fmt/reference/decisions",
+      "docs/research/code-formatting/prettier-decisions.md",
+      "docs/specs/dmd-fmt/index.md",
+      "libs/dmd-lsp/src"
+    ],
+    "dmd-lsp": ["libs/versions/src/sparkles/versions/schemes/semver.d"],
+    "doc-view": ["docs/specs/base/text/index.md"],
+    "docs": [
+      "docs/.vitepress/theme/sparkles-dark.tokens",
+      "docs/.vitepress/theme/sparkles-light.tokens",
+      "docs/.vitepress/theme/spk.css"
+    ],
+    "hue": ["docs/credits"],
+    "terminal": ["docs/apps/terminal/reference/bindings.md"],
+    "ui": ["docs/specs/design-system/capabilities.md"],
+    "ui-raylib": ["apps/shader-compile"]
+  },
+  "ignore": {
+    "build-primitives": [".gitignore"],
+    "ci": [
+      "apps",
+      "apps/diagram",
+      "apps/hue",
+      "apps/terminal",
+      "apps/ui-gallery",
+      "docs",
+      "docs/credits",
+      "docs/credits/parts",
+      "docs/index.md",
+      "docs/libs/base/index.md",
+      "docs/overview.md",
+      "docs/public",
+      "docs/research/application-packaging/PLAN.md",
+      "docs/research/parsing/index.md",
+      "docs/research/sql/index.md",
+      "docs/specs",
+      "docs/specs/base",
+      "docs/specs/design-system/capabilities.md",
+      "docs/specs/dmd-fmt/index.md",
+      "docs/specs/evidence-backlog.txt",
+      "libs",
+      "libs/ui-tui/src/sparkles/ui_tui/session.d",
+      "nix/ci/test-reads.json",
+      "nix/dub-lock.json",
+      "nix/packages/android/hue.nix",
+      "nix/packages/android/terminal.nix",
+      "nix/packages/fonts.nix",
+      "nix/packages/hue.nix"
+    ],
+    "dmd-fmt": [".editorconfig"],
+    "docs": [
+      "docs",
+      "docs/.vitepress/docs-config.json",
+      "docs/.vitepress/glossary.json",
+      "docs/.vitepress/sidebar.json",
+      "docs/hue-site.json",
+      "docs/research/async-io/io-uring/examples",
+      "docs/specs/fuzzy/SPEC.md",
+      "libs"
+    ],
+    "dsv": ["apps/hue", "docs/research/ui-layout", "nix/packages"],
+    "hue": [
+      ".gitignore",
+      "docs",
+      "docs/.vitepress/sidebar.json",
+      "docs/index.md",
+      "docs/research",
+      "docs/research/ui-layout",
+      "libs",
+      "nix/packages"
+    ],
+    "release": [
+      "apps",
+      "apps/ci/src/app.d",
+      "apps/hue/fdroid",
+      "ci",
+      "docs",
+      "docs/guidelines/release.md",
+      "docs/index.md",
+      "libs",
+      "nix",
+      "nix/packages/default.nix"
+    ],
+    "source-view": ["README.md"],
+    "syntax": ["docs/.vitepress"],
+    "terminal": ["docs", "docs/credits"],
+    "test-utils": [".gitignore"],
+    "ui-gallery": ["docs"]
+  }
+}

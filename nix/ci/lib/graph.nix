@@ -191,10 +191,11 @@ let
   # Tests that read files outside their package directory. Over-approximation
   # is safe (a job re-runs when it did not need to); under-approximation is a
   # stale pass, so anything a test opens by a repo-relative path belongs here.
-  testReads = {
-    doc-view = [ "docs/specs/base/text/index.md" ];
-    hue = [ "docs/credits" ];
-  };
+  # The data file is shared with `ci --check-test-reads`, which fails on a
+  # path a package's sources name that is neither here nor in its closure.
+  testReads =
+    lib.filterAttrs (n: _: !lib.hasPrefix "$" n)
+      (builtins.fromJSON (read "nix/ci/test-reads.json")).reads;
 
   testReadUnits = lib.mapAttrs' (
     name: paths:
