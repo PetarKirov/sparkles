@@ -928,7 +928,7 @@ int executeTheme(in HueCli root, in ThemeCmd cmd)
 
     import sparkles.ui.dtcg : writeDtcg;
     import sparkles.ui.theme_file : exportTheme, themeNamed;
-    import std.stdio : write;
+    import std.stdio : stdout;
 
     auto t = themeNamed(cmd.name);
     if (t.hasError)
@@ -938,7 +938,8 @@ int executeTheme(in HueCli root, in ThemeCmd cmd)
     }
     if (cmd.exportTokens)
     {
-        write(writeDtcg(exportTheme(*t.value)));
+        auto w = stdout.lockingTextWriter;
+        writeDtcg(w, exportTheme(*t.value));
         return 0;
     }
     writeln("Theme '", t.value.name, "':");
