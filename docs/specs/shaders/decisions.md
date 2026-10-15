@@ -146,18 +146,28 @@ library through the unselected `gui`. A selection inside `gui` itself did not.
 **Trade-offs.** Every configuration that adds the backend repeats one line,
 and a forgotten one is caught only if the consumer asserts it at compile time.
 
-### D9: `vec3` differs between host and device
+### D9: `vec3` is a struct on the host, laid out like the device's vector
 
 **Choice.** A native three-element vector on the device, a three-`float`
-struct on the host (`SHV2`), and no `vec3` at the shader interface (`SHF5`).
+struct on the host aligned to 16 bytes, so both occupy 16 (`SHV2`), with a
+packed 12-byte variant for host storage, and no `vec3` at the shader
+interface (`SHF5`).
 
 **Why.** The device needs a native vector: a struct `vec3` copied by memory
-is a load the SPIR-V backend cannot legalise. On the host, the frontend of
-the pinned LDC sizes the vector at 12 bytes and LLVM at 16, which is a
-compiler error inside any struct; three floats avoid it.
+is a load the SPIR-V backend cannot legalise. On the host, a released LDC
+sizes the vector at 12 bytes and LLVM at 16, which is a compiler error inside
+any struct, and DMD has no such vector; a struct avoids both. Giving it the
+device's alignment, rather than a packed 12 bytes, keeps the bytes of a
+struct or an array of vectors the same on both sides, in the device
+compiler's memory layout, which is what memory the two share needs. It is
+not `std140`, which packs a scalar into a `vec3`'s padding; a `std140`
+uniform block, when one is needed, takes its own layout rules.
 
-**Revisit if.** The host LDC release carries the odd-width vector fix; then
-both sides use the native vector.
+**Trade-offs.** An array of `vec3` on the host takes a third more memory
+than three floats per element; code that stores many uses `Vec3Packed`.
+
+**Revisit if.** Every host compiler the vocabulary supports has a native
+16-byte three-element vector; then the host can use it too.
 
 ### D10: The build step depends on Phobos alone
 

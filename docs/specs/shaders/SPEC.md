@@ -143,13 +143,22 @@ compiler's `__vector` types. In a device compilation `vec3` **must** be
 `__vector(float[3])`. Elsewhere, and on the host under every compiler, `vec3`
 **must** be a struct of three `float`s with the same operations; `vec2` and
 `vec4` **may** be such structs under a compiler without the corresponding
-`__vector`.
+`__vector`. Whatever the representation, each type **must** have the device's
+size and alignment: 8 bytes for `vec2`, 16 for `vec3` and `vec4`. The
+vocabulary **must** also provide packed variants (`Vec2Packed`, `Vec3Packed`,
+`Vec4Packed`), whose components are back to back, and conversions between
+the two.
 
 _Rationale:_ The device needs native vectors, because a struct is an
-aggregate the SPIR-V backend would have to keep in memory. Host LDC sizes a
-three-element `__vector` at 12 bytes while LLVM allocates 16, which breaks a
-struct that contains one; three floats avoid that, at the cost of `vec3`
-differing between the two sides. `SHF5` keeps that difference invisible.
+aggregate the SPIR-V backend would have to keep in memory. A released host
+LDC sizes a three-element `__vector` at 12 bytes while LLVM allocates 16,
+which breaks a struct that contains one, and DMD has no such vector; a
+struct avoids both. Aligning it like the device's vector means a value, a
+struct field or an array element occupies the same bytes on both sides, in
+the device compiler's memory layout. GLSL's `std140` is a different layout:
+it places a scalar that follows a `vec3` at offset 12, in the padding, where
+both sides here place it at 16. The packed variants keep dense host arrays at
+three floats per element.
 
 **SHV3: Constructors.** `v2(x, y)`, `v3(x, y, z)` and `v4(x, y, z, w)`
 **must** construct vectors from components, `v2(s)`, `v3(s)` and `v4(s)`

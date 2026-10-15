@@ -74,24 +74,22 @@ import sparkles.shaders.types;
     assert(luma(v3(0, 0, 1)) > 0, "blue text must not vanish");
 }
 
-@("shaders.types.representationPerCompiler")
+@("shaders.types.oneLayoutOnBothSides")
 @safe pure nothrow @nogc unittest
 {
-    // `SHV2`: under LDC the power-of-two vectors are the compiler's own; the
-    // host's `vec3` is three floats under every compiler, never a 16-byte
-    // native vector. (The device side, `__vector(float[3])`, is compiled by
-    // every generated-shader build: `crtTube` and the bloom passes use it.)
-    version (LDC)
-    {
-        static assert(is(vec2 == __vector(float[2])));
-        static assert(is(vec4 == __vector(float[4])));
-    }
-    else
-    {
-        static assert(is(vec2 == Vec!2) && is(vec4 == Vec!4));
-    }
-    static assert(is(vec3 == Vec!3));
-    static assert(vec3.sizeof == 3 * float.sizeof);
+    // `SHV2`: every vector occupies what the device's does, under every
+    // compiler, so a struct or an array that holds vectors means the same
+    // bytes on both sides.
+    static assert(vec2.sizeof == 8 && vec2.alignof == 8);
+    static assert(vec3.sizeof == 16 && vec3.alignof == 16);
+    static assert(vec4.sizeof == 16 && vec4.alignof == 16);
+
+    static struct Light { vec3 colour; float gain; }
+    static assert(Light.gain.offsetof == 16 && (vec3[2]).sizeof == 32);
+
+    static assert(Vec3Packed.sizeof == 12 && (Vec3Packed[2]).sizeof == 24);
+    assert(v3(1, 2, 3).packed.aligned.array == [1, 2, 3]);
+    assert(v2(1, 2).packed.array == [1, 2]);
 }
 
 @("shaders.math.transcendentalsMatchTheirDefinitions")
