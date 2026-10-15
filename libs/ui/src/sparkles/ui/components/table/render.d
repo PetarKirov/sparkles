@@ -1483,7 +1483,7 @@ in (hasRectangularShape(cells))
 
 /// ditto
 auto drawTableChunks(bool lineBuffered = true)(
-    Cell[][] cells, TableProps props = TableProps.init)
+    in Cell[][] cells, TableProps props = TableProps.init)
 {
     return tableChunkRange!lineBuffered(resolveGrid(cells).grid, props);
 }

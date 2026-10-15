@@ -55,13 +55,15 @@ module streaming_table_example;
 
 import core.thread : Thread;
 import core.time : dur;
-import std.range.primitives : ElementType, empty, front, popFront;
+import std.range.primitives : ElementType, empty, front, popFront, put;
 import std.stdio : stderr, stdout, write;
 
 import sparkles.core_cli.args : HelpInfo, Option, parseCli, reportCliError;
 import sparkles.ui.components.table :
-    builtinPresetNames, Cell, drawTable, drawTableChunks, presetGlyphs, TableProps;
-import sparkles.base.styled_template : styledText;
+    builtinPresetNames, Cell, drawTable, drawTableChunks, presetGlyphs, TableBuilder,
+    TableCells, TableProps;
+import sparkles.base.text.writers : writeText;
+import sparkles.base.styled_template : styledText, writeStyled;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.base.text.width : Align;
 
@@ -126,8 +128,11 @@ auto delayedRange(R, F)(R src, F delayFor) => DelayedRange!R(src, delayFor);
 /// in afterwards.
 struct DemoTable
 {
-    Cell[][] cells;
+    TableCells storage;
     TableProps props;
+
+    const(Cell[][]) cells() const return scope @safe pure nothrow @nogc
+        => storage[];
 }
 
 int main(string[] args)
@@ -196,7 +201,7 @@ int main(string[] args)
 /// cell-buffered ones, one chunk from each per tick, so the coarser-grained
 /// pane visibly finishes first while both end byte-identical. Piped output
 /// skips the animation and prints both (identical) renders once.
-void runRace(DemoTable table, int delayMs)
+void runRace(in DemoTable table, int delayMs)
 {
     import std.string : splitLines;
     import sparkles.ui.components.live : stdoutLiveRegion;
@@ -258,7 +263,7 @@ string streamChunks(R)(R chunks, int delegate(string) delayFor)
 /// Write the same table through the writer `drawTable` overload into `path`, then
 /// check the file against the bytes the chunk stream produced — the emission
 /// seams (chunk range and output-range writer) must agree byte-for-byte.
-void teeAndCheck(string path, DemoTable table, string streamed)
+void teeAndCheck(string path, in DemoTable table, string streamed)
 {
     import core.stdc.stdlib : exit;
     import std.file : readText;
@@ -301,43 +306,39 @@ DemoTable generatedFleet(int rows)
         Health.down, Health.up, Health.warn, Health.up,
     ];
 
-    static string statusLabel(Health h)
+    static void writeStatus(W)(ref W w, Health h)
     {
         final switch (h)
         {
-            case Health.up: return styledText(i"{green ✅ up}");
-            case Health.warn: return styledText(i"{yellow ⚠ warn}");
-            case Health.down: return styledText(i"{red ✗ down}");
+            case Health.up: return writeStyled(w, i"{green ✅ up}");
+            case Health.warn: return writeStyled(w, i"{yellow ⚠ warn}");
+            case Health.down: return writeStyled(w, i"{red ✗ down}");
         }
     }
 
-    Cell[][] cells = [[
-        Cell(styledText(i"{bold service}")),
-        Cell(styledText(i"{bold region}")),
-        Cell(styledText(i"{bold p99}")),
-        Cell(styledText(i"{bold status}")),
-    ]];
+    // Uniquifies wrapped-around service names: `api-2`.
+    static void writeService(W)(ref W w, size_t i)
+    {
+        put(w, services[i % $]);
+        if (i >= services.length)
+            writeText(w, i"-$(i / services.length + 1)");
+    }
+
+    TableBuilder cells;
+    cells.row.cell!writeStyled(i"{bold service}").cell!writeStyled(i"{bold region}")
+        .cell!writeStyled(i"{bold p99}").cell!writeStyled(i"{bold status}");
     int[3] counts;
     foreach (i; 0 .. rows)
     {
-        // Cycle the sample data, uniquifying wrapped-around service names.
-        const service = i < services.length
-            ? services[i]
-            : text(services[i % $], "-", i / services.length + 1);
         const health = healths[i % $];
         counts[health]++;
-        cells ~= [
-            Cell(service),
-            Cell(regions[i % $]),
-            Cell(latencies[i % $]),
-            Cell(statusLabel(health)),
-        ];
+        cells.row.cell!writeService(i).cell(regions[i % $]).cell(latencies[i % $])
+            .cell!writeStatus(health);
     }
-    const summary = text(counts[Health.up], " up · ", counts[Health.warn],
-        " warn · ", counts[Health.down], " down");
-    cells ~= [Cell(styledText(i"{dim $(summary)}"), colSpan: 4, halign: Align.center)];
+    cells.row.cell!writeStyled(i"{dim $(counts[Health.up]) up · $(counts[Health.warn]) warn · $(counts[Health.down]) down}")
+        .span(4).aligned(Align.center);
 
-    return DemoTable(cells, TableProps(
+    return DemoTable(cells.cells, TableProps(
         headerRows: 1,
         title: styledText(i"{bold Fleet status}"),
         footer: text(rows, " services"),
@@ -352,7 +353,7 @@ DemoTable generatedFleet(int rows)
 /// the generated board when the command fails or prints nothing.
 DemoTable commandTable(string cmd, int maxColumns)
 {
-    import std.algorithm.iteration : filter, map;
+    import std.algorithm.iteration : filter;
     import std.array : array, join, split;
     import std.conv : text;
     import std.string : strip;
@@ -361,18 +362,20 @@ DemoTable commandTable(string cmd, int maxColumns)
     if (lines.length == 0)
         return generatedFleet(fleetDefaultRows);
 
-    Cell[][] cells;
+    TableBuilder cells;
     foreach (line; lines)
     {
         auto fields = line.split; // split on whitespace runs
         if (maxColumns > 0 && fields.length > cast(size_t) maxColumns)
             fields = fields[0 .. maxColumns - 1] ~ fields[maxColumns - 1 .. $].join(" ");
-        cells ~= fields.map!(f => Cell(f)).array; // ragged rows pad with blanks
+        cells.row;
+        foreach (field; fields)
+            cells.cell(field); // ragged rows pad with blanks
     }
-    return DemoTable(cells, TableProps(
+    return DemoTable(cells.cells, TableProps(
         headerRows: 1,
         title: cmd,
-        footer: text(cells.length - 1, " rows"),
+        footer: text(cells.rowCount - 1, " rows"),
     ));
 }
 
