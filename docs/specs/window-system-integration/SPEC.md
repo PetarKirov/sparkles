@@ -279,18 +279,20 @@ touch, output, clipboard and popup events must never be merged, superseded or
 reordered. Surface metrics, move and expose keep the latest-observation merge they
 already have.
 
-**ED5: Overflow is counted, not fatal.** When the queue is full, the arriving event is
-dropped and a per-backend counter is incremented. The next drain must deliver one
-`EventsDropped` event carrying that count after the events it drains, then reset the
-counter. It is synthesized at drain time, because a full queue has no slot to give it,
-and it is delivered last carrying the sequence of the last dropped event: every
-dropped sequence is above every queued one, so any earlier position would contradict
-`ED6`. It is not attributable to one window and carries `WindowId.init`. Overflow must
-never set a sticky error, and must never be reported as a dispatch or loop failure.
-From the first drop until the drain that delivers the notice, every arriving event is
-dropped and counted, even one that would fit: an event refused for want of text space
-(`ED8`) can leave a free slot, and admitting a later event into it would put a queued
-sequence above a dropped one.
+**ED5: Overflow is counted, not fatal.** When the queue is full, the arriving
+event **must** be dropped and a per-backend counter incremented. The next drain
+**must** deliver one `EventsDropped` event carrying that count after the events it
+drains, then reset the counter. The notice carries the sequence of the last
+dropped event and `WindowId.init`, since no one window caused the loss. From the
+first drop until the drain that delivers the notice, every arriving event **must**
+be dropped and counted, even one that would fit. Overflow **must not** set a sticky
+error or be reported as a dispatch or loop failure.
+
+_Rationale:_ The notice is synthesized at drain time because a full queue has no
+slot to give it. It goes last because every dropped sequence is above every queued
+one, which any earlier position would contradict (`ED6`). The latch keeps that
+true: an event refused for want of text space (`ED8`) leaves a slot free, and a
+later event admitted into it would queue a sequence above a dropped one.
 
 **ED6: Drain order.** Sequence numbers delivered by one drain must be strictly
 increasing. Contiguity is explicitly not promised: merging and `ED5` both leave gaps.
@@ -299,20 +301,26 @@ increasing. Contiguity is explicitly not promised: merging and `ED5` both leave 
 converted once by the backend into the loop's monotonic clock. An event the platform
 supplies no time for carries the time it was observed.
 
-**ED8: Text storage and its lifetime.** Event text — committed text, pre-edit, and
-an offer's MIME type — is stored in a fixed-capacity
-[`TextPool`](../base/pool.md#_5-the-text-pool) owned by the queue, and a payload
-names it by a pool-local `TextId`. `WindowEvent` therefore holds no pointer and is
-`@safe` to assign. The text is readable only through the delivering WSI's
-`withText(id, fn)`, and only while the drain callback that delivered the event runs;
-once that callback returns the id is stale, and reading it returns `staleId`. A
+**ED8: Text storage and its lifetime.** Event text **must** be stored in a
+fixed-capacity [`TextPool`](../base/pool.md#_5-the-text-pool) owned by the queue,
+and a payload **must** name it by a pool-local `TextId`. Event text here means
+committed text, pre-edit, and an offer's MIME type. Text **must** be readable
+through the delivering WSI's `withText(id, fn)` while the drain callback that
+delivered its event runs. Once that callback returns, the id is stale and reading
+it **must** return `staleId`. `retain` copies an event's text into a `TextPool` the
+caller owns and returns the same event naming the copy.
+
+- One text holds at most 65,535 bytes. Longer text **must** be cut at a UTF-8
+  boundary, and its id reports `truncated`.
+- A MIME type longer than 255 bytes **must not** be shortened. The offer is
+  dropped and counted under `ED5` instead.
+- When the queue's text pool cannot hold an event's text, the event **must** be
+  dropped and counted under `ED5`. Lack of space never truncates text.
+
+_Rationale:_ A `WindowEvent` that holds no pointer is `@safe` to assign and small
+enough for the queue to hold many. The price is that text has a lifetime: a
 consumer that keeps an event longer, records or replays it, or hands it to another
-thread copies its text into a `TextPool` of its own with `retain`, which returns the
-same event naming the copy. One text holds at most 65,535 bytes; longer text is cut at
-a UTF-8 boundary and its id reports `truncated`. A MIME type longer than 255 bytes is
-never shortened: the offer is dropped and counted under `ED5`. When the queue's text
-pool cannot hold an event's text, the event is dropped and counted under `ED5`; arena
-pressure never truncates.
+thread must `retain` it first.
 
 **ED9: What is configurable.** Queue capacity and ring depth are compile-time
 parameters because they size inline storage. Motion coalescing and relative summing
@@ -348,9 +356,11 @@ round outward; suggested native rectangles remain exact physical values.
 ### 5.2 Identity and errors
 
 `WindowId`, `OutputId`, `SeatId`, `PointerId`, and `OfferId` are
-[`sparkles.base.pool`](../base/pool.md) handles: a 0-based index plus a generation
-that starts at 1. The all-zero value is invalid. Each backend keeps its windows in a
-fixed `Pool`, whose records never move, so a native callback may hold one's address. Stale identifiers return
+[generational handles](../../glossary.md#generational-handle) from
+[`sparkles.base.pool`](../base/pool.md): a 0-based index plus a generation that
+starts at 1. The all-zero value is invalid. Each backend keeps its windows in a fixed
+`Pool`, whose records never move, so a native callback may hold a record's address.
+Stale identifiers return
 `WsiErrorKind.staleId`, never address a recycled native object.
 
 Every fallible synchronous API returns `Expected!(T, WsiError)`. `WsiError` records:
@@ -435,6 +445,59 @@ cell metrics, scroll policy, and capability degradation once.
 How queued events are merged, dropped or held back when a consumer cannot keep up is
 specified in [§4.5](#_4-5-event-delivery-under-load) (`ED1`–`ED10`). Pure conversion helpers
 live in `sparkles:input` so SDL and raylib compatibility producers use the same rules.
+
+### 7.1 Bulk data: clipboard and drag-and-drop
+
+Clipboard and drag-and-drop data never travel in an event. A document copied
+whole can be tens of MiB, while event text is bounded at 65,535 bytes (`ED8`). An
+event therefore names an offer, and the bytes move in a separate, streamed
+transfer that the application drives and owns. These requirements are the
+contract for `F16` in [feature-requirements.md](./feature-requirements.md).
+
+Each backend moves the bytes over its platform's own transfer channel:
+
+| Platform | Receiving                                   | Offering                                        |
+| -------- | ------------------------------------------- | ----------------------------------------------- |
+| Wayland  | the pipe from `wl_data_offer.receive`       | the requester's pipe from `wl_data_source.send` |
+| X11      | `ConvertSelection`, then `INCR` chunks      | the selection property, in `INCR` chunks        |
+| Win32    | `GetClipboardData` / `IDataObject::GetData` | `WM_RENDERFORMAT` delayed rendering             |
+| AppKit   | `NSPasteboard`                              | an `NSPasteboardItemDataProvider`               |
+
+**DT1: Offers are named, not carried.** A clipboard offer, or a drag entering a
+window, **must** be reported by a `DataOfferEvent` holding an `OfferId` and one
+MIME type of at most `maxMimeType` bytes. No event **may** carry offer content,
+whatever its size.
+
+**DT2: Receiving is a streamed pull.** `receive(offer, mimeType, sink)` **must**
+deliver the offer's content to `sink` in chunks, as Event Horizon completions,
+without blocking the loop. A transfer **must** end in exactly one completion or
+one error. The application **may** cancel it, after which `sink` receives nothing
+more.
+
+_Rationale:_ The application chooses the destination, whether a heap buffer, a
+rope, or the document itself, so WSI never decides where tens of MiB live.
+
+**DT3: Offering is a streamed push.** `offerData(mimeTypes, provider)` announces
+data the application can produce. When a client requests a type, the backend
+**must** call `provider`, which writes into the platform's channel without
+blocking. WSI **must not** hold a copy of the offered data.
+
+**DT4: Memory follows the requester.** WSI **must** buffer at most one chunk per
+transfer in flight, so a transfer of any size leaves WSI's own memory flat. The
+rest belongs to whichever side asked for the data.
+
+**DT5: Evidence.** Each backend's lane **must** round-trip 32 MiB in both
+directions, for the clipboard and for drag-and-drop. During the transfer the loop
+**must** keep serving timers, and the receiver's resident memory **must** stay
+flat apart from the destination it chose.
+
+Text that an input path inserts directly, such as AppKit's `insertText:` from a
+Service, is event text under `ED8` and bounded by it. Larger text on such a path
+is out of scope until a backend demonstrates one. The text pool would then gain a
+spill tier: text above a threshold goes to a heap block owned by its pool slot,
+under a per-backend byte budget (`ED9`), and the `withText` borrow rule stays as
+it is. Pre-edit keeps its 65,535-byte bound regardless, because composition
+offsets are 16-bit.
 
 ## 8. Typed native handles
 
