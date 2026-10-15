@@ -118,8 +118,10 @@ program, the _device_ the GPU side.
 5. **Declared once, discovered always.** A package declares how its shaders
    compile once; which modules are shader code is read from the modules
    themselves, never from a list.
-6. **Generated, never committed.** Generated GLSL is a build product. A build
-   regenerates it exactly when an input changed.
+6. **Generated, never committed.** Generated GLSL is a build product. The
+   build that ships it is a Nix derivation, which regenerates it exactly when
+   an input changed, the toolchain included; a developer's build regenerates
+   it when the unit's modules or recipes change.
 7. **No compiler unless asked.** A consumer that does not opt in needs only
    its ordinary D compiler.
 8. **Complete, validated output.** Every generated file is a whole shader
@@ -199,8 +201,8 @@ input, the host and device results **must** agree within the error bounds
 GLSL allows the device for that operation at the precision the generated
 shader declares
 ([GLSL ES 3.00 §4.5.1](https://registry.khronos.org/OpenGL/specs/es/3.0/GLSL_ES_Specification_3.00.pdf)):
-full single precision for GLSL 3.30, and `mediump` for the GLSL ES 1.00
-output, which declares `precision mediump float`.
+full single precision for GLSL 3.30, and `highp` for the GLSL ES 1.00
+output, which qualifies every variable `highp` (`D15`).
 
 **SHV8: Inert stand-ins.** Outside a device compilation, the shader
 attributes of `SHM1` and `SHF1` and the `Sampler2D` handle **must** exist
@@ -437,7 +439,12 @@ nothing for it.
 ## 8. Build integration
 
 A consumer runs the build step inside its own build, as a step dub performs
-before compiling. The freshness stamp is what makes that cheap.
+before compiling. The freshness stamp is what makes that cheap. It is a
+shortcut for the edit loop, not a build system: it records what a developer
+edits (the unit's modules and their recipes), not the compiler, the SPIR-V
+and GLSL tools, or a module the unit imports without containing it. Output
+that ships, or that a build machine caches, comes from a Nix derivation whose
+inputs are all of those, placed with a `prebuilt` stamp (`SHB3`, `D14`).
 
 **SHB1: The stamp.** After a successful run the output directory **must**
 contain `.stamp`. Its first line names the stamp format version; then one

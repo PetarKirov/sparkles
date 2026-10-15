@@ -35,8 +35,9 @@ project owner, not implied by merging.
 
 **Progress.** The [adversarial review](./adversarial-review.md) is written:
 28 findings, two of them blockers (`R1`, entries sharing interface variables,
-and `R2`, stamp inputs missing what the compile reads). Its findings await
-dispositions.
+and `R2`, stamp inputs missing what the compile reads). Both blockers and
+six more findings have proposed dispositions, recorded in the review; the
+rest await theirs, and acceptance of all of them is the owner's.
 
 ## M0: Baseline
 
@@ -113,12 +114,13 @@ wrong uniform name, a tolerance violated on purpose.
   check, stale files kept, a wrong host function, bounds tightened to zero,
   and an unrecognised stock compiler. That last case was a real bug, and it
   is fixed.
-- `SHF5` turned out to be unenforced by the compiler; the build step now
-  enforces it, with `SHF6` (`D13`). The tolerances are `D12`, which resolves
-  open question Q3.
-- Remaining:
-  - `SHV7` and `SHF4` for the GLSL ES output (Q4);
-  - a negative case for `SHP6`.
+- `SHF5` turned out to be unenforced by the compiler; the compiler now
+  enforces it, with `SHF2`'s one variable per name, and types uniforms as the
+  host binds them (`D13`). The tolerances are `D12`, which resolves open
+  question Q3.
+- `SHP6` has its negative case; the ES output's precision is `D15`.
+- Remaining: `SHV7` and `SHF4` for the GLSL ES output, which needs an OpenGL
+  ES context in the readback.
 
 ## M4: Multi-pass effects in single-source D
 

@@ -138,8 +138,11 @@ and every terminal-only consumer build with a stock D compiler. Its
 `gpu-effects` configuration — selected beside every `sparkles:ui-raylib`
 dependency (ui-app's `gui` and `full`, hue), so every GUI build gets it — adds the GPU halves, and runs `shader-compile --if-stale` as a
 pre-generate step into the git-ignored `libs/ui/generated/shaders/`. A stamp
-there records the SHA-256 of every input, so a build whose shaders are current
-pays a hash check, and one whose inputs changed regenerates them.
+there records the SHA-256 of the shader modules and their packages' recipes,
+so a build whose shaders are current pays a hash check, and an edit to one of
+them regenerates. It does not track the compiler or the tools: after a
+toolchain change (a new dev shell), run the step once without `--if-stale`.
+What ships is built by Nix, which does track them.
 
 That step needs the dcompute-enabled LDC as `ldc2-vulkan` on `PATH` —
 dlang.nix's `ldc-vulkan` (dcompute's Vulkan target and the `@fragment` stage,
