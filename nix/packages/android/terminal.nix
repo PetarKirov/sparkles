@@ -249,6 +249,9 @@ in
           extraNativeLibs ? { },
           versionName ? null,
           versionCode ? null,
+          # The default theme's background (ChromeTheme), shown before the
+          # first frame.
+          windowBackground ? "#ff1e1e2e",
           debug ? true,
           sign ? true,
           # 28 keeps app-data files executable (NOD3); a higher value is for
@@ -272,6 +275,26 @@ in
             name = "${pname}-icon";
             source = iconSvg;
           };
+          # The icon, and the activity's theme: the window, and Android 12's
+          # launch splash, in the terminal's background colour — what shows
+          # from the tap until the first frame, instead of black.
+          themeXml =
+            splash:
+            pkgs.writeText "theme.xml" ''
+              <resources>
+                  <style name="Terminal" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+                      <item name="android:windowBackground">${windowBackground}</item>
+              ${lib.optionalString splash ''
+                <item name="android:windowSplashScreenBackground">${windowBackground}</item>
+              ''}    </style>
+              </resources>
+            '';
+          res = pkgs.runCommand "${pname}-res" { } ''
+            cp -r ${icon}/res $out
+            chmod -R u+w $out
+            install -Dm644 ${themeXml false} $out/values/theme.xml
+            install -Dm644 ${themeXml true} $out/values-v31/theme.xml
+          '';
         in
         assert lib.assertMsg validExtras
           "mkTerminalApk: extraNativeLibs needs supported ABIs and non-conflicting lib*.so names";
@@ -284,7 +307,7 @@ in
               sign
               ;
             renamePackage = appId;
-            resDir = "${icon}/res";
+            resDir = "${res}";
             # The patched libraries carry the build-info section (`TPG2`).
             # Debug and release share the one unstamped `.so`.
             libs = lib.mapAttrs (abi: libs: libs // (extraNativeLibs.${abi} or { })) baseLibs;
