@@ -140,12 +140,8 @@ uint view(ref Builder b, in GalleryState s)
 
     // The string view: the SAME cells and props through drawTable, one code
     // line per emitted row — agreement on every junction is the point.
-    // (`@trusted`: drawTable predates the explicit-attribute rule, so it
-    // defaults to `@system`; nothing in a pure render call is unsafe.)
     uint[] lines;
-    const rendered = (() @trusted
-        => drawTableLines(showcaseStringCells(), props).array)();
-    foreach (line; rendered)
+    foreach (line; drawTableLines(showcaseStringCells(), props))
         lines ~= label(b, line, Slot.code);
     body_ ~= section(b, "string view — drawTable, the same bytes", lines);
     body_ ~= spacer(b);
@@ -256,8 +252,7 @@ private int clampScroll(int n) pure nothrow @nogc
                 auto props = showcaseProps(d);
                 auto b = Builder();
                 const res = buildTableWidgets(b, showcaseCells(), props);
-                const lines = (() @trusted
-                    => drawTableLines(showcaseStringCells(), props).array)();
+                const lines = drawTableLines(showcaseStringCells(), props).array;
                 assert(cast(int) lines.length == res.height);
                 foreach (line; lines)
                     assert(cast(int) visibleWidth(line) == res.width,
