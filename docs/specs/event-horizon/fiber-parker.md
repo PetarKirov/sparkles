@@ -100,17 +100,26 @@ resume a later park.
 owner scheduler, the task's slab index and the park generation, and
 **must not** refer to the record. The scheduler **must** count the
 deliveries committed and not yet completed, and **must not** free its slab,
-its inbox or itself while that count is non-zero.
+its inbox or itself while that count is non-zero. A delivery is complete once
+the deliverer can no longer touch the owner's storage: when its inbox push and
+`Waker.wake()` have returned, when its `futex` call has returned, or when the
+completion of its `IORING_OP_FUTEX_WAKE` has been reaped on the deliverer's ring.
 
 **EFP5: Sleep.** `sleep(deadline, interruptible)` **must** suspend only the
 calling fiber and return the reason its winning resumption carried: woken,
-timed out, or cancelled. Its deadline and its cancellation **must** be
+timed out, or cancelled. The reason is tentative; the parking lot decides the
+park's outcome under the bucket lock (base.sync SYI3), and the parker's
+`settle` has nothing to consume, since cancellation stays latched (EFP16). Its deadline and its cancellation **must** be
 resumptions of the sleep's generation, and neither **may** take effect after
 `sleep` returns.
 
-**EFP6: Path selection.** A scheduler **must** use the ring path when its
-backend reports `futexOps` (SPEC §3.3) and `LoopGroupConfig.fiberPark` is
-`auto` or `ring`, and the inbox path otherwise. `fiberPark = inbox` **must**
+**EFP6: Path selection.** A scheduler **must** use the ring path for an
+operation — the sleep, the cancellation of EFP10, the bucket wait of EFP11 —
+when its backend reports `futexOps` (SPEC §3.3) and either
+`LoopGroupConfig.fiberPark` is `ring`, or it is `auto` and §7's recorded decision
+chooses the ring path for that operation; until FB1–FB7 are recorded, `auto`
+chooses the ring path wherever it is supported. Otherwise it **must** use the
+inbox path. `fiberPark = inbox` **must**
 force the inbox path on any backend, so that tests and benchmarks run both on
 one kernel. Both paths **must** satisfy every other requirement here.
 
@@ -118,8 +127,9 @@ one kernel. Both paths **must** satisfy every other requirement here.
 
 **EFP7: Waiting in the kernel.** A sleep **must** wait with
 `IORING_OP_FUTEX_WAIT` on its park word, expecting the sleeping value of its
-generation, with `FUTEX2_SIZE_U32` and `FUTEX2_PRIVATE`, as an ordinary I/O
-park (§7.3): the operation's terminal completion resumes the fiber. A
+generation, with `FUTEX2_SIZE_U32` and `FUTEX2_PRIVATE`, as an I/O park (§7.3):
+the operation's terminal completion resumes the fiber. Its cancellation
+follows EFP10, not §7.3's per-operation `ASYNC_CANCEL`. A
 deadline **must** be an `IORING_OP_LINK_TIMEOUT` linked to the wait. A
 completion that is not a wake **must** still perform EFP3's swap, and
 **must** report woken if a delivery's swap won first.
@@ -138,15 +148,28 @@ costing them an operation.
 wins and the wait may have been written, wake the park word: from a thread
 that owns a ring, with an `IORING_OP_FUTEX_WAKE` on that ring, submitted no
 later than its next submission point; from any other thread, with one
-`futex(FUTEX_WAKE_PRIVATE)` call. On the owner, before the wait is written, a
-winning swap **must** enqueue the fiber at the tail of the ready queue.
+`futex(FUTEX_WAKE_PRIVATE)` call. A ring thread whose ring has no free slot or
+submission entry **must** make the `futex` call instead, so that delivery never
+fails. On the owner, before the wait is written, a winning swap **must**
+enqueue the fiber at the tail of the ready queue.
 `deliverWake` **must** be `nothrow @nogc` and never block.
 
 **EFP10: Cancellation in the same wait.** An interruptible sleep **must**
 wait with `IORING_OP_FUTEX_WAITV` on its park word and on the cancel word of
-the fiber's current cancellation node. `cancelTree` (§8.2) **must**, for each
-node it marks cancelling, change that node's cancel word and wake every
-waiter on it with one wake, in place of an `ASYNC_CANCEL` per parked fiber.
+the fiber's current cancellation node, and cancellation reaches it by one of
+two routes:
+
+- **Node cancellation.** `cancelTree` (§8.2) **must**, for each node it marks
+  cancelling, latch every member fiber's interrupt, then change the node's
+  cancel word with release ordering and wake every waiter on it with one
+  wake. The member cancel functions it fires **must not** wake, or submit an
+  `ASYNC_CANCEL` for, a fiber whose sleep waits on that word.
+- **Direct interruption** of one fiber: its cancel function **must** latch the
+  interrupt, perform EFP3's swap as a cancellation and, if it wins, wake the
+  park word as EFP9 does.
+
+A completion caused by the cancel word **must** perform EFP3's swap as a
+cancellation.
 
 **EFP11: Bucket waits in the kernel.** `bucketWait(word)` **must** wait with
 `IORING_OP_FUTEX_WAIT` on the bucket word, which base.sync's bucket unlock
@@ -193,11 +216,12 @@ the scheduler rule base.sync SYI3 leaves to the parker.
 latched.
 
 **EFP18: Protected regions.** The parker's protected-region query (base.sync
-SYI4) **must** report whether the fiber's current cancellation node is
-protected, that is, whether the fiber runs inside `protect` or a shielded
-child (§8.2).
+SYI4) **must** report whether the fiber runs inside `protect`. A shielded child
+(§8.2) is not masked: a shield stops cancellation propagating from its
+ancestors, while cancellation aimed at the shield's node, or at the fiber
+itself, reaches its interruptible sleeps.
 
-## 6. Spinning, pinning and shutdown
+## 6. Spinning, pinning, shutdown and resources
 
 **EFP19: Relax.** `relax(step)` **must** issue a processor pause hint for the
 first steps and yield the fiber to the scheduler for the rest (base.sync
@@ -212,11 +236,24 @@ _Rationale:_ A fiber suspends only at a verb, a yield or a park, and none of
 those is allowed while pinned, so the count of the thread is the count of
 its running fiber.
 
-**EFP21: Draining deliveries.** A scheduler's destruction **must** wait until
-its committed-delivery count (EFP4) reaches zero and every operation naming a
-park word, a cancel word or a bucket word has reached its terminal completion.
-A fiber still parked non-interruptibly at shutdown keeps its scope from
-ending; `LoopGroup.shutdown`'s grace period (§11) bounds the wait.
+**EFP21: Retention at shutdown.** A scheduler **must not** be destroyed while
+any of these remain: a committed delivery not yet complete (EFP4); an
+operation naming a park word, a cancel word or a bucket word before its
+terminal completion; a record of one of its fibers queued or registered in
+the parking lot (base.sync SYP15); a task in its wake inbox; or a live fiber.
+If `LoopGroup.shutdown`'s grace period (§11) expires with any of them — a fiber
+parked non-interruptibly on an event nobody sets, say — shutdown **must**
+return its timeout error and leak the scheduler, its task slab, its inbox and
+its loop, wake routing included, rather than free them, so that a later wake
+from any thread touches live memory.
+
+**EFP22: Reserved resources.** The scheduler **must** reserve, for each task
+in its slab, the op slot a park needs on its path, and **must** obtain the
+submission entries for a wait and its linked timeout by flushing a full
+submission queue, so that a park never fails for lack of either. It **must**
+arm its wake routing — its inbox and its loop's `Waker` — before any of its
+fibers can park. A slot a park holds **must** count as live work in drain
+accounting (§5.6).
 
 ## 7. Benchmarks
 
@@ -241,22 +278,25 @@ bucket wait of EFP11), and recorded here with the numbers.
 
 ## Testing
 
-| Requirement       | Check                                                                                                                                                                           | Oracle                     |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| EFP1              | a tier-A callback and a fiber on one loop each report their current parker                                                                                                      | unit                       |
-| EFP3, EFP5        | on each path, a wake delivered after the sleep timed out does not resume the fiber's next park; a wake, a deadline and a cancellation race for one generation, and one wins     | base.sync oracle 1, stress |
-| EFP2, EFP4, EFP21 | a foreign thread's delivery is delayed past the fiber's return and the scheduler's shutdown begins; AddressSanitizer sees no use after free, and no operation is left in flight | ASan stress                |
-| EFP6              | on Linux 6.18, `auto` and `ring` wait in the kernel and `inbox` does not; the kqueue and IOCP backends use the inbox path                                                       | unit, `strace`             |
-| EFP7, EFP9, EFP12 | a fiber waiting for a `Mutex` is woken by a fiber on another worker, a blocking-pool thread and an unregistered thread; each resumes on its owner, on each path                 | native, every backend      |
-| EFP8              | a same-tick same-worker handoff submits no operation                                                                                                                            | unit, submission counter   |
-| EFP10, EFP14      | cancelling a scope with parked interruptible fibers resumes each once; on the ring path, with one wake per cancelled node and no `ASYNC_CANCEL`                                 | unit, submission counter   |
-| EFP11, EFP15      | a thread holds a bucket lock by a test hook while a fiber contends for it; another fiber on that loop keeps running, and on the ring path the waiting fiber burns no CPU        | native                     |
-| EFP16–EFP18       | after a cancellation, every interruptible wait in the scope returns cancelled, a `Mutex` lock still succeeds, and an interruptible wait inside `protect` sleeps                 | unit                       |
-| EFP20             | a fiber that suspends while holding a `Mutex` fails its assertion                                                                                                               | unit                       |
+| Requirement       | Check                                                                                                                                                                                                                                                                                                                               | Oracle                     |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| EFP1              | a tier-A callback and a fiber on one loop each report their current parker                                                                                                                                                                                                                                                          | unit                       |
+| EFP3, EFP5        | on each path, a wake delivered after the sleep timed out does not resume the fiber's next park; a wake, a deadline and a cancellation race for one generation, and one wins                                                                                                                                                         | base.sync oracle 1, stress |
+| EFP2, EFP4, EFP21 | a foreign thread's delivery is delayed past the fiber's return and the scheduler's shutdown begins; a fiber parked non-interruptibly on an unset event outlives the grace period, shutdown times out, and a thread then sets the event; AddressSanitizer sees no use after free                                                     | ASan stress                |
+| EFP6              | on Linux 6.18, `ring` waits in the kernel and `inbox` does not, and `auto` follows §7's recorded decision per operation; the kqueue and IOCP backends use the inbox path                                                                                                                                                            | unit, `strace`             |
+| EFP7, EFP9, EFP12 | a fiber waiting for a `Mutex` is woken by a fiber on another worker, a blocking-pool thread and an unregistered thread; each resumes on its owner, on each path                                                                                                                                                                     | native, every backend      |
+| EFP8              | a same-tick same-worker handoff submits no operation                                                                                                                                                                                                                                                                                | unit, submission counter   |
+| EFP10, EFP14      | cancelling a scope with parked interruptible fibers resumes each once, on the ring path with one wake per cancelled node and no `ASYNC_CANCEL`; directly interrupting one fiber of an uncancelled node resumes it alone                                                                                                             | unit, submission counter   |
+| EFP11, EFP15      | a thread holds a bucket lock by a test hook while a fiber contends for it; another fiber on that loop keeps running, and on the ring path the waiting fiber burns no CPU                                                                                                                                                            | native                     |
+| EFP16–EFP18       | after a cancellation, every interruptible wait in the scope returns cancelled, a `Mutex` lock still succeeds, and an interruptible wait inside `protect` sleeps; a shielded child waiting interruptibly on a `Semaphore` survives its ancestor's cancellation and returns cancelled when its owner cancels the shield, on each path |
+| EFP3              | a test build with a 2-bit generation keeps an old wake handle across a wrap-around: the current waiter neither gains ownership nor loses a legitimate wake                                                                                                                                                                          |
+| EFP19             | `relax` issues its pause steps and then yields, counted; a holder on the same loop releases during the yields                                                                                                                                                                                                                       |
+| EFP22             | with the op slab and submission queue exhausted by I/O, parks on both workers still succeed and every wake is delivered                                                                                                                                                                                                             | unit                       |
+| EFP20             | a fiber that suspends while holding a `Mutex` fails its assertion                                                                                                                                                                                                                                                                   | unit                       |
 
 ## Evidence ledger
 
 | Requirements | State   | Evidence | Gap                                                                                   |
 | ------------ | ------- | -------- | ------------------------------------------------------------------------------------- |
-| EFP1–EFP21   | planned | —        | depends on base.sync S1 and the ring futex operations; delivered in event-horizon M20 |
+| EFP1–EFP22   | planned | —        | depends on base.sync S1 and the ring futex operations; delivered in event-horizon M20 |
 | FB1–FB7      | planned | —        | no implementation to measure; `auto`'s choice is unmade until they run                |

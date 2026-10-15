@@ -267,7 +267,12 @@ tag, and every park and unpark **must** check the tags of the records it
 meets; meeting a record of another protocol is a programming error, which
 builds with assertions **must** detect. A requeue (SYP8) **must** rewrite
 each moved record's tag to the destination's protocol, under both buckets'
-locks, and with it the record's interruptibility (SYC3).
+locks, and with it the record's interruptibility and deadline (SYC3, SYC7).
+A sleep that returns timed out or cancelled while its record is still
+enqueued **must** be resolved against the record's current registration: if
+that is non-interruptible, or carries no deadline, the return is spurious and
+the parking lot **must** sleep again with the current interruptibility and
+deadline.
 
 _Rationale:_ A word used both as `LockBits` and as an address wait would let
 a mutex unlock select an address waiter (DS17).
@@ -305,8 +310,10 @@ enqueue; `sleep(deadline, interruptible)`, returning woken, timed out, or —
 only when `interruptible` is true — cancelled;
 `commitWake`, run under the bucket lock, returning a wake handle;
 `deliverWake(handle)`, run after; `bucketWait(word)`, one bounded wait for a
-contended bucket (SYP13); `relax(step)`, one step of a spin; and the
-cancellation queries of §4a.
+contended bucket (SYP13); `relax(step)`, one step of a spin; `settle`, run once a park's final
+outcome is cancelled (SYI3); and the cancellation queries of §4a. Before
+`sleep` returns, the parker **must** have withdrawn every deadline and
+cancellation subscription that sleep armed.
 
 **SYK3: The thread parker.** The thread parker's record **must** live in
 thread-local storage and need no allocation. Its `sleep` **must** wait through
@@ -358,9 +365,12 @@ the effective parker is the thread parker (SYK1), so a park, a bucket wait
 or a spin blocks the thread for its duration, and a fiber parker's scheduler
 **must not** suspend the fiber; a suspension while pinned is a programming
 error, which builds with assertions **must** detect. A condition wait
-**must** drop the pin of the lock it releases before it chooses the effective
-parker; waiting on a condition while another lock still pins the caller is
-a programming error, which builds with assertions **must** detect.
+**must** choose the parker for its sleep as if the pin of the lock it
+releases were dropped, but **must** keep that pin, and with it the thread
+parker for every bucket wait and spin, until its record is enqueued and the
+lock released (SYC2); it then drops the pin, and restores it with the lock on
+every return path. Waiting on a condition while another lock still pins the
+caller is a programming error, which builds with assertions **must** detect.
 
 _Rationale:_ Non-interruptible locks guard short critical sections that never
 suspend. A fiber that suspended while holding one would hold it across
@@ -387,17 +397,23 @@ _Rationale:_ This is the interruptible-operation rule of Marlow et al.'s
 asynchronous exceptions: there is no window between gaining ownership and
 the caller seeing it (DS13).
 
-**SYI3: The parker decides.** An interruptible operation **must** return
-`cancelled` exactly when its parker's `sleep` reports cancellation, and
-**must not** keep cancellation state of its own: whether a request outlives
-its first report is the scheduler's rule, not the library's. A scheduler whose
-cancellation stays pending after a report **must** let cleanup wait through a
-protected region (SYI4).
+**SYI3: One arbitration, in the parking lot.** A parker's `sleep` result is
+tentative; the park's outcome is decided under the bucket lock (SYP4, SYP5),
+so a sleep that returned cancelled after an unparker had dequeued the record
+ends `unparked`. An interruptible operation **must** return `cancelled`
+exactly when its park ended `cancelled`, and **must not** keep cancellation
+state of its own. The parking lot **must** call the parker's `settle` for
+every park whose final outcome is `cancelled`, and for no other; a scheduler that
+consumes a request on its report **must** consume it there and nowhere else,
+so that a request whose sleep lost to a grant stays pending (SYI2). Whether a
+request outlives its report is the scheduler's rule; a scheduler whose
+requests stay pending **must** let cleanup wait through a protected region
+(SYI4).
 
 _Rationale:_ Schedulers differ: Zig's `std.Io` consumes a request on its report,
 while event-horizon latches it until the fiber's scope ends, so that a body
-cannot silently drop a cancel. The library serves both by carrying the
-parker's answer and storing none (DS13, DS23).
+cannot silently drop a cancel. The library serves both by deciding the
+outcome once and storing no cancellation state (DS13, DS23, DS25).
 
 **SYI4: Protected regions.** A parker **must** report whether the current
 fiber is in a cancellation-protected region, which its scheduler lets code

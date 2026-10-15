@@ -1102,7 +1102,9 @@ drivers (`EventLoop.run`, `cancelAndWait`) never deliver deadlines.
 ### 8.4 Interrupt delivery and checkpoints
 
 A fiber observes cancellation at **checkpoints**: every I/O verb (before
-submitting), `yieldNow`, `checkCancellation`, and every park. Delivery
+submitting), `yieldNow`, `checkCancellation`, and every park except a
+non-interruptible `sparkles.base.sync` park ([fiber-parker.md](./fiber-parker.md)
+EFP17). Delivery
 latches `interrupted` on the fiber's context; the fiber shell (§8.6) makes
 the latch authoritative — a body that swallows the `ECANCELED` error still
 yields an interrupt outcome ("you cannot silently drop a cancel").
@@ -1550,7 +1552,8 @@ owner is busy. The CPU-bound arm has no loop and keeps a spin-then-sleep
 backoff. Targeted `MSG_RING` stealing remains O2.
 
 Cross-worker wakes, cancels, and spawn injection other than this idle
-nudge travel as `MSG_RING` messages to the owner ring; `wake()` asserts
+nudge and the fiber parker's wakes ([fiber-parker.md](./fiber-parker.md) §3,
+§4) travel as `MSG_RING` messages to the owner ring; `wake()` asserts
 owner-worker identity.
 
 ### 11.1 Persistent fixed-capacity CPU jobs

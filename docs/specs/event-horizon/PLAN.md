@@ -382,7 +382,7 @@ construction rather than by the process group alone (SPEC §13.7).
 
 ## M20 — The fiber parker for `sparkles.base.sync`
 
-Deliver [fiber-parker.md](./fiber-parker.md) (EFP1–EFP21) once base.sync's S1
+Deliver [fiber-parker.md](./fiber-parker.md) (EFP1–EFP22) once base.sync's S1
 has landed: the scheduler installs its parker, records and park words live in
 the task slab, and cancellation stays latched (§8.4). Two paths, both
 complete:
