@@ -11,7 +11,7 @@ import std.path : baseName;
 import std.string : fromStringz;
 
 import sparkles.font;
-import sparkles.font_oracle.corpus : corpus, Oracle;
+import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle;
 import sparkles.font_oracle.harfbuzz_c;
 import sparkles.test_runner.skip : skipTest;
 
@@ -19,17 +19,15 @@ import sparkles.test_runner.skip : skipTest;
 @system
 unittest
 {
-    const files = corpus();
-    if (files is null)
+    if (fontsDir is null)
         return skipTest("SPARKLES_FONTS_PATH is unset");
-    assert(files.length > 100, "the bundle holds about 180 fonts");
+    assert(corpus.length > 100, "the bundle holds about 180 fonts");
     size_t faces, mappings, names, glyphNames, macNameSkips;
-    foreach (path; files)
+    foreach (path; corpus)
     {
         const bytes = cast(const(ubyte)[]) read(path);
         const file = path.baseName;
         auto hb = Oracle(bytes, 0);
-        scope (exit) hb.close();
         const opened = openFace(bytes);
         assert(opened.hasValue, file);
         const face = opened.value;
@@ -114,5 +112,5 @@ unittest
             foreach (gid; 0 .. face.numGlyphs)
                 assert(metrics.value.advance(gid).value == hb_font_get_glyph_h_advance(hb.font, gid), file);
     }
-    assert(faces == files.length && mappings > 100_000 && names > 1_000 && glyphNames > 10_000);
+    assert(faces == corpus.length && mappings > 100_000 && names > 1_000 && glyphNames > 10_000);
 }

@@ -12,21 +12,19 @@ import std.path : baseName;
 import std.stdio : stderr;
 
 import sparkles.font;
-import sparkles.font_oracle.corpus : corpus, Oracle;
+import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle;
 import sparkles.font_oracle.harfbuzz_c;
 import sparkles.test_runner.skip : skipTest;
 
 /// The bundled faces with their HarfBuzz faces; `skipTest` when unset.
 private void eachFace(scope void delegate(string file, const Face face, ref Oracle hb) @system body_)
 {
-    const files = corpus();
-    if (files is null)
+    if (fontsDir is null)
         skipTest("SPARKLES_FONTS_PATH is unset");
-    foreach (path; files)
+    foreach (path; corpus)
     {
         const bytes = cast(const(ubyte)[]) read(path);
         auto hb = Oracle(bytes, 0);
-        scope (exit) hb.close();
         const opened = openFace(bytes);
         assert(opened.hasValue, path.baseName);
         body_(path.baseName, opened.value, hb);
