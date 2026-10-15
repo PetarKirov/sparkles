@@ -638,7 +638,7 @@ private ref Writer putTable(Writer)(return ref Writer w, TableLineRange lines)
     foreach (line; lines)
     {
         put(w, line);
-        put(w, '\n');
+        put(w, "\n"); // a string: a char into a delegate sink is @system
     }
     return w;
 }
