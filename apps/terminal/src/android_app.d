@@ -47,7 +47,7 @@ int androidMain()
 {
     import core.stdc.stdlib : exit;
     import std.file : exists, mkdirRecurse;
-    import std.path : buildPath;
+    import std.path : buildPath, dirName;
 
     import sparkles.android.activity : internalDataPath;
     import sparkles.android.assets : extractAssetBundle, readAssetText;
@@ -72,7 +72,12 @@ int androidMain()
     const config = conf is null ? SessionConfig.init : parseSessionConfig(conf);
     info(i"terminal: session mode $(config.mode)");
 
-    const paths = SessionPaths(internalDataPath, config.amSocket);
+    // A real directory only while the manifest keeps
+    // `extractNativeLibs="true"`: an in-APK library reports
+    // `…/base.apk!/lib/<abi>/…`, whose dirName is no directory.
+    const library = thisLibraryPath();
+    const paths = SessionPaths(internalDataPath, config.amSocket,
+        library.length && library[0] == '/' ? library.dirName : null);
     const fontsDir = buildPath(paths.files, "fonts");
     // The viewer's grammar queries are extracted beside the fonts; their
     // parsers ship as native libraries (`TDV1`, OQ6).

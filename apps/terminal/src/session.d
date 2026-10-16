@@ -84,6 +84,9 @@ struct SessionPaths
     string files;
     /// `session.conf`'s `amSocket`, if any.
     string amSocketOverride;
+    /// The extracted APK native-library directory, resolved by the Android
+    /// host. Install/update paths are not stable, so login must not guess it.
+    string nativeLibraryDir;
 
     string home() const @safe pure nothrow => buildPath(files, "home");
     string prefix() const @safe pure nothrow => buildPath(files, "usr");
@@ -203,6 +206,8 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
         "TERM=xterm-256color",
         "COLORTERM=truecolor",
     ];
+    if (p.nativeLibraryDir.length)
+        own ~= "SPARKLES_NATIVE_LIBRARY_DIR=" ~ p.nativeLibraryDir;
     if (prefixed)
     {
         own ~= "PREFIX=" ~ p.prefix;
@@ -215,7 +220,7 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
         own ~= "NIX_ON_DROID_AM_SOCKET=" ~ p.amSocket;
     }
 
-    static immutable dropped = ["LD_LIBRARY_PATH", "LD_PRELOAD"];
+    static immutable dropped = ["LD_LIBRARY_PATH", "LD_PRELOAD", "SPARKLES_NATIVE_LIBRARY_DIR"];
     string[] result;
     foreach (entry; parent)
     {
@@ -265,6 +270,24 @@ string[] sessionEnvironment(scope const string[] parent, const SessionPaths p,
         "the app's own commands first (shellTools)");
     assert(shell.canFind("TMPDIR=/data/org.example/files/tmp"));
     assert(!shell.canFind!(e => e.length >= 7 && e[0 .. 7] == "PREFIX="));
+}
+
+/// The host's actual APK path replaces stale inherited paths in both modes.
+@("session.sessionEnvironment.nativeLibraryDir")
+@safe pure unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const parent = ["SPARKLES_NATIVE_LIBRARY_DIR=/old/install/lib/arm64"];
+    const p = SessionPaths("/data/org.example/files", null, "/data/app/current/lib/arm64");
+    foreach (prefixed; [false, true])
+    {
+        const env = sessionEnvironment(parent, p, prefixed);
+        assert(env.canFind("SPARKLES_NATIVE_LIBRARY_DIR=/data/app/current/lib/arm64"));
+        assert(!env.canFind(parent[0]));
+        const absent = sessionEnvironment(parent, SessionPaths(p.files), prefixed);
+        assert(!absent.canFind(parent[0]), "never reuse an inherited APK location");
+    }
 }
 
 /// A command the plain shell gets from the app rather than from Android.
