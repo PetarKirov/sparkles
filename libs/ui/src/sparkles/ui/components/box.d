@@ -31,7 +31,7 @@ struct BoxProps
     /// width still uses `footer` / `minWidth` — set `minWidth` when the final
     /// footer may be wider than this placeholder. Evaluated before
     /// $(LREF footerRightNow).
-    string delegate() footerNow = null;
+    string delegate() @safe footerNow = null;
 
     /// Right-aligned label on the top border:
     /// `╭──╼ {title} ╾────╼ {titleRight} ╾──╮`. Empty = today's single-sided title.
@@ -44,7 +44,7 @@ struct BoxProps
     /// Late `footerRight`, same contract as $(LREF footerNow). Evaluated after
     /// `footerNow` so a caller can snapshot a clock in the left callback and
     /// read it here.
-    string delegate() footerRightNow = null;
+    string delegate() @safe footerRightNow = null;
 
     /// Lower/upper bounds on the box's total visible width (frame included), in the
     /// same units as `HeaderProps.width` — set both equal for a fixed-width box.
@@ -86,20 +86,52 @@ struct BoxProps
     dchar titleConnectRight = '├'; /// Nested title box's right border where the frame's top joins it.
 }
 
-string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
-{
-    import std.array : join;
+/**
+Draws `content` in a box titled `title` into `w`, its lines joined by `\n` (no
+trailing newline). `content` is lines (`string[]`), text that is split into lines
+(`string`), or any value that writes itself, such as `prettyPrint(x)` or
+`drawTable(cells)`: the box sizes itself to its content, so such a value is
+rendered first.
 
-    return drawBoxLines(content, title, props).join("\n");
-}
-
-/// Overload that accepts a single string and splits it into lines internally.
-string drawBox(string content, string title, BoxProps props = BoxProps.init)
+Without a writer, `drawBox(content, title, props)` is the box as a value:
+`writeln(lines.drawBox("Title"))` streams it, and `.toString` makes a string.
+*/
+void drawBox(W, Content)(ref W w, Content content, string title,
+    BoxProps props = BoxProps.init)
+if (imported!"std.range.primitives".isOutputRange!(W, char))
 {
-    import std.array : join;
     import std.string : lineSplitter;
 
-    return drawBoxLines(content.lineSplitter, title, props).join("\n");
+    static if (is(Content : const(char)[]))
+        putLines(w, drawBoxLines(content.lineSplitter, title, props));
+    else static if (imported!"sparkles.base.text.value_form".isWritableValue!Content)
+    {
+        import std.array : appender;
+
+        auto text = appender!string;
+        content.toString(text);
+        putLines(w, drawBoxLines(text[].lineSplitter, title, props));
+    }
+    else
+        putLines(w, drawBoxLines(content, title, props));
+}
+
+/// ditto
+mixin(imported!"sparkles.base.text.value_form".valueForm!"drawBox");
+
+// Writes `lines` joined by newlines.
+private void putLines(W, R)(ref W w, R lines)
+{
+    import std.range.primitives : put;
+
+    bool first = true;
+    foreach (line; lines)
+    {
+        if (!first)
+            put(w, "\n");
+        first = false;
+        put(w, line);
+    }
 }
 
 /// The rendered box as a lazy range of its lines (range-out): the top border (with
@@ -137,7 +169,7 @@ private struct CloseSpec
 }
 
 /// Render a $(LREF CloseSpec) for an accumulated visible width `w`.
-private string renderClose(in CloseSpec c, size_t w)
+private string renderClose(in CloseSpec c, size_t w) @safe pure
 {
     import std.conv : to;
     import std.range : repeat;
@@ -179,7 +211,7 @@ private struct BoxLayout
 /// Shared by layout-time baking and the late `footerNow` evaluation.
 private string renderBoxBottom(
     size_t outputWidth, size_t prefixLen, in BoxProps props,
-    string footer, string footerRight = null)
+    string footer, string footerRight = null) @safe pure
 {
     const leftW = footer !is null ? footer.visibleWidth : 0;
     const rightW = footerRight.length ? footerRight.visibleWidth : 0;
@@ -208,7 +240,7 @@ private bool hasLateFooter(in BoxProps props) @safe pure nothrow @nogc
 
 /// Evaluate `footerNow` then `footerRightNow` (falling back to the static
 /// fields) and render the bottom border. Shared by the line and chunk ranges.
-private string renderLateBottom(size_t outputWidth, size_t prefixLen, in BoxProps props)
+private string renderLateBottom(size_t outputWidth, size_t prefixLen, const BoxProps props) @safe
     => renderBoxBottom(outputWidth, prefixLen, props,
         props.footerNow !is null ? props.footerNow() : props.footer,
         props.footerRightNow !is null ? props.footerRightNow() : props.footerRight);
@@ -792,7 +824,7 @@ private struct BoxChunkRange(bool lineBuffered, Content)
 /// whitespace. Bounded box plans explicitly choose `trimAroundBreak`; raw
 /// unwrapped rows may still have authored trailing padding. The caller closes
 /// any active style before painting the border.
-private const(char)[] stripTrailingSpaces(const(char)[] s)
+private const(char)[] stripTrailingSpaces(const(char)[] s) @safe pure nothrow @nogc
 {
     import sparkles.base.text.grapheme : byGraphemeCluster;
 
@@ -811,7 +843,7 @@ private const(char)[] stripTrailingSpaces(const(char)[] s)
 /// Returns `title` unchanged when it already fits. Thin wrapper over the shared
 /// `truncateField` (grapheme-accurate, uses the full width budget rather than the
 /// old word-boundary cut); the `width == 0` case keeps the historical bare `…`.
-private string ellipsizeTitle(string title, size_t width)
+private string ellipsizeTitle(string title, size_t width) @safe pure
 {
     import std.array : appender;
     import sparkles.base.text.width : truncateField;
@@ -831,7 +863,7 @@ private string ellipsizeTitle(string title, size_t width)
 /// fills exactly. Assumes a standard left frame (`prefixLen == 2`); callers fall back to
 /// `ellipsis` when `omitLeftBorder`.
 private TopItem[] nestedTitleItems(
-    string[] titleLines, size_t outputWidth, const(dchar)[] prefix, in BoxProps props)
+    string[] titleLines, size_t outputWidth, const(dchar)[] prefix, in BoxProps props) @safe pure
 {
     import std.conv : to;
 
@@ -876,7 +908,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Hello"].drawBox("T") == `
+    assert(["Hello"].drawBox("T").toString == `
         ╭──╼ T ╾───╮
         │ Hello    │
         ╰──────────╯`.outdent(2));
@@ -887,7 +919,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Line 1", "Line 2", "Line 3"].drawBox("Title") == `
+    assert(["Line 1", "Line 2", "Line 3"].drawBox("Title").toString == `
         ╭──╼ Title ╾───╮
         │ Line 1       │
         │ Line 2       │
@@ -900,7 +932,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Short", "A longer line", "Mid"].drawBox("Box") == `
+    assert(["Short", "A longer line", "Mid"].drawBox("Box").toString == `
         ╭──╼ Box ╾──────╮
         │ Short         │
         │ A longer line │
@@ -913,7 +945,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["This is a very long content line"].drawBox("T") == `
+    assert(["This is a very long content line"].drawBox("T").toString == `
         ╭──╼ T ╾───────────────────────────╮
         │ This is a very long content line │
         ╰──────────────────────────────────╯`.outdent(2));
@@ -925,7 +957,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
 
     // This tests the fix for the underflow bug
-    assert(["Hi"].drawBox("Long Title Here") == `
+    assert(["Hi"].drawBox("Long Title Here").toString == `
         ╭──╼ Long Title Here ╾───╮
         │ Hi                     │
         ╰────────────────────────╯`.outdent(2));
@@ -937,7 +969,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
 
     // Single character content and title - tests minimum box size
-    assert(["x"].drawBox("T") == `
+    assert(["x"].drawBox("T").toString == `
         ╭──╼ T ╾───╮
         │ x        │
         ╰──────────╯`.outdent(2));
@@ -948,7 +980,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Content"].drawBox("") == `
+    assert(["Content"].drawBox("").toString == `
         ╭──╼  ╾────╮
         │ Content  │
         ╰──────────╯`.outdent(2));
@@ -959,7 +991,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Line 1", "Line 2"].drawBox("Title", BoxProps(omitLeftBorder: true)) == `
+    assert(["Line 1", "Line 2"].drawBox("Title", BoxProps(omitLeftBorder: true)).toString == `
         ╭──╼ Title ╾───╮
         Line 1         │
         Line 2         │
@@ -972,7 +1004,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
 
     // When omitLeftBorder is true, prefix is empty, affecting minWidth calculation
-    assert(["Hi"].drawBox("Very Long Title", BoxProps(omitLeftBorder: true)) == `
+    assert(["Hi"].drawBox("Very Long Title", BoxProps(omitLeftBorder: true)).toString == `
         ╭──╼ Very Long Title ╾───╮
         Hi                       │
         ╰────────────────────────╯`.outdent(2));
@@ -983,7 +1015,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Content"].drawBox("Title", BoxProps(footer: "Done")) == `
+    assert(["Content"].drawBox("Title", BoxProps(footer: "Done")).toString == `
         ╭──╼ Title ╾───╮
         │ Content      │
         ╰──╼ Done ╾────╯`.outdent(2));
@@ -995,7 +1027,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
 
     // Footer wider than content should expand the box
-    assert(["Hi"].drawBox("T", BoxProps(footer: "Completed successfully")) == `
+    assert(["Hi"].drawBox("T", BoxProps(footer: "Completed successfully")).toString == `
         ╭──╼ T ╾────────────────────────╮
         │ Hi                            │
         ╰──╼ Completed successfully ╾───╯`.outdent(2));
@@ -1008,7 +1040,7 @@ private TopItem[] nestedTitleItems(
 
     // Styled footer should not affect width calculation
     auto styledFooter = "✓ OK".stylize(Style.green);
-    assert(["Content"].drawBox("Title", BoxProps(footer: styledFooter)) ==
+    assert(["Content"].drawBox("Title", BoxProps(footer: styledFooter)).toString ==
         "╭──╼ Title ╾───╮\n" ~
         "│ Content      │\n" ~
         "╰──╼ \x1b[32m✓ OK\x1b[39m ╾────╯");
@@ -1021,7 +1053,7 @@ private TopItem[] nestedTitleItems(
     import std.string : splitLines;
 
     // Right-aligned label on the top border; every row stays the same width.
-    const box = ["Hi"].drawBox("Left", BoxProps(titleRight: "Right"));
+    const box = ["Hi"].drawBox("Left", BoxProps(titleRight: "Right")).toString;
     assert(box == `
         ╭──╼ Left ╾──╼ Right ╾──╮
         │ Hi                    │
@@ -1036,7 +1068,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
     import std.string : splitLines;
 
-    const box = ["Hi"].drawBox("T", BoxProps(footer: "ok", footerRight: "stats"));
+    const box = ["Hi"].drawBox("T", BoxProps(footer: "ok", footerRight: "stats")).toString;
     assert(box == `
         ╭──╼ T ╾──────────────╮
         │ Hi                  │
@@ -1057,7 +1089,7 @@ private TopItem[] nestedTitleItems(
         titleRight: "Δt 1.0s | Δtᵢ 1.0s",
         footer: "✓ passed",
         footerRight: "Δt 2.0s | Δtᵢ 1.0s (usr 1.0s/sys 1.0ms) | 1.0MiB",
-        minWidth: 88, maxWidth: 88));
+        minWidth: 88, maxWidth: 88)).toString;
     const lines = box.splitLines;
     assert(lines.length == 3);
     assert(lines[0].canFind("ci › dub test :ci"));
@@ -1079,7 +1111,7 @@ private TopItem[] nestedTitleItems(
         maxWidth: 40,
         titleOverflow: TitleOverflow.wrap,
         titleRight: "Δt 1s");
-    const box = ["x"].drawBox("This title is far too long to fit with the right label", props);
+    const box = ["x"].drawBox("This title is far too long to fit with the right label", props).toString;
     const top = box.splitLines.front;
     assert(top.canFind("Δt 1s"), top);
     assert(top.canFind("…"), top);
@@ -1118,8 +1150,8 @@ private TopItem[] nestedTitleItems(
     import std.string : splitLines;
 
     auto styled = "Right".stylize(Style.cyan);
-    const plain = ["Hi"].drawBox("Left", BoxProps(titleRight: "Right"));
-    const colored = ["Hi"].drawBox("Left", BoxProps(titleRight: styled));
+    const plain = ["Hi"].drawBox("Left", BoxProps(titleRight: "Right")).toString;
+    const colored = ["Hi"].drawBox("Left", BoxProps(titleRight: styled)).toString;
     assert(plain.splitLines.front.visibleWidth == colored.splitLines.front.visibleWidth);
     assert(colored.canFind("\x1b["));
 }
@@ -1131,7 +1163,7 @@ private TopItem[] nestedTitleItems(
 
     // ANSI codes should not affect box width calculation
     auto styledContent = "Hello".stylize(Style.bold);
-    assert([styledContent].drawBox("T") ==
+    assert([styledContent].drawBox("T").toString ==
         "╭──╼ T ╾───╮\n" ~
         "│ \x1b[1mHello\x1b[22m    │\n" ~
         "╰──────────╯");
@@ -1144,7 +1176,7 @@ private TopItem[] nestedTitleItems(
 
     // Styled title should not affect width calculation
     auto styledTitle = "Title".stylize(Style.cyan);
-    assert(["Content here"].drawBox(styledTitle) ==
+    assert(["Content here"].drawBox(styledTitle).toString ==
         "╭──╼ \x1b[36mTitle\x1b[39m ╾───╮\n" ~
         "│ Content here │\n" ~
         "╰──────────────╯");
@@ -1156,7 +1188,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
 
     // Test the single-string overload that splits on newlines
-    assert("Line 1\nLine 2".drawBox("T") == `
+    assert("Line 1\nLine 2".drawBox("T").toString == `
         ╭──╼ T ╾───╮
         │ Line 1   │
         │ Line 2   │
@@ -1168,7 +1200,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert("A\nBB\nCCC".drawBox("X") == `
+    assert("A\nBB\nCCC".drawBox("X").toString == `
         ╭──╼ X ╾───╮
         │ A        │
         │ BB       │
@@ -1190,7 +1222,7 @@ unittest
         path
             .readFromTestDir
             .lineSplitter.array
-            .drawBox("Sample Title", BoxProps(omitLeftBorder))
+            .drawBox("Sample Title", BoxProps(omitLeftBorder)).toString
             .writeln;
     }
 
@@ -1249,7 +1281,7 @@ unittest
     import std.string : splitLines;
 
     // maxWidth defaults to 0 -> no wrapping, box expands to fit the long line.
-    const box = drawBox(["aaaa bbbb cccc"], "T");
+    const box = drawBox(["aaaa bbbb cccc"], "T").toString;
     assert(box.splitLines.length == 3); // top + one content row + bottom
 }
 
@@ -1261,7 +1293,7 @@ unittest
 
     // maxWidth is the total box width; with the 4-column frame overhead this
     // leaves a 4-column content area, so "aaaa bbbb cccc" wraps to three rows.
-    const box = drawBox(["aaaa bbbb cccc"], "T", BoxProps(maxWidth: 8));
+    const box = drawBox(["aaaa bbbb cccc"], "T", BoxProps(maxWidth: 8)).toString;
     assert(box.splitLines.length == 5); // top + three content rows + bottom
     assert(box.canFind("aaaa") && box.canFind("bbbb") && box.canFind("cccc"));
 }
@@ -1275,7 +1307,7 @@ unittest
     // A styled line wrapped across rows is reset before the border, so color
     // cannot bleed onto the padding or frame.
     const styled = "red red red".stylize(Style.red);
-    const box = drawBox([styled], "T", BoxProps(maxWidth: 11));
+    const box = drawBox([styled], "T", BoxProps(maxWidth: 11)).toString;
     assert(box.canFind("\x1b[0m"));
 }
 
@@ -1286,7 +1318,7 @@ unittest
     import sparkles.base.text.grapheme : visibleWidth;
 
     // minWidth pads a short box out to a fixed total width so stacked boxes align.
-    const box = drawBox(["x"], "T", BoxProps(minWidth: 40));
+    const box = drawBox(["x"], "T", BoxProps(minWidth: 40)).toString;
     foreach (line; box.splitLines)
         assert(line.visibleWidth == 40);
 }
@@ -1300,7 +1332,7 @@ unittest
     // Setting minWidth == maxWidth yields a fixed-width box: long content wraps in,
     // short content pads out, every row lands on the requested total width.
     const box = drawBox(["aaaa bbbb cccc dddd eeee", "short"], "T",
-        BoxProps(minWidth: 20, maxWidth: 20));
+        BoxProps(minWidth: 20, maxWidth: 20)).toString;
     foreach (line; box.splitLines)
         assert(line.visibleWidth == 20);
 }
@@ -1314,7 +1346,7 @@ unittest
     // ellipsis keeps the title on one line, truncating it with '…' so the box
     // stays within maxWidth.
     const title = "Verifying 3 example(s) from docs/libs/base/how-to/foo.md";
-    const box = drawBox(["body"], title, BoxProps(maxWidth: 30, titleOverflow: TitleOverflow.ellipsis));
+    const box = drawBox(["body"], title, BoxProps(maxWidth: 30, titleOverflow: TitleOverflow.ellipsis)).toString;
     const lines = box.splitLines;
     foreach (line; lines)
         assert(line.visibleWidth <= 30);
@@ -1332,7 +1364,7 @@ unittest
     // row, a nested-box top rule sits above it, and every title word survives.
     const title = "This is a very long multi-line drawBox title. It ends here.";
     const box = drawBox(["Body content line one"], title,
-        BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap));
+        BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap)).toString;
     const lines = box.splitLines;
     foreach (line; lines)
         assert(line.visibleWidth <= 36);
@@ -1346,7 +1378,7 @@ unittest
     import std.algorithm.searching : canFind;
 
     // A title that already fits keeps the plain ╭──╼ … ╾ top even in wrap mode.
-    const box = drawBox(["body"], "Short", BoxProps(maxWidth: 40, titleOverflow: TitleOverflow.wrap));
+    const box = drawBox(["body"], "Short", BoxProps(maxWidth: 40, titleOverflow: TitleOverflow.wrap)).toString;
     assert(box.canFind("╭──╼ Short ╾"));
     assert(!box.canFind('┤') && !box.canFind('├'));
 }
@@ -1360,7 +1392,7 @@ unittest
     // Default expand: a long title still widens the box past maxWidth (maxWidth
     // only bounds the content), so the title is never wrapped or truncated.
     const title = "This is a very long multi-line drawBox title. It ends here.";
-    const box = drawBox(["body"], title, BoxProps(maxWidth: 20));
+    const box = drawBox(["body"], title, BoxProps(maxWidth: 20)).toString;
     assert(box.splitLines[0].canFind(title));
     assert(box.splitLines[0].visibleWidth > 20);
 }
@@ -1374,7 +1406,7 @@ unittest
     // A styled title wrapped into the nested box is reset before the border so its
     // color cannot bleed onto the frame.
     const styled = "cyan cyan cyan cyan cyan cyan cyan cyan".stylize(Style.cyan);
-    const box = drawBox(["body"], styled, BoxProps(maxWidth: 30, titleOverflow: TitleOverflow.wrap));
+    const box = drawBox(["body"], styled, BoxProps(maxWidth: 30, titleOverflow: TitleOverflow.wrap)).toString;
     assert(box.canFind("\x1b[0m"));
 }
 
@@ -1396,7 +1428,7 @@ unittest
             BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap)),
     ])
     {{
-        const str = drawBox(args[0], args[1], args[2]);
+        const str = drawBox(args[0], args[1], args[2]).toString;
         assert(drawBoxLines(args[0], args[1], args[2]).equal(str.splitLines));
         assert(drawBoxLines(args[0], args[1], args[2]).join("\n") == str);
     }}
@@ -1412,7 +1444,7 @@ unittest
     // drawBoxLines takes any input range of lines, not just string[]; a lazy range
     // (here a fixed-width box, which pulls content lazily) yields the same bytes.
     auto lazyContent = ["one", "two", "three"].map!(x => x);
-    const want = drawBox(["one", "two", "three"], "T", BoxProps(minWidth: 24, maxWidth: 24));
+    const want = drawBox(["one", "two", "three"], "T", BoxProps(minWidth: 24, maxWidth: 24)).toString;
     assert(drawBoxLines(lazyContent, "T", BoxProps(minWidth: 24, maxWidth: 24)).join("\n") == want);
 }
 
@@ -1463,7 +1495,7 @@ unittest
 
     // `preserve` wrapping keeps internal space runs (aligned columns) intact even in
     // a width-capped box; `collapse` would have folded "Name    Role" to "Name Role".
-    const box = drawBox(["Name    Role", "Bob     Dev"], "T", BoxProps(maxWidth: 30));
+    const box = drawBox(["Name    Role", "Bob     Dev"], "T", BoxProps(maxWidth: 30)).toString;
     assert(box.canFind("Name    Role"));
     assert(box.canFind("Bob     Dev"));
 }
@@ -1477,7 +1509,7 @@ unittest
     // the following space ("…wwww ") at width 17 and push the fixed-width box to 21;
     // trimming the trailing space keeps every line at the requested 20.
     const box = drawBox(["wwwwwwwwwwwwwwww x"], "T",
-        BoxProps(minWidth: 20, maxWidth: 20));
+        BoxProps(minWidth: 20, maxWidth: 20)).toString;
     foreach (line; box.splitLines)
         assert(line.visibleWidth == 20);
 }
@@ -1505,7 +1537,7 @@ unittest
         tuple(["aaaa bbbb cccc dddd", "short"], "T", BoxProps(minWidth: 20, maxWidth: 20)),
     ])
     {{
-        const str = drawBox(args[0], args[1], args[2]);
+        const str = drawBox(args[0], args[1], args[2]).toString;
         assert(drawBoxChunks!true(args[0], args[1], args[2]).join("") == str);
         assert(drawBoxChunks!false(args[0], args[1], args[2]).join("") == str);
     }}
@@ -1549,7 +1581,7 @@ unittest
 
     // Any input range of lines works; a lazy fixed-width box yields the same bytes.
     auto lazyContent = ["one", "two", "three"].map!(x => x);
-    const want = drawBox(["one", "two", "three"], "T", BoxProps(minWidth: 24, maxWidth: 24));
+    const want = drawBox(["one", "two", "three"], "T", BoxProps(minWidth: 24, maxWidth: 24)).toString;
     assert(drawBoxChunks!true(lazyContent, "T", BoxProps(minWidth: 24, maxWidth: 24)).join("") == want);
 }
 
@@ -1562,7 +1594,7 @@ unittest
     // Colors ride along with their word chunks, so the cell-granular stream still
     // reproduces drawBox's styled row exactly (reset before the border, no bleed).
     const styled = "red red red red".stylize(Style.red);
-    const want = drawBox([styled], "T", BoxProps(minWidth: 24, maxWidth: 24));
+    const want = drawBox([styled], "T", BoxProps(minWidth: 24, maxWidth: 24)).toString;
     assert(drawBoxChunks!false([styled], "T", BoxProps(minWidth: 24, maxWidth: 24)).join("") == want);
 }
 
@@ -1615,7 +1647,7 @@ unittest
     // it exactly, no bleed onto the frame).
     const styled = "alpha beta gamma delta epsilon".stylize(Style.red);
     const props = BoxProps(maxWidth: 24, titleOverflow: TitleOverflow.wrap);
-    assert(drawBoxChunks!false(["body"], styled, props).join("") == drawBox(["body"], styled, props));
+    assert(drawBoxChunks!false(["body"], styled, props).join("") == drawBox(["body"], styled, props).toString);
 }
 
 @("drawBox.chunks.titleOnlyNoBody")
@@ -1628,7 +1660,7 @@ unittest
     string[] noBody;
     const title = "This is a very long multi-line title here.";
     const props = BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap);
-    assert(drawBoxChunks!false(noBody, title, props).join("") == drawBox(noBody, title, props));
+    assert(drawBoxChunks!false(noBody, title, props).join("") == drawBox(noBody, title, props).toString);
 }
 
 @("drawBox.content.preservesBlankLines")
@@ -1648,7 +1680,7 @@ unittest
         BoxProps(minWidth: 20, maxWidth: 20), // fixed width, streamed
     ])
     {{
-        const box = drawBox(content, "T", props);
+        const box = drawBox(content, "T", props).toString;
         // Four content rows (two of them blank) between the borders.
         assert(box.splitLines.length == 6);
         assert(drawBoxChunks!true(content, "T", props).join("") == box);

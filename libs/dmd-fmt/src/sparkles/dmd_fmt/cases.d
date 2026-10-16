@@ -994,7 +994,7 @@ private string[] boxesFor(const Pane[] panes, bool footers, size_t minWidth)
 
     return panes
         .map!(p => drawBox(p.body_, p.title,
-            BoxProps(footer: footers ? p.footer : null, minWidth: minWidth)))
+            BoxProps(footer: footers ? p.footer : null, minWidth: minWidth)).toString)
         .array;
 }
 
