@@ -1,6 +1,6 @@
 # Recommended implementation and validation sequence
 
-**Last reviewed:** September 30, 2026.
+**Last reviewed:** October 16, 2026.
 
 ## Recommendation
 
@@ -9,6 +9,10 @@ Keep [PRoot][proot] as the broad-coverage backend for the working custom termina
 The Pad changes the immediate next experiment: it can exercise AVF ownership/permission machinery, but its protected-only capability means it cannot be the assumed test target for an unsigned nonprotected nixos-avf image. Pixel 10 Pro tests are deferred at the user's request; no hardware purchase or broad SoC support recommendation follows from the current evidence.
 
 [The contributor Pixel 7 Pro][pixel7] now supplies both AVF capability bits and an existing NNS app-UID session. Run two targeted follow-ups on that provisioned device: verify NNS source/kernel/policy identity and a real Nix workload; independently boot a bounded custom Linux root disk through non-protected AVF. The collector started no guest and used root ADB, so independent app/helper ownership and actual permission grants remain separate gates. Its current nix-on-droid frontend does not satisfy Sparkles integration by itself.
+
+## Current-target distribution
+
+The PRoot recommendation holds at a current target SDK, but not with today's packaging. [Termux on Google Play][play] establishes the constraint and a working answer: execute directly only what ships in the APK's native-library directory, and reach everything else through a loader. For the nix-on-droid backend that means `proot-static` and PRoot's loader as `lib*.so` native libraries with `PROOT_LOADER` pointing at the latter, `login` started as an argument to `/system/bin/sh`, and PRoot upgrades shipped as app releases. Termux's `linker64` route does not transfer, because Nix store executables are glibc-linked; nor does Termux's package universe, which is Bionic. Play review is a separate gate: the Play build had to drop `sharedUserId`, justify a `specialUse` foreground service and consolidate permissions. The executable-code policy is a third, and PRoot does not answer it: substituting from a binary cache downloads executable code whichever loader maps it. Termux's two years on Play show that review has tolerated this for a package manager, not that it permits it; its maintainers expect the `linker64` route to close. Keep targeting API 28 for sideloaded builds until M0b passes; it changes the packaging, not the backend contract.
 
 ## Backend contract
 
@@ -29,6 +33,7 @@ This is a research recommendation, not an accepted API specification. Translate 
 | Milestone                      | Work                                                                            | Exit evidence                                                                                                   |
 | ------------------------------ | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | M0: custom PRoot baseline      | Complete bootstrap in the custom package; shell/cache/package/local derivation  | Same app UID/domain recorded; canonical store, signed substitution, compiler and Git workflow run               |
+| M0b: current-target PRoot      | Ship `proot-static` and loader as native libraries; raise the target SDK        | M0's workload passes with no `execve` of an app-data file; APK still contains no DEX                            |
 | M1: capability model           | Integrate inventory and backend probes                                          | Stock app, shell and root authority reported separately; protected-only mode surfaced accurately                |
 | M2: no-DEX AVF owner           | Instantiate framework via attached JNI worker or deploy explicitly owned helper | Create/start/query/stop/delete a small guest without Android Terminal running; APK still contains no DEX        |
 | M3: custom Linux boot          | Prove supported boot inputs on selected firmware                                | Kernel/root disk boots; custom permission and verification path documented; no policy weakening hidden in setup |
@@ -67,3 +72,4 @@ Select a signed cache substitution, a metadata-heavy package operation, a small 
 [spec-guide]: ../../guidelines/spec-docs.md
 [pixel7]: ./device-validation/pixel7.md
 [contributing]: ./device-validation/contributing.md
+[play]: ./termux-play-store/index.md

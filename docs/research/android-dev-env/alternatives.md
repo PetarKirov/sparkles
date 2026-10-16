@@ -1,6 +1,6 @@
 # Adjacent approaches and escape hatches
 
-**Last reviewed:** September 30, 2026.
+**Last reviewed:** October 16, 2026.
 
 These options widen the design space without being interchangeable with the four main backends. They have not been implemented or benchmarked in this research.
 
@@ -16,7 +16,7 @@ These options widen the design space without being interchangeable with the four
 
 [Nix's distributed build model][builders] solves build placement, not local loader compatibility. [The ELF example][elf] demonstrates why a successful remote build does not make its interpreter path appear on Android.
 
-A Bionic port would need explicit packaging and cache policy, loader assumptions, dependency coverage and store mapping. This survey found no locally demonstrated drop-in Bionic replacement for the inspected nix-on-droid Linux bootstrap. Treat it as a separate portability project rather than a near-term substitute.
+A Bionic port would need explicit packaging and cache policy, loader assumptions, dependency coverage and store mapping. This survey found no locally demonstrated drop-in Bionic replacement for the inspected nix-on-droid Linux bootstrap. Treat it as a separate portability project rather than a near-term substitute. [Termux on Google Play][play] is the scale reference for that project: about 2,950 Bionic package recipes (2,056 main, 826 X11, 71 root) kept working at a current target only through a permanent fork of the package recipes, the Go toolchain and the app, with static and glibc executables dropped.
 
 ## Sources
 
@@ -30,3 +30,4 @@ A Bionic port would need explicit packaging and cache policy, loader assumptions
 [droidvm]: https://github.com/Droid-VM/DroidVM/blob/5c896915789294e3dbb9af81d6a53ee5f436887b/README.md
 [elf]: ./concepts/examples/elf-loader.d
 [concepts]: ./concepts/index.md
+[play]: ./termux-play-store/index.md
