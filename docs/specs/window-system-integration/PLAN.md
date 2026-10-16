@@ -414,6 +414,11 @@ Gate for slice 1: the emulator lane (`libs/wsi/scripts/verify-android-emulator.s
 passes the shared conformance suite and the clipboard suite, and refuses a clip
 past one Binder transaction with `capacity`; `comparison.md` records the run.
 
+Gate for slice 2: the same lane injects keys as evdev events on the
+emulator's keyboard and pointers through `input`, and the shared suite passes
+its chord, held-key repeat, IME commit, click and scroll properties; a touch
+drag arrives as one contact whose samples are all in the `ED3` history ring.
+
 ## Milestone M9 — TSF (deferred)
 
 Implement TSF as the second Win32 text-service backend after the desktop/renderer/host
