@@ -501,10 +501,10 @@ applies:
 1. the arguments are malformed: 2;
 2. with `--if-stale`, the output is fresh: 0;
 3. the device compiler, dub, or a SPIR-V or GLSL tool cannot be run: 3;
-4. the device configuration cannot be described, has no sources, names no
+4. the device configuration cannot be described, describes no build target
+   (it has no sources, or a target type that builds nothing), names no
    dcompute target, names anything but exactly one of the Vulkan targets of
-   `SHP1`, or yields
-   no device-only module: 2;
+   `SHP1`, or yields no device-only module: 2;
 5. the unit fails to compile: 3 if the device compiler cannot compile a
    minimal `@fragment` shader for that target either, 1 otherwise;
 6. the unit fails to validate or translate: 1.
