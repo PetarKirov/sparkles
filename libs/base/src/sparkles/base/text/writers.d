@@ -16,6 +16,8 @@ import sparkles.base.text.wire_names : AnyFormat, DSource, enumNames, Pretty, Re
     resolveRepr, WireName;
 import sparkles.reflection.kind : TypeKind, typeKindOf;
 
+public import sparkles.base.text.value_form : valueForm;
+
 version (unittest)
 {
     import core.time : dur;
@@ -2143,4 +2145,32 @@ unittest
 {
     // Rendered into the same sink as the text around it: no intermediate string.
     checkWriter!((ref b) => b.writeText(i"size $(formatted!writeBytes(1024UL)) ok"))("size 1.0KiB ok");
+}
+
+/// `writeDuration` as a value: `duration(d)`.
+mixin(valueForm!("writeDuration", "duration"));
+/// `writeBytes` as a value: `byteSize(n)`.
+mixin(valueForm!("writeBytes", "byteSize"));
+/// `writeFixedPoint` as a value: `fixedPoint(v, decimals)`.
+mixin(valueForm!("writeFixedPoint", "fixedPoint"));
+
+///
+@("valueForm.namedValues")
+@safe unittest
+{
+    import core.time : msecs;
+    import std.conv : text;
+
+    assert(byteSize(2048UL).toString == "2.0KiB");
+    assert(text(i"took $(duration(1500.msecs))") == "took 1.5s");
+    assert(text(fixedPoint(25, 1)) == "2.5");
+}
+
+@("valueForm.isAWriteTextSegment")
+@safe pure nothrow @nogc
+unittest
+{
+    // The value writes into the same sink as the text around it.
+    checkWriter!((ref b) => writeBytes(b, 1024UL))("1.0KiB");
+    checkWriter!((ref b) => b.writeText(i"[$(byteSize(1024UL))]"))("[1.0KiB]");
 }
