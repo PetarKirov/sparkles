@@ -4,7 +4,7 @@ The public symbols of `sparkles:base`, by module.
 
 ## `sparkles.base`
 
-Package module re-exporting `buffer`, `custom_float`, `lifetime`, `logger`,
+Package module re-exporting `buffer`, `custom_float`, `hash`, `lifetime`, `logger`,
 `meta`, `prettyprint`, `source_uri`, `static_init`, `styled_template`,
 `term_caps`, `term_color`, `term_style`, `text`, and `unique`.
 
@@ -38,6 +38,21 @@ happen — see the [buffer spec](../../../specs/base/buffer.md).
 
 Modelled on Phobos' `CustomFloat` without its defects — see the
 [CustomFloat spec](../../../specs/base/custom-float.md).
+
+## `sparkles.base.hash.blake3`
+
+| Symbol                                  | Description                                                                                    |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `blake3(input)`                         | The 32-byte BLAKE3 digest of a byte or `char` slice.                                           |
+| `blake3Keyed(key, input)`               | The keyed-mode digest (MAC/PRF) under a 32-byte key.                                           |
+| `blake3DeriveKey(context, keyMaterial)` | A 32-byte key derived for a hardcoded, globally unique context string.                         |
+| `Blake3`                                | Streaming hasher: output range and `std.digest` digest; `finish`, `finishXof(output, seek)`.   |
+| `Blake3.keyed` / `Blake3.deriveKey`     | Start a keyed or key-derivation hasher; `Blake3.withBackend` pins an implementation.           |
+| `Blake3Backend`, `bestBlake3Backend`    | `portable`, `sse41`, `avx2`, `avx512`, `neon`, and the fastest one this CPU supports (`pure`). |
+| `isSupported(backend)`                  | Whether a backend runs in this build on this CPU.                                              |
+
+Everything is `@safe pure nothrow @nogc` and CTFE-able. See
+[Hash bytes with BLAKE3](../how-to/hash-with-blake3.md).
 
 ## `sparkles.base.unique`
 
