@@ -20,7 +20,9 @@
 // a cross-compile.
 #define VK_NO_PROTOTYPES
 
-#if defined(__linux__)
+#if defined(__ANDROID__)
+#define VK_USE_PLATFORM_ANDROID_KHR
+#elif defined(__linux__)
 #define VK_USE_PLATFORM_WAYLAND_KHR
 #define VK_USE_PLATFORM_XCB_KHR
 #endif
