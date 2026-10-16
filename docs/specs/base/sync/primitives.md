@@ -82,7 +82,8 @@ held is a programming error, which builds with assertions **must** detect.
 on its way to the mutex at any time. An unlock that finds a designated waker
 pending **must** release without waking anyone; the designation ends when
 that waiter acquires the mutex or parks again. A designated waker that returns
-without the mutex, after a timeout, **must** end its designation and, if
+without the mutex, for any reason — a timeout or an escaping `Error` —
+**must** end its designation and, if
 waiters remain parked, wake one of them, so that the designation passes on.
 
 _Rationale:_ Waking a waiter on every contended unlock, as `parking_lot`
@@ -110,7 +111,9 @@ spin while a designated waker is pending.
 
 **SYJ1: Guards only.** `InterruptibleMutex` **must** expose acquisition only
 through operations that return a guard, and release only through the guard's
-destruction; it **must not** offer a raw `lock` or `unlock`.
+destruction; it **must not** offer a raw `lock` or `unlock` to its callers.
+`Condition` alone **must** reacquire it, through a package-internal
+acquisition that is not interruptible (SYC3).
 
 _Rationale:_ When cancellation races a grant, the operation must hand the
 lock on itself. A caller that also unlocked by hand would release a lock it
@@ -123,10 +126,11 @@ in callers that paired `lock` with `unlock` by hand
 guard, or reports timeout or cancellation with nothing held. Its deadline
 form behaves likewise.
 
-**SYJ3: Baton passing.** If cancellation arrives after the mutex was handed
-to a waiter, the waiter **must** keep it and succeed (SYI2); if it arrives
-before, the waiter **must** leave the queue, and no handoff **may** be
-addressed to it.
+**SYJ3: Baton passing.** If a handoff to a waiter is committed before
+cancellation wins the arbitration of its park (SPEC SYI3), the waiter **must**
+keep the mutex and succeed, leaving the cancellation pending (SYI2), however
+early the request arrived; if cancellation wins first, the parking lot
+removes the waiter, and no handoff **may** be addressed to it.
 
 **SYJ4: No pinning.** Holding an `InterruptibleMutex` **must not** pin the
 parker; its holder **may** suspend.
@@ -169,7 +173,11 @@ of the lock its waiters use.
 
 **SYC2: Wait.** `wait(guard)` **must** enqueue the caller, release the lock,
 and return only after a notification selected it, with the lock held again.
-A wait **must not** return spuriously.
+A wait **must not** return spuriously. A waiter moved onto the lock's queue
+(SYC5, SYC6) **must** continue as that lock's waiter when a release wakes it:
+one handed the lock **must** return holding it without acquiring again, and
+one designated (SYM6) **must** acquire as the designated waker, retiring its
+registration in the lock's bucket (SPEC SYP15) before it returns.
 
 **SYC3: Deadline and interruptible forms.** `waitUntil(guard, deadline)`
 **must** also return `false` when the deadline passes first. The
@@ -194,7 +202,10 @@ lock's queue without waking it; otherwise it **must** wake it.
 
 **SYC6: Notify all.** `notifyAll` **must** return the number of waiters it
 selected. If the lock is held, it **must** move all of them onto the lock's
-queue; otherwise it **must** wake one and move the rest.
+queue; otherwise it **must** wake one and move the rest. A free lock that
+grants only by handoff (SYJ5) **must** instead be acquired by the
+notification for the waiter it wakes, under the buckets' locks, so that the
+waiter returns owning it and no waiter is left queued on a free lock.
 
 _Rationale:_ Moving waiters onto the lock — wait morphing — turns a
 broadcast into one wake per release instead of a herd, which a user-space
@@ -242,6 +253,11 @@ shared waiter plus at most one upgradable waiter at the head of the queue.
 
 **SYR6: No recursion.** Acquiring shared mode while already holding the lock
 is a programming error: SYR3 makes it deadlock when a writer is parked.
+
+**SYR7: Progress.** A release **must** wake waiters whenever its change of
+mode lets a parked waiter acquire: the last shared release wakes a pending
+upgrade or else the head of the queue, and a release of upgradable mode
+wakes the next upgradable waiter.
 
 ## 8. Once
 

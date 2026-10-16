@@ -53,7 +53,7 @@ pass threshold from that record (DS2); the same machine sets `parkingBuckets`,
 
 ## S3: Reader–writer lock, semaphore, events, barrier, latch, address wait
 
-**Obligations.** SYR1–SYR6, SYS1–SYS5, SYE1–SYE4, SYB1–SYB3, SYW1–SYW3, SYH1
+**Obligations.** SYR1–SYR7, SYS1–SYS5, SYE1–SYE4, SYB1–SYB3, SYW1–SYW3, SYH1
 for these primitives.
 **Prerequisites.** S2.
 **Acceptance.** Oracles 1–7 and 9 pass for these primitives on every leg, and
