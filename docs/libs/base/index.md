@@ -48,6 +48,7 @@ _Task-oriented._ Short recipes for common jobs.
 - [Analyze Unicode text without allocation](./how-to/analyze-unicode-text.md)
 - [Own a heap value without the collector](./how-to/own-heap-values.md)
 - [Synchronize threads and fibers](./how-to/synchronize-threads-and-fibers.md)
+- [Hash bytes with BLAKE3](./how-to/hash-with-blake3.md)
 - [Test `@nogc` code with check helpers](./how-to/test-with-check-helpers.md)
 
 ### Reference
