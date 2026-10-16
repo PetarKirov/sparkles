@@ -129,3 +129,81 @@ int sendKey(xcb_connection_t* connection, ubyte keycode, bool press)
             XCB_CURRENT_TIME, XCB_NONE, 0, 0, 0));
     return error != 0 ? error : flushOrError(connection);
 }
+
+/**
+Another X client owning `CLIPBOARD`, on a connection of its own: it lists
+`TARGETS` and `UTF8_STRING`, and answers `UTF8_STRING` with `text`. A test
+calls `pump` from its step, since nothing else reads this connection.
+*/
+struct ForeignClipboardOwner
+{
+    xcb_connection_t* connection;
+    uint window;
+    uint clipboard, targets, utf8;
+    const(char)[] text;
+
+    /// Connects and takes the selection; `false` when either failed.
+    bool open(const(char)[] value)
+    {
+        int screen;
+        connection = xcb_connect(null, &screen);
+        if (connection is null || xcb_connection_has_error(connection) != 0)
+            return false;
+        text = value;
+        clipboard = internAtom(connection, "CLIPBOARD");
+        targets = internAtom(connection, "TARGETS");
+        utf8 = internAtom(connection, "UTF8_STRING");
+        auto root = xcb_setup_roots_iterator(xcb_get_setup(connection)).data.root;
+        window = xcb_generate_id(connection);
+        xcb_create_window(connection, 0, window, root, 0, 0, 1, 1, 0,
+            XCB_WINDOW_CLASS_INPUT_ONLY, XCB_COPY_FROM_PARENT, 0, null);
+        xcb_set_selection_owner(connection, window, clipboard, XCB_CURRENT_TIME);
+        return flushOrError(connection) == 0;
+    }
+
+    /// Answers every selection request queued on the connection.
+    void pump()
+    {
+        for (auto event = xcb_poll_for_event(connection); event !is null;
+            event = xcb_poll_for_event(connection))
+        {
+            scope (exit) free(event);
+            if ((event.response_type & 0x7F) != XCB_SELECTION_REQUEST)
+                continue;
+            auto request = cast(xcb_selection_request_event_t*) event;
+            xcb_selection_notify_event_t reply;
+            memset(&reply, 0, reply.sizeof);
+            reply.response_type = XCB_SELECTION_NOTIFY;
+            reply.time = request.time;
+            reply.requestor = request.requestor;
+            reply.selection = request.selection;
+            reply.target = request.target;
+            if (request.target == targets)
+            {
+                const uint[2] atoms = [targets, utf8];
+                xcb_change_property(connection, XCB_PROP_MODE_REPLACE,
+                    request.requestor, request.property, XCB_ATOM_ATOM, 32, 2,
+                    atoms.ptr);
+                reply.property = request.property;
+            }
+            else if (request.target == utf8)
+            {
+                xcb_change_property(connection, XCB_PROP_MODE_REPLACE,
+                    request.requestor, request.property, utf8, 8,
+                    cast(uint) text.length, text.ptr);
+                reply.property = request.property;
+            }
+            xcb_send_event(connection, 0, request.requestor, 0,
+                cast(const(char)*) &reply);
+            xcb_flush(connection);
+        }
+    }
+
+    void close()
+    {
+        if (connection is null)
+            return;
+        xcb_disconnect(connection);
+        connection = null;
+    }
+}

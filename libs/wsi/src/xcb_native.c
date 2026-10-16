@@ -19,6 +19,7 @@
 #include <xcb/xkb.h>
 #include <xcb/xtest.h>
 #include <xcb/xinput.h>
+#include <xcb/xfixes.h>
 #include <xcb-imdkit/imclient.h>
 #include <xcb-imdkit/imdkit.h>
 #include <xkbcommon/xkbcommon-x11.h>
