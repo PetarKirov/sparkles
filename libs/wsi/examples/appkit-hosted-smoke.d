@@ -16,6 +16,7 @@ version (OSX):
 import core.attribute : selector;
 import core.time : Duration, seconds;
 import std.stdio : writeln;
+import std.string : toStringz;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.input.pointer : PointerShape;
@@ -130,6 +131,14 @@ private extern class NSCursor : NSObject
 {
     static NSCursor IBeamCursor() @selector("IBeamCursor");
     static NSCursor currentCursor() @selector("currentCursor");
+}
+
+// The pasteboard as another application writes it: straight through AppKit.
+private extern class NSPasteboard : NSObject
+{
+    static NSPasteboard generalPasteboard() @selector("generalPasteboard");
+    long clearContents() @selector("clearContents");
+    bool setString(NSString text, NSString type) @selector("setString:forType:");
 }
 
 extern (D):
@@ -406,7 +415,156 @@ int main()
         outcome.skipped, " skipped)");
     checkMarkedText(wsi);
     writeln("ok: AppKit marked-text round trip");
+    checkClipboard(wsi, loop);
     return 0;
+}
+
+private extern (C) nothrow @nogc
+{
+    int task_info(uint task, int flavor, int* info, uint* count);
+    extern __gshared uint mach_task_self_;
+}
+
+/// This process' resident set and its high-water mark, in KiB, from
+/// `mach_task_basic_info`.
+private long[2] residentKiB()
+{
+    enum int machTaskBasicInfo = 20; // MACH_TASK_BASIC_INFO
+    // virtual, resident, resident_max (8 bytes each), two time_value_t,
+    // policy, suspend_count: 12 natural_t under `#pragma pack(4)`.
+    int[12] info;
+    uint count = info.length;
+    const kr = task_info(mach_task_self_, machTaskBasicInfo, info.ptr, &count);
+    assert(kr == 0, "task_info failed");
+    const resident = *cast(const(ulong)*) &info[2];
+    const peak = *cast(const(ulong)*) &info[4];
+    return [cast(long)(resident / 1024), cast(long)(peak / 1024)];
+}
+
+/*
+AppKit-only addendum: the clipboard (`DT1`–`DT5`). The shared suite
+round-trips 32 MiB through `NSPasteboard`: the backend's data provider pulls
+the pattern into the pasteboard's `NSData`, and the paste reads it back in
+64 KiB chunks. Then the pasteboard is written as another application would,
+straight through AppKit, and the backend must report its own offer there
+`withdrawn`, announce the new contents as a foreign offer, and read the text
+back intact.
+*/
+private void checkClipboard(ref AppKitWsi wsi, ref DefaultLoop loop)
+{
+    import core.time : MonoTime, msecs;
+
+    WindowConfig config;
+    assert(config.title.assign("sparkles:wsi AppKit clipboard"));
+    config.logicalSize = LogicalSize(320, 200);
+    const id = wsi.createWindow(config).value;
+
+    static struct ClipboardHooks
+    {
+        AppKitWsi* wsi;
+        DefaultLoop* loop;
+        ulong transferBytes = 32UL << 20; // `DT5`
+        enum size_t maxChunkBytes = AppKitWsi.clipChunkBytes;
+
+        void step(Duration timeout)
+        {
+            loop.runHostedOnce(*wsi, timeout).value;
+        }
+    }
+
+    auto hooks = ClipboardHooks(&wsi, &loop);
+    const before = residentKiB();
+    const started = MonoTime.currTime;
+    const clip = checkClipboardConformance(wsi, loop, hooks, id);
+    const elapsed = (MonoTime.currTime - started).total!"msecs";
+    const after = residentKiB();
+    // The pasteboard's own `NSData` lives in this process, since this
+    // process is its provider: 32 MiB the pasteboard asked for, which the
+    // offer's withdrawal hands back to malloc. WSI's share is one chunk; a
+    // copy of its own would show as a third 32 MiB.
+    const peakGrew = after[1] - before[1];
+    assert(peakGrew < 3 * 32 * 1024, "the round trip held more than the "
+        ~ "pasteboard's copies");
+    writeln("ok: AppKit clipboard conformance (", clip.checked,
+        " checked, 32 MiB through NSPasteboard in ", elapsed,
+        " ms, resident ", before[0] / 1024, " -> ", after[0] / 1024,
+        " MiB, peak +", peakGrew / 1024, " MiB)");
+
+    // An offer of this application's, for the other writer to replace.
+    static immutable ubyte[4] ours = cast(immutable(ubyte)[4]) "ours";
+    const own = wsi.offerClipboard(id, "text/plain;charset=utf-8", ours[]).value;
+    // Drain what the suite left, so only the foreign offer is looked for.
+    assert(!wsi.drain((WindowEvent event) {}).hasError);
+
+    static immutable string theirs = "copied by another writer: ünïcode ✓";
+    {
+        auto pasteboard = NSPasteboard.generalPasteboard();
+        auto text = NSString.alloc().initWithUTF8String(theirs.toStringz);
+        auto type = NSString.alloc().initWithUTF8String("public.utf8-plain-text");
+        pasteboard.clearContents();
+        assert(pasteboard.setString(text, type), "writing the pasteboard failed");
+    }
+
+    OfferId offer;
+    bool ownWithdrawn;
+    const deadline = MonoTime.currTime + 5.seconds;
+    while (offer == OfferId.init)
+    {
+        assert(MonoTime.currTime < deadline, "the foreign offer was never announced");
+        hooks.step(50.msecs);
+        assert(!wsi.drain((WindowEvent event) {
+            event.payload.match!(
+                (in DataOfferEvent e) {
+                    if (e.action == DataOfferAction.withdrawn)
+                    {
+                        assert(e.offer == own, "only an own offer is withdrawn");
+                        ownWithdrawn = true;
+                        return;
+                    }
+                    assert(e.offer != own, "the replaced offer was announced again");
+                    assert(!wsi.withText(e.mimeType, (scope const(char)[] mime) {
+                        if (mime == "text/plain;charset=utf-8")
+                            offer = e.offer;
+                    }).hasError);
+                },
+                (_) {});
+        }).hasError);
+    }
+    assert(ownWithdrawn, "the replaced own offer was not reported withdrawn");
+    PatternSink late;
+    assert(wsi.receive(own, "text/plain;charset=utf-8", late).error.kind
+        == WsiErrorKind.staleId, "a replaced own offer was still readable");
+
+    static struct Collect
+    {
+        char[128] text;
+        size_t length;
+        bool done, ok;
+
+        void chunk(TransferId, scope const(ubyte)[] bytes) @safe nothrow
+        {
+            text[length .. length + bytes.length] = cast(const(char)[]) bytes;
+            length += bytes.length;
+        }
+
+        void finish(TransferId, TransferStatus status) @safe nothrow
+        {
+            done = true;
+            ok = status == TransferStatus.completed;
+        }
+    }
+
+    Collect paste;
+    assert(!wsi.receive(offer, "text/plain;charset=utf-8", paste).hasError);
+    while (!paste.done)
+    {
+        assert(MonoTime.currTime < deadline + 5.seconds, "the paste never finished");
+        hooks.step(50.msecs);
+    }
+    assert(paste.ok && paste.text[0 .. paste.length] == theirs,
+        "another writer's text did not arrive intact");
+    assert(!wsi.destroyWindow(id).hasError);
+    writeln("ok: AppKit reads another writer's pasteboard");
 }
 
 /// AppKit-only addendum: the NSTextInputClient marked-text contract on a
