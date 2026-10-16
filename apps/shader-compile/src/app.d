@@ -39,7 +39,8 @@ depending on it would make the tool a prerequisite of itself.
 */
 module app;
 
-import std.algorithm : canFind, filter, map, sort, startsWith, uniq;
+import std.algorithm : all, canFind, filter, map, sort, startsWith, uniq;
+import std.ascii : isDigit;
 import std.array : array, join, replace;
 import std.conv : text;
 import std.file : dirEntries, exists, isFile, mkdirRecurse, readText, remove, rmdirRecurse,
@@ -50,7 +51,7 @@ import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, relati
 import std.process : environment, execute;
 import std.regex : ctRegex, matchAll, replaceAll;
 import std.stdio : stderr, writefln, writeln;
-import std.string : indexOf, lineSplitter, strip, stripRight;
+import std.string : indexOf, lastIndexOf, lineSplitter, strip, stripRight;
 
 import sparkles.shaders.compute_mode : ComputeMode, computeModeOf;
 
@@ -140,6 +141,32 @@ private string[] dedup(string[] items)
 }
 
 ///
+@("shaderCompile.unitOf.picksComputeModulesByTheirHead")
+@system unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir;
+
+    // `SHP3`, without a toolchain: of the sources, the `@compute` modules,
+    // and of those the device-only ones; a missing file is no member.
+    const root = buildPath(tempDir, "sparkles-shader-compile-unitof-test");
+    if (root.exists)
+        root.rmdirRecurse;
+    scope (exit) root.rmdirRecurse;
+    root.mkdirRecurse;
+    string mod(string name, string head)
+    {
+        const path = root.buildPath(name);
+        path.write(head ~ "\nvoid f() {}\n");
+        return path;
+    }
+    const entries = mod("entries.d", "@compute(CompileFor.deviceOnly) module entries;");
+    const shared_ = mod("shared_.d", "@compute(CompileFor.hostAndDevice) module shared_;");
+    const host = mod("host.d", "module host;");
+    const unit = unitOf(DeviceBuild(sources: [entries, host, shared_, root.buildPath("gone.d")]));
+    assert(unit.deviceOnly == [entries]);
+    assert(unit.sources == [entries, shared_]);
+}
+
 @("shaderCompile.parseDescribe.rootSettingsAndEverySource")
 @system unittest
 {
@@ -288,11 +315,14 @@ int main(string[] args)
             "(`-mdcompute-targets=`), so it is not a device build", build.packageName, configuration);
         return 2;
     }
-    if (build.target.canFind(',') || !build.target.startsWith("vulkan-"))
+    // The Vulkan versions dcompute accepts: one it does not would fail the
+    // unit and the capability probe alike, and read as a compiler without
+    // the fragment stage.
+    if (!["vulkan-100", "vulkan-110", "vulkan-120", "vulkan-130", "vulkan-140"].canFind(build.target))
     {
         stderr.writefln("shader-compile: %s's configuration `%s` must name exactly one Vulkan " ~
-            "target (`-mdcompute-targets=vulkan-<version>`), not `%s`", build.packageName,
-            configuration, build.target);
+            "target (`-mdcompute-targets=vulkan-<version>`, version 100 to 140), not `%s`",
+            build.packageName, configuration, build.target);
         return 2;
     }
     const unit = unitOf(build);
@@ -431,10 +461,43 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
     foreach (e; dirEntries(outDir, "*.frag", SpanMode.shallow).filter!(e => e.isFile).array)
         if (e.name.baseName !in produced)
             e.name.remove;
+    // So does a temporary a killed run left (`<file>.tmp-<pid>`, as
+    // `writeAtomically` names them): one whose process is gone. A live
+    // process's is a concurrent run's file about to be renamed, and a file
+    // only resembling a temporary is not this tool's.
+    foreach (e; dirEntries(outDir, "*.tmp-*", SpanMode.shallow).filter!(e => e.isFile).array)
+    {
+        const pid = e.name[e.name.lastIndexOf(".tmp-") + ".tmp-".length .. $];
+        if (pid.length && pid.all!isDigit && !isRunning(pid))
+            e.name.remove;
+    }
     writeAtomically(buildPath(outDir, stampName), stampFor(inputs, produced.keys.sort.array));
     if (keep)
         writefln("shader-compile: scratch kept at %s", scratch);
     return 0;
+}
+
+/// Whether `pid`, a decimal process id, names a running process in this
+/// process's PID namespace. A writer in another namespace (a container
+/// sharing the output directory) looks gone: concurrent runs are assumed to
+/// share one (`SHP8`). Where it cannot tell (not POSIX, an id out of range),
+/// it says yes, and the temporary stays.
+private bool isRunning(in char[] pid)
+{
+    import std.conv : ConvException, to;
+
+    version (Posix)
+    {
+        import core.stdc.errno : errno, ESRCH;
+        import core.sys.posix.signal : kill;
+
+        try
+            return kill(pid.to!int, 0) == 0 || errno != ESRCH;
+        catch (ConvException)
+            return true;
+    }
+    else
+        return true;
 }
 
 /// Writes `path` through a sibling temporary and a rename.
@@ -530,12 +593,15 @@ bool isFresh(string outDir, string packageDir)
     const stampPath = buildPath(outDir, stampName);
     if (!stampPath.exists)
         return false;
-    const lines = stampPath.readText.lineSplitter.array;
+    auto lines = stampPath.readText.lineSplitter.array;
+    while (lines.length && !lines[$ - 1].strip.length)
+        lines = lines[0 .. $ - 1];
     if (lines.length == 1 && lines[0] == "prebuilt")
         return true;
     if (!lines.length || lines[0] != stampVersion)
         return false;
     const pkg = packageDir.absolutePath.buildNormalizedPath;
+    size_t inputs, outputs;
     foreach (line; lines[1 .. $])
     {
         if (auto input = line.findSplit(" ")[2].findSplit(" "))
@@ -544,12 +610,17 @@ bool isFresh(string outDir, string packageDir)
                 const path = pkg.buildPath(input[2]).buildNormalizedPath;
                 if (!path.exists || sha256Of(path) != input[0])
                     return false;
+                inputs++;
                 continue;
             }
-        if (line.startsWith("output ") && !buildPath(outDir, line["output ".length .. $]).exists)
+        if (!line.startsWith("output "))
+            return false; // a line the format does not have: not a stamp this tool wrote
+        if (!buildPath(outDir, line["output ".length .. $]).exists)
             return false;
+        outputs++;
     }
-    return true;
+    // A run records at least one input (a module of the unit) and one output.
+    return inputs > 0 && outputs > 0;
 }
 
 @("shaderCompile.stamp.freshUntilAnInputChanges")
@@ -594,8 +665,30 @@ bool isFresh(string outDir, string packageDir)
     // Output a packager built elsewhere is taken as it is.
     out_.buildPath(stampName).write("prebuilt\n");
     assert(isFresh(out_, pkg));
+    out_.buildPath(stampName).write("prebuilt\n\n");
+    assert(isFresh(out_, pkg), "trailing blank lines do not change it");
     out_.buildPath(stampName).write("shader-compile stamp 0\n");
     assert(!isFresh(out_, pkg), "another tool version's stamp");
+    // A stamp with a line the format does not have is not one this tool
+    // wrote, and so is no evidence; nor is a version line alone with a
+    // corrupted input line.
+    out_.buildPath("fx.frag").write("glsl");
+    out_.buildPath(stampName).write(stampFor(hashInputs(build, unit), ["fx.frag"]) ~ "garbage\n");
+    assert(!isFresh(out_, pkg), "an unknown line");
+    out_.buildPath(stampName).write(stampVersion ~ "\ninput deadbeef\n");
+    assert(!isFresh(out_, pkg), "a malformed input line");
+    out_.buildPath(stampName).write(stampVersion ~ "\n");
+    assert(!isFresh(out_, pkg), "a version line alone vouches for nothing");
+    out_.buildPath(stampName).write(stampVersion ~ "\noutput fx.frag\n");
+    assert(!isFresh(out_, pkg), "outputs with no inputs");
+    out_.buildPath(stampName).write(stampFor(hashInputs(build, unit), []));
+    assert(!isFresh(out_, pkg), "inputs with no outputs");
+
+    // A contributing dependency's recipe is an input too.
+    out_.buildPath(stampName).write(stampFor(hashInputs(build, unit), ["fx.frag"]));
+    assert(isFresh(out_, pkg));
+    dep.buildPath("dub.sdl").write(`name "shader" // new flags`);
+    assert(!isFresh(out_, pkg), "a dependency's recipe changed");
 }
 
 private enum Dialect
@@ -628,10 +721,11 @@ string header(in DeviceBuild build, in Unit unit)
 @("shaderCompile.header.namesTheEntryModulesRelativeToTheirPackage")
 @system unittest
 {
-    const build = DeviceBuild(packageName: "sparkles:ui", packageDir: "/r/libs/ui");
+    // The package as `dub describe --root=libs/ui` names it: by its recipe.
+    const build = DeviceBuild(packageName: "ui", packageDir: "/r/libs/ui");
     const unit = Unit(deviceOnly: ["/r/libs/ui/shaders/effects.d"]);
     assert(format(header(build, unit), "dim") ==
-        "// Generated by shader-compile from sparkles:ui's shaders/effects.d (entry point `dim`).\n" ~
+        "// Generated by shader-compile from ui's shaders/effects.d (entry point `dim`).\n" ~
         "// Do not edit: it is regenerated from the D source whenever that changes.\n");
 }
 
@@ -736,31 +830,3 @@ private enum capabilityProbe = `@compute(CompileFor.deviceOnly) module probe;
 import ldc.dcompute;
 @fragment __vector(float[4]) probe(@input __vector(float[4]) c) { return c; }
 `;
-
-@("shaderCompile.unitOf.repositoryUi")
-@system unittest
-{
-    import std.path : dirName;
-
-    // The repository's own device build, as dub would describe it — the
-    // sources listed by hand here are exactly what the unit must pick out:
-    // every `@compute` module, of the package and of its dependencies, and no
-    // other. `attributes.d` is not one: on the device it only re-exports
-    // `ldc.dcompute`, so it is imported, never compiled.
-    const root = __FILE_FULL_PATH__.dirName.buildPath("..", "..", "..").buildNormalizedPath;
-    string p(string rel) => root.buildPath(rel);
-    const build = DeviceBuild(packageName: "sparkles:ui", packageDir: p("libs/ui"),
-        sources: [p("libs/ui/shaders/effects.d"), p("libs/ui/src/sparkles/ui/effect.d"),
-            p("libs/ui/src/sparkles/ui/effect_shaders.d"),
-            p("libs/shaders/src/sparkles/shaders/attributes.d"),
-            p("libs/shaders/src/sparkles/shaders/compute_mode.d"),
-            p("libs/shaders/src/sparkles/shaders/math.d"),
-            p("libs/shaders/src/sparkles/shaders/testing.d"),
-            p("libs/shaders/src/sparkles/shaders/types.d")]);
-    const unit = unitOf(build);
-    assert(unit.deviceOnly == [p("libs/ui/shaders/effects.d")], unit.deviceOnly.text);
-    assert(unit.sources == [p("libs/ui/shaders/effects.d"),
-        p("libs/ui/src/sparkles/ui/effect_shaders.d"),
-        p("libs/shaders/src/sparkles/shaders/math.d"),
-        p("libs/shaders/src/sparkles/shaders/types.d")], unit.sources.text);
-}
