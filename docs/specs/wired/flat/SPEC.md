@@ -113,7 +113,8 @@ record of reviews live in [PLAN.md](./PLAN.md), and unresolved questions in
    `return scope`, and the library never copies, retains or frees them.
 10. The library's own files carry a header with a magic number, a version, a
     layout digest and a content key; a mismatch is a rejection, not a
-    migration, and a pinned digest forces a version change at compile time.
+    migration. The version is declared with the layout's pinned digest, so
+    a changed layout fails to compile until it gets a new version.
 11. A builder's output is a pure function of its inputs, so a build that
     produces a file twice produces the same bytes.
 
@@ -145,11 +146,14 @@ declaration order.
 
 Each type has a **canonical alignment**, which is a property of the format and
 not of the compiler: the size of a 1-, 2-, 4- or 8-byte scalar; 1 for the
-24-bit integers; an array's element alignment; and for a record, the largest
-canonical alignment of its fields, or 1 when it has none. A record is
-**naturally aligned** when every field, recursively, sits at an offset that is
-a multiple of its canonical alignment; `flatAlignOf!T` is its canonical
-alignment. A record whose fields do not all sit so is **packed**.
+24-bit integers; for an `Offset`, the alignment of its integer; an array's
+element alignment; 1 for a dynamic member, whatever its element type, and for
+`FlatSelect`, `FlatTagged` and every other zero-size marker type; and for a
+record, the largest canonical alignment of its fields, or 1 when it has none.
+`flatAlignOf!T` is a record's canonical alignment. A record is **naturally
+aligned** when every field, recursively, sits at an offset that is a multiple
+of its canonical alignment and its declared size is a multiple of
+`flatAlignOf!T`. A record that is not naturally aligned is **packed**.
 
 A **view** is a value that pairs a borrowed byte slice with a record type and
 the position of one record in it. An [in-place view](../../../glossary.md#in-place-view)
@@ -169,8 +173,8 @@ Flat fields are positional.
 
 **WFL1: Admissible leaves.** A leaf **must** be one of `ubyte`, `byte`,
 `char`, `ushort`, `short`, `wchar`, `uint`, `int`, `dchar`, `ulong`, `long`,
-`float`, `double`; the 24-bit integers `FlatU24` and `FlatI24`; an `Offset` or
-`FlatSpan` (§5.3, §7); a static array `E[N]` with `N > 0` of an admissible leaf
+`float`, `double`; the 24-bit integers `FlatU24` and `FlatI24`; an `Offset`
+(§5.3); a static array `E[N]` with `N > 0` of an admissible leaf
 or record; `bool`; or an `enum` whose base type is an admissible integer leaf.
 Every other field type **must** fail the layout proof.
 
@@ -239,14 +243,17 @@ accepts and the extent ignores.
 `struct`; a struct with no fields; a nested struct that carries a context
 pointer; a field of a type not admitted by `WFL1`; a field that is neither
 dynamic nor conditional after a conditional field or a dynamic member; a
-conditional field after a dynamic member; and a struct with a postblit, copy
+conditional field after a dynamic member; a nested record, or a static array
+of records, whose record has dynamic members or conditional fields, unless it
+is the last field of its parent; and a struct with a postblit, copy
 constructor, destructor or `opAssign`. Each rejection **must** name the field
 or member responsible.
 
 _Rationale:_ A non-`static` nested struct carries a hidden pointer, which the
-shared schema's field enumeration drops without comment. Lifecycle hooks would
-run on values that the library constructs by reinterpretation, where they
-never run.
+shared schema's field enumeration drops without comment. An inline record
+whose extent varies would overlap the parent's later fields, whose offsets are
+fixed. Lifecycle hooks would run on values that the library constructs by
+reinterpretation, where they never run.
 
 **WFL5: Declared byte order.** Every leaf wider than one byte, and every
 element of such a leaf array, **must** have a byte order resolved at compile
@@ -277,8 +284,9 @@ target.
 
 _Rationale:_ D's alignment of `ulong` and `double` is 8 on x86_64 and 4 on
 i686, so `struct { uint a; ulong b; }` has no padding on i686 and 4 bytes of
-it on x86_64. Judging natural alignment by the canonical rule, not by the
-compiler's, rejects that struct on both targets alike.
+it on x86_64, and `struct { ulong a; uint b; }` has a size of 12 on i686 and
+16 elsewhere. Judging natural alignment by the canonical rule, including the
+declared size, rejects both structs on every target alike.
 
 **WFL7: Admission for in-place use.** `isFlatInPlace!(T, hostEndian)` **must**
 be true exactly when `T` is a naturally aligned record with no dynamic members,
@@ -357,9 +365,10 @@ read **may** loop or recurse over data; eager validation is bounded by
 
 **WFL15: Opening a view.** `FlatView!T.open(bytes, at = 0, regionBase = 0)`
 **must** check that the fixed part fits at `at` and check every `@FlatConst`
-field in the fixed part (§5.1). When `T` carries a type-level `@WireCheck`, it
-**must** then decode the record as `WFL20` does, which range-checks its present
-conditional fields, and run the checks. It returns a view or the first failure,
+field in the fixed part (§5.1), including those of nested records. When `T`,
+or a nested record in its fixed part, carries a type-level `@WireCheck`, it
+**must** then decode that record as `WFL20` does, which range-checks its
+present conditional fields, and run the checks. It returns a view or the first failure,
 and **must not** inspect dynamic members or offset targets, nor conditional
 fields beyond what those checks require.
 
@@ -390,6 +399,8 @@ bytes are not proven to have.
 type, an accessor for a 2-, 4- or 8-byte leaf **must** compile, apart from its
 bounds check, to one load of the leaf's width, unaligned where the target
 permits it, followed by one byte swap when the leaf's order is not the host's.
+For a 16-bit leaf the swap **may** be a rotate by 8 bits, and a `float` or
+`double` leaf **may** add one move into a floating-point register.
 
 _Rationale:_ This is the owner's zero-copy rule stated per field, which is
 what a packed format such as OpenType can have. An LDC probe compiles a
@@ -464,26 +475,36 @@ target and union variant reachable from the root, and report the first failure,
 or every failure into a caller-supplied sink as in
 [expressiveness §7.1](../expressiveness/SPEC.md#_7-1-accumulation). After a
 successful validation of unchanged bytes, no read of a view of the same root
-**may** return an error, except `indexOutOfRange` for a caller's argument and
-`invalidUtf8` from a `checked` string that validation was told to skip.
+**may** return an error, except `indexOutOfRange` for a caller's argument.
 
 **WFL24: Validation limits.** Validation **must** charge each record, array
 element and string it visits `max(extent, 1)` bytes against
 `FlatLimits.traversalBytes`, and track the number of offsets followed on the
-current path against `FlatLimits.maxDepth`. It **must** stop with
-`limitExceeded`, naming the limit, at the first charge or step that passes one.
-The defaults are `maxDepth = 64` and `traversalBytes = 8 × region length`, at
-least 4096.
+current path against `FlatLimits.maxDepth`. When it follows an offset, it
+**must** check the depth before charging the target. It **must** stop with
+`limitExceeded`, naming the limit, at the first step or charge that passes one.
+The defaults are provisional ([O7](./open-issues.md#o7-provisional-validation-limits)):
+`maxDepth = 64`, and `traversalBytes` equal to 64 times the region length,
+clamped to between 16,384 and 2^30 − 1.
 
 _Rationale:_ Offsets let many records share one target, so a small input can
 describe an exponentially large tree. Charging at least one byte per element
 bounds arrays of empty elements, whose count alone comes from the data. A
-self-referential offset adds one step of depth per visit, so it stops at
-`maxDepth` long before the traversal budget. Cap'n Proto requires the same
-defence: a reader increments a counter by the size of each object it
-dereferences and fails past a limit, with a pointer depth limit of 64 in its C++
-implementation ([encoding](https://capnproto.org/encoding.html); documented
-behaviour, not reproduced locally).
+self-referential offset stops at whichever limit it reaches first; checking
+depth first makes a chain of small records stop at `maxDepth`. The defaults
+are HarfBuzz's: its sanitizer allows 64 operations per byte, clamped to
+between 16,384 and `0x3FFFFFFF`
+([`hb-sanitize.hh`](https://github.com/harfbuzz/harfbuzz/blob/f20f4c20bcb715eeb7974854b0689688975fdeee/src/hb-sanitize.hh#L110-L117),
+[its use](https://github.com/harfbuzz/harfbuzz/blob/f20f4c20bcb715eeb7974854b0689688975fdeee/src/hb-sanitize.hh#L236-L241)),
+and a nesting limit of 64
+([`hb-limits.hh`](https://github.com/harfbuzz/harfbuzz/blob/f20f4c20bcb715eeb7974854b0689688975fdeee/src/hb-limits.hh#L52-L53)).
+Shared targets, such as the Coverage tables `GSUB` and `GPOS` reuse, are
+charged at every visit, so the budget is checked against real fonts in
+`PLAN.md`. Cap'n Proto requires the same defence: a reader increments a
+counter by the size of each object it dereferences and fails past a limit, with
+a pointer depth limit of 64 in its C++ implementation
+([encoding](https://capnproto.org/encoding.html); documented behaviour, not
+reproduced locally).
 
 ## 5. Variable-length members
 
@@ -647,7 +668,9 @@ they name, conditions, offset widths, bases and nullability, union tags, and
 for an `enum` leaf its members' values. A record reached a second time
 **must** be serialized as a back-reference to its first-visit index, so that
 recursive layouts terminate. The serialization **must not** include field,
-member or type names, documentation, or anything target-dependent.
+member or type names, documentation, `@FlatLayoutPin` and `@FlatArena`
+attributes, `@WireCheck` attributes, or anything target-dependent. The
+depth-first list of records it visits is the root's **visit table**.
 
 _Rationale:_ The digest guards against reading a file with a different layout,
 which is an accident, not an attack; content identity and integrity are the
@@ -655,14 +678,22 @@ content key's job (§7). Names are excluded so that renaming a field keeps
 existing files readable. `wireSchemaDigest` cannot serve: it hashes field and
 enum member names and omits offsets and offset targets.
 
-**WFL54: Layout pins.** A record **may** carry `@FlatLayoutPin(d)`. When
-`flatLayoutDigest!T` differs from `d`, the proof **must** fail with a message
-giving the computed digest. Every arena root **must** carry a pin.
+**WFL54: Layout pins.** A record **may** carry one or more
+`@FlatLayoutPin(version, digest)` attributes, which together are its pin
+history. The proof **must** fail when the versions are not strictly
+increasing in declaration order, when two pins share a digest, or when
+`flatLayoutDigest!T` differs from the digest of the last pin; the message
+**must** give the computed digest. Every arena root **must** carry a pin
+history, and its **current version** is the last pin's version.
+`openFlatArena` and the builder's `finish` **must** take the version from the
+pin history, never from an argument.
 
 _Rationale:_ A changed layout without a changed version would be read as a
-`layoutMismatch` at run time on every device. A pin turns the change into a
-compile error at the declaration, where the author bumps the version and the
-pin together.
+`layoutMismatch` at run time on every device. With the version declared next
+to the digest, a layout change fails to compile until the author appends a
+pin with a new version; prior pins stay, so reusing an old digest or version
+is a compile error too. Rewriting the last pin in place is the remaining
+escape, which the golden files of `PLAN.md` FL3 catch.
 
 ## 6. Describing OpenType
 
@@ -832,24 +863,25 @@ those targets take the in-place path for naturally aligned records.
 **WFL43: The arena header.** An arena file **must** begin with this record,
 little-endian, at offset 0:
 
-| Offset | Field          | Type        | Meaning                                                         |
-| ------ | -------------- | ----------- | --------------------------------------------------------------- |
-| 0      | `magic`        | `ubyte[8]`  | Format identity, chosen by the format and fixed forever         |
-| 8      | `version`      | `uint`      | Format version, incremented by the format's owner               |
-| 12     | `headerSize`   | `uint`      | 64, the size of this header                                     |
-| 16     | `layoutDigest` | `uint[2]`   | `flatLayoutDigest` of the root record (`WFL41`), low half first |
-| 24     | `byteLength`   | `uint[2]`   | Total file length, header included, low half first              |
-| 32     | `contentKey`   | `ubyte[32]` | The content hash of the inputs the file was built from          |
+| Offset | Field          | Type        | Meaning                                                             |
+| ------ | -------------- | ----------- | ------------------------------------------------------------------- |
+| 0      | `magic`        | `ubyte[8]`  | Format identity, from the root's `@FlatArena(magic)`, fixed forever |
+| 8      | `version`      | `uint`      | The root's current version, from its pin history (`WFL54`)          |
+| 12     | `headerSize`   | `uint`      | 64, the size of this header                                         |
+| 16     | `layoutDigest` | `uint[2]`   | `flatLayoutDigest` of the root record (`WFL41`), low half first     |
+| 24     | `byteLength`   | `uint[2]`   | Total file length, header included, low half first                  |
+| 32     | `contentKey`   | `ubyte[32]` | The content hash of the inputs the file was built from              |
 
 `layoutDigest` and `byteLength` are 64-bit values stored as two `uint` halves,
 so that the header needs only 4-byte alignment (`WFL45`). The root record
 **must** start at offset 64.
 
-**WFL44: Opening an arena.** `openFlatArena!(Root, magic, version)(bytes,
-regionBase = 0)` **must** compile only for a `Root` carrying `@FlatArena`, and
+**WFL44: Opening an arena.** `openFlatArena!Root(bytes, regionBase = 0)`
+**must** compile only for a `Root` carrying `@FlatArena(magic)` and a pin
+history, and
 **must** check, in this order, stopping at the first failure: at least 8 bytes
 (`truncated`); `magic` (`notThisFormat`); at least 64 bytes (`truncated`);
-`version` (`unsupportedVersion`, carrying both values); `headerSize`
+`version` against the current version (`unsupportedVersion`, carrying both); `headerSize`
 (`invalidValue`); `layoutDigest` against `flatLayoutDigest!Root`
 (`layoutMismatch`, carrying both); `byteLength` equal to the input length
 (`invalidLength`). It then opens the root as `WFL15` does and returns its view,
@@ -857,8 +889,7 @@ in time independent of the file's size. Eager validation is a separate call.
 
 _Rationale:_ Checking the magic before the full header length lets a short
 unrelated file report `notThisFormat`. Keeping "wrong version" distinct from
-"same version, different layout" exposes a forgotten version bump, which a pin
-(`WFL54`) prevents at compile time. Arena files are caches keyed by content and
+"same version, different layout" exposes a pin rewritten in place (`WFL54`). Arena files are caches keyed by content and
 rebuilt on mismatch, so no migration path is specified. Leaving validation to
 the caller keeps opening cheap; every later read is bounded either way.
 
@@ -866,7 +897,7 @@ the caller keeps opening cheap; every later read is bounded either way.
 `@FlatArena` **must** have a canonical alignment of at most 4, or the proof
 fails. A record that needs a 64-bit integer **must** store it as two `uint`
 fields or a `ubyte[8]`. `openFlatArena` and `FlatBuilder` **must** reject a
-root without `@FlatArena` at compile time.
+root without `@FlatArena` or without a pin history at compile time.
 
 _Rationale:_ Android stores uncompressed APK assets aligned to 4 bytes by
 [zipalign](https://developer.android.com/tools/zipalign) (documented behaviour,
@@ -876,7 +907,7 @@ can rely on. That alignment holds only for assets stored uncompressed, and
 Within the file, the builder aligns each record to its own alignment, so a file
 mapped at a 4-byte boundary is aligned throughout.
 
-**WFL46: Spans and strings.** `FlatSpan!E` **must** be a record of two
+**WFL46: Spans and strings.** `FlatSpan!E` **must** be a record, not a leaf, of two
 little-endian `uint` fields, `offset` from the region start and `count`, naming
 a uniform array of `E`. `FlatString` **must** be `FlatSpan!char`. Its accessor
 returns the bytes as `const(char)[]` without checking UTF-8, in constant time;
@@ -907,8 +938,9 @@ with more storage or abandon it.
 
 **WFL49: Deterministic output.** The builder's output **must** be a pure
 function of the sequence of builder calls and their arguments. Alignment gaps
-and pads **must** be zero bytes. `finish(magic, version, contentKey)` **must**
-write the arena header of `WFL43` with `flatLayoutDigest!Root`.
+and pads **must** be zero bytes. `finish(contentKey)` **must** write the
+arena header of `WFL43`, taking the magic from `@FlatArena`, the version from
+the pin history and the digest from `flatLayoutDigest!Root`.
 
 _Rationale:_ Nix builds the startup slice's files at package build time, and
 both reproducibility and content-keyed caching need byte-identical output for
@@ -934,17 +966,24 @@ A font port maps a `maxDepth` stop to its own `cycle` kind and supplies the
 table tag itself.
 
 **WFL56: Compact paths.** A `FlatError` **must** store the field's location as
-the index of its layout entry and at most 8 array indices, not as text, and
-**must not** exceed 128 bytes. Its `toString(writer)` **must** render the path
-on demand in the [path syntax](../SPEC.md#_9-errors) of base §9, such as
-`$.itemVariationDataOffsets[3].regionIndexes`, writing `…` for indices beyond
-the eighth. Building or rendering a `FlatError` **must not** allocate from the
-garbage collector.
+a sequence of hops, not as text. A hop is a record's index in the root's visit
+table (`WFL41`), a field's ordinal in that record, and an optional array index;
+a path crosses into a new hop at every nested record, array element and
+followed offset, so recursive layouts repeat visit-table entries rather than
+needing new ones. The error **must** keep the first hop and the 7 innermost,
+and record whether hops between them were dropped. Its `toString(writer)`
+**must** render the path on demand in the [path syntax](../SPEC.md#_9-errors)
+of base §9, such as `$.itemVariationDataOffsets[3].regionIndexes`, where a
+followed offset continues the path with the target's field, and **must** write
+`…` where hops were dropped. A `FlatError` **must not** exceed 160 bytes, and
+building or rendering one **must not** allocate from the garbage collector.
 
 _Rationale:_ Every `FlatResult` carries room for an error, and test threads
 have 512 KiB stacks. A text path would make each result as large as its longest
-path; a layout index and a few integers keep it small, and the names come from
-static data.
+path. Eight hops of a 16-bit record index, a 16-bit field ordinal and a 64-bit
+array index take 96 bytes; with the kind, the limit, two offsets, the value
+and its bound, and a pointer to the root's static name table, the error stays
+under 160.
 
 Error kinds (proposed `FlatErrorKind`):
 
@@ -984,7 +1023,7 @@ requirements bind behaviour, not spelling.
 | `flatDecode!T(bytes, at)`                                                           | `WFL20`                   |
 | `validateFlat!T(bytes, limits[, sink])`                                             | `WFL23`, `WFL24`          |
 | `flatLayoutDigest!T`, `@FlatLayoutPin`                                              | `WFL41`, `WFL54`          |
-| `openFlatArena!(Root, magic, version)(bytes, regionBase)`                           | `WFL44`                   |
+| `openFlatArena!Root(bytes, regionBase)`, `@FlatArena(magic)`                        | `WFL44`                   |
 | `FlatBuilder!(Root, Storage)`: `reserve`, `reserveArray`, `write`, `link`, `finish` | `WFL47`–`WFL50`           |
 
 | ID                        | Requirement                                              | Traces to                                        | Status  |

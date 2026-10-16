@@ -94,6 +94,20 @@ little-endian machine compiles it. A QEMU user-mode run of a big-endian target
 (for example `s390x`) would close the gap if LDC can target it from the dev
 shell; until then the evidence for those two branches stays `partial`.
 
+## O7: Provisional validation limits
+
+**Affects:** `WFL24`. **Blocks:** FL2 acceptance.
+
+The defaults, a depth of 64 and a traversal budget of 64 times the region
+length clamped to between 16,384 and 2^30 − 1, are HarfBuzz's sanitizer limits
+and are not measured for Flat. Flat charges a shared target at every visit,
+and `GSUB` and `GPOS` share Coverage tables heavily, so the budget may reject
+valid fonts; `COLR` paint graphs may nest deeper than the acceptance set.
+FL2's gate runs `validateFlat` with the defaults over every bundled font's
+`GSUB`, `GPOS`, `GDEF` and `HVAR` and records the largest charge and depth. If
+a table fails, either the factor rises or shared targets are charged once per
+validation, which needs a bounded visited set.
+
 ## O8: Evolution of arena formats
 
 **Affects:** `WFL43`, `WFL44`, `WFL54`.
@@ -135,7 +149,14 @@ names no field path, and its field enumeration drops a nested struct's context
 pointer without comment. Flat's checks therefore run before the schema is
 built.
 
-The FL0 spike in [PLAN.md](./PLAN.md#fl0-specification-review-and-the-o10-spike)
-shows whether the lockstep walk carries Flat's attributes and messages; if it
-does not, the shared schema gains a typed slot for format annotations before
-FL1 starts.
+**Spike result (2026-10-17): feasible.** The FL0 spike, recorded with its
+evidence in [PLAN.md](./PLAN.md#fl0-specification-review-and-the-o10-spike),
+walked natural, packed, dynamic-tailed and nested records in lockstep with
+`wireSchemaOf!(Flat, T)` on LDC 1.42.0 and DMD 2.112.1, with no change to
+`sparkles:wired`. It reached and called a function alias through the field's
+own attributes, and Flat's check reported the pointer field and the context
+pointer with their paths before the schema builder could. Two points carry into
+FL1: pair fields with schema children by ordinal, not by wire key; and treat
+the context-pointer rejection as Flat's, since the schema hides it. `Offset`
+targets, unions, recursion and cross-compiles were not covered. The issue
+closes when the owner accepts FL0.
