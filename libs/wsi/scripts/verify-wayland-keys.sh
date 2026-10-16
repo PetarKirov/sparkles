@@ -47,7 +47,7 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/wsi/examples" \
   "$repo/libs/wsi/examples/x11-key-injector.d" \
   "$repo/libs/wsi/src/xcb_native.c" \
-  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxcb-xinput -L-lxkbcommon -L-lxkbcommon-x11 \
+  -L-lxcb -L-lxcb-xkb -L-lxcb-xtest -L-lxcb-xinput -L-lxcb-xfixes -L-lxkbcommon -L-lxkbcommon-x11 \
   -of="$work/x11-key-injector"
 
 cat >"$work/lane.sh" <<EOF

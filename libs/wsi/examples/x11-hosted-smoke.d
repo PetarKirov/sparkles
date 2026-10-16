@@ -11,13 +11,15 @@ module x11_hosted_smoke;
 version (linux):
 
 import core.time : Duration, MonoTime, msecs, seconds;
+import std.conv : text;
 import std.stdio : writeln;
 import std.sumtype : match;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.wsi;
 import xcb_native : xcb_connection_t;
-import xcb_test_input : focusWindow, resizeWindow, sendButton, sendClose,
+import xcb_test_input : ForeignClipboardOwner, focusWindow, resizeWindow,
+    sendButton, sendClose,
     sendKey, sendRelativeMotion, warpPointerOnScreen;
 
 private struct X11Hooks
@@ -334,5 +336,110 @@ int main()
         writeln("ok: X11 queue overflow reported, not fatal (", dropped,
             " dropped of ", dropped + delivered, ")");
     }
+
+    /*
+    Addendum: the clipboard (`DT1`–`DT5`). The shared suite round-trips 1 MiB
+    through the X server, which this backend serves and reads `INCR` in
+    64 KiB chunks. Then another client takes the selection: its offer is
+    announced from its `TARGETS`, with `UTF8_STRING` as UTF-8 text, and reads
+    back through the same path.
+    */
+    {
+        WindowConfig config;
+        assert(config.title.assign("sparkles:wsi X11 clipboard"));
+        const id = wsi.createWindow(config).value;
+        ForeignClipboardOwner foreign;
+        static struct ClipboardHooks
+        {
+            X11Wsi* wsi;
+            DefaultLoop* loop;
+            ForeignClipboardOwner* foreign;
+            ulong transferBytes = 32UL << 20; // `DT5`
+            enum size_t maxChunkBytes = X11Wsi.clipChunkBytes;
+
+            void step(Duration timeout)
+            {
+                wsi.runIntegratedOnce(*loop, timeout).value;
+                if (foreign.connection !is null)
+                    foreign.pump();
+            }
+        }
+        auto clipHooks = ClipboardHooks(&wsi, &loop, &foreign);
+        const before = residentKiB();
+        const started = MonoTime.currTime;
+        const clip = checkClipboardConformance(wsi, loop, clipHooks, id);
+        const grew = residentKiB() - before;
+        // `DT4`: one 64 KiB chunk per transfer in flight; the sink checks
+        // each byte and keeps none, so 32 MiB must not show up here.
+        assert(grew < 4 * 1024, text("resident memory grew by ", grew,
+            " KiB across a 32 MiB round trip"));
+        writeln("ok: X11 clipboard conformance (", clip.checked,
+            " checked, 32 MiB through INCR in ",
+            (MonoTime.currTime - started).total!"msecs", " ms, resident +", grew, " KiB)");
+
+        static immutable string theirs = "copied in another client: ünïcode";
+        assert(foreign.open(theirs), "the foreign client could not take CLIPBOARD");
+        scope (exit) foreign.close();
+        OfferId offer;
+        const deadline = MonoTime.currTime + 5.seconds;
+        while (offer == OfferId.init)
+        {
+            assert(MonoTime.currTime < deadline, "the foreign offer was never announced");
+            clipHooks.step(50.msecs);
+            assert(!wsi.drain((WindowEvent event) {
+                event.payload.match!(
+                    (in DataOfferEvent e) {
+                        if (e.action != DataOfferAction.offered)
+                            return;
+                        assert(!wsi.withText(e.mimeType, (scope const(char)[] mime) {
+                            if (mime == "text/plain;charset=utf-8")
+                                offer = e.offer;
+                        }).hasError);
+                    },
+                    (_) {});
+            }).hasError);
+        }
+        static struct Collect
+        {
+            char[128] text;
+            size_t length;
+            bool done, ok;
+
+            void chunk(TransferId, scope const(ubyte)[] bytes) @safe nothrow
+            {
+                text[length .. length + bytes.length] = cast(const(char)[]) bytes;
+                length += bytes.length;
+            }
+
+            void finish(TransferId, TransferStatus status) @safe nothrow
+            {
+                done = true;
+                ok = status == TransferStatus.completed;
+            }
+        }
+        Collect paste;
+        assert(!wsi.receive(offer, "text/plain;charset=utf-8", paste).hasError);
+        while (!paste.done)
+        {
+            assert(MonoTime.currTime < deadline + 5.seconds, "the paste never finished");
+            clipHooks.step(50.msecs);
+        }
+        assert(paste.ok && paste.text[0 .. paste.length] == theirs,
+            "another client's text did not arrive intact");
+        assert(!wsi.destroyWindow(id).hasError);
+        writeln("ok: X11 reads another client's clipboard");
+    }
     return 0;
+}
+
+/// This process' resident set, from `/proc/self/statm`, in KiB.
+private long residentKiB()
+{
+    import std.file : readText;
+    import std.string : split;
+    import std.conv : to;
+    import core.sys.posix.unistd : sysconf, _SC_PAGESIZE;
+
+    const pages = readText("/proc/self/statm").split[1].to!long;
+    return pages * sysconf(_SC_PAGESIZE) / 1024;
 }

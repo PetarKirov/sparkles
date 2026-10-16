@@ -5,6 +5,11 @@ XCB owns no blocking loop: its connection descriptor is armed with
 `OpPollAdd`, completions only mark readiness, and `runIntegratedOnce` drains
 native values before re-arming the same Event Horizon loop. XIM/keymap work is
 a later input slice and cannot introduce another display connection or wait.
+
+The clipboard is the `CLIPBOARD` selection, owned by a hidden `InputOnly`
+helper window that is also the requestor of every conversion; transfers past
+one 64 KiB property go `INCR`, and XFixes reports another client taking the
+selection.
 */
 module sparkles.wsi.platform.x11;
 
@@ -23,6 +28,8 @@ import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
 import sparkles.event_horizon.op : Completion, OpHandle, OpPollAdd, PollEvents;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
+import sparkles.base.buffer : UniqueBuffer;
+import sparkles.wsi.clipboard;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
 import sparkles.wsi.history : PointerSample;
@@ -144,6 +151,7 @@ struct X11Wsi
         enableDetectableAutorepeat(connection);
         wsi.openKeymap();
         wsi.openXInput();
+        wsi.openClipboard();
         wsi.ownerThread_ = pthread_self();
         wsi.open_ = true;
         return wsiOk();
@@ -196,11 +204,11 @@ struct X11Wsi
     }
 
     private static uint internAtom(xcb_connection_t* connection,
-        const(char)* name)
+        scope const(char)[] name)
     {
         auto reply = xcb_intern_atom_reply(connection,
-            xcb_intern_atom(connection, 0,
-                cast(ushort) strlen(name), name), null);
+            xcb_intern_atom(connection, 0, cast(ushort) name.length, name.ptr),
+            null);
         if (reply is null)
             return 0;
         const atom = reply.atom;
@@ -988,6 +996,10 @@ struct X11Wsi
         auto detached = detach();
         if (detached.hasError)
             remember(detached.error);
+        foreach (h; clipboard_.transfers.byLive)
+            clipboard_.end(h, TransferStatus.failed);
+        if (clip_.helper != 0)
+            destroyNative(clip_.helper);
         foreach (h; windows_.byLive)
         {
             if (windows_[h].cursor != 0)
@@ -1318,6 +1330,7 @@ struct X11Wsi
                 emit(id, DestroyedEvent());
                 break;
             default:
+                handleClipboard(generic);
                 break;
         }
     }
@@ -1422,6 +1435,618 @@ struct X11Wsi
 
     /// Calls `fn` with the text a delivered event names, during the drain
     /// that delivers it (`ED8`). See `EventQueue.withText`.
+    // ── clipboard (`DT1`–`DT5`) ──────────────────────────────────────────────
+
+    /// Largest property one step writes or reads: also the bound on the
+    /// chunks a sink sees (`DT4`). An own offer larger than this goes `INCR`.
+    enum size_t clipChunkBytes = 64 * 1024;
+
+    /**
+    Offers `mimeTypes` on the `CLIPBOARD` selection; requests pull the bytes
+    from `provider`, which must outlive the offer (`DT3`). An offer of
+    `text/plain;charset=utf-8` also answers `UTF8_STRING`, the target most X
+    clients ask for.
+    */
+    WsiResult!OfferId offerClipboard(P)(WindowId window,
+        scope const(char[])[] mimeTypes, ref P provider)
+    if (isDataProvider!P)
+    {
+        auto checked = checkedSlot(window, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!OfferId(checked.error);
+        auto added = clipboard_.add(window, mimeTypes, true);
+        if (added.hasError)
+            return added;
+        clipboard_.offers[added.value].provider =
+            (() @trusted => ProviderRef.to(provider))();
+        return ownSelection(added.value);
+    }
+
+    /// ditto, for a small whole value the backend keeps a copy of.
+    WsiResult!OfferId offerClipboard(WindowId window, scope const(char)[] mimeType,
+        scope const(ubyte)[] value)
+    {
+        auto checked = checkedSlot(window, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!OfferId(checked.error);
+        auto added = clipboard_.add(window, mimeType, true);
+        if (added.hasError)
+            return added;
+        ref record = clipboard_.offers[added.value];
+        record.value.bytes ~= value;
+        record.hasValue = true;
+        return ownSelection(added.value);
+    }
+
+    /// Ends an offer this application made: gives up the selection and
+    /// reports `withdrawn` (`DT1`).
+    WsiResult!void withdrawClipboard(OfferId offer)
+    {
+        auto record = clipboard_.offers.get(offer);
+        if (record is null || !record.own)
+            return x11Failure!void(WsiOperation.command, 0,
+                "no live offer of this application's", WsiErrorKind.staleId);
+        if (clipboard_.current == offer)
+        {
+            xcb_set_selection_owner(connection_, XCB_NONE, clip_.clipboard,
+                XCB_CURRENT_TIME);
+            xcb_flush(connection_);
+        }
+        announce(offer, DataOfferAction.withdrawn);
+        dropOffer(offer);
+        return wsiOk();
+    }
+
+    /**
+    Starts reading `offer`'s `mimeType` into `sink` (`DT2`): the selection is
+    converted into a property of the helper window and read as it arrives,
+    following `INCR`. Only the clipboard's current offer is readable.
+    */
+    WsiResult!TransferId receive(S)(OfferId offer, scope const(char)[] mimeType,
+        ref S sink)
+    if (isDataSink!S)
+    {
+        if (offer != clipboard_.current || !clipboard_.offers.isLive(offer))
+            return x11Failure!TransferId(WsiOperation.command, 0,
+                "the offer has ended", WsiErrorKind.staleId);
+        const target = targetFor(offer, mimeType);
+        auto begun = clipboard_.begin(offer, mimeType,
+            (() @trusted => SinkRef.to(sink))());
+        if (begun.hasError)
+            return begun;
+        if (target == XCB_NONE)
+        {
+            clipboard_.end(begun.value, TransferStatus.failed);
+            return begun;
+        }
+        const i = begun.value.index;
+        fetches_[i] = Fetch(Fetch.State.requested, begun.value);
+        xcb_convert_selection(connection_, clip_.helper, clip_.clipboard,
+            target, clip_.transfer[i], XCB_CURRENT_TIME);
+        xcb_flush(connection_);
+        return begun;
+    }
+
+    /// Ends a transfer with `cancelled`; its sink then hears nothing more. An
+    /// `INCR` transfer in flight is still read to its end and discarded, so
+    /// the sender is not left waiting.
+    WsiResult!void cancelTransfer(TransferId transfer)
+    {
+        if (clipboard_.transfers.isLive(transfer))
+        {
+            ref fetch = fetches_[transfer.index];
+            fetch.state = fetch.state == Fetch.State.incremental
+                ? Fetch.State.discarding : Fetch.State.idle;
+        }
+        return clipboard_.cancel(transfer);
+    }
+
+    private struct ClipAtoms
+    {
+        uint helper;     // the window that owns the selection and receives it
+        uint clipboard;
+        uint targets;
+        uint incr;
+        uint utf8;       // UTF8_STRING
+        uint targetsProperty;
+        uint[8] transfer; // one property per transfer slot
+        ubyte xfixesEvent; // XFixes' first event code; 0 without XFixes
+    }
+
+    // One incoming transfer, by transfer slot.
+    private struct Fetch
+    {
+        enum State : ubyte { idle, requested, incremental, discarding }
+        State state;
+        TransferId transfer;
+    }
+
+    // One outgoing `INCR` transfer to a requestor.
+    private struct Serve
+    {
+        uint requestor;
+        uint property;
+        uint target;
+        OfferId offer;
+        ubyte type;    // the offer's MIME type being sent
+        ulong offset;  // bytes already written
+        bool live;
+    }
+
+    private enum textMime = "text/plain;charset=utf-8";
+
+    private ClipAtoms clip_;
+    private ClipboardState!() clipboard_;
+    private uint[maxOfferTypes][4] offerTargets_; // per offer slot, per type
+    private Fetch[8] fetches_;
+    private Serve[4] serves_;
+    private bool fetchingTargets_;
+
+    // The helper window and the atoms; XFixes, when present, reports every
+    // change of the selection's owner, which is how another client's offer
+    // is noticed.
+    private void openClipboard()
+    {
+        clip_.clipboard = internAtom(connection_, "CLIPBOARD");
+        clip_.targets = internAtom(connection_, "TARGETS");
+        clip_.incr = internAtom(connection_, "INCR");
+        clip_.utf8 = internAtom(connection_, "UTF8_STRING");
+        clip_.targetsProperty = internAtom(connection_, "SPARKLES_TARGETS");
+        foreach (i, ref atom; clip_.transfer)
+        {
+            char[19] name = "SPARKLES_TRANSFER_0";
+            name[18] = cast(char)('0' + i);
+            atom = internAtom(connection_, name[]);
+        }
+        clip_.helper = xcb_generate_id(connection_);
+        const uint mask = XCB_EVENT_MASK_PROPERTY_CHANGE;
+        xcb_create_window(connection_, 0, clip_.helper, bootstrap_.root,
+            -1, -1, 1, 1, 0, XCB_WINDOW_CLASS_INPUT_ONLY, XCB_COPY_FROM_PARENT,
+            XCB_CW_EVENT_MASK, &mask);
+
+        auto extension = xcb_get_extension_data(connection_, &xcb_xfixes_id);
+        if (extension !is null && extension.present)
+        {
+            auto version_ = xcb_xfixes_query_version_reply(connection_,
+                xcb_xfixes_query_version(connection_, 5, 0), null);
+            if (version_ !is null)
+            {
+                free(version_);
+                clip_.xfixesEvent = extension.first_event;
+                xcb_xfixes_select_selection_input(connection_, clip_.helper,
+                    clip_.clipboard,
+                    XCB_XFIXES_SELECTION_EVENT_MASK_SET_SELECTION_OWNER
+                        | XCB_XFIXES_SELECTION_EVENT_MASK_SELECTION_WINDOW_DESTROY
+                        | XCB_XFIXES_SELECTION_EVENT_MASK_SELECTION_CLIENT_CLOSE);
+            }
+        }
+        xcb_flush(connection_);
+    }
+
+    private WsiResult!OfferId ownSelection(OfferId offer)
+    {
+        auto record = clipboard_.offers.get(offer);
+        foreach (i, ref t; record.types[0 .. record.typeCount])
+            offerTargets_[offer.index][i] = internAtom(connection_, t[]);
+        xcb_set_selection_owner(connection_, clip_.helper, clip_.clipboard,
+            XCB_CURRENT_TIME);
+        auto owner = xcb_get_selection_owner_reply(connection_,
+            xcb_get_selection_owner(connection_, clip_.clipboard), null);
+        const owned = owner !is null && owner.owner == clip_.helper;
+        free(owner);
+        if (!owned)
+        {
+            dropOffer(offer);
+            return x11Failure!OfferId(WsiOperation.command, 0,
+                "the X server did not grant the CLIPBOARD selection");
+        }
+        publish(offer);
+        return wsiOk(offer);
+    }
+
+    // The X target to convert `offer`'s `mime` to: the atom it was listed
+    // as, which for text may be `UTF8_STRING`.
+    private uint targetFor(OfferId offer, scope const(char)[] mime)
+    {
+        auto record = clipboard_.offers.get(offer);
+        if (record is null)
+            return XCB_NONE;
+        foreach (i, ref t; record.types[0 .. record.typeCount])
+            if (t[] == mime)
+                return offerTargets_[offer.index][i];
+        return XCB_NONE;
+    }
+
+    // Selection traffic; `true` when the event was the clipboard's.
+    private bool handleClipboard(const xcb_generic_event_t* generic)
+    {
+        const responseType = generic.response_type & 0x7F;
+        if (clip_.xfixesEvent != 0
+            && responseType == clip_.xfixesEvent + XCB_XFIXES_SELECTION_NOTIFY)
+        {
+            auto event = cast(const xcb_xfixes_selection_notify_event_t*) generic;
+            if (event.selection == clip_.clipboard && event.owner != clip_.helper)
+                noticeForeignOwner(event.owner);
+            return true;
+        }
+        switch (responseType)
+        {
+            case XCB_SELECTION_REQUEST:
+                serveRequest(cast(const xcb_selection_request_event_t*) generic);
+                return true;
+            case XCB_SELECTION_NOTIFY:
+                auto event = cast(const xcb_selection_notify_event_t*) generic;
+                if (event.requestor == clip_.helper)
+                    converted(event);
+                return true;
+            case XCB_SELECTION_CLEAR:
+                auto event = cast(const xcb_selection_clear_event_t*) generic;
+                // Another client took the selection: this application's
+                // offer has ended (`DT1`).
+                if (event.selection == clip_.clipboard)
+                    if (auto record = clipboard_.offers.get(clipboard_.current))
+                        if (record.own)
+                        {
+                            announce(clipboard_.current, DataOfferAction.withdrawn);
+                            dropOffer(clipboard_.current);
+                        }
+                return true;
+            case XCB_PROPERTY_NOTIFY:
+                propertyChanged(cast(const xcb_property_notify_event_t*) generic);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Another client owns the clipboard now (or no one does): ask it for its
+    // targets, which become the foreign offer once they arrive.
+    private void noticeForeignOwner(uint owner)
+    {
+        if (auto record = clipboard_.offers.get(clipboard_.current))
+        {
+            if (record.own)
+                announce(clipboard_.current, DataOfferAction.withdrawn);
+            dropOffer(clipboard_.current);
+        }
+        if (owner == XCB_NONE)
+            return;
+        fetchingTargets_ = true;
+        xcb_convert_selection(connection_, clip_.helper, clip_.clipboard,
+            clip_.targets, clip_.targetsProperty, XCB_CURRENT_TIME);
+        xcb_flush(connection_);
+    }
+
+    private void converted(const xcb_selection_notify_event_t* event)
+    {
+        if (event.property == clip_.targetsProperty
+            || (event.target == clip_.targets && event.property == XCB_NONE
+                && fetchingTargets_))
+        {
+            fetchingTargets_ = false;
+            if (event.property != XCB_NONE)
+                readForeignTargets();
+            return;
+        }
+        foreach (i, ref fetch; fetches_)
+        {
+            if (fetch.state != Fetch.State.requested
+                || (event.property != clip_.transfer[i]
+                    && !(event.property == XCB_NONE
+                        && event.target == targetFor(
+                            clipboard_.transfers[fetch.transfer].offer,
+                            clipboard_.transfers[fetch.transfer].mime[]))))
+                continue;
+            if (event.property == XCB_NONE)
+            {
+                fetch.state = Fetch.State.idle;
+                clipboard_.end(fetch.transfer, TransferStatus.failed);
+                return;
+            }
+            readTransfer(i, true);
+            return;
+        }
+    }
+
+    // The owner's `TARGETS`, as the MIME types of a foreign offer: every
+    // target named like a MIME type, and `UTF8_STRING` as UTF-8 text.
+    private void readForeignTargets()
+    {
+        auto reply = xcb_get_property_reply(connection_,
+            xcb_get_property(connection_, 1, clip_.helper, clip_.targetsProperty,
+                XCB_ATOM_ATOM, 0, 256), null);
+        if (reply is null)
+            return;
+        scope (exit) free(reply);
+        const count = xcb_get_property_value_length(reply) / 4;
+        const atoms = (cast(const(uint)*) xcb_get_property_value(reply))[0 .. count];
+
+        char[maxMimeType][maxOfferTypes] names;
+        const(char)[][maxOfferTypes] types;
+        uint[maxOfferTypes] targets;
+        size_t n;
+        bool text;
+        foreach (atom; atoms)
+        {
+            if (n == maxOfferTypes)
+                break;
+            if (atom == clip_.utf8)
+            {
+                if (!text)
+                {
+                    text = true;
+                    types[n] = textMime;
+                    targets[n++] = atom;
+                }
+                continue;
+            }
+            auto name = xcb_get_atom_name_reply(connection_,
+                xcb_get_atom_name(connection_, atom), null);
+            if (name is null)
+                continue;
+            scope (exit) free(name);
+            const length = xcb_get_atom_name_name_length(name);
+            const spelled = xcb_get_atom_name_name(name)[0 .. length];
+            if (length == 0 || length > maxMimeType || !isMimeType(spelled))
+                continue;
+            if (spelled == textMime)
+            {
+                if (text)
+                    continue;
+                text = true;
+            }
+            names[n][0 .. length] = spelled[];
+            types[n] = names[n][0 .. length];
+            targets[n++] = atom;
+        }
+        if (n == 0)
+            return;
+        auto added = clipboard_.add(firstWindow(), types[0 .. n], false);
+        if (added.hasError)
+            return;
+        offerTargets_[added.value.index][0 .. n] = targets[0 .. n];
+        publish(added.value);
+    }
+
+    private static bool isMimeType(scope const(char)[] name) @safe pure nothrow @nogc
+    {
+        foreach (c; name)
+            if (c == '/')
+                return true;
+        return false;
+    }
+
+    // Reads what a conversion left in transfer slot `i`'s property: the whole
+    // value, read in bounded pieces, or the start of an `INCR` transfer.
+    private void readTransfer(size_t i, bool first)
+    {
+        ref fetch = fetches_[i];
+        ulong offset;
+        for (;;)
+        {
+            auto reply = xcb_get_property_reply(connection_,
+                xcb_get_property(connection_, 0, clip_.helper, clip_.transfer[i],
+                    XCB_GET_PROPERTY_TYPE_ANY, cast(uint)(offset / 4),
+                    cast(uint)(clipChunkBytes / 4)), null);
+            if (reply is null)
+            {
+                fetch.state = Fetch.State.idle;
+                clipboard_.end(fetch.transfer, TransferStatus.failed);
+                return;
+            }
+            scope (exit) free(reply);
+            if (first && offset == 0 && reply.type == clip_.incr)
+            {
+                // Deleting the property asks the owner for the first chunk.
+                fetch.state = Fetch.State.incremental;
+                xcb_delete_property(connection_, clip_.helper, clip_.transfer[i]);
+                xcb_flush(connection_);
+                return;
+            }
+            const length = xcb_get_property_value_length(reply);
+            const bytes = (cast(const(ubyte)*) xcb_get_property_value(reply))[0 .. length];
+            if (length != 0 && fetch.state != Fetch.State.discarding)
+                if (auto transfer = clipboard_.transfers.get(fetch.transfer))
+                    transfer.sink.chunk(fetch.transfer, bytes);
+            offset += length;
+            if (reply.bytes_after != 0)
+                continue;
+            // Deleting the property takes the chunk, which asks an `INCR`
+            // sender for the next one.
+            xcb_delete_property(connection_, clip_.helper, clip_.transfer[i]);
+            xcb_flush(connection_);
+            // A whole value ends here; an `INCR` transfer, with an empty chunk.
+            const ended = fetch.state == Fetch.State.requested || offset == 0;
+            if (ended)
+            {
+                const discarded = fetch.state == Fetch.State.discarding;
+                fetch.state = Fetch.State.idle;
+                if (!discarded)
+                    clipboard_.end(fetch.transfer, TransferStatus.completed);
+            }
+            return;
+        }
+    }
+
+    private void propertyChanged(const xcb_property_notify_event_t* event)
+    {
+        if (event.state == XCB_PROPERTY_DELETE)
+        {
+            // A requestor took a chunk of an `INCR` transfer this
+            // application serves: write the next one.
+            foreach (ref serve; serves_)
+                if (serve.live && serve.requestor == event.window
+                    && serve.property == event.atom)
+                    writeChunk(serve);
+            return;
+        }
+        if (event.window != clip_.helper)
+            return;
+        foreach (i, ref fetch; fetches_)
+            if (event.atom == clip_.transfer[i]
+                && (fetch.state == Fetch.State.incremental
+                    || fetch.state == Fetch.State.discarding))
+                readTransfer(i, false);
+    }
+
+    private void serveRequest(const xcb_selection_request_event_t* request)
+    {
+        xcb_selection_notify_event_t reply;
+        reply.response_type = XCB_SELECTION_NOTIFY;
+        reply.time = request.time;
+        reply.requestor = request.requestor;
+        reply.selection = request.selection;
+        reply.target = request.target;
+        // An obsolete client names no property: the target names it.
+        const property = request.property == XCB_NONE ? request.target : request.property;
+        reply.property = XCB_NONE;
+        scope (exit)
+        {
+            xcb_send_event(connection_, 0, request.requestor,
+                XCB_EVENT_MASK_NO_EVENT, cast(const(char)*) &reply);
+            xcb_flush(connection_);
+        }
+
+        auto record = clipboard_.offers.get(clipboard_.current);
+        if (request.selection != clip_.clipboard || record is null || !record.own)
+            return;
+        const offer = clipboard_.current;
+        if (request.target == clip_.targets)
+        {
+            uint[maxOfferTypes + 2] atoms;
+            size_t n;
+            atoms[n++] = clip_.targets;
+            foreach (i; 0 .. record.typeCount)
+            {
+                atoms[n++] = offerTargets_[offer.index][i];
+                if (record.types[i][] == textMime)
+                    atoms[n++] = clip_.utf8;
+            }
+            xcb_change_property(connection_, XCB_PROP_MODE_REPLACE,
+                request.requestor, property, XCB_ATOM_ATOM, 32, cast(uint) n,
+                atoms.ptr);
+            reply.property = property;
+            return;
+        }
+        ubyte type = ubyte.max;
+        foreach (i; 0 .. record.typeCount)
+            if (request.target == offerTargets_[offer.index][i]
+                || (request.target == clip_.utf8 && record.types[i][] == textMime))
+                type = cast(ubyte) i;
+        if (type == ubyte.max)
+            return;
+
+        // One chunk fits: send it whole. Otherwise announce `INCR`, and the
+        // requestor's deletions pull the rest (`writeChunk`).
+        auto chunk = UniqueBuffer!(ubyte, 1)();
+        chunk.length = clipChunkBytes;
+        const n = fillFully(*record, record.types[type][], 0, chunk[]);
+        if (n < clipChunkBytes)
+        {
+            xcb_change_property(connection_, XCB_PROP_MODE_REPLACE,
+                request.requestor, property, request.target, 8, cast(uint) n,
+                chunk[].ptr);
+            reply.property = property;
+            return;
+        }
+        size_t slot = serves_.length;
+        foreach (i, ref serve; serves_)
+            if (!serve.live)
+            {
+                slot = i;
+                break;
+            }
+        if (slot == serves_.length)
+            return; // every slot is serving: refuse rather than stall one
+        serves_[slot] = Serve(request.requestor, property, request.target,
+            offer, type, 0, true);
+        const uint mask = XCB_EVENT_MASK_PROPERTY_CHANGE;
+        if (request.requestor != clip_.helper)
+            xcb_change_window_attributes(connection_, request.requestor,
+                XCB_CW_EVENT_MASK, &mask);
+        const uint lowerBound = cast(uint) clipChunkBytes;
+        xcb_change_property(connection_, XCB_PROP_MODE_REPLACE,
+            request.requestor, property, clip_.incr, 32, 1, &lowerBound);
+        reply.property = property;
+    }
+
+    // The next `INCR` chunk; an empty one ends the transfer.
+    private void writeChunk(ref Serve serve)
+    {
+        auto record = clipboard_.offers.get(serve.offer);
+        auto chunk = UniqueBuffer!(ubyte, 1)();
+        chunk.length = clipChunkBytes;
+        const n = record is null ? 0
+            : fillFully(*record, record.types[serve.type][], serve.offset, chunk[]);
+        xcb_change_property(connection_, XCB_PROP_MODE_REPLACE, serve.requestor,
+            serve.property, serve.target, 8, cast(uint) n, chunk[].ptr);
+        xcb_flush(connection_);
+        serve.offset += n;
+        if (n == 0)
+            serve.live = false;
+    }
+
+    // Fills `buffer` as far as the provider has bytes: a provider may return
+    // short reads before its end.
+    private static size_t fillFully(ref OfferRecord record, scope const(char)[] mime,
+        ulong offset, scope ubyte[] buffer)
+    {
+        size_t filled;
+        while (filled < buffer.length)
+        {
+            const n = record.fill(mime, offset + filled, buffer[filled .. $]);
+            if (n == 0)
+                break;
+            filled += n;
+        }
+        return filled;
+    }
+
+    private void publish(OfferId offer)
+    {
+        const previous = clipboard_.current;
+        if (previous != offer)
+            if (auto old = clipboard_.offers.get(previous))
+            {
+                if (old.own)
+                    announce(previous, DataOfferAction.withdrawn);
+                dropOffer(previous);
+            }
+        clipboard_.current = offer;
+        announce(offer, DataOfferAction.offered);
+    }
+
+    private void announce(OfferId offer, DataOfferAction action)
+    {
+        auto record = clipboard_.offers.get(offer);
+        assert(record !is null, "announcing a live offer");
+        const window = record.window;
+        const count = action == DataOfferAction.offered ? record.typeCount : 1;
+        foreach (i; 0 .. count)
+            emitText(window, record.types[i][],
+                (TextId mime, size_t kept) => DataOfferEvent(offer, action, mime));
+    }
+
+    // Ends an offer: its transfers fail, and the `INCR` transfers this
+    // application serves from it stop.
+    private void dropOffer(OfferId offer)
+    {
+        foreach (h; clipboard_.transfers.byLive)
+            if (clipboard_.transfers[h].offer == offer)
+                fetches_[h.index].state = fetches_[h.index].state
+                    == Fetch.State.incremental ? Fetch.State.discarding : Fetch.State.idle;
+        foreach (ref serve; serves_)
+            if (serve.offer == offer)
+                serve.live = false;
+        clipboard_.drop(offer);
+    }
+
+    private WindowId firstWindow()
+    {
+        foreach (h; windows_.byLive)
+            return h;
+        return WindowId.init;
+    }
     WsiResult!void withText(Fn)(TextId id, scope Fn fn)
         => events_.withText(id, fn);
 
