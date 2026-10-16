@@ -1,0 +1,11 @@
+Breakpoint 1 at 0x4cec
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/data/data/com.termux/files/usr/lib/libthread_db.so".
+uid=10503 gid=10503
+context=u:r:untrusted_app:s0:c247,c257,c512,c768
+exe=/data/data/com.termux/files/home/android-exec-research/exec-probe
+argv[0]=/data/data/com.termux/files/home/android-exec-research/exec-probe
+[Inferior 1 (process 17861) exited normally]
+Num     Type           Disp Enb Address            What
+1       breakpoint     keep y   <PENDING>          main
+debugger-exit=0

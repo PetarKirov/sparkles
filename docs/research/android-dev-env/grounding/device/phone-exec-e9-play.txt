@@ -1,0 +1,491 @@
+LD_PRELOAD=/data/data/com.termux/files/usr/lib/libtermux-exec.so
+uid=10503 gid=10503
+context=u:r:untrusted_app:s0:c247,c257,c512,c768
+exe=/data/data/com.termux/files/home/android-exec-research/exec-probe
+argv[0]=/data/data/com.termux/files/home/android-exec-research/exec-probe
+argv[1]=marker
+hooked-dynamic-exit=0
+uid=10503 gid=10503
+context=u:r:untrusted_app:s0:c247,c257,c512,c768
+exe=/apex/com.android.runtime/bin/linker64
+argv[0]=/data/data/com.termux/files/home/android-exec-research/exec-probe
+argv[1]=marker
+unhooked-linker-exit=0
+error: "/data/data/com.termux/files/home/android-exec-research/static-probe" has unexpected e_type: 2
+hooked-static-exit=1
+error: "/data/data/com.termux/files/home/android-exec-research/static-probe" has unexpected e_type: 2
+static-linker-exit=1
+/data/data/com.termux/files/home/android-exec-research/e9.sh[19]: gdb: inaccessible or not found
+/data/data/com.termux/files/home/android-exec-research/e9.sh[19]: gdb: inaccessible or not found
+debugger-exit=127
+date: /data/data/com.termux/cache/apt/pkgcache.bin: No such file or directory
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+Get:1 https://termux.net stable InRelease [1089 B]
+Get:2 https://termux.net stable/main aarch64 Packages [253 kB]
+Fetched 255 kB in 1s (432 kB/s)
+Reading package lists...
+Building dependency tree...
+All packages are up to date.
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+Reading package lists...
+Building dependency tree...
+Solving dependencies...
+Installing:
+  gdb
+
+Installing dependencies:
+  clang             libexpat      libunistring     pkg-config
+  gdbm              libffi        libxml2          python
+  glib              libgc         lld              python-ensurepip-wheels
+  guile             libicu        llvm             python-pip
+  libandroid-spawn  libllvm       make             resolv-conf
+  libcompiler-rt    libsqlite     ncurses-ui-libs  zstd
+  libcrypt          libthread-db  ndk-sysroot
+
+Summary:
+  Upgrading: 0, Installing: 28, Removing: 0, Not Upgrading: 0
+  Download size: 117 MB
+  Space needed: 701 MB
+
+Get:1 https://termux.net stable/main aarch64 libcompiler-rt aarch64 21.1.8-2 [2792 kB]
+Get:2 https://termux.net stable/main aarch64 libffi aarch64 3.5.2 [31.2 kB]
+Get:3 https://termux.net stable/main aarch64 libicu aarch64 78.3 [10.2 MB]
+Get:4 https://termux.net stable/main aarch64 libxml2 aarch64 2.15.3 [440 kB]
+Get:5 https://termux.net stable/main aarch64 zstd aarch64 1.5.7-1 [360 kB]
+Get:6 https://termux.net stable/main aarch64 libllvm aarch64 21.1.8-2 [30.3 MB]
+Get:7 https://termux.net stable/main aarch64 lld aarch64 21.1.8-2 [2800 kB]
+Get:8 https://termux.net stable/main aarch64 llvm aarch64 21.1.8-2 [14.7 MB]
+Get:9 https://termux.net stable/main aarch64 ndk-sysroot aarch64 29-2 [1954 kB]
+Get:10 https://termux.net stable/main aarch64 clang aarch64 21.1.8-2 [30.1 MB]
+Get:11 https://termux.net stable/main aarch64 libandroid-spawn aarch64 0.4-1 [908 B]
+Get:12 https://termux.net stable/main aarch64 libgc aarch64 8.2.12 [205 kB]
+Get:13 https://termux.net stable/main aarch64 libunistring aarch64 1.3-1 [555 kB]
+Get:14 https://termux.net stable/main aarch64 guile aarch64 3.0.11-1 [7634 kB]
+Get:15 https://termux.net stable/main aarch64 libexpat aarch64 2.8.1 [93.7 kB]
+Get:16 https://termux.net stable/main aarch64 libthread-db aarch64 22-2 [4272 B]
+Get:17 https://termux.net stable/main aarch64 gdbm aarch64 1.26-1 [150 kB]
+Get:18 https://termux.net stable/main aarch64 libcrypt aarch64 0.2-6 [8868 B]
+Get:19 https://termux.net stable/main aarch64 libsqlite aarch64 3.53.2 [756 kB]
+Get:20 https://termux.net stable/main aarch64 ncurses-ui-libs aarch64 6.6.20260307+really6.5.20250830 [33.0 kB]
+Get:21 https://termux.net stable/main aarch64 python aarch64 3.13.13-1 [4521 kB]
+Get:22 https://termux.net stable/main aarch64 gdb aarch64 16.3-3 [3886 kB]
+Get:23 https://termux.net stable/main aarch64 resolv-conf aarch64 1.3 [992 B]
+Get:24 https://termux.net stable/main aarch64 glib aarch64 2.88.1 [2555 kB]
+Get:25 https://termux.net stable/main aarch64 make aarch64 4.4.1-1 [240 kB]
+Get:26 https://termux.net stable/main aarch64 pkg-config aarch64 0.29.2-3 [32.8 kB]
+Get:27 https://termux.net stable/main aarch64 python-ensurepip-wheels all 3.13.13-1 [1713 kB]
+Get:28 https://termux.net stable/main aarch64 python-pip all 26.1.2 [1190 kB]
+Fetched 117 MB in 3s (39.0 MB/s)
+Selecting previously unselected package libcompiler-rt.
+
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 3796 files and directories currently installed.)
+
+Preparing to unpack .../00-libcompiler-rt_21.1.8-2_aarch64.deb ...
+
+Unpacking libcompiler-rt (21.1.8-2) ...
+
+Selecting previously unselected package libffi.
+
+Preparing to unpack .../01-libffi_3.5.2_aarch64.deb ...
+
+Unpacking libffi (3.5.2) ...
+
+Selecting previously unselected package libicu.
+
+Preparing to unpack .../02-libicu_78.3_aarch64.deb ...
+
+Unpacking libicu (78.3) ...
+
+Selecting previously unselected package libxml2.
+
+Preparing to unpack .../03-libxml2_2.15.3_aarch64.deb ...
+
+Unpacking libxml2 (2.15.3) ...
+
+Selecting previously unselected package zstd.
+
+Preparing to unpack .../04-zstd_1.5.7-1_aarch64.deb ...
+
+Unpacking zstd (1.5.7-1) ...
+
+Selecting previously unselected package libllvm.
+
+Preparing to unpack .../05-libllvm_21.1.8-2_aarch64.deb ...
+
+Unpacking libllvm (21.1.8-2) ...
+
+Selecting previously unselected package lld.
+
+Preparing to unpack .../06-lld_21.1.8-2_aarch64.deb ...
+
+Unpacking lld (21.1.8-2) ...
+
+Selecting previously unselected package llvm.
+
+Preparing to unpack .../07-llvm_21.1.8-2_aarch64.deb ...
+
+Unpacking llvm (21.1.8-2) ...
+
+Selecting previously unselected package ndk-sysroot.
+
+Preparing to unpack .../08-ndk-sysroot_29-2_aarch64.deb ...
+
+Unpacking ndk-sysroot (29-2) ...
+
+Selecting previously unselected package clang.
+
+Preparing to unpack .../09-clang_21.1.8-2_aarch64.deb ...
+
+Unpacking clang (21.1.8-2) ...
+
+Selecting previously unselected package libandroid-spawn.
+
+Preparing to unpack .../10-libandroid-spawn_0.4-1_aarch64.deb ...
+
+Unpacking libandroid-spawn (0.4-1) ...
+
+Selecting previously unselected package libgc.
+
+Preparing to unpack .../11-libgc_8.2.12_aarch64.deb ...
+
+Unpacking libgc (8.2.12) ...
+
+Selecting previously unselected package libunistring.
+
+Preparing to unpack .../12-libunistring_1.3-1_aarch64.deb ...
+
+Unpacking libunistring (1.3-1) ...
+
+Selecting previously unselected package guile.
+
+Preparing to unpack .../13-guile_3.0.11-1_aarch64.deb ...
+
+Unpacking guile (3.0.11-1) ...
+
+Selecting previously unselected package libexpat.
+
+Preparing to unpack .../14-libexpat_2.8.1_aarch64.deb ...
+
+Unpacking libexpat (2.8.1) ...
+
+Selecting previously unselected package libthread-db.
+
+Preparing to unpack .../15-libthread-db_22-2_aarch64.deb ...
+
+Unpacking libthread-db (22-2) ...
+
+Selecting previously unselected package gdbm.
+
+Preparing to unpack .../16-gdbm_1.26-1_aarch64.deb ...
+
+Unpacking gdbm (1.26-1) ...
+
+Selecting previously unselected package libcrypt.
+
+Preparing to unpack .../17-libcrypt_0.2-6_aarch64.deb ...
+
+Unpacking libcrypt (0.2-6) ...
+
+Selecting previously unselected package libsqlite.
+
+Preparing to unpack .../18-libsqlite_3.53.2_aarch64.deb ...
+
+Unpacking libsqlite (3.53.2) ...
+
+Selecting previously unselected package ncurses-ui-libs.
+
+Preparing to unpack .../19-ncurses-ui-libs_6.6.20260307+really6.5.20250830_aarch64.deb ...
+
+Unpacking ncurses-ui-libs (6.6.20260307+really6.5.20250830) ...
+
+Selecting previously unselected package python.
+
+Preparing to unpack .../20-python_3.13.13-1_aarch64.deb ...
+
+Unpacking python (3.13.13-1) ...
+
+Selecting previously unselected package gdb.
+
+Preparing to unpack .../21-gdb_16.3-3_aarch64.deb ...
+
+Unpacking gdb (16.3-3) ...
+
+Selecting previously unselected package resolv-conf.
+
+Preparing to unpack .../22-resolv-conf_1.3_aarch64.deb ...
+
+Unpacking resolv-conf (1.3) ...
+
+Selecting previously unselected package glib.
+
+Preparing to unpack .../23-glib_2.88.1_aarch64.deb ...
+
+Unpacking glib (2.88.1) ...
+
+Selecting previously unselected package make.
+
+Preparing to unpack .../24-make_4.4.1-1_aarch64.deb ...
+
+Unpacking make (4.4.1-1) ...
+
+Selecting previously unselected package pkg-config.
+
+Preparing to unpack .../25-pkg-config_0.29.2-3_aarch64.deb ...
+
+Unpacking pkg-config (0.29.2-3) ...
+
+Selecting previously unselected package python-ensurepip-wheels.
+
+Preparing to unpack .../26-python-ensurepip-wheels_3.13.13-1_all.deb ...
+
+Unpacking python-ensurepip-wheels (3.13.13-1) ...
+
+Selecting previously unselected package python-pip.
+
+Preparing to unpack .../27-python-pip_26.1.2_all.deb ...
+
+Unpacking python-pip (26.1.2) ...
+
+Setting up resolv-conf (1.3) ...
+
+Setting up gdbm (1.26-1) ...
+
+Setting up libgc (8.2.12) ...
+
+Setting up ndk-sysroot (29-2) ...
+
+Setting up libexpat (2.8.1) ...
+
+Setting up libicu (78.3) ...
+
+Setting up libandroid-spawn (0.4-1) ...
+
+Setting up libsqlite (3.53.2) ...
+
+Setting up libffi (3.5.2) ...
+
+Setting up libcrypt (0.2-6) ...
+
+Setting up ncurses-ui-libs (6.6.20260307+really6.5.20250830) ...
+
+Setting up make (4.4.1-1) ...
+
+Setting up libcompiler-rt (21.1.8-2) ...
+
+Setting up libunistring (1.3-1) ...
+
+Setting up libthread-db (22-2) ...
+
+Setting up python (3.13.13-1) ...
+
+Setting up libxml2 (2.15.3) ...
+
+Setting up zstd (1.5.7-1) ...
+
+Setting up python-ensurepip-wheels (3.13.13-1) ...
+
+Setting up guile (3.0.11-1) ...
+
+Setting up python-pip (26.1.2) ...
+
+pip setup...
+
+Writing to /data/data/com.termux/files/usr/etc/pip.conf
+
+Setting up libllvm (21.1.8-2) ...
+
+Setting up glib (2.88.1) ...
+
+No schema files found: doing nothing.
+
+Setting up lld (21.1.8-2) ...
+
+Setting up gdb (16.3-3) ...
+
+Setting up pkg-config (0.29.2-3) ...
+
+Setting up llvm (21.1.8-2) ...
+
+Setting up clang (21.1.8-2) ...
+
+install-exit=0
+GNU gdb (GDB) 16.3
+Copyright (C) 2024 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+timeout: exec gdb: Permission denied
+debugger-exit=126
+apt	3.1.15
+bash	5.3.9
+ca-certificates	1:2026.05.14
+command-not-found	3.4.1-15
+coreutils	9.11-1
+curl	8.21.0
+dash	0.5.12-2
+debianutils	5.23.2-1
+diffutils	3.12-2
+dos2unix	7.5.6
+dpkg	1.22.6-5
+ed	1.22.5
+findutils	4.10.0-1
+gawk	5.3.2
+gpgv	2.5.17
+grep	3.12-3
+inetutils	2.7
+less	704
+libandroid-glob	0.7-1
+libandroid-posix-semaphore	0.1-4
+libandroid-selinux	14.0.0.11-1
+libandroid-support	28
+libassuan	3.0.2-1
+libbz2	1.0.8-8
+libc++	29
+libcap-ng	2:0.9.3
+libcurl	8.21.0
+libgcrypt	1.11.2-1
+libgmp	6.3.0-2
+libgpg-error	1.58
+libiconv	1.18-1
+liblzma	5.8.3
+libmd	1.1.0-1
+libmpfr	4.2.1-1
+libnghttp2	1.69.0
+libnghttp3	1.16.0
+libngtcp2	1.23.0
+libnpth	1.6-3
+libsmartcols	2.42.1-2
+libssh2	1.11.1-1
+nano	9.1
+ncurses	6.6.20260307+really6.5.20250830
+net-tools	2.10.0-1
+openssl	1:3.6.3
+patch	2.8-1
+pcre2	10.47
+procps	3.3.17-6
+psmisc	23.7-1
+readline	8.3.3
+sed	4.9-2
+tar	1.35-2
+termux-am	0.8.0-2
+termux-exec	1.9
+termux-keyring	3.15
+termux-licenses	2.1
+termux-tools	3.0.9
+unzip	6.0-10
+util-linux	2.42.1-2
+xxhash	0.8.3-1
+zlib	1.3.2
+apt	3.1.15
+bash	5.3.9
+ca-certificates	1:2026.05.14
+clang	21.1.8-2
+command-not-found	3.4.1-15
+coreutils	9.11-1
+curl	8.21.0
+dash	0.5.12-2
+debianutils	5.23.2-1
+diffutils	3.12-2
+dos2unix	7.5.6
+dpkg	1.22.6-5
+ed	1.22.5
+findutils	4.10.0-1
+gawk	5.3.2
+gdb	16.3-3
+gdbm	1.26-1
+glib	2.88.1
+gpgv	2.5.17
+grep	3.12-3
+guile	3.0.11-1
+inetutils	2.7
+less	704
+libandroid-glob	0.7-1
+libandroid-posix-semaphore	0.1-4
+libandroid-selinux	14.0.0.11-1
+libandroid-spawn	0.4-1
+libandroid-support	28
+libassuan	3.0.2-1
+libbz2	1.0.8-8
+libc++	29
+libcap-ng	2:0.9.3
+libcompiler-rt	21.1.8-2
+libcrypt	0.2-6
+libcurl	8.21.0
+libexpat	2.8.1
+libffi	3.5.2
+libgc	8.2.12
+libgcrypt	1.11.2-1
+libgmp	6.3.0-2
+libgpg-error	1.58
+libiconv	1.18-1
+libicu	78.3
+libllvm	21.1.8-2
+liblzma	5.8.3
+libmd	1.1.0-1
+libmpfr	4.2.1-1
+libnghttp2	1.69.0
+libnghttp3	1.16.0
+libngtcp2	1.23.0
+libnpth	1.6-3
+libsmartcols	2.42.1-2
+libsqlite	3.53.2
+libssh2	1.11.1-1
+libthread-db	22-2
+libunistring	1.3-1
+libxml2	2.15.3
+lld	21.1.8-2
+llvm	21.1.8-2
+make	4.4.1-1
+nano	9.1
+ncurses	6.6.20260307+really6.5.20250830
+ncurses-ui-libs	6.6.20260307+really6.5.20250830
+ndk-sysroot	29-2
+net-tools	2.10.0-1
+openssl	1:3.6.3
+patch	2.8-1
+pcre2	10.47
+pkg-config	0.29.2-3
+procps	3.3.17-6
+psmisc	23.7-1
+python	3.13.13-1
+python-ensurepip-wheels	3.13.13-1
+python-pip	26.1.2
+readline	8.3.3
+resolv-conf	1.3
+sed	4.9-2
+tar	1.35-2
+termux-am	0.8.0-2
+termux-exec	1.9
+termux-keyring	3.15
+termux-licenses	2.1
+termux-tools	3.0.9
+unzip	6.0-10
+util-linux	2.42.1-2
+xxhash	0.8.3-1
+zlib	1.3.2
+zstd	1.5.7-1

@@ -1,0 +1,8 @@
+uid=10488 gid=10488
+context=u:r:untrusted_app:s0:c232,c257,c512,c768
+exe=/apex/com.android.runtime/bin/linker64
+argv[0]=/data/user/0/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/exec-probe
+argv[1]=marker
+absolute-exit=0
+error: expected absolute path: "./exec-probe"
+relative-exit=1

@@ -1,0 +1,188 @@
+Current-target execution experiments, 2026-10-16
+
+Device: Xiaomi 11T Pro, bd123586, vili, Android 14 / API 34.
+Live queries: V816.0.20.0.UKDEUXM; 5.4.289-qgki-g7dd106e6c847;
+SELinux Enforcing; getconf PAGESIZE: 4096.
+Owner approved E1 agent execution, E2 separately, then remaining experiments.
+No root, flashing, SELinux change, application reset or logcat clearing.
+
+Installed control (not replaced): dev.petar_kirov.sparkles.terminal
+versionName=reo101-25, versionCode=20261016, targetSdk=28, appId=10468.
+
+E1-E3 disposable APK (built before this session):
+/nix/store/bzqnv6sqk92yymmynavmsrayyv657yj7-terminal-t36-0.0.0+20261016/terminal-t36.apk
+SHA256 ab5b7323cf397618daa1ece9c07661dc06e0d993d6d8945d56a526de1aa363fa
+package dev.petar_kirov.sparkles.terminal.t36, targetSdk=36, appId=10488.
+adb devices -l confirmed only bd123586; pm list packages confirmed this ID absent.
+adb -s bd123586 install <above APK>: Success.
+E1 target36 test: 22:14:00 +0300. Target28: 22:14:34 +0300.
+E3 target36 test: 22:18:15 +0300.
+
+E4 updated only the newly installed disposable target36 package:
+/nix/store/3zlwicc318ndjzjvygkshj1lhjar4mzi-terminal-t36-0.0.0+20261016/terminal-t36.apk
+SHA256 76ef7244cd96b652d0b73b7caa2b495fffff4033b5ba6ceb6f7fbc5bfe061f84
+Built from d699f5cfc's tree plus the terminal/session and Nix edits now committed
+as a83dc42d4 and 8b97c6a04; debug, plain-shell session, targetSdk=36.
+Includes lib/arm64-v8a/libstatic-probe.so; builder rejects DEX.
+adb -s bd123586 install -r <above APK>: Success.
+
+Payloads cross-compiled with LDC Android 1.42.0 and NDK 28.1.13356709,
+aarch64-linux-android29-clang ($ANDROID_CC); sources are the co-located
+device-validation/examples/exec-probe.d and load-probe.d.
+exec-probe SHA256 6d394908255350c09bde84c7dc7d88095a9522ef13eb1553c74f43a069a16c52
+static-probe SHA256 e7e0ff7677bf3c834d3c56e01296daf0a32793c3cc903534a7fd9537215088d8
+libload-probe.so SHA256 259d47c640d166a7fbd348ca723e56d0b62195493ae8a516dc1d9e8c875cf8d8
+file: dynamic probe has interpreter /system/bin/linker64; static probe is ET_EXEC.
+readelf -l static-probe: no PT_INTERP. Static payload hashes matched on device:
+e7e0ff7677bf3c834d3c56e01296daf0a32793c3cc903534a7fd9537215088d8  files/android-exec-research/static-probe
+e7e0ff7677bf3c834d3c56e01296daf0a32793c3cc903534a7fd9537215088d8  /data/app/~~-8xzKXYdqzv31CIvMZRQug==/dev.petar_kirov.sparkles.terminal.t36-7ABmkfYO3txVkaHh9r5ARA==/lib/arm64/libstatic-probe.so
+
+Copy/retrieve context ONLY (PKG is one of the two exact IDs above):
+adb -s bd123586 shell "run-as $PKG sh -c 'test ! -e files/android-exec-research && mkdir -p files/android-exec-research && cat > files/android-exec-research/exec-probe && chmod 700 files/android-exec-research/exec-probe'" < exec-probe
+The first target36 mkdir without -p failed because files/ did not exist yet;
+the corrected command above succeeded. No probe ran in runas_app.
+Additional scripts and payloads used the same cat-to-file method. Each real
+app was brought forward with am start -n $PKG/android.app.NativeActivity.
+ADB input text typed /system/bin/sh /data/user/0/$PKG/files/android-exec-research/eN.sh
+into the actual app terminal; input keyevent 66 submitted it. Outputs were
+redirected by that app-owned shell to eN.txt, then read with run-as cat.
+
+Script bodies (R is /data/user/0/$PKG/files/android-exec-research):
+E1:
+  /system/bin/linker64 "$R/exec-probe" --exec "$R/exec-probe"
+  printf 'exit=%s\n' "$?"
+E2:
+  /system/bin/linker64 "$R/exec-probe" marker
+  printf 'absolute-exit=%s\n' "$?"
+  (cd "$R" && /system/bin/linker64 ./exec-probe marker)
+  printf 'relative-exit=%s\n' "$?"
+E3 (target36):
+  /system/bin/linker64 "$R/exec-probe" --dlopen "$R/libload-probe.so"
+  printf 'exit=%s\n' "$?"
+E4:
+  /system/bin/linker64 "$R/exec-probe" --exec "$R/static-probe"
+  printf 'data-direct-exit=%s\n' "$?"
+E4 additionally at target36:
+  /system/bin/linker64 "$R/static-probe"
+  printf 'linker-exit=%s\n' "$?"
+  /data/app/~~-8xzKXYdqzv31CIvMZRQug==/dev.petar_kirov.sparkles.terminal.t36-7ABmkfYO3txVkaHh9r5ARA==/lib/arm64/libstatic-probe.so
+  printf 'apk-direct-exit=%s\n' "$?"
+
+Audit collectors: adb -s bd123586 shell logcat -d -v threadtime -T <window-start>
+then grep avc lines for exact app/payload names. E1 window starts 22:13:40;
+E3 22:17:00; E4 22:18:30. Interleaved adbd lines containing collector command
+text are preserved, not treated as SELinux results. No matching E1
+execute_no_trans denial was captured. Granted execute is visible for mappings.
+
+Limitations: different frontend versions; same probe bytes and session command.
+Results characterize this firmware and these actual app domains, not Android 17,
+Play review compliance, or a complete current-target Nix workflow.
+
+E8 bounded test (target36, after E4, before any PRoot update):
+settings get global settings_enable_monitor_phantom_procs: null
+device_config get activity_manager max_phantom_processes: null
+settings put global settings_enable_monitor_phantom_procs false
+settings get global settings_enable_monitor_phantom_procs: false
+Type and submit in real app terminal:
+  /system/bin/sh /data/user/0/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/e8.sh
+e8.sh runs the context probe, then:
+  /system/bin/linker64 "$R/child-probe" --run
+Move app to Home with input keyevent 3; wait ten seconds before retrieving output.
+Monitoring-disabled run completed before 22:26:18 +0300.
+Repeat with settings put global settings_enable_monitor_phantom_procs true;
+readback true. Both runs recorded 40 alive at seven seconds and cleanup by SIGTERM
+(wait status 15), not an Android signal-9 kill. Children self-exit after ten
+seconds if the parent dies. This was an idle fork test, not an active build.
+No matching kill lines were collected in the logcat window starting 22:25:00.
+Restore: settings delete global settings_enable_monitor_phantom_procs
+Output: Deleted 1 rows
+Verification: settings get global settings_enable_monitor_phantom_procs: null
+This changes the AOSP setting directly; the Xiaomi UI toggle was not inspected.
+child-probe SHA256 cebd27dd9092a3c97ecc04a69a4c19c81d91233b19af913d633d64e3004142ec
+
+E7 preparation only (no benchmark executed):
+start-bench SHA256 06b5aa3f626c46b6ac3c1c7bebe0f3cea2dcd3ff8b1590d18f85b7a52871d744
+true-probe SHA256 35b4db32a38e407d5ff5c6d7e847749f4be2d65d3a92de3eed48a7b57ceb8445
+Both payloads and scripts were copied into each research directory, not run.
+Pre-workload battery snapshot:
+  AC powered: false
+  USB powered: true
+  status: 2
+  level: 15
+  temperature: 500
+Battery temperature units are tenths of a degree Celsius: 50.0 C.
+The benchmark and E6 compiler workload were deferred rather than stress a hot
+charging phone or publish thermally uncontrolled timings.
+
+E5, 22:47:03 +0300, target36 real terminal:
+APK /nix/store/l97l19igxrfdrqm4kawbrzmmicyr6qmf-terminal-t36-proot-0.0.0+20261016/terminal-t36-proot.apk
+SHA256 77c80333af6e672b8016f29adb8fbf1ecd656e2fc70af3789be7a36f6ef628df
+Installed with adb install -r only over this session's disposable target36 app.
+PRoot source ab2e3464d04483b98a0614b470f3f8950d5a6468, selected by the flake's
+nix-on-droid input e3e71f5fb782f2a761ae608e976c699f0a4379ee.
+proot-static /nix/store/dvf2ck9bkw7yyrlkjk87xz1anaxsgrd6-proot-termux-static-aarch64-unknown-linux-android-unstable-2026-02-20/bin/proot-static
+SHA256 713eb72bfe8c78316c71a9f93b090d293d138796968feb93ca2eb7b0e8c25244
+Loader /nix/store/3l78k13604drlfd7f6y2rff1i1z91ijy-android-proot-loader-unstable-2026-02-20/libexec/proot-loader
+SHA256 d8643b79b877c75c22a0cca3e8447a7475fb036585972b6447fe7e54474c0076
+The loader was built from the same pinned source's loader/loader target using
+NDK 28.1.13356709, not the original PRoot executable's older cross-toolchain.
+Both are static AArch64 ELFs. Host and installed APK helper hashes matched.
+glibc closure /nix/store/rg46jkb5zf19827lwd119w4gfwy57jwk-android-exec-glibc-closure.tar
+SHA256 cdcc7875e12af3dfdb94710f0987f6655cfcc9592e0977d0e1e4858d9875cd34
+Host and copied device archive hashes matched. An earlier archive preserved
+read-only Nix directory modes and failed Toybox extraction (Permission denied,
+then bad header); the final archive uses GNU format and owner-writable modes.
+Only the isolated research root was made writable and extraction retried.
+hello PT_INTERP=/nix/store/8sz64jcd47ihhd2y3yd40jya9v7lzjjy-glibc-2.39-52/lib/ld-linux-aarch64.so.1
+N=/data/app/~~p8vvE0pTbe0u2imBb7Gg8Q==/dev.petar_kirov.sparkles.terminal.t36-jhsoZjNaaOHuMLLoGaS1fg==/lib/arm64
+export PROOT_TMP_DIR="$R/tmp"
+export PROOT_LOADER="$N/libproot-loader.so"
+"$N/libproot.so" -b "$R/root/nix:/nix" -w / /nix/store/j7qj7kllym339bcyzkggdvwagbdr17gn-hello-2.12.1/bin/hello
+printf 'apk-loader-exit=%s\n' "$?"
+unset PROOT_LOADER
+Repeat identical proot invocation, then printf 'unset-loader-exit=%s\n' "$?"
+Output: Hello, world! / exit 0 with loader; Permission denied / exit 1 without.
+The audit collector window starts 22:44:00; granted mappings are recorded.
+This is no Nix bootstrap, cache signature test, local compiler build or Play
+policy acceptance. It closes only the small glibc/loader experiment.
+
+E9 owner-installed Play reference:
+com.termux, googleplay.2026.10.09, versionCode=142, minSdk=32, targetSdk=37,
+installerPackageName=com.android.vending, firstInstallTime=2026-10-16 22:33:44.
+UID 10503, untrusted_app. No agent access to Google account or Play installation.
+Owner separately approved pkg install -y gdb and dependencies. Package versions
+before and after are concatenated after the install/debug logs in
+phone-exec-e9-play.txt (before starts with apt and ends zlib; then after starts apt).
+28 new packages, 117 MB download, 701 MB installed, zero upgrades or removals;
+install exit 0. GDB package 16.3-3, upstream version 16.3. Packages remain installed.
+
+Transfer: host read-only HTTP server on 127.0.0.1:18314 exposed only the explicit
+public fixture directory; adb reverse tcp:18314 tcp:18314 let the Play terminal
+curl the probe files/scripts into home/android-exec-research. Output was read
+using one-shot loopback Toybox nc on device port 8024, adb forward tcp:18024
+tcp:8024, and host /dev/tcp. No run-as access to the release Play app was used.
+The first attempt to run the installer as nc's child lost the executable route,
+showing Permission denied before installing anything. Retried by invoking the
+script directly with Termux bash, which installed successfully.
+
+E9 initial commands (R=/data/data/com.termux/files/home/android-exec-research):
+"$R/exec-probe" marker
+/system/bin/env -u LD_PRELOAD /system/bin/linker64 "$R/exec-probe" marker
+"$R/static-probe"
+/system/bin/linker64 "$R/static-probe"
+The first reports its own exe path through libtermux-exec.so; the second reports
+the actual linker; both succeed. Static attempts fail with unexpected e_type: 2.
+
+The first debugger wrapper, /system/bin/timeout 15 gdb ..., failed to launch
+gdb (exit 126). This is a setup failure, not a breakpoint result.
+Final command, invoked by Termux bash with Termux coreutils timeout:
+timeout 15 gdb -q -nx -batch -ex 'break main' -ex run -ex 'info breakpoints' "$R/exec-probe"
+phone-exec-e9-gdb.txt records breakpoint initially set at 0x4cec, no stop,
+normal program output/exit, then main PENDING; debugger exit 0, not a timeout.
+Host readelf confirms main is a defined FUNC symbol at 0x4cd0 in this probe.
+This observes one missed breakpoint, not all possible debugger behavior.
+
+Transfer cleanup: adb reverse --remove tcp:18314; adb forward --remove tcp:18024.
+The exact host HTTP-server process was terminated. No listener is intentionally
+left running. Test files and the disposable target36 app remain for deferred
+E6/E7; existing terminal/nix-on-droid data are preserved. E8's setting is restored.

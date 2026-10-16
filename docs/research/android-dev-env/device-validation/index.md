@@ -1,6 +1,6 @@
 # Device validation and runnable probes
 
-**Last reviewed:** September 30, 2026.
+**Last reviewed:** October 16, 2026.
 
 ## Evidence levels
 
@@ -102,6 +102,197 @@ Only one relevant VM mode was boot-tested, and the custom app's full PRoot boots
 
 The [Pixel report][pixel7] is an existing-process observation, not a workload benchmark. Its active NNS shell supplies new functional evidence, but signed substitution/build, DNS/TTY behavior, app-store-write rejection, independent terminal ownership and AVF custom-image boot remain acceptance gates. The report's seven nonzero process statuses reflect missing canonical paths outside NNS views, not seven failed NNS sessions.
 
+## Current-target experiments
+
+E1–E5, a bounded E8 and the Play reference E9 ran on the Xiaomi 11T Pro on October 16, 2026, after explicit owner
+approval; the owner then authorized the remaining experiments. The
+[Play Termux source analysis][play] supplies predictions, not the results below.
+Android 14 cannot establish Android 17 behavior, AVF support or 16 KB-page
+compatibility. M0b's full Nix workflow remains a separate gate.
+
+### Observed execution routes
+
+| Experiment | Observed locally                                                                                                                                                                                                                                    | Evidence                                                         |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| E1         | The same copied Bionic probe executes directly at target 28 (`exit=0`); target 36 reports `execve` errno 13 (`EACCES`, `exit=1`). Contexts are `untrusted_app_27` (UID 10468) and `untrusted_app` (UID 10488), not `runas_app`.                     | [Target 28][e1-28], [target 36][e1-36], [audit window][e1-audit] |
+| E2         | Absolute-path linker launch succeeds in both apps; `/proc/self/exe` names `/apex/com.android.runtime/bin/linker64`, while `argv[0]` is the probe path and `argv[1]` is `marker`. Both relative paths fail with `expected absolute path` and exit 1. | [Target 28][e2-28], [target 36][e2-36]                           |
+| E3         | Target 36 successfully `dlopen`s the app-data library. The audit log contains granted `{ execute }` for that exact `.so` and the same app domain.                                                                                                   | [Session][e3-36], [audit][e3-audit]                              |
+| E4         | The static ELF runs from app data at target 28. At target 36, direct app-data execution reports `EACCES`, linker launch rejects ELF type 2, and the identical file executes from the APK's extracted native-library directory.                      | [Target 28][e4-28], [target 36][e4-36], [audit window][e4-audit] |
+| E8         | In the disposable target-36 app, all 40 children survived the seven-second sample with phantom monitoring set both `false` and `true`; the probe then terminated/reaped its own children. No signal-9 kill was reproduced.                          | [Monitoring disabled][e8-off], [enabled][e8-on]                  |
+
+E5 ran the glibc Nix-store `hello` successfully with APK-native `proot-static`
+and `PROOT_LOADER`; the same invocation with `PROOT_LOADER` unset failed with
+permission denied. [The session][e5-36] and [mapping audits][e5-audit] are local
+evidence for the reduced-scale current-target PRoot design, not a Nix bootstrap,
+signed substitution, compiler build or distribution-policy acceptance.
+
+E9 used owner-installed Play Termux `googleplay.2026.10.09`, target 37, UID
+10503, verified with `installerPackageName=com.android.vending`. [Its output][e9-play]
+shows the Bionic probe running with the preload hook, which reports its own
+path through `/proc/self/exe`; without `LD_PRELOAD` it reports `linker64`.
+Both static cases fail with `unexpected e_type: 2`. After a separately approved
+installation of GDB 16.3-3, [the batch breakpoint test][e9-gdb] resolves `main`
+initially, then runs to normal exit without stopping and ends with the
+breakpoint pending. This reproduces one reported failure, not all debugger
+behavior. The initial missing-GDB and system-`timeout` launch failures in the
+combined transcript are setup failures, not breakpoint evidence; the final
+test uses Termux's own `timeout` wrapper.
+
+E1's log window contains a granted executable mapping, but no matching
+`execute_no_trans` denial. It therefore observes rejection and domain identity,
+not the exact denied SELinux permission. Unrelated `search` and `getopt` denials
+in the transcript are not evidence of that permission. No SELinux policy was changed.
+
+The existing target-28 app reports version `reo101-25`; the initial target-36
+APK was the handoff's previously built variant, and E4 updated only that newly
+installed disposable package to the native-payload build. These are not identical
+frontend revisions, so this is not a single-variable rebuild comparison. The
+probe bytes and session command were identical. [Provenance and commands][exec-provenance]
+record the APK/payload hashes and copy-only `run-as` use.
+
+E8 used [a bounded fork probe][child-example], not a sustained build. Each child
+self-exits after ten seconds if the parent dies; the parent samples after seven
+seconds. The app was moved to Home during each run. ADB read back
+`settings_enable_monitor_phantom_procs=false` then `true`; this exercises the
+platform setting, not a verified Xiaomi Developer-options UI toggle. Both it
+and `activity_manager/max_phantom_processes` were originally unset (`null`).
+The former was deleted afterward and read back `null`, restoring its prior
+state; the latter was never changed. These short idle tests do not prove the
+default process limit absent or characterize OEM scheduling/long-term survival.
+
+Agree each experiment's exact procedure with the device owner before starting.
+Prefer owner-run commands and pasted session output plus relevant `avc:` logcat
+lines. Do not install, launch, copy to or query the phone automatically. No root,
+flashing, SELinux changes or app-data reset is part of this protocol. E8 changes
+a Developer option only with separate consent; E9 is optional and owner-installed.
+
+### Host preparation
+
+The [exec probe][exec-example] reports UID, SELinux context, `/proc/self/exe`
+and arguments. Its `--exec` mode reports the actual `execve` errno on failure;
+`--dlopen` loads [the small shared-library payload][load-example]. Build on the
+workstation in `nix develop .#android`; these commands do not contact a device:
+
+```bash
+mkdir -p /tmp/opencode/android-dev-env
+ldc2 -betterC -mtriple=aarch64--linux-android -gcc="$ANDROID_CC" docs/research/android-dev-env/device-validation/examples/exec-probe.d -of=/tmp/opencode/android-dev-env/exec-probe
+ldc2 -betterC -mtriple=aarch64--linux-android -gcc="$ANDROID_CC" --d-version=ExecProbeStatic -L-static docs/research/android-dev-env/device-validation/examples/exec-probe.d -of=/tmp/opencode/android-dev-env/static-probe
+ldc2 -betterC -mtriple=aarch64--linux-android -gcc="$ANDROID_CC" --d-version=LoadProbeLibrary -shared -relocation-model=pic docs/research/android-dev-env/device-validation/examples/load-probe.d -of=/tmp/opencode/android-dev-env/libload-probe.so
+```
+
+Check with `file` and `readelf -l`: `exec-probe` must be Bionic-dynamic with
+`PT_INTERP=/system/bin/linker64`; `static-probe` must have no `PT_INTERP`.
+These three cross-compilations passed locally on October 16, 2026. This is host
+build evidence, not evidence that Android will execute them.
+
+`mkTerminalApk` now accepts `targetSdk` (default 28) and `extraNativeLibs`, an
+ABI-keyed map of non-conflicting `lib*.so` files. Unsupported ABI keys, invalid
+library names and replacement of bundled libraries are rejected. Build a separate
+target-36 plain-shell app carrying E4's static payload:
+
+```bash
+nix build --impure --no-link --print-out-paths --expr 'let f = builtins.getFlake (toString ./.); in f.legacyPackages.x86_64-linux.mkTerminalApk { appId = "dev.petar_kirov.sparkles.terminal.t36"; pname = "terminal-t36"; label = "terminal target 36 probe"; targetSdk = 36; extraNativeLibs."arm64-v8a"."libstatic-probe.so" = /tmp/opencode/android-dev-env/static-probe; }'
+```
+
+Before an approved install, record the APK hash, manifest target and revision.
+Verify `lib/arm64-v8a/libstatic-probe.so` is present and no DEX is present.
+Do not replace the existing target-28 app or use `adb install -r` on an
+unidentified existing target-36 installation. Agree any update separately.
+
+### E1: direct app-data execution protocol
+
+Installation scope: only the new
+`dev.petar_kirov.sparkles.terminal.t36` APK, alongside the existing
+`dev.petar_kirov.sparkles.terminal`. Installation was approved before execution.
+For reproduction, stage the dynamic payload separately for each package. The operator
+sets `PKG` to one of those two exact IDs and `SERIAL` to `bd123586`:
+
+```bash
+adb -s "$SERIAL" shell "run-as $PKG sh -c 'mkdir -p files/android-exec-research && cat > files/android-exec-research/exec-probe && chmod 700 files/android-exec-research/exec-probe'" < /tmp/opencode/android-dev-env/exec-probe
+```
+
+`run-as` is used only to copy/chmod files, never to execute a probe. In each
+app's actual terminal UI, set `R` to its own absolute research directory
+(`/data/user/0/PACKAGE/files/android-exec-research`, substituting the exact
+package ID), then run:
+
+```bash
+/system/bin/linker64 "$R/exec-probe" --exec "$R/exec-probe"
+printf 'exit=%s\n' "$?"
+```
+
+The launcher route is identical in both apps. Prediction, confirmed above: target 28
+executes the child; target 36 reports errno 13 (`EACCES`). Record the printed
+context and UID, wall-clock test window and matching denial if visible. A
+missing logcat line does not prove the absence of a denial; a `runas_app`
+context invalidates the experiment. Stop on unexpected context or loader failure.
+
+### E2–E4: reproduction protocol
+
+| Experiment | Procedure in the real app session                                                                                                                                                                                                                                                                                                                     | Prediction (observations above)                                                                                                                                |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E2         | Run `/system/bin/linker64 "$R/exec-probe" marker`; then `cd "$R"` and `/system/bin/linker64 ./exec-probe marker`. Capture complete output, arguments and exit statuses in both apps.                                                                                                                                                                  | Absolute succeeds and the executable link names the linker; relative path is rejected. Do not assume argument rewriting: record what this device prints.       |
+| E3         | Stage `libload-probe.so` beside the probe using the same copy-only approach; in target 36 run `/system/bin/linker64 "$R/exec-probe" --dlopen "$R/libload-probe.so"`.                                                                                                                                                                                  | Successful `dlopen`; a granted `execute` audit may be visible. Missing audit output does not contradict successful loading.                                    |
+| E4         | Stage `static-probe` with mode 700. Compare `/system/bin/linker64 "$R/exec-probe" --exec "$R/static-probe"`, `/system/bin/linker64 "$R/static-probe"`, and direct execution of the identical `libstatic-probe.so` in the app's installed native-library directory. Obtain that directory from the installed package metadata, not a guessed APK path. | At target 36: app-data direct execution fails, linker rejects static ELF, APK-native execution works. At target 28 the direct app-data control should succeed. |
+
+Do not interpret the E4 basename `.so` as a shared object: it is the same static
+ELF under Android's extraction naming convention. Compare hashes before testing.
+
+### E5–E9: gates and remaining preparation
+
+The optional `current-target.nix` fixture builds the same pinned PRoot's
+executable **and** matching loader, an AArch64 glibc `hello` closure and a
+disposable target-36 APK. It never invokes ADB:
+
+```bash
+nix build --builders '' --impure --no-link --print-out-paths --file docs/research/android-dev-env/device-validation/current-target.nix apk glibcClosure helloPath
+```
+
+E6's compiler workload and E7's benchmark were deferred when the phone's battery
+sensor still reported 50°C while USB-charging (15% level). The [benchmark
+harness][start-example] and [silent payload][true-example] are prepared, not
+measurements. After cooldown, verify every route succeeds before collecting five
+trials of 1,000 starts; the same Bionic payload can isolate route costs without
+comparing different libc/program implementations. Default host invocation skips
+the benchmark and the child-count experiment.
+
+The owner installed the Play reference for E9; no Play account was accessed by
+the agent. With separate approval, `pkg install -y gdb` added 28 packages (117 MB
+download, 701 MB installed; zero upgrades/removals), including compiler/Python
+dependencies. Before/after package lists and the install log are retained in
+the [combined transcript][e9-play]. These packages remain installed.
+
+| Experiment | Gate before agreeing the device procedure                                                                                                                                                                                                                                                                                                      | Evidence to capture                                                                                                                                                                      |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E5         | Select pinned, same-ABI `proot-static`, its matching loader and a small glibc closure; package both helpers through `extraNativeLibs`. Run with an absolute APK-native `PROOT_LOADER`, then a negative control with it unset. This reduced-scale gate passed; `current-target.nix` reproduces the fixtures.                                    | Helper/closure hashes, exact argv/environment, exit status and app context; distinguish a loader-location failure from other PRoot errors.                                               |
+| E6         | E5 passes. Adapt the bootstrap's PRoot invocation to the APK-native executable and loader. `session.mode = "bootstrap-shell"` now starts `login` as `/system/bin/sh login` in initial, post-install and later sessions, but does **not** rewrite the script's internal commands or set `PROOT_LOADER`. Use an isolated bootstrap app/data set. | M0 workload: `nix --version`, canonical store, signed cache substitution, compiler/Git workflow and a small local derivation; record execution-route evidence and no-DEX APK inspection. |
+| E7         | E5/E6 functional gates pass and owner agrees a bounded workload: five trials of approximately 1,000 successful `true` starts by direct target-28, linker target-36 and PRoot routes.                                                                                                                                                           | Raw elapsed times, success counts, median/range, thermal/battery state, identical payloads and warm/cold classification. The diagnostic probe prints output and is not a timing payload. |
+| E8         | Owner separately approves a bounded 40-child test, the Developer-option toggle and restoration of its original value. Agree timeout, background/foreground state and child cleanup before running.                                                                                                                                             | Setting before/after, child count, elapsed time, exit signals and available process-kill logs. No kill does not prove the global limit is absent.                                        |
+| E9         | Optional: owner chooses and installs Play Termux using their own account. Agree disposable files/package changes and debugger procedure.                                                                                                                                                                                                       | App/target version, linker/static controls and an actual `gdb` breakpoint hit or failure. App presence alone is not validation.                                                          |
+
+**M0b is partially observed, not delivered.** E5 closes the reduced-scale
+glibc-loader gate; the full bootstrap/cache/build workflow and downloaded-code
+policy acceptance remain unvalidated.
+
+### Recording and cleanup
+
+After each approved experiment, save the operator's transcript under
+`grounding/device/` with date, device/firmware, APK and payload hashes, target
+SDK, commands, timestamps, app UID/context, exit statuses, relevant audit output,
+privilege context and limitations. Label each claim observed, contradicted or
+still source-inspected. The linked E1–E5/E8/E9 transcripts are actual device output.
+
+Cleanup is owner-approved removal of only the named research directory in the
+existing app and uninstall of the newly installed disposable app. Confirm that
+the latter was created by this experiment before uninstalling it. Preserve all
+existing terminal/nix-on-droid data and restore E8's original setting. Never
+clear logcat or reset an existing app to simplify collection.
+
+Current cleanup state: the test app and named research directories are retained
+for deferred E6/E7, as are the explicitly approved Play GDB packages. All E8
+children were reaped, its setting was restored, and E9's loopback transfer
+server/ADB mappings were removed. No existing app was uninstalled or reset.
+
 ## CI scope
 
 The [examples][examples] are registered in `apps/ci`'s standalone defaults. CI parses an actual ELF, exercises real disposable namespace calls where permitted, runs the libc probe on Linux, and checks that device collectors skip without an explicit serial. CI does not silently contact hardware or prove AVF/NNS support. Device results remain dated evidence that must be rerun when firmware changes.
@@ -133,3 +324,26 @@ see [Contributor device probes][contributing].
 [concepts]: ../concepts/index.md
 [recommendations]: ../recommendations.md
 [page-size]: ../concepts/index.md#host-page-size
+[play]: ../termux-play-store/index.md
+[exec-example]: ./examples/exec-probe.d
+[load-example]: ./examples/load-probe.d
+[e1-28]: ../grounding/device/phone-exec-e1-target28.txt
+[e1-36]: ../grounding/device/phone-exec-e1-target36.txt
+[e1-audit]: ../grounding/device/phone-exec-e1-audit.txt
+[e2-28]: ../grounding/device/phone-exec-e2-target28.txt
+[e2-36]: ../grounding/device/phone-exec-e2-target36.txt
+[e3-36]: ../grounding/device/phone-exec-e3-target36.txt
+[e3-audit]: ../grounding/device/phone-exec-e3-audit.txt
+[e4-28]: ../grounding/device/phone-exec-e4-target28.txt
+[e4-36]: ../grounding/device/phone-exec-e4-target36.txt
+[e4-audit]: ../grounding/device/phone-exec-e4-audit.txt
+[exec-provenance]: ../grounding/device/phone-exec-provenance.txt
+[e8-off]: ../grounding/device/phone-exec-e8-monitor-off.txt
+[e8-on]: ../grounding/device/phone-exec-e8-monitor-on.txt
+[child-example]: ./examples/child-probe.d
+[start-example]: ./examples/start-bench.d
+[true-example]: ./examples/true-probe.d
+[e5-36]: ../grounding/device/phone-exec-e5-target36.txt
+[e5-audit]: ../grounding/device/phone-exec-e5-audit.txt
+[e9-play]: ../grounding/device/phone-exec-e9-play.txt
+[e9-gdb]: ../grounding/device/phone-exec-e9-gdb.txt
