@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-05
+reviewed: 2026-10-16
 ---
 
 # `sparkles:shaders` — Testing and evidence

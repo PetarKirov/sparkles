@@ -1,14 +1,14 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-05
+reviewed: 2026-10-16
 ---
 
 # `sparkles:shaders` — Decisions
 
 The consequential choices behind [`SPEC.md`](./SPEC.md), with the evidence and
 trade-offs of each, and the open questions that block named requirements. A
-decision is `proposed` until the specification is accepted.
+decision was accepted with the specification, on 2026-10-16.
 
 ## Exclusions and entry conditions
 
