@@ -76,6 +76,17 @@ VulkanWsiResult!NativeSurfacePlan planNativeSurface(in NativeHandles handles)
                     return unsupportedPlan(BackendKind.appkit);
                 },
                 _ => mismatchPlan(BackendKind.appkit));
+        },
+        // `VK_KHR_android_surface` is milestone MA's renderer slice; until
+        // then an Android window is reported, never silently mis-planned.
+        (in AndroidDisplayHandle display) {
+            return handles.window.match!(
+                (in AndroidWindowHandle window) {
+                    if (display.activity is null || window.nativeWindow is null)
+                        return invalidPlan(BackendKind.android, "null Android handle");
+                    return unsupportedPlan(BackendKind.android);
+                },
+                _ => mismatchPlan(BackendKind.android));
         });
 }
 
@@ -153,6 +164,9 @@ VulkanWsiResult!VkSurfaceKHR createNativeSurface(
 
         case BackendKind.appkit:
             return unsupportedCreate!VkSurfaceKHR(BackendKind.appkit);
+
+        case BackendKind.android:
+            return unsupportedCreate!VkSurfaceKHR(BackendKind.android);
     }
 
     if (result < 0)

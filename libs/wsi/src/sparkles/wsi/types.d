@@ -78,6 +78,7 @@ enum BackendKind : ubyte
     x11,
     win32,
     appkit,
+    android,
 }
 
 /// Backend request. `automatic` uses platform/runtime availability.
@@ -88,6 +89,7 @@ enum BackendPreference : ubyte
     x11,
     win32,
     appkit,
+    android,
 }
 
 /**

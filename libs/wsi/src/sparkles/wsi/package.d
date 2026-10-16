@@ -19,8 +19,12 @@ version (Windows)
     public import sparkles.wsi.platform.win32;
 version (OSX)
     public import sparkles.wsi.platform.appkit;
-version (linux)
+// Android is `linux` to D, but has neither Wayland nor X11.
+version (Android)
+    public import sparkles.wsi.platform.android;
+else version (linux)
+{
     public import sparkles.wsi.platform.wayland;
-version (linux)
     public import sparkles.wsi.platform.x11;
+}
 public import sparkles.wsi.types;

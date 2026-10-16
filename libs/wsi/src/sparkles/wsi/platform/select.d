@@ -11,6 +11,7 @@ struct BackendAvailability
     bool x11;
     bool win32;
     bool appkit;
+    bool android;
 }
 
 WsiResult!BackendKind selectBackend(BackendPreference preference,
@@ -23,6 +24,7 @@ WsiResult!BackendKind selectBackend(BackendPreference preference,
             if (available.x11) return wsiOk(BackendKind.x11);
             if (available.win32) return wsiOk(BackendKind.win32);
             if (available.appkit) return wsiOk(BackendKind.appkit);
+            if (available.android) return wsiOk(BackendKind.android);
             return unavailable(BackendKind.wayland);
         case BackendPreference.wayland:
             return available.wayland
@@ -36,6 +38,9 @@ WsiResult!BackendKind selectBackend(BackendPreference preference,
         case BackendPreference.appkit:
             return available.appkit
                 ? wsiOk(BackendKind.appkit) : unavailable(BackendKind.appkit);
+        case BackendPreference.android:
+            return available.android
+                ? wsiOk(BackendKind.android) : unavailable(BackendKind.android);
     }
 }
 
