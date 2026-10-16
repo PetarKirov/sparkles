@@ -1598,5 +1598,35 @@
     ],
     "owner": "sparkles:base",
     "seeAlso": ["parking-lot"]
+  },
+  {
+    "id": "layout-proof",
+    "term": "layout proof",
+    "aliases": [],
+    "summary": "A compile-time check that a D struct describes a fixed binary layout: fixed-width fields, declared byte order, and no implicit padding.",
+    "definition": "In `sparkles:wired`'s Flat format, the compile-time computation that admits a struct as a record. It derives every field's offset, size, alignment and byte order, rejects any field that is not a fixed-width value or that leaves implicit padding, and names the offending field when it fails.",
+    "authority": [
+      {
+        "text": "Flat specification §3",
+        "link": "/specs/wired/flat/SPEC#_3-the-layout-proof"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": ["in-place-view"]
+  },
+  {
+    "id": "in-place-view",
+    "term": "in-place view",
+    "aliases": [],
+    "summary": "Access to a binary record as a typed reference into the bytes it was read from, with no copy and no per-field decoding.",
+    "definition": "In `sparkles:wired`'s Flat format, a view whose record has every multi-byte field in the host's byte order and admits every byte pattern, so the bytes are reinterpreted as the record after one length and alignment check. Other views decode each field as it is read.",
+    "authority": [
+      {
+        "text": "Flat specification §4.3",
+        "link": "/specs/wired/flat/SPEC#_4-3-in-place-and-swapped-access"
+      }
+    ],
+    "owner": "sparkles:wired",
+    "seeAlso": ["layout-proof"]
   }
 ]

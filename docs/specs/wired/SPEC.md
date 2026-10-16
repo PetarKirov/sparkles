@@ -70,7 +70,9 @@ the same declarations, together with tagged unions, validation, and metadata,
 belongs to the [expressiveness upgrade](./expressiveness/SPEC.md), which extends
 this document without renumbering it. The library's backend for SDL, the
 Simple Declarative Language, is specified separately in the
-[SDL backend specification](./sdl/SPEC.md). The
+[SDL backend specification](./sdl/SPEC.md), and its binary format, which
+reads fixed-layout data such as OpenType tables in place, in the
+[Flat specification](./flat/SPEC.md). The
 format-neutral text primitives this library builds on belong to
 `sparkles:base` and are specified there; these include case conversion,
 enum-name lookup, parse-error values, and number formatting. Exact
