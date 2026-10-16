@@ -18,6 +18,7 @@ version (linux):
 
 import core.stdc.stdlib : getenv;
 import core.time : Duration, MonoTime, msecs, seconds;
+import std.conv : text;
 import std.stdio : writeln;
 import std.sumtype : match;
 
@@ -123,7 +124,9 @@ private struct WaylandHooks
     {
         // timedOut is a legitimate quiet outcome while waiting on the
         // external injector; the conformance deadline is the failure.
-        wsi.runIntegratedOnce(*loop, timeout).value;
+        auto ran = wsi.runIntegratedOnce(*loop, timeout);
+        assert(!ran.hasError, text("the integrated step failed: ", ran.error.context,
+            " (", ran.error.op, "/", ran.error.stage, ", code ", ran.error.code, ")"));
     }
 
     void onWindowReady(WindowId ready, in SurfaceMetrics metrics)
@@ -313,6 +316,26 @@ int main()
             }).hasError);
             if (ready)
                 hooks.onWindowReady(id, readyMetrics);
+        }
+        // Weston 16 dies when a constraint is requested for a surface the
+        // pointer is not over ("pointer focus doesn't match", then
+        // SIGSEGV), so wait until the injector's next warp gives the new
+        // window pointer focus.
+        bool entered;
+        const focusDeadline = MonoTime.currTime + 5.seconds;
+        while (!entered)
+        {
+            assert(MonoTime.currTime < focusDeadline,
+                "the confine window never gained pointer focus");
+            hooks.step(100.msecs);
+            assert(!wsi.drain((WindowEvent event) {
+                if (event.window == id)
+                    event.payload.match!(
+                        (in PointerEvent value) {
+                            entered |= value.phase == PointerPhase.entered;
+                        },
+                        (_) {});
+            }).hasError);
         }
         const confined = wsi.setPointerCapture(id, PointerCaptureMode.confine);
         if (confined.hasError)
