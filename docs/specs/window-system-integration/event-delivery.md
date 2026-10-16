@@ -445,15 +445,15 @@ depends on the merge: a remove-and-append merge can admit a sequence above a dro
 one, and then no position for the notice keeps `ED6`. Implementing that pair also
 corrected `ED5`, which had said the notice arrives first. The rest is outstanding:
 
-| Requirement  | Work                                                                                                                               |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `ED2`, `ED3` | done for the three latest-observation kinds; still owed for pointer motion: a per-(window, pointer) slot index and the sample ring |
-| `ED5`        | **done**: an `EventsDropped` payload, a counter on the queue, and a drain that reports it last                                     |
-| `ED7`        | a timestamp on `WindowEvent`, and the four backends' clock conversions                                                             |
-| `ED5`        | **done**: the admission latch from the first drop until the notice is delivered                                                    |
-| `ED8`        | **done**: a `TextPool` on the queue, `TextId` in three payloads, `withText`/`retain` on every backend; `WindowEvent` 600 to 88 B   |
-| `ED9`        | capacity and depth as template parameters; two per-window switches                                                                 |
-| `ED10`       | an accumulator in `sparkles:input`, and a `wsi-input-echo` mode that exercises it                                                  |
+| Requirement  | Work                                                                                                                                                                                         |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ED2`, `ED3` | **done**: `EventQueue.pushMotion` merges motion in place through a per-(window, pointer) slot index, and `SampleHistory` keeps the samples; every backend reaches it through `pushCoalesced` |
+| `ED5`        | **done**: an `EventsDropped` payload, a counter on the queue, and a drain that reports it last                                                                                               |
+| `ED7`        | `WindowEvent.timestamp`; every backend stamps the time it observed an event; converting each platform's own event time remains                                                               |
+| `ED5`        | **done**: the admission latch from the first drop until the notice is delivered                                                                                                              |
+| `ED8`        | **done**: a `TextPool` on the queue, `TextId` in three payloads, `withText`/`retain` on every backend; `WindowEvent` 600 to 88 B                                                             |
+| `ED9`        | **done**: capacity and history depth are template parameters; `setMotionPolicy` holds the two per-window switches                                                                            |
+| `ED10`       | an accumulator in `sparkles:input`, and a `wsi-input-echo` mode that exercises it                                                                                                            |
 
 A dropped lifecycle event is an accepted consequence rather than a special case:
 `ED5` drops by arrival, not by kind, and a consumer that misses a `destroyed` learns

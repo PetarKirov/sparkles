@@ -13,7 +13,7 @@ version (linux):
 import core.stdc.stdlib : free;
 import core.stdc.string : strlen;
 import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
-import core.time : Duration;
+import core.time : Duration, MonoTime;
 
 import sparkles.base.pool.pool : Pool, PoolError;
 import sparkles.base.text.utf8 : validateUtf8;
@@ -25,6 +25,7 @@ import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
+import sparkles.wsi.history : PointerSample;
 import sparkles.wsi.loop : EventQueue;
 import sparkles.wsi.types;
 
@@ -313,6 +314,7 @@ struct X11Wsi
         {
             destroyNative(window);
             windows_.remove(id);
+            events_.forgetWindow(id);
             return wsiErr!WindowId(stickyError_);
         }
         return wsiOk(id);
@@ -341,6 +343,7 @@ struct X11Wsi
         if (slot.cursor != 0)
             xcb_free_cursor(connection_, slot.cursor);
         windows_.remove(id);
+        events_.forgetWindow(id);
         emit(id, DestroyedEvent());
         return hasStickyError_ ? wsiErr!void(stickyError_) : wsiOk();
     }
@@ -1311,6 +1314,7 @@ struct X11Wsi
                 if (windows_[id].cursor != 0)
                     xcb_free_cursor(connection_, windows_[id].cursor);
                 windows_.remove(id);
+                events_.forgetWindow(id);
                 emit(id, DestroyedEvent());
                 break;
             default:
@@ -1393,7 +1397,7 @@ struct X11Wsi
     private void emit(Payload)(WindowId id, Payload payload) nothrow
     {
         auto result = events_.pushCoalesced(WindowEvent(nextSequence_, id,
-            WindowEventPayload(payload)));
+            WindowEventPayload(payload), MonoTime.currTime));
         if (result.hasError)
         {
             remember(result.error);
@@ -1406,7 +1410,8 @@ struct X11Wsi
     private void emitText(Make)(WindowId id, scope const(char)[] text,
         scope Make make) nothrow
     {
-        auto result = events_.pushText(nextSequence_, id, text, make);
+        auto result = events_.pushText(nextSequence_, id, text, make,
+            MonoTime.currTime);
         if (result.hasError)
         {
             remember(result.error);
@@ -1419,6 +1424,21 @@ struct X11Wsi
     /// that delivers it (`ED8`). See `EventQueue.withText`.
     WsiResult!void withText(Fn)(TextId id, scope Fn fn)
         => events_.withText(id, fn);
+
+    /// Sets `id`'s motion policy (`ED9`): whether its pointer motion merges,
+    /// and whether relative motion merges by summing.
+    WsiResult!void setMotionPolicy(WindowId id, bool coalesce, bool sumRelative)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        return events_.setMotionPolicy(id, coalesce, sumRelative);
+    }
+
+    /// Copies the newest samples of `id`'s `pointer` into `into`, in
+    /// arrival order, and returns how many (`ED3`).
+    size_t copySamples(WindowId id, PointerId pointer, scope PointerSample[] into)
+        const @safe pure nothrow @nogc => events_.copySamples(id, pointer, into);
 
     /// Copies an event's text into a `TextPool` the caller owns (`ED8`).
     /// See `EventQueue.retain`.

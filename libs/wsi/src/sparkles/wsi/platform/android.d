@@ -49,6 +49,7 @@ import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
 import sparkles.wsi.clipboard;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
+import sparkles.wsi.history : PointerSample;
 import sparkles.wsi.loop : EventQueue;
 import sparkles.wsi.types;
 
@@ -405,6 +406,7 @@ struct AndroidWsi
         if (checked.hasError)
             return wsiErr!void(checked.error);
         windows_.remove(id);
+        events_.forgetWindow(id);
         emit(id, DestroyedEvent());
         return wsiOk();
     }
@@ -457,6 +459,21 @@ struct AndroidWsi
     /// Calls `fn` with the text a delivered event names (`ED8`).
     WsiResult!void withText(Fn)(TextId id, scope Fn fn)
         => events_.withText(id, fn);
+
+    /// Sets `id`'s motion policy (`ED9`): whether its pointer motion merges,
+    /// and whether relative motion merges by summing.
+    WsiResult!void setMotionPolicy(WindowId id, bool coalesce, bool sumRelative)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        return events_.setMotionPolicy(id, coalesce, sumRelative);
+    }
+
+    /// Copies the newest samples of `id`'s `pointer` into `into`, in
+    /// arrival order, and returns how many (`ED3`).
+    size_t copySamples(WindowId id, PointerId pointer, scope PointerSample[] into)
+        const => events_.copySamples(id, pointer, into);
 
     /// Copies an event's text into a `TextPool` the caller owns (`ED8`).
     WsiResult!WindowEvent retain(P)(WindowEvent event, ref P pool)
@@ -642,6 +659,7 @@ struct AndroidWsi
                 if (live.valid)
                 {
                     windows_.remove(live);
+                    events_.forgetWindow(live);
                     emit(live, DestroyedEvent());
                 }
                 break;
@@ -869,7 +887,7 @@ struct AndroidWsi
     private void emit(Payload)(WindowId id, Payload payload)
     {
         auto result = events_.pushCoalesced(WindowEvent(nextSequence_, id,
-            WindowEventPayload(payload)));
+            WindowEventPayload(payload), MonoTime.currTime));
         if (!result.hasError)
             ++nextSequence_;
     }

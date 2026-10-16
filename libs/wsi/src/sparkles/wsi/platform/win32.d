@@ -23,7 +23,7 @@ import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16z;
 import sparkles.base.text.utf : decodeToken, encodeScalar, UtfMode, UtfStatus, scalarUnits;
 import sparkles.base.text.source_map : SourceByteOffset, Utf16Offset,
     MapAffinity, MapResult, MapStatus;
-import core.time : Duration;
+import core.time : Duration, MonoTime;
 
 import sparkles.event_horizon.loop : DefaultLoop;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
@@ -32,6 +32,7 @@ import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
+import sparkles.wsi.history : PointerSample;
 import sparkles.wsi.loop : EventQueue;
 import sparkles.wsi.types;
 
@@ -425,7 +426,7 @@ struct Win32Wsi
     private void emit(Payload)(WindowId id, Payload payload) nothrow
     {
         auto result = events_.pushCoalesced(WindowEvent(nextSequence_, id,
-            WindowEventPayload(payload)));
+            WindowEventPayload(payload), MonoTime.currTime));
         if (result.hasError)
         {
             remember(result.error);
@@ -438,7 +439,8 @@ struct Win32Wsi
     private void emitText(Make)(WindowId id, scope const(char)[] text,
         scope Make make) nothrow
     {
-        auto result = events_.pushText(nextSequence_, id, text, make);
+        auto result = events_.pushText(nextSequence_, id, text, make,
+            MonoTime.currTime);
         if (result.hasError)
         {
             remember(result.error);
@@ -451,6 +453,21 @@ struct Win32Wsi
     /// that delivers it (`ED8`). See `EventQueue.withText`.
     WsiResult!void withText(Fn)(TextId id, scope Fn fn)
         => events_.withText(id, fn);
+
+    /// Sets `id`'s motion policy (`ED9`): whether its pointer motion merges,
+    /// and whether relative motion merges by summing.
+    WsiResult!void setMotionPolicy(WindowId id, bool coalesce, bool sumRelative)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        return events_.setMotionPolicy(id, coalesce, sumRelative);
+    }
+
+    /// Copies the newest samples of `id`'s `pointer` into `into`, in
+    /// arrival order, and returns how many (`ED3`).
+    size_t copySamples(WindowId id, PointerId pointer, scope PointerSample[] into)
+        const @safe pure nothrow @nogc => events_.copySamples(id, pointer, into);
 
     /// Copies an event's text into a `TextPool` the caller owns (`ED8`).
     /// See `EventQueue.retain`.
@@ -1293,6 +1310,7 @@ struct Win32Wsi
                 // Resets the record, owner included: a late message for
                 // this `hwnd` finds no record.
                 owner.windows_.remove(id);
+                owner.events_.forgetWindow(id);
                 return DefWindowProcW(hwnd, message, wParam, lParam);
             case WM_ENTERSIZEMOVE:
             case WM_ENTERMENULOOP:
