@@ -5,6 +5,13 @@ AppKit owns the main thread's CFRunLoop. Event Horizon's kqueue descriptor is
 wrapped in a `CFFileDescriptor` source, so Cocoa sources, kqueue I/O, timers,
 and the cross-thread waker share one run-loop wait. Native callbacks append
 owned WSI events; application code runs only when the caller drains them.
+
+The clipboard is the general `NSPasteboard`. A streamed offer is an
+`NSPasteboardItem` whose data provider pulls the application's provider into
+the `NSData` the pasteboard keeps; a paste reads that `NSData` once and hands
+it to the sink in 64 KiB chunks from the dispatch. MIME types become pasteboard
+types through `UTType`. AppKit reports no change of the pasteboard, so the
+dispatch rereads its `changeCount` on focus gain and at most every 100 ms.
 */
 module sparkles.wsi.platform.appkit;
 
@@ -22,11 +29,12 @@ import sparkles.base.text.source_map : SourceByteOffset, Utf16Offset,
     MapAffinity, MapResult, MapStatus;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
-import core.time : Duration, MonoTime;
+import core.time : Duration, MonoTime, msecs;
 
 import sparkles.event_horizon.loop : DefaultLoop;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
     ioOk;
+import sparkles.wsi.clipboard;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
 import sparkles.wsi.history : PointerSample;
@@ -142,11 +150,14 @@ extern (Objective-C):
 private extern class NSObject
 {
     void release() @selector("release");
+    NSObject retain() @selector("retain");
 }
 
 private extern class NSString : NSObject
 {
     static NSString alloc() @selector("alloc");
+    static NSString stringWithUTF8String(const(char)* text)
+        @selector("stringWithUTF8String:");
     NSString initWithUTF8String(const(char)* text)
         @selector("initWithUTF8String:");
     const(char)* UTF8String() @selector("UTF8String");
@@ -161,6 +172,64 @@ private extern class NSString : NSObject
 private extern class NSArray : NSObject
 {
     static NSArray array() @selector("array");
+    static NSArray arrayWithObject(NSObject object)
+        @selector("arrayWithObject:");
+    ulong count() @selector("count");
+    NSObject objectAtIndex(ulong index) @selector("objectAtIndex:");
+}
+
+private extern class NSMutableArray : NSArray
+{
+    static NSMutableArray arrayWithCapacity(ulong capacity)
+        @selector("arrayWithCapacity:");
+    void addObject(NSObject object) @selector("addObject:");
+}
+
+private extern class NSData : NSObject
+{
+    static NSData dataWithBytes(const(void)* bytes, ulong length)
+        @selector("dataWithBytes:length:");
+    ulong length() @selector("length");
+    const(void)* bytes() @selector("bytes");
+}
+
+private extern class NSMutableData : NSData
+{
+    static NSMutableData dataWithCapacity(ulong capacity)
+        @selector("dataWithCapacity:");
+    void increaseLengthBy(ulong extra) @selector("increaseLengthBy:");
+    void setLength(ulong length) @selector("setLength:");
+    void* mutableBytes() @selector("mutableBytes");
+}
+
+private extern class NSPasteboard : NSObject
+{
+    static NSPasteboard generalPasteboard() @selector("generalPasteboard");
+    long changeCount() @selector("changeCount");
+    long clearContents() @selector("clearContents");
+    bool writeObjects(NSArray objects) @selector("writeObjects:");
+    NSArray types() @selector("types");
+    NSData dataForType(NSString type) @selector("dataForType:");
+}
+
+private extern class NSPasteboardItem : NSObject
+{
+    static NSPasteboardItem alloc() @selector("alloc");
+    NSPasteboardItem initialize() @selector("init");
+    bool setDataProvider(NSObject provider, NSArray types)
+        @selector("setDataProvider:forTypes:");
+    bool setData(NSData data, NSString type) @selector("setData:forType:");
+}
+
+// UniformTypeIdentifiers (macOS 11): the MIME ↔ pasteboard-type mapping.
+private extern class UTType : NSObject
+{
+    static UTType typeWithMIMEType(NSString mimeType)
+        @selector("typeWithMIMEType:");
+    static UTType typeWithIdentifier(NSString identifier)
+        @selector("typeWithIdentifier:");
+    NSString identifier() @selector("identifier");
+    NSString preferredMIMEType() @selector("preferredMIMEType");
 }
 
 private extern class NSDate : NSObject
@@ -276,6 +345,23 @@ private extern (D) const(char)[] payloadUtf8(NSString text)
     auto utf8 = resolved.UTF8String();
     return utf8 is null ? null : utf8[0 .. strlen(utf8)];
 }
+
+/// UTF-8 view of an `NSString`, valid while its autorelease pool lives;
+/// empty for nil.
+private extern (D) const(char)[] nsUtf8(NSString text)
+{
+    import core.stdc.string : strlen;
+
+    if (text is null)
+        return null;
+    auto utf8 = text.UTF8String();
+    return utf8 is null ? null : utf8[0 .. strlen(utf8)];
+}
+
+/// Element `index` of an array known to hold strings: D has no checked
+/// downcast between Objective-C classes, so the reference is reinterpreted.
+private extern (D) NSString stringAt(NSArray array, ulong index)
+    => cast(NSString) cast(void*) array.objectAtIndex(index);
 
 private class SparklesWsiView : NSView
 {
@@ -502,6 +588,32 @@ private class SparklesWsiWindow : NSWindow
     }
 }
 
+/**
+Private `NSPasteboardItemDataProvider`: one per streamed offer, retained by
+the pasteboard item it serves. It forwards the pasteboard's request for a
+type, and the end of its use, to the owner.
+*/
+private class SparklesWsiPasteboardProvider : NSObject
+{
+    static SparklesWsiPasteboardProvider alloc() @selector("alloc");
+    SparklesWsiPasteboardProvider initialize() @selector("init");
+
+    void provideDataForType(NSPasteboard pasteboard, NSPasteboardItem item,
+        NSString type)
+        @selector("pasteboard:item:provideDataForType:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onProvideData(this, item, type);
+    }
+
+    void pasteboardFinished(NSPasteboard pasteboard)
+        @selector("pasteboardFinishedWithDataProvider:")
+    {
+        if (activeOwner !is null)
+            activeOwner.onProviderFinished();
+    }
+}
+
 extern (D):
 
 private enum long NSApplicationActivationPolicyRegular = 0;
@@ -590,6 +702,11 @@ struct AppKitWsi
         if (wsi.runLoop_ is null)
             return appKitFailure!void(WsiOperation.open, 0,
                 "CFRunLoopGetCurrent returned null");
+        // A shared instance AppKit keeps for the process' lifetime.
+        wsi.pasteboard_ = NSPasteboard.generalPasteboard();
+        if (wsi.pasteboard_ is null)
+            return appKitFailure!void(WsiOperation.open, 0,
+                "NSPasteboard.generalPasteboard returned nil");
 
         wsi.open_ = true;
         activeOwner = &wsi;
@@ -754,11 +871,17 @@ struct AppKitWsi
         return wsiOk(count);
     }
 
-    /** Event Horizon native-host concept: non-blocking native dispatch. */
+    /**
+    Event Horizon native-host concept: non-blocking native dispatch, then the
+    clipboard's share of it: a pasteboard change noticed, and one chunk of
+    each transfer in flight. A transfer in flight counts as work, so the host
+    does not wait while bytes remain.
+    */
     bool dispatchPending()
     {
         auto pumped = pumpEvents();
-        return pumped.hasValue && pumped.value != 0;
+        const clipboardWork = serviceClipboard();
+        return (pumped.hasValue && pumped.value != 0) || clipboardWork;
     }
 
     /**
@@ -823,6 +946,7 @@ struct AppKitWsi
     {
         if (closed_ || !open_)
             return;
+        closeClipboard();
         foreach (h; windows_.byLive)
             destroySlot(h.index, true);
         removeKqueueBridge();
@@ -1384,6 +1508,10 @@ struct AppKitWsi
         const index = indexOfWindow(window);
         if (index != size_t.max && windows_.at(index).ready)
             emit(idAt(index), FocusChangedEvent(focused));
+        // Another application may have copied while this one was in the
+        // background: the next dispatch rereads the pasteboard (`DT1`).
+        if (focused)
+            pasteboardDue_ = true;
     }
 
     private void destroySlot(size_t index, bool notify)
@@ -1406,6 +1534,473 @@ struct AppKitWsi
         // Resets the record: the window and view are released above.
         windows_.remove(id);
         events_.forgetWindow(id);
+    }
+
+    // ── clipboard (`DT1`–`DT5`) ──────────────────────────────────────────────
+
+    /// The largest chunk a sink receives (`DT4`), and the step in which a
+    /// provider fills the pasteboard's `NSData`.
+    enum size_t clipChunkBytes = 64 * 1024;
+
+    /// How long the dispatch trusts the last `changeCount` it read. AppKit
+    /// posts nothing when another application copies.
+    enum pasteboardPollInterval = 100.msecs;
+
+    /**
+    Offers `mimeTypes` on the general pasteboard as a promise: when a reader
+    asks for a type, `provider` is pulled, in `clipChunkBytes` steps, into
+    the `NSData` the pasteboard keeps (`DT3`). It must outlive the offer.
+    */
+    WsiResult!OfferId offerClipboard(P)(WindowId window,
+        scope const(char[])[] mimeTypes, ref P provider)
+    if (isDataProvider!P)
+    {
+        auto checked = checkedSlot(window, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!OfferId(checked.error);
+        auto added = clipboard_.add(window, mimeTypes, true);
+        if (added.hasError)
+            return added;
+        clipboard_.offers[added.value].provider =
+            (() @trusted => ProviderRef.to(provider))();
+        return writeOffer(added.value, false, null);
+    }
+
+    /// ditto, for a small whole value, written to the pasteboard at once:
+    /// the pasteboard keeps the one copy, and it outlives this owner.
+    WsiResult!OfferId offerClipboard(WindowId window, scope const(char)[] mimeType,
+        scope const(ubyte)[] value)
+    {
+        auto checked = checkedSlot(window, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!OfferId(checked.error);
+        auto added = clipboard_.add(window, mimeType, true);
+        if (added.hasError)
+            return added;
+        return writeOffer(added.value, true, value);
+    }
+
+    /// Ends an offer this application made: clears the pasteboard if it
+    /// still holds the offer, and reports `withdrawn` (`DT1`).
+    WsiResult!void withdrawClipboard(OfferId offer)
+    {
+        auto owner = requireOwner!void(WsiOperation.command);
+        if (owner.hasError)
+            return owner;
+        auto record = clipboard_.offers.get(offer);
+        if (record is null || !record.own)
+            return appKitFailure!void(WsiOperation.command, 0,
+                "no live offer of this application's", WsiErrorKind.staleId);
+        if (clipboard_.current == offer)
+        {
+            auto pool = objc_autoreleasePoolPush();
+            scope (exit) objc_autoreleasePoolPop(pool);
+            seenChangeCount_ = pasteboard_.clearContents();
+        }
+        announce(offer, DataOfferAction.withdrawn);
+        dropOffer(offer);
+        return wsiOk();
+    }
+
+    /**
+    Starts reading `offer`'s `mimeType` into `sink` (`DT2`). The dispatch
+    reads the pasteboard's `NSData` once — for an offer of this application's
+    too, so the round trip is the pasteboard's — and delivers it in
+    `clipChunkBytes` chunks, one per dispatch. Only the pasteboard's current
+    offer is readable; a pasteboard change since the last read is noticed
+    first, so a replaced offer is stale here.
+    */
+    WsiResult!TransferId receive(S)(OfferId offer, scope const(char)[] mimeType,
+        ref S sink)
+    if (isDataSink!S)
+    {
+        auto owner = requireOwner!TransferId(WsiOperation.command);
+        if (owner.hasError)
+            return owner;
+        {
+            auto pool = objc_autoreleasePoolPush();
+            scope (exit) objc_autoreleasePoolPop(pool);
+            noticePasteboard();
+        }
+        if (offer != clipboard_.current || !clipboard_.offers.isLive(offer))
+            return appKitFailure!TransferId(WsiOperation.command, 0,
+                "the offer has ended", WsiErrorKind.staleId);
+        return clipboard_.begin(offer, mimeType,
+            (() @trusted => SinkRef.to(sink))());
+    }
+
+    /// Ends a transfer with `cancelled`; its sink then hears nothing more,
+    /// and the `NSData` it was reading is released.
+    WsiResult!void cancelTransfer(TransferId transfer)
+    {
+        if (clipboard_.transfers.isLive(transfer))
+            releaseReading(transfer.index);
+        return clipboard_.cancel(transfer);
+    }
+
+    private enum clipOffers = 4;
+    private enum clipTransfers = 8;
+    // A `dyn.` identifier spells its MIME type in about 1.6 bytes per byte.
+    private enum size_t maxPasteboardType = 512;
+
+    private NSPasteboard pasteboard_;
+    private ClipboardState!(clipOffers, clipTransfers) clipboard_;
+    // Per offer slot, the pasteboard type each of its MIME types travels as.
+    private InlineBuffer!(char, maxPasteboardType)[maxOfferTypes][clipOffers]
+        offerTypes_;
+    // Per offer slot, the provider object serving it: identity only, never
+    // messaged. The pasteboard item holds the reference.
+    private SparklesWsiPasteboardProvider[clipOffers] offerProviders_;
+    // Per transfer slot, the pasteboard's `NSData` being delivered (retained).
+    private NSData[clipTransfers] reading_;
+    // The `changeCount` the current offer was read or written at; `long.min`
+    // until a window exists, so the first one hears the pasteboard's offer.
+    private long seenChangeCount_ = long.min;
+    private bool pasteboardDue_;
+    private MonoTime lastPasteboardRead_;
+
+    // Writes `offer` as the pasteboard's one item: the whole value, or a
+    // promise of each type that `onProvideData` keeps.
+    private WsiResult!OfferId writeOffer(OfferId offer, bool whole,
+        scope const(ubyte)[] value)
+    {
+        auto pool = objc_autoreleasePoolPush();
+        scope (exit) objc_autoreleasePoolPop(pool);
+        auto record = clipboard_.offers.get(offer);
+        auto types = NSMutableArray.arrayWithCapacity(record.typeCount);
+        foreach (i, ref mime; record.types[0 .. record.typeCount])
+        {
+            auto type = pasteboardTypeFor(mime[]);
+            if (type is null || !offerTypes_[offer.index][i].assign(nsUtf8(type)))
+            {
+                dropOffer(offer);
+                return appKitFailure!OfferId(WsiOperation.command, 0,
+                    "UTType has no pasteboard type for a MIME type",
+                    WsiErrorKind.invalidArgument);
+            }
+            types.addObject(type);
+        }
+
+        auto item = NSPasteboardItem.alloc().initialize();
+        if (item is null)
+        {
+            dropOffer(offer);
+            return appKitFailure!OfferId(WsiOperation.command, 0,
+                "NSPasteboardItem initialization failed");
+        }
+        scope (exit) item.release(); // the pasteboard retains what it keeps
+        bool staged;
+        if (whole)
+        {
+            auto data = NSData.dataWithBytes(value.ptr, value.length);
+            staged = data !is null
+                && item.setData(data, stringAt(types, 0));
+        }
+        else
+        {
+            auto provider = SparklesWsiPasteboardProvider.alloc().initialize();
+            if (provider !is null)
+            {
+                adoptDataProviderProtocol(provider);
+                staged = item.setDataProvider(provider, types);
+                offerProviders_[offer.index] = provider;
+                provider.release(); // the item retains its provider
+            }
+        }
+        if (!staged)
+        {
+            dropOffer(offer);
+            return appKitFailure!OfferId(WsiOperation.command, 0,
+                "the pasteboard item rejected the offer");
+        }
+
+        // Only `clearContents` moves `changeCount`; the value it returns
+        // marks the pasteboard's next contents as this application's.
+        seenChangeCount_ = pasteboard_.clearContents();
+        if (!pasteboard_.writeObjects(NSArray.arrayWithObject(item)))
+        {
+            dropOffer(offer);
+            endCurrent(); // the clear above ended the previous offer
+            return appKitFailure!OfferId(WsiOperation.command, 0,
+                "NSPasteboard.writeObjects failed");
+        }
+        lastPasteboardRead_ = MonoTime.currTime;
+        publish(offer);
+        return wsiOk(offer);
+    }
+
+    // The pasteboard asks for one type of a promise: pull the provider into
+    // an `NSData` of the pasteboard's, a chunk at a time, straight into its
+    // bytes. AppKit wants the whole value before this returns.
+    private void onProvideData(SparklesWsiPasteboardProvider provider,
+        NSPasteboardItem item, NSString type)
+    {
+        foreach (h; clipboard_.offers.byLive)
+        {
+            if (offerProviders_[h.index] !is provider)
+                continue;
+            const spelled = nsUtf8(type);
+            ref record = clipboard_.offers[h];
+            foreach (i; 0 .. record.typeCount)
+                if (offerTypes_[h.index][i][] == spelled)
+                {
+                    auto data = NSMutableData.dataWithCapacity(clipChunkBytes);
+                    if (data is null)
+                        return;
+                    ulong offset;
+                    for (;;)
+                    {
+                        const before = data.length();
+                        data.increaseLengthBy(clipChunkBytes);
+                        auto room = (cast(ubyte*) data.mutableBytes())
+                            [before .. before + clipChunkBytes];
+                        const n = record.fill(record.types[i][], offset, room);
+                        if (n > clipChunkBytes)
+                            return; // a provider that overran its buffer
+                        data.setLength(before + n);
+                        if (n == 0)
+                            break;
+                        offset += n;
+                    }
+                    item.setData(data, type);
+                    return;
+                }
+            return;
+        }
+    }
+
+    // The pasteboard let go of a promise: it was cleared, by this application
+    // or another. The dispatch rereads it rather than act inside AppKit.
+    private void onProviderFinished()
+    {
+        pasteboardDue_ = true;
+    }
+
+    // The dispatch's clipboard step; `true` while there is work.
+    private bool serviceClipboard()
+    {
+        if (!open_ || closed_)
+            return false;
+        auto pool = objc_autoreleasePoolPush();
+        scope (exit) objc_autoreleasePoolPop(pool);
+        bool work;
+        if (pasteboardDue_
+            || MonoTime.currTime - lastPasteboardRead_ >= pasteboardPollInterval)
+            work = noticePasteboard();
+        foreach (h; clipboard_.transfers.byLive)
+        {
+            work = true;
+            const i = h.index;
+            if (reading_[i] is null)
+            {
+                // The whole value, once: AppKit has no partial read. The
+                // `NSData` is the pasteboard's; WSI keeps none of it.
+                ref transfer = clipboard_.transfers[h];
+                auto type = pasteboardTypeOf(transfer.offer, transfer.mime[]);
+                auto data = type is null ? null : pasteboard_.dataForType(type);
+                if (data is null)
+                {
+                    clipboard_.end(h, TransferStatus.failed);
+                    continue;
+                }
+                data.retain();
+                reading_[i] = data;
+            }
+            ref transfer = clipboard_.transfers[h];
+            const length = reading_[i].length();
+            const offset = transfer.offset;
+            const n = cast(size_t)(length - offset < clipChunkBytes
+                ? length - offset : clipChunkBytes);
+            if (n != 0)
+            {
+                auto bytes = (cast(const(ubyte)*) reading_[i].bytes())
+                    [cast(size_t) offset .. cast(size_t) offset + n];
+                transfer.offset = offset + n;
+                transfer.sink.chunk(h, bytes);
+            }
+            // The sink may have cancelled from its `chunk`.
+            if (auto still = clipboard_.transfers.get(h))
+                if (still.offset == length)
+                {
+                    releaseReading(i);
+                    clipboard_.end(h, TransferStatus.completed);
+                }
+        }
+        return work;
+    }
+
+    /*
+    Rereads `changeCount`; a change this application did not make ends its
+    offer (`withdrawn`) and announces the pasteboard's types as a foreign
+    offer, each that `UTType` names a MIME type for. Returns whether an
+    offer changed.
+    */
+    private bool noticePasteboard()
+    {
+        pasteboardDue_ = false;
+        lastPasteboardRead_ = MonoTime.currTime;
+        const count = pasteboard_.changeCount();
+        if (count == seenChangeCount_)
+            return false;
+        const hadOffer = clipboard_.offers.isLive(clipboard_.current);
+        endCurrent();
+        const window = firstWindow();
+        if (!window.valid)
+            return hadOffer; // announced once a window exists
+        seenChangeCount_ = count;
+
+        InlineBuffer!(char, maxMimeType)[maxOfferTypes] mimes;
+        InlineBuffer!(char, maxPasteboardType)[maxOfferTypes] spellings;
+        size_t n;
+        auto types = pasteboard_.types();
+        const total = types is null ? 0 : types.count();
+        foreach (t; 0 .. total)
+        {
+            if (n == maxOfferTypes)
+                break;
+            auto type = stringAt(types, t);
+            auto uti = type is null ? null : UTType.typeWithIdentifier(type);
+            if (uti is null)
+                continue; // a legacy name such as `NSStringPboardType`
+            const mime = nsUtf8(uti.preferredMIMEType());
+            if (mime.length == 0 || mime.length > maxMimeType)
+                continue;
+            bool seen;
+            foreach (ref m; mimes[0 .. n])
+                seen |= m[] == mime;
+            if (seen || !spellings[n].assign(nsUtf8(type)))
+                continue;
+            const assigned = mimes[n].assign(mime);
+            assert(assigned, "the length was checked above");
+            ++n;
+        }
+        if (n == 0)
+            return hadOffer;
+
+        const(char)[][maxOfferTypes] views;
+        foreach (i; 0 .. n)
+            views[i] = mimes[i][];
+        auto added = clipboard_.add(window, views[0 .. n], false);
+        if (added.hasError)
+            return hadOffer;
+        foreach (i; 0 .. n)
+        {
+            const assigned = offerTypes_[added.value.index][i].assign(spellings[i][]);
+            assert(assigned, "both buffers have one capacity");
+        }
+        publish(added.value);
+        return true;
+    }
+
+    private void publish(OfferId offer)
+    {
+        const previous = clipboard_.current;
+        if (previous != offer)
+            if (auto old = clipboard_.offers.get(previous))
+            {
+                if (old.own)
+                    announce(previous, DataOfferAction.withdrawn);
+                dropOffer(previous);
+            }
+        clipboard_.current = offer;
+        announce(offer, DataOfferAction.offered);
+    }
+
+    // The pasteboard no longer holds the current offer.
+    private void endCurrent()
+    {
+        if (auto record = clipboard_.offers.get(clipboard_.current))
+        {
+            if (record.own)
+                announce(clipboard_.current, DataOfferAction.withdrawn);
+            dropOffer(clipboard_.current);
+        }
+    }
+
+    private void announce(OfferId offer, DataOfferAction action)
+    {
+        auto record = clipboard_.offers.get(offer);
+        assert(record !is null, "announcing a live offer");
+        const window = record.window;
+        const count = action == DataOfferAction.offered ? record.typeCount : 1;
+        foreach (i; 0 .. count)
+            emitText(window, record.types[i][],
+                (TextId mime, size_t kept) => DataOfferEvent(offer, action, mime));
+    }
+
+    // Ends an offer: its transfers fail and release what they were reading.
+    private void dropOffer(OfferId offer)
+    {
+        if (!clipboard_.offers.isLive(offer))
+            return;
+        foreach (h; clipboard_.transfers.byLive)
+            if (clipboard_.transfers[h].offer == offer)
+                releaseReading(h.index);
+        offerProviders_[offer.index] = null;
+        foreach (ref t; offerTypes_[offer.index])
+            t.clear();
+        clipboard_.drop(offer);
+    }
+
+    private void releaseReading(size_t index)
+    {
+        if (reading_[index] !is null)
+        {
+            reading_[index].release();
+            reading_[index] = null;
+        }
+    }
+
+    // RAII teardown's share: transfers fail, and a promise this owner can no
+    // longer keep leaves the pasteboard. A whole value stays: it is the
+    // pasteboard's own copy.
+    private void closeClipboard()
+    {
+        auto pool = objc_autoreleasePoolPush();
+        scope (exit) objc_autoreleasePoolPop(pool);
+        foreach (h; clipboard_.transfers.byLive)
+        {
+            releaseReading(h.index);
+            clipboard_.end(h, TransferStatus.failed);
+        }
+        if (auto record = clipboard_.offers.get(clipboard_.current))
+            if (record.own && offerProviders_[clipboard_.current.index] !is null)
+                pasteboard_.clearContents();
+        foreach (h; clipboard_.offers.byLive)
+            dropOffer(h);
+    }
+
+    // The pasteboard type `offer`'s `mime` travels as, autoreleased.
+    private NSString pasteboardTypeOf(OfferId offer, scope const(char)[] mime)
+    {
+        auto record = clipboard_.offers.get(offer);
+        if (record is null)
+            return null;
+        foreach (i, ref t; record.types[0 .. record.typeCount])
+            if (t[] == mime)
+            {
+                auto spelled = offerTypes_[offer.index][i][].toTempStringz;
+                return NSString.stringWithUTF8String(spelled.ptr);
+            }
+        return null;
+    }
+
+    // `UTType`'s identifier for a MIME type: a declared type such as
+    // `public.utf8-plain-text` for `text/plain;charset=utf-8`, else a
+    // dynamic `dyn.` one that maps back to the MIME type. Autoreleased.
+    private static NSString pasteboardTypeFor(scope const(char)[] mime)
+    {
+        auto spelled = mime.toTempStringz;
+        auto name = NSString.stringWithUTF8String(spelled.ptr);
+        auto uti = name is null ? null : UTType.typeWithMIMEType(name);
+        return uti is null ? null : uti.identifier();
+    }
+
+    private WindowId firstWindow()
+    {
+        foreach (h; windows_.byLive)
+            return h;
+        return WindowId.init;
     }
 
     private bool installKqueueBridge(int descriptor)
@@ -1485,6 +2080,21 @@ private extern (D) void adoptTextInputProtocol(SparklesWsiView view)
     adopted = true;
     auto protocol = objc_getProtocol("NSTextInputClient");
     auto cls = object_getClass(cast(void*) view);
+    if (protocol !is null && cls !is null)
+        class_addProtocol(cls, protocol);
+}
+
+/// Likewise `NSPasteboardItemDataProvider` on the provider class, which
+/// `setDataProvider:forTypes:` is declared to take.
+private extern (D) void adoptDataProviderProtocol(
+    SparklesWsiPasteboardProvider provider)
+{
+    static bool adopted;
+    if (adopted || provider is null)
+        return;
+    adopted = true;
+    auto protocol = objc_getProtocol("NSPasteboardItemDataProvider");
+    auto cls = object_getClass(cast(void*) provider);
     if (protocol !is null && cls !is null)
         class_addProtocol(cls, protocol);
 }

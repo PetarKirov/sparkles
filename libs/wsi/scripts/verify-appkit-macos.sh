@@ -24,7 +24,7 @@ ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/test-runner/src" \
   -I"$expected_src" \
   "$repo/libs/wsi/examples/appkit-hosted-smoke.d" \
-  -L-framework -LCocoa \
+  -L-framework -LCocoa -L-framework -LUniformTypeIdentifiers \
   -of="$work/wsi-appkit-smoke"
 
 echo ">> running against AppKit ..."
@@ -35,4 +35,6 @@ if grep -q '^SKIP: no macOS WindowServer' "$work/output.log"; then
 fi
 grep -q '^ok: AppKit WSI conformance (18 checked, 3 skipped)' "$work/output.log"
 grep -q '^ok: AppKit marked-text round trip' "$work/output.log"
+grep -q '^ok: AppKit clipboard conformance (4 checked, 32 MiB' "$work/output.log"
+grep -q "^ok: AppKit reads another writer's pasteboard" "$work/output.log"
 echo ">> sparkles:wsi AppKit hosted-loop smoke verified on macOS."
