@@ -8,6 +8,7 @@ handle.
 */
 module sparkles.wsi.loop;
 
+import core.time : MonoTime;
 import std.math : isFinite;
 import sparkles.base.pool.pool : Pool, PoolError;
 import sparkles.base.pool.text_pool : TextPool;
@@ -16,6 +17,7 @@ static import sparkles.base.pool.text_pool;
 import sparkles.wsi.clipboard;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
+import sparkles.wsi.history;
 import sparkles.wsi.types;
 
 @safe:
@@ -28,14 +30,42 @@ owns and is named in the payload by a `TextId`. Text is readable through
 `withText` while the drain that delivers its event runs, and is released when
 that event's sink call returns.
 
+Pointer motion merges in place into the same window and pointer's queued
+motion (`ED2`), and every native sample is kept beside the queue in a
+history ring (`ED3`), see $(LREF pushMotion).
+
 Params:
     Capacity = event slots
     TextBytes = the text arena shared by every queued event's text
+    HistoryDepth = samples kept per (window, pointer)
+    HistoryKeys = (window, pointer) pairs with a history ring at once
 */
-struct EventQueue(size_t Capacity, size_t TextBytes = maxEventText + 1)
+struct EventQueue(size_t Capacity, size_t TextBytes = maxEventText + 1,
+    size_t HistoryDepth = 64, size_t HistoryKeys = 4)
 if (Capacity > 0 && TextBytes > 0)
 {
+    // Where a (window, pointer)'s merge partner sits while it is queued.
+    private static struct MotionSlot
+    {
+        WindowId window;
+        PointerId pointer;
+        bool relative;
+        ulong sequence;
+        size_t slot;
+    }
+
+    // A window whose motion policy differs from the default (`ED9`).
+    private static struct MotionPolicy
+    {
+        WindowId window;
+        bool coalesce = true;
+        bool sumRelative = true;
+    }
+
     private WindowEvent[Capacity] events_;
+    private MotionSlot[2 * HistoryKeys] motion_;
+    private MotionPolicy[4] policies_;
+    private SampleHistory!(HistoryDepth, HistoryKeys) history_;
     private size_t head_;
     private size_t count_;
     private bool draining_;
@@ -78,9 +108,126 @@ if (Capacity > 0 && TextBytes > 0)
             return wsiOk();
         }
 
+        endMotionRun(event);
         events_[(head_ + count_) % Capacity] = event;
         ++count_;
         return wsiOk();
+    }
+
+    /**
+    Pushes pointer motion, merging it in place (`ED2`), and records its
+    native `samples` in the history ring of its window and pointer (`ED3`).
+
+    `event` is a `moved` `PointerEvent`, a `RelativePointerEvent` or a
+    `moved` `TouchEvent`; its `samples` count is set to `samples.length`,
+    and with none given the event itself is the one sample recorded. While
+    the same window and pointer's motion of the same kind is still queued,
+    and no press, release, enter or leave of that pointer came after it,
+    the queued event takes this one's position, modifiers, pressure and
+    timestamp, adds its relative delta and sample count, and keeps its
+    sequence and place. Touch never merges (`ED4`); its samples are only
+    recorded. A window's merging and relative summing are switched off by
+    $(LREF setMotionPolicy).
+    */
+    WsiResult!void pushMotion(WindowEvent event,
+        scope const(PointerSample)[] samples...) pure nothrow @nogc
+    {
+        PointerId pointer;
+        bool relative, touch;
+        const motion = event.payload.match!(
+            (in PointerEvent e) { pointer = e.pointer; return e.phase == PointerPhase.moved; },
+            (in RelativePointerEvent e) { pointer = e.pointer; relative = true; return true; },
+            (in TouchEvent e) { pointer = e.contact; touch = true; return e.phase == TouchPhase.moved; },
+            _ => false);
+        assert(motion, "pushMotion takes pointer motion");
+
+        const count = samples.length == 0 ? 1 : cast(uint) samples.length;
+        event.payload.match!(
+            (ref PointerEvent e) { e.samples = count; },
+            (ref RelativePointerEvent e) { e.samples = count; },
+            (ref TouchEvent e) { e.samples = count; },
+            (ref _) {});
+        foreach (ref sample; samples)
+            history_.record(event.window, pointer, sample);
+        if (samples.length == 0)
+            history_.record(event.window, pointer, sampleOf(event));
+
+        if (dropped_ != 0)
+        {
+            drop(event.sequence);
+            return wsiOk();
+        }
+        const policy = policyOf(event.window);
+        const merges = !touch && policy.coalesce
+            && (!relative || policy.sumRelative);
+        if (merges)
+            if (auto queued = queuedMotion(event.window, pointer, relative))
+            {
+                merge(*queued, event);
+                return wsiOk();
+            }
+        if (full)
+        {
+            drop(event.sequence);
+            return wsiOk();
+        }
+        const slot = (head_ + count_) % Capacity;
+        events_[slot] = event;
+        ++count_;
+        if (merges)
+            noteMotion(event.window, pointer, relative, event.sequence, slot);
+        return wsiOk();
+    }
+
+    /**
+    Sets `window`'s motion policy (`ED9`): whether its pointer motion merges
+    at all, and whether relative motion merges by summing. Both default to
+    on. At most four windows may differ from the default; a fifth fails with
+    `capacity`.
+    */
+    WsiResult!void setMotionPolicy(WindowId window, bool coalesce,
+        bool sumRelative) pure nothrow @nogc
+    {
+        foreach (ref p; policies_)
+            if (p.window == window)
+            {
+                p.coalesce = coalesce;
+                p.sumRelative = sumRelative;
+                if (coalesce && sumRelative)
+                    p = MotionPolicy.init;
+                return wsiOk();
+            }
+        if (coalesce && sumRelative)
+            return wsiOk();
+        foreach (ref p; policies_)
+            if (p.window == WindowId.init)
+            {
+                p = MotionPolicy(window, coalesce, sumRelative);
+                return wsiOk();
+            }
+        return wsiErr!void(wsiError(WsiErrorKind.capacity, WsiOperation.command,
+            diagnostic: "at most four windows may change their motion policy"));
+    }
+
+    /**
+    Copies the newest samples of `window`'s `pointer` into `into`, in arrival
+    order, and returns how many (`ED3`). A merged event's own samples are its
+    newest `samples`.
+    */
+    size_t copySamples(WindowId window, PointerId pointer,
+        scope PointerSample[] into) const pure nothrow @nogc
+        => history_.copy(window, pointer, into);
+
+    /// Forgets `window`'s history and motion policy, as when it is destroyed.
+    void forgetWindow(WindowId window) pure nothrow @nogc
+    {
+        history_.forget(window);
+        foreach (ref p; policies_)
+            if (p.window == window)
+                p = MotionPolicy.init;
+        foreach (ref m; motion_)
+            if (m.window == window)
+                m = MotionSlot.init;
     }
 
     /**
@@ -88,14 +235,16 @@ if (Capacity > 0 && TextBytes > 0)
     `make(id, kept)` builds around it: `id` names the stored text and `kept`
     is how many of its bytes were kept, so a payload with offsets into the
     text can clamp them (`CompositionEvent.clampTo`). Empty text takes no
-    pool slot and is named by `TextId.init`.
+    pool slot and is named by `TextId.init`. `timestamp` stamps the event
+    (`ED7`).
 
     When the queue refuses arrivals, or the pool cannot hold the text, the
     event is dropped and counted (`ED5`, `ED8`); text is truncated only at
     `maxEventText`, never for want of space.
     */
     WsiResult!void pushText(Make)(ulong sequence, WindowId window,
-        scope const(char)[] text, scope Make make)
+        scope const(char)[] text, scope Make make,
+        MonoTime timestamp = MonoTime.init)
     {
         if (admissionClosed)
         {
@@ -116,7 +265,8 @@ if (Capacity > 0 && TextBytes > 0)
             id = interned.value;
             kept = texts_.lengthOf(id).value;
         }
-        return push(WindowEvent(sequence, window, WindowEventPayload(make(id, kept))));
+        return push(WindowEvent(sequence, window, WindowEventPayload(make(id, kept)),
+            timestamp));
     }
 
     /**
@@ -129,9 +279,14 @@ if (Capacity > 0 && TextBytes > 0)
     event that must keep its place. A merged event keeps its sequence, so
     drained sequences stay strictly increasing, the sequence names when
     the merged run began, and the payload names its newest observation.
+    Pointer motion goes to $(LREF pushMotion), with no samples beyond the
+    event itself.
     */
     WsiResult!void pushCoalesced(WindowEvent event) pure nothrow @nogc
     {
+        // Pointer motion has its own merge, with history (`ED2`, `ED3`).
+        if (isMotion(event))
+            return pushMotion(event);
         size_t scanned;
         while (scanned < count_)
         {
@@ -253,6 +408,110 @@ if (Capacity > 0 && TextBytes > 0)
         return wsiOk(event);
     }
 
+    // A press, release, enter or leave of a pointer anchors its motion: what
+    // was queued before it must stay before it (`ED2`).
+    private void endMotionRun(in WindowEvent event) pure nothrow @nogc
+    {
+        PointerId pointer;
+        const anchors = event.payload.match!(
+            (in PointerEvent e) { pointer = e.pointer; return e.phase != PointerPhase.moved; },
+            _ => false);
+        if (!anchors)
+            return;
+        foreach (ref m; motion_)
+            if (m.window == event.window && m.pointer == pointer)
+                m = MotionSlot.init;
+    }
+
+    // The one sample a motion event names when its backend passed none.
+    private static PointerSample sampleOf(in WindowEvent event) pure nothrow @nogc
+    {
+        PointerSample sample;
+        sample.timestamp = event.timestamp;
+        event.payload.match!(
+            (in PointerEvent e) {
+                sample.position = e.logicalPosition;
+                sample.pressure = e.pressure;
+            },
+            (in RelativePointerEvent e) { sample.dx = e.dx; sample.dy = e.dy; },
+            (in TouchEvent e) {
+                sample.position = e.logicalPosition;
+                sample.pressure = e.pressure;
+            },
+            (_) {});
+        return sample;
+    }
+
+    private MotionPolicy policyOf(WindowId window) const pure nothrow @nogc
+    {
+        foreach (p; policies_)
+            if (p.window == window)
+                return p;
+        return MotionPolicy.init;
+    }
+
+    // The queued motion a new sample of (window, pointer) merges into, if
+    // it is still queued: drained or overwritten slots fail the sequence
+    // check, since sequences only increase.
+    private WindowEvent* queuedMotion(WindowId window, PointerId pointer,
+        bool relative) pure nothrow @nogc return
+    {
+        foreach (ref m; motion_)
+        {
+            if (m.sequence == 0 || m.window != window || m.pointer != pointer
+                || m.relative != relative)
+                continue;
+            const offset = (m.slot + Capacity - head_) % Capacity;
+            if (offset < count_ && events_[m.slot].sequence == m.sequence)
+                return &events_[m.slot];
+            m = MotionSlot.init;
+            return null;
+        }
+        return null;
+    }
+
+    private void noteMotion(WindowId window, PointerId pointer, bool relative,
+        ulong sequence, size_t slot) pure nothrow @nogc
+    {
+        size_t free = motion_.length;
+        foreach (i, ref m; motion_)
+        {
+            if (m.window == window && m.pointer == pointer
+                && m.relative == relative)
+            {
+                free = i;
+                break;
+            }
+            const offset = (m.slot + Capacity - head_) % Capacity;
+            const stale = m.sequence == 0 || offset >= count_
+                || events_[m.slot].sequence != m.sequence;
+            if (stale && free == motion_.length)
+                free = i;
+        }
+        // Every entry live and for other pointers: this one simply does not
+        // merge until one frees up.
+        if (free != motion_.length)
+            motion_[free] = MotionSlot(window, pointer, relative, sequence, slot);
+    }
+
+    private static void merge(ref WindowEvent queued, in WindowEvent next)
+        pure nothrow @nogc
+    {
+        const keptSequence = queued.sequence;
+        uint before;
+        double dx = 0, dy = 0;
+        queued.payload.match!(
+            (in PointerEvent e) { before = e.samples; },
+            (in RelativePointerEvent e) { before = e.samples; dx = e.dx; dy = e.dy; },
+            (_) {});
+        queued = next;
+        queued.sequence = keptSequence;
+        queued.payload.match!(
+            (ref PointerEvent e) { e.samples += before; },
+            (ref RelativePointerEvent e) { e.samples += before; e.dx += dx; e.dy += dy; },
+            (ref _) {});
+    }
+
     private void drop(ulong sequence) pure nothrow @nogc
     {
         if (dropped_ != uint.max)
@@ -267,6 +526,212 @@ if (Capacity > 0 && TextBytes > 0)
         if (id != TextId.init)
             texts_.release(id);
     }
+}
+
+version (unittest)
+{
+    import sparkles.input.events : PointerButton;
+
+    private enum testWindow = WindowId(0, 1);
+    private enum testPointer = PointerId(0, 1);
+
+    private WindowEvent moved(ulong sequence, double x, PointerId pointer = testPointer)
+        @safe pure nothrow @nogc
+    {
+        PointerEvent e;
+        e.pointer = pointer;
+        e.phase = PointerPhase.moved;
+        e.logicalPosition = LogicalPosition(x, 0);
+        return WindowEvent(sequence, testWindow, WindowEventPayload(e));
+    }
+
+    private WindowEvent pressed(ulong sequence) @safe pure nothrow @nogc
+    {
+        PointerEvent e;
+        e.pointer = testPointer;
+        e.phase = PointerPhase.pressed;
+        e.button = PointerButton.left;
+        return WindowEvent(sequence, testWindow, WindowEventPayload(e));
+    }
+
+    private PointerSample at(double x) @safe pure nothrow @nogc
+        => PointerSample(position: LogicalPosition(x, 0));
+
+    // Each drained event's (sequence, x, samples), motion or not.
+    private struct Drained
+    {
+        ulong[8] sequence;
+        double[8] x;
+        uint[8] samples;
+        size_t count;
+
+        void opCall(WindowEvent event) @safe pure nothrow @nogc
+        {
+            sequence[count] = event.sequence;
+            event.payload.match!(
+                (in PointerEvent e) { x[count] = e.logicalPosition.x; samples[count] = e.samples; },
+                (in RelativePointerEvent e) { x[count] = e.dx; samples[count] = e.samples; },
+                (in TouchEvent e) { x[count] = e.logicalPosition.x; samples[count] = e.samples; },
+                (_) {});
+            ++count;
+        }
+    }
+}
+
+@("wsi.loop.motionMergesInPlaceAndKeepsEverySample")
+@safe pure nothrow @nogc
+unittest
+{
+    // `ED2`: a run of motion is one queued event with the newest position,
+    // its first sequence and the run's sample count; `ED3`: every sample is
+    // in the ring, in arrival order.
+    EventQueue!8 queue;
+    assert(!queue.pushMotion(moved(1, 10), at(10)).hasError);
+    assert(!queue.pushMotion(moved(2, 20), at(15), at(20)).hasError);
+    assert(!queue.pushMotion(moved(3, 30), at(30)).hasError);
+    assert(queue.length == 1);
+
+    Drained drained;
+    assert(!queue.drain(&drained.opCall).hasError);
+    assert(drained.count == 1 && drained.sequence[0] == 1);
+    assert(drained.x[0] == 30 && drained.samples[0] == 4);
+
+    PointerSample[8] samples;
+    assert(queue.copySamples(testWindow, testPointer, samples[]) == 4);
+    assert(samples[0].position.x == 10 && samples[3].position.x == 30);
+}
+
+@("wsi.loop.aPressAnchorsMotionAndADrainEndsTheRun")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.input.events : PointerButton;
+
+    // The last position before a press is delivered before it; motion after
+    // the press starts a new run, and so does motion after a drain.
+    EventQueue!8 queue;
+    assert(!queue.pushMotion(moved(1, 10)).hasError);
+    assert(!queue.push(pressed(2)).hasError);
+    assert(!queue.pushMotion(moved(3, 20)).hasError);
+    assert(!queue.pushMotion(moved(4, 30)).hasError);
+
+    Drained drained;
+    assert(!queue.drain(&drained.opCall).hasError);
+    assert(drained.count == 3);
+    assert(drained.sequence[0] == 1 && drained.x[0] == 10);
+    assert(drained.sequence[1] == 2);
+    assert(drained.sequence[2] == 3 && drained.x[2] == 30 && drained.samples[2] == 2);
+
+    assert(!queue.pushMotion(moved(5, 40)).hasError);
+    Drained after;
+    assert(!queue.drain(&after.opCall).hasError);
+    assert(after.count == 1 && after.sequence[0] == 5 && after.samples[0] == 1,
+        "a drained event is never merged into");
+}
+
+@("wsi.loop.aMotionFloodNeverOverflowsTheQueue")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.input.events : PointerButton;
+
+    // A flood of one pointer's motion, longer than the queue, interleaved
+    // with another pointer's: both merge, nothing drops, and order holds.
+    EventQueue!4 queue;
+    const other = PointerId(1, 1);
+    foreach (i; 0 .. 1000)
+    {
+        assert(!queue.pushMotion(moved(2 * i + 1, i)).hasError);
+        assert(!queue.pushMotion(moved(2 * i + 2, -i, other)).hasError);
+    }
+    assert(queue.length == 2 && queue.dropped == 0);
+
+    Drained drained;
+    assert(!queue.drain(&drained.opCall).hasError);
+    assert(drained.count == 2 && drained.sequence[0] < drained.sequence[1]);
+    assert(drained.x[0] == 999 && drained.samples[0] == 1000);
+    assert(drained.x[1] == -999 && drained.samples[1] == 1000);
+    PointerSample[100] kept;
+    assert(queue.copySamples(testWindow, testPointer, kept[]) == 64,
+        "the ring holds its depth");
+}
+
+@("wsi.loop.relativeMotionSumsAndTouchNeverMerges")
+@safe pure nothrow @nogc
+unittest
+{
+    EventQueue!8 queue;
+    const relative = (ulong sequence, double dx) @safe pure nothrow @nogc
+        => WindowEvent(sequence, testWindow, WindowEventPayload(
+            RelativePointerEvent(testPointer, dx, 0, true)));
+    assert(!queue.pushMotion(relative(1, 1.5)).hasError);
+    assert(!queue.pushMotion(relative(2, 2.5)).hasError);
+
+    TouchEvent touch;
+    touch.contact = PointerId(5, 1);
+    touch.phase = TouchPhase.moved;
+    assert(!queue.pushMotion(WindowEvent(3, testWindow, WindowEventPayload(touch)),
+        at(1), at(2), at(3)).hasError);
+    assert(!queue.pushMotion(WindowEvent(4, testWindow, WindowEventPayload(touch)),
+        at(4)).hasError);
+
+    Drained drained;
+    assert(!queue.drain(&drained.opCall).hasError);
+    assert(drained.count == 3);
+    assert(drained.x[0] == 4 && drained.samples[0] == 2, "relative deltas sum");
+    assert(drained.samples[1] == 3 && drained.samples[2] == 1, "touch stays apart");
+    PointerSample[8] kept;
+    assert(queue.copySamples(testWindow, PointerId(5, 1), kept[]) == 4);
+}
+
+@("wsi.loop.coalescedPushesRouteMotionToItsOwnMerge")
+@safe pure nothrow @nogc
+unittest
+{
+    // Every backend queues through `pushCoalesced`, so this is where native
+    // motion starts merging with history.
+    EventQueue!8 queue;
+    assert(!queue.pushCoalesced(moved(1, 10)).hasError);
+    assert(!queue.pushCoalesced(moved(2, 20)).hasError);
+    assert(queue.length == 1);
+    PointerSample[4] samples;
+    assert(queue.copySamples(testWindow, testPointer, samples[]) == 2);
+    assert(samples[0].position.x == 10 && samples[1].position.x == 20);
+}
+
+@("wsi.loop.aWindowCanTurnMergingOff")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.input.events : PointerButton;
+
+    // `ED9`: a drawing view keeps every event, history or not.
+    EventQueue!8 queue;
+    assert(!queue.setMotionPolicy(testWindow, false, true).hasError);
+    assert(!queue.pushMotion(moved(1, 10)).hasError);
+    assert(!queue.pushMotion(moved(2, 20)).hasError);
+    assert(queue.length == 2);
+    assert(!queue.setMotionPolicy(testWindow, true, true).hasError);
+    assert(!queue.pushMotion(moved(3, 30)).hasError);
+    assert(!queue.pushMotion(moved(4, 40)).hasError);
+    assert(queue.length == 3);
+}
+
+@("wsi.loop.motionAfterADropIsDroppedToo")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.input.events : PointerButton;
+
+    // `ED5`'s latch covers merges: once an event was dropped, merging a newer
+    // position into an older queued event would reorder it past the loss.
+    EventQueue!2 queue;
+    assert(!queue.pushMotion(moved(1, 10)).hasError);
+    assert(!queue.push(pressed(2)).hasError);
+    assert(!queue.push(pressed(3)).hasError);
+    assert(queue.dropped == 1);
+    assert(!queue.pushMotion(moved(4, 20)).hasError);
+    assert(queue.dropped == 2);
 }
 
 @("wsi.loop.aMergedEventKeepsItsSequenceAndTakesTheNewestObservation")
@@ -310,6 +775,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    import sparkles.input.events : PointerButton;
+
     import std.sumtype : match;
 
     // `ED5`: a consumer that stops draining must not be able to fail a
@@ -350,6 +817,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    import sparkles.input.events : PointerButton;
+
     import std.sumtype : match;
 
     // `ED5` with `ED8`: an event refused for want of text space leaves its
@@ -390,6 +859,8 @@ unittest
 @("wsi.loop.textIsReadableDuringItsDrainAndStaleAfter")
 @safe unittest
 {
+    import sparkles.input.events : PointerButton;
+
     RecordingWsi!(1, 8) wsi;
     WindowConfig config;
     config.logicalSize = LogicalSize(10, 10);
@@ -432,6 +903,8 @@ unittest
 @("wsi.loop.retainCopiesTextPastTheDrain")
 @safe unittest
 {
+    import sparkles.input.events : PointerButton;
+
     RecordingWsi!(1, 8) wsi;
     WindowConfig config;
     config.logicalSize = LogicalSize(10, 10);
@@ -482,6 +955,8 @@ unittest
 @("wsi.loop.aThrowingSinkStillReleasesItsText")
 @safe unittest
 {
+    import sparkles.input.events : PointerButton;
+
     EventQueue!2 queue;
     const window = WindowId(0, 1);
     static TextCommittedEvent committed(TextId text, size_t)
@@ -615,6 +1090,7 @@ if (MaxWindows > 0 && MaxEvents > 0)
                 "WSI event queue is full");
 
         windows_.remove(id);
+        events_.forgetWindow(id);
         return emit(id, DestroyedEvent());
     }
 
@@ -658,6 +1134,42 @@ if (MaxWindows > 0 && MaxEvents > 0)
             ++nextSequence_;
         return result;
     }
+
+    /**
+    Queues pointer input for `id`, as a native backend would: motion through
+    `pushMotion` (`ED2`, `ED3`), with one history sample per position in
+    `samples` (the event's own position when empty); anything else in order.
+    */
+    WsiResult!void injectPointer(WindowId id, PointerEvent event,
+        scope const(PointerSample)[] samples...)
+    {
+        auto slot = checkedSlot(id);
+        if (slot.hasError)
+            return wsiErr!void(slot.error);
+        auto queued = WindowEvent(nextSequence_, id, WindowEventPayload(event));
+        WsiResult!void result;
+        if (event.phase != PointerPhase.moved)
+            result = events_.push(queued);
+        else
+            result = events_.pushMotion(queued, samples);
+        if (!result.hasError)
+            ++nextSequence_;
+        return result;
+    }
+
+    /// Sets `id`'s motion policy (`ED9`); see `EventQueue.setMotionPolicy`.
+    WsiResult!void setMotionPolicy(WindowId id, bool coalesce, bool sumRelative)
+    {
+        auto slot = checkedSlot(id);
+        if (slot.hasError)
+            return wsiErr!void(slot.error);
+        return events_.setMotionPolicy(id, coalesce, sumRelative);
+    }
+
+    /// The newest samples of `id`'s `pointer`, in arrival order (`ED3`).
+    size_t copySamples(WindowId id, PointerId pointer, scope PointerSample[] into)
+        const pure nothrow @nogc
+        => events_.copySamples(id, pointer, into);
 
 
     /**
@@ -890,6 +1402,8 @@ unittest
 @("wsi.loop.recordingHandleFailureIsTyped")
 unittest
 {
+    import sparkles.input.events : PointerButton;
+
     RecordingWsi!() wsi;
     const id = wsi.createWindow(WindowConfig()).value;
     const handles = wsi.nativeHandles(id);
@@ -900,6 +1414,8 @@ unittest
 
 version (unittest)
 {
+    import sparkles.input.events : PointerButton;
+
     /// Serves `size` bytes of a position-derived pattern, so a receiver can
     /// verify every byte without the provider keeping a copy.
     private struct PatternProvider

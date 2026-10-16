@@ -242,10 +242,11 @@ int main()
     }
 
     /*
-    Addendum: a flood no longer ends the loop (`ED5`). XTEST delivers far
-    more events in one dispatch than the 128-slot queue holds, which used to
-    become a sticky capacity error that the next dispatch reported as a
-    failure. Now the excess is counted and the drain reports it, last, as an
+    Addendum: floods (`ED2`, `ED3`, `ED5`). XTEST delivers far more events in
+    one dispatch than the 128-slot queue holds. Motion merges in place, so a
+    motion flood drops nothing: the relative delta arrives summed and the
+    samples stay readable beside the queue. Clicks never merge, so a click
+    flood overflows: the excess is counted, the drain reports it last as an
     `EventsDropped` event, and the loop keeps running.
     */
     {
@@ -268,17 +269,50 @@ int main()
         }
         assert(!wsi.setRelativePointer(id, true).hasError);
 
-        // Every motion raises a core and a raw event, and neither kind
-        // coalesces, so this is several times the queue's capacity.
+        // Every motion raises a core and a raw event: several times the
+        // queue's capacity, all of it merging.
         foreach (_; 0 .. 400)
             assert(sendRelativeMotion(hooks.connection, 1, 0) == 0);
         foreach (_; 0 .. 4)
             hooks.step(100.msecs);
 
-        uint dropped;
+        double dx = 0;
+        uint samples;
+        uint motionDropped;
         ulong last;
+        assert(!wsi.drain((WindowEvent event) {
+            assert(event.sequence > last, "drained order stays increasing");
+            last = event.sequence;
+            event.payload.match!(
+                (in RelativePointerEvent value) {
+                    dx += value.dx;
+                    samples += value.samples;
+                },
+                (in EventsDroppedEvent value) { motionDropped = value.count; },
+                (_) {});
+        }).hasError, "the motion flood must not fail the drain");
+        assert(motionDropped == 0, "merging motion overflowed the queue");
+        assert(dx == 400 && samples == 400, "the merged delta is the flood's sum");
+        PointerSample[64] kept;
+        assert(wsi.copySamples(id, PointerId(0, 1), kept[]) == kept.length,
+            "the history ring holds the newest samples");
+        assert(!wsi.setRelativePointer(id, false).hasError);
+
+        // Clicks anchor the order and never merge: 200 clicks are 400
+        // events in one dispatch, more than the queue holds.
+        assert(warpPointerOnScreen(hooks.connection, 120, 80) == 0);
+        foreach (_; 0 .. 200)
+        {
+            assert(sendButton(hooks.connection, 1, true) == 0);
+            assert(sendButton(hooks.connection, 1, false) == 0);
+        }
+        foreach (_; 0 .. 4)
+            hooks.step(100.msecs);
+
+        uint dropped;
         ulong noticeSequence;
         size_t delivered;
+        last = 0;
         assert(!wsi.drain((WindowEvent event) {
             assert(event.sequence > last, "drained order stays increasing");
             last = event.sequence;
@@ -290,13 +324,13 @@ int main()
                 },
                 (_) {});
         }).hasError, "the flood must not fail the drain");
-        assert(dropped != 0, "the flood did not overflow the queue");
+        assert(dropped != 0, "the click flood did not overflow the queue");
         assert(noticeSequence == last, "the notice is delivered last");
 
         // The regression: the dispatch after an overflow used to fail.
         hooks.step(100.msecs);
-        assert(!wsi.setRelativePointer(id, false).hasError);
         assert(!wsi.destroyWindow(id).hasError);
+        writeln("ok: X11 motion flood merged (", samples, " samples, none dropped)");
         writeln("ok: X11 queue overflow reported, not fatal (", dropped,
             " dropped of ", dropped + delivered, ")");
     }

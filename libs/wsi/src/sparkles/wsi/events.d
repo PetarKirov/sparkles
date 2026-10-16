@@ -7,6 +7,7 @@ and physical coordinates and the source metadata needed to make that policy.
 */
 module sparkles.wsi.events;
 
+import core.time : MonoTime;
 import std.sumtype : SumType;
 import std.traits : EnumMembers;
 public import std.sumtype : match;
@@ -193,6 +194,10 @@ struct PointerEvent
     PhysicalPosition physicalPosition;
     Mods modifiers;
     double pressure;
+    /// How many native samples this motion stands for: more than one once
+    /// motion merged (`ED2`). The samples themselves are in the queue's
+    /// history ring for this window and pointer (`ED3`).
+    uint samples = 1;
 }
 
 struct RelativePointerEvent
@@ -201,6 +206,8 @@ struct RelativePointerEvent
     double dx;
     double dy;
     bool raw;
+    /// ditto; `dx` and `dy` are the merged samples' sum.
+    uint samples = 1;
 }
 
 enum ScrollSource : ubyte
@@ -265,6 +272,11 @@ struct TouchEvent
     double pressure;
     double majorRadius;
     double minorRadius;
+    /// How many native samples a `moved` contact stands for: a platform that
+    /// batches touch (Android) delivers one event per frame and keeps the
+    /// earlier samples in the history ring (`ED3`). Touch never merges in
+    /// the queue (`ED4`).
+    uint samples = 1;
 }
 
 enum OutputChange : ubyte
@@ -347,12 +359,20 @@ alias WindowEventPayload = SumType!(NoWindowEvent, ReadyEvent, ExposedEvent,
     PopupConfiguredEvent, PopupDismissedEvent, CursorChangedEvent,
     EventsDroppedEvent);
 
-/// Sequence-stamped event. Sequence zero is reserved for uninitialized data.
+/**
+Sequence-stamped event. Sequence zero is reserved for uninitialized data.
+
+`timestamp` is the platform's event time converted once into the loop's
+monotonic clock, or the time the backend observed the event when the
+platform supplies none (`ED7`). A merged motion event carries its newest
+sample's time. `MonoTime.init` means the backend has not stamped it.
+*/
 struct WindowEvent
 {
     ulong sequence;
     WindowId window;
     WindowEventPayload payload;
+    MonoTime timestamp;
 }
 
 /**
@@ -400,6 +420,16 @@ void setTextOf(ref WindowEvent event, TextId id) @safe pure nothrow @nogc
 // only, and these events arrive through `in` parameters.
 private bool isKind(Payload)(in WindowEvent event) @safe pure nothrow @nogc
     => event.payload.match!((in Payload _) => true, _ => false);
+
+/// Whether `event` is pointer motion: a `moved` pointer or touch contact, or
+/// relative motion. Motion merges by its own rule (`ED2`) and keeps its
+/// samples beside the queue (`ED3`).
+bool isMotion(in WindowEvent event) @safe pure nothrow @nogc
+    => event.payload.match!(
+        (in PointerEvent e) => e.phase == PointerPhase.moved,
+        (in RelativePointerEvent e) => true,
+        (in TouchEvent e) => e.phase == TouchPhase.moved,
+        _ => false);
 
 /// Whether this event's kind can ever be superseded — the queue may scan
 /// past it when coalescing; everything else anchors ordering.

@@ -16,7 +16,7 @@ import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
 import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, PROT_READ, mmap,
     munmap;
 import core.sys.posix.unistd : posixClose = close;
-import core.time : Duration, msecs;
+import core.time : Duration, MonoTime, msecs;
 import std.traits : Parameters;
 
 import sparkles.base.buffer : InlineBuffer, UniqueBuffer;
@@ -30,6 +30,7 @@ import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
 import sparkles.event_horizon.op : Completion, OpHandle, OpPollAdd, PollEvents;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
+import sparkles.wsi.history : PointerSample;
 import sparkles.wsi.loop : EventQueue;
 import sparkles.wsi.types;
 
@@ -378,6 +379,7 @@ struct WaylandWsi
             return paused;
         destroyNative(windows_.at(checked.value));
         windows_.remove(id);
+        events_.forgetWindow(id);
         const hadSticky = hasStickyError_;
         emit(id, DestroyedEvent());
         auto rearmed = prepareAndArm();
@@ -844,7 +846,7 @@ struct WaylandWsi
     private void emit(Payload)(WindowId id, Payload payload) nothrow @nogc
     {
         auto result = events_.pushCoalesced(WindowEvent(nextSequence_, id,
-            WindowEventPayload(payload)));
+            WindowEventPayload(payload), MonoTime.currTime));
         if (result.hasError)
         {
             remember(result.error);
@@ -857,7 +859,8 @@ struct WaylandWsi
     private void emitText(Make)(WindowId id, scope const(char)[] text,
         scope Make make) nothrow @nogc
     {
-        auto result = events_.pushText(nextSequence_, id, text, make);
+        auto result = events_.pushText(nextSequence_, id, text, make,
+            MonoTime.currTime);
         if (result.hasError)
         {
             remember(result.error);
@@ -870,6 +873,21 @@ struct WaylandWsi
     /// that delivers it (`ED8`). See `EventQueue.withText`.
     WsiResult!void withText(Fn)(TextId id, scope Fn fn)
         => events_.withText(id, fn);
+
+    /// Sets `id`'s motion policy (`ED9`): whether its pointer motion merges,
+    /// and whether relative motion merges by summing.
+    WsiResult!void setMotionPolicy(WindowId id, bool coalesce, bool sumRelative)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        return events_.setMotionPolicy(id, coalesce, sumRelative);
+    }
+
+    /// Copies the newest samples of `id`'s `pointer` into `into`, in
+    /// arrival order, and returns how many (`ED3`).
+    size_t copySamples(WindowId id, PointerId pointer, scope PointerSample[] into)
+        const @safe pure nothrow @nogc => events_.copySamples(id, pointer, into);
 
     /// Copies an event's text into a `TextPool` the caller owns (`ED8`).
     /// See `EventQueue.retain`.

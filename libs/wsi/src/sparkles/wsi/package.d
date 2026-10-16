@@ -12,6 +12,7 @@ public import sparkles.wsi.clipboard_conformance;
 public import sparkles.wsi.conformance;
 public import sparkles.wsi.events;
 public import sparkles.wsi.handles;
+public import sparkles.wsi.history;
 public import sparkles.wsi.loop;
 public import sparkles.wsi.platform.select;
 
