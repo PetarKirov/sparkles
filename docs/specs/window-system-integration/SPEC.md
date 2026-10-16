@@ -511,8 +511,9 @@ rest belongs to whichever side asked for the data.
 **DT5: Evidence.** Each backend's lane **must** round-trip 32 MiB in both
 directions, for the clipboard and for drag-and-drop. During the transfer the loop
 **must** keep serving timers, and the receiver's resident memory **must** stay
-flat apart from the destination it chose. On Android an offer is held whole by
-the Java side, so its lane checks WSI's own memory rather than the process's.
+flat apart from the destination it chose. On Android one clip is bounded by a
+Binder transaction, about 1 MB, until a `ContentProvider` can stream it: that
+lane round-trips 256 KiB and requires a larger offer to fail with `capacity`.
 
 Text that an input path inserts directly, such as AppKit's `insertText:` from a
 Service, is event text under `ED8` and bounded by it. Larger text on such a path

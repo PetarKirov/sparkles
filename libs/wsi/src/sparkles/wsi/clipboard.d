@@ -335,3 +335,35 @@ struct ClipboardState(size_t maxOffers = 4, size_t maxTransfers = 8)
         return true;
     }
 }
+
+/**
+The length of the longest prefix of `text` that ends on a complete UTF-8
+sequence. What follows it is the start of a sequence split across chunks,
+which a backend converting chunk by chunk carries into the next one.
+Invalid bytes are left for the converter to reject.
+*/
+size_t completeUtf8Prefix(scope const(char)[] text) @safe pure nothrow @nogc
+{
+    size_t back;
+    while (back < 3 && back < text.length && (text[$ - 1 - back] & 0xC0) == 0x80)
+        ++back;
+    if (back == text.length)
+        return text.length;
+    const lead = text[$ - 1 - back];
+    const size_t need = lead < 0x80 ? 1 : lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3
+        : lead >= 0xC0 ? 2 : 1;
+    return back + 1 >= need ? text.length : text.length - back - 1;
+}
+
+@("wsi.clipboard.completeUtf8PrefixStopsBeforeASplitSequence")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(completeUtf8Prefix("abc") == 3);
+    assert(completeUtf8Prefix("aé") == 3);            // 'é' is complete
+    assert(completeUtf8Prefix("a\xC3") == 1);         // 'é' split after its lead
+    assert(completeUtf8Prefix("a\xE2\x82") == 1);     // '€' missing its last byte
+    assert(completeUtf8Prefix("a\xE2\x82\xAC") == 4); // '€' complete
+    assert(completeUtf8Prefix("\xF0\x9F\x98") == 0);  // an astral scalar, split
+    assert(completeUtf8Prefix("") == 0);
+}

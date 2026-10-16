@@ -25,6 +25,9 @@ dependency "expected" version="~>0.4.1"
 dependency "sparkles:base" path="../.."
 dependency "sparkles:input" path="../.."
 dependency "sparkles:event-horizon" path="../.."
+// JNI and the activity on Android; every module there is `version (Android)`,
+// so on a desktop host this dependency compiles to nothing.
+dependency "sparkles:android" path="../.."
 
 configuration "library" {
     targetType "library"

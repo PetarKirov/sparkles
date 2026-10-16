@@ -25,6 +25,11 @@ struct X11WindowHandle
 struct Win32DisplayHandle { void* instance; }
 struct Win32WindowHandle { void* hwnd; }
 struct AppKitDisplayHandle { void* application; }
+/// The `ANativeActivity*` that owns the window.
+struct AndroidDisplayHandle { void* activity; }
+/// The activity's current `ANativeWindow*`; it changes when the surface is
+/// recreated, so query it again after a surface-metrics change.
+struct AndroidWindowHandle { void* nativeWindow; }
 
 struct AppKitWindowHandle
 {
@@ -33,9 +38,9 @@ struct AppKitWindowHandle
 }
 
 alias DisplayHandle = SumType!(WaylandDisplayHandle, X11DisplayHandle,
-    Win32DisplayHandle, AppKitDisplayHandle);
+    Win32DisplayHandle, AppKitDisplayHandle, AndroidDisplayHandle);
 alias WindowHandle = SumType!(WaylandWindowHandle, X11WindowHandle,
-    Win32WindowHandle, AppKitWindowHandle);
+    Win32WindowHandle, AppKitWindowHandle, AndroidWindowHandle);
 
 struct NativeHandles
 {

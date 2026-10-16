@@ -410,8 +410,9 @@ hand values to the WSI thread, which runs Event Horizon. JNI goes through
 4. **The terminal on the backend.** The phone terminal leaves raylib once a
    renderer on `sparkles:vulkan-wsi` exists (milestone M7).
 
-Gate for slice 1: the emulator lane passes the conformance suite and a 32 MiB
-clipboard round trip; `comparison.md` gains an Android column.
+Gate for slice 1: the emulator lane (`libs/wsi/scripts/verify-android-emulator.sh`)
+passes the shared conformance suite and the clipboard suite, and refuses a clip
+past one Binder transaction with `capacity`; `comparison.md` records the run.
 
 ## Milestone M9 — TSF (deferred)
 
