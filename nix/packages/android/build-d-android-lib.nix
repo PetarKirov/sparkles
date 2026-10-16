@@ -57,6 +57,10 @@ in
           # `--update-section` has something to replace. The contents do not
           # name a commit, so this derivation stays cached across commits.
           emptyBuildInfo ? false,
+          # Link for raylib's `native_app_glue`: keep its `ANativeActivity_onCreate`
+          # entry and route `fopen` through its asset-aware wrapper. An app whose
+          # activity `sparkles:wsi` owns (milestone MA) links neither.
+          raylibGlue ? true,
           description ? "D application as an Android shared library, per ABI",
         }:
         pkgs.stdenv.mkDerivation {
@@ -96,8 +100,7 @@ in
                 ${toString cFiles} \
                 ${toString (staticLibs t.abi)} \
                 -shared -link-defaultlib-shared=false \
-                -L-Wl,-u,ANativeActivity_onCreate \
-                -L-Wl,--wrap=fopen \
+                ${lib.optionalString raylibGlue "-L-Wl,-u,ANativeActivity_onCreate -L-Wl,--wrap=fopen"} \
                 -L-llog -L-landroid -L-lEGL -L-lGLESv2 -L-lOpenSLES -L-lm -L-ldl \
                 -L${ndk.pageAlignFlags} \
                 -of=lib${libName}-${t.abi}.so

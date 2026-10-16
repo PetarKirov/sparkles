@@ -4,8 +4,15 @@ The NativeActivity handle: hand-declared mirrors of the stable head of
 
 ImportC cannot parse `android_native_app_glue.h` (its kernel-header closure
 trips on `__int128`/`__alignof__`), and only these leading fields are touched,
-so they are mirrored here instead. `GetAndroidApp()` is defined by raylib's
-`rcore_android.c` (not bound by raylib-d) and is valid from `android_main` on.
+so they are mirrored here instead.
+
+Two hosts own the activity. Under raylib, its `native_app_glue` does, and
+`GetAndroidApp()` (defined by raylib's `rcore_android.c`, valid from
+`android_main` on) exposes the glue's state. Without raylib, the
+`sparkles:wsi` Android backend does. That symbol is therefore declared weak:
+an app without the glue still loads, the glue's readers below answer their
+"not known" values, and the activity itself comes from
+$(LREF setNativeActivity), which every entry point calls first.
 */
 module sparkles.android.activity;
 
@@ -54,11 +61,34 @@ struct AndroidApp
     int destroyRequested;
 }
 
-/// Defined by raylib's rcore_android.c; set before it calls our `main()`.
-extern (C) AndroidApp* GetAndroidApp() @nogc nothrow;
+/// Defined by raylib's rcore_android.c; set before it calls our `main()`. Weak:
+/// absent in an app that owns its activity without the glue.
+pragma(LDC_extern_weak) extern (C) AndroidApp* GetAndroidApp() @nogc nothrow;
+
+/// The glue's state, or `null` in an app without raylib's glue.
+AndroidApp* glueApp() @trusted nothrow @nogc
+    => &GetAndroidApp is null ? null : GetAndroidApp();
+
+private __gshared ANativeActivity* recordedActivity;
+
+/**
+Records the activity. Called by an entry point on the main thread, before
+druntime starts (C calls and `__gshared` stores only): `sparkles_onCreate`
+under raylib, the `sparkles:wsi` Android backend's entry without it.
+*/
+void setNativeActivity(ANativeActivity* activity) @trusted nothrow @nogc
+{
+    recordedActivity = activity;
+}
 
 /// The activity; valid for the process lifetime (the process exits with it).
-ANativeActivity* nativeActivity() @trusted nothrow @nogc => GetAndroidApp().activity;
+ANativeActivity* nativeActivity() @trusted nothrow @nogc
+{
+    if (recordedActivity !is null)
+        return recordedActivity;
+    auto app = glueApp();
+    return app is null ? null : app.activity;
+}
 
 /**
 The app's private data directory (`ANativeActivity.internalDataPath`,
@@ -81,7 +111,9 @@ private immutable int sdkVersionValue;
 
 shared static this() @trusted
 {
-    auto a = GetAndroidApp().activity;
+    auto a = nativeActivity();
+    if (a is null)
+        return;
     internalDataPathValue = a.internalDataPath.fromStringz.idup;
     externalDataPathValue = a.externalDataPath.fromStringz.idup;
     sdkVersionValue = a.sdkVersion;
@@ -102,14 +134,22 @@ Whether the activity currently has a native window to draw into. `false`
 between `APP_CMD_TERM_WINDOW` and the next `APP_CMD_INIT_WINDOW` — the app is
 stopped (in the background, the screen off) and any EGL swap would fail.
 */
-bool hasNativeWindow() @trusted nothrow @nogc => GetAndroidApp().window !is null;
+bool hasNativeWindow() @trusted nothrow @nogc
+{
+    auto app = glueApp();
+    return app !is null && app.window !is null;
+}
 
 /**
 The part of the window the app's content may use, in pixels: the window minus
 what the system decorations and the soft keyboard cover, as the framework last
 reported it (`APP_CMD_CONTENT_RECT_CHANGED`). Empty before the first report.
 */
-ARect contentRect() @trusted nothrow @nogc => GetAndroidApp().contentRect;
+ARect contentRect() @trusted nothrow @nogc
+{
+    auto app = glueApp();
+    return app is null ? ARect.init : app.contentRect;
+}
 
 // `<android/configuration.h>` (libandroid).
 private extern (C) int AConfiguration_getKeyboard(const(void)* config) @nogc nothrow;
@@ -125,7 +165,8 @@ plugged in or a cover being folded back without polling anything else.
 */
 bool hardwareKeyboardAttached() @trusted nothrow @nogc
 {
-    const config = GetAndroidApp().config;
+    auto app = glueApp();
+    const config = app is null ? null : app.config;
     return config !is null
         && AConfiguration_getKeyboard(config) == ACONFIGURATION_KEYBOARD_QWERTY
         && AConfiguration_getKeysHidden(config) == ACONFIGURATION_KEYSHIDDEN_NO;
@@ -142,7 +183,7 @@ yet paused. The glue records each lifecycle step (`START`, `RESUME`, `PAUSE`,
 transition into the foreground on the frame after it happened.
 */
 bool activityResumed() @trusted nothrow @nogc
-    => GetAndroidApp().activityState == appCmdResume;
+    => glueApp() !is null && glueApp().activityState == appCmdResume;
 
 private extern (C) int AConfiguration_getDensity(const(void)* config) @nogc nothrow;
 
@@ -150,7 +191,8 @@ private extern (C) int AConfiguration_getDensity(const(void)* config) @nogc noth
 /// the configuration does not say.
 int densityDpi() @trusted nothrow @nogc
 {
-    const config = GetAndroidApp().config;
+    auto app = glueApp();
+    const config = app is null ? null : app.config;
     const d = config !is null ? AConfiguration_getDensity(config) : 0;
     return d > 0 && d < 0xFFFE ? d : 160;
 }
@@ -175,9 +217,9 @@ handle a band of its own, as Termux and Chrome have.
 */
 void showStatusBar() @trusted nothrow @nogc
 {
-    auto app = GetAndroidApp();
-    if (app !is null && app.activity !is null)
-        ANativeActivity_setWindowFlags(app.activity, 0, awindowFlagFullscreen);
+    auto activity = nativeActivity();
+    if (activity !is null)
+        ANativeActivity_setWindowFlags(activity, 0, awindowFlagFullscreen);
 }
 
 private extern (C) int AConfiguration_getSmallestScreenWidthDp(const(void)* config) @nogc nothrow;
@@ -189,6 +231,7 @@ say. Follows the configuration, so a foldable opening flips it.
 */
 bool largeScreen() @trusted nothrow @nogc
 {
-    const config = GetAndroidApp().config;
+    auto app = glueApp();
+    const config = app is null ? null : app.config;
     return config !is null && AConfiguration_getSmallestScreenWidthDp(config) >= 600;
 }

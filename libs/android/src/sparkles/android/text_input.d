@@ -33,7 +33,7 @@ version (Android):
 
 import core.sys.posix.pthread;
 
-import sparkles.android.activity : AndroidApp, GetAndroidApp;
+import sparkles.android.activity : AndroidApp, glueApp;
 import sparkles.android.jni;
 
 /// A backspace from the soft keyboard, in the typed-text queue: a key, where
@@ -79,7 +79,9 @@ window is open (raylib assigns its callback during `InitWindow`). Idempotent.
 */
 void installTextInputHook() @trusted nothrow @nogc
 {
-    auto app = GetAndroidApp();
+    auto app = glueApp();
+    if (app is null)
+        return; // no raylib glue: the `sparkles:wsi` backend owns input
     auto current = cast(InputCallback) app.onInputEvent;
     if (current is &onInputEvent)
         return;
