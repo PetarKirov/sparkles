@@ -111,8 +111,8 @@ configuration "unittest" {
 // `sparkles:dmd-lsp` analyzes those modules under it (`TGT6`). It adds
 // `shaders/`, the device-only entry points: `@compute(CompileFor.deviceOnly)`
 // modules no host build may see, since they sample through SPIR-V intrinsics.
-// A configuration is the device build because its dflags name a dcompute
-// target, not because of its name.
+// `shader-compile` picks it by name (`--config`, `shaders` by default) and
+// accepts it because its dflags name exactly one Vulkan dcompute target.
 configuration "shaders" {
     targetType "library"
     sourcePaths "src" "shaders"

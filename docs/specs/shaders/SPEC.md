@@ -8,15 +8,16 @@ reviewed: 2026-10-05
 
 ## Abstract
 
-`sparkles:shaders` lets a D program write a per-pixel effect once, as an
-ordinary D function, and run it in two places: on the CPU, where any D
-compiler calls it directly, and on the GPU, where the same source is compiled
-into a fragment shader. It provides GLSL-shaped vectors and built-in
-functions with GLSL's definitions on both sides, a fragment-shader entry point
-for the GPU compilation of LDC, the LLVM-based D compiler, and a build step
-that turns a package's shader code into validated GLSL during the build,
-regenerating it only when its inputs change. A program that never uses the
-GPU half never needs the shader compiler.
+`sparkles:shaders` lets a D program write a per-pixel effect's computation
+once, as an ordinary D function, and run it in two places: on the CPU, where
+any D compiler calls it directly, and on the GPU, where the same source is
+compiled into a fragment shader, behind a thin entry point that reads its
+inputs and uniforms, samples its textures and calls it. It provides
+GLSL-shaped vectors and built-in functions with GLSL's definitions on both
+sides, and a build step that turns a package's shader code into validated GLSL
+during the build. Its GPU half needs LDC, the LLVM-based D compiler, extended
+with a fragment-shader entry point. Only a build that generates GLSL needs
+that compiler: one that uses only the CPU half, or prebuilt GLSL, does not.
 
 ## 1. Introduction
 
@@ -30,53 +31,76 @@ the host language. They drift. Nothing in that arrangement checks that the
 GLSL `mod` of a negative number matches the host's, that both sides clamp the
 same way, or that a fix applied to one was applied to the other.
 
-D has GPU compilation, but not for this. LDC's dcompute compiles marked D
-modules to GPU code for compute kernels: functions launched over a grid that
-read and write buffers. Its Vulkan target
+D has GPU compilation, but not for this. LDC's dcompute, its support for
+compiling D to GPU code, compiles marked D modules for compute kernels:
+functions launched over a grid that read and write buffers. Its Vulkan target
 ([ldc-developers/ldc#5132](https://github.com/ldc-developers/ldc/pull/5132))
 emits SPIR-V. A fragment shader is a different shape. Its inputs are
 interpolated values from the previous pipeline stage, sampled textures and
 named uniforms, and its output is a colour; a graphics API links all of these
-by name and location. dcompute has no graphics stages. D's own numeric
-semantics also differ from GLSL's in details that matter for effects, and
-GPUs consume SPIR-V or GLSL, not D. Finally, a compiler that emits SPIR-V is
-a custom LDC built against a development LLVM: far too heavy to impose on
+by name (GLSL ES 1.00 by name alone, so names must survive translation), and
+in newer GLSL also by location. dcompute has no graphics stages. D's own
+numeric semantics also differ from GLSL's in details that matter for effects,
+and GPUs consume SPIR-V or GLSL, not D. Finally, a compiler that emits SPIR-V
+is a custom LDC built against a development LLVM: far too heavy to impose on
 every program that merely uses an effect on the CPU.
 
-This library writes each effect as a
-[single-source shader](../../glossary.md#single-source-shader): one D
-function over a small [vocabulary](../../glossary.md#shader-vocabulary) of
-GLSL-shaped types and built-ins, compiled twice. The vocabulary implements
-GLSL's definitions, so the two compilations agree within the floating-point
-error GLSL permits a GPU. The host compilation is ordinary D, so any compiler
-and any CPU caller can use it. The device compilation goes through dcompute,
-extended with a fragment stage that a fork of LDC adds: a function marked as
-a [fragment entry point](../../glossary.md#fragment-entry-point) has its
-parameters turned into the shader's inputs, textures and uniforms, and its
-return value into the colour output. A build step compiles a package's
-shader modules to SPIR-V, validates it, translates each entry point into GLSL
-for OpenGL 3.3 and OpenGL ES 2.0, and validates the result again. It runs as
-part of an ordinary build of a [dub](https://dub.pm/) package, D's package
+This library writes each effect as a [single-source
+shader](../../glossary.md#single-source-shader): one D function over a small
+[vocabulary](../../glossary.md#shader-vocabulary) of GLSL-shaped types and
+built-ins, compiled twice. The vocabulary implements GLSL's definitions, so
+the two compilations agree within the floating-point error the GPU's precision
+permits (section 4 and decision `D12` give the bounds); both sides compute in
+`float`, and the compound built-ins are the same D formula on both. A module
+is shader code because its declaration carries dcompute's `@compute` attribute
+(named for dcompute's kernels, and used here for fragment shaders too); this
+document calls it a device module. A device module marked device-only is never
+compiled for the host; one marked host-and-device is compiled for both. The
+host compilation is ordinary D, so any compiler and any CPU caller can use the
+shader's functions. The device compilation goes through dcompute, with the
+Vulkan target of the pull request above and a fragment stage added by a fork
+of LDC: a function marked as a [fragment entry
+point](../../glossary.md#fragment-entry-point) has its parameters turned into
+the shader's inputs, textures and uniforms, and its return value into the
+colour output. The entry point itself runs only on the GPU: one that samples a
+texture can only be compiled for the device, so it lives in a device-only
+module (`SHF1`). It stays thin: it samples and forwards to host-and-device
+functions, which the CPU calls with its own values, as a terminal does once
+per cell with the cell's colour. A build step compiles a package's device
+modules to SPIR-V, validates it (`spirv-val`), translates each entry point
+with `spirv-cross` into GLSL for OpenGL 3.3 (GLSL 3.30) and OpenGL ES 2.0
+(GLSL ES 1.00), and validates the result again (`glslangValidator`). It runs
+as part of an ordinary build of a [dub](https://dub.pm/) package, D's package
 manager and build tool, and the GLSL it writes is a build product that is
-never committed. A [freshness stamp](../../glossary.md#freshness-stamp),
-recording the hashes of its inputs, lets it skip all work while they are
-unchanged. Consumers opt in per dub configuration, so the custom compiler is
-needed exactly where a GPU half is; a build that opts in on a machine without
-it fails and says how to obtain it.
+never committed. In a developer's build, a [freshness
+stamp](../../glossary.md#freshness-stamp) recording the hashes of the device
+modules and their recipes lets it skip all work while they are unchanged (the dependencies' device modules included); it does not
+track a module they import without being device modules themselves, or the
+toolchain, which changes only with a new development environment or another
+`--ldc`, after which the developer runs the step once without its freshness
+check (decision `D14`). A packager, which builds in a sandbox (here, the Nix
+build), builds the GLSL once instead, tracking the compiler and tools as well,
+and hands it to every build, which then needs no custom compiler. Consumers
+opt in to the generated GLSL per dub configuration, so the custom compiler is
+needed exactly where GLSL is generated; a build that opts in and must generate
+GLSL (it has neither prebuilt nor fresh output) but has no compiler fails and
+says how to obtain it.
 
 The scope is the fragment stage. Vertex, geometry and compute shading,
-matrices, integer and double-precision vectors, and runtime shader
-compilation are outside it. So is anything that draws: registering effects,
+matrices, integer and double-precision vector types in the vocabulary, and
+runtime shader compilation are outside it (an integer may still cross the
+interface as a uniform). So is anything that draws: registering effects,
 binding textures and uniforms, and running passes belong to the consumer's
-renderer, which this library hands complete GLSL source. SPIR-V is an
+renderer, which this library hands complete GLSL source; its vertex stage
+supplies the varyings under the D parameters' names. SPIR-V is an
 intermediate the build step consumes, not an output. A Vulkan consumer, which
 would need descriptor and push-constant layouts, is not served. The compiler
 itself is a pinned dependency: this specification states what it requires of
 the compiler, including the fragment stage, not how the compiler implements
 it. Editor diagnostics for shader code are specified by the analysis library
-that provides them, `sparkles:dmd-lsp` ([target profiles](../dmd-lsp/targets.md)).
-[`decisions.md`](./decisions.md) records each exclusion with what would bring
-it back.
+that provides them, `sparkles:dmd-lsp` ([target
+profiles](../dmd-lsp/targets.md)). [`decisions.md`](./decisions.md) records
+each exclusion with what would bring it back.
 
 The package holds two things: the vocabulary, a library, and the build step,
 a command-line tool. Section 2 lists the terms this document defines and
@@ -95,10 +119,11 @@ are defined once in the [glossary](../../glossary.md) and listed here:
 
 <GlossaryList owner="sparkles:shaders" />
 
-GPU terms follow their standards. [SPIR-V](https://registry.khronos.org/SPIR-V/)
-is the Khronos intermediate language for shaders. GLSL is the OpenGL Shading
-Language: version 3.30 for desktop OpenGL 3.3 and
-[ES 1.00](https://registry.khronos.org/OpenGL/specs/es/2.0/GLSL_ES_Specification_1.00.pdf)
+GPU terms follow their standards.
+[SPIR-V](https://registry.khronos.org/SPIR-V/) is the Khronos intermediate
+language for shaders. GLSL is the OpenGL Shading Language: version 3.30 for
+desktop OpenGL 3.3 and [ES
+1.00](https://registry.khronos.org/OpenGL/specs/es/2.0/GLSL_ES_Specification_1.00.pdf)
 for OpenGL ES 2.0. A _varying_ is an input a fragment shader receives,
 interpolated from the previous stage; a _uniform_ is a value constant over one
 draw. dcompute's own terms keep their meaning: the _host_ is the CPU side of a
@@ -109,7 +134,7 @@ program, the _device_ the GPU side.
 1. **One source.** An effect is one D function. Its CPU behaviour and its
    GPU shader derive from that function; neither is written separately.
 2. **One meaning.** Every vocabulary operation computes the same result on
-   the host and the device, up to floating-point rounding.
+   the host and the device, within the bounds of `SHV7`.
 3. **Device code is opt-in by target.** Without a GPU compilation target the
    vocabulary is plain D: no device rules apply and no special compiler is
    needed.
@@ -121,7 +146,8 @@ program, the _device_ the GPU side.
 6. **Generated, never committed.** Generated GLSL is a build product. The
    build that ships it is a Nix derivation, which regenerates it exactly when
    an input changed, the toolchain included; a developer's build regenerates
-   it when the unit's modules or recipes change.
+   it when one of the unit's modules or their recipes changes (and, once
+   `SHB4` is delivered, when a module joins or leaves the unit).
 7. **No compiler unless asked.** A consumer that does not opt in needs only
    its ordinary D compiler.
 8. **Complete, validated output.** Every generated file is a whole shader
@@ -208,17 +234,27 @@ effect that wraps a coordinate would differ between the sides wherever the
 coordinate is negative, which is exactly where nobody looks.
 
 **SHV7: Agreement.** For every operation in `SHV1`–`SHV6` and every finite
-input, the host and device results **must** agree within the error bounds
-GLSL allows the device for that operation at the precision the generated
-shader declares
-([GLSL ES 3.00 §4.5.1](https://registry.khronos.org/OpenGL/specs/es/3.0/GLSL_ES_Specification_3.00.pdf)):
-full single precision for GLSL 3.30, and `highp` for the GLSL ES 1.00
-output, which qualifies every variable `highp` (`D15`).
+input on which GLSL defines the result, the host and device results **must**
+agree within the bound [`D12`](./decisions.md#d12-agreement-is-judged-by-the-vulkan-precision-table)
+sets for that operation, inside the argument ranges it gives; outside them,
+and where `mod`'s quotient lies within rounding of an integer (one rounding
+moves `floor` by a whole step), no bound is required. Construction and
+component access are exact; vector `+`, `-` and `*` are correctly rounded per
+operation, with a multiply and an add allowed to fuse into one rounding on
+either side, and `/` is within 2.5 ULP for divisors in [2⁻¹²⁶, 2¹²⁶]; any
+operation may flush a denormal operand or result to zero. The GLSL ES 1.00
+output, which qualifies every variable `highp` (`D15`), is held to the same
+bounds; it is not yet read back, so its agreement is unverified. GLSL leaves the result
+undefined for `sqrt` of a negative number, `pow` with a negative base or with
+a zero base and a non-positive exponent, `mod` by zero, `smoothstep` with
+`e0 >= e1`, and `clamp` with `lo > hi`; on those inputs nothing is required.
 
 **SHV8: Inert stand-ins.** Outside a device compilation, the shader
-attributes of `SHM1` and `SHF1` and the `Sampler2D` handle **must** exist
-with the same names as plain D declarations that have no effect, so a shader
-module compiles as ordinary D under any compiler.
+attributes of `SHM1`, `SHF1` and `SHF2` and the `Sampler2D` handle **must** exist
+with the same names as plain D declarations that have no effect, so a
+host-and-device module compiles as ordinary D under any compiler. A
+device-only module is never compiled for the host, and need not compile
+there: it samples textures, which only the device compilation can do.
 
 ## 5. Device modules
 
@@ -280,7 +316,11 @@ pinned compiler (`SHT1`) and are checked through its output.
 **SHF1: Marking.** A function in a `@compute` module marked `@fragment`
 **must** become a fragment-shader entry point, named after the D function, in
 the device module. The D function itself remains callable from other device
-code. An entry point's name **must** be unique across the unit; a second
+code. An entry point that samples a texture compiles only for the device, so it
+belongs in a device-only module: in a host-and-device module the host
+compilation fails at the sample, since `SHV8`'s stand-in cannot sample. An
+entry point's name
+**must** be unique across the unit; a second
 function of the same name **must** fail the compilation with a diagnostic
 naming both definitions.
 
@@ -305,13 +345,17 @@ set 0. A parameter that the platform calling convention would rewrite **must**
 be rejected with a diagnostic, not miscompiled.
 
 Every interface name, and the field names of a uniform struct, **must** reach
-the generated GLSL unchanged: a name GLSL reserves (by spirv-cross's list), one
-with the reserved `gl_` prefix, or one with a run of underscores **must** fail
-the compilation with a diagnostic naming it. A host binds by these names.
+the generated GLSL unchanged. A name the translation would rewrite **must**
+fail the compilation with a diagnostic naming it: one GLSL reserves (by
+spirv-cross's list), one with the `gl_` or `spv` prefix, one of the
+translation's temporary names (`_` and digits, alone or followed by `_` and
+anything; `_m` and digits, alone, for a struct field), one with a run of underscores, and one
+with a character outside ASCII letters, digits and `_`. A host binds by these
+names.
 
 An interface name **must** denote one variable across the unit: every entry
-point that names it **must** give it the same kind and the same location or
-binding, or the compilation **must** fail with a diagnostic that names both
+point that names it **must** give it the same kind, the same type and the
+same location or binding, or the compilation **must** fail with a diagnostic that names both
 entry points.
 
 _Rationale:_ The unit compiles to one module (`SHP3`), in which a name is one
@@ -335,8 +379,9 @@ end of the interface, with the same meaning:
 
 - an input: `float`, `vec2`, `vec3` or `vec4`;
 - the output: `vec4` (`SHF3`);
-- a uniform: any of those, `int` or a vector of two to four `int`s, or a
-  struct or static array of uniform types.
+- a uniform: any of those, `int` or a vector of two to four `int`s (written
+  `__vector(int[N])`; the vocabulary has no integer vector type), or a struct
+  or static array of uniform types.
 
 A uniform's declaration **must** carry its D type: an `int` is declared
 `int`, and a struct's members are named after its fields. Any other type
@@ -361,18 +406,25 @@ composite or in Function storage, and the backend cannot pass one as an
 argument. The constraint is the target's, and it is why `Sampler2D` models
 GLSL's combined `sampler2D` as the image alone.
 
-**SHF7: Other stages.** A shader-stage attribute other than `@fragment`
-**must** be rejected at compile time with a diagnostic naming the stage.
+**SHF7: Other stages.** The compiler declares no shader stage but
+`@fragment`. A stage attribute carrying any other value **must** be rejected
+at compile time with a diagnostic that reports the value.
 
 ## 7. The build step
 
-The build step, `shader-compile`, turns a package's shader modules into GLSL.
-It takes the package's directory and an output directory, and it learns
-everything else from the package's build recipe.
+The build step, `shader-compile`, turns a package's device modules into GLSL.
+It takes the package's directory, an output directory, and the name of the
+device configuration (`--config`, `shaders` by default), and it learns
+everything else from the package's build recipe. The configuration is chosen
+by that name and must then be a device build (`SHP1`). `--ldc` names the
+compiler (`SHP9`), `--if-stale` asks for the freshness check (`SHB2`), and
+`--keep` and `--quiet` change only what it prints and leaves behind.
 
 **SHP1: Device configuration.** A package declares its device compilation
 once, as a [device configuration](../../glossary.md#device-configuration): a [dub](https://dub.pm/) configuration whose `dflags` contain
-`-mdcompute-targets=<target>`; `shaders` is the conventional name. The build
+`-mdcompute-targets=<target>`, where the target is exactly one of
+`vulkan-100`, `vulkan-110`, `vulkan-120`, `vulkan-130` and `vulkan-140`;
+`shaders` is the conventional name. The build
 step **must** use that configuration's import paths, version identifiers and
 flags as `dub describe` reports them, and **must** treat a configuration
 without the flag as a configuration error.
@@ -401,9 +453,8 @@ optimised with `spirv-opt -O`.
 
 _Rationale:_ Universal rules, not Vulkan's: uniforms outside a block
 (`SHF2`) are valid SPIR-V that Vulkan rejects, and they are what an OpenGL
-consumer needs. The same rules accept a `vec3` or a struct at the interface
-and a handle in function-local memory, and the compiler does not object to
-either, so the build step is the only place those are caught.
+consumer needs. What may cross the interface is the compiler's to enforce
+(`SHF2`, `SHF5`, `D13`), not the validator's.
 
 **SHP5: Translation.** For each fragment entry point of the optimised module,
 the build step **must** produce `<entry>.frag` in GLSL 3.30 and
@@ -428,7 +479,11 @@ directory the step runs from (the stamp's paths may).
 through a temporary file and a rename, the stamp last. Every `*.frag` file in
 the output directory that no entry point produces **must** be removed, and so
 must a temporary whose writer is no longer running: the directory belongs to
-the build step. Other files there, such as a `.gitignore`, are left alone.
+the build step. A temporary is named `<file>.tmp-<pid>`, and its writer is
+judged running by its process id: concurrent runs are assumed to share one
+host and process-id namespace, and a writer outside it looks gone. A file
+that only resembles a temporary, or whose writer cannot be judged, stays.
+Other files there, such as a `.gitignore`, are left alone.
 
 _Rationale:_ Several builds that depend on the same package may run the step
 at once. A reader then sees an old file or a new one, never half of one, and
@@ -447,7 +502,8 @@ applies:
 2. with `--if-stale`, the output is fresh: 0;
 3. the device compiler, dub, or a SPIR-V or GLSL tool cannot be run: 3;
 4. the device configuration cannot be described, has no sources, names no
-   dcompute target, names anything but exactly one Vulkan target, or yields
+   dcompute target, names anything but exactly one of the Vulkan targets of
+   `SHP1`, or yields
    no device-only module: 2;
 5. the unit fails to compile: 3 if the device compiler cannot compile a
    minimal `@fragment` shader for that target either, 1 otherwise;
@@ -484,8 +540,10 @@ the file, so a file edited while the step runs leaves the stamp stale.
 **SHB2: Freshness.** With `--if-stale`, the build step **must** exit 0
 without running dub or the device compiler when the stamp's format version is
 the current one, every recorded input exists with its recorded hash, and
-every recorded output exists. A stamp with any other line, or a malformed
-one, is stale. Otherwise it **must** regenerate.
+every recorded output exists, and it records at least one input and one
+output. A stamp with any other line, or a malformed one, is stale, except
+the prebuilt stamp of `SHB3`. Lines of each kind may come in any order.
+Otherwise it **must** regenerate.
 
 **SHB3: Prebuilt output.** With `--if-stale`, a stamp whose only line is
 `prebuilt`, trailing blank lines aside, **must** be treated as fresh. Without
@@ -498,17 +556,20 @@ packager, not the stamp.
 **SHB4: Unit membership.** Freshness **must** fail when a device module
 enters or leaves the unit, even if no recorded input changed. To decide it
 without dub or the compiler, the stamp **must** record a deterministic
-content digest of the files the unit can be drawn from: the source
-directories of the device configuration and of every dependency, and their
-build recipes. The digest is computed over a
-[fileset](../build-primitives/filesets/SPEC.md) resolution of those files and
-**must** depend only on their relative paths and contents, never on
-timestamps, enumeration order, the host or the checkout's location.
+digest of the device modules among the files the unit can be drawn from (the
+source directories of the device configuration and of every dependency):
+each one's relative path and `SHM5` mode, not its contents, and nothing about
+the other files. The candidates are a
+[fileset](../build-primitives/filesets/SPEC.md) resolution, and the digest
+**must** depend only on those paths and modes, never on timestamps,
+enumeration order, the host or the checkout's location.
 
 _Rationale:_ A list of the files a unit was built from cannot notice a file
 that was not on it. A digest of every file that could belong to the unit
-does, and depending on content alone keeps it reproducible across machines
-and clones.
+does. Membership changes only when a device module appears, disappears or
+changes mode, so a digest of contents, or of every file's path, would
+regenerate the GLSL, and require the device compiler, on unrelated edits to
+any dependency; the unit's own modules are already inputs (`SHB1`).
 
 **SHB5: Opt-in configuration.** A package whose code uses generated shaders
 **must** provide them in a dub configuration of its own, separate from its
@@ -518,34 +579,41 @@ and defines a version identifier by which its code selects the shader-using
 declarations. The default configuration **must** build with no device
 compiler on the machine.
 
-**SHB6: Selection beside the dependency.** A package that needs the opt-in
-configuration of a dependency **must** select it in each of its own
-configurations that adds that dependency, next to the `dependency`
-directive, and not in its top-level settings. The code that needs the
-generated shaders **should** fail to compile, with a message naming the
-configuration, when it is built without it. A package that cannot detect the
-configuration at compile time is the exception, and **must** document the
-selection instead.
+**SHB6: Selection beside the dependency.** The opt-in configuration **must**
+be selected beside every dependency through which it is reached: each package
+whose configuration adds such a dependency selects it in that configuration,
+next to the `dependency` directive, and not in its top-level settings. An
+application, which nothing depends on, **may** select it at top level. The
+code that needs the generated shaders **should** fail to compile, with a
+message naming the configuration, when it is built without it.
 
 _Rationale:_ dub applies a dependency's top-level `subConfiguration`, and one
 inside its library configuration, even when the dependency is reachable only
 through a parent configuration that the build does not select. An opt-in
-selected there leaks into builds that never asked for a GPU.
+selected there leaks into builds that never asked for a GPU. The package that
+needs the opt-in may itself be reachable only that way, as a backend is, so
+the selection belongs to each package that adds the edge; an application's
+top level leaks into nothing.
 
-**SHB7: Concurrent builds.** The pre-generate command **must** build and run
-the step through dub's lock-protected build cache (`dub run --temp-build`),
-so that dependents building in parallel do not race on the tool's own build.
+**SHB7: Concurrent builds.** Dependents building in parallel **must not**
+race on the build of the step itself or on its output. The pre-generate
+command builds and runs the step with `dub run --temp-build`, which builds in
+a temporary directory rather than into the step's package, and the step's own
+writes are atomic (`SHP8`).
 
 ## 9. Toolchain and platforms
 
 **SHT1: Pinned compiler.** The device compiler is LDC with dcompute's Vulkan
 target ([ldc-developers/ldc#5132](https://github.com/ldc-developers/ldc/pull/5132))
 and the fragment stage of section 6, at
-[`PetarKirov/ldc@6a57aafa`](https://github.com/PetarKirov/ldc/tree/6a57aafa2867b365619a052b84d3f3afa56490bc).
+[`PetarKirov/ldc@8ba52d40`](https://github.com/PetarKirov/ldc/tree/8ba52d400779edc9512ddc6042d1c7fcdf56c25e).
 It is built against LLVM at
 [`27ba4937`](https://github.com/llvm/llvm-project/tree/27ba493781215910f560b36cd5b3b2f6c93ec5a3),
-with the SPIR-V backend and the Vulkan fixes of
-[llvm/llvm-project#216919](https://github.com/llvm/llvm-project/pull/216919).
+with the SPIR-V backend, the Vulkan fixes of
+[llvm/llvm-project#216919](https://github.com/llvm/llvm-project/pull/216919),
+and two patches of this project's (signed integers by module flag with
+struct member names, and 32-bit access-chain indices) whose upstreaming is
+tracked in [#647](https://github.com/PetarKirov/sparkles/issues/647).
 A change to either pin **must** pass the acceptance suite of
 [`testing.md`](./testing.md) before it lands.
 
@@ -556,8 +624,9 @@ _Rationale:_ Their versions shape the output: a newer `spirv-opt` rewrote one
 branch of a generated shader. The pin is part of the output's definition.
 
 **SHT3: Reproducibility.** With the toolchain of `SHT1`–`SHT2`, the same
-inputs **must** produce byte-identical output on every supported platform and
-in every directory.
+inputs **must** produce byte-identical GLSL on every supported platform and
+in every directory. (The stamp records paths relative to the package, which
+can differ.)
 
 **SHT4: Platforms.** The device toolchain **must** be available on
 x86_64 Linux, aarch64 Linux and aarch64 macOS. The host side, the vocabulary

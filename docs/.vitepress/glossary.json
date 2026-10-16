@@ -1360,7 +1360,7 @@
     "id": "shader-vocabulary",
     "term": "shader vocabulary",
     "summary": "The GLSL-shaped vector types, constructors and built-in functions a single-source shader is written against, with the same results on CPU and GPU.",
-    "definition": "In `sparkles:shaders`, the types `vec2`, `vec3` and `vec4`, their constructors and component access, and GLSL's built-in functions with GLSL's definitions. It is plain D on the host and SPIR-V on the device; a `vec3`'s layout differs between the two, which is why one never crosses a shader interface.",
+    "definition": "In `sparkles:shaders`, the types `vec2`, `vec3` and `vec4`, their constructors and component access, and GLSL's built-in functions with GLSL's definitions. It is plain D on the host and SPIR-V on the device, and every vector occupies the same bytes on both.",
     "authority": [
       {
         "text": "sparkles:shaders specification §4",
@@ -1392,7 +1392,7 @@
   {
     "id": "device-configuration",
     "term": "device configuration",
-    "summary": "The dub configuration of a package that describes how its shader code compiles for the GPU, recognised by a dcompute target among its flags.",
+    "summary": "The dub configuration of a package that describes how its shader code compiles for the GPU: chosen by name (`shaders` by default) and required to name exactly one Vulkan dcompute target among its flags.",
     "definition": "In `sparkles:shaders`, a [dub](https://dub.pm/) configuration whose `dflags` contain `-mdcompute-targets=`; `shaders` is the conventional name. The build step and editor analysis both read a package's device compilation from it, so it is declared once and never restated per shader.",
     "authority": [
       {
@@ -1421,7 +1421,7 @@
     "id": "freshness-stamp",
     "term": "freshness stamp",
     "aliases": ["stamp"],
-    "summary": "The record, kept beside generated shaders, of the hash of every input they were built from, which lets a build skip regeneration while nothing changed.",
+    "summary": "The record, kept beside generated shaders, of the hashes of the shader unit's modules and recipes, which lets a developer's build skip regeneration while they are unchanged; it does not track imports outside the unit or the toolchain.",
     "definition": "In `sparkles:shaders`, the `.stamp` file in a build step's output directory: the SHA-256 of each module of the [shader unit](/glossary#shader-unit) and each contributing build recipe, and the files produced. While it still matches, a build needs neither dub nor the device compiler; a stamp reading `prebuilt` marks output a packager supplied.",
     "authority": [
       {

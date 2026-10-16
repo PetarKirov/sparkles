@@ -28,16 +28,37 @@ evidence ledger live in [`testing.md`](./testing.md).
 
 **Gate.** Per the [Stage 0 gate](../../guidelines/spec-docs.md#stage-0-gate):
 scope, ownership and non-goals agreed; a cold read of the opening; an
-adversarial review of sections 4–8 with worked traces — a successful build of
-a two-entry unit, a stale stamp, a configuration without a target, a leaked
+adversarial review of sections 4–8 with worked traces — a successful build
+of a two-entry unit, a stale stamp, a configuration without a target, a leaked
 selection — and its findings dispositioned. Acceptance is recorded by the
 project owner, not implied by merging.
 
-**Progress.** The [adversarial review](./adversarial-review.md) is written:
-28 findings, two of them blockers (`R1`, entries sharing interface variables,
-and `R2`, stamp inputs missing what the compile reads). Both blockers and
-six more findings have proposed dispositions, recorded in the review; the
-rest await theirs, and acceptance of all of them is the owner's.
+**Progress.**
+
+- The [adversarial review](./adversarial-review.md) found 28 findings, two of
+  them blockers (`R1`, entries sharing interface variables; `R2`, stamp
+  inputs missing what the compile reads). Every finding has a recorded
+  disposition: 27 fixed, ten of them by amending the specification alone,
+  and one deferred to M2 (`R17`).
+- An independent review of the dispositions and the changed artifact found
+  that `SHV7` cited the wrong bound, that `R5`, `R15` and `R20` were fixed
+  only in part and `R22`'s rejection did not hold, that several ledger rows
+  claimed more than their tests, that `SHB4` and stale text contradicted the
+  contract, and that the build step no longer built on Windows. Each is
+  repaired; the ledger now marks `SHP3`, `SHP9`/`SHP10`, `SHB7` and `SHT3`
+  partial, with their gaps.
+- Cold reads of the opening, by a reader given only the front matter, abstract
+  and introduction: the first found the entry point's owner, the stamp's
+  inputs, the prebuilt path, the fork's relation to the Vulkan target, the CPU
+  side of textures, the device-module term and an exclusion that contradicted
+  integer uniforms; the second restated scope and non-goals correctly and
+  found how much of the effect the CPU runs, `@compute`'s name, when a missing
+  compiler fails and the unnamed tools. The introduction answers each. A third
+  and a fourth read, of the text after every substantive change, restated the
+  problem, approach, scope and non-goals correctly; the wording points they
+  raised are answered too, and only editorial changes followed.
+- Remaining: the owner's acceptance of scope, ownership, non-goals and the
+  dispositions, recorded in the review.
 
 ## M0: Baseline
 
@@ -72,14 +93,15 @@ has no consumers outside this repository.
 
 **Obligations.** `SHB4`.
 
-**Deliverable.** The stamp records the content digest of the unit's
-candidate fileset, and freshness recomputes it with a fileset resolution, so
-a device module entering or leaving the unit makes the next build
-regenerate.
+**Deliverable.** The stamp records a digest of the device modules among the
+unit's candidate fileset (each one's path and mode), and freshness recomputes
+it with a fileset resolution, so a device module entering or leaving the
+unit, or changing mode, makes the next build regenerate; an edit to any other
+file does not.
 
 **Entry condition.** Two prerequisites from `sparkles:build-primitives`: the
 [filesets](../build-primitives/filesets/PLAN.md) resolution machine and a
-driver, and a deterministic content-digest scheme on its scheme seam (the
+driver, and a deterministic digest scheme on its scheme seam (the
 content-addressing contract the filesets specification defers to). M2 does
 not start, and does not build an interim directory listing, before both.
 
@@ -106,8 +128,9 @@ wrong uniform name, a tolerance violated on purpose.
 
 **Progress.**
 
-- Verified: `SHV2`, `SHV5`, `SHF1`–`SHF3`, `SHF5`–`SHF7`, `SHP1`, `SHP4`,
-  `SHP8`–`SHP10`, `SHB7` and `SHT3` (the Linux and macOS GLSL agreed in CI).
+- The [evidence ledger](./testing.md#evidence-ledger) records each row's
+  status; the rows this milestone moved are `SHV2`, `SHV5`, `SHF1`–`SHF7`,
+  `SHP1`, `SHP4`, `SHP6`, `SHP8`–`SHP10`, `SHB7` and `SHT3`.
 - The readback ran on the CI runner's software rasterizer and agreed
   (`SHV7`, `SHF4` for the GLSL 3.30 output).
 - Each new test was shown to fail on a broken input: a disabled interface
