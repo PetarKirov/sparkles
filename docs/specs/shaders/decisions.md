@@ -91,9 +91,10 @@ they compile?
 paths and output; one dub configuration per unit; or one device configuration
 per package, with the unit discovered.
 
-**Choice.** One device configuration per package (`SHP1`), recognised by its
-dcompute target flag rather than its name, and a unit discovered from the
-modules' own `@compute` declarations (`SHP3`, `SHM5`).
+**Choice.** One device configuration per package (`SHP1`), selected by name
+(`--config`, `shaders` by default) and accepted only if its dcompute target
+flag names exactly one Vulkan target, and a unit discovered from the modules'
+own `@compute` declarations (`SHP3`, `SHM5`).
 
 **Trade-offs.** Nothing is restated: dub already knows the import paths, the
 flags and the dependencies, and the modules already say they are shader code.
@@ -183,15 +184,16 @@ prerequisite of its own build.
 the last build, without running dub?
 
 **Alternatives.** A directory listing taken at generation and compared at
-the next build; or a deterministic content digest of the unit's candidate
-files, resolved as a fileset.
+the next build; or a deterministic digest of the device modules among the
+unit's candidate files (their paths and modes), resolved as a fileset.
 
 **Choice.** The digest (`SHB4`), once `sparkles:build-primitives` provides
-filesets and a content-digest scheme.
+filesets and a digest scheme.
 
 **Why.** A bespoke listing would be a second, private file walker with its
 own ignore and ordering rules, which the filesets library exists to replace.
-A digest over paths and contents is also reproducible: it does not change
+A digest over the device modules' paths and modes changes exactly when
+membership does, and is reproducible: it does not change
 with timestamps, enumeration order or the checkout's location, so a stamp
 made on one machine is valid on another.
 
@@ -220,8 +222,10 @@ where it states a bound:
 | `exp`                                                                | (3 + 2·\|x\|) ULP                                       |
 | `pow`                                                                | relative 2⁻¹⁷, for x in [0.5, 4] and y in [−2, 2]       |
 
-The compound bounds allow for the few correctly rounded operations each is
-defined by, contracted or not. `mod` samples whose quotient lies within
+Construction and component access are exact; vector `+`, `-` and `*` are
+correctly rounded per operation, contraction allowed, and `/` is within 2.5
+ULP for divisors in [2⁻¹²⁶, 2¹²⁶]; denormals may flush to zero. The compound bounds allow for the few correctly rounded operations each
+is defined by, contracted or not. `mod` samples whose quotient lies within
 rounding of an integer are excluded: there one rounding moves `floor` by a
 whole step on either side.
 
@@ -230,9 +234,9 @@ offers on the code path the shaders actually take. The bounds are checked
 both ways in `ui_raylib.shader_readback.boundsAcceptTheirLimitAndNoMore`.
 
 **Trade-offs.** It is evidence on one driver at a time, the software
-rasterizer in CI, and for the desktop dialect only: the GLSL ES output's
-output is not read back (`D15`). Arguments outside the
-stated ranges are not tested, because no bound exists there to test against.
+rasterizer in CI, and for the desktop dialect only: the GLSL ES output is not
+read back (`D15`). Arguments outside the stated ranges are not tested, because
+no bound exists there to test against.
 
 ### D13: The compiler enforces the interface contract
 
