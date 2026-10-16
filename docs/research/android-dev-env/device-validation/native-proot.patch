@@ -1,0 +1,19 @@
+--- a/modules/environment/login/login.nix
++++ b/modules/environment/login/login.nix
+@@ -49 +49,2 @@
+-  exec ${installationDir}/bin/proot-static \
++  export PROOT_LOADER="$SPARKLES_NATIVE_LIBRARY_DIR/libproot-loader.so"
++  exec "$SPARKLES_NATIVE_LIBRARY_DIR/libproot.so" \
+--- a/modules/environment/login/default.nix
++++ b/modules/environment/login/default.nix
+@@ -73,9 +73,3 @@
+       installProotStatic = ''
+-        if (test -e /bin/.proot-static.new && ! diff /bin/.proot-static.new ${cfg.prootStatic}/bin/proot-static > /dev/null) || \
+-            (! test -e /bin/.proot-static.new && ! diff /bin/proot-static ${cfg.prootStatic}/bin/proot-static > /dev/null); then
+-          $DRY_RUN_CMD mkdir $VERBOSE_ARG --parents /bin
+-          $DRY_RUN_CMD cp $VERBOSE_ARG ${cfg.prootStatic}/bin/proot-static /bin/.proot-static.tmp
+-          $DRY_RUN_CMD chmod $VERBOSE_ARG u+w /bin/.proot-static.tmp
+-          $DRY_RUN_CMD mv $VERBOSE_ARG /bin/.proot-static.tmp /bin/.proot-static.new
+-        fi
++        # The APK owns PRoot and its loader; updates require an APK update.
+       '';

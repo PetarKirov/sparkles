@@ -186,3 +186,134 @@ Transfer cleanup: adb reverse --remove tcp:18314; adb forward --remove tcp:18024
 The exact host HTTP-server process was terminated. No listener is intentionally
 left running. Test files and the disposable target36 app remain for deferred
 E6/E7; existing terminal/nix-on-droid data are preserved. E8's setting is restored.
+
+FOLLOW-UP: owner explicitly requested E6/E7 too and stated that the reported
+50 C was this phone's safe steady state. Tests continued without resetting or
+suppressing that reading. USB=true, level=15, temperature=500 before/after E7.
+
+E7 process-start benchmark:
+Same staged true-probe bytes (35b4db32a38e407d5ff5c6d7e847749f4be2d65d3a92de3eed48a7b57ceb8445),
+same start-bench bytes (06b5aa3f626c46b6ac3c1c7bebe0f3cea2dcd3ff8b1590d18f85b7a52871d744).
+Five trials of 1000 successful fork/exec/wait cycles in each actual foreground
+app session. The target36 app was still E5's l97l19igxrfdrqm4kawbrzmmicyr6qmf APK,
+not yet updated to E6. Routes ran sequentially, not randomized:
+  direct, target28: /system/bin/linker64 "$R/start-bench" --run "$R/true-probe"
+  linker, target36: /system/bin/linker64 "$R/start-bench" --run /system/bin/linker64 "$R/true-probe"
+  proot, target36: "$N/libproot.so" -w / "$R/start-bench" --run "$R/true-probe"
+The PRoot harness runs inside one already-started tracer, not a fresh tracer
+per iteration. PROOT_TMP_DIR="$R/tmp"; PROOT_LOADER="$N/libproot-loader.so";
+N is E5's installed native directory above. A single silent payload preflight
+under PRoot succeeded (exit 0). start-bench was chmod 700 for that route.
+Completion markers (logcat, +0300):
+  SparklesE7D 23:24:32.987
+  SparklesE7L 23:26:35.977
+  SparklesE7P 23:29:40.526
+All 15000 children succeeded. Host-derived statistics (total ns / 1000 / 1e6):
+  direct median-ms=12.203365 range-ms=10.654179..12.495589
+  linker median-ms=10.421300 range-ms=8.848141..10.887438
+  proot  median-ms=30.680027 range-ms=28.784470..31.213790
+These are median/range of five trial means, not per-child latency percentiles.
+No cache flush, CPU pinning, independent throttling control or repeated route
+order. App revisions/target domains differ. The lower linker number is not
+evidence of an intrinsically faster loader route. This is not a Nix workload.
+
+E6 bootstrap and full workload:
+APK /nix/store/gib3nr4v10a4bs6xvgqpm5x3ya82s4b4-terminal-t36-bootstrap-0.0.0+20261016/terminal-t36-bootstrap.apk
+SHA256 63cd3d6711c90480abfe9d3d3743fb44db9427ef73493f591b906e4a0ce7674e
+Built from 518cd774a plus the runtime native-library-directory implementation
+now committed as 9fcdf94ff and the experimental current-target.nix/source patch.
+Installed only over this session's disposable target36 app. No existing user
+bootstrap was replaced; files/usr/bin/login was confirmed absent beforehand.
+The APK embeds the bootstrap. Its no-DEX build guard remained enabled.
+The source patch changes login to APK-native PRoot/loader and makes activation's
+installProotStatic block a no-op. It is a deliberate research source fork.
+
+The app itself resolves libterminal.so with dladdr and supplies the current
+SPARKLES_NATIVE_LIBRARY_DIR. Actual new location:
+/data/app/~~ZjxXUi4JZUrgAtyi6aenpw==/dev.petar_kirov.sparkles.terminal.t36-108W0KTUHpuT7cqjyzX4Ow==/lib/arm64
+This differs from E5's location, so the login route cannot reuse that old path.
+The application was launched normally; the bundled-bootstrap prompt was accepted
+with Enter, then the channels (default N) first-start option was accepted.
+4050 files / 35.9 MiB extracted. The first generation completed, removed
+/etc/UNINTIALISED and reached bash-5.2. The screen-oracle captures are snapshots,
+not a complete PTY byte stream; progress updates may be overwritten.
+
+Pinned nixpkgs channel:
+https://github.com/NixOS/nixpkgs/archive/49ee0e94463abada1de470c9c07bfc12b36dcf40.tar.gz
+Research nix-on-droid source channel:
+http://127.0.0.1:18314/nix-on-droid-native-proot.tar.gz
+Final served source artifact:
+/nix/store/l5n3wg99r6gdjhyrygk61ybi1vh5nljq-nix-on-droid-native-proot.tar.gz
+SHA256 7b3e216b4598d755ca388dab956256174972e9ffa2c9bf044c2a0dc8552177c9
+The host's read-only loopback server logged HTTP 200 for the source at
+23:38:20 +0300, through adb reverse tcp:18314 tcp:18314. Before that request,
+the served archive was atomically replaced with the canonical owner/group/
+mtime/sort-normalized tarball. Earlier archive hashes differ; the applied
+source code changes are the same. This source URL needs the temporary server
+for a future channel update; a distributable release needs a published pin.
+
+Actual-session invocation:
+bash /data/data/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/e6-workload.sh
+run-as only staged files and retrieved output, never executed the test.
+The first collector assumed grep was in the minimal profile and stopped with
+exit 127 before the cache test. That separate setup log is preserved. The final
+collector used /android/system/bin/grep and completed with exit 0:
+  id; cat /proc/self/attr/current; nix --version
+  nix show-config --extra-experimental-features nix-command
+  nix-build '<nixpkgs>' -A hello --no-out-link --option require-sigs true --max-jobs 0
+  <hello>/bin/hello
+  nix path-info --extra-experimental-features nix-command --sigs <hello>
+  nix-store --verify-path <hello>
+  nix-build '<nixpkgs>' -A stdenv.cc --no-out-link --option require-sigs true --max-jobs 0
+  <compiler>/bin/cc --version
+  nix-build '<nixpkgs>' -A gitMinimal --no-out-link --option require-sigs true --max-jobs 0
+  <git>/bin/git --version
+  nix-build "$R/local-build.nix" --no-out-link --option require-sigs true --max-jobs 1 --cores 1
+  <out>/bin/probe
+  nix-build "$R/local-build.nix" --no-out-link --check --max-jobs 1 --cores 1
+  mkdir "$R/e6-git"; cd "$R/e6-git"
+  <git>/bin/git -c init.defaultBranch=main init
+  <git>/bin/git config user.name 'Sparkles research fixture'
+  <git>/bin/git config user.email sparkles-research@example.invalid
+  printf 'android-exec-git-ok\n' > probe.txt
+  <git>/bin/git add probe.txt
+  <git>/bin/git -c commit.gpgsign=false commit -m 'E6 local Git workflow'
+  <git>/bin/git log -1 --format=%s
+Observed Nix 2.18.4, require-sigs=true, sandbox=false; cache signature and
+verify-path succeeded; GCC 13.2.0, Git 2.44.1. The local build and --check
+both printed android-exec-local-build-ok; Git committed/read back successfully.
+Completion marker SparklesE6W2 at 23:42:50.394 +0300; workload-exit=0.
+Compiler/Git were store-realized outputs, not default-profile installations.
+
+Published local-build.nix SHA256:
+4638709b36b49671ce8a239c52c7c0fabd84ccba007bbbcb91e6bfc956595486
+The initial staged copy was before nixfmt (SHA256
+c03cad04c9d1b221be47ae167f11cd45815902dbc8f35d664c4447be2a547452).
+After formatting, the canonical file was copied again, its device hash matched,
+and nix-instantiate returned the SAME tested derivation:
+/nix/store/i3rcifj5ynyrj91q8b89952734954650-sparkles-android-e6-local-build.drv
+Canonical instantiate-exit=0 (SparklesE6D 23:48:10.628 +0300).
+Actual built output:
+/nix/store/y73sngy4yv5km0vnykanx8mf3w70k7an-sparkles-android-e6-local-build
+
+After all workload jobs finished, only the app, its PRoot and interactive bash
+remained. adb am force-stop/relaunch targeted ONLY the disposable app. The
+next login installed login-inner.new and reached an interactive prompt without
+repeating bootstrap. The relogin script recorded the same UID/domain, Nix,
+current native directory, patched generated-login lines, successful built ELF
+execution and the existing Git commit. relogin-exit=0; marker SparklesE6R at
+23:45:01.253 +0300. Generated login SHA256:
+3a91e98ceab7eabfdbdf742cd0127dac5e78ab9df019037c2ae4e12eb94fdf8b
+
+Available E6 audit mappings are captured from the window starting 23:32:00;
+these are selected logs, NOT an exhaustive execve trace. The APK-only kernel
+execution route is source-inspected and supported by successful workflow,
+restart and E1's direct app-data rejection. No root/policy weakening or DEX.
+This passes the one-firmware functional prototype gate, not production/policy/
+future-firmware/lifecycle guarantees.
+
+Final cleanup: the source HTTP server process was terminated, the exact
+tcp:18314 reverse mapping removed, and the screen-dump flag deleted. No
+existing app was reset/uninstalled. The experimental Nix app/store, research
+files and explicitly approved Play GDB packages remain available. Local build
+and cache-only toolchain outputs are not GC-rooted profile installations.

@@ -12,18 +12,23 @@ The Pad changes the immediate next experiment: it can exercise AVF ownership/per
 
 ## Current-target distribution
 
-The PRoot recommendation holds at a current target SDK, but not with today's packaging. [Termux on Google Play][play] establishes the constraint and a working answer: execute directly only what ships in the APK's native-library directory, and reach everything else through a loader. For the nix-on-droid backend that means `proot-static` and PRoot's loader as `lib*.so` native libraries with `PROOT_LOADER` pointing at the latter, `login` started as an argument to `/system/bin/sh`, and PRoot upgrades shipped as app releases. Termux's `linker64` route does not transfer, because Nix store executables are glibc-linked; nor does Termux's package universe, which is Bionic. Play review is a separate gate: the Play build had to drop `sharedUserId`, justify a `specialUse` foreground service and consolidate permissions. The executable-code policy is a third, and PRoot does not answer it: substituting from a binary cache downloads executable code whichever loader maps it. Termux's two years on Play show that review has tolerated this for a package manager, not that it permits it; its maintainers expect the `linker64` route to close. Keep targeting API 28 for sideloaded builds until M0b passes; it changes the packaging, not the backend contract.
+The PRoot recommendation holds at a current target SDK, but not with the default packaging. [Termux on Google Play][play] establishes the constraint and a working answer: execute directly only what ships in the APK's native-library directory, and reach everything else through a loader. For the nix-on-droid backend that means `proot-static` and PRoot's loader as `lib*.so` native libraries with `PROOT_LOADER` pointing at the latter, `login` started as an argument to `/system/bin/sh`, and PRoot upgrades shipped as app releases. Termux's `linker64` route does not transfer, because Nix store executables are glibc-linked; nor does Termux's package universe, which is Bionic. Play review is a separate gate: the Play build had to drop `sharedUserId`, justify a `specialUse` foreground service and consolidate permissions. The executable-code policy is a third, and PRoot does not answer it: substituting from a binary cache downloads executable code whichever loader maps it. Termux's two years on Play show that review has tolerated this for a package manager, not that it permits it; its maintainers expect the `linker64` route to close. The API-28 default remains until the experimental packaging is promoted and hardened; the device experiment changes the evidence, not the backend contract or default distribution policy.
 
-M0b is **partially grounded, not delivered**. The
+M0b's **functional prototype gate passed locally**. The
 [current-target experiment protocol][current-target] tracks E1–E9 separately.
 E1–E4 observed the app-data exec restriction, linker route, `dlopen` and
 APK-native static execution on the phone. E5 ran a glibc Nix-store `hello` with
 APK-native PRoot and its loader; the unset-loader negative control failed.
-The builder's optional target/native libraries and tested `bootstrap-shell`
-login route support further integration, but full bootstrap wiring and the
-same-device signed-cache/compiler/local-build acceptance workload remain open.
-E6/E7 were deferred at a reported 50°C battery temperature. No default target
-bump follows from those partial observations.
+E6 completed the real bootstrap and first activation, verified a signed cache
+substitution, ran GCC/Git, built and reproducibility-checked a local derivation,
+committed a Git fixture and survived app restart with APK-native login paths.
+It uses the explicit research source patch and runtime-resolved APK library
+directory, not an unmodified upstream bootstrap. E7 records 15,000 successful
+process starts across the three routes, with environmental limitations rather
+than a general performance claim. The owner explicitly authorized continuation
+at the phone's steady-state reported 50°C reading. Production integration,
+broader compatibility, lifecycle and policy acceptance remain separate gates;
+no default target bump follows automatically.
 
 ## Backend contract
 
