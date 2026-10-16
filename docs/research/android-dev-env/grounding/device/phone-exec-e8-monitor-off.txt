@@ -1,0 +1,47 @@
+uid=10488 gid=10488
+context=u:r:untrusted_app:s0:c232,c257,c512,c768
+exe=/apex/com.android.runtime/bin/linker64
+argv[0]=/data/user/0/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/exec-probe
+parent=3654 children-started=40
+cleanup-child=3655 wait=3655 status=15
+cleanup-child=3656 wait=3656 status=15
+cleanup-child=3657 wait=3657 status=15
+cleanup-child=3658 wait=3658 status=15
+cleanup-child=3659 wait=3659 status=15
+cleanup-child=3660 wait=3660 status=15
+cleanup-child=3661 wait=3661 status=15
+cleanup-child=3662 wait=3662 status=15
+cleanup-child=3663 wait=3663 status=15
+cleanup-child=3664 wait=3664 status=15
+cleanup-child=3665 wait=3665 status=15
+cleanup-child=3666 wait=3666 status=15
+cleanup-child=3669 wait=3669 status=15
+cleanup-child=3670 wait=3670 status=15
+cleanup-child=3671 wait=3671 status=15
+cleanup-child=3672 wait=3672 status=15
+cleanup-child=3673 wait=3673 status=15
+cleanup-child=3674 wait=3674 status=15
+cleanup-child=3675 wait=3675 status=15
+cleanup-child=3677 wait=3677 status=15
+cleanup-child=3678 wait=3678 status=15
+cleanup-child=3681 wait=3681 status=15
+cleanup-child=3682 wait=3682 status=15
+cleanup-child=3684 wait=3684 status=15
+cleanup-child=3685 wait=3685 status=15
+cleanup-child=3686 wait=3686 status=15
+cleanup-child=3689 wait=3689 status=15
+cleanup-child=3690 wait=3690 status=15
+cleanup-child=3691 wait=3691 status=15
+cleanup-child=3693 wait=3693 status=15
+cleanup-child=3694 wait=3694 status=15
+cleanup-child=3695 wait=3695 status=15
+cleanup-child=3696 wait=3696 status=15
+cleanup-child=3697 wait=3697 status=15
+cleanup-child=3698 wait=3698 status=15
+cleanup-child=3699 wait=3699 status=15
+cleanup-child=3700 wait=3700 status=15
+cleanup-child=3701 wait=3701 status=15
+cleanup-child=3702 wait=3702 status=15
+cleanup-child=3708 wait=3708 status=15
+alive-at-sample=40 of 40; cleanup-complete
+exit=0

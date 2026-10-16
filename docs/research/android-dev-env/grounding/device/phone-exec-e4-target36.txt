@@ -1,0 +1,15 @@
+uid=10488 gid=10488
+context=u:r:untrusted_app:s0:c232,c257,c512,c768
+exe=/apex/com.android.runtime/bin/linker64
+argv[0]=/data/user/0/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/exec-probe
+argv[1]=--exec
+argv[2]=/data/user/0/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/static-probe
+execve(/data/user/0/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/static-probe): errno=13
+data-direct-exit=1
+error: "/data/data/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/static-probe" has unexpected e_type: 2
+linker-exit=1
+uid=10488 gid=10488
+context=u:r:untrusted_app:s0:c232,c257,c512,c768
+exe=/data/app/~~-8xzKXYdqzv31CIvMZRQug==/dev.petar_kirov.sparkles.terminal.t36-7ABmkfYO3txVkaHh9r5ARA==/lib/arm64/libstatic-probe.so
+argv[0]=/data/app/~~-8xzKXYdqzv31CIvMZRQug==/dev.petar_kirov.sparkles.terminal.t36-7ABmkfYO3txVkaHh9r5ARA==/lib/arm64/libstatic-probe.so
+apk-direct-exit=0

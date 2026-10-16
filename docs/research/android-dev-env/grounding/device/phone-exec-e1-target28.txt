@@ -1,0 +1,11 @@
+uid=10468 gid=10468
+context=u:r:untrusted_app_27:s0:c212,c257,c512,c768
+exe=/apex/com.android.runtime/bin/linker64
+argv[0]=/data/user/0/dev.petar_kirov.sparkles.terminal/files/android-exec-research/exec-probe
+argv[1]=--exec
+argv[2]=/data/user/0/dev.petar_kirov.sparkles.terminal/files/android-exec-research/exec-probe
+uid=10468 gid=10468
+context=u:r:untrusted_app_27:s0:c212,c257,c512,c768
+exe=/data/user/0/dev.petar_kirov.sparkles.terminal/files/android-exec-research/exec-probe
+argv[0]=/data/user/0/dev.petar_kirov.sparkles.terminal/files/android-exec-research/exec-probe
+exit=0

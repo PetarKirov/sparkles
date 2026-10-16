@@ -61,6 +61,16 @@ The source paths above are relative to the original checkout. All thirteen snaps
 | [Device inventory][inventory-example] | Explicitly selected hardware inventory                          | No serial means no hardware contacted                     |
 | [App-domain probe][app-example]       | Real UID, SELinux/seccomp state, namespace and socket attempts  | Linux CI plus Bionic Android cross-build and UI execution |
 
+Additional current-target payloads are covered by the same standalone-example
+glob in `apps/ci`:
+
+| Program                                                             | Demonstrates                                                                  | CI / hardware boundary                                                                      |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [Execution probe][exec-example]                                     | Actual UID/domain, executable identity, `execve` errno and `dlopen`           | Prints host identity in CI; Android results require the real app session                    |
+| [Load payload][load-example]                                        | Minimal dependency-free shared-library load                                   | Host executable checks its exported function; Android build uses the shared-library version |
+| [Child-count probe][child-example]                                  | Bounded 40-child survival and owned-child cleanup                             | Default invocation skips; `--run` requires explicit approval                                |
+| [Start benchmark][start-example] and [silent payload][true-example] | Five trials of 1,000 successful fork/exec/waits using identical payload bytes | Benchmark skips by default; prepared but not measured on the hot phone                      |
+
 [Device validation][devices] records the commands, privilege context, failures, cleanup and limitations. Documentation CI is not presented as an Android integration test.
 
 The [contributor collector][collector-example] adds packaged root-ADB AVF/NNS inventory with selected existing-process views, bounded commands/output, private report directories and capability-aware CLI presentation. It also skips without an explicit device selection. Its real-device reports remain dated evidence, not CI assertions that every Android host has NNS or AVF.
@@ -99,6 +109,11 @@ The installed NNS module reports `3.1.0`, `versionCode=4`, and matching public/m
 [devices]: ./device-validation/index.md
 [pixel7]: ./device-validation/pixel7.md
 [collector-example]: ./device-validation/examples/contributor-probe.d
+[exec-example]: ./device-validation/examples/exec-probe.d
+[load-example]: ./device-validation/examples/load-probe.d
+[child-example]: ./device-validation/examples/child-probe.d
+[start-example]: ./device-validation/examples/start-bench.d
+[true-example]: ./device-validation/examples/true-probe.d
 [proot-page]: ./nix-on-droid.md
 [avf]: ./avf.md
 [gunyah]: ./gunyah.md

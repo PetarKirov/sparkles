@@ -1,0 +1,16 @@
+uid=10488 gid=10488
+context=u:r:untrusted_app:s0:c232,c257,c512,c768
+exe=/apex/com.android.runtime/bin/linker64
+argv[0]=/data/user/0/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/exec-probe
+Hello, world!
+apk-loader-exit=0
+proot error: execve("/nix/store/j7qj7kllym339bcyzkggdvwagbdr17gn-hello-2.12.1/bin/hello"): Permission denied
+proot info: possible causes:
+  * the program is a script but its interpreter (eg. /bin/sh) was not found;
+  * the program is an ELF but its interpreter (eg. ld-linux.so) was not found;
+  * the program is a foreign binary but qemu was not specified;
+  * qemu does not work correctly (if specified);
+  * the loader was not found or doesn't work.
+fatal error: see `libproot.so --help`.
+proot error: can't chmod '/data/data/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/tmp/proot-18402-aSlglS': No such file or directory
+unset-loader-exit=1
