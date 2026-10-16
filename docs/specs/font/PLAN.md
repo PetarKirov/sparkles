@@ -147,7 +147,9 @@ term consumer, raylib the interim one ([`FTX14`](./decisions.md#ftx14-a-startup-
   worker threads, and the work inflation $W_N = I_N / I_1$, the instructions
   retired by all threads on $N$ workers over those on one. Runs pin their
   threads to one recorded CPU set, since a big.LITTLE phone otherwise turns a
-  core migration into an apparent speed-up.
+  core migration into an apparent speed-up. It also records the same numbers
+  for the first frame after a device-scale change, cold (a scale not seen
+  before) and warm (a return to an earlier one).
 
 - **S1, catalog.** A face catalog: per face its family, style, axes, coverage
   ranges and metrics, with fallback resolved by coverage; serializable and
@@ -161,10 +163,21 @@ term consumer, raylib the interim one ([`FTX14`](./decisions.md#ftx14-a-startup-
   version), CPU-side packing, uploads handed to the renderer through a
   callback, and the rasterizer behind an interface. FreeType implements it
   until M5, in its own ImportC package, so that `sparkles:font` stays pure D
-  (`FTA7`); M5 replaces it under the same key.
+  (`FTA7`); M5 replaces it under the same key. The device scale may change
+  while the program runs: a window moves to another monitor, or Android
+  changes density or font scale. A change **must not** rebuild the catalog or
+  alter a physical measurement (`FTM10`), and **must not** make a frame wait
+  to re-rasterize what earlier frames drew: the next frame recomputes cell
+  metrics at the new ppem, which is constant work (M2), and rasterizes only
+  the glyphs it draws at that ppem. The key holds `FTM10`'s exact rational
+  ppem, so a fractional scale such as 1.25× or 1.5× never shares entries with
+  a neighbouring size. Several scales can be live at once, as with two windows
+  on two monitors; entries at a scale no longer drawn stay until a memory
+  budget evicts them, least recently used first, so moving back is warm.
 - **S4, precompute.** The Nix build produces the catalog and warm atlases for
   the design system's token sizes into the APK; an on-device cache keyed by
-  content hash covers what depends on density or the user.
+  content hash covers what depends on density or the user, and keeps its
+  entries per ppem, so a scale seen before is warm across launches.
 - **S5, decide.** Measure a first frame that shows the grid while its glyphs
   rasterize against one that shows the prompt legibly, on both front ends.
   The owner chooses, and the spec gains the obligation: a structural rule (the

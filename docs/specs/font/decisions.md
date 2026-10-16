@@ -417,6 +417,11 @@ M2's metrics; spike S1 catalogued the bundle in 1.9 ms).
   which replaces it under the same glyph key.
 - Precomputed artifacts come from both the Nix build (the catalog and the
   design system's token sizes) and an on-device cache keyed by content hash.
+- The device scale may change at run time (2026-10-16). The glyph key holds the
+  exact rational ppem, a change rebuilds no catalog and changes no physical
+  measurement, a frame after it rasterizes only what it draws at the new
+  ppem, and entries at other scales stay until evicted, so returning to a
+  scale is warm; the on-device cache keeps entries per ppem across launches.
 - Whether the first frame shows legible text or the grid while glyphs
   rasterize is decided by measuring both, on both the raylib terminal and the
   `vulkan-wsi` spike.
