@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-05
+reviewed: 2026-10-16
 ---
 
 # `sparkles:shaders` — Delivery plan
@@ -14,7 +14,7 @@ evidence ledger live in [`testing.md`](./testing.md).
 
 | Milestone                                                                   | State       |
 | --------------------------------------------------------------------------- | ----------- |
-| [Stage 0](#stage-0-specification)                                           | in progress |
+| [Stage 0](#stage-0-specification)                                           | done        |
 | [M0 Baseline](#m0-baseline)                                                 | done        |
 | [M1 Rename](#m1-rename-to-sparkles-shaders)                                 | done        |
 | [M2 Unit membership](#m2-unit-membership)                                   | deferred    |
@@ -57,8 +57,9 @@ project owner, not implied by merging.
   and a fourth read, of the text after every substantive change, restated the
   problem, approach, scope and non-goals correctly; the wording points they
   raised are answered too, and only editorial changes followed.
-- Remaining: the owner's acceptance of scope, ownership, non-goals and the
-  dispositions, recorded in the review.
+- The owner accepted the specification, its scope, ownership and non-goals,
+  and every disposition on 2026-10-16
+  ([acceptance](./adversarial-review.md#acceptance)).
 
 ## M0: Baseline
 

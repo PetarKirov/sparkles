@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-09
+reviewed: 2026-10-16
 ---
 
 # `sparkles:shaders` — Adversarial review of sections 4–8
@@ -213,8 +213,10 @@ This review did not examine:
 
 ## Dispositions
 
-Every finding has a proposed disposition, made by [#638](https://github.com/PetarKirov/sparkles/pull/638) and by the change that
-closes Stage 0. Each awaits the owner's acceptance (see
+Every finding has a disposition, made by
+[#638](https://github.com/PetarKirov/sparkles/pull/638) and
+[#650](https://github.com/PetarKirov/sparkles/pull/650); the owner accepted
+them all (see [Acceptance](#acceptance)).
 [Acceptance](#acceptance)).
 
 | ID  | Disposition                   | What was done                                                                                                                                                                                                                                                                                | Evidence                                                                                                                                                                                                                                            |
@@ -254,12 +256,11 @@ of the GLSL ES output (`SHV7`, `SHF4`) followed in M3.
 
 ## Acceptance
 
-Each disposition above is a proposal. Acceptance of the specification, of the
-dispositions, and of its scope, library ownership and non-goals is the
-project owner's to record here; it is not implied by this review, by the
-changes that answer it, or by their merging. The other parts of the Stage 0
-gate are recorded in [`PLAN.md`](./PLAN.md#stage-0-specification): the cold
-read of the opening, and an independent review of the final artifact.
+On 2026-10-16 the project owner accepted the specification, its scope,
+library ownership and non-goals, and every disposition above as recorded,
+`R17`'s deferral to M2 included. The other parts of the Stage 0 gate are
+recorded in [`PLAN.md`](./PLAN.md#stage-0-specification): the cold reads of
+the opening, and an independent review of the final artifact.
 
 ## Appendix: probe packages
 
