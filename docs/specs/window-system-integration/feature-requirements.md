@@ -59,7 +59,7 @@ not complete until all four columns are verified.
 
 ## Deferred (`POST`)
 
-| ID    | Requirement                                                                                      | Status   | Entry condition                                                 |
-| ----- | ------------------------------------------------------------------------------------------------ | -------- | --------------------------------------------------------------- |
-| POST1 | Replace or augment Win32 IMM32 with TSF without changing the public composition/commit contract. | deferred | native `F01`–`F17`, Graphite, and `ui-app` integration verified |
-| POST2 | Add Android/iOS backends without weakening the callback/lifecycle and typed-handle contracts.    | deferred | desktop baseline verified                                       |
+| ID    | Requirement                                                                                       | Status                                           | Entry condition                                                 |
+| ----- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------- |
+| POST1 | Replace or augment Win32 IMM32 with TSF without changing the public composition/commit contract.  | deferred                                         | native `F01`–`F17`, Graphite, and `ui-app` integration verified |
+| POST2 | Add Android and iOS backends without weakening the callback/lifecycle and typed-handle contracts. | Android in progress (milestone MA); iOS deferred | iOS: desktop baseline verified                                  |

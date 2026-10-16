@@ -62,9 +62,10 @@ renderer above it to paint. It creates no graphics device, shader or
 swapchain; `sparkles:vulkan-wsi` and the renderers above it own those. It does
 not decide how an application gets its window either: `sparkles:ui-app`
 chooses between this library and other hosts. An SDL 3 compatibility host
-lives in a separate package and is never a hidden fallback. Mobile and web
-platforms stay out of scope until all four desktop backends meet the
-native-desktop baseline that §13 defines. Windows TSF text input stays out of
+lives in a separate package and is never a hidden fallback. Android is a fifth
+native backend, developed alongside the desktop ones because a phone terminal is
+one of the library's main consumers. iOS and the web stay out of scope until the
+native-desktop baseline that §13 defines is met. Windows TSF text input stays out of
 scope until the IMM32 contract and native desktop integration are complete.
 
 Sections 1–3 state the platform set, package boundaries and ownership model;
@@ -89,14 +90,15 @@ information, exposes typed native handles to renderers, and joins native event s
 to the one [`sparkles:event-horizon`](../event-horizon/SPEC.md#_15-the-ui-event-loop)
 application loop.
 
-The first complete platform set is:
+The complete platform set is:
 
-| Platform | Native backend | Required client APIs                                              |
-| -------- | -------------- | ----------------------------------------------------------------- |
-| Linux    | Wayland        | `libwayland-client`, generated protocol declarations, `xkbcommon` |
-| Linux    | X11            | XCB/Xlib where required by XIM, `xkbcommon-x11`                   |
-| Windows  | Win32          | User32, DWM, DPI, raw input, IMM32                                |
-| macOS    | AppKit         | AppKit, Foundation, CoreGraphics, QuartzCore                      |
+| Platform | Native backend | Required client APIs                                                            |
+| -------- | -------------- | ------------------------------------------------------------------------------- |
+| Linux    | Wayland        | `libwayland-client`, generated protocol declarations, `xkbcommon`               |
+| Linux    | X11            | XCB/Xlib where required by XIM, `xkbcommon-x11`                                 |
+| Windows  | Win32          | User32, DWM, DPI, raw input, IMM32                                              |
+| macOS    | AppKit         | AppKit, Foundation, CoreGraphics, QuartzCore                                    |
+| Android  | Android        | NDK native activity, `ANativeWindow`, `AInputQueue`, JNI via `sparkles:android` |
 
 These operating-system client libraries are platform APIs for this specification. The
 native package does **not** depend on SDL, GLFW, raylib, Qt, winit, a widget toolkit, a
@@ -126,6 +128,7 @@ sparkles:wsi -> sparkles:base
              -> sparkles:event-horizon
              -> expected
              -> sparkles:math (source import only, like sparkles:input)
+             -> sparkles:android (Android only: JNI and the activity; empty elsewhere)
 ```
 
 The import directions are load-bearing:
@@ -456,31 +459,50 @@ contract for `F16` in [feature-requirements.md](./feature-requirements.md).
 
 Each backend moves the bytes over its platform's own transfer channel:
 
-| Platform | Receiving                                   | Offering                                        |
-| -------- | ------------------------------------------- | ----------------------------------------------- |
-| Wayland  | the pipe from `wl_data_offer.receive`       | the requester's pipe from `wl_data_source.send` |
-| X11      | `ConvertSelection`, then `INCR` chunks      | the selection property, in `INCR` chunks        |
-| Win32    | `GetClipboardData` / `IDataObject::GetData` | `WM_RENDERFORMAT` delayed rendering             |
-| AppKit   | `NSPasteboard`                              | an `NSPasteboardItemDataProvider`               |
+| Platform | Receiving                                                   | Offering                                         |
+| -------- | ----------------------------------------------------------- | ------------------------------------------------ |
+| Wayland  | the pipe from `wl_data_offer.receive`                       | the requester's pipe from `wl_data_source.send`  |
+| X11      | `ConvertSelection`, then `INCR` chunks                      | the selection property, in `INCR` chunks         |
+| Win32    | `GetClipboardData` / `IDataObject::GetData`                 | `WM_RENDERFORMAT` delayed rendering              |
+| AppKit   | `NSPasteboard`                                              | an `NSPasteboardItemDataProvider`                |
+| Android  | `ClipboardManager`: a text item read in slices, a URI by fd | a `ClipData` the backend builds on the Java side |
+
+Android has no NDK clipboard, so its backend works over JNI. A streamed offer
+there would need a Java `ContentProvider`, which an application without Java
+code cannot declare, so an Android offer is built whole on the Java heap. The
+backend still keeps no copy of its own.
 
 **DT1: Offers are named, not carried.** A clipboard offer, or a drag entering a
-window, **must** be reported by a `DataOfferEvent` holding an `OfferId` and one
-MIME type of at most `maxMimeType` bytes. No event **may** carry offer content,
-whatever its size.
+window, **must** be reported by one `DataOfferEvent` per MIME type, each holding
+the offer's `OfferId` and a MIME type of at most `maxMimeType` bytes. No event
+**may** carry offer content, whatever its size. A backend **must** announce the
+clipboard's offer when it changes. Where the platform gives no notification, as
+on Android, it **must** announce the current offer when one of its windows gains
+focus. When an offer the application made ends because another source replaced
+it, the backend **must** report a `DataOfferEvent` with action `withdrawn`.
 
-**DT2: Receiving is a streamed pull.** `receive(offer, mimeType, sink)` **must**
-deliver the offer's content to `sink` in chunks, as Event Horizon completions,
-without blocking the loop. A transfer **must** end in exactly one completion or
-one error. The application **may** cancel it, after which `sink` receives nothing
-more.
+**DT2: Receiving is a streamed pull into a sink.** `receive(offer, mimeType,
+sink)` **must** return a `TransferId` and deliver the offer's content to the
+sink in chunks, calling `sink.chunk(id, bytes)` for each and then
+`sink.finish(id, status)` exactly once with `completed`, `failed` or
+`cancelled`. The backend **must** make those calls from its own dispatch, never
+from inside a native callback, and **must not** block the loop while waiting for
+data. `cancelTransfer(id)` ends the transfer with `cancelled`, after which the
+sink receives nothing more. The sink **must** stay alive until its `finish`
+call.
 
 _Rationale:_ The application chooses the destination, whether a heap buffer, a
 rope, or the document itself, so WSI never decides where tens of MiB live.
 
-**DT3: Offering is a streamed push.** `offerData(mimeTypes, provider)` announces
-data the application can produce. When a client requests a type, the backend
-**must** call `provider`, which writes into the platform's channel without
-blocking. WSI **must not** hold a copy of the offered data.
+**DT3: Offering is a pull from a provider.** `offerClipboard(window, mimeTypes,
+provider)` announces data the application can produce and returns an `OfferId`.
+When a client requests a type, the backend **must** call
+`provider.fill(mimeType, offset, buffer)` repeatedly, writing each filled
+chunk to the platform's channel without blocking, until `fill` returns 0. The
+provider **must** stay alive until its offer ends. WSI **must not** keep a copy
+of a provider's data. A whole-value overload, `offerClipboard(window, mimeType,
+value)`, copies `value` once and keeps that copy until the offer ends; it is for
+small values, such as a terminal selection.
 
 **DT4: Memory follows the requester.** WSI **must** buffer at most one chunk per
 transfer in flight, so a transfer of any size leaves WSI's own memory flat. The
@@ -489,7 +511,8 @@ rest belongs to whichever side asked for the data.
 **DT5: Evidence.** Each backend's lane **must** round-trip 32 MiB in both
 directions, for the clipboard and for drag-and-drop. During the transfer the loop
 **must** keep serving timers, and the receiver's resident memory **must** stay
-flat apart from the destination it chose.
+flat apart from the destination it chose. On Android an offer is held whole by
+the Java side, so its lane checks WSI's own memory rather than the process's.
 
 Text that an input path inserts directly, such as AppKit's `insertText:` from a
 Service, is event text under `ED8` and bounded by it. Larger text on such a path
@@ -628,7 +651,7 @@ evidence.
 - widgets, layout, themes, accessibility trees, or app navigation;
 - graphics-device creation, shader compilation, or swapchains;
 - silently loading a third-party windowing library;
-- mobile/web support before all four desktop backends satisfy the baseline;
+- iOS or web support before all four desktop backends satisfy the baseline;
 - TSF before the IMM32 contract and native desktop integration are complete;
 - reproducing Event Horizon's scheduler, timers, channels, IOCP, kqueue, or wake logic.
 

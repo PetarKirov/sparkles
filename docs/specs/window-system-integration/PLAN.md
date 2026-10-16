@@ -45,6 +45,7 @@ to [feature-requirements.md](./feature-requirements.md)._
 | M7        | Skia Graphite native and SDL hosts                     | `INT3`                                     | planned     |
 | M8        | `ui-app` configurations and migration                  | `INT4`, `INT5`                             | planned     |
 | M9        | Win32 TSF                                              | `POST1`                                    | deferred    |
+| MA        | Android backend                                        | `POST2`, `F16`                             | in progress |
 
 ## Milestone M0 — specification and evidence baseline
 
@@ -382,6 +383,35 @@ or sleep loop.
 Gate: UI Gallery and representative hue/terminal flows run through recording, TUI,
 native Graphite, SDL Graphite, and raylib as applicable; application modules do not
 import WSI, SDL, Vulkan, Metal, or Skia.
+
+## Milestone MA — Android backend
+
+Android joins as a fifth native backend because a phone terminal is one of the
+library's main consumers (`POST2`). It is developed alongside the desktop
+milestones rather than after them. The backend owns the native activity
+without raylib's glue: the activity's callbacks run on the Java main thread and
+hand values to the WSI thread, which runs Event Horizon. JNI goes through
+`sparkles:android`'s worker thread.
+
+1. **Clipboard and the skeleton.**
+   - Clipboard API and its recording implementation, with the conformance
+     properties for `DT1`–`DT5`.
+   - `sparkles:android` takes the activity from its own `onCreate` entry,
+     not from raylib.
+   - The backend skeleton: entry point, one window over the activity's
+     `ANativeWindow`, lifecycle and focus events, typed handles, `BackendKind`.
+   - The Android clipboard over `ClipboardManager`.
+   - Evidence: a test APK on the emulator runs the shared conformance suite and
+     the clipboard round trip.
+2. **Input.** Keys and text through `AInputQueue` and the IME bridge; touch as
+   pointers with the `ED3` sample history.
+3. **Scale and insets.** Density, content rect and window insets as surface
+   metrics.
+4. **The terminal on the backend.** The phone terminal leaves raylib once a
+   renderer on `sparkles:vulkan-wsi` exists (milestone M7).
+
+Gate for slice 1: the emulator lane passes the conformance suite and a 32 MiB
+clipboard round trip; `comparison.md` gains an Android column.
 
 ## Milestone M9 — TSF (deferred)
 
