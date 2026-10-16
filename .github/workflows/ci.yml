@@ -160,6 +160,24 @@ jobs:
         if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
         run: nix flake check
 
+      # sparkles:shaders SHT3 on its third platform: the Nix build job, which
+      # hashes `ui-shaders` on x86_64 Linux and macOS, has no aarch64 Linux
+      # runner, so this leg hashes it there for `shader-reproducibility`. It
+      # runs before the tests, so a failing test cannot drop the platform.
+      - name: Hash the generated shaders
+        if: matrix.system == 'aarch64-linux'
+        run: |
+          out="$(nix build --no-link --print-out-paths .#ui-shaders)"
+          ls -A "$out"
+          nix hash path --type sha256 "$out" | tee "ui-shaders-${{ runner.os }}-${{ runner.arch }}.hash"
+
+      - name: Upload the generated shaders' hash
+        if: matrix.system == 'aarch64-linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-shaders-${{ runner.os }}-${{ runner.arch }}
+          path: ui-shaders-${{ runner.os }}-${{ runner.arch }}.hash
+
       - name: Build and test with dub
         if: runner.os != 'Windows'
         run: ci --test --fail-fast
@@ -461,17 +479,19 @@ jobs:
         run: |
           out="$(nix build --no-link --print-out-paths .#ui-shaders)"
           ls -A "$out"
-          nix hash path --type sha256 "$out" | tee "ui-shaders-${{ runner.os }}.hash"
+          nix hash path --type sha256 "$out" | tee "ui-shaders-${{ runner.os }}-${{ runner.arch }}.hash"
 
       - name: Upload the generated shaders' hash
         uses: actions/upload-artifact@v7
         with:
-          name: ui-shaders-${{ runner.os }}
-          path: ui-shaders-${{ runner.os }}.hash
+          name: ui-shaders-${{ runner.os }}-${{ runner.arch }}
+          path: ui-shaders-${{ runner.os }}-${{ runner.arch }}.hash
 
   shader-reproducibility:
     name: Generated shaders agree across platforms
-    needs: nix-build
+    # The Nix build job hashes x86_64 Linux and aarch64 macOS; the aarch64
+    # Linux test leg hashes the third (`SHT4`'s platforms).
+    needs: [nix-build, test]
     runs-on: ubuntu-latest
     steps:
       - name: Download every platform's hash
@@ -484,7 +504,7 @@ jobs:
         run: |
           for f in ui-shaders-*.hash; do echo "$f: $(cat "$f")"; done
           hashes=(ui-shaders-*.hash)
-          [ "${#hashes[@]}" -ge 2 ] || { echo "::error::fewer than two platforms reported"; exit 1; }
+          [ "${#hashes[@]}" -eq 3 ] || { echo "::error::${#hashes[@]} platforms reported, not 3"; exit 1; }
           [ "$(sort -u ui-shaders-*.hash | wc -l)" -eq 1 ] || { echo "::error::the generated GLSL differs between platforms (SHT3)"; exit 1; }
 
   # The Android APK pipeline (nix/packages/android/): builds `.#all-android`
