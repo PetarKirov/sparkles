@@ -133,7 +133,9 @@ private enum CommandSet[] globalSets = [
 
 /// Instance-level commands. `VK_KHR_surface` resolves only if it was enabled.
 private enum CommandSet[] platformInstanceSets = () {
-    version (Windows)
+    version (Android)
+        return [CommandSet(khrAndroidSurface, ["CreateAndroidSurfaceKHR"])];
+    else version (Windows)
         return [CommandSet(khrWin32Surface, [
             "CreateWin32SurfaceKHR",
             "GetPhysicalDeviceWin32PresentationSupportKHR",
@@ -282,7 +284,10 @@ enum string khrDynamicRendering = "VK_KHR_dynamic_rendering";
 /// ditto — not an extension name, a `has` key for the 1.3 core aliases.
 enum string vkVersion13 = "VK_VERSION_1_3";
 /// Native instance-surface extension names, available on their target only.
-version (linux)
+/// Android is checked first: its target is `linux` too, without Wayland or XCB.
+version (Android)
+    enum string khrAndroidSurface = "VK_KHR_android_surface";
+else version (linux)
 {
     enum string khrWaylandSurface = "VK_KHR_wayland_surface";
     enum string khrXcbSurface = "VK_KHR_xcb_surface";
@@ -397,7 +402,10 @@ struct DeviceCommands
     static assert(matchesHeaderMacro(khrSwapchain, VK_KHR_SWAPCHAIN_EXTENSION_NAME));
     static assert(matchesHeaderMacro(khrDynamicRendering,
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME));
-    version (linux)
+    version (Android)
+        static assert(matchesHeaderMacro(khrAndroidSurface,
+            VK_KHR_ANDROID_SURFACE_EXTENSION_NAME));
+    else version (linux)
     {
         static assert(matchesHeaderMacro(khrWaylandSurface,
             VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME));
@@ -427,7 +435,10 @@ struct DeviceCommands
     static assert(is(typeof(InstanceCommands.createDevice) == PFN_vkCreateDevice));
     static assert(is(typeof(InstanceCommands.getPhysicalDeviceSurfaceCapabilitiesKHR)
         == PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR));
-    version (linux)
+    version (Android)
+        static assert(is(typeof(InstanceCommands.createAndroidSurfaceKHR)
+            == PFN_vkCreateAndroidSurfaceKHR));
+    else version (linux)
     {
         static assert(is(typeof(InstanceCommands.createWaylandSurfaceKHR)
             == PFN_vkCreateWaylandSurfaceKHR));
