@@ -12,19 +12,11 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "expected" version="~>0.4.1"
 
-// HarfBuzz is the oracle, declared by ImportC from its installed headers
-// (src/sparkles/font_oracle/harfbuzz_c.c); pkg-config supplies both the link
-// flags and the header path. It is linked here, never by sparkles:font's
-// pure-D library configuration (FTA7).
 libs "harfbuzz"
 
-// The shim only declares; its symbols come from libharfbuzz. Compiling it as a
-// root source would give it the bare module name `harfbuzz_c`.
 excludedSourceFiles "src/sparkles/font_oracle/harfbuzz_c.c"
 
 configuration "library" {
-    // ImportC needs pkg-config's include flags, which dub applies only where
-    // the package is compiled into an executable.
     targetType "sourceLibrary"
     dependency "sparkles:font" path="../.."
     dependency "sparkles:base" path="../.."

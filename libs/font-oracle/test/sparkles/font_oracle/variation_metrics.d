@@ -20,7 +20,7 @@ import std.stdio : stderr;
 import sparkles.base.text.layout_units : LayoutUnit;
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle;
-import sparkles.font_oracle.harfbuzz_c;
+import sparkles.font_oracle;
 import sparkles.test_runner.skip : skipTest;
 
 /// Every instance here is 12 points; the comparisons are in design units.
@@ -33,8 +33,8 @@ private enum long unit = 65_536;
 /// rounding of a delta, plus 1/1024 unit for its single-precision arithmetic.
 private enum long halfUnit = unit / 2 + unit / 1024;
 
-/// A tag as HarfBuzz spells it.
-private hb_tag_t hbTag(string s) => Tag(s).value;
+/// A tag as HarfBuzz spells it, typed as the enum the call takes.
+private T hbTag(T = hb_tag_t)(string s) => cast(T) Tag(s).value;
 
 /**
 The F16.16 value nearest `u` that a `float` holds exactly, so that both
@@ -258,7 +258,7 @@ private bool hbOs2HasData(in Os2 o)
 private long hbMetric(ref Oracle hb, string tag)
 {
     hb_position_t p;
-    return hb_ot_metrics_get_position(hb.font, cast(hb_ot_metrics_tag_t) hbTag(tag), &p) ? long(p) * unit : long.min;
+    return hb_ot_metrics_get_position(hb.font, hbTag!hb_ot_metrics_tag_t(tag), &p) ? long(p) * unit : long.min;
 }
 
 /// Whether `ours` (design) and HarfBuzz's whole-unit `theirs` agree: exactly at
@@ -455,6 +455,11 @@ unittest
         skipTest("no bundled face has vhea and vmtx");
 }
 
+/// The `MATH` constants and kern corners, as HarfBuzz numbers them; both follow
+/// OpenType's order, as `MathConstant` and `MathKernCorner` do.
+private enum hbMathConstantCount = cast(hb_ot_math_constant_t) mathConstantCount;
+private enum hbMathKernEnd = cast(hb_ot_math_kern_t)(HB_OT_MATH_KERN_BOTTOM_LEFT + 1);
+
 /// HarfBuzz's direction for `d`; only horizontal or not matters to it.
 private hb_direction_t hbDirection(MathDirection d)
     => d == MathDirection.vertical ? hb_direction_t.HB_DIRECTION_TTB : hb_direction_t.HB_DIRECTION_LTR;
@@ -492,11 +497,11 @@ unittest
 
         const cs = inst.mathConstants;
         assert(cs.hasValue && cs.value.present, file);
-        foreach (c; 0 .. mathConstantCount)
+        foreach (c; HB_OT_MATH_CONSTANT_SCRIPT_PERCENT_SCALE_DOWN .. hbMathConstantCount)
         {
             const v = cs.value[cast(MathConstant) c];
             assert(v.hasValue && v.value.present, file);
-            const h = hb_ot_math_get_constant(hb.font, cast(hb_ot_math_constant_t) c);
+            const h = hb_ot_math_get_constant(hb.font, c);
             if (v.value.kind == MathValueKind.percentage)
                 assert(v.value.percentage == h, file);
             else
@@ -541,14 +546,14 @@ unittest
             assert(es.hasValue && es.value == (hb_ot_math_is_glyph_extended_shape(hb.face, gid) != 0), file);
             ++shapes;
 
-            foreach (corner; 0 .. 4)
+            foreach (corner; HB_OT_MATH_KERN_TOP_RIGHT .. hbMathKernEnd)
             {
                 const t = inst.mathKernTable(gid, cast(MathKernCorner) corner);
                 assert(t.hasValue, file);
                 const table = t.value;
                 hb_ot_math_kern_entry_t[64] entries;
                 uint count = entries.length;
-                const total = hb_ot_math_get_glyph_kernings(hb.font, gid, cast(hb_ot_math_kern_t) corner, 0, &count, entries.ptr);
+                const total = hb_ot_math_get_glyph_kernings(hb.font, gid, corner, 0, &count, entries.ptr);
                 if (!table.present)
                 {
                     assert(total == 0, file);
@@ -586,7 +591,7 @@ unittest
                     const k = table.lookup(DesignValue.fromUnits(h, face.unitsPerEm));
                     assert(k.hasValue && k.value.present, file);
                     assert(k.value.value.design.raw
-                        == long(hb_ot_math_get_glyph_kerning(hb.font, gid, cast(hb_ot_math_kern_t) corner, h)) * unit, file);
+                        == long(hb_ot_math_get_glyph_kerning(hb.font, gid, corner, h)) * unit, file);
                     ++kerns;
                 }
             }
@@ -670,7 +675,7 @@ unittest
                 const direction = axis == BaselineAxis.horizontal
                     ? hb_direction_t.HB_DIRECTION_LTR : hb_direction_t.HB_DIRECTION_TTB;
                 hb_position_t coord;
-                assert(!hb_ot_layout_get_baseline(hb.font, cast(hb_ot_layout_baseline_tag_t) hbTag(c[0]), direction,
+                assert(!hb_ot_layout_get_baseline(hb.font, hbTag!hb_ot_layout_baseline_tag_t(c[0]), direction,
                     hbTag(c[1]), 0, &coord),
                     file);
                 ++queries;
