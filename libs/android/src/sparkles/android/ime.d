@@ -35,7 +35,7 @@ import sparkles.android.autofill : autofillOwnsField;
 import sparkles.android.ime_diff : diff, FieldEdit, isSentinelRun,
     sentinel, sentinelLength;
 import sparkles.android.main_thread : mainThreadReady, postToMainThread;
-import sparkles.android.text_input : imeBackspace, imeEnter, pushTyped;
+import sparkles.android.text_input : imeBackspace, imeEnter, pushTypedRun;
 
 // android.text.InputType / EditorInfo
 package enum int inputTypeText = 0x1 // TYPE_CLASS_TEXT
@@ -81,6 +81,51 @@ bool showImeKeyboard(bool show) @trusted nothrow @nogc
     if (!atomicLoad(installed))
         return false;
     return postToMainThread(show ? &showJob : &hideJob, null);
+}
+
+/**
+Inserts `text` into the field at its cursor, as an input method's
+`commitText` does: the next $(LREF pollImeField) diffs it into typed text.
+For drivers and tests that need an IME commit without a keyboard. At most
+64 UTF-16 units; `false` when the field is not installed or a commit is
+still pending.
+*/
+bool commitToImeField(scope const(wchar)[] text) @trusted nothrow @nogc
+{
+    if (!atomicLoad(installed) || text.length > pendingCommit.length
+        || !cas(&commitPending, false, true))
+        return false;
+    pendingCommit[0 .. text.length] = text[];
+    pendingCommitLength = text.length;
+    if (postToMainThread(&commitJob, null))
+        return true;
+    atomicStore(commitPending, false);
+    return false;
+}
+
+private __gshared wchar[64] pendingCommit;
+private __gshared size_t pendingCommitLength;
+private shared bool commitPending;
+
+private void commitJob(JNIEnv* env, void*) nothrow @nogc
+{
+    scope (exit) atomicStore(commitPending, false);
+    if (field is null)
+        return;
+    auto getText = (*env).GetMethodID(env, (*env).GetObjectClass(env, field),
+        "getText", "()Landroid/text/Editable;");
+    auto editable = (*env).CallObjectMethodA(env, field, getText, null);
+    if (editable is null || (*env).ExceptionCheck(env))
+        return;
+    auto s = (*env).NewString(env, cast(const(jchar)*) pendingCommit.ptr,
+        cast(jsize) pendingCommitLength);
+    auto append = (*env).GetMethodID(env, (*env).GetObjectClass(env, editable),
+        "append", "(Ljava/lang/CharSequence;)Landroid/text/Editable;");
+    jvalue[1] a;
+    a[0].l = s;
+    cast(void) (*env).CallObjectMethodA(env, editable, append, a.ptr);
+    if ((*env).ExceptionCheck(env))
+        (*env).ExceptionClear(env);
 }
 
 // ── main-thread jobs ────────────────────────────────────────────────────────
@@ -280,17 +325,23 @@ private void callFloat(JNIEnv* env, jobject o, const(char)* name, float v) nothr
 /// Deliver an edit in the order it happened: backspaces, then the text.
 private void feed(FieldEdit e) nothrow @nogc
 {
-    foreach (_; 0 .. e.deleted)
-        pushTyped(imeBackspace);
     import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
 
+    // One run per edit, so a consumer never sees half of it (`pushTypedRun`).
+    dchar[256] run;
+    size_t n;
+    foreach (_; 0 .. e.deleted)
+        if (n < run.length)
+            run[n++] = imeBackspace;
     // JNI GetStringChars supplies ordinary UTF-16, not JNI modified UTF-8.
     for (size_t at; at < e.inserted.length;)
     {
         const decoded = decodeToken(e.inserted[at .. $], UtfMode.replacement, true, at);
         assert(decoded.result.status == UtfStatus.ok);
         const c = decoded.token.scalar;
-        pushTyped(c == '\n' ? imeEnter : c);
+        if (n < run.length)
+            run[n++] = c == '\n' ? imeEnter : c;
         at += decoded.result.consumed;
     }
+    pushTypedRun(run[0 .. n]);
 }
