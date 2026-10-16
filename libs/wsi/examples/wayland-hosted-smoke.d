@@ -353,5 +353,164 @@ int main()
         assert(!wsi.destroyWindow(id).hasError);
         writeln("ok: Wayland pointer confinement accepted and released");
     }
+
+    /*
+    Clipboard addendum (`DT1`–`DT5`): only where a keyboard gives this client
+    focus, since the compositor sends the selection to the focused client and
+    setting it takes an input serial. The shared suite round-trips 32 MiB
+    through the compositor: this client's `wl_data_source` writes a pipe and
+    its own `wl_data_offer` reads it. Then a second client (another
+    `WaylandWsi`, on its own connection) takes focus, offers text and hands
+    focus back; its offer arrives as a foreign one and reads back intact.
+    */
+    if (externalInjection && wsi.clipboardAvailable)
+    {
+        WindowConfig config;
+        assert(config.title.assign("sparkles:wsi Wayland clipboard"));
+        const id = wsi.createWindow(config).value;
+        awaitFocus(wsi, hooks, id, "the clipboard window never gained keyboard focus");
+
+        WaylandWsi other;
+        static struct ClipboardHooks
+        {
+            WaylandWsi* wsi;
+            WaylandWsi* other;
+            DefaultLoop* loop;
+            ulong transferBytes = 32UL << 20; // `DT5`
+            enum size_t maxChunkBytes = WaylandWsi.clipChunkBytes;
+
+            void step(Duration timeout)
+            {
+                auto ran = wsi.runIntegratedOnce(*loop, timeout);
+                assert(!ran.hasError, "the integrated step failed");
+                // The other client shares the loop; its completions are
+                // serviced by its own step.
+                if (other.bootstrapComplete)
+                    assert(!other.runIntegratedOnce(*loop, Duration.zero).hasError);
+            }
+        }
+        auto clipHooks = ClipboardHooks(&wsi, &other, &loop);
+        const before = residentKiB();
+        const started = MonoTime.currTime;
+        const clip = checkClipboardConformance(wsi, loop, clipHooks, id);
+        const grew = residentKiB() - before;
+        assert(grew < 4 * 1024, text("resident memory grew by ", grew,
+            " KiB across a 32 MiB round trip"));
+        writeln("ok: Wayland clipboard conformance (", clip.checked,
+            " checked, 32 MiB through the compositor in ",
+            (MonoTime.currTime - started).total!"msecs", " ms, resident +", grew, " KiB)");
+
+        static immutable string theirs = "copied in another client: ünïcode";
+        assert(!WaylandWsi.open(other, loop).hasError, "the second client did not connect");
+        const bootstrapDeadline = MonoTime.currTime + 5.seconds;
+        while (!other.bootstrapComplete)
+        {
+            assert(MonoTime.currTime < bootstrapDeadline, "the second client never bootstrapped");
+            assert(!other.runIntegratedOnce(loop, 100.msecs).hasError);
+        }
+        WindowConfig otherConfig;
+        assert(otherConfig.title.assign("sparkles:wsi Wayland other client"));
+        const otherWindow = other.createWindow(otherConfig).value;
+        // Its own hooks map a buffer when the window is ready: the
+        // compositor focuses a window only once it is mapped.
+        auto otherHooks = WaylandHooks(&other, &loop, chordEnabled: true,
+            pointerEnabled: false, resizeEnabled: false, readySizeExact: false);
+        awaitFocus(other, otherHooks, otherWindow,
+            "the second client's window never gained keyboard focus");
+        assert(!other.offerClipboard(otherWindow, "text/plain;charset=utf-8",
+            cast(const(ubyte)[]) theirs).hasError);
+        clipHooks.step(100.msecs);
+        assert(!other.drain((WindowEvent event) {}).hasError);
+        // Focus returns to this client, and the selection with it.
+        assert(!other.destroyWindow(otherWindow).hasError);
+
+        OfferId offer;
+        const deadline = MonoTime.currTime + 10.seconds;
+        while (offer == OfferId.init)
+        {
+            assert(MonoTime.currTime < deadline, "the other client's offer was never announced");
+            clipHooks.step(50.msecs);
+            assert(!other.drain((WindowEvent event) {}).hasError);
+            assert(!wsi.drain((WindowEvent event) {
+                event.payload.match!(
+                    (in DataOfferEvent e) {
+                        if (e.action != DataOfferAction.offered)
+                            return;
+                        assert(!wsi.withText(e.mimeType, (scope const(char)[] mime) {
+                            if (mime == "text/plain;charset=utf-8")
+                                offer = e.offer;
+                        }).hasError);
+                    },
+                    (_) {});
+            }).hasError);
+        }
+        static struct Collect
+        {
+            char[128] text;
+            size_t length;
+            bool done, ok;
+
+            void chunk(TransferId, scope const(ubyte)[] bytes) @safe nothrow
+            {
+                text[length .. length + bytes.length] = cast(const(char)[]) bytes;
+                length += bytes.length;
+            }
+
+            void finish(TransferId, TransferStatus status) @safe nothrow
+            {
+                done = true;
+                ok = status == TransferStatus.completed;
+            }
+        }
+        Collect paste;
+        assert(!wsi.receive(offer, "text/plain;charset=utf-8", paste).hasError);
+        while (!paste.done)
+        {
+            assert(MonoTime.currTime < deadline + 5.seconds, "the paste never finished");
+            clipHooks.step(50.msecs);
+        }
+        assert(paste.ok && paste.text[0 .. paste.length] == theirs,
+            "the other client's text did not arrive intact");
+        assert(!other.close().hasError);
+        assert(!wsi.destroyWindow(id).hasError);
+        writeln("ok: Wayland reads another client's clipboard");
+    }
     return 0;
+}
+
+/// Steps until `id` reports keyboard focus, after it became ready.
+private void awaitFocus(Hooks)(ref WaylandWsi wsi, ref Hooks hooks, WindowId id,
+    string failure)
+{
+    bool ready, focused;
+    const deadline = MonoTime.currTime + 10.seconds;
+    while (!ready || !focused)
+    {
+        assert(MonoTime.currTime < deadline, failure);
+        hooks.step(100.msecs);
+        SurfaceMetrics metrics;
+        assert(!wsi.drain((WindowEvent event) {
+            if (event.window != id)
+                return;
+            event.payload.match!(
+                (in ReadyEvent e) { ready = true; metrics = e.metrics; },
+                (in FocusChangedEvent e) { focused = e.focused; },
+                (_) {});
+        }).hasError);
+        static if (is(typeof(hooks.onWindowReady(id, metrics))))
+            if (ready && metrics != SurfaceMetrics.init)
+                hooks.onWindowReady(id, metrics);
+    }
+}
+
+/// This process' resident set, from `/proc/self/statm`, in KiB.
+private long residentKiB()
+{
+    import std.file : readText;
+    import std.string : split;
+    import std.conv : to;
+    import core.sys.posix.unistd : sysconf, _SC_PAGESIZE;
+
+    const pages = readText("/proc/self/statm").split[1].to!long;
+    return pages * sysconf(_SC_PAGESIZE) / 1024;
 }
