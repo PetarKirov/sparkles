@@ -69,7 +69,7 @@ glob in `apps/ci`:
 | [Execution probe][exec-example]                                     | Actual UID/domain, executable identity, `execve` errno and `dlopen`           | Prints host identity in CI; Android results require the real app session                    |
 | [Load payload][load-example]                                        | Minimal dependency-free shared-library load                                   | Host executable checks its exported function; Android build uses the shared-library version |
 | [Child-count probe][child-example]                                  | Bounded 40-child survival and owned-child cleanup                             | Default invocation skips; `--run` requires explicit approval                                |
-| [Start benchmark][start-example] and [silent payload][true-example] | Five trials of 1,000 successful fork/exec/waits using identical payload bytes | Benchmark skips by default; prepared but not measured on the hot phone                      |
+| [Start benchmark][start-example] and [silent payload][true-example] | Five trials of 1,000 successful fork/exec/waits using identical payload bytes | Benchmark skips by default; E7 records all 15,000 successful launches on the phone          |
 
 [Device validation][devices] records the commands, privilege context, failures, cleanup and limitations. Documentation CI is not presented as an Android integration test.
 

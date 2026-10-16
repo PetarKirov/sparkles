@@ -20,6 +20,13 @@ The implementation under investigation is `/home/petar/code/repos/mine/sparkles-
 
 The user reports an initial version working on a physical device. This research additionally installed and launched the existing no-DEX APK on the [Pad 8 Pro][devices] and ran a real session child there. The earlier Snapdragon 888 phone had the custom terminal installed. On that phone, its plain shell/app home was observed, while PRoot processes belonged to the **separate** `com.termux.nix` UID. That does not independently prove a completed PRoot bootstrap in the custom app on that device.
 
+The subsequent [E6 custom target-36 experiment][current-target] supplies that
+missing observation: the real installer and first activation completed under
+the custom app UID, followed by signed substitution, GCC/Git, a local
+derivation and `--check` rebuild, and app restart with the patched APK-native
+login route. It is an explicit experimental build; the default target remains
+28 and production promotion/policy/lifecycle gates remain separate.
+
 The original sibling [Android specification snapshot][spec] contains earlier emulator-oriented validation notes. User-reported physical progress and this research's app-domain evidence are recorded separately rather than silently rewriting that source snapshot.
 
 ## Gaps relevant to the research
@@ -37,6 +44,7 @@ The APK does not establish `MANAGE_VIRTUAL_MACHINE` / `USE_CUSTOM_VIRTUAL_MACHIN
 
 <!-- References -->
 
+[current-target]: ./device-validation/index.md#e6-full-current-target-nix-prototype
 [sources]: ./sources.md
 [manifest]: ./grounding/sparkles/AndroidManifest.xml.txt
 [session]: ./grounding/sparkles/session.d.txt

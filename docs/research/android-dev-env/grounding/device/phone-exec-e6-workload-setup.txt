@@ -1,0 +1,6 @@
+uid=10488(nix-on-droid) gid=10488(nix-on-droid) groups=10488(nix-on-droid),3003,9997,20488,50488
+u:r:untrusted_app:s0:c232,c257,c512,c768native-library-dir=/data/app/~~ZjxXUi4JZUrgAtyi6aenpw==/dev.petar_kirov.sparkles.terminal.t36-108W0KTUHpuT7cqjyzX4Ow==/lib/arm64
+nix (Nix) 2.18.4
+/data/data/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/e6-workload.sh: line 10: grep: command not found
+error: writing to file: Broken pipe
+workload-exit=127

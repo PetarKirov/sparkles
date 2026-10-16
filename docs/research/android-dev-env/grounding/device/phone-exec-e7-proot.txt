@@ -1,0 +1,11 @@
+uid=10488 gid=10488
+context=u:r:untrusted_app:s0:c232,c257,c512,c768
+exe=/apex/com.android.runtime/bin/linker64
+argv[0]=/data/user/0/dev.petar_kirov.sparkles.terminal.t36/files/android-exec-research/exec-probe
+preflight-exit=0
+trial=1 successful=1000 elapsed-ns=28784469885 ns-per-start=28784469
+trial=2 successful=1000 elapsed-ns=30550523478 ns-per-start=30550523
+trial=3 successful=1000 elapsed-ns=31170886134 ns-per-start=31170886
+trial=4 successful=1000 elapsed-ns=30680027488 ns-per-start=30680027
+trial=5 successful=1000 elapsed-ns=31213789988 ns-per-start=31213789
+benchmark-exit=0

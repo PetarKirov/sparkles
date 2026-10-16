@@ -1,0 +1,55 @@
+nix-on-droid — first start: installing the bootstrap.
+
+Bootstrap zipball location [the bundled bootstrap]:
+>
+Unpacking the bundled bootstrap
+  35.9 of 35.9 MiB (100%)
+Extracting
+  4050 of 4050 files
+Installed. Starting nix-on-droid…
+
+─────────────────────────────────────────────
+Welcome to Nix-on-Droid!
+If nothing works, open an issue at https://github.com/nix-community/nix-on-droid/issues or try the rescue shell.
+Setting default user profile...
+Sourcing Nix environment...
+
+Nix-on-Droid can be set up with channels or with flakes (still experimental).
+Do you want to set it up with flakes? (y/N)
+Setting up Nix-on-Droid with channels...
+Installing and updating nix-channels...
+this derivation will be built:
+  /nix/store/qcb6nqxwl2lsndiv1c846hagp6crlw1b-nixpkgs.drv
+building '/nix/store/qcb6nqxwl2lsndiv1c846hagp6crlw1b-nixpkgs.drv'...
+unpacking channels...
+this derivation will be built:
+  /nix/store/qps2xjh28rylriykbqd5v0vndx2cv2rc-nix-on-droid.drv
+building '/nix/store/qps2xjh28rylriykbqd5v0vndx2cv2rc-nix-on-droid.drv'...
+unpacking channels...
+Setting build.androidAppId = "dev.petar_kirov.sparkles.terminal.t36"...
+Installing first Nix-on-Droid generation...
+Building activation package...
+Executing activation script...
+Activating linkBinSh
+Activating linkUsrBinEnv
+Activating installLogin
+Activating installLoginInner
+Activating installPackages
+installing 'nix-on-droid-path'
+building '/nix/store/p4lg7m3iqlwpx760drd6nw643cwns33p-user-environment.drv'...
+Activating installProotStatic
+Activating setUpEtc
+Removing obsolete symlink '/etc/UNINTIALISED'...
+Activating unlinkColors
+Activating unlinkFont
+Activating linkProfile
+Copying default Nix-on-Droid config...
+
+Congratulations! Now you have Nix installed with some default packages like bashInteractive, coreutils, cacert and, most importantly, Nix-on-Droid itself to manage local configuration, see
+  nix-on-droid help
+or the config file
+  ~/.config/nixpkgs/nix-on-droid.nix
+
+You can go for the bare Nix-on-Droid setup or you can configure your phone via home-manager. See config file for further information.
+
+bash-5.2$

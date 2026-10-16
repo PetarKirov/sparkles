@@ -98,17 +98,22 @@ An initial invocation without creating the work directory failed before guest cr
 
 The phone snapshot had roughly 7 GiB total RAM, about 1.4 GiB available, 15% battery and a battery temperature reading of 50°C. The Pad snapshot had `MemTotal=7544184 kB`, `MemAvailable=1736308 kB`, 31% battery, 32.9°C and 126 GiB available on the reported data filesystem. These are transient pre-test snapshots, not performance characteristics.
 
-Only one relevant VM mode was boot-tested, and the custom app's full PRoot bootstrap was not completed as part of this research. A same-device backend benchmark would therefore give misleading coverage. Follow [the proposed workload protocol][recommendations] after two backends meet functional gates.
+Only one relevant VM mode was boot-tested. E6 now completes the custom app's
+PRoot Nix workflow on the phone, but there is no second backend with the same
+working workload. A same-device backend comparison would therefore still give
+misleading coverage. E7 is only a process-start microbenchmark. Follow
+[the proposed workload protocol][recommendations] after two backends meet
+functional gates.
 
 The [Pixel report][pixel7] is an existing-process observation, not a workload benchmark. Its active NNS shell supplies new functional evidence, but signed substitution/build, DNS/TTY behavior, app-store-write rejection, independent terminal ownership and AVF custom-image boot remain acceptance gates. The report's seven nonzero process statuses reflect missing canonical paths outside NNS views, not seven failed NNS sessions.
 
 ## Current-target experiments
 
-E1–E5, a bounded E8 and the Play reference E9 ran on the Xiaomi 11T Pro on October 16, 2026, after explicit owner
-approval; the owner then authorized the remaining experiments. The
+E1–E9 ran on the Xiaomi 11T Pro on October 16, 2026, with explicit owner
+approval, including a bounded E8 and the owner-installed Play reference E9. The
 [Play Termux source analysis][play] supplies predictions, not the results below.
 Android 14 cannot establish Android 17 behavior, AVF support or 16 KB-page
-compatibility. M0b's full Nix workflow remains a separate gate.
+compatibility. E6 records M0b's functional Nix workflow separately below.
 
 ### Observed execution routes
 
@@ -238,7 +243,7 @@ context invalidates the experiment. Stop on unexpected context or loader failure
 Do not interpret the E4 basename `.so` as a shared object: it is the same static
 ELF under Android's extraction naming convention. Compare hashes before testing.
 
-### E5–E9: gates and remaining preparation
+### Current-target fixtures
 
 The optional `current-target.nix` fixture builds the same pinned PRoot's
 executable **and** matching loader, an AArch64 glibc `hello` closure and a
@@ -248,13 +253,90 @@ disposable target-36 APK. It never invokes ADB:
 nix build --builders '' --impure --no-link --print-out-paths --file docs/research/android-dev-env/device-validation/current-target.nix apk glibcClosure helloPath
 ```
 
-E6's compiler workload and E7's benchmark were deferred when the phone's battery
-sensor still reported 50°C while USB-charging (15% level). The [benchmark
-harness][start-example] and [silent payload][true-example] are prepared, not
-measurements. After cooldown, verify every route succeeds before collecting five
-trials of 1,000 starts; the same Bionic payload can isolate route costs without
-comparing different libc/program implementations. Default host invocation skips
-the benchmark and the child-count experiment.
+E6/E7 were initially deferred at a reported 50°C battery temperature while
+USB-charging (15% level). The owner subsequently identified that as the phone's
+steady-state reading and explicitly authorized continuation. The reading was
+not reset or suppressed; it remained 50°C before/after E7. This is an owner
+statement about the device, not an independently calibrated temperature.
+
+### E6: full current-target Nix prototype
+
+The experimental `bootstrapApk` output embeds a 35.9 MiB bootstrap for the
+disposable target-36 package. The real app installer extracted 4,050 files,
+started `login` through `/system/bin/sh`, unpacked the pinned channels and
+completed the first nix-on-droid generation. The [initial screen][e6-screen1]
+and [completed setup screen][e6-screen2] are screen-text captures, **not a
+complete byte-for-byte PTY transcript**.
+
+The fixture's `native-proot.patch` changes both the bootstrap and subsequent
+activation's generated login to use APK-native PRoot and its loader. The app
+resolves its extracted library directory at runtime with `dladdr` and exports
+`SPARKLES_NATIVE_LIBRARY_DIR`; it is not a hard-coded `/data/app` install path.
+Inherited stale values are discarded. The patch also stops activation from
+installing a PRoot update into app data. This is an explicit research fork of
+the pinned nix-on-droid source, not an unmodified upstream deployment.
+
+```bash
+nix build --builders '' --impure --no-link --print-out-paths --file docs/research/android-dev-env/device-validation/current-target.nix bootstrapApk sourceTarball
+```
+
+For first channel setup, the source archive was served over a temporary
+loopback HTTP server through an explicitly selected ADB reverse mapping.
+Nixpkgs was pinned to `49ee0e94463abada1de470c9c07bfc12b36dcf40`.
+The custom channel is now stored on the device, but its update URL names that
+temporary loopback service: a distributable release needs a published source
+pin. The server and reverse mapping were removed after the experiment.
+
+| Acceptance check        | Observed locally                                                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| App identity            | UID/GID 10488; `untrusted_app`, not `runas_app`; no root or policy changes                                                                            |
+| Nix and canonical store | Nix 2.18.4; executable paths under logical `/nix/store`                                                                                               |
+| Signed substitution     | `hello` fetched from `cache.nixos.org` with `require-sigs=true` and local builds disabled; signature reported and `nix-store --verify-path` succeeded |
+| Compiler and Git        | GCC 13.2.0 and Git 2.44.1 fetched as signed store outputs, then executed                                                                              |
+| Local derivation        | The [C workload][local-build-example] compiled and ran, then passed a local `--check` rebuild with one job/core                                       |
+| Git workflow            | An isolated repository was initialized, a file added/committed and its commit read back                                                               |
+| Restart                 | After force-stop/relaunch, the generated login retained APK-native paths; Nix, the built program and the Git commit remained usable                   |
+
+The [workload transcript][e6-workload] ends with `workload-exit=0`; the
+[restart transcript][e6-relogin] ends with `relogin-exit=0`. An initial collector
+attempt assumed `grep` existed in the minimal profile and stopped before the
+cache test; [that setup failure][e6-setup] is retained separately. The corrected
+collector used Android's `grep`. The [canonical derivation check][e6-derivation]
+confirms that the formatted published workload instantiates to the same
+derivation that was actually built.
+
+APK no-DEX checks remained enabled. [Available audits][e6-audit] show granted
+app-data executable mappings; they are not an exhaustive syscall trace. The
+APK-only kernel execution route is source-inspected in the pinned PRoot/login
+implementation and supported by these functional observations and E1's direct
+execution rejection. This does not establish every future firmware's behavior,
+long-running lifecycle reliability, or Play-policy acceptance. Compiler/Git
+outputs were realized in the store, not added to the user's default profile.
+
+### E7: process-start microbenchmark
+
+The [harness][start-example] completed five trials of 1,000 successful
+fork/exec/wait cycles per route, using identical [silent Bionic payload][true-example]
+bytes. The PRoot case ran the harness **inside one PRoot session**, not a new
+PRoot instance per child. All 15,000 children exited successfully.
+
+| Route                                          | Median (ms/start) | Trial-mean range (ms/start) | Evidence                |
+| ---------------------------------------------- | ----------------- | --------------------------- | ----------------------- |
+| Direct app-data execution, target 28           | 12.203365         | 10.654179–12.495589         | [Raw trials][e7-direct] |
+| System linker, target 36                       | 10.421300         | 8.848141–10.887438          | [Raw trials][e7-linker] |
+| Inside PRoot with APK-native loader, target 36 | 30.680027         | 28.784470–31.213790         | [Raw trials][e7-proot]  |
+
+Each trial value is total monotonic elapsed time divided by 1,000; the median
+and range are across those **five block means**, not individual child latency
+samples. Timing includes `fork`, `execve`, runtime startup, exit and `waitpid`.
+The app stayed foreground. Routes ran in table order without randomization,
+cache flushing, CPU-frequency pinning or independent throttling control; the
+frontend revisions also differ. The lower linker number therefore does not
+establish that linker execution is intrinsically faster than direct execution.
+This microbenchmark does not measure a Nix workload or close milestone M7.
+Default host invocation skips the benchmark and the child-count experiment.
+
+### E8/E9 scope and reproduction gates
 
 The owner installed the Play reference for E9; no Play account was accessed by
 the agent. With separate approval, `pkg install -y gdb` added 28 packages (117 MB
@@ -262,17 +344,19 @@ download, 701 MB installed; zero upgrades/removals), including compiler/Python
 dependencies. Before/after package lists and the install log are retained in
 the [combined transcript][e9-play]. These packages remain installed.
 
-| Experiment | Gate before agreeing the device procedure                                                                                                                                                                                                                                                                                                      | Evidence to capture                                                                                                                                                                      |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| E5         | Select pinned, same-ABI `proot-static`, its matching loader and a small glibc closure; package both helpers through `extraNativeLibs`. Run with an absolute APK-native `PROOT_LOADER`, then a negative control with it unset. This reduced-scale gate passed; `current-target.nix` reproduces the fixtures.                                    | Helper/closure hashes, exact argv/environment, exit status and app context; distinguish a loader-location failure from other PRoot errors.                                               |
-| E6         | E5 passes. Adapt the bootstrap's PRoot invocation to the APK-native executable and loader. `session.mode = "bootstrap-shell"` now starts `login` as `/system/bin/sh login` in initial, post-install and later sessions, but does **not** rewrite the script's internal commands or set `PROOT_LOADER`. Use an isolated bootstrap app/data set. | M0 workload: `nix --version`, canonical store, signed cache substitution, compiler/Git workflow and a small local derivation; record execution-route evidence and no-DEX APK inspection. |
-| E7         | E5/E6 functional gates pass and owner agrees a bounded workload: five trials of approximately 1,000 successful `true` starts by direct target-28, linker target-36 and PRoot routes.                                                                                                                                                           | Raw elapsed times, success counts, median/range, thermal/battery state, identical payloads and warm/cold classification. The diagnostic probe prints output and is not a timing payload. |
-| E8         | Owner separately approves a bounded 40-child test, the Developer-option toggle and restoration of its original value. Agree timeout, background/foreground state and child cleanup before running.                                                                                                                                             | Setting before/after, child count, elapsed time, exit signals and available process-kill logs. No kill does not prove the global limit is absent.                                        |
-| E9         | Optional: owner chooses and installs Play Termux using their own account. Agree disposable files/package changes and debugger procedure.                                                                                                                                                                                                       | App/target version, linker/static controls and an actual `gdb` breakpoint hit or failure. App presence alone is not validation.                                                          |
+| Experiment | Gate before agreeing the device procedure                                                                                                                                                                                                                                                                   | Evidence to capture                                                                                                                               |
+| ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E5         | Select pinned, same-ABI `proot-static`, its matching loader and a small glibc closure; package both helpers through `extraNativeLibs`. Run with an absolute APK-native `PROOT_LOADER`, then a negative control with it unset. This reduced-scale gate passed; `current-target.nix` reproduces the fixtures. | Helper/closure hashes, exact argv/environment, exit status and app context; distinguish a loader-location failure from other PRoot errors.        |
+| E6         | Use `bootstrapApk`, the explicit source patch and an isolated app/data set. `bootstrap-shell` interprets login; the patch sets `PROOT_LOADER` and replaces its internal PRoot invocation. Functional workload and restart gates passed.                                                                     | Nix version, canonical store, signatures, compiler/Git/local build, restart, execution-route source and no-DEX APK inspection.                    |
+| E7         | Verify the identical payload succeeds through every route, then run five trials of 1,000 starts. This microbenchmark ran after E5 while the E6 host artifacts were prepared.                                                                                                                                | All 15,000 successful starts, raw elapsed times, median/range of trial means and explicit experimental limitations.                               |
+| E8         | Owner separately approves a bounded 40-child test, the Developer-option toggle and restoration of its original value. Agree timeout, background/foreground state and child cleanup before running.                                                                                                          | Setting before/after, child count, elapsed time, exit signals and available process-kill logs. No kill does not prove the global limit is absent. |
+| E9         | Optional: owner chooses and installs Play Termux using their own account. Agree disposable files/package changes and debugger procedure.                                                                                                                                                                    | App/target version, linker/static controls and an actual `gdb` breakpoint hit or failure. App presence alone is not validation.                   |
 
-**M0b is partially observed, not delivered.** E5 closes the reduced-scale
-glibc-loader gate; the full bootstrap/cache/build workflow and downloaded-code
-policy acceptance remain unvalidated.
+**M0b's functional prototype gate passed locally.** E6 now supplies the
+bootstrap/cache/compiler/local-build/Git/restart workload evidence on this
+firmware. Production integration, broader compatibility, lifecycle reliability,
+exhaustive execution tracing and downloaded-code policy acceptance remain open;
+the default target SDK remains 28.
 
 ### Recording and cleanup
 
@@ -280,7 +364,7 @@ After each approved experiment, save the operator's transcript under
 `grounding/device/` with date, device/firmware, APK and payload hashes, target
 SDK, commands, timestamps, app UID/context, exit statuses, relevant audit output,
 privilege context and limitations. Label each claim observed, contradicted or
-still source-inspected. The linked E1–E5/E8/E9 transcripts are actual device output.
+still source-inspected. The linked E1–E9 transcripts are actual device output.
 
 Cleanup is owner-approved removal of only the named research directory in the
 existing app and uninstall of the newly installed disposable app. Confirm that
@@ -288,10 +372,12 @@ the latter was created by this experiment before uninstalling it. Preserve all
 existing terminal/nix-on-droid data and restore E8's original setting. Never
 clear logcat or reset an existing app to simplify collection.
 
-Current cleanup state: the test app and named research directories are retained
-for deferred E6/E7, as are the explicitly approved Play GDB packages. All E8
-children were reaped, its setting was restored, and E9's loopback transfer
-server/ADB mappings were removed. No existing app was uninstalled or reset.
+Current cleanup state: the experimental Nix app/store and named research
+directories are retained, as are the explicitly approved Play GDB packages.
+The local build and cache-only toolchain outputs are not GC-rooted profile
+installations. All E8 children were reaped, its setting was restored, the screen
+oracle flag was removed, and the loopback servers/ADB mappings were removed.
+No existing app was uninstalled or reset.
 
 ## CI scope
 
@@ -347,3 +433,14 @@ see [Contributor device probes][contributing].
 [e5-audit]: ../grounding/device/phone-exec-e5-audit.txt
 [e9-play]: ../grounding/device/phone-exec-e9-play.txt
 [e9-gdb]: ../grounding/device/phone-exec-e9-gdb.txt
+[e7-direct]: ../grounding/device/phone-exec-e7-direct.txt
+[e7-linker]: ../grounding/device/phone-exec-e7-linker.txt
+[e7-proot]: ../grounding/device/phone-exec-e7-proot.txt
+[e6-screen1]: ../grounding/device/phone-exec-e6-bootstrap-screen-01.txt
+[e6-screen2]: ../grounding/device/phone-exec-e6-bootstrap-screen-02.txt
+[e6-workload]: ../grounding/device/phone-exec-e6-workload.txt
+[e6-relogin]: ../grounding/device/phone-exec-e6-relogin.txt
+[e6-setup]: ../grounding/device/phone-exec-e6-workload-setup.txt
+[e6-derivation]: ../grounding/device/phone-exec-e6-canonical-derivation.txt
+[e6-audit]: ../grounding/device/phone-exec-e6-audit.txt
+[local-build-example]: ./local-build.nix

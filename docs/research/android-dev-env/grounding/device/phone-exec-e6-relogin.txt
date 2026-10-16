@@ -1,0 +1,9 @@
+uid=10488(nix-on-droid) gid=10488(nix-on-droid) groups=10488(nix-on-droid),3003,9997,20488,50488
+u:r:untrusted_app:s0:c232,c257,c512,c768
+native-library-dir=/data/app/~~ZjxXUi4JZUrgAtyi6aenpw==/dev.petar_kirov.sparkles.terminal.t36-108W0KTUHpuT7cqjyzX4Ow==/lib/arm64
+nix (Nix) 2.18.4
+34:export PROOT_LOADER="$SPARKLES_NATIVE_LIBRARY_DIR/libproot-loader.so"
+35:exec "$SPARKLES_NATIVE_LIBRARY_DIR/libproot.so" \
+android-exec-local-build-ok
+E6 local Git workflow
+relogin-exit=0

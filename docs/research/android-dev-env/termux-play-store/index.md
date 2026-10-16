@@ -76,12 +76,14 @@ Some packages left the repository instead, for mixed reasons. Against the last m
 
 ### Deployment and permissions
 
-**Local evidence boundary:** [E1–E5][current-target] observed the execution
+**Local evidence boundary:** [E1–E7][current-target] observed the execution
 restriction, absolute-path linker route, app-data `dlopen` and APK-native static
 execution in the custom target-36 terminal on Android 14, plus a glibc `hello`
-under APK-native PRoot. E9 separately checked the owner-installed Play app's
-linker/static routes and reproduced a missed GDB breakpoint. None establishes
-Android 17 behavior, a full current-target Nix workflow or Play-policy compliance.
+under APK-native PRoot. E6 then completed the current-target experimental Nix
+bootstrap/cache/compiler/Git/local-build workflow and app restart; E7 measured
+process starts. E9 separately checked the owner-installed Play app's linker/static
+routes and reproduced a missed GDB breakpoint. None establishes Android 17
+behavior, broad production compatibility or Play-policy compliance.
 
 The inspected app declares `minSdkVersion=30` and `targetSdkVersion=37` ([`gradle.properties`][gradle-props]), one level above Play's floor: since August 31, 2026, “New apps and app updates must target Android 16 (API level 36) or higher” ([target API policy][play-target]). Under [`seapp_contexts`][seapp] that target places it in the plain `untrusted_app` domain, where nix-on-droid's target 28 places it in `untrusted_app_27`. It needed no root, no exemption and no kernel change: the workaround uses only operations the platform still grants to every app.
 
@@ -120,7 +122,8 @@ The cost is permanent divergence. `termux-packages` carries 1,285 changed files 
 The table describes upstream source/reports. [E1–E4][current-target] locally
 confirm the underlying Bionic-dynamic, static and raw executable-identity cases
 in the custom app, not the Play package ecosystem or its preload hooks. The
-reduced glibc/PRoot transfer passed E5, while the full Nix workflow remains E6.
+reduced glibc/PRoot transfer passed E5, and the experimental full Nix workflow
+passed E6 on the same phone.
 
 The [issue tracker][issues] (1,122 issues up to `#1653` on October 16, 2026, 361 open; 446 were closed on January 11, 2026 alone) records where the table below comes from. The maintainer's diagnosis recurs in it: “Termux on Google Play is not allowed to execute `…/usr/bin/tmux` directly, instead it executes `/apex/com.android.runtime/bin/linker64 …`” ([`termux-issues#149`][issue-149]), and the standing rule is that “you need to keep the `LD_PRELOAD` environment variable around while spawning sub processes” ([`termux-issues#24`][issue-24]). Relative interpreter paths once failed with `linker64`'s “error: expected absolute path” ([`#76`][issue-76], closed). Breakpoints that never trigger under `gdb` ([`#744`][issue-744]) and Go binaries from outside Termux's toolchain receiving their own path as `argv[1]` ([`termux-exec#9`][exec-9]) remain open.
 
@@ -131,8 +134,8 @@ The [issue tracker][issues] (1,122 issues up to `#1653` on October 16, 2026, 361
 | Go programs built with Termux's `golang`     | Works through the patched `os/exec` and runtime; Go toolchains fetched by `GOTOOLCHAIN` lack the patches                                                                          | Still source-inspected / upstream-reported                                                                                    |
 | Static executables (Zig/musl, static Go)     | Fails under `termux-exec`: `linker64` does not load them; an unmerged [September 2025 branch][static-loader] would hand `ET_EXEC` files to a `termux-elf-loader` not yet packaged | E4 observes linker rejection of a static Bionic ELF and execution of its identical APK-native copy; other toolchains untested |
 | Raw-`execve` programs outside libc           | Fails unless patched or run under PRoot                                                                                                                                           | Still source-inspected; E1 uses libc `execve`, not a raw-syscall payload                                                      |
-| glibc executables (glibc repo, Nix store)    | Not provided; possible only under PRoot with the APK loader                                                                                                                       | E5 observes glibc Nix-store `hello` with the APK loader; full Nix workflow remains E6                                         |
-| PRoot distributions                          | Works since app 0.126 with the APK-shipped loader                                                                                                                                 | E5 observes the reduced loader mechanism in the custom app, not a complete distribution                                       |
+| glibc executables (glibc repo, Nix store)    | Not provided; possible only under PRoot with the APK loader                                                                                                                       | E5 observes glibc `hello`; E6 observes the experimental signed-cache/compiler/Git/local-build workflow and restart            |
+| PRoot distributions                          | Works since app 0.126 with the APK-shipped loader                                                                                                                                 | E6 completes a patched nix-on-droid bootstrap; not evidence for every distribution or firmware                                |
 | Programs that inspect `/proc/self/exe`       | Works when hooked or patched; unpatched raw readers see `linker64`                                                                                                                | E2 observes unhooked identity; E9 observes the Play preload's path correction                                                 |
 | Debugging with `gdb`                         | Open: breakpoints reported not to stop ([`#744`][issue-744])                                                                                                                      | E9 locally reproduces a missed `main` breakpoint in Play Termux/GDB 16.3-3                                                    |
 | Plugins and add-ons                          | Boot and Widget merged; about twenty API commands built in; `Termux:API`, Tasker, Float absent                                                                                    | Source-inspected / upstream-reported; not locally tested                                                                      |
