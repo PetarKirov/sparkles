@@ -287,6 +287,7 @@ struct OutputEvent
 
 enum DataOfferAction : ubyte
 {
+    /// The offer exists and names this MIME type (one event per type).
     offered,
     entered,
     moved,
@@ -294,6 +295,9 @@ enum DataOfferAction : ubyte
     dropped,
     completed,
     failed,
+    /// An offer this application made ended: another source replaced it,
+    /// or it was withdrawn (`DT1`).
+    withdrawn,
 }
 
 struct DataOfferEvent
