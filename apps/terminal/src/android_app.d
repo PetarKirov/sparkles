@@ -122,7 +122,7 @@ int androidMain()
         import std.string : toStringz;
 
         TerminalViewOptions o = firstPending ? first
-            : sessionOptions(paths, bootstrapped && paths.login.exists);
+            : sessionOptions(paths, bootstrapped && paths.login.exists, config.mode);
         firstPending = false;
         o.colors = app.base.colors;
         o.policy = app.base.policy;
@@ -246,7 +246,7 @@ private bool configureSession(ref DroidTerminal app, const SessionConfig config,
     }
     if (paths.login.exists)
     {
-        first = sessionOptions(paths, true);
+        first = sessionOptions(paths, true, config.mode);
         return false;
     }
 
@@ -259,14 +259,15 @@ private bool configureSession(ref DroidTerminal app, const SessionConfig config,
     }
     first = sessionOptions(paths, false);
     first.adoptMaster = master;
-    app.next = sessionOptions(paths, true);
+    app.next = sessionOptions(paths, true, config.mode);
     app.hasNext = true;
     return true;
 }
 
 /// The options for a plain shell (`bootstrapped = false`) or the bootstrap's
 /// `login` — program, argv, cwd and the whole environment.
-private TerminalViewOptions sessionOptions(const SessionPaths paths, bool bootstrapped)
+private TerminalViewOptions sessionOptions(const SessionPaths paths, bool bootstrapped,
+    SessionMode mode = SessionMode.shell)
 {
     import std.array : array;
     import std.algorithm.iteration : map;
@@ -288,10 +289,12 @@ private TerminalViewOptions sessionOptions(const SessionPaths paths, bool bootst
 
     const(char)*[] envz = env.map!(e => cast(const(char)*) e.toStringz).array;
     envz ~= null;
-    const(char)*[] argv = bootstrapped ? ["-login".ptr, null] : ["-sh".ptr, null];
+    const command = sessionCommand(paths, mode, bootstrapped);
+    const(char)*[] argv = command.argv.map!(a => cast(const(char)*) a.toStringz).array;
+    argv ~= null;
 
     TerminalViewOptions o;
-    o.program = bootstrapped ? paths.login.toStringz : "/system/bin/sh";
+    o.program = command.program.toStringz;
     o.argv = argv;
     o.cwd = paths.home.toStringz;
     o.env = envz;

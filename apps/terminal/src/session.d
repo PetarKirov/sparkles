@@ -13,6 +13,7 @@ enum SessionMode
 {
     shell, /// `/system/bin/sh` as a login shell
     bootstrap, /// nix-on-droid: install the bootstrap once, then run `login`
+    bootstrapShell, /// experimental current-target bootstrap: `sh login`
 }
 
 /// The APK's `session.conf` asset (`KEY=VALUE` lines), parsed.
@@ -43,6 +44,7 @@ SessionConfig parseSessionConfig(const(char)[] text) @safe pure
         {
             case "mode":
                 c.mode = pair.value == "bootstrap" ? SessionMode.bootstrap
+                    : pair.value == "bootstrap-shell" ? SessionMode.bootstrapShell
                     : SessionMode.shell;
                 break;
             case "bootstrapUrl":
@@ -72,6 +74,7 @@ SessionConfig parseSessionConfig(const(char)[] text) @safe pure
 
     assert(parseSessionConfig("").mode == SessionMode.shell);
     assert(parseSessionConfig("mode=unheard-of").mode == SessionMode.shell);
+    assert(parseSessionConfig("mode=bootstrap-shell").mode == SessionMode.bootstrapShell);
 }
 
 /// The directories under the app's data dir (`/data/user/0/<pkg>/files`),
@@ -127,6 +130,47 @@ struct SessionPaths
     const short_ = SessionPaths(p.files, "/data/data/x/files/apps/termux-am/am.sock");
     assert(short_.amSocket == "/data/data/x/files/apps/termux-am/am.sock");
     assert(short_.amSocket.length <= 107);
+}
+
+/**
+The program and arguments to start in the PTY. `bootstrap-shell` reads the
+login script through the system shell rather than executing an app-data file.
+This changes only the first script: its PRoot command and loader still need
+APK-native paths before a current-target bootstrap can work.
+*/
+struct SessionCommand
+{
+    string program;
+    string[] argv;
+}
+
+/// Select the login route; a missing bootstrap always starts the plain shell.
+SessionCommand sessionCommand(const SessionPaths paths, SessionMode mode,
+    bool bootstrapped) @safe pure nothrow
+{
+    if (!bootstrapped || mode == SessionMode.shell)
+        return SessionCommand("/system/bin/sh", ["-sh"]);
+    if (mode == SessionMode.bootstrapShell)
+        return SessionCommand("/system/bin/sh", ["sh", paths.login]);
+    return SessionCommand(paths.login, ["-login"]);
+}
+
+///
+@("session.sessionCommand")
+@safe pure nothrow unittest
+{
+    const p = SessionPaths("/data/user/0/org.example/files");
+    const direct = sessionCommand(p, SessionMode.bootstrap, true);
+    assert(direct.program == p.login && direct.argv == ["-login"]);
+    const interpreted = sessionCommand(p, SessionMode.bootstrapShell, true);
+    assert(interpreted.program == "/system/bin/sh");
+    assert(interpreted.argv == ["sh", p.login]);
+    foreach (mode; [SessionMode.shell, SessionMode.bootstrap, SessionMode.bootstrapShell])
+    {
+        const fallback = sessionCommand(p, mode, false);
+        assert(fallback.program == "/system/bin/sh" && fallback.argv == ["-sh"]);
+    }
+    assert(sessionCommand(p, SessionMode.shell, true).argv == ["-sh"]);
 }
 
 /**
