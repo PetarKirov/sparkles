@@ -18,7 +18,7 @@ evidence ledger live in [`testing.md`](./testing.md).
 | [M0 Baseline](#m0-baseline)                                                 | done        |
 | [M1 Rename](#m1-rename-to-sparkles-shaders)                                 | done        |
 | [M2 Unit membership](#m2-unit-membership)                                   | deferred    |
-| [M3 Interface and agreement evidence](#m3-interface-and-agreement-evidence) | in progress |
+| [M3 Interface and agreement evidence](#m3-interface-and-agreement-evidence) | done        |
 | [M4 Multi-pass effects](#m4-multi-pass-effects-in-single-source-d)          | done        |
 | [M5 Further platforms](#m5-further-device-platforms)                        | not started |
 
@@ -143,8 +143,11 @@ wrong uniform name, a tolerance violated on purpose.
   host binds them (`D13`). The tolerances are `D12`, which resolves open
   question Q3.
 - `SHP6` has its negative case; the ES output's precision is `D15`.
-- Remaining: the `partial` rows of the ledger this milestone lists (`SHP10`,
-  `SHT3`).
+- `SHP10` has a case for every check of its order, and `SHT3` compares all
+  three platforms of `SHT4` and two directories. Testing the first turned up
+  a false cause: a source-library configuration was reported as having no
+  source files. Every row this milestone lists is `verified`, so the gate is
+  met.
 
 ## M4: Multi-pass effects in single-source D
 
