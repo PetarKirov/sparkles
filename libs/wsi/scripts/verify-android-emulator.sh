@@ -33,6 +33,22 @@ keyboard="$(adb shell getevent -p | tr -d '\r' \
   | awk '/^add device/ { dev = $4 } /name: *"AT Translated Set 2 keyboard"/ { print dev }')"
 [ -n "$keyboard" ] || { echo "the emulator has no AT keyboard device" >&2; exit 2; }
 
+# The run changes the density and the rotation, and puts both back on exit.
+density="$(adb shell wm density | tr -d '\r' | sed -n 's/^Override density: //p')"
+auto_rotate="$(adb shell settings get system accelerometer_rotation | tr -d '\r')"
+rotation="$(adb shell settings get system user_rotation | tr -d '\r')"
+restore_density() {
+  if [ -n "$density" ]; then adb shell wm density "$density"; else adb shell wm density reset; fi
+}
+restore_settings() {
+  restore_density
+  [ "$rotation" = null ] || adb shell settings put system user_rotation "$rotation"
+  [ "$auto_rotate" = null ] || adb shell settings put system accelerometer_rotation "$auto_rotate"
+}
+trap restore_settings EXIT
+adb shell settings put system accelerometer_rotation 0
+adb shell settings put system user_rotation 0
+
 echo ">> installing the smoke on $ANDROID_SERIAL ..."
 adb install -r "$apk" >/dev/null
 adb shell am force-stop "$package"
@@ -52,13 +68,17 @@ inject() {
     click) adb shell input mouse tap 120 400 ;;
     scroll) adb shell input mouse scroll 120 400 --axis VSCROLL,-1 ;;
     drag) adb shell input touchscreen swipe 100 400 500 800 400 ;;
+    density) adb shell wm density 480 ;;
+    densityreset) restore_density ;;
+    landscape) adb shell settings put system user_rotation 1 ;;
+    portrait) adb shell settings put system user_rotation 0 ;;
     *) echo "unknown injection request: $1" >&2; exit 1 ;;
   esac
 }
 
 echo ">> waiting for the smoke's verdict ..."
 log="$(mktemp)"
-trap 'rm -f "$log"' EXIT
+trap 'rm -f "$log"; restore_settings' EXIT
 served=" "
 for _ in $(seq 1 480); do
   adb logcat -d -s sparkles-wsi:V > "$log"
@@ -76,6 +96,7 @@ sed -n 's/.*sparkles-wsi *: //p' "$log"
 
 grep -q 'ok: Android WSI conformance (12 checked, 9 skipped)' "$log"
 grep -q 'ok: Android touch drag with history' "$log"
+grep -q 'ok: Android scale and insets' "$log"
 grep -q 'ok: Android clipboard conformance (4 checked' "$log"
 grep -q 'ok: Android refuses a 4 MiB clip with capacity' "$log"
 grep -q 'ok: Android smoke complete' "$log"

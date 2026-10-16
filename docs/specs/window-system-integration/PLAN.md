@@ -419,6 +419,12 @@ emulator's keyboard and pointers through `input`, and the shared suite passes
 its chord, held-key repeat, IME commit, click and scroll properties; a touch
 drag arrives as one contact whose samples are all in the `ED3` history ring.
 
+Gate for slice 3: the lane turns the display and changes its density; the
+surface's metrics follow both in one event each, with the system bars' insets in
+`safeInsets`. The soft keyboard's inset is read the same way but stays
+unverified there: the hardware keyboard the lane injects through keeps Gboard
+from showing one.
+
 ## Milestone M9 — TSF (deferred)
 
 Implement TSF as the second Win32 text-service backend after the desktop/renderer/host

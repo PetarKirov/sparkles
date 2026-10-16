@@ -13,7 +13,9 @@ than creating one. Its `ANativeWindow` comes and goes with the activity: while
 none exists the window's physical size is zero, which suspends presentation
 (`SurfaceMetrics.suspended`). When the surface is destroyed, the callback waits
 until the application has drained the event that reported it, so a renderer
-learns of the loss before the surface disappears.
+learns of the loss before the surface disappears. Its scale and safe insets
+come from the framework over JNI (`sparkles.android.window_metrics`), reread
+when the configuration, the content rect, the surface or focus changes.
 
 $(B Input.) The activity's `AInputQueue` is attached to the main thread's
 looper, and each event is translated there into plain records: a key with its
@@ -51,6 +53,7 @@ import sparkles.android.clipboard : ClipDescription, ClipText, closeClipText,
     describePrimaryClip, openPrimaryClipText, readClipText, setPrimaryClipTyped;
 import sparkles.android.ime : installImeField, pollImeField, showImeKeyboard;
 import sparkles.android.main_thread : wireMainThread;
+import sparkles.android.window_metrics : displayDensity, windowInsets;
 import sparkles.android.text_input : imeBackspace, imeEnter, keyCharacter,
     onTyped, popTypedChar;
 import sparkles.base.buffer : UniqueBuffer;
@@ -160,12 +163,15 @@ private enum NoteKind : ubyte
     resumed,
     paused,
     destroyed,
+    contentRect,   /// the area system bars and the soft keyboard leave
+    configuration, /// density, orientation or another setting changed
 }
 
 private struct Note
 {
     NoteKind kind;
     void* surface;
+    int[4] rect; /// `contentRect`: left, top, right, bottom in window pixels
 }
 
 /**
@@ -228,13 +234,14 @@ private struct InputRecord
 
 private __gshared Channel channel;
 
-private void post(NoteKind kind, void* surface = null) nothrow @nogc
+private void post(NoteKind kind, void* surface = null, int[4] rect = 0)
+    nothrow @nogc
 {
     pthread_mutex_lock(&channel.lock);
     if (channel.count < channel.notes.length)
     {
         channel.notes[(channel.head + channel.count) % channel.notes.length] =
-            Note(kind, surface);
+            Note(kind, surface, rect);
         ++channel.count;
     }
     const wake = channel.hasWaker;
@@ -576,6 +583,13 @@ extern (C) private nothrow
         post(focused ? NoteKind.focusGained : NoteKind.focusLost);
     }
 
+    // `ARect`: four `int32_t`, left, top, right, bottom.
+    void onContentRectChanged(void*, const(void)* rect)
+    {
+        post(NoteKind.contentRect, null, *cast(const(int[4])*) rect);
+    }
+
+    void onConfigurationChanged(void*) { post(NoteKind.configuration); }
     void onResumed(void*) { post(NoteKind.resumed); }
     void onPaused(void*) { post(NoteKind.paused); }
     void onDestroyed(void*) { post(NoteKind.destroyed); }
@@ -604,6 +618,8 @@ void startActivity(void* activity, void function() nothrow appMain) nothrow
     callbacks.onPause = &onPaused;
     callbacks.onDestroy = &onDestroyed;
     callbacks.onInputQueueCreated = &onInputQueueCreated;
+    callbacks.onContentRectChanged = &onContentRectChanged;
+    callbacks.onConfigurationChanged = &onConfigurationChanged;
     callbacks.onInputQueueDestroyed = &onInputQueueDestroyed;
     try
         (new Thread(appMain)).start();
@@ -684,6 +700,9 @@ struct AndroidWsi
     private void* surface_;   // the `ANativeWindow` the WSI thread knows of
     private bool releaseOwed_; // a destroyed surface waits for the next drain
     private ScaleFactor scale_ = ScaleFactor(1);
+    private PhysicalInsets insets_; // the last insets read (`refreshMetrics`)
+    private MonoTime insetsReadAt_;
+    private MonoTime insetsPollUntil_;
 
     private ClipboardState!() clipboard_;
     private long seenClipStamp_; // the last clip described
@@ -759,6 +778,13 @@ struct AndroidWsi
             pollImeField();
             if (timeout > imePollInterval)
                 timeout = imePollInterval;
+        }
+        if (textInput_ || MonoTime.currTime < insetsPollUntil_)
+        {
+            if (MonoTime.currTime - insetsReadAt_ >= insetsPollInterval)
+                refreshMetrics();
+            if (timeout > insetsPollInterval)
+                timeout = insetsPollInterval;
         }
         bool work = serviceAll();
         if (work)
@@ -958,6 +984,14 @@ struct AndroidWsi
     /// How often the soft keyboard's field is diffed while text input is on.
     enum imePollInterval = 50.msecs;
 
+    /// How often the insets are reread while text input is on: the user can
+    /// dismiss the keyboard, and nothing reports it.
+    enum insetsPollInterval = 250.msecs;
+
+    /// How long the insets are still reread after text input turns off, while
+    /// the keyboard animates out.
+    enum keyboardSettle = 1500.msecs;
+
     /**
     Turns text input on or off for the window: on, the soft keyboard shows
     and edits a hidden field whose changes arrive as `TextCommittedEvent`s
@@ -978,6 +1012,10 @@ struct AndroidWsi
         onTyped(enabled ? &wakeForTyped : null);
         textInput_ = enabled;
         showImeKeyboard(enabled);
+        // The keyboard animates in or out; the poll in `runIntegratedOnce`
+        // follows it until it has settled.
+        insetsPollUntil_ = MonoTime.currTime + keyboardSettle;
+        refreshMetrics();
         return wsiOk();
     }
 
@@ -1287,13 +1325,13 @@ struct AndroidWsi
                     if (!windows_[live].ready)
                         becomeReady(live);
                     else
-                        reportMetrics(live);
+                        refreshMetrics();
                     offerFrame(live);
                 }
                 break;
             case NoteKind.surfaceResized:
                 if (live.valid && cast(void*) note.surface is surface_)
-                    reportMetrics(live);
+                    refreshMetrics();
                 break;
             case NoteKind.surfaceRedraw:
                 if (live.valid && cast(void*) note.surface is surface_)
@@ -1315,6 +1353,7 @@ struct AndroidWsi
             case NoteKind.focusGained:
                 if (live.valid)
                     emit(live, FocusChangedEvent(true));
+                refreshMetrics();
                 noticeClip(describePrimaryClip());
                 break;
             case NoteKind.focusLost:
@@ -1336,6 +1375,11 @@ struct AndroidWsi
                     events_.forgetWindow(live);
                     emit(live, DestroyedEvent());
                 }
+                break;
+            case NoteKind.contentRect, NoteKind.configuration:
+                // Insets or the density may have changed; the surface's
+                // pixels did not.
+                refreshMetrics();
                 break;
         }
     }
@@ -1362,7 +1406,7 @@ struct AndroidWsi
         const physical = PhysicalSize(width < 0 ? 0 : width, height < 0 ? 0 : height);
         return SurfaceMetrics(
             LogicalSize(physical.width / scale_.value, physical.height / scale_.value),
-            physical, scale_);
+            physical, scale_, physical.width == 0 ? PhysicalInsets.init : insets_);
     }
 
     // The surface needs content: an expose, and a frame opportunity. Frame
@@ -1375,6 +1419,7 @@ struct AndroidWsi
 
     private void becomeReady(WindowId id)
     {
+        readMetrics();
         windows_[id].ready = true;
         windows_[id].metrics = currentMetrics();
         emit(id, ReadyEvent(windows_[id].metrics));
@@ -1387,6 +1432,37 @@ struct AndroidWsi
             return;
         windows_[id].metrics = metrics;
         emit(id, SurfaceMetricsChangedEvent(metrics));
+    }
+
+    // Rereads the density and the insets (`sparkles.android.window_metrics`)
+    // and reports the metrics if they changed. Each is a JNI round trip, so
+    // this runs when something may have changed, and while text input is on,
+    // when the user can dismiss the keyboard unannounced, every
+    // `insetsPollInterval`.
+    private void refreshMetrics()
+    {
+        readMetrics();
+        const live = windowHandle();
+        if (live.valid && windows_[live].ready)
+            reportMetrics(live);
+    }
+
+    private void readMetrics()
+    {
+        insetsReadAt_ = MonoTime.currTime;
+        const density = displayDensity();
+        if (density > 0)
+            scale_ = ScaleFactor(density);
+        const reading = windowInsets();
+        if (reading.known)
+        {
+            static uint edge(int a, int b) => cast(uint)(a > b ? a : b > 0 ? b : 0);
+            insets_ = PhysicalInsets(
+                edge(reading.bars[0], reading.keyboard[0]),
+                edge(reading.bars[1], reading.keyboard[1]),
+                edge(reading.bars[2], reading.keyboard[2]),
+                edge(reading.bars[3], reading.keyboard[3]));
+        }
     }
 
     private static ScaleFactor densityScale(ANativeActivity* activity)

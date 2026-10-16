@@ -29,7 +29,7 @@ private extern (C) int __android_log_write(int priority, const(char)* tag,
 
 mixin AndroidWsiMain!run;
 
-private void say(string line)
+private void say(string line) @trusted
 {
     __android_log_write(4, "sparkles-wsi", line.toStringz);
 }
@@ -202,6 +202,65 @@ private void checkTouchDrag(ref AndroidWsi wsi, ref AndroidHooks hooks, WindowId
         events, " events)"));
 }
 
+/**
+Slice 3: the surface's scale and safe insets follow the platform. Under
+edge-to-edge layout the system bars inset the surface; turning the display
+resizes the surface and moves its insets with the bars; and a density change
+rescales the logical size of an unchanged surface. (The soft keyboard's inset
+is read the same way, but the emulator's hardware keyboard, which the lane
+needs for scan codes, keeps Gboard from showing one.)
+*/
+private void checkScaleAndInsets(ref AndroidWsi wsi, ref AndroidHooks hooks,
+    WindowId id, SurfaceMetrics metrics)
+{
+    void await(scope bool delegate(in SurfaceMetrics) satisfied, string what)
+    {
+        const deadline = MonoTime.currTime + 15.seconds;
+        while (!satisfied(metrics))
+        {
+            assert(MonoTime.currTime < deadline, what);
+            hooks.step(50.msecs);
+            assert(!wsi.drain((WindowEvent event) {
+                event.payload.match!(
+                    (in SurfaceMetricsChangedEvent e) { metrics = e.metrics; },
+                    (_) {});
+            }).hasError);
+        }
+    }
+
+    assert(!wsi.setTextInput(id, false).hasError);
+    await((in m) => m.safeInsets.top > 0,
+        "the system bars never inset the surface");
+    const bars = metrics.safeInsets;
+    assert(metrics.safeSize.height < metrics.logicalSize.height,
+        "the safe region excludes the bars");
+
+    const portrait = metrics.physicalSize;
+    request("landscape");
+    await((in m) => m.physicalSize.width == portrait.height
+            && m.physicalSize.height == portrait.width,
+        "turning the display never resized the surface");
+    const landscape = metrics.safeInsets;
+    assert(landscape != PhysicalInsets.init, "the bars inset the turned surface");
+    request("portrait");
+    await((in m) => m.physicalSize == portrait && m.safeInsets == bars,
+        "the surface and its insets never turned back");
+
+    const before = metrics;
+    request("density");
+    await((in m) => m.scale.value == 3,
+        "a density change never rescaled the surface");
+    assert(metrics.physicalSize == before.physicalSize,
+        "a density change kept the surface's pixels");
+    assert(metrics.logicalSize.width == metrics.physicalSize.width / 3.0,
+        "the logical size follows the new scale");
+    request("densityreset");
+    await((in m) => m.scale == before.scale, "the density never returned");
+
+    say(text("ok: Android scale and insets (portrait ", bars, ", landscape ",
+        landscape, ", scale ", before.scale.value, " -> 3)"));
+}
+
 private void run()
 {
     DefaultLoop loop;
@@ -220,11 +279,20 @@ private void run()
     // The remaining checks need a live window: name the activity's again. It
     // kept focus throughout, which Android 10+ requires to read the clip.
     const window = wsi.createWindow(WindowConfig()).value;
+    SurfaceMetrics metrics;
     foreach (_; 0 .. 5)
+    {
         hooks.step(50.msecs);
+        assert(!wsi.drain((WindowEvent event) {
+            event.payload.match!(
+                (in ReadyEvent e) { metrics = e.metrics; },
+                (in SurfaceMetricsChangedEvent e) { metrics = e.metrics; },
+                (_) {});
+        }).hasError);
+    }
     paint(wsi, window);
-    assert(!wsi.drain((WindowEvent event) {}).hasError);
 
+    checkScaleAndInsets(wsi, hooks, window, metrics);
     checkTouchDrag(wsi, hooks, window);
 
     // One clip is bounded by a Binder transaction (about 1 MB): 256 KiB of
