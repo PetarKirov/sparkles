@@ -251,7 +251,7 @@ private uint termRow(ref Builder b, in GalleryState s, size_t i)
     const hot = s.pointerAffordances
         && (s.hover.isHot(tabHit(t.id)) || s.hover.isHot(closeHit(t.id)));
 
-    const caption = formatted!truncateField(
+    const caption = truncateField(
         t.labelText.idup ~ (t.exited ? text(" (", t.exitStatus, ")") : ""),
         labelCells).toString;
     uint[] children;

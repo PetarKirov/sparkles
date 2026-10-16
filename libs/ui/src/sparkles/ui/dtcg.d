@@ -107,7 +107,7 @@ struct DtcgJson
     static DtcgJson num(string lexeme) pure nothrow => DtcgJson(Kind.number, false, lexeme);
     /// ditto
     static DtcgJson num(double v)
-        => DtcgJson(Kind.number, false, formatted!writeNumber(v).toString);
+        => DtcgJson(Kind.number, false, numberLexeme(v).toString);
     /// ditto
     static DtcgJson boolean_(bool b) pure nothrow => DtcgJson(Kind.bool_, b);
     /// ditto
@@ -243,7 +243,7 @@ void writeNumber(W)(ref W w, double v)
     // A runtime double: a constant-folded one may carry extra precision.
     double v = 0x1e;
     v /= 255;
-    assert(numberOf(formatted!writeNumber(v).toString) == v);
+    assert(numberOf(numberLexeme(v).toString) == v);
 }
 
 // ── parsing and writing ─────────────────────────────────────────────────────
@@ -954,14 +954,14 @@ private DtcgResult!DtcgColor parseHex(string s, string where)
 DtcgJson colorValue(const DtcgColor c)
 {
     // Four decimals: channels are 1/255 apart, so rounding back is exact.
-    DtcgJson comp(ubyte x) => DtcgJson.num(formatted!writeNumber(round(x / 255.0 * 1e4) / 1e4).toString);
+    DtcgJson comp(ubyte x) => DtcgJson.num(numberLexeme(round(x / 255.0 * 1e4) / 1e4).toString);
     auto o = DtcgJson.object([
         DtcgMember("colorSpace", DtcgJson.str("srgb")),
         DtcgMember("components", DtcgJson.array([comp(c.rgb.r), comp(c.rgb.g), comp(c.rgb.b)])),
         DtcgMember("hex", DtcgJson.str(format("#%02x%02x%02x", c.rgb.r, c.rgb.g, c.rgb.b))),
     ]);
     if (c.alpha != 0xFF)
-        o.set("alpha", DtcgJson.num(formatted!writeNumber(c.alpha / 255.0).toString));
+        o.set("alpha", DtcgJson.num(numberLexeme(c.alpha / 255.0).toString));
     return o;
 }
 
@@ -1112,3 +1112,6 @@ version (unittest)
     assert(checked == 48, "the example corpus is incomplete");
     assert(failures.length == 0, "\n" ~ failures.join("\n"));
 }
+
+/// `writeNumber` as a value: `numberLexeme(v)`, the shortest lexeme of `v`.
+mixin(imported!"sparkles.base.text.value_form".valueForm!("writeNumber", "numberLexeme"));

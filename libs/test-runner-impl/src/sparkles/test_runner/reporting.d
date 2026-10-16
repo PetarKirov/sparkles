@@ -10,7 +10,7 @@ import core.interpolation : InterpolationFooter, InterpolationHeader;
 import core.time : Duration;
 
 import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
-import sparkles.base.text.writers : formatted, writeDuration;
+import sparkles.base.text.writers : byteSize, duration, formatted, writeDuration;
 import sparkles.base.text.width : Align;
 
 import sparkles.test_runner.bench : BenchStats;
@@ -234,8 +234,8 @@ string formatResultLine(in TestResult result, bool colored, bool verbose, uint w
 
     if (verbose)
     {
-        const duration = formatted!writeDuration(result.duration);
-        line ~= render(colored, i" {dim ($(duration))}");
+        const took = duration(result.duration);
+        line ~= render(colored, i" {dim ($(took))}");
         if (const location = formatLocation(test.location, colored))
             line ~= render(colored, i" {dim $(location)}");
     }
@@ -548,7 +548,7 @@ struct RunTotals
 /// The final summary line.
 string formatSummary(in RunTotals totals, Duration elapsed, bool colored) @safe
 {
-    const duration = formatted!writeDuration(elapsed);
+    const took = duration(elapsed);
     auto line = render(colored, i"{bold Summary:} {green $(totals.passed) passed}");
 
     line ~= totals.failed
@@ -567,7 +567,7 @@ string formatSummary(in RunTotals totals, Duration elapsed, bool colored) @safe
         line ~= render(colored,
             i", {dim $(totals.workloadSkipped) workloads (run with --bench)}");
 
-    line ~= render(colored, i" in $(duration)");
+    line ~= render(colored, i" in $(took)");
     return line;
 }
 
@@ -1860,7 +1860,7 @@ void writeDatasetCatalog(W)(ref W w, in DatasetInfo[] datasets, bool colored)
 
     foreach (ref d; datasets)
     {
-        const sizeStr = d.byteSize > 0 ? formatted!writeBytes(d.byteSize).toString : "—";
+        const sizeStr = d.byteSize > 0 ? byteSize(d.byteSize).toString : "—";
 
         if (hasTiers)
         {
@@ -2027,7 +2027,7 @@ private string benchNs(double value) @safe
 
     return value < 1_000
         ? format!"%.2fns"(value)
-        : formatted!writeDuration(nsecs(value.lrint)).toString;
+        : duration(nsecs(value.lrint)).toString;
 }
 
 /// The `--ctfe-trace` report: compile-time cost of each `@ctfe` test.
@@ -2051,7 +2051,7 @@ void writeCtfeTraceTable(W)(ref W w, in CtfeTestCost[] costs, bool colored)
             location,
             cost.durUs < 0
                 ? render(colored, i"{dim n/a}")
-                : formatted!writeDuration(cost.durUs.usecs).toString,
+                : duration(cost.durUs.usecs).toString,
         ];
         if (cost.durUs > 0)
             totalUs += cost.durUs;
@@ -2059,7 +2059,7 @@ void writeCtfeTraceTable(W)(ref W w, in CtfeTestCost[] costs, bool colored)
     // The CTFE-time column is numeric; the test name and location are textual.
     writeCells(w, cells, [Align.left, Align.left, Align.right], headerRows: 1);
     put(w, render(colored,
-        i"{bold total CTFE time attributed to @ctfe tests:} $(formatted!writeDuration(totalUs.usecs))\n"));
+        i"{bold total CTFE time attributed to @ctfe tests:} $(duration(totalUs.usecs))\n"));
 }
 
 /// Fallback tabular rendering: two-space-separated columns, left-aligned by
