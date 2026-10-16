@@ -138,3 +138,6 @@ struct ProgressBar
     checkToString(ProgressBar(done: 5, total: 40, barWidth: 8), "█         5/40");
     checkToString(ProgressBar(done: 40, total: 40, barWidth: 8), "████████ 40/40");
 }
+
+/// `writeMeter` as a value: `meter(fraction, width)`, `meter(done, total, width)`.
+mixin(imported!"sparkles.base.text.value_form".valueForm!("writeMeter", "meter"));

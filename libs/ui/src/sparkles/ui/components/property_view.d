@@ -484,14 +484,14 @@ version (UiPropertyFixtures)
     // The plain-text target shows the same refusal (PRT26).
     import std.algorithm.searching : canFind;
 
-    const txt = formatted!writePropertyText(f.pt.data, f.tv.rows, f.tv, f.es).toString;
+    const txt = propertyText(f.pt.data, f.tv.rows, f.tv, f.es).toString;
     assert(txt.canFind("⚠ out of range"));
 
     // Success clears it everywhere.
     assert(editProperty(f.subject, Edit("stroke.width", EditValue.of(2.0)),
         f.es).ok);
     f.pt.rebuild(f.subject, f.tv);
-    assert(!formatted!writePropertyText(f.pt.data, f.tv.rows, f.tv, f.es).toString
+    assert(!propertyText(f.pt.data, f.tv.rows, f.tv, f.es).toString
         .canFind("out of range"));
 }
 
@@ -519,7 +519,7 @@ version (UiPropertyFixtures)
     assert(sawMatchSpan && sawMarker);
 
     // …and the text target says WHICH field matched, without color (PRT33).
-    const txt = formatted!writePropertyText(f.pt.data, f.tv.rows, f.tv, f.es).toString;
+    const txt = propertyText(f.pt.data, f.tv.rows, f.tv, f.es).toString;
     assert(txt.canFind("● "), "direct-match marker");
     assert(txt.canFind("(matched: label)"), "accessibility text");
     assert(txt.canFind("▾ "),
@@ -572,3 +572,6 @@ version (UiPropertyFixtures)
     foreach (ref const node; wt2.nodes)
         assert(node.kind != WidgetKind.scrollbar);
 }
+
+/// `writePropertyText` as a value: `propertyText(data, rows, view, edits)`.
+mixin(imported!"sparkles.base.text.value_form".valueForm!("writePropertyText", "propertyText"));

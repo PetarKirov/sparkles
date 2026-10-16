@@ -1082,7 +1082,7 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
 
     import std.algorithm.comparison : max;
     import sparkles.base.text.writers : formatted, writeText;
-    import sparkles.ui.components.meter : writeMeter;
+    import sparkles.ui.components.meter : meter;
     import sparkles.ui.components.table : TableBuilder;
 
     TableBuilder overview;
@@ -1108,7 +1108,7 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
     {{
         const count = rs.typeCounts[__traits(getMember, CommitType, t)];
         if (count > 0)
-            types.row(t, count, formatted!writeMeter(count, maxTypeCount, 12));
+            types.row(t, count, meter(count, maxTypeCount, 12));
     }}
     if (types.rowCount > 1)
     {

@@ -553,13 +553,12 @@ progress lines:
 
 import std.stdio : writeln;
 
-import sparkles.base.text.writers : formatted;
-import sparkles.ui.components.meter : ProgressBar, writeMeter;
+import sparkles.ui.components.meter : meter, ProgressBar;
 
 void main()
 {
-    writeln("|", formatted!writeMeter(0.33, 16), "|");
-    writeln("|", formatted!writeMeter(7, 9, 16), "|");
+    writeln("|", meter(0.33, 16), "|");
+    writeln("|", meter(7, 9, 16), "|");
     writeln(ProgressBar(done: 5, total: 40, barWidth: 16));
 }
 ```
