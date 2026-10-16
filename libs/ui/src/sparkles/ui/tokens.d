@@ -129,7 +129,7 @@ Writes the CSS custom property of one color leaf (`WEB1`, D60): `--spk-`, then
 the leaf's theme-file path `<slot path>[.<state>].<channel>` with `.` → `-`;
 `sparkles.ui.css.writeCssPropertyName` is the same rule over any token path.
 Where a value is needed before the sink exists, pass
-`formatted!writeCssName(slot, channel)` (`sparkles.base.text.writers`).
+`cssName(slot, channel)` (`sparkles.base.text.writers`).
 */
 void writeCssName(W)(ref W w, Slot slot, ColorChannel channel,
     InteractionState state = InteractionState.rest)
@@ -852,3 +852,6 @@ unittest
     assert(noField.length == 0, "table rows naming no field: " ~ noField.sort.join(", "));
     assert(noRow.length == 0, "fields with no table row: " ~ noRow.sort.join(", "));
 }
+
+/// `writeCssName` as a value: `cssName(slot, channel[, state])`.
+mixin(imported!"sparkles.base.text.value_form".valueForm!("writeCssName", "cssName"));
