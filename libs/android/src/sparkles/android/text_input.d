@@ -66,6 +66,7 @@ private __gshared InputCallback chained;
 private __gshared pthread_mutex_t queueLock = PTHREAD_MUTEX_INITIALIZER;
 private __gshared dchar[256] queue;
 private __gshared size_t head, count;
+private __gshared void function() nothrow @nogc typedListener;
 
 /// JNI handles resolved on first use; global refs, held for the process.
 private __gshared jclass kcmClass;
@@ -104,18 +105,69 @@ dchar popTypedChar() @trusted nothrow @nogc
 }
 
 /// Queue a typed code point (or an IME key); any thread. A full queue drops:
-/// a frame never types 256 characters.
+/// a frame never types 256 characters. The listener set by
+/// $(LREF onTyped) then runs, on the calling thread.
 void pushTyped(dchar c) @trusted nothrow @nogc
 {
     if (c == 0)
         return;
     pthread_mutex_lock(&queueLock);
-    scope (exit) pthread_mutex_unlock(&queueLock);
-    if (count == queue.length)
-        return;
-    queue[(head + count) % queue.length] = c;
-    ++count;
+    if (count != queue.length)
+    {
+        queue[(head + count) % queue.length] = c;
+        ++count;
+    }
+    auto listener = typedListener;
+    pthread_mutex_unlock(&queueLock);
+    if (listener !is null)
+        listener();
 }
+
+/**
+Queues `run` as one unit, then calls the listener once: a consumer draining
+on another thread sees all of an edit or none of it, so one committed word
+never splits across two drains. A run longer than the queue's free space
+drops its tail, as $(LREF pushTyped) drops.
+*/
+void pushTypedRun(scope const(dchar)[] run) @trusted nothrow @nogc
+{
+    if (run.length == 0)
+        return;
+    pthread_mutex_lock(&queueLock);
+    foreach (c; run)
+    {
+        if (c == 0 || count == queue.length)
+            continue;
+        queue[(head + count) % queue.length] = c;
+        ++count;
+    }
+    auto listener = typedListener;
+    pthread_mutex_unlock(&queueLock);
+    if (listener !is null)
+        listener();
+}
+
+/**
+Sets the function 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF pushTyped) calls after queueing, on whichever thread
+queued: a consumer that does not poll every frame wakes its own loop there.
+It must be quick and must not block. `null` clears it.
+*/
+void onTyped(void function() nothrow @nogc listener) @trusted nothrow @nogc
+{
+    pthread_mutex_lock(&queueLock);
+    typedListener = listener;
+    pthread_mutex_unlock(&queueLock);
+}
+
+/**
+The character key `keyCode` types on input device `deviceId` with `metaState`
+held, as `KeyEvent.getUnicodeChar` computes it: `KeyCharacterMap.load(deviceId)
+.get(keyCode, metaState)`. A dead key's accent carries
+`KeyCharacterMap.COMBINING_ACCENT`; 0 when the key types nothing or the lookup
+failed. One JNI round trip.
+*/
+int keyCharacter(int deviceId, int keyCode, int metaState) @trusted nothrow
+    => unicodeChar(deviceId, keyCode, metaState);
 
 private extern (C) int onInputEvent(AndroidApp* app, void* event) nothrow
 {
