@@ -234,9 +234,10 @@ offers on the code path the shaders actually take. The bounds are checked
 both ways in `ui_raylib.shader_readback.boundsAcceptTheirLimitAndNoMore`.
 
 **Trade-offs.** It is evidence on one driver at a time, the software
-rasterizer in CI, and for the desktop dialect only: the GLSL ES output is not
-read back (`D15`). Arguments outside the stated ranges are not tested, because
-no bound exists there to test against.
+rasterizer in CI, and in a desktop context: the GLSL ES output runs through
+the driver's GLSL ES front end there, at single precision, so `highp` is
+`D15`'s assumption. Arguments outside the stated ranges are not tested,
+because no bound exists there to test against.
 
 ### D13: The compiler enforces the interface contract
 
