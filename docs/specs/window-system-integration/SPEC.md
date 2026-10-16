@@ -641,16 +641,16 @@ claim a native feature that SDL does not expose publicly.
 `sparkles:vulkan-wsi` owns Vulkan instance extension selection, native surface creation,
 swapchain/frame synchronization, and present/rebuild policy. It validates the closed WSI
 handle pair, reuses the loader and per-instance dispatch in `sparkles:vulkan`, creates
-Wayland/XCB/Win32 surfaces, and selects a graphics+present device. It also owns the
-backend-neutral `CommandPool`, `FrameSync`, and `Swapchain`, including acquire decisions,
-resize decisions, and deferred retirement. `sparkles:ui-sdl3` consumes those types
+Wayland, XCB, Win32 and Android surfaces, and selects a graphics+present device. It
+also owns the backend-neutral `CommandPool`, `FrameSync`, and `Swapchain`, including
+acquire decisions, resize decisions, and deferred retirement. `sparkles:ui-sdl3` consumes those types
 through compatibility re-exports rather than maintaining a second policy. WSI itself
 contains no Vulkan type.
 
 Skia Graphite sits above those seams:
 
 ```text
-ui-app -> ui-skia -> Skia Graphite -> Vulkan (Linux/Windows) -> vulkan-wsi -> wsi
+ui-app -> ui-skia -> Skia Graphite -> Vulkan (Linux/Windows/Android) -> vulkan-wsi -> wsi
                          |-> Metal (macOS) -------------------------------> wsi
 
 ui-app -> ui-skia-sdl -> Skia Graphite -> SDL compatibility host

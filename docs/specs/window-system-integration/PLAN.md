@@ -407,8 +407,11 @@ hand values to the WSI thread, which runs Event Horizon. JNI goes through
    pointers with the `ED3` sample history.
 3. **Scale and insets.** Density, content rect and window insets as surface
    metrics.
-4. **The terminal on the backend.** The phone terminal leaves raylib once a
-   renderer on `sparkles:vulkan-wsi` exists (milestone M7).
+4. **Vulkan, then the terminal, on the backend.**
+   - `VK_KHR_android_surface` in `sparkles:vulkan` and `sparkles:vulkan-wsi`,
+     and the shared triangle presenting on the backend.
+   - The phone terminal leaves raylib once a renderer on `sparkles:vulkan-wsi`
+     exists (milestone M7); until then it stays on raylib's glue.
 
 Gate for slice 1: the emulator lane (`libs/wsi/scripts/verify-android-emulator.sh`)
 passes the shared conformance suite and the clipboard suite, and refuses a clip
@@ -424,6 +427,11 @@ surface's metrics follow both in one event each, with the system bars' insets in
 `safeInsets`. The soft keyboard's inset is read the same way but stays
 unverified there: the hardware keyboard the lane injects through keeps Gboard
 from showing one.
+
+Gate for slice 4's Vulkan half: the lane runs `vulkan-wsi-android-triangle-apk`
+after the smoke, which presents the shared triangle through
+`VK_KHR_android_surface` and rebuilds its swapchain for each of two rotations.
+The terminal half waits for M7.
 
 ## Milestone M9 — TSF (deferred)
 
