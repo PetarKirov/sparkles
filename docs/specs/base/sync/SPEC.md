@@ -106,8 +106,9 @@ test oracles, the performance gates and the record of evidence, and
    yields; neither blocks its loop's thread, except while the fiber holds a
    lock that pins it (SYK5, SYP13, SYK9).
 10. Only interruptible operations observe cancellation, only while what they
-    wait for is unavailable, return `cancelled` exactly when their parker
-    reports it, and never observe it inside a protected region (SYI1–SYI5).
+    wait for is unavailable, return `cancelled` exactly when the parking lot
+    decides their park ended cancelled, and never observe it inside a
+    protected region (SYI1–SYI5).
 
 ## 1. Terms
 
@@ -173,7 +174,10 @@ up at run time once per process, and **must not** change afterwards.
 
 **SYF4: Deadlines.** A deadline **must** be an absolute point on the
 monotonic clock. A deadline already in the past **must** make `wait` return
-without sleeping.
+without sleeping. On macOS the seam **must** recompute the remaining time for
+each call, return without the call when none remains, and otherwise pass at
+least 1 ns: `__ulock_wait2` reads a zero timeout as no timeout, and
+`os_sync_wait_on_address_with_timeout` rejects it.
 
 ## 3. The parking lot
 
@@ -198,7 +202,10 @@ any unpark operation and **must not** park.
 with the unparker's token, `invalid` when validation returned `false`,
 `timedOut` when the deadline passed while the record was still enqueued, or
 `cancelled` (§4a). It **must not** return because of a spurious wakeup of the
-underlying mechanism.
+underlying mechanism. When a sleep returns while the record is still enqueued
+and the park continues, the parking lot **must** decide so under the bucket
+lock and call `prepare` before releasing it, so that every later
+`commitWake` names the new sleep.
 
 **SYP5: Timeout and cancellation races.** When a deadline passes or a
 cancellation arrives after an unparker has already dequeued the record, park
@@ -222,8 +229,10 @@ operation dequeued.
 both keys' buckets in a fixed global order and **may**, as `validate` decides,
 wake one record of `from` and move the rest, move one or all, or abort. A
 moved record **must** keep its relative order, join the tail of `to`'s queue,
-and not wake. A moved record's later timeout **must** be resolved under its
-current key's bucket.
+and not wake. A moved record's later timeout, cancellation, spurious return
+and registration retirement **must** each be resolved under the bucket of the
+key the record holds at that moment, and a requeue **must** change that key
+only under both buckets' locks.
 
 **SYP9: Filtered unpark.** `unparkFilter(key, filter, callback)` **must** offer
 each record of `key` in queue order to `filter`, which sees the record's park
@@ -250,12 +259,16 @@ filters run with a bucket locked. They **must** be bounded and non-blocking,
 and **must not** park, allocate, suspend or call another parking-lot
 operation; violating this is a programming error, not a contract outcome.
 
-**SYP13: The bucket lock.** A bucket lock **must** be a 32-bit word held only
-for queue edits and SYP12 code, and never across a system call or a fiber
-suspension. A contended acquirer **must** spin briefly and then wait through
-its effective parker's `bucketWait` (SYK1, SYK2): the thread parker sleeps on the
-bucket word through the seam (§2); a fiber parker yields to its scheduler
-between attempts, so that its loop keeps running.
+**SYP13: The bucket lock.** A bucket lock **must** be a 32-bit word with three
+states — unlocked, locked, and locked with waiters — held only for queue edits
+and SYP12 code, and never across a system call or a fiber suspension. A
+contended acquirer **must** spin briefly, then mark the word locked with
+waiters and wait through its effective parker's `bucketWait`, expecting that
+value (SYK1, SYK2). An acquirer that has waited **must** take the lock in the
+locked-with-waiters state, and an unlock from that state **must** wake one
+waiter through the seam. The thread parker sleeps on the bucket word through
+the seam (§2); a fiber parker suspends or yields the fiber, so that its loop
+keeps running.
 
 _Rationale:_ The holder of a bucket can be preempted for an unbounded time;
 a fiber that slept through the seam would stop every fiber on its loop for
@@ -266,26 +279,30 @@ that long (DS14).
 tag, and every park and unpark **must** check the tags of the records it
 meets; meeting a record of another protocol is a programming error, which
 builds with assertions **must** detect. A requeue (SYP8) **must** rewrite
-each moved record's tag to the destination's protocol, under both buckets'
-locks, and with it the record's interruptibility and deadline (SYC3, SYC7).
-A sleep that returns timed out or cancelled while its record is still
-enqueued **must** be resolved against the record's current registration: if
-that is non-interruptible, or carries no deadline, the return is spurious and
-the parking lot **must** sleep again with the current interruptibility and
-deadline.
+each moved record's tag to the destination's protocol under both buckets'
+locks, and **must** make the record non-interruptible with no deadline,
+whatever the destination's protocol: a moved record only reacquires (SYC3,
+SYC7). A sleep's tentative result **must** be resolved under the bucket lock
+against the record's current registration, by its reason: a cancellation is
+spurious when the registration is non-interruptible, and a timeout is
+spurious when the registration carries no deadline or its deadline has not
+passed. A park whose result is spurious and whose record is still enqueued
+**must** sleep again (SYP4).
 
 _Rationale:_ A word used both as `LockBits` and as an address wait would let
 a mutex unlock select an address waiter (DS17).
 
 **SYP15: Recoverable queue-derived state.** The parking lot **must** register,
-in its key's bucket, every record that has been woken and whose operation
-has not yet finished. The registration **must** be retired under the bucket
+in its key's bucket, every record whose wake set a queue-derived bit — a
+designation — and whose operation has not yet finished. The registration **must** be retired under the bucket
 lock before that operation returns or parks again, whatever the outcome:
 acquisition, timeout, cancellation or any other return. A primitive's
 queue-derived state — its parked and designated bits — **must** be reconciled
 under the bucket lock whenever an operation finds it inconsistent with the
 queue and the registrations: a bit with no queued record or registration
-behind it **must** be cleared.
+behind it **must** be cleared. Each such bit **must** be backed by the queue
+and registrations of one named key, and **must** be reconciled only under
+that key's bucket lock.
 
 _Rationale:_ After `fork` (SYX1) the queues are empty but the primitives keep
 their bits; reconciliation lets every primitive recover instead of leaving a
@@ -305,12 +322,14 @@ code it runs and **must** restore the previous one when it stops. Every park,
 `bucketWait` and `relax` **must** use the **effective parker**: the current
 parker, or the thread parker while the caller is pinned (SYK9).
 
-**SYK2: Parker operations.** A parker **must** provide: `prepare`, run before
-enqueue; `sleep(deadline, interruptible)`, returning woken, timed out, or —
+**SYK2: Parker operations.** A parker **must** provide: `prepare`, run under the
+bucket lock and bound by SYP12's rules before every sleep of a park — before
+the record is enqueued, and again before each sleep that follows a return the
+parking lot treats as spurious (SYP4); `sleep(deadline, interruptible)`, returning woken, timed out, or —
 only when `interruptible` is true — cancelled;
 `commitWake`, run under the bucket lock, returning a wake handle;
-`deliverWake(handle)`, run after; `bucketWait(word)`, one bounded wait for a
-contended bucket (SYP13); `relax(step)`, one step of a spin; `settle`, run once a park's final
+`deliverWake(handle)`, run after; `bucketWait(word, expected)`, one bounded
+wait for a contended bucket while its word holds `expected` (SYP13); `relax(step)`, one step of a spin; `settle`, run once a park's final
 outcome is cancelled (SYI3); and the cancellation queries of §4a. Before
 `sleep` returns, the parker **must** have withdrawn every deadline and
 cancellation subscription that sleep armed.
@@ -328,8 +347,9 @@ be reclaimed.
 
 **SYK5: A fiber parker.** A fiber parker **must** suspend only the calling
 fiber, and its `deliverWake` **must** make the fiber runnable from any thread.
-If it supports cancellation, a cancelled sleep **must** dequeue the record
-before returning cancelled, subject to SYP5. A fiber parker belongs to the
+Its sleep's result is tentative: the parking lot, not the parker, removes a
+record whose sleep returned timed out or cancelled, and decides the park's
+outcome (SYP14, SYI3). A fiber parker belongs to the
 scheduler that installs it; `sparkles:event-horizon` specifies its own.
 
 **SYK6: Mixed queues.** One key's queue **may** hold records of different
@@ -402,8 +422,9 @@ tentative; the park's outcome is decided under the bucket lock (SYP4, SYP5),
 so a sleep that returned cancelled after an unparker had dequeued the record
 ends `unparked`. An interruptible operation **must** return `cancelled`
 exactly when its park ended `cancelled`, and **must not** keep cancellation
-state of its own. The parking lot **must** call the parker's `settle` for
-every park whose final outcome is `cancelled`, and for no other; a scheduler that
+state of its own. The parking lot **must** call the parker's `settle`
+exactly once for every park whose final outcome is `cancelled`, before the
+record can be reused, and for no other; a scheduler that
 consumes a request on its report **must** consume it there and nowhere else,
 so that a request whose sleep lost to a grant stays pending (SYI2). Whether a
 request outlives its report is the scheduler's rule; a scheduler whose

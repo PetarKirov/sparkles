@@ -14,7 +14,8 @@ The evidence base is the
 The owner accepted DS1–DS7 and DS10–DS12 in review on 2026-10-12, and DS8,
 DS9 and DS13–DS22 on 2026-10-15, after an independent review whose findings
 DS13–DS22 resolve; DS23, resolving a second review, and DS24 were accepted on
-2026-10-15; and DS25, resolving a third review, on 2026-10-16.
+2026-10-15; and DS25, resolving a third review, on 2026-10-16. DS26 resolves
+a fourth review and is proposed.
 
 ## DS1: A parking lot, not a futex word per lock
 
@@ -308,7 +309,8 @@ itself; the choices that are not forced:
 - **Masking lives in the parker**: a non-interruptible operation sleeps with
   `interruptible` false (SYI1, SYK2), so a persistent cancellation cannot make
   it re-park in a loop.
-- **The parker owns cancellation state** (SYI3): an interruptible operation
+- **The parker owns cancellation state** (SYI3; superseded by DS25, which
+  makes the parking lot the one arbitration point): an interruptible operation
   returns `cancelled` exactly when its parker's `sleep` says so, whether the
   scheduler consumes a request on its report (Zig's `std.Io`) or latches it
   (event-horizon, whose fiber parker is sticky). Protected regions are
@@ -368,3 +370,40 @@ fourteen defects. The choices that are not forced:
   interrupts and node cancellation take separate routes on the ring path;
   parking reserves its resources; and `auto` follows a recorded decision
   ([fiber-parker.md](../../event-horizon/fiber-parker.md)).
+
+## DS26: Resolutions of the fourth review
+
+The fourth round ran two reviewers in parallel: the reviewer of the first
+three rounds, and a second with no earlier context. Their findings were
+checked against the tree. Several of the second reviewer's rested on text
+the specification does not contain, and were set aside; those that held,
+with the first reviewer's, are resolved here. The choices that are not
+forced:
+
+- **A spurious return re-prepares under the bucket lock** (SYK2, SYP4): a
+  park that sleeps again calls `prepare` before releasing the bucket, so the
+  next `commitWake` names the new sleep, instead of a separate rearm
+  operation.
+- **Spurious results are judged by their reason** (SYP14), and a requeued
+  record is made non-interruptible with no deadline whatever its
+  destination, because a moved record only reacquires.
+- **The parking lot alone dequeues** a record whose sleep returned timed out
+  or cancelled (SYK5); a parker never does.
+- **A woken waiter continues as the lock's waiter** (SYC2): a handoff means
+  it holds the lock, a designation means it acquires as the designated
+  waker. A free handoff lock is acquired for the waiter `notifyAll` wakes
+  (SYC6), and `Condition` reacquires an `InterruptibleMutex` through a
+  package-internal acquisition that is not interruptible (SYJ1).
+- **Only a designation registers** a woken record, and each queue-derived
+  bit is reconciled only under its own key's bucket (SYP15).
+- **RwLock releases promise progress** (SYR7), and the protocol model checks
+  liveness for `InterruptibleMutex` and `RwLock` (oracle 10).
+- **The bucket word has three states** (SYP13), and `bucketWait` takes the
+  value it expects.
+- In event-horizon: every completion of a ring wait reads the park word, so
+  a wake from an earlier generation writes the wait again (EFP7); the
+  deferred submission checks a latched interrupt (EFP8); the cancel word is
+  woken by one synchronous `futex` call, never a queued ring operation, so
+  the kernel never names a stack slot after its scope exits (EFP23); the
+  cancellation's ring route requires the ring sleep (EFP6); and a timed park
+  reserves both of its submission entries (EFP22).
