@@ -157,6 +157,8 @@ walked natural, packed, dynamic-tailed and nested records in lockstep with
 own attributes, and Flat's check reported the pointer field and the context
 pointer with their paths before the schema builder could. Two points carry into
 FL1: pair fields with schema children by ordinal, not by wire key; and treat
-the context-pointer rejection as Flat's, since the schema hides it. `Offset`
-targets, unions, recursion and cross-compiles were not covered. The issue
+the context-pointer rejection as Flat's, since the schema hides it. The
+reviewer cross-compiled the checker with LDC 1.42 for x86_64, i686, armv7 and
+aarch64 and found identical digests and the same rejections on all four.
+`Offset` targets, unions and recursion were not covered. The issue
 closes when the owner accepts FL0.

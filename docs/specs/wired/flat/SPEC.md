@@ -152,8 +152,10 @@ element alignment; 1 for a dynamic member, whatever its element type, and for
 record, the largest canonical alignment of its fields, or 1 when it has none.
 `flatAlignOf!T` is a record's canonical alignment. A record is **naturally
 aligned** when every field, recursively, sits at an offset that is a multiple
-of its canonical alignment and its declared size is a multiple of
-`flatAlignOf!T`. A record that is not naturally aligned is **packed**.
+of its canonical alignment, every dynamic member sits at an offset that is a
+multiple of its element's canonical alignment, and its declared size is a
+multiple of `flatAlignOf!T`. A record that is not naturally aligned is
+**packed**.
 
 A **view** is a value that pairs a borrowed byte slice with a record type and
 the position of one record in it. An [in-place view](../../../glossary.md#in-place-view)
@@ -186,7 +188,11 @@ outside the process cannot supply.
 **WFL2: One schema.** The layout proof **must** walk `T` in lockstep with the
 node indices of `wireSchemaOf!(Flat, T)`, as the JSON codec's
 `decodeNative!(V, Root, nodeIndex)` and the SDL codec do, so that each layout
-entry names the schema node it describes. Flat's own admissibility checks
+entry names the schema node it describes. Each record in the root's visit table
+(`WFL41`) walks in lockstep with its own `wireSchemaOf!(Flat, R)`, because
+offset targets and the variants of `FlatTagged` and `FlatSelect` are template
+arguments with no nodes in the root's schema; recursion ends at the visit
+table's back-references. Flat's own admissibility checks
 (`WFL1`, `WFL4`) **must** run before the schema is built, so that a rejected
 type reports Flat's message with its field path rather than the schema
 builder's. Flat **must not** keep a second description of `T` that is not
@@ -243,9 +249,9 @@ accepts and the extent ignores.
 `struct`; a struct with no fields; a nested struct that carries a context
 pointer; a field of a type not admitted by `WFL1`; a field that is neither
 dynamic nor conditional after a conditional field or a dynamic member; a
-conditional field after a dynamic member; a nested record, or a static array
-of records, whose record has dynamic members or conditional fields, unless it
-is the last field of its parent; and a struct with a postblit, copy
+conditional field after a dynamic member; a nested record whose record has
+dynamic members or conditional fields, unless it is the last field of its
+parent; a static array of two or more such records, wherever it appears; and a struct with a postblit, copy
 constructor, destructor or `opAssign`. Each rejection **must** name the field
 or member responsible.
 
@@ -285,8 +291,10 @@ target.
 _Rationale:_ D's alignment of `ulong` and `double` is 8 on x86_64 and 4 on
 i686, so `struct { uint a; ulong b; }` has no padding on i686 and 4 bytes of
 it on x86_64, and `struct { ulong a; uint b; }` has a size of 12 on i686 and
-16 elsewhere. Judging natural alignment by the canonical rule, including the
-declared size, rejects both structs on every target alike.
+16 elsewhere. Likewise `struct { uint n; ulong[0] xs; }` places `xs` at offset
+4 on i686 and 8 elsewhere. Judging natural alignment by the canonical rule,
+including the declared size and the offsets of dynamic members, rejects all
+three structs on every target alike.
 
 **WFL7: Admission for in-place use.** `isFlatInPlace!(T, hostEndian)` **must**
 be true exactly when `T` is a naturally aligned record with no dynamic members,
@@ -692,8 +700,10 @@ _Rationale:_ A changed layout without a changed version would be read as a
 `layoutMismatch` at run time on every device. With the version declared next
 to the digest, a layout change fails to compile until the author appends a
 pin with a new version; prior pins stay, so reusing an old digest or version
-is a compile error too. Rewriting the last pin in place is the remaining
-escape, which the golden files of `PLAN.md` FL3 catch.
+is a compile error too. As a consequence a layout can never return to an
+earlier digest: going from A to B and back to A needs a new layout. Rewriting
+the last pin in place is the remaining escape, which the golden files of
+`PLAN.md` FL3 catch.
 
 ## 6. Describing OpenType
 
@@ -970,7 +980,10 @@ a sequence of hops, not as text. A hop is a record's index in the root's visit
 table (`WFL41`), a field's ordinal in that record, and an optional array index;
 a path crosses into a new hop at every nested record, array element and
 followed offset, so recursive layouts repeat visit-table entries rather than
-needing new ones. The error **must** keep the first hop and the 7 innermost,
+needing new ones. Hops **must** be stored as three parallel arrays (`ushort[8]`
+record indices, `ushort[8]` field ordinals, `ulong[8]` array indices), with a
+named sentinel for a hop that has no array index. The error **must** keep the
+first hop and the 7 innermost,
 and record whether hops between them were dropped. Its `toString(writer)`
 **must** render the path on demand in the [path syntax](../SPEC.md#_9-errors)
 of base §9, such as `$.itemVariationDataOffsets[3].regionIndexes`, where a
@@ -980,8 +993,8 @@ building or rendering one **must not** allocate from the garbage collector.
 
 _Rationale:_ Every `FlatResult` carries room for an error, and test threads
 have 512 KiB stacks. A text path would make each result as large as its longest
-path. Eight hops of a 16-bit record index, a 16-bit field ordinal and a 64-bit
-array index take 96 bytes; with the kind, the limit, two offsets, the value
+path. Eight hops in parallel arrays take 96 bytes, where an array of 12-byte
+hop structs would be padded to 16 bytes each on 64-bit targets; with the kind, the limit, two offsets, the value
 and its bound, and a pointer to the root's static name table, the error stays
 under 160.
 
