@@ -94,7 +94,7 @@ acceptance.
 
 | Milestone | State       | Pull request |
 | --------- | ----------- | ------------ |
-| S0        | in review   | —            |
+| S0        | delivered   | #648         |
 | S1        | not started | —            |
 | S2        | not started | —            |
 | S3        | not started | —            |

@@ -14,8 +14,8 @@ The evidence base is the
 The owner accepted DS1–DS7 and DS10–DS12 in review on 2026-10-12, and DS8,
 DS9 and DS13–DS22 on 2026-10-15, after an independent review whose findings
 DS13–DS22 resolve; DS23, resolving a second review, and DS24 were accepted on
-2026-10-15; and DS25, resolving a third review, on 2026-10-16. DS26 resolves
-a fourth review and is proposed.
+2026-10-15; and DS25 and DS26, resolving a third and a fourth review, on
+2026-10-16.
 
 ## DS1: A parking lot, not a futex word per lock
 
