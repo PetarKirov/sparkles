@@ -30,14 +30,25 @@ import sparkles.test_runner.skip : skipTest;
 
 import app : isFresh, parseDescribe, stampName, unitOf, withoutHostFlags;
 
+/// The tools the step runs, the device compiler first.
+private immutable toolchain = ["ldc2-vulkan", "dub", "spirv-val", "spirv-opt", "spirv-dis",
+    "spirv-cross", "glslangValidator"];
+
+/// Where `tool` is on `PATH`, or `null`.
+private string onPath(string tool)
+{
+    foreach (dir; environment.get("PATH", "").split(pathSeparator))
+        if (dir.length && dir.buildPath(tool).exists)
+            return dir.buildPath(tool);
+    return null;
+}
+
 /// The tool this environment lacks, or `null` when the whole toolchain is
 /// on `PATH`.
 private string missingTool()
 {
-    foreach (tool; ["ldc2-vulkan", "dub", "spirv-val", "spirv-opt", "spirv-dis",
-            "spirv-cross", "glslangValidator"])
-        if (!environment.get("PATH", "").split(pathSeparator)
-                .canFind!(dir => dir.length && dir.buildPath(tool).exists))
+    foreach (tool; toolchain)
+        if (!onPath(tool))
             return tool;
     return null;
 }
@@ -170,6 +181,9 @@ private struct Outcome
 dflags "-mdcompute-targets=vulkan-130,ocl-300"`);
     f.configuration("hostOnly", `sourcePaths "src"
 dflags "-mdcompute-targets=vulkan-130"`);
+    f.configuration("sourceLibrary", `targetType "sourceLibrary"
+sourcePaths "src" "shaders"
+dflags "-mdcompute-targets=vulkan-130"`);
     f.configuration("badVersion", `sourcePaths "src" "shaders"
 dflags "-mdcompute-targets=vulkan-999"`);
     foreach (bad; [
@@ -177,6 +191,7 @@ dflags "-mdcompute-targets=vulkan-999"`);
         ["--config=badVersion", "not `vulkan-999`"],
         ["--config=nope", "failed in"],
         ["--config=library", "names no dcompute target"],
+        ["--config=sourceLibrary", "describes no build target"],
         ["--config=twoTargets", "must name exactly one Vulkan target"],
         ["--config=hostOnly", "has no `@compute(CompileFor.deviceOnly)` module"],
     ])
@@ -193,11 +208,48 @@ dflags "-mdcompute-targets=vulkan-999"`);
         assert(noLdc.status == 3 && noLdc.diagnostics.canFind("nix develop"), noLdc.diagnostics);
     }
 
+    // 3 for each other tool the step runs, named: here `spirv-cross`, on a
+    // `PATH` that holds every tool but it.
+    version (Posix)
+    {
+        import std.file : symlink;
+
+        const bin = f.root.buildPath("bin");
+        bin.mkdirRecurse;
+        foreach (t; toolchain.filter!(t => t != "spirv-cross"))
+            symlink(onPath(t), bin.buildPath(t));
+        f.env["PATH"] = bin;
+        const noCross = f.run();
+        f.env.remove("PATH");
+        assert(noCross.status == 3 && noCross.diagnostics.canFind("`spirv-cross` is not on PATH")
+            && noCross.diagnostics.canFind("nix develop"), noCross.diagnostics);
+    }
+
     // 1: a compile error, reported with the compiler's own message.
     f.entries(`@fragment vec4 tint(@input vec2 uv) => undefinedThing(uv);`);
     const broken = f.run();
     assert(broken.status == 1 && broken.diagnostics.canFind("undefinedThing")
         && broken.diagnostics.canFind("LDC failed"), broken.diagnostics);
+}
+
+@("shaderCompile.cli.outputIsTheSameInAnyDirectory")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHT3`: the same package in two directories, of different lengths,
+    // generates the same GLSL; only the stamp, which records paths, may differ.
+    auto a = Fixture.create("dir");
+    auto b = Fixture.create("a-longer-directory");
+    foreach (ref fx; [&a, &b])
+    {
+        const r = fx.run();
+        assert(r.status == 0, r.diagnostics);
+    }
+    assert(a.outputs == b.outputs, b.outputs.to!string);
+    foreach (name; a.outputs.filter!(n => n != stampName))
+        assert(a.out_.buildPath(name).readText == b.out_.buildPath(name).readText, name);
 }
 
 @("shaderCompile.cli.stockCompilerIsAToolchainError")

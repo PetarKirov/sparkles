@@ -60,7 +60,7 @@ import sparkles.shaders.compute_mode : ComputeMode, computeModeOf;
 struct DeviceBuild
 {
     string packageName;   /// the described package, e.g. `sparkles:ui`
-    bool hasTarget;       /// whether dub described a target for it (it omits one with no sources)
+    bool hasTarget;       /// whether dub described a target for it (none without sources, or for a `sourceLibrary`)
     string packageDir;    /// its directory (absolute)
     string target;        /// the dcompute target, e.g. `vulkan-130`
     string[] importPaths; /// `-I` roots: the package's and its dependencies'
@@ -305,7 +305,8 @@ int main(string[] args)
     const build = parseDescribe(described.output);
     if (!build.hasTarget)
     {
-        stderr.writefln("shader-compile: %s's configuration `%s` has no source files",
+        stderr.writefln("shader-compile: %s's configuration `%s` describes no build target: " ~
+            "it has no source files, or a `targetType` that builds nothing (`sourceLibrary`)",
             build.packageName, configuration);
         return 2;
     }
