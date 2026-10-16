@@ -17,6 +17,7 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | [Stage 0](#stage-0-specification-and-spikes)                              | done        |
 | [M1 Parse](#m1-parse)                                                     | done        |
 | [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | in progress |
+| [MS Startup slice](#ms-startup-slice)                                     | planned     |
 | [M3 Outlines](#m3-outlines)                                               | not started |
 | [M4 Shaping](#m4-shaping)                                                 | not started |
 | [M5 Grayscale raster](#m5-grayscale-raster)                               | not started |
@@ -115,6 +116,71 @@ conversion and exhaustion scenarios pass. Real math and vertical-font data are
 checked under the pinned corpus manifest described in `testing.md`; absence of
 such fonts is an unmet gate, not successful skipping. The baseline reference-point
 gate cannot be marked complete until the outline-point primitive is delivered.
+
+## MS Startup slice
+
+**Why.** On an Android phone the terminal's first frame arrives about 540 ms
+after the launch tap, against about 300 ms for Termux. A layered spike puts
+208 ms of that on building the bundled faces' atlases, and about 45 ms more on
+scanning font directories and probing faces with FreeType. Most of that work
+answers questions that need no pixels: the grid's geometry and the pty size
+need cell metrics, and fallback needs coverage. `sparkles:font` already
+answers both from borrowed bytes (M1, M2). This slice separates what a frame
+must _know_ from what it must _draw_, and builds both as renderer-independent
+foundations: the owned stack (event loop, window system, Vulkan) is the long
+term consumer, raylib the interim one ([`FTX14`](./decisions.md#ftx14-a-startup-slice-before-m3)).
+
+**Prerequisites.** M1, M2.
+
+**Deliverable.**
+
+- **S0, measurement.** A harness that launches the startup spike on a phone,
+  for both front ends (the raylib terminal and the `vulkan-wsi` spike), and
+  records per launch: first-frame wall-clock time, and instructions retired
+  per ISA (arm64-v8a, x86_64) for the font work. For any font work that runs
+  on worker threads, it records, at a fixed worker count $N$ (2 and 4), the
+  speed-up and parallel efficiency
+
+  $$S_N = \frac{T_1}{T_N}, \quad E_N = \frac{S_N}{N},$$
+
+  where $T_1$ and $T_N$ are the median wall-clock times on one and on $N$
+  worker threads, and the work inflation $W_N = I_N / I_1$, the instructions
+  retired by all threads on $N$ workers over those on one. Runs pin their
+  threads to one recorded CPU set, since a big.LITTLE phone otherwise turns a
+  core migration into an apparent speed-up.
+
+- **S1, catalog.** A face catalog: per face its family, style, axes, coverage
+  ranges and metrics, with fallback resolved by coverage; serializable and
+  keyed by the content hash of the fonts it describes. This is the part of
+  M7's catalog that startup needs.
+- **S2, know before drawing.** Grid geometry and cell and line metrics from
+  the catalog and an instance, with no rasterizer, so layout and the pty size
+  exist before any atlas does.
+- **S3, glyph cache and atlas.** A package independent of any renderer: a
+  cache keyed by the glyph key (face hash, instance, ppem, glyph, rasterizer
+  version), CPU-side packing, uploads handed to the renderer through a
+  callback, and the rasterizer behind an interface. FreeType implements it
+  until M5, in its own ImportC package, so that `sparkles:font` stays pure D
+  (`FTA7`); M5 replaces it under the same key.
+- **S4, precompute.** The Nix build produces the catalog and warm atlases for
+  the design system's token sizes into the APK; an on-device cache keyed by
+  content hash covers what depends on density or the user.
+- **S5, decide.** Measure a first frame that shows the grid while its glyphs
+  rasterize against one that shows the prompt legibly, on both front ends.
+  The owner chooses, and the spec gains the obligation: a structural rule (the
+  first frame builds only the faces and sizes it draws; everything else is
+  resolved but built on first use), a soft wall-clock budget, and a hard budget
+  of instructions retired per ISA that only ever decreases.
+
+**Integration order.** S1–S3 land as libraries with their own tests, then in
+the `vulkan-wsi` spike. The `raylib-text` adapter comes last, over the
+terminal stack's deferred faces once that stack has merged; it keeps their
+effect, and the design system's rule that lazy loading never changes which
+face or size draws (`TOK7`, `TOK8`).
+
+**Acceptance.** S0's numbers recorded for both front ends before and after,
+on the reference phone and an x86_64 emulator; S5's choice and budgets
+accepted by the owner and checked continuously.
 
 ## M3 Outlines
 
@@ -241,4 +307,6 @@ arm64-v8a phone. Its gate stays open until these, recorded in the evidence
 ledger, are met: fontations' exact delta oracle; a verified `BASE` face and a
 math face with kerns, under the pinned corpus manifest; and the reference-point
 and `glyf` vertical-origin resolution, which need M3's outline points. Next
-action: M3, whose outline points also close M2's `FTM7` gate.
+action: the startup slice, MS ([`FTX14`](./decisions.md#ftx14-a-startup-slice-before-m3)),
+beginning with S0's measurement harness; then M3, whose outline points also close
+M2's `FTM7` gate.

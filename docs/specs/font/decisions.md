@@ -390,6 +390,48 @@ font inputs, but testing only their absence cannot accept a supported capability
 The acceptance manifest records the pinned faces and measured values; no such
 measurement is claimed by this decision.
 
+## FTX14: A startup slice before M3
+
+**State:** accepted 2026-10-16 (owner) · **Affects:** [MS](./PLAN.md#ms-startup-slice), M5, M7, M8
+
+**Question.** The terminal's first frame on a phone waits about 208 ms on
+building font atlases and about 45 ms on scanning and probing font files. Should
+the font plan answer that now, and how, given that M8 is when `raylib-text`
+moves onto `sparkles:font`?
+
+**Evidence.** A layered startup spike on an Android 14 phone: a raw window
+reaches its first frame at 210 ms, the toolkit with one system face at 310 ms,
+the terminal's bundled faces at 518 ms; a `vulkan-wsi` spike presents at
+232 ms, so the renderer is not the cost. Most of the font time builds atlases
+for faces, sizes and fallbacks the first frame does not draw, and probes files
+for coverage that `sparkles:font` reads from borrowed bytes (M1's `CharMap`,
+M2's metrics; spike S1 catalogued the bundle in 1.9 ms).
+
+**Choice.**
+
+- Add a startup slice, MS, ahead of M3. It pulls forward the catalog part of M7
+  and the consumer part of M8, built as foundations independent of any
+  renderer, because the long-term stack is owned end to end (event loop,
+  window system, Vulkan) and raylib is an interim consumer.
+- The glyph cache rasterizes through FreeType behind an interface until M5,
+  which replaces it under the same glyph key.
+- Precomputed artifacts come from both the Nix build (the catalog and the
+  design system's token sizes) and an on-device cache keyed by content hash.
+- Whether the first frame shows legible text or the grid while glyphs
+  rasterize is decided by measuring both, on both the raylib terminal and the
+  `vulkan-wsi` spike.
+- The obligation is set after measuring. Its intended shape is a soft
+  wall-clock budget and a hard budget of instructions retired per ISA, which is
+  deterministic and only ever lowered. Work moved onto threads is tracked by its
+  speed-up and parallel efficiency at a fixed worker count, $S_N = T_1 / T_N$
+  and $E_N = S_N / N$, together with the work inflation $I_N / I_1$, so that a
+  wall-clock gain that only adds work shows up.
+
+**Trade-off.** The slice runs before M3, so outlines and our own rasterizer
+wait, and FreeType stays in the rendering path a while longer, contained in its
+own package. The `raylib-text` adapter waits for the terminal stack to merge,
+so the first gains show in the `vulkan-wsi` spike.
+
 ---
 
 ## Open questions
