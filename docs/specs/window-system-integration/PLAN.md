@@ -40,7 +40,7 @@ to [feature-requirements.md](./feature-requirements.md)._
 | M2        | Event Horizon/native-loop spikes on all four backends  | `WSI3`, `WSI4`, `F03`–`F05`, `F17`         | in progress |
 | M3        | package core and lifecycle (`F01`–`F05`, `F17`)        | `WSI1`–`WSI6`, `F01`–`F05`, `F17`, `INT1`  | in progress |
 | M4        | input, DPI, outputs, capture and cursors               | `F06`–`F12`                                | in progress |
-| M5        | decorations, state, popup, clipboard and DnD           | `F13`–`F16`                                | planned     |
+| M5        | decorations, state, popup, clipboard and DnD           | `F13`–`F16`                                | in progress |
 | M6        | SDL compatibility and Vulkan bridge                    | `WSI7`, `INT2`                             | in progress |
 | M7        | Skia Graphite native and SDL hosts                     | `INT3`                                     | planned     |
 | M8        | `ui-app` configurations and migration                  | `INT4`, `INT5`                             | planned     |
@@ -311,6 +311,10 @@ STA UI thread; AppKit pasteboard promises do not call application code re-entran
 
 Gate: the full `F01`–`F17` matrix is verified across four native backends. This is the
 entry condition for renderer integration.
+
+Delivered slice: the clipboard (`DT1`–`DT5`) on all four backends, each lane
+round-tripping 32 MiB through the platform and reading another writer's text.
+Drag-and-drop, decorations, window state and the grabbed popup remain.
 
 ## Milestone M6 — compatibility and Vulkan
 
