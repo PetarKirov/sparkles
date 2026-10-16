@@ -72,6 +72,7 @@ struct Config
   implicitly, as in a normal declaration; a `pure` factory does.
 - An exception thrown by an initializer aborts startup.
 - DDoc does not see doc comments inside the string.
+- A nested `/+ … +/` comment ends at its first `+/`.
 - A compile error in a `staticVar` is reported on your own line. In a
   `StaticBlock`, it points into `static_init.d`, followed by a
   "parent scope from here" note that gives your line.
