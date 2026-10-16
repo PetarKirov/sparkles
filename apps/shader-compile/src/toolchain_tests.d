@@ -17,7 +17,7 @@ import std.algorithm : canFind, filter, map, sort, startsWith;
 import std.array : array, replace, split;
 import std.concurrency : initOnce;
 import std.conv : octal, to;
-import std.file : copy, dirEntries, exists, mkdirRecurse, readText, rmdirRecurse,
+import std.file : copy, dirEntries, exists, mkdirRecurse, readText, remove, rmdirRecurse,
     setAttributes, SpanMode, tempDir, write;
 import std.format : format;
 import std.path : baseName, buildNormalizedPath, buildPath, dirName, pathSeparator,
@@ -287,6 +287,10 @@ exit 0
         // `SHF6`: a handle never sits inside a uniform.
         [`struct Pair { Sampler2D t; }
 @fragment vec4 e(@uniform Pair p) => v4(1.0f);`, "parameter `p` cannot be `Pair`"],
+        // `SHF2`: exactly one marker, and a name the translation keeps.
+        [`@fragment vec4 e(@input @uniform vec2 uv) => v4(uv.x);`, "marked both `@input` and `@uniform`"],
+        [`@fragment vec4 e(@uniform Sampler2D t) => t.sample(v2(0.5f));`, "which takes no `@input` or `@uniform` marker"],
+        [`@fragment vec4 e(@uniform float smooth) => v4(smooth);`, "`smooth` cannot keep its name in GLSL"],
     ])
     {
         f.entries(bad[0]);
@@ -305,6 +309,16 @@ exit 0
     assert(clash.status == 1 && clash.diagnostics.canFind(
         "shader input `fragColor` is at location 1 in `second` but location 0 in `first`"),
         clash.diagnostics);
+
+    // `SHF1`: an entry point's name is unique across the unit, so a second
+    // module defining `tint` fails, naming both definitions.
+    f.entries(`@fragment vec4 tint(@input vec4 c) => c;`);
+    f.pkg.buildPath("shaders", "fx_more.d").write("@compute(CompileFor.deviceOnly)\nmodule fx_more;\n\n"
+        ~ "import sparkles.shaders;\n\n@fragment vec4 tint(@input vec4 c) => c;\n");
+    const twice = f.run();
+    assert(twice.status == 1 && twice.diagnostics.canFind("entry point `tint` is defined by both"),
+        twice.diagnostics);
+    remove(f.pkg.buildPath("shaders", "fx_more.d"));
 
     // `SHF2`: an unmarked parameter is the compiler's to reject, naming it.
     f.entries(`@fragment vec4 e(vec2 plain) => v4(plain.x);`);

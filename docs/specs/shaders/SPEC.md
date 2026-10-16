@@ -265,11 +265,16 @@ pinned compiler (`SHT1`) and are checked through its output.
 **SHF1: Marking.** A function in a `@compute` module marked `@fragment`
 **must** become a fragment-shader entry point, named after the D function, in
 the device module. The D function itself remains callable from other device
-code.
+code. An entry point's name **must** be unique across the unit; a second
+function of the same name **must** fail the compilation with a diagnostic
+naming both definitions.
+
+_Rationale:_ The build step names each generated file after its entry point
+(`SHP5`), and a renamed duplicate (`tint.1`) is a name no D function has.
 
 **SHF2: Parameters.** Each parameter of a `@fragment` function **must** be
-exactly one of these, or the compilation **must** fail with a diagnostic that
-names the parameter:
+exactly one of these — one marker, and none on a `Sampler2D` — or the
+compilation **must** fail with a diagnostic that names the parameter:
 
 - **`@input`**: an input interface variable named after the parameter, of
   the parameter's type, decorated with location 0, 1, 2, … in the order the
@@ -283,6 +288,11 @@ names the parameter:
 All images **must** be read through one sampler at binding 0 of descriptor
 set 0. A parameter that the platform calling convention would rewrite **must**
 be rejected with a diagnostic, not miscompiled.
+
+Every interface name, and the field names of a uniform struct, **must** reach
+the generated GLSL unchanged: a name GLSL reserves (by spirv-cross's list), one
+with the reserved `gl_` prefix, or one with a run of underscores **must** fail
+the compilation with a diagnostic naming it. A host binds by these names.
 
 An interface name **must** denote one variable across the unit: every entry
 point that names it **must** give it the same kind and the same location or
