@@ -7,6 +7,8 @@ backend under `platform.*` without changing these values.
 */
 module sparkles.wsi;
 
+public import sparkles.wsi.clipboard;
+public import sparkles.wsi.clipboard_conformance;
 public import sparkles.wsi.conformance;
 public import sparkles.wsi.events;
 public import sparkles.wsi.handles;

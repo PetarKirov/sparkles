@@ -13,6 +13,7 @@ import sparkles.base.pool.pool : Pool, PoolError;
 import sparkles.base.pool.text_pool : TextPool;
 static import sparkles.base.pool.text_pool;
 
+import sparkles.wsi.clipboard;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
 import sparkles.wsi.types;
@@ -548,6 +549,7 @@ if (MaxWindows > 0 && MaxEvents > 0)
     }
 
     private Pool!(WindowId, Window, MaxWindows) windows_;
+    private ClipboardState!() clipboard_;
     private EventQueue!MaxEvents events_;
     private ulong nextSequence_ = 1;
     private bool closed_;
@@ -657,6 +659,150 @@ if (MaxWindows > 0 && MaxEvents > 0)
         return result;
     }
 
+
+    /**
+    Offers `mimeTypes` from `window` on the clipboard; requests pull the bytes
+    from `provider`, which must outlive the offer (`DT3`). An offer this
+    application made before is withdrawn.
+    */
+    WsiResult!OfferId offerClipboard(P)(WindowId window,
+        scope const(char[])[] mimeTypes, ref P provider)
+    if (isDataProvider!P)
+    {
+        auto slot = checkedSlot(window);
+        if (slot.hasError)
+            return wsiErr!OfferId(slot.error);
+        auto added = clipboard_.add(window, mimeTypes, true);
+        if (added.hasError)
+            return added;
+        clipboard_.offers[added.value].provider =
+            (() @trusted => ProviderRef.to(provider))();
+        publish(added.value);
+        return added;
+    }
+
+    /// ditto, for a small whole value: WSI keeps one copy until the offer ends.
+    WsiResult!OfferId offerClipboard(WindowId window, scope const(char)[] mimeType,
+        scope const(ubyte)[] value)
+    {
+        auto slot = checkedSlot(window);
+        if (slot.hasError)
+            return wsiErr!OfferId(slot.error);
+        auto added = clipboard_.add(window, mimeType, true);
+        if (added.hasError)
+            return added;
+        auto record = &clipboard_.offers[added.value];
+        record.value.bytes ~= value;
+        record.hasValue = true;
+        publish(added.value);
+        return added;
+    }
+
+    /// Ends an offer this application made, reporting `withdrawn` (`DT1`).
+    WsiResult!void withdrawClipboard(OfferId offer)
+    {
+        auto record = clipboard_.offers.get(offer);
+        if (record is null || !record.own)
+            return failure!void(WsiErrorKind.staleId, WsiOperation.command,
+                "no live offer of this application's");
+        announce(offer, DataOfferAction.withdrawn);
+        clipboard_.drop(offer);
+        return wsiOk();
+    }
+
+    /**
+    Starts streaming `offer`'s `mimeType` content into `sink`, which must
+    outlive its `finish` call (`DT2`).
+    */
+    WsiResult!TransferId receive(S)(OfferId offer, scope const(char)[] mimeType,
+        ref S sink)
+    if (isDataSink!S)
+        => clipboard_.begin(offer, mimeType, (() @trusted => SinkRef.to(sink))());
+
+    /// Ends a transfer with `cancelled`; its sink then hears nothing more.
+    WsiResult!void cancelTransfer(TransferId transfer)
+        => clipboard_.cancel(transfer);
+
+    /**
+    The recording backend's transfer dispatch: moves one chunk of at most
+    `chunkBytes` for every live transfer, ending each whose provider is
+    exhausted. Returns whether any transfer is still live.
+    */
+    bool pumpTransfers(size_t chunkBytes = 64 * 1024)
+    in (chunkBytes > 0)
+    {
+        import sparkles.base.buffer : UniqueBuffer;
+
+        UniqueBuffer!(ubyte, 1) buffer;
+        buffer.length = chunkBytes;
+        foreach (h; clipboard_.transfers.byLive)
+        {
+            ref transfer = clipboard_.transfers[h];
+            auto offer = clipboard_.offers.get(transfer.offer);
+            if (offer is null)
+            {
+                clipboard_.end(h, TransferStatus.failed);
+                continue;
+            }
+            const n = offer.fill(transfer.mime[], transfer.offset, buffer[]);
+            if (n == 0)
+            {
+                clipboard_.end(h, TransferStatus.completed);
+                continue;
+            }
+            transfer.offset += n;
+            transfer.sink.chunk(h, buffer[][0 .. n]);
+        }
+        return clipboard_.transfers.liveCount != 0;
+    }
+
+    /**
+    Stands in for another application copying: its offer replaces the
+    clipboard, withdrawing this application's. `provider` serves its bytes.
+    */
+    WsiResult!OfferId simulateForeignOffer(P)(scope const(char[])[] mimeTypes,
+        ref P provider)
+    if (isDataProvider!P)
+    {
+        auto added = clipboard_.add(WindowId.init, mimeTypes, false);
+        if (added.hasError)
+            return added;
+        clipboard_.offers[added.value].provider =
+            (() @trusted => ProviderRef.to(provider))();
+        publish(added.value);
+        return added;
+    }
+
+    // Makes `offer` the clipboard's, withdrawing the offer it replaces when
+    // that one was this application's, and announces one event per type.
+    private void publish(OfferId offer)
+    {
+        const previous = clipboard_.current;
+        if (auto old = clipboard_.offers.get(previous))
+        {
+            if (old.own)
+                announce(previous, DataOfferAction.withdrawn);
+            clipboard_.drop(previous);
+        }
+        clipboard_.current = offer;
+        announce(offer, DataOfferAction.offered);
+    }
+
+    private void announce(OfferId offer, DataOfferAction action)
+    {
+        auto record = clipboard_.offers.get(offer);
+        assert(record !is null, "announcing a live offer");
+        const window = record.window;
+        const count = action == DataOfferAction.offered ? record.typeCount : 1;
+        foreach (i; 0 .. count)
+        {
+            auto result = events_.pushText(nextSequence_, window,
+                record.types[i][],
+                (TextId mime, size_t kept) => DataOfferEvent(offer, action, mime));
+            if (!result.hasError)
+                ++nextSequence_;
+        }
+    }
     void close() pure nothrow @nogc
     {
         closed_ = true;
@@ -750,4 +896,196 @@ unittest
     assert(handles.hasError);
     assert(handles.error.kind == WsiErrorKind.unsupported);
     assert(handles.error.operation == WsiOperation.queryHandle);
+}
+
+version (unittest)
+{
+    /// Serves `size` bytes of a position-derived pattern, so a receiver can
+    /// verify every byte without the provider keeping a copy.
+    private struct PatternProvider
+    {
+        ulong size;
+
+        static ubyte at(ulong offset) @safe pure nothrow @nogc
+            => cast(ubyte)(offset * 31 + (offset >> 8));
+
+        size_t fill(scope const(char)[], ulong offset, scope ubyte[] buffer)
+            @safe pure nothrow @nogc
+        {
+            if (offset >= size)
+                return 0;
+            const n = size - offset < buffer.length
+                ? cast(size_t)(size - offset) : buffer.length;
+            foreach (i; 0 .. n)
+                buffer[i] = at(offset + i);
+            return n;
+        }
+    }
+
+    /// Checks each byte against the pattern as it arrives; keeps nothing.
+    private struct PatternSink
+    {
+        ulong received;
+        size_t chunks;
+        size_t largestChunk;
+        bool mismatch;
+        uint finishes;
+        TransferStatus status;
+
+        void chunk(TransferId, scope const(ubyte)[] bytes) @safe pure nothrow @nogc
+        {
+            foreach (i, b; bytes)
+                mismatch |= b != PatternProvider.at(received + i);
+            received += bytes.length;
+            ++chunks;
+            if (bytes.length > largestChunk)
+                largestChunk = bytes.length;
+        }
+
+        void finish(TransferId, TransferStatus how) @safe pure nothrow @nogc
+        {
+            ++finishes;
+            status = how;
+        }
+    }
+
+    private WindowId openRecordingWindow(R)(ref R wsi)
+    {
+        WindowConfig config;
+        config.logicalSize = LogicalSize(10, 10);
+        return wsi.createWindow(config).value;
+    }
+}
+
+@("wsi.loop.clipboardRoundTripsInChunks")
+@safe unittest
+{
+    RecordingWsi!(1, 16) wsi;
+    const window = openRecordingWindow(wsi);
+    auto provider = PatternProvider(300_000);
+    const(char)[][2] types = ["text/plain;charset=utf-8", "application/x-test"];
+    const offer = wsi.offerClipboard(window, types[], provider).value;
+
+    // `DT1`: one `offered` event per type, naming the offer and no content.
+    size_t announced;
+    assert(!wsi.drain((WindowEvent event) {
+        event.payload.match!(
+            (in DataOfferEvent e) {
+                assert(e.offer == offer && e.action == DataOfferAction.offered);
+                assert(!wsi.withText(e.mimeType, (scope const(char)[] mime) {
+                    assert(mime == types[announced]);
+                }).hasError);
+                ++announced;
+            },
+            (_) {});
+    }).hasError);
+    assert(announced == 2);
+
+    // `DT2`/`DT4`: the content streams in bounded chunks and ends once.
+    PatternSink sink;
+    assert(wsi.receive(offer, "application/x-test", sink).hasValue);
+    while (wsi.pumpTransfers(64 * 1024)) {}
+    assert(sink.received == 300_000 && !sink.mismatch);
+    assert(sink.chunks == 5 && sink.largestChunk == 64 * 1024);
+    assert(sink.finishes == 1 && sink.status == TransferStatus.completed);
+
+    // A type the offer does not name is refused.
+    PatternSink other;
+    assert(wsi.receive(offer, "image/png", other).error.kind
+        == WsiErrorKind.invalidArgument);
+}
+
+@("wsi.loop.aReplacedOfferIsWithdrawnAndStale")
+@safe unittest
+{
+    RecordingWsi!(1, 16) wsi;
+    const window = openRecordingWindow(wsi);
+    auto ours = PatternProvider(10);
+    const(char)[][1] text = ["text/plain"];
+    const mine = wsi.offerClipboard(window, text[], ours).value;
+
+    // A transfer in flight when the offer ends fails: its provider need not
+    // outlive the offer (`DT3`).
+    PatternSink reading;
+    assert(wsi.receive(mine, "text/plain", reading).hasValue);
+
+    auto theirs = PatternProvider(5);
+    const foreign = wsi.simulateForeignOffer(text[], theirs).value;
+    assert(reading.finishes == 1 && reading.status == TransferStatus.failed);
+
+    bool withdrawn;
+    bool offered;
+    assert(!wsi.drain((WindowEvent event) {
+        event.payload.match!(
+            (in DataOfferEvent e) {
+                withdrawn |= e.offer == mine && e.action == DataOfferAction.withdrawn;
+                offered |= e.offer == foreign && e.action == DataOfferAction.offered;
+            },
+            (_) {});
+    }).hasError);
+    assert(withdrawn && offered);
+
+    PatternSink late;
+    assert(wsi.receive(mine, "text/plain", late).error.kind == WsiErrorKind.staleId);
+    assert(wsi.withdrawClipboard(mine).error.kind == WsiErrorKind.staleId);
+    assert(late.finishes == 0);
+
+    // The foreign offer is readable like any other.
+    PatternSink paste;
+    assert(wsi.receive(foreign, "text/plain", paste).hasValue);
+    while (wsi.pumpTransfers()) {}
+    assert(paste.received == 5 && paste.status == TransferStatus.completed);
+}
+
+@("wsi.loop.cancelEndsATransferOnce")
+@safe unittest
+{
+    RecordingWsi!(1, 16) wsi;
+    const window = openRecordingWindow(wsi);
+    auto provider = PatternProvider(1000);
+    const(char)[][1] text = ["text/plain"];
+    const offer = wsi.offerClipboard(window, text[], provider).value;
+
+    PatternSink sink;
+    const transfer = wsi.receive(offer, "text/plain", sink).value;
+    wsi.pumpTransfers(100);
+    assert(!wsi.cancelTransfer(transfer).hasError);
+    assert(sink.finishes == 1 && sink.status == TransferStatus.cancelled);
+    const before = sink.received;
+    wsi.pumpTransfers(100);
+    assert(sink.received == before && sink.finishes == 1);
+    assert(wsi.cancelTransfer(transfer).error.kind == WsiErrorKind.staleId);
+}
+
+@("wsi.loop.aWholeValueOfferKeepsOneCopy")
+@safe unittest
+{
+    RecordingWsi!(1, 16) wsi;
+    const window = openRecordingWindow(wsi);
+    ubyte[5] value = cast(ubyte[5]) "hello";
+    const offer = wsi.offerClipboard(window, "text/plain", value[]).value;
+    value[] = 0; // the offer holds its own copy
+
+    static struct Collect
+    {
+        ubyte[16] bytes;
+        size_t length;
+        bool done;
+
+        void chunk(TransferId, scope const(ubyte)[] b) @safe pure nothrow @nogc
+        {
+            bytes[length .. length + b.length] = b[];
+            length += b.length;
+        }
+
+        void finish(TransferId, TransferStatus status) @safe pure nothrow @nogc
+        {
+            done = status == TransferStatus.completed;
+        }
+    }
+
+    Collect collect;
+    assert(wsi.receive(offer, "text/plain", collect).hasValue);
+    while (wsi.pumpTransfers(2)) {}
+    assert(collect.done && collect.bytes[0 .. collect.length] == "hello");
 }
