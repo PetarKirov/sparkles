@@ -349,9 +349,13 @@ of defining a second point/size implementation.
 | `PhysicalPosition` | signed pixel position; signed because a point may be off-screen |
 | `PhysicalSize`     | framebuffer/surface extent in pixels                            |
 | `ScaleFactor`      | physical pixels per logical unit                                |
+| `PhysicalInsets`   | pixels at each surface edge that system UI or a keyboard covers |
 
-Every resize or scale transition reports logical size, physical surface size, and
-scale together in one `SurfaceMetricsChanged` event. Consumers size GPU swapchains only
+Every resize or scale transition reports logical size, physical surface size, scale
+and safe insets together in one `SurfaceMetricsChanged` event. Safe insets are the
+pixels at each edge that system bars, a display cutout or a soft keyboard cover;
+content may extend under them, but nothing the user must read or reach belongs there.
+A platform that reports none leaves them zero. Consumers size GPU swapchains only
 from `physicalSize`. A zero physical extent means suspended/minimized and is not an
 error. Conversions specify rounding: positions use nearest integer; enclosing extents
 round outward; suggested native rectangles remain exact physical values.
@@ -618,6 +622,10 @@ Vulkan ICD—must additionally hold the backend's owner-thread native-I/O borrow
   in the loop's monotonic clock (`ED7`).
 - Pointer input is routed by the surface's bounds, so a window receives touch and
   pointer events only once a frame was presented on it.
+- The density and the safe insets come from the framework's `DisplayMetrics` and
+  the decor view's root `WindowInsets`, reread when the content rect, the
+  configuration, the surface or focus changes, and every 250 ms while text input is
+  on, since nothing reports the user dismissing the keyboard.
 - The soft keyboard edits a hidden `EditText` whose changes become committed text
   while text input is on. The field runs without suggestions, so no pre-edit is
   reported.

@@ -41,15 +41,61 @@ struct ScaleFactor
 }
 
 /// One atomic logical/physical/scale observation.
+/**
+Pixels at each edge of a surface that something else covers or reserves:
+system bars, a display cutout, a soft keyboard. Content may extend under
+them, but nothing the user must read or reach belongs there.
+*/
+struct PhysicalInsets
+{
+    uint left;
+    uint top;
+    uint right;
+    uint bottom;
+}
+
 struct SurfaceMetrics
 {
     LogicalSize logicalSize;
     PhysicalSize physicalSize;
     ScaleFactor scale;
+    /// Zero on a platform that reports no covered edges, and on every
+    /// desktop backend today.
+    PhysicalInsets safeInsets;
 
     /// A zero pixel extent suspends presentation but is not a WSI error.
     bool suspended() const pure nothrow @nogc
         => physicalSize.width == 0 || physicalSize.height == 0;
+
+    /// The region inside `safeInsets`, in logical units: its top-left corner
+    /// and its extent.
+    LogicalPosition safeOrigin() const pure nothrow @nogc
+        => LogicalPosition(safeInsets.left / scale.value,
+            safeInsets.top / scale.value);
+
+    /// ditto
+    LogicalSize safeSize() const pure nothrow @nogc
+    {
+        static double span(uint extent, uint a, uint b) pure nothrow @nogc
+            => a + b >= extent ? 0 : extent - a - b;
+        return LogicalSize(
+            span(physicalSize.width, safeInsets.left, safeInsets.right) / scale.value,
+            span(physicalSize.height, safeInsets.top, safeInsets.bottom) / scale.value);
+    }
+}
+
+@("wsi.types.safeRegionIsTheSurfaceInsideItsInsets")
+@safe pure nothrow @nogc
+unittest
+{
+    const metrics = SurfaceMetrics(LogicalSize(400, 300), PhysicalSize(800, 600),
+        ScaleFactor(2), PhysicalInsets(0, 40, 0, 160));
+    assert(metrics.safeOrigin == LogicalPosition(0, 20));
+    assert(metrics.safeSize == LogicalSize(400, 200));
+
+    const covered = SurfaceMetrics(LogicalSize(10, 10), PhysicalSize(10, 10),
+        ScaleFactor(1), PhysicalInsets(6, 0, 6, 0));
+    assert(covered.safeSize.width == 0, "insets wider than the surface leave none");
 }
 
 /**
