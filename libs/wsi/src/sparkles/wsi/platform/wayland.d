@@ -5,17 +5,24 @@ The adapter owns one `wl_display`, never calls a blocking Wayland dispatch
 function, acknowledges each `xdg_surface.configure` inside its listener, and
 observes the mandatory `prepare_read`/`read_events|cancel_read` pairing.  The
 renderer receives the `wl_surface` only after the initial configure.
+
+The clipboard is the seat's `wl_data_device` selection. Its bytes move through
+pipes that Event Horizon polls, one chunk per readiness, and listeners only
+record what the compositor said: dispatch acts on it, so no sink is called
+from inside libwayland.
 */
 module sparkles.wsi.platform.wayland;
 
 version (linux):
 
-import core.stdc.errno : EAGAIN, errno;
+import core.stdc.errno : EAGAIN, EINTR, EPIPE, errno;
+import core.sys.linux.unistd : pipe2;
+import core.sys.posix.fcntl : F_GETFL, F_SETFL, O_CLOEXEC, O_NONBLOCK, fcntl;
 import core.stdc.string : strcmp, strlen;
 import core.sys.posix.pthread : pthread_equal, pthread_self, pthread_t;
 import core.sys.posix.sys.mman : MAP_FAILED, MAP_PRIVATE, PROT_READ, mmap,
     munmap;
-import core.sys.posix.unistd : posixClose = close;
+import core.sys.posix.unistd : posixClose = close, read, write;
 import core.time : Duration, MonoTime, msecs;
 import std.traits : Parameters;
 
@@ -28,6 +35,7 @@ import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
 import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
 import sparkles.event_horizon.op : Completion, OpHandle, OpPollAdd, PollEvents;
+import sparkles.wsi.clipboard;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
 import sparkles.wsi.history : PointerSample;
@@ -457,6 +465,7 @@ struct WaylandWsi
             return ioErr!RunStatus(cast(int) stickyError_.nativeCode,
                 OpKind.pollAdd, IoErrorStage.completion,
                 "Wayland dispatch/re-arm failed");
+        nativeWork |= serviceClipboard();
         if (nativeWork)
             return ioOk(RunStatus.dispatched);
 
@@ -467,6 +476,7 @@ struct WaylandWsi
             return ioErr!RunStatus(cast(int) stickyError_.nativeCode,
                 OpKind.pollAdd, IoErrorStage.completion,
                 "Wayland dispatch/re-arm failed");
+        nativeWork |= serviceClipboard();
         return nativeWork && result.value != RunStatus.stopped
             ? ioOk(RunStatus.dispatched) : result;
     }
@@ -516,6 +526,9 @@ struct WaylandWsi
     {
         if (closed_ || !open_)
             return;
+        // The clipboard's pipes are polled by the loop; close them while
+        // it is still attached.
+        closeClipboard();
         auto detached = detach();
         if (detached.hasError)
             remember(detached.error);
@@ -871,6 +884,600 @@ struct WaylandWsi
 
     /// Calls `fn` with the text a delivered event names, during the drain
     /// that delivers it (`ED8`). See `EventQueue.withText`.
+    // ── clipboard (`DT1`–`DT5`) ──────────────────────────────────────────────
+
+    /// Largest piece one pipe read or write moves: also the bound on the
+    /// chunks a sink sees (`DT4`).
+    enum size_t clipChunkBytes = 64 * 1024;
+
+    /// Whether the compositor offers a data device: without one the
+    /// clipboard commands fail with `unsupported`.
+    bool clipboardAvailable() const @safe pure nothrow @nogc => dataDevice_ !is null;
+
+    /**
+    Offers `mimeTypes` as the selection through a `wl_data_source`; each
+    client's request pulls the bytes from `provider` into that client's pipe,
+    one chunk at a time as it drains (`DT3`, `DT4`). The provider must
+    outlive the offer. Setting the selection needs a recent input serial, so
+    a window of this application must have had keyboard or pointer input.
+    */
+    WsiResult!OfferId offerClipboard(P)(WindowId window,
+        scope const(char[])[] mimeTypes, ref P provider)
+    if (isDataProvider!P)
+    {
+        auto checked = checkedSlot(window, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!OfferId(checked.error);
+        auto added = clipboard_.add(window, mimeTypes, true);
+        if (added.hasError)
+            return added;
+        clipboard_.offers[added.value].provider =
+            (() @trusted => ProviderRef.to(provider))();
+        return setSelection(added.value);
+    }
+
+    /// ditto, for a small whole value the backend keeps a copy of.
+    WsiResult!OfferId offerClipboard(WindowId window, scope const(char)[] mimeType,
+        scope const(ubyte)[] value)
+    {
+        auto checked = checkedSlot(window, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!OfferId(checked.error);
+        auto added = clipboard_.add(window, mimeType, true);
+        if (added.hasError)
+            return added;
+        ref record = clipboard_.offers[added.value];
+        record.value.bytes ~= value;
+        record.hasValue = true;
+        return setSelection(added.value);
+    }
+
+    /// Ends an offer this application made: clears the selection and
+    /// reports `withdrawn` (`DT1`).
+    WsiResult!void withdrawClipboard(OfferId offer)
+    {
+        auto record = clipboard_.offers.get(offer);
+        if (record is null || !record.own)
+            return waylandFailure!void(WsiOperation.command, 0,
+                "no live offer of this application's", WsiErrorKind.staleId);
+        if (offer == clipboard_.current && dataDevice_ !is null)
+        {
+            wl_data_device_set_selection(dataDevice_, null, inputSerial_);
+            flushRequests();
+        }
+        announce(offer, DataOfferAction.withdrawn);
+        dropOffer(offer);
+        return wsiOk();
+    }
+
+    /**
+    Starts reading `offer`'s `mimeType` into `sink` (`DT2`): the compositor
+    is asked to have the offer's source write into a pipe, which Event
+    Horizon reports readable. Only the current selection is readable.
+    */
+    WsiResult!TransferId receive(S)(OfferId offer, scope const(char)[] mimeType,
+        ref S sink)
+    if (isDataSink!S)
+    {
+        const own = offer == sourceOffer_;
+        if (offer != clipboard_.current || !clipboard_.offers.isLive(offer)
+            || (!own && selectionOffer_ is null))
+            return waylandFailure!TransferId(WsiOperation.command, 0,
+                "the offer has ended", WsiErrorKind.staleId);
+        auto begun = clipboard_.begin(offer, mimeType,
+            (() @trusted => SinkRef.to(sink))());
+        if (begun.hasError)
+            return begun;
+        ref pipe = readers_[begun.value.index];
+        pipe = Pipe(&this, -1, begun.value);
+        // An own offer is read through the compositor too, once it has
+        // returned the source as the selection (`serviceClipboard`).
+        if (own && !selectionIsOwn_)
+            pipe.waiting = true;
+        else
+            startRead(pipe);
+        return begun;
+    }
+
+    // Asks the selection's source to write the transfer's type into a pipe.
+    private void startRead(ref Pipe pipe)
+    {
+        pipe.waiting = false;
+        auto transfer = clipboard_.transfers.get(pipe.transfer);
+        int[2] fds;
+        if (transfer is null || selectionOffer_ is null
+            || pipe2(fds, O_CLOEXEC | O_NONBLOCK) != 0)
+        {
+            clipboard_.end(pipe.transfer, TransferStatus.failed);
+            return;
+        }
+        char[maxMimeType + 1] mime = 0;
+        mime[0 .. transfer.mime.length] = transfer.mime[];
+        wl_data_offer_receive(selectionOffer_, mime.ptr, fds[1]);
+        flushRequests();
+        posixClose(fds[1]);
+        pipe.fd = fds[0];
+        armPipe(pipe, PollEvents.readable);
+    }
+
+    /// Ends a transfer with `cancelled`; its sink then hears nothing more and
+    /// its pipe is closed.
+    WsiResult!void cancelTransfer(TransferId transfer)
+    {
+        if (clipboard_.transfers.isLive(transfer))
+        {
+            readers_[transfer.index].waiting = false;
+            closePipe(readers_[transfer.index]);
+        }
+        return clipboard_.cancel(transfer);
+    }
+
+    // One pipe a transfer moves through, either way: a reader of an offer, or
+    // a writer serving a requester. Address-stable inside the backend, so the
+    // Event Horizon completion can name it.
+    private struct Pipe
+    {
+        WaylandWsi* owner;
+        int fd = -1;
+        TransferId transfer; // a reader's transfer
+        OfferId offer;       // a writer's offer
+        ubyte type;          // a writer's MIME type, by index
+        ulong offset;        // bytes a writer pulled from the provider
+        size_t pending;      // bytes of `chunk` not yet written
+        size_t written;
+        OpHandle handle;
+        bool armed;
+        bool ready;
+        int result;
+        bool fresh;          // a writer waiting for its first arming
+        bool waiting;        // a reader of an own offer, before its selection
+        UniqueBuffer!(ubyte, 1) chunk;
+    }
+
+    private enum textMime = "text/plain;charset=utf-8";
+
+    private ClipboardState!() clipboard_;
+    private wl_data_device_manager* dataManager_;
+    private wl_data_device* dataDevice_;
+    private wl_data_source* source_;        // the own offer's, while it is the selection
+    private OfferId sourceOffer_;
+    private wl_data_offer* pendingOffer_;   // introduced, not yet the selection
+    private InlineBuffer!(char, maxMimeType)[maxOfferTypes] pendingTypes_;
+    private ubyte pendingTypeCount_;
+    private wl_data_offer* selectionOffer_; // the selection's, own or foreign
+    private uint inputSerial_;              // the latest keyboard or button serial
+    // What listeners saw, for `serviceClipboard` to act on from dispatch:
+    // listeners run inside libwayland's dispatch, where no sink may be
+    // called (`DT2`).
+    private bool selectionChanged_;
+    private InlineBuffer!(char, maxMimeType)[maxOfferTypes] selectionTypes_;
+    private ubyte selectionTypeCount_;
+    private OfferId cancelledOffer_;
+    private bool selectionIsOwn_; // the compositor returned the own source
+    private Pipe[8] readers_;
+    private Pipe[4] writers_;
+
+    private void ensureDataDevice() nothrow @nogc
+    {
+        if (dataDevice_ !is null || dataManager_ is null || seat_ is null)
+            return;
+        dataDevice_ = wl_data_device_manager_get_data_device(dataManager_, seat_);
+        if (dataDevice_ !is null
+            && wl_data_device_add_listener(dataDevice_,
+                listenerPtr(dataDeviceListener), &this) != 0)
+            remember(wsiError(WsiErrorKind.nativeFailure, WsiOperation.open,
+                BackendKind.wayland, 0, "failed to install wl_data_device listener"));
+    }
+
+    private WsiResult!OfferId setSelection(OfferId offer)
+    {
+        if (dataDevice_ is null)
+        {
+            clipboard_.drop(offer);
+            return waylandFailure!OfferId(WsiOperation.command, 0,
+                "the compositor offers no wl_data_device_manager",
+                WsiErrorKind.unsupported);
+        }
+        auto source = wl_data_device_manager_create_data_source(dataManager_);
+        if (source is null || wl_data_source_add_listener(source,
+                listenerPtr(dataSourceListener), &this) != 0)
+        {
+            clipboard_.drop(offer);
+            return waylandFailure!OfferId(WsiOperation.command, 0,
+                "creating a wl_data_source failed");
+        }
+        auto record = clipboard_.offers.get(offer);
+        foreach (ref t; record.types[0 .. record.typeCount])
+        {
+            char[maxMimeType + 1] mime = 0;
+            mime[0 .. t.length] = t[];
+            wl_data_source_offer(source, mime.ptr);
+        }
+        // The previous own source is replaced: the compositor cancels it, and
+        // `publish` withdraws its offer now.
+        releaseSource();
+        source_ = source;
+        sourceOffer_ = offer;
+        selectionIsOwn_ = false;
+        wl_data_device_set_selection(dataDevice_, source, inputSerial_);
+        flushRequests();
+        publish(offer);
+        return wsiOk(offer);
+    }
+
+    private void releaseSource() nothrow @nogc
+    {
+        if (source_ is null)
+            return;
+        wl_data_source_destroy(source_);
+        source_ = null;
+        sourceOffer_ = OfferId.init;
+    }
+
+    private void flushRequests() nothrow @nogc
+    {
+        if (display_ !is null)
+            wl_display_flush(display_);
+    }
+
+    private void armPipe(ref Pipe pipe, PollEvents interest) nothrow
+    {
+        if (pipe.armed || pipe.fd < 0 || loop_ is null)
+            return;
+        auto submitted = loop_.submit(OpPollAdd(pipe.fd, interest, false),
+            &onPipeReady, &pipe);
+        if (submitted.hasError)
+        {
+            pipe.ready = true;
+            pipe.result = -1;
+            return;
+        }
+        pipe.handle = submitted.value;
+        pipe.armed = true;
+    }
+
+    private static void onPipeReady(void* context, ref Completion completion)
+        nothrow @nogc
+    {
+        auto pipe = cast(Pipe*) context;
+        pipe.armed = false;
+        pipe.ready = true;
+        pipe.result = completion.res;
+    }
+
+    private void closePipe(ref Pipe pipe) nothrow
+    {
+        if (pipe.armed && loop_ !is null)
+        {
+            const reaped = loop_.cancelAndWait(pipe.handle);
+            pipe.armed = false;
+            if (reaped.hasError)
+                remember(wsiError(WsiErrorKind.nativeFailure, WsiOperation.command,
+                    BackendKind.wayland, reaped.error.code,
+                    "failed to cancel a clipboard pipe's poll"));
+        }
+        if (pipe.fd >= 0)
+            posixClose(pipe.fd);
+        pipe.fd = -1;
+        pipe.ready = false;
+        pipe.pending = 0;
+        pipe.written = 0;
+    }
+
+    // Acts on what the listeners recorded, then moves the bytes of every pipe
+    // Event Horizon reported ready, from the backend's own dispatch (`DT2`);
+    // whether any of it happened.
+    private bool serviceClipboard()
+    {
+        bool work;
+        if (cancelledOffer_ != OfferId.init)
+        {
+            // Another client took the selection: this application's offer
+            // ends (`DT1`).
+            const offer = cancelledOffer_;
+            cancelledOffer_ = OfferId.init;
+            work = true;
+            if (clipboard_.offers.isLive(offer))
+            {
+                announce(offer, DataOfferAction.withdrawn);
+                dropOffer(offer);
+            }
+        }
+        if (selectionChanged_)
+        {
+            selectionChanged_ = false;
+            work = true;
+            selectionIsOwn_ = source_ !is null && selectionOffer_ !is null;
+            noticeSelection();
+            if (selectionIsOwn_)
+                foreach (ref pipe; readers_)
+                    if (pipe.waiting)
+                        startRead(pipe);
+        }
+        foreach (ref pipe; writers_)
+            if (pipe.fresh)
+            {
+                pipe.fresh = false;
+                work = true;
+                armPipe(pipe, PollEvents.writable);
+            }
+        foreach (ref pipe; readers_)
+        {
+            if (!pipe.ready)
+                continue;
+            pipe.ready = false;
+            work = true;
+            readPipe(pipe);
+        }
+        foreach (ref pipe; writers_)
+        {
+            if (!pipe.ready)
+                continue;
+            pipe.ready = false;
+            work = true;
+            writePipe(pipe);
+        }
+        return work;
+    }
+
+    private void readPipe(ref Pipe pipe)
+    {
+        const transfer = pipe.transfer;
+        ubyte[clipChunkBytes] chunk = void;
+        const n = read(pipe.fd, chunk.ptr, chunk.length);
+        if (n > 0)
+        {
+            if (auto record = clipboard_.transfers.get(transfer))
+                record.sink.chunk(transfer, chunk[0 .. n]);
+            armPipe(pipe, PollEvents.readable);
+            return;
+        }
+        if (n < 0 && (errno == EAGAIN || errno == EINTR))
+        {
+            armPipe(pipe, PollEvents.readable);
+            return;
+        }
+        closePipe(pipe);
+        clipboard_.end(transfer, n == 0 ? TransferStatus.completed : TransferStatus.failed);
+    }
+
+    // One chunk from the provider at a time; a requester that stops reading
+    // holds at most that chunk here (`DT4`).
+    private void writePipe(ref Pipe pipe)
+    {
+        auto record = clipboard_.offers.get(pipe.offer);
+        if (record is null || pipe.result < 0)
+        {
+            closePipe(pipe);
+            return;
+        }
+        if (pipe.pending == pipe.written)
+        {
+            pipe.chunk.length = clipChunkBytes;
+            pipe.pending = record.fill(record.types[pipe.type][], pipe.offset,
+                pipe.chunk[]);
+            pipe.offset += pipe.pending;
+            pipe.written = 0;
+            if (pipe.pending == 0)
+            {
+                // The provider's end: closing the pipe is the end of data.
+                closePipe(pipe);
+                return;
+            }
+        }
+        const n = writeWithoutSigpipe(pipe.fd, pipe.chunk[].ptr + pipe.written,
+            pipe.pending - pipe.written);
+        if (n < 0 && errno != EAGAIN && errno != EINTR)
+        {
+            closePipe(pipe); // the requester went away (EPIPE)
+            return;
+        }
+        if (n > 0)
+            pipe.written += n;
+        armPipe(pipe, PollEvents.writable);
+    }
+
+    private void publish(OfferId offer)
+    {
+        const previous = clipboard_.current;
+        if (previous != offer)
+            if (auto old = clipboard_.offers.get(previous))
+            {
+                if (old.own)
+                    announce(previous, DataOfferAction.withdrawn);
+                dropOffer(previous);
+            }
+        clipboard_.current = offer;
+        announce(offer, DataOfferAction.offered);
+    }
+
+    private void announce(OfferId offer, DataOfferAction action)
+    {
+        auto record = clipboard_.offers.get(offer);
+        assert(record !is null, "announcing a live offer");
+        const window = record.window;
+        const count = action == DataOfferAction.offered ? record.typeCount : 1;
+        foreach (i; 0 .. count)
+            emitText(window, record.types[i][],
+                (TextId mime, size_t kept) => DataOfferEvent(offer, action, mime));
+    }
+
+    // Ends an offer: its readers fail and close, and so do the writers
+    // serving it.
+    private void dropOffer(OfferId offer)
+    {
+        foreach (h; clipboard_.transfers.byLive)
+            if (clipboard_.transfers[h].offer == offer)
+                closePipe(readers_[h.index]);
+        foreach (ref pipe; writers_)
+            if (pipe.offer == offer && pipe.fd >= 0)
+                closePipe(pipe);
+        if (offer == sourceOffer_)
+            releaseSource();
+        clipboard_.drop(offer);
+    }
+
+    private WindowId firstWindow()
+    {
+        foreach (h; windows_.byLive)
+            return h;
+        return WindowId.init;
+    }
+
+    private void closeClipboard() nothrow
+    {
+        foreach (ref pipe; readers_)
+            closePipe(pipe);
+        foreach (ref pipe; writers_)
+            closePipe(pipe);
+        foreach (h; clipboard_.transfers.byLive)
+            clipboard_.end(h, TransferStatus.failed);
+        releaseSource();
+        if (pendingOffer_ !is null)
+            wl_data_offer_destroy(pendingOffer_);
+        if (selectionOffer_ !is null && selectionOffer_ !is pendingOffer_)
+            wl_data_offer_destroy(selectionOffer_);
+        pendingOffer_ = selectionOffer_ = null;
+        if (dataDevice_ !is null)
+        {
+            wl_data_device_release(dataDevice_);
+            dataDevice_ = null;
+        }
+        if (dataManager_ !is null)
+        {
+            wl_data_device_manager_destroy(dataManager_);
+            dataManager_ = null;
+        }
+    }
+
+    // ── data-device listeners ───────────────────────────────────────────────
+
+    private extern (C) static void onDataOffer(void* data, wl_data_device*,
+        wl_data_offer* offer) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        if (owner.pendingOffer_ !is null && owner.pendingOffer_ !is owner.selectionOffer_)
+            wl_data_offer_destroy(owner.pendingOffer_);
+        owner.pendingOffer_ = offer;
+        owner.pendingTypeCount_ = 0;
+        wl_data_offer_add_listener(offer, listenerPtr(dataOfferListener), owner);
+    }
+
+    private extern (C) static void onOfferType(void* data, wl_data_offer* offer,
+        const(char)* type) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        if (offer !is owner.pendingOffer_ || owner.pendingTypeCount_ == maxOfferTypes)
+            return;
+        const spelled = type[0 .. strlen(type)];
+        // Text under its X names (Xwayland, older toolkits) is the one MIME
+        // type; anything else that is not a MIME type is skipped.
+        const mime = spelled == "UTF8_STRING" ? textMime : spelled;
+        if (mime.length == 0 || mime.length > maxMimeType || !isMimeType(mime))
+            return;
+        foreach (ref t; owner.pendingTypes_[0 .. owner.pendingTypeCount_])
+            if (t[] == mime)
+                return;
+        const assigned = owner.pendingTypes_[owner.pendingTypeCount_].assign(mime);
+        assert(assigned, "the length was checked");
+        ++owner.pendingTypeCount_;
+    }
+
+    private extern (C) static void onSelection(void* data, wl_data_device*,
+        wl_data_offer* offer) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        if (owner.selectionOffer_ !is null && owner.selectionOffer_ !is offer)
+            wl_data_offer_destroy(owner.selectionOffer_);
+        owner.selectionOffer_ = offer;
+        owner.selectionTypeCount_ = 0;
+        if (offer !is null && offer is owner.pendingOffer_)
+        {
+            owner.selectionTypes_ = owner.pendingTypes_;
+            owner.selectionTypeCount_ = owner.pendingTypeCount_;
+            owner.pendingOffer_ = null;
+        }
+        owner.selectionChanged_ = true;
+    }
+
+    // A new selection: this application's own source coming back, which
+    // needs nothing, or another client's, which replaces whatever was.
+    private void noticeSelection()
+    {
+        if (source_ !is null)
+            return;
+        if (auto record = clipboard_.offers.get(clipboard_.current))
+        {
+            if (record.own)
+                announce(clipboard_.current, DataOfferAction.withdrawn);
+            dropOffer(clipboard_.current);
+        }
+        if (selectionOffer_ is null || selectionTypeCount_ == 0)
+            return;
+        const(char)[][maxOfferTypes] types;
+        foreach (i; 0 .. selectionTypeCount_)
+            types[i] = selectionTypes_[i][];
+        auto added = clipboard_.add(firstWindow(), types[0 .. selectionTypeCount_],
+            false);
+        if (!added.hasError)
+            publish(added.value);
+    }
+
+    private extern (C) static void onSourceSend(void* data, wl_data_source* source,
+        const(char)* type, int fd) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        auto record = owner.clipboard_.offers.get(owner.sourceOffer_);
+        const spelled = type[0 .. strlen(type)];
+        ubyte index = ubyte.max;
+        if (source is owner.source_ && record !is null)
+            foreach (i, ref t; record.types[0 .. record.typeCount])
+                if (t[] == spelled)
+                    index = cast(ubyte) i;
+        Pipe* free;
+        foreach (ref pipe; owner.writers_)
+            if (pipe.fd < 0)
+            {
+                free = &pipe;
+                break;
+            }
+        if (index == ubyte.max || free is null)
+        {
+            posixClose(fd); // an unknown type, or every writer busy: no data
+            return;
+        }
+        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+        free.owner = owner;
+        free.fd = fd;
+        free.offer = owner.sourceOffer_;
+        free.type = index;
+        free.offset = 0;
+        free.pending = free.written = 0;
+        free.result = 0;
+        // Armed and written from dispatch (`serviceClipboard`).
+        free.fresh = true;
+    }
+
+    private extern (C) static void onSourceCancelled(void* data,
+        wl_data_source* source) nothrow @nogc
+    {
+        auto owner = cast(WaylandWsi*) data;
+        if (source !is owner.source_)
+        {
+            wl_data_source_destroy(source);
+            return;
+        }
+        owner.cancelledOffer_ = owner.sourceOffer_;
+        owner.releaseSource();
+    }
+
+    private static bool isMimeType(scope const(char)[] name) @safe pure nothrow @nogc
+    {
+        foreach (c; name)
+            if (c == '/')
+                return true;
+        return false;
+    }
     WsiResult!void withText(Fn)(TextId id, scope Fn fn)
         => events_.withText(id, fn);
 
@@ -995,6 +1602,15 @@ struct WaylandWsi
                     WsiOperation.open, BackendKind.wayland, 0,
                     "failed to install wl_seat listener"));
             owner.ensureTextInput();
+            owner.ensureDataDevice();
+        }
+        else if (strcmp(interfaceName, wl_data_device_manager_interface.name) == 0
+            && owner.dataManager_ is null)
+        {
+            const version_ = advertisedVersion < 3 ? advertisedVersion : 3;
+            owner.dataManager_ = cast(wl_data_device_manager*) wl_registry_bind(
+                registry, name, &wl_data_device_manager_interface, version_);
+            owner.ensureDataDevice();
         }
         else if (strcmp(interfaceName,
             zwp_text_input_manager_v3_interface.name) == 0
@@ -1537,7 +2153,10 @@ struct WaylandWsi
     {
         auto owner = cast(WaylandWsi*) data;
         if (state != 0)
+        {
             owner.pointerButtonSerial_ = serial;
+            owner.inputSerial_ = serial;
+        }
         owner.emitPointer(state != 0
             ? PointerPhase.pressed : PointerPhase.released,
             waylandPointerButton(button));
@@ -1714,9 +2333,10 @@ struct WaylandWsi
     }
 
     private extern (C) static void onKeyboardEnter(void* data,
-        wl_keyboard*, uint, wl_surface* surface, wl_array*) nothrow @nogc
+        wl_keyboard*, uint serial, wl_surface* surface, wl_array*) nothrow @nogc
     {
         auto owner = cast(WaylandWsi*) data;
+        owner.inputSerial_ = serial;
         owner.keyboardFocus_ = surface;
         const index = owner.indexOfSurface(surface);
         if (index != size_t.max)
@@ -1738,9 +2358,10 @@ struct WaylandWsi
     }
 
     private extern (C) static void onKeyboardKey(void* data, wl_keyboard*,
-        uint, uint, uint key, uint state) nothrow @nogc
+        uint serial, uint, uint key, uint state) nothrow @nogc
     {
         auto owner = cast(WaylandWsi*) data;
+        owner.inputSerial_ = serial;
         const index = owner.indexOfSurface(owner.keyboardFocus_);
         if (index == size_t.max)
             return;
@@ -2719,4 +3340,136 @@ private void zwp_relative_pointer_v1_destroy()(zwp_relative_pointer_v1* self)
     wl_proxy_marshal_flags(cast(wl_proxy*) self,
         ZWP_RELATIVE_POINTER_V1_DESTROY, null,
         wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private immutable wl_data_device_listener dataDeviceListener = {
+    &WaylandWsi.onDataOffer, &onDataEnter, &onDataLeave, &onDataMotion,
+    &onDataDrop, &WaylandWsi.onSelection
+};
+private immutable wl_data_offer_listener dataOfferListener = {
+    &WaylandWsi.onOfferType, &onOfferSourceActions, &onOfferAction
+};
+private immutable wl_data_source_listener dataSourceListener = {
+    &onSourceTarget, &WaylandWsi.onSourceSend, &WaylandWsi.onSourceCancelled,
+    &onSourceDropPerformed, &onSourceDndFinished, &onSourceAction
+};
+
+// Drag-and-drop events: no drag is accepted yet, so these only keep
+// libwayland from calling through a null listener slot.
+private extern (C) nothrow @nogc
+{
+    void onDataEnter(void*, wl_data_device*, uint, wl_surface*, wl_fixed_t,
+        wl_fixed_t, wl_data_offer*) {}
+    void onDataLeave(void*, wl_data_device*) {}
+    void onDataMotion(void*, wl_data_device*, uint, wl_fixed_t, wl_fixed_t) {}
+    void onDataDrop(void*, wl_data_device*) {}
+    void onOfferSourceActions(void*, wl_data_offer*, uint) {}
+    void onOfferAction(void*, wl_data_offer*, uint) {}
+    void onSourceTarget(void*, wl_data_source*, const(char)*) {}
+    void onSourceDropPerformed(void*, wl_data_source*) {}
+    void onSourceDndFinished(void*, wl_data_source*) {}
+    void onSourceAction(void*, wl_data_source*, uint) {}
+}
+
+private wl_data_device* wl_data_device_manager_get_data_device()(
+        wl_data_device_manager* self, wl_seat* seat)
+    => cast(wl_data_device*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WL_DATA_DEVICE_MANAGER_GET_DATA_DEVICE, &wl_data_device_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null, seat);
+
+private wl_data_source* wl_data_device_manager_create_data_source()(
+        wl_data_device_manager* self)
+    => cast(wl_data_source*) wl_proxy_marshal_flags(cast(wl_proxy*) self,
+        WL_DATA_DEVICE_MANAGER_CREATE_DATA_SOURCE, &wl_data_source_interface,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, cast(void*) null);
+
+private void wl_data_device_manager_destroy()(wl_data_device_manager* self)
+    => wl_proxy_destroy(cast(wl_proxy*) self);
+
+private int wl_data_device_add_listener()(wl_data_device* self,
+        const(wl_data_device_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void wl_data_device_set_selection()(wl_data_device* self,
+        wl_data_source* source, uint serial)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_DATA_DEVICE_SET_SELECTION,
+        null, wl_proxy_get_version(cast(wl_proxy*) self), 0, source, serial);
+}
+
+private void wl_data_device_release()(wl_data_device* self)
+{
+    if (wl_proxy_get_version(cast(wl_proxy*) self) >= WL_DATA_DEVICE_RELEASE_SINCE_VERSION)
+        wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_DATA_DEVICE_RELEASE, null,
+            wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+    else
+        wl_proxy_destroy(cast(wl_proxy*) self);
+}
+
+private int wl_data_source_add_listener()(wl_data_source* self,
+        const(wl_data_source_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void wl_data_source_offer()(wl_data_source* self, const(char)* mimeType)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_DATA_SOURCE_OFFER, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, mimeType);
+}
+
+private void wl_data_source_destroy()(wl_data_source* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_DATA_SOURCE_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+private int wl_data_offer_add_listener()(wl_data_offer* self,
+        const(wl_data_offer_listener)* listener, void* data)
+    => wl_proxy_add_listener(cast(wl_proxy*) self,
+        cast(ListenerImpl) listener, data);
+
+private void wl_data_offer_receive()(wl_data_offer* self, const(char)* mimeType,
+        int fd)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_DATA_OFFER_RECEIVE, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), 0, mimeType, fd);
+}
+
+private void wl_data_offer_destroy()(wl_data_offer* self)
+{
+    wl_proxy_marshal_flags(cast(wl_proxy*) self, WL_DATA_OFFER_DESTROY, null,
+        wl_proxy_get_version(cast(wl_proxy*) self), WL_MARSHAL_FLAG_DESTROY);
+}
+
+/**
+`write`, with `SIGPIPE` held off: a requester that closed its end makes the
+write fail with `EPIPE` instead of killing the process. The signal is blocked
+on this thread only for the call, and one it raised is consumed before the
+mask is restored, so the process's own disposition is never touched.
+*/
+private ptrdiff_t writeWithoutSigpipe(int fd, const(void)* bytes, size_t length)
+    nothrow @nogc
+{
+    import core.sys.posix.signal : SIG_BLOCK, SIG_SETMASK, SIGPIPE,
+        pthread_sigmask, sigaddset, sigemptyset, sigismember, sigpending,
+        sigset_t, sigtimedwait, timespec;
+
+    sigset_t pipeOnly, previous, pending;
+    sigemptyset(&pipeOnly);
+    sigaddset(&pipeOnly, SIGPIPE);
+    pthread_sigmask(SIG_BLOCK, &pipeOnly, &previous);
+    // A SIGPIPE already pending belongs to someone else; leave it.
+    sigpending(&pending);
+    const alreadyPending = sigismember(&pending, SIGPIPE) == 1;
+    const n = write(fd, bytes, length);
+    const failure = errno;
+    if (n < 0 && failure == EPIPE && !alreadyPending)
+    {
+        timespec now;
+        sigtimedwait(&pipeOnly, null, &now);
+    }
+    pthread_sigmask(SIG_SETMASK, &previous, null);
+    errno = failure;
+    return n;
 }

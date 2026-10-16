@@ -101,4 +101,6 @@ cat "$work/smoke.log" 2>/dev/null || true
 test "$lane_status" -eq 0
 grep -q '^ok: Wayland WSI conformance (14 checked, 7 skipped)' "$work/smoke.log"
 grep -q '^ok: Wayland pointer confinement accepted and released' "$work/smoke.log"
+grep -q '^ok: Wayland clipboard conformance (4 checked, 32 MiB' "$work/smoke.log"
+grep -q "^ok: Wayland reads another client's clipboard" "$work/smoke.log"
 echo ">> sparkles:wsi Wayland keyboard verified through Weston."
