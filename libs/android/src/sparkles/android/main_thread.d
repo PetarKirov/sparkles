@@ -41,9 +41,11 @@ private extern (C) nothrow @nogc
 private enum int looperPollCallback = -2; // ALOOPER_POLL_CALLBACK
 private enum int looperEventInput = 1; // ALOOPER_EVENT_INPUT
 
-/// native_app_glue's entry point, which this module's runs first.
-private extern (C) void ANativeActivity_onCreate(void* activity, void* savedState,
-    size_t savedStateSize) nothrow @nogc;
+/// native_app_glue's entry point, which this module's runs first. Weak: an app
+/// whose activity the `sparkles:wsi` backend owns links no glue, and calls
+/// $(LREF wireMainThread) from its own entry instead.
+pragma(LDC_extern_weak) private extern (C) void ANativeActivity_onCreate(
+    void* activity, void* savedState, size_t savedStateSize) nothrow @nogc;
 
 /// A job for the main thread: `env` is its `JNIEnv*`, inside a local frame.
 alias MainThreadJob = void function(JNIEnv* env, void* context) nothrow @nogc;
@@ -71,9 +73,22 @@ calls and `__gshared` stores only.
 export extern (C) void sparkles_onCreate(void* activity, void* savedState,
     size_t savedStateSize) nothrow @nogc
 {
-    import core.sys.posix.fcntl : O_CLOEXEC, O_NONBLOCK;
-    import sparkles.android.activity : ANativeActivity;
+    wireMainThread(activity);
+    if (&ANativeActivity_onCreate !is null)
+        ANativeActivity_onCreate(activity, savedState, savedStateSize);
+}
 
+/**
+Records `activity` and wires the main thread's looper, so
+$(LREF postToMainThread) and every JNI bridge work. Any entry point that owns
+the activity calls it first, on the main thread, before druntime starts.
+*/
+void wireMainThread(void* activity) nothrow @nogc
+{
+    import core.sys.posix.fcntl : O_CLOEXEC, O_NONBLOCK;
+    import sparkles.android.activity : ANativeActivity, setNativeActivity;
+
+    setNativeActivity(cast(ANativeActivity*) activity);
     int[2] fds;
     if (pipe2(fds, O_CLOEXEC | O_NONBLOCK) == 0)
     {
@@ -89,7 +104,6 @@ export extern (C) void sparkles_onCreate(void* activity, void* savedState,
             wakeWrite = fds[1];
         }
     }
-    ANativeActivity_onCreate(activity, savedState, savedStateSize);
 }
 
 private extern (C) int pipe2(ref int[2] fds, int flags) nothrow @nogc;
