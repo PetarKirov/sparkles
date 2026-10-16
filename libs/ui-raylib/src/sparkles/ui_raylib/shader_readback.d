@@ -113,6 +113,16 @@ private immutable Probe[] probes = [
     Probe("probeLuma", (a) => [luma(v3(a[0], a[1], a[2])), 0.0f, 0.0f, 1.0f],
         [Bound.ulps8, Bound.unused, Bound.unused, Bound.unused],
         (i, n) => [lerp(0, 1, i, n), lerp(1, 0, (i * 3) % n, n), lerp(0, 1, (i * 7) % n, n), 1.0f]),
+    // The per-component forms with vector and widened scalar arguments.
+    Probe("probeVectorForms", (a) => [
+            step(0.5f, a[1]) + step(0.0f, a[3]),
+            smoothstep(-2.0f, 2.0f, a[3]),
+            mix(a[1], a[3], 0.75f),
+            clamp(a[0], -1.0f, 1.0f) + min(a[3], 0.5f) + mod(a[1], 1.5f) + smoothstep(-1.0f, 1.0f, a[2])],
+        [Bound.exact, Bound.ulps8, Bound.ulps8, Bound.ulps8],
+        // the mod argument stays a quarter away from a multiple of 1.5
+        (i, n) => [lerp(-2, 2, i, n), (cast(int) (i % 3) - 1 + 0.25f + 0.5f * ((i * 7) % n) / n) * 1.5f,
+            lerp(-2, 2, (i * 11) % n, n), lerp(-1, 1, (i * 3) % n, n)]),
     // count + bias = 4; gain 2.5; tint (0.25, 0.5, 0.75)
     Probe("probeUniforms", (a) => [a[0] * 2.5f + 4.0f, a[1] * 0.5f, 0.75f, 1.0f],
         [Bound.ulps8, Bound.exact, Bound.exact, Bound.unused],

@@ -21,7 +21,8 @@ vec3 phosphor(in vec2 at, in vec2 extent, in vec3 color) @safe pure nothrow @nog
 ```
 
 - **Types** — `vec2`, `vec3`, `vec4`: component-wise `+ - * /` against a vector
-  or a scalar, unary `-`, `.array` for the components. Under LDC the
+  or a scalar, unary `-`, `.array` for the components, and `allEqual(a, b)`
+  for equality (D's `==` on a `__vector` is a mask, so it is not used). Under LDC the
   power-of-two sizes are the compiler's own `__vector`s; `vec3`, and every size
   under DMD, is a struct with the same surface. Every representation has the
   GPU's size and alignment (`vec3` is 16 bytes, padding included), so a struct
@@ -33,9 +34,10 @@ vec3 phosphor(in vec2 at, in vec2 extent, in vec3 color) @safe pure nothrow @nog
   device module may not spell an array literal, so these are functions.
 - **Components** — `p.x`, `p.y`, `c.z`, `c.w`, `c.xy`, `c.xyz` (alias `rgb`),
   by UFCS, so they work on both representations.
-- **Built-ins** — `floor`, `abs`, `min`, `max`, `sqrt`, `sin`, `cos`, `pow`,
-  `mod`, `fract`, `clamp`, `mix`, `step`, `smoothstep`, `dot`, `length`, and
-  `luma` (Rec. 601). GLSL's semantics on both sides: `mod` follows the divisor's
+- **Built-ins** — `floor`, `abs`, `min`, `max`, `sqrt`, `sin`, `cos`, `exp`,
+  `pow`, `mod`, `fract`, `clamp`, `mix`, `step`, `smoothstep`, `dot`, `length`,
+  and `luma` (Rec. 601), per component on vectors, with GLSL's widening of a
+  scalar argument (`clamp(v, 0.0f, 1.0f)`, `step(0.5f, v)`). GLSL's semantics on both sides: `mod` follows the divisor's
   sign, and the compound ones are the specification's formulas.
 
 ## Device compilation is opt-in

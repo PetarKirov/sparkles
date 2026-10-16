@@ -137,8 +137,14 @@ types and instructions on the device.
 **SHV1: Vector types.** The library **must** provide `vec2`, `vec3` and
 `vec4`, vectors of two, three and four `float` components, with
 component-wise `+`, `-`, `*` and `/` between two vectors of the same length
-and between a vector and a `float` on either side, unary `-`, equality, and
-`.array` for the components as a static array.
+and between a vector and a `float` on either side, unary `-`, and `.array`
+for the components as a static array. Equality of two vectors **must** be
+`allEqual(a, b)`, one `bool` that is true when every component is equal,
+GLSL's `all(equal(a, b))`; `==` on two vectors is outside the vocabulary.
+
+_Rationale:_ D's `==` on a `__vector` is a mask, one lane per component, and
+on a struct a `bool`, so the same expression would mean different things
+under LDC and DMD. GLSL's `==` on vectors is the single `bool`.
 
 **SHV2: Representation.** Under LDC, `vec2` and `vec4` **must** be the
 compiler's `__vector` types. In a device compilation `vec3` **must** be
@@ -176,10 +182,15 @@ three of a `vec4`. They are free functions reached by D's uniform function
 call syntax, so `c.xyz` works on both representations.
 
 **SHV5: Built-in functions.** The library **must** provide `floor`, `abs`,
-`min`, `max`, `sqrt`, `sin`, `cos`, `pow`, `mod`, `fract`, `clamp`, `mix`,
-`step`, `smoothstep`, `dot` and `length` with the names and meanings of the
+`min`, `max`, `sqrt`, `sin`, `cos`, `exp`, `pow`, `mod`, `fract`, `clamp`,
+`mix`, `step`, `smoothstep`, `dot` and `length` with the names and meanings
+of the
 [GLSL 4.60 specification §8](https://registry.khronos.org/OpenGL/specs/gl/GLSLangSpec.4.60.html#built-in-functions),
-for `float` and, where GLSL defines them per component, for each vector type.
+for `float` and, where GLSL defines them per component, for each vector type,
+including GLSL's forms that widen a `float` argument to every component:
+`min`, `max` and `mod` with a `float` second argument, `clamp` with `float`
+bounds, `step` and `smoothstep` with `float` edges, and `mix` with a vector
+or a `float` weight.
 It **must** also provide `luma(vec3)`, the Rec. 601 luma
 `dot(c, v3(0.299, 0.587, 0.114))`.
 
@@ -248,10 +259,14 @@ protect.
 
 **SHM5: Lexical detection.** Whether a module is a device module **must** be
 decidable from the attributes before its `module` keyword alone, without
-semantic analysis. `@compute` is recognised under any qualified name ending
-in `compute`. `hostAndDevice` counts only inside `@compute`'s own
-parentheses, and comments, string literals and other attributes are skipped.
-A file without a module declaration is host code.
+semantic analysis. `@compute` is recognised under any qualified name whose
+last component is `compute`. Its argument, if any, **must** be
+`CompileFor.deviceOnly` or `CompileFor.hostAndDevice`, optionally qualified;
+any other spelling (a cast, arithmetic on the enum) is unsupported, and the
+classification of a module that uses one is unspecified. `hostAndDevice`
+counts only inside `@compute`'s own parentheses, and comments, string
+literals and other attributes are skipped. A UTF-8 byte-order mark before the
+declaration is skipped. A file without a module declaration is host code.
 
 _Rationale:_ The build step (`SHP3`) and editors must classify modules
 before, and without, compiling them.
