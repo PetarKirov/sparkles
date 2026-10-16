@@ -477,6 +477,12 @@ there would need a Java `ContentProvider`, which an application without Java
 code cannot declare, so an Android offer is built whole on the Java heap. The
 backend still keeps no copy of its own.
 
+Win32 delayed rendering and an AppKit pasteboard promise also take the value
+whole: the provider fills the clipboard's `HGLOBAL` or the pasteboard's `NSData`
+inside `WM_RENDERFORMAT` or the promise callback, the one place either platform
+allows. That memory is the requester's side under `DT4`, and `DT3` lets the provider run
+inside the native callback there.
+
 **DT1: Offers are named, not carried.** A clipboard offer, or a drag entering a
 window, **must** be reported by one `DataOfferEvent` per MIME type, each holding
 the offer's `OfferId` and a MIME type of at most `maxMimeType` bytes. No event
@@ -503,7 +509,10 @@ rope, or the document itself, so WSI never decides where tens of MiB live.
 provider)` announces data the application can produce and returns an `OfferId`.
 When a client requests a type, the backend **must** call
 `provider.fill(mimeType, offset, buffer)` repeatedly, writing each filled
-chunk to the platform's channel without blocking, until `fill` returns 0. The
+chunk to the platform's channel without blocking, until `fill` returns 0. Where
+the platform takes the value whole inside a native callback (Win32
+`WM_RENDERFORMAT`, an AppKit pasteboard promise), the backend **may** call `fill`
+there until it returns 0, filling the platform's own block. The
 provider **must** stay alive until its offer ends. WSI **must not** keep a copy
 of a provider's data. A whole-value overload, `offerClipboard(window, mimeType,
 value)`, copies `value` once and keeps that copy until the offer ends; it is for
