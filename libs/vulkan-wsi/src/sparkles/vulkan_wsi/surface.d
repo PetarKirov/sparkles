@@ -33,7 +33,9 @@ VulkanWsiResult!NativeSurfacePlan planNativeSurface(in NativeHandles handles)
                 (in WaylandWindowHandle window) {
                     if (display.display is null || window.surface is null)
                         return invalidPlan(BackendKind.wayland, "null Wayland handle");
-                    version (linux)
+                    version (Android)
+                        return unsupportedPlan(BackendKind.wayland);
+                    else version (linux)
                         return vulkanWsiOk(NativeSurfacePlan(
                             BackendKind.wayland, cstr!khrWaylandSurface));
                     else
@@ -46,7 +48,9 @@ VulkanWsiResult!NativeSurfacePlan planNativeSurface(in NativeHandles handles)
                 (in X11WindowHandle window) {
                     if (display.connection is null || window.window == 0)
                         return invalidPlan(BackendKind.x11, "null XCB handle");
-                    version (linux)
+                    version (Android)
+                        return unsupportedPlan(BackendKind.x11);
+                    else version (linux)
                         return vulkanWsiOk(NativeSurfacePlan(
                             BackendKind.x11, cstr!khrXcbSurface));
                     else
@@ -77,14 +81,16 @@ VulkanWsiResult!NativeSurfacePlan planNativeSurface(in NativeHandles handles)
                 },
                 _ => mismatchPlan(BackendKind.appkit));
         },
-        // `VK_KHR_android_surface` is milestone MA's renderer slice; until
-        // then an Android window is reported, never silently mis-planned.
         (in AndroidDisplayHandle display) {
             return handles.window.match!(
                 (in AndroidWindowHandle window) {
                     if (display.activity is null || window.nativeWindow is null)
                         return invalidPlan(BackendKind.android, "null Android handle");
-                    return unsupportedPlan(BackendKind.android);
+                    version (Android)
+                        return vulkanWsiOk(NativeSurfacePlan(
+                            BackendKind.android, cstr!khrAndroidSurface));
+                    else
+                        return unsupportedPlan(BackendKind.android);
                 },
                 _ => mismatchPlan(BackendKind.android));
         });
@@ -103,7 +109,9 @@ VulkanWsiResult!VkSurfaceKHR createNativeSurface(
     final switch (planned.value.backend)
     {
         case BackendKind.wayland:
-            version (linux)
+            version (Android)
+                return unsupportedCreate!VkSurfaceKHR(BackendKind.wayland);
+            else version (linux)
             {
                 if (!instance.has!khrWaylandSurface)
                     return missingDispatch!VkSurfaceKHR(BackendKind.wayland);
@@ -123,7 +131,9 @@ VulkanWsiResult!VkSurfaceKHR createNativeSurface(
             break;
 
         case BackendKind.x11:
-            version (linux)
+            version (Android)
+                return unsupportedCreate!VkSurfaceKHR(BackendKind.x11);
+            else version (linux)
             {
                 if (!instance.has!khrXcbSurface)
                     return missingDispatch!VkSurfaceKHR(BackendKind.x11);
@@ -166,7 +176,21 @@ VulkanWsiResult!VkSurfaceKHR createNativeSurface(
             return unsupportedCreate!VkSurfaceKHR(BackendKind.appkit);
 
         case BackendKind.android:
-            return unsupportedCreate!VkSurfaceKHR(BackendKind.android);
+            version (Android)
+            {
+                if (!instance.has!khrAndroidSurface)
+                    return missingDispatch!VkSurfaceKHR(BackendKind.android);
+                auto window = handles.window.match!(
+                    (in AndroidWindowHandle h) => h.nativeWindow, _ => null);
+                auto info = vkInfo(VkAndroidSurfaceCreateInfoKHR(
+                    window: cast(ANativeWindow*) window,
+                ));
+                result = instance.createAndroidSurfaceKHR(
+                    instance.instance, &info, null, &surface);
+            }
+            else
+                return unsupportedCreate!VkSurfaceKHR(BackendKind.android);
+            break;
     }
 
     if (result < 0)
@@ -211,7 +235,9 @@ private VulkanWsiResult!T unsupportedCreate(T)(BackendKind backend)
     handles.display = DisplayHandle(WaylandDisplayHandle(cast(void*) 1));
     handles.window = WindowHandle(WaylandWindowHandle(cast(void*) 2));
     auto wayland = planNativeSurface(handles);
-    version (linux)
+    version (Android)
+        assert(wayland.hasError);
+    else version (linux)
     {
         assert(wayland.hasValue);
         assert(wayland.value.backend == BackendKind.wayland);
@@ -229,4 +255,13 @@ private VulkanWsiResult!T unsupportedCreate(T)(BackendKind backend)
     auto missing = planNativeSurface(handles);
     assert(missing.hasError);
     assert(missing.error.kind == VulkanWsiErrorKind.mismatchedHandles);
+
+    // An Android pair plans `VK_KHR_android_surface` on Android only.
+    handles.display = DisplayHandle(AndroidDisplayHandle(cast(void*) 1));
+    handles.window = WindowHandle(AndroidWindowHandle(cast(void*) 2));
+    auto android = planNativeSurface(handles);
+    version (Android)
+        assert(android.hasValue && android.value.platformExtension[] == khrAndroidSurface);
+    else
+        assert(android.hasError && android.error.kind == VulkanWsiErrorKind.unsupported);
 }
