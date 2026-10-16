@@ -9,7 +9,8 @@ precisely the inputs the host does, and writes its results to a float render
 target. The host evaluates the same `sparkles.shaders` functions on the same
 inputs, and each result must agree within the bound
 [`decisions.md`](../../../../../../docs/specs/shaders/decisions.md) `D12` sets
-for that operation.
+for that operation. Both dialects the step writes are read back, GLSL 3.30
+and GLSL ES 1.00.
 
 Test-only. It needs a GL context (a display — a virtual one in CI) and the
 device toolchain, and skips without either.
@@ -165,6 +166,29 @@ private bool agrees(Bound b, float device, float host, float x, float scale = 1)
     assert(!agrees(Bound.exp, 100.0f + 24 * ulp(100.0f), 100.0f, 10));
 }
 
+/// The two dialects the build step writes, each read back on the same
+/// driver. GLSL links only shaders of one dialect, so the GLSL ES 1.00 output
+/// is paired with a GLSL ES vertex stage that hands it `fragTexCoord` under
+/// raylib's attribute names; the GLSL 3.30 output takes raylib's own.
+private struct Dialect
+{
+    string suffix;
+    string vertex;
+
+    enum desktop = Dialect(".frag", null);
+    enum es = Dialect(".es.frag", q{#version 100
+        attribute vec3 vertexPosition;
+        attribute vec2 vertexTexCoord;
+        uniform mat4 mvp;
+        varying highp vec2 fragTexCoord;
+        void main()
+        {
+            fragTexCoord = vertexTexCoord;
+            gl_Position = mvp * vec4(vertexPosition, 1.0);
+        }
+    });
+}
+
 /// Compiles the probe package (`tests/shader-readback/`) with `shader-compile`,
 /// in place; the directory holding `<entry>.frag`.
 private string compileProbes(string root)
@@ -211,6 +235,7 @@ private string compileProbes(string root)
 
     string[] failures;
     size_t checked;
+    foreach (dialect; [Dialect.desktop, Dialect.es])
     foreach (ref p; probes)
     {
         float[samples * 4] input;
@@ -218,10 +243,11 @@ private string compileProbes(string root)
             input[i * 4 .. i * 4 + 4] = p.input(i, samples);
         const inTex = rlLoadTexture(input.ptr, cast(int) samples, 1, fmt, 1);
         scope (exit) rlUnloadTexture(inTex);
-        const source = glsl.buildPath(p.entry ~ ".frag").readText;
+        const source = glsl.buildPath(p.entry ~ dialect.suffix).readText;
         const z = source.toTempStringz;
-        auto shader = LoadShaderFromMemory(null, z.ptr);
-        assert(IsShaderValid(shader), p.entry ~ ": the generated shader did not link");
+        const vz = dialect.vertex.toTempStringz;
+        auto shader = LoadShaderFromMemory(dialect.vertex is null ? null : vz.ptr, z.ptr);
+        assert(IsShaderValid(shader), p.entry ~ dialect.suffix ~ ": the generated shader did not link");
         scope (exit) UnloadShader(shader);
         if (p.uniforms !is null)
             p.uniforms(shader);
@@ -256,8 +282,8 @@ private string compileProbes(string root)
                     continue;
                 ++checked;
                 if (!agrees(p.bounds[c], got, want[c], a[1], scale) && failures.length < 20)
-                    failures ~= format("%s[%s].%s: device %.9g host %.9g (args %s, bound %s)",
-                        p.entry, i, "xyzw"[c], got, want[c], a, p.bounds[c]);
+                    failures ~= format("%s%s[%s].%s: device %.9g host %.9g (args %s, bound %s)",
+                        p.entry, dialect.suffix, i, "xyzw"[c], got, want[c], a, p.bounds[c]);
             }
         }
     }

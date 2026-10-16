@@ -250,7 +250,7 @@ closes Stage 0. Each awaits the owner's acceptance (see
 
 Outside the findings, `SHP6` gained its negative case
 (`shaderCompile.cli.aRejectedTranslationWritesNothing`), and the read-back
-of the GLSL ES output (`SHV7`, `SHF4`) stays open in M3.
+of the GLSL ES output (`SHV7`, `SHF4`) followed in M3.
 
 ## Acceptance
 

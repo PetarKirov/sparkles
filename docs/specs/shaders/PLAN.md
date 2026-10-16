@@ -132,7 +132,8 @@ wrong uniform name, a tolerance violated on purpose.
   status; the rows this milestone moved are `SHV2`, `SHV5`, `SHF1`–`SHF7`,
   `SHP1`, `SHP4`, `SHP6`, `SHP8`–`SHP10`, `SHB7` and `SHT3`.
 - The readback ran on the CI runner's software rasterizer and agreed
-  (`SHV7`, `SHF4` for the GLSL 3.30 output).
+  (`SHV7`, `SHF4`), for the GLSL 3.30 output and, linked with a GLSL ES vertex
+  stage in the same desktop context, for the GLSL ES 1.00 output.
 - Each new test was shown to fail on a broken input: a disabled interface
   check, stale files kept, a wrong host function, bounds tightened to zero,
   and an unrecognised stock compiler. That last case was a real bug, and it
@@ -142,8 +143,8 @@ wrong uniform name, a tolerance violated on purpose.
   host binds them (`D13`). The tolerances are `D12`, which resolves open
   question Q3.
 - `SHP6` has its negative case; the ES output's precision is `D15`.
-- Remaining: `SHV7` and `SHF4` for the GLSL ES output, which needs an OpenGL
-  ES context in the readback.
+- Remaining: the `partial` rows of the ledger this milestone lists (`SHP10`,
+  `SHT3`).
 
 ## M4: Multi-pass effects in single-source D
 

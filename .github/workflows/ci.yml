@@ -189,7 +189,8 @@ jobs:
 
       # sparkles:shaders' agreement evidence (SHV7, SHF4): a probe unit compiled
       # by shader-compile runs on Mesa's software rasterizer under Xvfb, and its
-      # results are read back against the host's. The runner is not NixOS, so
+      # results are read back against the host's, for the GLSL 3.30 and the
+      # GLSL ES 1.00 output alike. The runner is not NixOS, so
       # the Nix-built raylib is pointed at the flake's Mesa explicitly. Opted
       # into, the test fails rather than skips when it cannot run.
       - name: Read back generated shaders on a GL driver

@@ -244,9 +244,9 @@ operation, with a multiply and an add allowed to fuse into one rounding on
 either side, and `/` is within 2.5 ULP for divisors in [2⁻¹²⁶, 2¹²⁶]; any
 operation may flush a denormal operand or result to zero. The GLSL ES 1.00
 output, which qualifies every variable `highp` (`D15`), is held to the same
-bounds; it is not yet read back, so its agreement is unverified. GLSL leaves the result
-undefined for `sqrt` of a negative number, `pow` with a negative base or with
-a zero base and a non-positive exponent, `mod` by zero, `smoothstep` with
+bounds. GLSL leaves the result undefined for `sqrt` of a negative number,
+`pow` with a negative base or with a zero base and a non-positive exponent,
+`mod` by zero, `smoothstep` with
 `e0 >= e1`, and `clamp` with `lo > hi`; on those inputs nothing is required.
 
 **SHV8: Inert stand-ins.** Outside a device compilation, the shader
