@@ -226,8 +226,8 @@ in
 
       /**
         The terminal APK. Every argument but `session` is packaging; `session`
-        is the `session.conf` the app reads at start (`mode = "shell"` or
-        `"bootstrap"`, with `bootstrapUrl`).
+        is the `session.conf` the app reads at start (`mode = "shell"`,
+        `"bootstrap"`, or experimental `"bootstrap-shell"`, with `bootstrapUrl`).
       */
       legacyPackages.mkTerminalApk =
         {
@@ -243,12 +243,28 @@ in
           # tens of megabytes, so a published APK usually bundles none and a
           # self-built one only its device's.
           bootstraps ? { },
+          # Extra APK-shipped executables/loaders, using Android's native-library
+          # naming convention: { "arm64-v8a" = { "libproot.so" = <path>; }; }.
+          # These must not replace the terminal or its bundled parsers.
+          extraNativeLibs ? { },
           versionName ? null,
           versionCode ? null,
           debug ? true,
           sign ? true,
+          # 28 keeps app-data files executable (NOD3); a higher value is for
+          # measuring the target-SDK exec restriction (android-dev-env E1).
+          targetSdk ? 28,
         }:
         let
+          baseLibs = apkLibs libterminalStamped;
+          validExtras = lib.all (
+            abi:
+            builtins.hasAttr abi baseLibs
+            && lib.all (
+              name:
+              builtins.match "lib[A-Za-z0-9_.+-]+\\.so" name != null && !(builtins.hasAttr name baseLibs.${abi})
+            ) (builtins.attrNames extraNativeLibs.${abi})
+          ) (builtins.attrNames extraNativeLibs);
           manifest = pkgs.replaceVars ../../../apps/terminal/android/AndroidManifest.xml {
             inherit label;
           };
@@ -257,6 +273,8 @@ in
             source = iconSvg;
           };
         in
+        assert lib.assertMsg validExtras
+          "mkTerminalApk: extraNativeLibs needs supported ABIs and non-conflicting lib*.so names";
         (config.legacyPackages.buildAndroidApk (
           {
             inherit
@@ -269,9 +287,9 @@ in
             resDir = "${icon}/res";
             # The patched libraries carry the build-info section (`TPG2`).
             # Debug and release share the one unstamped `.so`.
-            libs = apkLibs libterminalStamped;
+            libs = lib.mapAttrs (abi: libs: libs // (extraNativeLibs.${abi} or { })) baseLibs;
             assetsDir = mkAssets session bootstraps;
-            targetSdk = 28;
+            inherit targetSdk;
             description = "${label} — sparkles:terminal (Android NativeActivity APK)";
           }
           // lib.optionalAttrs (versionName != null) { inherit versionName; }
