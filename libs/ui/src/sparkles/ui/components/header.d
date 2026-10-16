@@ -40,13 +40,12 @@ struct HeaderProps
     size_t titlePadding = 1; // spaces around title in divider
 }
 
-/// Draw a section header.
+/// Draw a section header into `w` (no trailing newline). Without a writer,
+/// `drawHeader(title, props)` is the header as a value.
 ///
 /// Params:
 ///   title = The header title text
 ///   props = Rendering options
-/// Returns:
-///   Formatted header string
 ///
 /// Examples:
 /// ---
@@ -57,34 +56,40 @@ struct HeaderProps
 /// // Banner style
 /// "Main Title".drawHeader(HeaderProps(style: HeaderStyle.banner, width: 40)).writeln;
 /// ---
-string drawHeader(string title, HeaderProps props = HeaderProps.init)
+void drawHeader(W)(ref W w, string title, HeaderProps props = HeaderProps.init)
+if (imported!"std.range.primitives".isOutputRange!(W, char))
 {
+    import std.range.primitives : put;
+
     final switch (props.style)
     {
-        case HeaderStyle.divider: return drawDivider(title, props);
-        case HeaderStyle.banner: return drawBanner(title, props);
+        case HeaderStyle.divider: return put(w, drawDivider(title, props));
+        case HeaderStyle.banner: return put(w, drawBanner(title, props));
     }
 }
+
+/// ditto
+mixin(imported!"sparkles.base.text.value_form".valueForm!"drawHeader");
 
 /// Default divider style
 @("header.drawHeader.defaultDivider")
 unittest
 {
-    assert("Title".drawHeader == "── Title ──");
+    assert("Title".drawHeader.toString == "── Title ──");
 }
 
 /// Custom line character
 @("header.drawHeader.customLineChar")
 unittest
 {
-    assert("Test".drawHeader(HeaderProps(lineChar: '═')) == "══ Test ══");
+    assert("Test".drawHeader(HeaderProps(lineChar: '═')).toString == "══ Test ══");
 }
 
 /// Banner style with fixed width
 @("header.drawHeader.bannerStyle")
 unittest
 {
-    const result = "Demo".drawHeader(HeaderProps(style: HeaderStyle.banner, width: 20));
+    const result = "Demo".drawHeader(HeaderProps(style: HeaderStyle.banner, width: 20)).toString;
     assert(result == "════════════════════\n        Demo        \n════════════════════");
 }
 
@@ -92,7 +97,7 @@ unittest
 @("header.drawHeader.fixedWidth")
 unittest
 {
-    const result = "X".drawHeader(HeaderProps(width: 11));
+    const result = "X".drawHeader(HeaderProps(width: 11)).toString;
     assert(result == "──── X ────");
 }
 
@@ -106,7 +111,7 @@ unittest
     import std.string : splitLines;
 
     const title = "a-very-long-title-that-exceeds-the-requested-banner-width";
-    const result = title.drawHeader(HeaderProps(style: HeaderStyle.banner, width: 20));
+    const result = title.drawHeader(HeaderProps(style: HeaderStyle.banner, width: 20)).toString;
     const lines = result.splitLines;
     assert(lines.length >= 4); // top rule + >=2 wrapped title rows + bottom rule
     foreach (line; lines)
@@ -120,7 +125,7 @@ unittest
     import std.string : splitLines;
 
     const title = "a-very-long-title-that-exceeds-the-requested-divider-width";
-    const result = title.drawHeader(HeaderProps(width: 10));
+    const result = title.drawHeader(HeaderProps(width: 10)).toString;
     foreach (line; result.splitLines)
         assert(line.visibleWidth == 10);
 }
@@ -134,7 +139,7 @@ unittest
     import std.algorithm.searching : canFind;
 
     const title = "alpha beta gamma delta epsilon zeta";
-    const result = title.drawHeader(HeaderProps(style: HeaderStyle.banner, width: 20));
+    const result = title.drawHeader(HeaderProps(style: HeaderStyle.banner, width: 20)).toString;
     const lines = result.splitLines;
     assert(lines.length >= 4); // top rule + >=2 title rows + bottom rule
     foreach (line; lines)
@@ -149,7 +154,7 @@ unittest
     import std.string : splitLines;
 
     const title = "alpha beta gamma delta epsilon zeta";
-    const result = title.drawHeader(HeaderProps(width: 20));
+    const result = title.drawHeader(HeaderProps(width: 20)).toString;
     const lines = result.splitLines;
     assert(lines.length >= 2);
     foreach (line; lines)

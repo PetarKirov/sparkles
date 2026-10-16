@@ -31,3 +31,26 @@ enum string valueForm(string writer, string name = writer) =
     ~ "if (!(Args.length && imported!\"std.range.primitives\".isOutputRange!(Args[0], char)\n"
     ~ "    && !is(Args[0] : const(char)[])))\n"
     ~ "    => imported!\"sparkles.base.text.writers\".formatted!(" ~ writer ~ ")(args);\n";
+
+/**
+Whether `T` writes itself: it has a `toString(Writer)` taking a sink, as every
+value form does (and `prettyPrint(x)`). A component that takes text can take
+such a value too, rendering it where it would read the text.
+*/
+enum bool isWritableValue(T) = is(T == struct) && __traits(compiles, (const T t) {
+    scope void delegate(const(char)[]) @safe sink;
+    t.toString(sink);
+});
+
+///
+@("valueForm.isWritableValue")
+@safe pure nothrow @nogc
+unittest
+{
+    static struct Text
+    {
+        void toString(W)(ref W w) const { w("x"); }
+    }
+    static assert(isWritableValue!Text);
+    static assert(!isWritableValue!string && !isWritableValue!int);
+}
