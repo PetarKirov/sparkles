@@ -1,25 +1,31 @@
 # Source ledger and reproducibility
 
-**Last reviewed:** September 30, 2026.
+**Last reviewed:** October 16, 2026.
 
 ## Revision ledger
 
-| Source                          | Inspected revision                         | Provenance / scope                                                                                     |
-| ------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| Sparkles sibling implementation | `24f3e533987f6e48f260fce0b6fa3870dcb19634` | Clean tracked tree; unpublished local revision, relevant exact files copied below                      |
-| nix-on-droid local fork         | `ae506ea303c49d1866e92632d68b9a5bb7ce6d1a` | Unpublished app-ID/module changes; unrelated untracked screenshots excluded                            |
-| nix-on-droid published baseline | `55b6449b4582a4ba3ce712543c973360a026db7d` | Published upstream commit, used for original scope/README                                              |
-| nix-on-droid-app                | `e87b6091bffa7b6eafb1b59cc7824f5692441cd0` | Local upstream clone; installer/service source inspected                                               |
-| NNS                             | `28d2229a664cbe29e55a051d648a789b6511f735` | Clean published source; launcher/kernel/bridge/tests inspected, custom VM harness not run              |
-| Contributor collector handoff   | `1fa8d36707330435fd6e7ca8e34deec1229fe542` | Command set matches Pixel logs; executable revision is not embedded in the report                      |
-| AOSP Virtualization main        | `175a51b30123fa6b02b541f1969665708f7ec2c3` | Framework, native demo, permission, pvmfw/Microdroid source; main is not universally shipping firmware |
-| AOSP Android 16 release         | `46351de83cd509bc9a9fee8fc99b07fcc0cdd0bd` | `android-16.0.0_r3` resolved to commit; custom image class checked in release tree                     |
-| nixos-avf                       | `d0a62c3f64b45a39570fde31a3a490b214bf19ee` | Guest and image construction; default owner is Android Terminal                                        |
-| Podroid                         | `ce0121896b2895637ab1f656cbb0d75fa2874489` | Independent managed app engine; private API use examined                                               |
-| Gunyah device guide             | `61ac570c2d467274d1d7d73605dcc685af6945b8` | Rooted Lenovo demonstration, protected variant and networking                                          |
-| DroidVM                         | `5c896915789294e3dbb9af81d6a53ee5f436887b` | Current backend and device registry, not locally run                                                   |
-| Termux PRoot                    | `ab2e3464d04483b98a0614b470f3f8950d5a6468` | Exact PRoot revision pinned by inspected nix-on-droid expression                                       |
-| Nix upstream                    | `1ed54a0fd62da96d4f5e9c806555861e46f65341` | Local chroot-store documentation and `run.cc` equal upstream files at this revision                    |
+| Source                            | Inspected revision                         | Provenance / scope                                                                                                      |
+| --------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Sparkles sibling implementation   | `24f3e533987f6e48f260fce0b6fa3870dcb19634` | Clean tracked tree; unpublished local revision, relevant exact files copied below                                       |
+| nix-on-droid local fork           | `ae506ea303c49d1866e92632d68b9a5bb7ce6d1a` | Unpublished app-ID/module changes; unrelated untracked screenshots excluded                                             |
+| nix-on-droid published baseline   | `55b6449b4582a4ba3ce712543c973360a026db7d` | Published upstream commit, used for original scope/README                                                               |
+| nix-on-droid-app                  | `e87b6091bffa7b6eafb1b59cc7824f5692441cd0` | Local upstream clone; installer/service source inspected                                                                |
+| NNS                               | `28d2229a664cbe29e55a051d648a789b6511f735` | Clean published source; launcher/kernel/bridge/tests inspected, custom VM harness not run                               |
+| Contributor collector handoff     | `1fa8d36707330435fd6e7ca8e34deec1229fe542` | Command set matches Pixel logs; executable revision is not embedded in the report                                       |
+| AOSP Virtualization main          | `175a51b30123fa6b02b541f1969665708f7ec2c3` | Framework, native demo, permission, pvmfw/Microdroid source; main is not universally shipping firmware                  |
+| AOSP Android 16 release           | `46351de83cd509bc9a9fee8fc99b07fcc0cdd0bd` | `android-16.0.0_r3` resolved to commit; custom image class checked in release tree                                      |
+| nixos-avf                         | `d0a62c3f64b45a39570fde31a3a490b214bf19ee` | Guest and image construction; default owner is Android Terminal                                                         |
+| Podroid                           | `ce0121896b2895637ab1f656cbb0d75fa2874489` | Independent managed app engine; private API use examined                                                                |
+| Gunyah device guide               | `61ac570c2d467274d1d7d73605dcc685af6945b8` | Rooted Lenovo demonstration, protected variant and networking                                                           |
+| DroidVM                           | `5c896915789294e3dbb9af81d6a53ee5f436887b` | Current backend and device registry, not locally run                                                                    |
+| Termux PRoot                      | `ab2e3464d04483b98a0614b470f3f8950d5a6468` | Exact PRoot revision pinned by inspected nix-on-droid expression                                                        |
+| AOSP sepolicy `android17-release` | `e066568e98d86db31a9346d30977f3632fa7073c` | `app_neverallows.te`, `untrusted_app_all.te`, `app.te`, `seapp_contexts`, `untrusted_app_34.te`; public `main` is stale |
+| Termux Play `termux-apps`         | `cf69df7a8d2a4c496f5b2464d0365a63a58716c5` | App `googleplay.2026.10.09`; launcher, installer, manifest, build inspected                                             |
+| Termux Play `termux-exec`         | `47633d5df2db3dfea34cef568c6c82a7ba8dcc2e` | `exec`, `readlink`, `realpath` hooks; `static-loader` WIP branch `00a7c00c` read, not run                               |
+| Termux Play `termux-packages`     | `57401119f9988f79fa095398a9b33b03380222b3` | Diffed against upstream merge base `d68cd0cccd42e6fcf3463e2ad67b2fb85dd30eb3`; tag `bootstrap-2026.10.04-r1`            |
+| Termux Play `termux-tools`        | `3f0880a0b4d085d251c230c6d5fe3d248c9c615d` | Diffed against upstream merge base `3bd5ca4418238a040c7c327b9190b0f7f0d5f6fe`                                           |
+| Termux Play organization README   | `3094ae778e6ad87321229ab46c50893d04ffcb73` | Status, rationale and dated release notes; `termux-issues` (`c031e0db`) is a README plus issue templates                |
+| Nix upstream                      | `1ed54a0fd62da96d4f5e9c806555861e46f65341` | Local chroot-store documentation and `run.cc` equal upstream files at this revision                                     |
 
 External citations in the deep dives point at exact implementation paths. Official Android policy documentation is a living source, reviewed on the date above. The QEMU and Nix manuals provide adjacent concepts rather than tested Android implementations.
 
@@ -47,12 +53,13 @@ The source paths above are relative to the original checkout. All thirteen snaps
 
 ## Runnable evidence
 
-| Program                               | Demonstrates                                                   | CI / hardware boundary                                    |
-| ------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------- |
-| [ELF loader reader][elf-example]      | Real `PT_INTERP` parsing and loader paths                      | Ordinary Linux host                                       |
-| [Namespace probe][namespace-example]  | Actual namespace syscall and unchanged parent                  | Capability-dependent; skips on rejection                  |
-| [Device inventory][inventory-example] | Explicitly selected hardware inventory                         | No serial means no hardware contacted                     |
-| [App-domain probe][app-example]       | Real UID, SELinux/seccomp state, namespace and socket attempts | Linux CI plus Bionic Android cross-build and UI execution |
+| Program                               | Demonstrates                                                    | CI / hardware boundary                                    |
+| ------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------- |
+| [Exec-route model][route-example]     | `termux-exec`'s `linker64` rewrite and the file kinds it misses | Synthetic headers; identical output on any host           |
+| [ELF loader reader][elf-example]      | Real `PT_INTERP` parsing and loader paths                       | Ordinary Linux host                                       |
+| [Namespace probe][namespace-example]  | Actual namespace syscall and unchanged parent                   | Capability-dependent; skips on rejection                  |
+| [Device inventory][inventory-example] | Explicitly selected hardware inventory                          | No serial means no hardware contacted                     |
+| [App-domain probe][app-example]       | Real UID, SELinux/seccomp state, namespace and socket attempts  | Linux CI plus Bionic Android cross-build and UI execution |
 
 [Device validation][devices] records the commands, privilege context, failures, cleanup and limitations. Documentation CI is not presented as an Android integration test.
 
@@ -85,6 +92,7 @@ The installed NNS module reports `3.1.0`, `versionCode=4`, and matching public/m
 [bootstrap]: ./grounding/nix-on-droid/bootstrap.nix.txt
 [proot]: ./grounding/nix-on-droid/proot.nix.txt
 [elf-example]: ./concepts/examples/elf-loader.d
+[route-example]: ./termux-play-store/examples/exec-route.d
 [namespace-example]: ./concepts/examples/namespace-probe.d
 [inventory-example]: ./device-validation/examples/inventory.d
 [app-example]: ./device-validation/examples/app-probe.d

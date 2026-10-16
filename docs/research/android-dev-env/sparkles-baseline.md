@@ -1,6 +1,6 @@
 # Sparkles custom terminal baseline
 
-**Last reviewed:** September 30, 2026.
+**Last reviewed:** October 16, 2026.
 
 The implementation under investigation is `/home/petar/code/repos/mine/sparkles-nix-on-droid`, revision `24f3e533987f6e48f260fce0b6fa3870dcb19634`. It is a separate checkout from this documentation branch. Relevant exact sources are preserved in [the ledger][sources] because that local revision was not publicly resolvable when inspected.
 
@@ -24,6 +24,8 @@ The original sibling [Android specification snapshot][spec] contains earlier emu
 
 ## Gaps relevant to the research
 
+The target-API-28 manifest is what keeps `usr/bin/login` and `proot-static` executable from app data; it also excludes Google Play, whose target-API floor is far above 28. [Termux on Google Play][play] shows the move a current target forces: anything executed directly must ship as an APK native library, and the rest must be reached through a loader. For this app that means bundling `proot-static` and its loader, launching `login` through `/system/bin/sh`, and replacing the bootstrap's in-place PRoot upgrade.
+
 The current local session transport cannot launch a VM simply by substituting a host executable path. A VM needs an owner, image/configuration lifecycle, guest PTY/control service and failure/reconnect model. Background durability also needs a defined Android owner/helper lifecycle; partial wake locks alone do not provide it.
 
 The APK does not establish `MANAGE_VIRTUAL_MACHINE` / `USE_CUSTOM_VIRTUAL_MACHINE` access, hidden-API compatibility, guest image boot or no-DEX VM ownership. [AVF][avf] describes the JNI hypothesis and explicit helper alternative. Native NNS entry needs a provisioned external stack; neither stock Xiaomi device supplies its namespace requirements.
@@ -43,3 +45,4 @@ The APK does not establish `MANAGE_VIRTUAL_MACHINE` / `USE_CUSTOM_VIRTUAL_MACHIN
 [spec]: ./grounding/sparkles/android-spec.md.txt
 [devices]: ./device-validation/index.md
 [avf]: ./avf.md
+[play]: ./termux-play-store/index.md

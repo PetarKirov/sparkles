@@ -36,6 +36,8 @@ The distro and terminal front end are separable. Upstream ships a Termux-derived
 
 Stock sideloading is the strongest deployment story among these approaches. It still depends on Android executable-file policy: [Android 10][exec-policy] forbids executing writable app-home files for apps targeting API 29 or later. The current Sparkles app targets 28 while requiring API 29 at runtime; this distinction is material. A future current-target distribution needs a demonstrated execution design, not just a manifest target bump.
 
+[Termux's Google Play build][play] shows which design survives a current target. Its Bionic packages run through `/system/bin/linker64`, which cannot load glibc store paths; its PRoot path can. The Play app ships PRoot's static loader as `libproot-loader.so` in the APK's native-library directory, where `execve` remains allowed, and PRoot turns every tracee `execve` into an `execve` of that loader, which only `mmap`s the target and its glibc interpreter. [The pinned PRoot][loader-path] already reads `PROOT_LOADER` in its bundled build, so nix-on-droid's `proot-static` needs no source change. Three things in the [login wrapper][login] do: it executes `bin/proot-static` from the installation directory, `login` itself is a script in app data, and `.proot-static.new` upgrades move a binary into a non-executable location. A current-target build would ship `proot-static` and its loader in the APK, start `login` as an argument to `/system/bin/sh`, and tie PRoot upgrades to app releases. This is a source-inspected design, not a demonstrated session.
+
 ### Nix compatibility and services
 
 The logical canonical store permits Linux binary-cache reuse. The local module sets `sandbox = false`; [Nix configuration][nix-config] supplies trusted cache keys. Linux packages remain subject to Android's kernel and process policy. This is a nix-on-droid module system, not booted NixOS: systemd, mount-dependent services, containers and namespace-isolated builds must not be promised.
@@ -65,7 +67,7 @@ The app owns the PTY/process tree and must handle shutdown, child reaping and re
 ## Weaknesses
 
 - Syscall translation overhead and Android-kernel compatibility gaps.
-- Executable-files policy complicates modern target-SDK distribution.
+- Executable-files policy complicates modern target-SDK distribution: PRoot and its loader must move into the APK, as [the Play build][play] did.
 - Native activity lifecycle alone does not supervise long-running development services.
 
 ## Key design decisions and trade-offs
@@ -97,3 +99,5 @@ The app owns the PTY/process tree and must handle shutdown, child reaping and re
 [event]: https://github.com/termux/proot/blob/ab2e3464d04483b98a0614b470f3f8950d5a6468/src/tracee/event.c
 [elf]: https://github.com/termux/proot/blob/ab2e3464d04483b98a0614b470f3f8950d5a6468/src/execve/elf.c
 [exec-policy]: https://developer.android.com/about/versions/10/behavior-changes-10#execute-permission
+[play]: ./termux-play-store/index.md
+[loader-path]: https://github.com/termux/proot/blob/ab2e3464d04483b98a0614b470f3f8950d5a6468/src/execve/enter.c#L562-L588

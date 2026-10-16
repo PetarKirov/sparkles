@@ -1,12 +1,12 @@
 # Comparison and architectural synthesis
 
-**Last reviewed:** September 30, 2026.
+**Last reviewed:** October 16, 2026.
 
 ## At a glance
 
 | Dimension                | [nix-on-droid][proot]                                                              | [AVF][avf]                                                                             | [Gunyah custom VMM][gunyah]                         | [NNS/native][native]                                                                      |
 | ------------------------ | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Stock app reach          | Broad sideload route, subject to executable policy                                 | Device/API/permission dependent                                                        | Documented custom routes rooted; stock AVF separate | NNS app path needs provisioned kernel/policy                                              |
+| Stock app reach          | Broad sideload route; Play-compatible only with PRoot and its loader in the APK    | Device/API/permission dependent                                                        | Documented custom routes rooted; stock AVF separate | NNS app path needs provisioned kernel/policy                                              |
 | Full NixOS               | No                                                                                 | Yes, if custom guest boots                                                             | Possible; adaptation unverified locally             | No, shared Android kernel/userspace integration                                           |
 | Standard Linux cache     | Canonical translated store                                                         | Canonical guest store                                                                  | Canonical guest store                               | Canonical mounted store                                                                   |
 | Guest kernel ownership   | No                                                                                 | Yes                                                                                    | Yes                                                 | No                                                                                        |
@@ -19,7 +19,7 @@
 
 ### Deployment and permissions
 
-PRoot has the fewest kernel prerequisites, but target-SDK executable policy is a serious product constraint. AVF's feature bit does not imply an app permission grant or usable nonprotected guest. The Pad demonstrates a stock **protected-only** route; it changes the Qualcomm feasibility assessment without proving unprotected NixOS. NNS makes its required custom stack explicit. Rooted Gunyah work should remain an advanced-device track until exact configurations are verified.
+PRoot has the fewest kernel prerequisites, but target-SDK executable policy is a serious product constraint. [Termux on Google Play][play] bounds it: at a current target only system files and the APK's native libraries are executable, so a Bionic universe can exec through `/system/bin/linker64` while glibc store paths need PRoot's loader shipped in the APK. AVF's feature bit does not imply an app permission grant or usable nonprotected guest. The Pad demonstrates a stock **protected-only** route; it changes the Qualcomm feasibility assessment without proving unprotected NixOS. NNS makes its required custom stack explicit. Rooted Gunyah work should remain an advanced-device track until exact configurations are verified.
 
 [The contributor Pixel 7 Pro][pixel7] separates two useful tracks: AVF declares both protected/non-protected support, while NNS has an already running app-UID canonical-store session under deliberately provisioned policy. The former is a capability declaration, the latter a captured userspace process. Neither establishes Sparkles ownership, a complete Nix workload, or an unmodified stock deployment. The kernel's `CONFIG_GUNYAH=y` does not change its reported active pKVM backend.
 
@@ -65,6 +65,7 @@ The inspected implementations converge on a canonical Linux filesystem view, a b
 | Full NixOS guest                | Guest prior art inspected                                              | App-owned disks/config and guest PTY broker                                          |
 | Qualcomm protected/custom route | Stock Microdroid boot proven on Pad                                    | Prove accepted custom Linux boot inputs before promising NixOS                       |
 | Native namespace entry          | Rejected on stock Xiaomi; contributor Pixel has an NNS app-UID session | Sparkles-owned launcher contract, deployment provenance and workload/isolation tests |
+| Current-target distribution     | Target API 28; sideload only                                           | PRoot and loader as APK native libraries; `login` via `/system/bin/sh`; Play review  |
 | Durable sessions                | Activity/session machinery                                             | Defined owner death, UI recreation, reboot and unlock behavior                       |
 | Quantified workload comparison  | None                                                                   | Same-device, same-output workload protocol after two backends work                   |
 
@@ -83,3 +84,4 @@ The inspected implementations converge on a canonical Linux filesystem view, a b
 [devices]: ./device-validation/index.md
 [sources]: ./sources.md
 [pixel7]: ./device-validation/pixel7.md
+[play]: ./termux-play-store/index.md

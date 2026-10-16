@@ -5351,6 +5351,10 @@
                 "link": "/research/android-dev-env/nix-on-droid"
               },
               {
+                "text": "Termux on Google Play",
+                "link": "/research/android-dev-env/termux-play-store/"
+              },
+              {
                 "text": "AVF / Pixel / MediaTek",
                 "link": "/research/android-dev-env/avf"
               },

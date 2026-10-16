@@ -1,6 +1,6 @@
 # Execution boundaries and capability gates
 
-**Last reviewed:** September 30, 2026.
+**Last reviewed:** October 16, 2026.
 
 ## Terminal, distro and lifecycle owner
 
@@ -33,6 +33,10 @@ dub docs/research/android-dev-env/concepts/examples/elf-loader.d /proc/self/exe
 ```
 
 The program parses ELF headers and reports the actual interpreter; it does not infer compatibility from filenames. A static executable legitimately has no `PT_INTERP`.
+
+### Executable locations at a current target SDK
+
+An app targeting API 29 or later may not `execve` a file from its writable data directory, but it may still `mmap` such a file executable. Two kinds of file remain directly executable: system files and the APK's extracted native libraries. A **loader indirection** turns the first rule into a path: `/system/bin/linker64 /path/to/elf` makes the kernel execute only the system linker, which then maps a Bionic-dynamic target. Static and glibc executables need a loader that the kernel will execute, which means one shipped in the APK. [Termux on Google Play][play] uses both, and its [exec-route model][route-example] tabulates which file kinds each route reaches.
 
 ### Host page size
 
@@ -67,6 +71,8 @@ Persistence has three lifetimes: package/store files, session processes and the 
 <!-- References -->
 
 [pixel7]: ../device-validation/pixel7.md
+[play]: ../termux-play-store/index.md
+[route-example]: ../termux-play-store/examples/exec-route.d
 [baseline]: ../sparkles-baseline.md
 [avf]: ../avf.md
 [gunyah]: ../gunyah.md

@@ -1203,6 +1203,7 @@ private string[] standaloneExampleGlobs()
         "docs/research/linux-on-macos/examples/*.d",
         "docs/research/android-dev-env/concepts/examples/*.d",
         "docs/research/android-dev-env/device-validation/examples/*.d",
+        "docs/research/android-dev-env/termux-play-store/examples/*.d",
         "docs/research/safe-path-traversal/examples/*.d",
         "docs/research/font-libraries/examples/*.d",
         "docs/research/fine-grained-locking/examples/*.d",
