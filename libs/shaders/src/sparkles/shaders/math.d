@@ -41,6 +41,24 @@ private T perComponent2(alias f, T)(in T a, in T b) @safe pure nothrow @nogc
     return r;
 }
 
+private T perComponent3(alias f, T)(in T a, in T b, in T c) @safe pure nothrow @nogc
+{
+    T r;
+    static foreach (i; 0 .. vectorLength!T)
+        r.array[i] = f(a.array[i], b.array[i], c.array[i]);
+    return r;
+}
+
+// `s` in every component of a `V`: GLSL's implicit widening of a scalar
+// argument, for the forms that take one.
+private V splat(V)(float s) @safe pure nothrow @nogc
+{
+    V r;
+    static foreach (i; 0 .. vectorLength!V)
+        r.array[i] = s;
+    return r;
+}
+
 /// GLSL `floor`.
 T floor(T)(in T v) @safe pure nothrow @nogc
 {
@@ -151,6 +169,23 @@ T pow(T)(in T a, in T b) @safe pure nothrow @nogc
 /// GLSL `mod`: `a - b * floor(a / b)`.
 T mod(T)(in T a, in T b) @safe pure nothrow @nogc => a - b * floor(a / b);
 
+/// GLSL `min`, `max`, `clamp` and `mod` of a vector against a scalar, which
+/// GLSL widens to every component.
+V min(V)(in V a, float b) @safe pure nothrow @nogc
+if (isShaderVector!V) => min(a, splat!V(b));
+
+/// ditto
+V max(V)(in V a, float b) @safe pure nothrow @nogc
+if (isShaderVector!V) => max(a, splat!V(b));
+
+/// ditto
+V clamp(V)(in V v, float lo, float hi) @safe pure nothrow @nogc
+if (isShaderVector!V) => clamp(v, splat!V(lo), splat!V(hi));
+
+/// ditto
+V mod(V)(in V a, float b) @safe pure nothrow @nogc
+if (isShaderVector!V) => mod(a, splat!V(b));
+
 /// GLSL `fract`: `v - floor(v)`.
 T fract(T)(in T v) @safe pure nothrow @nogc => v - floor(v);
 
@@ -160,8 +195,20 @@ T clamp(T)(in T v, in T lo, in T hi) @safe pure nothrow @nogc => min(max(v, lo),
 /// GLSL `mix`: `a * (1 - t) + b * t`.
 T mix(T)(in T a, in T b, float t) @safe pure nothrow @nogc => a * (1.0f - t) + b * t;
 
+/// ditto — with a weight per component.
+V mix(V)(in V a, in V b, in V t) @safe pure nothrow @nogc
+if (isShaderVector!V) => a * (splat!V(1.0f) - t) + b * t;
+
 /// GLSL `step`: `0` below `edge`, `1` at or above it.
 float step(float edge, float v) @safe pure nothrow @nogc => v < edge ? 0.0f : 1.0f;
+
+/// ditto — per component, against an edge per component or one for all.
+V step(V)(in V edge, in V v) @safe pure nothrow @nogc
+if (isShaderVector!V) => perComponent2!((float e, float x) => step(e, x), V)(edge, v);
+
+/// ditto
+V step(V)(float edge, in V v) @safe pure nothrow @nogc
+if (isShaderVector!V) => step(splat!V(edge), v);
 
 /// GLSL `smoothstep`: Hermite interpolation between the edges.
 float smoothstep(float e0, float e1, float v) @safe pure nothrow @nogc
@@ -169,6 +216,15 @@ float smoothstep(float e0, float e1, float v) @safe pure nothrow @nogc
     const t = clamp((v - e0) / (e1 - e0), 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
 }
+
+/// ditto — per component, against edges per component or one pair for all.
+V smoothstep(V)(in V e0, in V e1, in V v) @safe pure nothrow @nogc
+if (isShaderVector!V)
+    => perComponent3!((float a, float b, float x) => smoothstep(a, b, x), V)(e0, e1, v);
+
+/// ditto
+V smoothstep(V)(float e0, float e1, in V v) @safe pure nothrow @nogc
+if (isShaderVector!V) => smoothstep(splat!V(e0), splat!V(e1), v);
 
 /// GLSL `dot`.
 float dot(V)(in V a, in V b) @safe pure nothrow @nogc

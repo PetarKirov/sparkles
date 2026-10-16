@@ -62,3 +62,14 @@ struct Light
     return v4(a.x * light.gain + cast(float) (count + light.bias), a.y * light.tint.y,
         light.tint.z, 1.0f);
 }
+
+@fragment vec4 probeVectorForms(@input vec2 fragTexCoord, Sampler2D texture0)
+{
+    const a = texture0.sample(fragTexCoord);
+    const p = v2(a.x, a.y), q = v2(a.z, a.w);
+    // Lanes other than `.x` of the per-component forms, so a form that used
+    // the first component's edge for every lane would disagree.
+    return v4(step(v2(0.0f, 0.5f), p).y + step(0.0f, q).y,
+        smoothstep(v2(-1.0f, -2.0f), v2(1.0f, 2.0f), q).y, mix(p, q, v2(0.25f, 0.75f)).y,
+        clamp(p, -1.0f, 1.0f).x + min(q, 0.5f).y + mod(p, 1.5f).y + smoothstep(-1.0f, 1.0f, q).x);
+}

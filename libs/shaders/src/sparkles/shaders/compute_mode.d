@@ -99,6 +99,13 @@ ComputeMode computeModeOf(const(char)[] source) @safe pure nothrow @nogc
     assert(computeModeOf(`@("hostAndDevice") module a;`) == ComputeMode.none);
     // `@compute` on a declaration below the module is not the module's.
     assert(computeModeOf("module a; @compute void f();") == ComputeMode.none);
+    // A byte-order mark before the head, with and without a shebang.
+    assert(computeModeOf("\xEF\xBB\xBF@compute(CompileFor.hostAndDevice) module a;")
+        == ComputeMode.hostAndDevice);
+    assert(computeModeOf("\xEF\xBB\xBF#!/usr/bin/env dub\n@compute module a;")
+        == ComputeMode.deviceOnly);
+    // The attribute is named by its last component, not a suffix of it.
+    assert(computeModeOf("@precompute module a;") == ComputeMode.none);
 }
 
 // A lexer over just enough of D to read the attributes before `module`:
@@ -112,7 +119,10 @@ private struct HeadLexer
     this(const(char)[] source) @safe pure nothrow @nogc
     {
         src = source;
-        if (src.length >= 2 && src[0 .. 2] == "#!")
+        // A byte-order mark is not part of the source the compiler reads.
+        if (src.length >= 3 && src[0 .. 3] == "\xEF\xBB\xBF")
+            pos = 3;
+        if (src.length >= pos + 2 && src[pos .. pos + 2] == "#!")
             while (pos < src.length && src[pos] != '\n')
                 pos++;
     }

@@ -74,6 +74,49 @@ import sparkles.shaders.types;
     assert(luma(v3(0, 0, 1)) > 0, "blue text must not vanish");
 }
 
+@("shaders.math.vectorFormsArePerComponent")
+@safe pure nothrow @nogc unittest
+{
+    // `SHV5`: GLSL defines these per component, and widens a scalar
+    // argument to every component; each form must equal the scalar one
+    // applied to each component.
+    const v = v3(-1.5f, 0.25f, 3);
+    const e = v3(0, 0.5f, 2);
+    const float[3] stepped = [step(0, -1.5f), step(0.5f, 0.25f), step(2, 3)];
+    assert(step(e, v).array == stepped);
+    assert(step(0.0f, v).array == [0, 1, 1]);
+    const float[3] smoothed = [smoothstep(-2, 4, -1.5f), smoothstep(-2, 4, 0.25f),
+        smoothstep(-2, 4, 3.0f)];
+    assert(smoothstep(v3(-2), v3(4), v).array == smoothed);
+    assert(smoothstep(0.0f, 1.0f, v2(0.5f, 2)).array == [0.5f, 1]);
+    assert(mix(v2(0, 10), v2(10, 20), v2(0.5f, 0.25f)).array == [5, 12.5f]);
+    assert(min(v, 0.0f).array == [-1.5f, 0, 0] && max(v, 0.0f).array == [0, 0.25f, 3]);
+    assert(clamp(v, 0.0f, 1.0f).array == [0, 0.25f, 1]);
+    assert(mod(v2(3, -0.5f), 2.0f).array == [1, 1.5f]);
+}
+
+@("shaders.types.allEqualIsOneBool")
+@safe pure nothrow @nogc unittest
+{
+    // `SHV1`: GLSL's vector `==`, the same `bool` under every compiler.
+    assert(allEqual(v2(1, 2), v2(1, 2)) && !allEqual(v2(1, 2), v2(1, 3)));
+    assert(allEqual(v3(0.5f), v3(0.5f)) && !allEqual(v3(0, 0, 1), v3(0)));
+    assert(allEqual(v4(1, 2, 3, 4), v4(1, 2, 3, 4)) && !allEqual(v4(1), v4(1, 1, 1, 2)));
+}
+
+@("shaders.attributes.standInsCompileAsPlainD")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.shaders.attributes : fragment, input, Sampler2D, uniform;
+
+    // `SHV8`: outside a device compilation every attribute and the
+    // `Sampler2D` handle exist and do nothing, so a function spelled like an
+    // entry point is ordinary D a host calls.
+    @fragment static vec4 entry(@input vec2 uv, Sampler2D texture0, @uniform float amount)
+        => v4(uv.x * amount);
+    assert(entry(v2(2, 0), Sampler2D.init, 0.5f).x == 1);
+}
+
 @("shaders.types.oneLayoutOnBothSides")
 @safe pure nothrow @nogc unittest
 {

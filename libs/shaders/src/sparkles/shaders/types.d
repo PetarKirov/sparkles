@@ -6,8 +6,10 @@ $(B Compiler vectors where the compiler has them.) Under LDC every size is a
 the interface variables must be, because GLSL links a `vec2` varying by name
 and type. DMD only knows 16- and 32-byte vectors, so there `vec2` and `vec3`
 are a struct with the same surface. Either way the surface is small and the
-same: component-wise `+ - * /` against a vector or a scalar, unary `-`,
-`.array` for the components, and equality.
+same: component-wise `+ - * /` against a vector or a scalar, unary `-`, and
+`.array` for the components. Not `==`: on a `__vector` it is a mask per
+component, on a struct a `bool`, so two compilers would disagree; compare with
+`allEqual`, GLSL's `all(equal(a, b))`.
 
 $(B `v2`/`v3`/`v4` construct, because an alias cannot be called.)
 `vec3(a, b, c)` is not D — D constructs a `__vector` from a static array only,
@@ -198,6 +200,18 @@ vec3 xyz(in vec4 v) @safe pure nothrow @nogc => v3(v.array[0], v.array[1], v.arr
 
 /// ditto
 alias rgb = xyz;
+
+/// Whether every component of `a` equals the one of `b`: GLSL's
+/// `all(equal(a, b))`, and what `==` means on GLSL vectors. The same `bool`
+/// under every compiler, where `==` on a `__vector` is a mask.
+bool allEqual(V)(in V a, in V b) @safe pure nothrow @nogc
+if (isShaderVector!V)
+{
+    bool same = true;
+    static foreach (i; 0 .. vectorLength!V)
+        same = same & (a.array[i] == b.array[i]);
+    return same;
+}
 
 /// Whether `V` is one of the shader vector types.
 enum isShaderVector(V) = is(V == vec2) || is(V == vec3) || is(V == vec4);
