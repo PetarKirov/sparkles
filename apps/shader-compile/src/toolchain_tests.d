@@ -22,13 +22,13 @@ import std.file : copy, dirEntries, exists, mkdirRecurse, readText, remove, rmdi
 import std.format : format;
 import std.path : baseName, buildNormalizedPath, buildPath, dirName, pathSeparator,
     relativePath;
-import std.process : environment, execute, Pid, spawnProcess, thisProcessID, wait;
+import std.process : Config, environment, execute, Pid, spawnProcess, thisProcessID, wait;
 import std.stdio : File;
 import std.string : lineSplitter, strip;
 
 import sparkles.test_runner.skip : skipTest;
 
-import app : isFresh, stampName;
+import app : isFresh, parseDescribe, stampName, unitOf, withoutHostFlags;
 
 /// The tool this environment lacks, or `null` when the whole toolchain is
 /// on `PATH`.
@@ -170,7 +170,11 @@ private struct Outcome
 dflags "-mdcompute-targets=vulkan-130,ocl-300"`);
     f.configuration("hostOnly", `sourcePaths "src"
 dflags "-mdcompute-targets=vulkan-130"`);
+    f.configuration("badVersion", `sourcePaths "src" "shaders"
+dflags "-mdcompute-targets=vulkan-999"`);
     foreach (bad; [
+        ["stray", "unexpected argument `stray`"],
+        ["--config=badVersion", "not `vulkan-999`"],
         ["--config=nope", "failed in"],
         ["--config=library", "names no dcompute target"],
         ["--config=twoTargets", "must name exactly one Vulkan target"],
@@ -291,6 +295,14 @@ exit 0
         [`@fragment vec4 e(@input @uniform vec2 uv) => v4(uv.x);`, "marked both `@input` and `@uniform`"],
         [`@fragment vec4 e(@uniform Sampler2D t) => t.sample(v2(0.5f));`, "which takes no `@input` or `@uniform` marker"],
         [`@fragment vec4 e(@uniform float smooth) => v4(smooth);`, "`smooth` cannot keep its name in GLSL"],
+        [`@fragment vec4 e(@uniform float gl_x) => v4(gl_x);`, "`gl_` prefix"],
+        [`@fragment vec4 e(@uniform float spvGain) => v4(spvGain);`, "`spv` prefix"],
+        [`@fragment vec4 e(@uniform float a__b) => v4(a__b);`, "run of underscores"],
+        [`struct Light { float filter; }
+@fragment vec4 e(@uniform Light light) => v4(light.filter);`, "uniform struct field `filter`"],
+        // `SHF2`: one variable per name, so one type per name.
+        [`@fragment vec4 e(@uniform float scale) => v4(scale);
+@fragment vec4 g(@uniform vec2 scale) => v4(scale.x);`, "is `__vector(float[2])` in `g` but `float` in `e`"],
     ])
     {
         f.entries(bad[0]);
@@ -316,7 +328,8 @@ exit 0
     f.pkg.buildPath("shaders", "fx_more.d").write("@compute(CompileFor.deviceOnly)\nmodule fx_more;\n\n"
         ~ "import sparkles.shaders;\n\n@fragment vec4 tint(@input vec4 c) => c;\n");
     const twice = f.run();
-    assert(twice.status == 1 && twice.diagnostics.canFind("entry point `tint` is defined by both"),
+    assert(twice.status == 1 && twice.diagnostics.canFind("entry point `tint` is defined by both")
+        && twice.diagnostics.canFind("`fx_entries.tint`") && twice.diagnostics.canFind("`fx_more.tint`"),
         twice.diagnostics);
     remove(f.pkg.buildPath("shaders", "fx_more.d"));
 
@@ -345,8 +358,16 @@ exit 0
     f.out_.mkdirRecurse;
     f.out_.buildPath("renamed.frag").write("// an entry point that no longer exists\n");
     f.out_.buildPath("renamed.es.frag").write("// likewise\n");
+    // A killed run's temporary goes; a live run's is about to be renamed.
+    f.out_.buildPath("tint.frag.tmp-2147483646").write("// a run that died\n");
+    const live = format("tint.frag.tmp-%s", thisProcessID);
+    f.out_.buildPath(live).write("// a run still writing\n");
+    f.out_.buildPath("notes.tmp-old").write("// not a temporary of the step's\n");
     assert(f.run().status == 0);
-    assert(f.outputs == [stampName, "tint.es.frag", "tint.frag"], f.outputs.to!string);
+    assert(f.outputs == [stampName, "notes.tmp-old", "tint.es.frag", "tint.frag", live],
+        f.outputs.to!string);
+    remove(f.out_.buildPath(live));
+    remove(f.out_.buildPath("notes.tmp-old"));
     const expected = f.out_.buildPath("tint.frag").readText;
 
     // The builds of several dependents run the step at once on one directory
@@ -432,4 +453,50 @@ exit 0
     assert(r.status == 0, r.diagnostics);
     assert(module_.readText.canFind("edited during the run"));
     assert(!isFresh(f.out_, f.pkg), "the stamp vouches for the edit the output never saw");
+}
+
+@("shaderCompile.unitOf.repositoryUiAsDubDescribesIt")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHP3`: the unit of the repository's own consumer, as the step reads
+    // it — every `@compute` module among the device configuration's sources, the
+    // package's and its dependencies', and no other; one of them device-only.
+    const described = execute(["dub", "describe", "--root=" ~ repoRoot.buildPath("libs", "ui"),
+        "--config=shaders", "--compiler=ldc2-vulkan"], withoutHostFlags(environment.toAA),
+        Config.newEnv);
+    assert(described.status == 0, described.output);
+    const unit = unitOf(parseDescribe(described.output));
+    string rel(string p) => p.relativePath(repoRoot);
+    assert(unit.deviceOnly.map!rel.array == ["libs/ui/shaders/effects.d"], unit.deviceOnly.to!string);
+    auto sources = unit.sources.map!rel.array;
+    sources.sort;
+    assert(sources == ["libs/shaders/src/sparkles/shaders/math.d",
+        "libs/shaders/src/sparkles/shaders/types.d",
+        "libs/ui/shaders/effects.d",
+        "libs/ui/src/sparkles/ui/crt_shaders.d",
+        "libs/ui/src/sparkles/ui/effect_shaders.d"], sources.to!string);
+}
+
+@("shaderCompile.fragment.whatMayCrossIsDeclared")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHF5`, the accepted side: a `vec3` input, an integer-vector uniform
+    // and an array uniform reach both dialects declared as their D types say.
+    auto f = Fixture.create("cross");
+    f.entries(`@fragment vec4 cross(@input vec3 colour, @uniform __vector(int[2]) cell,
+    @uniform float[2] weights) => v4(colour.x * weights[1] + cast(float) cell[0]);`);
+    const made = f.run();
+    assert(made.status == 0, made.diagnostics);
+    const desktop = f.out_.buildPath("cross.frag").readText;
+    foreach (decl; ["in vec3 colour;", "uniform ivec2 cell;", "uniform float weights[2];"])
+        assert(desktop.canFind(decl), decl ~ "\n" ~ desktop);
+    const es = f.out_.buildPath("cross.es.frag").readText;
+    foreach (decl; ["varying highp vec3 colour;", "uniform ivec2 cell;", "uniform highp float weights[2];"])
+        assert(es.canFind(decl), decl ~ "\n" ~ es);
 }

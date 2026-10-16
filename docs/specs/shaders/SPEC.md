@@ -409,7 +409,7 @@ either, so the build step is the only place those are caught.
 the build step **must** produce `<entry>.frag` in GLSL 3.30 and
 `<entry>.es.frag` in GLSL ES 1.00. In each, the combined image-sampler that
 the translation introduces **must** carry the name of the `Sampler2D`
-parameter it came from. Unused variables are removed.
+parameter it came from. Unused interface variables are removed.
 
 _Rationale:_ A consumer binds textures by name, and the name it knows is the
 one written in D.
@@ -419,14 +419,16 @@ GLSL validator, `glslangValidator`, before it is written to the output
 directory.
 
 **SHP7: Provenance.** Every generated file **must** begin with a comment that
-names the package, the device-only modules relative to the package
-directory, and the entry point, and that states the file is generated. The
-bytes **must not** depend on the directory the step runs from.
+names the package as its recipe names it, every device-only module of the
+unit relative to the package directory, and the entry point, and that states
+the file is generated. The generated GLSL's bytes **must not** depend on the
+directory the step runs from (the stamp's paths may).
 
 **SHP8: Atomic output.** Each output file and the stamp **must** be written
-through a temporary file and a rename, the stamp last. Files in the output
-directory that no entry point produces **must** be removed: the directory
-belongs to the build step.
+through a temporary file and a rename, the stamp last. Every `*.frag` file in
+the output directory that no entry point produces **must** be removed, and so
+must a temporary whose writer is no longer running: the directory belongs to
+the build step. Other files there, such as a `.gitignore`, are left alone.
 
 _Rationale:_ Several builds that depend on the same package may run the step
 at once. A reader then sees an old file or a new one, never half of one, and
@@ -482,10 +484,12 @@ the file, so a file edited while the step runs leaves the stamp stale.
 **SHB2: Freshness.** With `--if-stale`, the build step **must** exit 0
 without running dub or the device compiler when the stamp's format version is
 the current one, every recorded input exists with its recorded hash, and
-every recorded output exists. Otherwise it **must** regenerate.
+every recorded output exists. A stamp with any other line, or a malformed
+one, is stale. Otherwise it **must** regenerate.
 
-**SHB3: Prebuilt output.** A stamp whose only line is `prebuilt` **must** be
-treated as fresh.
+**SHB3: Prebuilt output.** With `--if-stale`, a stamp whose only line is
+`prebuilt`, trailing blank lines aside, **must** be treated as fresh. Without
+`--if-stale` the step always regenerates.
 
 _Rationale:_ A packager that builds the output once, elsewhere, can hand it
 to every build without the device compiler. Builds that place it trust the
