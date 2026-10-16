@@ -5,6 +5,12 @@ User32 callbacks only append owned events. Application code runs later at
 `drain`; `dispatchPending` is the non-blocking half of Event Horizon's hosted
 wait concept, and `wait` combines the IOCP mirror event with the thread message
 queue through `MsgWaitForMultipleObjectsEx`.
+
+The clipboard is owned by a hidden message-only helper window, so an offer
+does not depend on an application window living. Offers use delayed
+rendering: `WM_RENDERFORMAT` pulls the provider into a block the clipboard
+owns, and a receive streams the clipboard's block into its sink one bounded
+chunk per dispatch.
 */
 module sparkles.wsi.platform.win32;
 
@@ -17,9 +23,9 @@ import core.sys.windows.imm : ATTR_CONVERTED, ATTR_FIXEDCONVERTED,
     ISC_SHOWUICOMPOSITIONWINDOW, WM_IME_CHAR, WM_IME_COMPOSITION,
     WM_IME_ENDCOMPOSITION, WM_IME_SETCONTEXT, WM_IME_STARTCOMPOSITION;
 
-import sparkles.base.buffer : UniqueBuffer;
+import sparkles.base.buffer : HeapBuffer, Storage, UniqueBuffer;
 import sparkles.base.pool.pool : Pool, PoolError;
-import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16z;
+import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16, utf8ToUtf16z;
 import sparkles.base.text.utf : decodeToken, encodeScalar, UtfMode, UtfStatus, scalarUnits;
 import sparkles.base.text.source_map : SourceByteOffset, Utf16Offset,
     MapAffinity, MapResult, MapStatus;
@@ -30,6 +36,7 @@ import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
     ioOk;
 import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.input.pointer : PointerShape;
+import sparkles.wsi.clipboard;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
 import sparkles.wsi.history : PointerSample;
@@ -47,6 +54,7 @@ private enum int GWLP_USERDATA_ = -21;
 private enum UINT WM_INPUT_ = 0x00FF;
 private enum USHORT hidUsagePageGeneric = 0x01;
 private enum USHORT hidUsageMouse = 0x02;
+private enum UINT WM_CLIPBOARDUPDATE_ = 0x031D;
 
 // druntime currently models HIMC as DWORD, but Win64 declares it as a
 // pointer-sized handle. Redeclare the small IMM32 surface with the correct ABI
@@ -65,6 +73,8 @@ private extern (Windows) nothrow
     BOOL ImmReleaseContext(HWND hwnd, HIMC context);
     LONG ImmGetCompositionStringW(HIMC context, DWORD index, PVOID buffer,
         DWORD bufferBytes);
+    BOOL AddClipboardFormatListener(HWND hwnd);
+    BOOL RemoveClipboardFormatListener(HWND hwnd);
 }
 
 /**
@@ -139,6 +149,9 @@ struct Win32Wsi
                     "RegisterClassExW failed");
         }
 
+        auto helper = wsi.openClipboard();
+        if (helper.hasError)
+            return helper;
         wsi.open_ = true;
         return wsiOk();
     }
@@ -286,6 +299,10 @@ struct Win32Wsi
             TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+        // The clipboard's work runs here, after the window procedures: they
+        // only note what happened, and sinks are called from this dispatch
+        // (`DT2`).
+        count += serviceClipboard();
         if (hasStickyError_)
             return wsiErr!size_t(stickyError_);
         return wsiOk(count);
@@ -367,6 +384,17 @@ struct Win32Wsi
     {
         if (closed_ || !open_)
             return;
+        foreach (h; clipboard_.transfers.byLive)
+            clipboard_.end(h, TransferStatus.failed);
+        // An own offer still on the clipboard is rendered in full by
+        // `WM_RENDERALLFORMATS` as the helper goes, so it outlives the
+        // application, as Windows users expect.
+        if (helper_ !is null)
+        {
+            RemoveClipboardFormatListener(helper_);
+            DestroyWindow(helper_);
+            helper_ = null;
+        }
         // `WM_NCDESTROY` removes each record as its window goes, which the
         // live iteration allows.
         foreach (h; windows_.byLive)
@@ -771,6 +799,620 @@ struct Win32Wsi
         // Malformed standalone units are rejected; the next unit still progresses.
         if (decoded.result.status == UtfStatus.ok)
             emitCommittedText(id, single[]);
+    }
+
+    // ── clipboard (`DT1`–`DT5`) ──────────────────────────────────────────────
+
+    /// The largest chunk one dispatch reads from the clipboard: the bound on
+    /// what a sink sees (`DT4`), and WSI's one buffer of clipboard bytes.
+    enum size_t clipChunkBytes = 64 * 1024;
+
+    /**
+    Offers `mimeTypes` on the clipboard by delayed rendering; a request pulls
+    the bytes from `provider`, which must outlive the offer (`DT3`). Each MIME
+    type is the registered clipboard format of that name, and
+    `text/plain;charset=utf-8` is also `CF_UNICODETEXT`, the format every
+    Windows application reads.
+    */
+    WsiResult!OfferId offerClipboard(P)(WindowId window,
+        scope const(char[])[] mimeTypes, ref P provider)
+    if (isDataProvider!P)
+    {
+        auto checked = checkedSlot(window, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!OfferId(checked.error);
+        auto added = clipboard_.add(window, mimeTypes, true);
+        if (added.hasError)
+            return added;
+        clipboard_.offers[added.value].provider =
+            (() @trusted => ProviderRef.to(provider))();
+        return takeClipboard(added.value);
+    }
+
+    /// ditto, for a small whole value the backend keeps a copy of.
+    WsiResult!OfferId offerClipboard(WindowId window, scope const(char)[] mimeType,
+        scope const(ubyte)[] value)
+    {
+        auto checked = checkedSlot(window, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!OfferId(checked.error);
+        auto added = clipboard_.add(window, mimeType, true);
+        if (added.hasError)
+            return added;
+        ref record = clipboard_.offers[added.value];
+        record.value.bytes ~= value;
+        record.hasValue = true;
+        return takeClipboard(added.value);
+    }
+
+    /// Ends an offer this application made: empties the clipboard if the
+    /// offer is still on it, and reports `withdrawn` (`DT1`).
+    WsiResult!void withdrawClipboard(OfferId offer)
+    {
+        auto owner = requireOwner!void(WsiOperation.command);
+        if (owner.hasError)
+            return owner;
+        auto record = clipboard_.offers.get(offer);
+        if (record is null || !record.own)
+            return win32Failure!void(WsiOperation.command, 0,
+                "no live offer of this application's", WsiErrorKind.staleId);
+        if (clipboard_.current == offer && OpenClipboard(helper_))
+        {
+            if (GetClipboardOwner() == helper_)
+                EmptyClipboard();
+            CloseClipboard();
+        }
+        announce(offer, DataOfferAction.withdrawn);
+        clipboard_.drop(offer);
+        return wsiOk();
+    }
+
+    /**
+    Starts reading `offer`'s `mimeType` into `sink` (`DT2`). Each dispatch
+    opens the clipboard, copies at most `clipChunkBytes` of the format's
+    block from the transfer's offset, closes the clipboard, and only then
+    calls the sink: the clipboard is never held open across dispatches.
+    `CF_UNICODETEXT` arrives as UTF-8. Only the clipboard's current offer is
+    readable, and an own offer is read back through the clipboard like any
+    other.
+    */
+    WsiResult!TransferId receive(S)(OfferId offer, scope const(char)[] mimeType,
+        ref S sink)
+    if (isDataSink!S)
+    {
+        auto owner = requireOwner!TransferId(WsiOperation.command);
+        if (owner.hasError)
+            return owner;
+        if (offer != clipboard_.current || !clipboard_.offers.isLive(offer))
+            return win32Failure!TransferId(WsiOperation.command, 0,
+                "the offer has ended", WsiErrorKind.staleId);
+        auto begun = clipboard_.begin(offer, mimeType,
+            (() @trusted => SinkRef.to(sink))());
+        if (begun.hasError)
+            return begun;
+        fetches_[begun.value.index] = Fetch(formatFor(offer, mimeType));
+        return begun;
+    }
+
+    /// Ends a transfer with `cancelled`; its sink then hears nothing more.
+    WsiResult!void cancelTransfer(TransferId transfer)
+    {
+        auto owner = requireOwner!void(WsiOperation.command);
+        if (owner.hasError)
+            return owner;
+        return clipboard_.cancel(transfer);
+    }
+
+    // One incoming transfer, by transfer slot: the clipboard format it reads
+    // and how far into the format's block it has read, in bytes.
+    private struct Fetch
+    {
+        UINT format;
+        size_t offset;
+    }
+
+    private enum textMime = "text/plain;charset=utf-8";
+
+    private HWND helper_;
+    private ClipboardState!() clipboard_;
+    private UINT[maxOfferTypes][4] offerFormats_; // per offer slot, per type
+    private Fetch[8] fetches_;
+    // The one chunk buffer: what a dispatch copies out of the clipboard
+    // before calling a sink, and the UTF-8 a text rendering converts.
+    private HeapBuffer!(ubyte, Storage.unique) chunk_;
+    private bool clipboardChanged_; // a window procedure saw a change
+    private DWORD seenSequence_;    // the clipboard sequence last examined
+
+    // The helper window: it owns the clipboard while an offer of ours is on
+    // it, answers `WM_RENDERFORMAT`, and listens for changes.
+    private WsiResult!void openClipboard()
+    {
+        WNDCLASSEXW wc;
+        wc.cbSize = WNDCLASSEXW.sizeof;
+        wc.lpfnWndProc = &clipboardProcedure;
+        wc.hInstance = instance_;
+        wc.lpszClassName = clipboardClassName.ptr;
+        if (RegisterClassExW(&wc) == 0)
+        {
+            const code = GetLastError();
+            if (code != ERROR_CLASS_ALREADY_EXISTS)
+                return win32Failure!void(WsiOperation.open, code,
+                    "RegisterClassExW failed for the clipboard helper");
+        }
+        helper_ = CreateWindowExW(0, clipboardClassName.ptr, null, 0, 0, 0, 0, 0,
+            HWND_MESSAGE, null, instance_, &this);
+        if (helper_ is null)
+            return win32Failure!void(WsiOperation.open, GetLastError(),
+                "CreateWindowExW failed for the clipboard helper");
+        if (!AddClipboardFormatListener(helper_))
+        {
+            const code = GetLastError();
+            DestroyWindow(helper_);
+            helper_ = null;
+            return win32Failure!void(WsiOperation.open, code,
+                "AddClipboardFormatListener failed");
+        }
+        seenSequence_ = GetClipboardSequenceNumber();
+        return wsiOk();
+    }
+
+    // Empties the clipboard into the helper's ownership and lists `offer`'s
+    // formats for delayed rendering.
+    private WsiResult!OfferId takeClipboard(OfferId offer)
+    {
+        auto record = clipboard_.offers.get(offer);
+        foreach (i, ref t; record.types[0 .. record.typeCount])
+        {
+            wchar[maxMimeType + 1] name;
+            const converted = utf8ToUtf16z(t[], name[]);
+            const format = converted.hasError ? 0
+                : RegisterClipboardFormatW(name.ptr);
+            if (format == 0)
+            {
+                const code = GetLastError();
+                clipboard_.drop(offer);
+                return win32Failure!OfferId(WsiOperation.command, code,
+                    "a MIME type could not be registered as a clipboard format",
+                    converted.hasError ? WsiErrorKind.invalidArgument
+                        : WsiErrorKind.nativeFailure);
+            }
+            offerFormats_[offer.index][i] = format;
+        }
+        if (!OpenClipboard(helper_))
+        {
+            const code = GetLastError();
+            clipboard_.drop(offer);
+            return win32Failure!OfferId(WsiOperation.command, code,
+                "OpenClipboard failed: another window holds the clipboard");
+        }
+        // A previous offer of ours gets `WM_DESTROYCLIPBOARD` from this; the
+        // owner check in the dispatch tells it from another writer's.
+        EmptyClipboard();
+        foreach (format; offerFormats_[offer.index][0 .. record.typeCount])
+            SetClipboardData(format, null);
+        if (record.offers(textMime))
+            SetClipboardData(CF_UNICODETEXT, null);
+        CloseClipboard();
+        publish(offer);
+        return wsiOk(offer);
+    }
+
+    // The clipboard format a transfer of `offer`'s `mime` reads.
+    private UINT formatFor(OfferId offer, scope const(char)[] mime)
+    {
+        auto record = clipboard_.offers.get(offer);
+        foreach (i, ref t; record.types[0 .. record.typeCount])
+            if (t[] == mime)
+                return offerFormats_[offer.index][i];
+        return 0;
+    }
+
+    // The dispatch half: what the helper's procedure noted, then one chunk
+    // per transfer in flight. Returns how much work it did, so the hosted
+    // loop does not block while a transfer has bytes left.
+    private size_t serviceClipboard()
+    {
+        if (helper_ is null)
+            return 0;
+        size_t work;
+        if (clipboardChanged_)
+        {
+            clipboardChanged_ = false;
+            ++work;
+            const sequence = GetClipboardSequenceNumber();
+            if (sequence != seenSequence_ && GetClipboardOwner() != helper_)
+            {
+                if (noticeForeignOwner())
+                    seenSequence_ = sequence;
+                else
+                    clipboardChanged_ = true; // the clipboard was busy
+            }
+        }
+        foreach (h; clipboard_.transfers.byLive)
+        {
+            ++work;
+            pumpTransfer(h);
+        }
+        return work;
+    }
+
+    // Another writer replaced the clipboard: this application's offer ended
+    // (`DT1`), and the formats the writer lists become the foreign offer.
+    // Returns `false` when the clipboard could not be opened, to retry.
+    private bool noticeForeignOwner()
+    {
+        if (auto record = clipboard_.offers.get(clipboard_.current))
+        {
+            if (record.own)
+                announce(clipboard_.current, DataOfferAction.withdrawn);
+            clipboard_.drop(clipboard_.current);
+        }
+        if (!OpenClipboard(helper_))
+            return false;
+        char[maxMimeType][maxOfferTypes] names;
+        const(char)[][maxOfferTypes] types;
+        UINT[maxOfferTypes] formats;
+        size_t n;
+        bool unicodeText;
+        bool text;
+        for (UINT format = EnumClipboardFormats(0); format != 0;
+            format = EnumClipboardFormats(format))
+        {
+            if (format == CF_UNICODETEXT)
+            {
+                unicodeText = true;
+                continue;
+            }
+            // Registered formats start at 0xC000; the rest are predefined.
+            if (format < 0xC000 || n == maxOfferTypes)
+                continue;
+            // One unit more than a MIME type may have, to see a longer name.
+            wchar[maxMimeType + 2] wide;
+            const units = GetClipboardFormatNameW(format, wide.ptr,
+                cast(int) wide.length);
+            if (units <= 0 || units > maxMimeType)
+                continue;
+            auto converted = utf16ToUtf8(wide[0 .. units], names[n][]);
+            if (converted.hasError || !isMimeType(names[n][0 .. converted.value]))
+                continue;
+            types[n] = names[n][0 .. converted.value];
+            text |= types[n] == textMime;
+            formats[n++] = format;
+        }
+        CloseClipboard();
+        // UTF-16 text is offered as UTF-8 unless the writer named the UTF-8
+        // type itself; it displaces the last type when the offer is full.
+        if (unicodeText && !text)
+        {
+            if (n == maxOfferTypes)
+                --n;
+            types[n] = textMime;
+            formats[n++] = CF_UNICODETEXT;
+        }
+        if (n == 0)
+            return true;
+        auto added = clipboard_.add(firstWindow(), types[0 .. n], false);
+        if (added.hasError)
+            return true;
+        offerFormats_[added.value.index][0 .. n] = formats[0 .. n];
+        publish(added.value);
+        return true;
+    }
+
+    private static bool isMimeType(scope const(char)[] name) @safe pure nothrow @nogc
+    {
+        foreach (c; name)
+            if (c == '/')
+                return true;
+        return false;
+    }
+
+    // One step of transfer `h`: copies the next chunk of its format's block
+    // out of the clipboard, closes the clipboard, then hands the chunk on.
+    private void pumpTransfer(TransferId h)
+    {
+        ref fetch = fetches_[h.index];
+        if (fetch.format == 0)
+        {
+            clipboard_.end(h, TransferStatus.failed);
+            return;
+        }
+        // Another window holding the clipboard open is retried next dispatch.
+        if (!OpenClipboard(helper_))
+            return;
+        if (chunk_.length < clipChunkBytes)
+            chunk_.length = clipChunkBytes;
+        // For an own offer the first request sends the helper
+        // `WM_RENDERFORMAT`, which renders the value into the clipboard.
+        HANDLE data = GetClipboardData(fetch.format);
+        const total = data is null ? 0 : GlobalSize(data);
+        auto block = total == 0 ? null : cast(const(ubyte)*) GlobalLock(data);
+        if (data is null || (total != 0 && block is null))
+        {
+            CloseClipboard();
+            clipboard_.end(h, TransferStatus.failed);
+            return;
+        }
+        size_t n;
+        bool last;
+        if (fetch.format == CF_UNICODETEXT)
+            n = readUnicodeChunk(fetch, block, total, last);
+        else
+        {
+            const at = fetch.offset < total ? fetch.offset : total;
+            n = total - at < clipChunkBytes ? total - at : clipChunkBytes;
+            if (n != 0)
+                chunk_[][0 .. n] = block[at .. at + n];
+            fetch.offset = at + n;
+            last = fetch.offset == total;
+        }
+        if (block !is null)
+            GlobalUnlock(data);
+        CloseClipboard();
+
+        if (n != 0)
+            if (auto record = clipboard_.transfers.get(h))
+            {
+                auto sink = record.sink;
+                sink.chunk(h, chunk_[][0 .. n]);
+            }
+        // `end` ignores a transfer the sink cancelled meanwhile.
+        if (last)
+            clipboard_.end(h, TransferStatus.completed);
+    }
+
+    // `CF_UNICODETEXT` as UTF-8 into `chunk_`: at most a third of a chunk of
+    // UTF-16 units, so the UTF-8 fits, never ending inside a surrogate pair,
+    // and stopping at the terminating NUL.
+    private size_t readUnicodeChunk(ref Fetch fetch, const(ubyte)* block,
+        size_t totalBytes, out bool last)
+    {
+        const totalUnits = totalBytes / wchar.sizeof;
+        const start = fetch.offset / wchar.sizeof;
+        if (start >= totalUnits)
+        {
+            last = true;
+            return 0;
+        }
+        const units = (cast(const(wchar)*) block)[start .. totalUnits];
+        enum size_t maxUnits = clipChunkBytes / 3;
+        size_t take = units.length < maxUnits ? units.length : maxUnits;
+        foreach (i, u; units[0 .. take])
+            if (u == 0)
+            {
+                take = i;
+                last = true;
+                break;
+            }
+        if (!last && take == units.length)
+            last = true; // an unterminated block ends with the block
+        if (!last && take > 1 && units[take - 1] >= 0xD800 && units[take - 1] <= 0xDBFF)
+            --take;
+        auto converted = utf16ToUtf8(units[0 .. take], cast(char[]) chunk_[],
+            UtfMode.replacement);
+        assert(converted.hasValue, "a third of a chunk of units fits a chunk");
+        fetch.offset += take * wchar.sizeof;
+        return converted.value;
+    }
+
+    // `WM_RENDERFORMAT`: the current own offer's `format`, rendered whole
+    // into a block handed to the clipboard. Windows needs the value in one
+    // block; it belongs to the clipboard, the requesting side (`DT4`).
+    private void renderFormat(UINT format) nothrow
+    {
+        auto record = clipboard_.offers.get(clipboard_.current);
+        if (record is null || !record.own)
+            return;
+        HGLOBAL block;
+        if (format == CF_UNICODETEXT)
+            block = renderUnicode(*record);
+        else
+            foreach (i, ref t; record.types[0 .. record.typeCount])
+                if (offerFormats_[clipboard_.current.index][i] == format)
+                {
+                    block = renderBytes(*record, t[]);
+                    break;
+                }
+        if (block !is null && SetClipboardData(format, block) is null)
+            GlobalFree(block);
+    }
+
+    // `WM_RENDERALLFORMATS`: the helper is going while an offer of ours is
+    // on the clipboard; every format is rendered so the data outlives it.
+    private void renderAllFormats() nothrow
+    {
+        auto record = clipboard_.offers.get(clipboard_.current);
+        if (record is null || !record.own || !OpenClipboard(helper_))
+            return;
+        if (GetClipboardOwner() == helper_)
+        {
+            const offer = clipboard_.current;
+            foreach (format; offerFormats_[offer.index][0 .. record.typeCount])
+                renderFormat(format);
+            if (record.offers(textMime))
+                renderFormat(CF_UNICODETEXT);
+        }
+        CloseClipboard();
+    }
+
+    // Grows the unlocked `block` to at least `wanted` bytes, by doubling.
+    private static bool reserveBlock(ref HGLOBAL block, ref size_t capacity,
+        size_t wanted) nothrow @nogc
+    {
+        if (wanted <= capacity)
+            return true;
+        size_t grown = capacity;
+        while (grown < wanted)
+            grown *= 2;
+        auto moved = GlobalReAlloc(block, grown, GMEM_MOVEABLE);
+        if (moved is null)
+            return false;
+        block = moved;
+        capacity = grown;
+        return true;
+    }
+
+    // Shrinks `block` to the value's exact size, which is how a reader
+    // (`GlobalSize`) knows where the value ends; frees it on failure.
+    private static HGLOBAL exactBlock(HGLOBAL block, size_t size) nothrow @nogc
+    {
+        auto exact = GlobalReAlloc(block, size, GMEM_MOVEABLE);
+        if (exact is null)
+            GlobalFree(block);
+        return exact;
+    }
+
+    // The provider's bytes, pulled straight into the clipboard's block.
+    private HGLOBAL renderBytes(ref OfferRecord record, scope const(char)[] mime)
+        nothrow
+    {
+        size_t capacity = clipChunkBytes;
+        HGLOBAL block = GlobalAlloc(GMEM_MOVEABLE, capacity);
+        if (block is null)
+            return null;
+        size_t size;
+        for (;;)
+        {
+            if (!reserveBlock(block, capacity, size + 1))
+            {
+                GlobalFree(block);
+                return null;
+            }
+            auto memory = cast(ubyte*) GlobalLock(block);
+            if (memory is null)
+            {
+                GlobalFree(block);
+                return null;
+            }
+            const n = record.fill(mime, size, memory[size .. capacity]);
+            GlobalUnlock(block);
+            if (n == 0)
+                break;
+            size += n;
+        }
+        return exactBlock(block, size);
+    }
+
+    // The provider's UTF-8 text as NUL-terminated UTF-16, a chunk at a time
+    // through `chunk_`; a sequence split across chunks carries over.
+    private HGLOBAL renderUnicode(ref OfferRecord record) nothrow
+    {
+        if (chunk_.length < clipChunkBytes)
+            chunk_.length = clipChunkBytes;
+        auto staging = chunk_[];
+        size_t capacity = clipChunkBytes;
+        HGLOBAL block = GlobalAlloc(GMEM_MOVEABLE, capacity);
+        if (block is null)
+            return null;
+        size_t units;  // UTF-16 units written
+        ulong offset;  // provider bytes read
+        size_t carry;  // a split sequence's bytes at the staging's start
+        for (bool ended; !ended;)
+        {
+            const n = record.fill(textMime, offset, staging[carry .. $]);
+            offset += n;
+            ended = n == 0;
+            const have = carry + n;
+            const text = cast(const(char)[]) staging[0 .. have];
+            // At the end a dangling sequence converts too, as U+FFFD.
+            const complete = ended ? have : completeUtf8Prefix(text);
+            // UTF-16 never needs more units than UTF-8 has bytes; plus NUL.
+            if (!reserveBlock(block, capacity, (units + complete + 1) * wchar.sizeof))
+            {
+                GlobalFree(block);
+                return null;
+            }
+            auto memory = cast(wchar*) GlobalLock(block);
+            if (memory is null)
+            {
+                GlobalFree(block);
+                return null;
+            }
+            auto converted = utf8ToUtf16(text[0 .. complete],
+                memory[units .. capacity / wchar.sizeof], UtfMode.replacement);
+            if (converted.hasValue)
+                units += converted.value;
+            if (ended)
+                memory[units++] = 0;
+            GlobalUnlock(block);
+            if (converted.hasError)
+            {
+                GlobalFree(block);
+                return null;
+            }
+            foreach (i; complete .. have)
+                staging[i - complete] = staging[i];
+            carry = have - complete;
+        }
+        return exactBlock(block, units * wchar.sizeof);
+    }
+
+    private void publish(OfferId offer)
+    {
+        const previous = clipboard_.current;
+        if (previous != offer)
+            if (auto old = clipboard_.offers.get(previous))
+            {
+                if (old.own)
+                    announce(previous, DataOfferAction.withdrawn);
+                clipboard_.drop(previous);
+            }
+        clipboard_.current = offer;
+        announce(offer, DataOfferAction.offered);
+    }
+
+    private void announce(OfferId offer, DataOfferAction action)
+    {
+        auto record = clipboard_.offers.get(offer);
+        assert(record !is null, "announcing a live offer");
+        const window = record.window;
+        const count = action == DataOfferAction.offered ? record.typeCount : 1;
+        foreach (i; 0 .. count)
+            emitText(window, record.types[i][],
+                (TextId mime, size_t kept) => DataOfferEvent(offer, action, mime));
+    }
+
+    private WindowId firstWindow()
+    {
+        foreach (h; windows_.byLive)
+            return h;
+        return WindowId.init;
+    }
+
+    // The helper's procedure. Changes are only noted; the dispatch after the
+    // pump acts on them. `WM_RENDERFORMAT` cannot be deferred: the requester
+    // waits in `GetClipboardData` until it returns.
+    private extern (Windows) static LRESULT clipboardProcedure(HWND hwnd,
+        UINT message, WPARAM wParam, LPARAM lParam) nothrow
+    {
+        Win32Wsi* owner;
+        if (message == WM_NCCREATE)
+        {
+            owner = cast(Win32Wsi*)(cast(CREATESTRUCTW*) lParam).lpCreateParams;
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA_, cast(LONG_PTR) owner);
+        }
+        else
+            owner = cast(Win32Wsi*) GetWindowLongPtrW(hwnd, GWLP_USERDATA_);
+        if (owner is null)
+            return DefWindowProcW(hwnd, message, wParam, lParam);
+        switch (message)
+        {
+            case WM_CLIPBOARDUPDATE_:
+            case WM_DESTROYCLIPBOARD:
+                owner.clipboardChanged_ = true;
+                return 0;
+            case WM_RENDERFORMAT:
+                owner.renderFormat(cast(UINT) wParam);
+                return 0;
+            case WM_RENDERALLFORMATS:
+                owner.renderAllFormats();
+                return 0;
+            case WM_NCDESTROY:
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA_, 0);
+                return DefWindowProcW(hwnd, message, wParam, lParam);
+            default:
+                return DefWindowProcW(hwnd, message, wParam, lParam);
+        }
     }
 
     /**
@@ -1334,6 +1976,7 @@ struct Win32Wsi
 }
 
 private immutable wchar[] className = "sparkles-wsi-window"w;
+private immutable wchar[] clipboardClassName = "sparkles-wsi-clipboard"w;
 
 private WsiResult!T win32Failure(T)(WsiOperation operation, long nativeCode,
     scope const(char)[] diagnostic,

@@ -29,8 +29,11 @@ version (Windows):
 
 import core.sys.windows.imm : CPS_COMPLETE, ImmGetIMEFileNameW, ImmIsIME,
     NI_COMPOSITIONSTR, SCS_SETSTR;
+import core.sys.windows.psapi : PROCESS_MEMORY_COUNTERS;
 import core.sys.windows.windows;
-import core.time : Duration, MonoTime, seconds;
+import core.time : Duration, MonoTime, msecs, seconds;
+import std.array : replicate;
+import std.conv : text;
 import std.stdio : writefln, writeln;
 
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
@@ -238,7 +241,198 @@ int main()
     else
         writeln("ok: Win32 text commit + IMM32 result commit (no preedit "
             ~ "phase: the active keyboard layout has no IME UI)");
+
+    checkClipboard(wsi, loop);
     return 0;
+}
+
+private extern (Windows) nothrow @nogc
+BOOL K32GetProcessMemoryInfo(HANDLE process, PROCESS_MEMORY_COUNTERS* counters,
+    DWORD size);
+
+/// This process' working set and its peak, in KiB.
+private SIZE_T[2] workingSetKiB()
+{
+    PROCESS_MEMORY_COUNTERS counters;
+    counters.cb = PROCESS_MEMORY_COUNTERS.sizeof;
+    assert(K32GetProcessMemoryInfo(GetCurrentProcess(), &counters,
+        counters.cb));
+    return [counters.WorkingSetSize / 1024, counters.PeakWorkingSetSize / 1024];
+}
+
+/**
+Addendum: the clipboard (`DT1`–`DT5`). The shared suite round-trips 32 MiB
+through the Win32 clipboard: the offer is delay-rendered into one block the
+clipboard owns, and the receive streams it out in 64 KiB chunks. Then another
+party that does not go through the WSI reads offered UTF-8 text as
+`CF_UNICODETEXT`, and sets UTF-16 text of its own: that offer is announced as
+UTF-8 text and reads back intact.
+*/
+private void checkClipboard(ref Win32Wsi wsi, ref DefaultLoop loop)
+{
+    WindowConfig config;
+    assert(config.title.assign("sparkles:wsi Win32 clipboard"));
+    const id = wsi.createWindow(config).value;
+
+    static struct ClipboardHooks
+    {
+        Win32Wsi* wsi;
+        DefaultLoop* loop;
+        ulong transferBytes = 32UL << 20; // `DT5`
+        enum size_t maxChunkBytes = Win32Wsi.clipChunkBytes;
+
+        void step(Duration timeout)
+        {
+            loop.runHostedOnce(*wsi, timeout).value;
+        }
+    }
+
+    auto hooks = ClipboardHooks(&wsi, &loop);
+    const before = workingSetKiB();
+    const started = MonoTime.currTime;
+    const clip = checkClipboardConformance(wsi, loop, hooks, id);
+    const elapsed = (MonoTime.currTime - started).total!"msecs";
+    const after = workingSetKiB();
+    // `DT4`: WSI keeps one 64 KiB chunk; the 32 MiB lives in the block
+    // `WM_RENDERFORMAT` hands the clipboard (the requester's side), freed
+    // when the next offer empties the clipboard. So the working set may
+    // peak by about the value's size, and must settle back afterwards.
+    const peakGrew = cast(long) after[1] - cast(long) before[1];
+    const settled = cast(long) after[0] - cast(long) before[0];
+    enum long valueKiB = 32 * 1024;
+    assert(peakGrew < valueKiB * 2 + 8 * 1024, text("the working set peaked ",
+        peakGrew, " KiB above its start across a 32 MiB round trip"));
+    assert(settled < 4 * 1024, text("the working set stayed ", settled,
+        " KiB above its start after a 32 MiB round trip"));
+    writeln("ok: Win32 clipboard conformance (", clip.checked,
+        " checked, 32 MiB through delayed rendering in ", elapsed,
+        " ms, working set peak +", peakGrew, " KiB, settled ", settled,
+        " KiB)");
+
+    // Another party: a window of its own, not the WSI's, that reads and
+    // writes the clipboard the plain Win32 way. `OpenClipboard(null)` would
+    // not do for writing: an ownerless clipboard refuses `SetClipboardData`.
+    auto writer = CreateWindowExW(0, "STATIC"w.ptr, null, 0, 0, 0, 0, 0,
+        HWND_MESSAGE, null, GetModuleHandleW(null), null);
+    assert(writer !is null, "the other party's window could not be made");
+    scope (exit) DestroyWindow(writer);
+
+    // It reads an offer of UTF-8 text as `CF_UNICODETEXT`, rendered on
+    // request in 64 KiB pieces of UTF-8: over 64 KiB of text whose 2-, 3-
+    // and 4-byte sequences straddle those pieces must arrive whole.
+    {
+        import std.utf : toUTF16;
+
+        static struct TextProvider
+        {
+            string text;
+
+            size_t fill(scope const(char)[], ulong offset, scope ubyte[] buffer)
+                @safe pure nothrow @nogc
+            {
+                if (offset >= text.length)
+                    return 0;
+                const at = cast(size_t) offset;
+                const n = text.length - at < buffer.length
+                    ? text.length - at : buffer.length;
+                buffer[0 .. n] = cast(const(ubyte)[]) text[at .. at + n];
+                return n;
+            }
+        }
+
+        auto ours = TextProvider("ünïcode ✓ 😀 ".replicate(9000));
+        const(char)[][1] plain = ["text/plain;charset=utf-8"];
+        const offered = wsi.offerClipboard(id, plain[], ours);
+        assert(!offered.hasError, "offering text failed");
+        assert(OpenClipboard(writer), "the other party could not open the clipboard");
+        auto data = GetClipboardData(CF_UNICODETEXT);
+        assert(data !is null, "CF_UNICODETEXT was not rendered");
+        const units = cast(const(wchar)*) GlobalLock(data);
+        const expected = ours.text.toUTF16;
+        const size = GlobalSize(data) / wchar.sizeof;
+        const intact = size == expected.length + 1
+            && units[0 .. expected.length] == expected && units[expected.length] == 0;
+        GlobalUnlock(data);
+        assert(CloseClipboard());
+        assert(intact, "the CF_UNICODETEXT rendering did not match the UTF-8 offered");
+        assert(!wsi.withdrawClipboard(offered.value).hasError);
+        // Its `offered` and `withdrawn` events are not the foreign offer's.
+        assert(!wsi.drain((WindowEvent event) {}).hasError);
+        writeln("ok: Win32 offers UTF-8 text as CF_UNICODETEXT (",
+            ours.text.length / 1024, " KiB intact)");
+    }
+
+    // Over 64 KiB, so its UTF-16 is read in several chunks, with surrogate
+    // pairs at their edges.
+    const string theirs = "copied by another writer: ünïcode ✓ 😀 ".replicate(3000);
+    {
+        import std.utf : toUTF16;
+
+        const wide = theirs.toUTF16;
+        auto block = GlobalAlloc(GMEM_MOVEABLE, (wide.length + 1) * wchar.sizeof);
+        assert(block !is null);
+        auto units = cast(wchar*) GlobalLock(block);
+        units[0 .. wide.length] = wide[];
+        units[wide.length] = 0;
+        GlobalUnlock(block);
+        assert(OpenClipboard(writer), "the second writer could not open the clipboard");
+        assert(EmptyClipboard());
+        assert(SetClipboardData(CF_UNICODETEXT, block) !is null,
+            "the second writer could not set its text");
+        assert(CloseClipboard());
+    }
+
+    OfferId offer;
+    const deadline = MonoTime.currTime + 5.seconds;
+    while (offer == OfferId.init)
+    {
+        assert(MonoTime.currTime < deadline, "the foreign offer was never announced");
+        hooks.step(50.msecs);
+        assert(!wsi.drain((WindowEvent event) {
+            event.payload.match!(
+                (in DataOfferEvent e) {
+                    if (e.action != DataOfferAction.offered)
+                        return;
+                    assert(!wsi.withText(e.mimeType, (scope const(char)[] mime) {
+                        if (mime == "text/plain;charset=utf-8")
+                            offer = e.offer;
+                    }).hasError);
+                },
+                (_) {});
+        }).hasError);
+    }
+    static struct Collect
+    {
+        char[] text;
+        size_t largest;
+        bool done, ok;
+
+        void chunk(TransferId, scope const(ubyte)[] bytes) @safe nothrow
+        {
+            text ~= cast(const(char)[]) bytes;
+            largest = bytes.length > largest ? bytes.length : largest;
+        }
+
+        void finish(TransferId, TransferStatus status) @safe nothrow
+        {
+            done = true;
+            ok = status == TransferStatus.completed;
+        }
+    }
+    Collect paste;
+    assert(!wsi.receive(offer, "text/plain;charset=utf-8", paste).hasError);
+    while (!paste.done)
+    {
+        assert(MonoTime.currTime < deadline + 5.seconds, "the paste never finished");
+        hooks.step(50.msecs);
+    }
+    assert(paste.ok && paste.text == theirs,
+        "another writer's text did not arrive intact");
+    assert(paste.largest <= Win32Wsi.clipChunkBytes,
+        "a chunk exceeded the bound a sink may receive");
+    assert(!wsi.destroyWindow(id).hasError);
+    writeln("ok: Win32 reads another writer's clipboard (",
+        theirs.length / 1024, " KiB of UTF-16 text intact)");
 }
 
 /// Win32-only addendum: VK logical identity, UTF-16 commits, and the IMM32

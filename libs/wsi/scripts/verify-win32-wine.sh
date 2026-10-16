@@ -29,6 +29,9 @@ env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$work/runtime" \
   | tee "$work/output.log"
 grep -q '^ok: Win32 WSI conformance (18 checked, 3 skipped)' "$work/output.log"
 grep -q '^ok: Win32 text commit + IMM32 composition round trip' "$work/output.log"
+grep -q '^ok: Win32 clipboard conformance (4 checked, 32 MiB ' "$work/output.log"
+grep -q '^ok: Win32 offers UTF-8 text as CF_UNICODETEXT' "$work/output.log"
+grep -q "^ok: Win32 reads another writer's clipboard" "$work/output.log"
 
 # No 192-DPI phase: a per-monitor-V2-aware window under Wine always sees a
 # 96-DPI monitor (GetDpiForWindow ignores LogPixels, which only feeds the
