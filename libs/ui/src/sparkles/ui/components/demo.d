@@ -44,17 +44,14 @@ struct Section
     /// `toString(Writer)`, such as `drawTable(cells)` or `prettyPrint(x)`: it is
     /// written when the demo runs, with no string built first.
     this(T)(string header, T content)
-    if (!is(T : const(char)[]) && !is(T : ContentWriter) && isWritable!T)
+    if (!is(T : const(char)[]) && !is(T : ContentWriter)
+        && imported!"sparkles.base.text.value_form".isWritableValue!T)
     {
         this.header = header;
         this.writeContent = (sink) { content.toString(sink); };
     }
 }
 
-private enum bool isWritable(T) = __traits(compiles, (const T t) {
-    scope void delegate(const(char)[]) @safe sink;
-    t.toString(sink);
-});
 
 /// Configuration for demo rendering.
 struct DemoProps

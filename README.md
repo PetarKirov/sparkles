@@ -674,7 +674,7 @@ void main()
         ["pushed", "origin ✔"],
     ]);
     writeln(hjoin([
-        drawBox(receipt, "released", BoxProps(footer: "next: publish")),
+        drawBox(receipt, "released", BoxProps(footer: "next: publish")).toString,
         "notes:\n2 feats\n1 fix",
     ]));
 }

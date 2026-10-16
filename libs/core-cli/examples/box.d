@@ -74,7 +74,7 @@ void main()
                     ["Alice", "30", "Engineer"],
                     ["Bob", "25", "Designer"],
                     ["Carol", "35", "Manager"],
-                ].drawTable.toString.drawBox("Team"),
+                ].drawTable.drawBox("Team"),
             ),
             Section(
                 header: "Box with prettyPrint Output",
@@ -83,7 +83,7 @@ void main()
                     port: 8080,
                     ssl: true,
                     endpoints: ["/api", "/health", "/metrics"],
-                ).prettyPrint(PrettyPrintOptions!void(softMaxWidth: 0)).toString.drawBox("Config"),
+                ).prettyPrint(PrettyPrintOptions!void(softMaxWidth: 0)).drawBox("Config"),
             ),
             Section(
                 header: "Dashboard Example",
@@ -93,7 +93,7 @@ void main()
                     ["Memory", "2.1 GB", styledText(i"{green OK}")],
                     ["Disk", "89%", styledText(i"{yellow Warning}")],
                     ["Network", "1.2 Gbps", styledText(i"{green OK}")],
-                ].drawTable.toString.drawBox("Metrics"),
+                ].drawTable.drawBox("Metrics"),
             ),
             Section(
                 header: "Color Palette Box",
@@ -121,7 +121,7 @@ void main()
                         Server("db-01", "192.168.1.20", 5432),
                     ],
                     active: true,
-                ).prettyPrint(PrettyPrintOptions!void(softMaxWidth: 60)).toString.drawBox("Cluster"),
+                ).prettyPrint(PrettyPrintOptions!void(softMaxWidth: 60)).drawBox("Cluster"),
             ),
             Section(
                 header: "Box with Footer",
@@ -167,10 +167,10 @@ void main()
             Section(
                 header: "Aligned Stack - Same Width Regardless of Content",
                 content: [
-                    ["ok"].drawBox("alpha", BoxProps(minWidth: 44, maxWidth: 44)),
+                    ["ok"].drawBox("alpha", BoxProps(minWidth: 44, maxWidth: 44)).toString,
                     ["a slightly longer middle line"]
-                        .drawBox("beta", BoxProps(minWidth: 44, maxWidth: 44)),
-                    ["x"].drawBox("gamma", BoxProps(minWidth: 44, maxWidth: 44)),
+                        .drawBox("beta", BoxProps(minWidth: 44, maxWidth: 44)).toString,
+                    ["x"].drawBox("gamma", BoxProps(minWidth: 44, maxWidth: 44)).toString,
                 ].joiner("\n").to!string,
             ),
             Section(
