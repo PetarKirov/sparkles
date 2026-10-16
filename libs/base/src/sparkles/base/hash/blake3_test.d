@@ -11,6 +11,7 @@ import std.meta : AliasSeq;
 
 import sparkles.base.hash.blake3;
 import sparkles.base.hash.blake3_vectors;
+import sparkles.test_runner.attributes : benchmark;
 
 private:
 
@@ -284,4 +285,73 @@ unittest
     assert(early == blake3(vectorInput[0 .. 5000]));
     hasher.put(vectorInput[5000 .. 9000]);
     assert(hasher.finish() == blake3(vectorInput[0 .. 9000]));
+}
+
+// Throughput of each backend on one input size: `dub test :base -b bench --
+// --bench -i blake3.bench --group-by=size`. A case runs after its test body
+// returns, so its state lives on the heap, not in a closure frame.
+final class ThroughputCase
+{
+    Blake3Backend backend;
+    ubyte[] input;
+    ubyte[32] expected;
+
+    this(Blake3Backend backend, size_t size) @safe
+    {
+        this.backend = backend;
+        input = new ubyte[](size);
+        Rng(size).fill(input);
+        expected = blake3With(Blake3Backend.portable, input);
+    }
+
+    ubyte[32] timed() @safe
+    {
+        import sparkles.test_runner.bench : blackBox;
+
+        return blake3With(backend, blackBox(input));
+    }
+
+    void after(ref ubyte[32] digest) @safe
+    {
+        if (digest != expected)
+            throw new Exception("digest differs from the portable backend's");
+    }
+}
+
+void registerThroughput(Blake3Backend backend, string sizeLabel, size_t size) @safe
+{
+    import std.conv : to;
+    import sparkles.test_runner.bench : benchCase, Metric, Unit;
+
+    auto c = new ThroughputCase(backend, size);
+    benchCase(
+        name: backend.to!string,
+        labels: ["size": sizeLabel],
+        timed: &c.timed,
+        after: &c.after,
+        metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
+}
+
+
+ubyte[32] blake3With(Blake3Backend backend, scope const(ubyte)[] input) @safe pure nothrow @nogc
+{
+    auto hasher = Blake3.withBackend(backend);
+    hasher.put(input);
+    return hasher.finish();
+}
+
+@("blake3.bench.throughput")
+@benchmark @safe
+unittest
+{
+    static foreach (name; concreteBackendNames)
+    {{
+        enum backend = __traits(getMember, Blake3Backend, name);
+        if (isSupported(backend))
+        {
+            registerThroughput(backend, "1KiB", 1 << 10);
+            registerThroughput(backend, "64KiB", 1 << 16);
+            registerThroughput(backend, "1MiB", 1 << 20);
+        }
+    }}
 }

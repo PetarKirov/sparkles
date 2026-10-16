@@ -20,6 +20,27 @@ module sparkles.base.hash.blake3;
 
 import core.bitop : bsr, popcnt, ror;
 
+version (LDC)
+{
+    version (X86_64)
+        version = blake3X86;
+    else version (AArch64)
+        version = blake3Neon;
+}
+
+version (blake3X86)
+{
+    import core.cpuid : avx2, sse41;
+    import sparkles.base.text.simd_caps : hasAvx512FVl;
+    import sparkles.base.hash.blake3_simd : compressRowsInPlace, compressRowsXof,
+        hashManySimd, targetAvx2, targetAvx512, targetSse41;
+}
+else version (blake3Neon)
+{
+    import sparkles.base.hash.blake3_simd : compressRowsInPlace, compressRowsXof,
+        hashManySimd, targetNeon;
+}
+
 @safe pure nothrow @nogc:
 
 /// Bytes in a default BLAKE3 digest.
@@ -78,18 +99,42 @@ enum Blake3Backend : ubyte
     /// Plain D, one block at a time. Always available, and the only backend
     /// in CTFE and DMD builds.
     portable,
+    /// x86_64 SSE4.1: four chunks at a time (LDC).
+    sse41,
+    /// x86_64 AVX2: eight chunks at a time (LDC).
+    avx2,
+    /// x86_64 AVX-512 F and VL: sixteen chunks at a time (LDC).
+    avx512,
+    /// AArch64 NEON: four chunks at a time (LDC; NEON is baseline there).
+    neon,
 }
 
 /**
-The fastest backend this build and CPU support. `pure`: the CPU's features
-are fixed for the life of the process, read from immutable data initialized
-at startup; in CTFE it is always `portable`.
+The fastest backend this build and CPU support.
+
+It is `pure`, and so is every hash: a CPU's features cannot change while a
+process runs, and the dispatch reads them from immutable data initialized
+before `main` (`core.cpuid`, and the AVX-512 register-state probe of
+`sparkles.base.text.simd_caps`). In CTFE it is always `portable`.
 */
 Blake3Backend bestBlake3Backend()
 {
     if (__ctfe)
         return Blake3Backend.portable;
-    return Blake3Backend.portable;
+    version (blake3X86)
+    {
+        if (hasAvx512FVl && avx2)
+            return Blake3Backend.avx512;
+        if (avx2)
+            return Blake3Backend.avx2;
+        if (sse41)
+            return Blake3Backend.sse41;
+        return Blake3Backend.portable;
+    }
+    else version (blake3Neon)
+        return Blake3Backend.neon;
+    else
+        return Blake3Backend.portable;
 }
 
 /// Whether `backend` can run in this build on this CPU. `automatic` and
@@ -101,6 +146,18 @@ bool isSupported(Blake3Backend backend)
         case Blake3Backend.automatic:
         case Blake3Backend.portable:
             return true;
+        case Blake3Backend.sse41:
+        case Blake3Backend.avx2:
+        case Blake3Backend.avx512:
+            version (blake3X86)
+                return !__ctfe && backend <= bestBlake3Backend;
+            else
+                return false;
+        case Blake3Backend.neon:
+            version (blake3Neon)
+                return !__ctfe;
+            else
+                return false;
     }
 }
 
@@ -481,6 +538,13 @@ private size_t simdDegree(Blake3Backend backend)
             return simdDegree(resolve(backend));
         case Blake3Backend.portable:
             return 1;
+        case Blake3Backend.sse41:
+        case Blake3Backend.neon:
+            return 4;
+        case Blake3Backend.avx2:
+            return 8;
+        case Blake3Backend.avx512:
+            return 16;
     }
 }
 
@@ -707,6 +771,25 @@ package(sparkles.base.hash) void compressInPlace(Blake3Backend backend, ref uint
     scope const(ubyte)[] block, ubyte blockLength, ulong counter, ubyte flags)
 in (block.length == 64)
 {
+    version (blake3X86)
+    {
+        switch (backend)
+        {
+            case Blake3Backend.avx512:
+                return compressRowsInPlace!targetAvx512(cv, block, blockLength, counter, flags);
+            case Blake3Backend.avx2:
+                return compressRowsInPlace!targetAvx2(cv, block, blockLength, counter, flags);
+            case Blake3Backend.sse41:
+                return compressRowsInPlace!targetSse41(cv, block, blockLength, counter, flags);
+            default:
+                break;
+        }
+    }
+    else version (blake3Neon)
+    {
+        if (backend == Blake3Backend.neon)
+            return compressRowsInPlace!targetNeon(cv, block, blockLength, counter, flags);
+    }
     compressPortable(cv, block, blockLength, counter, flags);
 }
 
@@ -715,6 +798,25 @@ package(sparkles.base.hash) void compressXof(Blake3Backend backend, in uint[8] c
     ref ubyte[64] output)
 in (block.length == 64)
 {
+    version (blake3X86)
+    {
+        switch (backend)
+        {
+            case Blake3Backend.avx512:
+                return compressRowsXof!targetAvx512(cv, block, blockLength, counter, flags, output);
+            case Blake3Backend.avx2:
+                return compressRowsXof!targetAvx2(cv, block, blockLength, counter, flags, output);
+            case Blake3Backend.sse41:
+                return compressRowsXof!targetSse41(cv, block, blockLength, counter, flags, output);
+            default:
+                break;
+        }
+    }
+    else version (blake3Neon)
+    {
+        if (backend == Blake3Backend.neon)
+            return compressRowsXof!targetNeon(cv, block, blockLength, counter, flags, output);
+    }
     uint[16] state;
     compressPre(state, cv, block, blockLength, counter, flags);
     static foreach (i; 0 .. 8)
@@ -732,6 +834,29 @@ package(sparkles.base.hash) void hashMany(Blake3Backend backend, scope const(uby
     ubyte flags, ubyte flagsStart, ubyte flagsEnd, scope ubyte[] output)
 in (input.length >= count * blocks * 64 && output.length >= count * 32)
 {
+    version (blake3X86)
+    {
+        switch (backend)
+        {
+            case Blake3Backend.avx512:
+                return hashManySimd!(targetAvx512, 16, 8, 4)(input, count, blocks, key,
+                    counter, incrementCounter, flags, flagsStart, flagsEnd, output);
+            case Blake3Backend.avx2:
+                return hashManySimd!(targetAvx2, 8, 4)(input, count, blocks, key,
+                    counter, incrementCounter, flags, flagsStart, flagsEnd, output);
+            case Blake3Backend.sse41:
+                return hashManySimd!(targetSse41, 4)(input, count, blocks, key,
+                    counter, incrementCounter, flags, flagsStart, flagsEnd, output);
+            default:
+                break;
+        }
+    }
+    else version (blake3Neon)
+    {
+        if (backend == Blake3Backend.neon)
+            return hashManySimd!(targetNeon, 4)(input, count, blocks, key,
+                counter, incrementCounter, flags, flagsStart, flagsEnd, output);
+    }
     hashManyPortable(input, count, blocks, key, counter, incrementCounter,
         flags, flagsStart, flagsEnd, output);
 }

@@ -9,12 +9,15 @@ version (textSimdX86)
 {
     package immutable bool hasAvx512BwVl;
     package immutable bool hasAvx512Vbmi2;
+    /// AVX-512 F and VL with the OS-enabled ZMM state (`sparkles.base.hash`).
+    package(sparkles.base) immutable bool hasAvx512FVl;
 
     shared static this()
     {
         const capabilities = detectCapabilities();
         hasAvx512BwVl = (capabilities & 1) != 0;
         hasAvx512Vbmi2 = (capabilities & 2) != 0;
+        hasAvx512FVl = (capabilities & 4) != 0;
     }
 
     private uint detectCapabilities() @safe nothrow @nogc
@@ -51,11 +54,13 @@ version (textSimdX86)
                 "cpuid" : "=a" (a), "=b" (b), "=c" (c), "=d" (d) : "a" (7), "c" (0);
             }
         })();
+        enum fVl = (1u << 16) | (1u << 31);
+        if ((b & fVl) != fVl)
+            return 0;
         // LLVM can narrow 512-bit comparisons to 128/256-bit opmask forms;
         // those require VL in addition to F/BW, including the VBMI2 path.
-        enum required = (1u << 16) | (1u << 30) | (1u << 31);
-        if ((b & required) != required)
-            return 0;
-        return 1 | ((c & (1u << 6)) != 0 ? 2 : 0);
+        if ((b & (1u << 30)) == 0)
+            return 4;
+        return 4 | 1 | ((c & (1u << 6)) != 0 ? 2 : 0);
     }
 }
