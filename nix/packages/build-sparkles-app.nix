@@ -273,7 +273,8 @@
                 # `views/twoslash.css` and `views/icons/**/*.svg`, pulled in via `import()`)
                 # and `.frag` shaders (sparkles:ui's are generated and come from
                 # `ui-shaders`; this keeps any hand-written one a package
-                # string-imports).
+                # string-imports), and the prebuilt SPIR-V (`.spv`) a package
+                # string-imports (sparkles:vulkan-wsi's triangle).
                 file:
                 file.hasExt "d"
                 || file.hasExt "c"
@@ -282,6 +283,7 @@
                 || file.hasExt "css"
                 || file.hasExt "svg"
                 || file.hasExt "frag"
+                || file.hasExt "spv"
               ) (fromRoot path)
             ) sourceDirs
           );
