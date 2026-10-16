@@ -55,6 +55,7 @@ $(UL
     $(LI DDoc does not see doc comments inside the mixed-in string.)
     $(LI Declarations without `=`, and `enum`, `alias` and `import` lines,
     pass through unchanged.)
+    $(LI A nested `/+ … +/` comment ends at its first `+/`.)
 )
 
 A declaration may omit its type (`immutable x = f();`, `auto y = g();`). The
@@ -62,10 +63,15 @@ type then becomes `typeof(<initializer>)`.
 */
 module sparkles.base.static_init;
 
-import std.algorithm.searching : canFind;
+import std.algorithm.searching : canFind, count;
 import std.array : join, split;
-import std.conv : to;
-import std.string : strip;
+import std.string : stripLeft, stripRight;
+
+// The documented examples' declarations, in the docs and in unittest builds.
+version (D_Ddoc)
+    version = StaticInitExamples;
+version (unittest)
+    version = StaticInitExamples;
 
 /**
 Rewrites $(I one) declaration with a run-time initializer into the declaration
@@ -78,18 +84,29 @@ Params:
     decl = a single declaration, `;` included, usually written as a `q{…}`
         token string.
 
-The generated code keeps each declaration on its source line, so a compile
+The generated code keeps the declaration on its source line, so a compile
 error in it is reported at `<file>-mixin-<L>(<line>)`, where `<line>` is the
 offending line of the caller's file.
 */
 enum string staticVar(string decl) = staticInitCode(decl, singleDeclaration: true);
 
+version (StaticInitExamples)
+{
+    private int[] computeSquares(int n) @safe pure
+    {
+        int[] r;
+        foreach (i; 0 .. n)
+            r ~= i * i;
+        return r;
+    }
+
+    mixin(staticVar!q{ immutable int[] exampleSquares = computeSquares(4); });
+}
+
 ///
 @("staticInit.staticVar.example")
 @safe unittest
 {
-    // At module scope:
-    //     mixin(staticVar!q{ immutable int[] squares = computeSquares(4); });
     assert(exampleSquares == [0, 1, 4, 9]);
 }
 
@@ -103,9 +120,7 @@ Params:
 
 A compile error inside the block is reported as
 `static_init.d-mixin-<M>(<M + k>)`, where `k` is the offending line within the
-block. A "parent scope from here" note follows it with the caller's line, and
-the message names the variable. (A `#line` directive cannot help here: DMD 2.112
-shifts a `#line` inside a string mixin by twice the mixin's own line.)
+block. A "parent scope from here" note follows it with the caller's line.
 */
 mixin template StaticBlock(string decls)
 {
@@ -116,111 +131,135 @@ mixin template StaticBlock(string decls)
     mixin(staticInit_.staticInitCode(decls, singleDeclaration: false));
 }
 
+version (StaticInitExamples)
+{
+    mixin StaticBlock!q{
+        immutable int[] examplePrimes = [2, 3, 5, 7].dup;
+        immutable size_t examplePrimeCount = examplePrimes.length; // reads the line above
+    };
+}
+
 ///
 @("staticInit.StaticBlock.example")
 @safe unittest
 {
-    // At module scope:
-    //     mixin StaticBlock!q{
-    //         immutable int[] primes = [2, 3, 5, 7].dup;
-    //         immutable size_t primeCount = primes.length; // reads the line above
-    //     };
     assert(examplePrimes == [2, 3, 5, 7]);
     assert(examplePrimeCount == 4);
 }
 
 // ─── Code generation ────────────────────────────────────────────────────────
 
-/// One declaration as found in the source: its text, without the trailing `;`
-/// or leading trivia, and the 0-based line its text starts on.
-private struct Declaration
-{
-    string text;
-    size_t lineOffset;
-}
-
-/// The pieces of `<lhs> = <expr>`; `name` is the variable's identifier.
-private struct Split
-{
-    string lhs;
-    string name;
-    string expr;
-}
-
 // Public only so `StaticBlock` can reach it from the mixin site. It is not
 // part of the API.
 string staticInitCode(string source, bool singleDeclaration) @safe pure
 {
-    auto decls = splitDeclarations(source);
-    if (singleDeclaration && decls.length != 1)
-        assert(false, "staticVar: expected exactly one declaration, found " ~
-            decls.length.to!string ~ "; use `StaticBlock` for several");
-
-    // Pad with newlines so each declaration starts on its source line: DMD
-    // reports a mixin's line k as the mixin's line + k, which then names the
-    // caller's own line.
-    string code;
-    size_t lines;
-    foreach (decl; decls)
+    const code = codeOnly(source);
+    string result;
+    size_t start, declarations;
+    ptrdiff_t depth;
+    foreach (i, c; code)
     {
-        for (; lines < decl.lineOffset; lines++)
-            code ~= "\n";
-        const generated = declarationCode(decl.text);
-        code ~= generated;
-        lines += countLines(generated);
+        depth += (c == '(' || c == '[' || c == '{') - (c == ')' || c == ']' || c == '}');
+        if (c != ';' || depth != 0)
+            continue;
+        result ~= declaration(source[start .. i], code[start .. i]);
+        start = i + 1;
+        declarations++;
     }
-    return code;
+    if (code[start .. $].stripLeft.length)
+        assert(false, "static_init: missing `;` after `" ~ source[start .. $].stripLeft ~ "`");
+    if (singleDeclaration && declarations != 1)
+        assert(false, "staticVar: expected exactly one declaration; use `StaticBlock` for several");
+    return result;
 }
 
-/// The generated code for one declaration (see the module docs). The
-/// boilerplate adds no newlines, so it shares the declaration's line.
-private string declarationCode(string decl) @safe pure
+/// `s` with comments and the contents of string and character literals turned
+/// into spaces, newlines kept, so plain searches find only code at the same
+/// offsets.
+private string codeOnly(string s) @safe pure
 {
-    if (isPassThrough(decl))
-        return decl ~ ";";
-
-    const s = splitAssignment(decl);
-    const name = s.name;
-    const assign = "{ " ~ name ~ " = " ~ s.expr ~ "; } ";
-
-    return declaredVariable(s) ~ "; " ~
-        "static if (!__traits(compiles, { auto p_ = &" ~ name ~ "; })) " ~
-        "static assert(false, \"`" ~ name ~ "`: a run-time initializer needs a " ~
-        "module-level or `static` variable\"); " ~
-        "else static if (is(typeof(" ~ name ~ ") == immutable) || is(typeof(" ~ name ~
-        ") == shared) || !__traits(compiles, () @safe { auto p_ = &" ~ name ~ "; })) " ~
-        "shared static this() " ~ assign ~
-        "else static if (is(typeof(" ~ name ~ ") == const) || is(typeof(" ~ name ~ ") == inout)) " ~
-        "static assert(false, \"`" ~ name ~ "`: a thread-local `const` would be " ~
-        "initialized on the main thread only; declare it `immutable` or `shared const`\"); " ~
-        "else static this() " ~ assign;
+    auto r = s.dup;
+    for (size_t i; i < s.length; )
+    {
+        const rest = s[i .. $];
+        size_t end;
+        if (rest.length > 1 && rest[0] == '/' && rest[1] == '/')
+            end = indexOrEnd(s, i, "\n");
+        else if (rest.length > 1 && rest[0] == '/' && (rest[1] == '*' || rest[1] == '+'))
+            end = indexOrEnd(s, i + 2, rest[1] == '*' ? "*/" : "+/") + 2;
+        else if (rest[0] == '`' || (rest.length > 1 && rest[0] == 'r' && rest[1] == '"'))
+            end = indexOrEnd(s, i + (rest[0] == '`' ? 1 : 2), rest[0] == '`' ? "`" : `"`) + 1;
+        else if (rest[0] == '"' || rest[0] == '\'')
+        {
+            end = i + 1;
+            while (end < s.length && s[end] != rest[0])
+                end += s[end] == '\\' ? 2 : 1;
+            end++;
+        }
+        else
+        {
+            i++;
+            continue;
+        }
+        end = end < s.length ? end : s.length;
+        foreach (j; i .. end)
+            if (r[j] != '\n')
+                r[j] = ' ';
+        i = end;
+    }
+    return r.idup;
 }
 
-/// `enum`, `alias` and `import` lines keep their `=`, and so does a
-/// declaration without an initializer (it has no `=` to begin with).
-private bool isPassThrough(string decl) @safe pure
+private size_t indexOrEnd(string s, size_t from, string what) @safe pure nothrow
 {
-    const words = decl.split;
-    if (words.length && ["enum", "alias", "import"].canFind(words[0]))
-        return true;
-    if (words.length > 1 && words[0] == "static" && words[1] == "import")
-        return true;
-    return findAssignment(decl) == size_t.max;
+    for (size_t i = from; i + what.length <= s.length; i++)
+        if (s[i .. i + what.length] == what)
+            return i;
+    return s.length;
 }
 
-/// The declaration without its initializer. A typeless declaration
-/// (`immutable x = …`, `auto x = …`) gets `typeof(<expr>)` as its type.
-private string declaredVariable(Split s) @safe pure
+/// The generated code for one declaration (see the module docs); `code` is
+/// `src` through `codeOnly`. The boilerplate adds no newlines, so the
+/// declaration stays on its source line.
+private string declaration(string src, string code) @safe pure
 {
-    const prefix = s.lhs[0 .. $ - s.name.length];
-    if (!isTypeless(prefix))
-        return s.lhs;
+    const begin = code.length - code.stripLeft.length;
+    const words = code.split;
+    const eq = assignment(code);
+    if (eq == size_t.max || (words.length && ["enum", "alias", "import"].canFind(words[0]))
+        || (words.length > 1 && words[0] == "static" && words[1] == "import"))
+        return src ~ ";";
 
-    string[] storage;
-    foreach (word; prefix.split)
-        if (word != "auto")
-            storage ~= word;
-    return (storage ~ ("typeof(" ~ s.expr ~ ")") ~ s.name).join(" ");
+    const lhsEnd = code[0 .. eq].stripRight.length;
+    size_t nameStart = lhsEnd;
+    while (nameStart > begin && isIdentChar(code[nameStart - 1]))
+        nameStart--;
+    const name = src[nameStart .. lhsEnd];
+    const expr = src[eq + 1 .. $];
+    if (name.length == 0 || code[eq + 1 .. $].stripLeft.length == 0
+        || topLevel!((s, i) => s[i] == ',')(code) != size_t.max)
+        assert(false, "staticVar: expected one `<type> <name> = <initializer>` in `" ~ src ~ "`");
+
+    // A declaration without a type (`immutable x = …`, `auto x = …`) gets
+    // `typeof(<initializer>)`.
+    const prefix = code[begin .. nameStart].split;
+    string declared = src[begin .. lhsEnd];
+    if (prefix.length && !prefix.canFind!(w => w[0] != '@' && !storageWords.canFind(w)))
+    {
+        string[] kept;
+        foreach (w; src[begin .. nameStart].split)
+            if (w != "auto")
+                kept ~= w;
+        declared = (kept ~ ("typeof((" ~ expr ~ "))") ~ name).join(" ");
+    }
+
+    const assign = "{ " ~ name ~ " = (" ~ expr ~ "); } ";
+    return src[0 .. begin] ~ declared ~ "; " ~
+        "static if (is(typeof(" ~ name ~ ") == immutable) || is(typeof(" ~ name ~ ") == shared)" ~
+        " || !__traits(compiles, () @safe { auto p_ = &" ~ name ~ "; })) shared static this() " ~
+        assign ~ "else { static assert(!is(typeof(" ~ name ~ ") == const), \"`" ~ name ~
+        "`: a thread-local `const` would be set on the main thread only; declare it " ~
+        "`immutable` or `shared const`\"); static this() " ~ assign ~ "}";
 }
 
 private immutable string[] storageWords = [
@@ -228,258 +267,43 @@ private immutable string[] storageWords = [
     "private", "package", "public", "protected", "export", "extern",
 ];
 
-/// Whether every word before the name is a storage class, an attribute or a
-/// protection keyword, which leaves no type.
-private bool isTypeless(string prefix) @safe pure
+/// The offset of the first character outside brackets for which `pred(code, i)`
+/// holds, or `size_t.max`.
+private size_t topLevel(alias pred)(string code)
 {
-    foreach (c; prefix)
-        if (!isIdentChar(c) && c != '@' && c != ' ' && c != '\t' && c != '\r' && c != '\n')
-            return false;
-    foreach (word; prefix.split)
-        if (word[0] != '@' && !storageWords.canFind(word))
-            return false;
-    return true;
-}
-
-private Split splitAssignment(string decl) @safe pure
-{
-    const eq = findAssignment(decl);
-    const lhs = stripTrailingTrivia(decl[0 .. eq]);
-    const expr = decl[eq + 1 .. $].strip;
-
-    if (expr.length == 0)
-        assert(false, "staticVar: empty initializer in `" ~ decl ~ "`");
-    if (topLevelPositions(lhs, ',').length || topLevelPositions(expr, ',').length)
-        assert(false, "staticVar: one declarator per declaration (and no comma " ~
-            "expression) in `" ~ decl ~ "`");
-
-    size_t start = lhs.length;
-    while (start > 0 && isIdentChar(lhs[start - 1]))
-        start--;
-    if (start == lhs.length || !isIdentStart(lhs[start]))
-        assert(false, "staticVar: expected a variable name before `=` in `" ~ decl ~ "`");
-
-    return Split(lhs, lhs[start .. $], expr);
-}
-
-/// The index of the declaration's top-level `=`, or `size_t.max` if it has
-/// none. Comparisons, `=>` and compound assignments are not it.
-private size_t findAssignment(string s) @safe pure nothrow
-{
-    foreach (p; topLevelPositions(s, '='))
+    ptrdiff_t depth;
+    foreach (i, c; code)
     {
-        const next = p + 1 < s.length ? s[p + 1] : '\0';
-        const prev = p > 0 ? s[p - 1] : '\0';
-        if (next == '=' || next == '>')
-            continue;
-        if (isOneOf(prev, "=!<>+-*/%&|^~"))
-            continue;
-        return p;
+        depth += (c == '(' || c == '[' || c == '{') - (c == ')' || c == ']' || c == '}');
+        if (depth == 0 && pred(code, i))
+            return i;
     }
     return size_t.max;
 }
 
-/// Splits `source` on top-level `;`. Segments that hold only whitespace and
-/// comments are dropped; anything else after the last `;` is an error.
-private Declaration[] splitDeclarations(string source) @safe pure
-{
-    Declaration[] decls;
-    size_t begin;
-    foreach (end; topLevelPositions(source, ';') ~ source.length)
-    {
-        const start = skipTrivia(source, begin);
-        if (start < end)
-        {
-            if (end == source.length)
-                assert(false, "staticVar: missing `;` after `" ~ source[start .. end].strip ~ "`");
-            decls ~= Declaration(stripTrailingTrivia(source[start .. end]), countLines(source[0 .. start]));
-        }
-        begin = end + 1;
-    }
-    return decls;
-}
-
-/// `s` without trailing whitespace and comments. A trailing `//` comment would
-/// otherwise swallow the code generated after it on the same line.
-private string stripTrailingTrivia(string s) @safe pure nothrow
-{
-    size_t codeEnd;
-    size_t i = skipTrivia(s, 0);
-    while (i < s.length)
-    {
-        const after = skipLexeme(s, i);
-        codeEnd = after == i ? i + 1 : after;
-        i = skipTrivia(s, codeEnd);
-    }
-    return s[0 .. codeEnd];
-}
-
-/// The positions of `c` outside brackets, string literals and comments.
-private size_t[] topLevelPositions(string s, char c) @safe pure nothrow
-{
-    size_t[] positions;
-    size_t depth;
-    size_t i;
-    while (i < s.length)
-    {
-        const after = skipLexeme(s, i);
-        if (after != i)
-        {
-            i = after;
-            continue;
-        }
-        const ch = s[i];
-        if (ch == '(' || ch == '[' || ch == '{')
-            depth++;
-        else if ((ch == ')' || ch == ']' || ch == '}') && depth > 0)
-            depth--;
-        else if (ch == c && depth == 0)
-            positions ~= i;
-        i++;
-    }
-    return positions;
-}
-
-/// Skips whitespace and comments from `i`.
-private size_t skipTrivia(string s, size_t i) @safe pure nothrow
-{
-    while (i < s.length)
-    {
-        if (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n')
-            i++;
-        else if (i + 1 < s.length && s[i] == '/' && isOneOf(s[i + 1], "/*+"))
-            i = skipLexeme(s, i);
-        else
-            break;
-    }
-    return i;
-}
-
-/// If a comment, string or character literal starts at `i`, returns the index
-/// just past it; otherwise returns `i`.
-private size_t skipLexeme(string s, size_t i) @safe pure nothrow
-{
-    const next = i + 1 < s.length ? s[i + 1] : '\0';
-    if (s[i] == '/' && next == '/')
-    {
-        while (i < s.length && s[i] != '\n')
-            i++;
-        return i;
-    }
-    if (s[i] == '/' && next == '*')
-    {
-        for (i += 2; i < s.length; i++)
-            if (s[i] == '/' && s[i - 1] == '*')
-                return i + 1;
-        return s.length;
-    }
-    if (s[i] == '/' && next == '+')
-    {
-        size_t nesting = 1;
-        for (i += 2; i < s.length && nesting; i++)
-        {
-            if (s[i] == '+' && i + 1 < s.length && s[i + 1] == '/')
-            {
-                nesting--;
-                i++;
-            }
-            else if (s[i] == '/' && i + 1 < s.length && s[i + 1] == '+')
-            {
-                nesting++;
-                i++;
-            }
-        }
-        return i;
-    }
-    if ((s[i] == 'r' && next == '"' && (i == 0 || !isIdentChar(s[i - 1]))) || s[i] == '`')
-    {
-        // WYSIWYG strings: no escapes.
-        const close = s[i] == '`' ? '`' : '"';
-        for (i += s[i] == '`' ? 1 : 2; i < s.length; i++)
-            if (s[i] == close)
-                return i + 1;
-        return s.length;
-    }
-    if (s[i] == '"' || s[i] == '\'')
-    {
-        const close = s[i];
-        for (i++; i < s.length; i++)
-        {
-            if (s[i] == '\\')
-                i++;
-            else if (s[i] == close)
-                return i + 1;
-        }
-        return s.length;
-    }
-    return i;
-}
-
-/// Whether `c` occurs in `set`, byte by byte (no decoding, so `nothrow`).
-private bool isOneOf(char c, string set) @safe pure nothrow @nogc
-{
-    foreach (x; set)
-        if (x == c)
-            return true;
-    return false;
-}
-
-private size_t countLines(string s) @safe pure nothrow
-{
-    size_t n;
-    foreach (c; s)
-        n += c == '\n';
-    return n;
-}
-
-private bool isIdentStart(char c) @safe pure nothrow @nogc =>
-    c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c >= 0x80;
+/// The declaration's `=`: not a comparison, `=>` or a compound assignment.
+private size_t assignment(string code) @safe pure nothrow => topLevel!((s, i) => s[i] == '='
+    && (i + 1 == s.length || (s[i + 1] != '=' && s[i + 1] != '>'))
+    && (i == 0 || !(cast(const(ubyte)[]) "=!<>+-*/%&|^~").canFind(cast(ubyte) s[i - 1])))(code);
 
 private bool isIdentChar(char c) @safe pure nothrow @nogc =>
-    isIdentStart(c) || (c >= '0' && c <= '9');
+    c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c >= 0x80;
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
-@("staticInit.findAssignment.skipsNonAssignments")
-@safe pure nothrow unittest
-{
-    assert(findAssignment("bool b = (x == y)") == 7);
-    assert(findAssignment("auto f = (int x) => x == 1") == 7);
-    assert(findAssignment(`string s = "a=b"`) == 9);
-    assert(findAssignment(`string s /* = */ = r"=" ~ '='`) == 17);
-    assert(findAssignment("int x /+ /+ = +/ = +/ = 1") == 22);
-    assert(findAssignment("int x // = 2\n = 1") == 14);
-    assert(findAssignment("Foo!(a = b) x = 1") == 14);
-    assert(findAssignment("int x") == size_t.max);
-}
-
-@("staticInit.splitDeclarations.linesAndTrivia")
+@("staticInit.codeOnly.blanksCommentsAndLiterals")
 @safe pure unittest
 {
-    const decls = splitDeclarations(q{
-        int a = f(); // trailing
-        /* lead */ string s = ";"; int[] b = [1, 2].map!((x) { return x; }).array;
-    });
-    assert(decls.length == 3);
-    assert(decls[0] == Declaration("int a = f()", 1));
-    assert(splitDeclarations("int x = 1 // c\n;") == [Declaration("int x = 1", 0)]);
-    assert(splitDeclarations("int x /* c */ = 1;")[0].text == "int x /* c */ = 1");
-    assert(decls[1] == Declaration(`string s = ";"`, 2));
-    assert(decls[2].text == "int[] b = [1, 2].map!((x) { return x; }).array");
-    assert(decls[2].lineOffset == 2);
+    // The literal (6 bytes) and the comment (8 bytes) become spaces.
+    assert(codeOnly(`s = "a=;b"; // x = 1`) == "s = " ~ "      " ~ "; " ~ "        ");
+    assert(assignment(codeOnly("bool b = (x == y)")) == 7);
+    assert(assignment(codeOnly("auto f = (int x) => x == 1")) == 7);
+    assert(assignment(codeOnly(`string s /* = */ = r"=" ~ '='`)) == 17);
+    assert(assignment(codeOnly("int x // = 2\n = 1")) == 14);
+    assert(assignment(codeOnly("Foo!(a = b) x = 1")) == 14);
+    assert(assignment(codeOnly("int x")) == size_t.max);
 }
 
-@("staticInit.splitAssignment.nameAndType")
-@safe pure unittest
-{
-    assert(splitAssignment("immutable int[] xs = f()") == Split("immutable int[] xs", "xs", "f()"));
-    assert(declaredVariable(splitAssignment("immutable int[] xs = f()")) == "immutable int[] xs");
-    assert(declaredVariable(splitAssignment("auto x = g()")) == "typeof(g()) x");
-    assert(declaredVariable(splitAssignment("private immutable x = g()")) ==
-        "private immutable typeof(g()) x");
-    assert(splitAssignment("int x /* c */ = 1").name == "x");
-    assert(declaredVariable(splitAssignment("const(int) x = g()")) == "const(int) x");
-}
 
 @("staticInit.staticInitCode.rejects")
 @safe pure unittest
@@ -494,29 +318,14 @@ private bool isIdentChar(char c) @safe pure nothrow @nogc =>
 
 version (unittest)
 {
-    private int[] computeSquares(int n) @safe pure
-    {
-        int[] r;
-        foreach (i; 0 .. n)
-            r ~= i * i;
-        return r;
-    }
-
-    mixin(staticVar!q{ immutable int[] exampleSquares = computeSquares(4); });
-
-    mixin StaticBlock!q{
-        immutable int[] examplePrimes = [2, 3, 5, 7].dup;
-        immutable size_t examplePrimeCount = examplePrimes.length;
-    };
-
     private size_t tlsInitCount;
 
     mixin StaticBlock!q{
         shared int sharedValue = computeSquares(4)[3];
-        __gshared int[] gsharedSlice = computeSquares(3);
+        __gshared int[] gsharedSlice = computeSquares(3); /* a block comment; = */
         int[] threadLocal = (() { tlsInitCount++; return [7, 7]; })();
         immutable typelessImmutable = computeSquares(2);
-        auto typelessTls = "tls".dup;
+        auto typelessTls = "t;l=s".dup;
         enum compileTime = 5;
         int noInitializer;
     };
@@ -542,7 +351,7 @@ version (unittest)
     assert(gsharedSlice == [0, 1, 4]);
     assert(threadLocal == [7, 7]);
     assert(typelessImmutable == [0, 1]);
-    assert(typelessTls == "tls");
+    assert(typelessTls == "t;l=s");
     assert(noInitializer == 0);
     assert(Holder.name == "holder");
     assert(Holder.counter == 6);
