@@ -12,7 +12,7 @@ import std.string : fromStringz;
 
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle;
-import sparkles.font_oracle.harfbuzz_c;
+import sparkles.font_oracle;
 import sparkles.test_runner.skip : skipTest;
 
 @("oracle.parsing.everyBundledFace")
@@ -58,8 +58,7 @@ unittest
             auto set = hb_set_create();
             scope (exit) hb_set_destroy(set);
             hb_face_collect_unicodes(hb.face, set);
-            // HB_SET_VALUE_INVALID is a cast macro, which ImportC does not import.
-            hb_codepoint_t cp = hb_codepoint_t.max;
+            hb_codepoint_t cp = HB_SET_VALUE_INVALID;
             while (hb_set_next(set, &cp))
                 assert(map.value.glyph(cp) == hbGlyph(cp), file);
         }

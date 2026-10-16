@@ -10,7 +10,7 @@ import std.file : dirEntries, exists, SpanMode;
 import std.process : environment;
 
 import sparkles.base.static_init : StaticBlock;
-import sparkles.font_oracle.harfbuzz_c;
+import sparkles.font_oracle;
 
 /**
 A HarfBuzz blob, face and font over borrowed bytes, released when the value
