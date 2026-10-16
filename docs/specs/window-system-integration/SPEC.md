@@ -390,6 +390,7 @@ The command algebra includes:
 - maximize, minimize, restore, fullscreen, and attention;
 - accept or cancel a close request;
 - set cursor shape/visibility, begin/end capture and relative mode;
+- set a window's motion policy (`ED9`);
 - set IME enabled state and candidate/pre-edit rectangle;
 - create/reposition/destroy a grabbed popup;
 - read/write clipboard and accept/reject a data offer.
@@ -599,6 +600,28 @@ Vulkan ICD—must additionally hold the backend's owner-thread native-I/O borrow
 - Live resize produces metrics/frame opportunities without blocking Event Horizon.
 - Pasteboard, dragging destination/source, cursor rectangles, tracking areas, and
   display notifications feed the common event/command algebra.
+
+### 9.5 Android
+
+- The backend owns the native activity, with no `native_app_glue`. Activity
+  callbacks run on the Java main thread, record plain values in a mutex-guarded
+  channel and wake Event Horizon; application code never runs inside one.
+- An activity has one window, so `createWindow` names it. A destroyed surface is
+  reported as zero physical size, which suspends presentation, and the callback
+  waits, bounded, until the application has drained that report.
+- Input arrives through the activity's `AInputQueue`, attached to the main
+  thread's looper and translated there into values. A key's physical identity is
+  its evdev scan code and its logical identity the `KeyCharacterMap` base
+  character; its text comes from the same map with the event's meta state. Touch
+  contacts are `TouchEvent`s, mouse and stylus are pointers, and a batched
+  event's history goes to the `ED3` ring. Event times are the platform's, already
+  in the loop's monotonic clock (`ED7`).
+- Pointer input is routed by the surface's bounds, so a window receives touch and
+  pointer events only once a frame was presented on it.
+- The soft keyboard edits a hidden `EditText` whose changes become committed text
+  while text input is on. The field runs without suggestions, so no pre-edit is
+  reported.
+- The clipboard goes through `ClipboardManager` over JNI (§7.1).
 
 ## 10. Compatibility and renderer layers
 

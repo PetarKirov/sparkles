@@ -15,6 +15,16 @@ none exists the window's physical size is zero, which suspends presentation
 until the application has drained the event that reported it, so a renderer
 learns of the loss before the surface disappears.
 
+$(B Input.) The activity's `AInputQueue` is attached to the main thread's
+looper, and each event is translated there into plain records: a key with its
+scan code, a motion event as one record per pointer and per historical sample.
+The WSI thread turns them into key, text, touch, pointer and scroll events,
+with the platform's event times, and puts a batched event's history in the
+queue's sample ring (`ED3`). Pointer input is routed by the surface's bounds,
+so the window receives none until a frame was presented on it. The soft
+keyboard edits a hidden field (`sparkles.android.ime`) that is polled while
+$(LREF AndroidWsi.setTextInput) is on.
+
 $(B The clipboard.) Android has no NDK clipboard, so it goes through
 `ClipboardManager` over JNI (`sparkles.android.clipboard`). A paste streams
 from the Java string in bounded slices. An offer is built whole on the Java
@@ -33,19 +43,24 @@ version (Android):
 
 import core.lifetime : move;
 import core.sys.posix.pthread;
-import core.time : Duration, MonoTime, msecs;
+import core.time : Duration, MonoTime, msecs, nsecs;
+import std.math : lround;
 
 import sparkles.android.activity : ANativeActivity, nativeActivity;
 import sparkles.android.clipboard : ClipDescription, ClipText, closeClipText,
     describePrimaryClip, openPrimaryClipText, readClipText, setPrimaryClipTyped;
+import sparkles.android.ime : installImeField, pollImeField, showImeKeyboard;
 import sparkles.android.main_thread : wireMainThread;
+import sparkles.android.text_input : imeBackspace, imeEnter, keyCharacter,
+    onTyped, popTypedChar;
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.pool.pool : Pool, PoolError;
-import sparkles.base.text.utf16 : utf16ToUtf8, utf8ToUtf16;
+import sparkles.base.text.utf16 : utf16ToUtf8, utf32ToUtf8, utf8ToUtf16;
 import sparkles.event_horizon.backend.concept : Waker;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
     ioOk;
 import sparkles.event_horizon.loop : DefaultLoop, RunStatus;
+import sparkles.input.events : KeyAction, Mods, PointerButton;
 import sparkles.wsi.clipboard;
 import sparkles.wsi.events;
 import sparkles.wsi.handles;
@@ -68,7 +83,53 @@ private extern (C) nothrow @nogc
     int AConfiguration_getDensity(const(void)* config);
     int rt_init();
     int __android_log_write(int priority, const(char)* tag, const(char)* text);
+
+    void* ALooper_forThread();
+    void AInputQueue_attachLooper(void* queue, void* looper, int ident,
+        ALooperCallback callback, void* data);
+    void AInputQueue_detachLooper(void* queue);
+    int AInputQueue_getEvent(void* queue, void** event);
+    int AInputQueue_preDispatchEvent(void* queue, void* event);
+    void AInputQueue_finishEvent(void* queue, void* event, int handled);
+
+    int AInputEvent_getType(const(void)* event);
+    int AInputEvent_getDeviceId(const(void)* event);
+    int AInputEvent_getSource(const(void)* event);
+    int AKeyEvent_getAction(const(void)* event);
+    int AKeyEvent_getKeyCode(const(void)* event);
+    int AKeyEvent_getScanCode(const(void)* event);
+    int AKeyEvent_getMetaState(const(void)* event);
+    int AKeyEvent_getRepeatCount(const(void)* event);
+    long AKeyEvent_getEventTime(const(void)* event);
+    int AMotionEvent_getAction(const(void)* event);
+    int AMotionEvent_getMetaState(const(void)* event);
+    int AMotionEvent_getButtonState(const(void)* event);
+    long AMotionEvent_getEventTime(const(void)* event);
+    size_t AMotionEvent_getPointerCount(const(void)* event);
+    int AMotionEvent_getPointerId(const(void)* event, size_t index);
+    int AMotionEvent_getToolType(const(void)* event, size_t index);
+    float AMotionEvent_getX(const(void)* event, size_t index);
+    float AMotionEvent_getY(const(void)* event, size_t index);
+    float AMotionEvent_getPressure(const(void)* event, size_t index);
+    float AMotionEvent_getTouchMajor(const(void)* event, size_t index);
+    float AMotionEvent_getTouchMinor(const(void)* event, size_t index);
+    float AMotionEvent_getAxisValue(const(void)* event, int axis, size_t index);
+    size_t AMotionEvent_getHistorySize(const(void)* event);
+    long AMotionEvent_getHistoricalEventTime(const(void)* event, size_t history);
+    float AMotionEvent_getHistoricalX(const(void)* event, size_t index, size_t history);
+    float AMotionEvent_getHistoricalY(const(void)* event, size_t index, size_t history);
+    float AMotionEvent_getHistoricalPressure(const(void)* event, size_t index,
+        size_t history);
+    float AMotionEvent_getHistoricalAxisValue(const(void)* event, int axis,
+        size_t index, size_t history);
 }
+
+private alias ALooperCallback = extern (C) int function(int fd, int events,
+    void* data) nothrow;
+
+// API 33; absent below it, where a press's button comes from the button state.
+pragma(LDC_extern_weak)
+private extern (C) int AMotionEvent_getActionButton(const(void)* event) nothrow @nogc;
 
 /// `<android/native_activity.h>`'s callback table, in declaration order.
 private struct ANativeActivityCallbacks
@@ -123,6 +184,46 @@ private struct Channel
     Waker waker;
     bool hasWaker;
     bool releasePending; /// a destroyed surface waits for the WSI thread
+
+    InputRecord[1024] inputs;
+    size_t inputHead, inputCount;
+    uint inputLost; /// records refused because the ring was full
+}
+
+/// What kind of input an $(LREF InputRecord) carries.
+private enum InputKind : ubyte
+{
+    key,
+    touch,
+    mouse,
+    stylus,
+    scroll,
+}
+
+/// The button a press record names when it releases every held button.
+private enum ubyte allButtons = 0xFF;
+
+/**
+One native input sample, translated on the main thread into plain values.
+A motion event becomes one record per pointer and per historical sample;
+`last` marks a pointer's newest sample in its event, so the WSI thread knows
+where one queued event's samples end.
+*/
+private struct InputRecord
+{
+    InputKind kind;
+    ubyte phase;  /// `KeyAction`, `PointerPhase` or `TouchPhase`
+    ubyte button; /// `PointerButton`, or `allButtons`
+    bool last;
+    int code;     /// key: the key code; pointer: the platform's pointer id
+    int scanCode; /// key: the physical scan code
+    int meta;     /// `AMETA_*` state
+    int device;
+    long time;    /// nanoseconds, `CLOCK_MONOTONIC`
+    float x = 0, y = 0;
+    float pressure = float.nan;
+    float major = 0, minor = 0;
+    float tiltX = float.nan, tiltY = float.nan;
 }
 
 private __gshared Channel channel;
@@ -143,8 +244,292 @@ private void post(NoteKind kind, void* surface = null) nothrow @nogc
         waker.wake();
 }
 
+// Appends one native event's records at once, so the WSI thread never sees
+// half of a motion event's samples, then wakes it.
+private void postInputs(scope const(InputRecord)[] records) nothrow @nogc
+{
+    if (records.length == 0)
+        return;
+    pthread_mutex_lock(&channel.lock);
+    if (channel.inputs.length - channel.inputCount < records.length)
+        channel.inputLost += cast(uint) records.length;
+    else
+        foreach (ref record; records)
+        {
+            channel.inputs[(channel.inputHead + channel.inputCount)
+                % channel.inputs.length] = record;
+            ++channel.inputCount;
+        }
+    const wake = channel.hasWaker;
+    auto waker = channel.waker;
+    pthread_mutex_unlock(&channel.lock);
+    if (wake)
+        waker.wake();
+}
+
+// ── input, on the main thread ───────────────────────────────────────────────
+
+private enum : int
+{
+    inputTypeKey = 1,
+    inputTypeMotion = 2,
+    keyActionDown = 0,
+    keyActionUp = 1,
+    motionDown = 0,
+    motionUp = 1,
+    motionMove = 2,
+    motionCancel = 3,
+    motionPointerDown = 5,
+    motionPointerUp = 6,
+    motionHoverMove = 7,
+    motionScroll = 8,
+    motionHoverEnter = 9,
+    motionHoverExit = 10,
+    motionButtonPress = 11,
+    motionButtonRelease = 12,
+    toolFinger = 1,
+    toolStylus = 2,
+    toolMouse = 3,
+    toolEraser = 4,
+    sourceMouse = 0x2002,
+    sourceStylus = 0x4002,
+    axisOrientation = 8,
+    axisVScroll = 9,
+    axisHScroll = 10,
+    axisTilt = 25,
+}
+
+/// Keys the system acts on (volume, power, media, …): reported, and left
+/// unhandled so the system still acts on them.
+private bool isSystemKey(int keyCode) @safe pure nothrow @nogc
+{
+    switch (keyCode)
+    {
+        case 3: // HOME
+        case 24, 25, 164: // VOLUME_UP, VOLUME_DOWN, VOLUME_MUTE
+        case 26, 223, 224: // POWER, SLEEP, WAKEUP
+        case 27, 80: // CAMERA, FOCUS
+        case 79, 85, 86, 87, 88, 89, 90, 91, 126, 127: // HEADSETHOOK, MEDIA_*, MUTE
+        case 187, 219, 220, 221: // APP_SWITCH, ASSIST, BRIGHTNESS_DOWN/UP
+            return true;
+        default:
+            return false;
+    }
+}
+
+private InputKind pointerKind(int toolType, int source) @safe pure nothrow @nogc
+{
+    switch (toolType)
+    {
+        case toolFinger: return InputKind.touch;
+        case toolStylus, toolEraser: return InputKind.stylus;
+        case toolMouse: return InputKind.mouse;
+        default:
+            if (source == sourceMouse)
+                return InputKind.mouse;
+            return source == sourceStylus ? InputKind.stylus : InputKind.touch;
+    }
+}
+
+private PointerButton buttonOf(int bits) @safe pure nothrow @nogc
+{
+    if (bits & 0x2) return PointerButton.right;  // BUTTON_SECONDARY
+    if (bits & 0x4) return PointerButton.middle; // BUTTON_TERTIARY
+    if (bits & 0x8) return PointerButton.back;
+    if (bits & 0x10) return PointerButton.forward;
+    return PointerButton.left;                   // BUTTON_PRIMARY, or none
+}
+
+private void stylusTilt(ref InputRecord record, float tilt, float orientation)
+    nothrow @nogc
+{
+    import std.math : atan, cos, sin, tan, PI;
+
+    // Android reports a polar tilt from the normal and the direction it
+    // leans; the record carries the two planar angles, in degrees.
+    const t = tan(tilt);
+    record.tiltX = cast(float)(atan(t * sin(orientation)) * 180 / PI);
+    record.tiltY = cast(float)(atan(-t * cos(orientation)) * 180 / PI);
+}
+
+// Translates one native event into records; whether it was handled.
+private int translateInput(void* event) nothrow @nogc
+{
+    InputRecord[64] records;
+    size_t n;
+    const type = AInputEvent_getType(event);
+    if (type == inputTypeKey)
+    {
+        const action = AKeyEvent_getAction(event);
+        if (action != keyActionDown && action != keyActionUp)
+            return 1; // ACTION_MULTIPLE: its text reaches the IME field
+        InputRecord r;
+        r.kind = InputKind.key;
+        r.code = AKeyEvent_getKeyCode(event);
+        r.scanCode = AKeyEvent_getScanCode(event);
+        r.meta = AKeyEvent_getMetaState(event);
+        r.device = AInputEvent_getDeviceId(event);
+        r.time = AKeyEvent_getEventTime(event);
+        r.phase = action == keyActionUp ? KeyAction.release
+            : AKeyEvent_getRepeatCount(event) > 0 ? KeyAction.repeat
+            : KeyAction.press;
+        r.last = true;
+        postInputs((&r)[0 .. 1]);
+        return isSystemKey(r.code) ? 0 : 1;
+    }
+    if (type != inputTypeMotion)
+        return 0;
+
+    const raw = AMotionEvent_getAction(event);
+    const action = raw & 0xFF;
+    const actionIndex = cast(size_t)((raw & 0xFF00) >> 8);
+    const source = AInputEvent_getSource(event);
+    const meta = AMotionEvent_getMetaState(event);
+    const time = AMotionEvent_getEventTime(event);
+    const pointers = AMotionEvent_getPointerCount(event);
+
+    InputRecord sample(size_t i, InputKind kind)
+    {
+        InputRecord r;
+        r.kind = kind;
+        r.code = AMotionEvent_getPointerId(event, i);
+        r.meta = meta;
+        r.time = time;
+        r.x = AMotionEvent_getX(event, i);
+        r.y = AMotionEvent_getY(event, i);
+        r.pressure = AMotionEvent_getPressure(event, i);
+        r.major = AMotionEvent_getTouchMajor(event, i);
+        r.minor = AMotionEvent_getTouchMinor(event, i);
+        if (kind == InputKind.stylus)
+            stylusTilt(r, AMotionEvent_getAxisValue(event, axisTilt, i),
+                AMotionEvent_getAxisValue(event, axisOrientation, i));
+        r.last = true;
+        return r;
+    }
+
+    void add(InputRecord r)
+    {
+        if (n < records.length)
+            records[n++] = r;
+    }
+
+    // Every pointer's samples since the last event, oldest first.
+    void moved(ubyte phase)
+    {
+        const history = AMotionEvent_getHistorySize(event);
+        foreach (i; 0 .. pointers)
+        {
+            const kind = pointerKind(AMotionEvent_getToolType(event, i), source);
+            // Keep the newest samples when a pointer's history outruns the
+            // record buffer; history is advisory (`ED3`).
+            const room = (records.length - n) / (pointers - i);
+            const skip = history + 1 > room ? history + 1 - room : 0;
+            foreach (h; skip .. history)
+            {
+                auto r = sample(i, kind);
+                r.phase = phase;
+                r.last = false;
+                r.time = AMotionEvent_getHistoricalEventTime(event, h);
+                r.x = AMotionEvent_getHistoricalX(event, i, h);
+                r.y = AMotionEvent_getHistoricalY(event, i, h);
+                r.pressure = AMotionEvent_getHistoricalPressure(event, i, h);
+                if (kind == InputKind.stylus)
+                    stylusTilt(r,
+                        AMotionEvent_getHistoricalAxisValue(event, axisTilt, i, h),
+                        AMotionEvent_getHistoricalAxisValue(event, axisOrientation, i, h));
+                add(r);
+            }
+            auto r = sample(i, kind);
+            r.phase = phase;
+            add(r);
+        }
+    }
+
+    const actionKind = pointerKind(AMotionEvent_getToolType(event, actionIndex), source);
+    const touch = actionKind == InputKind.touch;
+    switch (action)
+    {
+        case motionDown, motionPointerDown:
+            auto r = sample(actionIndex, actionKind);
+            r.phase = touch ? cast(ubyte) TouchPhase.began : cast(ubyte) PointerPhase.pressed;
+            r.button = buttonOf(AMotionEvent_getButtonState(event));
+            add(r);
+            break;
+        case motionUp, motionPointerUp:
+            auto r = sample(actionIndex, actionKind);
+            r.phase = touch ? cast(ubyte) TouchPhase.ended : cast(ubyte) PointerPhase.released;
+            r.button = allButtons;
+            add(r);
+            break;
+        case motionMove, motionHoverMove:
+            moved(touch ? cast(ubyte) TouchPhase.moved : cast(ubyte) PointerPhase.moved);
+            break;
+        case motionCancel:
+            foreach (i; 0 .. pointers)
+            {
+                const kind = pointerKind(AMotionEvent_getToolType(event, i), source);
+                auto r = sample(i, kind);
+                r.phase = kind == InputKind.touch ? cast(ubyte) TouchPhase.cancelled
+                    : cast(ubyte) PointerPhase.released;
+                r.button = allButtons;
+                add(r);
+            }
+            break;
+        case motionHoverEnter, motionHoverExit:
+            auto r = sample(actionIndex, actionKind);
+            r.phase = action == motionHoverEnter ? PointerPhase.entered
+                : PointerPhase.left;
+            add(r);
+            break;
+        case motionButtonPress, motionButtonRelease:
+            auto r = sample(actionIndex, actionKind);
+            r.phase = action == motionButtonPress ? PointerPhase.pressed
+                : cast(ubyte) PointerPhase.released;
+            const bits = &AMotionEvent_getActionButton !is null
+                ? AMotionEvent_getActionButton(event)
+                : AMotionEvent_getButtonState(event);
+            r.button = buttonOf(bits);
+            add(r);
+            break;
+        case motionScroll:
+            auto r = sample(actionIndex, InputKind.scroll);
+            r.major = AMotionEvent_getAxisValue(event, axisHScroll, actionIndex);
+            r.minor = AMotionEvent_getAxisValue(event, axisVScroll, actionIndex);
+            add(r);
+            break;
+        default:
+            return 0;
+    }
+    postInputs(records[0 .. n]);
+    return 1;
+}
+
 extern (C) private nothrow
 {
+    int onInputReady(int, int, void* queue)
+    {
+        void* event;
+        while (AInputQueue_getEvent(queue, &event) >= 0)
+        {
+            if (AInputQueue_preDispatchEvent(queue, event) != 0)
+                continue;
+            AInputQueue_finishEvent(queue, event, translateInput(event));
+        }
+        return 1;
+    }
+
+    // Both run on the main thread, whose looper then delivers the queue's
+    // events to `onInputReady` there.
+    void onInputQueueCreated(void*, void* queue)
+    {
+        AInputQueue_attachLooper(queue, ALooper_forThread(), 1, &onInputReady, queue);
+    }
+
+    void onInputQueueDestroyed(void*, void* queue)
+    {
+        AInputQueue_detachLooper(queue);
+    }
+
     void onSurfaceCreated(void*, void* surface)
     {
         ANativeWindow_acquire(surface);
@@ -218,6 +603,8 @@ void startActivity(void* activity, void function() nothrow appMain) nothrow
     callbacks.onResume = &onResumed;
     callbacks.onPause = &onPaused;
     callbacks.onDestroy = &onDestroyed;
+    callbacks.onInputQueueCreated = &onInputQueueCreated;
+    callbacks.onInputQueueDestroyed = &onInputQueueDestroyed;
     try
         (new Thread(appMain)).start();
     catch (Exception)
@@ -304,6 +691,12 @@ struct AndroidWsi
     private ClipText[8] reading_; // per transfer slot: the text being pasted
     private size_t[8] readUnits_; // UTF-16 units already delivered
 
+    private bool textInput_;     // the IME field is installed and polled
+    private ubyte[2] held_;      // buttons reported pressed: mouse, stylus
+    private PointerSample[64] samples_; // one pointer's samples so far
+    private size_t sampleCount_;
+    private uint lostReported_;  // input records the channel refused
+
     /**
     Opens the backend on the calling thread, which becomes its owner. Fails
     with `unavailable` when no activity was recorded: the process was not
@@ -359,15 +752,21 @@ struct AndroidWsi
             return ioErr!RunStatus(0, OpKind.nop, IoErrorStage.submit,
                 "Android WSI used with a different Event Horizon loop");
 
-        bool work = serviceNotes();
-        work |= pumpTransfers();
+        // The soft keyboard edits a field no callback reports, so it is polled
+        // while text input is on (`sparkles.android.ime`).
+        if (textInput_)
+        {
+            pollImeField();
+            if (timeout > imePollInterval)
+                timeout = imePollInterval;
+        }
+        bool work = serviceAll();
         if (work)
             return ioOk(RunStatus.dispatched);
         auto result = loop.runOnce(timeout);
         if (result.hasError)
             return result;
-        work = serviceNotes();
-        work |= pumpTransfers();
+        work = serviceAll();
         return work && result.value != RunStatus.stopped
             ? ioOk(RunStatus.dispatched) : result;
     }
@@ -473,7 +872,7 @@ struct AndroidWsi
     /// Copies the newest samples of `id`'s `pointer` into `into`, in
     /// arrival order, and returns how many (`ED3`).
     size_t copySamples(WindowId id, PointerId pointer, scope PointerSample[] into)
-        const => events_.copySamples(id, pointer, into);
+        const @safe pure nothrow @nogc => events_.copySamples(id, pointer, into);
 
     /// Copies an event's text into a `TextPool` the caller owns (`ED8`).
     WsiResult!WindowEvent retain(P)(WindowEvent event, ref P pool)
@@ -554,6 +953,34 @@ struct AndroidWsi
         return clipboard_.cancel(transfer);
     }
 
+    // ── text input ──────────────────────────────────────────────────────────
+
+    /// How often the soft keyboard's field is diffed while text input is on.
+    enum imePollInterval = 50.msecs;
+
+    /**
+    Turns text input on or off for the window: on, the soft keyboard shows
+    and edits a hidden field whose changes arrive as `TextCommittedEvent`s
+    (`sparkles.android.ime`); its backspace and Enter arrive as key presses
+    and releases of `KEYCODE_DEL` and `KEYCODE_ENTER`. A hardware keyboard
+    types whether or not this is on. The IME runs without suggestions, so it
+    commits at once and no `CompositionEvent` is reported.
+    */
+    WsiResult!void setTextInput(WindowId id, bool enabled)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (enabled && !installImeField())
+            return androidFailure!void(WsiOperation.command,
+                "the soft keyboard's field needs the activity's main thread",
+                WsiErrorKind.unavailable);
+        onTyped(enabled ? &wakeForTyped : null);
+        textInput_ = enabled;
+        showImeKeyboard(enabled);
+        return wsiOk();
+    }
+
     /// Reads the clipboard's description and announces a changed clip, as a
     /// focus gain does. For an application that needs it sooner.
     void refreshClipboard() => noticeClip(describePrimaryClip());
@@ -562,6 +989,8 @@ struct AndroidWsi
     {
         if (closed_)
             return;
+        if (textInput_)
+            onTyped(null);
         foreach (h; clipboard_.transfers.byLive)
         {
             closeReading(h.index);
@@ -582,6 +1011,251 @@ struct AndroidWsi
     }
 
     // ── internals ───────────────────────────────────────────────────────────
+
+    private bool serviceAll()
+    {
+        bool work = serviceNotes();
+        work |= serviceInput();
+        work |= drainTyped();
+        work |= pumpTransfers();
+        return work;
+    }
+
+    private bool serviceInput()
+    {
+        InputRecord[128] taken;
+        bool work;
+        for (;;)
+        {
+            size_t n;
+            uint lost;
+            pthread_mutex_lock(&channel.lock);
+            while (channel.inputCount != 0 && n < taken.length)
+            {
+                taken[n++] = channel.inputs[channel.inputHead];
+                channel.inputHead = (channel.inputHead + 1) % channel.inputs.length;
+                --channel.inputCount;
+            }
+            lost = channel.inputLost;
+            pthread_mutex_unlock(&channel.lock);
+            if (lost != lostReported_)
+            {
+                lostReported_ = lost;
+                logFailure("input arrived faster than the WSI thread took it; some was lost");
+            }
+            if (n == 0)
+                return work;
+            work = true;
+            foreach (ref record; taken[0 .. n])
+                applyInput(record);
+        }
+    }
+
+    private void applyInput(in InputRecord r)
+    {
+        const id = windowHandle();
+        if (!id.valid)
+            return;
+        const at = MonoTime.zero + r.time.nsecs;
+        const physical = PhysicalPosition(cast(int) r.x, cast(int) r.y);
+        const logical = LogicalPosition(r.x / scale_.value, r.y / scale_.value);
+        final switch (r.kind)
+        {
+            case InputKind.key:
+                applyKey(id, r, at);
+                break;
+            case InputKind.touch:
+                TouchEvent e;
+                e.contact = touchContact(r.code);
+                e.phase = cast(TouchPhase) r.phase;
+                e.logicalPosition = logical;
+                e.physicalPosition = physical;
+                e.pressure = r.pressure;
+                e.majorRadius = r.major / 2 / scale_.value;
+                e.minorRadius = r.minor / 2 / scale_.value;
+                if (e.phase == TouchPhase.moved)
+                    pushSamples(id, e, r, logical, at);
+                else
+                    emit(id, e, at);
+                break;
+            case InputKind.mouse:
+            case InputKind.stylus:
+                applyPointer(id, r, logical, physical, at);
+                break;
+            case InputKind.scroll:
+                ScrollEvent e;
+                e.logicalPosition = logical;
+                e.physicalPosition = physical;
+                // Android's axes are positive away from the user and to the
+                // right; WSI's `dy` is positive scrolling the content down.
+                e.dx = r.major;
+                e.dy = -r.minor;
+                e.discreteX = cast(int) lround(r.major);
+                e.discreteY = -cast(int) lround(r.minor);
+                e.source = ScrollSource.wheel;
+                e.unit = ScrollUnit.logical;
+                e.modifiers = modsOf(r.meta);
+                emit(id, e, at);
+                break;
+        }
+    }
+
+    private void applyPointer(WindowId id, in InputRecord r,
+        LogicalPosition logical, PhysicalPosition physical, MonoTime at)
+    {
+        const slot = r.kind == InputKind.stylus ? 1 : 0;
+        PointerEvent e;
+        e.pointer = PointerId(slot, 1);
+        e.phase = cast(PointerPhase) r.phase;
+        e.logicalPosition = logical;
+        e.physicalPosition = physical;
+        e.modifiers = modsOf(r.meta);
+        e.pressure = r.pressure;
+        final switch (e.phase)
+        {
+            case PointerPhase.moved:
+                pushSamples(id, e, r, logical, at);
+                return;
+            case PointerPhase.entered, PointerPhase.left:
+                emit(id, e, at);
+                return;
+            case PointerPhase.pressed:
+                // A mouse reports a press twice, as the contact and as the
+                // button; the first one reported wins.
+                const bit = cast(ubyte)(1 << r.button);
+                if (held_[slot] & bit)
+                    return;
+                held_[slot] |= bit;
+                e.button = cast(PointerButton) r.button;
+                emit(id, e, at);
+                return;
+            case PointerPhase.released:
+                foreach (button; 0 .. 8)
+                {
+                    const bit = cast(ubyte)(1 << button);
+                    if (!(held_[slot] & bit)
+                        || (r.button != allButtons && r.button != button))
+                        continue;
+                    held_[slot] &= ~bit;
+                    e.button = cast(PointerButton) button;
+                    emit(id, e, at);
+                }
+                return;
+        }
+    }
+
+    // Collects one pointer's samples until its newest, then queues the
+    // motion with all of them (`ED3`).
+    private void pushSamples(Payload)(WindowId id, Payload payload,
+        in InputRecord r, LogicalPosition logical, MonoTime at)
+    {
+        if (sampleCount_ == samples_.length)
+        {
+            samples_[0 .. $ - 1] = samples_[1 .. $];
+            --sampleCount_;
+        }
+        PointerSample sample;
+        sample.timestamp = at;
+        sample.position = logical;
+        sample.pressure = r.pressure;
+        sample.tiltX = r.tiltX;
+        sample.tiltY = r.tiltY;
+        samples_[sampleCount_++] = sample;
+        if (!r.last)
+            return;
+        auto result = events_.pushMotion(WindowEvent(nextSequence_, id,
+            WindowEventPayload(payload), at), samples_[0 .. sampleCount_]);
+        sampleCount_ = 0;
+        if (!result.hasError)
+            ++nextSequence_;
+    }
+
+    private void applyKey(WindowId id, in InputRecord r, MonoTime at)
+    {
+        KeyboardEvent e;
+        e.physical = PhysicalKey(cast(uint) r.scanCode, 0);
+        e.logical = logicalKey(r.device, r.code);
+        e.location = keyLocation(r.code);
+        e.action = cast(KeyAction) r.phase;
+        e.modifiers = modsOf(r.meta);
+        emit(id, e, at);
+
+        // Text is separate from the key (§7), and a chord types none.
+        if (e.action == KeyAction.release
+            || (r.meta & (metaCtrlOn | metaAltOn | metaMetaOn)) != 0)
+            return;
+        const c = keyCharacter(r.device, r.code, r.meta);
+        if (c <= 0 || (c & combiningAccent) != 0)
+            return;
+        const dchar[1] typed = [cast(dchar) c];
+        emitTextOf(typed[], at);
+    }
+
+    // The soft keyboard's edits: text, and backspace and Enter as keys.
+    private bool drainTyped()
+    {
+        if (!textInput_)
+            return false;
+        dchar[256] run;
+        size_t n;
+        bool work;
+        const id = windowHandle();
+        for (dchar c = popTypedChar(); c != 0; c = popTypedChar())
+        {
+            work = true;
+            if (c != imeBackspace && c != imeEnter)
+            {
+                if (n < run.length)
+                    run[n++] = c;
+                continue;
+            }
+            if (id.valid)
+            {
+                emitTextOf(run[0 .. n], MonoTime.currTime);
+                n = 0;
+                tapKey(id, c == imeBackspace ? keycodeDel : keycodeEnter);
+            }
+        }
+        if (id.valid)
+            emitTextOf(run[0 .. n], MonoTime.currTime);
+        return work;
+    }
+
+    private void tapKey(WindowId id, int keyCode)
+    {
+        KeyboardEvent e;
+        e.logical = LogicalKey(LogicalKeyKind.named, dchar.init, keyCode);
+        e.action = KeyAction.press;
+        emit(id, e);
+        e.action = KeyAction.release;
+        emit(id, e);
+    }
+
+    private void emitTextOf(scope const(dchar)[] text, MonoTime at)
+    {
+        const id = windowHandle();
+        if (text.length == 0 || !id.valid)
+            return;
+        char[256 * 4] bytes;
+        auto encoded = utf32ToUtf8(text, bytes[]);
+        if (encoded.hasError)
+            return;
+        auto result = events_.pushText(nextSequence_, id, bytes[0 .. encoded.value],
+            (TextId committed, size_t kept) => TextCommittedEvent(committed), at);
+        if (!result.hasError)
+            ++nextSequence_;
+    }
+
+    // The key's identity at its unshifted base level (`LogicalKey`).
+    private static LogicalKey logicalKey(int device, int keyCode)
+    {
+        const c = keyCharacter(device, keyCode, 0);
+        if (c >= 0x20 && c != 0x7F && (c & combiningAccent) == 0)
+            return LogicalKey(LogicalKeyKind.character, cast(dchar) c, keyCode);
+        return keyCode != 0
+            ? LogicalKey(LogicalKeyKind.named, dchar.init, keyCode)
+            : LogicalKey.init;
+    }
 
     private bool serviceNotes()
     {
@@ -884,10 +1558,11 @@ struct AndroidWsi
                 closeReading(h.index);
     }
 
-    private void emit(Payload)(WindowId id, Payload payload)
+    private void emit(Payload)(WindowId id, Payload payload,
+        MonoTime at = MonoTime.currTime)
     {
         auto result = events_.pushCoalesced(WindowEvent(nextSequence_, id,
-            WindowEventPayload(payload), MonoTime.currTime));
+            WindowEventPayload(payload), at));
         if (!result.hasError)
             ++nextSequence_;
     }
@@ -921,6 +1596,57 @@ struct AndroidWsi
         else
             return wsiOk(T.init);
     }
+}
+
+// ── input helpers ───────────────────────────────────────────────────────────
+
+private enum : int
+{
+    metaShiftOn = 0x1,
+    metaAltOn = 0x2,
+    metaCtrlOn = 0x1000,
+    metaMetaOn = 0x10000,
+    keycodeEnter = 66,
+    keycodeDel = 67,
+    /// `KeyCharacterMap.COMBINING_ACCENT`: the result is a dead key's accent.
+    combiningAccent = int.min,
+}
+
+/// A finger's contact id: past the mouse (0) and the stylus (1).
+private PointerId touchContact(int pointerId) @safe pure nothrow @nogc
+    => PointerId(16 + pointerId, 1);
+
+private Mods modsOf(int meta) @safe pure nothrow @nogc
+    => Mods(
+        ctrl: (meta & metaCtrlOn) != 0,
+        alt: (meta & metaAltOn) != 0,
+        shift: (meta & metaShiftOn) != 0,
+        super_: (meta & metaMetaOn) != 0);
+
+private KeyLocation keyLocation(int keyCode) @safe pure nothrow @nogc
+{
+    switch (keyCode)
+    {
+        case 57, 59, 113, 117: // ALT_LEFT, SHIFT_LEFT, CTRL_LEFT, META_LEFT
+            return KeyLocation.left;
+        case 58, 60, 114, 118: // ALT_RIGHT, SHIFT_RIGHT, CTRL_RIGHT, META_RIGHT
+            return KeyLocation.right;
+        case 144: .. case 163: // NUMPAD_0 .. NUMPAD_RIGHT_PAREN
+            return KeyLocation.numpad;
+        default:
+            return KeyLocation.standard;
+    }
+}
+
+// The soft keyboard's field typed: wake the WSI thread to drain it.
+private void wakeForTyped() nothrow @nogc
+{
+    pthread_mutex_lock(&channel.lock);
+    const wake = channel.hasWaker;
+    auto waker = channel.waker;
+    pthread_mutex_unlock(&channel.lock);
+    if (wake)
+        waker.wake();
 }
 
 private WsiResult!T androidFailure(T)(WsiOperation operation,

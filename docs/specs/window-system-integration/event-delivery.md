@@ -449,7 +449,7 @@ corrected `ED5`, which had said the notice arrives first. The rest is outstandin
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ED2`, `ED3` | **done**: `EventQueue.pushMotion` merges motion in place through a per-(window, pointer) slot index, and `SampleHistory` keeps the samples; every backend reaches it through `pushCoalesced` |
 | `ED5`        | **done**: an `EventsDropped` payload, a counter on the queue, and a drain that reports it last                                                                                               |
-| `ED7`        | `WindowEvent.timestamp`; every backend stamps the time it observed an event; converting each platform's own event time remains                                                               |
+| `ED7`        | `WindowEvent.timestamp`; every backend stamps the time it observed an event, and Android stamps input with the platform's own time; converting the desktop platforms' event times remains    |
 | `ED5`        | **done**: the admission latch from the first drop until the notice is delivered                                                                                                              |
 | `ED8`        | **done**: a `TextPool` on the queue, `TextId` in three payloads, `withText`/`retain` on every backend; `WindowEvent` 600 to 88 B                                                             |
 | `ED9`        | **done**: capacity and history depth are template parameters; `setMotionPolicy` holds the two per-window switches                                                                            |
