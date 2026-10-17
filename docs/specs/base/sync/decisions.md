@@ -15,7 +15,8 @@ The owner accepted DS1–DS7 and DS10–DS12 in review on 2026-10-12, and DS8,
 DS9 and DS13–DS22 on 2026-10-15, after an independent review whose findings
 DS13–DS22 resolve; DS23, resolving a second review, and DS24 were accepted on
 2026-10-15; and DS25 and DS26, resolving a third and a fourth review, on
-2026-10-16. DS27 is proposed.
+2026-10-16. DS27, recording the protocol model's findings, was accepted on
+2026-10-17.
 
 ## DS1: A parking lot, not a futex word per lock
 
@@ -454,9 +455,5 @@ The implementation also fixed what the specification leaves to it:
   one `Condition` serves every lock (SYC9) while holding only an address
   (SYC1).
 
-**Status.** Proposed. B4, the fairness gate, does not pass on the
-reference machine: at 32 threads `Mutex`'s fewest-to-most acquisition
-ratio is 0.66 against the futex word's 0.82 with `starvationBound` 8, and
-0.68–0.84 against 0.79–0.81 with 1, which costs a fifth of the 32-thread
-throughput; the owner decides between the gate, the bound and the spin
-(DS5).
+**Status.** Accepted 2026-10-17. B4, the fairness gate, is DS5's
+question, not this record's.
