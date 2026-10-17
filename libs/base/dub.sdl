@@ -41,6 +41,21 @@ configuration "unittest" {
     lflags "--export-dynamic" platform="linux-ldc"
 }
 
+// The unittest build with base.sync's portable thread parker in place of the
+// native seam (SPEC SYF2, DS24), so a leg with a native mechanism also runs
+// the fallback: `dub test :base -c unittest-portable -- -i "sync\."`.
+configuration "unittest-portable" {
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+    buildRequirements "disallowDeprecations"
+    versions "SparklesSyncPortableParker"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
 // Linux allocation audit for the capability VFS (testing.md § allocation): the
 // audit module wraps the libc allocation family and compares druntime's
 // per-thread GC counter around the VFS operations. Separate, so GNU ld's --wrap

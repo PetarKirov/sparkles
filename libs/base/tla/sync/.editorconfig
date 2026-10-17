@@ -1,0 +1,4 @@
+# TLA+ aligns conjunctions, disjunctions and continued tuples under the
+# operator they continue, so indentation is not a multiple of anything.
+[*.{tla,cfg}]
+indent_size = unset

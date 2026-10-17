@@ -302,7 +302,10 @@ under the bucket lock whenever an operation finds it inconsistent with the
 queue and the registrations: a bit with no queued record or registration
 behind it **must** be cleared. Each such bit **must** be backed by the queue
 and registrations of one named key, and **must** be reconciled only under
-that key's bucket lock.
+that key's bucket lock. The operations that reconcile are every park on the
+key and every release that enters the parking lot; a stale bit with no
+waiter behind it, which a fast release never sees, is harmless and is
+cleared by the first of them.
 
 _Rationale:_ After `fork` (SYX1) the queues are empty but the primitives keep
 their bits; reconciliation lets every primitive recover instead of leaving a
