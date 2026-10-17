@@ -205,6 +205,13 @@ jobs:
         shell: bash
         run: dub test :base --compiler=${{ matrix.DC }} -c unittest-portable -- -i 'sync\.'
 
+      # Oracle 9, base.sync's litmus tests, optimized: on arm64 every
+      # deliberately weakened primitive must show a stale read. `dub test`'s
+      # unoptimized build cannot, so this is the oracle.
+      - name: base.sync litmus tests
+        if: runner.arch == 'ARM64'
+        run: dub run --single --temp-build libs/base/tools/check-sync-litmus.d
+
       - name: Build and run examples
         if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
         run: |
@@ -886,6 +893,10 @@ jobs:
 
       - name: TLA+ protocol model
         run: nix shell --inputs-from . nixpkgs#tlaplus18 nixpkgs#jdk21_headless --command sh libs/base/tla/sync/check.sh
+
+      # Oracle 9's x86-64 control: the real primitives show no stale read.
+      - name: base.sync litmus tests
+        run: dub run --single --temp-build libs/base/tools/check-sync-litmus.d
 
   # The `_umtx_op` seam has no hosted runner: a FreeBSD virtual machine runs
   # base.sync's suite on every pull request, within 15 minutes (DS24; past
