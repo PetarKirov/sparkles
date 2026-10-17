@@ -5,8 +5,8 @@
 #extension GL_ARB_shading_language_420pack : require
 #endif
 
-vec4 _40;
-vec4 _149;
+vec4 _20;
+vec4 _97;
 
 void main()
 {

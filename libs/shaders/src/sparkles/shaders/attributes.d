@@ -14,7 +14,7 @@ module sparkles.shaders.attributes;
 version (LDC_DCompute)
 {
     public import ldc.dcompute : compute, CompileFor, fragment, input, uniform,
-        Sampler, Sampler2D, sample;
+        SamplerState, Sampler2D, sample;
 }
 else
 {
@@ -63,7 +63,7 @@ else
     }
 
     /// An opaque sampler handle. Only meaningful in device code.
-    struct Sampler
+    struct SamplerState
     {
         const(void)* handle; ///
     }

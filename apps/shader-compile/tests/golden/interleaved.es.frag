@@ -4,8 +4,8 @@
 precision mediump float;
 precision highp int;
 
-vec4 _40;
-vec4 _149;
+vec4 _20;
+vec4 _97;
 
 uniform highp float scale;
 uniform highp vec2 offset;
@@ -17,7 +17,7 @@ varying highp vec4 second;
 
 void main()
 {
-    highp vec4 _67;
-    _67.x = scale;
-    gl_FragData[0] = _67.xxxx * (texture2D(texA, first) * texture2D(texB, second.xy + offset));
+    highp vec4 _41;
+    _41.x = scale;
+    gl_FragData[0] = _41.xxxx * (texture2D(texA, first) * texture2D(texB, second.xy + offset));
 }

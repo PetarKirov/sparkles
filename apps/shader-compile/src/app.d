@@ -396,7 +396,7 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
 
     // 2. Validate what the compiler emitted, before anything rewrites it.
     //    Universal rules: the plain uniforms are GL's shape, not Vulkan's.
-    if (!step(["spirv-val", "--target-env", "spv1.4", spv], name ~ ": spirv-val"))
+    if (!step(["spirv-val", "--target-env", "spv1.6", spv], name ~ ": spirv-val"))
         return 1;
 
     // 3. Optimise: folds the name-string constants and dead helpers away, so

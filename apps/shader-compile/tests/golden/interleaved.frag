@@ -5,8 +5,8 @@
 #extension GL_ARB_shading_language_420pack : require
 #endif
 
-vec4 _40;
-vec4 _149;
+vec4 _20;
+vec4 _97;
 
 uniform float scale;
 uniform vec2 offset;
@@ -19,7 +19,7 @@ layout(location = 0) out vec4 finalColor;
 
 void main()
 {
-    vec4 _67;
-    _67.x = scale;
-    finalColor = _67.xxxx * (texture(texA, first) * texture(texB, second.xy + offset));
+    vec4 _41;
+    _41.x = scale;
+    finalColor = _41.xxxx * (texture(texA, first) * texture(texB, second.xy + offset));
 }
