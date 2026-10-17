@@ -58,6 +58,21 @@ package uint detectTerminalWidth(bool stderrStream = false)
         return 0;
 }
 
+version (unittest)
+{
+    // The text a writer writes for `args`, for the tests' comparisons.
+    // Unlike `formatted`, the arguments pass through unconverted, so a
+    // test can hand `writeBenchTable` a `TableGeometry*` to update.
+    private string textOf(alias write, Args...)(auto ref Args args)
+    {
+        import std.array : appender;
+
+        auto w = appender!string;
+        write(w, args);
+        return w[];
+    }
+}
+
 /// Renders a styled IES with ANSI escapes when `colored`, plain text otherwise.
 package string render(Args...)(
     bool colored,
@@ -704,22 +719,22 @@ unittest
 /// columns only widen during a run. The recorded header row is the signature:
 /// a table with different columns resets the carry instead of misapplying the
 /// floors positionally.
-string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter = null,
-    string sortBy = null, in string[] groupKeys = null,
-    TableGeometry* geometry = null) @system // drawTable is @system
+void writeBenchTable(W)(ref W w, in BenchStats[] rows, bool colored,
+    string metricFilter = null, string sortBy = null, in string[] groupKeys = null,
+    TableGeometry* geometry = null)
 {
+    import std.range.primitives : put;
+
     auto models = buildBenchTables(rows, colored, metricFilter, sortBy, groupKeys);
     const floors = applyGeometry(geometry, models);
 
-    string result;
-    foreach (ref m; models)
+    foreach (i, ref m; models)
     {
-        if (result.length)
-            result ~= "\n";
-        result ~= renderCells(m.cells, m.aligns, headerRows: 1, title: m.title,
+        if (i)
+            put(w, "\n");
+        writeCells(w, m.cells, m.aligns, headerRows: 1, title: m.title,
             minWidths: floors, maxWidths: m.maxWidths);
     }
-    return result;
 }
 
 /// One renderable bench table: the (possibly styled) `title` — empty for the
@@ -744,7 +759,7 @@ private enum benchNotesMaxWidth = 48;
 /// column mid-run.
 package enum benchInflightSentinel = "\x01measuring";
 
-/// Column geometry carried across `formatBenchTable` calls (caller-owned; see
+/// Column geometry carried across `writeBenchTable` calls (caller-owned; see
 /// the `geometry` parameter above).
 package struct TableGeometry
 {
@@ -772,7 +787,7 @@ private size_t[] applyGeometry(TableGeometry* geometry, in BenchTableModel[] mod
     return floors;
 }
 
-/// The table models `formatBenchTable` renders — split out so a live view can
+/// The table models `writeBenchTable` renders — split out so a live view can
 /// render the same rows through `drawTableLines` with identical geometry.
 package BenchTableModel[] buildBenchTables(in BenchStats[] rows, bool colored,
     string metricFilter = null, string sortBy = null, in string[] groupKeys = null)
@@ -966,10 +981,10 @@ package BenchTableModel[] buildBenchTables(in BenchStats[] rows, bool colored,
 /// Renders `@workload` windows as their own table — window totals and the
 /// wall-clock decomposition, deliberately separate from the per-iteration
 /// bench tables (a window's fields mean different things).
-string formatWorkloadTable(in WorkloadWindow[] rows, bool colored) @system
+void writeWorkloadTable(W)(ref W w, in WorkloadWindow[] rows, bool colored)
 {
     auto model = buildWorkloadTable(rows, colored);
-    return renderCells(model.cells, model.aligns, headerRows: 1, title: model.title);
+    writeCells(w, model.cells, model.aligns, headerRows: 1, title: model.title);
 }
 
 /// The workload table's model: `workload | reps | wall | cpu usr | cpu krn |
@@ -1077,7 +1092,7 @@ package BenchTableModel buildWorkloadTable(in WorkloadWindow[] rows, bool colore
     }
 
     // Header cells are bolded here like every other runner table —
-    // `renderCells` treats `headerRows` as separator geometry only.
+    // `writeCells` treats `headerRows` as separator geometry only.
     auto headerCells = new string[headers.length];
     foreach (i, h; headers)
         headerCells[i] = render(colored, i"{bold $(h)}");
@@ -1284,7 +1299,7 @@ unittest
     assert(model.cells[2][3] == "—", "error rows pad with em dashes");
     assert(model.cells[3][2] == "no hardware");
 
-    const rendered = formatWorkloadTable([scaledWin], false);
+    const rendered = textOf!writeWorkloadTable([scaledWin], false);
     assert(rendered.canFind("workloads"), "the table carries its title");
 }
 
@@ -1463,7 +1478,7 @@ package string[] benchFrameLines(in BenchStats[] rows, BenchStats inflight,
     }
 }
 
-@("formatBenchTable.metricColumns")
+@("writeBenchTable.metricColumns")
 @system
 unittest
 {
@@ -1483,12 +1498,12 @@ unittest
     row.perf = p;
 
     // Default: client rate + the four default perf columns; not the opt-in extras.
-    const def = formatBenchTable([row], false);
+    const def = textOf!writeBenchTable([row], false);
     assert(def.canFind("B/s") && def.canFind("IPC") && def.canFind("cache-miss"));
     assert(!def.canFind("cycles/iter"));
 
     // A glob filter narrows to the requested columns.
-    const filtered = formatBenchTable([row], false, "ipc,cycles");
+    const filtered = textOf!writeBenchTable([row], false, "ipc,cycles");
     assert(filtered.canFind("IPC") && filtered.canFind("cycles/iter"));
     assert(!filtered.canFind("B/s") && !filtered.canFind("cache-miss"));
 }
@@ -1496,7 +1511,7 @@ unittest
 /// `median/iter` folds the deviation into one right-aligned cell
 /// (`30.00ns ±1.00ns`); the standalone `±dev` column is gone, while `min` and
 /// `max` remain their own decimal-aligned columns.
-@("formatBenchTable.mergedMedianColumn")
+@("writeBenchTable.mergedMedianColumn")
 @system
 unittest
 {
@@ -1507,7 +1522,7 @@ unittest
             nsPerIterMedian: 110, nsPerIterDeviation: 5,
             nsPerIterMin: 108, nsPerIterMax: 120),
     ];
-    const rendered = formatBenchTable(rows[], false);
+    const rendered = textOf!writeBenchTable(rows[], false);
 
     // The median and its deviation share one cell; the dedicated ±dev column
     // and its header are gone; min/max keep their own cells.
@@ -1519,7 +1534,7 @@ unittest
 
 /// The `n` column shows the sample count (what `--bench-min-time` grows); a
 /// batched case running several iterations per sample reads `samples×iters`.
-@("formatBenchTable.sampleCountColumn")
+@("writeBenchTable.sampleCountColumn")
 @system
 unittest
 {
@@ -1527,17 +1542,17 @@ unittest
 
     BenchStats[1] perCall = [BenchStats(name: "a", samples: 19000, iterations: 1,
         nsPerIterMedian: 30)];
-    assert(formatBenchTable(perCall[], false).canFind("19000"), "per-call: n = samples");
+    assert(textOf!writeBenchTable(perCall[], false).canFind("19000"), "per-call: n = samples");
 
     BenchStats[1] batched = [BenchStats(name: "a", samples: 32, iterations: 8,
         nsPerIterMedian: 30)];
-    assert(formatBenchTable(batched[], false).canFind("32×8"), "batched: samples×iterations");
+    assert(textOf!writeBenchTable(batched[], false).canFind("32×8"), "batched: samples×iterations");
 }
 
 /// A failing row's message rides in a trailing, wrapping `notes` column — never
 /// in a timing cell; a passing row's note is empty, and an all-green table grows
 /// no notes column at all.
-@("formatBenchTable.notesColumn")
+@("writeBenchTable.notesColumn")
 @system
 unittest
 {
@@ -1548,7 +1563,7 @@ unittest
         BenchStats(name: "ok", samples: 100, iterations: 1, nsPerIterMedian: 30),
         BenchStats(name: "bad", error: "boom: it failed"),
     ];
-    const rendered = formatBenchTable(rows[], false);
+    const rendered = textOf!writeBenchTable(rows[], false);
     assert(rendered.canFind("notes"), rendered);          // header present
     assert(rendered.canFind("boom: it failed"), rendered); // message in the table
     assert(rendered.canFind("30.00ns ±0.00ns"), rendered); // passing row keeps timings
@@ -1556,7 +1571,7 @@ unittest
     // No error rows → no notes column (legacy layout preserved).
     BenchStats[1] green = [BenchStats(name: "ok", samples: 100, iterations: 1,
         nsPerIterMedian: 30)];
-    assert(!formatBenchTable(green[], false).canFind("notes"), "no notes header when green");
+    assert(!textOf!writeBenchTable(green[], false).canFind("notes"), "no notes header when green");
 
     // A long message wraps within the cap on the drawTable path: the words all
     // survive, but the full line is broken across rows (never contiguous).
@@ -1565,7 +1580,7 @@ unittest
         enum long_ = "serialize output is not valid JSON: Illegal control "
             ~ "character somewhere deep inside the payload buffer";
         BenchStats[1] longErr = [BenchStats(name: "bad", error: long_)];
-        const wrapped = formatBenchTable(longErr[], false);
+        const wrapped = textOf!writeBenchTable(longErr[], false);
         assert(wrapped.canFind("serialize") && wrapped.canFind("payload"), wrapped);
         assert(!wrapped.canFind(long_), "a long note must wrap, not stay one line");
     }
@@ -1575,7 +1590,7 @@ unittest
 /// on one column layout: the second (narrower) table renders under the first
 /// call's floors, so their lines share a visible width — instead of the
 /// naturally narrower layout it gets alone.
-@("formatBenchTable.geometryCarriesAcrossCalls")
+@("writeBenchTable.geometryCarriesAcrossCalls")
 @system
 unittest
 {
@@ -1592,12 +1607,12 @@ unittest
     BenchStats[1] narrow = [BenchStats(name: "b", samples: 1, iterations: 1,
         nsPerIterMedian: 30)];
 
-    const first = formatBenchTable(wide[], false, null, null, null, &geom);
-    const second = formatBenchTable(narrow[], false, null, null, null, &geom);
+    const first = textOf!writeBenchTable(wide[], false, null, null, null, &geom);
+    const second = textOf!writeBenchTable(narrow[], false, null, null, null, &geom);
     assert(visibleWidth(first.splitLines[0]) == visibleWidth(second.splitLines[0]),
         first ~ second);
 
-    const alone = formatBenchTable(narrow[], false);
+    const alone = textOf!writeBenchTable(narrow[], false);
     assert(visibleWidth(alone.splitLines[0]) < visibleWidth(second.splitLines[0]));
 }
 
@@ -1659,14 +1674,14 @@ unittest
         TableGeometry frameGeom, flushGeom;
         const frame = benchFrameLines(rows[], BenchStats.init, 0, false, null,
             null, ["dataset"], 0, frameGeom);
-        const flushed = formatBenchTable(rows[], false, null, null, ["dataset"],
+        const flushed = textOf!writeBenchTable(rows[], false, null, null, ["dataset"],
             &flushGeom);
         assert(frame.join("\n") ~ "\n" == flushed, frame.join("\n"));
         assert(frameGeom == flushGeom);
     }
 }
 
-@("formatBenchTable.geometryResetsOnHeaderChange")
+@("writeBenchTable.geometryResetsOnHeaderChange")
 @system
 unittest
 {
@@ -1675,15 +1690,15 @@ unittest
     TableGeometry geom;
     BenchStats[1] plain = [BenchStats(name: "a-rather-long-benchmark-name",
         iterations: 1, nsPerIterMedian: 110)];
-    cast(void) formatBenchTable(plain[], false, null, null, null, &geom);
+    cast(void) textOf!writeBenchTable(plain[], false, null, null, null, &geom);
 
     BenchStats[1] withMetric = [BenchStats(name: "b", iterations: 1,
         nsPerIterMedian: 110, metrics: [Metric(Unit("B"), 1000.0, Metric.Mode.rate)])];
-    assert(formatBenchTable(withMetric[], false, null, null, null, &geom)
-        == formatBenchTable(withMetric[], false));
+    assert(textOf!writeBenchTable(withMetric[], false, null, null, null, &geom)
+        == textOf!writeBenchTable(withMetric[], false));
 }
 
-@("formatBenchTable.grouped")
+@("writeBenchTable.grouped")
 @system
 unittest
 {
@@ -1706,7 +1721,7 @@ unittest
     // --group-by=dataset,operation → one table per group; the group name rides
     // in the table title, `implementation` heads the stub column, and rows
     // list the engine `name`.
-    const rendered = formatBenchTable(rows, false, null, null, ["dataset", "operation"]);
+    const rendered = textOf!writeBenchTable(rows, false, null, null, ["dataset", "operation"]);
     assert(rendered.canFind("benchmark: canada/parse"));
     assert(rendered.canFind("benchmark: twitter/parse"));
     assert(rendered.canFind("implementation"));
@@ -1719,7 +1734,7 @@ unittest
     assert(rendered.indexOf("mir-ion") < rendered.indexOf("asdf"));
 }
 
-@("formatBenchTable.groupedKeepsRemainingLabels")
+@("writeBenchTable.groupedKeepsRemainingLabels")
 @system
 unittest
 {
@@ -1736,7 +1751,7 @@ unittest
     }
 
     BenchStats[2] rows = [row("asdf", "parse"), row("asdf", "serialize")];
-    const rendered = formatBenchTable(rows, false, null, null, ["dataset"]);
+    const rendered = textOf!writeBenchTable(rows, false, null, null, ["dataset"]);
     assert(rendered.canFind("operation"), "the non-grouped label key gets a column");
     assert(rendered.canFind("parse") && rendered.canFind("serialize"));
     assert(!rendered.canFind("dataset"), "the grouped key lives in the title only");
@@ -1745,11 +1760,11 @@ unittest
     BenchStats bare;
     bare.name = "plain";
     bare.iterations = 1;
-    const bareTable = formatBenchTable([bare], false, null, null, ["dataset"]);
+    const bareTable = textOf!writeBenchTable([bare], false, null, null, ["dataset"]);
     assert(bareTable.canFind("benchmark: (unlabeled)"));
 }
 
-@("formatBenchTable.flatLabelColumns")
+@("writeBenchTable.flatLabelColumns")
 @system
 unittest
 {
@@ -1761,19 +1776,19 @@ unittest
         BenchStats(name: "asdf", labels: ["dataset": "canada"], iterations: 1),
         BenchStats(name: "mir-ion", labels: ["dataset": "twitter"], iterations: 1),
     ];
-    const rendered = formatBenchTable(rows, false); // no --group-by
+    const rendered = textOf!writeBenchTable(rows, false); // no --group-by
     assert(rendered.canFind("dataset") && rendered.canFind("benchmark"));
     assert(rendered.canFind("canada") && rendered.canFind("asdf"));
     // A label-less row set reproduces the plain flat table (no leading columns).
     BenchStats plain;
     plain.name = "sum/64";
     plain.iterations = 1;
-    assert(formatBenchTable([plain], false).canFind("benchmark"));
+    assert(textOf!writeBenchTable([plain], false).canFind("benchmark"));
 }
 
 /// The `--list-metrics` report: every catalog metric with its column label,
 /// class (quantitative/diagnostic), source, and whether it is producible now.
-string formatMetricCatalog(in MetricDescriptor[] cat, bool colored) @system // renderCells
+void writeMetricCatalog(W)(ref W w, in MetricDescriptor[] cat, bool colored)
 {
     string[][] cells = [[
         render(colored, i"{bold metric}"),
@@ -1790,7 +1805,7 @@ string formatMetricCatalog(in MetricDescriptor[] cat, bool colored) @system // r
             d.source,
             d.available ? "yes" : "no",
         ];
-    return renderCells(cells, headerRows: 1);
+    writeCells(w, cells, headerRows: 1);
 }
 
 /// A summary of one dataset's statistics extracted from registered benchmark cases.
@@ -1805,10 +1820,10 @@ struct DatasetInfo
 
 /// The `--list-datasets` report: every registered dataset with its size,
 /// case count, and supported operations.
-string formatDatasetCatalog(in DatasetInfo[] datasets, bool colored) @system
+void writeDatasetCatalog(W)(ref W w, in DatasetInfo[] datasets, bool colored)
 {
     import sparkles.base.text.writers : writeBytes;
-    import std.array : appender, join;
+    import std.array : join;
     import std.conv : to;
 
     bool hasTiers = false;
@@ -1845,13 +1860,7 @@ string formatDatasetCatalog(in DatasetInfo[] datasets, bool colored) @system
 
     foreach (ref d; datasets)
     {
-        string sizeStr = "—";
-        if (d.byteSize > 0)
-        {
-            auto w = appender!string;
-            writeBytes(w, d.byteSize);
-            sizeStr = w.data;
-        }
+        const sizeStr = d.byteSize > 0 ? formatted!writeBytes(d.byteSize).toString : "—";
 
         if (hasTiers)
         {
@@ -1873,7 +1882,7 @@ string formatDatasetCatalog(in DatasetInfo[] datasets, bool colored) @system
             ];
         }
     }
-    return renderCells(cells, aligns, headerRows: 1);
+    writeCells(w, cells, aligns, headerRows: 1);
 }
 
 /// The `--list-metrics` capability block: what each backend can deliver on
@@ -1948,7 +1957,7 @@ unittest
     assert(colored.canFind("✓") && colored.canFind("\x1b["));
 }
 
-/// Renders table cells with `core-cli`'s `drawTable` when available, plain
+/// Writes table cells with `core-cli`'s `drawTable` when available, plain
 /// space-aligned columns otherwise. `aligns`/`headerRows` describe per-column
 /// alignment and the header-rule row count; `Align` lives in `base`, so this
 /// signature stays valid without `core-cli` (`TableProps` is built strictly
@@ -1960,27 +1969,31 @@ unittest
 /// fallback too), letting consecutive streamed tables share their geometry.
 /// `maxWidths` caps them (`TableProps.columnMaxWidths`; content over a column's
 /// cap wraps on the `drawTable` path, ignored by the plain fallback).
-package string renderCells(
-    string[][] cells, in Align[] aligns = null, size_t headerRows = 0,
-    string title = null, in size_t[] minWidths = null, in size_t[] maxWidths = null)
-@system // drawTable is @system
+package void writeCells(W)(ref W w,
+    in string[][] cells, const(Align)[] aligns = null, size_t headerRows = 0,
+    string title = null, const(size_t)[] minWidths = null,
+    const(size_t)[] maxWidths = null)
 {
     static if (hasUiComponents)
     {
-        import sparkles.base.text.writers : formatted;
         import sparkles.ui.components.table : drawTable, TableProps;
 
-        // The report is assembled from strings, so the table is one too.
-        return formatted!drawTable(cells, TableProps(
+        drawTable(w, cells, TableProps(
             headerRows: headerRows, columnAligns: aligns, title: title,
-            columnMinWidths: minWidths, columnMaxWidths: maxWidths)).toString;
+            columnMinWidths: minWidths, columnMaxWidths: maxWidths));
     }
     else
     {
+        import std.range.primitives : put;
+
         // The plain fallback has no wrapping engine, so `maxWidths` is ignored;
         // `errorCell` already collapses a message to one line for this grid.
-        auto table = alignColumns(cells, aligns, minWidths);
-        return title.length ? title ~ "\n" ~ table : table;
+        if (title.length)
+        {
+            put(w, title);
+            put(w, "\n");
+        }
+        writeAlignedColumns(w, cells, aligns, minWidths);
     }
 }
 
@@ -1988,14 +2001,17 @@ package string renderCells(
 /// border (given a rule wide enough to carry the label — bench tables always
 /// are); the fallback hoists it as a heading line. Either way it precedes the
 /// cells, so this pins the property common to both builds.
-@("reporting.renderCells.titled")
-@system
+@("reporting.writeCells.titled")
+@safe
 unittest
 {
+    import std.array : appender;
     import std.string : indexOf;
 
-    const rendered = renderCells([["one sufficiently wide header"], ["v"]], null,
+    auto w = appender!string;
+    writeCells(w, [["one sufficiently wide header"], ["v"]], null,
         headerRows: 1, title: "benchmark: canada");
+    const rendered = w[];
     assert(rendered.indexOf("benchmark: canada") >= 0, rendered);
     assert(rendered.indexOf("benchmark: canada") < rendered.indexOf("v"), rendered);
 }
@@ -2015,8 +2031,9 @@ private string benchNs(double value) @safe
 }
 
 /// The `--ctfe-trace` report: compile-time cost of each `@ctfe` test.
-string formatCtfeTraceTable(in CtfeTestCost[] costs, bool colored) @system // renderCells
+void writeCtfeTraceTable(W)(ref W w, in CtfeTestCost[] costs, bool colored)
 {
+    import std.range.primitives : put;
     import core.time : usecs;
     import std.conv : text;
 
@@ -2040,8 +2057,9 @@ string formatCtfeTraceTable(in CtfeTestCost[] costs, bool colored) @system // re
             totalUs += cost.durUs;
     }
     // The CTFE-time column is numeric; the test name and location are textual.
-    return renderCells(cells, [Align.left, Align.left, Align.right], headerRows: 1)
-        ~ render(colored, i"{bold total CTFE time attributed to @ctfe tests:} $(formatted!writeDuration(totalUs.usecs))\n");
+    writeCells(w, cells, [Align.left, Align.left, Align.right], headerRows: 1);
+    put(w, render(colored,
+        i"{bold total CTFE time attributed to @ctfe tests:} $(formatted!writeDuration(totalUs.usecs))\n"));
 }
 
 /// Fallback tabular rendering: two-space-separated columns, left-aligned by
@@ -2051,65 +2069,65 @@ string formatCtfeTraceTable(in CtfeTestCost[] costs, bool colored) @system // re
 /// `sparkles.base.text.visibleWidth`, so ANSI escapes count zero and wide CJK /
 /// emoji / combining clusters are sized correctly (matching `drawTable`), and
 /// `minWidths` floors them (matching `TableProps.columnMinWidths`).
-package string alignColumns(in string[][] cells, in Align[] aligns = null,
-    in size_t[] minWidths = null) @safe
+package void writeAlignedColumns(W)(ref W w, in string[][] cells,
+    in Align[] aligns = null, in size_t[] minWidths = null)
 {
+    import std.range.primitives : put;
+
     auto widths = mergeWidths(contentWidths(cells), minWidths);
 
     bool rightish(size_t i)
         => i < aligns.length && (aligns[i] == Align.right || aligns[i] == Align.decimal);
 
-    string result;
     foreach (row; cells)
     {
         foreach (i, cell; row)
         {
             if (rightish(i))
                 foreach (_; visibleWidth(cell) .. widths[i])
-                    result ~= ' ';
-            result ~= cell;
+                    put(w, " ");
+            put(w, cell);
             if (i + 1 < row.length)
             {
                 const used = rightish(i) ? widths[i] : visibleWidth(cell);
                 foreach (_; used .. widths[i] + 2)
-                    result ~= ' ';
+                    put(w, " ");
             }
         }
-        result ~= '\n';
+        put(w, "\n");
     }
-    return result;
 }
 
-@("alignColumns.basic")
+@("writeAlignedColumns.basic")
 @safe
 unittest
 {
-    assert(alignColumns([["a", "bb"], ["ccc", "d"]]) ==
+    assert(textOf!writeAlignedColumns([["a", "bb"], ["ccc", "d"]]) ==
         "a    bb\n" ~
         "ccc  d\n");
 }
 
 /// Wide (CJK) cells align by terminal cells, not bytes — proving the
 /// `visibleWidth` switch (byte-length would over-pad the `世界` column).
-@("alignColumns.wideCells")
+@("writeAlignedColumns.wideCells")
 @safe
 unittest
 {
-    assert(alignColumns([["世界", "z"], ["x", "y"]]) ==
+    assert(textOf!writeAlignedColumns([["世界", "z"], ["x", "y"]]) ==
         "世界  z\n" ~
         "x     y\n");
 }
 
-@("alignColumns.rightAndDecimalFallback")
+@("writeAlignedColumns.rightAndDecimalFallback")
 @safe
 unittest
 {
     // right/decimal columns pad before the cell; decimal degrades to right.
-    assert(alignColumns([["a", "22"], ["ccc", "4"]],
+    assert(textOf!writeAlignedColumns([["a", "22"], ["ccc", "4"]],
             [Align.left, Align.right]) ==
         "a    22\n" ~
         "ccc   4\n");
-    assert(alignColumns([["1.5"], ["12.25"]], [Align.decimal]) ==
+    assert(textOf!writeAlignedColumns([["1.5"], ["12.25"]], [Align.decimal]) ==
         "  1.5\n" ~
         "12.25\n");
 }
@@ -2117,15 +2135,15 @@ unittest
 /// `minWidths` floors widen a column past its natural width (the gap after a
 /// left column grows; a right column pads further); short/absent entries
 /// leave columns natural — mirroring `TableProps.columnMinWidths`.
-@("alignColumns.minWidthFloors")
+@("writeAlignedColumns.minWidthFloors")
 @safe
 unittest
 {
-    assert(alignColumns([["a", "b"], ["c", "d"]], null, [3]) ==
+    assert(textOf!writeAlignedColumns([["a", "b"], ["c", "d"]], null, [size_t(3)]) ==
         "a    b\n" ~
         "c    d\n");
-    assert(alignColumns([["a", "22"], ["ccc", "4"]],
-            [Align.left, Align.right], [0, 4]) ==
+    assert(textOf!writeAlignedColumns([["a", "22"], ["ccc", "4"]],
+            [Align.left, Align.right], [size_t(0), 4]) ==
         "a      22\n" ~
         "ccc     4\n");
 }
@@ -2325,7 +2343,7 @@ unittest
     assert(bare.cells[0].countUntil("wall") == 2);
 }
 
-@("reporting.formatDatasetCatalog")
+@("reporting.writeDatasetCatalog")
 @system
 unittest
 {
@@ -2335,7 +2353,7 @@ unittest
         DatasetInfo("twitter", "light", 631_514, 24, ["decode", "parse", "serialize", "validate"]),
         DatasetInfo("cloudtrail", "medium", 278_800, 5, ["parse-stream"]),
     ];
-    const rendered = formatDatasetCatalog(datasets, false);
+    const rendered = textOf!writeDatasetCatalog(datasets, false);
     assert(rendered.canFind("dataset"));
     assert(rendered.canFind("tier"));
     assert(rendered.canFind("size"));

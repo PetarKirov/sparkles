@@ -81,7 +81,7 @@ rationale read the [spec](./index.md); item numbers (A1…E5) refer to its §2._
 - [x] Consumer wiring: `release` stats adopt `columnAligns`, `headerRows`, titles,
       and `maxWidth: terminalSize().width`
 - [x] Bench + `ci` tables likewise (M5) (needs `TableProps` plumbing through
-      `renderCells`'s capability gate)
+      `writeCells`'s capability gate)
 - [x] Lazy/streaming rendering (M5) (parity with `drawBoxLines`/`drawBoxChunks`)
 - [x] As needed (M5): per-cell align/valign override, `Align.decimal`, writer overload
 - [x] Structural (M5): split `table/grid.d` (pure resolution) from `table/render.d`

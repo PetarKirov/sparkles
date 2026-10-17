@@ -29,12 +29,12 @@ import sparkles.test_runner.stack_budget : installStackBudgetHandler;
 import sparkles.test_runner.workers : joinTestWorkers, startTestWorkers;
 import sparkles.test_runner.filter : matchesFilter;
 import sparkles.test_runner.model : Test, TestResult;
+import sparkles.base.text.writers : formatted;
 import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
-    formatBenchTable, formatCapabilityBlock, formatCtfeFailedLine, formatCtfeLine,
-    formatWorkloadTable,
-    formatDatasetCatalog, DatasetInfo,
-    formatFailedRecap, formatMetricCatalog, formatResultLine, formatSummary,
-    formatThrown, progressEnabled, RunTotals, TableGeometry;
+    formatCapabilityBlock, formatCtfeFailedLine, formatCtfeLine,
+    formatFailedRecap, formatResultLine, formatSummary,
+    formatThrown, progressEnabled, RunTotals, TableGeometry, writeBenchTable,
+    writeDatasetCatalog, DatasetInfo, writeMetricCatalog, writeWorkloadTable;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point — called across the extern(C) seam by the registration shim,
@@ -584,7 +584,7 @@ private UnitTestResult runCtfeTraceMode(Test[] tests, in RunnerOptions options, 
     import std.file : readText;
     import std.stdio : stderr, stdout;
     import sparkles.test_runner.ctfe_trace : attributeCtfeCosts, parseCtfeEvents;
-    import sparkles.test_runner.reporting : formatCtfeTraceTable, render;
+    import sparkles.test_runner.reporting : render, writeCtfeTraceTable;
 
     auto ctfeTests = tests.filter!(t => t.traits.isCtfe).array;
     if (!ctfeTests.length)
@@ -630,7 +630,7 @@ private UnitTestResult runCtfeTraceMode(Test[] tests, in RunnerOptions options, 
         return UnitTestResult(ctfeTests.length, 0, false, false);
     }
     const costs = attributeCtfeCosts(ctfeTests, parseCtfeEvents(traceJson));
-    stdout.write(formatCtfeTraceTable(costs, colored));
+    stdout.write(formatted!writeCtfeTraceTable(costs, colored));
     return UnitTestResult(ctfeTests.length, ctfeTests.length, false, false);
 }
 
@@ -860,7 +860,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             fixedOnly: probe.perf.fixedCountersOnly)
             ~ tier0Family(probe.tier0.available)
             ~ syscallFamily(probe.syscalls.available);
-        stdout.write(formatMetricCatalog(cat, colored));
+        stdout.write(formatted!writeMetricCatalog(cat, colored));
         stdout.writeln;
         {
             import sparkles.test_runner.psi : PsiSource;
@@ -1001,7 +1001,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
                 info.operations = ops.keys.sort.release;
                 infos ~= info;
             }
-            stdout.write(formatDatasetCatalog(infos, colored));
+            stdout.write(formatted!writeDatasetCatalog(infos, colored));
             stdout.writeln;
         }
         return UnitTestResult(failed, 0, false, false);
@@ -1192,8 +1192,11 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         }
         if (!firstFlush)
             stdout.write("\n"); // blank line between group tables
-        stdout.write(formatBenchTable(bucket, colored, options.metrics,
-            sortBy, keys, &geometry));
+        {
+            // Directly, not through `formatted`: the geometry is updated.
+            auto w = stdout.lockingTextWriter;
+            writeBenchTable(w, bucket, colored, options.metrics, sortBy, keys, &geometry);
+        }
         stdout.flush(); // on screen before the next tick redraws the spinner below
         firstFlush = false;
         bucket = null;
@@ -1349,7 +1352,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         {
             if (!firstFlush)
                 stdout.write("\n"); // blank line between the bench tables and this one
-            stdout.write(formatWorkloadTable(windows, colored));
+            stdout.write(formatted!writeWorkloadTable(windows, colored));
             firstFlush = false;
         }
     }

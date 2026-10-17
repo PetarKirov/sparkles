@@ -73,7 +73,7 @@ private size_t[] anchorDecimalPads(in SlotGrid g, in TableProps p,
 
 /// One horizontal rule (top border, interior row separator, or bottom border) at
 /// lattice row `i`: the core's `ruleGlyphs` joined to UTF-8.
-private string separatorLine(in SlotGrid g, in size_t[] w, in TableProps p, size_t i)
+private string separatorLine(in SlotGrid g, in size_t[] w, in TableProps p, size_t i) @safe pure
 {
     import std.conv : to;
 
@@ -83,7 +83,7 @@ private string separatorLine(in SlotGrid g, in size_t[] w, in TableProps p, size
 /// Commit one complete source-qualified plan per anchor. Emitted lines and hit
 /// metadata both consume these plans; no byte offsets are inferred from output.
 private string[][] wrapCells(in SlotGrid g, in size_t[] w, in TableProps p,
-    in size_t[] decimalPads, ref WrapPlan[] plans, out CellWrapProjection[] projections)
+    in size_t[] decimalPads, ref WrapPlan[] plans, out CellWrapProjection[] projections) @safe
 {
     import std.exception : enforce;
     auto result = new string[][](g.anchors.length);
@@ -140,7 +140,7 @@ private struct LineSegment
 /// segments: each anchor emits its wrapped line for the current text line in
 /// its content band, or a blank field otherwise, separated by interior
 /// verticals where a real boundary sits. No trailing newline.
-private LineSegment[] bodyLineSegments(in TableLayout lay, size_t r, size_t t)
+private LineSegment[] bodyLineSegments(in TableLayout lay, size_t r, size_t t) @safe pure
 {
     const g = lay.grid;
     const p = lay.props;
@@ -205,7 +205,7 @@ private LineSegment[] bodyLineSegments(in TableLayout lay, size_t r, size_t t)
 
 /// Render text line `t` of grid row `r`: the join of its segments. No trailing
 /// newline — emission joins lines (see `lineDescs`/`renderLine`).
-private string bodyLine(in TableLayout lay, size_t r, size_t t)
+private string bodyLine(in TableLayout lay, size_t r, size_t t) @safe pure
 {
     auto out_ = appender!string;
     foreach (seg; bodyLineSegments(lay, r, t))
@@ -222,7 +222,7 @@ private string bodyLine(in TableLayout lay, size_t r, size_t t)
 /// covered (the same policy as `drawBox`, whose title also interrupts its top
 /// rule). `label` may be styled — it is measured by visible width and spliced
 /// opaquely between plain-`dchar` border runs.
-private string spliceIntoRule(string rule, string label, in TableProps p)
+private string spliceIntoRule(string rule, string label, in TableProps p) @safe pure
 {
     import std.conv : to;
     import sparkles.base.text.width : truncateField;
@@ -269,7 +269,7 @@ package(sparkles.ui.components.table) struct TableLayout
 
 /// Resolve `g` under `p` into a $(LREF TableLayout).
 package(sparkles.ui.components.table) TableLayout computeTableLayout(
-    SlotGrid g, TableProps p)
+    SlotGrid g, TableProps p) @safe
 {
     auto naturals = new size_t[g.anchors.length];
     auto cellPlans = new WrapPlan[](g.anchors.length);
@@ -294,7 +294,7 @@ package(sparkles.ui.components.table) TableLayout computeTableLayout(
 
 
 /// Render one described line (no trailing newline).
-private string renderLine(in TableLayout lay, in LineDesc d)
+private string renderLine(ref const TableLayout lay, in LineDesc d) @safe pure
 {
     const p = lay.props;
     final switch (d.kind)
@@ -328,26 +328,26 @@ private string renderLine(in TableLayout lay, in LineDesc d)
 /// byte-for-byte (drawTable terminates every line, including the last), i.e.
 /// `drawTableLines(c, p).array == drawTable(c, p).toString.splitLines`.
 /// An empty grid is an empty range (drawTable's historical `""`).
-auto drawTableLines(in string[][] cells, TableProps props = TableProps.init)
+auto drawTableLines(in string[][] cells, TableProps props = TableProps.init) @safe
 in (hasRectangularShape(cells))
 {
     return tableLineRange(resolveGrid(toCells(cells)).grid, props);
 }
 
 /// ditto
-auto drawTableLines(in Cell[][] cells, TableProps props = TableProps.init)
+auto drawTableLines(in Cell[][] cells, TableProps props = TableProps.init) @safe
 {
     return tableLineRange(resolveGrid(cells).grid, props);
 }
 
 /// ditto
-auto drawTableLines(in Placement[] cells, TableProps props = TableProps.init)
+auto drawTableLines(in Placement[] cells, TableProps props = TableProps.init) @safe
 {
     return tableLineRange(resolveGrid(cells).grid, props);
 }
 
 /// ditto
-auto drawTableLines(in TableBuilder table, TableProps props = TableProps.init)
+auto drawTableLines(in TableBuilder table, TableProps props = TableProps.init) @safe
 {
     auto cells = table.cells;
     auto grid = resolveGrid(cells[]).grid;
@@ -358,7 +358,7 @@ auto drawTableLines(in TableBuilder table, TableProps props = TableProps.init)
 }
 
 /// ditto
-private TableLineRange tableLineRange(SlotGrid g, TableProps p)
+private TableLineRange tableLineRange(SlotGrid g, TableProps p) @safe
 {
     auto lay = computeTableLayout(g, p);
     return TableLineRange(lay, lineDescs(lay.grid, lay.props, lay.rowHeights));
@@ -377,7 +377,7 @@ struct TableLineRange
     bool empty() const @safe pure nothrow @nogc => _i >= _descs.length;
 
     /// ditto
-    string front() const
+    string front() const @safe pure
     in (!empty)
         => renderLine(_lay, _descs[_i]);
 
@@ -458,7 +458,7 @@ if (is(Cells : const(string[][])) || is(Cells : const(Cell[][]))
 
 ///
 @("drawTable.asValue")
-@system unittest
+@safe unittest
 {
     import std.conv : text;
 
@@ -586,14 +586,14 @@ struct MappedTable
 /// Render `cells` and return the lines together with a $(LREF TableGridMap) for
 /// screen↔cell hit-testing (the GUI's table selection). Layout is identical to
 /// $(LREF drawTableLines); only the map is extra.
-MappedTable drawTableMapped(string[][] cells, TableProps props = TableProps.init)
+MappedTable drawTableMapped(string[][] cells, TableProps props = TableProps.init) @safe
 in (hasRectangularShape(cells))
 {
     const layout = computeTableLayout(resolveGrid(toCells(cells)).grid, props);
     return buildMappedTable(layout, props);
 }
 
-private MappedTable buildMappedTable(const ref TableLayout lay, in TableProps p)
+private MappedTable buildMappedTable(const ref TableLayout lay, in TableProps p) @safe pure
 {
     const g = lay.grid;
     string[] lines;
@@ -638,7 +638,7 @@ private ref Writer putTable(Writer)(return ref Writer w, TableLineRange lines)
     foreach (line; lines)
     {
         put(w, line);
-        put(w, '\n');
+        put(w, "\n"); // a string: a char into a delegate sink is @system
     }
     return w;
 }
@@ -1483,7 +1483,7 @@ in (hasRectangularShape(cells))
 
 /// ditto
 auto drawTableChunks(bool lineBuffered = true)(
-    Cell[][] cells, TableProps props = TableProps.init)
+    in Cell[][] cells, TableProps props = TableProps.init)
 {
     return tableChunkRange!lineBuffered(resolveGrid(cells).grid, props);
 }
