@@ -386,7 +386,7 @@ and is not also used with the address wait (SYL3).
 struct LockBits(T, T locked, T parked, T designated)
     if (is(T == ubyte) || is(T == ushort) || is(T == uint) || is(T == ulong))
 {
-    private alias Impl = LockBitsT!(NativePlatform, T, locked, parked, designated);
+    package(sparkles.base.sync) alias Impl = LockBitsT!(NativePlatform, T, locked, parked, designated);
 
 static:
     /// Locks, parking while held.
@@ -413,6 +413,10 @@ static:
     struct Guard
     {
         private shared(T)* word;
+
+        package(sparkles.base.sync) alias Impl = LockBits.Impl;
+        package(sparkles.base.sync) alias Word = T;
+        package(sparkles.base.sync) enum T lockedBit = locked, parkedBit = parked;
 
         @disable this(this);
 

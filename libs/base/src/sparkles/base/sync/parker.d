@@ -489,3 +489,15 @@ nothrow @nogc:
         }
     }
 }
+
+/**
+Whether an interruptible operation's sleep observes cancellation now: only
+outside a protected region of the effective parker (SYI1, SYI4).
+*/
+bool observesCancellation(P)(bool interruptible, uint pinAdjust = 0)
+{
+    if (!interruptible)
+        return false;
+    auto eff = effectiveParker!P(pinAdjust);
+    return !eff.vtbl.inProtectedRegion(eff.ctx);
+}
