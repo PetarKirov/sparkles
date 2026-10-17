@@ -1207,6 +1207,7 @@ private string[] standaloneExampleGlobs()
         "docs/research/safe-path-traversal/examples/*.d",
         "docs/research/font-libraries/examples/*.d",
         "docs/research/fine-grained-locking/examples/*.d",
+        "docs/research/shading-languages/examples/*.d",
     ];
 }
 
