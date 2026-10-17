@@ -898,6 +898,11 @@ jobs:
       - name: base.sync litmus tests
         run: dub run --single --temp-build libs/base/tools/check-sync-litmus.d
 
+      # Oracle 11: the uncontended lock and unlock compile to one atomic
+      # read–modify–write and no call, on x86-64 and arm64.
+      - name: base.sync fast-path disassembly
+        run: dub run --single --temp-build libs/base/tools/check-sync-fast-path.d
+
   # The `_umtx_op` seam has no hosted runner: a FreeBSD virtual machine runs
   # base.sync's suite on every pull request, within 15 minutes (DS24; past
   # that, it moves to a nightly and on-demand schedule).
