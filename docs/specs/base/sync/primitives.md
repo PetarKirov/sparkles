@@ -83,8 +83,10 @@ on its way to the mutex at any time. An unlock that finds a designated waker
 pending **must** release without waking anyone; the designation ends when
 that waiter acquires the mutex or parks again. A designated waker that returns
 without the mutex, for any reason — a timeout or an escaping `Error` —
-**must** end its designation and, if
-waiters remain parked, wake one of them, so that the designation passes on.
+**must** end its designation and, if waiters remain parked and the mutex is
+free, designate one of them, so that the designation passes on; a held
+mutex's next unlock wakes one instead. A deadline form **may** notice that
+its deadline has passed at the point where it would park.
 
 _Rationale:_ Waking a waiter on every contended unlock, as `parking_lot`
 does, collapses throughput once the cores are saturated; one designated
@@ -98,7 +100,9 @@ designated waker.
 **SYM8: Starvation bound.** A waiter that is woken and then loses the race to
 a barging locker `starvationBound` times in a row **must** park at the head
 of the queue, and the next unlock **must** hand it the mutex directly: the
-mutex stays held and the waiter returns from park owning it.
+mutex stays held and the waiter returns from park owning it. A loss is a
+designated waker that finds the mutex held and parks again; the count
+belongs to one acquisition, and a waiter's first park is not a loss.
 
 _Rationale:_ A count needs no clock on the slow path; the Linux kernel mutex
 and nsync bound starvation the same way (DS5).
@@ -106,6 +110,15 @@ and nsync bound starvation the same way (DS5).
 **SYM9: Spinning.** A locker that finds the mutex held **may** spin for at
 most `spinSteps` `relax` steps (SPEC SYK7) before parking, and **must not**
 spin while a designated waker is pending.
+
+**SYM10: Validation acquires.** A park's validation (SPEC SYP2) that finds
+the mutex free **must** take it there, under the bucket lock, in the same
+read–modify–write that would otherwise mark it parked; the locker then
+returns holding it. The same holds for `InterruptibleMutex`.
+
+_Rationale:_ A validation that only declined would let a locker alternate
+forever between a failed compare-and-swap and an invalid park: never woken,
+it would never count a loss, and SYM8 would never promote it (DS27).
 
 ## 4. Interruptible mutex
 
@@ -141,6 +154,10 @@ direct handoff whenever any are parked.
 _Rationale:_ A holder that suspends makes critical sections long, where a
 fair handoff costs little and barging would starve
 ([CQS § evaluation](../../../research/fine-grained-locking/koval-2023-cqs.md#evaluation)).
+
+**SYJ6: Try form.** `tryLock` **must** return a guard when the mutex is free
+and nobody is queued, and otherwise report `unavailable` with nothing held,
+without parking. It is the try form `InterruptibleGuarded!T` exposes (SYG1).
 
 ## 5. Guarded data
 
@@ -182,7 +199,8 @@ registration in the lock's bucket (SPEC SYP15) before it returns.
 **SYC3: Deadline and interruptible forms.** `waitUntil(guard, deadline)`
 **must** also return `false` when the deadline passes first. The
 interruptible form `waitInterruptible` **must** also report cancellation
-while the waiter is waiting for a notification. Every form **must** return
+while the waiter is waiting for a notification, and **may** take a deadline
+as well. Every form **must** return
 with the lock held: reacquiring the lock after a timeout or a cancellation
 **must not** itself be interruptible.
 
@@ -202,7 +220,9 @@ lock's queue without waking it; otherwise it **must** wake it.
 
 **SYC6: Notify all.** `notifyAll` **must** return the number of waiters it
 selected. If the lock is held, it **must** move all of them onto the lock's
-queue; otherwise it **must** wake one and move the rest. A free lock that
+queue; otherwise it **must** wake one and move the rest. The waiter woken on
+a free `Mutex` is not designated (SYM6): it acquires as any locker does,
+and its release, or any barger's, wakes the moved waiters. A free lock that
 grants only by handoff (SYJ5) **must** instead be acquired by the
 notification for the waiter it wakes, under the buckets' locks, so that the
 waiter returns owning it and no waiter is left queued on a free lock.
