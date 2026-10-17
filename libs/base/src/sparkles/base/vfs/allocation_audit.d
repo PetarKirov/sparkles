@@ -13,8 +13,8 @@ version (linux)
 {
     // Module globals are thread-local, so parallel tests cannot contaminate
     // the counter this test samples on its own thread.
-    private bool auditActive;
-    private size_t allocationCalls;
+    package(sparkles.base) bool auditActive;
+    package(sparkles.base) size_t allocationCalls;
 
     extern(C) void* __real_malloc(size_t size) @system nothrow @nogc;
     extern(C) void* __real_calloc(size_t count, size_t size) @system nothrow @nogc;
