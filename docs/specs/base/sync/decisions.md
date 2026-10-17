@@ -15,7 +15,7 @@ The owner accepted DS1–DS7 and DS10–DS12 in review on 2026-10-12, and DS8,
 DS9 and DS13–DS22 on 2026-10-15, after an independent review whose findings
 DS13–DS22 resolve; DS23, resolving a second review, and DS24 were accepted on
 2026-10-15; and DS25 and DS26, resolving a third and a fourth review, on
-2026-10-16.
+2026-10-16. DS27 is proposed.
 
 ## DS1: A parking lot, not a futex word per lock
 
@@ -407,3 +407,56 @@ forced:
   the kernel never names a stack slot after its scope exits (EFP23); the
   cancellation's ring route requires the ring sleep (EFP6); and a timed park
   reserves both of its submission entries (EFP22).
+
+## DS27: The protocol model's findings, and choices the implementation fixed
+
+The TLA+ protocol model (oracle 10), written from the specification, found
+seven places where it had to choose between readings; S1 and S2's
+implementation made the same choices, and this records them.
+
+- **Validation acquires** (SYM10): a park's validation that finds the lock
+  free takes it in the same read–modify–write. A validation that only
+  declined lets a locker alternate forever between a failed
+  compare-and-swap and an invalid park under weak fairness; the model's
+  `mx-fault-purevalidate` configuration shows the starvation.
+- **A lost race** (SYM8) is a designated waker that finds the mutex held
+  and parks again, counted per acquisition.
+- **Passing a designation on** (SYM6) designates the woken waiter, so that
+  at most one is on its way and its wake is registered (SYP15); it happens
+  only when the mutex is free, since a holder's unlock wakes one anyway. A
+  deadline form may give up at the point where it would park.
+- **Reconciliation** (SYP15) happens in every park on the key and every
+  release that enters the parking lot. A fast release cannot see a stale
+  designated bit, so after `fork` one with no waiter behind it survives
+  until the first park, harmlessly.
+- **A waiter woken on a free `Mutex`** by `notifyAll` is not designated
+  (SYC6); its release, or a barger's, wakes the waiters moved behind it.
+- **Bucket fairness** is an assumption of oracle 10, not a requirement:
+  the model assumes strongly fair bucket acquisition (testing.md).
+- **`InterruptibleMutex` has a try form** (new SYJ6), which SYG1 already
+  required of `InterruptibleGuarded!T`; it reports a new `unavailable`
+  status rather than a timeout.
+- **`waitInterruptible` may take a deadline** (SYC3), as
+  `InterruptibleMutex.lockUntil` does.
+
+The implementation also fixed what the specification leaves to it:
+
+- **The model's constants.** Under the model platform the bucket and lock
+  spins are one step, a multi-record unpark delivers one wake per round,
+  and `starvationBound` is 2, so contended bucket waits, round delivery and
+  the handoff are reachable within the preemption bound.
+- **Unbounded wakes without allocation.** An unpark that dequeues many
+  records keeps them in a private chain and commits and delivers them in
+  rounds of 64; a waiter dequeued but not yet committed sleeps again until
+  its wake arrives (SYP10, SYK8, SYA1).
+- **A condition knows its lock by a descriptor**: each waiter's park token
+  records its lock word's size, bits and whether it grants by handoff, so
+  one `Condition` serves every lock (SYC9) while holding only an address
+  (SYC1).
+
+**Status.** Proposed. B4, the fairness gate, does not pass on the
+reference machine: at 32 threads `Mutex`'s fewest-to-most acquisition
+ratio is 0.66 against the futex word's 0.82 with `starvationBound` 8, and
+0.68–0.84 against 0.79–0.81 with 1, which costs a fifth of the 32-thread
+throughput; the owner decides between the gate, the bound and the spin
+(DS5).
