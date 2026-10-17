@@ -197,6 +197,14 @@ jobs:
         env:
           DC: ${{ matrix.DC }}
 
+      # sparkles.base.sync's portable thread parker binds its OS's condition
+      # variable itself, so each OS builds it (DS24); the `sync` job covers
+      # x86-64 Linux.
+      - name: base.sync with the portable parker
+        if: runner.os == 'macOS' || runner.os == 'Windows'
+        shell: bash
+        run: dub test :base --compiler=${{ matrix.DC }} -c unittest-portable -- -i 'sync\.'
+
       - name: Build and run examples
         if: matrix.system != 'aarch64-linux' && runner.os != 'Windows'
         run: |
@@ -845,6 +853,61 @@ jobs:
       - name: Run complete offline official corpora
         run: nix build -L .#checks.x86_64-linux.text-conformance
 
+  # sparkles.base.sync's evidence that no other job produces
+  # (docs/specs/base/sync/testing.md): the portable thread parker on a leg
+  # with a native seam (oracle 5, DS24), and the TLA+ protocol model
+  # (oracle 10).
+  sync:
+    name: base.sync portable parker and protocol model
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: ci
+          use-nix-cache: true
+          nix-cache-key: nix-v2-x86_64-linux-sync-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-v2-x86_64-linux-sync-
+            nix-v2-x86_64-linux-
+
+      - name: base.sync with the portable parker
+        run: dub test :base -c unittest-portable -- -i 'sync\.'
+
+      - name: TLA+ protocol model
+        run: nix shell --inputs-from . nixpkgs#tlaplus18 nixpkgs#jdk21_headless --command sh libs/base/tla/sync/check.sh
+
+  # The `_umtx_op` seam has no hosted runner: a FreeBSD virtual machine runs
+  # base.sync's suite on every pull request, within 15 minutes (DS24; past
+  # that, it moves to a nightly and on-demand schedule).
+  freebsd:
+    name: FreeBSD (base.sync)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: base.sync in a FreeBSD VM
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: '14.5'
+          usesh: true
+          prepare: pkg install -y ldc dub git
+          run: dub test :base --compiler=ldc2 -- -i 'sync\.'
+
   # Every symbol a spec's evidence column cites must exist in the tree. The
   # pre-commit hook of the same name runs it too (and so does `lint`, through
   # `prek run --all-files`), but a hook can be skipped and a lint failure
@@ -892,6 +955,8 @@ jobs:
       - cloud-env
       - spec-evidence
       - text-conformance
+      - sync
+      - freebsd
     if: always()
     runs-on: ubuntu-latest
     steps:
