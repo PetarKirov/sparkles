@@ -167,8 +167,10 @@ returns. `InterruptibleGuarded!T` **must** do the same over an
 `InterruptibleMutex`.
 
 **SYG2: Scoped access.** The guard **must** release the mutex when destroyed,
-and the reference it gives **must** be `scope`, so that under
-`-preview=dip1000` no reference into the `T` outlives the guard.
+and the reference it gives **must** be bound to the guard, so that under
+`-preview=dip1000` no reference into the `T` outlives the guard's scope.
+Destroying or moving the guard while such a reference is live is outside
+this guarantee, which dip1000 cannot express (DS28).
 
 **SYG3: Contained payloads.** `Guarded!T` **must** reject at compile time a
 `T` that holds a mutable indirection, unless `T` declares itself contained:
