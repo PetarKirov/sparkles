@@ -3,7 +3,8 @@
 `sparkles:base` is the shared foundation for Sparkles libraries: small
 allocation-conscious buffers, recycled `Error` storage for `@nogc` code,
 text readers/writers, owned Unicode 18 codecs and text algorithms, terminal
-styling, styled Interpolated Expression Sequences, and the core logging interface.
+styling, styled Interpolated Expression Sequences, the core logging interface,
+and locks and waiting primitives that serve threads and fibers alike.
 
 Use it when a package needs low-level building blocks without depending on
 the higher-level `sparkles:core-cli` UI and argument-parsing modules.
@@ -46,6 +47,7 @@ _Task-oriented._ Short recipes for common jobs.
 - [Parse text with readers](./how-to/parse-text-readers.md)
 - [Analyze Unicode text without allocation](./how-to/analyze-unicode-text.md)
 - [Own a heap value without the collector](./how-to/own-heap-values.md)
+- [Synchronize threads and fibers](./how-to/synchronize-threads-and-fibers.md)
 - [Test `@nogc` code with check helpers](./how-to/test-with-check-helpers.md)
 
 ### Reference
@@ -64,3 +66,4 @@ _Understanding-oriented._ Why `base` exists as a separate package.
 - [The design](./explanation/design.md)
 - [Buffers: storage as capabilities](./explanation/buffer.md)
 - [Base codecs: design notes](./explanation/base-codecs.md)
+- [The parking lot: why `base.sync` looks the way it does](./explanation/parking-lot.md)

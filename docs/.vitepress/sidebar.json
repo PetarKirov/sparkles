@@ -393,6 +393,10 @@
                 "link": "/libs/base/how-to/initialize-statics"
               },
               {
+                "text": "Synchronize threads and fibers",
+                "link": "/libs/base/how-to/synchronize-threads-and-fibers"
+              },
+              {
                 "text": "Test @nogc code with check helpers",
                 "link": "/libs/base/how-to/test-with-check-helpers"
               }
@@ -435,6 +439,10 @@
               {
                 "text": "Base codecs: design notes",
                 "link": "/libs/base/explanation/base-codecs"
+              },
+              {
+                "text": "The parking lot",
+                "link": "/libs/base/explanation/parking-lot"
               }
             ]
           }
