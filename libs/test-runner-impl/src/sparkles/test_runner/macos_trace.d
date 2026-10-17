@@ -43,12 +43,14 @@ static if (hasExecinfo)
         private void*[maxFrames] callstack = void;
         private int numframes;
 
-        this() @nogc nothrow
+        // Not `@nogc`: FreeBSD's external `backtrace` is declared without it.
+        this() nothrow
         {
             // Bias each return address back into its CALL instruction's range,
             // matching druntime's `DefaultTraceInfo`.
             enum callInstructionOffset = 1;
-            numframes = backtrace(callstack.ptr, maxFrames);
+            // FreeBSD's returns `size_t`; it never exceeds `maxFrames`.
+            numframes = cast(int) backtrace(callstack.ptr, maxFrames);
             if (numframes >= 2)
                 foreach (ref frame; callstack[0 .. numframes])
                     frame -= callInstructionOffset;
