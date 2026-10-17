@@ -1,7 +1,7 @@
 /++
 A table built in place. Every cell's text is written into one buffer the
 builder owns, and the cell keeps its place in it, so a cell formatted from a
-value (`cell!writeDuration(d)`, or `formatted!writeDuration(d)` in a `row`)
+value (`cell!writeDuration(d)`, or `duration(d)` in a `row`)
 costs no `string` of its own.
 
 The layout must measure every cell before it emits a line, so cell text has
@@ -49,7 +49,7 @@ struct TableBuilder
     Appends a row with one cell per value. A string is copied; anything else
     is written in place as `writeValue` (`sparkles.base.text.writers`) renders
     it: numbers, enums, and values that write themselves through
-    `toString(Writer)` such as `formatted!writeDuration(d)`.
+    `toString(Writer)` such as `duration(d)`.
     */
     ref TableBuilder row(Values...)(auto ref Values values) return
     if (Values.length > 0)

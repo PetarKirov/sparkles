@@ -538,7 +538,7 @@ void sampleThisProcessTree(ref ResourceUsage usage) @trusted
 struct MonitoredLineRange
 {
     /// The finished child's outcome. Valid after `empty` is true.
-    @property ref MonitoredResult result() return
+    @property ref MonitoredResult result() return @safe pure nothrow @nogc
     in (_s !is null)
         => _s.result;
 

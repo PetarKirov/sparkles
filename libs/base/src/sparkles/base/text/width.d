@@ -421,3 +421,20 @@ ref Writer truncateField(Writer)(
     checkWriter!((ref b) => truncateField(b, "hello world", 8, "..."))("hello...");
     checkWriter!((ref b) => truncateField(b, "hello", 8, "..."))("hello");
 }
+
+/// `alignField` as a value: `alignField(content, width, align_)`.
+mixin(imported!"sparkles.base.text.value_form".valueForm!"alignField");
+/// `truncateField` as a value: `truncateField(content, width)`.
+mixin(imported!"sparkles.base.text.value_form".valueForm!"truncateField");
+
+/// Without a writer, each is its field as a value.
+@("width.alignField.asValue")
+@safe unittest
+{
+    import std.conv : text;
+
+    assert(text("|", alignField("ok", 5, Align.right), "|") == "|   ok|");
+    char[3] buf = "abc";
+    assert(text(alignField(buf[], 4, Align.left)) == "abc ", "char[] content is a value");
+    assert(truncateField("a long line", 6).toString == "a lon…");
+}

@@ -445,16 +445,9 @@ if (isOutputRange!(Writer, char))
 The table as a value: `writeln(drawTable(cells))` writes it straight into
 stdout's sink, and `drawTable(cells).toString` makes a `string` where one is
 stored. Any of the four cell forms; the value holds them (and `props`) by copy
-and lays the table out each time it is written.
+and lays the table out each time it is written (`valueForm`).
 */
-auto drawTable(Cells)(Cells cells, TableProps props = TableProps.init)
-if (is(Cells : const(string[][])) || is(Cells : const(Cell[][]))
-    || is(Cells : const(Placement[])) || is(Cells : const(TableBuilder)))
-{
-    import sparkles.base.text.writers : formatted;
-
-    return formatted!drawTable(cells, props);
-}
+mixin(imported!"sparkles.base.text.value_form".valueForm!"drawTable");
 
 ///
 @("drawTable.asValue")

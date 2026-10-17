@@ -34,7 +34,8 @@ import expected : Expected, ok, err;
 
 import sparkles.base.buffer : SharedBuffer;
 import sparkles.base.styled_template : styledWriteln;
-import sparkles.base.text.writers : formatted, writeDuration, writeFixedPoint, writeInteger;
+import sparkles.base.text.writers : duration, formatted, writeDuration, writeFixedPoint,
+    writeInteger;
 
 import sparkles.base.term_caps : detectTermCaps;
 import sparkles.ui.components.live : stdoutLiveRegion;
@@ -560,9 +561,9 @@ void renderByLabel(in NamedAggregate[] rows, string title)
     TableBuilder table;
     table.row("Name", "Runs", "Total", "Median", "Min", "Max");
     foreach (r; rows)
-        table.row(r.label, r.stats.count, formatted!writeDuration(r.stats.total),
-            formatted!writeDuration(r.stats.median), formatted!writeDuration(r.stats.min),
-            formatted!writeDuration(r.stats.max));
+        table.row(r.label, r.stats.count, duration(r.stats.total),
+            duration(r.stats.median), duration(r.stats.min),
+            duration(r.stats.max));
 
     writeln();
     writeln(drawTable(table, TableProps(headerRows: 1, title: title)));
@@ -624,9 +625,9 @@ void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slow
     foreach (r; byRunner)
     {
         auto s = r.stats;
-        runnerRows.row(r.runnerType, s.count, formatted!writeDuration(s.total),
-            formatted!writeDuration(s.mean), formatted!writeDuration(s.min),
-            formatted!writeDuration(s.max), formatted!writeMinutes(s.total));
+        runnerRows.row(r.runnerType, s.count, duration(s.total),
+            duration(s.mean), duration(s.min),
+            duration(s.max), formatted!writeMinutes(s.total));
     }
 
     writeln();
@@ -637,7 +638,7 @@ void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slow
         TableBuilder slowRows;
         slowRows.row("#", "Job", "Workflow", "Duration", "Runner");
         foreach (i, j; slowJobs)
-            slowRows.row(i + 1, j.name, j.workflow, formatted!writeDuration(j.duration),
+            slowRows.row(i + 1, j.name, j.workflow, duration(j.duration),
                 j.runnerName.length ? j.runnerName : "-");
         writeln();
         writeln(drawTable(slowRows, TableProps(headerRows: 1, title: "Top Slow Jobs")));

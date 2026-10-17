@@ -27,7 +27,7 @@ import std.range.primitives : put;
 
 import sparkles.base.text.writers : formatted;
 
-import sparkles.ui.dtcg : aliasTarget, collectTokens, DtcgJson, DtcgResult, writeNumber,
+import sparkles.ui.dtcg : aliasTarget, collectTokens, DtcgJson, DtcgResult, numberLexeme, writeNumber,
     parseColor, parseDimension;
 import sparkles.ui.theme : Theme;
 import sparkles.ui.theme_file : exportTheme, overlay, ThemeFile;
@@ -123,10 +123,10 @@ private string cssValue(string type, const DtcgJson v, string path) @safe
             return c.value.alpha == 0xFF
                 ? format("#%02x%02x%02x", rgb.r, rgb.g, rgb.b)
                 : format("rgb(%d %d %d / %s)", rgb.r, rgb.g, rgb.b,
-                    formatted!writeNumber(round(c.value.alpha / 255.0 * 1e4) / 1e4));
+                    numberLexeme(round(c.value.alpha / 255.0 * 1e4) / 1e4));
         case "dimension":
             const d = parseDimension(v, path);
-            return d.hasError ? null : text(i"$(formatted!writeNumber(d.value.value))$(d.value.unit)");
+            return d.hasError ? null : text(i"$(numberLexeme(d.value.value))$(d.value.unit)");
         case "number":
             return v.kind == DtcgJson.Kind.number ? v.text : null;
         case "fontFamily":
@@ -186,7 +186,7 @@ private string fontStack(const DtcgJson v) @safe
     import sparkles.ui.themes : builtinThemes;
     import std.conv : text;
     import sparkles.base.text.writers : formatted;
-    import sparkles.ui.tokens : ColorChannel, writeCssName;
+    import sparkles.ui.tokens : ColorChannel, cssName, writeCssName;
 
     const t = builtinThemes["one-dark-pro"];
     const css = formatted!writeThemeProperties(t).toString;
@@ -195,15 +195,15 @@ private string fontStack(const DtcgJson v) @safe
     foreach (i; 0 .. Slot.max + 1)
     {
         if (p.fg[i].kind == Color.Kind.rgb)
-            assert(css.canFind(text(i"  $(formatted!writeCssName(cast(Slot) i, ColorChannel.foreground)): ")),
-                formatted!writeCssName(cast(Slot) i, ColorChannel.foreground).toString);
+            assert(css.canFind(text(i"  $(cssName(cast(Slot) i, ColorChannel.foreground)): ")),
+                cssName(cast(Slot) i, ColorChannel.foreground).toString);
         if (p.bg[i].kind == Color.Kind.rgb)
-            assert(css.canFind(text(i"  $(formatted!writeCssName(cast(Slot) i, ColorChannel.background)): ")),
-                formatted!writeCssName(cast(Slot) i, ColorChannel.background).toString);
+            assert(css.canFind(text(i"  $(cssName(cast(Slot) i, ColorChannel.background)): ")),
+                cssName(cast(Slot) i, ColorChannel.background).toString);
     }
     // A state aliased to another slot stays a reference to it.
-    assert(css.canFind(text(i"$(formatted!writeCssName(Slot.inherit, ColorChannel.background,
-        InteractionState.selected)): var($(formatted!writeCssName(Slot.selection,
+    assert(css.canFind(text(i"$(cssName(Slot.inherit, ColorChannel.background,
+        InteractionState.selected)): var($(cssName(Slot.selection,
         ColorChannel.background)));\n")), css);
 }
 

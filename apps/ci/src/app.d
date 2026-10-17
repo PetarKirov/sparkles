@@ -2938,7 +2938,7 @@ private struct PackageTestStream
         _s = new State(baseCmd, runnerArgs, cov, extraEnv, interval, onSample);
     }
 
-    @property ref PackageRun result()
+    @property ref PackageRun result() return @safe pure nothrow @nogc
     in (_s !is null)
         => _s.result;
 
@@ -5472,8 +5472,8 @@ unittest
 private void streamResultBox(Lines)(
     string header,
     auto ref Lines lines,
-    scope string delegate() makeFooter,
-    scope string delegate(LogDelta) makeFooterRight,
+    scope string delegate() @safe makeFooter,
+    scope string delegate(LogDelta) @safe makeFooterRight,
 )
 {
     const start = takeLogDelta();

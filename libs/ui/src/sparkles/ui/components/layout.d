@@ -8,6 +8,17 @@ module sparkles.ui.components.layout;
 
 import sparkles.base.buffer : SharedBuffer;
 
+/// `hjoin` for blocks that write themselves (`drawBox(…)`, `drawTable(…)`): each
+/// is rendered, then joined.
+string hjoin(Block)(const(Block)[] blocks, size_t gap = 2)
+if (imported!"sparkles.base.text.value_form".isWritableValue!Block)
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    return hjoin(blocks.map!(b => b.toString).array, gap);
+}
+
 /// Join `blocks` (each a rendered multi-line string) side by side with `gap`
 /// spaces between columns. Blocks are top-aligned; a block shorter than the
 /// tallest one contributes blank space below. Trailing whitespace on each
@@ -140,4 +151,13 @@ string[] kvList(in string[2][] pairs, size_t gap = 2) @safe
     ]);
     assert(kvList([["a", "1"]], 4) == ["a    1"]);
     assert(kvList([]) == cast(string[]) []);
+}
+
+@("layout.hjoin.writableBlocks")
+@safe unittest
+{
+    import sparkles.ui.components.box : drawBox;
+
+    const joined = hjoin([drawBox(["a"], "x"), drawBox(["b"], "y")]);
+    assert(joined == hjoin([drawBox(["a"], "x").toString, drawBox(["b"], "y").toString]));
 }
