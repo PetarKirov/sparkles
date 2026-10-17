@@ -14,21 +14,12 @@ The Pad changes the immediate next experiment: it can exercise AVF ownership/per
 
 The PRoot recommendation holds at a current target SDK, but not with the default packaging. [Termux on Google Play][play] establishes the constraint and a working answer: execute directly only what ships in the APK's native-library directory, and reach everything else through a loader. For the nix-on-droid backend that means `proot-static` and PRoot's loader as `lib*.so` native libraries with `PROOT_LOADER` pointing at the latter, `login` started as an argument to `/system/bin/sh`, and PRoot upgrades shipped as app releases. Termux's `linker64` route does not transfer, because Nix store executables are glibc-linked; nor does Termux's package universe, which is Bionic. Play review is a separate gate: the Play build had to drop `sharedUserId`, justify a `specialUse` foreground service and consolidate permissions. The executable-code policy is a third, and PRoot does not answer it: substituting from a binary cache downloads executable code whichever loader maps it. Termux's two years on Play show that review has tolerated this for a package manager, not that it permits it; its maintainers expect the `linker64` route to close. The API-28 default remains until the experimental packaging is promoted and hardened; the device experiment changes the evidence, not the backend contract or default distribution policy.
 
-M0b's **functional prototype gate passed locally**. The
-[current-target experiment protocol][current-target] tracks E1–E9 separately.
-E1–E4 observed the app-data exec restriction, linker route, `dlopen` and
-APK-native static execution on the phone. E5 ran a glibc Nix-store `hello` with
-APK-native PRoot and its loader; the unset-loader negative control failed.
-E6 completed the real bootstrap and first activation, verified a signed cache
-substitution, ran GCC/Git, built and reproducibility-checked a local derivation,
-committed a Git fixture and survived app restart with APK-native login paths.
-It uses the explicit research source patch and runtime-resolved APK library
-directory, not an unmodified upstream bootstrap. E7 records 15,000 successful
-process starts across the three routes, with environmental limitations rather
-than a general performance claim. The owner explicitly authorized continuation
-at the phone's steady-state reported 50°C reading. Production integration,
-broader compatibility, lifecycle and policy acceptance remain separate gates;
-no default target bump follows automatically.
+**M0b's functional gate has passed on one phone.** In [the device
+experiments][current-target], a target-36 build of the terminal ran a patched
+nix-on-droid bootstrap with PRoot and its loader shipped in the APK, then
+substituted signed paths, ran GCC and Git, built a local derivation and survived
+a restart. What remains is upstreaming the packaging change, which is a
+research patch today, and testing beyond Android 14 on a single device.
 
 ## Backend contract
 
