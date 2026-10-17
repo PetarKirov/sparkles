@@ -38,7 +38,8 @@ import sparkles.base.text.writers : formatted, writeDuration, writeFixedPoint, w
 
 import sparkles.base.term_caps : detectTermCaps;
 import sparkles.ui.components.live : stdoutLiveRegion;
-import sparkles.ui.components.table : drawTable, drawTableLines, TableProps;
+import sparkles.ui.components.table : drawTable, drawTableLines, TableBuilder,
+    TableProps;
 import sparkles.ui.components.tasklist : TaskReporter;
 import sparkles.ui.components.theme : makeTheme, Theme;
 
@@ -474,21 +475,15 @@ if (isInputRange!R && is(ElementType!R == Job))
 // Rendering helpers (SharedBuffer + writers for durations, UI stack for tables)
 // ---------------------------------------------------------------------------
 
-// These `fmt*` return `string` because the table APIs (`string[][]` / `Cell`)
-// require owning string content for cells. They are thin adapters over the
-// project's writer primitives.
-//
-// Preferred style elsewhere (IES, task details, logs):
-//   SharedBuffer!(char, N) buf;
-//   writeDuration(buf, d);
-//   styledWriteln(i"... $(buf[]) ...");
-// or using the TaskReporter proxy for live output.
-//
-// See the direct buffer usage in the header stats and some task outputs below.
-
-/// A table cell: `write`'s text for `args`, materialized because the table
-/// stores finished strings.
-private string cell(alias write, Args...)(Args args) => formatted!write(args).toString;
+/// Appends a cell holding `write`'s text for `args`, or `-` when the value is
+/// absent.
+private void cellOrDash(alias write, Args...)(ref TableBuilder t, bool present, Args args)
+{
+    if (present)
+        t.cell!write(args);
+    else
+        t.cell("-");
+}
 
 /// Writes `total` as minutes with one decimal: a bare number, since the column
 /// header carries the unit.
@@ -562,16 +557,12 @@ void renderByLabel(in NamedAggregate[] rows, string title)
     if (rows.empty)
         return;
 
-    string[][] table = [["Name", "Runs", "Total", "Median", "Min", "Max"]];
+    TableBuilder table;
+    table.row("Name", "Runs", "Total", "Median", "Min", "Max");
     foreach (r; rows)
-        table ~= [
-            r.label,
-            cell!writeInteger(r.stats.count),
-            cell!writeDuration(r.stats.total),
-            cell!writeDuration(r.stats.median),
-            cell!writeDuration(r.stats.min),
-            cell!writeDuration(r.stats.max),
-        ];
+        table.row(r.label, r.stats.count, formatted!writeDuration(r.stats.total),
+            formatted!writeDuration(r.stats.median), formatted!writeDuration(r.stats.min),
+            formatted!writeDuration(r.stats.max));
 
     writeln();
     writeln(drawTable(table, TableProps(headerRows: 1, title: title)));
@@ -586,22 +577,22 @@ void renderComparison(in Comparison[] rows, string baselineLabel, string candida
 
     // Medians, not totals: the two sides almost never have the same run count,
     // so a total comparison would mostly measure how often each ref was pushed.
-    string[][] table = [
-        ["Name", baselineLabel ~ " (n)", "median", candidateLabel ~ " (n)", "median", "Δ", "Δ%"]
-    ];
+    TableBuilder table;
+    table.row("Name", baselineLabel ~ " (n)", "median", candidateLabel ~ " (n)", "median", "Δ", "Δ%");
     foreach (r; rows)
-        table ~= [
-            r.label,
-            cell!writeInteger(r.baseline.count),
-            r.baseline.count ? cell!writeDuration(r.baseline.median) : "-",
-            cell!writeInteger(r.candidate.count),
-            r.candidate.count ? cell!writeDuration(r.candidate.median) : "-",
-            (r.baseline.count && r.candidate.count) ? cell!writeDeltaDuration(r.delta) : "-",
-            (r.baseline.count && r.candidate.count) ? cell!writeDeltaPercent(r.deltaPercent) : "-",
-        ];
+    {
+        const both = r.baseline.count && r.candidate.count;
+        table.row.cell(r.label).cell!writeInteger(r.baseline.count);
+        cellOrDash!writeDuration(table, r.baseline.count != 0, r.baseline.median);
+        table.cell!writeInteger(r.candidate.count);
+        cellOrDash!writeDuration(table, r.candidate.count != 0, r.candidate.median);
+        cellOrDash!writeDeltaDuration(table, both, r.delta);
+        cellOrDash!writeDeltaPercent(table, both, r.deltaPercent);
+    }
 
     writeln();
-    writeln(drawTable(table, TableProps(headerRows: 1, title: "Per-job median: " ~ candidateLabel ~ " vs " ~ baselineLabel)));
+    writeln(drawTable(table, TableProps(headerRows: 1,
+        title: "Per-job median: " ~ candidateLabel ~ " vs " ~ baselineLabel)));
 }
 
 void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slowJobs, in Theme theme)
@@ -628,19 +619,14 @@ void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slow
     }
 
     // Runner aggregates table - richer with per-runner stats (using range style data prep)
-    string[][] runnerRows = [["Runner Type", "Jobs", "Total", "Avg", "Min", "Max", "Minutes"]];
+    TableBuilder runnerRows;
+    runnerRows.row("Runner Type", "Jobs", "Total", "Avg", "Min", "Max", "Minutes");
     foreach (r; byRunner)
     {
         auto s = r.stats;
-        runnerRows ~= [
-            r.runnerType,
-            cell!writeInteger(s.count),
-            cell!writeDuration(s.total),
-            cell!writeDuration(s.mean),
-            cell!writeDuration(s.min),
-            cell!writeDuration(s.max),
-            cell!writeMinutes(r.stats.total)
-        ];
+        runnerRows.row(r.runnerType, s.count, formatted!writeDuration(s.total),
+            formatted!writeDuration(s.mean), formatted!writeDuration(s.min),
+            formatted!writeDuration(s.max), formatted!writeMinutes(s.total));
     }
 
     writeln();
@@ -648,17 +634,11 @@ void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slow
 
     if (!slowJobs.empty)
     {
-        string[][] slowRows = [["#", "Job", "Workflow", "Duration", "Runner"]];
+        TableBuilder slowRows;
+        slowRows.row("#", "Job", "Workflow", "Duration", "Runner");
         foreach (i, j; slowJobs)
-        {
-            slowRows ~= [
-                cell!writeInteger(i + 1),
-                j.name,
-                j.workflow,
-                cell!writeDuration(j.duration),
-                j.runnerName.length ? j.runnerName : "-"
-            ];
-        }
+            slowRows.row(i + 1, j.name, j.workflow, formatted!writeDuration(j.duration),
+                j.runnerName.length ? j.runnerName : "-");
         writeln();
         writeln(drawTable(slowRows, TableProps(headerRows: 1, title: "Top Slow Jobs")));
     }

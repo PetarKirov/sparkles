@@ -918,7 +918,7 @@ version (unittest)
         import std.array : join;
         import std.string : splitLines, stripRight;
 
-        return drawTable(cells, props)
+        return drawTable(cells, props).toString
             .splitLines.map!(l => l.stripRight ~ "\n").join;
     }
 

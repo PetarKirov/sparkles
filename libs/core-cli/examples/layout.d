@@ -30,7 +30,7 @@ void main()
     // A box, a table, and a plain block side by side.
     const box = drawBox(["one", "two"], "box");
     const table = drawTable([["a", "b"], ["1", "2"]],
-        TableProps(columnAligns: [Align.left, Align.right]));
+        TableProps(columnAligns: [Align.left, Align.right])).toString;
     const notes = "plain\ntext\nblock";
     writeln(hjoin([box, table, notes]));
 

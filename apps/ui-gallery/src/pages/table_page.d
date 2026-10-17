@@ -13,11 +13,11 @@ scrollbars — driven from the keyboard.
 module pages.table_page;
 
 import std.conv : text;
-import std.string : splitLines;
+import std.array : array;
 
 import sparkles.base.text.width : Align;
 import sparkles.input : Key, KeyEvent;
-import sparkles.ui.components.table : builtinPresetNames, Cell, drawTable,
+import sparkles.ui.components.table : builtinPresetNames, Cell, drawTableLines,
     presetGlyphs, TableProps, VAlign;
 import sparkles.ui.components.table.widgets : buildTableWidgets, SpanCell,
     TableViewportSpec, TableWidgetStyle;
@@ -144,8 +144,8 @@ uint view(ref Builder b, in GalleryState s)
     // defaults to `@system`; nothing in a pure render call is unsafe.)
     uint[] lines;
     const rendered = (() @trusted
-        => drawTable(showcaseStringCells(), props))();
-    foreach (line; rendered.splitLines)
+        => drawTableLines(showcaseStringCells(), props).array)();
+    foreach (line; rendered)
         lines ~= label(b, line, Slot.code);
     body_ ~= section(b, "string view — drawTable, the same bytes", lines);
     body_ ~= spacer(b);
@@ -257,7 +257,7 @@ private int clampScroll(int n) pure nothrow @nogc
                 auto b = Builder();
                 const res = buildTableWidgets(b, showcaseCells(), props);
                 const lines = (() @trusted
-                    => drawTable(showcaseStringCells(), props))().splitLines;
+                    => drawTableLines(showcaseStringCells(), props).array)();
                 assert(cast(int) lines.length == res.height);
                 foreach (line; lines)
                     assert(cast(int) visibleWidth(line) == res.width,
