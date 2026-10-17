@@ -16,7 +16,7 @@ DS9 and DS13–DS22 on 2026-10-15, after an independent review whose findings
 DS13–DS22 resolve; DS23, resolving a second review, and DS24 were accepted on
 2026-10-15; and DS25 and DS26, resolving a third and a fourth review, on
 2026-10-16. DS27, recording the protocol model's findings, was accepted on
-2026-10-17.
+2026-10-17. DS28 is proposed.
 
 ## DS1: A parking lot, not a futex word per lock
 
@@ -457,3 +457,83 @@ The implementation also fixed what the specification leaves to it:
 
 **Status.** Accepted 2026-10-17. B4, the fairness gate, is DS5's
 question, not this record's.
+
+## DS28: The fifth and sixth reviews, of the implementation
+
+The fifth review read S1 and S2's code, tests and evidence ledger; the
+sixth read the tree that resolved the fifth. Each finding was checked
+against the tree before it was acted on.
+
+**Defects, fixed.**
+
+- **A lost wake-up in `notify` on a free handoff lock** (SYC5, SYJ5). The
+  notifier found an `InterruptibleMutex` free, failed to take it, and
+  marked it parked unconditionally; a locker that took and released it
+  through the fast paths in between left the waiter queued on a free lock.
+  The notifier now retries until one read–modify–write takes the lock free
+  or marks it held. The model scenario `SYC5.notifyRacesAFastPathLocker`
+  reproduced the hang.
+- **Waiting with a bucket held** (SYP13): the two-bucket lock waited for its
+  second bucket while holding the first, a fiber yield that can deadlock a
+  worker. It now takes one, tries the other, and on failure releases the
+  first and waits for the other with nothing held. The model checks every
+  test-parker yield as well as seam waits.
+- **The fork handler** (SYX1) was flagged installed before it was
+  registered. It is now registered when the image loads, before any caller
+  can use a bucket; see the sixth review's allocation finding below.
+  **A condition's binding** survived `fork` with no waiter behind it; a wait or notify that finds the queue empty now
+  rebinds or clears it (SYC4).
+- **`@safe` holes.** The condition adapters accepted any type with the
+  right member names and ran its operations as trusted; they now match
+  only the real guards, and an empty guard fails an assertion rather than
+  dereferencing null. `Guarded`'s reference escaped a heap payload's guard,
+  a temporary guard and `return ref`; it is now bound to the guard, with
+  compile-fail tests.
+- **Smaller ones:** the macOS function table is written and read
+  atomically by racing first callers (SYF3); a designated waker's
+  designation ends where its park's validation clears it, so an escaping
+  `Error` cannot pass it on twice (SYM6); a requeued record drops the old
+  protocol's park token.
+
+**Defects of the sixth review, fixed.**
+
+- **Guards made without their locks** (SYJ1, SYG2). A struct literal from
+  outside the package could build a `MutexGuard`, an `InterruptibleGuard`,
+  a `LockBits` guard or an `InterruptibleGuardedGuard` around a pointer, and
+  the last one's `get` then removed `shared` from an unlocked payload in
+  `@safe` code. Each guard now has a package constructor, as
+  `GuardedGuard` already had, so only an acquisition makes one; compile-fail
+  tests from a module outside the package pin it.
+- **Allocation on first use** (SYA1). The first slow-path operation
+  registered the fork handler, and glibc allocates when its handler list
+  outgrows 48 entries; the first macOS wait looked its symbols up with
+  `dlsym`. Both now run at image load, from `pragma(crt_constructor)`, and
+  the allocation audit also runs a fresh thread's first operations. The
+  slow paths read a flag the fork handler's constructor sets: the lock code
+  is templates, and a DMD-built program that instantiated them in its own
+  objects otherwise left the constructor's module out of the link.
+- **Empty acquisitions reported success** (SYI5). `WaitStatus.ok` is the
+  enum's first member, so a default `Acquisition` converted to `true` with
+  no lock held. Conversion now requires a held guard as well.
+
+**Choice: SYG2 is narrowed.** dip1000 tracks a reference by scope, not by
+whether a destructor has run, so an explicit `destroy` or move of the guard
+in `@safe` code ends the lock while the reference looks alive. A
+callback-scoped accessor taking a `@safe` delegate would close that too, at
+the cost of every access becoming a closure; the guarantee is stated for
+the guard's scope instead.
+
+**Evidence, narrowed.** The ledger claimed more than the tests show. It now
+marks partly verified: the cancellation lifecycle (no pending request in
+the test parker), SYP13 and SYP14's fiber and requeue-then-cancel
+scenarios, the model counters behind SYM2, SYM5, SYM7 and SYM9, the
+ThreadSanitizer controls (one fully weakened platform, not one fault each),
+the allocation audit (Linux, warmed, no CI job) and the litmus pairs (four
+of primitives.md §13's). Windows SYF2 cites the native seam's run.
+
+**Refuted.** A record dequeued in a later delivery round re-sleeps without
+`prepare`, which SYP4 requires only of a record still queued; a `prepare`
+there would lose a portable delivery. The requeue onto its own key cannot
+arise from a real guard.
+
+**Status.** Proposed.
