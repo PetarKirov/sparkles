@@ -127,6 +127,39 @@ whose `_d_assert_fail!(T)` instances go unemitted;
 bench defaults to `library-inline`; `--override-config sparkles:wired/library`
 and `.../library-singleobj` reproduce the matrix above.
 
+### Halt-mode CMI probe (2026-08-05) — concluded, no effect
+
+The runner's context-checking build fails when bare CMI propagates into mir-ion,
+because context-assert template instances are not emitted. Switching the whole
+field to `-checkaction=halt` does make it link: with halt-mode assertions,
+stock `sparkles:wired/library` plus bare `-enable-cross-module-inlining`
+builds and runs the complete field, mir-ion included. (`-link-internally` is
+not accepted by LDC 1.41.)
+
+**It buys nothing.** Re-measured against the canonical build, the halt+CMI
+binary retires the same instruction counts on every corpus — canada 25.95 M,
+citm 9.55 M, mesh 10.01 M — because wired's hot path is templates, and a
+template is code-generated in whichever translation unit instantiates it,
+CMI or not. That is the same property the
+[inlining ceiling](#the-inlining-ceiling-wired-inline) section relies on when
+it collects its −5.2 % by giving the float kernels empty template parameter
+lists. The remaining wall-clock difference was the larger engine-field cache
+regime, not codegen.
+
+The probe is recorded here rather than carried as a configuration of its own:
+it would duplicate the foreign-engine dependency block, and the `--linker=lld`
+it needs bypasses the nixpkgs cc-wrapper's rpath injection, leaving the binary
+unable to resolve `libstdc++.so.6` at load time. The canonical benchmark mode
+is the context-checking `library-inline` recipe. To reconstruct the probe, add
+`-checkaction=halt` and `-enable-cross-module-inlining` to a copy of
+`unittest-foreign` and leave the linker alone.
+
+Independently of the codegen matrix, the runtime benchmark configs no longer
+force shared Phobos, Gold, or `--export-dynamic`; default libraries are static
+unless a foreign shim brings a shared runtime dependency. That change is
+instruction-neutral: the mesh snapshots recorded before it reproduce to within
+0.01 % after it.
+
 ## The headline: typed decode (twitter.json)
 
 The op closest to wired's real workload — raw text → a partial Twitter
@@ -765,6 +798,28 @@ all pretty arrays through the compact subtree loop (pretty mesh rose from
 21.40 M to 24.57 M instructions); sharing one runtime-branched compact/pretty
 loop (compact IPC collapsed and Twitter/citm regressed); and accelerating all
 deep pretty numeric arrays (reparsed short/mixed arrays erased the mesh win).
+
+**What round 6 costs the other four corpora.** The mesh snapshots contain
+mesh rows only, so no single snapshot shows the trade. Measured against the
+round-5 snapshot in a
+[same-host recheck](../../../libs/wired/bench/runtime/results/2026-08-05-ryzen9-7940hx-x86-64-v4-session-recheck.json)
+of the whole field, the accepted flat-array probe adds:
+
+| corpus              |  round 5 |      now |   delta |
+| ------------------- | -------: | -------: | ------: |
+| citm_catalog parse  |  9.424 M |  9.549 M | +1.33 % |
+| canada parse        | 25.844 M | 25.951 M | +0.41 % |
+| twitter parse       |  3.643 M |  3.656 M | +0.37 % |
+| github_events parse | 333.98 k |  335.0 k | +0.31 % |
+| twitter decode      |  3.974 M |  3.974 M |  0.00 % |
+
+That is `shouldScanNumericArray`'s nine-value prefix probe running on arrays
+that never reach the subtree loop; citm pays most because it is array-dense.
+The trade is worth taking — mesh −33.8 % instructions against citm +1.33 %,
+and citm still measures 1.102× — but it is a real cost and belongs in the
+ledger next to the win. Note the distinction from the rejected variant above:
+that one admitted flat arrays _before_ the integer kernel and cost citm 3.3 %;
+the shipped probe costs 1.33 %.
 
 ## Reproducing
 
