@@ -6743,6 +6743,139 @@
         ]
       },
       {
+        "text": "Shading Languages",
+        "link": "/research/shading-languages/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Overview",
+            "link": "/research/shading-languages/"
+          },
+          {
+            "text": "Concepts",
+            "link": "/research/shading-languages/concepts"
+          },
+          {
+            "text": "Shading Languages",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "GLSL (GL, Vulkan, ES)",
+                "link": "/research/shading-languages/glsl"
+              },
+              {
+                "text": "HLSL",
+                "link": "/research/shading-languages/hlsl"
+              },
+              {
+                "text": "Slang",
+                "link": "/research/shading-languages/slang"
+              },
+              {
+                "text": "WGSL",
+                "link": "/research/shading-languages/wgsl"
+              },
+              {
+                "text": "Metal Shading Language",
+                "link": "/research/shading-languages/msl"
+              }
+            ]
+          },
+          {
+            "text": "Single-Source & Embedded",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "D (dcompute, sparkles:shaders)",
+                "link": "/research/shading-languages/dcompute"
+              },
+              {
+                "text": "Rust (rust-gpu)",
+                "link": "/research/shading-languages/rust-gpu"
+              },
+              {
+                "text": "C++ (CUDA, HIP)",
+                "link": "/research/shading-languages/cuda-hip"
+              },
+              {
+                "text": "C++ (SYCL)",
+                "link": "/research/shading-languages/sycl"
+              },
+              {
+                "text": "C++ (Circle)",
+                "link": "/research/shading-languages/circle"
+              },
+              {
+                "text": "C/C++ (Vcc, Shady)",
+                "link": "/research/shading-languages/vcc-shady"
+              },
+              {
+                "text": "TypeScript (TypeGPU)",
+                "link": "/research/shading-languages/typegpu"
+              },
+              {
+                "text": "C# (ComputeSharp)",
+                "link": "/research/shading-languages/computesharp"
+              },
+              {
+                "text": "C# (ILGPU)",
+                "link": "/research/shading-languages/ilgpu"
+              },
+              {
+                "text": "ISPC (SPMD on SIMD)",
+                "link": "/research/shading-languages/ispc"
+              },
+              {
+                "text": "Julia (GPU stack)",
+                "link": "/research/shading-languages/julia"
+              },
+              {
+                "text": "Zig (SPIR-V backend)",
+                "link": "/research/shading-languages/zig-spirv"
+              }
+            ]
+          },
+          {
+            "text": "Toolchain",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "LLVM SPIR-V backend",
+                "link": "/research/shading-languages/llvm-spirv-backend"
+              },
+              {
+                "text": "Clang HLSL",
+                "link": "/research/shading-languages/clang-hlsl"
+              },
+              {
+                "text": "DXC",
+                "link": "/research/shading-languages/dxc"
+              },
+              {
+                "text": "MLIR SPIR-V dialect",
+                "link": "/research/shading-languages/mlir-spirv"
+              },
+              {
+                "text": "SPIRV-Cross",
+                "link": "/research/shading-languages/spirv-cross"
+              },
+              {
+                "text": "naga",
+                "link": "/research/shading-languages/naga"
+              },
+              {
+                "text": "Tint",
+                "link": "/research/shading-languages/tint"
+              }
+            ]
+          },
+          {
+            "text": "Comparison",
+            "link": "/research/shading-languages/comparison"
+          }
+        ]
+      },
+      {
         "text": "Units of Measure",
         "link": "/research/units-of-measure/",
         "collapsed": true,
