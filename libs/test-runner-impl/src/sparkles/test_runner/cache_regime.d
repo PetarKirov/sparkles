@@ -87,6 +87,8 @@ version (Posix)
 
     version (OSX)
         private alias MincoreVec = char; // darwin's mincore takes char*
+    else version (FreeBSD)
+        private alias MincoreVec = char; // and so does FreeBSD's
     else
         private alias MincoreVec = ubyte;
 
@@ -123,6 +125,10 @@ version (Posix)
     else version (OSX)
     {
         import core.sys.darwin.sys.mman : mincore;
+    }
+    else version (FreeBSD)
+    {
+        import core.sys.freebsd.sys.mman : mincore;
     }
 
     /// The filesystem kind holding `path` (Linux `statfs` magic; `unknown`
@@ -169,6 +175,11 @@ version (Posix)
             // druntime's darwin core.sys.posix.fcntl has no O_CLOEXEC —
             // values from the SDK's fcntl.h.
             enum int oExtra = 0x0100_0000 /*O_CLOEXEC*/ | 0x0004 /*O_NONBLOCK*/;
+        }
+        else version (FreeBSD)
+        {
+            // Nor has FreeBSD's — values from sys/fcntl.h.
+            enum int oExtra = 0x0010_0000 /*O_CLOEXEC*/ | 0x0004 /*O_NONBLOCK*/;
         }
         else
         {
