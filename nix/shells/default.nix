@@ -342,6 +342,12 @@
         # root sub-package either.
         pkgs.simdjson
 
+        # BLAKE3 reference bench (libs/base/bench/blake3, not a root
+        # sub-package): the official C implementation, with its own runtime
+        # SIMD dispatch; `libblake3.pc` and the header are in `.dev`.
+        pkgs.libblake3
+        pkgs.libblake3.dev
+
         # Python + wcwidth for the PyD-embedded Layer 10.
         pythonEnv
 

@@ -13,6 +13,7 @@
 
 module static_init_example;
 
+import core.atomic : atomicLoad, atomicOp;
 import core.thread : Thread;
 import std.stdio : writeln;
 
@@ -37,7 +38,7 @@ mixin(staticVar!q{ immutable uint[256] crcTable = buildCrcTable(); });
 mixin StaticBlock!q{
     immutable size_t nonZeroEntries = countNonZero(crcTable[]); // reads the line above
     string[] threadLog = ["started"];                          // one per thread
-    __gshared size_t threadsSeen = 1;
+    shared size_t threadsSeen = 1;                            // one, shared by all
 };
 
 size_t countNonZero(in uint[] xs) pure
@@ -58,9 +59,12 @@ uint crc32(in ubyte[] data)
 
 void main()
 {
+    // threadLog is thread-local: each thread appends to its own copy, so it
+    // needs no lock. threadsSeen is shared, so the worker updates it atomically.
     threadLog ~= "main ran";
     new Thread({
         threadLog ~= "worker ran";
+        threadsSeen.atomicOp!"+="(1);
         writeln("worker log: ", threadLog);
     }).start.join;
 
@@ -68,5 +72,6 @@ void main()
     writeln("non-zero:   ", nonZeroEntries);
     writeln("crc32:      ", crc32(cast(const(ubyte)[]) "123456789"));
     assert(crc32(cast(const(ubyte)[]) "123456789") == 0xCBF43926);
-    assert(threadsSeen == 1);
+    writeln("threads:    ", threadsSeen.atomicLoad);
+    assert(threadsSeen.atomicLoad == 2);
 }

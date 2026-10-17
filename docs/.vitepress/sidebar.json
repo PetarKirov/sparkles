@@ -389,6 +389,10 @@
                 "link": "/libs/base/how-to/own-heap-values"
               },
               {
+                "text": "Hash bytes with BLAKE3",
+                "link": "/libs/base/how-to/hash-with-blake3"
+              },
+              {
                 "text": "Initialize globals at run time",
                 "link": "/libs/base/how-to/initialize-statics"
               },

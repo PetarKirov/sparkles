@@ -1,0 +1,34 @@
+name "base-blake3-bench"
+description "sparkles:base BLAKE3 against the official C implementation"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "build"
+dflags "-preview=in" "-preview=dip1000"
+dependency "sparkles:base" path="../../../.."
+dependency "sparkles:test-runner" path="../../../.."
+dependency "sparkles:test-runner-impl" path="../../../.."
+subConfiguration "sparkles:test-runner-impl" "benchmark"
+
+// The C reference (libblake3, with its own runtime SIMD dispatch) resolves
+// through pkg-config: link flags and the ImportC include path for `c.c`.
+// Only this bench links it; sparkles:base stays free of C dependencies.
+libs "blake3"
+
+configuration "unittest" {
+    dflags "-checkaction=context" "-allinst"
+    dflags "--link-defaultlib-shared" "-linkonce-templates" platform="ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// Optimized with assertions live (see docs/libs/test-runner/how-to/benchmark.md).
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+}
+
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
