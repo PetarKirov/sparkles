@@ -1994,6 +1994,24 @@
             ]
           },
           {
+            "text": "Flat Binary Format (draft)",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Specification",
+                "link": "/specs/wired/flat/SPEC"
+              },
+              {
+                "text": "Delivery Plan",
+                "link": "/specs/wired/flat/PLAN"
+              },
+              {
+                "text": "Open Issues",
+                "link": "/specs/wired/flat/open-issues"
+              }
+            ]
+          },
+          {
             "text": "Runtime JSON benchmark baseline",
             "link": "/specs/wired/bench-baseline"
           },
