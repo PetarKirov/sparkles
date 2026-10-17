@@ -178,7 +178,9 @@ each effect calls the same D functions as its GPU passes.
   DMD.
 - The tube exposed two constructs the pinned SPIR-V backend structures wrongly,
   both rejected by `spirv-val`: an `if … else if (a && b)` chain, and early
-  returns among short-circuit masks. The tube avoids both.
+  returns among short-circuit masks. The tube avoids both. Both are fixed
+  since: the compiler structures device code before the backend, which gives
+  nested conditions sharing an exit merge blocks of their own.
 
 ## M5: Further device platforms
 

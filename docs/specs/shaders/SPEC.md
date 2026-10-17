@@ -448,7 +448,7 @@ library's own vocabulary, therefore belongs to the unit as much as the
 package's own.
 
 **SHP4: Validation.** The compiled SPIR-V **must** pass `spirv-val` under the
-universal SPIR-V 1.4 rules before anything else reads it, and is then
+universal SPIR-V 1.6 rules before anything else reads it, and is then
 optimised with `spirv-opt -O`.
 
 _Rationale:_ Universal rules, not Vulkan's: uniforms outside a block
