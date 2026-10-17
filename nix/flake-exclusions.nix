@@ -21,5 +21,7 @@ in
   excludedCiPackages = [
     "wired-bench-medium-data"
     "run-wired-bench"
+    # The FreeBSD image (~700 MiB), fetched only when the VM is wanted.
+    "freebsd-vm"
   ];
 }
