@@ -76,14 +76,11 @@ Some packages left the repository instead, for mixed reasons. Against the last m
 
 ### Deployment and permissions
 
-**Local evidence boundary:** [E1–E7][current-target] observed the execution
-restriction, absolute-path linker route, app-data `dlopen` and APK-native static
-execution in the custom target-36 terminal on Android 14, plus a glibc `hello`
-under APK-native PRoot. E6 then completed the current-target experimental Nix
-bootstrap/cache/compiler/Git/local-build workflow and app restart; E7 measured
-process starts. E9 separately checked the owner-installed Play app's linker/static
-routes and reproduced a missed GDB breakpoint. None establishes Android 17
-behavior, broad production compatibility or Play-policy compliance.
+[Device experiments][current-target] on an Android 14 phone reproduce the
+mechanism below in a target-36 build of the Sparkles terminal: direct execution
+from app data fails, the `linker64` route and `dlopen` work, and a static ELF runs only
+from the APK. A patched nix-on-droid bootstrap then works end to end with PRoot
+and its loader in the APK.
 
 The inspected app declares `minSdkVersion=30` and `targetSdkVersion=37` ([`gradle.properties`][gradle-props]), one level above Play's floor: since August 31, 2026, “New apps and app updates must target Android 16 (API level 36) or higher” ([target API policy][play-target]). Under [`seapp_contexts`][seapp] that target places it in the plain `untrusted_app` domain, where nix-on-droid's target 28 places it in `untrusted_app_27`. It needed no root, no exemption and no kernel change: the workaround uses only operations the platform still grants to every app.
 
@@ -119,11 +116,8 @@ The cost is permanent divergence. `termux-packages` carries 1,285 changed files 
 
 ## Extent of the workaround
 
-The table describes upstream source/reports. [E1–E4][current-target] locally
-confirm the underlying Bionic-dynamic, static and raw executable-identity cases
-in the custom app, not the Play package ecosystem or its preload hooks. The
-reduced glibc/PRoot transfer passed E5, and the experimental full Nix workflow
-passed E6 on the same phone.
+The status column comes from upstream sources and reports; the last column
+records what [the device experiments][current-target] observed.
 
 The [issue tracker][issues] (1,122 issues up to `#1653` on October 16, 2026, 361 open; 446 were closed on January 11, 2026 alone) records where the table below comes from. The maintainer's diagnosis recurs in it: “Termux on Google Play is not allowed to execute `…/usr/bin/tmux` directly, instead it executes `/apex/com.android.runtime/bin/linker64 …`” ([`termux-issues#149`][issue-149]), and the standing rule is that “you need to keep the `LD_PRELOAD` environment variable around while spawning sub processes” ([`termux-issues#24`][issue-24]). Relative interpreter paths once failed with `linker64`'s “error: expected absolute path” ([`#76`][issue-76], closed). Breakpoints that never trigger under `gdb` ([`#744`][issue-744]) and Go binaries from outside Termux's toolchain receiving their own path as `argv[1]` ([`termux-exec#9`][exec-9]) remain open.
 
