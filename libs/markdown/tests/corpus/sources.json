@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "managedBy": "nix-flake",
+  "note": "Exact revisions are pinned in flake.lock; fixture JSONL entries only keep sourceUrl + license.",
+  "sources": [
+    {
+      "name": "commonmark-spec",
+      "license": "BSD-2-Clause",
+      "upstream": "github:commonmark/commonmark-spec"
+    },
+    {
+      "name": "cmark",
+      "license": "BSD-2-Clause",
+      "upstream": "github:commonmark/cmark"
+    },
+    {
+      "name": "cmark-gfm",
+      "license": "MIT",
+      "upstream": "github:github/cmark-gfm"
+    },
+    {
+      "name": "commonmark.js",
+      "license": "BSD-2-Clause",
+      "upstream": "github:commonmark/commonmark.js"
+    },
+    {
+      "name": "markdown-it",
+      "license": "MIT",
+      "upstream": "github:markdown-it/markdown-it"
+    },
+    {
+      "name": "micromark",
+      "license": "MIT",
+      "upstream": "github:micromark/micromark"
+    },
+    {
+      "name": "marked",
+      "license": "MIT",
+      "upstream": "github:markedjs/marked"
+    },
+    { "name": "nextra", "license": "MIT", "upstream": "github:shuding/nextra" },
+    { "name": "mdx-js", "license": "MIT", "upstream": "github:mdx-js/mdx" },
+    {
+      "name": "pulldown-cmark",
+      "license": "MIT",
+      "upstream": "github:pulldown-cmark/pulldown-cmark"
+    },
+    {
+      "name": "comrak",
+      "license": "MIT",
+      "upstream": "github:kivikakk/comrak"
+    },
+    {
+      "name": "markdown-rs",
+      "license": "MIT",
+      "upstream": "github:wooorm/markdown-rs"
+    },
+    { "name": "md4c", "license": "MIT", "upstream": "github:mity/md4c" },
+    { "name": "goldmark", "license": "MIT", "upstream": "github:yuin/goldmark" }
+  ]
+}

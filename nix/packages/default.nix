@@ -3,6 +3,7 @@
   imports = [
     ./examples.nix
     ./bench-tools.nix
+    ./nvme-sanitize.nix
   ];
 
   perSystem =
