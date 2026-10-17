@@ -391,7 +391,7 @@ and is not also used with the address wait (SYL3).
 struct LockBits(T, T locked, T parked, T designated)
     if (is(T == ubyte) || is(T == ushort) || is(T == uint) || is(T == ulong))
 {
-    private alias Impl = LockBitsT!(NativePlatform, T, locked, parked, designated);
+    package(sparkles.base.sync) alias Impl = LockBitsT!(NativePlatform, T, locked, parked, designated);
 
 static:
     /// Locks, parking while held.
@@ -419,6 +419,10 @@ static:
     {
         private shared(T)* word;
 
+        package(sparkles.base.sync) alias Impl = LockBits.Impl;
+        package(sparkles.base.sync) alias Word = T;
+        package(sparkles.base.sync) enum T lockedBit = locked, parkedBit = parked, designatedBit = designated;
+
         @disable this(this);
 
         /// Only `guard` makes one, holding the lock.
@@ -433,7 +437,14 @@ static:
                 Impl.unlock(*word);
         }
 
-        package(sparkles.base.sync) ref shared(T) lockWord() return @trusted nothrow @nogc => *word;
+        /// Whether the guard holds the lock: a `.init` guard holds nothing.
+        package(sparkles.base.sync) bool holds() const @safe nothrow @nogc => word !is null;
+
+        package(sparkles.base.sync) ref shared(T) lockWord() return @trusted nothrow @nogc
+        {
+            assert(word !is null, "an empty guard holds no lock");
+            return *word;
+        }
     }
 }
 
