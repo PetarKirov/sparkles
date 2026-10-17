@@ -903,6 +903,11 @@ jobs:
       - name: base.sync fast-path disassembly
         run: dub run --single --temp-build libs/base/tools/check-sync-fast-path.d
 
+      # Oracle 4: native stress under ThreadSanitizer reports nothing, and
+      # every seeded fault (a relaxed release) is reported.
+      - name: base.sync under ThreadSanitizer
+        run: dub run --single --temp-build libs/base/tools/check-sync-tsan.d
+
   # The `_umtx_op` seam has no hosted runner: a FreeBSD virtual machine runs
   # base.sync's suite on every pull request, within 15 minutes (DS24; past
   # that, it moves to a nightly and on-demand schedule).
