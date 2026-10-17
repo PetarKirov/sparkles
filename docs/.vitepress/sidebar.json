@@ -2286,6 +2286,140 @@
     "collapsed": true,
     "items": [
       {
+        "text": "Binary Formats",
+        "link": "/research/binary-formats/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Concepts & Vocabulary",
+            "link": "/research/binary-formats/concepts"
+          },
+          {
+            "text": "Schema / Description Languages",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "ASN.1: BER, DER & PER",
+                "link": "/research/binary-formats/asn1"
+              },
+              { "text": "DFDL", "link": "/research/binary-formats/dfdl" },
+              { "text": "CDDL", "link": "/research/binary-formats/cddl" },
+              {
+                "text": "OMG IDL, CDR & XCDR2",
+                "link": "/research/binary-formats/omg-idl-cdr"
+              },
+              {
+                "text": "Kaitai Struct",
+                "link": "/research/binary-formats/kaitai-struct"
+              },
+              {
+                "text": "Construct",
+                "link": "/research/binary-formats/construct"
+              }
+            ]
+          },
+          {
+            "text": "Schema-driven Protocols",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Protocol Buffers",
+                "link": "/research/binary-formats/protobuf"
+              },
+              {
+                "text": "Apache Thrift",
+                "link": "/research/binary-formats/thrift"
+              },
+              {
+                "text": "Apache Avro",
+                "link": "/research/binary-formats/avro"
+              },
+              {
+                "text": "FlatBuffers",
+                "link": "/research/binary-formats/flatbuffers"
+              },
+              {
+                "text": "Cap'n Proto",
+                "link": "/research/binary-formats/capnproto"
+              },
+              {
+                "text": "Simple Binary Encoding",
+                "link": "/research/binary-formats/sbe"
+              },
+              { "text": "Bebop", "link": "/research/binary-formats/bebop" }
+            ]
+          },
+          {
+            "text": "Self-describing Encodings",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "MessagePack",
+                "link": "/research/binary-formats/messagepack"
+              },
+              { "text": "CBOR", "link": "/research/binary-formats/cbor" },
+              { "text": "BSON", "link": "/research/binary-formats/bson" },
+              { "text": "Smile", "link": "/research/binary-formats/smile" },
+              { "text": "UBJSON", "link": "/research/binary-formats/ubjson" }
+            ]
+          },
+          {
+            "text": "Merkleization & Content Addressing",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Ethereum SSZ",
+                "link": "/research/binary-formats/ssz"
+              },
+              {
+                "text": "IPLD, DAG-CBOR & DAG-PB",
+                "link": "/research/binary-formats/ipld"
+              },
+              {
+                "text": "Tendermint / CometBFT",
+                "link": "/research/binary-formats/cometbft"
+              },
+              {
+                "text": "COSE & dCBOR",
+                "link": "/research/binary-formats/cbor-cose-dcbor"
+              },
+              {
+                "text": "Git Object Framing",
+                "link": "/research/binary-formats/git-objects"
+              },
+              {
+                "text": "Plutus Core Data",
+                "link": "/research/binary-formats/plutus-data"
+              },
+              {
+                "text": "iroh / Bao Framing",
+                "link": "/research/binary-formats/iroh-bao"
+              },
+              {
+                "text": "BitTorrent v2",
+                "link": "/research/binary-formats/bittorrent-v2"
+              },
+              {
+                "text": "Certificate Transparency",
+                "link": "/research/binary-formats/certificate-transparency"
+              },
+              {
+                "text": "TUF & in-toto",
+                "link": "/research/binary-formats/tuf-in-toto"
+              },
+              {
+                "text": "Hypercore",
+                "link": "/research/binary-formats/hypercore"
+              }
+            ]
+          },
+          {
+            "text": "Comparison & Flat Delta",
+            "link": "/research/binary-formats/comparison"
+          }
+        ]
+      },
+      {
         "text": "SIMD UTF & Unicode",
         "link": "/research/simd-unicode/",
         "collapsed": true,
