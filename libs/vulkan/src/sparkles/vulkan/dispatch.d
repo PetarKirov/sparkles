@@ -234,6 +234,7 @@ private enum CommandSet[] deviceSets = [
         "CmdBindPipeline",
         "CmdSetViewport",
         "CmdSetScissor",
+        "CmdPushConstants",
         "CmdDraw",
     ]),
     CommandSet(khrSwapchain, [
