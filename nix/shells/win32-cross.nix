@@ -13,7 +13,7 @@
 # integrated LLD (see nix/d-toolchain.nix):
 #
 #     win32-ldc2 app.d -of=build/app.exe
-#     WINEPREFIX=$(mktemp -d) WINEDEBUG=-all wine64 build/app.exe
+#     WINEPREFIX=$(mktemp -d) WINEDEBUG=-all wine build/app.exe
 #
 # `win32-ldc2` is `ldc2 -mtriple=x86_64-pc-windows-msvc -link-internally
 # -mscrtlib=msvcrt` plus the /LIBPATHs below. Notes baked into the wiring:
@@ -114,10 +114,17 @@
 
       win32Shell = pkgs.mkShell {
         packages = [
-          pkgs.wine64Packages.minimal
+          # `stable`, not `minimal`: only it has the X11 driver, without which
+          # Wine creates no window at all.
+          pkgs.wine64Packages.stable
           pkgs.clang
           clangCl
           win32Ldc2
+          # What the Wine lanes (`libs/*/scripts/verify-*-wine.sh`) run: a
+          # display, and `pkg-config` for the Vulkan headers.
+          pkgs.xvfb-run
+          pkgs.pkg-config
+          pkgs.vulkan-loader.dev
         ]
         ++ d-toolchain.packages;
         shellHook = ''

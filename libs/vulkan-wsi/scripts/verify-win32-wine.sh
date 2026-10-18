@@ -19,6 +19,8 @@ win32-ldc2 -preview=in -preview=dip1000 -g -i \
   -I"$repo/libs/input/src" \
   -I"$repo/libs/math/src" \
   -I"$repo/libs/base/src" \
+  -I"$repo/libs/metadata/src" \
+  -I"$repo/libs/reflection/src" \
   -I"$repo/libs/test-runner/src" \
   -I"$expected_src" \
   -P-I"$WIN32_SDK/crt/include" \
@@ -34,7 +36,7 @@ mkdir "$work/runtime"
 chmod 700 "$work/runtime"
 env -u WAYLAND_DISPLAY XDG_RUNTIME_DIR="$work/runtime" \
   WINEPREFIX="$work/wine" WINEDEBUG=-all \
-  xvfb-run -a wine64 "$work/vulkan-wsi-win32-plan.exe" \
+  xvfb-run -a wine "$work/vulkan-wsi-win32-plan.exe" \
   | tee "$work/output.log"
 grep -q '^ok: Win32 native Vulkan surface ABI/plan' "$work/output.log"
 echo ">> sparkles:vulkan-wsi Win32 surface plan verified under Wine."
