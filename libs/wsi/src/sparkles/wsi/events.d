@@ -383,12 +383,17 @@ bounded queue's answer to native event floods: an interactive resize can
 batch hundreds of configures into one dispatch, and during a Win32 or
 AppKit modal phase the application cannot drain at all, so keeping the
 latest observation beats failing on capacity. Input, text, focus, and
-lifecycle events never coalesce.
+lifecycle events never coalesce, and neither do metrics that suspend
+presentation (`ED4`): a surface replaced by another of the same size before
+the drain would otherwise look unchanged, and the application would keep
+presenting to the one that is gone.
 */
 bool supersedes(in WindowEvent tail, in WindowEvent next)
     @safe pure nothrow @nogc
 {
     if (tail.window != next.window)
+        return false;
+    if (suspendsPresentation(tail))
         return false;
     static bool bothAre(Payload)(in WindowEvent a, in WindowEvent b)
         => isKind!Payload(a) && isKind!Payload(b);
@@ -437,6 +442,12 @@ bool coalescible(in WindowEvent event) @safe pure nothrow @nogc
     => isKind!SurfaceMetricsChangedEvent(event) || isKind!MovedEvent(event)
         || isKind!ExposedEvent(event);
 
+// Metrics reporting the surface lost (`F01`): the consumer must see these.
+private bool suspendsPresentation(in WindowEvent event) @safe pure nothrow @nogc
+    => event.payload.match!(
+        (in SurfaceMetricsChangedEvent e) => e.metrics.suspended,
+        _ => false);
+
 @("wsi.events.supersedesCoalescesOnlyLatestObservationKinds")
 @safe pure nothrow @nogc
 unittest
@@ -457,6 +468,25 @@ unittest
     assert(!supersedes(
         WindowEvent(1, window, WindowEventPayload(KeyboardEvent())),
         WindowEvent(2, window, WindowEventPayload(KeyboardEvent()))));
+}
+
+@("wsi.events.aSuspensionIsNeverSuperseded")
+@safe pure nothrow @nogc
+unittest
+{
+    // `ED4`: a surface lost and replaced by one of the same size before the
+    // drain must still be reported lost, or the application keeps presenting
+    // to the old one.
+    const window = WindowId(1, 1);
+    const shown = SurfaceMetrics(LogicalSize(1080, 1920), PhysicalSize(1080, 1920),
+        ScaleFactor(1));
+    const lost = SurfaceMetrics(LogicalSize(0, 0), PhysicalSize(0, 0), ScaleFactor(1));
+    static WindowEvent metrics(ulong sequence, WindowId window, SurfaceMetrics m)
+        @safe pure nothrow @nogc
+        => WindowEvent(sequence, window, WindowEventPayload(SurfaceMetricsChangedEvent(m)));
+    assert(!supersedes(metrics(1, window, lost), metrics(2, window, shown)));
+    // The other way round is the ordinary merge: the loss is the newest.
+    assert(supersedes(metrics(1, window, shown), metrics(2, window, lost)));
 }
 
 @("wsi.events.eventsHoldNoPointerAndFitTwoCacheLines")

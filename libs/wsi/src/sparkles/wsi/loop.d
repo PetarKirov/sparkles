@@ -771,6 +771,37 @@ unittest
     assert(width == 200);
 }
 
+@("wsi.loop.aReplacedSurfaceIsReportedLostBeforeItsSuccessor")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.sumtype : match;
+
+    // `ED4`: a surface shown, lost, and replaced by one of the same size
+    // before the drain drains as the loss and then the new surface. Merging
+    // the replacement into either earlier observation would hide the loss.
+    EventQueue!8 queue;
+    const window = WindowId(1, 1);
+    static WindowEvent metrics(ulong sequence, WindowId window, uint side)
+        @safe pure nothrow @nogc
+        => WindowEvent(sequence, window, WindowEventPayload(SurfaceMetricsChangedEvent(
+            SurfaceMetrics(LogicalSize(side, side), PhysicalSize(side, side),
+                ScaleFactor(1)))));
+    assert(!queue.pushCoalesced(metrics(1, window, 100)).hasError);
+    assert(!queue.pushCoalesced(metrics(2, window, 0)).hasError);
+    assert(!queue.pushCoalesced(metrics(3, window, 100)).hasError);
+
+    bool[4] suspended;
+    size_t n;
+    assert(!queue.drain((WindowEvent event) @safe pure nothrow @nogc {
+        event.payload.match!(
+            (in SurfaceMetricsChangedEvent e) { suspended[n++] = e.metrics.suspended; },
+            (_) {});
+    }).hasError);
+    assert(n == 2, "the loss superseded the first observation, nothing else merged");
+    assert(suspended[0] && !suspended[1]);
+}
+
 @("wsi.loop.overflowIsCountedAndReportedRatherThanFatal")
 @safe pure nothrow @nogc
 unittest
