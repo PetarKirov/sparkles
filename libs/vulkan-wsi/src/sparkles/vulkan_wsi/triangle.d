@@ -48,7 +48,8 @@ VkExtent2D drawableExtent(Size)(in Swapchain sc, in Size windowPx)
 /// Record one frame: begin the pass, set the dynamic state, draw three vertices.
 Expected!(void, string) record(Context)(ref Context vk, ref CommandPool pool,
     ref Pipeline pipeline, ref RenderTarget target, ref Swapchain sc,
-    uint frame, uint imageIndex, VkExtent2D drawExtent) @system
+    uint frame, uint imageIndex, VkExtent2D drawExtent,
+    scope const(void)[] pushConstants = null) @system
 {
     auto begun = pool.begin(vk, frame);
     if (begun.hasError)
@@ -120,6 +121,10 @@ Expected!(void, string) record(Context)(ref Context vk, ref CommandPool pool,
     auto scissor = VkRect2D(VkOffset2D(0, 0), drawExtent);
     vk.device.cmdSetViewport(cmd, 0, 1, &viewport);
     vk.device.cmdSetScissor(cmd, 0, 1, &scissor);
+    if (pushConstants.length != 0)
+        vk.device.cmdPushConstants(cmd, pipeline.layout,
+            VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+            cast(uint) pushConstants.length, pushConstants.ptr);
 
     // Three vertices, no buffers: the shader indexes constants by
     // `gl_VertexIndex`. See `shaders/triangle.vert`.
@@ -384,7 +389,7 @@ bytes whose alignment D does not promise — casting the pointer would be
 undefined behaviour that happens to work. Building the words in CTFE puts a
 correctly aligned `uint[]` in `.rodata` instead, at no runtime cost.
 */
-private immutable(uint)[] spirvWords(string bytes)
+package immutable(uint)[] spirvWords(string bytes)
 {
     assert(bytes.length % 4 == 0, "SPIR-V is a stream of 32-bit words");
 
@@ -416,17 +421,26 @@ struct Pipeline
 
     @disable this(this);
 
+    /**
+    Builds the pipeline for `colorFormat`, drawing three vertices with no
+    buffers. The triangle's shaders are the default; another pair (the
+    test pattern's) may declare `pushConstantBytes` of fragment push
+    constants and a boolean specialization constant 0, set to `srgbTarget`.
+    */
     static Expected!(void, string) create(Context)(out Pipeline p, ref Context vk,
-        VkFormat colorFormat, VkRenderPass renderPass = null) @system
+        VkFormat colorFormat, VkRenderPass renderPass = null,
+        immutable(uint)[] vertCode = triangleVert,
+        immutable(uint)[] fragCode = triangleFrag,
+        uint pushConstantBytes = 0, bool srgbTarget = false) @system
     {
         VkShaderModule vert, frag;
-        auto vertMade = createModule(vk, triangleVert, vert);
+        auto vertMade = createModule(vk, vertCode, vert);
         if (vertMade.hasError)
             return vertMade;
         scope (exit)
             vk.device.destroyShaderModule(vk.device.device, vert, null);
 
-        auto fragMade = createModule(vk, triangleFrag, frag);
+        auto fragMade = createModule(vk, fragCode, frag);
         if (fragMade.hasError)
             return fragMade;
         scope (exit)
@@ -449,6 +463,15 @@ struct Pipeline
         // and is the only way to write to it.
         __traits(getMember, stages[0], "module") = vert;
         __traits(getMember, stages[1], "module") = frag;
+
+        // Constant 0 of the fragment stage; a shader that declares none
+        // ignores it.
+        VkBool32 srgb = srgbTarget ? VK_TRUE : VK_FALSE;
+        auto entry = VkSpecializationMapEntry(constantID: 0, offset: 0,
+            size: VkBool32.sizeof);
+        auto specialization = VkSpecializationInfo(mapEntryCount: 1,
+            pMapEntries: &entry, dataSize: VkBool32.sizeof, pData: &srgb);
+        stages[1].pSpecializationInfo = &specialization;
 
         // No bindings and no attributes: the vertex shader reads constants.
         auto vertexInput = vkInfo(VkPipelineVertexInputStateCreateInfo());
@@ -499,7 +522,13 @@ struct Pipeline
             pDynamicStates: dynamicStates.ptr,
         ));
 
-        auto layoutInfo = vkInfo(VkPipelineLayoutCreateInfo());
+        auto pushRange = VkPushConstantRange(
+            stageFlags: VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT,
+            offset: 0, size: pushConstantBytes);
+        auto layoutInfo = vkInfo(VkPipelineLayoutCreateInfo(
+            pushConstantRangeCount: pushConstantBytes == 0 ? 0 : 1,
+            pPushConstantRanges: &pushRange,
+        ));
         auto layoutMade = vk.device.createPipelineLayout(
             vk.device.device, &layoutInfo, null, &p.layout).check;
         if (layoutMade.hasError)
