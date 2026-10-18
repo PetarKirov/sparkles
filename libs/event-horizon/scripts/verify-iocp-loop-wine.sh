@@ -35,5 +35,5 @@ win32-ldc2 -preview=in -preview=dip1000 -g \
   -of=echowin.exe
 
 echo ">> running under Wine ..."
-WINEPREFIX="$(mktemp -d)" WINEDEBUG=-all wine64 echowin.exe
+WINEPREFIX="$(mktemp -d)" WINEDEBUG=-all wine echowin.exe
 echo ">> EventLoop!IocpBackend fiber echo verified under Wine."

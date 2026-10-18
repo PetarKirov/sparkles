@@ -2,7 +2,7 @@
 # Cross-compile the IOCP backend's data-path unittest to a Windows .exe and
 # run it under headless Wine — the M11 gate (SPEC §3.5, backend/iocp.d).
 #
-# Must run inside a win32 dev shell (which provides win32-ldc2 + wine64) whose
+# Must run inside a win32 dev shell (which provides win32-ldc2 + wine) whose
 # `ldc2` is LLD-integrated (the official ldc-binary release) — `-link-internally`
 # needs it. This repo's `.#win32` shell inherits its `ldc2` from `d-toolchain`;
 # if that build lacks integrated LLD you'll see "Unknown command line argument
@@ -47,5 +47,5 @@ win32-ldc2 -unittest -main -g -preview=in -preview=dip1000 \
   "$ehm/backend/iocp.d" deps.lib -of=iocptest.exe
 
 echo ">> running under Wine ..."
-WINEPREFIX="$(mktemp -d)" WINEDEBUG=-all wine64 iocptest.exe
+WINEPREFIX="$(mktemp -d)" WINEDEBUG=-all wine iocptest.exe
 echo ">> IOCP backend verified under Wine."
