@@ -556,8 +556,13 @@ struct Pipeline
             subpass: 0,
         ));
 
+        // Through the device's pipeline cache when it keeps one (§10.1),
+        // so a pipeline compiled once is not compiled again.
+        VkPipelineCache cache;
+        static if (is(typeof(vk.pipelineCache) : VkPipelineCache))
+            cache = vk.pipelineCache;
         auto made = vk.device.createGraphicsPipelines(
-            vk.device.device, null, 1, &info, null, &p.handle).check;
+            vk.device.device, cache, 1, &info, null, &p.handle).check;
         if (made.hasError)
         {
             p.destroy(vk);
