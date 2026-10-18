@@ -109,7 +109,11 @@ version (Windows)
     private extern (Windows) int SetEvent(void* event) nothrow @nogc;
 }
 
+// Every platform whose default backend is kqueue: `select.d` picks it on
+// Android too, and without `kevent` here `Waker.wake` would compile to nothing.
 version (OSX)
+    private enum bool conceptHasKevent = true;
+else version (Android)
     private enum bool conceptHasKevent = true;
 else version (EventHorizonLibkqueue)
     private enum bool conceptHasKevent = true;
@@ -289,7 +293,11 @@ version (Posix)
                 void* udata;
             }
 
-            enum short EVFILT_USER = -10;
+            // Darwin numbers it -10; FreeBSD and libkqueue, -11.
+            version (OSX)
+                enum short EVFILT_USER = -10;
+            else
+                enum short EVFILT_USER = -11;
             enum uint NOTE_TRIGGER = 0x0100_0000;
             kevent_t ch;
             ch.ident = ident;
@@ -298,9 +306,8 @@ version (Posix)
             cast(void) kevent(kq, &ch, 1, null, 0, null);
         }
         else
-        {
-            cast(void) kq;
-            cast(void) ident;
-        }
+            // Only a kqueue backend hands out an `EVFILT_USER` ident: reaching
+            // this is a platform whose backend selection and this list disagree.
+            assert(false, "an EVFILT_USER waker on a platform without kevent");
     }
 }

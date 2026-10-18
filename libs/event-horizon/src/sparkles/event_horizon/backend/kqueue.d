@@ -97,7 +97,11 @@ enum short EVFILT_READ = -1;
 enum short EVFILT_WRITE = -2;
 enum short EVFILT_PROC = -5;
 enum short EVFILT_TIMER = -7;
-enum short EVFILT_USER = -10;
+/// Darwin numbers it -10; FreeBSD, and libkqueue (Linux, Android) after it, -11.
+version (OSX)
+    enum short EVFILT_USER = -10;
+else
+    enum short EVFILT_USER = -11;
 /// `EVFILT_PROC` fflag: the process exited. The only note this backend asks
 /// for — fork/exec tracking has no op to lower onto.
 enum uint NOTE_EXIT = 0x8000_0000;
