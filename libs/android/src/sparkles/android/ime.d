@@ -62,6 +62,20 @@ bool installImeField() @trusted nothrow @nogc
     return postToMainThread(&installJob, null);
 }
 
+/**
+Forgets the field of an activity that ended, so the next $(LREF installImeField)
+makes one in the current activity's view hierarchy. Call on the main thread,
+with its `JNIEnv`, when a new activity starts in the same process.
+*/
+void forgetImeField(JNIEnv* env) @trusted nothrow @nogc
+{
+    if (field !is null)
+        (*env).DeleteGlobalRef(env, field);
+    field = null;
+    atomicStore(installed, false);
+    atomicStore(pollPending, false);
+}
+
 /// `true` once the field is installed (text then arrives through it).
 bool imeFieldActive() @trusted nothrow @nogc => atomicLoad(installed);
 

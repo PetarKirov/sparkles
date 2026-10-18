@@ -45,6 +45,8 @@ version (Android):
 
 import core.lifetime : move;
 import core.sys.posix.pthread;
+import core.atomic : atomicStore, cas;
+import core.stdc.config : c_long;
 import core.time : Duration, MonoTime, msecs, nsecs;
 import std.math : lround;
 
@@ -52,7 +54,8 @@ import sparkles.android.activity : ANativeActivity, nativeActivity;
 import sparkles.android.clipboard : ClipDescription, ClipText, closeClipText,
     describePrimaryClip, openPrimaryClipText, readClipText, setPrimaryClipTyped;
 import sparkles.android.ime : installImeField, pollImeField, showImeKeyboard;
-import sparkles.android.main_thread : wireMainThread;
+import jni_c : JNIEnv;
+import sparkles.android.main_thread : postToMainThread, wireMainThread;
 import sparkles.android.window_metrics : displayDensity, layOutEdgeToEdge,
     windowInsets;
 import sparkles.android.text_input : imeBackspace, imeEnter, keyCharacter,
@@ -166,6 +169,9 @@ private enum NoteKind : ubyte
     destroyed,
     contentRect,   /// the area system bars and the soft keyboard leave
     configuration, /// density, orientation or another setting changed
+    activityStarted, /// a new activity of this process took over the window
+    lowMemory,     /// the system is short of memory
+    frame,         /// a display frame began (`AChoreographer`)
 }
 
 private struct Note
@@ -173,6 +179,11 @@ private struct Note
     NoteKind kind;
     void* surface;
     int[4] rect; /// `contentRect`: left, top, right, bottom in window pixels
+    long frameNanos; /// `frame`: the frame's start, `CLOCK_MONOTONIC`
+    /// `surfaceDestroyed`: the WSI thread releases the surface's reference,
+    /// not the callback (a finished activity's surface, lost after another
+    /// activity started).
+    bool wsiReleases;
 }
 
 /**
@@ -239,19 +250,32 @@ private __gshared Channel channel;
 // A note from an activity other than the current one is dropped: a finished
 // activity's last callbacks can arrive after a new activity started in the
 // same process, and its `destroyed` must not end the new one's window.
-private void post(void* activity, NoteKind kind, void* surface = null,
+private bool post(void* activity, NoteKind kind, void* surface = null,
     int[4] rect = 0) nothrow @nogc
+    => postNote(activity, Note(kind, surface, rect));
+
+// Whether the note was queued: `false` for another activity's, or a full
+// channel.
+private bool postNote(void* activity, Note note) nothrow @nogc
 {
     pthread_mutex_lock(&channel.lock);
     if (activity !is channel.activity)
     {
         pthread_mutex_unlock(&channel.lock);
-        return;
+        return false;
     }
-    if (channel.count < channel.notes.length)
+    return enqueueLocked(note);
+}
+
+// Queues `note` and wakes the WSI thread; called with `channel.lock` held,
+// which it releases.
+private bool enqueueLocked(Note note) nothrow @nogc
+{
+    const queued = channel.count < channel.notes.length;
+    if (queued)
     {
         channel.notes[(channel.head + channel.count) % channel.notes.length] =
-            Note(kind, surface, rect);
+            note;
         ++channel.count;
     }
     const wake = channel.hasWaker;
@@ -259,6 +283,55 @@ private void post(void* activity, NoteKind kind, void* surface = null,
     pthread_mutex_unlock(&channel.lock);
     if (wake)
         waker.wake();
+    return queued;
+}
+
+// ── frame opportunities, from `AChoreographer` on the main thread ───────────
+
+private extern (C) nothrow @nogc
+{
+    void* AChoreographer_getInstance();
+    void AChoreographer_postFrameCallback(void* choreographer,
+        void function(c_long, void*) nothrow @nogc callback, void* data);
+}
+
+// API 29; below it the `long`-sized callback is the 32-bit-safe one.
+pragma(LDC_extern_weak)
+private extern (C) void AChoreographer_postFrameCallback64(void* choreographer,
+    void function(long, void*) nothrow @nogc callback, void* data) nothrow @nogc;
+
+private shared bool framePending; // a frame callback is registered
+
+// `requestFrame` asks the main thread, whose looper the choreographer needs,
+// to register one callback for the next display frame.
+private void frameJob(JNIEnv*, void*) nothrow @nogc
+{
+    auto choreographer = AChoreographer_getInstance();
+    if (choreographer is null)
+    {
+        atomicStore(framePending, false);
+        return;
+    }
+    if (&AChoreographer_postFrameCallback64 !is null)
+        AChoreographer_postFrameCallback64(choreographer, &onFrame64, null);
+    else
+        AChoreographer_postFrameCallback(choreographer, &onFrame, null);
+}
+
+private extern (C) void onFrame64(long frameTimeNanos, void*) nothrow @nogc
+{
+    atomicStore(framePending, false);
+    pthread_mutex_lock(&channel.lock);
+    auto activity = channel.activity;
+    pthread_mutex_unlock(&channel.lock);
+    Note note = Note(NoteKind.frame);
+    note.frameNanos = frameTimeNanos;
+    postNote(activity, note);
+}
+
+private extern (C) void onFrame(c_long frameTimeNanos, void* data) nothrow @nogc
+{
+    onFrame64(frameTimeNanos, data);
 }
 
 // Appends one native event's records at once, so the WSI thread never sees
@@ -549,8 +622,10 @@ extern (C) private nothrow
 
     void onSurfaceCreated(void* activity, void* surface)
     {
+        // The WSI thread's reference, released once it reported the loss.
         ANativeWindow_acquire(surface);
-        post(activity, NoteKind.surfaceCreated, surface);
+        if (!post(activity, NoteKind.surfaceCreated, surface))
+            ANativeWindow_release(surface);
     }
 
     void onSurfaceResized(void* activity, void* surface)
@@ -572,11 +647,17 @@ extern (C) private nothrow
         import core.sys.posix.time : clock_gettime, CLOCK_REALTIME, timespec;
 
         pthread_mutex_lock(&channel.lock);
-        // A finished activity's surface has no reader to wait for.
+        // A finished activity's surface, lost after another activity of the
+        // process started: the application may still present to it, so the
+        // WSI thread reports the loss and releases the reference after the
+        // drain that reported it. Nothing waits for that here: the new
+        // activity's callbacks run on this thread.
         if (activity !is channel.activity)
         {
-            pthread_mutex_unlock(&channel.lock);
-            ANativeWindow_release(surface);
+            auto note = Note(NoteKind.surfaceDestroyed, surface);
+            note.wsiReleases = true;
+            if (!enqueueLocked(note))
+                ANativeWindow_release(surface);
             return;
         }
         channel.releasePending = true;
@@ -610,6 +691,7 @@ extern (C) private nothrow
     void onResumed(void* activity) { post(activity, NoteKind.resumed); }
     void onPaused(void* activity) { post(activity, NoteKind.paused); }
     void onDestroyed(void* activity) { post(activity, NoteKind.destroyed); }
+    void onLowMemory(void* activity) { post(activity, NoteKind.lowMemory); }
 }
 
 /**
@@ -621,18 +703,36 @@ $(LREF AndroidWsiMain) defines.
 void startActivity(void* activity, void function() nothrow appMain) nothrow
 {
     import core.thread : Thread;
+    import sparkles.android.ime : forgetImeField;
 
     wireMainThread(activity);
-    rt_init();
-    pthread_cond_init(&channel.released, null);
+    if (!runtimeStarted)
+    {
+        rt_init();
+        pthread_cond_init(&channel.released, null);
+        runtimeStarted = true;
+    }
+    else
+        // The previous activity's soft-keyboard field lived in its views.
+        forgetImeField(cast(JNIEnv*) (cast(ANativeActivity*) activity).env);
+
     // A process can outlive its activity and start another: nothing the
-    // previous one queued belongs to this one.
+    // previous one queued belongs to this one, and the backend, which
+    // outlives both, is told the window is this activity's now.
+    // Notes the previous activity queued stay: they are applied in order, and
+    // one may carry a surface reference the WSI thread must release. Its later
+    // callbacks are dropped (`postNote`), its surface's loss excepted.
     pthread_mutex_lock(&channel.lock);
     channel.activity = activity;
-    channel.head = channel.count = 0;
     channel.inputHead = channel.inputCount = 0;
     channel.releasePending = false;
-    pthread_mutex_unlock(&channel.lock);
+    const startApp = !appRunning;
+    appRunning = true;
+    enqueueLocked(Note(NoteKind.activityStarted));
+    // The window covers the whole panel, cutouts and bars included; what
+    // covers it is reported as `safeInsets`. A layout parameter of each
+    // activity's window, so set for every one.
+    layOutEdgeToEdge();
     auto callbacks = *cast(ANativeActivityCallbacks**) activity;
     callbacks.onNativeWindowCreated = &onSurfaceCreated;
     callbacks.onNativeWindowResized = &onSurfaceResized;
@@ -646,10 +746,30 @@ void startActivity(void* activity, void function() nothrow appMain) nothrow
     callbacks.onContentRectChanged = &onContentRectChanged;
     callbacks.onConfigurationChanged = &onConfigurationChanged;
     callbacks.onInputQueueDestroyed = &onInputQueueDestroyed;
+    callbacks.onLowMemory = &onLowMemory;
+    if (!startApp)
+        return;
+    // One application thread for the process (§3): later activities are
+    // the same window's, served by the same backend.
+    applicationMain = appMain;
     try
-        (new Thread(appMain)).start();
+        (new Thread(&runApplication)).start();
     catch (Exception)
         __android_log_write(6, "sparkles-wsi", "cannot start the application thread");
+}
+
+private __gshared bool runtimeStarted;
+private __gshared bool appRunning; // under `channel.lock`
+private __gshared void function() nothrow applicationMain;
+
+// The application's thread. Should `main` return, the next activity starts
+// it again.
+private void runApplication() nothrow
+{
+    applicationMain();
+    pthread_mutex_lock(&channel.lock);
+    appRunning = false;
+    pthread_mutex_unlock(&channel.lock);
 }
 
 /**
@@ -723,7 +843,12 @@ struct AndroidWsi
     private pthread_t owner_;
     private void* activity_;
     private void* surface_;   // the `ANativeWindow` the WSI thread knows of
+    private bool activityLive_ = true; // an activity holds the window now
+    private ulong nextFrameToken_ = 1;
     private bool releaseOwed_; // a destroyed surface waits for the next drain
+    // References the WSI thread owns, released after the next drain.
+    private void*[8] releasing_;
+    private size_t releasingCount_;
     private ScaleFactor scale_ = ScaleFactor(1);
     private PhysicalInsets insets_; // the last insets read (`refreshMetrics`)
     private MonoTime insetsReadAt_;
@@ -756,9 +881,6 @@ struct AndroidWsi
         wsi.activity_ = cast(void*) activity;
         wsi.owner_ = pthread_self();
         wsi.scale_ = densityScale(activity);
-        // The window covers the whole panel, cutouts and bars included; what
-        // covers it is reported as `safeInsets`.
-        layOutEdgeToEdge();
         wsi.open_ = true;
         return wsiOk();
     }
@@ -864,6 +986,27 @@ struct AndroidWsi
         return wsiOk();
     }
 
+    /**
+    Asks for one frame opportunity: a `FrameReadyEvent` at the start of the
+    next display frame (`AChoreographer`), stamped with its time. A renderer
+    that animates asks again after each frame it draws, and one that does not
+    simply stops asking, so nothing wakes the loop while nothing changes.
+    Requests made before the frame arrives are one request.
+    */
+    WsiResult!void requestFrame(WindowId id)
+    {
+        auto checked = checkedSlot(id, WsiOperation.command);
+        if (checked.hasError)
+            return wsiErr!void(checked.error);
+        if (cas(&framePending, false, true) && !postToMainThread(&frameJob, null))
+        {
+            atomicStore(framePending, false);
+            return androidFailure!void(WsiOperation.command,
+                "frame requests need the activity's main thread", WsiErrorKind.unavailable);
+        }
+        return wsiOk();
+    }
+
     /// Ends the activity (`ANativeActivity_finish`): its window then reports
     /// `DestroyedEvent` once the platform destroys it.
     WsiResult!void finishActivity()
@@ -871,12 +1014,24 @@ struct AndroidWsi
         auto owner = requireOwner!void(WsiOperation.close);
         if (owner.hasError)
             return owner;
-        ANativeActivity_finish(activity_);
+        if (activityLive_)
+            ANativeActivity_finish(activity_);
         return wsiOk();
     }
 
     /// The activity and its current `ANativeWindow`; `unavailable` while the
     /// activity has no surface.
+    /// The connection's display handle, without a window: what a
+    /// process-scoped renderer (a Vulkan instance and device) is chosen
+    /// from before any window has a surface (§10.1).
+    WsiResult!DisplayHandle displayHandle()
+    {
+        auto owner = requireOwner!DisplayHandle(WsiOperation.queryHandle);
+        if (owner.hasError)
+            return owner;
+        return wsiOk(DisplayHandle(AndroidDisplayHandle(activity_)));
+    }
+
     WsiResult!NativeHandles nativeHandles(WindowId id)
     {
         auto checked = checkedSlot(id, WsiOperation.queryHandle);
@@ -903,6 +1058,9 @@ struct AndroidWsi
             releaseOwed_ = false;
             releaseNow();
         }
+        foreach (s; releasing_[0 .. releasingCount_])
+            ANativeWindow_release(s);
+        releasingCount_ = 0;
         return drained;
     }
 
@@ -1060,14 +1218,9 @@ struct AndroidWsi
             clipboard_.end(h, TransferStatus.failed);
         }
         pthread_mutex_lock(&channel.lock);
-        // A backend another activity superseded leaves the channel, and the
-        // waker the new one installed, alone.
-        if (channel.activity is activity_)
-        {
-            channel.hasWaker = false;
-            channel.releasePending = false;
-            pthread_cond_broadcast(&channel.released);
-        }
+        channel.hasWaker = false;
+        channel.releasePending = false;
+        pthread_cond_broadcast(&channel.released);
         pthread_mutex_unlock(&channel.lock);
         closed_ = true;
         open_ = false;
@@ -1098,11 +1251,6 @@ struct AndroidWsi
             size_t n;
             uint lost;
             pthread_mutex_lock(&channel.lock);
-            if (channel.activity !is activity_)
-            {
-                pthread_mutex_unlock(&channel.lock);
-                return work; // another activity's input
-            }
             while (channel.inputCount != 0 && n < taken.length)
             {
                 taken[n++] = channel.inputs[channel.inputHead];
@@ -1335,10 +1483,7 @@ struct AndroidWsi
         Note[32] taken;
         size_t n;
         pthread_mutex_lock(&channel.lock);
-        // Another activity started in this process: the channel is its now.
-        // This backend takes nothing more, and its window has ended.
-        const superseded = channel.activity !is activity_;
-        while (!superseded && channel.count != 0)
+        while (channel.count != 0)
         {
             taken[n++] = channel.notes[channel.head];
             channel.head = (channel.head + 1) % channel.notes.length;
@@ -1346,16 +1491,6 @@ struct AndroidWsi
         }
         pthread_mutex_unlock(&channel.lock);
 
-        if (superseded)
-        {
-            const live = windowHandle();
-            if (!live.valid)
-                return false;
-            windows_.remove(live);
-            events_.forgetWindow(live);
-            emit(live, DestroyedEvent());
-            return true;
-        }
         foreach (ref note; taken[0 .. n])
             apply(note);
         return n != 0;
@@ -1367,6 +1502,14 @@ struct AndroidWsi
         final switch (note.kind)
         {
             case NoteKind.surfaceCreated:
+                // The new activity's surface can come before the previous
+                // one's loss: report that loss first, so the application lets
+                // go of the old surface before it sees the new one.
+                if (surface_ !is null && live.valid)
+                {
+                    surface_ = null;
+                    reportMetrics(live);
+                }
                 surface_ = cast(void*) note.surface;
                 if (live.valid)
                 {
@@ -1386,15 +1529,18 @@ struct AndroidWsi
                     offerFrame(live);
                 break;
             case NoteKind.surfaceDestroyed:
+                if (note.wsiReleases)
+                    releaseAfterDrain(cast(void*) note.surface);
                 if (cast(void*) note.surface !is surface_)
                     break;
                 surface_ = null;
                 if (live.valid)
-                {
                     // A zero pixel extent suspends presentation (`F01`).
                     reportMetrics(live);
+                if (note.wsiReleases)
+                    break;
+                if (live.valid)
                     releaseOwed_ = true;
-                }
                 else
                     releaseNow();
                 break;
@@ -1417,12 +1563,26 @@ struct AndroidWsi
                     emit(live, OccludedEvent(true));
                 break;
             case NoteKind.destroyed:
-                if (live.valid)
+                // The activity ended with no other started: the window stays,
+                // without a surface, for the next one (§9.5).
+                activityLive_ = false;
+                break;
+            case NoteKind.activityStarted:
+                activity_ = cast(void*) nativeActivity();
+                activityLive_ = true;
+                if (textInput_)
                 {
-                    windows_.remove(live);
-                    events_.forgetWindow(live);
-                    emit(live, DestroyedEvent());
+                    installImeField();
+                    showImeKeyboard(true);
                 }
+                break;
+            case NoteKind.lowMemory:
+                emit(WindowId.init, MemoryPressureEvent(true));
+                break;
+            case NoteKind.frame:
+                if (live.valid && surface_ !is null)
+                    emit(live, FrameReadyEvent(nextFrameToken_++, 0),
+                        MonoTime.zero + note.frameNanos.nsecs);
                 break;
             case NoteKind.contentRect, NoteKind.configuration:
                 // Insets or the density may have changed; the surface's
@@ -1432,15 +1592,27 @@ struct AndroidWsi
         }
     }
 
-    // The surface-destroyed callback waits on this; only for its own activity.
+    // A surface reference this thread owns, released once the drain that
+    // reports its loss has returned. Should more be owed than one drain
+    // releases, the oldest goes now.
+    private void releaseAfterDrain(void* surface)
+    {
+        if (releasingCount_ == releasing_.length)
+        {
+            ANativeWindow_release(releasing_[0]);
+            foreach (i; 1 .. releasing_.length)
+                releasing_[i - 1] = releasing_[i];
+            --releasingCount_;
+        }
+        releasing_[releasingCount_++] = surface;
+    }
+
+    // The surface-destroyed callback waits on this.
     private void releaseNow()
     {
         pthread_mutex_lock(&channel.lock);
-        if (channel.activity is activity_)
-        {
-            channel.releasePending = false;
-            pthread_cond_broadcast(&channel.released);
-        }
+        channel.releasePending = false;
+        pthread_cond_broadcast(&channel.released);
         pthread_mutex_unlock(&channel.lock);
     }
 
