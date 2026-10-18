@@ -269,6 +269,17 @@ struct Win32Wsi
         return wsiOk();
     }
 
+    /// The connection's display handle, without a window: what a
+    /// process-scoped renderer (a Vulkan instance and device) is chosen
+    /// from before any window has a surface (§10.1).
+    WsiResult!DisplayHandle displayHandle()
+    {
+        auto owner = requireOwner!DisplayHandle(WsiOperation.queryHandle);
+        if (owner.hasError)
+            return owner;
+        return wsiOk(DisplayHandle(Win32DisplayHandle(cast(void*) instance_)));
+    }
+
     WsiResult!NativeHandles nativeHandles(WindowId id)
     {
         auto slot = checkedSlot(id, WsiOperation.queryHandle);
