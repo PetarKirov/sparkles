@@ -706,6 +706,19 @@ armed op at all — `wake()` posts a zero-byte `PostQueuedCompletionStatus`
 packet. The portable fallback (a backend with no `nativeWaker`) is an
 `eventfd` / pipe and a persistently armed internal read.
 
+**The futex hash is pinned first.** From Linux 6.16 a process hashes its
+private futexes globally until its first `CLONE_VM` clone (a thread, the
+ring's own io-wq worker, and on later kernels `vfork`) gives it a private
+hash, and that switch migrates no waiter out of the global hash. A blocking
+waiter cannot exist at that moment; the in-ring `FUTEX_WAIT` can, and would
+miss every later `FUTEX_WAKE`. So the uring backend's `open` asks for the
+private hash itself (`PR_FUTEX_HASH`) when the process has none, sized as
+the kernel's default grows to at most (4 slots per online CPU, at least
+16); an explicit size is process-wide and does not grow. A kernel without
+the option, or a process that chose the global hash, has nothing to strand.
+`libs/event-horizon/examples/cross-thread-wake.d` arms its waker while the
+process is still single-threaded, and fails without the pin.
+
 The returned `Waker` is a copyable value. `Waker.wake()` is **thread-safe**,
 `nothrow @nogc`, coalescing, and never blocks. The fd-write fallback is
 also async-signal-safe; native `kevent`/`futex` triggers are not promised
