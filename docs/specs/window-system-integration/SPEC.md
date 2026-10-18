@@ -420,7 +420,7 @@ The required event families are:
 
 | Family        | Required information                                                  |
 | ------------- | --------------------------------------------------------------------- |
-| lifecycle     | ready, exposed, occluded, close requested, destroyed                  |
+| lifecycle     | ready, exposed, occluded, close requested, destroyed, memory pressure |
 | metrics       | logical/physical size, scale, move, output enter/leave                |
 | frame         | frame opportunity and presentation feedback where available           |
 | focus         | window focus, keyboard focus, pointer enter/leave                     |
@@ -619,9 +619,19 @@ Vulkan ICD—must additionally hold the backend's owner-thread native-I/O borrow
 - The backend owns the native activity, with no `native_app_glue`. Activity
   callbacks run on the Java main thread, record plain values in a mutex-guarded
   channel and wake Event Horizon; application code never runs inside one.
-- An activity has one window, so `createWindow` names it. A destroyed surface is
-  reported as zero physical size, which suspends presentation, and the callback
-  waits, bounded, until the application has drained that report.
+- One owner thread serves the process (§3). The backend starts it at the
+  process's first activity and runs the application's `main` there; `main` does not
+  return when an activity ends, since Android keeps the process for the next one.
+- The application's window outlives activities. `createWindow` names it once; an
+  activity finishing or going to the background is that window losing its
+  surface, and a relaunch or a return is the window gaining one again. Its
+  `WindowId` stays valid for the process, and `DestroyedEvent` comes only from
+  `destroyWindow`. A lost surface is reported as zero physical size, which
+  suspends presentation, and the callback waits, bounded, until the application
+  has drained that report. Callbacks of an activity that is no longer current are
+  dropped.
+- The platform's low-memory call is reported as a `MemoryPressureEvent`, so a
+  renderer can release what it keeps while the window has no surface.
 - Input arrives through the activity's `AInputQueue`, attached to the main
   thread's looper and translated there into values. A key's physical identity is
   its evdev scan code and its logical identity the `KeyCharacterMap` base
@@ -665,6 +675,38 @@ ui-app -> ui-skia -> Skia Graphite -> Vulkan (Linux/Windows/Android) -> vulkan-w
 ui-app -> ui-skia-sdl -> Skia Graphite -> SDL compatibility host
 ui-app -> ui-raylib   -> existing raylib host
 ```
+
+### 10.1 Lifetimes
+
+Work belongs to the longest scope that can own it, so nothing is repeated per
+window or per surface that a process could do once. A library user creates the
+process-scoped objects once, and handles three events: a surface appearing
+(`Ready`, or metrics that are no longer suspended), a surface going (suspended
+metrics), and memory pressure.
+
+| Scope    | Lives as long as                                                        | Owns                                                                                                                                             |
+| -------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| process  | the OS process                                                          | the WSI owner and its loop (§3); `VulkanDevice`: the loader, `VkInstance`, the physical device, `VkDevice`, its queues and its `VkPipelineCache` |
+| window   | its `WindowId`                                                          | metrics, focus, text input, clipboard ownership                                                                                                  |
+| surface  | one native surface of a window (an Android window has a series of them) | `WindowSurface`: the `VkSurfaceKHR`, the swapchain, its views, framebuffers and frame synchronization                                            |
+| renderer | until the surface format changes or the device is lost                  | pipelines and shader modules, built through the device's pipeline cache                                                                          |
+
+`sparkles:vulkan-wsi` follows the table. `VulkanDevice` is created from the WSI's
+`BackendKind` and display handle, choosing a device by queue capability and the
+platform's presentation support, so it needs no surface. `WindowSurface` makes
+one surface on that device and checks present support for it; a new surface
+repeats only that check. The pipeline cache is loaded from and saved to a path
+the application chooses, so even a cold start skips pipeline compilation.
+
+**Background policy.** While a window has no surface, an application keeps the
+process-scoped objects: resuming then costs a surface and a swapchain. It
+releases the device on `MemoryPressureEvent`. An application that prefers the
+least background memory may instead release the device whenever the surface
+goes, at the cost of rebuilding it on return; the examples show both.
+
+**Pacing.** A renderer draws only while it has a surface and something to show:
+on `FrameReady`, or when its content changes. It draws nothing while suspended,
+occluded or hidden. An animation draws once per frame opportunity, never faster.
 
 ## 11. Testing and evidence
 
