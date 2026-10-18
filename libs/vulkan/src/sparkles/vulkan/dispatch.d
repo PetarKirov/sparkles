@@ -225,6 +225,9 @@ private enum CommandSet[] deviceSets = [
         "CreatePipelineLayout",
         "DestroyPipelineLayout",
         "CreateGraphicsPipelines",
+        "CreatePipelineCache",
+        "GetPipelineCacheData",
+        "DestroyPipelineCache",
         "DestroyPipeline",
         // Recording a draw. Viewport and scissor are set dynamically rather
         // than baked into the pipeline, so a resize rebuilds the swapchain
