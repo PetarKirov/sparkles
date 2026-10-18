@@ -513,6 +513,14 @@
     {
       legacyPackages.examples = examplesByLib;
 
+      # The catalogue other builders read: every example file with an inline
+      # recipe, whatever its `platforms`, and what its path and recipe say.
+      # `nix/packages/android/examples.nix` builds the `platforms "android"`
+      # ones as APKs.
+      legacyPackages.exampleCatalog = {
+        inherit allExampleFiles exampleInfo;
+      };
+
       # Smoke-run every standalone example the way `ci --example-files` does:
       # `// ci: build-only` examples are built (they are retained in the
       # script's closure) but not executed; the rest run sequentially and any
