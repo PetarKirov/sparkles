@@ -578,6 +578,17 @@ struct IocpBackend
         if (want == 0)
             return ioOk(0u);
 
+        // Something is ready already: a completion the issue-time probe took
+        // off the port (`repairHostSignalAfterIssue`), or a synthesized one.
+        // Waiting would delay it, and the dequeue below would overwrite the
+        // held completion and lose it — the operation it belongs to would
+        // never complete. An overlapped call that succeeds at once queues its
+        // packet before the probe runs, so this is the common case under Wine
+        // and a race on Windows.
+        expireTimers();
+        if (_hasPending || _synthCount != 0)
+            return ioOk((_hasPending ? 1u : 0u) + _synthCount);
+
         // The wait timeout is the min of the caller's deadline and the
         // earliest pending timer, so GQCS wakes when a timer is due.
         ulong waitMs = deadline is null
