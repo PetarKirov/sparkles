@@ -53,7 +53,8 @@ import sparkles.android.clipboard : ClipDescription, ClipText, closeClipText,
     describePrimaryClip, openPrimaryClipText, readClipText, setPrimaryClipTyped;
 import sparkles.android.ime : installImeField, pollImeField, showImeKeyboard;
 import sparkles.android.main_thread : wireMainThread;
-import sparkles.android.window_metrics : displayDensity, windowInsets;
+import sparkles.android.window_metrics : displayDensity, layOutEdgeToEdge,
+    windowInsets;
 import sparkles.android.text_input : imeBackspace, imeEnter, keyCharacter,
     onTyped, popTypedChar;
 import sparkles.base.buffer : UniqueBuffer;
@@ -187,6 +188,7 @@ private struct Channel
     pthread_cond_t released;
     Note[32] notes;
     size_t head, count;
+    void* activity; /// the activity whose callbacks are current
     Waker waker;
     bool hasWaker;
     bool releasePending; /// a destroyed surface waits for the WSI thread
@@ -234,10 +236,18 @@ private struct InputRecord
 
 private __gshared Channel channel;
 
-private void post(NoteKind kind, void* surface = null, int[4] rect = 0)
-    nothrow @nogc
+// A note from an activity other than the current one is dropped: a finished
+// activity's last callbacks can arrive after a new activity started in the
+// same process, and its `destroyed` must not end the new one's window.
+private void post(void* activity, NoteKind kind, void* surface = null,
+    int[4] rect = 0) nothrow @nogc
 {
     pthread_mutex_lock(&channel.lock);
+    if (activity !is channel.activity)
+    {
+        pthread_mutex_unlock(&channel.lock);
+        return;
+    }
     if (channel.count < channel.notes.length)
     {
         channel.notes[(channel.head + channel.count) % channel.notes.length] =
@@ -537,34 +547,41 @@ extern (C) private nothrow
         AInputQueue_detachLooper(queue);
     }
 
-    void onSurfaceCreated(void*, void* surface)
+    void onSurfaceCreated(void* activity, void* surface)
     {
         ANativeWindow_acquire(surface);
-        post(NoteKind.surfaceCreated, surface);
+        post(activity, NoteKind.surfaceCreated, surface);
     }
 
-    void onSurfaceResized(void*, void* surface)
+    void onSurfaceResized(void* activity, void* surface)
     {
-        post(NoteKind.surfaceResized, surface);
+        post(activity, NoteKind.surfaceResized, surface);
     }
 
-    void onSurfaceRedraw(void*, void* surface)
+    void onSurfaceRedraw(void* activity, void* surface)
     {
-        post(NoteKind.surfaceRedraw, surface);
+        post(activity, NoteKind.surfaceRedraw, surface);
     }
 
     // The platform destroys the surface as soon as this returns, so it waits
     // until the WSI thread has reported the loss and the application has
     // drained that report. The wait is bounded: an application that stops
     // draining must not hang the activity.
-    void onSurfaceDestroyed(void*, void* surface)
+    void onSurfaceDestroyed(void* activity, void* surface)
     {
         import core.sys.posix.time : clock_gettime, CLOCK_REALTIME, timespec;
 
         pthread_mutex_lock(&channel.lock);
+        // A finished activity's surface has no reader to wait for.
+        if (activity !is channel.activity)
+        {
+            pthread_mutex_unlock(&channel.lock);
+            ANativeWindow_release(surface);
+            return;
+        }
         channel.releasePending = true;
         pthread_mutex_unlock(&channel.lock);
-        post(NoteKind.surfaceDestroyed, surface);
+        post(activity, NoteKind.surfaceDestroyed, surface);
 
         timespec until;
         clock_gettime(CLOCK_REALTIME, &until);
@@ -578,21 +595,21 @@ extern (C) private nothrow
         ANativeWindow_release(surface);
     }
 
-    void onFocusChanged(void*, int focused)
+    void onFocusChanged(void* activity, int focused)
     {
-        post(focused ? NoteKind.focusGained : NoteKind.focusLost);
+        post(activity, focused ? NoteKind.focusGained : NoteKind.focusLost);
     }
 
     // `ARect`: four `int32_t`, left, top, right, bottom.
-    void onContentRectChanged(void*, const(void)* rect)
+    void onContentRectChanged(void* activity, const(void)* rect)
     {
-        post(NoteKind.contentRect, null, *cast(const(int[4])*) rect);
+        post(activity, NoteKind.contentRect, null, *cast(const(int[4])*) rect);
     }
 
-    void onConfigurationChanged(void*) { post(NoteKind.configuration); }
-    void onResumed(void*) { post(NoteKind.resumed); }
-    void onPaused(void*) { post(NoteKind.paused); }
-    void onDestroyed(void*) { post(NoteKind.destroyed); }
+    void onConfigurationChanged(void* activity) { post(activity, NoteKind.configuration); }
+    void onResumed(void* activity) { post(activity, NoteKind.resumed); }
+    void onPaused(void* activity) { post(activity, NoteKind.paused); }
+    void onDestroyed(void* activity) { post(activity, NoteKind.destroyed); }
 }
 
 /**
@@ -608,6 +625,14 @@ void startActivity(void* activity, void function() nothrow appMain) nothrow
     wireMainThread(activity);
     rt_init();
     pthread_cond_init(&channel.released, null);
+    // A process can outlive its activity and start another: nothing the
+    // previous one queued belongs to this one.
+    pthread_mutex_lock(&channel.lock);
+    channel.activity = activity;
+    channel.head = channel.count = 0;
+    channel.inputHead = channel.inputCount = 0;
+    channel.releasePending = false;
+    pthread_mutex_unlock(&channel.lock);
     auto callbacks = *cast(ANativeActivityCallbacks**) activity;
     callbacks.onNativeWindowCreated = &onSurfaceCreated;
     callbacks.onNativeWindowResized = &onSurfaceResized;
@@ -731,6 +756,9 @@ struct AndroidWsi
         wsi.activity_ = cast(void*) activity;
         wsi.owner_ = pthread_self();
         wsi.scale_ = densityScale(activity);
+        // The window covers the whole panel, cutouts and bars included; what
+        // covers it is reported as `safeInsets`.
+        layOutEdgeToEdge();
         wsi.open_ = true;
         return wsiOk();
     }
@@ -873,10 +901,7 @@ struct AndroidWsi
         if (releaseOwed_)
         {
             releaseOwed_ = false;
-            pthread_mutex_lock(&channel.lock);
-            channel.releasePending = false;
-            pthread_cond_broadcast(&channel.released);
-            pthread_mutex_unlock(&channel.lock);
+            releaseNow();
         }
         return drained;
     }
@@ -1035,9 +1060,14 @@ struct AndroidWsi
             clipboard_.end(h, TransferStatus.failed);
         }
         pthread_mutex_lock(&channel.lock);
-        channel.hasWaker = false;
-        channel.releasePending = false;
-        pthread_cond_broadcast(&channel.released);
+        // A backend another activity superseded leaves the channel, and the
+        // waker the new one installed, alone.
+        if (channel.activity is activity_)
+        {
+            channel.hasWaker = false;
+            channel.releasePending = false;
+            pthread_cond_broadcast(&channel.released);
+        }
         pthread_mutex_unlock(&channel.lock);
         closed_ = true;
         open_ = false;
@@ -1068,6 +1098,11 @@ struct AndroidWsi
             size_t n;
             uint lost;
             pthread_mutex_lock(&channel.lock);
+            if (channel.activity !is activity_)
+            {
+                pthread_mutex_unlock(&channel.lock);
+                return work; // another activity's input
+            }
             while (channel.inputCount != 0 && n < taken.length)
             {
                 taken[n++] = channel.inputs[channel.inputHead];
@@ -1300,7 +1335,10 @@ struct AndroidWsi
         Note[32] taken;
         size_t n;
         pthread_mutex_lock(&channel.lock);
-        while (channel.count != 0)
+        // Another activity started in this process: the channel is its now.
+        // This backend takes nothing more, and its window has ended.
+        const superseded = channel.activity !is activity_;
+        while (!superseded && channel.count != 0)
         {
             taken[n++] = channel.notes[channel.head];
             channel.head = (channel.head + 1) % channel.notes.length;
@@ -1308,6 +1346,16 @@ struct AndroidWsi
         }
         pthread_mutex_unlock(&channel.lock);
 
+        if (superseded)
+        {
+            const live = windowHandle();
+            if (!live.valid)
+                return false;
+            windows_.remove(live);
+            events_.forgetWindow(live);
+            emit(live, DestroyedEvent());
+            return true;
+        }
         foreach (ref note; taken[0 .. n])
             apply(note);
         return n != 0;
@@ -1384,11 +1432,15 @@ struct AndroidWsi
         }
     }
 
+    // The surface-destroyed callback waits on this; only for its own activity.
     private void releaseNow()
     {
         pthread_mutex_lock(&channel.lock);
-        channel.releasePending = false;
-        pthread_cond_broadcast(&channel.released);
+        if (channel.activity is activity_)
+        {
+            channel.releasePending = false;
+            pthread_cond_broadcast(&channel.released);
+        }
         pthread_mutex_unlock(&channel.lock);
     }
 

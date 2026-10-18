@@ -107,3 +107,60 @@ private bool edges(ref JniFrame f, jobject insets, int types, ref EdgePixels int
     }
     return !f.failed;
 }
+
+/**
+Lays the activity's window out edge to edge, asynchronously on the main
+thread: into a display cutout on every edge (`LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS`,
+`SHORT_EDGES` before API 30) and, from API 30, behind the system bars
+(`setDecorFitsSystemWindows(false)`). The window then covers the whole panel
+and what covers it arrives as insets ($(LREF windowInsets)). `false` when the
+main thread is not wired.
+*/
+bool layOutEdgeToEdge() @trusted nothrow @nogc
+{
+    import sparkles.android.main_thread : postToMainThread;
+
+    return postToMainThread(&edgeToEdgeJob, null);
+}
+
+private void edgeToEdgeJob(JNIEnv* env, void*) nothrow @nogc
+{
+    import sparkles.android.activity : nativeActivity;
+
+    const api = android_get_device_api_level();
+    if (api < 28)
+        return;
+    auto activity = cast(jobject) nativeActivity().clazz;
+    jobject call(jobject o, const(char)* name, const(char)* sig)
+    {
+        auto m = (*env).GetMethodID(env, (*env).GetObjectClass(env, o), name, sig);
+        return m is null ? null : (*env).CallObjectMethodA(env, o, m, null);
+    }
+    auto window = call(activity, "getWindow", "()Landroid/view/Window;");
+    if (window is null)
+        return;
+    auto attributes = call(window, "getAttributes", "()Landroid/view/WindowManager$LayoutParams;");
+    if (attributes is null)
+        return;
+    auto mode = (*env).GetFieldID(env, (*env).GetObjectClass(env, attributes),
+        "layoutInDisplayCutoutMode", "I");
+    if (mode !is null)
+        (*env).SetIntField(env, attributes, mode, api >= 30 ? 3 : 1);
+    auto set = (*env).GetMethodID(env, (*env).GetObjectClass(env, window),
+        "setAttributes", "(Landroid/view/WindowManager$LayoutParams;)V");
+    jvalue[1] a;
+    a[0].l = attributes;
+    if (set !is null)
+        (*env).CallVoidMethodA(env, window, set, a.ptr);
+    if (api >= 30)
+    {
+        auto fits = (*env).GetMethodID(env, (*env).GetObjectClass(env, window),
+            "setDecorFitsSystemWindows", "(Z)V");
+        jvalue[1] no;
+        no[0].z = false;
+        if (fits !is null)
+            (*env).CallVoidMethodA(env, window, fits, no.ptr);
+    }
+    if ((*env).ExceptionCheck(env))
+        (*env).ExceptionClear(env);
+}
