@@ -34,6 +34,14 @@ last dropped event, so the delivered order stays strictly increasing and the gap
 in sequence numbers names exactly what was lost.
 */
 struct EventsDroppedEvent { uint count; }
+
+/**
+The system is short of memory. Not attributable to one window, so `window` is
+`WindowId.init`. A renderer releases what it can rebuild, first what it keeps
+for a window that has no surface (§10.1); `critical` asks for everything
+optional, since the process may be killed next.
+*/
+struct MemoryPressureEvent { bool critical; }
 struct FocusChangedEvent { bool focused; }
 struct SurfaceMetricsChangedEvent { SurfaceMetrics metrics; }
 struct MovedEvent { PhysicalPosition position; }
@@ -357,7 +365,7 @@ alias WindowEventPayload = SumType!(NoWindowEvent, ReadyEvent, ExposedEvent,
     KeyboardEvent, TextCommittedEvent, CompositionEvent, PointerEvent,
     RelativePointerEvent, ScrollEvent, TouchEvent, OutputEvent, DataOfferEvent,
     PopupConfiguredEvent, PopupDismissedEvent, CursorChangedEvent,
-    EventsDroppedEvent);
+    EventsDroppedEvent, MemoryPressureEvent);
 
 /**
 Sequence-stamped event. Sequence zero is reserved for uninitialized data.
