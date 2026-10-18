@@ -30,13 +30,34 @@ both axes — Vulkan's "the surface has no fixed size; the swapchain decides".
 Several Wayland and RADV paths report exactly that, and a swapchain that trusts
 it asks for a four-billion-pixel image. The window's pixel size is the answer
 there, clamped to what the surface will actually accept.
+
+A surface turned 90° or 270° from its panel (Android, with the display turned)
+has images that keep the panel's orientation: they are created with
+`preTransform` set to that turn and drawn pre-rotated, so their extent is the
+window's with width and height swapped. Implementations disagree on which
+orientation `currentExtent` reports then (the emulator's gives the display's,
+Adreno the panel's), so the window's own pixels decide: of the current extent
+and its swap, the one shaped opposite to the window. Without window pixels the
+current extent is swapped, as Android's pre-rotation guide describes.
 */
 VkExtent2D chooseExtent(Size)(in VkSurfaceCapabilitiesKHR caps,
     in Size windowPixels, in Size minAlloc = Size.init)
     @safe pure nothrow @nogc
 {
+    enum turned = VkSurfaceTransformFlagBitsKHR.VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR
+        | VkSurfaceTransformFlagBitsKHR.VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR;
     if (caps.currentExtent.width != uint.max)
-        return caps.currentExtent;
+    {
+        const current = caps.currentExtent;
+        if ((caps.currentTransform & turned) == 0)
+            return current;
+        const swapped = VkExtent2D(current.height, current.width);
+        const w = cast(uint) windowPixels.width, h = cast(uint) windowPixels.height;
+        if (w == 0 || h == 0 || w == h)
+            return swapped;
+        // Shaped opposite to the window: tall for a wide window.
+        return (w > h) == (current.height > current.width) ? current : swapped;
+    }
 
     // The surface has no size of its own. `minAlloc` is the display-sized
     // pad: a swapchain created at that size can shrink with the window by
@@ -194,6 +215,13 @@ struct Swapchain
     VkColorSpaceKHR colorSpace;
     VkPresentModeKHR presentMode;
     VkExtent2D extent;
+    /// How the presentation engine turns the images onto the display: the
+    /// surface's `currentTransform` when the swapchain was built. On
+    /// Android it is a rotation while the display is turned from its panel's
+    /// orientation; the images keep the panel's, and the renderer draws into
+    /// them pre-rotated rather than leaving the turn to the compositor.
+    VkSurfaceTransformFlagBitsKHR transform =
+        VkSurfaceTransformFlagBitsKHR.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 
     /// The presentable images. Owned by the swapchain, not by us.
     VkImage[] images;
@@ -285,6 +313,7 @@ struct Swapchain
 
         if (created.hasError)
             return err!void("vkCreateSwapchainKHR: " ~ describeResult(created.error));
+        sc.transform = caps.currentTransform;
 
         sc.images = queryVkList!VkImage(
             vk.device.getSwapchainImagesKHR, vk.device.device, sc.handle);
@@ -292,6 +321,29 @@ struct Swapchain
             return err!void("swapchain reports no images");
 
         return ok!string();
+    }
+
+    /**
+    Whether the surface now wants another swapchain than this one: another
+    extent for `windowPixels`, or another transform. It queries the surface's
+    capabilities and waits for nothing, so a renderer can ask before every
+    frame. That is what a turned Android display needs: the window's new size
+    and the surface's new transform arrive separately, a rebuild made between
+    them is shaped for neither, and a size mismatch is not an error the
+    present reports.
+    */
+    bool outdated(Context, Size)(ref Context vk, in Size windowPixels,
+        in Size minAlloc = Size.init) @system nothrow
+    {
+        if (handle is null)
+            return true;
+        VkSurfaceCapabilitiesKHR caps;
+        if (vk.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
+                vk.physicalDevice, vk.surface, &caps) < 0)
+            return false;
+        const wanted = chooseExtent(caps, windowPixels, minAlloc);
+        return caps.currentTransform != transform
+            || wanted.width != extent.width || wanted.height != extent.height;
     }
 
     /**
@@ -351,7 +403,10 @@ struct Swapchain
         }
 
         const extent = chooseExtent(caps, windowPixels, minAlloc);
-        auto action = decideResize(true, sc.extent, extent, force, growOnly);
+        // A turned display can keep the extent and change only the
+        // transform; the images must then be rebuilt for it all the same.
+        const turned = caps.currentTransform != sc.transform;
+        auto action = decideResize(true, sc.extent, extent, force || turned, growOnly);
         if (action != SwapchainResize.rebuilt)
             return ok!string(action);
 
@@ -390,6 +445,7 @@ struct Swapchain
 
         sc.handle = next;
         sc.extent = extent;
+        sc.transform = caps.currentTransform;
         sc.images = queryVkList!VkImage(
             vk.device.getSwapchainImagesKHR, vk.device.device, sc.handle);
         if (sc.images.length == 0)
@@ -488,6 +544,19 @@ struct Swapchain
     // The ordinary case: the surface knows its own size and wins.
     caps.currentExtent = VkExtent2D(800, 600);
     assert(chooseExtent(caps, PixelSize(1920, 1080)) == VkExtent2D(800, 600));
+    // A turned surface reports the display's orientation; the images keep the
+    // panel's.
+    caps.currentTransform = VkSurfaceTransformFlagBitsKHR.VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR;
+    // The display's orientation reported (the emulator)...
+    caps.currentExtent = VkExtent2D(800, 600);
+    assert(chooseExtent(caps, PixelSize(800, 600)) == VkExtent2D(600, 800));
+    // ...or the panel's (Adreno): either way the images are tall.
+    caps.currentExtent = VkExtent2D(600, 800);
+    assert(chooseExtent(caps, PixelSize(800, 600)) == VkExtent2D(600, 800));
+    // No window pixels: Android's documented swap.
+    assert(chooseExtent(caps, PixelSize(0, 0)) == VkExtent2D(800, 600));
+    caps.currentExtent = VkExtent2D(800, 600);
+    caps.currentTransform = VkSurfaceTransformFlagBitsKHR.VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
 
     // The trap: 0xFFFFFFFF means "you decide". Trusting it verbatim asks for a
     // four-billion-pixel image; the window's pixels are the answer.
