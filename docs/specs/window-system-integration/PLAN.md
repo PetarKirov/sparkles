@@ -413,7 +413,8 @@ hand values to the WSI thread, which runs Event Horizon. JNI goes through
    metrics.
 4. **Vulkan, then the terminal, on the backend.**
    - `VK_KHR_android_surface` in `sparkles:vulkan` and `sparkles:vulkan-wsi`,
-     and the shared triangle presenting on the backend.
+     and a diagnostic test pattern presenting on the backend through a
+     pre-rotated swapchain.
    - The phone terminal leaves raylib once a renderer on `sparkles:vulkan-wsi`
      exists (milestone M7); until then it stays on raylib's glue.
 
@@ -432,10 +433,12 @@ surface's metrics follow both in one event each, with the system bars' insets in
 unverified there: the hardware keyboard the lane injects through keeps Gboard
 from showing one.
 
-Gate for slice 4's Vulkan half: the lane runs `vulkan-wsi-android-triangle-apk`
-after the smoke, which presents the shared triangle through
-`VK_KHR_android_surface` and rebuilds its swapchain for each of two rotations.
-The terminal half waits for M7.
+Gate for slice 4's Vulkan half: after the smoke, the lane runs
+`libs/vulkan-wsi/scripts/verify-android-test-pattern.sh`, which presents the test
+pattern through `VK_KHR_android_surface` with a pre-rotated swapchain and checks
+a screen capture in portrait, turned to landscape and back: corners, safe-area
+border, inset hatch, and an unstretched layout. The same script passes on a
+phone without root. The terminal half waits for M7.
 
 ## Milestone M9 — TSF (deferred)
 

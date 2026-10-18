@@ -31,9 +31,7 @@ in
     ./sdk.nix
     ./shaping.nix
     ./terminal.nix
-    ./wsi-smoke.nix
     ./examples.nix
-    ./vulkan-triangle.nix
     ./terminal-nix.nix
     ./tree-sitter.nix
     ./ts-grammars.nix
