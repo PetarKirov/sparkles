@@ -265,3 +265,43 @@ private VulkanWsiResult!T unsupportedCreate(T)(BackendKind backend)
     else
         assert(android.hasError && android.error.kind == VulkanWsiErrorKind.unsupported);
 }
+
+/**
+The instance extension a backend's surfaces need on this target, or an empty
+string where Vulkan has no surface for it (AppKit, whose renderer is Metal).
+A `VulkanDevice` names it before any window has a surface.
+*/
+CStr platformSurfaceExtension(BackendKind backend) pure nothrow @nogc
+{
+    final switch (backend)
+    {
+        case BackendKind.wayland:
+            version (Android) return CStr.init;
+            else version (linux) return cstr!khrWaylandSurface;
+            else return CStr.init;
+        case BackendKind.x11:
+            version (Android) return CStr.init;
+            else version (linux) return cstr!khrXcbSurface;
+            else return CStr.init;
+        case BackendKind.win32:
+            version (Windows) return cstr!khrWin32Surface;
+            else return CStr.init;
+        case BackendKind.appkit:
+            return CStr.init;
+        case BackendKind.android:
+            version (Android) return cstr!khrAndroidSurface;
+            else return CStr.init;
+    }
+}
+
+@("vulkan_wsi.surface.platformExtensionFollowsTheTarget")
+@safe pure nothrow @nogc unittest
+{
+    version (Android) {}
+    else version (linux)
+    {
+        assert(platformSurfaceExtension(BackendKind.wayland)[] == khrWaylandSurface);
+        assert(platformSurfaceExtension(BackendKind.android).length == 0);
+    }
+    assert(platformSurfaceExtension(BackendKind.appkit).length == 0);
+}
