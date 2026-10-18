@@ -415,8 +415,18 @@ hand values to the WSI thread, which runs Event Horizon. JNI goes through
    - `VK_KHR_android_surface` in `sparkles:vulkan` and `sparkles:vulkan-wsi`,
      and a diagnostic test pattern presenting on the backend through a
      pre-rotated swapchain.
-   - The phone terminal leaves raylib once a renderer on `sparkles:vulkan-wsi`
-     exists (milestone M7); until then it stays on raylib's glue.
+5. **Process-lifetime ownership and pacing** (§10.1).
+   - One WSI owner thread per process; the window outlives activities, and an
+     activity ending or a return is a surface lost or gained.
+   - `MemoryPressureEvent` from the platform's low-memory call.
+   - `VulkanDevice` (process) and `WindowSurface` (surface) in
+     `sparkles:vulkan-wsi`, with a pipeline cache persisted to a path the
+     application chooses.
+   - Frame opportunities from `AChoreographer`, so a renderer draws once per
+     display frame and nothing while it has no surface.
+   - The test pattern shows it: device and pipelines kept across surfaces and
+     activities, released on memory pressure, or optionally whenever the
+     surface goes.
 
 Gate for slice 1: the emulator lane (`libs/wsi/scripts/verify-android-emulator.sh`)
 passes the shared conformance suite and the clipboard suite, and refuses a clip
@@ -439,6 +449,13 @@ pattern through `VK_KHR_android_surface` with a pre-rotated swapchain and checks
 a screen capture in portrait, turned to landscape and back: corners, safe-area
 border, inset hatch, and an unstretched layout. The same script passes on a
 phone without root. The terminal half waits for M7.
+
+Gate for slice 5: the test pattern logs each launch's timing (instance, device,
+pipelines, swapchain, first present); a relaunch in a running process and a
+return from the background create neither a device nor a pipeline, and a launch
+after the process was killed compiles no pipeline the cache holds. While the
+window has no surface the app presents nothing, and while visible it presents
+once per display frame. Measured on the emulator and a phone.
 
 ## Milestone M9 — TSF (deferred)
 
