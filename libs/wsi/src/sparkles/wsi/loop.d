@@ -1125,6 +1125,11 @@ if (MaxWindows > 0 && MaxEvents > 0)
         return emit(id, DestroyedEvent());
     }
 
+    /// Recording has no display connection.
+    WsiResult!DisplayHandle displayHandle()
+        => failure!DisplayHandle(WsiErrorKind.unsupported, WsiOperation.queryHandle,
+            "recording has no display connection");
+
     WsiResult!NativeHandles nativeHandles(WindowId id)
     {
         auto slot = checkedSlot(id);
