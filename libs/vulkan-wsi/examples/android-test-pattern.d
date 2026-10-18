@@ -13,7 +13,9 @@
     }
 +/
 /**
-A Vulkan test pattern on the native `sparkles:wsi` Android backend.
+A Vulkan test pattern on the native `sparkles:wsi` Android backend, and the
+reference for what lives how long in an Android Vulkan app (§10.1 of the
+window-system-integration specification).
 
 The activity's `ANativeWindow` becomes a `VkSurfaceKHR` through
 `VK_KHR_android_surface`, and the shared swapchain and frame synchronization
@@ -23,12 +25,30 @@ marks, and an orientation-specific layout. The swapchain is pre-rotated: its
 images keep the panel's orientation and the shader turns the pattern, so the
 compositor never rotates or scales it.
 
-It runs until the activity ends, which BACK asks for. When the window loses its surface (the app
-goes to the background) everything Vulkan is released, and it comes back on
-the next surface. Each swapchain it builds is logged under the tag
-`sparkles-wsi` as a `pattern:` line naming the display size, the safe insets,
-the swapchain extent and its pre-transform, whenever what a frame draws for
-changes;
+What each scope owns:
+
+- the process: the WSI's one window and this thread, which outlive every
+    activity; the `VulkanDevice`, made from the display handle before any
+    surface, with its pipeline cache saved under the app's `internalDataPath`;
+    and what is built on the device alone, the pipeline and the command pool;
+- a surface: a `WindowSurface`, its swapchain, render target and frame
+    synchronization, released inside the drain that reports the surface's loss
+    (the platform destroys the `ANativeWindow` once that drain returns).
+
+So a return from the background or a relaunch costs a surface and a swapchain,
+and a launch after the process was killed finds its pipeline in the cache. The
+device is kept while the app is in the background and released on memory
+pressure, or with the surface when `releaseDeviceWithSurface` is set, for an
+app that prefers the least background memory to the fastest return.
+
+Frames are paced by the display: the app draws on each `FrameReadyEvent` and
+asks for the next (`requestFrame`, `AChoreographer`), so nothing runs while it
+has no surface, and the loop sleeps between frames.
+
+BACK finishes the activity. Each state a frame draws for is logged under the
+tag `sparkles-wsi` as a `pattern:` line (display size, safe insets, swapchain
+extent and pre-transform); each surface's start as a `launch:` line with what
+it cost and how many devices and pipelines the process has built.
 `libs/wsi/scripts/verify-android-emulator.sh` captures the screen after each
 and checks the pattern with `libs/vulkan-wsi/scripts/check-test-pattern.d`.
 Its recipe says `platforms "android"`, so it builds as an APK
@@ -38,12 +58,13 @@ module android_test_pattern;
 
 version (Android):
 
-import core.time : Duration, MonoTime, msecs, seconds;
+import core.time : Duration, MonoTime, seconds;
 import std.conv : text;
 import std.string : toStringz;
 
 import expected : Expected, err, ok;
 
+import sparkles.android.activity : internalDataPath;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig;
 import sparkles.input.events : KeyAction;
 import sparkles.vulkan;
@@ -60,6 +81,10 @@ mixin AndroidWsiMain!run;
 
 private enum uint keycodeBack = 4; // `AKEYCODE_BACK`
 
+/// Release the device with each surface instead of keeping it in the
+/// background: less memory there, a slower return.
+private enum releaseDeviceWithSurface = false;
+
 private void say(string line) @trusted
 {
     __android_log_write(4, "sparkles-wsi", line.toStringz);
@@ -72,45 +97,77 @@ private void run()
         assert(false, outcome.error);
 }
 
-/// Everything Vulkan that lives on one `ANativeWindow`.
-private struct Renderer
+private static long ms(Duration d) => d.total!"msecs";
+
+/// The process-scoped objects: the device and what is built on it alone.
+private struct DeviceScope
 {
-    VulkanContext vk;
-    Swapchain swapchain;
-    RenderTarget target;
-    FrameSync sync;
-    CommandPool commands;
+    VulkanDevice device;
     Pipeline pipeline;
-    bool live;
+    VkFormat pipelineFormat;
+    CommandPool commands;
+    bool cacheDirty; // a pipeline was built since the cache was saved
 
     @disable this(this);
+
+    bool live() const => device.device.device !is null;
+
+    static string cachePath() => internalDataPath ~ "/pipeline-cache";
+
+    void saveCache()
+    {
+        if (!cacheDirty)
+            return;
+        cacheDirty = false;
+        if (device.savePipelineCache(cachePath).hasError)
+            say("pipeline cache: not saved");
+    }
 
     void release() @system
     {
         if (!live)
             return;
-        if (vk.device.device !is null)
-            vk.device.deviceWaitIdle(vk.device.device);
-        pipeline.destroy(vk);
-        commands.destroy(vk);
+        device.device.deviceWaitIdle(device.device.device);
+        saveCache();
+        pipeline.destroy(device);
+        commands.destroy(device);
+        device.destroy();
+        pipeline = Pipeline.init;
+        commands = CommandPool.init;
+    }
+}
+
+/// The surface-scoped objects, on a `DeviceScope`'s device.
+private struct SurfaceScope
+{
+    WindowSurface vk;
+    Swapchain swapchain;
+    RenderTarget target;
+    FrameSync sync;
+
+    @disable this(this);
+
+    bool live() const => vk.surface !is null;
+
+    void release() @system
+    {
+        if (!live)
+            return;
+        vk.device.deviceWaitIdle(vk.device.device);
         sync.destroy(vk);
         target.destroy(vk);
         swapchain.destroy(vk);
         vk.destroy();
-        // Back to their initial state: the next surface builds every one
-        // afresh, and an object that kept its old handles would be rebound
-        // on a device that no longer exists.
-        pipeline = Pipeline.init;
-        commands = CommandPool.init;
+        // Back to their initial state: the next surface builds them afresh.
         sync = FrameSync.init;
         target = RenderTarget.init;
         swapchain = Swapchain.init;
-        live = false;
     }
 }
 
 private Expected!(void, string) drive() @system
 {
+    const processStarted = MonoTime.currTime;
     DefaultLoop loop;
     if (DefaultLoop.create(loop, LoopConfig()).hasError)
         return err!void("Event Horizon did not open");
@@ -119,15 +176,77 @@ private Expected!(void, string) drive() @system
         return err!void("the Android backend did not open");
     const window = wsi.createWindow(WindowConfig()).value;
 
+    DeviceScope d;
+    SurfaceScope s;
+    scope (exit)
+    {
+        s.release();
+        d.release();
+    }
+    uint devicesBuilt, pipelinesBuilt, surfacesBuilt, swapchainsBuilt, frames;
+
+    // The device, from the display handle: made before the first surface
+    // and kept across surfaces and activities.
+    Expected!(void, string) bringUpDevice()
+    {
+        if (d.live)
+            return ok!string();
+        const started = MonoTime.currTime;
+        auto display = wsi.displayHandle();
+        if (display.hasError)
+            return err!void("no display handle");
+        auto made = VulkanDevice.create(d.device, display.value,
+            ContextRequest(applicationName: "sparkles-android-test-pattern",
+                apiVersion: apiVersion13));
+        if (made.hasError)
+            return err!void(text("Vulkan did not come up: ", made.error.diagnostic[],
+                " (", describeResult(made.error.vkResult), ")"));
+        if (d.device.loadPipelineCache(DeviceScope.cachePath).hasError)
+            say("pipeline cache: not loaded");
+        ++devicesBuilt;
+        say(text("device: ", d.device.deviceName, " in ", ms(MonoTime.currTime - started), " ms"));
+        return ok!string();
+    }
+    {
+        auto up = bringUpDevice();
+        if (up.hasError)
+            return up;
+    }
+
     SurfaceMetrics metrics;
-    bool changed, destroyed, leave;
+    bool changed, destroyed, leave, frameDue, pressure;
+    // Where the current surface's first frame spent its time.
+    MonoTime surfaceArrived;
+    Duration deviceTime, surfaceTime, swapchainTime, pipelineTime;
+    bool firstFrameLogged = true;
+
+    void loseSurface()
+    {
+        // Inside the drain that reported the loss: the platform destroys the
+        // `ANativeWindow` once it returns.
+        s.release();
+        frameDue = false;
+        static if (releaseDeviceWithSurface)
+            d.release();
+        else if (d.live)
+            d.saveCache(); // the process may be killed in the background
+    }
+
     void pump(Duration timeout)
     {
         wsi.runIntegratedOnce(loop, timeout).value;
         assert(!wsi.drain((WindowEvent event) {
             event.payload.match!(
                 (in ReadyEvent e) { metrics = e.metrics; changed = true; },
-                (in SurfaceMetricsChangedEvent e) { metrics = e.metrics; changed = true; },
+                (in SurfaceMetricsChangedEvent e) {
+                    metrics = e.metrics;
+                    changed = true;
+                    // Vulkan teardown is `@system`; the drain wants a `@safe` sink.
+                    if (metrics.suspended)
+                        () @trusted { loseSurface(); }();
+                },
+                (in FrameReadyEvent _) { frameDue = true; },
+                (in MemoryPressureEvent _) { pressure = true; },
                 (in DestroyedEvent _) { destroyed = true; },
                 // The backend reports BACK as a key, so leaving is the app's
                 // decision: this one finishes its activity on the release.
@@ -139,160 +258,198 @@ private Expected!(void, string) drive() @system
         }).hasError);
     }
 
-    Renderer r;
-    scope (exit) r.release();
-    uint frames, built;
-    string logged; // the last `pattern:` line
-
-    // A new swapchain (or a first one) for the current surface and metrics.
+    // A new swapchain (or a first one, on a new surface) for the metrics.
     Expected!(void, string) rebuild(bool force)
     {
-        if (!r.live)
+        if (!s.live)
         {
             auto handles = wsi.nativeHandles(window);
             if (handles.hasError)
                 return ok!string(); // no surface yet
-            auto broughtUp = VulkanContext.create(r.vk, handles.value,
-                ContextRequest(applicationName: "sparkles-android-test-pattern",
-                    apiVersion: apiVersion13));
-            if (broughtUp.hasError)
-                return err!void(text("Vulkan did not come up: ",
-                    broughtUp.error.diagnostic[], " (",
-                    describeResult(broughtUp.error.vkResult), ")"));
-            r.live = true;
+            surfaceArrived = MonoTime.currTime;
+            firstFrameLogged = false;
+            deviceTime = surfaceTime = swapchainTime = pipelineTime = Duration.zero;
+            const deviceStarted = MonoTime.currTime;
+            {
+                auto up = bringUpDevice();
+                if (up.hasError)
+                    return up;
+            }
+            deviceTime = MonoTime.currTime - deviceStarted;
+            const surfaceStarted = MonoTime.currTime;
+            auto made = WindowSurface.create(s.vk, d.device, handles.value);
+            surfaceTime = MonoTime.currTime - surfaceStarted;
+            if (made.hasError)
+                return err!void(text("no Vulkan surface: ", made.error.diagnostic[]));
+            ++surfacesBuilt;
         }
-        auto waited = r.sync.waitAll(r.vk);
+        auto waited = s.sync.waitAll(s.vk);
         if (waited.hasError)
             return err!void("vkWaitForFences: " ~ describeResult(waited.error));
         // FIFO: one frame per display refresh, not as many as the GPU can.
-        auto updated = Swapchain.recreate(r.swapchain, r.vk, metrics.physicalSize,
+        const swapchainStarted = MonoTime.currTime;
+        auto updated = Swapchain.recreate(s.swapchain, s.vk, metrics.physicalSize,
             force, PhysicalSize.init, VkPresentModeKHR.VK_PRESENT_MODE_FIFO_KHR);
+        swapchainTime += MonoTime.currTime - swapchainStarted;
         if (updated.hasError)
             return err!void(updated.error);
         if (updated.value != SwapchainResize.rebuilt)
             return ok!string();
-        auto retargeted = r.target.views.length == 0
-            ? RenderTarget.create(r.target, r.vk, r.swapchain)
-            : r.target.rebind(r.vk, r.swapchain);
+        ++swapchainsBuilt;
+        auto retargeted = s.target.views.length == 0
+            ? RenderTarget.create(s.target, s.vk, s.swapchain)
+            : s.target.rebind(s.vk, s.swapchain);
         if (retargeted.hasError)
             return err!void(retargeted.error);
-        const images = cast(uint) r.swapchain.images.length;
-        if (r.sync.imageCount == 0)
+        const images = cast(uint) s.swapchain.images.length;
+        if (s.sync.imageCount == 0)
         {
-            if (FrameSync.create(r.sync, r.vk, images).hasError)
+            if (FrameSync.create(s.sync, s.vk, images).hasError)
                 return err!void("frame synchronization failed");
         }
-        else if (r.sync.replaceImages(r.vk, images).hasError)
+        else if (s.sync.replaceImages(s.vk, images).hasError)
             return err!void("frame synchronization failed");
-        if (r.pipeline.handle is null)
+        // The pipeline outlives the surface: it is rebuilt only for a device
+        // it was not made on, or a format it was not made for.
+        if (d.pipeline.handle !is null && d.pipelineFormat != s.swapchain.format)
         {
-            if (createTestPattern(r.pipeline, r.vk, r.swapchain, r.target.renderPass).hasError
-                || CommandPool.create(r.commands, r.vk, r.sync.framesInFlight).hasError)
-                return err!void("the pipeline or the command pool failed");
+            d.device.device.deviceWaitIdle(d.device.device.device);
+            d.pipeline.destroy(d.device);
+            d.pipeline = Pipeline.init;
         }
-        ++built;
+        if (d.pipeline.handle is null)
+        {
+            const pipelineStarted = MonoTime.currTime;
+            scope (exit) pipelineTime += MonoTime.currTime - pipelineStarted;
+            if (createTestPattern(d.pipeline, s.vk, s.swapchain, s.target.renderPass).hasError)
+                return err!void("the pipeline failed");
+            d.pipelineFormat = s.swapchain.format;
+            d.cacheDirty = true;
+            ++pipelinesBuilt;
+        }
+        if (d.commands.buffers.length == 0
+            && CommandPool.create(d.commands, d.device, s.sync.framesInFlight).hasError)
+            return err!void("the command pool failed");
         return ok!string();
     }
 
+    string logged; // the last `pattern:` line
     Expected!(void, string) present()
     {
-        if (r.sync.waitForFrame(r.vk).hasError)
+        if (s.sync.waitForFrame(s.vk).hasError)
             return err!void("vkWaitForFences failed");
         uint image;
-        const acquired = r.vk.device.acquireNextImageKHR(r.vk.device.device,
-            r.swapchain.handle, ulong.max, r.sync.imageAvailable, null, &image);
+        const acquired = s.vk.device.acquireNextImageKHR(s.vk.device.device,
+            s.swapchain.handle, ulong.max, s.sync.imageAvailable, null, &image);
         const decision = decideAcquire(acquired);
         if (decision.failed)
             return err!void("vkAcquireNextImageKHR: " ~ describeResult(acquired));
         if (!decision.proceed)
             return rebuild(true);
-        if (r.sync.waitForImage(r.vk, image).hasError || r.sync.beginFrame(r.vk, image).hasError)
+        if (s.sync.waitForImage(s.vk, image).hasError || s.sync.beginFrame(s.vk, image).hasError)
             return err!void("frame synchronization failed");
 
         // The display's own size and insets; the whole (panel-oriented) image
         // is drawn, and the shader turns the pattern upright.
-        const shown = displayExtent(r.swapchain);
+        const shown = displayExtent(s.swapchain);
         const insets = metrics.safeInsets;
         FrameContext context;
         context.resolution = [shown.width, shown.height];
         context.safeInsets = [insets.left, insets.top, insets.right, insets.bottom];
-        context.preTransform = cast(uint) r.swapchain.transform;
+        context.preTransform = cast(uint) s.swapchain.transform;
         context.frameCount = frames;
         // What this frame draws for, logged whenever it changes: a rebuild
         // and the metrics that settle a turn arrive separately, and the lane
         // checks a capture against the latest line.
         const state = text("pattern: display ", shown.width, "x", shown.height,
             " insets ", insets.left, ",", insets.top, ",", insets.right, ",", insets.bottom,
-            " swapchain ", r.swapchain.extent.width, "x", r.swapchain.extent.height,
-            " transform ", cast(uint) r.swapchain.transform,
-            " format ", cast(uint) r.swapchain.format,
-            r.target.dynamicRendering ? " dynamic-rendering" : " render-pass",
-            " device ", r.vk.deviceName);
+            " swapchain ", s.swapchain.extent.width, "x", s.swapchain.extent.height,
+            " transform ", cast(uint) s.swapchain.transform,
+            " format ", cast(uint) s.swapchain.format,
+            s.target.dynamicRendering ? " dynamic-rendering" : " render-pass",
+            " device ", d.device.deviceName);
         if (state != logged)
         {
             logged = state;
             say(state);
         }
-        auto recorded = record(r.vk, r.commands, r.pipeline, r.target, r.swapchain,
-            r.sync.frame, image, r.swapchain.extent, (cast(const(void)*) &context)[0 .. context.sizeof]);
+        auto recorded = record(s.vk, d.commands, d.pipeline, s.target, s.swapchain,
+            s.sync.frame, image, s.swapchain.extent, (cast(const(void)*) &context)[0 .. context.sizeof]);
         if (recorded.hasError)
             return recorded;
-        if (r.sync.submit(r.vk, r.commands.buffers[r.sync.frame], image).hasError)
+        if (s.sync.submit(s.vk, d.commands.buffers[s.sync.frame], image).hasError)
             return err!void("vkQueueSubmit failed");
-        auto shownResult = r.swapchain.present(r.vk, image, r.sync.renderFinished(image));
-        r.sync.advance();
+        auto shownResult = s.swapchain.present(s.vk, image, s.sync.renderFinished(image));
+        s.sync.advance();
         ++frames;
         const stale = shownResult.hasError ? Swapchain.needsRecreation(shownResult.error)
             : Swapchain.needsRecreation(shownResult.value);
         if (shownResult.hasError && !stale)
             return err!void("vkQueuePresentKHR: " ~ describeResult(shownResult.error));
+        if (!firstFrameLogged)
+        {
+            firstFrameLogged = true;
+            say(text("launch: ", surfacesBuilt == 1 ? "first surface" : "next surface",
+                " first frame ", ms(MonoTime.currTime - surfaceArrived), " ms after it (",
+                surfacesBuilt == 1 ? text(ms(MonoTime.currTime - processStarted), " ms after start, ") : "",
+                "device ", ms(deviceTime), " ms, surface ", ms(surfaceTime),
+                " ms, swapchain ", ms(swapchainTime), " ms, pipeline ", ms(pipelineTime),
+                " ms); built so far: ", devicesBuilt, " devices, ", pipelinesBuilt,
+                " pipelines, ", surfacesBuilt, " surfaces, ", swapchainsBuilt, " swapchains"));
+            say(text("ok: Android test pattern presenting (", d.device.deviceName, ")"));
+        }
         if (stale || decision.recreate)
             return rebuild(true);
         return ok!string();
     }
 
-    bool announced;
     while (!destroyed)
     {
         if (leave)
         {
             leave = false;
-            r.release();
             assert(!wsi.finishActivity().hasError);
         }
-        pump(r.live && !metrics.suspended ? Duration.zero : 250.msecs);
-        if (metrics.suspended)
+        // Asleep until an event: a frame opportunity, input, a new surface.
+        pump(frameDue ? Duration.zero : 10.seconds);
+        if (pressure)
         {
-            // The surface is going away: release everything on it before the
-            // backend lets the platform destroy it.
-            r.release();
-            continue;
+            pressure = false;
+            // In the foreground the device is in use; in the background it
+            // is what the system wants back.
+            if (!s.live && d.live)
+            {
+                d.release();
+                say("pressure: released the device");
+            }
         }
+        if (metrics.suspended)
+            continue;
         // A turn arrives as a new window size and a new surface transform,
         // separately: ask the surface before every frame, not only on an event.
-        if (changed || (r.live && r.swapchain.outdated(r.vk, metrics.physicalSize)))
+        if (changed || (s.live && frameDue && s.swapchain.outdated(s.vk, metrics.physicalSize)))
         {
             changed = false;
             auto rebuilt = rebuild(false);
             if (rebuilt.hasError)
                 return rebuilt;
         }
-        if (!r.live || r.swapchain.handle is null)
+        if (!frameDue)
+            continue;
+        frameDue = false;
+        if (!s.live || s.swapchain.handle is null)
             continue;
         auto presented = present();
         if (presented.hasError)
             return presented;
-        if (!announced && frames >= 60)
+        // The pattern animates, so it asks for the next frame after each.
+        assert(!wsi.requestFrame(window).hasError);
+        if (s.swapchain.hasRetired || s.sync.hasRetired)
         {
-            announced = true;
-            say(text("ok: Android test pattern presenting (", r.vk.deviceName, ")"));
-        }
-        if (r.swapchain.hasRetired || r.sync.hasRetired)
-        {
-            r.sync.reap(r.vk, 8);
-            r.swapchain.reap(r.vk, 1);
+            s.sync.reap(s.vk, 8);
+            s.swapchain.reap(s.vk, 1);
         }
     }
-    say(text("ok: Android test pattern ended (", frames, " frames, ", built, " swapchains)"));
+    say(text("ok: Android test pattern ended (", frames, " frames, ", swapchainsBuilt, " swapchains)"));
     return ok!string();
 }
