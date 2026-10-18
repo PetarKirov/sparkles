@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build the sparkles:wsi Android smoke and the sparkles:vulkan-wsi triangle,
-# run each on an emulator, and check the lines they write to logcat. Run from
-# the repository root inside the Android shell, with an emulator already
-# booted:
+# Build the sparkles:wsi Android smoke, run it on an emulator and check the
+# lines it writes to logcat, then run the sparkles:vulkan-wsi test pattern
+# (libs/vulkan-wsi/scripts/verify-android-test-pattern.sh). Run from the
+# repository root inside the Android shell, with an emulator already booted:
 #
 #   nix develop .#android -c hue-emulator -no-window &
 #   nix develop .#android -c libs/wsi/scripts/verify-android-emulator.sh
@@ -12,9 +12,9 @@
 set -euo pipefail
 
 system="$(nix eval --raw --impure --expr builtins.currentSystem)"
-build() { nix build --no-link --print-out-paths ".#legacyPackages.${system}.$1"; }
-smoke="$(build wsi-android-smoke-apk)/wsi-android-smoke.apk"
-triangle="$(build vulkan-wsi-android-triangle-apk)/vulkan-wsi-android-triangle.apk"
+smoke_attr=".#legacyPackages.${system}.androidExamples.wsi.android-hosted-smoke${APK_VARIANT:+.$APK_VARIANT}"
+smoke="$(echo "$(nix build --no-link --print-out-paths "$smoke_attr")"/*.apk)"
+smoke_package="$(nix eval --raw "$smoke_attr.applicationId")"
 
 if [ -z "${ANDROID_SERIAL:-}" ]; then
   ANDROID_SERIAL="$(adb devices | awk '/^emulator-[0-9]+\tdevice$/ {print $1; exit}')"
@@ -98,7 +98,7 @@ run() {
   sed -n 's/.*sparkles-wsi *: //p' "$log"
 }
 
-run "$smoke" dev.petar_kirov.sparkles.wsismoke 'ok: Android smoke complete'
+run "$smoke" "$smoke_package" 'ok: Android smoke complete'
 grep -q 'ok: Android WSI conformance (12 checked, 9 skipped)' "$log"
 grep -q 'ok: Android touch drag with history' "$log"
 grep -q 'ok: Android scale and insets' "$log"
@@ -106,6 +106,9 @@ grep -q 'ok: Android clipboard conformance (4 checked' "$log"
 grep -q 'ok: Android refuses a 4 MiB clip with capacity' "$log"
 grep -q 'ok: Android smoke complete' "$log"
 
-run "$triangle" dev.petar_kirov.sparkles.vktriangle 'ok: Android Vulkan triangle'
-grep -q 'ok: Android Vulkan triangle' "$log"
-echo ">> sparkles:wsi Android smoke and Vulkan triangle verified on $ANDROID_SERIAL."
+echo ">> sparkles:wsi Android smoke verified on $ANDROID_SERIAL."
+
+# The Vulkan test pattern, checked on screen in both orientations.
+cleanup
+trap - EXIT
+"$(dirname "${BASH_SOURCE[0]}")/../../vulkan-wsi/scripts/verify-android-test-pattern.sh"

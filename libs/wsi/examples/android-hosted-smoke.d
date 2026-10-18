@@ -1,3 +1,15 @@
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "android_hosted_smoke"
+    dependency "sparkles:wsi" path="../../.."
+    dependency "sparkles:android" path="../../.."
+    dependency "sparkles:event-horizon" path="../../.."
+    targetPath "build"
+    platforms "android"
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
++/
 /**
 Android driver for the shared WSI conformance suites.
 
@@ -5,8 +17,9 @@ Every assertion lives in `sparkles.wsi.conformance` and
 `sparkles.wsi.clipboard_conformance`; this driver supplies the Android step
 and the input it injects, and reports to logcat under the tag `sparkles-wsi`,
 one `ok:` line per suite, which `scripts/verify-android-emulator.sh` waits for.
-It is an APK of its own (`legacyPackages.wsi-android-smoke-apk`), started on
-the emulator.
+Its recipe says `platforms "android"`, so it builds as an APK
+(`legacyPackages.androidExamples.wsi.android-hosted-smoke`), started on the
+emulator.
 
 Input comes from outside, as a device's would: the driver logs what it
 needs (`inject: chord 1`) and the lane script injects it.
