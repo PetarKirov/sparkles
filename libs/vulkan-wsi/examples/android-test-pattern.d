@@ -219,11 +219,22 @@ private Expected!(void, string) drive() @system
     MonoTime surfaceArrived;
     Duration deviceTime, surfaceTime, swapchainTime, pipelineTime;
     bool firstFrameLogged = true;
+    // What the current surface presented: frames from its first, over time.
+    MonoTime firstFrameAt;
+    uint framesBefore;
+    bool pipelineBuiltNow;
 
     void loseSurface()
     {
         // Inside the drain that reported the loss: the platform destroys the
         // `ANativeWindow` once it returns.
+        if (s.live && firstFrameLogged)
+        {
+            const shown = MonoTime.currTime - firstFrameAt;
+            const presented = frames - framesBefore;
+            say(text("surface: lost after ", presented, " frames in ", ms(shown), " ms (",
+                shown > Duration.zero ? presented * 1000 / ms(shown) : 0, " fps)"));
+        }
         s.release();
         frameDue = false;
         static if (releaseDeviceWithSurface)
@@ -269,6 +280,7 @@ private Expected!(void, string) drive() @system
             surfaceArrived = MonoTime.currTime;
             firstFrameLogged = false;
             deviceTime = surfaceTime = swapchainTime = pipelineTime = Duration.zero;
+            pipelineBuiltNow = false;
             const deviceStarted = MonoTime.currTime;
             {
                 auto up = bringUpDevice();
@@ -324,8 +336,9 @@ private Expected!(void, string) drive() @system
             if (createTestPattern(d.pipeline, s.vk, s.swapchain, s.target.renderPass).hasError)
                 return err!void("the pipeline failed");
             d.pipelineFormat = s.swapchain.format;
-            d.cacheDirty = true;
+            d.cacheDirty = !d.pipeline.fromCache;
             ++pipelinesBuilt;
+            pipelineBuiltNow = true;
         }
         if (d.commands.buffers.length == 0
             && CommandPool.create(d.commands, d.device, s.sync.framesInFlight).hasError)
@@ -389,13 +402,20 @@ private Expected!(void, string) drive() @system
         if (!firstFrameLogged)
         {
             firstFrameLogged = true;
+            firstFrameAt = MonoTime.currTime;
+            framesBefore = frames - 1;
+            const pipeline = !pipelineBuiltNow ? "pipeline kept"
+                : text("pipeline ", ms(pipelineTime), " ms (", !d.pipeline.creationFeedback
+                    ? "the driver does not say if cached"
+                    : d.pipeline.fromCache ? "from the cache" : "compiled", ")");
             say(text("launch: ", surfacesBuilt == 1 ? "first surface" : "next surface",
                 " first frame ", ms(MonoTime.currTime - surfaceArrived), " ms after it (",
                 surfacesBuilt == 1 ? text(ms(MonoTime.currTime - processStarted), " ms after start, ") : "",
                 "device ", ms(deviceTime), " ms, surface ", ms(surfaceTime),
-                " ms, swapchain ", ms(swapchainTime), " ms, pipeline ", ms(pipelineTime),
-                " ms); built so far: ", devicesBuilt, " devices, ", pipelinesBuilt,
-                " pipelines, ", surfacesBuilt, " surfaces, ", swapchainsBuilt, " swapchains"));
+                " ms, swapchain ", ms(swapchainTime), " ms, ", pipeline,
+                "); built so far: ", devicesBuilt, " devices, ", pipelinesBuilt,
+                " pipelines, ", surfacesBuilt, " surfaces, ", swapchainsBuilt,
+                " swapchains; ", frames, " frames presented"));
             say(text("ok: Android test pattern presenting (", d.device.deviceName, ")"));
         }
         if (stale || decision.recreate)

@@ -418,6 +418,12 @@ struct Pipeline
 {
     VkPipeline handle;
     VkPipelineLayout layout;
+    /// Whether the driver reported how it created the pipeline (Vulkan 1.3's
+    /// creation feedback): if so, whether it took the pipeline whole from the
+    /// context's pipeline cache, and how long creating it took.
+    bool creationFeedback;
+    bool fromCache; /// ditto
+    ulong creationNanos; /// ditto
 
     @disable this(this);
 
@@ -561,6 +567,17 @@ struct Pipeline
         VkPipelineCache cache;
         static if (is(typeof(vk.pipelineCache) : VkPipelineCache))
             cache = vk.pipelineCache;
+        // Whether the cache served it, from the driver itself (core in 1.3).
+        VkPipelineCreationFeedback whole;
+        auto feedback = vkInfo(VkPipelineCreationFeedbackCreateInfo(
+            pPipelineCreationFeedback: &whole,
+        ));
+        const askFeedback = vk.device.has!vkVersion13;
+        if (askFeedback)
+        {
+            feedback.pNext = info.pNext;
+            info.pNext = &feedback;
+        }
         auto made = vk.device.createGraphicsPipelines(
             vk.device.device, cache, 1, &info, null, &p.handle).check;
         if (made.hasError)
@@ -568,6 +585,14 @@ struct Pipeline
             p.destroy(vk);
             return err!void("vkCreateGraphicsPipelines: " ~ describeResult(made.error));
         }
+        with (VkPipelineCreationFeedbackFlagBits)
+            if (askFeedback && (whole.flags & VK_PIPELINE_CREATION_FEEDBACK_VALID_BIT))
+            {
+                p.creationFeedback = true;
+                p.fromCache = (whole.flags
+                    & VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT) != 0;
+                p.creationNanos = whole.duration;
+            }
 
         return ok!string();
     }
