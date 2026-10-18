@@ -280,7 +280,10 @@ oldest sample when full; history is advisory and its loss is not an error.
 **ED4: Only motion merges.** Lifecycle, focus, keyboard, text, composition, scroll,
 touch, output, clipboard and popup events must never be merged, superseded or
 reordered. Surface metrics, move and expose keep the latest-observation merge they
-already have.
+already have, with one exception: metrics that suspend presentation (a zero pixel
+extent, `F01`) are never superseded. The surface they report lost may be replaced by
+another of the same size before the application drains, and the application must
+release what it built on the old surface before it sees the new one.
 
 **ED5: Overflow is counted, not fatal.** When the queue is full, the arriving
 event **must** be dropped and a per-backend counter incremented. The next drain
