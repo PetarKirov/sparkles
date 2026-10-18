@@ -50,7 +50,9 @@ import sparkles.event_horizon.op : CompletionFlags, KernelTimespec, OpAccept,
     OpSymlinkAt, OpUnlinkAt,
     OpTimeout, OpToken, OpWaitid, OpWrite, SockAddr;
 
-import core.stdc.errno : ETIME;
+import core.stdc.errno : ENOMEM, errno, ETIME;
+import core.sys.linux.sys.prctl : prctl;
+import core.sys.posix.unistd : _SC_NPROCESSORS_ONLN, sysconf;
 
 /// One `io_uring` ring plus its negotiated capabilities. Thread-affine and
 /// non-copyable (`SINGLE_ISSUER` made structural, SPEC §5.1).
@@ -68,6 +70,9 @@ struct UringBackend
     Linux hard-error semantics (SPEC §3.4): no epoll fallback — a host
     without a working `io_uring` gets `ioError(stage: setup)`; a pre-6.1
     kernel or a rejected exact mode gets `ioError(stage: probe)`.
+
+    It also pins the process's futex hash, process-wide, before the waker's
+    in-ring `FUTEX_WAIT` can be queued (SPEC §5.6, $(LREF pinFutexHash)).
     */
     IoResult!void open(in BackendConfig cfg) @safe nothrow @nogc
     {
@@ -82,6 +87,9 @@ struct UringBackend
             return ioErr!void(0, OpKind.none, IoErrorStage.probe,
                 "kernel below the 6.1 baseline");
         }
+        auto pinned = pinFutexHash();
+        if (pinned.hasError)
+            return pinned;
 
         const requested = cast(LoopMode) cfg.mode;
         auto ret = setupMode(requested, cfg.sqEntries);
@@ -827,4 +835,44 @@ unittest
     assert(waited.hasValue && waited.value == queued);
     const n = b.reap((ref const RawCompletion c) @safe nothrow @nogc {});
     assert(n == queued);
+}
+
+/**
+Gives the process its private futex hash now, before the waker's in-ring
+`FUTEX_WAIT` is queued (SPEC §5.6).
+
+From Linux 6.16 a process hashes its private futexes globally until it first
+clones with `CLONE_VM` (a thread, an io-wq worker of this very ring, and on
+later kernels `vfork`), and only then gets a private hash. That switch
+migrates no waiter from the global hash (`__futex_pivot_hash` rehashes only
+an existing private hash), and a blocking waiter cannot exist then, but an
+io_uring `FUTEX_WAIT` can: it stays in the global bucket while every
+`FUTEX_WAKE` looks in the private one, and each wake is lost. Resizing an
+existing private hash migrates io_uring waiters, so pinning one first is
+enough.
+
+`PR_FUTEX_HASH` sizes it explicitly, and an explicit size does not grow:
+this asks for the largest the kernel's default would grow to, 4 slots per
+online CPU rounded to a power of two, at least 16. A process that already
+has a private hash, a kernel without the option (`EINVAL`), and one that
+chose the global hash for good (`EBUSY`) have nothing to strand. Only an
+allocation failure is an error: without the hash, wakes can be lost.
+*/
+private IoResult!void pinFutexHash() @trusted nothrow @nogc
+{
+    enum PR_FUTEX_HASH = 78;
+    enum PR_FUTEX_HASH_SET_SLOTS = 1;
+    enum PR_FUTEX_HASH_GET_SLOTS = 2;
+
+    if (prctl(PR_FUTEX_HASH, PR_FUTEX_HASH_GET_SLOTS, 0, 0, 0) != 0)
+        return ioOk(); // a private hash already, or no such option
+    const cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    size_t slots = 16;
+    while (slots < 4 * (cpus > 0 ? cast(size_t) cpus : 1))
+        slots <<= 1;
+    if (prctl(PR_FUTEX_HASH, PR_FUTEX_HASH_SET_SLOTS, slots, 0, 0) == 0
+        || errno != ENOMEM)
+        return ioOk();
+    return ioErr!void(ENOMEM, OpKind.none, IoErrorStage.setup,
+        "no memory for the private futex hash the waker needs");
 }
