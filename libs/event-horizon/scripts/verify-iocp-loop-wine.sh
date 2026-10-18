@@ -14,9 +14,6 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-eh="$repo/libs/event-horizon/src"
-base="$repo/libs/base/src"
-ehm="$eh/sparkles/event_horizon"
 exp="$(find "$HOME/.dub/packages/expected" -name expected.d -path '*source*' | sort -V | tail -1)"
 exp_src="$(dirname "$exp")"
 
@@ -25,13 +22,17 @@ trap 'rm -rf "$work"' EXIT
 cd "$work"
 
 echo ">> cross-compiling the full EventLoop!IocpBackend fiber echo ..."
-win32-ldc2 -preview=in -preview=dip1000 -g \
-  -I"$eh" -I"$base" -I"$exp_src" \
+# `-i` compiles whatever the echo imports, so the closure follows the code
+# instead of a hand-kept file list.
+win32-ldc2 -preview=in -preview=dip1000 -g -i \
+  -I"$repo/libs/event-horizon/src" \
+  -I"$repo/libs/event-horizon-sys/src" \
+  -I"$repo/libs/base/src" \
+  -I"$repo/libs/metadata/src" \
+  -I"$repo/libs/reflection/src" \
+  -I"$repo/libs/test-runner/src" \
+  -I"$exp_src" \
   "$repo/libs/event-horizon/scripts/echo-iocp-win.d" \
-  "$ehm/errors.d" "$ehm/op.d" "$ehm/buffer.d" "$ehm/net.d" "$ehm/capability.d" \
-  "$ehm/cause.d" "$ehm/scope_.d" "$ehm/schedule.d" "$ehm/clock.d" "$ehm/loop.d" \
-  "$ehm/sched.d" "$ehm/io.d" "$ehm/backend/concept.d" "$ehm/backend/probe.d" \
-  "$ehm/backend/iocp.d" "$ehm/backend/select.d" "$exp_src/expected.d" \
   -of=echowin.exe
 
 echo ">> running under Wine ..."

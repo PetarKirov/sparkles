@@ -19,9 +19,6 @@ set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 eh="$repo/libs/event-horizon/src"
-base="$repo/libs/base/src"
-test_runner="$repo/libs/test-runner/src"
-test_runner_impl="$repo/libs/test-runner-impl/src"
 # The `expected` runtime dep, resolved from the dub package cache.
 exp="$(find "$HOME/.dub/packages/expected" -name expected.d -path '*source*' | sort -V | tail -1)"
 exp_src="$(dirname "$exp")"
@@ -30,20 +27,32 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 cd "$work"
 
+includes=(
+  -I"$eh"
+  -I"$repo/libs/event-horizon-sys/src"
+  -I"$repo/libs/base/src"
+  -I"$repo/libs/metadata/src"
+  -I"$repo/libs/reflection/src"
+  -I"$repo/libs/test-runner/src"
+  -I"$repo/libs/test-runner-impl/src"
+  -I"$exp_src"
+)
 ehm="$eh/sparkles/event_horizon"
+
+# `-i` compiles whatever iocp.d imports, so the closure follows the code
+# instead of a hand-kept file list. The root is a stub importing iocp.d, which
+# `-i=-…` leaves out: the test links its own `-unittest` build of it. `skip.d`
+# is named because only iocp.d's tests import it, and this build does not
+# compile them.
 echo ">> building dependency closure (no -unittest) ..."
-win32-ldc2 -lib -preview=in -preview=dip1000 \
-  -I"$eh" -I"$base" -I"$test_runner" -I"$test_runner_impl" -I"$exp_src" \
-  "$ehm/errors.d" "$ehm/op.d" "$ehm/buffer.d" "$ehm/net.d" \
-  "$ehm/capability.d" "$ehm/cause.d" \
-  "$ehm/backend/concept.d" "$ehm/backend/probe.d" \
-  "$base/sparkles/base/lifetime.d" \
-  "$test_runner_impl/sparkles/test_runner/skip.d" "$exp_src/expected.d" \
+echo "module deps; import sparkles.event_horizon.backend.iocp;" > deps.d
+win32-ldc2 -lib -i -i=-sparkles.event_horizon.backend.iocp \
+  -preview=in -preview=dip1000 "${includes[@]}" \
+  deps.d "$repo/libs/test-runner-impl/src/sparkles/test_runner/skip.d" \
   -of=deps.lib
 
 echo ">> linking the IOCP data-path test ..."
-win32-ldc2 -unittest -main -g -preview=in -preview=dip1000 \
-  -I"$eh" -I"$base" -I"$test_runner" -I"$test_runner_impl" -I"$exp_src" \
+win32-ldc2 -unittest -main -g -preview=in -preview=dip1000 "${includes[@]}" \
   "$ehm/backend/iocp.d" deps.lib -of=iocptest.exe
 
 echo ">> running under Wine ..."
