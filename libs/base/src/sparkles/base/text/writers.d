@@ -876,6 +876,12 @@ private void writeValueBody(Policy, Writer, T)(ref Writer w,
         {
             put(w, cast(string) value);
         }
+        else static if (hasOutputRangeToString!T)
+        {
+            // A value that allocates while rendering (a table's layout) still
+            // writes into the caller's sink rather than through a string.
+            value.toString(w);
+        }
         else
         {
             // GC fallback
@@ -2108,6 +2114,15 @@ auto formatted(alias write, Args...)(Args args)
             write(w, stored);
             return w[];
         }
+
+        /// The rendered text's lines, without terminators: for a value read
+        /// line by line (a layout pass, a test) rather than streamed.
+        auto byLine() const
+        {
+            import std.string : lineSplitter;
+
+            return toString.lineSplitter;
+        }
     }
 
     return Formatted(args);
@@ -2153,6 +2168,9 @@ mixin(valueForm!("writeDuration", "duration"));
 mixin(valueForm!("writeBytes", "byteSize"));
 /// `writeFixedPoint` as a value: `fixedPoint(v, decimals)`.
 mixin(valueForm!("writeFixedPoint", "fixedPoint"));
+/// `writeText` as a value: `interpolated(i"…")`, the interpolated text,
+/// rendered when consumed. Where a `string` is wanted, `std.conv.text(i"…")`.
+mixin(valueForm!("writeText", "interpolated"));
 
 ///
 @("valueForm.namedValues")
@@ -2164,6 +2182,19 @@ mixin(valueForm!("writeFixedPoint", "fixedPoint"));
     assert(byteSize(2048UL).toString == "2.0KiB");
     assert(text(i"took $(duration(1500.msecs))") == "took 1.5s");
     assert(text(fixedPoint(25, 1)) == "2.5");
+}
+
+@("valueForm.interpolatedAndByLine")
+@safe unittest
+{
+    import std.algorithm.comparison : equal;
+
+    import sparkles.base.buffer : checkToString;
+
+    // Interpolated text with a value inside, still lazy as a whole.
+    const both = interpolated(i"size: $(byteSize(2048UL))\nend");
+    checkToString(both, "size: 2.0KiB\nend");
+    assert(both.byLine.equal(["size: 2.0KiB", "end"]));
 }
 
 @("valueForm.isAWriteTextSegment")
