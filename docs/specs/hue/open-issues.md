@@ -105,16 +105,30 @@ a table-bearing tree in its round-trip tests.
 
 ## HUE-O6 — hue has no about page for its build facts {#hue-o6}
 
-**Status:** open. **Requirements:** [`TPG1`–`TPG3`](../terminal/pages.md)
-(the terminal's about page, the model to follow).
+**Status:** open. **Requirements:**
+[`TPG1`–`TPG3`](../terminal/pages.md#about-tpg1tpg3) (the terminal's about
+page, the model to follow), [`TPG17`](../terminal/pages.md#credits-tpg12tpg17),
+[`TPR6`](../terminal/protocols.md#requirements).
 
 Desktop hue and the APK's `libhue.so` both carry the build-info section
-(`stampBuildInfo`, `stampAndroidLib`): the version, the commit, the build type
-and the linked components. Desktop `hue --version` prints it; on Android
-nothing reads it, because hue has no about page and a phone has no
-command line.
+(`stampBuildInfo`, `stampAndroidLib`, checked by `checkHueBuildInfo`): the
+version, the commit, the build type and the linked components. Desktop
+`hue --version` prints it; on Android nothing reads it, because hue has no
+about page and a phone has no command line.
+
+The surface follows `apps/terminal/src/about_page.d` and reads the section
+through `sparkles.core_cli.build_info` the way the terminal does: from the
+executable on the desktop, and on Android from the library that holds it,
+found with `dladdr` as `apps/terminal/src/android_app.d` finds
+`libterminal.so`. hue's source, documentation and credits links are entries
+of hue's own document, not a second copy of the terminal's
+`legacyPackages.terminalLinks`, and open through the link allow-list
+(`TPR6`). The credits link is the Android route `TPG17` lacks; when it opens
+`docs/credits/hue.md`, move `TPG17` off partial.
+
+The notifier's startup popup ([`NSI1`](./notifier.md)) is a different
+surface, and building it does not close this issue.
 
 Close this when hue shows the document on an about surface reachable on
-Android — identity, the read-only component tree, and the links — reading
-the section through `sparkles.core_cli.build_info` as the terminal does,
-with a test that drives it from a stamped document.
+Android — identity, the read-only component tree, and the links — with a
+test that drives it from a stamped document.
