@@ -10,6 +10,7 @@ import sparkles.base.sync.guarded : GuardedGuard, InterruptibleGuarded, Interrup
 import sparkles.base.sync.interruptible_mutex : Acquisition, InterruptibleGuard, InterruptibleMutex, WaitStatus;
 import sparkles.base.sync.mutex : LockBits, Mutex, MutexGuard;
 import sparkles.base.sync.platform : NativePlatform;
+import sparkles.base.sync.rwlock : RwGuard, RwLock, RwMode;
 
 private alias P = NativePlatform;
 
@@ -21,6 +22,7 @@ unittest
     shared Mutex m;
     shared InterruptibleMutex im;
     shared uint word;
+    shared RwLock rw;
     alias LB = LockBits!(uint, 1, 2, 4);
 
     // Each guard type exists only through an acquisition.
@@ -30,11 +32,13 @@ unittest
     static assert(!__traits(compiles, GuardedGuard!(P, int)(MutexGuard!P.init, &value)));
     static assert(!__traits(compiles,
         InterruptibleGuardedGuard!(P, int)(InterruptibleGuard!P.init, &value)));
+    static assert(!__traits(compiles, RwGuard!P(&rw, RwMode.shared_)));
 
     // The control: acquiring is how a guard is made.
     {
         auto g = m.guard();
         auto lg = LB.guard(word);
+        auto rg = rw.read();
     }
     auto a = im.lock();
     assert(a && a.guard.holds);
