@@ -24,7 +24,7 @@
  */
 module sparkles.test_runner.syscalls;
 
-import sparkles.base.text.writers : formatted, writeText;
+import sparkles.base.text.writers : interpolated;
 import sparkles.test_runner.capability : Capability, CapabilityAbsence,
     CapabilityReport, has, hasNamedColumns, hasSnapshot, isCounterBackend,
     probeParanoid, reasonFor;
@@ -141,8 +141,8 @@ version (linux)
             if (!p.ok)
                 return "perf_event_open refused tracepoints — perf_event_paranoid? (needs ≤ 1)";
             if (p.value > 1)
-                return formatted!writeText(i"perf_event_open refused tracepoints — perf_event_paranoid=$(p.value) (needs ≤ 1)").toString;
-            return formatted!writeText(i"perf_event_open refused tracepoints (seccomp or kernel policy — perf_event_paranoid=$(p.value) is permissive)").toString;
+                return interpolated(i"perf_event_open refused tracepoints — perf_event_paranoid=$(p.value) (needs ≤ 1)").toString;
+            return interpolated(i"perf_event_open refused tracepoints (seccomp or kernel policy — perf_event_paranoid=$(p.value) is permissive)").toString;
         }
 
         /// What this backend can deliver: OS-event gating via tracepoints.

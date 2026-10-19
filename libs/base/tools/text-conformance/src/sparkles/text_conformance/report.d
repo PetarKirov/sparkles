@@ -56,9 +56,13 @@ struct LayerOutcome
 bool anyNewFailures(in LayerOutcome[] outcomes)
     => outcomes.any!(o => o.newFail > 0 || o.errored);
 
-/// Render the per-layer summary as a banner + table.
-string renderSummary(in LayerOutcome[] outcomes)
+/// Writes the per-layer summary, a banner and a table, into `w`. Without a
+/// writer, `renderSummary(outcomes)` is the summary as a value.
+void renderSummary(W)(ref W w, in LayerOutcome[] outcomes)
+if (imported!"std.range.primitives".isOutputRange!(W, char))
 {
+    import std.range.primitives : put;
+
     string[][] rows = [[
         styledText(i"{bold Layer}"),
         styledText(i"{bold Passed}"),
@@ -91,7 +95,10 @@ string renderSummary(in LayerOutcome[] outcomes)
         ];
     }
 
-    return "text-conformance"
-        .drawHeader(HeaderProps(style: HeaderStyle.banner))
-        ~ "\n\n" ~ drawTable(rows).toString;
+    drawHeader(w, "text-conformance", HeaderProps(style: HeaderStyle.banner));
+    put(w, "\n\n");
+    drawTable(w, rows);
 }
+
+/// ditto
+mixin(imported!"sparkles.base.text.value_form".valueForm!"renderSummary");

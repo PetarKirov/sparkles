@@ -20,6 +20,7 @@ import sparkles.ui.components.table : drawTable;
 import sparkles.base.term_style : Style, stylize, styleSample;
 import sparkles.base.styled_template : styledText;
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
+import sparkles.base.text.writers : interpolated;
 
 struct Config
 {
@@ -45,6 +46,12 @@ struct Cluster
 
 void main()
 {
+    // The aligned stack: three fixed-width boxes, one under another.
+    const fixed = BoxProps(minWidth: 44, maxWidth: 44);
+    const alpha = ["ok"].drawBox("alpha", fixed);
+    const beta = ["a slightly longer middle line"].drawBox("beta", fixed);
+    const gamma = ["x"].drawBox("gamma", fixed);
+
     runDemo(
         header: "drawBox Demo - All Features",
         content: [
@@ -166,12 +173,7 @@ void main()
             ),
             Section(
                 header: "Aligned Stack - Same Width Regardless of Content",
-                content: [
-                    ["ok"].drawBox("alpha", BoxProps(minWidth: 44, maxWidth: 44)).toString,
-                    ["a slightly longer middle line"]
-                        .drawBox("beta", BoxProps(minWidth: 44, maxWidth: 44)).toString,
-                    ["x"].drawBox("gamma", BoxProps(minWidth: 44, maxWidth: 44)).toString,
-                ].joiner("\n").to!string,
+                content: interpolated(i"$(alpha)\n$(beta)\n$(gamma)"),
             ),
             Section(
                 header: "Title Overflow - wrap (nested title box with ┤ ├ handles)",

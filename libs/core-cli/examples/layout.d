@@ -28,11 +28,11 @@ import sparkles.ui.components.table : drawTable, TableProps;
 void main()
 {
     // A box, a table, and a plain block side by side.
-    const box = drawBox(["one", "two"], "box").toString;
+    const box = drawBox(["one", "two"], "box");
     const table = drawTable([["a", "b"], ["1", "2"]],
-        TableProps(columnAligns: [Align.left, Align.right])).toString;
+        TableProps(columnAligns: [Align.left, Align.right]));
     const notes = "plain\ntext\nblock";
-    writeln(hjoin([box, table, notes]));
+    writeln(hjoin(box, table, notes));
 
     writeln();
 

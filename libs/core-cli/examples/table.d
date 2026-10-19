@@ -26,6 +26,7 @@ import sparkles.ui.components.table :
     validateTable, TableError;
 import sparkles.base.styled_template : styledText;
 import sparkles.base.text.width : Align;
+import sparkles.base.text.writers : interpolated;
 
 void main()
 {
@@ -266,11 +267,7 @@ void main()
             //
             Section(
                 header: "validateTable (overlap): reports the error AND still renders deterministically",
-                writeContent: (sink) {
-                    sink(validationNote);
-                    sink("\n\n");
-                    sink.drawTable(overlapping);
-                },
+                content: interpolated(i"$(validationNote)\n\n$(drawTable(overlapping))"),
             ),
             //
             // 13. Title & footer — spliced into the frame like drawBox's

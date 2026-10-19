@@ -14,7 +14,7 @@ import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 
 /// The type of $(LREF Section.writeContent): given a sink, writes the
 /// section's content into it.
-alias ContentWriter = void delegate(scope void delegate(const(char)[]) @safe sink) @safe;
+alias ContentWriter = void delegate(scope void delegate(scope const(char)[]) @safe sink) @safe;
 
 /// A section in a demo with a header and content.
 struct Section
@@ -87,7 +87,11 @@ void runDemo(string header, Section[] content, DemoProps props = DemoProps.init)
         section.header.drawHeader.writeln;
         if (section.writeContent !is null)
         {
-            section.writeContent((const(char)[] text) { write(text); });
+            // `write` does not keep its argument; it just does not infer `@safe` for
+            // a `scope` slice.
+            section.writeContent((scope const(char)[] text) {
+                () @trusted { write(text); }();
+            });
             write("\n\n");
         }
         else
@@ -125,6 +129,6 @@ unittest
 
     string got;
     const section = Section(header: "Table", content: drawTable([["a", "b"]]));
-    section.writeContent((const(char)[] text) { got ~= text; });
+    section.writeContent((scope const(char)[] text) { got ~= text; });
     assert(got == "╭───┬───╮\n│ a │ b │\n╰───┴───╯\n");
 }
