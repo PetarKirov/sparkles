@@ -9,6 +9,8 @@ VT engine's actual grid. Cells are not typographic lengths.
 */
 module sparkles.base.text.width;
 
+version (unittest) import sparkles.base.buffer : checkToString;
+
 import sparkles.base.text.unicode_tables : GeneralCategory, generalCategory,
     isEastAsianWide, isEmojiVsBase;
 
@@ -436,5 +438,5 @@ mixin(imported!"sparkles.base.text.value_form".valueForm!"truncateField");
     assert(text("|", alignField("ok", 5, Align.right), "|") == "|   ok|");
     char[3] buf = "abc";
     assert(text(alignField(buf[], 4, Align.left)) == "abc ", "char[] content is a value");
-    assert(truncateField("a long line", 6).toString == "a lon…");
+    checkToString(truncateField("a long line", 6), "a lon…");
 }

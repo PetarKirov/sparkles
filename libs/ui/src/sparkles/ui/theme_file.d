@@ -27,6 +27,8 @@ theme, so saving writes its primitives, aliases and unknown extensions back
 */
 module sparkles.ui.theme_file;
 
+version (unittest) import sparkles.base.buffer : checkToString;
+
 import std.algorithm.searching : canFind, endsWith, startsWith;
 import std.array : appender, join, replace, split;
 import std.conv : to;
@@ -1062,7 +1064,7 @@ version (unittest)
     auto loaded = loadTheme(text);
     assert(loaded.hasValue, loaded.hasError ? loaded.error.message : "");
     assert(loaded.value.theme.palette == t.palette);
-    assert(formatted!saveTheme(loaded.value).toString == text);
+    checkToString(formatted!saveTheme(loaded.value), text);
 }
 
 @("theme_file.load.overlaysABase")

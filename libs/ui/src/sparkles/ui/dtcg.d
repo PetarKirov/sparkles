@@ -26,6 +26,8 @@ assertion (`FMT3`).
 */
 module sparkles.ui.dtcg;
 
+version (unittest) import sparkles.base.buffer : checkToString;
+
 import std.algorithm.comparison : among;
 import std.array : join;
 import std.conv : ConvException, to;
@@ -421,7 +423,7 @@ private const(DtcgMember)[] sortedMembers(const DtcgJson v)
     assert(text == "{\n  \"a\": [1, 2],\n  \"b\": {\n    \"$type\": \"number\",\n"
         ~ "    \"$value\": 1.50\n  }\n}\n");
     // Reading the canonical form back is a fixed point.
-    assert(formatted!writeDtcg(parseDtcg(text).value).toString == text);
+    checkToString(formatted!writeDtcg(parseDtcg(text).value), text);
 }
 
 @("dtcg.parse.rejectsWithALocation")

@@ -942,10 +942,9 @@ version (unittest)
     {
         import std.algorithm : map;
         import std.array : join;
-        import std.string : splitLines, stripRight;
+        import std.string : stripRight;
 
-        return drawTable(cells, props).toString
-            .splitLines.map!(l => l.stripRight ~ "\n").join;
+        return drawTable(cells, props).byLine.map!(l => l.stripRight ~ "\n").join;
     }
 
     private void checkGlyphParity(in string[][] rows, TableProps props,
