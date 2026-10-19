@@ -8,8 +8,8 @@ reviewed: 2026-10-19
 
 How a package's device modules become shaders during its build. `SHP1`–`SHP10`
 and `SHB1`–`SHB7` are the accepted contract of 2026-10-16, revised for one
-compilation per [profile](./profiles.md): `SHP3`–`SHP8` and `SHP10` change, the
-rest stand. This page is part of the [specification](./SPEC.md).
+compilation per [profile](./profiles.md): `SHP1`, `SHP3`–`SHP8` and `SHP10`
+change, the rest stand. This page is part of the [specification](./SPEC.md).
 
 ## The build step
 
@@ -23,7 +23,7 @@ then be a device build (`SHP1`). `--ldc` names the compiler (`SHP9`),
 `--if-stale` asks for the freshness check (`SHB2`), and `--keep` and
 `--quiet` change only what it prints and leaves behind.
 
-**SHP1: Device configuration.** A package declares its device compilation
+**SHP1: Device configuration.** _(Revised.)_ A package declares its device compilation
 once, as a [device configuration](../../glossary.md#device-configuration): a [dub](https://dub.pm/) configuration whose `dflags` contain
 `-mdcompute-targets=<target>`, where the target is exactly one of
 `vulkan-100`, `vulkan-110`, `vulkan-120`, `vulkan-130` and `vulkan-140`;
@@ -31,8 +31,9 @@ once, as a [device configuration](../../glossary.md#device-configuration): a [du
 step **must** use that configuration's import paths, version identifiers and
 flags as `dub describe` reports them, and **must** treat a configuration
 without the flag as a configuration error. The target names the compiler's
-code generator, which every profile uses; the profiles come from the unit
-itself (`SHC4`).
+code generator, which every profile uses, and not the SPIR-V version: the
+pinned code generator emits SPIR-V 1.6 for every Vulkan target. The profiles
+come from the unit itself (`SHC4`).
 
 **SHP2: Host flags excluded.** The build step **must** describe the device
 configuration with the `DFLAGS` environment variable removed.
@@ -55,8 +56,9 @@ package's own.
 **SHP4: Validation.** _(Revised.)_ The SPIR-V compiled for a profile **must**
 pass `spirv-val` under that profile's environment before anything else reads
 it: Vulkan 1.3's rules for `vulkan1.3`, the universal SPIR-V 1.6 rules for
-`gl330` and `gles100`. It **must** then pass the capability audit
-([`SHC9`](./profiles.md)), and is then optimised with `spirv-opt -O`.
+`gl330` and `gles100`. It is then optimised with `spirv-opt -O`, and the
+optimised module and every module written from it **must** pass the
+capability audit ([`SHC9`](./profiles.md)).
 
 _Rationale:_ Each output is validated against the rules of what consumes it:
 Vulkan's rules reject the loose uniforms OpenGL needs, so the GL profiles
@@ -86,7 +88,10 @@ the file is generated; a generated SPIR-V file **must** carry the same text in
 an `OpModuleProcessed` instruction. The generated files' bytes **must not** depend on the
 directory the step runs from (the stamp's paths may).
 
-**SHP8: Atomic output.** _(Revised.)_ Each output file and the stamp **must** be written
+**SHP8: Atomic output.** _(Revised.)_ Nothing **must** be written to the
+output directory until every profile of the unit has compiled, validated,
+passed the audit and been translated; a failure in any profile leaves the
+directory as it was. Each output file and the stamp **must** then be written
 through a temporary file and a rename, the stamp last. Every `*.frag`, `*.vert`
 and `*.spv` file in
 the output directory that no entry point produces **must** be removed, and so
@@ -117,13 +122,17 @@ applies:
    (it has no sources, or a target type that builds nothing), names no
    dcompute target, names anything but exactly one of the Vulkan targets of
    `SHP1`, or yields no device-only module: 2;
-5. the manifest cannot be produced, or names a profile the table does not
-   define: 1 if the compiler reports the unit's error, 3 if it cannot produce
-   a manifest for a minimal `@fragment` shader either;
-6. the unit fails to compile for a profile: 3 if the device compiler cannot
-   compile a minimal `@fragment` shader for that target either, 1 otherwise;
-7. the unit fails to validate, to pass the capability audit (`SHC9`), or to
-   translate, for a profile: 1, naming the profile.
+5. the manifest cannot be produced: 1 if the compiler reports the unit's
+   error, 3 if it cannot produce a manifest for a minimal `@fragment` shader
+   either;
+6. the manifest names a profile the table does not define, or lists no entry
+   point: 2 (`SHC3`, `SHC5`);
+7. the profiles are then processed one at a time, in the table's order, each
+   compiled, validated, audited (`SHC9`) and translated before the next
+   begins, and the first failure decides the outcome: a failure to compile
+   is 3 if the device compiler cannot compile a minimal `@fragment` shader
+   for that target either, and 1 otherwise; any other failure is 1. Either
+   names the profile.
 
 Every non-zero exit **must** print the cause; exit 3 **must** say how to
 obtain the toolchain.

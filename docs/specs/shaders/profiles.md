@@ -29,71 +29,109 @@ and [`D17`](./decisions.md#d17-capabilities-are-checked-three-times).
 
 ## Profiles
 
-**SHC1: Profiles are data.** Capabilities, their implications and the
-profiles **must** be declared once, as D data, in the module
+**SHC1: Profiles are data.** Capabilities, their implications, the
+profiles, and the mapping from each SPIR-V capability and extension to the
+capability it belongs to **must** be declared once, as D data, in the module
 `sparkles.shaders.capabilities`, and **must** be readable at compile time by
-ordinary D code, by the build step and by the compiler's checks. Adding a
-profile or a capability **must not** require a change to the compiler.
+ordinary D code and by the build step. The module **must** be a
+host-and-device module of the vocabulary (`SHM1`), so it belongs to every unit
+(`SHP3`) and is an input of every stamp (`SHB1`). Adding a profile whose
+output the compiler and the build step already produce — a capability set
+over a SPIR-V version the code generator emits and an existing translation —
+**must not** require a change to either.
 
 _Rationale:_ The table is what a reader consults to learn what a target
 offers; as D data it is tested like any other code, and the vocabulary, the
-build step and the shader author all read the same one.
+build step and the shader author all read the same one. A profile with a new
+SPIR-V version or a new translator is new output, and needs the code that
+produces it.
 
-**SHC2: The profiles of the first slice.** The table **must** define at least:
+**SHC2: The profiles of the first slice.** Each profile has a D identifier
+(used in `@profiles`) and a name (used on the command line, in the manifest
+and in diagnostics). The table **must** define at least:
 
-| Profile     | Output                                       | Stages           | Files written per entry point          |
-| ----------- | -------------------------------------------- | ---------------- | -------------------------------------- |
-| `gl330`     | GLSL 3.30, translated by SPIRV-Cross         | fragment         | `<entry>.frag`                         |
-| `gles100`   | GLSL ES 1.00, translated by SPIRV-Cross      | fragment         | `<entry>.es.frag`                      |
-| `vulkan1.3` | SPIR-V 1.6 for Vulkan 1.3, validated as such | vertex, fragment | `<entry>.vert.spv`, `<entry>.frag.spv` |
-| `cpu`       | the host compilation (no device output)      | —                | —                                      |
+| Identifier | Name        | Output                                       | Stages           | Files written per entry point          |
+| ---------- | ----------- | -------------------------------------------- | ---------------- | -------------------------------------- |
+| `gl330`    | `gl330`     | GLSL 3.30, translated by SPIRV-Cross         | fragment         | `<entry>.frag`                         |
+| `gles100`  | `gles100`   | GLSL ES 1.00, translated by SPIRV-Cross      | fragment         | `<entry>.es.frag`                      |
+| `vulkan13` | `vulkan1.3` | SPIR-V 1.6 for Vulkan 1.3, validated as such | vertex, fragment | `<entry>.vert.spv`, `<entry>.frag.spv` |
+| `cpu`      | `cpu`       | the host compilation (no device output)      | —                | —                                      |
 
-The capabilities of each are recorded in the table itself. A profile's
-capability set **must** be a subset of what its output can express and what
-its validator accepts: `vulkan1.3` grants push constants and uniform blocks and
-denies loose uniforms; `gl330` and `gles100` grant loose uniforms; `gles100`
-denies integer bit operations and dynamic loop bounds.
+A profile's capabilities say what its output can declare, and so how each
+resource kind is lowered for it ([`SHR3`–`SHR5`](./resources.md)): `gl330`
+and `gles100` grant `looseUniforms` and neither `uniformBlocks` nor
+`pushConstants`; `vulkan1.3` grants `uniformBlocks` and `pushConstants` and
+not `looseUniforms`. Every device profile of the slice grants `vertexStage` or
+`fragmentStage` as its stages column says, and `sampledImages`; `vulkan1.3`
+also grants `intVertexInputs`. `cpu` grants `looseUniforms`, `uniformBlocks`,
+`pushConstants` and `int64`, and no stage and no `sampledImages` until the
+executor's images (`SHX3`). `vulkan1.3`
+denies `int64`: Vulkan grants 64-bit integers only with a device feature the
+first consumer does not enable. A capability set **must** be a subset of what
+the output can express and its validator accepts.
 
-**SHC3: The active profile is a compile-time fact.** In a device compilation,
-`__traits(getTargetInfo, "shaderProfile")` **must** evaluate to the active
-profile's name; in a host compilation it **must** evaluate to `"cpu"`. The
+**SHC3: The active profile is a compile-time fact.** A device compilation
+**must** be given its profile by name, with `-mdcompute-profile=<name>`, and
+`__traits(getTargetInfo, "shaderProfile")` **must** then evaluate to that
+name; in a host compilation by the fork it **must** evaluate to `"cpu"`. The
 library **must** provide `activeProfile`, the profile of that name from the
-table, so that `static if`, `static assert` and template constraints can
-branch on it. A device compilation whose profile is not in the table **must**
-fail before semantic analysis of the unit, naming the profile.
+table, so that `static if`, `static assert` and template constraints can branch
+on it; under a compiler that does not know the trait (DMD, a stock LDC),
+`activeProfile` **must** be `cpu`. A name that is not in the table **must**
+fail: the build step **must** reject it before compiling, naming it, and
+`activeProfile` **must** fail its compilation, naming it, if a compiler is
+given it directly.
 
 _Rationale:_ D's compile-time evaluation runs once per compilation, for host
 and device alike; a profile can only be something code branches on if each
-compilation has one.
+compilation has one. The compiler knows only the name; what the name means is
+the table's.
 
 ## Declaring a shader's profiles
 
 **SHC4: `@profiles`.** An entry point **may** carry `@profiles(p, …)`, naming
-profiles by the table's identifiers (`vulkan13`, `gl330`, `gles100`); a device
+profiles by their D identifiers (`vulkan13`, `gl330`, `gles100`); a device
 module **may** carry it on its declaration, as the default for its entry
 points. An entry point's own `@profiles` **replaces** its module's. An entry
-point with neither builds for `gl330` and `gles100`, the outputs of the
-specification before profiles existed. A name that is not in the table
-**must** fail the compilation at the attribute.
+point with neither builds for every profile among `gl330` and `gles100` that
+grants its stage, the outputs of the specification before profiles existed; a
+`@vertex` entry point with neither therefore has no profile, and **must** fail
+the compilation, naming it, as must any entry point whose profiles do not
+grant its stage (`SHF7`). An identifier that is not in the table is an
+undefined symbol and fails the compilation at the attribute.
 
 **SHC5: The manifest.** Before compiling for any profile, the build step
-**must** obtain, without generating code, every entry point of the unit with
-its stage and its profiles, as the compiler resolves them under `SHC4`
-(`-mdcompute-manifest=<file>`). The profiles the unit is compiled for are the
-union of those.
+**must** obtain from the compiler (`-mdcompute-manifest=<file>`), without
+generating code and with no profile active, a JSON document listing every
+entry point of the unit, sorted by name, each with its stage, its module, and
+the names of its profiles as `SHC4` resolves them, sorted. The profiles the
+unit is compiled for are the union of those, in the table's order. A unit
+whose manifest lists no entry point **must** fail the build step with exit 2
+(`SHP10`).
+
+The manifest compilation **must** analyse the unit's declarations and their
+attributes, and not the bodies of its functions. In it, `activeProfile`
+**must** fail the compilation, naming the manifest, so an entry point whose
+existence or `@profiles` depends on the profile is an error rather than a
+manifest that differs from the compilations it plans. A `static if` on
+`activeProfile` inside a function body (`SHC10`) is unaffected.
 
 **SHC6: One compilation per profile.** The build step **must** compile the
 unit once for each profile of the manifest, with that profile active. In the
 compilation for profile `P`, an entry point whose profiles do not include `P`
 **must not** be emitted, and what only it reaches **must not** be checked
-against `P` (`SHC8`); its body is still analysed as D, like every function of
-the unit.
-Each compilation's output is validated and translated (`SHP4`–`SHP6`) as the
-profile prescribes, and every entry point **must** produce the files of
+against `P` (`SHC8`, `SHC9`), and its interface **must not** take part in
+`SHF2`'s rule that an interface name is one variable; its body is still analysed as D, like every
+function of the unit, so it **must** compile as D under every profile of the
+unit. Each compilation's output is validated and translated (`SHP4`–`SHP6`) as
+the profile prescribes, and every entry point **must** produce the files of
 `SHC2` for each of its profiles and its stage, and no others.
 
 _Rationale:_ An entry point written for one target uses what that target
-offers; compiling it for another would reject correct code.
+offers; checking it against another would reject correct code. Analysing it as
+D everywhere is what D's single semantic pass does, which is why the vocabulary
+compiles a capability a profile lacks to `unsupported` rather than to an error
+(`SHC7`).
 
 ## Requirements and their checks
 
@@ -123,11 +161,14 @@ _Rationale:_ The call graph is the one the compiler already walks to reject
 recursion, and a chain of D source lines is what the author needs to act on
 the error.
 
-**SHC9: Capability audit.** After the compilation for any profile, every
-`OpCapability` and `OpExtension` the module declares **must** map, through
-the table, to a capability of the active profile; one that does not **must**
-fail the build step (exit 1) with a diagnostic that names the SPIR-V
-capability, the profile, and the entry points whose module declares it.
+**SHC9: Capability audit.** For each profile, in the optimised module
+(`SHP4`) and in every SPIR-V module written from it (`SHP5`), every
+`OpCapability` and `OpExtension` the module declares **must** map, through the
+table's mapping (`SHC1`), to a capability of the active profile; one that does
+not, or one the mapping does not list, **must** fail the build step (exit 1)
+with a diagnostic that names the SPIR-V capability, the profile and the entry
+points the module holds — every entry point of the profile for the optimised
+module, one for a written module.
 
 _Rationale:_ Some capabilities come from the compiler, not the source: a
 64-bit index pulls in `Int64`. Only the emitted module shows them, and only a
@@ -149,7 +190,9 @@ float4 fwidthFine(float4 p) @requires(Cap.derivativeControl)
 
 _Rationale:_ This is the D counterpart of a target switch: one function, a
 body per target, chosen at compile time. The example is illustrative; the
-names of the derivative built-ins belong to the vocabulary.
+names of the derivative built-ins belong to the vocabulary, and `@requires`
+and `unsupported` arrive with `SHC7` (M7). Until then the branch on
+`activeProfile` is the whole of the selection.
 
 ## Not in this slice
 

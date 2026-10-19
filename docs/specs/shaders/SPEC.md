@@ -7,12 +7,15 @@ reviewed: 2026-10-19
 # `sparkles:shaders` — Specification
 
 > [!IMPORTANT]
-> This is a revision under Stage 0 review, widening the library from
-> fragment shaders for OpenGL to a single-source replacement for the shading
-> languages. Until it is accepted, the shipped behaviour is governed by the
+> This is a revision under Stage 0 review — the
+> [gate](../../guidelines/spec-docs.md#stage-0-gate) at which the owner
+> accepts a specification's scope and contracts before they are implemented.
+> It sets the library a wider goal, a single-source replacement for the
+> shading languages, and specifies the first slice towards it. Until it is
+> accepted, the shipped behaviour is governed by the
 > [accepted specification of 2026-10-16](https://github.com/PetarKirov/sparkles/blob/d4f64961ca9b40f0d72d77aa8155048c1e88ab3a/docs/specs/shaders/SPEC.md);
-> requirements carried over unchanged keep their identifiers and wording, and
-> each revised one is marked.
+> requirements carried over unchanged keep their identifiers and wording,
+> and each revised one is marked _(Revised.)_ after its title.
 
 ## Abstract
 
@@ -25,7 +28,8 @@ step that compiles a package's shaders for each target it declares — SPIR-V
 for Vulkan, GLSL for OpenGL and OpenGL ES — checking at compile time that each
 uses only what its target offers. Its GPU half needs LDC, the LLVM-based D
 compiler, extended with graphics stages. Only a build that generates shaders
-needs that compiler.
+needs that compiler; the CPU half, and every consumer that takes shaders
+already generated, builds with any D compiler.
 
 ## 1. Introduction
 
@@ -53,16 +57,17 @@ code, over a [vocabulary](../../glossary.md#shader-vocabulary) of vector types
 and built-ins that compute the same results on both sides. An entry point is
 an ordinary D function marked with its stage; its parameters are its inputs,
 its resources and its built-in variables, and its result is its outputs. The
-device compilation goes through LDC's dcompute and its Vulkan target, extended
-by a fork with graphics stages, to SPIR-V, which the build step validates,
+device compilation goes through dcompute — LDC's support for compiling D
+modules for a GPU — and its Vulkan target, extended with graphics stages by a
+fork of LDC that this project maintains and means to upstream, to SPIR-V, which the build step validates,
 translates where a target needs source (GLSL for OpenGL), and validates again.
 Each output is a [profile](./profiles.md): a target and the capabilities it
 grants. A shader declares its profiles beside its entry points; the build step
 compiles it once per profile, with the profile a compile-time constant that D
 code branches on; and the compiler and the build step reject any use of a
 capability the profile lacks, at the D source line. Resources are declared
-once in D and lowered per profile — a block with a binding for Vulkan, named
-uniforms for OpenGL — with the byte layout the host writes computed from the
+once in D and lowered per profile — a block with a binding, or a push-constant
+block, for Vulkan; named uniforms for OpenGL, push constants included — with the byte layout the host writes computed from the
 same declaration. The generated shaders are build products, never committed;
 a developer's build regenerates them behind a [freshness
 stamp](../../glossary.md#freshness-stamp), and a packager (here, the Nix
@@ -71,8 +76,11 @@ custom compiler.
 
 The scope of this revision is the vertex and fragment stages, for Vulkan,
 OpenGL 3.3 and OpenGL ES 2.0, with uniforms, uniform blocks, push constants
-and sampled images; its first consumer is the triangle of
-`sparkles:vulkan-wsi`. The library's goal is wider — every stage and feature
+and sampled images. Its consumers are the effects of `sparkles:ui`, on
+OpenGL and OpenGL ES, whose output the revision leaves unchanged, and the
+triangle of `sparkles:vulkan-wsi`, the first on Vulkan. On the CPU, the slice
+guarantees what the accepted specification did: the vocabulary, and every
+entry point that samples no image, run as plain D with the same results. The library's goal is wider — every stage and feature
 of the shading languages, further targets (GLSL 4.60, GLSL ES 3.x, HLSL, MSL,
 WGSL, and DXIL later), a CPU executor that runs subgroup, quad and derivative
 semantics — and the [delivery plan](./PLAN.md) orders it; each later contract
@@ -142,7 +150,7 @@ side of a program, the _device_ the GPU side.
 | Page                                  | Holds                                                                          | IDs                           |
 | ------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------- |
 | [Vocabulary](./vocabulary.md)         | vector types, constructors, component access, built-in functions, agreement    | `SHV1`–`SHV10`                |
-| [Device modules](./device-modules.md) | which modules are shader code; the device compilation's rules                  | `SHM1`–`SHM5`                 |
+| [Device modules](./device-modules.md) | which modules are shader code; the device compilation's rules                  | `SHM1`–`SHM6`                 |
 | [Entry points](./entry-points.md)     | stages, parameters, built-in variables, outputs, linking stages, handles       | `SHF1`–`SHF9`                 |
 | [Resources](./resources.md)           | uniforms, blocks, push constants, images, interface structs, layout, bindings  | `SHR1`–`SHR8`                 |
 | [Profiles](./profiles.md)             | capabilities, profiles, `@profiles`, the manifest, the three capability checks | `SHC1`–`SHC10`                |

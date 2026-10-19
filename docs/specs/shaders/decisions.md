@@ -144,7 +144,7 @@ the output prebuilt (`SHB3`).
 > The shared sampler stands.
 
 **Choice.** A `@uniform` parameter is a plain uniform outside any block, and
-every image is read through one sampler at binding 0 (`SHF2`).
+every image is read through one sampler at binding 0 (`SHR7`).
 
 **Why.** OpenGL consumers look uniforms up by name, so a plain named uniform
 is exactly what they need after translation. SPIR-V for Vulkan cannot hold a
@@ -427,7 +427,8 @@ under the OpenGL profiles. `@uniform` parameters stand for fields of a default
 block, and their OpenGL output is unchanged.
 
 **Why.** A shader builds for both kinds of consumer without edits, and the
-OpenGL output of every existing effect stays byte-identical.
+OpenGL output of every existing effect is unchanged: built with one toolchain
+from the source before the revision and after it, the GLSL is byte-identical.
 
 **Trade-offs.** The two lowerings are different interfaces of one source, and
 a host binds them differently: by name on OpenGL, by binding and offset on
@@ -458,7 +459,9 @@ one. What drives and verifies features now that the goal is completeness?
 flake inputs (ported to D, the originals kept external), hand-written shaders
 per feature, and the project's own effects. A feature is delivered when its
 corpus shaders compile for every profile that grants it, validate, and agree
-with the CPU executor under a GPU readback.
+with the CPU executor under a GPU readback. Until the executor exists (M11),
+agreement is with the host execution of the same D functions, as the
+milestone's oracle defines it.
 
 **Trade-offs.** Porting samples is work that a consumer would otherwise pay
 for once; the first slice still has a real consumer (the triangle of

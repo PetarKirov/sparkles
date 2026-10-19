@@ -12,7 +12,7 @@ is part of the [specification](./SPEC.md).
 
 **SHT1: Pinned compiler.** The device compiler is LDC with dcompute's Vulkan
 target ([ldc-developers/ldc#5132](https://github.com/ldc-developers/ldc/pull/5132))
-and the fragment stage of section 6, at
+and the stages of [Entry points](./entry-points.md), at
 [`PetarKirov/ldc@64104a9a`](https://github.com/PetarKirov/ldc/tree/64104a9a6da522730d6b661b85adfdfd2e7e25e7).
 It is built against LLVM at
 [`27ba4937`](https://github.com/llvm/llvm-project/tree/27ba493781215910f560b36cd5b3b2f6c93ec5a3),
@@ -33,9 +33,9 @@ be pinned. The pinned versions are 1.4.357.0, 1.4.357.0 and 16.4.0.
 _Rationale:_ Their versions shape the output: a newer `spirv-opt` rewrote one
 branch of a generated shader. The pin is part of the output's definition.
 
-**SHT3: Reproducibility.** With the toolchain of `SHT1`–`SHT2`, the same
-inputs **must** produce byte-identical GLSL on every supported platform and
-in every directory. (The stamp records paths relative to the package, which
+**SHT3: Reproducibility.** _(Revised.)_ With the toolchain of `SHT1`–`SHT2`, the same
+inputs **must** produce byte-identical GLSL and SPIR-V on every supported
+platform and in every directory. (The stamp records paths relative to the package, which
 can differ.)
 
 **SHT4: Platforms.** The device toolchain **must** be available on
