@@ -1,12 +1,13 @@
 ---
-status: accepted
+status: draft
 owner: sparkles:shaders
-reviewed: 2026-10-16
+reviewed: 2026-10-19
 ---
 
 # `sparkles:shaders` — Delivery plan
 
-The order in which the requirements of [`SPEC.md`](./SPEC.md) are delivered,
+The order in which the requirements of [`SPEC.md`](./SPEC.md) and its topic
+pages are delivered,
 the gate each milestone must pass, and progress. Scenarios, oracles and the
 evidence ledger live in [`testing.md`](./testing.md).
 
@@ -21,6 +22,18 @@ evidence ledger live in [`testing.md`](./testing.md).
 | [M3 Interface and agreement evidence](#m3-interface-and-agreement-evidence) | done        |
 | [M4 Multi-pass effects](#m4-multi-pass-effects-in-single-source-d)          | done        |
 | [M5 Further platforms](#m5-further-device-platforms)                        | not started |
+| [Stage 0 (revision)](#stage-0-revision-the-full-language-scope)             | in progress |
+| [M6 Profiles and the Vulkan triangle](#m6-profiles-and-the-vulkan-triangle) | not started |
+| [M7 Capability inference](#m7-capability-inference-and-stage-operations)    | not started |
+| [M8 One vector type](#m8-one-vector-type)                                   | not started |
+| [M9 Vocabulary breadth](#m9-vocabulary-breadth)                             | not started |
+| [M10 Compute and storage](#m10-compute-and-storage)                         | not started |
+| [M11 Reference CPU executor](#m11-reference-cpu-executor)                   | not started |
+| [M12 Further targets](#m12-further-targets)                                 | not started |
+| [M13 Subgroups and convergence](#m13-subgroups-and-convergence)             | not started |
+| [M14 Further stages](#m14-further-stages)                                   | not started |
+| [M15 DXIL](#m15-dxil)                                                       | not started |
+| [M16 SPMD executor](#m16-spmd-executor)                                     | not started |
 
 ## Stage 0: specification
 
@@ -189,3 +202,140 @@ each effect calls the same D functions as its GPU passes.
 
 **Entry condition.** Q1 resolved: a consumer needs generated shaders on a
 platform the device toolchain does not reach.
+
+## Stage 0 (revision): the full-language scope
+
+**Deliverable.** The revision of 2026-10-19 accepted: the umbrella
+[`SPEC.md`](./SPEC.md), the topic pages it maps, decisions `D16`–`D24`, this
+plan's M6–M16 and the scenarios of [`testing.md`](./testing.md) for M6.
+
+**Gate.** The [Stage 0 gate](../../guidelines/spec-docs.md#stage-0-gate) for
+the first slice: scope, ownership and non-goals agreed by the owner; cold
+reads of the umbrella's opening; an adversarial review of the first slice's
+contracts (profiles, entry points, resources, the revised build step) with
+worked traces — a two-profile unit whose Vulkan-only entry point reaches a
+capability the GL profiles lack, a push-constant block over 128 bytes, an
+interface struct whose flattened names clash, a module whose emitted SPIR-V
+declares a capability its profile denies — and every finding dispositioned.
+Acceptance is recorded by the owner. Later milestones' contracts are refined,
+reviewed and accepted before each starts.
+
+**Progress.** The scope and the design choices behind `D16`–`D22` were set by
+the owner in two grilling rounds (2026-10-17 to 2026-10-19), from the
+[research catalog](../../research/shading-languages/index.md); `D17` refines
+one of those choices for a reason the owner has yet to confirm.
+
+## M6: Profiles and the Vulkan triangle
+
+**Obligations.** `SHC1`–`SHC6`, `SHC9`, `SHC10`; `SHF1`–`SHF3`, `SHF5`,
+`SHF7`–`SHF9`; `SHR1`–`SHR8`; `SHV1`, `SHV2`, `SHV8`, `SHV9`; `SHP3`–`SHP8`,
+`SHP10`.
+
+**Deliverable.**
+
+- **Library.** `sparkles.shaders.capabilities` with the four profiles of
+  `SHC2` and `activeProfile`; `@profiles`, `@builtin`, `Builtin`, `@resources`,
+  `@binding`, `UniformBlock`, `PushConstants`, `UniformsOf`, `layoutOf`,
+  `writeLayout`, `stagesLink`; the `float*` and `int*` aliases.
+- **Compiler** (the fork): the vertex stage; built-in variables; struct
+  results; interface structs flattened; uniform blocks, push-constant blocks
+  and the default uniform block, laid out by `SHR6` and lowered per profile;
+  `getTargetInfo("shaderProfile")`; the manifest; per-profile emission.
+- **Build step.** The manifest, one compilation per profile, Vulkan
+  validation, the capability audit, SPIR-V output files.
+- **Consumer.** The triangle of `sparkles:vulkan-wsi` as one D device module
+  built for `vulkan1.3`, with an aspect-ratio push constant; its committed GLSL
+  and SPIR-V removed.
+- **Oracle.** A Vulkan readback harness on the software rasterizer (lavapipe)
+  in CI.
+
+**Gate.** Every M6 row of the ledger `verified`. The effects of
+`sparkles:ui`, built for `gl330` and `gles100`, generate GLSL byte-identical to
+before the slice, apart from the provenance comment. The triangle, read back
+from lavapipe at three window aspects, matches the host evaluation of its
+vertex function within one rasterisation rule. Each new check is shown to
+fail on a deliberately broken input: a push constant over the limit, a
+capability its profile denies in the emitted module, a vertex output renamed
+against its fragment input.
+
+**Entry condition.** The revision's Stage 0 accepted.
+
+## M7: Capability inference and stage operations
+
+**Obligations.** `SHC7`, `SHC8`; the vocabulary's first capability-narrow
+built-ins: derivatives (coarse and fine), terminate and demote, and `discard`
+defined as one of them per profile, as [Concepts](../../research/shading-languages/concepts.md#discard-demote-and-terminate)
+separates them.
+
+**Entry condition.** M6.
+
+## M8: One vector type
+
+**Obligations.** `SHV10`: `sparkles.math`'s `Vector!(T, N)` meets the
+vocabulary's representation and layout rules on host and device, with
+`Matrix!(T, R, C)`; the vocabulary's aliases point at it. Its contract is a
+page of `sparkles:math`'s specification, owned there.
+
+**Entry condition.** M6; a refined contract for `sparkles:math`.
+
+## M9: Vocabulary breadth
+
+**Obligations.** Further scalar and vector types (`uint`, `bool`, `half`,
+`double`), matrices, and GLSL's built-in families, each with its agreement
+oracle and its capabilities.
+
+**Entry condition.** M8.
+
+## M10: Compute and storage
+
+**Obligations.** Compute entry points beside dcompute's kernels; storage
+buffers, storage images, workgroup memory, barriers and atomics; module-scope
+constant tables.
+
+**Entry condition.** M6.
+
+## M11: Reference CPU executor
+
+**Obligations.** `SHX1`–`SHX3`, refined into testable contracts first.
+
+**Entry condition.** M7 and M10, which bring the operations it must define.
+
+## M12: Further targets
+
+**Obligations.** Profiles for GLSL ES 3.00, GLSL 4.60, HLSL by shader model,
+MSL by version and WGSL through Tint, each with the capability set the
+[translation ceiling](../../research/shading-languages/comparison.md#the-translation-ceiling)
+records; the GLSL ES 1.00 profile retired once the Android build of raylib
+moves to OpenGL ES 3.
+
+**Entry condition.** M6.
+
+## M13: Subgroups and convergence
+
+**Obligations.** Subgroup and quad operations; the compiler emitting
+convergence information so reconvergence points survive optimisation.
+
+**Entry condition.** M11, so the operations have a CPU semantics to agree
+with.
+
+## M14: Further stages
+
+**Obligations.** Geometry, tessellation, mesh and task, and ray tracing, as
+LLVM's SPIR-V backend gains their execution models.
+
+**Entry condition.** Backend support, upstream or in this project's patches,
+with lit tests.
+
+## M15: DXIL
+
+**Obligations.** A second dcompute target on LLVM's DirectX backend, and the
+D3D-only features it brings.
+
+**Entry condition.** M12's Vulkan tiers delivered.
+
+## M16: SPMD executor
+
+**Obligations.** `SHX1`'s SPMD executor, agreeing with the reference executor
+on the corpus.
+
+**Entry condition.** M11.

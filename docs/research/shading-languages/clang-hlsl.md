@@ -326,7 +326,7 @@ None. Clang HLSL produces device binaries only; there is no host-side reflection
 [spv-cbuf]: https://github.com/llvm/llvm-project/blob/27ba493781215910f560b36cd5b3b2f6c93ec5a3/llvm/lib/Target/SPIRV/SPIRVCBufferAccess.cpp
 [ldc-fork]: https://github.com/PetarKirov/ldc/blob/64104a9a6da522730d6b661b85adfdfd2e7e25e7/gen/dcompute/targetVulkan.cpp
 [spec]: ../../specs/shaders/SPEC.md
-[spec-frag]: ../../specs/shaders/SPEC.md#_6-fragment-entry-points
+[spec-frag]: ../../specs/shaders/entry-points.md
 [decisions]: ../../specs/shaders/decisions.md
 [hlsl]: ./hlsl.md
 [dxc]: ./dxc.md

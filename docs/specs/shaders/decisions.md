@@ -1,33 +1,47 @@
 ---
-status: accepted
+status: draft
 owner: sparkles:shaders
-reviewed: 2026-10-16
+reviewed: 2026-10-19
 ---
 
 # `sparkles:shaders` — Decisions
 
 The consequential choices behind [`SPEC.md`](./SPEC.md), with the evidence and
-trade-offs of each, and the open questions that block named requirements. A
-decision was accepted with the specification, on 2026-10-16.
+trade-offs of each, and the open questions that block named requirements.
+`D1`–`D15` were accepted with the specification on 2026-10-16; `D16`–`D24`
+are proposed with the revision that widens its scope, and are accepted with it.
+A decision a later one supersedes says so, and keeps its text.
 
-## Exclusions and entry conditions
+## Scope
 
-Each capability below is outside the specification. An entry condition says
-what evidence would bring it back; without one, the item is not planned.
+The library's goal is to replace the shading languages — GLSL for OpenGL and
+Vulkan, HLSL, Slang, WGSL and MSL — with single-source D: every stage and
+feature they express, reached through SPIR-V where SPIR-V reaches it, and
+through LLVM's DirectX backend later for what only DXIL expresses (`D23`). The
+evidence base is the [research catalog](../../research/shading-languages/index.md).
+Each capability below is outside the current milestones; an entry condition
+says what brings it in.
 
-| Excluded                                     | Why                                                                                                              | Entry condition                                                                     |
-| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Vertex, geometry and tessellation stages     | Every consumer draws textured quads; the fragment stage carries all the effect logic.                            | A consumer whose effect needs per-vertex work it cannot express on a quad.          |
-| Compute kernels                              | dcompute already compiles them; this library adds nothing a kernel needs.                                        | None in this library.                                                               |
-| Matrices, integer and double vectors         | No effect uses them; each multiplies the vocabulary's surface and its CPU/GPU agreement tests.                   | A consumer effect that needs one, with its agreement oracle.                        |
-| Vulkan and SPIR-V consumers                  | Consumers draw through OpenGL; a Vulkan consumer needs descriptor sets and push-constant blocks (`D7`).          | A Vulkan renderer in a consumer; then a target flag selects Vulkan-shaped uniforms. |
-| Runtime shader compilation and hot reload    | The device compiler is a build-time tool far too large to ship in a program.                                     | None; a consumer may reload GLSL the build regenerated.                             |
-| Drawing: registries, passes, texture binding | A consumer's renderer owns them; the library hands it complete shaders.                                          | None in this library.                                                               |
-| Editor diagnostics                           | Owned by the analysis library ([`sparkles:dmd-lsp`](../dmd-lsp/targets.md)), which reads the same configuration. | None in this library.                                                               |
+| Not yet in scope                                          | Why                                                                                                             | Entry condition                                                             |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Geometry, tessellation, mesh, ray-tracing stages          | LLVM's SPIR-V backend has execution models for compute, vertex and fragment only                                | Backend support upstream, or in this project's LLVM patches, with lit tests |
+| D3D-only features (work graphs, sampler feedback)         | No SPIR-V path reaches them                                                                                     | The DXIL target (`D23`)                                                     |
+| Runtime shader compilation and hot reload                 | The device compiler is a build-time tool far too large to ship in a program                                     | None; a consumer may reload output the build regenerated                    |
+| Drawing: registries, passes, pipelines, descriptor writes | A consumer's renderer owns them; the library hands it complete shaders, their layouts and their bindings        | None in this library                                                        |
+| Editor diagnostics                                        | Owned by the analysis library ([`sparkles:dmd-lsp`](../dmd-lsp/targets.md)), which reads the same configuration | None in this library                                                        |
+| Automatic differentiation                                 | Reverse mode needs a compiler transform (Enzyme on LLVM IR) the project has not evaluated                       | A consumer, and a feasibility spike                                         |
+
+The exclusions of 2026-10-16 that this revision lifts — vertex stages, Vulkan
+consumers, integer vectors — come back through the milestones of
+[`PLAN.md`](./PLAN.md); matrices, further types and compute through later ones.
 
 ## Decisions
 
 ### D1: The vocabulary is GLSL's, spelled in D
+
+> [!NOTE]
+> Superseded in part by [`D20`](#d20-generic-types-hlsl-shaped-aliases-glsl-math-names): the math keeps GLSL's names and
+> definitions; the types take HLSL-shaped names over generic types.
 
 **Question.** Should effects be written against D's numeric idioms, with a
 translation to GLSL, or against GLSL's own names and definitions?
@@ -63,6 +77,10 @@ functions whose interface is checked at compile time.
 and any divergence from `SHF1`–`SHF7` is a contract change.
 
 ### D3: Generate GLSL, not SPIR-V, for consumers
+
+> [!NOTE]
+> Amended by [`D16`](#d16-one-compilation-per-profile-capabilities-as-d-data): GLSL remains the output of the OpenGL
+> profiles; a Vulkan profile hands consumers SPIR-V.
 
 **Choice.** The build step translates the SPIR-V to GLSL 3.30 and GLSL ES
 1.00 and validates both.
@@ -119,6 +137,11 @@ nothing in the common case.
 the output prebuilt (`SHB3`).
 
 ### D7: OpenGL-shaped uniforms and one shared sampler
+
+> [!NOTE]
+> Superseded for uniforms by [`D19`](#d19-blocks-in-d-lowered-per-profile): the OpenGL profiles keep these
+> plain uniforms, and a Vulkan profile lowers the same declarations to blocks.
+> The shared sampler stands.
 
 **Choice.** A `@uniform` parameter is a plain uniform outside any block, and
 every image is read through one sampler at binding 0 (`SHF2`).
@@ -312,9 +335,173 @@ it is an assumption, checked on the devices tested. Translating to GLSL ES
 3.00, where fragment `highp` is mandatory, would make it a guarantee and needs
 an OpenGL ES 3 context.
 
+### D16: One compilation per profile; capabilities as D data
+
+**Question.** How does a shader target several outputs — Vulkan SPIR-V, GLSL
+for OpenGL and OpenGL ES, later HLSL, MSL, WGSL — when each grants different
+features, and how does the source say which it is for?
+
+**Alternatives.** A list of targets in the build recipe; consumer-chosen
+outputs, with failures only when a consumer asks for one; one compilation for
+every target, with per-target choices made at code generation (as dcompute's
+`__dcompute_reflect` does); or one compilation per profile, with the profile a
+compile-time constant.
+
+**Choice.** One compilation per profile (`SHC6`), the profile reported by
+`__traits(getTargetInfo, "shaderProfile")` (`SHC3`), the profiles an entry
+point is for declared beside it with `@profiles` (`SHC4`) and gathered by the
+compiler's manifest (`SHC5`), and the capability table written in D
+(`SHC1`).
+
+**Why.** D's compile-time evaluation runs once per compilation, shared by
+host and every device target; only one profile per compilation lets `static
+if`, templates and `static assert` branch on it, which is the D counterpart of
+Slang's capability system and target switch, with the table readable and
+testable as ordinary D rather than a compiler file. Declaring profiles beside
+the entry point keeps the fact next to the code it constrains.
+
+**Trade-offs.** N profiles cost N device compilations. A profile's lowering
+choices (blocks or loose uniforms) are passed to the compiler by the build
+step, which reads them from the same table.
+
+**Revisit if.** Build time is dominated by repeated semantic analysis of the
+unit.
+
+### D17: Capabilities are checked three times
+
+**Question.** Where is a use of a capability the active profile lacks
+rejected?
+
+**Alternatives.** Only in the vocabulary (a `static assert` in each built-in);
+only in the compiler; or at three layers.
+
+**Choice.** Three: the vocabulary declares requirements and selects
+implementations per profile, compiling the gap to `unsupported` (`SHC7`); the
+compiler infers each emitted entry point's requirements through the call graph
+and reports the chain (`SHC8`); and the build step audits the emitted module's
+capabilities (`SHC9`).
+
+**Why.** A `static assert` in a built-in would fire in every compilation that
+analyses a caller, including callers that belong to entry points built for
+other profiles — every function of the unit is analysed in every
+compilation. Only the compiler knows which entry points are emitted. The
+audit catches what neither declares: capabilities the compiler introduces.
+
+**Trade-offs.** `SHC8` is compiler work; until it lands, the audit and
+per-profile compilation are the checks. This refines the owner's choice of a
+static-assert-based check in the vocabulary, for the reason above; the
+choice is the owner's to confirm.
+
+### D18: Resources are parameters or interface structs
+
+**Question.** How does a shader declare the resources it reads?
+
+**Alternatives.** Module-scope declarations with bindings, as GLSL and HLSL
+do; entry-point parameters; or a struct of resources the entry point takes.
+
+**Choice.** Parameters and interface structs both, the struct flattened into
+parameters (`SHR2`).
+
+**Why.** A parameter keeps the entry point an ordinary D function the CPU
+executor can call with host values; a struct groups a shader's resources, or
+a set several entry points share, without repeating them. Module-scope
+resources would lift the device pass's global-variable rule and give the
+executor globals to bind.
+
+**Trade-offs.** Two spellings of one thing; flattening makes them one
+interface.
+
+### D19: Blocks in D, lowered per profile
+
+**Question.** Vulkan requires every uniform value in a block; raylib's OpenGL
+path binds plain uniforms by name and cannot bind a block. How do the two
+coexist?
+
+**Alternatives.** Two declaration forms, one per target family; blocks on
+every target, with OpenGL consumers binding uniform buffers; or one
+declaration lowered per profile.
+
+**Choice.** One declaration, lowered per profile (`SHR3`–`SHR5`): a uniform
+block or push-constant block under `vulkan1.3`, one named uniform per field
+under the OpenGL profiles. `@uniform` parameters stand for fields of a default
+block, and their OpenGL output is unchanged.
+
+**Why.** A shader builds for both kinds of consumer without edits, and the
+OpenGL output of every existing effect stays byte-identical.
+
+**Trade-offs.** The two lowerings are different interfaces of one source, and
+a host binds them differently: by name on OpenGL, by binding and offset on
+Vulkan, with the offsets of `SHR6`.
+
+### D20: Generic types, HLSL-shaped aliases, GLSL math names
+
+**Question.** What do the vocabulary's names look like, now that it serves
+every shading language rather than GLSL alone?
+
+**Choice.** Types are generic — `sparkles.math`'s `Vector!(T, N)` and
+`Matrix!(T, R, C)`, once unified (`SHV10`) — with HLSL-shaped aliases
+(`float4`, `int2`, `float4x4`, `half4`); math functions keep the names GLSL,
+WGSL and MSL share (`mix`, `fract`, `smoothstep`); operations on resources and
+stages are methods of their types (`texture.sample(uv)`), in D's naming.
+GLSL's `vec*` names remain as aliases.
+
+**Why.** `float4` reads the same in HLSL, Slang, MSL and D, and avoids GLSL's
+column-major `mat3x2` naming; the math names are the ones most languages
+share; methods replace GLSL's free-function texture zoo with D's own idiom.
+
+### D21: Evidence is a conformance corpus
+
+**Question.** The exclusions of 2026-10-16 came back when a consumer needed
+one. What drives and verifies features now that the goal is completeness?
+
+**Choice.** A conformance corpus: permissively licensed samples as pinned
+flake inputs (ported to D, the originals kept external), hand-written shaders
+per feature, and the project's own effects. A feature is delivered when its
+corpus shaders compile for every profile that grants it, validate, and agree
+with the CPU executor under a GPU readback.
+
+**Trade-offs.** Porting samples is work that a consumer would otherwise pay
+for once; the first slice still has a real consumer (the triangle of
+`sparkles:vulkan-wsi`).
+
+### D22: A scalar reference executor, then SPMD on SIMD
+
+**Choice.** The CPU executes GPU semantics — subgroups, quads, derivatives,
+barriers — first in a scalar reference executor that pins the semantics, and
+later in an SPMD executor that runs invocations as SIMD lanes, checked
+against the reference (`SHX1`).
+
+**Why.** The research found no system that runs fragment shaders on a CPU
+with quads and derivatives, and two precedents that disagree on edge cases;
+semantics first, speed second.
+
+### D23: SPIR-V first; DXIL later
+
+**Choice.** Every feature SPIR-V reaches goes through the LLVM SPIR-V path
+and the translators; D3D-only features come with a second dcompute target on
+LLVM's DirectX backend, after the SPIR-V side covers the Vulkan tiers.
+
+**Why.** One device path covers Vulkan, OpenGL, OpenGL ES, Metal (through
+SPIRV-Cross) and the web (through Tint and naga); the DirectX backend is the
+one Clang HLSL builds, and Microsoft has announced SPIR-V for Direct3D 12 from
+Shader Model 7.
+
+### D24: LLVM stays the device path; MLIR is a contribution
+
+**Choice.** Device code keeps going through LLVM IR and its SPIR-V backend,
+structured before the backend (since #659); the project contributes its
+control-flow cases to the LDC MLIR effort's lowering to MLIR's structured
+form, and switches device code generation only if that path beats this one on
+the corpus.
+
+**Why.** MLIR's SPIR-V dialect keeps structure by construction but lacks
+graphics operations (derivatives, demote, terminate), and a second code
+generator in LDC is a large cost to take on speculatively.
+
 ## Open questions
 
-| ID  | Question                                                                                                                                                  | Affects | Decision point             |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------- |
-| Q1  | Which further platforms get a device toolchain, and how? Windows needs LLVM and LDC cross-built for MSVC, or built natively, and published as an archive. | `SHT4`  | A consumer needing it (M5) |
-| Q2  | Does the output variable keep the name `finalColor`, a convention of one OpenGL framework, when the fragment stage is proposed upstream?                  | `SHF3`  | Upstreaming the stage      |
+| ID  | Question                                                                                                                                                                                       | Affects | Decision point               |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------- |
+| Q1  | Which further platforms get a device toolchain, and how? Windows needs LLVM and LDC cross-built for MSVC, or built natively, and published as an archive.                                      | `SHT4`  | A consumer needing it (M5)   |
+| Q2  | Does the output variable keep the name `finalColor`, a convention of one OpenGL framework, when the fragment stage is proposed upstream?                                                       | `SHF3`  | Upstreaming the stage        |
+| Q3  | Which Vulkan profile serves the Android floor? `VP_ANDROID_baseline_2022` guarantees Vulkan 1.1, which consumes SPIR-V up to 1.3; a `vulkan1.1` profile needs the compiler to emit SPIR-V 1.3. | `SHC2`  | A Vulkan consumer on Android |
