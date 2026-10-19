@@ -3,17 +3,19 @@
 This directory holds oracle 10 of
 [testing.md](../../../../docs/specs/base/sync/testing.md#oracle-10-the-protocol-model):
 TLA+ specifications of the parking lot and of the `Mutex`,
-`InterruptibleMutex` and `Condition` protocols, with TLC configurations
-that check their safety invariants, their liveness under weak fairness,
-traces the model must accept, and seeded faults it must reject. The model
+`InterruptibleMutex`, `Condition`, `Semaphore` and `RwLock` protocols,
+with TLC configurations that check their safety invariants, their liveness
+under weak fairness, traces the model must accept, and seeded faults it
+must reject. The model
 is written from [SPEC.md](../../../../docs/specs/base/sync/SPEC.md) and
 [primitives.md](../../../../docs/specs/base/sync/primitives.md) alone, not
 from the D code; whether the code implements it is a manual review
 obligation, recorded with each result.
 
-It covers PLAN.md's S1 (the parking lot, `fork` included) and S2 (the
-mutex and condition protocols). The semaphore and reader–writer protocols
-that oracle 10 also names belong to S3 and are not modelled yet.
+It covers PLAN.md's S1 (the parking lot, `fork` included), S2 (the
+mutex and condition protocols) and S3 (the semaphore and reader–writer
+protocols that oracle 10 names; S3's other primitives are not in its
+scope).
 
 ## Files
 
@@ -21,10 +23,13 @@ that oracle 10 also names belong to S3 and are not modelled yet.
 | ------------------- | ------------------------------------------------------------------ |
 | `ParkingLot.tla`    | S1: buckets and their locks, queues, records, the abstract parker  |
 | `LockProtocols.tla` | S2: `Mutex` (`LockBits`), `InterruptibleMutex`, `Condition`        |
+| `WaitProtocols.tla` | S3: `Semaphore`, `RwLock`                                          |
 | `pl-*.cfg`          | configurations of `ParkingLot.tla`                                 |
 | `mx-*.cfg`          | `LockProtocols.tla` with `Kind = "mutex"` and lockers only         |
 | `im-*.cfg`          | `LockProtocols.tla` with `Kind = "imutex"` and lockers only        |
 | `cv-*.cfg`          | `LockProtocols.tla` with condition waiters and a notifier          |
+| `sem-*.cfg`         | `WaitProtocols.tla` with `Kind = "semaphore"`                      |
+| `rw-*.cfg`          | `WaitProtocols.tla` with `Kind = "rwlock"`                         |
 | `check.sh`          | runs every configuration and checks each has its expected verdict  |
 | `.editorconfig`     | TLA+ aligns continuation lines under their operator, at any column |
 
@@ -60,49 +65,66 @@ tlc -workers auto -metadir /tmp/tla-meta/pl-wait -cleanup \
 
 Recorded on 2026-10-17 with TLC 2.18 (`nixpkgs#tlaplus18`) and OpenJDK 21,
 `TLA_WORKERS=4`, on a 32-core x86-64 Linux machine. The whole `check.sh`
-run took 162 s (115 s with `-workers auto`). States are distinct states;
+run took 162 s (115 s with `-workers auto`). The S3 rows (`sem-*`, `rw-*`) were
+recorded on 2026-10-19 on the same machine with `-workers auto`; they take
+13 s together. States are distinct states;
 for a witness or a fault they are the states explored before the first
 violation, which varies with the worker count.
 
-| Configuration           | Checks            | States    | Time | Verdict                       |
-| ----------------------- | ----------------- | --------- | ---- | ----------------------------- |
-| `pl-wait`               | safety, liveness  | 29 409    | 19 s | pass                          |
-| `pl-designate`          | safety            | 125 700   | 3 s  | pass                          |
-| `pl-filter`             | safety            | 51 918    | 2 s  | pass                          |
-| `pl-requeue`            | safety            | 496 922   | 7 s  | pass                          |
-| `pl-requeue-shared`     | safety            | 385 337   | 5 s  | pass                          |
-| `pl-fork`               | safety            | 261 561   | 4 s  | pass                          |
-| `pl-live-designate`     | safety, liveness  | 3 738     | 3 s  | pass                          |
-| `pl-live-requeue`       | safety, liveness  | 7 336     | 3 s  | pass                          |
-| `pl-witness-withdraw`   | `NoWithdrawal`    | 245       | 1 s  | violated, as required         |
-| `pl-witness-race`       | `NoLostRace`      | 483       | 1 s  | violated, as required         |
-| `pl-witness-late`       | `NoLateDelivery`  | 5 096     | 1 s  | violated, as required         |
-| `pl-fault-validate`     | safety            | 346       | 1 s  | `NoLostWakeup` violated       |
-| `pl-fault-timeout`      | safety            | 354       | 1 s  | `ReturnConsistent` violated   |
-| `pl-fault-delivery`     | safety            | 6 738     | 1 s  | `QueueConsistent` violated    |
-| `pl-fault-retire`       | safety            | 795       | 1 s  | `RegistrationsSound` violated |
-| `pl-fault-settle`       | safety            | 5 831     | 1 s  | `SettleOnlyOnCancel` violated |
-| `pl-fault-requeue`      | safety            | 2 108     | 1 s  | `ReturnConsistent` violated   |
-| `mx-deadline`           | safety, liveness  | 22 516    | 9 s  | pass                          |
-| `mx-bound2`             | safety, liveness  | 5 328     | 3 s  | pass                          |
-| `mx-fork`               | safety, liveness  | 10 716    | 5 s  | pass                          |
-| `mx-witness-handoff`    | `NoHandoff`       | 251       | 1 s  | violated, as required         |
-| `mx-witness-withdraw`   | `NoWithdrawal`    | 87        | 1 s  | violated, as required         |
-| `mx-fault-nohandoff`    | `AcquisitionsEnd` | 1 920     | 1 s  | liveness violated             |
-| `mx-fault-purevalidate` | `AcquisitionsEnd` | 1 842     | 1 s  | liveness violated             |
-| `mx-fault-nopasson`     | `AcquisitionsEnd` | 24 736    | 5 s  | liveness violated             |
-| `mx-fault-twodesig`     | `Designation`     | 1 631     | 1 s  | violated                      |
-| `im-basic`              | safety, liveness  | 67 349    | 24 s | pass                          |
-| `im-fork`               | safety, liveness  | 34 463    | 14 s | pass                          |
-| `im-witness-baton`      | `NoBatonPass`     | 637       | 1 s  | violated, as required         |
-| `im-witness-withdraw`   | `NoWithdrawal`    | 280       | 1 s  | violated, as required         |
-| `im-fault-cancel`       | `MutualExclusion` | 741       | 1 s  | violated                      |
-| `cv-mutex`              | safety            | 2 107 194 | 20 s | pass                          |
-| `cv-imutex`             | safety            | 1 029 454 | 10 s | pass                          |
-| `cv-mutex-live`         | safety, liveness  | 10 983    | 4 s  | pass                          |
-| `cv-imutex-live`        | safety, liveness  | 12 977    | 4 s  | pass                          |
-| `cv-witness-withdraw`   | `NoWithdrawal`    | 479       | 1 s  | violated, as required         |
-| `cv-fault-reacquire`    | `WaitReturn`      | 14 761    | 2 s  | violated                      |
+| Configuration           | Checks             | States    | Time | Verdict                       |
+| ----------------------- | ------------------ | --------- | ---- | ----------------------------- |
+| `pl-wait`               | safety, liveness   | 29 409    | 19 s | pass                          |
+| `pl-designate`          | safety             | 125 700   | 3 s  | pass                          |
+| `pl-filter`             | safety             | 51 918    | 2 s  | pass                          |
+| `pl-requeue`            | safety             | 496 922   | 7 s  | pass                          |
+| `pl-requeue-shared`     | safety             | 385 337   | 5 s  | pass                          |
+| `pl-fork`               | safety             | 261 561   | 4 s  | pass                          |
+| `pl-live-designate`     | safety, liveness   | 3 738     | 3 s  | pass                          |
+| `pl-live-requeue`       | safety, liveness   | 7 336     | 3 s  | pass                          |
+| `pl-witness-withdraw`   | `NoWithdrawal`     | 245       | 1 s  | violated, as required         |
+| `pl-witness-race`       | `NoLostRace`       | 483       | 1 s  | violated, as required         |
+| `pl-witness-late`       | `NoLateDelivery`   | 5 096     | 1 s  | violated, as required         |
+| `pl-fault-validate`     | safety             | 346       | 1 s  | `NoLostWakeup` violated       |
+| `pl-fault-timeout`      | safety             | 354       | 1 s  | `ReturnConsistent` violated   |
+| `pl-fault-delivery`     | safety             | 6 738     | 1 s  | `QueueConsistent` violated    |
+| `pl-fault-retire`       | safety             | 795       | 1 s  | `RegistrationsSound` violated |
+| `pl-fault-settle`       | safety             | 5 831     | 1 s  | `SettleOnlyOnCancel` violated |
+| `pl-fault-requeue`      | safety             | 2 108     | 1 s  | `ReturnConsistent` violated   |
+| `mx-deadline`           | safety, liveness   | 22 516    | 9 s  | pass                          |
+| `mx-bound2`             | safety, liveness   | 5 328     | 3 s  | pass                          |
+| `mx-fork`               | safety, liveness   | 10 716    | 5 s  | pass                          |
+| `mx-witness-handoff`    | `NoHandoff`        | 251       | 1 s  | violated, as required         |
+| `mx-witness-withdraw`   | `NoWithdrawal`     | 87        | 1 s  | violated, as required         |
+| `mx-fault-nohandoff`    | `AcquisitionsEnd`  | 1 920     | 1 s  | liveness violated             |
+| `mx-fault-purevalidate` | `AcquisitionsEnd`  | 1 842     | 1 s  | liveness violated             |
+| `mx-fault-nopasson`     | `AcquisitionsEnd`  | 24 736    | 5 s  | liveness violated             |
+| `mx-fault-twodesig`     | `Designation`      | 1 631     | 1 s  | violated                      |
+| `im-basic`              | safety, liveness   | 67 349    | 24 s | pass                          |
+| `im-fork`               | safety, liveness   | 34 463    | 14 s | pass                          |
+| `im-witness-baton`      | `NoBatonPass`      | 637       | 1 s  | violated, as required         |
+| `im-witness-withdraw`   | `NoWithdrawal`     | 280       | 1 s  | violated, as required         |
+| `im-fault-cancel`       | `MutualExclusion`  | 741       | 1 s  | violated                      |
+| `cv-mutex`              | safety             | 2 107 194 | 20 s | pass                          |
+| `cv-imutex`             | safety             | 1 029 454 | 10 s | pass                          |
+| `cv-mutex-live`         | safety, liveness   | 10 983    | 4 s  | pass                          |
+| `cv-imutex-live`        | safety, liveness   | 12 977    | 4 s  | pass                          |
+| `cv-witness-withdraw`   | `NoWithdrawal`     | 479       | 1 s  | violated, as required         |
+| `cv-fault-reacquire`    | `WaitReturn`       | 14 761    | 2 s  | violated                      |
+| `sem-basic`             | safety, liveness   | 134       | 2 s  | pass                          |
+| `sem-two`               | safety, liveness   | 58        | 1 s  | pass                          |
+| `sem-four`              | safety, liveness   | 614       | 1 s  | pass                          |
+| `sem-witness-withdraw`  | `NoWithdrawal`     | 17        | 1 s  | violated, as required         |
+| `sem-fault-raise`       | `NoStrandedPermit` | 11        | 1 s  | violated                      |
+| `sem-fault-drop`        | `SemBalance`       | 36        | 1 s  | violated                      |
+| `rw-readers`            | safety, liveness   | 78        | 1 s  | pass                          |
+| `rw-upgrade`            | safety, liveness   | 138       | 1 s  | pass                          |
+| `rw-timed`              | safety, liveness   | 351       | 1 s  | pass                          |
+| `rw-upgraders`          | safety, liveness   | 106       | 1 s  | pass                          |
+| `rw-four`               | safety, liveness   | 1 553     | 1 s  | pass                          |
+| `rw-witness-withdraw`   | `NoWithdrawal`     | 19        | 1 s  | violated, as required         |
+| `rw-fault-barge`        | `Acquires`         | 472       | 1 s  | liveness violated             |
+| `rw-fault-nodrain`      | `Acquires`         | 21        | 1 s  | liveness violated             |
+| `rw-fault-grant`        | `MutualExclusion`  | 69        | 1 s  | violated                      |
 
 Liveness checking costs about twenty times the safety search, so the
 three-thread configurations with the largest spaces check safety only and
@@ -128,6 +150,13 @@ fault configuration, and all of `ParkingLot.tla`, which always has them.
   parking lot decides the outcome. The scheduler consumes a request at
   `settle` (Zig's rule); a latching scheduler differs only in leaving it
   pending, which no invariant depends on.
+- **`WaitProtocols.tla`** folds the parker further: a committed wake takes
+  the record out of the queue with its token, after which its deadline
+  cannot win (SYP5), and the waiter returns with the token at a later step
+  of its own. A semaphore waiter's cancellation is modelled as its
+  timeout, which it resolves identically; `RwLock` has no interruptible
+  forms (SYR2). Every thread loops forever, so `Acquires` is about
+  unbounded runs.
 - **Not modelled:** the seam (SYF1–SYF4), parker installation and pinning
   (SYK1, SYK9), spinning (SYK7, SYM9), memory ordering (SYH1, SYH2: oracles
   1, 4 and 9), bits outside `LockBits`'s three (SYL2), a condition used with
@@ -177,6 +206,21 @@ fault configuration, and all of `ParkingLot.tla`, which always has them.
 | SYC9        | `Kind`                                                                                    | `cv-mutex*` and `cv-imutex*`                                                                      |
 | SYI3        | `Resolve`'s cancelled branch                                                              | `SettleOnce`, `WaitReturn`                                                                        |
 | SYX1        | `Fork`, `Stuck`                                                                           | `HeldStaysHeld`; `mx-fork`, `im-fork`                                                             |
+
+### `WaitProtocols.tla` (S3)
+
+| Requirement | Actions                                                                | Checked by                                                                  |
+| ----------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| SYS2        | `SIdle`, `SPark` (the validation takes a free permit), `SRelease`      | `SemBalance`, `Acquires`                                                    |
+| SYS3        | `SRelease` hands off to the head while waiters are parked              | `NoStrandedPermit`, `Acquires`; `sem-fault-raise`                           |
+| SYS4        | `STimeout` wins only while queued; `SWake` keeps a handed-off permit   | `SemBalance`; `sem-witness-withdraw`, `sem-fault-drop`                      |
+| SYR2        | `Acquire`, `RIdle`, `RPark`, `RHoldU`, `RUnlockS`, `RUnlockX`          | `MutualExclusion`, `WordMatches`                                            |
+| SYR3        | `RIdle` fails while parked                                             | `Acquires`; `rw-fault-barge`                                                |
+| SYR4        | `RHoldU` upgrades, `RDrain`, `RDTimeout` keeps upgradable mode         | `MutualExclusion`, `Acquires` in `rw-upgrade`, `rw-timed`; `rw-fault-grant` |
+| SYR5        | `Pass`: one exclusive waiter, or shared and one upgradable waiter      | `MutualExclusion`, `WordMatches`                                            |
+| SYR7        | `RUnlockS` wakes the drain or runs the pass; `RRepass` after a timeout | `Acquires` in `rw-*`; `rw-fault-nodrain`                                    |
+| SYP15       | every queue edit recomputes the parked bit                             | `ParkedBit`                                                                 |
+| withdrawal  | `STimeout`, `RTimeout`, `RDTimeout`                                    | `sem-witness-withdraw`, `rw-witness-withdraw`                               |
 
 Oracle 1's safety invariants appear as `MutualExclusion`,
 `QueueConsistent` (exactly one outcome per park: a dequeued record is in no
@@ -263,3 +307,28 @@ oracle 10 or require the bucket lock to be starvation-free.
 deadline and interruptibility is specified, while `InterruptibleMutex`'s
 lock has an interruptible deadline form (SYJ2). The model gives each
 condition waiter one of the two forms.
+
+**F8. Barging past parked waiters (SYR3).** SYR3 requires only that new
+shared acquirers park behind a parked writer or upgrader. The model, like
+the D code, lets no mode's fast path succeed while anyone is parked: a
+barging writer or upgradable acquirer would need the release pass to
+re-check grants against a word that changed under it, and the pass hands
+modes off directly, so nothing is gained by barging. `rw-fault-barge`
+shows that letting shared acquirers barge starves a parked writer.
+
+**F9. "At most one upgradable waiter at the head" (SYR5).** The pass
+grants one upgradable waiter and then skips further upgradable waiters,
+still granting the shared waiters behind them up to the first writer: a
+reader queued behind a second upgradable waiter can share the lock with
+the first, and SYR7 requires waking every waiter whose mode the lock now
+admits. The specification's "at the head of the queue" reads more
+narrowly; it should say whether the pass stops or skips there.
+
+**F10. A pass is one step here, two in the code.** `RwPass` reads the
+word, chooses the waiters to wake and replaces the word in one action. In
+`rwlock.d` the filter chooses under the bucket lock and the callback's
+read–modify–write lands later, while an upgrade and a reader's plain
+release, which take no bucket lock, may change the word in between. The
+seventh review found both races there (DS30); they are fixed and
+reproduced by the D model's scenarios, not by this model, whose
+granularity cannot reach them.

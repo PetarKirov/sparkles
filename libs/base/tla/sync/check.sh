@@ -55,6 +55,21 @@ cv-mutex-live        LockProtocols  pass
 cv-imutex-live       LockProtocols  pass
 cv-witness-withdraw  LockProtocols  inv:NoWithdrawal
 cv-fault-reacquire   LockProtocols  inv:WaitReturn
+sem-basic            WaitProtocols  pass
+sem-two              WaitProtocols  pass
+sem-four             WaitProtocols  pass
+sem-witness-withdraw WaitProtocols  inv:NoWithdrawal
+sem-fault-raise      WaitProtocols  inv:NoStrandedPermit
+sem-fault-drop       WaitProtocols  inv:SemBalance
+rw-readers           WaitProtocols  pass
+rw-upgrade           WaitProtocols  pass
+rw-timed             WaitProtocols  pass
+rw-upgraders         WaitProtocols  pass
+rw-four              WaitProtocols  pass
+rw-witness-withdraw  WaitProtocols  inv:NoWithdrawal
+rw-fault-barge       WaitProtocols  temporal
+rw-fault-nodrain     WaitProtocols  temporal
+rw-fault-grant       WaitProtocols  inv:MutualExclusion
 '
 
 selected() {
