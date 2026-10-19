@@ -16,7 +16,7 @@ DS9 and DS13–DS22 on 2026-10-15, after an independent review whose findings
 DS13–DS22 resolve; DS23, resolving a second review, and DS24 were accepted on
 2026-10-15; and DS25 and DS26, resolving a third and a fourth review, on
 2026-10-16. DS27, recording the protocol model's findings, was accepted on
-2026-10-17. DS28 is proposed.
+2026-10-17, and DS28, resolving a fifth and a sixth review, on 2026-10-19.
 
 ## DS1: A parking lot, not a futex word per lock
 
@@ -536,4 +536,4 @@ of primitives.md §13's). Windows SYF2 cites the native seam's run.
 there would lose a portable delivery. The requeue onto its own key cannot
 arise from a real guard.
 
-**Status.** Proposed.
+**Status.** Accepted 2026-10-19.
