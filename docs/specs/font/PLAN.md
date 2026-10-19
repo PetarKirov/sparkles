@@ -186,7 +186,9 @@ term consumer, raylib the interim one ([`FTX14`](./decisions.md#ftx14-a-startup-
   of instructions retired per ISA that only ever decreases.
 
 **Integration order.** S1–S3 land as libraries with their own tests, then in
-the `vulkan-wsi` spike. The `raylib-text` adapter comes last, over the
+the `vulkan-wsi` spike. Their first renderer consumer is
+[`sparkles:ui-vulkan`](../ui-vulkan/PLAN.md#v3-glyphs), whose canvas implements
+S3's upload callback. The `raylib-text` adapter comes last, over the
 terminal stack's deferred faces once that stack has merged; it keeps their
 effect, and the design system's rule that lazy loading never changes which
 face or size draws (`TOK7`, `TOK8`).
