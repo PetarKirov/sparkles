@@ -1,13 +1,14 @@
 # Synchronize threads and fibers
 
-`sparkles.base.sync` provides locks, a condition variable and a one-time
-initializer whose state is one byte or one word and whose operations never
-allocate. The same primitive serves threads and fibers: a thread that waits
+`sparkles.base.sync` provides locks, a condition variable, a one-time
+initializer, a reader–writer lock, a semaphore, events, a latch, a barrier
+and a futex-style wait on any word. Each primitive's state is one byte or
+one word, and no operation allocates. The same primitive serves threads and fibers: a thread that waits
 sleeps, and a fiber that waits under a scheduler's parker suspends without
 blocking its loop. Import the package, or a single module from it:
 
 ```d
-import sparkles.base.sync : Condition, Guarded, Mutex, Once;
+import sparkles.base.sync : Condition, Guarded, Mutex, Once, RwLock, Semaphore;
 ```
 
 | See also                                                 |                                                       |
@@ -254,6 +255,192 @@ cancellation leaves that initializer running. A caller that runs the
 initializer itself runs it to completion. `isComplete` reports whether one
 has completed.
 
+## Share data among readers with `RwLock`
+
+`RwLock` is one word with three modes: shared for readers, exclusive for
+a writer, and upgradable, which coexists with readers and can later become
+exclusive. `read`, `write` and `upgradableRead` return a guard that
+releases its mode when it leaves scope:
+
+```d
+__gshared RwLock routesLock;
+__gshared int[string] routes;
+
+int lookup(string name)
+{
+    auto g = routesLock.read();
+    return routes.get(name, -1);
+}
+
+void add(string name, int port)
+{
+    auto g = routesLock.write();
+    routes[name] = port;
+}
+```
+
+Once a writer is waiting, new readers queue behind it instead of
+overtaking it (SYR3), so a steady stream of readers cannot starve writers.
+A release hands the lock to the head of the queue directly: one writer, or
+every reader up to the first writer.
+
+An upgradable guard reads alongside other readers, then upgrades when it
+decides to write. The upgrade waits only for the readers already inside
+and goes ahead of every queued writer (SYR4):
+
+```d
+void addIfMissing(string name, int port)
+{
+    auto g = routesLock.upgradableRead();
+    if (name in routes)
+        return;
+    g.upgrade(); // exclusive from here
+    routes[name] = port;
+}
+```
+
+Only one upgradable holder exists at a time. `upgradeUntil(deadline)`
+gives up at a deadline and leaves the caller in upgradable mode;
+`downgrade` turns an exclusive or upgradable guard back into a reader.
+The raw operations (`lockShared`/`unlockShared`, `lock`/`unlock`,
+`lockUpgradable`/`unlockUpgradable`) have `try` and `Until` forms that
+return `false` holding nothing. Like `Mutex`, an `RwLock` is for short
+sections: holding any mode pins the caller, and acquisition is never
+interruptible. Taking shared mode while already holding the lock is a
+programming error; with a writer queued it deadlocks.
+
+## Limit concurrency with a semaphore
+
+`Semaphore` is one word of permits. `acquire` takes one, waiting while
+none is available; `release(n)` adds `n`. Its `.init` holds no permits, so
+construct it with a count:
+
+```d
+__gshared Semaphore downloads;
+
+shared static this()
+{
+    downloads = Semaphore(4); // at most four at once
+}
+
+void download(string url)
+{
+    downloads.acquire();
+    scope (exit)
+        downloads.release();
+    // ...
+}
+```
+
+While anyone waits, `release` hands its permits to the waiters in queue
+order instead of raising the count, so a waiter is never overtaken by a
+caller that arrived later (SYS3). `tryAcquire` takes a permit without
+waiting, and `acquireUntil(deadline, interruptible = false)` returns a
+`WaitStatus`; a waiter that was handed a permit keeps it even if its
+deadline passes or a cancellation arrives before it returns (SYS4).
+
+## Signal with events
+
+`ManualResetEvent` and `AutoResetEvent` are one byte each. A manual-reset
+event stays set until `reset` and releases every waiter; an auto-reset
+event releases one waiter per `set`, or, with nobody waiting, stays set
+until the next `wait` consumes it:
+
+```d
+__gshared ManualResetEvent configLoaded;
+__gshared AutoResetEvent workAvailable;
+
+void worker()
+{
+    configLoaded.wait(); // every worker passes once the config is in
+    while (true)
+    {
+        workAvailable.wait(); // one worker per signal
+        // ...
+    }
+}
+```
+
+`waitUntil(deadline, interruptible = false)` returns a `WaitStatus`, and
+`tryWait` never waits: it reports whether the event is set and, for an
+auto-reset event, consumes the signal. Setting a set event does nothing
+more, so signals do not accumulate; count them with a `Semaphore` if they
+must.
+
+## Wait for a count or a rendezvous
+
+`Latch(n)` opens once `countDown` has been called `n` times and stays open:
+every `wait`, before or after, returns once the count reaches zero.
+`Barrier(n)` releases all `n` parties when the last arrives, returns `true`
+to exactly one of them, and is then ready for the next round:
+
+```d
+enum workers = 4;
+__gshared Latch started;
+__gshared Barrier phase;
+
+shared static this()
+{
+    started = Latch(workers);
+    phase = Barrier(workers);
+}
+
+void work()
+{
+    started.countDown();
+    foreach (step; 0 .. 10)
+    {
+        // ... this step's share of the work ...
+        if (phase.arriveAndWait())
+        {
+            // exactly one party gets here per step
+        }
+    }
+}
+
+void supervise()
+{
+    started.wait(); // every worker is running
+}
+```
+
+`arriveAndWaitUntil(deadline, interruptible = false)` returns an `Arrival`:
+its `status`, and whether this party completed the round (`leader`). A party
+that times out or is cancelled before the round completes withdraws its
+arrival, so the round still needs all `n` parties (SYB2). The latch's
+`waitUntil` leaves the count unchanged when it gives up, and counting below
+zero fails an assertion.
+
+## Wait on a word
+
+`waitWhile(word, expected)` waits, as a futex does, while an atomic word of
+1, 2, 4 or 8 bytes holds `expected`, and `wakeOne(word)` and `wakeAll(word)`
+wake its waiters and return how many they woke. The waiters queue in the
+parking lot, so a fiber that waits suspends:
+
+```d
+shared uint generation;
+
+void awaitNext(uint seen)
+{
+    while (atomicLoad(generation) == seen)
+        waitWhile(generation, seen);
+}
+
+void publish()
+{
+    atomicOp!"+="(generation, 1);
+    wakeAll(generation);
+}
+```
+
+A store alone wakes nobody: only `wakeOne` and `wakeAll` on the same word
+do (SYW3). A woken waiter returns without reading the word again, so wait
+in a loop on your own condition. `waitWhileUntil(word, expected, deadline,
+interruptible = false)` reports `timedOut` or `cancelled` only if the caller
+waited and was not woken. A word used this way cannot also carry a
+`LockBits` lock (SYL3).
+
 ## Run the primitives on your own scheduler
 
 Every blocking operation parks through the calling thread's current parker,
@@ -273,5 +460,5 @@ operations and the guarantees each must give are in
 [§4a](../../../specs/base/sync/SPEC.md#_4a-cancellation).
 `sparkles:event-horizon`'s fiber parker is the reference implementation; its
 contract is the [fiber parker specification](../../../specs/event-horizon/fiber-parker.md).
-While a caller holds a `Mutex`, a `LockBits` lock or a `Guarded!T`, it is
-pinned, and its waits use the thread parker whatever is installed.
+While a caller holds a `Mutex`, a `LockBits` lock, a `Guarded!T` or an
+`RwLock`, it is pinned, and its waits use the thread parker whatever is installed.

@@ -17,7 +17,8 @@ DS13–DS22 resolve; DS23, resolving a second review, and DS24 were accepted on
 2026-10-15; and DS25 and DS26, resolving a third and a fourth review, on
 2026-10-16. DS27, recording the protocol model's findings, was accepted on
 2026-10-17, and DS28, resolving a fifth and a sixth review, and DS29, on
-B4, on 2026-10-19.
+B4, on 2026-10-19. DS30, S3's implementation choices, resolving a seventh
+review, was accepted on 2026-10-20.
 
 ## DS1: A parking lot, not a futex word per lock
 
@@ -580,3 +581,90 @@ again.
 narrow `Mutex`'s spread.
 
 **Status.** Accepted 2026-10-19.
+
+## DS30: S3's implementation choices
+
+**Question.** The S3 primitives (primitives.md §7, §9–§12) leave room in
+how a reader–writer release grants modes, how a barrier tells generations
+apart and withdraws an arrival, and what a woken address waiter does. What
+did the implementation choose, and what did its oracles find?
+
+**Choice.**
+
+- **No mode barges past parked waiters (SYR3).** Every `RwLock` fast path
+  fails while the parked bit is set, not only the shared one. A release that
+  finds waiters keeps its mode while one `unparkFilter` pass grants modes
+  from the head of the queue, then replaces its mode with the grants in one
+  read–modify–write, so the woken waiters return holding them (SYR5).
+  Barging writers would make the pass's grants race the word; with direct
+  handoff they gain nothing.
+- **An upgrade with waiters parked takes the bucket lock.** An upgrade
+  outranks queued writers (SYR4), so it may proceed while the parked bit is
+  set, but not between a pass's choice of grants and its read–modify–write:
+  a pass that granted a reader against the upgradable bit would otherwise
+  leave an exclusive and a shared holder together. With nobody parked the
+  upgrade stays one compare-and-swap. The seventh review found the race,
+  and `sync.model.SYR2.anUpgradeCannotSplitARelease` reproduces it.
+- **A pass that readers outran runs again.** While the writer bit is set a
+  reader leaves by a plain release, since only a drainer can be waiting for
+  it. When a writer timing out of its drain gives the bit back as the last
+  reader leaves, its pass may have declined a queued writer on the reader
+  count it read; if the count fell before the pass's read–modify–write and
+  waiters remain, the pass runs again (SYR7;
+  `sync.model.SYR7.drainTimeoutAsTheLastReaderLeaves`).
+- **Pins outlast the release.** Each `RwLock` release unpins after its mode
+  is gone, as `Mutex`'s does: a release may wait for a bucket, and a fiber
+  that yielded there would still hold the lock (SYK9).
+- **The pass skips a second upgradable waiter (SYR5).** It grants one
+  upgradable waiter and keeps granting the shared waiters behind later
+  upgradable ones, up to the first writer: those readers can share the lock
+  with the upgradable holder, and SYR7 wakes every waiter the lock admits.
+- **The drain key.** An exclusive acquisition or an upgrade that finds only
+  readers sets the writer bit, which admits no new reader, and waits on the
+  key one byte past the lock's (SYR4); the last reader wakes it.
+- **Granted waiters acquire the word.** The park's return orders only the
+  pass's releaser before a granted waiter (SYH2). A reader that released
+  earlier, by a plain release while waiters were parked, is ordered before
+  it by an acquire load of the word, which continues that release's
+  sequence: the word changes only by read–modify–writes. ThreadSanitizer
+  found the missing edge, and the model's
+  `sync.model.SYH1.everyReaderBeforeAGrantedWriter` now reproduces it.
+- **A barrier's generation is its waiters' park token.** The completing
+  arrival wakes only records whose token is the completed generation, so a
+  party of the next generation that parked in between stays parked (SYB1).
+  A waiter that times out or is cancelled withdraws its arrival in the
+  park's removal callback, under the bucket lock, unless the generation
+  completed first (SYB2). The last arrival completes the generation before
+  it takes the bucket, so its waiters are still queued then: the removal
+  callback reports the wait satisfied, and the park ends `unparked` without
+  settling the cancellation that lost (SYP5, SYI2, SYI3). Reporting success
+  after the park had settled would consume a request on behalf of an
+  operation that succeeded; the seventh review found it. `.init` is a
+  barrier of one party (SYA6).
+- **A manual-reset `set` with waiters sets its bit under the bucket lock**
+  that wakes them. Set first and woken later, a waiter that parked after a
+  `reset` in between would be released by a `set` that preceded the reset
+  (SYE2). With nobody parked, `set` stays one compare-and-swap.
+- **The semaphore's validation takes a free permit**, as SYM10 does for the
+  mutex, and a release hands off up to `n` permits in one filtered pass,
+  raising the count only by the rest (SYS3).
+- **A woken address waiter returns** without reading the word again, as a
+  futex waiter does; callers loop on their own condition (SYW1).
+- **Litmus pairs.** Oracle 9 has no barrier pair: its first arrival parks
+  until the last, so the instances run in lockstep, not in the streaming
+  shape that makes a dropped ordering visible. It has no address-wait pair
+  either: the waits its §13 row covers are those a wake ended, whose edge
+  is the parking lot's, which the weakened platform keeps.
+
+**Cost.** `RwLock` gives up throughput to writers that could barge; a
+reader queued behind a writer waits even when the writer is itself waiting
+for an upgradable holder. An upgrade with waiters parked, and a
+manual-reset `set` with waiters, each take a bucket lock. The barrier pays
+one bucket lock per completed generation even with nobody parked. The
+parking lot's removal callback now returns whether the wait was satisfied,
+which every primitive but the barrier answers `false`.
+
+**Revisit** if a workload measures `RwLock` throughput below a barging
+design's, or if a primitive gains a pair the litmus shape can reach.
+
+**Status.** Accepted 2026-10-20.
