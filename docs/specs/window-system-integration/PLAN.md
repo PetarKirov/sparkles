@@ -18,9 +18,10 @@ to [feature-requirements.md](./feature-requirements.md)._
    presentation host may begin once the renderer-facing subset — `INT1`/`INT2` handles
    and Vulkan bridge, `F01` first frame, `F02` resize, `F04` frame pacing, `F08`
    scale — is verified on the platform in question, which it now is on all four at the
-   partial level the evidence log records. M7's full acceptance gate (goldens,
-   interactive resize, DPI, device loss) is unchanged, and `ui-app` integration (M8)
-   stays sequential because it consumes the still-moving input vocabulary.
+   partial level the evidence log records. MG's full acceptance gate (goldens,
+   interactive resize, DPI, device loss) is unchanged. M7 brings the `INT5` adapter and
+   one native configuration, `gui-vulkan`, forward for the terminal; M8 completes the
+   configuration set and the migration.
 4. Platform code may reuse OS client libraries but never a cross-platform WSI library.
 5. Prefer pure model/translation tests, then automated native harnesses, then the named
    HITL pass. Record which kind proved each claim.
@@ -42,8 +43,9 @@ to [feature-requirements.md](./feature-requirements.md)._
 | M4        | input, DPI, outputs, capture and cursors               | `F06`–`F12`                                | in progress |
 | M5        | decorations, state, popup, clipboard and DnD           | `F13`–`F16`                                | in progress |
 | M6        | SDL compatibility and Vulkan bridge                    | `WSI7`, `INT2`                             | in progress |
-| M7        | Skia Graphite native and SDL hosts                     | `INT3`                                     | planned     |
-| M8        | `ui-app` configurations and migration                  | `INT4`, `INT5`                             | planned     |
+| M7        | native Vulkan canvas and the terminal on it            | `INT5`, `INT4` (`gui-vulkan`)              | planned     |
+| MG        | Skia Graphite native and SDL hosts                     | `INT3`                                     | planned     |
+| M8        | `ui-app` configurations and migration                  | `INT4`                                     | planned     |
 | M9        | Win32 TSF                                              | `POST1`                                    | deferred    |
 | MA        | Android backend                                        | `POST2`, `F16`                             | in progress |
 
@@ -328,7 +330,7 @@ Drag-and-drop, decorations, window state and the grabbed popup remain.
    selection explicit at build/configuration time.
 
 Gate: Vulkan validation clean on Wayland, X11, Win32/Wine and native Windows CI; native
-macOS uses the handle probe here but Metal in M7.
+macOS uses the handle probe here but Metal in MG.
 
 Delivered slices: target-native surface ABI/dispatch in `sparkles:vulkan`, typed
 handle-pair validation, instance/surface/device ownership in `sparkles:vulkan-wsi`, and
@@ -356,7 +358,16 @@ as the `windows-latest` leg of the test matrix, which runs `dub test :wsi` and
 the Win32 conformance driver on a real User32/IOCP — a 96-DPI, IME-less runner,
 so per-monitor scale and IME automation still wait for a host that has them.
 
-## Milestone M7 — Skia Graphite
+## Milestone M7 — the native Vulkan canvas
+
+The toolkit and the terminal draw with Vulkan on `sparkles:wsi`, through
+`sparkles:ui-vulkan` and a native `sparkles:ui-app` arm: the Linux desktop
+first, the phone terminal of MA slice 4 last. Its specification, slices and
+gates are owned by [`sparkles:ui-vulkan`](../ui-vulkan/PLAN.md); this plan does
+not repeat them. Skia Graphite follows as milestone MG, a second canvas behind
+the same seam ([UVX1](../ui-vulkan/decisions.md#uvx1-a-native-vulkan-renderer-before-skia-graphite)).
+
+## Milestone MG — Skia Graphite
 
 Add `sparkles:ui-skia` over the existing Nix Skia build:
 
@@ -375,7 +386,8 @@ Replace `ui-app`'s generic `gui` configuration with the explicit set:
 | Configuration  | Backend closure                                             |
 | -------------- | ----------------------------------------------------------- |
 | `tui`          | `ui-tui` only                                               |
-| `gui-skia`     | native WSI + Graphite; default GUI                          |
+| `gui-vulkan`   | native WSI + `sparkles:ui-vulkan`; default GUI              |
+| `gui-skia`     | native WSI + Graphite                                       |
 | `gui-skia-sdl` | SDL compatibility WSI + Graphite                            |
 | `gui-raylib`   | existing raylib host                                        |
 | `full`         | TUI plus all GUI choices used by development/gallery builds |
@@ -385,7 +397,7 @@ The GPU arm uses Event Horizon readiness/frame opportunities rather than a priva
 or sleep loop.
 
 Gate: UI Gallery and representative hue/terminal flows run through recording, TUI,
-native Graphite, SDL Graphite, and raylib as applicable; application modules do not
+native Vulkan, native Graphite, SDL Graphite, and raylib as applicable; application modules do not
 import WSI, SDL, Vulkan, Metal, or Skia.
 
 ## Milestone MA — Android backend
