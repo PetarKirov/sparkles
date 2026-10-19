@@ -31,11 +31,15 @@ import core.thread : Thread;
 import core.time : Duration, MonoTime, msecs, seconds;
 
 import sparkles.base.sync.condition : ConditionT;
+import sparkles.base.sync.event : AutoResetEventT, ManualResetEventT;
 import sparkles.base.sync.interruptible_mutex : InterruptibleMutexT;
+import sparkles.base.sync.latch : LatchT;
 import sparkles.base.sync.mutex : MutexT;
 import sparkles.base.sync.once : OnceT;
 import sparkles.base.sync.platform : NativePlatform;
+import sparkles.base.sync.rwlock : RwLockT;
 import sparkles.base.sync.seam : Deadline;
+import sparkles.base.sync.semaphore : SemaphoreT;
 import sparkles.base.sync.weak_platform : WeakPlatform;
 
 private enum size_t instances = 20_000;
@@ -206,6 +210,96 @@ private ulong onceMp(P)() @system
     });
 }
 
+/// The `RwLock` pair: an exclusive release happens before the next acquisition in any mode.
+private ulong rwLockMp(P)() @system
+{
+    auto ls = new RwLockT!P[instances];
+    return round((Messages msgs, ref ulong stale) {
+        foreach (k; 0 .. instances)
+            for (;;)
+            {
+                ls[k].lockShared();
+                const sent = msgs.sent(k), bad = msgs.stale(k);
+                ls[k].unlockShared();
+                if (sent)
+                {
+                    stale += bad;
+                    break;
+                }
+            }
+    }, (Messages msgs) {
+        foreach (k; 0 .. instances)
+        {
+            ls[k].lock();
+            msgs.send(k);
+            ls[k].unlock();
+        }
+    });
+}
+
+/// The semaphore pair: `release` happens before the acquisition that takes its permit.
+private ulong semaphoreMp(P)() @system
+{
+    auto ss = new SemaphoreT!P[instances];
+    return round((Messages msgs, ref ulong stale) {
+        foreach (k; 0 .. instances)
+        {
+            while (!ss[k].tryAcquire()) {}
+            stale += msgs.stale(k);
+        }
+    }, (Messages msgs) {
+        foreach (k; 0 .. instances)
+        {
+            msgs.data[k] = k + 1;
+            ss[k].release();
+        }
+    });
+}
+
+/// The event pairs: `set` happens before every wait that returns because of it.
+private ulong eventMp(E, P)() @system
+{
+    auto es = new E[instances];
+    return round((Messages msgs, ref ulong stale) {
+        foreach (k; 0 .. instances)
+        {
+            while (!es[k].tryWait()) {}
+            stale += msgs.stale(k);
+        }
+    }, (Messages msgs) {
+        foreach (k; 0 .. instances)
+        {
+            msgs.data[k] = k + 1;
+            es[k].set();
+        }
+    });
+}
+
+private ulong manualResetMp(P)() @system => eventMp!(ManualResetEventT!P, P)();
+private ulong autoResetMp(P)() @system => eventMp!(AutoResetEventT!P, P)();
+
+/// The latch pair: every `countDown` happens before every wait the count's zero ends.
+private ulong latchMp(P)() @system
+{
+    auto ls = new LatchT!P[instances];
+    foreach (ref l; ls)
+        l = LatchT!P(1);
+    return round((Messages msgs, ref ulong stale) {
+        foreach (k; 0 .. instances)
+        {
+            while (!ls[k].isOpen) {}
+            stale += msgs.stale(k);
+        }
+    }, (Messages msgs) {
+        foreach (k; 0 .. instances)
+        {
+            msgs.data[k] = k + 1;
+            ls[k].countDown();
+        }
+    });
+}
+
+
 private void check(alias test)(string pair) @system
 {
     import std.stdio : stdout, writefln;
@@ -250,4 +344,34 @@ private void check(alias test)(string pair) @system
 @system unittest
 {
     check!onceMp("Once completion -> call");
+}
+
+@("sync.litmus.SYH1.rwLock")
+@system unittest
+{
+    check!rwLockMp("RwLock exclusive release -> shared acquisition");
+}
+
+@("sync.litmus.SYH1.semaphore")
+@system unittest
+{
+    check!semaphoreMp("Semaphore release -> acquire");
+}
+
+@("sync.litmus.SYH1.manualResetEvent")
+@system unittest
+{
+    check!manualResetMp("ManualResetEvent set -> wait");
+}
+
+@("sync.litmus.SYH1.autoResetEvent")
+@system unittest
+{
+    check!autoResetMp("AutoResetEvent set -> wait");
+}
+
+@("sync.litmus.SYH1.latch")
+@system unittest
+{
+    check!latchMp("Latch countDown -> wait");
 }
