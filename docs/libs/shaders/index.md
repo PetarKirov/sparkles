@@ -90,9 +90,10 @@ there:
 Anything else is a compile error naming the parameter and the reason.
 
 All the entry points of a package compile to one module, where a name is one
-variable. A name used by two entry points must therefore be the same kind of
-parameter at the same position among its kind (`fragColor` the second
-`@input` in both, say), or the compiler rejects the second, naming both.
+variable per stage. A name two entry points of one stage use must therefore be
+the same kind of parameter at the same position among its kind (`fragColor`
+the second `@input` in both, say), or the compiler rejects the second, naming
+both.
 
 ### Control flow the device compiler cannot structure
 
@@ -109,6 +110,78 @@ upstream report). The two shapes are:
 Compute each condition as a `bool` and combine the conditions with `&` and
 `|`, which do not branch. Then use one select (`?:`) or independent `if`s. The
 CRT's cursor and divider in `libs/ui/shaders/effects.d` are written that way.
+
+## Writing a vertex shader
+
+A vertex shader is built for Vulkan, so it names its profile:
+
+```d
+@compute(CompileFor.deviceOnly)
+module triangle;
+
+import sparkles.shaders;
+
+struct Varyings
+{
+    @builtin(Builtin.position) vec4 position;
+    vec4 colour;
+}
+
+@profiles(vulkan13) @vertex Varyings tri(@builtin(Builtin.vertexIndex) int index)
+{
+    vec2[3] corner;
+    corner[0] = v2(-0.5f, 0.5f);
+    corner[1] = v2(0.5f, 0.5f);
+    corner[2] = v2(0.0f, -0.5f);
+    Varyings v;
+    v.position = v4(corner[index][0], corner[index][1], 0.0f, 1.0f);
+    v.colour = v4(1.0f, 0.0f, 0.0f, 1.0f);
+    return v;
+}
+
+@profiles(vulkan13) @fragment vec4 shade(@input vec4 colour) => colour;
+
+static assert(stagesLink!(tri, shade));
+```
+
+- **Inputs.** `@input` parameters are the vertex attributes, at locations in
+  parameter order, and may be integers too. `@builtin(Builtin.vertexIndex)`
+  and `@builtin(Builtin.instanceIndex)` read the built-in inputs, as `int`s.
+- **Result.** A vertex entry point returns a struct. The field marked
+  `@builtin(Builtin.position)` is the clip-space position. Every other field
+  is an output named after it, at locations in field order, which a fragment
+  entry point reads as the `@input` of that name.
+- **Tables.** A table is a local static array filled element by element:
+  device code allows no array literals. Index it with an `int`, so that the
+  module declares no 64-bit integers.
+- **Linking.** `stagesLink!(V, F)` holds when every `@input` of `F` is an
+  output of `V` with the same name, type and location. No validator catches a
+  mismatch at draw time, so assert it where the pair is chosen.
+
+### Profiles
+
+A profile is one output: `gl330` (GLSL 3.30), `gles100` (GLSL ES 1.00) or
+`vulkan13` (SPIR-V 1.6 for Vulkan 1.3). Mark an entry point, or a whole module
+(`@profiles(...) module m;`), with the profiles it is built for. An entry
+point's own `@profiles` replaces its module's.
+
+A fragment entry point with neither builds for the two OpenGL profiles. A
+vertex entry point with neither is an error, since no OpenGL profile offers
+the vertex stage.
+
+`shader-compile` compiles the unit once per profile and writes:
+
+- `<entry>.frag` and `<entry>.es.frag` for the OpenGL profiles;
+- `<entry>.vert.spv` and `<entry>.frag.spv` for Vulkan, one entry point per
+  module.
+
+In each compilation the profile is a compile-time constant, `activeProfile`
+(`cpu` on the host), so one function can have a body per target:
+
+```d
+static if (activeProfile.has(Cap.pushConstants))
+    // …
+```
 
 ## Editor support
 
@@ -147,7 +220,7 @@ toolchain change (a new dev shell), run the step once without `--if-stale`.
 What ships is built by Nix, which does track them.
 
 That step needs the dcompute-enabled LDC as `ldc2-vulkan` on `PATH` —
-dlang.nix's `ldc-vulkan` (dcompute's Vulkan target and the `@fragment` stage,
+dlang.nix's `ldc-vulkan` (dcompute's Vulkan target with the vertex and fragment stages and shader profiles,
 built against LLVM main with the SPIR-V backend) — plus spirv-tools,
 spirv-cross and glslang; the dev shell carries all of them. Nix builds the
 shaders once (`nix build .#ui-shaders`) and copies them into each app's tree.
