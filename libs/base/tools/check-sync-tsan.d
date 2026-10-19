@@ -34,13 +34,18 @@ import std.stdio : writefln, writeln;
 /// A program over platform `P` (`NativePlatform` or `WeakPlatform`).
 enum string header = q{
 import core.thread : Thread;
+import sparkles.base.sync.barrier : BarrierT;
 import sparkles.base.sync.condition : ConditionT;
+import sparkles.base.sync.event : AutoResetEventT;
 import sparkles.base.sync.interruptible_mutex : InterruptibleMutexT;
+import sparkles.base.sync.latch : LatchT;
 import sparkles.base.sync.mutex : MutexT;
 import sparkles.base.sync.once : OnceT;
 import sparkles.base.sync.parking_lot;
 import sparkles.base.sync.platform : NativePlatform;
+import sparkles.base.sync.rwlock : RwLockT;
 import sparkles.base.sync.seam : Deadline;
+import sparkles.base.sync.semaphore : SemaphoreT;
 import sparkles.base.sync.weak_platform : WeakPlatform;
 
 void run(void delegate() body, uint threads = 4)
@@ -118,6 +123,95 @@ enum string[string] workloads = [
                         assert(0);
                 }
             });
+        }
+    },
+    "rwlock": q{
+        __gshared RwLockT!P l;
+        __gshared ulong counter;
+        void main()
+        {
+            run({
+                foreach (i; 0 .. 10_000)
+                    if (i % 4 == 0)
+                    {
+                        l.lock();
+                        ++counter;
+                        l.unlock();
+                    }
+                    else
+                    {
+                        l.lockShared();
+                        const x = counter;
+                        l.unlockShared();
+                        if (x == ulong.max)
+                            assert(0);
+                    }
+            });
+        }
+    },
+    "semaphore": q{
+        __gshared SemaphoreT!P s;
+        __gshared ulong counter;
+        void main()
+        {
+            s = SemaphoreT!P(1);
+            run({ foreach (_; 0 .. 10_000) { s.acquire(); ++counter; s.release(); } });
+        }
+    },
+    // An auto-reset event as a token: `wait` takes it, `set` passes it on.
+    "event": q{
+        __gshared AutoResetEventT!P e;
+        __gshared ulong counter;
+        void main()
+        {
+            e.set();
+            run({ foreach (_; 0 .. 5_000) { e.wait(); ++counter; e.set(); } });
+        }
+    },
+    "latch": q{
+        __gshared LatchT!P[2_000] latches;
+        __gshared ulong[2_000] payload;
+        void main()
+        {
+            foreach (ref l; latches)
+                l = LatchT!P(1);
+            auto reader = new Thread({
+                foreach (k; 0 .. 2_000)
+                {
+                    latches[k].wait();
+                    if (payload[k] != k + 1)
+                        assert(0);
+                }
+            }).start();
+            foreach (k; 0 .. 2_000)
+            {
+                payload[k] = k + 1;
+                latches[k].countDown();
+            }
+            reader.join();
+        }
+    },
+    "barrier": q{
+        __gshared BarrierT!P b;
+        __gshared ulong[4] slots;
+        void main()
+        {
+            b = BarrierT!P(4);
+            Thread[] ts;
+            foreach (i; 0 .. 4)
+                ts ~= new Thread(((size_t id) => () {
+                    foreach (gen; 1 .. 2_001)
+                    {
+                        slots[id] = gen;
+                        cast(void) b.arriveAndWait();
+                        foreach (s; slots)
+                            if (s < gen)
+                                assert(0);
+                        cast(void) b.arriveAndWait();
+                    }
+                })(i)).start();
+            foreach (t; ts)
+                t.join();
         }
     },
     // Publication through park and unpark alone: the thread parker's wake

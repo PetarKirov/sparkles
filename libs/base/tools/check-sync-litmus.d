@@ -34,8 +34,8 @@ import core.thread : Thread;
 import core.time : minutes, MonoTime, msecs;
 
 /// The whole run's budget: about a minute on the reference machines, and at
-/// most 90 s for each of the four weakened pairs on arm64.
-enum timeLimit = 10.minutes;
+/// most 90 s for each of the nine weakened pairs on arm64.
+enum timeLimit = 20.minutes;
 
 int main()
 {

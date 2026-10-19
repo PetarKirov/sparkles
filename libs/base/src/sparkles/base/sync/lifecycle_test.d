@@ -198,6 +198,17 @@ version (linux)
     __gshared Once once;
     __gshared int shared_;
     shared bool stop;
+    __gshared Semaphore sem;
+    __gshared RwLock rw;
+    __gshared AutoResetEvent ev;
+    __gshared ManualResetEvent mev;
+    // Met by other threads: a barrier generation that completes with a
+    // waiter parked, and a manual-reset wait that parks before a set.
+    __gshared Barrier pair;
+    __gshared ManualResetEvent gate;
+    static shared uint word;
+    sem = Semaphore(1);
+    pair = Barrier(2);
 
     // Helpers on other threads keep the primitives contended; only this
     // thread's allocations are counted.
@@ -210,7 +221,22 @@ version (linux)
                 ++shared_;
                 c.notifyAll();
                 m.unlock();
-                auto a = im.lock();
+                {
+                    auto a = im.lock();
+                }
+                sem.acquire();
+                sem.release();
+                {
+                    auto r = rw.read();
+                }
+                {
+                    auto w = rw.write();
+                }
+                ev.set();
+                cast(void) wakeAll(word);
+                gate.set();
+                gate.reset();
+                cast(void) pair.arriveAndWaitUntil(MonoTime.currTime + 1.msecs);
             }
         }).start();
 
@@ -230,6 +256,33 @@ version (linux)
                 auto a = im.lockUntil(MonoTime.currTime + 1.msecs);
             }
             once.call(() {});
+            if (sem.acquireUntil(MonoTime.currTime + 1.msecs) == WaitStatus.ok)
+                sem.release();
+            {
+                auto r = rw.read();
+            }
+            if (rw.lockUntil(MonoTime.currTime + 1.msecs))
+                rw.unlock();
+            {
+                auto u = rw.upgradableRead();
+                u.upgrade();
+                u.downgrade();
+            }
+            if (k % 16 == 0)
+            {
+                cast(void) ev.waitUntil(MonoTime.currTime + 1.msecs);
+                mev.set();
+                mev.wait();
+                mev.reset();
+                auto l = Latch(1);
+                l.countDown();
+                l.wait();
+                auto b = Barrier(2);
+                cast(void) b.arriveAndWaitUntil(MonoTime.currTime + 1.msecs);
+                cast(void) waitWhileUntil(word, 0u, MonoTime.currTime + 1.msecs);
+                cast(void) gate.waitUntil(MonoTime.currTime + 1.msecs);
+                cast(void) pair.arriveAndWaitUntil(MonoTime.currTime + 1.msecs);
+            }
         }
     }
 
@@ -259,11 +312,16 @@ version (linux)
     __gshared Mutex m;
     __gshared Condition c;
     __gshared InterruptibleMutex im;
+    __gshared Semaphore empty;
+    __gshared RwLock rw;
+    __gshared AutoResetEvent ev;
+    static shared uint word;
     __gshared size_t calls;
     __gshared bool gcClean;
 
     m.lock();
     auto held = im.lock();
+    rw.lock();
     auto t = new Thread({
         const gcBefore = GC.allocatedInCurrentThread();
         allocationCalls = 0;
@@ -275,12 +333,22 @@ version (linux)
             auto g = own.guard();
             cast(void) c.waitUntil(g, MonoTime.currTime + 2.msecs);
         }
+        const soon = MonoTime.currTime + 2.msecs;
+        assert(empty.acquireUntil(soon) == WaitStatus.timedOut);
+        assert(!rw.lockSharedUntil(soon), "the main thread holds the lock exclusively");
+        assert(ev.waitUntil(soon) == WaitStatus.timedOut);
+        auto l = Latch(1);
+        assert(l.waitUntil(soon) == WaitStatus.timedOut);
+        auto b = Barrier(2);
+        assert(!b.arriveAndWaitUntil(soon));
+        assert(waitWhileUntil(word, 0u, soon) == WaitStatus.timedOut);
         auditActive = false;
         calls = allocationCalls;
         gcClean = GC.allocatedInCurrentThread() == gcBefore;
     }).start();
     t.join();
     m.unlock();
+    rw.unlock();
     assert(calls == 0, "a fresh thread's first sync operations called a libc allocator (SYA1)");
     assert(gcClean, "a fresh thread's first sync operations allocated on the GC heap (SYA1)");
 }
