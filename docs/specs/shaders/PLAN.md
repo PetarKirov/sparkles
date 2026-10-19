@@ -266,7 +266,7 @@ codegen suite green.
   - A duplicate type name is removed.
   - The open point is [`Q4`](./decisions.md#open-questions): the uniform block
     is a one-member wrapper around `T`, not `T` itself.
-- **S2 holds, with one backend fix and one compiler fix.**
+- **S2 holds, with two backend fixes and one compiler fix.**
   - An `int`-indexed local table declares no `Int64` at `-O0` or `-O2`. The
     backend now indexes with the 32-bit value a widened index came from, and
     with 32-bit constants.
