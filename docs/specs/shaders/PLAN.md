@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-19
+reviewed: 2026-10-20
 ---
 
 # `sparkles:shaders` — Delivery plan
@@ -223,10 +223,12 @@ reviewed and accepted before each starts.
 **Progress.** The scope and the design choices behind `D16`–`D22` were set by
 the owner in two grilling rounds (2026-10-17 to 2026-10-19), from the
 [research catalog](../../research/shading-languages/index.md); `D17` refines
-one of those choices for a reason the owner has yet to confirm. The
+one of those choices. The
 [adversarial review of the revision](./revision-review.md) found 32 findings,
-four of them blockers; every one has a disposition, and acceptance is the
-owner's.
+four of them blockers; every one has a disposition. M6's two spikes were run
+before acceptance. The owner accepted the revision on 2026-10-20, `D17`'s
+refinement included, and settled the one point the spikes left open as
+`D25` ([acceptance](./revision-review.md#acceptance)).
 
 ## M6: Profiles and the Vulkan triangle
 
@@ -264,8 +266,10 @@ codegen suite green.
     member. It now lowers to `T[N]` with the padded stride and no `Int8`, and
     is read by index or by byte offset.
   - A duplicate type name is removed.
-  - The open point is [`Q4`](./decisions.md#open-questions): the uniform block
-    is a one-member wrapper around `T`, not `T` itself.
+  - The open point, that the uniform block was a one-member wrapper around
+    `T`, is settled by
+    [`D25`](./decisions.md#d25-a-vulkan-uniform-block-is-its-struct): the
+    block is `T`, and the backend change is part of M6.
 - **S2 holds, with two backend fixes and one compiler fix.**
   - An `int`-indexed local table declares no `Int64` at `-O0` or `-O2`. The
     backend now indexes with the 32-bit value a widened index came from, and
@@ -306,7 +310,9 @@ include them.
 - **Compiler** (the fork): the vertex stage; built-in variables; struct
   results; interface structs flattened; uniform blocks, push-constant blocks
   and the default uniform block, laid out by `SHR6` and lowered per profile;
-  interface variables keyed by stage, direction and name (`SHF2`); 32-bit
+  interface variables keyed by stage, direction and name (`SHF2`); a uniform
+  block emitted as its struct, with the backend's buffer lowering changed to
+  match (`D25`); 32-bit
   indexing and its diagnostics (`SHM6`), with the backend's unsigned
   division and remainder on signed-integer types fixed upstream, and the
   shapes that failed (a `size_t` remainder, a `size_t` offset index) in the

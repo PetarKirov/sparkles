@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-19
+reviewed: 2026-10-20
 ---
 
 # `sparkles:shaders` — Testing and evidence
@@ -114,7 +114,8 @@ person.
   `writeLayout` of a value, read back by those offsets, gives the value.
 - **Lowering.** Build one entry point with `@uniform` parameters, a
   `UniformBlock!T` and a `PushConstants!T` for `vulkan1.3` and for `gl330`;
-  check that the Vulkan module declares the blocks with the offsets and array
+  check that the Vulkan module declares each uniform block as its struct `T`,
+  decorated `Block` with no struct around it (`D25`), with the offsets and array
   strides of `layoutOf`, the bindings of `SHR7` and the default block's
   names of `SHR8`, and that the GLSL declares one uniform per field under its
   D name, and no block.

@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-19
+reviewed: 2026-10-20
 ---
 
 # `sparkles:shaders` — Toolchain and platforms
