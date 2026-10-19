@@ -210,7 +210,12 @@ lock and call `prepare` before releasing it, so that every later
 **SYP5: Timeout and cancellation races.** When a deadline passes or a
 cancellation arrives after an unparker has already dequeued the record, park
 **must** return `unparked` with that unparker's token, and the record
-**must** leave the queue exactly once.
+**must** leave the queue exactly once. A primitive can also satisfy a
+waiter without dequeuing it, as a barrier's last arrival completes the
+generation before it takes the bucket: the removal callback, which runs
+under the bucket lock before a timed-out or cancelled park returns,
+**may** report the wait satisfied, and the park **must** then return
+`unparked` with token 0 and settle no cancellation (SYI3).
 
 _Rationale:_ A token can carry ownership ("the lock is yours"); a waiter that
 reported a timeout after receiving one would leak a held lock or a permit
@@ -422,8 +427,8 @@ the caller seeing it (DS13).
 
 **SYI3: One arbitration, in the parking lot.** A parker's `sleep` result is
 tentative; the park's outcome is decided under the bucket lock (SYP4, SYP5),
-so a sleep that returned cancelled after an unparker had dequeued the record
-ends `unparked`. An interruptible operation **must** return `cancelled`
+so a sleep that returned cancelled after an unparker had dequeued the record,
+or after the primitive had satisfied the wait (SYP5), ends `unparked`. An interruptible operation **must** return `cancelled`
 exactly when its park ended `cancelled`, and **must not** keep cancellation
 state of its own. The parking lot **must** call the parker's `settle`
 exactly once for every park whose final outcome is `cancelled`, before the

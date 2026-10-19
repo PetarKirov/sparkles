@@ -839,6 +839,8 @@ struct TestParkerStats
     uint commits;
     uint deliveries;
     uint parks;
+    /// Bucket waits and spins that yielded the fiber (SYP13, SYK9).
+    uint yields;
 }
 
 private struct TestParker
@@ -943,9 +945,16 @@ private void tpkYield() @trusted
 }
 
 private void tpkBucketWait(void* ctx, ref ModelAtomic!uint word, uint expected) @trusted nothrow @nogc
-    => nogc(&tpkYield)();
+{
+    ++tpk(ctx).stats.yields;
+    nogc(&tpkYield)();
+}
 
-private void tpkRelax(void* ctx, uint step) @trusted nothrow @nogc => nogc(&tpkYield)();
+private void tpkRelax(void* ctx, uint step) @trusted nothrow @nogc
+{
+    ++tpk(ctx).stats.yields;
+    nogc(&tpkYield)();
+}
 
 private void tpkSettle(void* ctx, WaitRecord!ModelPlatform* rec) @trusted nothrow @nogc
 {

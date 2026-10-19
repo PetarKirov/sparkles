@@ -15,20 +15,30 @@ primitive serves threads and, through a scheduler's parker, fibers.
 - `Condition`: a condition variable that moves notified waiters onto the
     lock's queue.
 - `Once`: a one-time initializer.
+- `Semaphore`, `ManualResetEvent`, `AutoResetEvent`, `Barrier`, `Latch`:
+    counting and signalling primitives with deadline and interruptible waits.
+- `waitWhile`, `wakeOne`, `wakeAll`: the address wait, a futex over the
+    parking lot.
 
 Schedulers install their own parker with `installParker` (SPEC §4).
 */
 module sparkles.base.sync;
 
+public import sparkles.base.sync.address_wait : AddressWait, waitWhile, waitWhileUntil, wakeAll, wakeOne;
+public import sparkles.base.sync.barrier : Arrival, Barrier, BarrierT;
 public import sparkles.base.sync.condition : Condition, ConditionT;
+public import sparkles.base.sync.event : AutoResetEvent, AutoResetEventT, EventKind, EventT,
+    ManualResetEvent, ManualResetEventT;
 public import sparkles.base.sync.guarded : contained, Guarded, GuardedGuard, GuardedT,
     InterruptibleGuarded, InterruptibleGuardedT, isContainedPayload;
 public import sparkles.base.sync.interruptible_mutex : Acquisition, InterruptibleGuard,
     InterruptibleMutex, InterruptibleMutexT, WaitStatus;
+public import sparkles.base.sync.latch : Latch, LatchT;
 public import sparkles.base.sync.mutex : LockBits, Mutex, MutexGuard, MutexT;
 public import sparkles.base.sync.once : Once, OnceT;
 public import sparkles.base.sync.parker : installParker, Parker, ParkerVtbl, SleepResult,
     WaitRecord, WakeHandle;
 public import sparkles.base.sync.parking_lot : designatedSpinSteps, parkingBuckets, spinSteps, starvationBound;
 public import sparkles.base.sync.platform : NativePlatform;
+public import sparkles.base.sync.semaphore : Semaphore, SemaphoreT;
 public import sparkles.base.sync.seam : Deadline;

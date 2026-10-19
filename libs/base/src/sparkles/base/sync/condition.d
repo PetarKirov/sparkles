@@ -208,6 +208,7 @@ struct ConditionT(P)
             (ref const LockedKey!P lk, bool haveMore) {
                 if (!haveMore)
                     P.store!(Order.relaxed)(state, cast(size_t) 0);
+                return false;
             });
         final switch (r.outcome)
         {
