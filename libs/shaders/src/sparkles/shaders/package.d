@@ -24,5 +24,7 @@ loads is `apps/shader-compile`; the spec is `docs/specs/ui/effects.md` (`EFX20`)
 module sparkles.shaders;
 
 public import sparkles.shaders.attributes;
+public import sparkles.shaders.capabilities;
+public import sparkles.shaders.stages;
 public import sparkles.shaders.math;
 public import sparkles.shaders.types;
