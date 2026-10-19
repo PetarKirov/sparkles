@@ -17,7 +17,7 @@ the [specification](./SPEC.md).
 
 ## Stages
 
-**SHF1: Marking.** A function in a `@compute` module marked `@fragment` or
+**SHF1: Marking.** _(Revised.)_ A function in a `@compute` module marked `@fragment` or
 `@vertex` **must** become an entry point of that stage, named after the D
 function, in the device module of each profile it is built for
 ([`SHC6`](./profiles.md)). The D function itself remains callable from other
@@ -31,7 +31,7 @@ diagnostic naming both definitions.
 _Rationale:_ The build step names each generated file after its entry point
 (`SHP5`), and a renamed duplicate (`tint.1`) is a name no D function has.
 
-**SHF7: Other stages.** The compiler supports the stages of `SHF1` and
+**SHF7: Other stages.** _(Revised.)_ The compiler supports the stages of `SHF1` and
 dcompute's kernels. A stage attribute carrying any other value **must** be
 rejected at compile time with a diagnostic that reports the value. A stage a
 profile does not grant ([`SHC2`](./profiles.md)) **must** be rejected for that
@@ -39,7 +39,7 @@ profile with a diagnostic naming the entry point and the profile.
 
 ## Parameters
 
-**SHF2: Parameters.** Each parameter of an entry point **must** be exactly
+**SHF2: Parameters.** _(Revised.)_ Each parameter of an entry point **must** be exactly
 one of these, or the compilation **must** fail with a diagnostic that names
 the parameter:
 
@@ -53,7 +53,17 @@ the parameter:
   [Resources](./resources.md) specifies.
 
 A parameter that the platform calling convention would rewrite **must** be
-rejected with a diagnostic, not miscompiled.
+rejected with a diagnostic, not miscompiled. Images are read through one
+shared sampler, and every resource's binding is the one
+[`SHR7`](./resources.md) assigns under the active profile.
+
+Within one entry point, every interface name — each `@input`, each output
+field, and each resource after flattening and lowering
+([`SHR2`–`SHR5`](./resources.md)), including the uniforms a block's fields
+become under an OpenGL profile, and the default uniform block's names of
+`SHR3` and `SHR8` — **must** be distinct; a clash **must** fail the
+compilation, naming both declarations. The compiler **must** key an
+interface variable by its stage, its direction and its name.
 
 Every interface name, and the field names of a uniform struct, **must** reach
 the generated GLSL unchanged. A name the translation would rewrite **must**
@@ -73,8 +83,11 @@ _Rationale:_ The unit compiles to one module per profile (`SHC6`), in which a
 name is one variable with one decoration. Two entry points that put it at
 different ordinals would otherwise share the first one's, and one of them
 would read through a location or binding it did not ask for, with no
-validator able to tell. Inputs of different stages are different variables,
-so a vertex input and a fragment input may share a name.
+validator able to tell. Inputs and outputs are different variables, and so
+are the interfaces of different stages, so a vertex output and the fragment
+input it feeds share their name in one module, as `SHF9` requires. A field
+of a default uniform block is not an interface name of its own: each entry
+point's block is a separate variable (`SHR3`).
 
 ## Built-in variables
 
@@ -82,20 +95,21 @@ so a vertex input and a fragment input may share a name.
 the built-in variables of the first slice with their stage, direction and
 type:
 
-| `Builtin`       | Stage    | Direction | Type     | SPIR-V `BuiltIn` | GLSL               |
-| --------------- | -------- | --------- | -------- | ---------------- | ------------------ |
-| `vertexIndex`   | vertex   | in        | `int`    | `VertexIndex`    | `gl_VertexIndex`   |
-| `instanceIndex` | vertex   | in        | `int`    | `InstanceIndex`  | `gl_InstanceIndex` |
-| `position`      | vertex   | out       | `float4` | `Position`       | `gl_Position`      |
-| `fragCoord`     | fragment | in        | `float4` | `FragCoord`      | `gl_FragCoord`     |
-| `frontFacing`   | fragment | in        | `bool`   | `FrontFacing`    | `gl_FrontFacing`   |
+| `Builtin`       | Stage  | Direction | Type     | SPIR-V `BuiltIn` | Vulkan GLSL        |
+| --------------- | ------ | --------- | -------- | ---------------- | ------------------ |
+| `vertexIndex`   | vertex | in        | `int`    | `VertexIndex`    | `gl_VertexIndex`   |
+| `instanceIndex` | vertex | in        | `int`    | `InstanceIndex`  | `gl_InstanceIndex` |
+| `position`      | vertex | out       | `float4` | `Position`       | `gl_Position`      |
 
 A built-in used in the wrong stage, in the wrong direction, or with another
-type **must** fail the compilation with a diagnostic naming it.
+type **must** fail the compilation with a diagnostic naming it. The fragment
+stage's position and facing (`FragCoord`, `FrontFacing`) are not in this
+slice: their origin and winding differ between Vulkan and the OpenGL outputs,
+and they come with a convention stated for each profile (M7).
 
 ## Results
 
-**SHF3: Output.** A fragment entry point's return value **must** be stored to
+**SHF3: Output.** _(Revised.)_ A fragment entry point's return value **must** be stored to
 one output interface variable named `finalColor`, at location 0, of the
 return type, which **must** be `float4`. A vertex entry point **must** return
 a struct: its field marked `@builtin(Builtin.position)` is the stage's
@@ -107,8 +121,11 @@ writes no output.
 **SHF9: Linking stages.** The library **must** provide `stagesLink!(V, F)`, a
 compile-time predicate on a vertex entry point `V` and a fragment entry point
 `F` that holds exactly when every `@input` of `F` is an output field of `V`'s
-result with the same name, the same type and the same location. A consumer
-that pairs two entry points in one pipeline **should** assert it.
+result with the same name, the same type and the same location, and, when
+both declare a push-constant block, both blocks have the same type, and
+every binding of descriptor set 0 that both stages use (`SHR7`) holds a
+resource of the same kind and type in each. A consumer that pairs two entry
+points in one pipeline **should** assert it.
 
 _Rationale:_ The two stages are compiled as separate entry points, and a
 mismatch is caught by no validator: the pipeline links and reads garbage. D
@@ -121,14 +138,14 @@ can check it where the pair is chosen, from the two signatures.
 `texture(sampler, uv)` returns for the same image, sampler state and
 coordinate.
 
-**SHF5: Interface types.** Every input, uniform and output of an entry point
+**SHF5: Interface types.** _(Revised.)_ Every input, uniform and output of an entry point
 **must** have a type that every profile the entry point is built for can
 declare at that end of the interface, with the same meaning:
 
 - a fragment input or a vertex output field: `float`, `float2`, `float3` or
   `float4`;
 - a vertex input: those, or `int`, `int2`, `int3`, `int4` under a profile that
-  grants integer vertex inputs;
+  grants `intVertexInputs`;
 - the fragment output: `float4` (`SHF3`);
 - a uniform: any of those, `int` or a vector of two to four `int`s, or a
   struct or static array of uniform types;
@@ -144,7 +161,7 @@ colour output through a `vec4`, and has no `uint`. The host binds a uniform by
 name and type, so a declaration that says `uint` for an `int` (`glUniform1i`
 then fails) or `_m0` for a field breaks the binding without a diagnostic.
 
-**SHF6: Opaque handles.** A `Sampler2D` **must** stay a single scalar handle in
+**SHF6: Opaque handles.** _(Revised.)_ A `Sampler2D` **must** stay a single scalar handle in
 the generated code: never a member of an aggregate in the emitted module,
 never stored in function-local memory, and never passed across a call that
 survives optimisation. Device helpers the entry point calls **must** therefore

@@ -19,27 +19,52 @@ writes is computed from the same D declaration. This page is part of the
 ## Kinds
 
 **SHR1: Resource kinds.** The library **must** provide these resource kinds
-for entry-point parameters, and the compiler **must** accept each only where
-the active profile grants its capability ([`SHC2`](./profiles.md)):
+for entry-point parameters. Every kind is a form of declaration, accepted
+under every profile of this slice; what a profile's capabilities decide is
+how the kind is lowered (`SHR3`–`SHR5`):
 
-| Kind                | Declared as                  | Capability      | Holds                                                     |
-| ------------------- | ---------------------------- | --------------- | --------------------------------------------------------- |
-| Uniform             | `@uniform T name`            | `uniforms`      | one value of a uniform type ([`SHF5`](./entry-points.md)) |
-| Uniform block       | `UniformBlock!T name`        | `uniformBlocks` | a struct `T` of uniform types                             |
-| Push-constant block | `PushConstants!T name`       | `pushConstants` | a struct `T` of uniform types                             |
-| Sampled 2-D image   | `Sampler2D name`             | `sampledImages` | an image read through the shared sampler (`SHF4`)         |
-| Interface struct    | a struct marked `@resources` | —               | fields of the kinds above, flattened (`SHR2`)             |
+| Kind                | Declared as                  | Holds                                                     |
+| ------------------- | ---------------------------- | --------------------------------------------------------- |
+| Uniform             | `@uniform T name`            | one value of a uniform type ([`SHF5`](./entry-points.md)) |
+| Uniform block       | `UniformBlock!T name`        | a struct `T` of uniform types                             |
+| Push-constant block | `PushConstants!T name`       | a struct `T` of uniform types                             |
+| Sampled 2-D image   | `Sampler2D name`             | an image read through the shared sampler (`SHR7`)         |
+| Interface struct    | a struct marked `@resources` | fields of the kinds above, flattened (`SHR2`)             |
 
-Every kind **must** also be callable from host code with a host value — a
-`UniformBlock!T` wraps a `T`, a `Sampler2D` a host image — so an entry point
-remains an ordinary D function the CPU can call ([Executor](./executor.md)).
+The lowering of each kind under each profile of the slice is:
+
+| Kind                | `gl330`, `gles100`             | `vulkan1.3`                                   |
+| ------------------- | ------------------------------ | --------------------------------------------- |
+| Uniform             | a uniform outside any block    | a field of the default uniform block (`SHR3`) |
+| Uniform block       | one uniform per field (`SHR5`) | a block in `Uniform` storage (`SHR5`)         |
+| Push-constant block | one uniform per field (`SHR4`) | a block in `PushConstant` storage (`SHR4`)    |
+| Sampled 2-D image   | a sampler uniform              | a sampled image (`SHR7`)                      |
+
+A kind a later profile cannot lower **must** fail the compilation for that
+profile, naming the parameter and the capability its lowering needs.
+
+A uniform block and a push-constant block **must** also be callable from host
+code with a host value — a `UniformBlock!T` and a `PushConstants!T` wrap a `T`
+— so an entry point that takes no image remains an ordinary D function the CPU
+can call. A `Sampler2D` becomes host-callable with the
+[executor](./executor.md)'s images (`SHX3`); until then an entry point that
+samples compiles only for the device ([`SHF1`](./entry-points.md)).
+
+_Rationale:_ OpenGL 3.3 has uniform blocks, but `gl330` does not grant
+`uniformBlocks` and lowers a block to loose uniforms: its
+consumers bind uniforms by name and cannot bind a block
+([`D19`](./decisions.md#d19-blocks-in-d-lowered-per-profile)). Keeping the
+kind apart from its lowering keeps one D declaration valid for both kinds of
+profile.
 
 **SHR2: Interface structs.** A parameter whose type is a struct marked
 `@resources` **must** be treated as if each of its fields, in field order,
 were a parameter of the entry point in its place, named after the field; a
-field that is itself an interface struct is flattened the same way. A field
-of any kind but `SHR1`'s **must** fail the compilation, naming the field. Two
-resources of one entry point **must not** share a name after flattening.
+field that is itself an interface struct is flattened the same way, so the
+name of a nested field is its own name, not a path. A field of any kind but
+`SHR1`'s **must** fail the compilation, naming the field. Names after
+flattening are subject to `SHF2`'s rule that every interface name of an entry
+point is distinct.
 
 _Rationale:_ A shader with many resources, or a set shared by several entry
 points, groups them once; one with two resources keeps them as parameters.
@@ -50,34 +75,41 @@ speaks of parameters.
 
 **SHR3: Uniforms.** A `@uniform T name` parameter **must** be lowered as:
 
-- under a profile granting `uniforms` (`gl330`, `gles100`): a uniform named
-  `name` outside any block, of `T`, as today;
-- under a profile granting only `uniformBlocks` (`vulkan1.3`): a field named
-  `name` of the entry point's **default uniform block**, a uniform block
-  named `Uniforms` holding the entry point's `@uniform` parameters in
+- under `gl330` and `gles100`, which grant `looseUniforms`: a uniform named
+  `name` outside any block, of `T`, as before this revision;
+- under `vulkan1.3`, which does not: a field named `name` of the entry
+  point's **default uniform block**, a uniform block whose variable is named
+  `<entry>Uniforms` after the entry point and whose type is
+  `UniformsOf!entry`, holding the entry point's `@uniform` parameters in
   parameter order, laid out as `SHR6` specifies.
 
-A shader written with `@uniform` parameters therefore builds for both kinds
-of profile unchanged. The library **must** provide `UniformsOf!entry`, a
-struct whose fields are the entry point's `@uniform` parameters, named and
-typed as they are and in parameter order, so a Vulkan host fills the default
-uniform block with `writeLayout` (`SHR6`) from the entry point's own
-signature.
+An entry point with no `@uniform` parameter has no default uniform block.
+Each entry point's block is its own variable, so `SHF2`'s rule that a name is
+one variable across the unit's entry points holds for it. A shader written
+with `@uniform` parameters therefore builds for both kinds of profile
+unchanged. The library **must** provide `UniformsOf!entry`, a struct whose
+fields are the entry point's `@uniform` parameters, named and typed as they
+are and in parameter order, so a Vulkan host fills the default uniform block
+with `writeLayout` (`SHR6`) from the entry point's own signature.
 
 **SHR4: Push constants.** A `PushConstants!T name` parameter **must** be
 lowered under `vulkan1.3` to one block of `T` in the `PushConstant` storage
-class, laid out as `SHR6` specifies; under a profile without
-`pushConstants`, to one uniform per field of `T`, named after the field, as
-`SHR3` lowers a `@uniform`. An entry point **must** declare at most one
-push-constant block, whose size **must not** exceed 128 bytes, the minimum
-every Vulkan implementation offers; either violation **must** fail the
-compilation, naming the parameter.
+class, laid out as `SHR6` specifies; under `gl330` and `gles100`, to one
+uniform per field of `T`, named after the field, as `SHR3` lowers a
+`@uniform`. An entry point **must** declare at most one push-constant block,
+whose `std430` size, `layoutOf!(T, Rule.std430).size`, **must not** exceed 128
+bytes, the minimum every Vulkan implementation offers; either violation
+**must** fail the compilation, naming the parameter. A host **must** push
+that many bytes, written by `writeLayout!(T, Rule.std430)`. Two stages of one
+pipeline that both declare a push-constant block share its range from offset
+0, so their blocks **must** have the same `T`, which `stagesLink` checks
+([`SHF9`](./entry-points.md)).
 
 **SHR5: Uniform blocks.** A `UniformBlock!T name` parameter **must** be
 lowered under `vulkan1.3` to a block of `T` in the `Uniform` storage class,
 named `name`, laid out as `SHR6` specifies, at the binding `SHR7` assigns;
-under a profile without `uniformBlocks`, to one uniform per field of `T`,
-named after the field.
+under `gl330` and `gles100`, to one uniform per field of `T`, named after the
+field.
 
 _Rationale (`SHR3`–`SHR5`):_ Vulkan rejects a value outside a block, and
 raylib's OpenGL path binds a uniform by name and cannot bind a block. One
@@ -101,19 +133,37 @@ followed by a `float` sits at 16 in D (`SHV2`) and at 12 in `std140`. The
 host and the device must agree on every byte, and only one function may say
 where each byte goes.
 
-**SHR7: Bindings.** Under `vulkan1.3`, every resource that has a binding
-**must** be in descriptor set 0, with the shared sampler at binding 0
-([`SHF2`](./entry-points.md)), and the uniform blocks, the default uniform
-block and the images of an entry point at bindings 1, 2, 3, … in parameter
-order after flattening (the default uniform block at the position of the
-first `@uniform`). A `@binding(b)` attribute on a parameter or field
-**may** fix its binding; two resources of one entry point at one binding
-**must** fail the compilation, naming both. A push-constant block has no
+**SHR7: Bindings.** All images of an entry point **must** be read through one
+shared sampler. Under `gl330` and `gles100`, the shared sampler is at binding
+0 and the images are at bindings 1, 2, 3, … in the order the `Sampler2D`
+parameters appear after flattening, as before this revision; the generated
+GLSL carries no binding qualifier, and a host binds each image's texture unit
+by its order. Under `vulkan1.3`, every resource that has a binding **must** be
+in descriptor set 0. Binding 0 is reserved for the shared sampler, which is
+declared only by an entry point that takes an image; the uniform
+blocks, the default uniform block and the images of an entry point at the
+next free bindings, in parameter order after flattening, the default uniform
+block at the position of the first `@uniform`. A push-constant block has no
 binding.
 
+A `@binding(b)` attribute on a parameter or a field **must** fix that
+resource's binding under `vulkan1.3` and is ignored under the OpenGL
+profiles; `@binding(0)` **must** fail the compilation, naming the reserved
+binding. Automatic numbering **must** start at 1 and skip every binding fixed
+in the entry point. Two resources of one entry point at one binding **must**
+fail the compilation, naming both.
+
+_Rationale:_ Bindings follow parameter position, so a `@resources` struct
+that two entry points take at different positions gets different bindings,
+and `SHF2`'s unit-wide rule rejects it. A struct shared that way fixes its
+fields' bindings with `@binding`, once, on the struct.
+
 **SHR8: Names.** Every resource and every field of a block **must** reach
-the generated GLSL under its D name, by the rules of
-[`SHF2`](./entry-points.md); a block's type is named after `T`.
+the generated GLSL under its D name, and the written SPIR-V as its `OpName`
+or `OpMemberName`, by the rules of
+[`SHF2`](./entry-points.md). A block's type is named after `T`, and the
+default uniform block's after `UniformsOf!entry`, whose identifier
+**must** be `<entry>UniformsBlock`, distinct from the variable's name.
 
 ## Not in this slice
 

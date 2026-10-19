@@ -131,7 +131,7 @@ still runs without dub and without the compiler.
 **Obligations.** `SHV7`, `SHF2`, `SHF3`, `SHF4`, `SHF5`, `SHF6`, `SHF7`,
 `SHP8`, `SHP10`, and the open cases of `SHV2`, `SHV5` and `SHT3`.
 
-**Deliverable.** The disassembly checks of section 6, a GPU readback harness
+**Deliverable.** The disassembly checks of the accepted specification's section 6, a GPU readback harness
 under a software rasterizer, host assertions for `sin`, `cos` and `pow`, an
 automated test of each exit code, a concurrent-run test of the build step,
 and a comparison of generated output across platforms.
@@ -223,40 +223,82 @@ reviewed and accepted before each starts.
 **Progress.** The scope and the design choices behind `D16`–`D22` were set by
 the owner in two grilling rounds (2026-10-17 to 2026-10-19), from the
 [research catalog](../../research/shading-languages/index.md); `D17` refines
-one of those choices for a reason the owner has yet to confirm.
+one of those choices for a reason the owner has yet to confirm. The
+[adversarial review of the revision](./revision-review.md) found 32 findings,
+four of them blockers; every one has a disposition, and acceptance is the
+owner's.
 
 ## M6: Profiles and the Vulkan triangle
 
-**Obligations.** `SHC1`–`SHC6`, `SHC9`, `SHC10`; `SHF1`–`SHF3`, `SHF5`,
-`SHF7`–`SHF9`; `SHR1`–`SHR8`; `SHV1`, `SHV2`, `SHV8`, `SHV9`; `SHP3`–`SHP8`,
-`SHP10`.
+**Obligations.** `SHC1`–`SHC6`, `SHC9`, `SHC10`; `SHF1`–`SHF3`, `SHF5`–`SHF9`;
+`SHR1`–`SHR8`; `SHM6`; `SHV1`, `SHV2`, `SHV8`, `SHV9`; `SHP3`–`SHP8`,
+`SHP10`; the SPIR-V 1.6 sentence of `SHP1`; the SPIR-V half of `SHT3`. For a revised requirement whose
+pre-revision part is already verified, the obligation is the revised part.
+
+**Spikes, before the compiler work.** Two probes of the pinned compiler
+settle what the deliverable assumes; a spike that fails reopens the
+requirements it names before anything is built on them.
+
+- **S1, explicit layout.** A uniform block and a push-constant block whose
+  `std140` and `std430` offsets differ from D's, decorated with `Offset` and
+  `ArrayStride` through the backend's layout metadata, pass `spirv-val` for
+  Vulkan 1.3 and declare no `Int8` (`SHR4`–`SHR6`, `SHR8`).
+- **S2, the triangle's tables.** The triangle's corner and colour tables, as
+  local static arrays filled element by element (`SHM3`) and indexed by
+  `Builtin.vertexIndex`, compile to a module that declares no `Int64` once
+  `SHM6` holds.
 
 **Deliverable.**
 
 - **Library.** `sparkles.shaders.capabilities` with the four profiles of
   `SHC2` and `activeProfile`; `@profiles`, `@builtin`, `Builtin`, `@resources`,
   `@binding`, `UniformBlock`, `PushConstants`, `UniformsOf`, `layoutOf`,
-  `writeLayout`, `stagesLink`; the `float*` and `int*` aliases.
+  `writeLayout`, `stagesLink`; the `float*` and `int*` aliases; host stand-ins
+  for `@builtin` and `Builtin` (`SHV8`).
 - **Compiler** (the fork): the vertex stage; built-in variables; struct
   results; interface structs flattened; uniform blocks, push-constant blocks
   and the default uniform block, laid out by `SHR6` and lowered per profile;
+  interface variables keyed by stage, direction and name (`SHF2`); 32-bit
+  indexing and its diagnostics (`SHM6`), with the backend's unsigned
+  division and remainder on signed-integer types fixed upstream, and the
+  shapes that failed (a `size_t` remainder, a `size_t` offset index) in the
+  fork's and the backend's lit tests;
   `getTargetInfo("shaderProfile")`; the manifest; per-profile emission.
 - **Build step.** The manifest, one compilation per profile, Vulkan
-  validation, the capability audit, SPIR-V output files.
-- **Consumer.** The triangle of `sparkles:vulkan-wsi` as one D device module
-  built for `vulkan1.3`, with an aspect-ratio push constant; its committed GLSL
-  and SPIR-V removed.
+  validation, the capability audit, SPIR-V output files and their provenance,
+  no output until every profile has succeeded (`SHP8`).
+- **Consumer.** The triangle of `sparkles:vulkan-wsi` as one host-and-device
+  D module built for `vulkan1.3`, with an aspect-ratio push constant, its
+  committed GLSL and SPIR-V removed. The package follows `sparkles:ui`'s
+  pattern: an opt-in `gpu-shaders` configuration generates the triangle's
+  SPIR-V into `generated/shaders/` (git-ignored) with `--if-stale` and
+  compiles the triangle renderer under a version identifier; the default
+  configuration builds without the renderer and needs no device compiler;
+  the triangle examples select `gpu-shaders`; CI takes the output prebuilt
+  from a Nix derivation (`SHB3`). The test pattern's committed SPIR-V moves out
+  of the swept directory. The renderer names each stage's entry point by its
+  D identifier, and takes the push-constant range from `layoutOf` and the
+  stages that declare it.
 - **Oracle.** A Vulkan readback harness on the software rasterizer (lavapipe)
-  in CI.
+  in CI, with the Khronos validation layer loaded.
 
-**Gate.** Every M6 row of the ledger `verified`. The effects of
-`sparkles:ui`, built for `gl330` and `gles100`, generate GLSL byte-identical to
-before the slice, apart from the provenance comment. The triangle, read back
-from lavapipe at three window aspects, matches the host evaluation of its
-vertex function within one rasterisation rule. Each new check is shown to
-fail on a deliberately broken input: a push constant over the limit, a
-capability its profile denies in the emitted module, a vertex output renamed
-against its fragment input.
+**Gate.**
+
+- Every M6 row of the ledger `verified`.
+- The effects of `sparkles:ui`, built for `gl330` and `gles100` by the M6
+  toolchain from the source and recipe before the slice and from those after
+  it, generate byte-identical GLSL; and the GPU readback of every effect
+  matches its readback before the slice.
+- The triangle, read back from lavapipe at three window aspects, matches the
+  host evaluation of its vertex function: at pixel centres inset two pixels
+  from each vertex toward the centroid, and at the centroid, the colour is
+  the host's barycentric blend at that centre within 2 in 8-bit units, and
+  coverage is asserted only at those pixels and at pixels two or more pixels
+  outside every edge. The validation layer reports no message.
+- Each new check is shown to fail on a deliberately broken input: a push
+  constant over the limit, a capability its profile denies in the emitted
+  module, a vertex output renamed against its fragment input, a `size_t`
+  remainder under `vulkan1.3`.
 
 **Entry condition.** The revision's Stage 0 accepted.
 
@@ -265,7 +307,8 @@ against its fragment input.
 **Obligations.** `SHC7`, `SHC8`; the vocabulary's first capability-narrow
 built-ins: derivatives (coarse and fine), terminate and demote, and `discard`
 defined as one of them per profile, as [Concepts](../../research/shading-languages/concepts.md#discard-demote-and-terminate)
-separates them.
+separates them; the fragment built-ins `fragCoord` and `frontFacing`, with
+their origin and winding stated per profile.
 
 **Entry condition.** M6.
 

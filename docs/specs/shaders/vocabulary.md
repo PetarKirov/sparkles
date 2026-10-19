@@ -118,7 +118,7 @@ bounds. GLSL leaves the result undefined for `sqrt` of a negative number,
 `mod` by zero, `smoothstep` with `e0 >= e1`, and `clamp` with `lo > hi`; on
 those inputs nothing is required.
 
-**SHV8: Inert stand-ins.** Outside a device compilation, the shader
+**SHV8: Inert stand-ins.** _(Revised.)_ Outside a device compilation, the shader
 attributes (`@compute`, the stages of `SHF1`, the parameter markers of `SHF2`,
 `@profiles`, `@requires`, `@resources`, `@binding`) and the resource handles
 of [`SHR1`](./resources.md) **must** exist with the same names as plain D

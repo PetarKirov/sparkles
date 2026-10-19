@@ -1395,6 +1395,10 @@
           {
             "text": "Adversarial Review",
             "link": "/specs/shaders/adversarial-review"
+          },
+          {
+            "text": "Revision Review",
+            "link": "/specs/shaders/revision-review"
           }
         ]
       },
