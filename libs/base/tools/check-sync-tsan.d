@@ -115,6 +115,20 @@ enum string[string] workloads = [
         __gshared ulong[2_000] payload;
         void main()
         {
+            // An observer that never calls `call`: it never parks, so the
+            // completion store is its only edge to the initializer. Callers
+            // that convoy behind one another go through the parking lot's
+            // bucket locks instead, and a run where every caller did would
+            // show TSan no unordered read.
+            auto observer = new Thread({
+                foreach (k; 0 .. 2_000)
+                {
+                    while (!onces[k].isComplete)
+                        Thread.yield();
+                    if (payload[k] != k + 1)
+                        assert(0);
+                }
+            }).start();
             run({
                 foreach (k; 0 .. 2_000)
                 {
@@ -123,6 +137,7 @@ enum string[string] workloads = [
                         assert(0);
                 }
             });
+            observer.join();
         }
     },
     "rwlock": q{
