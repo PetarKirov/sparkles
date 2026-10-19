@@ -523,7 +523,8 @@ if (isTextMeasure!TM)
                     if (!retained && node.wrap != TextWrap.none)
                     {
                         // Unwrapped, a newline is a hard break: the width is
-                        // the widest segment between them, spans joined.
+                        // the widest segment between them, spans joined,
+                        // with hanging indentation on each continuation.
                         size_t segment, widest;
                         bool ascii = true;
                         foreach (ref const span; node.spans)
@@ -531,7 +532,9 @@ if (isTextMeasure!TM)
                             {
                                 if (c == '\n')
                                 {
-                                    segment = 0;
+                                    segment = node.hangIndent > 0 ? node.hangIndent : 0;
+                                    if (segment > widest)
+                                        widest = segment;
                                     continue;
                                 }
                                 if (c < 0x20 || c > 0x7E)
@@ -1533,6 +1536,56 @@ version (unittest)
         "column 11×2 @(0,0)\n" ~
         "    text 5×1 @(0,0) \"short\"\n" ~
         "    text 11×1 @(0,1) \"much longer\"\n");
+}
+
+/// Hanging indentation contributes to the natural width of continuation lines.
+@("ui.layout.wrappingAsciiRichRunKeepsHangingIndent")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder, TextSpan;
+
+    auto b = Builder();
+    const t = b.add(Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy,
+        spans: [TextSpan("a\nbbbb")], hangIndent: 3));
+    const tree = b.finish(t);
+    const frames = layout(tree);
+
+    assert(frames[t].rect.width == 7);
+    assert(frames[t].paintSpanLines.length == 2);
+    const continuation = frames[t].paintSpanLines[1];
+    assert(continuation.length == 4);
+    foreach (ref const span; continuation)
+        assert(span.text == "b" && span.cellAdvance == 1);
+}
+
+/// Natural width joins spans, indents only continuations, and counts empty lines.
+@("ui.layout.wrappingAsciiRichRunHangingIndentWidthCases")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder, TextSpan;
+
+    struct Case
+    {
+        TextSpan[] spans;
+        int indent, width;
+    }
+    const cases = [
+        Case([TextSpan("a\n"), TextSpan("bb"), TextSpan("bb")], 3, 7),
+        Case([TextSpan("a"), TextSpan("\n"), TextSpan("bbbb")], 3, 7),
+        Case([TextSpan("a\nbbbb")], 0, 4),
+        Case([TextSpan("abcdefgh\nb")], 3, 8),
+        Case([TextSpan("a\n")], 3, 3),
+        Case([TextSpan("abcd")], 3, 4),
+    ];
+    foreach (ref const c; cases)
+    {
+        auto b = Builder();
+        const t = b.add(Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy,
+            spans: c.spans.dup, hangIndent: c.indent));
+        const tree = b.finish(t);
+        const frames = layout(tree);
+        assert(frames[t].rect.width == c.width);
+    }
 }
 
 @("ui.layout.wrappingRichRunReportsItsLineCount")
