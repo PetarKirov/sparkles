@@ -705,6 +705,17 @@ private size_t modelBucketOf(size_t key) @trusted
     return b;
 }
 
+/**
+Gives `key` the bucket `other` has under this execution, assigning `other` one
+first if it has none: a scenario of two heap keys that share a bucket (SYP15),
+which first-use assignment never produces. Call it before either key is used.
+*/
+void shareBucket(size_t key, size_t other) @trusted
+{
+    assert(exec !is null && key !in exec.buckets, "shareBucket: call it in the setup, before the key is used");
+    exec.buckets[key] = modelBucketOf(other);
+}
+
 /// Keys below this are synthetic: hashed as in production.
 enum size_t syntheticKeys = 0x100_0000;
 

@@ -15,6 +15,7 @@ primitive serves threads and, through a scheduler's parker, fibers.
 - `Condition`: a condition variable that moves notified waiters onto the
     lock's queue.
 - `Once`: a one-time initializer.
+- `RwLock`: a reader–writer lock with shared, exclusive and upgradable modes.
 - `Semaphore`, `ManualResetEvent`, `AutoResetEvent`, `Barrier`, `Latch`:
     counting and signalling primitives with deadline and interruptible waits.
 - `waitWhile`, `wakeOne`, `wakeAll`: the address wait, a futex over the
@@ -40,5 +41,6 @@ public import sparkles.base.sync.parker : installParker, Parker, ParkerVtbl, Sle
     WaitRecord, WakeHandle;
 public import sparkles.base.sync.parking_lot : designatedSpinSteps, parkingBuckets, spinSteps, starvationBound;
 public import sparkles.base.sync.platform : NativePlatform;
+public import sparkles.base.sync.rwlock : RwGuard, RwLock, RwLockT, RwMode;
 public import sparkles.base.sync.semaphore : Semaphore, SemaphoreT;
 public import sparkles.base.sync.seam : Deadline;
