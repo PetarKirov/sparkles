@@ -248,6 +248,42 @@ requirements it names before anything is built on them.
   `Builtin.vertexIndex`, compile to a module that declares no `Int64` once
   `SHM6` holds.
 
+**Spike progress (2026-10-20).** Both spikes were run before acceptance, on
+the local toolchain (LLVM's SPIR-V backend at its pinned base and the
+fork's branch), with the backend's lit suite (1314 tests) and the fork's
+codegen suite green.
+
+- **S1 holds, with three backend fixes and one open point.**
+  - An explicit-offset uniform block (`std140`) and push-constant block
+    (`std430`) validate for Vulkan 1.3 with exactly the offsets `layoutOf`
+    gives, and their member names survive as `OpMemberName`.
+  - Reading a member of an explicitly laid-out uniform block asserted in the
+    backend. That is fixed.
+  - A `std140` array whose stride exceeds its element, such as `float[4]` at
+    stride 16, used to lower to an array of padded structs declaring an 8-bit
+    member. It now lowers to `T[N]` with the padded stride and no `Int8`, and
+    is read by index or by byte offset.
+  - A duplicate type name is removed.
+  - The open point is [`Q4`](./decisions.md#open-questions): the uniform block
+    is a one-member wrapper around `T`, not `T` itself.
+- **S2 holds, with one backend fix and one compiler fix.**
+  - An `int`-indexed local table declares no `Int64` at `-O0` or `-O2`. The
+    backend now indexes with the 32-bit value a widened index came from, and
+    with 32-bit constants.
+  - The fork initialises a constant-length array by one store, or by a loop
+    counted in 32 bits
+    ([`PetarKirov/ldc@6c966756`](https://github.com/PetarKirov/ldc/commit/6c9667564375c8061ef5fdc06358f9d2e672200a)).
+  - The backend lowers a `memset` of a whole local to a store. A zero-filled
+    local array used to crash the compilation at `-O2`.
+- **Found along the way.** In signed-integer mode, `OpUDiv`, `OpUMod` and
+  `OpConvertFToU` need an unsigned result type at every width, not only for
+  `size_t` (R22). A `uint` division in a shader is invalid today. The fix is
+  part of M6's compiler work.
+
+The backend fixes are carried as patches for the toolchain bump that opens M6
+and are proposed upstream; until then the pinned toolchain (`SHT1`) does not
+include them.
+
 **Deliverable.**
 
 - **Library.** `sparkles.shaders.capabilities` with the four profiles of
