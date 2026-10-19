@@ -25,6 +25,8 @@ import sparkles.base.sync.seam : Deadline;
 
 /// `relax` steps a locker spins before parking under `P` (SYM9).
 package(sparkles.base.sync) enum uint lockSpinFor(P) = P.isModel ? 1 : spinSteps;
+/// The designated waker's pause-only steps under `P` (SYM9).
+package(sparkles.base.sync) enum uint designatedSpinFor(P) = P.isModel ? 1 : designatedSpinSteps;
 
 /**
 The lock algorithm over the bits `L`, `PK` and `D` of a word of type `T`,
@@ -162,8 +164,17 @@ static:
                     passOn(word);
                 return false;
             }
-            // Spin only while nobody is parked and no designated waker is
-            // pending (SYM9).
+            // The designated waker, the locker the last unlock expects, keeps
+            // spinning while others are parked, on processor pauses alone; any
+            // other locker spins only while nobody is parked and no designated
+            // waker is pending (SYM9).
+            if (designated && spin < designatedSpinFor!P)
+            {
+                auto eff = effectiveParker!P();
+                eff.vtbl.relax(eff.ctx, spin < 2 ? spin : 2);
+                ++spin;
+                continue;
+            }
             if (spin < lockSpinFor!P && !(s & (PK | D)))
             {
                 auto eff = effectiveParker!P();

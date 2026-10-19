@@ -33,7 +33,8 @@ import std.stdio : stderr, writeln;
 import core.thread : Thread;
 import core.time : minutes, MonoTime, msecs;
 
-/// The whole run's budget; it takes about a minute on the reference machines.
+/// The whole run's budget: about a minute on the reference machines, and at
+/// most 90 s for each of the four weakened pairs on arm64.
 enum timeLimit = 10.minutes;
 
 int main()

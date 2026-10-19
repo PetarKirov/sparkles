@@ -29,6 +29,6 @@ public import sparkles.base.sync.mutex : LockBits, Mutex, MutexGuard, MutexT;
 public import sparkles.base.sync.once : Once, OnceT;
 public import sparkles.base.sync.parker : installParker, Parker, ParkerVtbl, SleepResult,
     WaitRecord, WakeHandle;
-public import sparkles.base.sync.parking_lot : parkingBuckets, spinSteps, starvationBound;
+public import sparkles.base.sync.parking_lot : designatedSpinSteps, parkingBuckets, spinSteps, starvationBound;
 public import sparkles.base.sync.platform : NativePlatform;
 public import sparkles.base.sync.seam : Deadline;

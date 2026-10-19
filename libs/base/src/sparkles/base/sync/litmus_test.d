@@ -13,9 +13,9 @@ two cores every round.
 
 Each test runs over `NativePlatform`, where a stale read is a failure, and over
 `WeakPlatform`, whose orderings are all relaxed: on arm64, a weakly ordered
-machine, the weakened variant must show a stale read within its budget of
-rounds, or the test proves nothing. The x86-64 legs run both as a control, and
-there the weakened variant passes.
+machine, the weakened variant must show a stale read within its budget, or the
+test proves nothing. The x86-64 legs run both as a control, and there the
+weakened variant passes.
 
 That requirement holds for the optimized build
 (`libs/base/tools/check-sync-litmus.d`) only. Unoptimized, as `dub test` builds
@@ -28,7 +28,7 @@ module sparkles.base.sync.litmus_test;
 
 import core.atomic : atomicLoad, atomicStore, MemoryOrder;
 import core.thread : Thread;
-import core.time : MonoTime, msecs;
+import core.time : Duration, MonoTime, msecs, seconds;
 
 import sparkles.base.sync.condition : ConditionT;
 import sparkles.base.sync.interruptible_mutex : InterruptibleMutexT;
@@ -44,18 +44,28 @@ private enum size_t instances = 20_000;
 /// weakened ones until the first stale read, within a budget. The oracle is
 /// the optimized build (`SparklesSyncLitmus`); `dub test` runs both as a
 /// check of the real primitives and asserts nothing about the weakened ones.
+/// On arm64 the budget is time, not rounds: how often a round shows a stale
+/// read differs by core and by the primitives' timing, from every round to
+/// one in several thousand.
 version (SparklesSyncLitmus)
 {
     private enum uint nativeRounds = 100;
     version (AArch64)
-        private enum uint weakBudget = 5000;
+    {
+        private enum uint weakBudget = uint.max;
+        private enum Duration weakTime = 90.seconds;
+    }
     else
+    {
         private enum uint weakBudget = 10;
+        private enum Duration weakTime = Duration.max;
+    }
 }
 else
 {
     private enum uint nativeRounds = 10;
     private enum uint weakBudget = 10;
+    private enum Duration weakTime = Duration.max;
 }
 
 /// One message per instance: plain payload and a relaxed flag.
@@ -205,7 +215,8 @@ private void check(alias test)(string pair) @system
             "a stale read through " ~ pair ~ ": an ordering edge is missing (SYH1)");
     ulong weak;
     uint rounds;
-    while (weak == 0 && rounds < weakBudget)
+    const start = MonoTime.currTime;
+    while (weak == 0 && rounds < weakBudget && MonoTime.currTime - start < weakTime)
     {
         weak += test!WeakPlatform();
         ++rounds;

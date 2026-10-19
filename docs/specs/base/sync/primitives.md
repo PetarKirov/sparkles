@@ -109,7 +109,14 @@ and nsync bound starvation the same way (DS5).
 
 **SYM9: Spinning.** A locker that finds the mutex held **may** spin for at
 most `spinSteps` `relax` steps (SPEC SYK7) before parking, and **must not**
-spin while a designated waker is pending.
+spin while a designated waker is pending. The designated waker itself
+**may** spin for at most `designatedSpinSteps` steps before parking again,
+whoever else is parked, and **must** spin on processor pauses alone, never
+yielding its thread.
+
+_Rationale:_ The designated waker is the locker an unlock expects; while it
+spins, a barger that takes the mutex is the only one it races, and it
+parks again only after the mutex has stayed held a while (DS29).
 
 **SYM10: Validation acquires.** A park's validation (SPEC SYP2) that finds
 the mutex free **must** take it there, under the bucket lock, in the same

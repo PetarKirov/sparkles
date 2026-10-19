@@ -16,7 +16,8 @@ DS9 and DS13–DS22 on 2026-10-15, after an independent review whose findings
 DS13–DS22 resolve; DS23, resolving a second review, and DS24 were accepted on
 2026-10-15; and DS25 and DS26, resolving a third and a fourth review, on
 2026-10-16. DS27, recording the protocol model's findings, was accepted on
-2026-10-17, and DS28, resolving a fifth and a sixth review, on 2026-10-19.
+2026-10-17, and DS28, resolving a fifth and a sixth review, and DS29, on
+B4, on 2026-10-19.
 
 ## DS1: A parking lot, not a futex word per lock
 
@@ -106,6 +107,8 @@ protected?
 the slow path, and a bound a deterministic test can check.
 
 **Revisit** with the fairness measurement in [testing.md](./testing.md#benchmarks).
+B4 revisited it in DS29: the bound is 4, beside a designated waker that
+spins.
 
 ## DS6: The macOS seam
 
@@ -535,5 +538,45 @@ of primitives.md §13's). Windows SYF2 cites the native seam's run.
 `prepare`, which SYP4 requires only of a record still queued; a `prepare`
 there would lose a portable delivery. The requeue onto its own key cannot
 arise from a real guard.
+
+**Status.** Accepted 2026-10-19.
+
+## DS29: B4, a designated waker that spins
+
+**Question.** B4 failed: at 32 threads `Mutex`'s fairness was 0.66 against
+the three-state futex word's 0.82 (`starvationBound` 8). What closes it?
+
+**Alternatives.** A sweep on the reference machine, each figure the median
+of 21 runs of 100 ms:
+
+- the spin policy alone (its length, its pause and yield split, none at
+  all) changes nothing, because SYM9 already stops a locker from spinning
+  while anyone is parked, and at 32 threads someone always is;
+- `starvationBound` 1 reaches about 0.84 and loses a fifth of the
+  throughput;
+- letting every locker spin while others are parked raises throughput and
+  drops fairness to 0.5–0.65;
+- re-parking a designated waker that lost at the head of the queue helps
+  only at bound 1;
+- every locker spinning on pauses alone passes B4 and loses a quarter to
+  almost half of the 2-thread throughput;
+- only the designated waker spinning on pauses, with bound 4, costs no
+  throughput at any thread count, reaches parity at 32 threads and raises
+  64-thread fairness from about 0.5 to 0.7.
+
+**Choice.** The last: the designated waker spins for up to
+`designatedSpinSteps` (40) pause-only steps whoever else is parked, and
+`starvationBound` is 4 (SYM9, SYM8). Parity makes a strict "at least"
+comparison of two noisy medians a coin flip, so B4 takes 21 runs at 32
+threads and allows 0.03 below the futex word, that word's own run-to-run
+spread.
+
+**Cost.** `Mutex`'s median spreads wider than the futex word's, 0.70–0.83
+against 0.80–0.82, so B4 still fails about one run in three. A spinning
+designated waker burns a core for up to about 300 pauses before parking
+again.
+
+**Revisit** if a workload shows the spin costing more than it saves, or to
+narrow `Mutex`'s spread.
 
 **Status.** Accepted 2026-10-19.
