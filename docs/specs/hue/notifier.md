@@ -55,11 +55,11 @@ presents _out-of-band_ panels about the session.
 
 Presented on launch; collapsible to an icon (`NTF2`).
 
-| ID   | Requirement                                                                                                                                                                                         | Status      | Traces to                                                                                                                                                                         |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| NSI1 | Must show hue's **version and short commit hash**, and the active **rendering mode** (`tui` / `gui` / `html`); in GUI mode it must also show the **GPU backend version** (e.g. the raylib version). | not started | proposed build stamp (none today); `RAYLIB_VERSION`; mode dispatch ([`MOD*`](./feature-requirements.md#output-mode-dispatch-mod))                                                 |
-| NSI2 | Must show the counts of **available/loaded tree-sitter languages** and **themes**; `languages: N` and `themes: N` are **actionable items** (`NTF4`) that expand to the full lists.                  | not started | `GrammarRegistry` (avail, [`ENG2`](./feature-requirements.md#highlight-engine-eng)) / `TsConfigCache` (loaded); `names`/`themes` ([`THM2`](./feature-requirements.md#themes-thm)) |
-| NSI3 | The distinction between **available** (grammars in the `$SPARKLES_TS_GRAMMAR_PATH` bundle) and **loaded** (instantiated on demand) languages must be reflected in the count/list.                   | not started | `GrammarRegistry.fromEnvironment`; `TsConfigCache`                                                                                                                                |
+| ID   | Requirement                                                                                                                                                                                         | Status      | Traces to                                                                                                                                                                                |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NSI1 | Must show hue's **version and short commit hash**, and the active **rendering mode** (`tui` / `gui` / `html`); in GUI mode it must also show the **GPU backend version** (e.g. the raylib version). | not started | the build-info section (`sparkles.core_cli.build_info`: `BuildInfo`, `buildInfoSection`); `RAYLIB_VERSION`; mode dispatch ([`MOD*`](./feature-requirements.md#output-mode-dispatch-mod)) |
+| NSI2 | Must show the counts of **available/loaded tree-sitter languages** and **themes**; `languages: N` and `themes: N` are **actionable items** (`NTF4`) that expand to the full lists.                  | not started | `GrammarRegistry` (avail, [`ENG2`](./feature-requirements.md#highlight-engine-eng)) / `TsConfigCache` (loaded); `names`/`themes` ([`THM2`](./feature-requirements.md#themes-thm))        |
+| NSI3 | The distinction between **available** (grammars in the `$SPARKLES_TS_GRAMMAR_PATH` bundle) and **loaded** (instantiated on demand) languages must be reflected in the count/list.                   | not started | `GrammarRegistry.fromEnvironment`; `TsConfigCache`                                                                                                                                       |
 
 ## File info popup (`NFI`)
 
@@ -104,7 +104,7 @@ Proposed layout — no code on any branch yet.
 | `apps/hue/src/gui.d` (raylib popup layer, proposed)            | `NTF6` (GUI), `NSI*`, `NFI*` (GUI paint)  |
 | `apps/hue/src/previewer.d` (TUI popup over viewport, proposed) | `NTF6` (TUI), `NTF9` (`@nogc` discipline) |
 | `apps/hue/src/app.d` HTML branch (CSS-only popup, proposed)    | `NTF6` (HTML), `NTF9` (ANSI skip)         |
-| build stamp (version + commit, proposed)                       | `NSI1`                                    |
+| build-info section (`sparkles.core_cli.build_info`)            | `NSI1`                                    |
 | `sparkles:base` `text/grapheme.d` (`byGraphemeCluster`)        | `NFI2` (EGC count)                        |
 
 → [Overlay requirements](./overlays.md) · [GUI requirements](./gui.md) · [General requirements](./feature-requirements.md) · [Overview](./index.md)
