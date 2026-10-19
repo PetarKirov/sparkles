@@ -419,8 +419,20 @@ unittest
     t.join();
     assert(measured >= workerStackBytes,
         "worker stack is smaller than the requested size");
-    // glibc adds TLS onto the requested size; allow a page-rounded slack.
-    assert(measured <= workerStackBytes + 128 * 1024,
+    // On glibc, TLS lives at the top of a thread's stack, so druntime adds the
+    // static TLS size to the request. That size is the binary's, not a
+    // constant: a DMD `-cov` build keeps its line counters in TLS, and they
+    // have passed 160 KiB. So the slack is that size plus a page-rounded margin.
+    version (CRuntime_Glibc)
+    {
+        import core.internal.traits : externDFunc;
+
+        const tls = externDFunc!("rt.sections_elf_shared.sizeOfTLS",
+            size_t function() @nogc nothrow)();
+    }
+    else
+        enum size_t tls = 0;
+    assert(measured <= workerStackBytes + tls + 128 * 1024,
         "worker stack was not pinned near the requested size");
 }
 
