@@ -165,7 +165,7 @@ in
       # so nothing else lands beside the user's home) — plus session.conf,
       # NOTICE and the credits/ document, read in place from the APK.
       mkAssets =
-        session: bootstraps:
+        session: bootstraps: fontFiles:
         pkgs.runCommand "terminal-android-assets" { } ''
           mkdir -p $out/fonts
           ${lib.concatStrings (
@@ -176,7 +176,7 @@ in
           )}
           ${lib.concatMapStrings (f: ''
             cp ${fonts.fontBundle}/fonts/${f} ${fonts.fontBundle}/fonts/${f}.charset $out/fonts/
-          '') bundledFonts}
+          '') fontFiles}
           # All script fallbacks and emoji are shared with the desktop bundle.
           cp ${fonts.fontBundle}/fonts/Noto* $out/fonts/
           # The credits document with its licence texts — the files the
@@ -249,6 +249,9 @@ in
           extraNativeLibs ? { },
           versionName ? null,
           versionCode ? null,
+          # The bundle's font files (with their charset sidecars) the APK
+          # ships beside the shared script fallbacks and emoji.
+          fonts ? bundledFonts,
           # The default theme's background (ChromeTheme), shown before the
           # first frame.
           windowBackground ? "#ff1e1e2e",
@@ -311,7 +314,7 @@ in
             # The patched libraries carry the build-info section (`TPG2`).
             # Debug and release share the one unstamped `.so`.
             libs = lib.mapAttrs (abi: libs: libs // (extraNativeLibs.${abi} or { })) baseLibs;
-            assetsDir = mkAssets session bootstraps;
+            assetsDir = mkAssets session bootstraps fonts;
             inherit targetSdk;
             description = "${label} — sparkles:terminal (Android NativeActivity APK)";
           }
