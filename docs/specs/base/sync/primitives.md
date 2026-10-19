@@ -277,8 +277,13 @@ upgradable holder to leave while the upgrader waits for the writer: a
 deadlock (DS20).
 
 **SYR5: One pass per release.** A release that wakes waiters **must** wake,
-in one `unparkFilter` pass (SPEC SYP9), either one exclusive waiter or every
-shared waiter plus at most one upgradable waiter at the head of the queue.
+in one `unparkFilter` pass (SPEC SYP9), either the exclusive waiter at the
+head of the queue or, up to the first exclusive waiter, every shared waiter
+and at most one upgradable waiter, skipping later upgradable ones (DS30).
+If readers left during the pass, so that its choice of grants counted
+readers gone by its read–modify–write, and waiters remain, the release
+**must** run the pass again: nobody else will wake a waiter those readers
+kept out (SYR7).
 
 **SYR6: No recursion.** Acquiring shared mode while already holding the lock
 is a programming error: SYR3 makes it deadlock when a writer is parked.
@@ -391,7 +396,8 @@ the word, an atomic integer of 1, 2, 4 or 8 bytes, equals `expected`,
 checking the value as SPEC SYP2's validation. If the word already differs it
 **must** return at once without parking. It **must** have deadline and
 interruptible forms, which report a timeout or a cancellation only if the
-caller parked and was not woken.
+caller parked and was not woken. A wait that a wake ended **must** return without
+reading the word again: the caller loops on its own condition (DS30).
 
 **SYW2: Wake.** `wakeOne(word)` and `wakeAll(word)` **must** wake waiters of
 that word and return how many they woke.
