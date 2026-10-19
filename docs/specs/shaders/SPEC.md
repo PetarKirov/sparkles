@@ -1,19 +1,19 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-19
+reviewed: 2026-10-20
 ---
 
 # `sparkles:shaders` — Specification
 
 > [!IMPORTANT]
-> This is a revision under Stage 0 review — the
-> [gate](../../guidelines/spec-docs.md#stage-0-gate) at which the owner
-> accepts a specification's scope and contracts before they are implemented.
-> It sets the library a wider goal, a single-source replacement for the
-> shading languages, and specifies the first slice towards it. Until it is
-> accepted, the shipped behaviour is governed by the
-> [accepted specification of 2026-10-16](https://github.com/PetarKirov/sparkles/blob/d4f64961ca9b40f0d72d77aa8155048c1e88ab3a/docs/specs/shaders/SPEC.md);
+> This revision passed its Stage 0
+> [gate](../../guidelines/spec-docs.md#stage-0-gate) on 2026-10-20: the owner
+> accepted its scope and contracts. It sets the library a wider goal, a
+> single-source replacement for the shading languages, and specifies the
+> first slice towards it, which M6 implements ([`PLAN.md`](./PLAN.md)). Until
+> M6 delivers a requirement, the shipped behaviour is governed by the
+> [specification of 2026-10-16](https://github.com/PetarKirov/sparkles/blob/d4f64961ca9b40f0d72d77aa8155048c1e88ab3a/docs/specs/shaders/SPEC.md);
 > requirements carried over unchanged keep their identifiers and wording,
 > and each revised one is marked _(Revised.)_ after its title.
 

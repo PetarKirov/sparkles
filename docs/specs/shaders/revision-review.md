@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-19
+reviewed: 2026-10-20
 ---
 
 # `sparkles:shaders`: Adversarial review of the Stage 0 revision (first slice)
@@ -419,7 +419,7 @@ M6's, and its evidence is the ledger row the M6 gate requires.
 | R7  | Fixed             | `@binding(b)` takes `b` ≥ 1, applies under `vulkan1.3` and is ignored on OpenGL; automatic numbering skips fixed bindings, and the sampler counts for clashes. A struct shared at different positions fixes its bindings once, on the struct.                                                                                                                                                                                                                                                                          | `SHR7`; scenario "Bindings"                                 |
 | R8  | Fixed             | Every interface name of an entry point, after flattening and lowering, is distinct, block fields lowered to uniforms included; a clash names both declarations. A nested interface struct's field keeps its own name.                                                                                                                                                                                                                                                                                                  | `SHF2`, `SHR2`; scenario in Entry points                    |
 | R9  | Fixed             | The limit is the `std430` size, which the host pushes, written by `writeLayout`. `stagesLink` requires two stages' push-constant blocks to have one type.                                                                                                                                                                                                                                                                                                                                                              | `SHR4`, `SHF9`; scenario "Push-constant size"               |
-| R10 | Fixed (spike run) | Spike S1 was run before acceptance (2026-10-20): explicit offsets and strides through the backend's layout metadata validate for Vulkan 1.3 with no `Int8`, after three backend fixes. One point is open: the uniform block is a one-member wrapper around `T` (`Q4`).                                                                                                                                                                                                                                                 | `PLAN.md` M6 (S1)                                           |
+| R10 | Fixed (spike run) | Spike S1 was run before acceptance (2026-10-20): explicit offsets and strides through the backend's layout metadata validate for Vulkan 1.3 with no `Int8`, after three backend fixes. The one point it left open, a uniform block wrapped in a one-member struct (`Q5`), is settled as `D25`: the block is `T`.                                                                                                                                                                                                       | `PLAN.md` M6 (S1)                                           |
 | R11 | Fixed             | `activeProfile` is `cpu` under a compiler without the trait; the fork gives `"cpu"` in a host compilation.                                                                                                                                                                                                                                                                                                                                                                                                             | `SHC3`; scenario in Profiles                                |
 | R12 | Fixed             | The manifest is JSON, sorted, built with no profile active from declarations and attributes alone, in which `activeProfile` is an error. Profiles are compiled in the table's order; an empty manifest exits 2.                                                                                                                                                                                                                                                                                                        | `SHC5`, `SHP10`                                             |
 | R13 | Fixed             | Kinds are not gated (R1). An unemitted entry point takes no part in `SHF2`'s rule. `gles100`'s bit-operation and loop-bound denials, which no M6 check could falsify, are removed. A requirement only `SHC8` would catch is caught from M7.                                                                                                                                                                                                                                                                            | `SHR1`, `SHC2`, `SHC6`, `SHC7`                              |
@@ -464,9 +464,12 @@ incomplete in places, and they were completed before this record:
 
 ## Acceptance
 
-Not yet recorded. The owner accepts the revision, its scope, ownership and
-non-goals, and the dispositions above, `D17`'s refinement included, and
-answers `Q4`.
+On 2026-10-20 the project owner accepted the revision, its scope, library
+ownership and non-goals, and every disposition above as recorded, `D17`'s
+refinement included. The owner then settled the question spike S1 raised
+(`Q5`, whether a Vulkan uniform block is `T` or a wrapper around it) as
+[`D25`](./decisions.md#d25-a-vulkan-uniform-block-is-its-struct): the block
+is `T`.
 
 ## Not covered
 

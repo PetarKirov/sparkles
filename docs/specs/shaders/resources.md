@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-19
+reviewed: 2026-10-20
 ---
 
 # `sparkles:shaders` — Resources and layout
@@ -106,8 +106,10 @@ pipeline that both declare a push-constant block share its range from offset
 ([`SHF9`](./entry-points.md)).
 
 **SHR5: Uniform blocks.** A `UniformBlock!T name` parameter **must** be
-lowered under `vulkan1.3` to a block of `T` in the `Uniform` storage class,
-named `name`, laid out as `SHR6` specifies, at the binding `SHR7` assigns;
+lowered under `vulkan1.3` to a block whose type is `T` itself, decorated
+`Block` with no struct around it
+([`D25`](./decisions.md#d25-a-vulkan-uniform-block-is-its-struct)), in the
+`Uniform` storage class, named `name`, laid out as `SHR6` specifies, at the binding `SHR7` assigns;
 under `gl330` and `gles100`, to one uniform per field of `T`, named after the
 field.
 

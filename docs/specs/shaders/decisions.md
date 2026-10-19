@@ -1,7 +1,7 @@
 ---
-status: draft
+status: accepted
 owner: sparkles:shaders
-reviewed: 2026-10-19
+reviewed: 2026-10-20
 ---
 
 # `sparkles:shaders` — Decisions
@@ -389,8 +389,8 @@ audit catches what neither declares: capabilities the compiler introduces.
 
 **Trade-offs.** `SHC8` is compiler work; until it lands, the audit and
 per-profile compilation are the checks. This refines the owner's choice of a
-static-assert-based check in the vocabulary, for the reason above; the
-choice is the owner's to confirm.
+static-assert-based check in the vocabulary, for the reason above; the owner
+accepted the refinement with the revision on 2026-10-20.
 
 ### D18: Resources are parameters or interface structs
 
@@ -501,11 +501,40 @@ the corpus.
 graphics operations (derivatives, demote, terminate), and a second code
 generator in LDC is a large cost to take on speculatively.
 
+### D25: A Vulkan uniform block is its struct
+
+**Question.** The backend emits every Vulkan buffer as a new one-member
+struct `{ T }` decorated `Block`, so a uniform block's type is unnamed and
+its fields sit one level below it (spike S1; raised as `Q5`). Is a uniform
+block `T` itself, or that wrapper?
+
+**Alternatives.** Keep the wrapper and say so in `SHR5` and `SHR8`, named
+or unnamed; have the fork declare uniform blocks itself, as plain globals
+decorated through metadata, as it does push constants; or have the backend
+decorate a buffer's single struct as the block.
+
+**Choice.** The block is `T`: under `vulkan1.3`, the compiler **must** emit a
+uniform block whose type is `T`, decorated `Block`, with no struct around
+it, and the backend is changed so a buffer whose contents are one struct
+makes that struct the block. Buffers whose contents are not one struct
+(arrays, runtime arrays) keep their wrapper, which SPIR-V requires.
+
+**Why.** It is the block `SHR5` and `SHR8` describe, so names reach
+reflection and every translated output unchanged, and a later profile that
+binds blocks by name (GLSL 4.60, ES 3.x) needs no special case. It is also
+how the reference HLSL compiler (DXC) emits a `cbuffer`, which makes the
+backend change a defensible upstream proposal.
+
+**Trade-offs.** It changes how the shared backend lowers buffers, which
+upstream may decline; until it lands, the toolchain carries it as a patch.
+If it is declined, the fallback is the wrapper named after `T`, with `SHR5`
+and `SHR8` amended. A `T` used both as a block and as a plain value needs
+the two types kept apart, which the explicit-layout type already does.
+
 ## Open questions
 
-| ID  | Question                                                                                                                                                                                                                                                                                                                                                                                                                                                | Affects        | Decision point               |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- | ---------------------------- |
-| Q1  | Which further platforms get a device toolchain, and how? Windows needs LLVM and LDC cross-built for MSVC, or built natively, and published as an archive.                                                                                                                                                                                                                                                                                               | `SHT4`         | A consumer needing it (M5)   |
-| Q2  | Does the output variable keep the name `finalColor`, a convention of one OpenGL framework, when the fragment stage is proposed upstream?                                                                                                                                                                                                                                                                                                                | `SHF3`         | Upstreaming the stage        |
-| Q3  | Which Vulkan profile serves the Android floor? `VP_ANDROID_baseline_2022` guarantees Vulkan 1.1, which consumes SPIR-V up to 1.3; a `vulkan1.1` profile needs the compiler to emit SPIR-V 1.3.                                                                                                                                                                                                                                                          | `SHC2`         | A Vulkan consumer on Android |
-| Q4  | Is a Vulkan uniform block the type `T` itself, or a one-member block wrapping `T`? The backend wraps every buffer's contents (`{ T }`), so the block's type is unnamed and `T` is its only member, with `T`'s name, offsets and member names intact; `SHR5` and `SHR8` say the block is of type `T`, named after it. Either the requirements say the wrapper, or the backend decorates `T` itself as the block, a change to how it lowers every buffer. | `SHR5`, `SHR8` | Stage 0 acceptance (S1)      |
+| ID  | Question                                                                                                                                                                                       | Affects | Decision point               |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------- |
+| Q1  | Which further platforms get a device toolchain, and how? Windows needs LLVM and LDC cross-built for MSVC, or built natively, and published as an archive.                                      | `SHT4`  | A consumer needing it (M5)   |
+| Q2  | Does the output variable keep the name `finalColor`, a convention of one OpenGL framework, when the fragment stage is proposed upstream?                                                       | `SHF3`  | Upstreaming the stage        |
+| Q3  | Which Vulkan profile serves the Android floor? `VP_ANDROID_baseline_2022` guarantees Vulkan 1.1, which consumes SPIR-V up to 1.3; a `vulkan1.1` profile needs the compiler to emit SPIR-V 1.3. | `SHC2`  | A Vulkan consumer on Android |
