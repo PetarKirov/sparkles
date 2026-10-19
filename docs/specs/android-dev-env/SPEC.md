@@ -1,7 +1,7 @@
 ---
 status: draft
 owner: sparkles:terminal
-reviewed: 2026-10-05
+reviewed: 2026-10-19
 ---
 
 # Android Nix development environments
@@ -49,6 +49,7 @@ QEMU TCG, live Android-folder sharing, and deeper Podroid integration are exclud
 No library package is prescribed for each backend.
 
 Sections 1–5 define ownership, operations, and support boundaries.
+Section 6 defines artifact trust, initial input pinning and acquisition recovery.
 [PLAN.md](./PLAN.md) owns project milestones and delivery order.
 [testing.md](./testing.md) owns acceptance scenarios and evidence.
 [decisions.md](./decisions.md) records accepted choices and blocked design work.
@@ -124,7 +125,8 @@ than consume a partial installation. Failure or cancellation **must** preserve a
 existing environment and leave identifiable staging data that can be retried or
 explicitly discarded. Concurrent provision/stop/remove requests for one environment
 **must** be serialized or refused as busy, with no two writers of its metadata.
-Artifact authenticity policy is a blocker in [decisions](./decisions.md#open-design-gates).
+Artifact verification and retry **must** follow ADE18–ADE20. Trust-root and
+publication mechanisms remain gates in [decisions](./decisions.md#open-design-gates).
 
 **ADE6: Provisioning scope.** Ordinary PRoot installation **must** be possible
 entirely on-device from published artifacts. AVF and NNS **may** require documented
@@ -228,3 +230,46 @@ without an explicit user export choice. Reports **must** expose a reviewable
 preview before export. IDs, firmware identifiers, and paths require a documented
 redaction policy before report distribution. Diagnostic policy belongs to the app,
 not the wired resolver.
+
+## 6. Provisioning artifacts and reproducibility
+
+**ADE18: Artifact trust.** Official PRoot bootstrap and AVF image artifacts
+**must** be selected through authenticated release metadata and verified against
+the expected artifact digest before extraction or guest use. A digest obtained
+from an unauthenticated source alone **must not** establish official provenance.
+Missing/invalid authentication or digest mismatch **must** reject provisioning,
+leave any existing working environment unchanged and explain the failed check.
+Bundled artifacts **must** meet the same provenance and digest requirements;
+verification may rely on metadata bound to the authenticated APK distribution.
+
+Custom URL and local artifacts **must** remain available through explicit user
+selection with an expected digest. They **must** be identified as custom rather
+than official; a matching digest establishes correspondence to the supplied
+expectation, not publisher authenticity. Custom selection **must not** bypass
+archive safety, backend compatibility or readiness validation. Exact authenticated
+metadata format, trust-root distribution, signing/key handling and compatibility
+fields remain release-design gates; no signing mechanism is selected here.
+
+**ADE19: Initial environment identity.** Official provisioning **must** pin both
+the bootstrap/image and the initial environment configuration's source inputs to
+immutable revisions or content identities. A moving branch/channel alone **must
+not** identify an initial configuration. Provisioning records **must** retain
+the selected artifact and initial configuration identities, including their pinned
+input set, so the procedure can be repeated without silently selecting newer
+inputs. Custom provisioning **must** record the supplied digest and available
+source identities and **must not** claim official reproducibility for missing or
+moving inputs. Later user-directed guest maintenance remains separate under ADE13;
+this clause does not add app-managed guest upgrades or promise perpetual source
+availability or identical outputs from arbitrary custom builds.
+
+**ADE20: Restartable acquisition.** First-release provisioning **must** allow
+failed/interrupted artifact acquisition to restart and **must** reuse a complete
+verified artifact matching the selected identity rather than require downloading
+it again. Cached bytes **must** be revalidated before reuse; changed selection,
+corruption or incomplete acquisition **must not** be treated as verified completion.
+Partial-download resumption is deferred; restart may fetch the artifact from its
+beginning. Provisioning **must** distinguish acquisition, extracted installation
+and ready environment states. Prefix/disk presence alone **must not** establish
+readiness. Retry **must** preserve any existing working environment and use ADE5's
+staging/publication boundary. Durable phase records, cache ownership and
+crash-consistent recovery mechanics remain implementation acceptance gates.

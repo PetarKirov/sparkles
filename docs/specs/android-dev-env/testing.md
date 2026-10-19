@@ -69,6 +69,24 @@ or repeatable human procedure with explicit assertions. Harness mutation checks
 must catch joined argv, erased profile keys, automatic one-off replay, and incorrect
 loopback binding. There is no acceptance command for an unimplemented test.
 
+## Provisioning trust and recovery scenarios
+
+These extend E4. Expected artifact bytes/digests and accepted metadata are fixture
+inputs established independently of the production verifier. A fetch-counting
+server and filesystem markers observe reuse and preservation. Deliberately
+corrupted authentication evidence, digests and staging records must be rejected; a generic
+error alone does not prove the forbidden extraction or publication did not occur.
+
+| Scenario                 | Requirements | Actions and falsifying observations                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E5 — Artifact provenance | ADE5/18      | Official metadata missing authentication, invalid authentication and artifact digest mismatch each reject before extraction/guest use. Existing environment marker and readiness remain unchanged. A bundled artifact has authenticated metadata and matching digest too. Custom URL/local artifact requires explicit selection/expected digest; mismatch rejects, match remains labelled custom. Malformed archives or incompatible backend still reject                       |
+| E6 — Initial inputs      | ADE19        | Official bootstrap/image and initial configuration records identify immutable inputs. Advance a source branch between two provisions: the recorded input set remains unchanged. Reject an official configuration containing only a moving branch identity. Custom records retain digest/available source identities without an official reproducibility claim. User-directed later maintenance does not overwrite initial provenance                                            |
+| E7 — Acquisition retry   | ADE5/20      | Interrupt download then retry from the beginning. With a complete matching verified artifact retained, restart/retry fetches no artifact bytes; metadata checks may still occur. Corrupt cached bytes or change selection: revalidation rejects reuse. Interrupt after extraction/before readiness: target stays provisioning, requested entry argv never runs, existing environment remains intact. Exercise explicit staging discard independently of the working environment |
+
+ADE18–ADE20 remain **unverified**. These scenarios require the final trust-root,
+metadata, cache and phase-record design before becoming an executable acceptance
+suite. Documentation checks are not artifact authenticity or recovery evidence.
+
 ## Evidence ledger
 
 | Record    | Checked scope and revision                                                                                                                                                                        | Result                                                                        | Remaining gap                                                                                         |
