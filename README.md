@@ -673,10 +673,10 @@ void main()
         ["tag", "v0.6.0 (annotated)"],
         ["pushed", "origin ✔"],
     ]);
-    writeln(hjoin([
-        drawBox(receipt, "released", BoxProps(footer: "next: publish")).toString,
+    writeln(hjoin(
+        drawBox(receipt, "released", BoxProps(footer: "next: publish")),
         "notes:\n2 feats\n1 fix",
-    ]));
+    ));
 }
 ```
 

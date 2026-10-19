@@ -43,7 +43,7 @@ import std.typecons : Nullable;
 // The `workload` attribute struct shares its name with this module; the
 // rename keeps the dogfood test's UDA unambiguous (discovery matches the
 // UDA by type, not name).
-import sparkles.base.text.writers : formatted, writeText;
+import std.conv : text;
 import sparkles.test_runner.attributes : CacheRegime, workloadUda = workload;
 import sparkles.test_runner.cache_regime : appendNote, applyCold, applyWarm,
     CacheRegimeStamp, FsKind, fsKind, probeResidency, resolveStamp;
@@ -662,7 +662,7 @@ if (is(typeof(run()) == void))
     }
     const base = name.length ? ctx.testName ~ "/" ~ name : ctx.testName;
     const n = ++ctx.nameCounts.require(base, 0);
-    const windowName = n == 1 ? base : formatted!writeText(i"$(base)#$(n)").toString;
+    const windowName = n == 1 ? base : text(i"$(base)#$(n)");
     measureWindow(ctx, windowName, run);
 }
 

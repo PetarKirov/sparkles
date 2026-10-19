@@ -19,6 +19,28 @@ if (imported!"sparkles.base.text.value_form".isWritableValue!Block)
     return hjoin(blocks.map!(b => b.toString).array, gap);
 }
 
+/// `hjoin` over blocks of mixed kinds, each a string or a value that writes
+/// itself, joined with the default gap: `hjoin(drawBox(…), drawTable(…), "notes")`.
+string hjoin(Blocks...)(Blocks blocks)
+if (Blocks.length > 1 && isBlockList!Blocks)
+{
+    import std.conv : text;
+
+    auto rendered = new string[Blocks.length];
+    static foreach (i; 0 .. Blocks.length)
+        rendered[i] = text(blocks[i]);
+    return hjoin(rendered);
+}
+
+private template isBlockList(Blocks...)
+{
+    import std.meta : allSatisfy;
+
+    enum isBlock(T) = is(T : const(char)[])
+        || imported!"sparkles.base.text.value_form".isWritableValue!T;
+    enum isBlockList = allSatisfy!(isBlock, Blocks);
+}
+
 /// Join `blocks` (each a rendered multi-line string) side by side with `gap`
 /// spaces between columns. Blocks are top-aligned; a block shorter than the
 /// tallest one contributes blank space below. Trailing whitespace on each
@@ -159,5 +181,8 @@ string[] kvList(in string[2][] pairs, size_t gap = 2) @safe
     import sparkles.ui.components.box : drawBox;
 
     const joined = hjoin([drawBox(["a"], "x"), drawBox(["b"], "y")]);
-    assert(joined == hjoin([drawBox(["a"], "x").toString, drawBox(["b"], "y").toString]));
+    assert(joined == hjoin(drawBox(["a"], "x"), drawBox(["b"], "y")));
+    // Mixed kinds, side by side.
+    assert(hjoin(drawBox(["a"], "x"), "notes")
+        == hjoin([drawBox(["a"], "x").toString, "notes"]));
 }
