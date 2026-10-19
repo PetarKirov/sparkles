@@ -6,6 +6,8 @@ supporting divider and banner styles.
 +/
 module sparkles.ui.components.header;
 
+version (unittest) import sparkles.base.buffer : checkToString;
+
 import std.algorithm : map, maxElement;
 import std.array : appender;
 import std.conv : to;
@@ -75,14 +77,14 @@ mixin(imported!"sparkles.base.text.value_form".valueForm!"drawHeader");
 @("header.drawHeader.defaultDivider")
 unittest
 {
-    assert("Title".drawHeader.toString == "── Title ──");
+    checkToString("Title".drawHeader, "── Title ──");
 }
 
 /// Custom line character
 @("header.drawHeader.customLineChar")
 unittest
 {
-    assert("Test".drawHeader(HeaderProps(lineChar: '═')).toString == "══ Test ══");
+    checkToString("Test".drawHeader(HeaderProps(lineChar: '═')), "══ Test ══");
 }
 
 /// Banner style with fixed width

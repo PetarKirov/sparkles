@@ -1,5 +1,7 @@
 module sparkles.ui.components.box;
 
+version (unittest) import sparkles.base.buffer : checkToString;
+
 import std.algorithm.comparison : max;
 import std.algorithm.iteration : map;
 import std.algorithm.searching : maxElement, canFind;
@@ -908,7 +910,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Hello"].drawBox("T").toString == `
+    checkToString(["Hello"].drawBox("T"), `
         ╭──╼ T ╾───╮
         │ Hello    │
         ╰──────────╯`.outdent(2));
@@ -919,7 +921,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Line 1", "Line 2", "Line 3"].drawBox("Title").toString == `
+    checkToString(["Line 1", "Line 2", "Line 3"].drawBox("Title"), `
         ╭──╼ Title ╾───╮
         │ Line 1       │
         │ Line 2       │
@@ -932,7 +934,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Short", "A longer line", "Mid"].drawBox("Box").toString == `
+    checkToString(["Short", "A longer line", "Mid"].drawBox("Box"), `
         ╭──╼ Box ╾──────╮
         │ Short         │
         │ A longer line │
@@ -945,7 +947,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["This is a very long content line"].drawBox("T").toString == `
+    checkToString(["This is a very long content line"].drawBox("T"), `
         ╭──╼ T ╾───────────────────────────╮
         │ This is a very long content line │
         ╰──────────────────────────────────╯`.outdent(2));
@@ -957,7 +959,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
 
     // This tests the fix for the underflow bug
-    assert(["Hi"].drawBox("Long Title Here").toString == `
+    checkToString(["Hi"].drawBox("Long Title Here"), `
         ╭──╼ Long Title Here ╾───╮
         │ Hi                     │
         ╰────────────────────────╯`.outdent(2));
@@ -969,7 +971,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
 
     // Single character content and title - tests minimum box size
-    assert(["x"].drawBox("T").toString == `
+    checkToString(["x"].drawBox("T"), `
         ╭──╼ T ╾───╮
         │ x        │
         ╰──────────╯`.outdent(2));
@@ -980,7 +982,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Content"].drawBox("").toString == `
+    checkToString(["Content"].drawBox(""), `
         ╭──╼  ╾────╮
         │ Content  │
         ╰──────────╯`.outdent(2));
@@ -991,7 +993,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Line 1", "Line 2"].drawBox("Title", BoxProps(omitLeftBorder: true)).toString == `
+    checkToString(["Line 1", "Line 2"].drawBox("Title", BoxProps(omitLeftBorder: true)), `
         ╭──╼ Title ╾───╮
         Line 1         │
         Line 2         │
@@ -1004,7 +1006,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
 
     // When omitLeftBorder is true, prefix is empty, affecting minWidth calculation
-    assert(["Hi"].drawBox("Very Long Title", BoxProps(omitLeftBorder: true)).toString == `
+    checkToString(["Hi"].drawBox("Very Long Title", BoxProps(omitLeftBorder: true)), `
         ╭──╼ Very Long Title ╾───╮
         Hi                       │
         ╰────────────────────────╯`.outdent(2));
@@ -1015,7 +1017,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert(["Content"].drawBox("Title", BoxProps(footer: "Done")).toString == `
+    checkToString(["Content"].drawBox("Title", BoxProps(footer: "Done")), `
         ╭──╼ Title ╾───╮
         │ Content      │
         ╰──╼ Done ╾────╯`.outdent(2));
@@ -1027,7 +1029,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
 
     // Footer wider than content should expand the box
-    assert(["Hi"].drawBox("T", BoxProps(footer: "Completed successfully")).toString == `
+    checkToString(["Hi"].drawBox("T", BoxProps(footer: "Completed successfully")), `
         ╭──╼ T ╾────────────────────────╮
         │ Hi                            │
         ╰──╼ Completed successfully ╾───╯`.outdent(2));
@@ -1040,8 +1042,7 @@ private TopItem[] nestedTitleItems(
 
     // Styled footer should not affect width calculation
     auto styledFooter = "✓ OK".stylize(Style.green);
-    assert(["Content"].drawBox("Title", BoxProps(footer: styledFooter)).toString ==
-        "╭──╼ Title ╾───╮\n" ~
+    checkToString(["Content"].drawBox("Title", BoxProps(footer: styledFooter)), "╭──╼ Title ╾───╮\n" ~
         "│ Content      │\n" ~
         "╰──╼ \x1b[32m✓ OK\x1b[39m ╾────╯");
 }
@@ -1163,8 +1164,7 @@ private TopItem[] nestedTitleItems(
 
     // ANSI codes should not affect box width calculation
     auto styledContent = "Hello".stylize(Style.bold);
-    assert([styledContent].drawBox("T").toString ==
-        "╭──╼ T ╾───╮\n" ~
+    checkToString([styledContent].drawBox("T"), "╭──╼ T ╾───╮\n" ~
         "│ \x1b[1mHello\x1b[22m    │\n" ~
         "╰──────────╯");
 }
@@ -1176,8 +1176,7 @@ private TopItem[] nestedTitleItems(
 
     // Styled title should not affect width calculation
     auto styledTitle = "Title".stylize(Style.cyan);
-    assert(["Content here"].drawBox(styledTitle).toString ==
-        "╭──╼ \x1b[36mTitle\x1b[39m ╾───╮\n" ~
+    checkToString(["Content here"].drawBox(styledTitle), "╭──╼ \x1b[36mTitle\x1b[39m ╾───╮\n" ~
         "│ Content here │\n" ~
         "╰──────────────╯");
 }
@@ -1188,7 +1187,7 @@ private TopItem[] nestedTitleItems(
     import sparkles.test_utils.string : outdent;
 
     // Test the single-string overload that splits on newlines
-    assert("Line 1\nLine 2".drawBox("T").toString == `
+    checkToString("Line 1\nLine 2".drawBox("T"), `
         ╭──╼ T ╾───╮
         │ Line 1   │
         │ Line 2   │
@@ -1200,7 +1199,7 @@ private TopItem[] nestedTitleItems(
 {
     import sparkles.test_utils.string : outdent;
 
-    assert("A\nBB\nCCC".drawBox("X").toString == `
+    checkToString("A\nBB\nCCC".drawBox("X"), `
         ╭──╼ X ╾───╮
         │ A        │
         │ BB       │
@@ -1647,7 +1646,7 @@ unittest
     // it exactly, no bleed onto the frame).
     const styled = "alpha beta gamma delta epsilon".stylize(Style.red);
     const props = BoxProps(maxWidth: 24, titleOverflow: TitleOverflow.wrap);
-    assert(drawBoxChunks!false(["body"], styled, props).join("") == drawBox(["body"], styled, props).toString);
+    checkToString(drawBox(["body"], styled, props), drawBoxChunks!false(["body"], styled, props).join(""));
 }
 
 @("drawBox.chunks.titleOnlyNoBody")
@@ -1660,7 +1659,7 @@ unittest
     string[] noBody;
     const title = "This is a very long multi-line title here.";
     const props = BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap);
-    assert(drawBoxChunks!false(noBody, title, props).join("") == drawBox(noBody, title, props).toString);
+    checkToString(drawBox(noBody, title, props), drawBoxChunks!false(noBody, title, props).join(""));
 }
 
 @("drawBox.content.preservesBlankLines")

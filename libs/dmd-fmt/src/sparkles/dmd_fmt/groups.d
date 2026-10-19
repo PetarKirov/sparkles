@@ -34,6 +34,8 @@ built, which is what M2's engine needs as input).
 */
 module sparkles.dmd_fmt.groups;
 
+version (unittest) import sparkles.base.buffer : checkToString;
+
 import sparkles.base.text.writers : formatted;
 import sparkles.dmd_fmt.oracle : containsOffset, containsOffsetIn, StructuralFacts;
 import sparkles.dmd_fmt.spine : SpineToken, TokenSpine;
@@ -497,8 +499,7 @@ version (unittest)
         ~ "    return null;\n"
         ~ "}\n";
     auto spine = lexSpine(src);
-    assert(formatted!writeSexpr(spine, buildGroups(spine, StructuralFacts.init)).toString ==
-        "(doc (paren) (paren) (paren (paren)) (paren) (paren) "
+    checkToString(formatted!writeSexpr(spine, buildGroups(spine, StructuralFacts.init)), "(doc (paren) (paren) (paren (paren)) (paren) (paren) "
         ~ "(brace (paren) (brace (paren))))");
 }
 
