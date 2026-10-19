@@ -1359,6 +1359,32 @@
         ]
       },
       {
+        "text": "Vulkan Canvas (proposal)",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/ui-vulkan/SPEC"
+          },
+          {
+            "text": "Device Memory",
+            "link": "/specs/vulkan/memory"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/ui-vulkan/PLAN"
+          },
+          {
+            "text": "Testing & Evidence",
+            "link": "/specs/ui-vulkan/testing"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/ui-vulkan/decisions"
+          }
+        ]
+      },
+      {
         "text": "Shaders (proposal)",
         "collapsed": true,
         "items": [
