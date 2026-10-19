@@ -1353,6 +1353,38 @@
             "link": "/specs/shaders/SPEC"
           },
           {
+            "text": "Vocabulary",
+            "link": "/specs/shaders/vocabulary"
+          },
+          {
+            "text": "Device Modules",
+            "link": "/specs/shaders/device-modules"
+          },
+          {
+            "text": "Entry Points",
+            "link": "/specs/shaders/entry-points"
+          },
+          {
+            "text": "Resources",
+            "link": "/specs/shaders/resources"
+          },
+          {
+            "text": "Profiles",
+            "link": "/specs/shaders/profiles"
+          },
+          {
+            "text": "Build Step",
+            "link": "/specs/shaders/build"
+          },
+          {
+            "text": "Toolchain",
+            "link": "/specs/shaders/toolchain"
+          },
+          {
+            "text": "CPU Executor",
+            "link": "/specs/shaders/executor"
+          },
+          {
             "text": "Delivery Plan",
             "link": "/specs/shaders/PLAN"
           },
