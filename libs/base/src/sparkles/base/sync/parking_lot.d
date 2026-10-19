@@ -25,8 +25,10 @@ import sparkles.base.sync.seam : Deadline, WakeCount;
 enum size_t parkingBuckets = 1024;
 /// `relax` steps a locker takes before parking (SYK7, SPEC §7).
 enum uint spinSteps = 10;
+/// Pause-only `relax` steps a designated waker takes before parking again (SYM9, SPEC §7).
+enum uint designatedSpinSteps = 40;
 /// Lost races before a waiter is handed the lock (SYM8, SPEC §7).
-enum uint starvationBound = 8;
+enum uint starvationBound = 4;
 
 private enum uint bucketBits = 10;
 static assert(1 << bucketBits == parkingBuckets);

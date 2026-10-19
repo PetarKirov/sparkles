@@ -69,6 +69,11 @@ clock: a waiter that loses `starvationBound` races in a row parks at the head
 of the queue and is handed the lock directly on the next unlock
 ([DS3](../../../specs/base/sync/decisions.md#ds3-the-designated-waker),
 [DS5](../../../specs/base/sync/decisions.md#ds5-a-count-based-starvation-bound)).
+While it is on its way, the designated waker alone keeps spinning on
+processor pauses for a while before it parks again, whoever else is parked:
+it is the waiter the unlock expects, so its spin narrows the window a barger
+can take
+([DS29](../../../specs/base/sync/decisions.md#ds29-b4-a-designated-waker-that-spins)).
 The survey's benchmark measured the parked-bit design at 0.76–0.97 sleeps
 per acquisition and the designated waker at 0.002.
 

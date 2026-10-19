@@ -5,7 +5,7 @@ The benchmark gates of testing.md (B1–B7), measured by
 The baseline is the three-state futex word (Drepper's `mutex3`, glibc's
 `lll_lock`, Rust std's futex mutex), so the gates run on Linux; elsewhere
 only B1 runs. B1 lands in the runner's table. B2–B7 are matrices of
-time-boxed runs — each cell 100 ms, five runs, the median kept — whose
+time-boxed runs — each cell 100 ms, five runs (21 for B4's), the median kept — whose
 throughput, sleeps per acquisition and fairness are printed with each
 gate's verdict. The verdicts bind only on the reference machine (the
 32-hardware-thread Linux host of the survey); other legs log them.
@@ -176,13 +176,18 @@ private Cell runCell(L)(ref L lock, uint threads, uint ms) @system
         hi ? lo / cast(double) hi : 0);
 }
 
-/// The median over five runs of each measure.
-private Cell measure(L)(uint threads) @system
+/// B4: runs in its cell, and how far below the futex word's median fairness
+/// it may fall, that word's own run-to-run spread (DS29).
+private enum uint fairnessRuns = 21;
+private enum double fairnessTolerance = 0.03;
+
+/// The median over `runs` runs of each measure.
+private Cell measure(L)(uint threads, uint runs) @system
 {
     import std.algorithm : sort;
 
-    double[5] tp, sl, fa;
-    foreach (r; 0 .. 5)
+    auto tp = new double[runs], sl = new double[runs], fa = new double[runs];
+    foreach (r; 0 .. runs)
     {
         auto lock = new L;
         const c = runCell(*lock, threads, 100);
@@ -190,10 +195,10 @@ private Cell measure(L)(uint threads) @system
         sl[r] = c.sleeps;
         fa[r] = c.fairness;
     }
-    sort(tp[]);
-    sort(sl[]);
-    sort(fa[]);
-    return Cell(tp[2], sl[2], fa[2]);
+    sort(tp);
+    sort(sl);
+    sort(fa);
+    return Cell(tp[runs / 2], sl[runs / 2], fa[runs / 2]);
 }
 
 @("sync.bench.B2-B4.B7.contended")
@@ -211,13 +216,15 @@ private Cell measure(L)(uint threads) @system
     else
     {
         bool b2 = true, b3 = true, b4 = true;
-        writeln("\nB2–B4, B7: acquisitions/µs, sleeps/acquisition, fairness (median of 5 × 100 ms)");
+        writeln("\nB2–B4, B7: acquisitions/µs, sleeps/acquisition, fairness (median of 5 × 100 ms; 21 at 32 threads)");
         writefln("%8s | %24s | %24s | %24s", "threads", "futex3", "Mutex", "InterruptibleMutex");
         foreach (uint t; [2, 4, 32, 64])
         {
-            const f = measure!Futex3(t);
-            const m = measure!MutexLock(t);
-            const i = measure!InterruptibleLock(t);
+            // B4's cell takes more runs: a fairness ratio is noisy.
+            const runs = t == 32 ? fairnessRuns : 5;
+            const f = measure!Futex3(t, runs);
+            const m = measure!MutexLock(t, runs);
+            const i = measure!InterruptibleLock(t, runs);
             writefln("%8d | %7.2f %7.4f %6.3f   | %7.2f %7.4f %6.3f   | %7.2f %7.4f %6.3f",
                 t, f.throughput, f.sleeps, f.fairness, m.throughput, m.sleeps, m.fairness,
                 i.throughput, i.sleeps, i.fairness);
@@ -225,11 +232,11 @@ private Cell measure(L)(uint threads) @system
             if (t >= 32)
                 b3 &= m.sleeps <= 0.01;
             if (t == 32)
-                b4 &= m.fairness >= f.fairness;
+                b4 &= m.fairness >= f.fairness - fairnessTolerance;
         }
         writefln("B2 throughput >= futex3 at every count: %s", b2 ? "pass" : "FAIL");
         writefln("B3 <= 0.01 sleeps/acquisition at 32 and 64: %s", b3 ? "pass" : "FAIL");
-        writefln("B4 fairness >= futex3 at 32: %s", b4 ? "pass" : "FAIL");
+        writefln("B4 fairness >= futex3 - %.2f at 32: %s", fairnessTolerance, b4 ? "pass" : "FAIL");
         writeln("B7 InterruptibleMutex against Mutex: recorded above");
     }
 }

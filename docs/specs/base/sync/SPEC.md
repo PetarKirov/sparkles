@@ -502,11 +502,12 @@ signal handler is outside the contract.
 
 ## 7. Limits and constants
 
-| Constant          | Meaning                                              | Value                |
-| ----------------- | ---------------------------------------------------- | -------------------- |
-| `parkingBuckets`  | buckets in the table (SYP11)                         | 1024                 |
-| `spinSteps`       | `relax` steps a locker takes before parking (SYK7)   | 10: 3 pause, 7 yield |
-| `starvationBound` | lost races before a waiter is handed the lock (SYM8) | 8                    |
+| Constant              | Meaning                                                               | Value                |
+| --------------------- | --------------------------------------------------------------------- | -------------------- |
+| `parkingBuckets`      | buckets in the table (SYP11)                                          | 1024                 |
+| `spinSteps`           | `relax` steps a locker takes before parking (SYK7)                    | 10: 3 pause, 7 yield |
+| `designatedSpinSteps` | pause-only steps a designated waker takes before parking again (SYM9) | 40                   |
+| `starvationBound`     | lost races before a waiter is handed the lock (SYM8)                  | 4                    |
 
 The values are starting points; each is settled by the measurement its
 [testing.md](./testing.md#benchmarks) row names, and a change is a
