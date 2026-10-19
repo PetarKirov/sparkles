@@ -1,10 +1,13 @@
 ---
 status: draft
 owner: sparkles:terminal
-reviewed: 2026-10-06
+reviewed: 2026-10-19
 ---
 
 # Environment decisions and design gates
+
+The [provisioning agreement](#provisioning-agreement-q50q52) records the latest
+accepted artifact trust, input pinning and retry policy.
 
 ## Accepted scope decisions
 
@@ -14,7 +17,8 @@ including the explicit revision of invocation precedence in Q41/Q43. Q44–Q47,
 confirmed on 2026-10-06, settle root-associated workspaces, ambiguous import aliases,
 supported local-state writers and unsupported-version recovery. Q48–Q49 additionally
 confirm retained migration/reset backups and an explicit legacy workspace destination.
-These choices establish scope; the detailed draft requirements and
+Q50–Q52 confirm authenticated official artifacts, immutable initial inputs and
+restartable acquisition. These choices establish scope; the detailed draft requirements and
 implementation conformance require their own reviews. Revisit a choice explicitly
 if feasibility evidence conflicts with it.
 
@@ -45,7 +49,7 @@ can proceed without claiming Stage 0 feasibility completion.
 | G4 — Native AVF support           | Exact stock firmware, grants, owner API and SDK/flavor constraints; F1/F2                                                                                                                      | Production owner/image architecture; no target device assumed connected             |
 | G5 — Guest transport              | Independent PTYs, authority, protocol, buffer bounds, cancellation, namespace/lookup/inherited-env semantics; F3                                                                               | Production guest broker and E/P/R acceptance                                        |
 | G6 — Storage/network/resources    | Firmware-specific units/defaults/limits, transfer interruption semantics, stopped/unbootable extraction, port transport; F4                                                                    | Resource/transfer/network implementation acceptance                                 |
-| G7 — Distribution/authenticity    | Artifact hosting, integrity/authenticity trust root, signing/key handling and interrupted publication; PRoot channel/flake pinning                                                             | Provisioning and release acceptance, not mere builder success                       |
+| G7 — Distribution/authenticity    | ADE18–ADE20 settle trust/pinning/retry policy; specify hosting, authenticated metadata/trust root, signing/key handling, input records and interrupted publication                             | Provisioning and release acceptance, not mere builder success                       |
 | G8 — Diagnostics and presentation | Redaction/export contract and reviewed profile/environment/recovery mockups                                                                                                                    | Diagnostic distribution and visible-context UI; ADE17 detail is proposed for review |
 
 No planned symbol is evidence of an implemented facility. Wired configuration is
@@ -246,6 +250,22 @@ workspace when only override state was unsupported. TPC17 now forbids all saved-
 restoration in that mode; C11 covers each mismatch independently and together.
 The final corrected combined artifact received a clear publication recheck.
 Coordination, acquisition and persisted-format implementation gates remain unmet.
+
+## Provisioning agreement (Q50–Q52)
+
+The owner confirmed Q50–Q52 before the 2026-10-19 continuation. ADE18–ADE20 own
+the resulting requirements; E5–E7 own their acceptance scenarios. This records
+accepted product policy, not implemented verification or a selected signing design.
+Independent read-only review found no substantive publication blocker. It requested
+mechanism-neutral authentication fixtures rather than requiring signatures before
+the metadata design is chosen; the scenarios now use that wording. Concrete
+trust-root, format and recovery implementation gates remain unmet.
+
+| Decision                    | Accepted choice                                                                                                                                                             | Trade-off / remaining gate                                                                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D-ADE23 — Artifact trust    | Authenticate official release metadata and check artifact digests; custom URL/local sources require explicit selection and an expected digest, with custom provenance shown | Digest agreement alone is not publisher authentication. Trust-root distribution, metadata/signing design and hosting remain G7 gates                       |
+| D-ADE24 — Initial inputs    | Pin bootstrap/image and initial environment inputs to immutable identities; retain those identities separately from later user maintenance                                  | Moving branches cannot reproduce the selected initial input set. Pinning does not promise permanent availability or arbitrary custom-build reproducibility |
+| D-ADE25 — Download recovery | Restart acquisition and reuse complete verified artifacts; distinguish downloaded/extracted/ready states and preserve working environments                                  | Partial-download resumption is deferred. Cache revalidation, durable phases and crash-consistent publication need implementation review                    |
 
 ## Migration policy agreement (Q48–Q49)
 
