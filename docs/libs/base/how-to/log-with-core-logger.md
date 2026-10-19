@@ -131,8 +131,10 @@ unstamped facts (`version` is `dev`) rather than parsing nothing, which is an
 error. A section that fails to decode is an error too (`load.hasError`). A
 dirty tree is `dirty: true` with the hash, not the hash alone.
 
-`sparkles.base.build_stamp.buildStampOf` is the leftover compile-time `-J`
-import. The packaging path does not call it.
+Do not reach for `sparkles.base.build_stamp.buildStampOf`: it is the
+compile-time `-J` stamp the section replaced. Nothing calls it, and it is due
+for removal (the terminal [delivery plan](../../../specs/terminal/PLAN.md),
+M4).
 
 ## Advanced Customization: Fatal Handlers
 
