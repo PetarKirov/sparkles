@@ -223,3 +223,18 @@ static:
 private ThreadState!NativePlatform tlsState;
 
 static assert(isSyncPlatform!NativePlatform);
+
+/**
+Gives an atomic word its first value, in a constructor, before the word is
+shared: not a store, so the model records it as the location's initial value.
+A platform's own word type constructs with its own attributes; only the
+native `shared` word is trusted, its plain store being to a word no other
+thread can see yet.
+*/
+package(sparkles.base.sync) void initState(A, T)(ref A word, T v)
+{
+    static if (is(A == shared(T)))
+        () @trusted { word = A(v); }();
+    else
+        word = A(v);
+}

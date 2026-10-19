@@ -148,7 +148,14 @@ struct LockedKey(P)
 
 alias Validate(P) = bool delegate(ref const LockedKey!P) @safe nothrow @nogc;
 alias BeforeSleep = void delegate() @safe nothrow @nogc;
-alias OnRemoved(P) = void delegate(ref const LockedKey!P, bool haveMore) @safe nothrow @nogc;
+/**
+Runs under the bucket lock when a park is about to end timed out or
+cancelled, with whether records of the key remain. Returning `true` says the
+operation was satisfied after all, by a change the primitive made without
+dequeuing the record (a barrier's generation completing): the park then ends
+`unparked` with token 0, and a cancellation is not settled (SYI2, SYI3).
+*/
+alias OnRemoved(P) = bool delegate(ref const LockedKey!P, bool haveMore) @safe nothrow @nogc;
 alias Callback(P) = UnparkDecision delegate(ref const LockedKey!P, UnparkResult) @safe nothrow @nogc;
 alias RequeueValidate(P) = RequeueOp delegate(ref const LockedKey!P from,
     ref const LockedKey!P to) @safe nothrow @nogc;
@@ -456,7 +463,8 @@ bucket, retires the caller's registration (SYP15), runs `validate`, and on
 deadline passes, or, if interruptible, it is cancelled. `beforeSleep` runs
 after the record is enqueued and the bucket released (SYP3). `onRemoved`
 runs under the bucket lock when the park ends timed out or cancelled, with
-whether records of the key remain.
+whether records of the key remain, and may report the operation satisfied
+instead (`OnRemoved`).
 */
 ParkResult park(P = NativePlatform)(size_t key, ParkOptions o, scope Validate!P validate,
     scope BeforeSleep beforeSleep = null, scope OnRemoved!P onRemoved = null)
@@ -542,12 +550,17 @@ ParkResult park(P = NativePlatform)(size_t key, ParkOptions o, scope Validate!P 
             const k = P.peek(rec.key);
             remove!P(b, rec);
             rec.queued = false;
+            bool satisfied;
             if (onRemoved !is null)
             {
                 const lk = LockedKey!P(b, k);
-                onRemoved(lk, anyQueued!P(b, k));
+                satisfied = onRemoved(lk, anyQueued!P(b, k));
             }
             unlockBucket!P(b);
+            // Satisfied under the lock that resolved the race: no cancellation
+            // was consumed, so none is settled (SYI2, SYI3).
+            if (satisfied)
+                return ParkResult(ParkOutcome.unparked, 0);
             if (r == SleepResult.cancelled)
             {
                 sp.vtbl.settle(sp.ctx, rec);

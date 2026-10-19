@@ -112,6 +112,7 @@ struct InterruptibleMutexT(P)
                 (ref const LockedKey!P lk, bool haveMore) {
                     if (!haveMore)
                         clear(parked);
+                    return false;
                 });
             final switch (r.outcome)
             {

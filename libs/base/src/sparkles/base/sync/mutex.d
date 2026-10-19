@@ -227,6 +227,7 @@ static:
                 (ref const LockedKey!P lk, bool haveMore) {
                     if (!haveMore)
                         cast(void) clearBits(word, PK);
+                    return false;
                 });
             final switch (r.outcome)
             {
