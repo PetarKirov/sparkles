@@ -39,20 +39,23 @@ depending on it would make the tool a prerequisite of itself.
 */
 module app;
 
-import std.algorithm : all, canFind, filter, map, sort, startsWith, uniq;
+import std.algorithm : all, any, canFind, filter, find, map, sort, splitter, startsWith, uniq;
 import std.ascii : isDigit;
-import std.array : array, join, replace;
-import std.conv : text;
-import std.file : dirEntries, exists, isFile, mkdirRecurse, readText, remove, rmdirRecurse,
+import std.array : array, join, replace, split;
+import std.conv : text, to;
+import std.file : dirEntries, exists, isFile, mkdirRecurse, read, readText, remove, rmdirRecurse,
     SpanMode, tempDir, write;
 import std.format : format;
 import std.json : JSONValue, parseJSON;
 import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, relativePath;
 import std.process : environment, execute;
+import std.range : empty, front, popFront;
 import std.regex : ctRegex, matchAll, replaceAll;
 import std.stdio : stderr, writefln, writeln;
-import std.string : indexOf, lastIndexOf, lineSplitter, strip, stripRight;
+import std.string : chompPrefix, indexOf, lastIndexOf, lineSplitter, strip, stripRight;
 
+import sparkles.shaders.capabilities : allProfiles, Cap, gl330, gles100, Output, Profile,
+    spirvRequirements, vulkan13;
 import sparkles.shaders.compute_mode : ComputeMode, computeModeOf;
 
 /// A package's device build, as `dub describe` reports its device
@@ -244,7 +247,7 @@ int main(string[] args)
     auto help = getopt(args, config.passThrough,
         "package", "The dub package whose device configuration to compile (default: the current directory).", &packageDir,
         "config", "Its device configuration: the one whose dflags name a dcompute target (default: shaders).", &configuration,
-        "out", "Where `<entry>.frag` and `<entry>.es.frag` land (required).", &outDir,
+        "out", "Where the generated shaders land (required): `<entry>.frag` and `<entry>.es.frag` for the OpenGL profiles, `<entry>.vert.spv` and `<entry>.frag.spv` for Vulkan.", &outDir,
         "ldc", "The dcompute-enabled LDC (default: `ldc2-vulkan` on PATH).", &ldc,
         "if-stale", "Do nothing while `--out`'s stamp says its inputs are unchanged — the build step's mode.", &ifStale,
         "keep", "Keep the scratch directory (SPIR-V, disassembly) and print its path.", &keep,
@@ -281,7 +284,8 @@ int main(string[] args)
             "`sparkles/vulkan-shaders` build.", ldc);
         return 3;
     }
-    foreach (tool; ["dub", "spirv-val", "spirv-opt", "spirv-dis", "spirv-cross", "glslangValidator"])
+    foreach (tool; ["dub", "spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross",
+            "glslangValidator"])
         if (tryExecute([tool, "--version"]).status == 127)
         {
             stderr.writefln("shader-compile: `%s` is not on PATH. The dev shell (`nix develop`) " ~
@@ -338,7 +342,8 @@ int main(string[] args)
     return run(build, unit, hashInputs(build, unit), outDir, ldc, keep, quiet);
 }
 
-/// The outcome: 0 ok, 1 failure, 3 a compiler without the fragment stage.
+/// The outcome: 0 ok, 1 failure, 2 a unit with no entry point or an unknown
+/// profile, 3 a compiler without the stages or profiles.
 int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir, string ldc,
     bool keep, bool quiet)
 {
@@ -357,97 +362,175 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
         if (!keep && scratch.exists)
             scratch.rmdirRecurse;
 
-    // 1. D -> SPIR-V. One invocation for the whole unit: the device module is
-    //    one SPIR-V module, and it has no linker to find an import.
-    // LDC names the module `<prefix>_<target without dashes>_64.spv`.
-    const prefix = "unit";
-    const spv = buildPath(scratch, prefix ~ "_" ~ build.target.replace("-", "") ~ "_64.spv");
-    auto cmd = [ldc, "-O2", "-c", "-m64", "-mdcompute-targets=" ~ build.target,
-        "-mdcompute-file-prefix=" ~ prefix, "-od=" ~ scratch]
+    const compileFlags = ["-c", "-m64", "-mdcompute-targets=" ~ build.target]
         ~ build.versions.map!(v => "-d-version=" ~ v).array
         ~ build.dflags
-        ~ build.importPaths.map!(d => "-I" ~ d).array ~ unit.sources;
-    const compiled = tryExecute(cmd);
-    if (compiled.status != 0)
+        ~ build.importPaths.map!(d => "-I" ~ d).array;
+
+    // Whose failure is it? A compiler that cannot build even the smallest
+    // fragment shader, or list it, for this target (a stock LDC: no Vulkan
+    // target, no stages, no profiles) is a toolchain problem, whatever it said
+    // about the unit.
+    int failure(string what)
     {
-        stderr.writeln(compiled.output);
-        // Whose failure is it? A compiler that cannot build even the smallest
-        // fragment shader for this target (a stock LDC: no Vulkan target, no
-        // `@fragment`) is a toolchain problem, whatever it said about the unit.
         const probe = buildPath(scratch, "probe.d");
         probe.write(capabilityProbe);
+        const manifest = buildPath(scratch, "probe.json");
+        const listed = tryExecute([ldc, "-c", "-m64", "-mdcompute-targets=" ~ build.target,
+            "-mdcompute-manifest=" ~ manifest, probe]);
         const probed = tryExecute([ldc, "-c", "-m64", "-mdcompute-targets=" ~ build.target,
-            "-mdcompute-file-prefix=probe", "-od=" ~ scratch, probe]);
-        if (probed.status != 0)
+            "-mdcompute-profile=gl330", "-mdcompute-file-prefix=probe", "-od=" ~ scratch, probe]);
+        if (listed.status != 0 || probed.status != 0)
         {
-            stderr.writefln("shader-compile: `%s` cannot compile a `@fragment` shader for `%s`: " ~
-                "it is not a dcompute-enabled LDC with the fragment stage " ~
-                "(`sparkles/vulkan-shaders`)", ldc, build.target);
+            stderr.writefln("shader-compile: `%s` cannot compile a `@fragment` shader for `%s` " ~
+                "by profile: it is not a dcompute-enabled LDC with the shader stages and " ~
+                "profiles (`sparkles/vulkan-shaders`)", ldc, build.target);
             return 3;
         }
-        stderr.writefln("shader-compile: %s: LDC failed (%s)", build.packageName, compiled.status);
-        return 1;
-    }
-    if (!spv.exists)
-    {
-        stderr.writefln("shader-compile: %s: LDC produced no %s", build.packageName, spv);
+        stderr.writefln("shader-compile: %s: %s", build.packageName, what);
         return 1;
     }
 
-    // 2. Validate what the compiler emitted, before anything rewrites it.
-    //    Universal rules: the plain uniforms are GL's shape, not Vulkan's.
-    if (!step(["spirv-val", "--target-env", "spv1.6", spv], name ~ ": spirv-val"))
-        return 1;
-
-    // 3. Optimise: folds the name-string constants and dead helpers away, so
-    //    the GLSL carries no `uint8_t` arrays and no Int8 extension request.
-    const opt = buildPath(scratch, prefix ~ ".opt.spv");
-    if (!step(["spirv-opt", "-O", spv, "-o", opt], name ~ ": spirv-opt"))
-        return 1;
-
-    // 4. The entry points, from the disassembly — one shader file per entry.
-    const dis = tryExecute(["spirv-dis", opt]);
-    if (dis.status != 0)
+    // 1. The manifest: every entry point, its stage and its profiles, from
+    //    the declarations alone (`SHC5`).
+    const manifestPath = buildPath(scratch, "manifest.json");
+    const listed = tryExecute([ldc] ~ compileFlags ~ ["-mdcompute-manifest=" ~ manifestPath]
+        ~ unit.sources);
+    if (listed.status != 0 || !manifestPath.exists)
     {
-        stderr.writeln(dis.output);
-        return 1;
+        stderr.writeln(listed.output);
+        return failure("LDC could not list the unit's entry points");
     }
-    const entries = entryPoints(dis.output);
-    if (entries.length == 0)
+    const entries = parseManifest(manifestPath.readText);
+    if (!entries.length)
     {
-        stderr.writefln("shader-compile: %s: no fragment entry points in %s", name, spv);
-        return 1;
+        stderr.writefln("shader-compile: %s: the unit declares no `@fragment` or `@vertex` " ~
+            "entry point", build.packageName);
+        return 2;
     }
-
-    // 5. Cross-compile each entry to both dialects, name the sampler what
-    //    raylib binds, and prove the result with glslang.
-    const origin = header(build, unit);
-    string[string] produced; // relative file name -> contents
-    foreach (entry; entries)
-    {
-        foreach (dialect; [Dialect.desktop, Dialect.es])
-        {
-            auto cross = tryExecute(["spirv-cross", "--entry", entry, "--stage", "frag",
-                "--remove-unused-variables"] ~ dialect.flags ~ [opt]);
-            if (cross.status != 0)
+    foreach (e; entries)
+        foreach (p; e.profiles)
+            if (!knownProfile(p))
             {
-                stderr.writeln(cross.output);
-                stderr.writefln("shader-compile: %s/%s: spirv-cross failed", name, entry);
+                stderr.writefln("shader-compile: %s: entry point `%s` names the profile `%s`, " ~
+                    "which is not a shader profile; the profiles are %-(`%s`%|, %)",
+                    build.packageName, e.name, p, allProfiles.map!(q => q.name));
+                return 2;
+            }
+    foreach (e; entries)
+        foreach (p; e.profiles)
+            if (!grantsStage(profileByName(p), e.stage))
+            {
+                stderr.writefln("shader-compile: %s: entry point `%s` is a %s shader, which the " ~
+                    "profile `%s` does not offer", build.packageName, e.name, e.stage, p);
                 return 1;
             }
-            // One trailing newline, exactly, as every text file here has.
-            const glsl = format(origin, entry)
-                ~ renameCombinedSamplers(cross.output).stripRight ~ "\n";
-            const file = entry ~ dialect.suffix;
-            const path = buildPath(scratch, file);
-            path.write(glsl);
-            if (!step(["glslangValidator", path], name ~ "/" ~ file ~ ": glslang"))
-                return 1;
-            produced[file] = glsl;
+
+    // 2. One compilation per profile, in the table's order, each compiled,
+    //    validated, audited and translated before the next begins (`SHP10`);
+    //    nothing is written until all of them have succeeded (`SHP8`).
+    const origin = header(build, unit);
+    string[string] produced; // relative file name -> contents
+    foreach (profile; allProfiles)
+    {
+        if (profile.output == Output.host || !entries.any!(e => e.profiles.canFind(profile.name)))
+            continue;
+        const pname = profile.name;
+        const dir = buildPath(scratch, pname);
+        dir.mkdirRecurse;
+        const prefix = "unit";
+        const spv = buildPath(dir, prefix ~ "_" ~ build.target.replace("-", "") ~ "_64.spv");
+        const compiled = tryExecute([ldc, "-O2"] ~ compileFlags
+            ~ ["-mdcompute-profile=" ~ pname, "-mdcompute-file-prefix=" ~ prefix, "-od=" ~ dir]
+            ~ unit.sources);
+        if (compiled.status != 0)
+        {
+            stderr.writeln(compiled.output);
+            return failure(format("LDC failed for the profile `%s` (%s)", pname, compiled.status));
+        }
+        if (!spv.exists)
+        {
+            stderr.writefln("shader-compile: %s: LDC produced no %s", build.packageName, spv);
+            return 1;
+        }
+
+        // Validate what the compiler emitted, before anything rewrites it,
+        // under the rules of what consumes it (`SHP4`): Vulkan's for a Vulkan
+        // profile, the universal ones for the GL profiles' plain uniforms.
+        const env = profile.output == Output.spirv ? vulkanEnv(profile) : "spv1.6";
+        if (!step(["spirv-val", "--target-env", env, spv], name ~ " (" ~ pname ~ "): spirv-val"))
+            return 1;
+
+        // Optimise: folds the name-string constants and dead helpers away, so
+        // the GLSL carries no `uint8_t` arrays and no Int8 extension request.
+        const opt = buildPath(dir, prefix ~ ".opt.spv");
+        if (!step(["spirv-opt", "-O", spv, "-o", opt], name ~ " (" ~ pname ~ "): spirv-opt"))
+            return 1;
+        const dis = tryExecute(["spirv-dis", opt]);
+        if (dis.status != 0)
+        {
+            stderr.writeln(dis.output);
+            return 1;
+        }
+        const mine = entries.filter!(e => e.profiles.canFind(pname)).array;
+        if (const why = audit(dis.output, profile))
+        {
+            stderr.writefln("shader-compile: %s (%s): %s, in the module of %-(`%s`%|, %)",
+                name, pname, why, mine.map!(e => e.name));
+            return 1;
+        }
+
+        foreach (e; mine)
+        {
+            const file = outputFile(profile, e);
+            const path = buildPath(dir, file);
+            if (profile.output == Output.spirv)
+            {
+                // One entry point per module (`SHP5`), its provenance in an
+                // `OpModuleProcessed` (`SHP7`).
+                const text = singleEntry(dis.output, e.name, format(origin, e.name));
+                const asm_ = buildPath(dir, e.name ~ ".spvasm");
+                asm_.write(text);
+                const assembled = buildPath(dir, e.name ~ ".asm.spv");
+                if (!step(["spirv-as", "--target-env", env, asm_, "-o", assembled],
+                        name ~ "/" ~ file ~ ": spirv-as")
+                    || !step(["spirv-opt", "--eliminate-dead-functions",
+                        "--eliminate-dead-code-aggressive", "--remove-unused-interface-variables",
+                        assembled, "-o", path], name ~ "/" ~ file ~ ": spirv-opt")
+                    || !step(["spirv-val", "--target-env", env, path], name ~ "/" ~ file ~ ": spirv-val"))
+                    return 1;
+                const single = tryExecute(["spirv-dis", path]);
+                if (const why = single.status == 0 ? audit(single.output, profile) : single.output)
+                {
+                    stderr.writefln("shader-compile: %s/%s: %s", name, file, why);
+                    return 1;
+                }
+                produced[file] = cast(string) read(path);
+            }
+            else
+            {
+                // Translate to the profile's GLSL, name the sampler what raylib
+                // binds, and prove the result with glslang.
+                auto cross = tryExecute(["spirv-cross", "--entry", e.name, "--stage", "frag",
+                    "--remove-unused-variables"] ~ glslFlags(profile) ~ [opt]);
+                if (cross.status != 0)
+                {
+                    stderr.writeln(cross.output);
+                    stderr.writefln("shader-compile: %s/%s: spirv-cross failed", name, e.name);
+                    return 1;
+                }
+                // One trailing newline, exactly, as every text file here has.
+                const glsl = format(origin, e.name)
+                    ~ renameCombinedSamplers(cross.output).stripRight ~ "\n";
+                path.write(glsl);
+                if (!step(["glslangValidator", path], name ~ "/" ~ file ~ ": glslang"))
+                    return 1;
+                produced[file] = glsl;
+            }
         }
     }
 
-    // 6. Write. Each file lands by rename, so a concurrent build reading the
+    // 3. Write. Each file lands by rename, so a concurrent build reading the
     //    directory sees an old file or a new one, never half of one; the
     //    stamp goes last, so it never vouches for output not yet written.
     outDir.mkdirRecurse;
@@ -457,11 +540,12 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
         if (!quiet)
             writefln("shader-compile: wrote %s", buildPath(outDir, file));
     }
-    // A renamed entry point leaves its old GLSL behind; the directory is
+    // A renamed entry point leaves its old output behind; the directory is
     // this tool's, so it goes.
-    foreach (e; dirEntries(outDir, "*.frag", SpanMode.shallow).filter!(e => e.isFile).array)
-        if (e.name.baseName !in produced)
-            e.name.remove;
+    foreach (pattern; ["*.frag", "*.vert", "*.spv"])
+        foreach (e; dirEntries(outDir, pattern, SpanMode.shallow).filter!(e => e.isFile).array)
+            if (e.name.baseName !in produced)
+                e.name.remove;
     // So does a temporary a killed run left (`<file>.tmp-<pid>`, as
     // `writeAtomically` names them): one whose process is gone. A live
     // process's is a concurrent run's file about to be renamed, and a file
@@ -692,17 +776,6 @@ bool isFresh(string outDir, string packageDir)
     assert(!isFresh(out_, pkg), "a dependency's recipe changed");
 }
 
-private enum Dialect
-{
-    desktop,
-    es,
-}
-
-private string[] flags(Dialect d)
-    => d == Dialect.desktop ? ["--version", "330"] : ["--es", "--version", "100"];
-
-private string suffix(Dialect d) => d == Dialect.desktop ? ".frag" : ".es.frag";
-
 /**
 The provenance comment, a format string taking the entry point. GLSL allows
 comments before `#version`. It names the entry modules relative to their
@@ -730,30 +803,185 @@ string header(in DeviceBuild build, in Unit unit)
         "// Do not edit: it is regenerated from the D source whenever that changes.\n");
 }
 
-/// `OpEntryPoint Fragment %name "name"` lines, in order.
-string[] entryPoints(string disassembly)
+/// An entry point of the unit, as the compiler's manifest lists it.
+struct ManifestEntry
 {
-    string[] names;
-    foreach (line; disassembly.lineSplitter)
-    {
-        const l = line.strip;
-        if (!l.startsWith("OpEntryPoint Fragment "))
-            continue;
-        foreach (m; l.matchAll(ctRegex!`"([^"]+)"`))
-            names ~= m[1];
-    }
-    return names;
+    string name;       /// the D function's name
+    string stage;      /// `vertex` or `fragment`
+    string module_;    /// the module that declares it
+    string[] profiles; /// the names of its profiles, sorted
+}
+
+/// The entry points of a manifest (`-mdcompute-manifest`).
+ManifestEntry[] parseManifest(string json)
+{
+    import std.json : parseJSON;
+
+    ManifestEntry[] r;
+    foreach (e; parseJSON(json)["entryPoints"].array)
+        r ~= ManifestEntry(e["name"].str, e["stage"].str, e["module"].str,
+            e["profiles"].array.map!(p => p.str).array);
+    return r;
 }
 
 ///
-@("shaderCompile.entryPoints.readsFragmentEntriesInOrder")
+@("shaderCompile.parseManifest.readsEntriesStagesAndProfiles")
+@system unittest
+{
+    const m = parseManifest(`{"entryPoints":[{"name":"tri","stage":"vertex","module":"fx",` ~
+        `"profiles":["vulkan1.3"]},{"name":"dim","stage":"fragment","module":"fx",` ~
+        `"profiles":["gl330","gles100"]}]}`);
+    assert(m == [ManifestEntry("tri", "vertex", "fx", ["vulkan1.3"]),
+        ManifestEntry("dim", "fragment", "fx", ["gl330", "gles100"])]);
+    assert(parseManifest(`{"entryPoints":[]}`) == []);
+}
+
+/// Whether `name` is a profile of the table.
+bool knownProfile(string name) => allProfiles.any!(p => p.name == name);
+
+/// The profile of the table named `name`, which must be one.
+Profile profileByName(string name) => allProfiles.find!(p => p.name == name).front;
+
+/// Whether `p` offers the stage a manifest names (`vertex`, `fragment`).
+bool grantsStage(in Profile p, string stage)
+    => p.caps.has(stage == "vertex" ? Cap.vertexStage : Cap.fragmentStage);
+
+/// The file the build step writes for `e` under `p` (`SHC2`).
+string outputFile(in Profile p, in ManifestEntry e)
+{
+    final switch (p.output)
+    {
+    case Output.glsl:
+        return e.name ~ ".frag";
+    case Output.glslEs:
+        return e.name ~ ".es.frag";
+    case Output.spirv:
+        return e.name ~ (e.stage == "vertex" ? ".vert.spv" : ".frag.spv");
+    case Output.host:
+        assert(0, "the host profile writes no files");
+    }
+}
+
+///
+@("shaderCompile.outputFile.followsTheProfileTable")
+@system unittest
+{
+    const tri = ManifestEntry("tri", "vertex"), dim = ManifestEntry("dim", "fragment");
+    assert(outputFile(gl330, dim) == "dim.frag");
+    assert(outputFile(gles100, dim) == "dim.es.frag");
+    assert(outputFile(vulkan13, tri) == "tri.vert.spv");
+    assert(outputFile(vulkan13, dim) == "dim.frag.spv");
+}
+
+private string[] glslFlags(in Profile p)
+    => p.output == Output.glsl ? ["--version", p.version_.to!string]
+        : ["--es", "--version", p.version_.to!string];
+
+/// spirv-val's environment for a Vulkan profile: `vulkan1.3`.
+private string vulkanEnv(in Profile p) => format("vulkan%s.%s", p.version_ / 10, p.version_ % 10);
+
+/**
+Why the module `disassembly` may not be emitted for `p`, or null (`SHC9`):
+every `OpCapability` and `OpExtension` it declares must belong, by the
+table's mapping, to a capability `p` grants. One the mapping does not list
+fails too.
+*/
+string audit(string disassembly, in Profile p)
+{
+    foreach (line; disassembly.lineSplitter)
+    {
+        auto words = line.strip.splitter(' ');
+        if (words.empty)
+            continue;
+        const op = words.front;
+        if (op != "OpCapability" && op != "OpExtension")
+            continue;
+        words.popFront;
+        if (words.empty)
+            continue;
+        const what = words.front.strip(`"`);
+        const known = spirvRequirements.find!(r => r.spirv == what);
+        if (known.empty)
+            return format("the module declares `%s %s`, which no shader capability maps", op, what);
+        if (!p.caps.has(known.front.capability))
+            return format("the module declares `%s %s`, which needs `%s`, a capability the " ~
+                "profile `%s` does not grant", op, what, known.front.capability, p.name);
+    }
+    return null;
+}
+
+///
+@("shaderCompile.audit.rejectsWhatTheProfileDoesNotGrant")
+@system unittest
+{
+    const ok = "OpCapability Shader\nOpMemoryModel Logical GLSL450\n";
+    assert(audit(ok, vulkan13) is null);
+    assert(audit(ok ~ "OpCapability Int64\n", vulkan13).canFind("`int64`"));
+    assert(audit("OpCapability Shader\nOpCapability Geometry\n", vulkan13)
+        .canFind("no shader capability maps"));
+    assert(audit("OpExtension \"SPV_KHR_physical_storage_buffer\"\n", vulkan13)
+        .canFind("`bufferDeviceAddress`"));
+}
+
+/**
+The module of `disassembly` with `entry` its only entry point, and `origin`
+recorded as `OpModuleProcessed` lines: the other entry points and their
+execution modes go, and an optimiser then drops what only they used.
+*/
+string singleEntry(string disassembly, string entry, string origin)
+{
+    string[] dropped; // the ids of the other entry points
+    foreach (line; disassembly.lineSplitter)
+    {
+        const l = line.strip;
+        if (!l.startsWith("OpEntryPoint "))
+            continue;
+        const words = l.split(' ');
+        if (words.length >= 4 && words[3] != `"` ~ entry ~ `"`)
+            dropped ~= words[2];
+    }
+    string r;
+    bool processed;
+    foreach (line; disassembly.lineSplitter)
+    {
+        const l = line.strip;
+        if (l.startsWith("OpEntryPoint ") || l.startsWith("OpExecutionMode "))
+        {
+            const words = l.split(' ');
+            const id = l.startsWith("OpEntryPoint ") ? words[2] : words[1];
+            if (dropped.canFind(id))
+                continue;
+        }
+        // Debug instructions end where the annotations begin.
+        if (!processed && (l.startsWith("OpDecorate") || l.startsWith("OpMemberDecorate")
+                || l.startsWith("OpType")))
+        {
+            foreach (o; origin.lineSplitter)
+                r ~= `OpModuleProcessed "` ~ o.chompPrefix("// ") ~ "\"\n";
+            processed = true;
+        }
+        r ~= line ~ "\n";
+    }
+    return r;
+}
+
+///
+@("shaderCompile.singleEntry.keepsOneEntryPointAndRecordsItsOrigin")
 @system unittest
 {
     const dis = "OpCapability Shader\n" ~
-        `               OpEntryPoint Fragment %scanlines "scanlines" %fragTexCoord` ~ "\n" ~
-        `               OpEntryPoint GLCompute %k "k"` ~ "\n" ~
-        `               OpEntryPoint Fragment %dim "dim" %x` ~ "\n";
-    assert(entryPoints(dis) == ["scanlines", "dim"]);
+        `OpEntryPoint Vertex %tri "tri" %pos` ~ "\n" ~
+        `OpEntryPoint Fragment %shade "shade" %colour` ~ "\n" ~
+        "OpExecutionMode %shade OriginUpperLeft\n" ~
+        `OpName %tri "tri"` ~ "\n" ~
+        "OpDecorate %pos Location 0\n";
+    assert(singleEntry(dis, "tri", "// from fx\n// do not edit\n") ==
+        "OpCapability Shader\n" ~
+        `OpEntryPoint Vertex %tri "tri" %pos` ~ "\n" ~
+        `OpName %tri "tri"` ~ "\n" ~
+        `OpModuleProcessed "from fx"` ~ "\n" ~
+        `OpModuleProcessed "do not edit"` ~ "\n" ~
+        "OpDecorate %pos Location 0\n");
 }
 
 /**
