@@ -15,22 +15,46 @@ libs "vulkan"
 
 dependency "expected" version="~>0.4.1"
 dependency "sparkles:base" path="../.."
+dependency "sparkles:shaders" path="../.."
+dependency "sparkles:ui" path="../.."
 dependency "sparkles:vulkan" path="../.."
 dependency "sparkles:vulkan-wsi" path="../.."
+
+// The canvas's SPIR-V, compiled from its D shaders (`shading.d`,
+// `shaders/…/canvas_fragment.d`) by `shader-compile` into `generated/shaders/`
+// (git-ignored) before every build, and a no-op while its stamp is fresh.
+// The canvas cannot draw without them, so every configuration that builds the
+// library runs it; it needs the dcompute-enabled LDC (`ldc2-vulkan`), which
+// the dev and CI shells provide. `--temp-build` keeps concurrent dependents
+// from racing on the tool's build.
+stringImportPaths "generated/shaders"
 
 configuration "library" {
     // ImportC needs `vulkan.pc`'s `-I`; dub skips pkg-config for static
     // libraries, so follow `sparkles:vulkan` and distribute source here.
     targetType "sourceLibrary"
+    preGenerateCommands "$DUB run --temp-build -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR --out=$PACKAGE_DIR/generated/shaders --if-stale"
 }
 
 configuration "unittest" {
+    preGenerateCommands "$DUB run --temp-build -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR --out=$PACKAGE_DIR/generated/shaders --if-stale"
     dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// The device build: what LDC's dcompute target compiles for the GPU. Never
+// built by dub — `shader-compile` asks `dub describe` for it and compiles the
+// `@compute` modules among its sources, the device-only fragment function's
+// included.
+configuration "shaders" {
+    targetType "library"
+    sourcePaths "src" "shaders"
+    importPaths "src" "shaders"
+    dflags "-mdcompute-targets=vulkan-130"
 }
 
 buildType "checked" {
