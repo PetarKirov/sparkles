@@ -38,6 +38,10 @@ struct ContextRequest
     string applicationName = "sparkles";
     uint apiVersion = apiVersion11;
     bool validation;
+    /// A messenger made as soon as the instance exists, so it hears the
+    /// device being chosen and created as well (offscreen devices with
+    /// `VK_EXT_debug_utils` only); destroyed with the instance.
+    const(VkDebugUtilsMessengerCreateInfoEXT)* messenger;
 }
 
 package struct Candidate
@@ -87,6 +91,7 @@ struct VulkanDevice
     /// Whether the instance enabled `VK_EXT_debug_utils`, so the layer's
     /// messages can be received by a messenger rather than the console.
     bool debugUtils;
+    private VkDebugUtilsMessengerEXT messenger_;
 
     @disable this(this);
 
@@ -151,6 +156,14 @@ struct VulkanDevice
             return made;
         d.debugUtils = nameCount > 0 && names[0] is extDebugUtils.ptr
             && d.instance.has!extDebugUtils;
+        if (request.messenger !is null && d.debugUtils)
+        {
+            const r = d.instance.createDebugUtilsMessengerEXT(d.instance.instance,
+                cast(VkDebugUtilsMessengerCreateInfoEXT*) request.messenger, null, &d.messenger_);
+            if (r < 0)
+                return d.fail(VulkanWsiErrorKind.vulkanFailure, VulkanWsiOperation.createDevice,
+                    r, "vkCreateDebugUtilsMessengerEXT failed");
+        }
         return d.selectAndCreateDevice(request, (VkPhysicalDevice, uint) => true,
             presents: false);
     }
@@ -241,10 +254,15 @@ struct VulkanDevice
         queue = null;
         properties = VkPhysicalDeviceProperties.init;
         dynamicRendering = false;
+        imagelessFramebuffer = false;
+        apiVersion = 0;
     }
 
     package void releaseInstance() @trusted nothrow
     {
+        if (messenger_ !is null)
+            instance.destroyDebugUtilsMessengerEXT(instance.instance, messenger_, null);
+        messenger_ = null;
         if (instance.instance !is null && instance.destroyInstance !is null)
             instance.destroyInstance(instance.instance, null);
         instance = InstanceCommands.init;
@@ -372,7 +390,9 @@ package:
 
         const wantPortability = advertised.hasExtension(khrPortabilitySubset);
         const plan = planDynamicRendering(request.apiVersion, properties.apiVersion,
-            advertised.hasExtension(khrDynamicRendering));
+            advertised.hasExtension(khrDynamicRendering),
+            advertised.hasExtension(khrDepthStencilResolve)
+                && advertised.hasExtension(khrCreateRenderpass2));
         const wantDynamicExtension = plan.enableExtension;
         const wantDynamicFeature = plan.chainFeature;
         // The effective version, not the request: a 1.3 request on a 1.1
@@ -395,14 +415,21 @@ package:
         }
         const wantImageless = imagelessFeature.imagelessFramebuffer == VK_TRUE;
 
-        const(char)*[5] deviceExtensions;
+        const(char)*[7] deviceExtensions;
         uint extensionCount;
         if (presents)
             deviceExtensions[extensionCount++] = khrSwapchain.ptr;
         if (wantPortability)
             deviceExtensions[extensionCount++] = khrPortabilitySubset.ptr;
         if (wantDynamicExtension)
+        {
+            if (plan.enableDependencies)
+            {
+                deviceExtensions[extensionCount++] = khrCreateRenderpass2.ptr;
+                deviceExtensions[extensionCount++] = khrDepthStencilResolve.ptr;
+            }
             deviceExtensions[extensionCount++] = khrDynamicRendering.ptr;
+        }
         if (wantImageless && imageless.enableExtensions)
         {
             deviceExtensions[extensionCount++] = khrImageFormatList.ptr;
@@ -567,50 +594,58 @@ private:
 /// How a device gets dynamic rendering, if it does.
 package struct DynamicRenderingPlan
 {
-    bool enableExtension; /// enable `VK_KHR_dynamic_rendering`
-    bool chainFeature;    /// chain the dynamic-rendering feature at creation
-    bool core;            /// the device is Vulkan 1.3: chain the 1.3 features
+    bool enableExtension;    /// enable `VK_KHR_dynamic_rendering`
+    bool enableDependencies; /// and, below 1.2, the two extensions it needs
+    bool chainFeature;       /// chain the dynamic-rendering feature at creation
+    bool core;               /// the device is Vulkan 1.3: chain the 1.3 features
 }
 
 /**
 Dynamic rendering for a device created at `requested` on hardware that
 reports `supported`, as Vulkan versions; `advertised` says whether the device
-lists `VK_KHR_dynamic_rendering`.
+lists `VK_KHR_dynamic_rendering`, and `dependencies` whether it lists the
+`VK_KHR_depth_stencil_resolve` and `VK_KHR_create_renderpass2` that need
+enabling beside it below 1.2.
 
 The effective version is the lower of the two: a 1.3 request on a 1.1 device
 gets a 1.1 device. At 1.3 dynamic rendering is core. Below it, a device that
-advertises the extension gets it enabled, whatever was requested, from 1.1 on,
-where the feature query it needs is core.
+advertises the extension, and below 1.2 its dependencies, gets it enabled,
+whatever was requested, from 1.1 on, where the feature query it needs is core.
 */
 package DynamicRenderingPlan planDynamicRendering(uint requested, uint supported,
-    bool advertised) @safe pure nothrow @nogc
+    bool advertised, bool dependencies) @safe pure nothrow @nogc
 {
     const effective = requested < supported ? requested : supported;
     const major = apiVersionMajor(effective);
     const minor = apiVersionMinor(effective);
     const core = major > 1 || (major == 1 && minor >= 3);
+    const atLeast12 = major > 1 || (major == 1 && minor >= 2);
     const atLeast11 = major > 1 || (major == 1 && minor >= 1);
-    const extension = !core && atLeast11 && advertised;
-    return DynamicRenderingPlan(enableExtension: extension, chainFeature: core || extension,
-        core: core);
+    const extension = !core && atLeast11 && advertised && (atLeast12 || dependencies);
+    return DynamicRenderingPlan(enableExtension: extension,
+        enableDependencies: extension && !atLeast12, chainFeature: core || extension, core: core);
 }
 
 @("vulkan_wsi.device.dynamicRenderingFollowsTheEffectiveVersion")
 @safe pure nothrow @nogc unittest
 {
     enum v10 = apiVersion10, v11 = apiVersion11, v12 = apiVersion12, v13 = apiVersion13;
+    alias Plan = DynamicRenderingPlan;
     // Core at 1.3 on both sides.
-    assert(planDynamicRendering(v13, v13, true) == DynamicRenderingPlan(false, true, true));
-    assert(planDynamicRendering(v13, v13, false) == DynamicRenderingPlan(false, true, true));
-    // A 1.3 request on a 1.1 device that advertises the extension: enabled.
-    assert(planDynamicRendering(v13, v11, true) == DynamicRenderingPlan(true, true, false));
-    // ... and on one that does not, as the reference phone: a render pass.
-    assert(planDynamicRendering(v13, v11, false) == DynamicRenderingPlan(false, false, false));
-    // A 1.1 or 1.2 request on a 1.3 device stays below core.
-    assert(planDynamicRendering(v12, v13, true) == DynamicRenderingPlan(true, true, false));
-    assert(planDynamicRendering(v11, v13, false) == DynamicRenderingPlan(false, false, false));
+    assert(planDynamicRendering(v13, v13, true, true) == Plan(false, false, true, true));
+    assert(planDynamicRendering(v13, v13, false, false) == Plan(false, false, true, true));
+    // A 1.3 request on a 1.1 device that advertises the extension and what it
+    // needs: all three enabled.
+    assert(planDynamicRendering(v13, v11, true, true) == Plan(true, true, true, false));
+    // ... without its dependencies, or without it, as the reference phone: a
+    // render pass.
+    assert(planDynamicRendering(v13, v11, true, false) == Plan(false, false, false, false));
+    assert(planDynamicRendering(v13, v11, false, true) == Plan(false, false, false, false));
+    // At 1.2 the dependencies are core.
+    assert(planDynamicRendering(v12, v13, true, false) == Plan(true, false, true, false));
+    assert(planDynamicRendering(v11, v13, false, true) == Plan(false, false, false, false));
     // Vulkan 1.0 cannot query the feature.
-    assert(planDynamicRendering(v13, v10, true) == DynamicRenderingPlan(false, false, false));
+    assert(planDynamicRendering(v13, v10, true, true) == Plan(false, false, false, false));
 }
 
 /// How a device gets imageless framebuffers, if it can.
