@@ -104,7 +104,8 @@ uniform blocks, and Vulkan validation: its M6, delivered by pull requests
 **Trade-offs.** Two further shader capabilities are requests of this
 milestone: separate samplers for glyphs and images
 ([UVX8](#uvx8-a-sampler-per-kind-of-image)), and a profile for Vulkan 1.1
-devices ([UVQ3](#open-questions)).
+devices ([UVQ3](#resolved-questions)). Both landed, in pull requests #673 and
+#675.
 
 ## UVX5: Instanced quads with vertex inputs
 
@@ -173,8 +174,9 @@ every sample lands on a texel centre, works with the slice as it is but
 makes glyph crispness depend on that placement never slipping.
 
 **Choice.** Two samplers: nearest for atlas pages, linear for images.
-`sparkles:shaders` is asked to let an entry point bind more than one sampler
-([UVQ4](#open-questions)); the canvas's shaders wait on it.
+`sparkles:shaders` was asked to let an entry point bind more than one sampler
+([UVQ4](#resolved-questions)), and does: an entry point takes samplers of its
+own (`SHR7`).
 
 ## UVX9: This milestone is the window-system plan's M7
 
@@ -217,13 +219,16 @@ an effect on the native arm.
 `feat/ui-skia-graphite` work revived or redone? Owner: the window-system plan's
 MG; decided after this milestone.
 
-**UVQ3: A Vulkan 1.1 shader profile.** The shaders plan's only Vulkan
-profile emits SPIR-V 1.6 for Vulkan 1.3. The reference phone runs Vulkan 1.1,
-which accepts SPIR-V 1.3, or 1.4 through the `VK_KHR_spirv_1_4` it offers.
-Owner: `sparkles:shaders`; the phone terminal waits on it.
+## Resolved questions
 
-**UVQ4: More than one sampler.** The shaders plan binds every image through
-one shared sampler. The canvas needs an entry point to name its sampler per
-image, nearest for atlas pages and linear for images
-([UVX8](#uvx8-a-sampler-per-kind-of-image)). Owner: `sparkles:shaders`; the
-canvas's shaders wait on it.
+**UVQ3: A Vulkan 1.1 shader profile.** The shaders plan's only Vulkan
+profile emitted SPIR-V 1.6 for Vulkan 1.3; the reference phone runs Vulkan
+1.1, which accepts SPIR-V 1.3. _Resolved_ by `sparkles:shaders`' `vulkan1.1`
+profile (pull request #675): the canvas builds both profiles and loads the one
+its device's version takes.
+
+**UVQ4: More than one sampler.** The shaders plan bound every image through
+one shared sampler; the canvas needs nearest filtering for atlas pages and
+linear for images ([UVX8](#uvx8-a-sampler-per-kind-of-image)). _Resolved_ by
+samplers of an entry point's own (`SHR7`, pull request #673): the canvas's
+fragment function takes two.

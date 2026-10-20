@@ -19,7 +19,7 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 | ----------------------------------------------------------------- | ----------- |
 | [V0 Specification](#v0-specification)                             | done        |
 | [V1 Device memory and resources](#v1-device-memory-and-resources) | done        |
-| [V2 The canvas](#v2-the-canvas)                                   | not started |
+| [V2 The canvas](#v2-the-canvas)                                   | done        |
 | [V3 Glyphs](#v3-glyphs)                                           | not started |
 | [V4 The native host](#v4-the-native-host)                         | not started |
 | [V5 The terminal's seams](#v5-the-terminal-s-seams)               | not started |
@@ -28,18 +28,18 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 
 ## Dependencies
 
-Three slices wait on work other plans own: V2, V3 and V7. The rest can
-start at once.
+One slice waits on work another plan owns: V3, on the font library. The
+shader capabilities V2 and V7 needed have landed.
 
-| Slice | Waits on                                                                                                                                            |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| V1    | nothing                                                                                                                                             |
-| V2    | more than one sampler per entry point in `sparkles:shaders` ([UVQ4](./decisions.md#open-questions)); the shaders plan's M6 it also needs has landed |
-| V3    | `sparkles:font` MS S1–S3 in memory; the serialized parts of S4 wait on `sparkles:wired`'s flat format and BLAKE3                                    |
-| V4    | nothing; it presents a cleared target until V2                                                                                                      |
-| V5    | nothing; the raylib terminal keeps drawing through the new seams                                                                                    |
-| V6    | V2–V5                                                                                                                                               |
-| V7    | V6; a Vulkan 1.1 shader profile ([UVQ3](./decisions.md#open-questions))                                                                             |
+| Slice | Waits on                                                                                                                    |
+| ----- | --------------------------------------------------------------------------------------------------------------------------- |
+| V1    | nothing                                                                                                                     |
+| V2    | nothing: samplers of an entry point's own ([UVQ4](./decisions.md#resolved-questions)) and the shaders plan's M6 have landed |
+| V3    | `sparkles:font` MS S1–S3 in memory; the serialized parts of S4 wait on `sparkles:wired`'s flat format and BLAKE3            |
+| V4    | nothing; it presents a cleared target until V2                                                                              |
+| V5    | nothing; the raylib terminal keeps drawing through the new seams                                                            |
+| V6    | V2–V5                                                                                                                       |
+| V7    | V6; the Vulkan 1.1 shader profile has landed ([UVQ3](./decisions.md#resolved-questions))                                    |
 
 The work ships in three pull requests: V0–V2 (rendering), V3–V4 (text and
 the host), V5–V7 (the terminal and the phone).
@@ -82,7 +82,7 @@ staging path and reads it back byte-identical.
 **Obligations.** `UVK1`–`UVK17`, `UVK23`–`UVK34`.
 
 **Prerequisites.** V1; more than one sampler per entry point in
-`sparkles:shaders` ([UVQ4](./decisions.md#open-questions)).
+`sparkles:shaders` ([UVQ4](./decisions.md#resolved-questions)), landed.
 
 **Deliverable.**
 
@@ -96,6 +96,17 @@ staging path and reads it back byte-identical.
 pass on lavapipe, each shown to fail on its deliberately broken variant.
 `sparkles:ui`'s test suite passes with the moved geometry, and the raylib
 canvas renders the gallery pages byte-identical to before the move.
+
+**Outcome.** The gate is met: the 19 scenarios pass on lavapipe under the
+validation layer, each failing on a broken variant, and the 18 non-terminal
+gallery pages render byte-identical. The pixel geometry's move found that
+the error squiggle never waved and that `UVK12` misdescribed the reference
+shadow. The rendering-path scenario found that a Vulkan 1.1 device enabling
+`VK_KHR_dynamic_rendering` also needs `VK_KHR_depth_stencil_resolve` and
+`VK_KHR_create_renderpass2`, which `sparkles:vulkan-wsi` now enables beside
+it, with imageless framebuffers wherever a device has them. Scenario 18
+waits for a whole gallery frame on the native host (V4), and scenario 21 for
+glyphs (V3).
 
 ## V3: Glyphs
 

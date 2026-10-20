@@ -132,7 +132,7 @@ where the device offers them, imageless framebuffers. Creation on any other devi
 **UVK3: Frame bracket.** `beginFrame(target, commands, slot, metrics,
 ground)` **must** receive:
 
-- the target: its image, a colour view of it, its format and extent, the
+- the target: its image, a colour view of it, its format, extent and usage, the
   layout it is in, and the layout it must be left in;
 - a command buffer in the recording state;
 - the frame slot;
@@ -274,15 +274,18 @@ its texels multiplied by the operation's foreground alpha.
 **UVK25: Limits.** An image larger than the device's maximum 2-D image
 extent **must** draw the reference canvas's placeholder and count as
 `imageTooLarge`. An image whose upload would exceed the frame's upload budget
-**must** draw the placeholder, count as `imageDeferred`, and upload in a later
-frame.
+**must** draw the placeholder, count as `imageDeferred`, ask for another frame,
+and upload in a later one; the frame's first upload is exempt, so an image
+larger than the whole budget still arrives.
 
 ## 6. Resources and lifetimes
 
-**UVK26: Scopes.** Pipelines, the sampler, atlas pages and cached images
+**UVK26: Scopes.** Pipelines, the samplers, atlas pages and cached images
 **must** live on the process-scoped device and survive the loss of a surface.
 Only objects tied to a target's format, extent or view **may** be rebuilt
-when the target changes.
+when the target changes. A host that destroys the views it handed in **must**
+tell the canvas (`releaseTargets`), which releases what it made for them under
+`UVK31`.
 
 **UVK27: Memory.** Device memory **must** come from the `sparkles:vulkan`
 sub-allocator ([memory.md](../vulkan/memory.md)); the canvas makes no
