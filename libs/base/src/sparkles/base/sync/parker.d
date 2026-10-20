@@ -319,6 +319,15 @@ else version (OSX)
     private extern (C) int pthread_cond_timedwait_relative_np(pthread_cond_t*,
         pthread_mutex_t*, const timespec*) nothrow @nogc @system;
 }
+else version (CRuntime_Bionic)
+{
+    import core.sys.posix.sys.types : pthread_condattr_t;
+    import core.sys.posix.time : clockid_t;
+
+    // Bionic has it from API level 21; druntime's Bionic bindings omit it.
+    private extern (C) int pthread_condattr_setclock(pthread_condattr_t*, clockid_t)
+        nothrow @nogc @system;
+}
 
 /// The portable sleeper, per OS.
 struct PortableSleeper
@@ -442,7 +451,10 @@ nothrow @nogc:
             else
             {
                 import core.sys.posix.pthread : pthread_condattr_t, pthread_condattr_init,
-                    pthread_condattr_setclock, pthread_condattr_destroy;
+                    pthread_condattr_destroy;
+                version (CRuntime_Bionic) {}
+                else
+                    import core.sys.posix.pthread : pthread_condattr_setclock;
                 import core.sys.posix.time : CLOCK_MONOTONIC;
 
                 pthread_condattr_t attr;
