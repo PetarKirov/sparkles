@@ -679,3 +679,80 @@ exit 0
     assert(built.status == 0, built.diagnostics);
     assert(g.outputs == [".stamp", "tint.frag", "tint.frag.spv"], g.outputs.join(" "));
 }
+
+@("shaderCompile.resources.blocksOnVulkanUniformsOnOpenGL")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // One declaration, lowered per profile (`SHR3`–`SHR6`): on Vulkan a
+    // uniform block of `T` itself, a push-constant block and the default
+    // uniform block, laid out as `layoutOf` says; on OpenGL one uniform per
+    // field, named after it.
+    auto f = Fixture.create("resources");
+    f.entries(q{
+        struct Light
+        {
+            vec3 tint;
+            float gain;
+        }
+
+        struct Push
+        {
+            float aspect;
+        }
+
+        @profiles(gl330, vulkan13) @fragment vec4 lit(@input vec4 colour, UniformBlock!Light light,
+            PushConstants!Push pc, @uniform float exposure)
+            => colour * (light.gain * exposure * pc.aspect) + v4(light.tint, 0.0f);
+
+        static assert(layoutOf!(Light, Rule.std140)["gain"].offset == 12);
+    });
+    const made = f.run();
+    assert(made.status == 0, made.diagnostics);
+    assert(f.outputs == [".stamp", "lit.frag", "lit.frag.spv"], f.outputs.join(" "));
+
+    const dis = execute(["spirv-dis", f.out_.buildPath("lit.frag.spv")]);
+    assert(dis.status == 0, dis.output);
+    foreach (line; [`OpName %light "light"`, `OpMemberName %Light 1 "gain"`,
+            "OpMemberDecorate %Light 1 Offset 12", "OpDecorate %Light Block",
+            "OpDecorate %light Binding 1", "OpDecorate %litUniforms Binding 2",
+            `OpName %litUniformsBlock "litUniformsBlock"`, "PushConstant"])
+        assert(dis.output.canFind(line), line ~ "\n" ~ dis.output);
+
+    const glsl = readText(f.out_.buildPath("lit.frag"));
+    foreach (line; ["uniform vec3 tint;", "uniform float gain;", "uniform float aspect;",
+            "uniform float exposure;"])
+        assert(glsl.canFind(line), line ~ "\n" ~ glsl);
+}
+
+@("shaderCompile.audit.int64NamesTheDLines")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // A module that computes in 64 bits fails a profile that denies `int64`
+    // (`SHC9`), and the failure names the D line of each such operation
+    // (`SHM6`); nothing is written.
+    auto f = Fixture.create("int64");
+    f.entries(q{
+        size_t wrap(size_t i) => i % 3;
+
+        @profiles(vulkan13) @fragment vec4 pick(@uniform int index)
+        {
+            vec4[3] t;
+            t[0] = v4(1.0f);
+            t[1] = v4(0.5f);
+            t[2] = v4(0.0f);
+            return t[wrap(index)];
+        }
+    });
+    const made = f.run();
+    assert(made.status == 1, made.diagnostics);
+    assert(made.diagnostics.canFind("`OpCapability Int64`"), made.diagnostics);
+    assert(made.diagnostics.canFind("fx_entries.d(") && made.diagnostics.canFind("64-bit integer operation `i % 3LU`"),
+        made.diagnostics);
+    assert(f.outputs.length == 0, f.outputs.join(" "));
+}
