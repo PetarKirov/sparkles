@@ -767,7 +767,7 @@ struct Gallery
     */
     private void syncDock() @safe
     {
-        import sparkles.ui_raylib.raylib_canvas : scrollbarMinExtentPx;
+        import sparkles.ui.pixel_geometry : scrollbarMinExtentPx;
 
         dock.paintedScrollbarCellW = s.guiCellW;
         dock.paintedScrollbarCellH = s.guiCellH;

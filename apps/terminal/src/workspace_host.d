@@ -909,7 +909,7 @@ struct WorkspaceHost
     {
         import sparkles.ui.canvas : RuleEdge;
         import sparkles.ui.components.chrome : fracByte;
-        import sparkles.ui_raylib.raylib_canvas : railExpandedPx, railIdlePx,
+        import sparkles.ui.pixel_geometry : railExpandedPx, railIdlePx,
             scrollbarRailPx;
 
         BarTarget t;

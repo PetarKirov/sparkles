@@ -32,159 +32,15 @@ import sparkles.ui.interp.immediate : paintImagePlaceholder;
 import sparkles.ui.effect : EffectId;
 import sparkles.ui_raylib.effect_gpu : EffectGpu, scissorInTarget;
 import sparkles.ui_raylib.image_textures : ImageTextures;
-import sparkles.ui.state : scrollbarThumb;
+import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, ClipEntry,
+    cornerRadiusPx, densityPx, lineRects, railExpandedPx, railIdlePx, roundedBorderPx,
+    ruleRect, ScissorBox, scissorBoxOfStack, scrollbarMinExtentPx, ScrollbarRail,
+    scrollbarRail, scrollbarRailPx, shadowRect, shiftPx;
 import sparkles.ui.degradation : projectColor;
 import sparkles.ui.glyphs : admits, projectGlyph;
 import sparkles.ui.style : BorderStyle, FontRole, Shadow, Visual;
 import sparkles.ui.style : UiTextStyle = TextStyle, TypeStep;
 import sparkles.ui.tokens : TargetCapabilities;
-
-/// The idle scrollbar rail thickness for a cell extent, in device pixels.
-int railIdlePx(int cellExtent) @safe pure nothrow @nogc
-{
-    const third = cellExtent / 3;
-    return third < 2 ? 2 : third;
-}
-
-/// The fully-expanded scrollbar rail thickness: exactly 1.5 glyph-cell widths,
-/// including odd widths (integer multiply before divide is normative). Both
-/// axes use the width so horizontal rails retain their compact GUI height.
-int railExpandedPx(int cellWidth) @safe pure nothrow @nogc
-    => cellWidth * 3 / 2;
-
-/// The pixel backend's minimum grabbable scrollbar-handle length.
-enum int scrollbarMinExtentPx = 24;
-
-/// Pure, window-free resolved pixel geometry for one semantic scrollbar op.
-struct ScrollbarRail
-{
-    Rect track;
-    Rect thumb;
-    bool live;
-}
-
-/**
-Resolves a semantic scrollbar operation into pixel track/thumb geometry. The
-op keeps content units and an expansion percentage; this backend alone chooses
-pixel rail thickness and the 24px minimum grabbable thumb.
-*/
-ScrollbarRail scrollbarRail(in Scrollbar op, int cellW, int cellH,
-    int originX = 0, int originY = 0,
-    int minExtent = scrollbarMinExtentPx)
-    @safe pure nothrow @nogc
-{
-    if (op.fadePercent == 0)
-        return ScrollbarRail.init;
-    bool vertical;
-    final switch (op.edge) with (RuleEdge)
-    {
-        case left: case right: case centerX:
-            vertical = true;
-            break;
-        case top: case bottom: case centerY:
-            vertical = false;
-            break;
-    }
-    const idle = railIdlePx(vertical ? cellW : cellH);
-    const expanded = railExpandedPx(cellW);
-    const thickness = idle
-        + (expanded - idle) * cast(int) op.expandPercent / 100;
-    return scrollbarRailPx(Rect(originX + op.rect.x * cellW,
-            originY + op.rect.y * cellH, op.rect.width * cellW,
-            op.rect.height * cellH),
-        op.edge, op.content, op.viewport, op.offset, op.offsetFrac, thickness,
-        minExtent);
-}
-
-/**
-The same resolution for a band given in pixels — a terminal pane's padding,
-which is not a whole number of cells — at a `thickness` the caller resolved:
-the one geometry every bar paints and hit-tests with (`SCV13`).
-`offsetFrac` is the view's fraction past `offset` in 256ths, so the thumb
-slides with content scrolled between cells (`LAY7`).
-*/
-ScrollbarRail scrollbarRailPx(in Rect band, RuleEdge edge, long content,
-    long viewport, long offset, ubyte offsetFrac, int thickness,
-    int minExtent = scrollbarMinExtentPx)
-    @safe pure nothrow @nogc
-{
-    ScrollbarRail r;
-    if (content <= viewport || content <= 0)
-        return r;
-    const x = band.x, y = band.y, w = band.width, h = band.height;
-    bool vertical;
-    final switch (edge) with (RuleEdge)
-    {
-        case left:
-            r.track = Rect(x, y, thickness, h);
-            vertical = true;
-            break;
-        case right:
-            r.track = Rect(x + w - thickness, y, thickness, h);
-            vertical = true;
-            break;
-        case centerX:
-            r.track = Rect(x + w / 2 - thickness / 2, y, thickness, h);
-            vertical = true;
-            break;
-        case top:
-            r.track = Rect(x, y, w, thickness);
-            break;
-        case bottom:
-            r.track = Rect(x, y + h - thickness, w, thickness);
-            break;
-        case centerY:
-            r.track = Rect(x, y + h / 2 - thickness / 2, w, thickness);
-            break;
-    }
-
-    const track = vertical ? h : w;
-    if (track <= 0 || thickness <= 0)
-        return ScrollbarRail.init;
-    // In 256ths of a unit, so a fraction moves the thumb by the pixels it
-    // should rather than by none until a whole unit is crossed.
-    const thumb = scrollbarThumb(content * 256, viewport * 256,
-        offset * 256 + offsetFrac, track, minExtent);
-    r.thumb = vertical
-        ? Rect(r.track.x, y + thumb.start, thickness, thumb.extent)
-        : Rect(x + thumb.start, r.track.y, thumb.extent, thickness);
-    r.live = true;
-    return r;
-}
-
-@("ui_raylib.scrollbarRail.aLongHistoryKeepsAThumbAFingerCanTake")
-@safe pure nothrow @nogc
-unittest
-{
-    // `seq 1 100000` in a 40-row pane on a 2000 px track: proportionally a
-    // thumb under a pixel; the minimum keeps it 132 px (48 dp at 2.75×), and
-    // it still travels the whole track.
-    const band = Rect(0, 0, 24, 2000);
-    const top = scrollbarRailPx(band, RuleEdge.right, 100_040, 40, 0, 0, 8, 132);
-    const end = scrollbarRailPx(band, RuleEdge.right, 100_040, 40, 100_000, 0, 8, 132);
-    assert(top.thumb.height == 132 && top.thumb.y == 0);
-    assert(end.thumb.y + end.thumb.height == 2000, "the newest rows: at the bottom");
-}
-
-@("ui_raylib.scrollbarRail.aFractionSlidesTheThumb")
-@safe pure nothrow @nogc
-unittest
-{
-    // 100 rows in a 10-row view, a 400 px track: the thumb is 40 px and
-    // travels 360 px over 90 rows — 4 px a row, 2 px for half of one.
-    const band = Rect(0, 0, 12, 400);
-    const at = scrollbarRailPx(band, RuleEdge.right, 100, 10, 45, 0, 4);
-    const half = scrollbarRailPx(band, RuleEdge.right, 100, 10, 45, 128, 4);
-    assert(at.live && at.thumb.height == 40 && at.thumb.y == 180);
-    assert(half.thumb.y == 182);
-    assert(half.track == Rect(8, 0, 4, 400), "on the band's right edge");
-    Scrollbar faded;
-    faded.content = 100;
-    faded.viewport = 10;
-    faded.rect = Rect(0, 0, 1, 10);
-    faded.fadePercent = 0;
-    assert(!scrollbarRail(faded, 8, 16).live, "a faded-out bar paints nothing");
-}
 
 /// A resolved `Visual`'s foreground as a raylib `Color` (with its alpha).
 Color rlFg(in Visual v) pure nothrow @nogc @trusted
@@ -403,8 +259,8 @@ struct RaylibCanvas
         shiftY -= s[1];
     }
 
-    private float[2][] shifts;
-    private float shiftX = 0, shiftY = 0; // the open shifts' sum, in pixels
+    private int[2][] shifts;
+    private int shiftX, shiftY; // the open shifts' sum, in pixels
 
     /// Returns the accumulated geometric intersection of all active clips on the stack.
     package static Rect effectiveClip(scope const(Rect)[] clips) pure nothrow @nogc @safe
@@ -437,7 +293,7 @@ struct RaylibCanvas
         // tables or code blocks) stay strictly bounded by their enclosing
         // viewports — in pixels, each clip at the origin it was pushed under.
         ScissorBox box;
-        if (!scissorBoxOfStack(clips, originX - shiftX, originY - shiftY,
+        if (!scissorBoxOfStack(clips, cast(int)(originX - shiftX), cast(int)(originY - shiftY),
                 cellW, cellH, boundW, boundH, box))
         {
             BeginScissorMode(0, 0, 0, 0);
@@ -544,40 +400,51 @@ struct RaylibCanvas
         // A box drawn smaller than its rect (`TOK11`) is centred in it: the
         // control keeps its whole touch target and draws a compact chip —
         // or, drawn narrower too, a switch's round knob.
-        float x = px(r.x), w = cast(float)(r.width * cellW);
+        int x = cast(int) px(r.x), w = r.width * cellW;
         centredSpan(x, w, v.drawWidth);
-        float y = py(r.y), h = cast(float)(r.height * cellH);
+        int y = cast(int) py(r.y), h = r.height * cellH;
         centredSpan(y, h, v.drawHeight);
+        const box = Rect(x, y, w, h);
 
         // Drop shadow first, behind the surface: an offset translucent rect.
         if (v.shadow.any)
         {
             const s = v.shadow;
             const sc = Color(s.color.r, s.color.g, s.color.b, s.alpha);
-            const sr = Rectangle(x + s.dx - s.blur / 2.0f, y + s.dy,
-                w + s.blur, h + s.blur / 2.0f);
+            const sr = shadowRect(box, s);
             if (v.borderRadius > 0)
-                DrawRectangleRounded(sr, roundnessOf(v.borderRadius, sr.width, sr.height), 8, sc);
+                DrawRectangleRounded(rectangleOf(sr),
+                    roundnessOf(v.borderRadius, sr.width, sr.height), 8, sc);
             else
-                DrawRectangleRec(sr, sc);
+                fillExact(sr, sc);
         }
 
         // Background fill.
         if (v.hasBg)
         {
             if (v.borderRadius > 0)
-                DrawRectangleRounded(Rectangle(x, y, w, h),
-                    roundnessOf(v.borderRadius, w, h), 8, rlBg(v));
+                DrawRectangleRounded(rectangleOf(box), roundnessOf(v.borderRadius, w, h), 8,
+                    rlBg(v));
             else
-                DrawRectangle(cast(int) x, cast(int) y, cast(int) w, cast(int) h, rlBg(v));
+                fillExact(box, rlBg(v));
         }
 
         // Border and popup arrow.
         if (v.border.any)
-            drawBorder(x, y, w, h, v);
+            drawBorder(box, v);
         if (v.arrow)
             drawArrow(x, y, v);
     }
+
+    // One pixel rectangle of the shared geometry, exactly as it names it.
+    private static void fillExact(in Rect r, Color c) @system
+    {
+        if (!r.empty)
+            DrawRectangle(r.x, r.y, r.width, r.height, c);
+    }
+
+    private static Rectangle rectangleOf(in Rect r) pure nothrow @nogc @safe
+        => Rectangle(r.x, r.y, r.width, r.height);
 
     /**
     Draws the registered image `handle` into `r` under `fit` (`IMG1`).
@@ -677,18 +544,15 @@ struct RaylibCanvas
     /// 440 dpi phone, not the 6 dp a raw 16 would be there.
     private Visual densityScaled(in Visual v) const @safe pure nothrow @nogc
     {
-        static int dp(int px, float density) @safe pure nothrow @nogc
-            => cast(int)(px * density + (px >= 0 ? 0.5f : -0.5f));
-
         Visual s = v;
         if (density == 1)
             return s;
-        s.borderRadius = dp(v.borderRadius, density);
-        s.shadow.dx = dp(v.shadow.dx, density);
-        s.shadow.dy = dp(v.shadow.dy, density);
-        s.shadow.blur = dp(v.shadow.blur, density);
-        s.drawHeight = dp(v.drawHeight, density);
-        s.drawWidth = dp(v.drawWidth, density);
+        s.borderRadius = densityPx(v.borderRadius, density);
+        s.shadow.dx = densityPx(v.shadow.dx, density);
+        s.shadow.dy = densityPx(v.shadow.dy, density);
+        s.shadow.blur = densityPx(v.shadow.blur, density);
+        s.drawHeight = densityPx(v.drawHeight, density);
+        s.drawWidth = densityPx(v.drawWidth, density);
         return s;
     }
 
@@ -726,21 +590,7 @@ struct RaylibCanvas
     void rule(in Rect rect, RuleEdge edge, in Visual visual) @system
     {
         const v = narrowed(visual);
-        const x0 = cast(int) px(rect.x);
-        const y0 = cast(int) py(rect.y);
-        const w = cast(int)(rect.width * cellW);
-        const h = cast(int)(rect.height * cellH);
-        const c = v.fg;
-        const a = v.fgAlpha;
-        final switch (edge) with (RuleEdge)
-        {
-            case top:     fillPixels(x0, y0, w, 1, c, a); break;
-            case bottom:  fillPixels(x0, y0 + h - 1, w, 1, c, a); break;
-            case left:    fillPixels(x0, y0, 1, h, c, a); break;
-            case right:   fillPixels(x0 + w - 1, y0, 1, h, c, a); break;
-            case centerX: fillPixels(x0 + w / 2, y0, 1, h, c, a); break;
-            case centerY: fillPixels(x0, y0 + h / 2, w, 1, c, a); break;
-        }
+        fillExact(ruleRect(pixelsOf(rect), edge), rlFg(v));
     }
 
     /// The hairline an owned track shows while idle — `rule`'s geometry, in
@@ -748,22 +598,13 @@ struct RaylibCanvas
     /// from the border when nothing is hovering it.
     private void idleRule(in Scrollbar op) @system
     {
-        const x0 = cast(int) px(op.rect.x);
-        const y0 = cast(int) py(op.rect.y);
-        const w = cast(int)(op.rect.width * cellW);
-        const h = cast(int)(op.rect.height * cellH);
         const c = op.trackColor;
-        const a = op.trackAlpha;
-        final switch (op.edge) with (RuleEdge)
-        {
-            case top:     fillPixels(x0, y0, w, 1, c, a); break;
-            case bottom:  fillPixels(x0, y0 + h - 1, w, 1, c, a); break;
-            case left:    fillPixels(x0, y0, 1, h, c, a); break;
-            case right:   fillPixels(x0 + w - 1, y0, 1, h, c, a); break;
-            case centerX: fillPixels(x0 + w / 2, y0, 1, h, c, a); break;
-            case centerY: fillPixels(x0, y0 + h / 2, w, 1, c, a); break;
-        }
+        fillExact(ruleRect(pixelsOf(op.rect), op.edge), Color(c.r, c.g, c.b, op.trackAlpha));
     }
+
+    // A cell rect in device pixels.
+    private Rect pixelsOf(in Rect r) const @safe pure nothrow @nogc
+        => Rect(cast(int) px(r.x), cast(int) py(r.y), r.width * cellW, r.height * cellH);
 
     /// Draws the semantic scrollbar op with the backend's continuous px rail.
     /**
@@ -823,22 +664,9 @@ struct RaylibCanvas
     void line(in Point from, in Point to, in Visual visual, LineStyle style) @system
     {
         const v = narrowed(visual);
-        const y0 = cast(int) py(from.y);
-        const x0 = cast(int) px(from.x);
-        const x1 = cast(int) px(to.x);
-        const w = x1 - x0;
-        if (style == LineStyle.wavy)
-        {
-            // Alternating 2px segments, one row above the cell bottom.
-            const baseY = y0 + cellH - 2;
-            for (int i = 0; i < w; i += 4)
-            {
-                const seg = i + 2 <= w ? 2 : w - i;
-                DrawRectangle(x0 + i, baseY + (i / 2 % 2), seg, 1, rlFg(v));
-            }
-        }
-        else
-            DrawRectangle(x0, y0, w, 1, rlFg(v));
+        const c = rlFg(v);
+        lineRects(cast(int) px(from.x), cast(int) py(from.y), cast(int) px(to.x),
+            style == LineStyle.wavy, cellH, (Rect r) { fillExact(r, c); });
     }
 
     /// raylib's rounded-rect `roundness` (0..1 of the shorter half-side) for a
@@ -848,98 +676,37 @@ struct RaylibCanvas
         const half = (w < h ? w : h) / 2.0f;
         if (half <= 0)
             return 0;
-        const rr = radiusPx / half;
-        return rr > 1 ? 1 : rr;
+        return cornerRadiusPx(radiusPx, w, h) / half;
     }
 
     /// Strokes the box border. A rounded box (`borderRadius > 0`) gets a uniform
     /// rounded outline; a square box strokes each present side, honoring the
-    /// dotted/dashed style (the `.twoslash-hover` bottom underline is dotted).
-    private void drawBorder(float x, float y, float w, float h, in Visual v) @system
+    /// dotted/dashed style (the `.twoslash-hover` bottom underline is dotted),
+    /// with the pixels `borderRects` names: the strokes of the box-drawing
+    /// glyphs a terminal draws for the same box.
+    private void drawBorder(in Rect box, in Visual v) @system
     {
         const b = v.border;
         const c = rlBorder(v);
         if (v.borderRadius > 0)
         {
-            const thick = maxSide(b.width) * density;
-            DrawRectangleRoundedLinesEx(Rectangle(x, y, w, h),
-                roundnessOf(v.borderRadius, w, h), 8, thick, c);
+            DrawRectangleRoundedLinesEx(rectangleOf(box),
+                roundnessOf(v.borderRadius, box.width, box.height), 8,
+                roundedBorderPx(b.width, density), c);
             return;
         }
-        // Border widths are CELL-space weights; stroke thickness scales by
-        // the same unit the procedural box glyphs use for their arms
-        // (`drawBox`'s light stroke), so "1 wide" here matches a `│` and
-        // "2 wide" a `┃` at any cell size. A solid vertical side centers in
-        // its border COLUMN, where the cell backends put their `│` — and
-        // where a glyph-composed corner row's `╭`/`╰` stems are, so the
-        // fence chrome's edges meet (the quote bar gains the same parity).
-        // Dotted/dashed accents straddle the rect edge instead.
-        const md = cellW < cellH ? cellW : cellH;
-        const unit = md / 14 < 1 ? 1.0f : cast(float)(md / 14);
-        const boxed = b.style == BorderStyle.solid
-            || b.style == BorderStyle.double_;
-        const inset = boxed ? cellW / 2.0f : 0;
-        // A solid box with a side the terminal draws as `│` is drawn as the
-        // terminal draws it, horizontals too: `─` centred in its row, meeting
-        // the `│`s at `┌┐└┘` (`┏┓┗┛` heavy) rather than overshooting them.
-        // Without a vertical side there is no corner, and a bottom-only rule
-        // keeps the edge the terminal's underline uses.
-        const insetY = boxed
-            && (b.width.left || b.width.right) ? cellH / 2.0f : 0;
-        // The four rectangles come from `borderEdges`, which is pure and
-        // tested. Computing them here is how the vertical pair ended up
-        // passing the horizontal argument order — `len` and `thick` swap
-        // meaning between the two axes, and a box whose left border drew as
-        // a stripe across the box was invisible to every test in the
-        // repository.
-        if (b.style == BorderStyle.double_)
-        {
-            // `═║╔╗╚╝`: two nested boxes, each stroked like a solid one.
-            foreach (e; doubleBorderEdges(x, y, w, h, b.width, unit, inset,
-                    insetY))
-                strokeEdge(e, BorderStyle.solid, c);
-            return;
-        }
-        foreach (e; borderEdges(x, y, w, h, b.width, unit, inset, insetY))
-            strokeEdge(e, b.style, c);
-    }
-
-    /// Strokes one edge, dashed for a dotted/dashed style, solid otherwise.
-    /// Dashes run along the edge's own long axis, whichever that is.
-    private void strokeEdge(in BorderEdge e, BorderStyle style, Color c) @system
-    {
-        if (e.empty)
-            return;
-        if (style != BorderStyle.dotted && style != BorderStyle.dashed)
-            return DrawRectangle(cast(int) e.x, cast(int) e.y,
-                cast(int) e.w, cast(int) e.h, c);
-
-        const thick = e.horizontal ? e.h : e.w;
-        const len = e.horizontal ? e.w : e.h;
-        const dash = style == BorderStyle.dotted ? thick : thick * 3;
-        const gap = style == BorderStyle.dotted ? thick : thick * 2;
-        for (float p = 0; p < len; p += dash + gap)
-        {
-            const seg = (p + dash <= len) ? dash : (len - p);
-            if (e.horizontal)
-                DrawRectangle(cast(int)(e.x + p), cast(int) e.y,
-                    cast(int) seg, cast(int) thick, c);
-            else
-                DrawRectangle(cast(int) e.x, cast(int)(e.y + p),
-                    cast(int) thick, cast(int) seg, c);
-        }
+        borderRects(box, b.width, b.style, cellW, cellH, (Rect r) { fillExact(r, c); });
     }
 
     /// Draws the popup arrow/tail: a small upward triangle off the box's top edge
     /// at `arrowOffset` cells, filled with the surface color and outlined in the
     /// border color (approximating the CSS 6×6 rotated-square notch).
-    private void drawArrow(float boxX, float boxY, in Visual v) @system
+    private void drawArrow(int boxX, int boxY, in Visual v) @system
     {
-        const asz = cellH / 3 < 4 ? 4.0f : cast(float)(cellH / 3);
-        const cx = boxX + v.arrowOffset * cellW + cellW * 0.5f;
-        const apex = Vector2(cx, boxY - asz);
-        const left = Vector2(cx - asz, boxY + 1); // +1: overlap the border so the
-        const right = Vector2(cx + asz, boxY + 1); // notch merges into the surface
+        const t = arrowTriangle(boxX, boxY, v.arrowOffset, cellW, cellH);
+        const apex = Vector2(t.apex[0], t.apex[1]);
+        const left = Vector2(t.left[0], t.left[1]);
+        const right = Vector2(t.right[0], t.right[1]);
         // Screen space is y-down, so apex→left→right is the counter-clockwise
         // winding raylib needs (apex→right→left is culled as a back face).
         if (v.hasBg)
@@ -950,19 +717,6 @@ struct RaylibCanvas
             DrawLineEx(left, apex, 1, c);
             DrawLineEx(apex, right, 1, c);
         }
-    }
-
-    /// The greatest of an `Insets`' four sides (border outline thickness).
-    private static float maxSide(in Insets i) pure nothrow @nogc @safe
-    {
-        int m = i.top;
-        if (i.right > m)
-            m = i.right;
-        if (i.bottom > m)
-            m = i.bottom;
-        if (i.left > m)
-            m = i.left;
-        return m <= 0 ? 1 : cast(float) m;
     }
 
     /// The cell extent of a text run (height 1), from the owned terminalKitty
@@ -1123,30 +877,6 @@ unittest
     assert(uiStepOf(FontRole.inherit, TypeStep.body, 100) == -1);
 }
 
-/// Shrinks the span `[y, y + h)` to `drawn` pixels centred in it, on whole
-/// pixels; a `drawn` of 0, or one at least `h`, leaves the span whole.
-void centredSpan(ref float y, ref float h, int drawn) @safe pure nothrow @nogc
-{
-    if (drawn <= 0 || drawn >= h)
-        return;
-    y += cast(int)((h - drawn) / 2);
-    h = drawn;
-}
-
-@("uiRaylib.centredSpan")
-@safe pure nothrow @nogc
-unittest
-{
-    float y = 100, h = 132; // 3 rows of 44 px
-    centredSpan(y, h, 88);  // a 32 dp chip at 2.75 px/dp
-    assert(y == 122 && h == 88);
-    y = 0; h = 20;
-    centredSpan(y, h, 0);
-    assert(y == 0 && h == 20, "0: the whole rect");
-    centredSpan(y, h, 40);
-    assert(y == 0 && h == 20, "taller than the rect: the whole rect");
-}
-
 /// `px` in whole cells of `cell`, rounded up; at least one cell for any ink.
 int cellsCeil(float px, int cell) @safe pure nothrow @nogc
 {
@@ -1211,343 +941,9 @@ unittest
     assert(s.borderRadius == 44 && s.shadow.dy == 11 && s.shadow.blur == 33);
 }
 
-@("uiRaylib.scrollbarRail.metricsAndOddCells")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(railIdlePx(5) == 2);
-    assert(railIdlePx(21) == 7);
-    assert(railExpandedPx(5) == 7);  // not cast(int)(5 * 1.5f) by accident
-    assert(railExpandedPx(21) == 31);
-
-    Scrollbar op = {
-        rect: Rect(2, 1, 10, 20),
-        content: 400,
-        viewport: 100,
-        expandPercent: 0,
-        edge: RuleEdge.right,
-    };
-    const idle = scrollbarRail(op, 5, 7);
-    assert(idle.live && idle.track == Rect(58, 7, 2, 140));
-    assert(idle.thumb == Rect(58, 7, 2, 35));
-
-    op.expandPercent = 100;
-    const expanded = scrollbarRail(op, 5, 7);
-    assert(expanded.track == Rect(53, 7, 7, 140));
-    op.expandPercent = 50;
-    const middle = scrollbarRail(op, 5, 7);
-    assert(middle.track.width >= idle.track.width);
-    assert(middle.track.width <= expanded.track.width);
-
-    op.offset = 300;
-    const bottom = scrollbarRail(op, 5, 7);
-    assert(bottom.thumb.y + bottom.thumb.height
-        == bottom.track.y + bottom.track.height);
-
-    op.edge = RuleEdge.bottom;
-    op.rect = Rect(1, 2, 20, 3);
-    op.content = 200;
-    op.viewport = 100;
-    op.offset = 100;
-    op.expandPercent = 100;
-    const horizontal = scrollbarRail(op, 5, 7);
-    assert(horizontal.track.height == railExpandedPx(5));
-    assert(horizontal.thumb.x + horizontal.thumb.width
-        == horizontal.track.x + horizontal.track.width);
-
-    // Horizontal bars historically expand to 1.5 glyph widths, not 1.5 row
-    // heights. The distinction is substantial for a typical tall font cell.
-    const compactHorizontal = scrollbarRail(op, 9, 21);
-    assert(compactHorizontal.track.height == 13);
-}
-
 // The raylib canvas must satisfy the ui capability concept, or the shared
 // `paint` interpreter won't accept it.
 static assert(isCanvas!RaylibCanvas);
-
-// ---------------------------------------------------------------------------
-// Border geometry — pure, so it is testable without a GL context.
-// ---------------------------------------------------------------------------
-
-/// One stroked edge of a box border, as a device-pixel rectangle.
-struct BorderEdge
-{
-    float x; ///
-    float y; ///
-    float w; ///
-    float h; ///
-
-@safe pure nothrow @nogc:
-
-    /// `true` iff the edge covers no pixels — a side of zero width.
-    bool empty() const => w <= 0 || h <= 0;
-
-    /// `true` for the top and bottom edges: the ones whose long axis is x.
-    /// Dashes run along the long axis, so this is what tells them which way.
-    bool horizontal() const => w >= h;
-}
-
-/**
-The four edges of a square border, in device pixels.
-
-$(B Extracted because it was wrong.) Inline, the two axes' rectangles were
-written by hand from a `(length, thickness)` pair whose meaning swaps between
-them — and the vertical pair was written in the horizontal order, so a box's
-left border drew as a bar $(I across) the box and its right border as a bar
-poking out to the right of it. Every backend-neutral test passed: the display
-list was correct, the cell grid drew the box correctly, and the defect existed
-only inside a `@system` function that needs a window to run.
-
-Pure arithmetic in, four rectangles out, and the arithmetic has tests.
-
-`unit` scales a side's cell-space weight into pixels of stroke thickness.
-`inset` centres a vertical stroke that many pixels into its border column —
-half a cell for a solid border, so the stroke lands where the cell backends
-put their `│` and a glyph-composed corner's stem meets it; zero makes a
-vertical stroke straddle the rect edge (the dotted/dashed accents).
-*/
-BorderEdge[4] borderEdges(float x, float y, float w, float h, in Insets width,
-    float unit = 1, float inset = 0, float insetY = 0) @safe pure nothrow @nogc
-{
-    const t = width.top * unit;
-    const b = width.bottom * unit;
-    const l = width.left * unit;
-    const r = width.right * unit;
-    // Centre lines of the four strokes. With `insetY` the horizontals sit
-    // in the middle of their rows, and every stroke runs between the centre
-    // lines of the two it meets — so each corner is a `┌`, not a `┼` with
-    // half a cell of overshoot on one arm.
-    const cxL = x + inset;
-    const cxR = x + w - inset;
-    const cyT = y + insetY;
-    const cyB = y + h - insetY;
-    // A horizontal spans to a present vertical's outer face, else the rect.
-    const hx0 = insetY > 0 && width.left ? cxL - l / 2 : x;
-    const hx1 = insetY > 0 && width.right ? cxR + r / 2 : x + w;
-    // A vertical spans to a present horizontal's outer face, else the rect.
-    const vy0 = insetY > 0 && width.top ? cyT - t / 2 : y;
-    const vy1 = insetY > 0 && width.bottom ? cyB + b / 2 : y + h;
-    return [
-        BorderEdge(hx0, insetY > 0 ? cyT - t / 2 : y, hx1 - hx0, t),      // top
-        BorderEdge(hx0, insetY > 0 ? cyB - b / 2 : y + h - b, hx1 - hx0,
-            b),                                                           // bottom
-        BorderEdge(width.left ? cxL - l / 2 : x, vy0, l, vy1 - vy0),      // left
-        BorderEdge(width.right ? cxR - r / 2 : x + w - r, vy0,
-            r, vy1 - vy0),                                                // right
-    ];
-}
-
-/**
-The eight edges of a double border (`═║╔╗╚╝`), in device pixels: an outer and
-an inner box, each laid out by `borderEdges`, so every corner is two nested
-`┌`s — the outer stroke meeting the outer, the inner the inner.
-
-Each stroke is as thick as a single border's, and the two sit `3t` apart
-centre to centre (a gap of `2t`, where `t` is the thickest side), so they
-stay distinct at every cell size and keep whole-pixel edges wherever a
-single stroke has them.
-
-In corner mode (`insetY > 0`, a vertical side present) the pair straddles
-the single border's centre lines. Without a vertical side there is no
-centre to straddle: the rules keep their edges and the second stroke steps
-inward, as a double underline does.
-*/
-BorderEdge[8] doubleBorderEdges(float x, float y, float w, float h,
-    in Insets width, float unit = 1, float inset = 0, float insetY = 0)
-    @safe pure nothrow @nogc
-{
-    const m = width.top > width.bottom ? width.top : width.bottom;
-    const n = width.left > width.right ? width.left : width.right;
-    const t = (m > n ? m : n) * unit;
-    BorderEdge[8] e;
-    if (insetY > 0)
-    {
-        const s = 1.5f * t;
-        e[0 .. 4] = borderEdges(x - s, y - s, w + 2 * s, h + 2 * s, width,
-            unit, inset, insetY);
-        e[4 .. 8] = borderEdges(x + s, y + s, w - 2 * s, h - 2 * s, width,
-            unit, inset, insetY);
-    }
-    else
-    {
-        const g = 2 * t;
-        e[0 .. 4] = borderEdges(x, y, w, h, width, unit, inset);
-        e[4 .. 8] = borderEdges(x, y + g, w, h - 2 * g, width, unit, inset);
-    }
-    return e;
-}
-
-@("ui_raylib.raylib_canvas.doubleBorderEdgesNestTwoBoxes")
-@safe pure nothrow @nogc
-unittest
-{
-    // A double box in a window reads `╔═╗ ║ ╚═╝`, as it does in a terminal:
-    // two strokes per side straddling the single border's centre line, and
-    // each corner an outer `┌` around an inner one.
-    enum x = 0.0f, y = 0.0f, w = 130.0f, h = 60.0f; // 13 x 3 cells of 10 x 20
-    const e = doubleBorderEdges(x, y, w, h, Insets.all(1), unit: 1, inset: 5,
-        insetY: 10);
-    const outer = e[0 .. 4], inner = e[4 .. 8];
-
-    // Top: the outer stroke above the row's centre, the inner below it, the
-    // two a stroke-width gap apart (here 2px) and equally far from it.
-    assert(outer[0] == BorderEdge(3, 8, 124, 1));
-    assert(inner[0] == BorderEdge(6, 11, 118, 1));
-    assert(inner[0].y - (outer[0].y + outer[0].h) == 2, "a visible gap");
-    assert(10 - (outer[0].y + 0.5f) == (inner[0].y + 0.5f) - 10, "centred");
-    // Left, the same across the column's centre.
-    assert(outer[2] == BorderEdge(3, 8, 1, 44));
-    assert(inner[2] == BorderEdge(6, 11, 1, 38));
-
-    // Each box closes on itself: the arms meet at their outer faces.
-    foreach (box; [outer, inner])
-    {
-        assert(box[0].x == box[2].x);
-        assert(box[0].x + box[0].w == box[3].x + box[3].w);
-        assert(box[2].y == box[0].y);
-        assert(box[2].y + box[2].h == box[1].y + box[1].h);
-    }
-    // And the inner box lies wholly inside the outer one.
-    assert(inner[0].x > outer[0].x && inner[1].y < outer[1].y);
-    assert(inner[3].x < outer[3].x);
-}
-
-@("ui_raylib.raylib_canvas.doubleBorderEdgesWithoutASideStackInward")
-@safe pure nothrow @nogc
-unittest
-{
-    // A bottom-only double rule has no vertical to centre on: it keeps the
-    // edge a single rule uses, and its second stroke sits above it.
-    const e = doubleBorderEdges(0, 0, 40, 20, Insets(0, 0, 1, 0), unit: 1,
-        inset: 5);
-    assert(e[1] == BorderEdge(0, 19, 40, 1), "the rule keeps its edge");
-    assert(e[5] == BorderEdge(0, 17, 40, 1), "and doubles inward");
-    foreach (i; [0, 2, 3, 4, 6, 7])
-        assert(e[i].empty, "absent sides stay absent in both boxes");
-}
-
-@("ui_raylib.raylib_canvas.borderEdgesMeetAtBoxDrawingCorners")
-@safe pure nothrow @nogc
-unittest
-{
-    // A solid box in a window must read as `┌─┐ │ └─┘`, as it does in a
-    // terminal: each stroke centred in its cell row or column, and each
-    // corner a meeting of two arms, with neither running past the other.
-    enum x = 0.0f, y = 0.0f, w = 130.0f, h = 60.0f; // 13 x 3 cells of 10 x 20
-    foreach (unit; [1.0f, 2.0f]) // light, then heavy
-    {
-        const e = borderEdges(x, y, w, h, Insets.all(1), unit, inset: 5,
-            insetY: 10);
-        // Centred: in the middle of the top/bottom rows, left/right columns.
-        assert(e[0].y + e[0].h / 2 == 10 && e[1].y + e[1].h / 2 == 50);
-        assert(e[2].x + e[2].w / 2 == 5 && e[3].x + e[3].w / 2 == 125);
-        // Meeting: the horizontals end at the verticals' outer faces, and
-        // the verticals at the horizontals' — no arm crosses a corner.
-        assert(e[0].x == e[2].x && e[0].x + e[0].w == e[3].x + e[3].w);
-        assert(e[2].y == e[0].y && e[2].y + e[2].h == e[1].y + e[1].h);
-        assert(e[3].y == e[2].y && e[3].h == e[2].h);
-    }
-
-    // No vertical side (a bottom-only underline) keeps its edge placement.
-    const u = borderEdges(x, y, w, h, Insets(0, 0, 1, 0), 1, inset: 5);
-    assert(u[1] == BorderEdge(0, 59, 130, 1));
-}
-
-@("ui_raylib.raylib_canvas.borderEdgesStayNearTheBoxTheyBorder")
-@safe pure nothrow @nogc
-unittest
-{
-    // The bug, stated as a property: an edge never extends a box-length past
-    // the box. The old vertical pair drew `h` pixels WIDE, so the right edge
-    // started at the box's right and ran another box-height past it — which is
-    // what a reader saw as stray horizontal lines beside every square-cornered
-    // panel. (A vertical stroke MAY straddle the rect edge by half its own
-    // thickness — that is the inset-0 accent geometry — so the bound is the
-    // thickness, not zero.)
-    enum x = 100.0f, y = 40.0f, w = 130.0f, h = 78.0f;
-    foreach (e; borderEdges(x, y, w, h, Insets.all(1)))
-    {
-        assert(e.x >= x - e.w && e.x + e.w <= x + w + e.w,
-            "an edge escaped sideways");
-        assert(e.y >= y && e.y + e.h <= y + h, "an edge escaped vertically");
-    }
-}
-
-@("ui_raylib.raylib_canvas.borderEdgesScaleAndCentreInTheirColumn")
-@safe pure nothrow @nogc
-unittest
-{
-    // The GPU border's two cell-parity rules, as arithmetic: `unit` scales a
-    // side's cell weight into stroke pixels, and a solid vertical stroke
-    // centres `inset` pixels into its border column — where the cell
-    // backends put their `│` and where a glyph-composed corner's stem is.
-    enum x = 0.0f, y = 0.0f, w = 40.0f, h = 20.0f;
-    const e = borderEdges(x, y, w, h, Insets.all(1), unit: 2, inset: 5);
-
-    assert(e[0].h == 2 && e[1].h == 2, "horizontal thickness scales by unit");
-    assert(e[2].w == 2 && e[3].w == 2, "vertical thickness scales by unit");
-    assert(e[2].x + e[2].w / 2 == x + 5, "left centres in its column");
-    assert(e[3].x + e[3].w / 2 == x + w - 5, "right centres in its column");
-
-    // Inset 0 — the dotted/dashed accents — straddles the rect edge instead.
-    const a = borderEdges(x, y, w, h, Insets.all(1), unit: 2);
-    assert(a[2].x + a[2].w / 2 == x && a[3].x + a[3].w / 2 == x + w);
-}
-
-@("ui_raylib.raylib_canvas.borderEdgesRunAlongTheirOwnAxis")
-@safe pure nothrow @nogc
-unittest
-{
-    enum x = 0.0f, y = 0.0f, w = 40.0f, h = 20.0f;
-    const e = borderEdges(x, y, w, h, Insets(1, 2, 3, 4)); // top right bottom left
-
-    // Horizontal edges span the width and are as thick as their own side.
-    assert(e[0] == BorderEdge(0, 0, 40, 1), "top");
-    assert(e[1] == BorderEdge(0, 17, 40, 3), "bottom");
-    // Vertical edges span the HEIGHT and are as thick as their own side. This
-    // is the assertion the swap failed: it produced (0, 0, 20, 4) — a bar four
-    // pixels tall lying across the top of the box. (At inset 0 a vertical
-    // stroke centres ON the rect edge, hence the half-thickness x shift.)
-    assert(e[2] == BorderEdge(-2, 0, 4, 20), "left");
-    assert(e[3] == BorderEdge(39, 0, 2, 20), "right");
-
-    assert(e[0].horizontal && e[1].horizontal);
-    assert(!e[2].horizontal && !e[3].horizontal);
-}
-
-@("ui_raylib.raylib_canvas.borderEdgesDropAbsentSides")
-@safe pure nothrow @nogc
-unittest
-{
-    // A bottom-only rule and a left accent bar are both real decorations
-    // (`hoverUnderline`, the error accent). The sides they do not ask for must
-    // draw nothing rather than a zero-thickness smear.
-    const bottom = borderEdges(0, 0, 40, 20, Insets(0, 0, 1, 0));
-    assert(bottom[0].empty && bottom[2].empty && bottom[3].empty);
-    assert(!bottom[1].empty && bottom[1].horizontal);
-
-    const accent = borderEdges(0, 0, 40, 20, Insets(0, 0, 0, 3));
-    assert(accent[0].empty && accent[1].empty && accent[3].empty);
-    assert(!accent[2].empty && !accent[2].horizontal,
-        "a left accent is a vertical bar, not a horizontal one");
-}
-
-@("ui_raylib.raylib_canvas.borderEdgesOfADegenerateBox")
-@safe pure nothrow @nogc
-unittest
-{
-    // A one-pixel-tall box: no edge strays past its own thickness, and the
-    // verticals are not mistaken for horizontals just because they are short.
-    foreach (e; borderEdges(0, 0, 10, 1, Insets.all(1)))
-    {
-        assert(e.x >= -e.w && e.x + e.w <= 10 + e.w);
-        assert(e.y >= 0 && e.y + e.h <= 1);
-    }
-
-    // Borders wider than the box do not invert it into negative geometry.
-    foreach (e; borderEdges(0, 0, 2, 2, Insets.all(5)))
-        assert(!e.empty || e.w <= 0 || e.h <= 0);
-}
 
 @("uiRaylib.capabilities.aWindowHonoursBoxChrome")
 @safe pure nothrow @nogc
@@ -1619,155 +1015,4 @@ unittest
 
     // Empty stack returns empty rect.
     assert(RaylibCanvas.effectiveClip(null).empty);
-}
-
-/// The device-pixel scissor rectangle a clip resolves to.
-struct ScissorBox
-{
-    int x, y, w, h;
-}
-
-/**
-Turns a clip rect in cells into a device-pixel scissor box, clamped to a
-target `boundW` x `boundH`. Returns `false` when nothing survives.
-
-$(B Extracted because the clamp is where this went wrong.) An axis-only
-viewport (`clipX` without `clipY`) leaves the other axis spanning the whole
-`int` range, so the bound is doing real work rather than tidying edges — and
-the bound must be the size of the target actually being drawn into, which
-inside an `EFX11` bracket is a texture rather than the screen.
-
-The previous version reached for `cast(float) int.max` as an "unbounded"
-sentinel on the axis a render target did not constrain. That value rounds UP
-to 2147483648.0f, and casting it back to `int` on x86 yields `int.min`, so the
-width handed to `glScissor` was negative: `GL_INVALID_VALUE`, no state change,
-and the PREVIOUS scissor — belonging to a different coordinate space — left
-quietly in force. The visible symptom was a bracketed subtree missing a row.
-Integer throughout, and a real bound, is the fix; the tests below are the
-guard.
-*/
-bool scissorBoxOf(in Rect clip, float originX, float originY,
-    int cellW, int cellH, int boundW, int boundH, out ScissorBox box)
-    @safe pure nothrow @nogc
-{
-    if (clip.empty || boundW <= 0 || boundH <= 0)
-        return false;
-
-    static long cl(long v, long lo, long hi)
-        => v < lo ? lo : (v > hi ? hi : v);
-
-    // `long` throughout: a sentinel cell coordinate times a cell size
-    // overflows `int` long before it reaches the clamp.
-    const ox = cast(long) originX, oy = cast(long) originY;
-    const x0 = cl(ox + cast(long) clip.x * cellW, 0, boundW);
-    const y0 = cl(oy + cast(long) clip.y * cellH, 0, boundH);
-    const x1 = cl(ox + (cast(long) clip.x + clip.width) * cellW, 0, boundW);
-    const y1 = cl(oy + (cast(long) clip.y + clip.height) * cellH, 0, boundH);
-    if (x1 <= x0 || y1 <= y0)
-        return false;
-
-    box = ScissorBox(cast(int) x0, cast(int) y0,
-        cast(int)(x1 - x0), cast(int)(y1 - y0));
-    return true;
-}
-
-/// A pushed clip and the sub-cell shift, in pixels, in force when it was
-/// pushed (`LAY7`).
-struct ClipEntry
-{
-    Rect rect;
-    float shiftX = 0;
-    float shiftY = 0;
-}
-
-/// A shift of `cells` (a fraction) as whole device pixels of a `cell`-pixel
-/// cell: rounded, so the glyphs under it rasterise identically at every
-/// offset and the hit test can undo exactly what was painted.
-float shiftPx(float cells, int cell) @safe pure nothrow @nogc
-{
-    const v = cells * cell;
-    return cast(float)(v < 0 ? -cast(long)(-v + 0.5f) : cast(long)(v + 0.5f));
-}
-
-/**
-The device-pixel scissor a stack of clips resolves to: each clip turned into
-pixels at the origin it was pushed under — `baseX`/`baseY` is the origin with
-no shift open, and each entry adds the shift that was — then intersected.
-A clip pushed outside a viewport's shift stays where the viewport is; one
-pushed inside it moves with the content (`LAY7`).
-*/
-bool scissorBoxOfStack(scope const(ClipEntry)[] clips, float baseX, float baseY,
-    int cellW, int cellH, int boundW, int boundH, out ScissorBox box)
-    @safe pure nothrow @nogc
-{
-    if (!clips.length)
-        return false;
-    int x0 = 0, y0 = 0, x1 = int.max, y1 = int.max;
-    foreach (ref const c; clips)
-    {
-        ScissorBox b;
-        if (!scissorBoxOf(c.rect, baseX + c.shiftX, baseY + c.shiftY, cellW, cellH,
-                boundW, boundH, b))
-            return false;
-        x0 = b.x > x0 ? b.x : x0;
-        y0 = b.y > y0 ? b.y : y0;
-        x1 = b.x + b.w < x1 ? b.x + b.w : x1;
-        y1 = b.y + b.h < y1 ? b.y + b.h : y1;
-    }
-    if (x1 <= x0 || y1 <= y0)
-        return false;
-    box = ScissorBox(x0, y0, x1 - x0, y1 - y0);
-    return true;
-}
-
-@("ui_raylib.raylib_canvas.aShiftMovesTheContentNotTheViewportClip")
-@safe pure nothrow @nogc
-unittest
-{
-    // 10×20 px cells. A viewport clip at rows 1..5, then a half-row shift
-    // (−10 px), then a nested clip (a code block) at rows 2..4 of the content.
-    assert(shiftPx(-0.5f, 20) == -10);
-    assert(shiftPx(-0.26f, 20) == -5, "rounded to a whole pixel");
-    ClipEntry[2] stack = [ClipEntry(Rect(0, 1, 30, 4)),
-        ClipEntry(Rect(0, 2, 30, 2), 0, -10)];
-    ScissorBox box;
-    assert(scissorBoxOfStack(stack[0 .. 1], 0, 0, 10, 20, 800, 600, box));
-    assert(box == ScissorBox(0, 20, 300, 80), "the viewport's own clip ignores the shift");
-    assert(scissorBoxOfStack(stack[], 0, 0, 10, 20, 800, 600, box));
-    assert(box == ScissorBox(0, 30, 300, 40), "the nested clip moves with the content");
-    assert(!scissorBoxOfStack(null, 0, 0, 10, 20, 800, 600, box));
-}
-
-@("ui_raylib.raylib_canvas.scissorBoxClampsToTheTargetNotToASentinel")
-@safe pure nothrow @nogc
-unittest
-{
-    ScissorBox box;
-
-    // The ordinary case: a viewport well inside the target.
-    assert(scissorBoxOf(Rect(2, 1, 10, 4), 0, 0, 10, 24, 800, 600, box));
-    assert(box == ScissorBox(20, 24, 100, 96));
-
-    // `LAY7`'s axis-only viewport: one axis spans the whole int range, and
-    // the bound is what makes that expressible at all. The regression this
-    // guards produced a NEGATIVE width here.
-    const wide = Rect(-1_073_741_824, 1, 2_147_483_647, 31);
-    assert(scissorBoxOf(wide, -250, -408, 10, 24, 340, 96, box));
-    assert(box.x >= 0 && box.y >= 0);
-    assert(box.w > 0 && box.h > 0, "a negative extent is GL_INVALID_VALUE");
-    assert(box.x + box.w <= 340 && box.y + box.h <= 96,
-        "never larger than the target being drawn into");
-    assert(box == ScissorBox(0, 0, 340, 96), "the bracket is fully visible");
-
-    // Inside an effect bracket the origin is shifted so the bracket's own
-    // cell lands at the target's (0, 0); a clip that starts above it clamps
-    // rather than going negative.
-    assert(scissorBoxOf(Rect(0, 0, 100, 100), -250, -408, 10, 24, 340, 96, box));
-    assert(box == ScissorBox(0, 0, 340, 96));
-
-    // Fully off the target, and degenerate inputs, report nothing rather
-    // than a box GL would reject.
-    assert(!scissorBoxOf(Rect(100, 100, 2, 2), 0, 0, 10, 24, 340, 96, box));
-    assert(!scissorBoxOf(Rect(0, 0, 0, 0), 0, 0, 10, 24, 340, 96, box));
-    assert(!scissorBoxOf(Rect(0, 0, 4, 4), 0, 0, 10, 24, 0, 0, box));
 }

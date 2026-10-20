@@ -15,6 +15,7 @@ depend on $(D sparkles:ui), never the reverse. See
 module sparkles.ui;
 
 public import sparkles.ui.geometry;
+public import sparkles.ui.pixel_geometry;
 public import sparkles.ui.style;
 public import sparkles.ui.theme;
 public import sparkles.ui.themes;
