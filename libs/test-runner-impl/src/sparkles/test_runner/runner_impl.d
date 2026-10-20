@@ -710,9 +710,9 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     }
     if (!ranLive)
     {
-        import core.sync.mutex : Mutex;
+        import sparkles.base.sync.mutex : Mutex;
 
-        auto mutex = new Mutex;
+        Mutex mutex;
         auto workers = startTestWorkers(runnable, threads, (result) {
             auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
             foreach (thrown; result.thrown)
@@ -725,8 +725,10 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
             else
                 atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
             if (!result.succeeded && !result.skipped)
-                synchronized (mutex)
-                    failures ~= result;
+            {
+                auto held = mutex.guard();
+                failures ~= result;
+            }
         });
         joinTestWorkers(workers);
     }
@@ -1483,15 +1485,15 @@ private void runParallelLive(
     ref shared size_t skipped, ref TestResult[] failures)
 {
     import core.atomic : atomicLoad, atomicOp;
-    import core.sync.mutex : Mutex;
     import core.thread : Thread;
     import core.time : MonoTime, msecs;
     import std.array : appender;
     import std.string : lineSplitter;
+    import sparkles.base.sync.mutex : Mutex;
     import sparkles.ui.components.live : stdoutLiveRegion;
     import sparkles.ui.components.progress : ProgressLine;
 
-    auto mutex = new Mutex;
+    Mutex mutex;
     string[] pendingOutput;
     shared size_t completed;
 
@@ -1500,8 +1502,8 @@ private void runParallelLive(
             auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
             foreach (thrown; result.thrown)
                 output ~= formatThrown(thrown, colored, options.verbose);
-            synchronized (mutex)
             {
+                auto held = mutex.guard();
                 pendingOutput ~= output;
                 if (!result.succeeded && !result.skipped)
                     failures ~= result;
@@ -1526,8 +1528,8 @@ private void runParallelLive(
     void drain()
     {
         string[] drained;
-        synchronized (mutex)
         {
+            auto held = mutex.guard();
             drained = pendingOutput;
             pendingOutput = null;
         }
