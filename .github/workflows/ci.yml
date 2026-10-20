@@ -167,16 +167,18 @@ jobs:
       - name: Hash the generated shaders
         if: matrix.system == 'aarch64-linux'
         run: |
-          out="$(nix build --no-link --print-out-paths .#ui-shaders)"
-          ls -A "$out"
-          nix hash path --type sha256 "$out" | tee "ui-shaders-${{ runner.os }}-${{ runner.arch }}.hash"
+          for p in ui-shaders vulkan-wsi-shaders; do
+            out="$(nix build --no-link --print-out-paths ".#$p")"
+            ls -A "$out"
+            echo "$p $(nix hash path --type sha256 "$out")"
+          done | tee "shaders-${{ runner.os }}-${{ runner.arch }}.hash"
 
       - name: Upload the generated shaders' hash
         if: matrix.system == 'aarch64-linux'
         uses: actions/upload-artifact@v7
         with:
-          name: ui-shaders-${{ runner.os }}-${{ runner.arch }}
-          path: ui-shaders-${{ runner.os }}-${{ runner.arch }}.hash
+          name: shaders-${{ runner.os }}-${{ runner.arch }}
+          path: shaders-${{ runner.os }}-${{ runner.arch }}.hash
 
       - name: Build and test with dub
         if: runner.os != 'Windows'
@@ -233,6 +235,21 @@ jobs:
           export LIBGL_DRIVERS_PATH="$mesa/lib/dri"
           export LD_LIBRARY_PATH="$mesa/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           SPARKLES_GPU_READBACK=1 xvfb-run -a dub test :ui-raylib -- -i shader_readback
+
+      # sparkles:shaders M6: the triangle's D shaders, compiled to SPIR-V by
+      # shader-compile, drawn offscreen by Mesa's software Vulkan driver
+      # (lavapipe) at three aspects, and read back against the host's
+      # evaluation of the same vertex function, with the Khronos validation
+      # layer loaded and no message allowed. Opted into, the test fails rather
+      # than skips when it cannot run.
+      - name: Read back the triangle on a Vulkan driver
+        if: matrix.system == 'x86_64-linux' && matrix.DC == 'ldc2'
+        run: |
+          mesa="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#mesa)"
+          layers="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#vulkan-validation-layers)"
+          export VK_DRIVER_FILES="$mesa/share/vulkan/icd.d/lvp_icd.x86_64.json"
+          export VK_LAYER_PATH="$layers/share/vulkan/explicit_layer.d"
+          SPARKLES_VULKAN_READBACK=1 dub test :vulkan-wsi -- -i triangle_readback
 
       # OS-API research examples (docs/research/.../os-apis). These are multi-file
       # dub packages (ImportC), not single-file, so they are outside `ci
@@ -487,20 +504,22 @@ jobs:
         run: nix run .#run-all-examples
 
       # sparkles:shaders SHT3: the same sources and toolchain must generate the
-      # same GLSL on every platform. Each runner records the content hash of
-      # its `ui-shaders` (names, bytes, modes), and `shader-reproducibility`
-      # compares them.
+      # same GLSL and SPIR-V on every platform. Each runner records the content
+      # hash of its `ui-shaders` and `vulkan-wsi-shaders` (names, bytes, modes),
+      # and `shader-reproducibility` compares them.
       - name: Hash the generated shaders
         run: |
-          out="$(nix build --no-link --print-out-paths .#ui-shaders)"
-          ls -A "$out"
-          nix hash path --type sha256 "$out" | tee "ui-shaders-${{ runner.os }}-${{ runner.arch }}.hash"
+          for p in ui-shaders vulkan-wsi-shaders; do
+            out="$(nix build --no-link --print-out-paths ".#$p")"
+            ls -A "$out"
+            echo "$p $(nix hash path --type sha256 "$out")"
+          done | tee "shaders-${{ runner.os }}-${{ runner.arch }}.hash"
 
       - name: Upload the generated shaders' hash
         uses: actions/upload-artifact@v7
         with:
-          name: ui-shaders-${{ runner.os }}-${{ runner.arch }}
-          path: ui-shaders-${{ runner.os }}-${{ runner.arch }}.hash
+          name: shaders-${{ runner.os }}-${{ runner.arch }}
+          path: shaders-${{ runner.os }}-${{ runner.arch }}.hash
 
   shader-reproducibility:
     name: Generated shaders agree across platforms
@@ -512,15 +531,15 @@ jobs:
       - name: Download every platform's hash
         uses: actions/download-artifact@v8
         with:
-          pattern: ui-shaders-*
+          pattern: shaders-*
           merge-multiple: true
 
       - name: Compare
         run: |
-          for f in ui-shaders-*.hash; do echo "$f: $(cat "$f")"; done
-          hashes=(ui-shaders-*.hash)
+          for f in shaders-*.hash; do echo "$f:"; cat "$f"; done
+          hashes=(shaders-*.hash)
           [ "${#hashes[@]}" -eq 3 ] || { echo "::error::${#hashes[@]} platforms reported, not 3"; exit 1; }
-          [ "$(sort -u ui-shaders-*.hash | wc -l)" -eq 1 ] || { echo "::error::the generated GLSL differs between platforms (SHT3)"; exit 1; }
+          [ "$(for f in shaders-*.hash; do sha256sum < "$f"; done | sort -u | wc -l)" -eq 1 ] || { echo "::error::the generated shaders differ between platforms (SHT3)"; exit 1; }
 
   # The Android APK pipeline (nix/packages/android/): builds `.#all-android`
   # — the repo-embedded hue APK, whose dependency chain covers the entire
