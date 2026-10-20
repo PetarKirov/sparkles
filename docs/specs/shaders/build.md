@@ -31,8 +31,9 @@ once, as a [device configuration](../../glossary.md#device-configuration): a [du
 step **must** use that configuration's import paths, version identifiers and
 flags as `dub describe` reports them, and **must** treat a configuration
 without the flag as a configuration error. The target names the compiler's
-code generator, which every profile uses, and not the SPIR-V version: the
-pinned code generator emits SPIR-V 1.6 for every Vulkan target. The profiles
+code generator, which the OpenGL profiles use; a Vulkan profile is compiled
+for its own Vulkan version (`vulkan-110` for `vulkan1.1`), whose SPIR-V the
+code generator emits: 1.3 for Vulkan 1.1, 1.6 for Vulkan 1.3. The profiles
 come from the unit itself (`SHC4`).
 
 **SHP2: Host flags excluded.** The build step **must** describe the device
@@ -59,7 +60,8 @@ push-constant range from their signatures. One that samples is device-only
 
 **SHP4: Validation.** _(Revised.)_ The SPIR-V compiled for a profile **must**
 pass `spirv-val` under that profile's environment before anything else reads
-it: Vulkan 1.3's rules for `vulkan1.3`, the universal SPIR-V 1.6 rules for
+it: each Vulkan profile's environment's rules (Vulkan 1.3's for `vulkan1.3`,
+Vulkan 1.1's for `vulkan1.1`), the universal SPIR-V 1.6 rules for
 `gl330` and `gles100`. It is then optimised with `spirv-opt -O`, and the
 optimised module and every module written from it **must** pass the
 capability audit ([`SHC9`](./profiles.md)).
@@ -73,8 +75,8 @@ module of a profile, the build step **must** write the files `SHC2` gives
 that profile and the entry point's stage: for `gl330` and `gles100`, the
 entry point translated to GLSL 3.30 and GLSL ES 1.00, in which the combined
 image-sampler the translation introduces carries the name of the `Sampler2D`
-parameter it came from; for `vulkan1.3`, a SPIR-V module holding that entry
-point alone. Unused interface variables are removed.
+parameter it came from; for a Vulkan profile, a SPIR-V module holding that
+entry point alone. Unused interface variables are removed.
 
 _Rationale:_ A consumer binds textures by name, and the name it knows is the
 one written in D. A Vulkan consumer creates one shader module per stage, and

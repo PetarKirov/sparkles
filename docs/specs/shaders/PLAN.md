@@ -433,8 +433,10 @@ otherwise bring later; they come first, in this order.
   `SamplerState` parameters at their own bindings (`SHR7`,
   [`D28`](./decisions.md#d28-samplers-are-resources-of-their-own)), read back on
   lavapipe through a nearest and a linear sampler.
-- **A Vulkan 1.1 profile** (the phone, `UVQ3`, and Q3 here): `vulkan1.1`, emitting
-  SPIR-V 1.3, the version every Vulkan 1.1 device accepts.
+- **A Vulkan 1.1 profile** (the phone, `UVQ3`, and Q3 here). Done: `vulkan1.1`,
+  emitting SPIR-V 1.3, the version every Vulkan 1.1 device accepts
+  ([`D29`](./decisions.md#d29-the-android-floor-is-vulkan-11-as-spir-v-13)); its
+  modules validate for Vulkan 1.1 and read back as `vulkan1.3`'s do.
 
 ## M8: One vector type
 
