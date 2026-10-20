@@ -67,12 +67,14 @@ them. Without one — a test, a cell target — runs measure in cells.
 */
 private ChromeMeasure chromeMeasure;
 private bool haveChromeMeasure;
+private int[6] chromeFaces; // `facesFingerprint` of the published measurer
 
 /// ditto
-void useChromeMeasure(ChromeMeasure m) @safe nothrow @nogc
+void useChromeMeasure(ChromeMeasure m) @safe
 {
     chromeMeasure = m;
     haveChromeMeasure = true;
+    chromeFaces = facesFingerprint();
 }
 
 /// The host's measurer, behind delegates so this module names no backend.
@@ -204,7 +206,7 @@ private struct Placed
 {
     WidgetTree tree;
     int cols, rows;
-    int[2] faces;
+    int[6] faces;
     Frame[] frames;
     HoverTarget[] hits;
 }
@@ -228,9 +230,7 @@ Frame[] cachedChromeLayout(WidgetTree tree, int cols, int rows) @safe
 private void placedLayout(WidgetTree tree, int cols, int rows,
     out Frame[] frames, out HoverTarget[] hits) @safe
 {
-    int[2] faces;
-    if (haveChromeMeasure)
-        faces = [chromeMeasure.width("Mg", TextStyle.init), chromeMeasure.rows(TextStyle.init)];
+    const faces = haveChromeMeasure ? chromeFaces : typeof(chromeFaces).init;
     // The same nodes first: a surface that hands back its last tree must not
     // pay a deep comparison against every other one of the same size.
     static foreach (sameNodes; [true, false])
@@ -247,6 +247,58 @@ private void placedLayout(WidgetTree tree, int cols, int rows,
     hits = hoverTargets(tree, frames);
     placed[placedNext] = Placed(tree, cols, rows, faces, frames, hits);
     placedNext = (placedNext + 1) % placed.length;
+}
+
+// What the measurer answers for each interface role, once per published
+// measurer rather than per layout. A style without a role
+// measures in cells, which no interface face changes; and a run measures in
+// whole cells, so the probe is long enough for a resized face to move it.
+private int[6] facesFingerprint() @safe
+{
+    enum probe = "The quick brown fox jumps over the lazy dog 0123456789";
+    int[6] faces;
+    if (!haveChromeMeasure)
+        return faces;
+    static immutable FontRole[3] roles = [FontRole.ui, FontRole.uiMono, FontRole.docs];
+    foreach (i, role; roles)
+    {
+        const st = TextStyle(fontRole: role, typeStep: TypeStep.body);
+        faces[2 * i] = chromeMeasure.width(probe, st);
+        faces[2 * i + 1] = chromeMeasure.rows(st);
+    }
+    return faces;
+}
+
+@("chrome.place.aResizedInterfaceFaceLaysOutAgain")
+@safe unittest
+{
+    WidgetTree build()
+    {
+        Builder b;
+        const t = b.add(Widget(kind: WidgetKind.text, text: "Settings",
+            textStyle: TextStyle(fontRole: FontRole.ui, typeStep: TypeStep.body)));
+        return b.finish(b.add(Widget(kind: WidgetKind.column, children: [t])));
+    }
+
+    // A host whose interface face draws `perCell` characters a cell.
+    static int perCell = 2;
+    static int width(scope const(char)[] s, in TextStyle st) @safe
+        => st.fontRole == FontRole.ui ? cast(int)(s.length + perCell - 1) / perCell
+            : cast(int) s.length;
+    static int rows(in TextStyle) @safe => 1;
+    import std.functional : toDelegate;
+
+    useChromeMeasure(ChromeMeasure(toDelegate(&width), toDelegate(&rows)));
+    scope (exit) haveChromeMeasure = false;
+
+    auto tree = build();
+    const first = place(tree, 40, 3, 0, 0, 1, 1, Place.top);
+    perCell = 1; // the face grew: the same label takes twice the cells
+    useChromeMeasure(ChromeMeasure(toDelegate(&width), toDelegate(&rows)));
+    const grown = place(tree, 40, 3, 0, 0, 1, 1, Place.top);
+    assert(grown.frames !is first.frames, "a layout measured in the old face is stale");
+    const label = first.tree.nodes[first.tree.root].children[0];
+    assert(grown.frames[label].rect.width == 2 * first.frames[label].rect.width);
 }
 
 @("chrome.place.reusesTheLayoutOfAnUnchangedTree")
