@@ -45,11 +45,11 @@ configuration "gpu-shaders" {
 }
 
 configuration "unittest" {
-    // The block readback's probe module, compiled for the host so the test and
-    // the device read one `Probe` (`tests/block-readback/`).
-    sourcePaths "src" "tests/block-readback/src"
-    importPaths "src" "tests/block-readback/src"
-    versions "VulkanWsiBlockProbe"
+    // The readbacks' probe modules, compiled for the host so the test and the
+    // device read one `Probe` (`tests/readback-probes/`).
+    sourcePaths "src" "tests/readback-probes/src"
+    importPaths "src" "tests/readback-probes/src"
+    versions "VulkanWsiReadbackProbes"
 
     dependency "sparkles:test-runner" path="../.."
 

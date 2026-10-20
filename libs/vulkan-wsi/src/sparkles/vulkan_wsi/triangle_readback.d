@@ -118,12 +118,14 @@ private double insideBy(in Corners c, double[2] p)
 }
 
 /// Compiles the unit of the package at `packageDir` (from the repository's
-/// root) with `shader-compile`, into a fresh directory.
-private string compileUnit(string packageDir)
+/// root) with `shader-compile`, into a fresh directory named after `test`.
+/// The readbacks run concurrently; one at a time builds and runs the tool,
+/// whose temporary build is shared.
+private string compileUnit(string packageDir, string test)
 {
-    const out_ = tempDir.buildPath(format("sparkles-vulkan-readback-%s-%s", thisProcessID,
-        packageDir.baseName));
-    const r = execute(["dub", "run", "-q", "--temp-build",
+    const out_ = tempDir.buildPath(format("sparkles-vulkan-readback-%s-%s", thisProcessID, test));
+    typeof(execute([""])) r;
+    synchronized r = execute(["dub", "run", "-q", "--temp-build",
         "--root=" ~ repoRoot.buildPath("apps", "shader-compile"), "--",
         "--package=" ~ repoRoot.buildPath(packageDir), "--out=" ~ out_, "--quiet"]);
     assert(r.status == 0, "SPARKLES_VULKAN_READBACK=1, but " ~ packageDir ~ " did not compile:\n"
@@ -447,7 +449,7 @@ private string compare(const(ubyte)[] pixels, uint width, uint height)
         return skipTest("a Vulkan readback is opt-in: SPARKLES_VULKAN_READBACK=1, with a driver "
             ~ "(lavapipe) and the validation layer");
 
-    const out_ = compileUnit("libs/vulkan-wsi");
+    const out_ = compileUnit("libs/vulkan-wsi", "triangle");
     scope (exit) out_.rmdirRecurse;
     const vert = moduleOf(out_, __traits(identifier, triangleVertex), "vert");
     const frag = moduleOf(out_, __traits(identifier, triangleFragment), "frag");
@@ -475,7 +477,7 @@ private string compare(const(ubyte)[] pixels, uint width, uint height)
 
 // Only in this package's own unittest build, which compiles the probe module:
 // a dependent's (`sparkles:ui-sdl3`'s) compiles this module without it.
-version (VulkanWsiBlockProbe)
+version (VulkanWsiReadbackProbes)
 @("vulkan_wsi.triangle_readback.aStd140BlockReadsAsWritten")
 @system unittest
 {
@@ -490,7 +492,7 @@ version (VulkanWsiBlockProbe)
     // offsets `layoutOf` gives, reads back field for field. Every value is
     // distinct and away from 0, so a field read at the wrong offset (padding,
     // or a neighbour) is caught.
-    const out_ = compileUnit("libs/vulkan-wsi/tests/block-readback");
+    const out_ = compileUnit("libs/vulkan-wsi/tests/readback-probes", "block");
     scope (exit) out_.rmdirRecurse;
     Probe probe;
     probe.a = v3(0.10f, 0.15f, 0.20f);
@@ -578,6 +580,74 @@ version (VulkanWsiBlockProbe)
     d.device.destroyBuffer(dev, buffer, null);
     d.device.freeMemory(dev, memory, null);
     session.close();
+}
+
+// Only in this package's own unittest build, as above.
+version (VulkanWsiReadbackProbes)
+@("vulkan_wsi.triangle_readback.theFragmentStageAsVulkanDefinesIt")
+@system unittest
+{
+    import fragment_probe : stageDemote, stageDerivatives, stageDiscard, stageFragCoord,
+        stageSize, stageVertex, stageVertexReversed;
+
+    if (environment.get("SPARKLES_VULKAN_READBACK", "") != "1")
+        return skipTest("a Vulkan readback is opt-in: SPARKLES_VULKAN_READBACK=1, with a driver "
+            ~ "(lavapipe) and the validation layer");
+
+    // `SHF8`, M7, on `vulkan1.3`: the window position's origin is the upper
+    // left (`Origin.upperLeft`), so it grows with the row Vulkan copies out first;
+    // a triangle whose clip-space corners run counter-clockwise with y up faces
+    // the viewer under the pipeline's front face, `VK_FRONT_FACE_CLOCKWISE` (Vulkan's
+    // window y points down), and the reverse does not; `discard` writes nothing;
+    // derivatives are one per pixel; and a demoted invocation writes nothing
+    // but keeps its quad's derivatives defined.
+    const out_ = compileUnit("libs/vulkan-wsi/tests/readback-probes", "fragment");
+    scope (exit) out_.rmdirRecurse;
+
+    Session session;
+    session.open();
+    ref VulkanDevice d() @system => session.d;
+
+    string[] failures;
+    void check(string vertex, string fragment, int[] delegate(int x, int row) want)
+    {
+        Pipeline pipeline;
+        auto built = Pipeline.create(pipeline, d, VkFormat.VK_FORMAT_R8G8B8A8_UNORM, null,
+            moduleOf(out_, vertex, "vert"), moduleOf(out_, fragment, "frag"), 0, false, vertex,
+            fragment, 0);
+        assert(!built.hasError, built.error);
+        const pixels = draw(d, pipeline, stageSize, stageSize);
+        pipeline.destroy(d);
+        foreach (row; 0 .. stageSize)
+            foreach (x; 0 .. stageSize)
+            {
+                const at = (row * stageSize + x) * 4;
+                const w = want(x, row);
+                bool differs;
+                foreach (c; 0 .. 4)
+                    differs |= abs(pixels[at + c] - w[c]) > 1;
+                if (differs && failures.length < 20)
+                    failures ~= format("%s with %s: pixel (%s, row %s) is %s, not %s", fragment,
+                        vertex, x, row, pixels[at .. at + 4], w);
+            }
+    }
+
+    int unorm(double v) => cast(int) lround(v * 255);
+    enum string forward = __traits(identifier, stageVertex);
+    enum string reversed = __traits(identifier, stageVertexReversed);
+    // The clear colour is opaque black.
+    check(forward, __traits(identifier, stageFragCoord), (int x, int row) => [
+        unorm((x + 0.5) / stageSize), unorm((row + 0.5) / stageSize), 255, 255]);
+    check(reversed, __traits(identifier, stageFragCoord), (int x, int row) => [
+        unorm((x + 0.5) / stageSize), unorm((row + 0.5) / stageSize), 0, 255]);
+    check(forward, __traits(identifier, stageDiscard),
+        (int x, int row) => x < stageSize / 2 ? [0, 0, 0, 255] : [255, 255, 255, 255]);
+    check(forward, __traits(identifier, stageDerivatives),
+        (int x, int row) => [unorm(0.5), unorm(0.25), unorm(0.1875), 255]);
+    check(forward, __traits(identifier, stageDemote),
+        (int x, int row) => x % 2 ? [0, 0, 0, 255] : [unorm(0.5), 0, 0, 255]);
+    session.close();
+    assert(failures.length == 0, format("%-(%s\n%)", failures));
 }
 
 /// Fails the test unless `r` is `VK_SUCCESS`; the call stays outside any
