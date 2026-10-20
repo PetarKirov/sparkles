@@ -191,16 +191,89 @@ static if (activeProfile.has(Cap.pushConstants))
 The compiler is told the profile's name and what it grants:
 `shader-compile` passes `-capabilities=shader:<capability>,…` from this
 table. The compiler checks each name against its own vocabulary,
-`ldc.dcompute.Capability`, which mirrors `Cap`. It enforces what it knows a
-capability to mean:
+`ldc.dcompute.Capability`, which is `Cap` in a device compilation. It
+enforces what it knows a capability to mean:
 
 - an entry point's stage needs `vertexStage` or `fragmentStage`;
 - an integer vertex input needs `intVertexInputs`;
 - resources lower to blocks when `uniformBlocks` is granted without
-  `looseUniforms`.
+  `looseUniforms`;
+- whatever an entry point reaches needs what it `@requires`.
 
 A violation is an error at the D line. Which profile grants what stays in
 the table, so a new profile needs no compiler change.
+
+### Fragment-stage operations
+
+`sparkles.shaders.fragment` has the fragment stage's operations, named as in
+WGSL:
+
+| Operation                                  | What it does                                            | `gl330` | `gles100` | `vulkan13` |
+| ------------------------------------------ | ------------------------------------------------------- | ------- | --------- | ---------- |
+| `dpdx`, `dpdy`, `fwidth`                   | how fast a value changes per pixel, across the 2×2 quad | yes     | no        | yes        |
+| `dpdxCoarse`, `dpdyCoarse`, `fwidthCoarse` | the same, possibly one value for the quad               | no      | no        | yes        |
+| `dpdxFine`, `dpdyFine`, `fwidthFine`       | the same, per pixel                                     | no      | no        | yes        |
+| `discard()`, `terminate()`                 | stop: write nothing, run nothing more                   | yes     | yes       | yes        |
+| `demote()`                                 | write nothing, but keep the quad's derivatives defined  | no      | no        | yes        |
+
+`discard` is `terminate` everywhere, as GLSL's is. After it, derivatives in
+the quad are undefined; if a later sample or derivative needs them, use
+`demote` and build for Vulkan.
+
+The fragment's position and facing are built-in parameters:
+
+```d
+@fragment vec4 shade(@builtin(Builtin.fragCoord) vec4 position,
+    @builtin(Builtin.frontFacing) bool front, @uniform float height)
+{
+    // y grows up on the OpenGL profiles and down on Vulkan: count rows from
+    // the bottom on both.
+    static if (activeProfile.fragCoordOrigin == Origin.upperLeft)
+        const y = height - position.y;
+    else
+        const y = position.y;
+    return v4(y / height, front ? 1 : 0, 0, 1);
+}
+```
+
+A triangle whose clip-space corners run counter-clockwise (x right, y up) is
+front-facing on every profile, under OpenGL's default front face and
+`sparkles:vulkan-wsi`'s pipelines.
+
+Each operation is marked `@requires(Cap.fragmentStage, …)`. The compiler
+follows the calls from every entry point it emits. When one reaches an
+operation its profile does not grant, it reports the entry point, the
+capability, and the chain of calls, each at its line:
+
+```text
+fx.d(6): Error: entry point `soft` reaches `sparkles.shaders.fragment.fwidth!(__vector(float[2]))`, which requires `derivatives`; the profile `gles100` does not grant it
+fx.d(8):        `fx.soft` calls `fx.edge`
+fx.d(4):        `fx.edge` calls `sparkles.shaders.fragment.fwidth!(__vector(float[2]))`
+```
+
+Fix it by building the entry point for profiles that grant the capability
+(`@profiles(gl330, vulkan13)`), or by selecting another body with
+`static if (activeProfile.has(…))`. A vertex entry point that reaches a
+fragment operation fails the same way, even on Vulkan, which grants both
+stages.
+
+Your own functions can require capabilities too. In the branch where the
+profile lacks one, return `unsupported!c(…)`, so the function still compiles
+for every profile of its unit:
+
+```d
+@requires(Cap.fragmentStage, Cap.derivativeControl)
+vec2 sharpEdge(vec2 uv)
+{
+    static if (activeProfile.has(Cap.derivativeControl))
+        return fwidthFine(uv);
+    else
+        return unsupported!(Cap.derivativeControl)(uv);
+}
+```
+
+On the host (`cpu`), these operations and `unsupported` stop the program
+with a message naming the capability.
 
 ### Uniform blocks, push constants and interface structs
 
