@@ -268,6 +268,11 @@ private enum CommandSet[] deviceSets = [
         "AllocateDescriptorSets",
         "UpdateDescriptorSets",
         "CmdBindDescriptorSets",
+        // A sampled image: its pixels uploaded, and the samplers it is read
+        // through.
+        "CmdCopyBufferToImage",
+        "CreateSampler",
+        "DestroySampler",
     ]),
     CommandSet(khrSwapchain, [
         "CreateSwapchainKHR",
