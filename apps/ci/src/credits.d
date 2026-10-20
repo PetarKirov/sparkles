@@ -274,6 +274,69 @@ private string withoutLineComments(string sdl) @safe pure
         .map!((l) { const c = l.indexOf("//"); return c < 0 ? l : l[0 .. c]; })
         .join("\n");
 
+/**
+The manifest as a build selecting `configurations` sees it: everything outside
+a `configuration` block, and the blocks of those configurations. With none
+selected, the whole manifest — every configuration a build might select.
+*/
+string selectedManifest(string sdl, scope const string[] configurations) @safe
+{
+    if (!configurations.length)
+        return sdl;
+    string kept;
+    size_t at;
+    foreach (m; sdl.matchAll(ctRegex!`configuration "([^"]+)"\s*\{`))
+    {
+        const start = m.pre.length;
+        if (start < at)
+            continue;
+        // The block runs to the brace that closes the one it opens.
+        size_t end = start + m.hit.length;
+        for (int depth = 1; end < sdl.length && depth > 0; ++end)
+            depth += sdl[end] == '{' ? 1 : sdl[end] == '}' ? -1 : 0;
+        kept ~= sdl[at .. start];
+        if (configurations.canFind(m[1]))
+            kept ~= sdl[start .. end];
+        at = end;
+    }
+    return kept ~ sdl[at .. $];
+}
+
+/// The configurations a manifest selects for its `sparkles:*` dependencies
+/// (`subConfiguration "sparkles:<name>" "<configuration>"`), as name pairs.
+string[2][] sparklesSubConfigurations(string sdl) @safe
+{
+    const text = shippedManifest(sdl).withoutLineComments;
+    string[2][] pairs;
+    foreach (m; text.matchAll(ctRegex!`subConfiguration "sparkles:([a-z0-9-]+)" "([^"]+)"`))
+        pairs ~= [m[1], m[2]];
+    return pairs;
+}
+
+@("credits.selectedManifest.keepsTheSelectedConfigurations")
+@safe unittest
+{
+    const sdl = `dependency "sparkles:ui" path="../.."
+configuration "tui" {
+    dependency "sparkles:ui-tui" path="../.."
+}
+configuration "gui-vulkan" {
+    dependency "sparkles:wsi" path="../.."
+    libs "vulkan"
+}
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+}`;
+    assert(sparklesEdges(selectedManifest(sdl, ["tui"])) == ["ui", "ui-tui"]);
+    assert(manifestTokens(selectedManifest(sdl, ["tui"])).length == 0);
+    assert(sparklesEdges(selectedManifest(sdl, null)) == ["ui", "ui-tui", "wsi"],
+        "nothing selected: every configuration a build might pick");
+    assert(sparklesSubConfigurations(`subConfiguration "sparkles:ui-app" "gui"
+configuration "unittest" {
+    subConfiguration "sparkles:ui" "testing"
+}`) == [["ui-app", "gui"]], "the unittest configuration selects nothing that ships");
+}
+
 /// The `sparkles:*` libraries a manifest pulls in: its dependencies and the
 /// sibling sources it includes directly (`../<name>/src`).
 string[] sparklesEdges(string sdl) @safe
@@ -453,28 +516,55 @@ ShippedToken[] scanShipped(scope FileReader read, ref string[] problems) @safe
             foreach (name; dubPackagesIn(text))
                 found ~= ShippedToken("dub:" ~ name, null, selections);
 
-        // The app's `sparkles:*` closure, as buildSparklesApp derives it.
-        string[] seen;
-        string[] frontier = [app.appDir];
-        while (frontier.length)
+        // The app's `sparkles:*` closure, as buildSparklesApp derives it: a
+        // library some manifest in it selects configurations of contributes
+        // only those, one nothing selects every configuration. Selections
+        // narrow the walk, so it repeats until they stop growing.
+        string[][string] chosen;
+        ShippedToken[] closure;
+        for (size_t selected = size_t.max;;)
         {
-            const dir = frontier[0];
-            frontier = frontier[1 .. $];
-            if (seen.canFind(dir))
-                continue;
-            seen ~= dir;
-            const manifest = dir ~ "/dub.sdl";
-            const sdl = read(manifest);
-            if (sdl is null)
+            closure = null;
+            string[] seen;
+            string[] frontier = [app.appDir];
+            while (frontier.length)
             {
-                problems ~= "cannot read " ~ manifest;
-                continue;
+                const dir = frontier[0];
+                frontier = frontier[1 .. $];
+                if (seen.canFind(dir))
+                    continue;
+                seen ~= dir;
+                const manifest = dir ~ "/dub.sdl";
+                const full = read(manifest);
+                if (full is null)
+                {
+                    problems ~= "cannot read " ~ manifest;
+                    continue;
+                }
+                const name = dir.startsWith("libs/") ? dir["libs/".length .. $] : null;
+                const sdl = selectedManifest(full, chosen.get(name, null));
+                foreach (t; manifestTokens(sdl))
+                    closure ~= ShippedToken(t, app.name, manifest);
+                foreach (lib; sparklesEdges(sdl))
+                    frontier ~= "libs/" ~ lib;
+                foreach (pair; sparklesSubConfigurations(sdl))
+                {
+                    auto configs = pair[0] in chosen;
+                    if (configs is null)
+                        chosen[pair[0]] = [pair[1]];
+                    else if (!(*configs).canFind(pair[1]))
+                        *configs ~= pair[1];
+                }
             }
-            foreach (t; manifestTokens(sdl))
-                found ~= ShippedToken(t, app.name, manifest);
-            foreach (lib; sparklesEdges(sdl))
-                frontier ~= "libs/" ~ lib;
+            // A selection added this pass changes what it would have read.
+            size_t now;
+            foreach (configs; chosen)
+                now += configs.length;
+            if (now == selected)
+                break;
+            selected = now;
         }
+        found ~= closure;
 
         foreach (builder; app.apkBuilders ~ app.nixBuilders)
         {
