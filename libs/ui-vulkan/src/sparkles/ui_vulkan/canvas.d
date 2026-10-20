@@ -431,6 +431,19 @@ struct VulkanCanvas(B)
         device_ = null;
     }
 
+    /**
+    Binds the image registry handles resolve against (`IMG3`), which must
+    outlive the canvas. The images cached from the previous one are released:
+    a handle names an image only within its registry.
+    */
+    void images(const(ImageRegistry)* registry) @system
+    {
+        if (registry is registry_)
+            return;
+        releaseCaches();
+        registry_ = registry;
+    }
+
     /// Whether the device was lost (`UVK33`).
     bool lost() const => lost_;
 
