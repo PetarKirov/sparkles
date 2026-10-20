@@ -615,6 +615,33 @@ GLSL. Code that needs one origin on every profile branches on it. A shader
 that uses derivatives builds for `gl330` and `vulkan1.3` and not `gles100`,
 until an ES 3.00 profile exists (M12).
 
+### D28: Samplers are resources of their own
+
+**Question.** Every image was read through one shared sampler, but a
+consumer reads glyph atlases with nearest filtering and images with linear
+filtering in one entry point (the Vulkan canvas's `UVQ4`). How does a shader
+name the sampler an image is read through?
+
+**Alternatives.**
+
+- `SamplerState` parameters, each a descriptor at its binding, named at the
+  sample: `atlas.sample(nearest, uv)`.
+- A sampler description on the image, `@sampler(Filter.nearest) Sampler2D`,
+  lowered to an immutable sampler or texture parameters the host applies.
+
+**Choice.** `SamplerState` parameters and fields; `image.sample(uv)` keeps the
+shared sampler at binding 0 (`SHR7`).
+
+**Why.** It is SPIR-V's own model and HLSL's, WGSL's and Slang's: an image
+and a sampler are separate objects, combined at the sample. An image may be
+read through several samplers, and sampler state stays the host's, out of
+the shader's ABI. Existing shaders read through the shared sampler
+unchanged.
+
+**Trade-offs.** OpenGL has no separate samplers: the translation gives each
+(image, sampler) pair a sampler uniform, so an image read through two
+samplers is two uniforms the host binds the texture to twice (`SHR8`).
+
 ## Open questions
 
 | ID  | Question                                                                                                                                                                                       | Affects | Decision point               |
