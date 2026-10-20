@@ -531,6 +531,49 @@ If it is declined, the fallback is the wrapper named after `T`, with `SHR5`
 and `SHR8` amended. A `T` used both as a block and as a plain value needs
 the two types kept apart, which the explicit-layout type already does.
 
+### D26: The compiler is granted capabilities, not profiles
+
+**Question.** The compiler knew a profile only by its name (`SHC1`), so
+everything it had to decide from a profile's capabilities reached it as a
+flag of its own: how resources lower (`-mdcompute-resources`), and, next,
+whether an integer vertex input is allowed (`SHF5`) and which stages are
+(`SHF7`). Each new capability check would add one. Where should the
+compiler learn what a compilation may use?
+
+**Alternatives.**
+
+- Keep one derived flag per need.
+- Move the whole table into the compiler's druntime (`ldc.dcompute`), read
+  at compile time, so the compiler selects the profile itself.
+- Keep the table in the library and grant each compilation its profile's
+  capabilities as one list, checked against a vocabulary the compiler
+  recognises.
+
+**Choice.** The last. The build step passes the profile's name and its
+grants, closed under the implications:
+`-capabilities=shader:<capability>,…`. The compiler checks the names against
+`ldc.dcompute.Capability`, which a device compilation asserts names the
+same capabilities as `Cap`, and derives what it enforces: the resources'
+lowering (`SHR3`–`SHR5`), the stages (`SHF7`), integer vertex inputs
+(`SHF5`), and later the requirements of `SHC7` and `SHC8`. The option is
+generic in its domain (`shader:`), so a CPU feature floor or an OS API
+level can be granted the same way. `-mdcompute-report-int64` stays a mode
+of its own: it is a diagnostic, not a capability.
+
+**Why.** One option replaces a flag per check, and every check is made by
+the compiler, at the D line. Which profile grants what stays policy the
+library owns and can change without a compiler release, while M7–M12
+change the table often. A small, policy-free interface is also what can be
+proposed upstream.
+
+**Trade-offs.** The vocabulary exists twice, the library's `Cap` and the
+compiler's `Capability`, kept in step by an assertion; a new capability
+changes both. A compiler invoked directly must be given the grants, or it
+checks nothing. Code that runs above a compilation's floor behind a runtime
+test (a CPU feature, an OS version) needs the compiler to know which test
+grants what to the code it guards: a flow-sensitive check, recorded as
+issue #667 and not part of this design.
+
 ## Open questions
 
 | ID  | Question                                                                                                                                                                                       | Affects | Decision point               |
