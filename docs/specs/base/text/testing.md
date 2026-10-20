@@ -276,6 +276,17 @@ mandatory breaks versus opportunities, including empty/end input, CRLF, apostrop
 Hebrew contexts, numeric contexts, and Unicode 18 dash/GL updates. Default results
 must not depend on terminal width or a selected dictionary.
 
+**A01b — boundaries from any position (TXT-SEG7–9).** For every row of the
+pinned GraphemeBreakTest and WordBreakTest, and for generated sources mixing
+regional-indicator runs, ZWJ emoji sequences, Indic conjuncts, CR LF and
+malformed bytes, compute the whole-source boundary set once; then, at every
+offset, assert that the next and previous queries name the neighbouring
+members of that set, and that segment kinds and blank-delimited runs match a
+classification computed from the whole-source segments. Repeat over every
+partition of each source into chunks of one to four bytes. A deliberately
+broken backward query that resumes at the nearest offset without
+resynchronising must fail the regional-indicator rows.
+
 **A02 — normalization (TXT-NORM1/2).** Execute every NormalizationTest row for all
 four forms, independently assert canonical ordering/composition exclusion/Hangul,
 and normalize a starter plus a nonstarter run longer than workspace. Capacity exactly
