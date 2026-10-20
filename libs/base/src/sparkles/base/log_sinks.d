@@ -17,10 +17,10 @@ is what survives a crash ([RotatingFileCoreLogger]). Writing to either is
 module sparkles.base.log_sinks;
 
 import core.stdc.stdio : FILE;
-import core.sync.mutex : Mutex;
 
 import sparkles.base.logger : coreGlobalLogLevel, CoreLogEntry, CoreLogger,
     ForwardingCoreLogger, LogLevel, sharedCoreLog;
+import sparkles.base.sync.mutex : Mutex;
 
 /**
 One entry as the ring hands it to a reader. `message` is borrowed from the
@@ -113,7 +113,6 @@ final class RingCoreLogger : ForwardingCoreLogger
         slots = new Slot[capacity];
         arena = new char[textBytes];
         _entryBytes = entryBytes;
-        mutex = new Mutex;
     }
 
     /// The most entries the ring holds.
@@ -125,24 +124,21 @@ final class RingCoreLogger : ForwardingCoreLogger
     /// The entries held now.
     size_t length() @safe nothrow @nogc
     {
-        mutex.lock_nothrow();
-        scope (exit) mutex.unlock_nothrow();
+        auto held = mutex.guard();
         return cast(size_t)(head - tail);
     }
 
     /// Entries overwritten to make room — the count since construction.
     ulong dropped() @safe nothrow @nogc
     {
-        mutex.lock_nothrow();
-        scope (exit) mutex.unlock_nothrow();
+        auto held = mutex.guard();
         return dropCount;
     }
 
     /// Entries ever written; the next entry's `seq`.
     ulong total() @safe nothrow @nogc
     {
-        mutex.lock_nothrow();
-        scope (exit) mutex.unlock_nothrow();
+        auto held = mutex.guard();
         return head;
     }
 
@@ -153,8 +149,7 @@ final class RingCoreLogger : ForwardingCoreLogger
     */
     void each(Fun)(scope Fun fun, ulong fromSeq = 0)
     {
-        mutex.lock_nothrow();
-        scope (exit) mutex.unlock_nothrow();
+        auto held = mutex.guard();
         for (ulong seq = fromSeq > tail ? fromSeq : tail; seq < head; ++seq)
         {
             const s = slots[cast(size_t)(seq % slots.length)];
@@ -191,8 +186,7 @@ final class RingCoreLogger : ForwardingCoreLogger
         const truncated = message.length > _entryBytes;
         const text = truncated ? message[0 .. utf8Floor(message, _entryBytes)] : message;
 
-        mutex.lock_nothrow();
-        scope (exit) mutex.unlock_nothrow();
+        auto held = mutex.guard();
 
         // A message never wraps: one that would cross the arena's end starts
         // at the beginning instead (the skipped tail is dead space).
@@ -285,7 +279,6 @@ final class RotatingFileCoreLogger : ForwardingCoreLogger
         pathz = path ~ '\0';
         rotatedz = path ~ ".1\0";
         this.maxBytes = maxBytes;
-        mutex = new Mutex;
 
         try
             mkdirRecurse(path.dirName);
@@ -309,8 +302,7 @@ final class RotatingFileCoreLogger : ForwardingCoreLogger
     /// Whether the sink still writes (`false` once a failure disabled it).
     bool active() @safe nothrow @nogc
     {
-        mutex.lock_nothrow();
-        scope (exit) mutex.unlock_nothrow();
+        auto held = mutex.guard();
         return file !is null;
     }
 
@@ -337,8 +329,7 @@ final class RotatingFileCoreLogger : ForwardingCoreLogger
     /// Closes the file; from here on the sink only forwards.
     void close() @safe nothrow @nogc
     {
-        mutex.lock_nothrow();
-        scope (exit) mutex.unlock_nothrow();
+        auto held = mutex.guard();
         closeFile();
     }
 
@@ -365,8 +356,7 @@ final class RotatingFileCoreLogger : ForwardingCoreLogger
         static immutable string tail = " […]\n";
         const lineBytes = prefix.length + text.length + (truncated ? tail.length : 1);
 
-        mutex.lock_nothrow();
-        scope (exit) mutex.unlock_nothrow();
+        auto held = mutex.guard();
         if (file is null)
             return true;
         if (size > 0 && size + lineBytes > maxBytes)
@@ -390,8 +380,7 @@ final class RotatingFileCoreLogger : ForwardingCoreLogger
         import sparkles.base.logger : warning;
 
         {
-            mutex.lock_nothrow();
-            scope (exit) mutex.unlock_nothrow();
+            auto held = mutex.guard();
             if (failed)
                 return;
             failed = true;
