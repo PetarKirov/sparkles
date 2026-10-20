@@ -149,7 +149,7 @@ side of a program, the _device_ the GPU side.
 
 | Page                                  | Holds                                                                          | IDs                           |
 | ------------------------------------- | ------------------------------------------------------------------------------ | ----------------------------- |
-| [Vocabulary](./vocabulary.md)         | vector types, constructors, component access, built-in functions, agreement    | `SHV1`–`SHV10`                |
+| [Vocabulary](./vocabulary.md)         | vector types, constructors, component access, built-in functions, agreement    | `SHV1`–`SHV11`                |
 | [Device modules](./device-modules.md) | which modules are shader code; the device compilation's rules                  | `SHM1`–`SHM6`                 |
 | [Entry points](./entry-points.md)     | stages, parameters, built-in variables, outputs, linking stages, handles       | `SHF1`–`SHF9`                 |
 | [Resources](./resources.md)           | uniforms, blocks, push constants, images, interface structs, layout, bindings  | `SHR1`–`SHR8`                 |

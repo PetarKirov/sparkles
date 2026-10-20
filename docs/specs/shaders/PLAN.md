@@ -24,7 +24,7 @@ evidence ledger live in [`testing.md`](./testing.md).
 | [M5 Further platforms](#m5-further-device-platforms)                        | not started |
 | [Stage 0 (revision)](#stage-0-revision-the-full-language-scope)             | done        |
 | [M6 Profiles and the Vulkan triangle](#m6-profiles-and-the-vulkan-triangle) | done        |
-| [M7 Capability inference](#m7-capability-inference-and-stage-operations)    | not started |
+| [M7 Capability inference](#m7-capability-inference-and-stage-operations)    | done        |
 | [M8 One vector type](#m8-one-vector-type)                                   | not started |
 | [M9 Vocabulary breadth](#m9-vocabulary-breadth)                             | not started |
 | [M10 Compute and storage](#m10-compute-and-storage)                         | not started |
@@ -387,7 +387,41 @@ defined as one of them per profile, as [Concepts](../../research/shading-languag
 separates them; the fragment built-ins `fragCoord` and `frontFacing`, with
 their origin and winding stated per profile.
 
+**Deliverable.** `@requires` and `unsupported` in the compiler, checked from
+every emitted entry point through the call graph; `sparkles.shaders.fragment`
+(`SHV11`); `fragCoord` and `frontFacing` (`SHF8`); each profile's grants of
+them (`SHC2`) and its origin. The design choices are
+[`D27`](./decisions.md#d27-the-fragment-stages-operations-are-free-functions).
+
+**Gate.**
+
+- Every M7 row of the ledger `verified`.
+- The effects of `sparkles:ui`, built by the M7 toolchain, generate GLSL
+  byte-identical to M6's.
+- Each operation and built-in, read back on a GL driver for `gl330` and
+  `gles100` and on lavapipe for `vulkan1.3`, shows its meaning at every pixel
+  of the target, with no validation message; each readback fails when its
+  expected origin, facing or demoted columns are flipped.
+
 **Entry condition.** M6.
+
+**Progress (2026-10-20).** Done. Every M7 row of the
+[evidence ledger](./testing.md#evidence-ledger) is `verified`, the effects'
+GLSL is byte-identical to M6's, and the readbacks show each operation's
+meaning on all three profiles and fail when their expectations are flipped.
+
+- **What the readbacks pinned.** The window position's origin is the lower
+  left on both GL profiles and the upper left on Vulkan. The same clip-space
+  triangle is front-facing under OpenGL's default front face and under the
+  `VK_FRONT_FACE_CLOCKWISE` of `sparkles:vulkan-wsi`'s pipelines. A demoted
+  fragment's quad neighbour still reads a fine derivative of one.
+- **Two changes beyond the obligations.**
+  - An entry point is granted, of the stages, only its own (`SHC8`): the
+    profile grants both stages on Vulkan, and a vertex entry point must not
+    reach a derivative.
+  - `sparkles:vulkan-wsi` enables Vulkan 1.3's `shaderTerminateInvocation`
+    and `shaderDemoteToHelperInvocation`, which every 1.3 device supports, so
+    that a module using `discard` or `demote` is valid on it.
 
 ## M8: One vector type
 
