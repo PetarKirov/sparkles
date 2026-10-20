@@ -188,6 +188,20 @@ static if (activeProfile.has(Cap.pushConstants))
     // …
 ```
 
+The compiler is told the profile's name and what it grants:
+`shader-compile` passes `-capabilities=shader:<capability>,…` from this
+table. The compiler checks each name against its own vocabulary,
+`ldc.dcompute.Capability`, which mirrors `Cap`. It enforces what it knows a
+capability to mean:
+
+- an entry point's stage needs `vertexStage` or `fragmentStage`;
+- an integer vertex input needs `intVertexInputs`;
+- resources lower to blocks when `uniformBlocks` is granted without
+  `looseUniforms`.
+
+A violation is an error at the D line. Which profile grants what stays in
+the table, so a new profile needs no compiler change.
+
 ### Uniform blocks, push constants and interface structs
 
 One declaration of a resource serves every profile; the compiler lowers it
