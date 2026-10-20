@@ -27,6 +27,9 @@
 #define VK_USE_PLATFORM_XCB_KHR
 #endif
 
+// Keep shared system callback types unannotated across ImportC modules.
+#include <stdint.h>
+
 // `nothrow @nogc` is accurate for the whole surface: these are C entry points
 // reached through function pointers; they neither allocate via the D GC nor
 // throw D exceptions. `pure` is deliberately omitted — Vulkan calls mutate

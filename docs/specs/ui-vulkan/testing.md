@@ -147,16 +147,16 @@ On lavapipe, reading the target back, at two cell sizes and two densities.
 
 ## Evidence ledger
 
-| Requirement                       | Evidence                                                                                | Status      |
-| --------------------------------- | --------------------------------------------------------------------------------------- | ----------- |
-| `VKM1`–`VKM13`                    | memory scenarios 1–11                                                                   | not started |
-| `UVK1`                            | a compile-time check that the canvas satisfies `isCanvas` and has every optional method | not started |
-| `UVK2`–`UVK4`, `UVK30`            | canvas scenarios 9, 20                                                                  | not started |
-| `UVK5`–`UVK8`                     | canvas scenarios 1, 2, 6–8, 19                                                          | not started |
-| `UVK9`–`UVK14`                    | canvas scenarios 1–5                                                                    | not started |
-| `UVK15`–`UVK17`                   | canvas scenario 14                                                                      | not started |
-| `UVK18`–`UVK21`                   | canvas scenario 21; glyph scenarios, refined before V3                                  | not started |
-| `UVK22`                           | planned with the font library's first-frame budget                                      | not started |
-| `UVK23`–`UVK25`, `UVK29`          | canvas scenarios 10–12, 21                                                              | not started |
-| `UVK26`–`UVK28`, `UVK31`, `UVK32` | canvas scenarios 10, 13, 15, 18                                                         | not started |
-| `UVK33`, `UVK34`                  | canvas scenarios 16, 17                                                                 | not started |
+| Requirement                       | Evidence                                                                                                     | Status                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `VKM1`–`VKM13`                    | memory scenarios 1–11 in `sparkles.vulkan.memory`, against the fake device; each fails on a broken allocator | partial: no real driver until the staging readback |
+| `UVK1`                            | a compile-time check that the canvas satisfies `isCanvas` and has every optional method                      | not started                                        |
+| `UVK2`–`UVK4`, `UVK30`            | canvas scenarios 9, 20                                                                                       | not started                                        |
+| `UVK5`–`UVK8`                     | canvas scenarios 1, 2, 6–8, 19                                                                               | not started                                        |
+| `UVK9`–`UVK14`                    | canvas scenarios 1–5                                                                                         | not started                                        |
+| `UVK15`–`UVK17`                   | canvas scenario 14                                                                                           | not started                                        |
+| `UVK18`–`UVK21`                   | canvas scenario 21; glyph scenarios, refined before V3                                                       | not started                                        |
+| `UVK22`                           | planned with the font library's first-frame budget                                                           | not started                                        |
+| `UVK23`–`UVK25`, `UVK29`          | canvas scenarios 10–12, 21                                                                                   | not started                                        |
+| `UVK26`–`UVK28`, `UVK31`, `UVK32` | canvas scenarios 10, 13, 15, 18                                                                              | not started                                        |
+| `UVK33`, `UVK34`                  | canvas scenarios 16, 17                                                                                      | not started                                        |
