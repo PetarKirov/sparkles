@@ -260,6 +260,14 @@ private enum CommandSet[] deviceSets = [
         "MapMemory",
         "UnmapMemory",
         "CmdCopyImageToBuffer",
+        // A uniform buffer bound through a descriptor set.
+        "CreateDescriptorSetLayout",
+        "DestroyDescriptorSetLayout",
+        "CreateDescriptorPool",
+        "DestroyDescriptorPool",
+        "AllocateDescriptorSets",
+        "UpdateDescriptorSets",
+        "CmdBindDescriptorSets",
     ]),
     CommandSet(khrSwapchain, [
         "CreateSwapchainKHR",
