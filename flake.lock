@@ -16,11 +16,11 @@
         "wasm-component-ld": "wasm-component-ld"
       },
       "locked": {
-        "lastModified": 1792487129,
-        "narHash": "sha256-0Mc2aRWeGedsjCgcu3dB0WQPpkqmBvYEfvj6YNylWak=",
+        "lastModified": 1792508870,
+        "narHash": "sha256-evVuS3Ced7uFR2TkumkHXk8ufANhwhLJZgqn3FRelwA=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "81c0eb3777b5b350a5514a4cd944fc913c6b49d8",
+        "rev": "ae1e9e9700be83fdec4f5709749932fbb8b9d93b",
         "type": "github"
       },
       "original": {

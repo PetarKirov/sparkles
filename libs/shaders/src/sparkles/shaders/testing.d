@@ -234,3 +234,60 @@ import sparkles.shaders.types;
     // On the host `vec3` is a struct; it is still a vector, not a block.
     static assert(!__traits(compiles, layoutOf!(vec3, Rule.std140)));
 }
+
+@("shaders.capabilities.stageOperationsPerProfile")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.shaders.capabilities : Cap, cpu, gl330, gles100, Origin, vulkan13;
+
+    // `SHC2`: derivatives on `gl330` and `vulkan1.3`, not on ES 2.0's core;
+    // coarse and fine ones (which imply the plain ones) and demotion on
+    // `vulkan1.3` only; the host has no fragment stage, so none of them.
+    assert(gl330.has(Cap.derivatives) && !gl330.has(Cap.derivativeControl) && !gl330.has(Cap.demote));
+    assert(!gles100.has(Cap.derivatives) && !gles100.has(Cap.demote));
+    assert(vulkan13.has(Cap.derivatives) && vulkan13.has(Cap.derivativeControl)
+        && vulkan13.has(Cap.demote));
+    assert(!cpu.has(Cap.derivatives) && !cpu.has(Cap.demote));
+
+    // `SHF8`: where each profile's fragment positions start.
+    assert(gl330.fragCoordOrigin == Origin.lowerLeft && gles100.fragCoordOrigin == Origin.lowerLeft);
+    assert(vulkan13.fragCoordOrigin == Origin.upperLeft && cpu.fragCoordOrigin == Origin.none);
+}
+
+@("shaders.fragment.theHostIsNotGrantedTheFragmentStage")
+@system unittest
+{
+    import core.exception : AssertError;
+    import std.algorithm : canFind;
+    import std.exception : collectException;
+    import sparkles.shaders.fragment : demote, discard, dpdx, dpdxFine, fwidth;
+
+    // Outside a device compilation the active profile is `cpu`, which grants
+    // no fragment stage until the reference executor (`SHX`): an operation
+    // of the stage stops the program, naming what is missing.
+    static bool fails(string capability)(void delegate() @system f)
+    {
+        auto e = collectException!AssertError(f());
+        return e !is null && e.msg.canFind("`" ~ capability ~ "` is not granted by the profile `cpu`");
+    }
+
+    assert(fails!"derivatives"({ cast(void) dpdx(1.0f); }));
+    assert(fails!"derivatives"({ cast(void) fwidth(v2(1, 2)); }));
+    assert(fails!"derivativeControl"({ cast(void) dpdxFine(v4(1)); }));
+    assert(fails!"fragmentStage"({ discard(); }));
+    assert(fails!"demote"({ demote(); }));
+}
+
+@("shaders.attributes.requiresIsAPlainAttribute")
+@safe pure nothrow unittest
+{
+    import sparkles.shaders.capabilities : _requires, Cap, requires;
+
+    // `SHV8`: outside a device compilation `@requires` records its
+    // capabilities and checks nothing; a host calls the function.
+    @requires(Cap.fragmentStage, Cap.derivatives) static float slope(float v) => v * 2;
+    enum attributes = __traits(getAttributes, slope);
+    static assert(attributes.length == 1 && is(typeof(attributes[0]) == _requires));
+    static assert(attributes[0].capabilities == [Cap.fragmentStage, Cap.derivatives]);
+    assert(slope(2) == 4);
+}

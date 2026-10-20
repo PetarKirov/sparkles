@@ -57,6 +57,8 @@ else
         vertexIndex = 0,   /// the vertex's index: an `int` vertex input
         instanceIndex = 1, /// the instance's index: an `int` vertex input
         position = 2,      /// the clip-space position: a `vec4` vertex output
+        fragCoord = 3,     /// the fragment's window position: a `vec4` fragment input
+        frontFacing = 4,   /// whether the primitive faces the viewer: a `bool` fragment input
     }
 
     /// Marks a parameter, or a field of a `@vertex` result, as a built-in

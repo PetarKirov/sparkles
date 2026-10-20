@@ -952,8 +952,10 @@ unittest
 {
     assert(profileFlags(vulkan13) == ["-mdcompute-profile=vulkan1.3",
         "-capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,"
-        ~ "sampledImages,intVertexInputs"]);
+        ~ "sampledImages,intVertexInputs,derivatives,derivativeControl,demote"]);
     assert(profileFlags(gl330) == ["-mdcompute-profile=gl330",
+        "-capabilities=shader:shader,fragmentStage,looseUniforms,sampledImages,derivatives"]);
+    assert(profileFlags(gles100) == ["-mdcompute-profile=gles100",
         "-capabilities=shader:shader,fragmentStage,looseUniforms,sampledImages"]);
 }
 
