@@ -830,6 +830,12 @@ struct TerminalView
         ghostty_render_state_row_cells_free(s.cells);
         ghostty_render_state_row_iterator_free(s.row_iter);
         ghostty_render_state_free(s.render_state);
+        // The second state a sub-row scroll paints the row above from.
+        if (aboveState !is null)
+        {
+            ghostty_render_state_free(aboveState);
+            aboveState = null;
+        }
         ghostty_key_event_free(s.key_event);
         ghostty_key_encoder_free(s.key_encoder);
         ghostty_mouse_event_free(s.mouse_event);
@@ -2867,6 +2873,28 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     tv.pump(); // anything written just before the exit
     const text = tv.screenText();
     assert(text.canFind("-probe|/|from-env"), text);
+}
+
+@("terminal_view.component.closeFreesTheRowAboveState")
+@system unittest
+{
+    import core.sys.posix.fcntl : O_NOCTTY, O_RDWR, open;
+    import core.sys.posix.unistd : close;
+    import sparkles.terminal_view.protocol_oracle : openTestPty;
+
+    char[128] slavePath = 0;
+    const master = openTestPty(slavePath);
+    const slave = open(slavePath.ptr, O_RDWR | O_NOCTTY);
+    assert(slave >= 0);
+    scope (exit) close(slave);
+
+    TerminalView tv;
+    tv.opts = TerminalViewOptions(adoptMaster: master, exitBehavior: ExitBehavior.hold);
+    assert(tv.openCore(40, 4, 0, 0));
+    // What `paintRowAbove` allocates on a pane's first sub-row scroll.
+    ghostty_render_state_new(null, &tv.aboveState);
+    tv.close();
+    assert(tv.aboveState is null, "a closed pane keeps no native render state");
 }
 
 @("terminal_view.component.anAdoptedPtyEndsWhenItsSlaveCloses")
