@@ -489,14 +489,16 @@ struct Pipeline
     drawing three vertices with no buffers. The modules' entry points are
     `vertEntry` and `fragEntry`; they may declare `pushConstantBytes` of push
     constants, for `pushStages`, and the fragment stage a boolean
-    specialization constant 0, set to `srgbTarget`.
+    specialization constant 0, set to `srgbTarget`. A `setLayout` is the
+    layout of descriptor set 0, for shaders that bind resources.
     */
     static Expected!(void, string) create(Context)(out Pipeline p, ref Context vk,
         VkFormat colorFormat, VkRenderPass renderPass,
         immutable(uint)[] vertCode, immutable(uint)[] fragCode,
         uint pushConstantBytes = 0, bool srgbTarget = false,
         string vertEntry = "main", string fragEntry = "main",
-        VkShaderStageFlags pushStages = VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT) @system
+        VkShaderStageFlags pushStages = VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT,
+        VkDescriptorSetLayout setLayout = null) @system
     {
         p.pushConstantStages = pushStages;
         VkShaderModule vert, frag;
@@ -595,6 +597,8 @@ struct Pipeline
         auto pushRange = VkPushConstantRange(
             stageFlags: pushStages, offset: 0, size: pushConstantBytes);
         auto layoutInfo = vkInfo(VkPipelineLayoutCreateInfo(
+            setLayoutCount: setLayout is null ? 0 : 1,
+            pSetLayouts: &setLayout,
             pushConstantRangeCount: pushConstantBytes == 0 ? 0 : 1,
             pPushConstantRanges: &pushRange,
         ));
