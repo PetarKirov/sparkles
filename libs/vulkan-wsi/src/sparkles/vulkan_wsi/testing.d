@@ -56,23 +56,17 @@ struct HeadlessSession
 {
     VulkanDevice device;          ///
     ValidationMessages messages;  ///
-    private VkDebugUtilsMessengerEXT messenger_;
 
     @disable this(this);
 
     /**
     Opens the device at `apiVersion`; asserts that it came up with the
-    validation layer. The layer's messages about creating the instance and
-    the device go to the console, not to the count.
+    validation layer. The messenger is made as soon as the instance exists,
+    so the layer's messages about choosing and creating the device count
+    too; only those about creating the instance go to the console.
     */
     void open(string applicationName, uint apiVersion = apiVersion13) @system
     {
-        auto made = VulkanDevice.createHeadless(device, ContextRequest(
-            applicationName: applicationName, apiVersion: apiVersion, validation: true));
-        assert(!made.hasError, "SPARKLES_VULKAN_READBACK=1, but no headless Vulkan device: "
-            ~ made.error.diagnostic[].idup);
-        assert(device.validationEnabled && device.debugUtils,
-            "SPARKLES_VULKAN_READBACK=1, but the validation layer did not load (VK_LAYER_PATH?)");
         auto info = vkInfo(VkDebugUtilsMessengerCreateInfoEXT(
             messageSeverity: VkDebugUtilsMessageSeverityFlagBitsEXT.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
                 | VkDebugUtilsMessageSeverityFlagBitsEXT.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
@@ -80,18 +74,22 @@ struct HeadlessSession
             pfnUserCallback: &sparklesVulkanWsiTestingOnMessage,
             pUserData: &messages,
         ));
-        succeeded(device.instance.createDebugUtilsMessengerEXT(device.instance.instance, &info,
-            null, &messenger_));
+        auto made = VulkanDevice.createHeadless(device, ContextRequest(
+            applicationName: applicationName, apiVersion: apiVersion, validation: true,
+            messenger: &info));
+        assert(!made.hasError, "SPARKLES_VULKAN_READBACK=1, but no headless Vulkan device: "
+            ~ made.error.diagnostic[].idup);
+        assert(device.validationEnabled && device.debugUtils,
+            "SPARKLES_VULKAN_READBACK=1, but the validation layer did not load (VK_LAYER_PATH?)");
     }
 
     /**
-    Destroys the device, then the messenger, and asserts the layer reported
-    nothing. Release everything made on the device first.
+    Destroys the device, the messenger still listening, and asserts the
+    layer reported nothing. Release everything made on the device first.
     */
     void close() @system
     {
         device.releaseDevice();
-        device.instance.destroyDebugUtilsMessengerEXT(device.instance.instance, messenger_, null);
         assert(messages.count == 0, format("the validation layer reported %s message(s), the first: %s",
             messages.count, messages.first[0 .. messages.firstLength]));
     }

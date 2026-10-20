@@ -334,6 +334,11 @@ enum string khrSurface = "VK_KHR_surface";
 enum string khrSwapchain = "VK_KHR_swapchain";
 /// ditto
 enum string khrDynamicRendering = "VK_KHR_dynamic_rendering";
+/// ditto — what `VK_KHR_dynamic_rendering` needs beside it below 1.2, with
+/// the `VK_KHR_create_renderpass2` that one needs in turn
+enum string khrDepthStencilResolve = "VK_KHR_depth_stencil_resolve";
+/// ditto
+enum string khrCreateRenderpass2 = "VK_KHR_create_renderpass2";
 /// ditto
 enum string khrImagelessFramebuffer = "VK_KHR_imageless_framebuffer";
 /// ditto — what `VK_KHR_imageless_framebuffer` needs beside it below 1.2
@@ -467,6 +472,10 @@ struct DeviceCommands
         VK_KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME));
     static assert(matchesHeaderMacro(khrImageFormatList,
         VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrDepthStencilResolve,
+        VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrCreateRenderpass2,
+        VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME));
     version (Android)
         static assert(matchesHeaderMacro(khrAndroidSurface,
             VK_KHR_ANDROID_SURFACE_EXTENSION_NAME));
