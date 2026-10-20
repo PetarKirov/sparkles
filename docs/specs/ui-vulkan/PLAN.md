@@ -17,7 +17,7 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 
 | Slice                                                             | State       |
 | ----------------------------------------------------------------- | ----------- |
-| [V0 Specification](#v0-specification)                             | in progress |
+| [V0 Specification](#v0-specification)                             | done        |
 | [V1 Device memory and resources](#v1-device-memory-and-resources) | not started |
 | [V2 The canvas](#v2-the-canvas)                                   | not started |
 | [V3 Glyphs](#v3-glyphs)                                           | not started |
@@ -31,15 +31,15 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 Three slices wait on work other plans own: V2, V3 and V7. The rest can
 start at once.
 
-| Slice | Waits on                                                                                                                                                       |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| V1    | nothing                                                                                                                                                        |
-| V2    | the shaders revision's first Vulkan slice: the vertex stage, vertex inputs, push constants ([UVX4](./decisions.md#uvx4-shaders-in-d-through-sparkles-shaders)) |
-| V3    | `sparkles:font` MS S1–S3 in memory; the serialized parts of S4 wait on `sparkles:wired`'s flat format and BLAKE3                                               |
-| V4    | nothing; it presents a cleared target until V2                                                                                                                 |
-| V5    | nothing; the raylib terminal keeps drawing through the new seams                                                                                               |
-| V6    | V2–V5                                                                                                                                                          |
-| V7    | V6; a Vulkan 1.1 shader profile ([UVQ3](./decisions.md#open-questions))                                                                                        |
+| Slice | Waits on                                                                                                                                            |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V1    | nothing                                                                                                                                             |
+| V2    | more than one sampler per entry point in `sparkles:shaders` ([UVQ4](./decisions.md#open-questions)); the shaders plan's M6 it also needs has landed |
+| V3    | `sparkles:font` MS S1–S3 in memory; the serialized parts of S4 wait on `sparkles:wired`'s flat format and BLAKE3                                    |
+| V4    | nothing; it presents a cleared target until V2                                                                                                      |
+| V5    | nothing; the raylib terminal keeps drawing through the new seams                                                                                    |
+| V6    | V2–V5                                                                                                                                               |
+| V7    | V6; a Vulkan 1.1 shader profile ([UVQ3](./decisions.md#open-questions))                                                                             |
 
 The work ships in three pull requests: V0–V2 (rendering), V3–V4 (text and
 the host), V5–V7 (the terminal and the phone).
@@ -63,8 +63,12 @@ review's findings are dispositioned; `ci --check-docs-sidebar`,
 
 - `sparkles.vulkan.memory`: the sub-allocator of [memory.md](../vulkan/memory.md),
   shaped by `std.experimental.allocator`'s protocol ([UVX3](./decisions.md#uvx3-an-allocator-shaped-by-std-experimental-allocator)).
-- Dispatch for the buffer, image, image-view, sampler, descriptor and copy
-  commands the canvas needs.
+- Dispatch for the buffer, image, image-view, sampler and copy commands the
+  canvas needs, beside the descriptor-set commands `sparkles:vulkan` already
+  dispatches.
+- `sparkles:vulkan-wsi`'s device creation enabling `VK_KHR_dynamic_rendering`
+  on a device below Vulkan 1.3 that offers it, whatever version was
+  requested ([UVX10](./decisions.md#uvx10-dynamic-rendering-where-offered-a-render-pass-elsewhere)).
 - Buffers and images bound through the allocator, a staging path that records
   copies before a frame's rendering, and a frame arena per frame slot.
 
@@ -77,7 +81,8 @@ staging path and reads it back byte-identical.
 
 **Obligations.** `UVK1`–`UVK17`, `UVK23`–`UVK34`.
 
-**Prerequisites.** V1; the shaders revision's first Vulkan slice.
+**Prerequisites.** V1; more than one sampler per entry point in
+`sparkles:shaders` ([UVQ4](./decisions.md#open-questions)).
 
 **Deliverable.**
 
@@ -87,7 +92,7 @@ staging path and reads it back byte-identical.
   every operation but text, offscreen rendering for tests.
 - Text operations draw nothing and count as `glyphMiss` until V3.
 
-**Gate.** Canvas scenarios 1–17 of [testing.md](./testing.md#canvas-scenarios)
+**Gate.** Canvas scenarios 1–17, 19 and 20 of [testing.md](./testing.md#canvas-scenarios)
 pass on lavapipe, each shown to fail on its deliberately broken variant.
 `sparkles:ui`'s test suite passes with the moved geometry, and the raylib
 canvas renders the gallery pages byte-identical to before the move.
@@ -105,7 +110,7 @@ shapes, clusters that need it count as `unshapedCluster` (`UVK19`).
 coverage and colour atlas pages, regions uploaded before the frame's pass,
 glyph instances placed by `UVK21`.
 
-**Gate.** Glyph scenarios against the font library's own rasterization (the
+**Gate.** Canvas scenario 21; glyph scenarios against the font library's own rasterization (the
 cache's bitmaps, read back after the round trip through the atlas); the
 gallery's text pages within the glyph tolerance of the raylib canvas.
 

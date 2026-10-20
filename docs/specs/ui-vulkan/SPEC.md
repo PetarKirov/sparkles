@@ -124,8 +124,9 @@ so the immediate interpreter hands it every operation.
 **UVK2: Devices.** A canvas **must** be creatable on any device that has a
 graphics queue and a shader profile of `sparkles:shaders` for its Vulkan
 version. It **must** render with dynamic rendering where the device offers
-it, and otherwise through a render pass and framebuffers it owns per target
-format and view. Creation on any other device **must** fail with
+it, through Vulkan 1.3 or `VK_KHR_dynamic_rendering`, and otherwise through a
+render pass it owns per target format, with framebuffers per target view or,
+where the device offers them, imageless framebuffers. Creation on any other device **must** fail with
 `unsupported`.
 
 **UVK3: Frame bracket.** `beginFrame(target, commands, slot, metrics,
@@ -158,13 +159,16 @@ _Rationale:_ Batching by bound image or kind would reorder overlapping
 operations; reordering is what makes renderers disagree with the reference
 canvas on popups and tooltips.
 
-**UVK6: Blending.** Every operation **must** composite as premultiplied
-source over destination, `out = src + dst·(1 − α_src)`. The shaders
-premultiply straight colours and image texels; colour glyphs arrive
-premultiplied. On a `UNORM` target, blending happens in the stored encoding.
+**UVK6: Blending.** A canvas **must** be created with a blend space. In the
+`gamma` space, every operation **must** composite as premultiplied source
+over destination, `out = src + dst·(1 − α_src)`, in the target's stored
+encoding: the shaders premultiply straight colours and image texels, and
+colour glyphs arrive premultiplied. Creating a canvas with any other blend
+space **must** fail with `unsupported`.
 
 _Rationale:_ The toolkit's colours are authored for, and compared against,
-gamma-space blending ([UVX6](./decisions.md#uvx6-blend-in-the-stored-encoding)).
+gamma-space blending; a host chooses the space so that linear light can be
+added without changing the interface ([UVX6](./decisions.md#uvx6-a-blend-space-the-host-chooses-gamma-first)).
 
 **UVK7: sRGB targets.** On an `sRGB` target, the canvas **must** decode its
 colours to linear before output, so an opaque pixel stores the same value as
@@ -249,7 +253,7 @@ says. `measure` **must** return cell widths, as the reference canvas does.
 
 **UVK21: Placement.** A glyph **must** be drawn with its bitmap's origin at
 the pen position plus its bearing, rounded to whole pixels, sampled one
-texel per pixel.
+texel per pixel through a nearest-filtering sampler.
 
 **UVK22: Misses.** _Status: planned._ The policy for a glyph the cache cannot
 supply in time is decided with the font library's first-frame budget. Until
@@ -263,8 +267,8 @@ its `(handle, generation)`: once when first drawn, and again only after its
 upload was released (`UVK32`) or the device was rebuilt.
 
 **UVK24: Placement.** An image **must** be placed by `fitRect`, clipped to
-its rectangle for `cover`, and its texels multiplied by the operation's
-foreground alpha.
+its rectangle for `cover`, sampled through a linear-filtering sampler, and
+its texels multiplied by the operation's foreground alpha.
 
 **UVK25: Limits.** An image larger than the device's maximum 2-D image
 extent **must** draw the reference canvas's placeholder and count as
