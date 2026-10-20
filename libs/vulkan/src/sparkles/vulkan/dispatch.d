@@ -179,6 +179,12 @@ private enum CommandSet[] instanceSets = [
         "GetPhysicalDeviceSurfaceFormatsKHR",
         "GetPhysicalDeviceSurfacePresentModesKHR",
     ]),
+    // The validation layer's messages, for a caller that counts them (a
+    // readback test) rather than reads them on the console.
+    CommandSet(extDebugUtils, [
+        "CreateDebugUtilsMessengerEXT",
+        "DestroyDebugUtilsMessengerEXT",
+    ]),
 ] ~ platformInstanceSets;
 
 /// Device-level commands: the queue, frame synchronisation, and the swapchain.
@@ -239,6 +245,21 @@ private enum CommandSet[] deviceSets = [
         "CmdSetScissor",
         "CmdPushConstants",
         "CmdDraw",
+        // An offscreen image and its readback: what a test renders into and
+        // copies out, where a window would present.
+        "CreateImage",
+        "DestroyImage",
+        "GetImageMemoryRequirements",
+        "BindImageMemory",
+        "CreateBuffer",
+        "DestroyBuffer",
+        "GetBufferMemoryRequirements",
+        "BindBufferMemory",
+        "AllocateMemory",
+        "FreeMemory",
+        "MapMemory",
+        "UnmapMemory",
+        "CmdCopyImageToBuffer",
     ]),
     CommandSet(khrSwapchain, [
         "CreateSwapchainKHR",
@@ -285,6 +306,8 @@ enum string khrSurface = "VK_KHR_surface";
 enum string khrSwapchain = "VK_KHR_swapchain";
 /// ditto
 enum string khrDynamicRendering = "VK_KHR_dynamic_rendering";
+/// ditto
+enum string extDebugUtils = "VK_EXT_debug_utils";
 /// ditto — not an extension name, a `has` key for the 1.3 core aliases.
 enum string vkVersion13 = "VK_VERSION_1_3";
 /// Native instance-surface extension names, available on their target only.
