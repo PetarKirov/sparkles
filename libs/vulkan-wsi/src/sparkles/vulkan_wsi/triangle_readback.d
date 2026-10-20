@@ -650,6 +650,224 @@ version (VulkanWsiReadbackProbes)
     assert(failures.length == 0, format("%-(%s\n%)", failures));
 }
 
+/// A `width`×`height` RGBA8 image holding `pixels`, ready to be sampled.
+private struct SampledImage
+{
+    VkImage image;
+    VkDeviceMemory memory;
+    VkImageView view;
+
+    void destroy(ref VulkanDevice d) @system
+    {
+        auto dev = d.device.device;
+        d.device.destroyImageView(dev, view, null);
+        d.device.destroyImage(dev, image, null);
+        d.device.freeMemory(dev, memory, null);
+    }
+}
+
+private SampledImage sampledImage(ref VulkanDevice d, uint width, uint height,
+    in ubyte[] pixels) @system
+{
+    enum format_ = VkFormat.VK_FORMAT_R8G8B8A8_UNORM;
+    auto dev = d.device.device;
+    SampledImage r;
+    auto imageInfo = vkInfo(VkImageCreateInfo(
+        imageType: VkImageType.VK_IMAGE_TYPE_2D,
+        format: format_,
+        extent: VkExtent3D(width, height, 1),
+        mipLevels: 1,
+        arrayLayers: 1,
+        samples: VkSampleCountFlagBits.VK_SAMPLE_COUNT_1_BIT,
+        tiling: VkImageTiling.VK_IMAGE_TILING_OPTIMAL,
+        usage: VkImageUsageFlagBits.VK_IMAGE_USAGE_SAMPLED_BIT
+            | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        initialLayout: VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED,
+    ));
+    succeeded(d.device.createImage(dev, &imageInfo, null, &r.image));
+    VkMemoryRequirements needs;
+    d.device.getImageMemoryRequirements(dev, r.image, &needs);
+    auto alloc = vkInfo(VkMemoryAllocateInfo(allocationSize: needs.size,
+        memoryTypeIndex: memoryType(d, needs.memoryTypeBits, 0)));
+    succeeded(d.device.allocateMemory(dev, &alloc, null, &r.memory));
+    succeeded(d.device.bindImageMemory(dev, r.image, r.memory, 0));
+    auto viewInfo = vkInfo(VkImageViewCreateInfo(
+        image: r.image,
+        viewType: VkImageViewType.VK_IMAGE_VIEW_TYPE_2D,
+        format: format_,
+        subresourceRange: VkImageSubresourceRange(
+            aspectMask: VkImageAspectFlagBits.VK_IMAGE_ASPECT_COLOR_BIT,
+            levelCount: 1,
+            layerCount: 1,
+        ),
+    ));
+    succeeded(d.device.createImageView(dev, &viewInfo, null, &r.view));
+
+    // The pixels, through a staging buffer.
+    VkBuffer staging;
+    VkDeviceMemory stagingMemory;
+    hostBuffer(d, pixels.length, VkBufferUsageFlagBits.VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging,
+        stagingMemory);
+    scope (exit)
+    {
+        d.device.destroyBuffer(dev, staging, null);
+        d.device.freeMemory(dev, stagingMemory, null);
+    }
+    void* mapped;
+    succeeded(d.device.mapMemory(dev, stagingMemory, 0, pixels.length, 0, &mapped));
+    (cast(ubyte*) mapped)[0 .. pixels.length] = pixels[];
+    d.device.unmapMemory(dev, stagingMemory);
+
+    CommandPool pool;
+    const pooled = CommandPool.create(pool, d, 1);
+    assert(!pooled.hasError, pooled.error);
+    scope (exit) pool.destroy(d);
+    auto begun = pool.begin(d, 0);
+    assert(!begun.hasError);
+    auto cmd = begun.value;
+    transition(d, cmd, r.image, VkImageLayout.VK_IMAGE_LAYOUT_UNDEFINED,
+        VkImageLayout.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+        VkAccessFlagBits.VK_ACCESS_TRANSFER_WRITE_BIT,
+        VkPipelineStageFlagBits.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VkPipelineStageFlagBits.VK_PIPELINE_STAGE_TRANSFER_BIT);
+    auto region = VkBufferImageCopy(
+        imageSubresource: VkImageSubresourceLayers(
+            aspectMask: VkImageAspectFlagBits.VK_IMAGE_ASPECT_COLOR_BIT,
+            layerCount: 1,
+        ),
+        imageExtent: VkExtent3D(width, height, 1),
+    );
+    d.device.cmdCopyBufferToImage(cmd, staging, r.image,
+        VkImageLayout.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+    transition(d, cmd, r.image, VkImageLayout.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        VkImageLayout.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        VkAccessFlagBits.VK_ACCESS_TRANSFER_WRITE_BIT, VkAccessFlagBits.VK_ACCESS_SHADER_READ_BIT,
+        VkPipelineStageFlagBits.VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VkPipelineStageFlagBits.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    const ended = pool.end(d, 0);
+    assert(!ended.hasError);
+    VkFence fence;
+    auto fenceInfo = vkInfo(VkFenceCreateInfo());
+    succeeded(d.device.createFence(dev, &fenceInfo, null, &fence));
+    scope (exit) d.device.destroyFence(dev, fence, null);
+    auto submit = vkInfo(VkSubmitInfo(commandBufferCount: 1, pCommandBuffers: &cmd));
+    succeeded(d.device.queueSubmit(d.queue, 1, &submit, fence));
+    succeeded(d.device.waitForFences(dev, 1, &fence, VK_TRUE, ulong.max));
+    return r;
+}
+
+// Only in this package's own unittest build, as above.
+version (VulkanWsiReadbackProbes)
+@("vulkan_wsi.triangle_readback.eachImageReadsThroughTheSamplerItNames")
+@system unittest
+{
+    import fragment_probe : stageVertex;
+
+    if (environment.get("SPARKLES_VULKAN_READBACK", "") != "1")
+        return skipTest("a Vulkan readback is opt-in: SPARKLES_VULKAN_READBACK=1, with a driver "
+            ~ "(lavapipe) and the validation layer");
+
+    // `SHR7`: an entry point's `SamplerState` parameters are samplers of their
+    // own, each at its binding. One 2×1 image, black then white, read through
+    // a nearest and a linear sampler (both clamping to the edge) across 8
+    // columns: nearest gives black on the left half and white on the right;
+    // linear blends between the texel centres, at u = 1/4 and 3/4.
+    const out_ = compileUnit("libs/vulkan-wsi/tests/readback-probes", "samplers");
+    scope (exit) out_.rmdirRecurse;
+
+    Session session;
+    session.open();
+    ref VulkanDevice d() @system => session.d;
+    auto dev = d.device.device;
+
+    immutable ubyte[8] ramp = [0, 0, 0, 255, 255, 255, 255, 255];
+    auto image = sampledImage(d, 2, 1, ramp[]);
+    VkSampler[2] samplers;
+    foreach (i, filter; [VkFilter.VK_FILTER_NEAREST, VkFilter.VK_FILTER_LINEAR])
+    {
+        auto info = vkInfo(VkSamplerCreateInfo(
+            magFilter: filter,
+            minFilter: filter,
+            mipmapMode: VkSamplerMipmapMode.VK_SAMPLER_MIPMAP_MODE_NEAREST,
+            addressModeU: VkSamplerAddressMode.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            addressModeV: VkSamplerAddressMode.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            addressModeW: VkSamplerAddressMode.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+            maxLod: 0,
+        ));
+        succeeded(d.device.createSampler(dev, &info, null, &samplers[i]));
+    }
+
+    // The image at 1, `nearest` at 2, `linear` at 3 (`sampler_probe`). The
+    // shared sampler's 0 is unused, so the layout leaves it out.
+    // The arrays of Vulkan structs below are filled element by element: a
+    // static array of them initialised from a literal leaves DMD's unittest
+    // build an undefined `RTInfoImpl` (as `Pipeline.create`'s stages note).
+    enum fragmentBit = VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding[3] layoutBindings;
+    foreach (i, type; [VkDescriptorType.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+            VkDescriptorType.VK_DESCRIPTOR_TYPE_SAMPLER, VkDescriptorType.VK_DESCRIPTOR_TYPE_SAMPLER])
+        layoutBindings[i] = VkDescriptorSetLayoutBinding(binding: cast(uint) i + 1,
+            descriptorType: type, descriptorCount: 1, stageFlags: fragmentBit);
+    auto layoutInfo = vkInfo(VkDescriptorSetLayoutCreateInfo(bindingCount: 3,
+        pBindings: layoutBindings.ptr));
+    VkDescriptorSetLayout setLayout;
+    succeeded(d.device.createDescriptorSetLayout(dev, &layoutInfo, null, &setLayout));
+    VkDescriptorPoolSize[2] poolSizes;
+    poolSizes[0] = VkDescriptorPoolSize(VkDescriptorType.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1);
+    poolSizes[1] = VkDescriptorPoolSize(VkDescriptorType.VK_DESCRIPTOR_TYPE_SAMPLER, 2);
+    auto poolInfo = vkInfo(VkDescriptorPoolCreateInfo(maxSets: 1, poolSizeCount: 2,
+        pPoolSizes: poolSizes.ptr));
+    VkDescriptorPool pool;
+    succeeded(d.device.createDescriptorPool(dev, &poolInfo, null, &pool));
+    auto allocInfo = vkInfo(VkDescriptorSetAllocateInfo(descriptorPool: pool,
+        descriptorSetCount: 1, pSetLayouts: &setLayout));
+    VkDescriptorSet set;
+    succeeded(d.device.allocateDescriptorSets(dev, &allocInfo, &set));
+    auto imageInfo = VkDescriptorImageInfo(imageView: image.view,
+        imageLayout: VkImageLayout.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    VkDescriptorImageInfo[2] samplerInfos;
+    samplerInfos[0] = VkDescriptorImageInfo(sampler: samplers[0]);
+    samplerInfos[1] = VkDescriptorImageInfo(sampler: samplers[1]);
+    VkWriteDescriptorSet[3] writes;
+    writes[0] = vkInfo(VkWriteDescriptorSet(dstSet: set, dstBinding: 1, descriptorCount: 1,
+        descriptorType: VkDescriptorType.VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, pImageInfo: &imageInfo));
+    foreach (i; 0 .. 2)
+        writes[i + 1] = vkInfo(VkWriteDescriptorSet(dstSet: set, dstBinding: cast(uint) i + 2,
+            descriptorCount: 1, descriptorType: VkDescriptorType.VK_DESCRIPTOR_TYPE_SAMPLER,
+            pImageInfo: &samplerInfos[i]));
+    d.device.updateDescriptorSets(dev, 3, writes.ptr, 0, null);
+
+    Pipeline pipeline;
+    enum string vertex = __traits(identifier, stageVertex);
+    auto built = Pipeline.create(pipeline, d, VkFormat.VK_FORMAT_R8G8B8A8_UNORM, null,
+        moduleOf(out_, vertex, "vert"), moduleOf(out_, "stageSamplers", "frag"), 0, false, vertex,
+        "stageSamplers", 0, setLayout);
+    assert(!built.hasError, built.error);
+    const pixels = draw(d, pipeline, 8, 1, set);
+    pipeline.destroy(d);
+
+    string[] failures;
+    foreach (x; 0 .. 8)
+    {
+        const u = (x + 0.5) / 8;
+        const nearest = u < 0.5 ? 0 : 255;
+        double t = u * 2 - 0.5;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const linear = cast(int) lround(t * 255);
+        if (abs(pixels[x * 4] - nearest) > 1 || abs(pixels[x * 4 + 1] - linear) > 1)
+            failures ~= format("column %s: nearest %s, linear %s; expected %s and %s", x,
+                pixels[x * 4], pixels[x * 4 + 1], nearest, linear);
+    }
+
+    d.device.destroyDescriptorPool(dev, pool, null);
+    d.device.destroyDescriptorSetLayout(dev, setLayout, null);
+    foreach (s; samplers)
+        d.device.destroySampler(dev, s, null);
+    image.destroy(d);
+    session.close();
+    assert(failures.length == 0, format("%-(%s\n%)", failures));
+}
+
 /// Fails the test unless `r` is `VK_SUCCESS`; the call stays outside any
 /// `assert`, which a `-release` build would delete with it.
 private void succeeded(VkResult r, string call = __FUNCTION__, size_t line = __LINE__)
