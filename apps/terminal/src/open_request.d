@@ -17,9 +17,9 @@ module open_request;
 
 version (Posix):
 
-import core.sync.mutex : Mutex;
 import core.time : msecs, MonoTime;
 
+import sparkles.base.sync.mutex : Mutex;
 import sparkles.doc_view.kind : ViewKind, viewKindOf;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -123,16 +123,10 @@ private shared OpenRequest[] queued;
 private shared Answer[] answers;
 private shared uint lastId;
 
-shared static this()
-{
-    queueLock = new shared Mutex;
-}
-
 /// Queues `path` for the frame; the id to wait on.
 uint enqueueOpen(string path, int pid) @trusted
 {
-    queueLock.lock();
-    scope (exit) queueLock.unlock();
+    auto held = queueLock.guard();
     import core.atomic : atomicOp;
 
     const id = atomicOp!"+="(lastId, 1);
@@ -143,8 +137,7 @@ uint enqueueOpen(string path, int pid) @trusted
 /// The requests queued since the last call (the frame's side).
 OpenRequest[] takeOpenRequests() @trusted
 {
-    queueLock.lock();
-    scope (exit) queueLock.unlock();
+    auto held = queueLock.guard();
     auto r = cast(OpenRequest[]) queued;
     queued = null;
     return r;
@@ -153,8 +146,7 @@ OpenRequest[] takeOpenRequests() @trusted
 /// The frame's answer to request `id`: opened, or why not.
 void answerOpen(uint id, bool ok, string message) @trusted
 {
-    queueLock.lock();
-    scope (exit) queueLock.unlock();
+    auto held = queueLock.guard();
     answers ~= cast(shared) Answer(id, ok, message);
 }
 
@@ -172,8 +164,7 @@ bool awaitOpen(uint id, out string message, int timeoutMs = 3000) @trusted
     while (MonoTime.currTime < until)
     {
         {
-            queueLock.lock();
-            scope (exit) queueLock.unlock();
+            auto held = queueLock.guard();
             foreach (i, a; cast(Answer[]) answers)
                 if (a.id == id)
                 {
