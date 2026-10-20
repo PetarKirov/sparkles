@@ -54,12 +54,13 @@ produces it.
 (used in `@profiles`) and a name (used on the command line, in the manifest
 and in diagnostics). The table **must** define at least:
 
-| Identifier | Name        | Output                                       | Stages           | Files written per entry point          |
-| ---------- | ----------- | -------------------------------------------- | ---------------- | -------------------------------------- |
-| `gl330`    | `gl330`     | GLSL 3.30, translated by SPIRV-Cross         | fragment         | `<entry>.frag`                         |
-| `gles100`  | `gles100`   | GLSL ES 1.00, translated by SPIRV-Cross      | fragment         | `<entry>.es.frag`                      |
-| `vulkan13` | `vulkan1.3` | SPIR-V 1.6 for Vulkan 1.3, validated as such | vertex, fragment | `<entry>.vert.spv`, `<entry>.frag.spv` |
-| `cpu`      | `cpu`       | the host compilation (no device output)      | —                | —                                      |
+| Identifier | Name        | Output                                       | Stages           | Files written per entry point                    |
+| ---------- | ----------- | -------------------------------------------- | ---------------- | ------------------------------------------------ |
+| `gl330`    | `gl330`     | GLSL 3.30, translated by SPIRV-Cross         | fragment         | `<entry>.frag`                                   |
+| `gles100`  | `gles100`   | GLSL ES 1.00, translated by SPIRV-Cross      | fragment         | `<entry>.es.frag`                                |
+| `vulkan13` | `vulkan1.3` | SPIR-V 1.6 for Vulkan 1.3, validated as such | vertex, fragment | `<entry>.vert.spv`, `<entry>.frag.spv`           |
+| `vulkan11` | `vulkan1.1` | SPIR-V 1.3 for Vulkan 1.1, validated as such | vertex, fragment | `<entry>.vk11.vert.spv`, `<entry>.vk11.frag.spv` |
+| `cpu`      | `cpu`       | the host compilation (no device output)      | —                | —                                                |
 
 A profile's capabilities say what its output can declare, and so how each
 resource kind is lowered for it ([`SHR3`–`SHR5`](./resources.md)): `gl330`
@@ -70,13 +71,15 @@ each output can say: `gl330` grants `derivatives` and not
 `derivativeControl`, which needs OpenGL 4.5; `gles100` grants neither, as
 OpenGL ES 2.0 offers derivatives only as an extension; `vulkan1.3` grants
 both, `derivativeControl` implying `derivatives`, and `demote`, which no GL
-profile can express. Each profile also states where its fragments' window
+profile can express. `vulkan1.1` grants what `vulkan1.3` grants but `demote`,
+which SPIR-V 1.3 has only as an extension
+([`D29`](./decisions.md#d29-the-android-floor-is-vulkan-11-as-spir-v-13)). Each profile also states where its fragments' window
 positions start (`SHF8`). Every device profile of the slice grants `vertexStage` or
 `fragmentStage` as its stages column says, and `sampledImages`; `vulkan1.3`
-also grants `intVertexInputs`. `cpu` grants `looseUniforms`, `uniformBlocks`,
+and `vulkan1.1` also grant `intVertexInputs`. `cpu` grants `looseUniforms`, `uniformBlocks`,
 `pushConstants` and `int64`, and no stage, no `sampledImages` and none of the fragment stage's
-operations until the executor brings them (`SHX3`). `vulkan1.3`
-denies `int64`: Vulkan grants 64-bit integers only with a device feature the
+operations until the executor brings them (`SHX3`). Both Vulkan profiles
+deny `int64`: Vulkan grants 64-bit integers only with a device feature the
 first consumer does not enable. A capability set **must** be a subset of what
 the output can express and its validator accepts.
 

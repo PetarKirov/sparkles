@@ -642,10 +642,34 @@ unchanged.
 (image, sampler) pair a sampler uniform, so an image read through two
 samplers is two uniforms the host binds the texture to twice (`SHR8`).
 
+### D29: The Android floor is Vulkan 1.1, as SPIR-V 1.3
+
+**Question.** (Q3, and the phone terminal's `UVQ3`.) `VP_ANDROID_baseline_2022`
+guarantees Vulkan 1.1, which consumes SPIR-V up to 1.3, and the only Vulkan
+profile emitted SPIR-V 1.6. Which profile serves the Android floor?
+
+**Alternatives.**
+
+- `vulkan1.1`, emitting SPIR-V 1.3, which every Vulkan 1.1 device accepts.
+- SPIR-V 1.4 through `VK_KHR_spirv_1_4`, which the reference phone offers but
+  the baseline does not guarantee.
+
+**Choice.** `vulkan1.1`: SPIR-V 1.3, validated for Vulkan 1.1, granting what
+`vulkan1.3` grants but `demote`; its files carry the version
+(`<entry>.vk11.frag.spv`), so one unit builds both. The compiler emits the SPIR-V
+a Vulkan target consumes, and LLVM's logical SPIR-V target accepts the
+Vulkan 1.0 and 1.1 triples (a patch, proposed upstream with the rest).
+
+**Why.** The floor is what every device of the baseline accepts, not what one
+phone offers. Terminate lowers to `OpKill` before 1.6, which means the same;
+demote needs an extension at 1.3, so the profile does not grant it.
+
+**Trade-offs.** A second Vulkan output per entry point, where a unit asks
+for both. A 1.4 profile can follow if something needs what 1.4 adds.
+
 ## Open questions
 
-| ID  | Question                                                                                                                                                                                       | Affects | Decision point               |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------- |
-| Q1  | Which further platforms get a device toolchain, and how? Windows needs LLVM and LDC cross-built for MSVC, or built natively, and published as an archive.                                      | `SHT4`  | A consumer needing it (M5)   |
-| Q2  | Does the output variable keep the name `finalColor`, a convention of one OpenGL framework, when the fragment stage is proposed upstream?                                                       | `SHF3`  | Upstreaming the stage        |
-| Q3  | Which Vulkan profile serves the Android floor? `VP_ANDROID_baseline_2022` guarantees Vulkan 1.1, which consumes SPIR-V up to 1.3; a `vulkan1.1` profile needs the compiler to emit SPIR-V 1.3. | `SHC2`  | A Vulkan consumer on Android |
+| ID  | Question                                                                                                                                                  | Affects | Decision point             |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------- |
+| Q1  | Which further platforms get a device toolchain, and how? Windows needs LLVM and LDC cross-built for MSVC, or built natively, and published as an archive. | `SHT4`  | A consumer needing it (M5) |
+| Q2  | Does the output variable keep the name `finalColor`, a convention of one OpenGL framework, when the fragment stage is proposed upstream?                  | `SHF3`  | Upstreaming the stage      |
