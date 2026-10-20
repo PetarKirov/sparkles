@@ -74,6 +74,12 @@ struct VulkanDevice
     /// Built pipelines' compiled form, shared by every pipeline made on this
     /// device; `null` until $(LREF loadPipelineCache).
     VkPipelineCache pipelineCache;
+    /// Whether the instance loaded the validation layer, which a request
+    /// asks for but the loader may not have.
+    bool validationEnabled;
+    /// Whether the instance enabled `VK_EXT_debug_utils`, so the layer's
+    /// messages can be received by a messenger rather than the console.
+    bool debugUtils;
 
     @disable this(this);
 
@@ -101,6 +107,45 @@ struct VulkanDevice
             return made;
         return d.selectAndCreateDevice(request,
             (VkPhysicalDevice physical, uint family) => d.presentable(display, physical, family));
+    }
+
+    /**
+    Makes a device for offscreen rendering: an instance without surface
+    extensions, and a device whose graphics queue draws into images it never
+    presents, with no swapchain. With `request.validation`, the instance also
+    enables `VK_EXT_debug_utils` where it is offered ($(LREF debugUtils)).
+    */
+    static VulkanWsiResult!void createHeadless(out VulkanDevice d,
+        in ContextRequest request = ContextRequest.init) @trusted nothrow
+    {
+        auto loaded = loadGetInstanceProcAddr();
+        if (loaded.hasError)
+            return d.fail(VulkanWsiErrorKind.loaderUnavailable,
+                VulkanWsiOperation.load, VkResult.VK_SUCCESS,
+                "Vulkan loader is unavailable");
+        d.global = GlobalCommands.load(loaded.value);
+        if (!d.global.complete)
+            return d.fail(VulkanWsiErrorKind.incompleteDispatch,
+                VulkanWsiOperation.load, VkResult.VK_SUCCESS,
+                "Vulkan global commands are incomplete");
+
+        auto advertised = queryVkList!VkExtensionProperties(
+            d.global.enumerateInstanceExtensionProperties, null);
+        const(char)*[2] names;
+        uint nameCount;
+        if (request.validation && advertised.hasExtension(extDebugUtils))
+            names[nameCount++] = extDebugUtils.ptr;
+        const portability = instancePortability(d.global, names[0 .. nameCount]);
+        if (portability.addExtension)
+            names[nameCount++] = khrPortabilityEnumeration.ptr;
+        auto made = d.createInstanceWith(request, names[0 .. nameCount], portability,
+            presents: false);
+        if (made.hasError)
+            return made;
+        d.debugUtils = nameCount > 0 && names[0] is extDebugUtils.ptr
+            && d.instance.has!extDebugUtils;
+        return d.selectAndCreateDevice(request, (VkPhysicalDevice, uint) => true,
+            presents: false);
     }
 
     string deviceName() const nothrow
@@ -288,7 +333,8 @@ package:
     }
 
     VulkanWsiResult!void selectAndCreateDevice(in ContextRequest request,
-        scope bool delegate(VkPhysicalDevice, uint) nothrow presentable) @trusted nothrow
+        scope bool delegate(VkPhysicalDevice, uint) nothrow presentable,
+        bool presents = true) @trusted nothrow
     {
         auto candidates = pickCandidates(presentable);
         if (candidates.length == 0)
@@ -310,7 +356,7 @@ package:
 
         auto advertised = queryVkList!VkExtensionProperties(
             instance.enumerateDeviceExtensionProperties, physicalDevice, null);
-        if (!advertised.hasExtension(khrSwapchain))
+        if (presents && !advertised.hasExtension(khrSwapchain))
             return fail(VulkanWsiErrorKind.missingExtension,
                 VulkanWsiOperation.createDevice, VkResult.VK_ERROR_EXTENSION_NOT_PRESENT,
                 "VK_KHR_swapchain is unavailable");
@@ -326,7 +372,8 @@ package:
 
         const(char)*[3] deviceExtensions;
         uint extensionCount;
-        deviceExtensions[extensionCount++] = khrSwapchain.ptr;
+        if (presents)
+            deviceExtensions[extensionCount++] = khrSwapchain.ptr;
         if (wantPortability)
             deviceExtensions[extensionCount++] = khrPortabilitySubset.ptr;
         if (wantDynamicExtension)
@@ -350,7 +397,7 @@ package:
                 VulkanWsiOperation.createDevice, result, "vkCreateDevice failed");
 
         device = DeviceCommands.load(instance, handle);
-        if (!device.complete || !device.has!khrSwapchain)
+        if (!device.complete || (presents && !device.has!khrSwapchain))
             return fail(VulkanWsiErrorKind.incompleteDispatch,
                 VulkanWsiOperation.createDevice, VkResult.VK_SUCCESS,
                 "Vulkan device commands are incomplete");
@@ -370,7 +417,7 @@ package:
 private:
     VulkanWsiResult!void createInstanceWith(in ContextRequest request,
         scope const(char*)[] extensionNames,
-        in InstancePortability portability) @trusted nothrow
+        in InstancePortability portability, bool presents = true) @trusted nothrow
     {
         CString!256 appName;
         if (!tryToCString(appName, [request.applicationName]))
@@ -402,7 +449,7 @@ private:
         {
             ContextRequest withoutValidation = request;
             withoutValidation.validation = false;
-            return createInstanceWith(withoutValidation, extensionNames, portability);
+            return createInstanceWith(withoutValidation, extensionNames, portability, presents);
         }
         if (result < 0)
             return fail(VulkanWsiErrorKind.vulkanFailure,
@@ -410,7 +457,8 @@ private:
                 "vkCreateInstance failed");
 
         instance = InstanceCommands.load(global, handle);
-        if (!instance.complete || !instance.has!khrSurface)
+        validationEnabled = request.validation;
+        if (!instance.complete || (presents && !instance.has!khrSurface))
             return fail(VulkanWsiErrorKind.incompleteDispatch,
                 VulkanWsiOperation.createInstance, VkResult.VK_SUCCESS,
                 "Vulkan instance commands are incomplete");
