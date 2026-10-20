@@ -1301,7 +1301,15 @@ struct WorkspaceHost
             home = environment.get("HOME");
             read = true;
         }
-        if (home.length && path.length >= home.length && path[0 .. home.length] == home)
+        return shortenHome(path, home);
+    }
+
+    /// `path` with a leading `home` directory written `~`; a sibling that
+    /// only shares the prefix (`/home/ann-old` beside `/home/ann`) stays.
+    static string shortenHome(string path, string home) @safe pure nothrow
+    {
+        if (home.length && path.length >= home.length && path[0 .. home.length] == home
+            && (path.length == home.length || path[home.length] == '/'))
             return "~" ~ path[home.length .. $];
         return path;
     }
@@ -2196,4 +2204,15 @@ import sparkles.input : KeyEvent, WheelEvent;
     WorkspaceHost.stretchToEdges(inner, 100, 40, area);
     assert(right == Rect(50, 0, 53, 47), "a pane at the corner reaches both edges");
     assert(inner == Rect(0, 0, 50, 20), "one inside the grid keeps its box");
+}
+
+@("workspace_host.shortenHome.onlyTheHomeDirectoryItself")
+@safe pure nothrow unittest
+{
+    assert(WorkspaceHost.shortenHome("/home/ann", "/home/ann") == "~");
+    assert(WorkspaceHost.shortenHome("/home/ann/src", "/home/ann") == "~/src");
+    assert(WorkspaceHost.shortenHome("/home/ann-old/src", "/home/ann") == "/home/ann-old/src",
+        "a sibling sharing the prefix is not home");
+    assert(WorkspaceHost.shortenHome("/home/annabel", "/home/ann") == "/home/annabel");
+    assert(WorkspaceHost.shortenHome("/tmp", "") == "/tmp");
 }
