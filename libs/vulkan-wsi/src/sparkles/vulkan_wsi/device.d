@@ -382,8 +382,17 @@ package:
         auto dynamicFeature = vkInfo(VkPhysicalDeviceDynamicRenderingFeatures(
             dynamicRendering: VK_TRUE,
         ));
+        // At 1.3, what the `vulkan1.3` shader profile assumes besides dynamic
+        // rendering: ending and demoting a fragment invocation (`discard`,
+        // `demote`). Vulkan 1.3 requires every device to support all three.
+        auto features13 = vkInfo(VkPhysicalDeviceVulkan13Features(
+            shaderTerminateInvocation: VK_TRUE,
+            shaderDemoteToHelperInvocation: VK_TRUE,
+            dynamicRendering: VK_TRUE,
+        ));
         auto info = vkInfo(VkDeviceCreateInfo(
-            pNext: wantDynamicFeature ? &dynamicFeature : null,
+            pNext: atLeast13 ? cast(const(void)*) &features13
+                : wantDynamicExtension ? cast(const(void)*) &dynamicFeature : null,
             queueCreateInfoCount: 1,
             pQueueCreateInfos: &queueInfo,
             enabledExtensionCount: extensionCount,
