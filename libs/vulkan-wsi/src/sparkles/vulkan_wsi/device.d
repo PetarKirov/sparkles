@@ -70,6 +70,10 @@ struct VulkanDevice
     uint queueFamily = uint.max;
     VkQueue queue;
     VkPhysicalDeviceProperties properties;
+    /// The Vulkan version the device was created at: the lower of the
+    /// request's and what the device supports, which decides what a
+    /// shader may assume (SPIR-V 1.6 at 1.3, 1.3 below it).
+    uint apiVersion;
     bool dynamicRendering;
     /// Whether framebuffers may be created imageless (`VK_KHR_imageless_framebuffer`,
     /// core in 1.2): enabled wherever the device has the feature.
@@ -349,6 +353,8 @@ package:
         physicalDevice = best.handle;
         queueFamily = best.queueFamily;
         properties = best.properties;
+        apiVersion = request.apiVersion < properties.apiVersion ? request.apiVersion
+            : properties.apiVersion;
 
         float priority = 1.0f;
         auto queueInfo = vkInfo(VkDeviceQueueCreateInfo(
