@@ -21,7 +21,7 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 | [V1 Device memory and resources](#v1-device-memory-and-resources) | done        |
 | [V2 The canvas](#v2-the-canvas)                                   | done        |
 | [V3 Glyphs](#v3-glyphs)                                           | not started |
-| [V4 The native host](#v4-the-native-host)                         | not started |
+| [V4 The native host](#v4-the-native-host)                         | done        |
 | [V5 The terminal's seams](#v5-the-terminal-s-seams)               | not started |
 | [V6 The terminal on Vulkan](#v6-the-terminal-on-vulkan)           | not started |
 | [V7 The phone terminal](#v7-the-phone-terminal)                   | not started |
@@ -140,6 +140,19 @@ same scripted input produces the same operation lists as the recording host;
 an idle window draws no frame for ten seconds; an interactive resize, a
 density change and a device loss each redraw correctly; canvas scenario 18
 passes over a gallery frame.
+
+**Outcome.** The gate is met but for one item: a density change while
+running was not shown, since neither headless compositor changes an output's
+scale; a window opened on a scale-2 output starts at that scale. The cells
+are measured by `sparkles:font`'s cell rule from a face that
+`sparkles:raylib-text`'s resolver finds, an interim dependency the font
+library's catalog replaces, at the em whose line matches the raylib arm's,
+so both arms open the same grid. The parity check drives a component rather
+than the gallery, whose test build links the raylib arm; it runs the native
+loop's own input and frame steps (`replayNative`). Making the arm run under
+headless Weston found that its pixman renderer loses every Vulkan surface;
+the GL renderer does not. The credits check now follows a package's selected
+configurations, which the new `ui-app` configurations needed.
 
 ## V5: The terminal's seams
 
