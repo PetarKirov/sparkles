@@ -12,7 +12,8 @@ module sparkles.shaders.resources;
 
 import std.traits : fullyQualifiedName, Unqual;
 
-import sparkles.shaders.attributes : binding, PushConstants, resources, Sampler2D, UniformBlock, uniform;
+import sparkles.shaders.attributes : binding, PushConstants, resources, Sampler2D, SamplerState,
+    UniformBlock, uniform;
 
 /**
 A struct whose fields are the `@uniform` parameters of `entry`, in parameter
@@ -108,7 +109,8 @@ struct DescriptorBinding
     /// What is at it: `sampler`, `image`, `uniformBlock` or `defaultBlock`.
     string kind;
     /// The resource's type, by its fully qualified name: a block's `T`, a
-    /// default block's members, `Sampler2D`; empty for the shared sampler.
+    /// default block's members, `Sampler2D`, `SamplerState`; empty for the
+    /// shared sampler.
     string type;
 }
 
@@ -116,9 +118,11 @@ struct DescriptorBinding
 The bindings of descriptor set 0 that `entry` uses under `vulkan1.3`, by the
 rules the compiler numbers them by (`SHR7`): the shared sampler at 0 when the
 entry point takes an image; a `@binding(b)` resource at `b`; and the uniform
-blocks, the images and the default uniform block (at the place of the first
-`@uniform`) at the next free bindings from 1, in parameter order after
-flattening. A push-constant block has none. In binding order.
+blocks, the images, the samplers of its own (`SamplerState`) and the default
+uniform block (at the place of the first `@uniform`) at the next free bindings
+from 1, in parameter order after flattening. The shared sampler is listed
+whether or not an image is read through it: a layout may hold a binding the
+module does not use. A push-constant block has none. In binding order.
 */
 enum DescriptorBinding[] descriptorBindingsOf(alias entry) = () {
     DescriptorBinding[] bound;
@@ -195,6 +199,29 @@ unittest
     static assert(b[4] == DescriptorBinding(5, "uniformBlock", fullyQualifiedName!Light));
 }
 
+///
+@("resources.descriptorBindingsOf.samplersOfTheirOwn")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.shaders.attributes : binding, input, Sampler2D, SamplerState;
+    import sparkles.shaders.types : vec2, vec4;
+
+    // A `SamplerState` takes the next binding in parameter order, as an image
+    // does, or the one its `@binding` fixes; the shared sampler keeps 0.
+    static vec4 canvas(@input vec2 uv, Sampler2D atlas, Sampler2D photo, SamplerState nearest,
+        @binding(7) SamplerState linear) => vec4.init;
+
+    enum b = descriptorBindingsOf!canvas;
+    static assert(b == [
+        DescriptorBinding(0, "sampler", ""),
+        DescriptorBinding(1, "image", "Sampler2D"),
+        DescriptorBinding(2, "image", "Sampler2D"),
+        DescriptorBinding(3, "sampler", "SamplerState"),
+        DescriptorBinding(7, "sampler", "SamplerState"),
+    ]);
+}
+
 private:
 
 // A resource of an entry point after flattening: its kind (`uniform`,
@@ -236,6 +263,8 @@ Resource[] resourcesIn(Q, attrs...)(string name)
         return [Resource("uniformBlock", fullyQualifiedName!B, fixed)];
     else static if (is(T == Sampler2D))
         return [Resource("image", "Sampler2D", fixed)];
+    else static if (is(T == SamplerState))
+        return [Resource("sampler", "SamplerState", fixed)];
     else static if (is(T == struct) && isMarked!(resources, __traits(getAttributes, T)))
     {
         Resource[] r;

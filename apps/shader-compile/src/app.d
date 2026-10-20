@@ -39,7 +39,7 @@ depending on it would make the tool a prerequisite of itself.
 */
 module app;
 
-import std.algorithm : all, any, canFind, filter, find, map, sort, splitter, startsWith, uniq;
+import std.algorithm : all, any, canFind, endsWith, filter, find, map, sort, splitter, startsWith, uniq;
 import std.ascii : isDigit;
 import std.array : array, join, replace, split;
 import std.conv : text, to;
@@ -532,7 +532,7 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
                 }
                 // One trailing newline, exactly, as every text file here has.
                 const glsl = origin(e)
-                    ~ renameCombinedSamplers(cross.output).stripRight ~ "\n";
+                    ~ renameCombinedSamplers(cross.output, samplerNames(dis.output)).stripRight ~ "\n";
                 path.write(glsl);
                 if (!step(["glslangValidator", path], name ~ "/" ~ file ~ ": glslang"))
                     return 1;
@@ -1067,21 +1067,104 @@ string singleEntry(string disassembly, string entry, string origin)
 }
 
 /**
+The names of the sampler variables a module declares, from its disassembly:
+the shared sampler (`sampler`) and each `SamplerState` parameter.
+*/
+string[] samplerNames(string dis)
+{
+    string[string] names;
+    bool[string] samplerTypes, samplerPointers;
+    string[] variables;
+    foreach (line; dis.lineSplitter)
+    {
+        auto w = line.strip.split;
+        if (w.length >= 3 && w[0] == "OpName")
+            names[w[1]] = w[2].strip(`"`);
+        else if (w.length >= 3 && w[1] == "=" && w[2] == "OpTypeSampler")
+            samplerTypes[w[0]] = true;
+        else if (w.length >= 5 && w[2] == "OpTypePointer" && w[4] in samplerTypes)
+            samplerPointers[w[0]] = true;
+        else if (w.length >= 4 && w[2] == "OpVariable" && w[3] in samplerPointers)
+            variables ~= w[0];
+    }
+    string[] r;
+    foreach (v; variables)
+        if (auto n = v in names)
+            r ~= *n;
+    return r;
+}
+
+///
+@("shaderCompile.samplerNames.areTheSamplerVariables")
+@system unittest
+{
+    assert(samplerNames(q"(
+                OpName %atlas "atlas"
+                OpName %nearest "nearest"
+                OpName %sampler "sampler"
+%spirv_Sampler = OpTypeSampler
+%_ptr_UniformConstant_spirv_Sampler = OpTypePointer UniformConstant %spirv_Sampler
+    %nearest = OpVariable %_ptr_UniformConstant_spirv_Sampler UniformConstant
+    %sampler = OpVariable %_ptr_UniformConstant_spirv_Sampler UniformConstant
+)") == ["nearest", "sampler"]);
+}
+
+/**
 spirv-cross fuses an image with the sampler it is read through into one
 `sampler2D` named `SPIRV_Cross_Combined<image><sampler>`. The image is what
-the D parameter was called and what raylib binds by name (`texture0`), so the
-combined sampler takes the image's name back.
+the D parameter was called and what raylib binds by name (`texture0`), so an
+image read through one sampler takes its name back; one read through several
+(`SamplerState` parameters, `SHR7`) is `<image>_<sampler>` for each. `samplers`
+are the module's sampler names (`samplerNames`).
 */
-string renameCombinedSamplers(string glsl)
-    => glsl.replaceAll(ctRegex!`SPIRV_Cross_Combined(\w+?)sampler\b`, "$1");
+string renameCombinedSamplers(string glsl, in string[] samplers)
+{
+    import std.algorithm : sort;
+
+    // Each combined name, split into its image and sampler by the longest
+    // sampler name it ends with.
+    string[2][string] parts;
+    size_t[string] samplersOf;
+    foreach (m; glsl.matchAll(ctRegex!`\bSPIRV_Cross_Combined(\w+)\b`))
+    {
+        const combined = m[1];
+        if (combined in parts)
+            continue;
+        string best;
+        foreach (sampler; samplers)
+            if (sampler.length > best.length && combined.length > sampler.length
+                && combined.endsWith(sampler))
+                best = sampler;
+        if (!best.length)
+            continue;
+        const image = combined[0 .. $ - best.length];
+        parts[combined] = [image, best];
+        samplersOf[image]++;
+    }
+    // Longest first, so no name is replaced inside a longer one.
+    auto names = parts.keys;
+    names.sort!((a, b) => a.length > b.length);
+    foreach (combined; names)
+    {
+        const image = parts[combined][0], sampler = parts[combined][1];
+        glsl = glsl.replace("SPIRV_Cross_Combined" ~ combined,
+            samplersOf[image] == 1 ? image : image ~ "_" ~ sampler);
+    }
+    return glsl;
+}
 
 ///
 @("shaderCompile.renameCombinedSamplers.givesTheImageItsNameBack")
 @system unittest
 {
     assert(renameCombinedSamplers("uniform sampler2D SPIRV_Cross_Combinedtexture0sampler;\n" ~
-        "  vec4 t = texture(SPIRV_Cross_Combinedtexture0sampler, uv);")
+        "  vec4 t = texture(SPIRV_Cross_Combinedtexture0sampler, uv);", ["sampler"])
         == "uniform sampler2D texture0;\n  vec4 t = texture(texture0, uv);");
+    // An image read through two samplers is one `sampler2D` per pair; one read
+    // through a sampler of its own keeps its name.
+    assert(renameCombinedSamplers("SPIRV_Cross_Combinedatlasnearest SPIRV_Cross_Combinedatlassampler "
+        ~ "SPIRV_Cross_Combinedphotolinear", ["nearest", "linear", "sampler"])
+        == "atlas_nearest atlas_sampler photo");
 }
 
 /// `env` without the variables that tune the host build — the device build
