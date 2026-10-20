@@ -615,6 +615,7 @@ exit 0
     auto sources = unit.sources.map!rel.array;
     sources.sort;
     assert(sources == ["libs/shaders/src/sparkles/shaders/capabilities.d",
+        "libs/shaders/src/sparkles/shaders/fragment.d",
         "libs/shaders/src/sparkles/shaders/math.d",
         "libs/shaders/src/sparkles/shaders/types.d",
         "libs/ui/shaders/effects.d",
@@ -793,4 +794,119 @@ exit 0
         assert(dis.output.canFind(line), line ~ "\n" ~ dis.output);
     // That no aggregate holds the image is spirv-val's to say: the step ran
     // it for Vulkan 1.3, which rejects an image in a struct.
+}
+
+@("shaderCompile.requirements.anEntryPointMayReachOnlyWhatItsProfileGrants")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHC8`: built for its default profiles, `gl330` and `gles100`, an entry
+    // point whose helper takes a derivative fails `gles100`, which denies
+    // `derivatives`, with the chain of calls from the entry point; nothing
+    // is written.
+    auto f = Fixture.create("requires");
+    f.entries(q{
+        vec2 edge(vec2 uv) => fwidth(uv);
+
+        @fragment vec4 soft(@input vec2 uv)
+        {
+            const w = edge(uv);
+            return v4(w.x, w.y, 0, 1);
+        }
+    });
+    const denied = f.run();
+    assert(denied.status == 1, denied.diagnostics);
+    foreach (line; ["entry point `soft` reaches `sparkles.shaders.fragment.fwidth!(__vector(float[2]))`, "
+            ~ "which requires `derivatives`; the profile `gles100` does not grant it",
+            "`fx_entries.soft` calls `fx_entries.edge`",
+            "`fx_entries.edge` calls `sparkles.shaders.fragment.fwidth!(__vector(float[2]))`"])
+        assert(denied.diagnostics.canFind(line), line ~ "\n" ~ denied.diagnostics);
+    assert(f.outputs.length == 0, f.outputs.join(" "));
+
+    // Coarse and fine derivatives are `derivativeControl`, which `gl330`
+    // denies: an entry point built for it and `vulkan1.3` fails `gl330`
+    // only. One built for `vulkan1.3` alone builds.
+    f.entries(q{
+        @profiles(gl330, vulkan13) @fragment vec4 sharp(@input vec2 uv)
+            => v4(dpdxFine(uv.x), 0, 0, 1);
+    });
+    const fine = f.run();
+    assert(fine.status == 1, fine.diagnostics);
+    assert(fine.diagnostics.canFind("requires `derivativeControl`; the profile `gl330` does not grant it"),
+        fine.diagnostics);
+    assert(!fine.diagnostics.canFind("vulkan1.3` does not grant"), fine.diagnostics);
+
+    f.entries(q{
+        @profiles(vulkan13) @fragment vec4 sharp(@input vec2 uv)
+            => v4(dpdxFine(uv.x), 0, 0, 1);
+    });
+    const built = f.run();
+    assert(built.status == 0, built.diagnostics);
+    assert(f.outputs == [".stamp", "sharp.frag.spv"], f.outputs.join(" "));
+}
+
+@("shaderCompile.fragment.stageOperationsInEveryOutput")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `discard` ends the invocation in every output (GLSL's `discard`,
+    // SPIR-V's `OpTerminateInvocation`); `demote`, which only Vulkan grants,
+    // is `OpDemoteToHelperInvocation`; derivatives are GLSL's `fwidth` and
+    // SPIR-V's `OpFwidth`; `fragCoord` and `frontFacing` are the stage's
+    // built-ins.
+    auto f = Fixture.create("fragmentops");
+    f.entries(q{
+        @profiles(gl330, vulkan13) @fragment vec4 cut(@input vec2 uv,
+            @builtin(Builtin.fragCoord) vec4 position, @builtin(Builtin.frontFacing) bool front)
+        {
+            if (uv.x < 0.25f)
+                discard();
+            const w = fwidth(uv);
+            return v4(w.x, position.y, front ? 1 : 0, 1);
+        }
+
+        @profiles(vulkan13) @fragment vec4 fade(@input vec2 uv)
+        {
+            if (uv.y < 0.25f)
+                demote();
+            return v4(uv.x, uv.y, 0, 1);
+        }
+    });
+    const made = f.run();
+    assert(made.status == 0, made.diagnostics);
+    assert(f.outputs == [".stamp", "cut.frag", "cut.frag.spv", "fade.frag.spv"], f.outputs.join(" "));
+
+    const glsl = readText(f.out_.buildPath("cut.frag"));
+    foreach (line; ["discard;", "fwidth(", "gl_FragCoord.y", "gl_FrontFacing"])
+        assert(glsl.canFind(line), line ~ "\n" ~ glsl);
+
+    const cut = execute(["spirv-dis", f.out_.buildPath("cut.frag.spv")]);
+    assert(cut.status == 0, cut.output);
+    foreach (line; ["OpTerminateInvocation", "OpFwidth", "BuiltIn FragCoord", "BuiltIn FrontFacing",
+            "OpExecutionMode %cut OriginUpperLeft"])
+        assert(cut.output.canFind(line), line ~ "\n" ~ cut.output);
+    const fade = execute(["spirv-dis", f.out_.buildPath("fade.frag.spv")]);
+    assert(fade.status == 0, fade.output);
+    foreach (line; ["OpCapability DemoteToHelperInvocation", "OpDemoteToHelperInvocation"])
+        assert(fade.output.canFind(line), line ~ "\n" ~ fade.output);
+}
+
+@("shaderCompile.capabilities.theVocabularyIsTheCompilers")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHC1`: a device compilation reads `Cap` as the compiler's
+    // `ldc.dcompute.Capability`; a host compilation by the device compiler
+    // asserts that the library's own copy names the same capabilities, in
+    // the same order.
+    const shaders = repoRoot.buildPath("libs", "shaders", "src");
+    const r = execute(["ldc2-vulkan", "-o-", "-I" ~ shaders,
+        shaders.buildPath("sparkles", "shaders", "capabilities.d")]);
+    assert(r.status == 0, r.output);
 }

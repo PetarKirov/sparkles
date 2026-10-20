@@ -18,46 +18,68 @@ constants.
 
 import sparkles.shaders.attributes : compute, CompileFor;
 
-/// One thing a target may or may not offer: a stage, a resource lowering, a
-/// type width, an instruction family.
-enum Cap : uint
-{
-    /// The SPIR-V `Shader` capability: graphics-stage code at all.
-    shader,
-    /// The vertex stage.
-    vertexStage,
-    /// The fragment stage.
-    fragmentStage,
-    /// Uniforms outside any block, as OpenGL declares them.
-    looseUniforms,
-    /// Uniform blocks with a binding, as Vulkan declares them.
-    uniformBlocks,
-    /// Push-constant blocks.
-    pushConstants,
-    /// Sampled 2-D images read through a sampler.
-    sampledImages,
-    /// Integer (and integer-vector) vertex inputs.
-    intVertexInputs,
-    /// 64-bit integers.
-    int64,
-    /// 16-bit integers.
-    int16,
-    /// 8-bit integers.
-    int8,
-    /// 64-bit floats.
-    float64,
-    /// Buffer device addresses (`PhysicalStorageBuffer`).
-    bufferDeviceAddress,
-}
-
-// The compiler checks a grant's names against its own vocabulary,
-// `ldc.dcompute.Capability`, and the build step passes this table's: the two
-// must name the same capabilities, in the same order.
 version (LDC_DCompute)
 {
     static import ldc.dcompute;
 
-    static assert([__traits(allMembers, Cap)] == [__traits(allMembers, ldc.dcompute.Capability)]);
+    /*
+    In a device compilation, the compiler's own vocabulary, which it checks a
+    grant's names against and reads `@requires` by: the build step passes
+    this table's names, so the two are one list.
+    */
+    alias Cap = ldc.dcompute.Capability;
+}
+else
+{
+    /// One thing a target may or may not offer: a stage, a resource lowering,
+    /// a type width, an instruction family. In a device compilation, the
+    /// compiler's `ldc.dcompute.Capability`, which names the same ones in the
+    /// same order.
+    enum Cap : int
+    {
+        /// The SPIR-V `Shader` capability: graphics-stage code at all.
+        shader,
+        /// The vertex stage.
+        vertexStage,
+        /// The fragment stage.
+        fragmentStage,
+        /// Uniforms outside any block, as OpenGL declares them.
+        looseUniforms,
+        /// Uniform blocks with a binding, as Vulkan declares them.
+        uniformBlocks,
+        /// Push-constant blocks.
+        pushConstants,
+        /// Sampled 2-D images read through a sampler.
+        sampledImages,
+        /// Integer (and integer-vector) vertex inputs.
+        intVertexInputs,
+        /// 64-bit integers.
+        int64,
+        /// 16-bit integers.
+        int16,
+        /// 8-bit integers.
+        int8,
+        /// 64-bit floats.
+        float64,
+        /// Buffer device addresses (`PhysicalStorageBuffer`).
+        bufferDeviceAddress,
+        /// Screen-space derivatives: `dpdx`, `dpdy`, `fwidth`.
+        derivatives,
+        /// Coarse and fine derivatives: `dpdxCoarse`, `dpdxFine`, ….
+        derivativeControl,
+        /// Demoting an invocation to a helper: `demote`.
+        demote,
+    }
+
+    // A host compilation by a compiler that has the vocabulary checks this
+    // copy against it.
+    static if (__traits(compiles, { import ldc.dcompute : Capability; }))
+    {
+        static import ldc.dcompute;
+
+        static assert([__traits(allMembers, Cap)] == [__traits(allMembers, ldc.dcompute.Capability)],
+            "`Cap` and `ldc.dcompute.Capability` must name the same capabilities, in the same order");
+    }
 }
 
 /// A capability that implies others: granting it grants them too.
@@ -72,6 +94,7 @@ struct Implication
 enum Implication[] implications = [
     Implication(Cap.vertexStage, Cap.shader),
     Implication(Cap.fragmentStage, Cap.shader),
+    Implication(Cap.derivativeControl, Cap.derivatives),
 ];
 
 /// What a profile's output is.
@@ -85,6 +108,17 @@ enum Output
     spirv,
     /// The host compilation: no device output.
     host,
+}
+
+/// Where a fragment's window position (`Builtin.fragCoord`) has its origin.
+enum Origin
+{
+    /// The profile has no fragment stage.
+    none,
+    /// The lower-left corner, y up: OpenGL's window coordinates.
+    lowerLeft,
+    /// The upper-left corner, y down: Vulkan's framebuffer coordinates.
+    upperLeft,
 }
 
 /// A set of capabilities.
@@ -140,30 +174,36 @@ struct Profile
     uint version_;
     /// The capabilities it grants, closed under `implications`.
     CapSet caps;
+    /// Where its fragments' window positions have their origin.
+    Origin fragCoordOrigin;
 
     /// Whether the profile grants `c`.
     bool has(Cap c) const @safe pure nothrow @nogc => caps.has(c);
 }
 
-/// OpenGL 3.3: GLSL 3.30, fragment shaders, uniforms outside blocks.
+/// OpenGL 3.3: GLSL 3.30, fragment shaders, uniforms outside blocks, and
+/// derivatives, but not coarse and fine ones (OpenGL 4.5).
 enum Profile gl330 = Profile("gl330", "gl330", Output.glsl, 330,
-    capsOf(Cap.fragmentStage, Cap.looseUniforms, Cap.sampledImages));
+    capsOf(Cap.fragmentStage, Cap.looseUniforms, Cap.sampledImages, Cap.derivatives),
+    Origin.lowerLeft);
 
 /// OpenGL ES 2.0: GLSL ES 1.00, fragment shaders, uniforms outside blocks.
+/// Denies derivatives, which ES 2.0 offers only as an extension.
 enum Profile gles100 = Profile("gles100", "gles100", Output.glslEs, 100,
-    capsOf(Cap.fragmentStage, Cap.looseUniforms, Cap.sampledImages));
+    capsOf(Cap.fragmentStage, Cap.looseUniforms, Cap.sampledImages), Origin.lowerLeft);
 
 /// Vulkan 1.3: SPIR-V 1.6, vertex and fragment shaders, uniform and
-/// push-constant blocks. Denies `int64`, which Vulkan grants only with a
-/// device feature.
+/// push-constant blocks, derivatives of every kind, and demotion. Denies
+/// `int64`, which Vulkan grants only with a device feature.
 enum Profile vulkan13 = Profile("vulkan13", "vulkan1.3", Output.spirv, 13,
     capsOf(Cap.vertexStage, Cap.fragmentStage, Cap.uniformBlocks, Cap.pushConstants,
-        Cap.sampledImages, Cap.intVertexInputs));
+        Cap.sampledImages, Cap.intVertexInputs, Cap.derivativeControl, Cap.demote),
+    Origin.upperLeft);
 
 /// The host compilation: every resource kind as plain D values, no stage.
 enum Profile cpu = Profile("cpu", "cpu", Output.host, 0,
     capsOf(Cap.looseUniforms, Cap.uniformBlocks, Cap.pushConstants, Cap.int64,
-        Cap.int16, Cap.int8, Cap.float64));
+        Cap.int16, Cap.int8, Cap.float64), Origin.none);
 
 /// Every profile, in the table's order: the order the build step compiles
 /// them in.
@@ -243,4 +283,42 @@ enum SpirvRequirement[] spirvRequirements = [
     SpirvRequirement("Float64", Cap.float64),
     SpirvRequirement("PhysicalStorageBufferAddresses", Cap.bufferDeviceAddress),
     SpirvRequirement("SPV_KHR_physical_storage_buffer", Cap.bufferDeviceAddress),
+    SpirvRequirement("DerivativeControl", Cap.derivativeControl),
+    SpirvRequirement("DemoteToHelperInvocation", Cap.demote),
+    SpirvRequirement("SPV_EXT_demote_to_helper_invocation", Cap.demote),
 ];
+
+version (LDC_DCompute)
+{
+    /*
+    The compiler's: an emitted entry point that reaches a function marked
+    `@requires(c)`, or a call of `unsupported!c`, fails the compilation unless
+    it is granted `c`, and the compiler names the chain of calls (`SHC8`).
+    */
+    public import ldc.dcompute : requires, _requires, unsupported;
+}
+else
+{
+    /// What `@requires` makes of its capabilities. Stand-in for
+    /// `ldc.dcompute._requires`.
+    struct _requires
+    {
+        Cap[] capabilities; ///
+    }
+
+    /// Marks a function as needing `capabilities` (`SHC7`). Stand-in for
+    /// `ldc.dcompute.requires`: nothing checks it outside a device compilation.
+    _requires requires(Cap[] capabilities...) @safe pure nothrow => _requires(capabilities.dup);
+
+    /**
+    What a function that needs `c` compiles to where the active profile lacks
+    it. Here, outside a device compilation, nothing can check that no caller
+    reaches it, so a call is an error at run time, naming the capability.
+    */
+    noreturn unsupported(Cap c, T...)(T args)
+    {
+        enum message = "`" ~ __traits(allMembers, Cap)[c] ~ "` is not granted by the profile `"
+            ~ activeProfile.name ~ "`";
+        assert(0, message);
+    }
+}
