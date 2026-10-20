@@ -313,6 +313,25 @@ pure nothrow @nogc
     private enum bool unique = (storage & Storage.unique) != 0;
 
     /**
+    Whether a `const` element assigns to a mutable one: false for an element
+    with mutable indirections, such as a struct holding a pointer or a handle.
+    Such elements are appended only from mutable slices, and only a `unique`
+    buffer holds them, since a copy-on-write copy reached through `const` would
+    hand out mutable aliases of `const` data.
+    */
+    private enum bool constCopyable = is(typeof((ref T dst, ref const T src) { dst = src; }));
+
+    static if (!unique)
+        static assert(constCopyable, "a copy-on-write buffer needs elements that copy from `const`: "
+            ~ T.stringof ~ " has mutable indirections; use a UniqueBuffer");
+
+    // The slice `put` appends from: `const` where an element copies from it.
+    static if (constCopyable)
+        private alias Elements = const(T)[];
+    else
+        private alias Elements = T[];
+
+    /**
     How many elements fit without allocating — `N`, named.
 
     A compile-time constant, unlike $(LREF Buffer.capacity), so it can size a
@@ -330,7 +349,7 @@ pure nothrow @nogc
     // The copy-on-write instantiation this `unique` buffer promotes to (and,
     // symmetrically, the type `toShared` returns). Same field layout — only the
     // ownership discipline differs — so a heap block moves across for free.
-    static if (unique)
+    static if (unique && constCopyable)
         private alias Shared = Buffer!(T, N, cast(Storage)(storage & ~Storage.unique));
 
     private
@@ -687,7 +706,7 @@ pure nothrow @nogc
         }
 
         /// Output range interface: appends elements from a slice.
-        void put(in T[] elements) scope @trusted
+        void put(scope Elements elements) scope @trusted
         {
             const n = elements.length;
             if (n == 0)
@@ -789,7 +808,7 @@ pure nothrow @nogc
         }
 
         /// Appends elements from a slice using `~=` operator.
-        void opOpAssign(string op : "~")(in T[] elements) scope @safe
+        void opOpAssign(string op : "~")(scope Elements elements) scope @safe
         {
             put(elements);
         }
@@ -1067,6 +1086,10 @@ pure nothrow @nogc
     }
     else
     {
+        // A copy-on-write buffer hands out `const` copies; elements that do not
+        // copy from `const` would leak mutable aliases through them.
+        static if (constCopyable)
+        {
         /**
          * Consumes this `unique` buffer and returns an equivalent copy-on-write
          * `SharedBuffer!(T, N)` that can be shared/borrowed. This is the bridge from
@@ -1104,6 +1127,7 @@ pure nothrow @nogc
             copyElements(result._inline[0 .. _length], _inline[0 .. _length]);
             _lenBits = 0;
             return result;
+        }
         }
     }
 } // pure nothrow @nogc
@@ -3864,4 +3888,34 @@ unittest
     static assert(__traits(hasMember, SharedBuffer!(char, 16), "writePretty"));
     static assert(__traits(hasMember, InlineBuffer!(char, 16), "writePretty"));
     static assert(!__traits(hasMember, Buffer!(int, 4), "writePretty"));
+}
+
+@("buffer.unique.holdsElementsWithMutableIndirections")
+@system pure nothrow @nogc
+unittest
+{
+    // An element holding a mutable pointer, such as a native handle, does not
+    // copy from `const`: a unique buffer holds it, appending from mutable
+    // slices; a copy-on-write buffer, whose `const` copies would hand out
+    // mutable aliases, is refused.
+    static struct Handle
+    {
+        int* target;
+        size_t tag;
+    }
+
+    int[3] targets;
+    UniqueBuffer!(Handle, 2) handles;
+    foreach (i; 0 .. 3)
+        handles.put(Handle(&targets[i], i));
+    Handle[2] more = [Handle(&targets[0], 3), Handle(&targets[1], 4)];
+    handles.put(more[]);
+    assert(handles.length == 5 && handles[4].tag == 4);
+    *handles[2].target = 7;
+    assert(targets[2] == 7);
+    handles.popBack();
+    assert(handles.length == 4);
+
+    static assert(!__traits(compiles, SharedBuffer!Handle.init));
+    static assert(!__traits(compiles, handles.toShared()));
 }
