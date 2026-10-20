@@ -8,12 +8,18 @@ chosen, from the two signatures.
 */
 module sparkles.shaders.stages;
 
-import sparkles.shaders.attributes : builtin, input;
+import std.traits : Unqual;
+
+import sparkles.shaders.attributes : builtin, input, PushConstants;
+import sparkles.shaders.resources : descriptorBindingsOf, PushConstantsOf;
 
 /**
 Whether every `@input` of the fragment entry point `F` is an output of the
 vertex entry point `V` with the same name, the same type and the same
-location.
+location; when both declare a push-constant block, whose blocks have the
+same type (`SHR4`), since the two share one push-constant range; and where
+both use a binding of descriptor set 0 (`descriptorBindingsOf`, `SHR7`),
+whose resources there are of the same kind and type.
 
 A vertex entry point returns a struct whose fields, but the one marked
 `@builtin`, are its outputs, at locations 0, 1, 2, … in field order; a
@@ -29,7 +35,7 @@ enum bool stagesLink(alias V, alias F) = () {
         static if (!isBuiltin!(__traits(getAttributes, R.tupleof[i])))
         {
             outNames ~= __traits(identifier, R.tupleof[i]);
-            outTypes ~= typeof(field).stringof;
+            outTypes ~= Unqual!(typeof(field)).mangleof;
         }
     size_t location = 0;
     bool links = true;
@@ -38,10 +44,15 @@ enum bool stagesLink(alias V, alias F) = () {
         {
             links = links && location < outNames.length
                 && outNames[location] == parameterName!(F, i)
-                && outTypes[location] == Parameters!F[i].stringof;
+                && outTypes[location] == Unqual!(Parameters!F[i]).mangleof;
             location++;
         }
-    return links;
+    foreach (v; descriptorBindingsOf!V)
+        foreach (f; descriptorBindingsOf!F)
+            if (v.binding == f.binding)
+                links = links && v.kind == f.kind && v.type == f.type;
+    return links && (is(PushConstantsOf!V == void) || is(PushConstantsOf!F == void)
+        || is(PushConstantsOf!V == PushConstantsOf!F));
 }();
 
 ///
@@ -49,7 +60,7 @@ enum bool stagesLink(alias V, alias F) = () {
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.shaders.attributes : Builtin;
+    import sparkles.shaders.attributes : binding, Builtin, uniform, UniformBlock;
     import sparkles.shaders.types : vec2, vec4;
 
     static struct Out
@@ -73,6 +84,26 @@ unittest
     static assert(!stagesLink!(vs, renamed));
     static assert(!stagesLink!(vs, retyped));
     static assert(!stagesLink!(vs, tooMany));
+
+    static struct A { float aspect; }
+    static struct B { float scale; }
+    static Out pushing(@builtin(Builtin.vertexIndex) int i, PushConstants!A pc) => Out.init;
+    static vec4 sameBlock(@input vec4 colour, PushConstants!A pc) => colour;
+    static vec4 otherBlock(@input vec4 colour, PushConstants!B pc) => colour;
+    static assert(stagesLink!(pushing, sameBlock));
+    static assert(stagesLink!(pushing, fs)); // one stage without a block
+    static assert(!stagesLink!(pushing, otherBlock));
+
+    // A binding both stages use holds one kind and type of resource.
+    static Out lit(@builtin(Builtin.vertexIndex) int i, UniformBlock!A a) => Out.init;
+    static vec4 sameUniforms(@input vec4 colour, UniformBlock!A a) => colour;
+    static vec4 otherUniforms(@input vec4 colour, UniformBlock!B b) => colour;
+    static vec4 otherKind(@input vec4 colour, @uniform float a) => colour;
+    static vec4 elsewhere(@input vec4 colour, @binding(2) UniformBlock!B b) => colour;
+    static assert(stagesLink!(lit, sameUniforms));
+    static assert(!stagesLink!(lit, otherUniforms));
+    static assert(!stagesLink!(lit, otherKind));
+    static assert(stagesLink!(lit, elsewhere));
 }
 
 private:
