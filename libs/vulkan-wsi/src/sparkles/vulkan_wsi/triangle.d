@@ -220,7 +220,7 @@ struct RenderTarget
     {
         t.dynamicRendering = vk.dynamicRendering;
         if (t.dynamicRendering)
-            return t.createViews(vk, sc);
+            return t.createViewsOrDestroy(vk, sc);
 
 
         // One colour attachment, cleared each frame and left in PRESENT_SRC.
@@ -278,7 +278,18 @@ struct RenderTarget
         if (pass.hasError)
             return err!void("vkCreateRenderPass: " ~ describeResult(pass.error));
 
-        return t.createViews(vk, sc);
+        return t.createViewsOrDestroy(vk, sc);
+    }
+
+    // At creation, a failure leaves nothing behind: the render pass goes
+    // too.
+    private Expected!(void, string) createViewsOrDestroy(Context)(ref Context vk,
+        ref Swapchain sc) @system
+    {
+        auto made = createViews(vk, sc);
+        if (made.hasError)
+            destroy(vk);
+        return made;
     }
 
     /**
@@ -321,7 +332,7 @@ struct RenderTarget
                 vk.device.device, &viewInfo, null, &views[i]).check;
             if (view.hasError)
             {
-                destroy(vk);
+                destroyViews(vk);
                 return err!void("vkCreateImageView: " ~ describeResult(view.error));
             }
 
@@ -342,7 +353,7 @@ struct RenderTarget
                 vk.device.device, &fbInfo, null, &framebuffers[i]).check;
             if (fb.hasError)
             {
-                destroy(vk);
+                destroyViews(vk);
                 return err!void("vkCreateFramebuffer: " ~ describeResult(fb.error));
             }
         }
@@ -695,4 +706,56 @@ private Expected!(void, string) createModule(Context)(ref Context vk,
     return made.hasError
         ? err!void("vkCreateShaderModule: " ~ describeResult(made.error))
         : ok!string();
+}
+
+version (unittest)
+{
+    // A device whose image views cannot be made, and that counts the render
+    // passes it destroys.
+    private struct FailingViews
+    {
+        DeviceCommands device;
+        bool dynamicRendering;
+        static int renderPassesDestroyed;
+    }
+
+    private extern (C) VkResult failCreateImageView(VkDevice, const(VkImageViewCreateInfo)*,
+        const(VkAllocationCallbacks)*, VkImageView*) nothrow @nogc
+        => VkResult.VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    private extern (C) void countDestroyRenderPass(VkDevice, VkRenderPass,
+        const(VkAllocationCallbacks)*) nothrow @nogc
+    {
+        FailingViews.renderPassesDestroyed++;
+    }
+    private extern (C) void ignoreDestroyImageView(VkDevice, VkImageView,
+        const(VkAllocationCallbacks)*) nothrow @nogc {}
+    private extern (C) void ignoreDestroyFramebuffer(VkDevice, VkFramebuffer,
+        const(VkAllocationCallbacks)*) nothrow @nogc {}
+}
+
+@("vulkan_triangle.aFailedRebindKeepsTheRenderPass")
+@system unittest
+{
+    // `rebind` keeps the render pass it was built with, failure included, so
+    // the next rebind can retry; a target that fails while being created
+    // leaves nothing behind.
+    FailingViews vk;
+    vk.device.device = cast(VkDevice) cast(void*) 1;
+    vk.device.createImageView = &failCreateImageView;
+    vk.device.destroyRenderPass = &countDestroyRenderPass;
+    vk.device.destroyImageView = &ignoreDestroyImageView;
+    vk.device.destroyFramebuffer = &ignoreDestroyFramebuffer;
+
+    Swapchain sc;
+    sc.images = new VkImage[2];
+    RenderTarget t;
+    t.renderPass = cast(VkRenderPass) cast(void*) 2;
+    FailingViews.renderPassesDestroyed = 0;
+    assert(t.rebind(vk, sc).hasError);
+    assert(t.renderPass !is null && FailingViews.renderPassesDestroyed == 0);
+
+    RenderTarget fresh;
+    vk.dynamicRendering = true;
+    assert(RenderTarget.create(fresh, vk, sc).hasError);
+    assert(fresh.views.length == 2 && fresh.views[0] is null);
 }
