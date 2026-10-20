@@ -60,11 +60,11 @@ jobs:
           - runner: ubuntu-latest
             system: x86_64-linux
             DC: ldc2
-            timeout: 75
+            timeout: 95
           - runner: ubuntu-latest
             system: x86_64-linux
             DC: dmd
-            timeout: 40
+            timeout: 60
           - runner: macos-latest
             system: aarch64-darwin
             DC: ldc2
@@ -99,6 +99,10 @@ jobs:
     # x86_64 LDC also includes the complete X11/Wayland demo sweep. Run
     # 37375104839 spent ~45m on tests and ~10m on examples before that sweep;
     # its 55m cap cancelled the otherwise passing job during the demos.
+    # Run 39400408038 passed all 58 packages at ~69m and was cancelled at
+    # 75m during the steps after them: x86_64 LDC now has 95m. x86_64 DMD
+    # takes 33-37m, and runs 39435191749 and 39436564680 were cancelled at
+    # its 40m cap while building the examples: it now has 60m.
     timeout-minutes: ${{ matrix.timeout }}
     steps:
       - name: Checkout
@@ -396,12 +400,13 @@ jobs:
   # No UBSan: LDC rejects `-fsanitize=undefined` for D, and `-Xcc` never
   # reaches ImportC codegen (docs/research/sanitizers/ubsan.md). One `-t N`
   # leg on 4 MiB workers (the stack watermark is off under ASan).
-  # 45m: every package is rebuilt with ASan; a 30m cap cancelled mid-package
-  # the same way the test job's old 20m cap did.
+  # 60m: every package is rebuilt with ASan; a 30m cap cancelled mid-package
+  # the same way the test job's old 20m cap did, and run 39361822480 passed
+  # every package at 43.6m and was cancelled at 45m.
   sanitize:
     name: Sanitizers (ASan, stackovf)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -575,16 +580,23 @@ jobs:
             nix-${{ runner.os }}-nixandroid-
             nix-${{ runner.os }}-
 
+      # One derivation at a time: the compiler peaks at 9.4 GiB building
+      # `libhue-android` and at 7.1 GiB building `libterminal-android`, and the
+      # runner has 16. Built together, as the default parallelism does, they ran
+      # the runner out of memory, and the job was cancelled mid-build with no
+      # failed step (runs 39334458752 and 39400408038, three and two times).
       - name: Build & push the Android APK closure
         env:
           CACHIX_CACHE: ${{ vars.CACHIX_CACHE }}
           CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-        run: ci/with-cachix.sh nix build --print-build-logs .#all-android
+        run: ci/with-cachix.sh nix build --print-build-logs --max-jobs 1 .#all-android
 
   lint:
     name: Lint & markdown link check
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    # 24-35m, most of it verifying the markdown examples (31m in run
+    # 39435191749, which the old 35m cap cancelled).
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@v7
 
