@@ -49,3 +49,9 @@ version (UiAppGui)
     public import sparkles.ui_app.gui_setup;
     public import sparkles.ui_app.gui_loop;
 }
+
+version (UiAppGuiVulkan)
+{
+    public import sparkles.ui_app.native_loop;
+    public import sparkles.ui_app.wsi_input;
+}
