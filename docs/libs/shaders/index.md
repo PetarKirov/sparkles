@@ -285,6 +285,7 @@ for each:
 | `@uniform T name`         | a uniform `name`           | a field of the entry point's default uniform block         |
 | `UniformBlock!T name`     | one uniform per field of T | a uniform block whose type is `T`, laid out by `std140`    |
 | `PushConstants!T name`    | one uniform per field of T | the push-constant block, laid out by `std430`, ≤ 128 bytes |
+| `SamplerState name`       | nothing of its own (below) | a sampler                                                  |
 | a `@resources` struct `s` | its fields, flattened      | its fields, flattened                                      |
 
 The default uniform block of an entry point `e` is the variable `eUniforms`,
@@ -293,6 +294,23 @@ resources with a binding are in descriptor set 0. Binding 0 is the shared
 sampler's, and the rest follow parameter order from 1. `@binding(b)` on a
 parameter or a field fixes one; Vulkan only. An entry point declares at most
 one push-constant block.
+
+`image.sample(uv)` reads through the shared sampler. To read images with
+different filtering or addressing, take a `SamplerState` per kind and name it
+at the sample:
+
+```d
+@profiles(vulkan13) @fragment vec4 canvas(@input vec2 uv, Sampler2D atlas,
+    Sampler2D photo, SamplerState nearest, SamplerState linear)
+    => atlas.sample(nearest, uv) * photo.sample(linear, uv);
+```
+
+On Vulkan each sampler is a descriptor at its binding (here `atlas` 1, `photo`
+2, `nearest` 3, `linear` 4; `descriptorBindingsOf!canvas` lists them), and the
+host creates the samplers it binds there. On OpenGL a sampler is not a uniform
+of its own: each image becomes one `sampler2D` named after it, or, when it is
+read through several samplers, one per sampler, `<image>_<sampler>`; the host
+sets the filtering on the texture it binds to each.
 
 The host writes a block's bytes from the same D struct:
 
