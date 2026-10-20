@@ -47,7 +47,7 @@ import core.lifetime : move;
 import core.sys.posix.pthread;
 import core.atomic : atomicStore, cas;
 import core.stdc.config : c_long;
-import core.time : Duration, MonoTime, msecs, nsecs;
+import core.time : Duration, MonoTime, msecs, nsecs, seconds;
 import std.math : lround;
 
 import sparkles.android.activity : ANativeActivity, nativeActivity;
@@ -62,6 +62,8 @@ import sparkles.android.text_input : imeBackspace, imeEnter, keyCharacter,
     onTyped, popTypedChar;
 import sparkles.base.buffer : UniqueBuffer;
 import sparkles.base.pool.pool : Pool, PoolError;
+import sparkles.base.sync.condition : Condition;
+import sparkles.base.sync.mutex : Mutex;
 import sparkles.base.text.utf16 : utf16ToUtf8, utf32ToUtf8, utf8ToUtf16;
 import sparkles.event_horizon.backend.concept : Waker;
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr,
@@ -193,10 +195,8 @@ they touch only `__gshared` state and C calls.
 */
 private struct Channel
 {
-    pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-    // Initialised by `startActivity`: druntime's Bionic bindings have no
-    // `PTHREAD_COND_INITIALIZER`.
-    pthread_cond_t released;
+    Mutex lock;
+    Condition released;
     Note[32] notes;
     size_t head, count;
     void* activity; /// the activity whose callbacks are current
@@ -258,10 +258,10 @@ private bool post(void* activity, NoteKind kind, void* surface = null,
 // channel.
 private bool postNote(void* activity, Note note) nothrow @nogc
 {
-    pthread_mutex_lock(&channel.lock);
+    channel.lock.lock();
     if (activity !is channel.activity)
     {
-        pthread_mutex_unlock(&channel.lock);
+        channel.lock.unlock();
         return false;
     }
     return enqueueLocked(note);
@@ -280,7 +280,7 @@ private bool enqueueLocked(Note note) nothrow @nogc
     }
     const wake = channel.hasWaker;
     auto waker = channel.waker;
-    pthread_mutex_unlock(&channel.lock);
+    channel.lock.unlock();
     if (wake)
         waker.wake();
     return queued;
@@ -321,9 +321,9 @@ private void frameJob(JNIEnv*, void*) nothrow @nogc
 private extern (C) void onFrame64(long frameTimeNanos, void*) nothrow @nogc
 {
     atomicStore(framePending, false);
-    pthread_mutex_lock(&channel.lock);
+    channel.lock.lock();
     auto activity = channel.activity;
-    pthread_mutex_unlock(&channel.lock);
+    channel.lock.unlock();
     Note note = Note(NoteKind.frame);
     note.frameNanos = frameTimeNanos;
     postNote(activity, note);
@@ -340,7 +340,7 @@ private void postInputs(scope const(InputRecord)[] records) nothrow @nogc
 {
     if (records.length == 0)
         return;
-    pthread_mutex_lock(&channel.lock);
+    channel.lock.lock();
     if (channel.inputs.length - channel.inputCount < records.length)
         channel.inputLost += cast(uint) records.length;
     else
@@ -352,7 +352,7 @@ private void postInputs(scope const(InputRecord)[] records) nothrow @nogc
         }
     const wake = channel.hasWaker;
     auto waker = channel.waker;
-    pthread_mutex_unlock(&channel.lock);
+    channel.lock.unlock();
     if (wake)
         waker.wake();
 }
@@ -644,9 +644,7 @@ extern (C) private nothrow
     // draining must not hang the activity.
     void onSurfaceDestroyed(void* activity, void* surface)
     {
-        import core.sys.posix.time : clock_gettime, CLOCK_REALTIME, timespec;
-
-        pthread_mutex_lock(&channel.lock);
+        channel.lock.lock();
         // A finished activity's surface, lost after another activity of the
         // process started: the application may still present to it, so the
         // WSI thread reports the loss and releases the reference after the
@@ -661,18 +659,17 @@ extern (C) private nothrow
             return;
         }
         channel.releasePending = true;
-        pthread_mutex_unlock(&channel.lock);
+        channel.lock.unlock();
         post(activity, NoteKind.surfaceDestroyed, surface);
 
-        timespec until;
-        clock_gettime(CLOCK_REALTIME, &until);
-        until.tv_sec += 2;
-        pthread_mutex_lock(&channel.lock);
-        while (channel.releasePending)
-            if (pthread_cond_timedwait(&channel.released, &channel.lock, &until) != 0)
-                break;
-        channel.releasePending = false;
-        pthread_mutex_unlock(&channel.lock);
+        const until = MonoTime.currTime + 2.seconds;
+        {
+            auto held = channel.lock.guard();
+            while (channel.releasePending)
+                if (!channel.released.waitUntil(held, until))
+                    break;
+            channel.releasePending = false;
+        }
         ANativeWindow_release(surface);
     }
 
@@ -709,7 +706,6 @@ void startActivity(void* activity, void function() nothrow appMain) nothrow
     if (!runtimeStarted)
     {
         rt_init();
-        pthread_cond_init(&channel.released, null);
         runtimeStarted = true;
     }
     else
@@ -722,7 +718,7 @@ void startActivity(void* activity, void function() nothrow appMain) nothrow
     // Notes the previous activity queued stay: they are applied in order, and
     // one may carry a surface reference the WSI thread must release. Its later
     // callbacks are dropped (`postNote`), its surface's loss excepted.
-    pthread_mutex_lock(&channel.lock);
+    channel.lock.lock();
     channel.activity = activity;
     channel.inputHead = channel.inputCount = 0;
     channel.releasePending = false;
@@ -767,9 +763,9 @@ private __gshared void function() nothrow applicationMain;
 private void runApplication() nothrow
 {
     applicationMain();
-    pthread_mutex_lock(&channel.lock);
+    channel.lock.lock();
     appRunning = false;
-    pthread_mutex_unlock(&channel.lock);
+    channel.lock.unlock();
 }
 
 /**
@@ -895,10 +891,10 @@ struct AndroidWsi
         if (waker.hasError)
             return androidFailure!void(WsiOperation.attach,
                 "Event Horizon has no waker");
-        pthread_mutex_lock(&channel.lock);
+        channel.lock.lock();
         channel.waker = waker.value;
         channel.hasWaker = true;
-        pthread_mutex_unlock(&channel.lock);
+        channel.lock.unlock();
         loop_ = &loop;
         return wsiOk();
     }
@@ -1217,11 +1213,11 @@ struct AndroidWsi
             closeReading(h.index);
             clipboard_.end(h, TransferStatus.failed);
         }
-        pthread_mutex_lock(&channel.lock);
+        channel.lock.lock();
         channel.hasWaker = false;
         channel.releasePending = false;
-        pthread_cond_broadcast(&channel.released);
-        pthread_mutex_unlock(&channel.lock);
+        channel.released.notifyAll();
+        channel.lock.unlock();
         closed_ = true;
         open_ = false;
     }
@@ -1250,7 +1246,7 @@ struct AndroidWsi
         {
             size_t n;
             uint lost;
-            pthread_mutex_lock(&channel.lock);
+            channel.lock.lock();
             while (channel.inputCount != 0 && n < taken.length)
             {
                 taken[n++] = channel.inputs[channel.inputHead];
@@ -1258,7 +1254,7 @@ struct AndroidWsi
                 --channel.inputCount;
             }
             lost = channel.inputLost;
-            pthread_mutex_unlock(&channel.lock);
+            channel.lock.unlock();
             if (lost != lostReported_)
             {
                 lostReported_ = lost;
@@ -1482,14 +1478,14 @@ struct AndroidWsi
     {
         Note[32] taken;
         size_t n;
-        pthread_mutex_lock(&channel.lock);
+        channel.lock.lock();
         while (channel.count != 0)
         {
             taken[n++] = channel.notes[channel.head];
             channel.head = (channel.head + 1) % channel.notes.length;
             --channel.count;
         }
-        pthread_mutex_unlock(&channel.lock);
+        channel.lock.unlock();
 
         foreach (ref note; taken[0 .. n])
             apply(note);
@@ -1610,10 +1606,10 @@ struct AndroidWsi
     // The surface-destroyed callback waits on this.
     private void releaseNow()
     {
-        pthread_mutex_lock(&channel.lock);
+        channel.lock.lock();
         channel.releasePending = false;
-        pthread_cond_broadcast(&channel.released);
-        pthread_mutex_unlock(&channel.lock);
+        channel.released.notifyAll();
+        channel.lock.unlock();
     }
 
     private WindowId windowHandle()
@@ -1941,10 +1937,10 @@ private KeyLocation keyLocation(int keyCode) @safe pure nothrow @nogc
 // The soft keyboard's field typed: wake the WSI thread to drain it.
 private void wakeForTyped() nothrow @nogc
 {
-    pthread_mutex_lock(&channel.lock);
+    channel.lock.lock();
     const wake = channel.hasWaker;
     auto waker = channel.waker;
-    pthread_mutex_unlock(&channel.lock);
+    channel.lock.unlock();
     if (wake)
         waker.wake();
 }
