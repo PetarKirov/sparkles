@@ -362,13 +362,13 @@ package:
                 "VK_KHR_swapchain is unavailable");
 
         const wantPortability = advertised.hasExtension(khrPortabilitySubset);
-        const major = apiVersionMajor(request.apiVersion);
-        const minor = apiVersionMinor(request.apiVersion);
-        const atLeast12 = major > 1 || (major == 1 && minor >= 2);
-        const atLeast13 = major > 1 || (major == 1 && minor >= 3);
-        const wantDynamicExtension = !atLeast13 && atLeast12
-            && advertised.hasExtension(khrDynamicRendering);
-        const wantDynamicFeature = atLeast13 || wantDynamicExtension;
+        const plan = planDynamicRendering(request.apiVersion, properties.apiVersion,
+            advertised.hasExtension(khrDynamicRendering));
+        const wantDynamicExtension = plan.enableExtension;
+        const wantDynamicFeature = plan.chainFeature;
+        // The effective version, not the request: a 1.3 request on a 1.1
+        // device must not chain features the device does not know.
+        const atLeast13 = plan.core;
 
         const(char)*[3] deviceExtensions;
         uint extensionCount;
@@ -525,4 +525,53 @@ private:
     device.destroy();
     device.destroy();
     assert(device.queueFamily == uint.max && device.pipelineCache is null);
+}
+
+/// How a device gets dynamic rendering, if it does.
+package struct DynamicRenderingPlan
+{
+    bool enableExtension; /// enable `VK_KHR_dynamic_rendering`
+    bool chainFeature;    /// chain the dynamic-rendering feature at creation
+    bool core;            /// the device is Vulkan 1.3: chain the 1.3 features
+}
+
+/**
+Dynamic rendering for a device created at `requested` on hardware that
+reports `supported`, as Vulkan versions; `advertised` says whether the device
+lists `VK_KHR_dynamic_rendering`.
+
+The effective version is the lower of the two: a 1.3 request on a 1.1 device
+gets a 1.1 device. At 1.3 dynamic rendering is core. Below it, a device that
+advertises the extension gets it enabled, whatever was requested, from 1.1 on,
+where the feature query it needs is core.
+*/
+package DynamicRenderingPlan planDynamicRendering(uint requested, uint supported,
+    bool advertised) @safe pure nothrow @nogc
+{
+    const effective = requested < supported ? requested : supported;
+    const major = apiVersionMajor(effective);
+    const minor = apiVersionMinor(effective);
+    const core = major > 1 || (major == 1 && minor >= 3);
+    const atLeast11 = major > 1 || (major == 1 && minor >= 1);
+    const extension = !core && atLeast11 && advertised;
+    return DynamicRenderingPlan(enableExtension: extension, chainFeature: core || extension,
+        core: core);
+}
+
+@("vulkan_wsi.device.dynamicRenderingFollowsTheEffectiveVersion")
+@safe pure nothrow @nogc unittest
+{
+    enum v10 = apiVersion10, v11 = apiVersion11, v12 = apiVersion12, v13 = apiVersion13;
+    // Core at 1.3 on both sides.
+    assert(planDynamicRendering(v13, v13, true) == DynamicRenderingPlan(false, true, true));
+    assert(planDynamicRendering(v13, v13, false) == DynamicRenderingPlan(false, true, true));
+    // A 1.3 request on a 1.1 device that advertises the extension: enabled.
+    assert(planDynamicRendering(v13, v11, true) == DynamicRenderingPlan(true, true, false));
+    // ... and on one that does not, as the reference phone: a render pass.
+    assert(planDynamicRendering(v13, v11, false) == DynamicRenderingPlan(false, false, false));
+    // A 1.1 or 1.2 request on a 1.3 device stays below core.
+    assert(planDynamicRendering(v12, v13, true) == DynamicRenderingPlan(true, true, false));
+    assert(planDynamicRendering(v11, v13, false) == DynamicRenderingPlan(false, false, false));
+    // Vulkan 1.0 cannot query the feature.
+    assert(planDynamicRendering(v13, v10, true) == DynamicRenderingPlan(false, false, false));
 }
