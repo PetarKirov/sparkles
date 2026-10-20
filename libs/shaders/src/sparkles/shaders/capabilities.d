@@ -50,6 +50,16 @@ enum Cap : uint
     bufferDeviceAddress,
 }
 
+// The compiler checks a grant's names against its own vocabulary,
+// `ldc.dcompute.Capability`, and the build step passes this table's: the two
+// must name the same capabilities, in the same order.
+version (LDC_DCompute)
+{
+    static import ldc.dcompute;
+
+    static assert([__traits(allMembers, Cap)] == [__traits(allMembers, ldc.dcompute.Capability)]);
+}
+
 /// A capability that implies others: granting it grants them too.
 struct Implication
 {

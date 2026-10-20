@@ -930,30 +930,34 @@ private string[] glslFlags(in Profile p)
     => p.output == Output.glsl ? ["--version", p.version_.to!string]
         : ["--es", "--version", p.version_.to!string];
 
-/// spirv-val's environment for a Vulkan profile: `vulkan1.3`.
 /**
-The flags that compile the unit for `p`: the profile's name, and how its
-resources are lowered (`SHR3`–`SHR5`): as blocks where it grants uniform
-blocks and not loose uniforms, else as loose uniforms. The compiler knows a
-profile only by its name (`SHC1`), so what it cannot read from the table is
-passed beside the name.
+The flags that compile the unit for `p`: the profile's name and the
+capabilities it grants, closed under their implications
+(`-capabilities=shader:…`, `SHC3`). The compiler knows each capability's
+meaning and enforces it (the resources' lowering, the stages, integer
+vertex inputs); which profile grants what is this table's.
 */
 string[] profileFlags(in Profile p)
 {
-    const blocks = p.caps.has(Cap.uniformBlocks) && !p.caps.has(Cap.looseUniforms);
-    return ["-mdcompute-profile=" ~ p.name,
-        "-mdcompute-resources=" ~ (blocks ? "blocks" : "loose")];
+    string[] granted;
+    static foreach (name; __traits(allMembers, Cap))
+        if (p.caps.has(__traits(getMember, Cap, name)))
+            granted ~= name;
+    return ["-mdcompute-profile=" ~ p.name, "-capabilities=shader:" ~ granted.join(",")];
 }
 
 ///
-@("shaderCompile.profileFlags.lowerResourcesByWhatTheProfileGrants")
+@("shaderCompile.profileFlags.passTheProfileAndWhatItGrants")
 unittest
 {
-    assert(profileFlags(vulkan13) == ["-mdcompute-profile=vulkan1.3", "-mdcompute-resources=blocks"]);
-    assert(profileFlags(gl330) == ["-mdcompute-profile=gl330", "-mdcompute-resources=loose"]);
-    assert(profileFlags(gles100) == ["-mdcompute-profile=gles100", "-mdcompute-resources=loose"]);
+    assert(profileFlags(vulkan13) == ["-mdcompute-profile=vulkan1.3",
+        "-capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,"
+        ~ "sampledImages,intVertexInputs"]);
+    assert(profileFlags(gl330) == ["-mdcompute-profile=gl330",
+        "-capabilities=shader:shader,fragmentStage,looseUniforms,sampledImages"]);
 }
 
+/// spirv-val's environment for a Vulkan profile: `vulkan1.3`.
 private string vulkanEnv(in Profile p) => format("vulkan%s.%s", p.version_ / 10, p.version_ % 10);
 
 /**
