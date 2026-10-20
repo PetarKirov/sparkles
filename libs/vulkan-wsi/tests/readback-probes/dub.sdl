@@ -1,8 +1,8 @@
 // The Vulkan readbacks' probe unit (`sparkles.vulkan_wsi.triangle_readback`):
-// the block probe and the fragment-stage probe, as a consumer of
+// the block, fragment-stage and sampler probes, as a consumer of
 // `sparkles:shaders` with a device configuration. The readback runs the build
 // step on it in place, into a scratch directory; vulkan-wsi's unittest build
-// compiles its modules for the host, so both sides read one `Probe`.
+// compiles `src/` for the host, so both sides read one `Probe`.
 name "readback-probes"
 dependency "sparkles:shaders" path="../../../.."
 
@@ -12,6 +12,7 @@ configuration "library" {
 
 configuration "shaders" {
     targetType "library"
-    sourcePaths "src"
+    // `shaders/` holds the device-only probes, which the host never compiles.
+    sourcePaths "src" "shaders"
     dflags "-mdcompute-targets=vulkan-130"
 }
