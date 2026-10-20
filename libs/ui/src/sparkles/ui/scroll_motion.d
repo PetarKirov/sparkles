@@ -156,6 +156,14 @@ struct ScrollMotion
                 break;
             case MotionMode.easing:
                 target = clamp(target, limit);
+                // The limit shrank under the content (a filter, a taller
+                // viewport): what it showed past the new end is gone.
+                if (pos != clamp(pos, limit))
+                {
+                    pos = target;
+                    settle();
+                    break;
+                }
                 // Critically damped: x'' = −2ωx' − ω²x, solved exactly over
                 // the step, so a long frame cannot overshoot.
                 const omega = 4.0 / (springSeconds > 0 ? springSeconds : 0.2);
@@ -272,6 +280,20 @@ unittest
     assert(m.velocity == v, "a retarget keeps the motion it had");
     while (m.step(1.0 / 60, 100)) {}
     assert(m.pos == 6);
+}
+
+@("ui.scroll_motion.aShrunkLimitEndsAnEaseAtTheNewEnd")
+@safe pure nothrow @nogc
+unittest
+{
+    ScrollMotion m;
+    m.jumpTo(80, 100);
+    m.nudge(20, 100);
+    m.step(1.0 / 60, 100);
+    assert(m.active && m.pos > 80);
+    m.step(1.0 / 60, 50);
+    assert(!m.active, "a clamp ends the ease");
+    assert(m.pos == 50 && m.target == 50);
 }
 
 @("ui.scroll_motion.aFlingSlowsDownAndStopsAtTheEdge")
