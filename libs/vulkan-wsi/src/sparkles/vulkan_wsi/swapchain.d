@@ -215,6 +215,9 @@ struct Swapchain
     VkColorSpaceKHR colorSpace;
     VkPresentModeKHR presentMode;
     VkExtent2D extent;
+    /// What the images were created for: a renderer that names them (an
+    /// imageless framebuffer) needs it, and a readback needs `TRANSFER_SRC`.
+    VkImageUsageFlags usage;
     /// How the presentation engine turns the images onto the display: the
     /// surface's `currentTransform` when the swapchain was built. On
     /// Android it is a rotation while the display is turned from its panel's
@@ -277,6 +280,13 @@ struct Swapchain
         else
             sc.presentMode = choosePresentMode(modes);
         sc.extent = chooseExtent(caps, windowPixels, minAlloc);
+        // COLOR_ATTACHMENT to render into; TRANSFER_DST because Skia
+        // resolves and blits into the presentable image on some paths;
+        // TRANSFER_SRC, where the surface allows it, so a frame can be read
+        // back (a screenshot).
+        sc.usage = VkImageUsageFlagBits.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+            | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT
+            | (caps.supportedUsageFlags & VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
 
         // A zero-area swapchain is invalid. It happens while a window is
         // minimised, and the caller's answer is to stop drawing, not to fail.
@@ -290,10 +300,7 @@ struct Swapchain
             imageColorSpace: sc.colorSpace,
             imageExtent: sc.extent,
             imageArrayLayers: 1,
-            // COLOR_ATTACHMENT to render into; TRANSFER_DST because Skia
-            // resolves and blits into the presentable image on some paths.
-            imageUsage: VkImageUsageFlagBits.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
-                | VkImageUsageFlagBits.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            imageUsage: sc.usage,
             imageSharingMode: VkSharingMode.VK_SHARING_MODE_EXCLUSIVE,
             preTransform: caps.currentTransform,
             compositeAlpha: VkCompositeAlphaFlagBitsKHR.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
