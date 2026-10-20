@@ -43,7 +43,7 @@ to [feature-requirements.md](./feature-requirements.md)._
 | M4        | input, DPI, outputs, capture and cursors               | `F06`–`F12`                                | in progress |
 | M5        | decorations, state, popup, clipboard and DnD           | `F13`–`F16`                                | in progress |
 | M6        | SDL compatibility and Vulkan bridge                    | `WSI7`, `INT2`                             | in progress |
-| M7        | native Vulkan canvas and the terminal on it            | `INT5`, `INT4` (`gui-vulkan`)              | planned     |
+| M7        | native Vulkan canvas and the terminal on it            | `INT5`, `INT4` (`gui-vulkan`)              | in progress |
 | MG        | Skia Graphite native and SDL hosts                     | `INT3`                                     | planned     |
 | M8        | `ui-app` configurations and migration                  | `INT4`                                     | planned     |
 | M9        | Win32 TSF                                              | `POST1`                                    | deferred    |
