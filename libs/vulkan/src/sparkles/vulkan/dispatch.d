@@ -185,6 +185,10 @@ private enum CommandSet[] instanceSets = [
         "CreateDebugUtilsMessengerEXT",
         "DestroyDebugUtilsMessengerEXT",
     ]),
+    // Core in 1.1: which optional features a device has, before creating it.
+    CommandSet(vkVersion11, [
+        "GetPhysicalDeviceFeatures2",
+    ]),
 ] ~ platformInstanceSets;
 
 /// Device-level commands: the queue, frame synchronisation, and the swapchain.
@@ -331,6 +335,10 @@ enum string khrSwapchain = "VK_KHR_swapchain";
 /// ditto
 enum string khrDynamicRendering = "VK_KHR_dynamic_rendering";
 /// ditto
+enum string khrImagelessFramebuffer = "VK_KHR_imageless_framebuffer";
+/// ditto — what `VK_KHR_imageless_framebuffer` needs beside it below 1.2
+enum string khrImageFormatList = "VK_KHR_image_format_list";
+/// ditto
 enum string extDebugUtils = "VK_EXT_debug_utils";
 /// ditto — not an extension name, a `has` key for the 1.3 core aliases.
 enum string vkVersion13 = "VK_VERSION_1_3";
@@ -455,6 +463,10 @@ struct DeviceCommands
     static assert(matchesHeaderMacro(khrSwapchain, VK_KHR_SWAPCHAIN_EXTENSION_NAME));
     static assert(matchesHeaderMacro(khrDynamicRendering,
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrImagelessFramebuffer,
+        VK_KHR_IMAGELESS_FRAMEBUFFER_EXTENSION_NAME));
+    static assert(matchesHeaderMacro(khrImageFormatList,
+        VK_KHR_IMAGE_FORMAT_LIST_EXTENSION_NAME));
     version (Android)
         static assert(matchesHeaderMacro(khrAndroidSurface,
             VK_KHR_ANDROID_SURFACE_EXTENSION_NAME));

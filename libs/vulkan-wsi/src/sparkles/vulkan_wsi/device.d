@@ -71,6 +71,9 @@ struct VulkanDevice
     VkQueue queue;
     VkPhysicalDeviceProperties properties;
     bool dynamicRendering;
+    /// Whether framebuffers may be created imageless (`VK_KHR_imageless_framebuffer`,
+    /// core in 1.2): enabled wherever the device has the feature.
+    bool imagelessFramebuffer;
     /// Built pipelines' compiled form, shared by every pipeline made on this
     /// device; `null` until $(LREF loadPipelineCache).
     VkPipelineCache pipelineCache;
@@ -370,7 +373,23 @@ package:
         // device must not chain features the device does not know.
         const atLeast13 = plan.core;
 
-        const(char)*[3] deviceExtensions;
+        // Imageless framebuffers, where the device has them, for a canvas
+        // that renders through a render pass instead (`sparkles:ui-vulkan`
+        // `UVX10`). The query needs Vulkan 1.1, which every plan that
+        // queries implies.
+        const imageless = planImageless(request.apiVersion, properties.apiVersion,
+            advertised.hasExtension(khrImagelessFramebuffer),
+            advertised.hasExtension(khrImageFormatList));
+        auto imagelessFeature = vkInfo(VkPhysicalDeviceImagelessFramebufferFeatures());
+        if (imageless.query && instance.has!vkVersion11)
+        {
+            auto features = vkInfo(VkPhysicalDeviceFeatures2(pNext: &imagelessFeature));
+            instance.getPhysicalDeviceFeatures2(physicalDevice, &features);
+            imagelessFeature.pNext = null;
+        }
+        const wantImageless = imagelessFeature.imagelessFramebuffer == VK_TRUE;
+
+        const(char)*[5] deviceExtensions;
         uint extensionCount;
         if (presents)
             deviceExtensions[extensionCount++] = khrSwapchain.ptr;
@@ -378,6 +397,11 @@ package:
             deviceExtensions[extensionCount++] = khrPortabilitySubset.ptr;
         if (wantDynamicExtension)
             deviceExtensions[extensionCount++] = khrDynamicRendering.ptr;
+        if (wantImageless && imageless.enableExtensions)
+        {
+            deviceExtensions[extensionCount++] = khrImageFormatList.ptr;
+            deviceExtensions[extensionCount++] = khrImagelessFramebuffer.ptr;
+        }
 
         auto dynamicFeature = vkInfo(VkPhysicalDeviceDynamicRenderingFeatures(
             dynamicRendering: VK_TRUE,
@@ -390,9 +414,15 @@ package:
             shaderDemoteToHelperInvocation: VK_TRUE,
             dynamicRendering: VK_TRUE,
         ));
+        const(void)* chain = atLeast13 ? cast(const(void)*) &features13
+            : wantDynamicExtension ? cast(const(void)*) &dynamicFeature : null;
+        if (wantImageless)
+        {
+            imagelessFeature.pNext = cast(void*) chain;
+            chain = &imagelessFeature;
+        }
         auto info = vkInfo(VkDeviceCreateInfo(
-            pNext: atLeast13 ? cast(const(void)*) &features13
-                : wantDynamicExtension ? cast(const(void)*) &dynamicFeature : null,
+            pNext: chain,
             queueCreateInfoCount: 1,
             pQueueCreateInfos: &queueInfo,
             enabledExtensionCount: extensionCount,
@@ -413,6 +443,7 @@ package:
 
         dynamicRendering = wantDynamicFeature
             && (device.has!vkVersion13 || device.has!khrDynamicRendering);
+        imagelessFramebuffer = wantImageless;
         device.getDeviceQueue(handle, queueFamily, 0, &queue);
         return vulkanWsiOk();
     }
@@ -574,4 +605,49 @@ package DynamicRenderingPlan planDynamicRendering(uint requested, uint supported
     assert(planDynamicRendering(v11, v13, false) == DynamicRenderingPlan(false, false, false));
     // Vulkan 1.0 cannot query the feature.
     assert(planDynamicRendering(v13, v10, true) == DynamicRenderingPlan(false, false, false));
+}
+
+/// How a device gets imageless framebuffers, if it can.
+package struct ImagelessPlan
+{
+    bool query;            /// ask the device whether it has the feature
+    bool enableExtensions; /// enable `VK_KHR_imageless_framebuffer` and `VK_KHR_image_format_list`
+}
+
+/**
+Imageless framebuffers, which let a render pass draw into every swapchain image
+of one size through one framebuffer (`sparkles:ui-vulkan` `UVX10`), for a
+device created at `requested` on hardware that reports `supported`.
+`imageless` and `formatList` say whether the device lists
+`VK_KHR_imageless_framebuffer` and the `VK_KHR_image_format_list` it needs
+beside it below 1.2.
+
+Core at 1.2, where only the feature query decides; at 1.1, both extensions
+must be listed, and the query decides too.
+*/
+package ImagelessPlan planImageless(uint requested, uint supported, bool imageless,
+    bool formatList) @safe pure nothrow @nogc
+{
+    const effective = requested < supported ? requested : supported;
+    const major = apiVersionMajor(effective);
+    const minor = apiVersionMinor(effective);
+    const core = major > 1 || (major == 1 && minor >= 2);
+    const atLeast11 = major > 1 || (major == 1 && minor >= 1);
+    const extension = !core && atLeast11 && imageless && formatList;
+    return ImagelessPlan(query: core || extension, enableExtensions: extension);
+}
+
+@("vulkan_wsi.device.imagelessFollowsTheEffectiveVersion")
+@safe pure nothrow @nogc unittest
+{
+    enum v10 = apiVersion10, v11 = apiVersion11, v12 = apiVersion12, v13 = apiVersion13;
+    assert(planImageless(v13, v13, false, false) == ImagelessPlan(true, false), "core");
+    assert(planImageless(v12, v13, false, false) == ImagelessPlan(true, false));
+    // The reference phone: 1.1 with both extensions.
+    assert(planImageless(v13, v11, true, true) == ImagelessPlan(true, true));
+    assert(planImageless(v13, v11, true, false) == ImagelessPlan(false, false),
+        "without the format list it needs");
+    assert(planImageless(v11, v13, false, true) == ImagelessPlan(false, false),
+        "a 1.1 request on a 1.3 device that lists neither");
+    assert(planImageless(v13, v10, true, true) == ImagelessPlan(false, false));
 }
