@@ -1,0 +1,678 @@
+/**
+The canvas's batcher: the toolkit's drawing operations in, quad records and
+draw runs out, with no device in sight.
+
+A $(LREF Painter) satisfies `isCanvas` with every optional method (`UVK1`).
+Each operation becomes the $(REF Instance, sparkles,ui_vulkan,shading)s it
+needs, appended in the order the operations arrive, so a later operation is
+always drawn over an earlier one (`UVK5`). The records are grouped into
+$(LREF DrawRun)s: a run ends only where the scissor or a bound image changes,
+never by reordering. Pixels come from `sparkles:ui`'s pixel geometry
+(`UVK10`), cells map to pixels as `UVK8` says, and clips and shifts are
+resolved to a scissor per run (`UVK13`, `UVK14`).
+
+What the canvas cannot draw it counts in a $(LREF FrameReport) instead of
+approximating (`UVK16`): until glyphs arrive (plan slice V3) every text
+operation draws nothing and counts as `glyphMiss`, and an interface run
+counts as `missingFace` too (`UVK17`).
+
+The Vulkan canvas wraps a painter and records its output at `endFrame`;
+keeping the two apart is what lets the operation-to-record mapping be tested
+without a driver.
+*/
+module sparkles.ui_vulkan.painter;
+
+import std.traits : EnumMembers;
+
+import sparkles.base.buffer : UniqueBuffer;
+import sparkles.base.term_color : RgbColor;
+import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.shaders : v4, vec4;
+import sparkles.ui.canvas : isCanvas, LineStyle, RuleEdge, Scrollbar;
+import sparkles.ui.effect : EffectId;
+import sparkles.ui.geometry : Point, Rect, Size;
+import sparkles.ui.image : fitRect, ImageFit, ImageHandle;
+import sparkles.ui.interp.immediate : paintImagePlaceholder;
+import sparkles.ui.pixel_geometry : arrowTriangle, borderRects, centredSpan, ClipEntry,
+    cornerRadiusPx, densityPx, lineRects, roundedBorderPx, ruleRect, ScissorBox,
+    scissorBoxOfStack, scrollbarMinExtentPx, scrollbarRail, shadowRect, shiftPx;
+import sparkles.ui.style : FontRole, Visual;
+import sparkles.ui_vulkan.shading : Instance, QuadKind;
+
+/// Why an operation was drawn differently from its specification (`UVK16`).
+enum Degradation : ubyte
+{
+    effect,          /// an effect bracket drew its contents unaffected (`UVK15`)
+    missingFace,     /// a text run's font role had no face (`UVK17`)
+    glyphMiss,       /// a glyph was not available in time (`UVK22`)
+    unshapedCluster, /// a cluster needing shaping drew its first codepoint (`UVK19`)
+    imageDeferred,   /// an image waited for a later frame's upload budget (`UVK25`)
+    imageTooLarge,   /// an image exceeded the device's largest image (`UVK25`)
+    srgbBlending,    /// the target is sRGB: partial coverage blends in linear light (`UVK7`)
+}
+
+/// One frame's degradation report: a count per cause, and whether the frame
+/// asks for another to complete what it skipped.
+struct FrameReport
+{
+    uint[EnumMembers!Degradation.length] counts; /// indexed by `Degradation`
+    bool anotherFrame; ///
+
+@safe pure nothrow @nogc:
+
+    /// The count for `d`.
+    uint opIndex(Degradation d) const => counts[d];
+
+    /// Counts one more operation drawn differently for `d`.
+    void count(Degradation d)
+    {
+        ++counts[d];
+    }
+
+    /// Whether the frame was drawn exactly as specified.
+    bool empty() const
+    {
+        foreach (c; counts)
+            if (c)
+                return false;
+        return !anotherFrame;
+    }
+}
+
+/// How the frame's cells map to its pixels (`UVK3`, `UVK8`).
+struct FrameMetrics
+{
+    int cellW = 1;     /// one cell's width, in pixels
+    int cellH = 1;     /// one cell's height, in pixels
+    int originX;       /// the pixel of cell column 0
+    int originY;       /// the pixel of cell row 0
+    float density = 1; /// device pixels per CSS pixel
+}
+
+/// The images a draw run binds: an atlas page of each kind and an image,
+/// each by its holder's number; 0 is the placeholder the holder binds for
+/// none.
+struct BoundImages
+{
+    uint coveragePage; ///
+    uint colourPage;   ///
+    uint image;        ///
+}
+
+/// Records drawn with one call: a range of the frame's instances under one
+/// scissor and one set of bound images.
+struct DrawRun
+{
+    uint first;          /// the first instance
+    uint count;          /// how many
+    ScissorBox scissor;  /// in target pixels
+    BoundImages images;  ///
+}
+
+/// What became of an image a painter asked for.
+enum ImageOutcome : ubyte
+{
+    drawn,    /// resident, or uploaded this frame: draw it from `slot`
+    missing,  /// no pixels under the handle: the placeholder, uncounted (`IMG4`)
+    tooLarge, /// larger than the device's largest image (`UVK25`)
+    deferred, /// over this frame's upload budget; it uploads in a later one (`UVK25`)
+}
+
+/**
+Whether `S` resolves images for a painter: `resolve(handle, slot, size)`
+reports what became of the image and, when it is drawn, the number its
+draw runs bind it by and its size in pixels.
+*/
+enum bool isImageSource(S) = is(typeof((ref S s, ImageHandle h) {
+    uint slot;
+    Size size;
+    ImageOutcome o = s.resolve(h, slot, size);
+}));
+
+/// An image source with no images: every image is the placeholder.
+struct NoImages
+{
+    /// Always `missing`.
+    ImageOutcome resolve(ImageHandle, out uint, out Size) const @safe pure nothrow @nogc
+        => ImageOutcome.missing;
+}
+
+static assert(isImageSource!NoImages);
+
+/// A colour and an 8-bit alpha as the shading's straight RGBA.
+vec4 rgba(RgbColor c, ubyte a) @safe pure nothrow @nogc
+    => v4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, a / 255.0f);
+
+/**
+The batcher. `begin` starts a frame for a target of `target` pixels; the
+canvas methods append records; `instances` and `runs` are the frame's.
+Not copyable: it owns its buffers.
+*/
+struct Painter(Images)
+if (isImageSource!Images)
+{
+    /// Where image draws are resolved: the source itself, or a pointer to
+    /// one, which may be null for none.
+    Images images;
+
+    /// The shortest a scrollbar's thumb is drawn, in device pixels (`SCV13`).
+    int minThumbPx = scrollbarMinExtentPx;
+
+    /// The frame's degradation report so far.
+    FrameReport report;
+
+    private FrameMetrics m_;
+    private Size target_;
+    private UniqueBuffer!Instance instances_;
+    private UniqueBuffer!DrawRun runs_;
+    private UniqueBuffer!ClipEntry clips_;
+    private UniqueBuffer!(int[2]) shifts_;
+    private int shiftX_, shiftY_;
+    private ScissorBox scissor_;
+    private bool clipped_; // nothing survives the clip stack
+
+    @disable this(this);
+
+    /// Starts a frame: no records, no clip, no shift, an empty report.
+    void begin(Size target, in FrameMetrics metrics)
+    {
+        m_ = metrics;
+        target_ = target;
+        instances_.clear();
+        runs_.clear();
+        clips_.clear();
+        shifts_.clear();
+        shiftX_ = shiftY_ = 0;
+        report = FrameReport.init;
+        updateScissor();
+    }
+
+    /// The frame's records, in drawing order.
+    const(Instance)[] instances() const return => instances_[];
+
+    /// The frame's draw runs, in drawing order.
+    const(DrawRun)[] runs() const return => runs_[];
+
+    /// The frame's metrics.
+    ref const(FrameMetrics) metrics() const return => m_;
+
+    // -------------------------------------------------------------------
+    // The canvas concept
+    // -------------------------------------------------------------------
+
+    /**
+    A box: its shadow behind it, its background, its border and its popup
+    arrow, each only where the visual asks for it — the reference canvas's
+    order. A plain fill is one solid record over exactly its pixels (`UVK9`).
+    */
+    void fillRect(in Rect r, in Visual visual)
+    {
+        const v = densityScaled(visual);
+        int x = px(r.x), w = r.width * m_.cellW;
+        centredSpan(x, w, v.drawWidth);
+        int y = py(r.y), h = r.height * m_.cellH;
+        centredSpan(y, h, v.drawHeight);
+        const box = Rect(x, y, w, h);
+
+        if (v.shadow.any)
+        {
+            const s = v.shadow;
+            const sr = shadowRect(box, s);
+            if (v.borderRadius > 0)
+                rounded(sr, cornerRadiusPx(v.borderRadius, sr.width, sr.height),
+                    rgba(s.color, s.alpha), v4(0), 0);
+            else
+                solid(sr, rgba(s.color, s.alpha));
+        }
+
+        const fill = v.hasBg ? rgba(v.bg, v.bgAlpha) : v4(0);
+        const edge = v.border.any ? rgba(v.border.color, v.border.alpha) : v4(0);
+        if (v.borderRadius > 0)
+        {
+            // Background and outline in one record: the ring lies outside
+            // the box, so drawing it over the fill is all the order there is.
+            if (v.hasBg || v.border.any)
+                rounded(box, cornerRadiusPx(v.borderRadius, w, h), fill, edge,
+                    v.border.any ? roundedBorderPx(v.border.width, m_.density) : 0);
+        }
+        else
+        {
+            if (v.hasBg)
+                solid(box, fill);
+            if (v.border.any)
+                borderRects(box, v.border.width, v.border.style, m_.cellW, m_.cellH,
+                    (Rect e) { solid(e, edge); });
+        }
+
+        if (v.arrow)
+        {
+            const t = arrowTriangle(x, y, v.arrowOffset, m_.cellW, m_.cellH);
+            emit(record(v4(t.left[0], t.apex[1], t.right[0] - t.left[0], t.left[1] - t.apex[1]),
+                fill, edge, v4(QuadKind.arrow, 0, 0, 1)));
+        }
+    }
+
+    /// Text draws nothing until glyphs arrive, and counts as `glyphMiss`.
+    void textRun(in Point at, scope const(char)[] text, in Visual v)
+    {
+        if (text.length)
+            report.count(Degradation.glyphMiss);
+    }
+
+    /// ditto — an interface run has no face of its own here, so it also
+    /// counts as `missingFace` and falls back to the cell font (`UVK17`).
+    void textRunIn(in Rect r, scope const(char)[] text, in Visual v)
+    {
+        if (text.length && (v.fontRole == FontRole.ui || v.fontRole == FontRole.uiMono
+                || v.fontRole == FontRole.docs))
+            report.count(Degradation.missingFace);
+        textRun(r.origin, text, v);
+    }
+
+    /// ditto
+    void glyph(in Point at, dchar g, in Visual v)
+    {
+        if (g != ' ')
+            report.count(Degradation.glyphMiss);
+    }
+
+    /// A line's pixels, from `lineRects`.
+    void line(in Point from, in Point to, in Visual v, LineStyle style)
+    {
+        const c = rgba(v.fg, v.fgAlpha);
+        lineRects(px(from.x), py(from.y), px(to.x), style == LineStyle.wavy, m_.cellH,
+            (Rect r) { solid(r, c); });
+    }
+
+    /// A one-pixel rule along `edge` of `rect` (`UIA2`).
+    void rule(in Rect rect, RuleEdge edge, in Visual v)
+    {
+        solid(ruleRect(pixelsOf(rect), edge), rgba(v.fg, v.fgAlpha));
+    }
+
+    /// A scrollbar's rail and thumb, from `scrollbarRail`; a bar that owns
+    /// its rule shows that rule while idle.
+    void scrollbar(in Scrollbar op)
+    {
+        const r = scrollbarRail(op, m_.cellW, m_.cellH, m_.originX + shiftX_,
+            m_.originY + shiftY_, minThumbPx);
+        if (!r.live)
+            return;
+        if (op.trackLit)
+            solid(r.track, rgba(op.trackColor, cast(ubyte)(op.trackAlpha * op.fadePercent / 100)));
+        else if (op.paintsIdleTrack)
+            solid(ruleRect(pixelsOf(op.rect), op.edge), rgba(op.trackColor, op.trackAlpha));
+        solid(r.thumb, rgba(op.fg, cast(ubyte)(op.fgAlpha * op.fadePercent / 100)));
+    }
+
+    /**
+    The image `handle` placed in `r` by `fitRect`, clipped to `r` for
+    `cover`, its texels times the foreground alpha (`UVK24`). An image the
+    source cannot draw is the placeholder every canvas draws (`IMG4`),
+    counted when it was too large or deferred (`UVK25`).
+    */
+    void image(in Rect r, ImageHandle handle, ImageFit fit, scope const(char)[] alt,
+        in Visual v)
+    {
+        uint slot;
+        Size size;
+        static if (is(Images == U*, U))
+            const outcome = images is null ? ImageOutcome.missing : images.resolve(handle, slot, size);
+        else
+            const outcome = images.resolve(handle, slot, size);
+        if (outcome != ImageOutcome.drawn)
+        {
+            if (outcome == ImageOutcome.tooLarge)
+                report.count(Degradation.imageTooLarge);
+            else if (outcome == ImageOutcome.deferred)
+            {
+                report.count(Degradation.imageDeferred);
+                report.anotherFrame = true;
+            }
+            paintImagePlaceholder(this, r, alt, v);
+            return;
+        }
+        const placed = fitRect(pixelsOf(r), size, fit);
+        const clipped = fit == ImageFit.cover;
+        if (clipped)
+            pushClip(r);
+        emit(record(v4(placed.x, placed.y, placed.width, placed.height),
+            v4(1, 1, 1, v.fgAlpha / 255.0f), v4(0), v4(QuadKind.image, 0, 0, 0), v4(0, 0, 1, 1)),
+            BoundImages(image: slot));
+        if (clipped)
+            popClip();
+    }
+
+    /// Clips what follows to `r` intersected with every enclosing clip,
+    /// where `r` lies under the shifts open now (`UVK13`).
+    void pushClip(in Rect r)
+    {
+        clips_.put(ClipEntry(r, shiftX_, shiftY_));
+        updateScissor();
+    }
+
+    /// ditto
+    void popClip()
+    {
+        if (clips_.length)
+            clips_.popBack();
+        updateScissor();
+    }
+
+    /// Moves what follows by `dx` and `dy` cells, each rounded to whole
+    /// pixels half away from zero (`UVK14`).
+    void pushShift(float dx, float dy)
+    {
+        const x = shiftPx(dx, m_.cellW), y = shiftPx(dy, m_.cellH);
+        shifts_.put([x, y]);
+        shiftX_ += x;
+        shiftY_ += y;
+    }
+
+    /// ditto
+    void popShift()
+    {
+        if (!shifts_.length)
+            return;
+        const s = shifts_[][$ - 1];
+        shifts_.popBack();
+        shiftX_ -= s[0];
+        shiftY_ -= s[1];
+    }
+
+    /// An effect bracket draws its contents unaffected and counts once
+    /// (`UVK15`).
+    void pushEffect(in Rect r, EffectId id)
+    {
+        report.count(Degradation.effect);
+    }
+
+    /// ditto
+    void popEffect()
+    {
+    }
+
+    /// A run's extent in cells, as layout measured it.
+    Size measure(scope const(char)[] text) const => Size(cast(int) visibleWidth(text), 1);
+
+    // -------------------------------------------------------------------
+
+    private int px(int cx) const => m_.originX + shiftX_ + cx * m_.cellW;
+    private int py(int cy) const => m_.originY + shiftY_ + cy * m_.cellH;
+
+    private Rect pixelsOf(in Rect r) const
+        => Rect(px(r.x), py(r.y), r.width * m_.cellW, r.height * m_.cellH);
+
+    private Visual densityScaled(in Visual v) const
+    {
+        Visual s = v;
+        if (m_.density == 1)
+            return s;
+        s.borderRadius = densityPx(v.borderRadius, m_.density);
+        s.shadow.dx = densityPx(v.shadow.dx, m_.density);
+        s.shadow.dy = densityPx(v.shadow.dy, m_.density);
+        s.shadow.blur = densityPx(v.shadow.blur, m_.density);
+        s.drawHeight = densityPx(v.drawHeight, m_.density);
+        s.drawWidth = densityPx(v.drawWidth, m_.density);
+        return s;
+    }
+
+    private void updateScissor()
+    {
+        if (!clips_.length)
+        {
+            scissor_ = ScissorBox(0, 0, target_.width, target_.height);
+            clipped_ = target_.width <= 0 || target_.height <= 0;
+            return;
+        }
+        clipped_ = !scissorBoxOfStack(clips_[], m_.originX, m_.originY, m_.cellW, m_.cellH,
+            target_.width, target_.height, scissor_);
+    }
+
+    private void solid(in Rect r, vec4 colour)
+    {
+        if (!r.empty && colour.array[3] > 0)
+            emit(record(v4(r.x, r.y, r.width, r.height), colour, v4(0),
+                v4(QuadKind.solid, 0, 0, 0)));
+    }
+
+    private void rounded(in Rect r, float radius, vec4 fill, vec4 edge, float thickness)
+    {
+        if (!r.empty)
+            emit(record(v4(r.x, r.y, r.width, r.height), fill, edge,
+                v4(QuadKind.roundedBox, radius, thickness, thickness + 1)));
+    }
+
+    // Every field given: a vector left out of a literal starts as NaN.
+    private static Instance record(vec4 box, vec4 fill, vec4 edge, vec4 shape,
+        vec4 texRect = v4(0))
+    {
+        Instance i;
+        i.box = box;
+        i.fill = fill;
+        i.edge = edge;
+        i.shape = shape;
+        i.texRect = texRect;
+        return i;
+    }
+
+    // Appends `i`, starting a run where the scissor or the images change.
+    private void emit(in Instance i, BoundImages bound = BoundImages.init)
+    {
+        if (clipped_)
+            return;
+        auto all = runs_[];
+        if (!all.length || all[$ - 1].scissor != scissor_ || all[$ - 1].images != bound)
+            runs_.put(DrawRun(cast(uint) instances_.length, 0, scissor_, bound));
+        instances_.put(i);
+        ++runs_[][$ - 1].count;
+    }
+}
+
+static assert(isCanvas!(Painter!NoImages));
+
+// `UVK1`: every optional method, so the interpreter hands it every operation.
+static assert(__traits(hasMember, Painter!NoImages, "textRunIn")
+    && __traits(hasMember, Painter!NoImages, "rule")
+    && __traits(hasMember, Painter!NoImages, "scrollbar")
+    && __traits(hasMember, Painter!NoImages, "image")
+    && __traits(hasMember, Painter!NoImages, "pushClip") && __traits(hasMember, Painter!NoImages, "popClip")
+    && __traits(hasMember, Painter!NoImages, "pushShift") && __traits(hasMember, Painter!NoImages, "popShift")
+    && __traits(hasMember, Painter!NoImages, "pushEffect") && __traits(hasMember, Painter!NoImages, "popEffect"));
+
+version (unittest)
+{
+    import sparkles.ui.style : BorderStyle, BoxBorder, Shadow;
+    import sparkles.ui.geometry : Insets;
+
+    // An image source of two images: 1 is resident, 2 is too large, 3 is
+    // over the budget.
+    private struct TwoImages
+    {
+        ImageOutcome resolve(ImageHandle h, out uint slot, out Size size) const
+            @safe pure nothrow @nogc
+        {
+            if (h.value == 1)
+            {
+                slot = 7;
+                size = Size(40, 20);
+                return ImageOutcome.drawn;
+            }
+            return h.value == 2 ? ImageOutcome.tooLarge
+                : h.value == 3 ? ImageOutcome.deferred : ImageOutcome.missing;
+        }
+    }
+
+    private enum FrameMetrics metrics10x20 = FrameMetrics(cellW: 10, cellH: 20, originX: 5, originY: 3);
+
+    private bool boxIs(in Instance i, int x, int y, int w, int h) @safe pure nothrow @nogc
+        => i.box.array == [cast(float) x, y, w, h];
+}
+
+@("ui_vulkan.painter.aPlainFillIsOneSolidRecordOverItsPixels")
+@safe pure nothrow @nogc
+unittest
+{
+    Painter!NoImages p;
+    p.begin(Size(200, 100), metrics10x20);
+    p.fillRect(Rect(1, 2, 3, 1), Visual(bg: RgbColor(10, 20, 30), bgAlpha: 128, hasBg: true));
+    assert(p.instances.length == 1 && p.runs.length == 1);
+    const i = p.instances[0];
+    assert(boxIs(i, 15, 43, 30, 20), "cell (1, 2) at origin (5, 3) of 10 × 20 cells");
+    assert(i.shape.array[0] == QuadKind.solid);
+    assert(i.fill.array == [10 / 255.0f, 20 / 255.0f, 30 / 255.0f, 128 / 255.0f]);
+    assert(i.edge.array == [0, 0, 0, 0] && i.texRect.array == [0, 0, 0, 0]);
+    assert(p.runs[0].scissor == ScissorBox(0, 0, 200, 100), "no clip: the whole target");
+
+    p.fillRect(Rect(0, 0, 1, 1), Visual.init);
+    assert(p.instances.length == 1, "nothing to paint, nothing recorded");
+}
+
+@("ui_vulkan.painter.runsBreakWhereTheImageChangesAndNeverReorder")
+@safe pure nothrow @nogc
+unittest
+{
+    // `UVK5`, canvas scenario 6's shape: image A, a fill, image A again. A
+    // batcher that grouped by bound image would draw the fill last.
+    Painter!TwoImages p;
+    p.begin(Size(400, 300), metrics10x20);
+    const v = Visual(bg: RgbColor(255, 0, 0), hasBg: true);
+    p.image(Rect(0, 0, 4, 1), ImageHandle(1), ImageFit.fill, "a", Visual.init);
+    p.fillRect(Rect(1, 0, 4, 1), v);
+    p.image(Rect(2, 0, 4, 1), ImageHandle(1), ImageFit.fill, "a", Visual.init);
+    assert(p.instances.length == 3 && p.runs.length == 3);
+    assert(p.runs[0].images.image == 7 && p.runs[1].images.image == 0 && p.runs[2].images.image == 7);
+    assert(p.instances[0].shape.array[0] == QuadKind.image);
+    assert(p.instances[1].shape.array[0] == QuadKind.solid);
+    assert(p.runs[2].first == 2 && p.runs[2].count == 1);
+
+    // Two fills in a row share a run.
+    p.fillRect(Rect(0, 1, 1, 1), v);
+    p.fillRect(Rect(1, 1, 1, 1), v);
+    assert(p.runs.length == 4 && p.runs[3].count == 2);
+}
+
+@("ui_vulkan.painter.clipsNestAndStayWhereTheyWerePushed")
+@safe pure nothrow @nogc
+unittest
+{
+    // `UVK13`/`UVK14`: a viewport clip, a half-row shift, a nested clip
+    // inside it — the nested one moves with the content, the outer stays.
+    Painter!NoImages p;
+    p.begin(Size(800, 600), FrameMetrics(cellW: 10, cellH: 20));
+    p.pushClip(Rect(0, 1, 30, 4));
+    p.pushShift(0, -0.5f);
+    p.pushClip(Rect(0, 2, 30, 2));
+    p.fillRect(Rect(0, 0, 100, 100), Visual(hasBg: true, bgAlpha: 255));
+    assert(p.runs[$ - 1].scissor == ScissorBox(0, 30, 300, 40));
+    assert(boxIs(p.instances[$ - 1], 0, -10, 1000, 2000), "the fill moved by the shift");
+    p.popClip();
+    p.popShift();
+    p.fillRect(Rect(0, 0, 1, 1), Visual(hasBg: true, bgAlpha: 255));
+    assert(p.runs[$ - 1].scissor == ScissorBox(0, 20, 300, 80));
+    assert(boxIs(p.instances[$ - 1], 0, 0, 10, 20));
+
+    // A clip disjoint from its parent leaves nothing to draw.
+    p.pushClip(Rect(40, 40, 2, 2));
+    const before = p.instances.length;
+    p.fillRect(Rect(40, 40, 2, 2), Visual(hasBg: true, bgAlpha: 255));
+    assert(p.instances.length == before);
+}
+
+@("ui_vulkan.painter.shiftsRoundHalfAwayFromZeroAndAdd")
+@safe pure nothrow @nogc
+unittest
+{
+    // `UVK14`, canvas scenario 5: an odd cell width.
+    Painter!NoImages p;
+    p.begin(Size(100, 100), FrameMetrics(cellW: 9, cellH: 20));
+    p.pushShift(0.5f, 0);
+    p.pushShift(-0.5f, 0);
+    p.pushShift(0.5f, 0);
+    p.fillRect(Rect(1, 0, 1, 1), Visual(hasBg: true, bgAlpha: 255));
+    assert(boxIs(p.instances[0], 9 + 5, 0, 9, 20), "+5 − 5 + 5");
+}
+
+@("ui_vulkan.painter.bordersAreTheSharedGeometrysPixels")
+@safe pure nothrow @nogc
+unittest
+{
+    // `UVK10`: the records of a dashed border are `borderRects`' rectangles.
+    Painter!NoImages p;
+    p.begin(Size(400, 300), metrics10x20);
+    const border = BoxBorder(width: Insets.all(1), style: BorderStyle.dashed,
+        color: RgbColor(1, 2, 3));
+    p.fillRect(Rect(1, 1, 6, 3), Visual(border: border));
+    Rect[64] want;
+    size_t n;
+    borderRects(Rect(15, 23, 60, 60), Insets.all(1), BorderStyle.dashed, 10, 20,
+        (Rect r) { want[n++] = r; });
+    assert(n > 4 && p.instances.length == n);
+    foreach (k, r; want[0 .. n])
+        assert(boxIs(p.instances[k], r.x, r.y, r.width, r.height));
+}
+
+@("ui_vulkan.painter.roundedBoxesAndShadows")
+@safe pure nothrow @nogc
+unittest
+{
+    Painter!NoImages p;
+    p.begin(Size(400, 300), FrameMetrics(cellW: 10, cellH: 20, density: 2));
+    const v = Visual(bg: RgbColor(9, 9, 9), hasBg: true, borderRadius: 6,
+        border: BoxBorder(width: Insets.all(1), style: BorderStyle.solid),
+        shadow: Shadow(dy: 2, blur: 3, alpha: 0x40));
+    p.fillRect(Rect(1, 1, 6, 3), v);
+    assert(p.instances.length == 2, "the shadow, then the box and its ring in one record");
+    const shadow = p.instances[0], box = p.instances[1];
+    // Density 2: dy 4, blur 6 — three pixels left, six wider, three longer.
+    assert(boxIs(shadow, 7, 24, 66, 63) && shadow.shape.array[0] == QuadKind.roundedBox);
+    assert(boxIs(box, 10, 20, 60, 60));
+    assert(box.shape.array == [QuadKind.roundedBox, 12, 2, 3], "radius 12, a 2 px ring");
+}
+
+@("ui_vulkan.painter.textAndEffectsDegradeVisibly")
+@safe pure nothrow @nogc
+unittest
+{
+    // `UVK15`–`UVK17`, canvas scenario 14.
+    Painter!NoImages p;
+    p.begin(Size(400, 300), metrics10x20);
+    p.pushEffect(Rect(0, 0, 4, 4), EffectId.init);
+    p.fillRect(Rect(0, 0, 2, 2), Visual(hasBg: true, bgAlpha: 255));
+    p.popEffect();
+    assert(p.instances.length == 1, "the contents, unaffected");
+    p.textRunIn(Rect(0, 0, 4, 1), "Logs", Visual(fontRole: FontRole.ui));
+    p.textRunIn(Rect(0, 1, 4, 1), "code", Visual(fontRole: FontRole.code));
+    p.glyph(Point(0, 2), 'x', Visual.init);
+    assert(p.report[Degradation.effect] == 1);
+    assert(p.report[Degradation.missingFace] == 1);
+    assert(p.report[Degradation.glyphMiss] == 3);
+    assert(p.instances.length == 1 && !p.report.anotherFrame);
+}
+
+@("ui_vulkan.painter.imagesPlaceAndDegrade")
+@safe pure nothrow @nogc
+unittest
+{
+    Painter!TwoImages p;
+    p.begin(Size(400, 300), metrics10x20);
+
+    // `UVK24`: `contain` letterboxes a 40 × 20 image into a 60 × 20 rect.
+    p.image(Rect(0, 0, 6, 1), ImageHandle(1), ImageFit.contain, null, Visual(fgAlpha: 128));
+    assert(boxIs(p.instances[0], 15, 3, 40, 20));
+    assert(p.instances[0].fill.array[3] == 128 / 255.0f);
+    assert(p.instances[0].texRect.array == [0, 0, 1, 1]);
+
+    // `cover` is clipped to its rect.
+    p.image(Rect(0, 1, 1, 1), ImageHandle(1), ImageFit.cover, null, Visual.init);
+    assert(p.runs[$ - 1].scissor == ScissorBox(5, 23, 10, 20));
+
+    // `UVK25`: too large and deferred draw the placeholder and count.
+    const n = p.instances.length;
+    const bg = Visual(bg: RgbColor(1, 1, 1), hasBg: true);
+    p.image(Rect(0, 2, 6, 3), ImageHandle(2), ImageFit.contain, "big", bg);
+    p.image(Rect(0, 5, 6, 3), ImageHandle(3), ImageFit.contain, "later", bg);
+    assert(p.instances.length == n + 2, "each placeholder's box");
+    assert(p.report[Degradation.imageTooLarge] == 1 && p.report[Degradation.imageDeferred] == 1);
+    assert(p.report.anotherFrame, "a deferred image asks for the frame that uploads it");
+}
