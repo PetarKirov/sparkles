@@ -149,3 +149,44 @@ import sparkles.shaders.types;
     assert(allEqual(10 - i4(1, 2, 3, 4), i4(9, 8, 7, 6)));
     assert(allEqual(-i3(1, -2, 3), i3(-1, 2, -3)));
 }
+
+@("shaders.resources.inParametersAreTheirTypes")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.shaders.attributes : builtin, Builtin, input, PushConstants, uniform,
+        UniformBlock;
+    import sparkles.shaders.layout : layoutOf, Rule;
+    import sparkles.shaders.resources : descriptorBindingsOf, PushConstantsOf, UniformsOf;
+    import sparkles.shaders.stages : stagesLink;
+
+    // An `in` parameter is its type for every reflection template, as the
+    // compiler takes it.
+    static struct View
+    {
+        float aspect;
+    }
+
+    static struct Out
+    {
+        @builtin(Builtin.position) vec4 position;
+        vec4 colour;
+    }
+
+    static Out vs(@builtin(Builtin.vertexIndex) in int i, in PushConstants!View view) => Out.init;
+    static vec4 fs(@input in vec4 colour, @uniform in float gain, in UniformBlock!View v) => colour;
+
+    static assert(is(PushConstantsOf!vs == View));
+    static assert(is(typeof(UniformsOf!fs.gain) == float));
+    static assert(layoutOf!(UniformsOf!fs, Rule.std140).size == 16);
+    static assert(descriptorBindingsOf!fs.length == 2);
+    static assert(stagesLink!(vs, fs));
+}
+
+@("shaders.layout.aVectorIsNotABlock")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.shaders.layout : layoutOf, Rule;
+
+    // On the host `vec3` is a struct; it is still a vector, not a block.
+    static assert(!__traits(compiles, layoutOf!(vec3, Rule.std140)));
+}

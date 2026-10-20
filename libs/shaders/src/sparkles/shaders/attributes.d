@@ -17,7 +17,8 @@ import sparkles.shaders.capabilities : Profile;
 version (LDC_DCompute)
 {
     public import ldc.dcompute : compute, CompileFor, fragment, vertex, input, uniform,
-        builtin, Builtin, SamplerState, Sampler2D, sample;
+        builtin, Builtin, SamplerState, Sampler2D, sample, UniformBlock, PushConstants,
+        resources, binding;
     import ldc.dcompute : _profiles;
 }
 else
@@ -88,6 +89,41 @@ else
 
     /// Marks a `@fragment` parameter as a uniform.
     enum uniform = _uniform();
+
+    /// A uniform block of `T` (`SHR5`). Stand-in for
+    /// `ldc.dcompute.UniformBlock`; a host calls an entry point with one by
+    /// wrapping a `T`.
+    struct UniformBlock(T)
+    {
+        T value; ///
+        alias value this;
+    }
+
+    /// A push-constant block of `T` (`SHR4`). Stand-in for
+    /// `ldc.dcompute.PushConstants`.
+    struct PushConstants(T)
+    {
+        T value; ///
+        alias value this;
+    }
+
+    private struct _resources
+    {
+    }
+
+    /// Marks a struct as an interface struct (`SHR2`). Stand-in for
+    /// `ldc.dcompute.resources`.
+    enum resources = _resources();
+
+    /// Fixes a resource's binding on Vulkan (`SHR7`). Stand-in for
+    /// `ldc.dcompute.binding`.
+    struct _binding
+    {
+        int index; ///
+    }
+
+    /// ditto
+    alias binding = _binding;
 
     /// A sampled 2-D image: GLSL's `sampler2D`. Only meaningful in device
     /// code — a `@fragment` function is never compiled for the host.

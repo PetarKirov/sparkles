@@ -25,6 +25,8 @@ module sparkles.shaders;
 
 public import sparkles.shaders.attributes;
 public import sparkles.shaders.capabilities;
+public import sparkles.shaders.layout;
+public import sparkles.shaders.resources;
 public import sparkles.shaders.stages;
 public import sparkles.shaders.math;
 public import sparkles.shaders.types;
