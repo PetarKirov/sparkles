@@ -55,7 +55,7 @@ import std.stdio : stderr, writefln, writeln;
 import std.string : chompPrefix, indexOf, lastIndexOf, lineSplitter, strip, stripRight;
 
 import sparkles.shaders.capabilities : allProfiles, Cap, gl330, gles100, Output, Profile,
-    spirvRequirements, vulkan13;
+    spirvRequirements, vulkan11, vulkan13;
 import sparkles.shaders.compute_mode : ComputeMode, computeModeOf, moduleNameOf;
 
 /// A package's device build, as `dub describe` reports its device
@@ -441,8 +441,14 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
         const dir = buildPath(scratch, pname);
         dir.mkdirRecurse;
         const prefix = "unit";
-        const spv = buildPath(dir, prefix ~ "_" ~ build.target.replace("-", "") ~ "_64.spv");
-        const compiled = tryExecute([ldc, "-O2"] ~ compileFlags
+        // A Vulkan profile is compiled for its own Vulkan version, so the
+        // compiler emits the SPIR-V version it consumes; the OpenGL profiles
+        // translate from the recipe's.
+        const target = targetFor(profile, build.target);
+        const spv = buildPath(dir, prefix ~ "_" ~ target.replace("-", "") ~ "_64.spv");
+        const compiled = tryExecute([ldc, "-O2"]
+            ~ compileFlags.map!(f => f.startsWith("-mdcompute-targets=")
+                ? "-mdcompute-targets=" ~ target : f).array
             ~ profileFlags(profile) ~ ["-mdcompute-file-prefix=" ~ prefix, "-od=" ~ dir]
             ~ unit.sources);
         if (compiled.status != 0)
@@ -909,7 +915,10 @@ string outputFile(in Profile p, in ManifestEntry e)
     case Output.glslEs:
         return e.name ~ ".es.frag";
     case Output.spirv:
-        return e.name ~ (e.stage == "vertex" ? ".vert.spv" : ".frag.spv");
+        // `vulkan1.3`'s are `<entry>.<stage>.spv`; an older Vulkan's carry its
+        // version, `<entry>.vk11.<stage>.spv`.
+        return e.name ~ (p.version_ == 13 ? "" : ".vk" ~ p.version_.to!string)
+            ~ (e.stage == "vertex" ? ".vert.spv" : ".frag.spv");
     case Output.host:
         assert(0, "the host profile writes no files");
     }
@@ -924,6 +933,22 @@ string outputFile(in Profile p, in ManifestEntry e)
     assert(outputFile(gles100, dim) == "dim.es.frag");
     assert(outputFile(vulkan13, tri) == "tri.vert.spv");
     assert(outputFile(vulkan13, dim) == "dim.frag.spv");
+    assert(outputFile(vulkan11, tri) == "tri.vk11.vert.spv");
+    assert(outputFile(vulkan11, dim) == "dim.vk11.frag.spv");
+}
+
+/// The dcompute target a profile is compiled for: a Vulkan profile's own
+/// version (`vulkan-110` for `vulkan1.1`), else the recipe's `target`.
+string targetFor(in Profile p, string target)
+    => p.output == Output.spirv ? format("vulkan-%s0", p.version_) : target;
+
+///
+@("shaderCompile.targetFor.aVulkanProfileItsOwnVersion")
+@system unittest
+{
+    assert(targetFor(vulkan13, "vulkan-130") == "vulkan-130");
+    assert(targetFor(vulkan11, "vulkan-130") == "vulkan-110");
+    assert(targetFor(gl330, "vulkan-130") == "vulkan-130");
 }
 
 private string[] glslFlags(in Profile p)
@@ -957,6 +982,9 @@ unittest
         "-capabilities=shader:shader,fragmentStage,looseUniforms,sampledImages,derivatives"]);
     assert(profileFlags(gles100) == ["-mdcompute-profile=gles100",
         "-capabilities=shader:shader,fragmentStage,looseUniforms,sampledImages"]);
+    assert(profileFlags(vulkan11) == ["-mdcompute-profile=vulkan1.1",
+        "-capabilities=shader:shader,vertexStage,fragmentStage,uniformBlocks,pushConstants,"
+        ~ "sampledImages,intVertexInputs,derivatives,derivativeControl"]);
 }
 
 /// spirv-val's environment for a Vulkan profile: `vulkan1.3`.

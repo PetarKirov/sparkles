@@ -944,3 +944,55 @@ exit 0
             "OpDecorate %sampler Binding 0"])
         assert(dis.output.canFind(line), line ~ "\n" ~ dis.output);
 }
+
+@("shaderCompile.vertex.vulkan11IsSpirv13")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHC2`: `vulkan1.1` is compiled for Vulkan 1.1, so its modules are
+    // SPIR-V 1.3, valid for that environment, beside `vulkan1.3`'s 1.6 ones
+    // and named apart from them. It denies `demote`.
+    auto f = Fixture.create("vulkan11");
+    f.entries(q{
+        struct Corner
+        {
+            @builtin(Builtin.position) vec4 position;
+            vec2 uv;
+        }
+
+        @profiles(vulkan11, vulkan13) @vertex Corner corner(@builtin(Builtin.vertexIndex) int i)
+            => Corner(v4(cast(float) (i & 1), cast(float) (i >> 1), 0, 1), v2(0, 0));
+
+        @profiles(vulkan11, vulkan13) @fragment vec4 shade(@input vec2 uv,
+            @builtin(Builtin.fragCoord) vec4 p)
+        {
+            if (p.x < 1)
+                discard();
+            return v4(dpdxFine(uv.x), uv.y, 0, 1);
+        }
+    });
+    const made = f.run();
+    assert(made.status == 0, made.diagnostics);
+    assert(f.outputs == [".stamp", "corner.vert.spv", "corner.vk11.vert.spv", "shade.frag.spv",
+        "shade.vk11.frag.spv"], f.outputs.join(" "));
+    foreach (file, version_; ["corner.vk11.vert.spv": "1.3", "shade.vk11.frag.spv": "1.3",
+            "shade.frag.spv": "1.6"])
+    {
+        const dis = execute(["spirv-dis", f.out_.buildPath(file)]);
+        assert(dis.status == 0 && dis.output.canFind("; Version: " ~ version_), file ~ "\n" ~ dis.output);
+    }
+
+    f.entries(q{
+        @profiles(vulkan11) @fragment vec4 fade(@input vec2 uv)
+        {
+            demote();
+            return v4(uv.x, uv.y, 0, 1);
+        }
+    });
+    const denied = f.run();
+    assert(denied.status == 1, denied.diagnostics);
+    assert(denied.diagnostics.canFind("requires `demote`; the profile `vulkan1.1` does not grant it"),
+        denied.diagnostics);
+}
