@@ -423,6 +423,19 @@ meaning on all three profiles and fail when their expectations are flipped.
     and `shaderDemoteToHelperInvocation`, which every 1.3 device supports, so
     that a module using `discard` or `demote` is valid on it.
 
+## Ahead of M8: two consumer requests
+
+The Vulkan canvas and the phone terminal of `sparkles:ui`'s Vulkan backend
+(its plan's V2 and V7) wait on two capabilities this plan would
+otherwise bring later; they come first, in this order.
+
+- **Samplers of their own** (the canvas, `UVQ4`). Done:
+  `SamplerState` parameters at their own bindings (`SHR7`,
+  [`D28`](./decisions.md#d28-samplers-are-resources-of-their-own)), read back on
+  lavapipe through a nearest and a linear sampler.
+- **A Vulkan 1.1 profile** (the phone, `UVQ3`, and Q3 here): `vulkan1.1`, emitting
+  SPIR-V 1.3, the version every Vulkan 1.1 device accepts.
+
 ## M8: One vector type
 
 **Obligations.** `SHV10`: `sparkles.math`'s `Vector!(T, N)` meets the

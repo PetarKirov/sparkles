@@ -28,17 +28,19 @@ how the kind is lowered (`SHR3`–`SHR5`):
 | Uniform             | `@uniform T name`            | one value of a uniform type ([`SHF5`](./entry-points.md)) |
 | Uniform block       | `UniformBlock!T name`        | a struct `T` of uniform types                             |
 | Push-constant block | `PushConstants!T name`       | a struct `T` of uniform types                             |
-| Sampled 2-D image   | `Sampler2D name`             | an image read through the shared sampler (`SHR7`)         |
+| Sampled 2-D image   | `Sampler2D name`             | an image, read through a sampler (`SHR7`)                 |
+| Sampler             | `SamplerState name`          | a sampler of the entry point's own (`SHR7`)               |
 | Interface struct    | a struct marked `@resources` | fields of the kinds above, flattened (`SHR2`)             |
 
 The lowering of each kind under each profile of the slice is:
 
-| Kind                | `gl330`, `gles100`             | `vulkan1.3`                                   |
-| ------------------- | ------------------------------ | --------------------------------------------- |
-| Uniform             | a uniform outside any block    | a field of the default uniform block (`SHR3`) |
-| Uniform block       | one uniform per field (`SHR5`) | a block in `Uniform` storage (`SHR5`)         |
-| Push-constant block | one uniform per field (`SHR4`) | a block in `PushConstant` storage (`SHR4`)    |
-| Sampled 2-D image   | a sampler uniform              | a sampled image (`SHR7`)                      |
+| Kind                | `gl330`, `gles100`                                                  | `vulkan1.3`                                   |
+| ------------------- | ------------------------------------------------------------------- | --------------------------------------------- |
+| Uniform             | a uniform outside any block                                         | a field of the default uniform block (`SHR3`) |
+| Uniform block       | one uniform per field (`SHR5`)                                      | a block in `Uniform` storage (`SHR5`)         |
+| Push-constant block | one uniform per field (`SHR4`)                                      | a block in `PushConstant` storage (`SHR4`)    |
+| Sampled 2-D image   | a sampler uniform                                                   | a sampled image (`SHR7`)                      |
+| Sampler             | none: it names the sampler uniforms of the images it reads (`SHR8`) | a sampler (`SHR7`)                            |
 
 A kind a later profile cannot lower **must** fail the compilation for that
 profile, naming the parameter and the capability its lowering needs.
@@ -135,18 +137,20 @@ followed by a `float` sits at 16 in D (`SHV2`) and at 12 in `std140`. The
 host and the device must agree on every byte, and only one function may say
 where each byte goes.
 
-**SHR7: Bindings.** All images of an entry point **must** be read through one
-shared sampler. Under `gl330` and `gles100`, the shared sampler is at binding
-0 and the images are at bindings 1, 2, 3, … in the order the `Sampler2D`
-parameters appear after flattening, as before this revision; the generated
-GLSL carries no binding qualifier, and a host binds each image's texture unit
-by its order. Under `vulkan1.3`, every resource that has a binding **must** be
-in descriptor set 0. Binding 0 is reserved for the shared sampler, which is
-declared only by an entry point that takes an image; the uniform
-blocks, the default uniform block and the images of an entry point at the
-next free bindings, in parameter order after flattening, the default uniform
-block at the position of the first `@uniform`. A push-constant block has no
-binding.
+**SHR7: Bindings.** _(Revised.)_ An image **must** be read through the shared
+sampler, `image.sample(uv)`, or through a sampler of the entry point's own, a
+`SamplerState` parameter or field, `image.sample(sampler, uv)`; an entry point
+whose images want different filtering or addressing takes one sampler per
+kind. Under `gl330` and `gles100`, the shared sampler is at binding 0 and the
+images are at bindings 1, 2, 3, … in the order the `Sampler2D` parameters
+appear after flattening, as before this revision; the generated GLSL carries
+no binding qualifier, and a host binds each image's texture unit by its order.
+Under `vulkan1.3`, every resource that has a binding **must** be in descriptor
+set 0. Binding 0 is reserved for the shared sampler, which is declared only by
+an entry point that reads an image through it; the uniform blocks, the default
+uniform block, the images and the samplers of an entry point at the next free
+bindings, in parameter order after flattening, the default uniform block at
+the position of the first `@uniform`. A push-constant block has no binding.
 
 A `@binding(b)` attribute on a parameter or a field **must** fix that
 resource's binding under `vulkan1.3` and is ignored under the OpenGL
@@ -165,11 +169,15 @@ the generated GLSL under its D name, and the written SPIR-V as its `OpName`
 or `OpMemberName`, by the rules of
 [`SHF2`](./entry-points.md). A block's type is named after `T`, and the
 default uniform block's after `UniformsOf!entry`, whose identifier
-**must** be `<entry>UniformsBlock`, distinct from the variable's name.
+**must** be `<entry>UniformsBlock`, distinct from the variable's name. In the
+GLSL, an image read through one sampler is one sampler uniform named after
+the image; one read through several samplers is a sampler uniform per
+sampler, named `<image>_<sampler>`, the shared sampler's name being
+`sampler`.
 
 ## Not in this slice
 
-Storage buffers, storage images, separate images and samplers, arrays of
+Storage buffers, storage images, images other than 2-D ones, arrays of
 resources, bindless indexing, specialization constants and buffer device
 addresses are specified by the milestones that bring them
 ([`PLAN.md`](./PLAN.md)), with the capabilities their profiles grant. The
