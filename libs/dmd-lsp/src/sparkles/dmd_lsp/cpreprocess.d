@@ -134,6 +134,5 @@ private __gshared string importcHeader;
 
 // No unittest here reaches `Analyzer`: `init_` imports this module, so an
 // `api`/`testing` import would close the `init_` → `cpreprocess` → `api` →
-// `init_` module-constructor cycle the runtime rejects at startup (the same
-// cycle `dmdGlobalsLock`'s placement avoids). The end-to-end test lives in
-// `sparkles.dmd_lsp.testing`.
+// `init_` module-constructor cycle the runtime rejects at startup. The
+// end-to-end test lives in `sparkles.dmd_lsp.testing`.
