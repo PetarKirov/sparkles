@@ -484,9 +484,8 @@ replaces this for in-process work (`FPR10`); this stays as the fallback.
 */
 final class FormatService
 {
-    import core.sync.condition : Condition;
-    import core.sync.mutex : Mutex;
     import core.thread : Thread;
+    import sparkles.base.sync : Condition, Mutex;
 
     private Mutex mtx;
     private Condition cond;
@@ -509,8 +508,6 @@ final class FormatService
     this(FormatterRegistry* registry) @safe
     {
         this.registry = registry;
-        mtx = new Mutex;
-        cond = new Condition(mtx);
     }
 
     /// Queue `r` (asserts the previous request was consumed — the flow
@@ -541,8 +538,8 @@ final class FormatService
                     }
                 }
         }
-        synchronized (mtx)
         {
+            auto held = mtx.guard();
             assert(!hasRequest, "FormatService is single-flight");
             req = r;
             hasRequest = true;
@@ -594,8 +591,8 @@ final class FormatService
                 return true;
             }
         }
-        synchronized (mtx)
         {
+            auto held = mtx.guard();
             if (!hasCompletion)
                 return false;
             c = completion;
@@ -609,8 +606,8 @@ final class FormatService
     {
         if (worker is null)
             return;
-        synchronized (mtx)
         {
+            auto held = mtx.guard();
             stopping = true;
             cond.notifyAll();
         }
@@ -647,10 +644,10 @@ final class FormatService
         for (;;)
         {
             FormatRequest r;
-            synchronized (mtx)
             {
+                auto held = mtx.guard();
                 while (!hasRequest && !stopping)
-                    cond.wait();
+                    cond.wait(held);
                 if (stopping)
                     return;
                 r = req;
@@ -672,8 +669,8 @@ final class FormatService
                 c.text = result.value[].idup;
             }
 
-            synchronized (mtx)
             {
+                auto held = mtx.guard();
                 completion = c;
                 hasCompletion = true;
             }

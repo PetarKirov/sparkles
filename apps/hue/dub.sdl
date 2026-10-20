@@ -19,6 +19,7 @@ dependency "sparkles:syntax" path="../.."
 dependency "sparkles:source-view" path="../.."
 dependency "sparkles:diff" path="../.."
 dependency "sparkles:dsv" path="../.."
+dependency "sparkles:base" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:twoslash" path="../.."
 // Picker compute and its closure-free background scheduler (`PIK5`–`PIK8`);
