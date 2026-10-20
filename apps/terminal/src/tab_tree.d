@@ -99,6 +99,7 @@ final class TabTree : Surface, Scrollable
     private ulong selectedKey;  // the selection, kept across rebuilds
     private bool seeded;        // the first build opened the current tab
     private bool reveal;        // the keyboard moved: bring the selection into view
+    private bool bestMatch;     // the query changed: select its first row
     private int per = 1;        // rows a row takes (a touch target is taller)
 
     /// `snapshot` lists the workspace now; `pick` selects a tab and, when
@@ -268,9 +269,11 @@ final class TabTree : Surface, Scrollable
         seeded = true;
         tv.rows = flatten(data, &isOpenNode);
         tv.sel = 0;
-        foreach (i, ref r; tv.rows)
-            if (data.nodes[r.node].value.key == selectedKey)
-                tv.sel = cast(long) i;
+        if (!bestMatch)
+            foreach (i, ref r; tv.rows)
+                if (data.nodes[r.node].value.key == selectedKey)
+                    tv.sel = cast(long) i;
+        bestMatch = false;
         tv.clamp();
         keepSelection();
     }
@@ -371,7 +374,7 @@ final class TabTree : Surface, Scrollable
                 if (query.length)
                 {
                     query.length = queryPrefixWithoutLastGrapheme(query);
-                    tv.sel = 0;
+                    bestMatch = true;
                 }
                 break;
             case Key.char_:
@@ -382,7 +385,9 @@ final class TabTree : Surface, Scrollable
                 if (encoded.status != UtfStatus.ok)
                     return false;
                 query ~= buf[0 .. encoded.written];
-                tv.sel = 0; // the best match
+                // The rows still hold the old results: the next rebuild
+                // selects the new best match.
+                bestMatch = true;
                 break;
             default:
                 return false;
@@ -621,6 +626,38 @@ version (unittest)
     foreach (_; 0 .. 7)
         assert(t.key(KeyEvent(Key.backspace)));
     assert(t.search == "");
+}
+
+@("tab_tree.key.anEditedQuerySelectsTheBestMatch")
+@system unittest
+{
+    auto t = tree();
+    t.build(SurfaceContext.init, 40);
+    // "~/sparkles" is the first row and still matches (its "nix build"
+    // pane), but the tab named "build" ranks first.
+    foreach (dchar c; "build")
+        assert(t.key(KeyEvent(Key.char_, c)));
+    t.build(SurfaceContext.init, 40);
+    assert(t.confirm());
+    assert(picked[0] == 2, "the best match, not the row selected before the search");
+}
+
+@("tab_tree.key.anEditedQuerySelectsTheBestMatch")
+@system unittest
+{
+    // The first tab still matches "vim" by its title, but "vim" ranks first.
+    static TreeTab[] two() @safe => [
+        TreeTab("old vim notes", "≡", 0, true, [TreePane(1, "zsh", "❯", "~/notes")]),
+        TreeTab("vim", "≡", 0, false, [TreePane(2, "vim", "≡", "~/src")]),
+    ];
+    size_t[] chosen;
+    auto t = new TabTree(() => two(), (size_t tab, PaneId p) { chosen = [tab, p]; });
+    t.build(SurfaceContext.init, 40);
+    foreach (dchar c; "vim")
+        assert(t.key(KeyEvent(Key.char_, c)));
+    t.build(SurfaceContext.init, 40);
+    assert(t.confirm());
+    assert(chosen[0] == 1, "the best match, not the row selected before the search");
 }
 
 @("tab_tree.key.clusterBackspaceAndInvalidScalar")
