@@ -98,18 +98,17 @@ vertex stage.
 **Choice.** D. The canvas depends on the first Vulkan slice of the
 [shaders plan](../shaders/PLAN.md)'s revision for the full-language scope:
 the vertex stage, built-in variables, vertex inputs, push-constant and
-uniform blocks, and Vulkan validation. That revision's Stage 0 is not yet
-accepted, and its slice is drafted on its own branch; this plan cites it as a
-dependency, not as available.
+uniform blocks, and Vulkan validation: its M6, delivered by pull requests
+#666 and #668, with a lavapipe readback harness.
 
-**Trade-offs.** The canvas cannot draw until that slice lands. Memory and
-resources, the native host and the terminal's own seams do not wait for it.
-The revision's first Vulkan profile targets Vulkan 1.3, so a Vulkan 1.1
-device needs another profile ([UVQ3](#open-questions)).
+**Trade-offs.** Two further shader capabilities are requests of this
+milestone: separate samplers for glyphs and images
+([UVX8](#uvx8-a-sampler-per-kind-of-image)), and a profile for Vulkan 1.1
+devices ([UVQ3](#open-questions)).
 
 ## UVX5: Instanced quads with vertex inputs
 
-**State:** proposed · **Affects:** `UVK5`, `UVK28`
+**State:** accepted 2026-10-20 (owner) · **Affects:** `UVK5`, `UVK28`
 
 **Question.** How do operations reach the GPU?
 
@@ -130,25 +129,29 @@ the same values, interpolation leaves them exact. Storage-buffer vertex
 pulling would wait for the shaders plan's storage milestone. Painter's order
 costs a draw call where images alternate, which atlas pages keep rare.
 
-## UVX6: Blend in the stored encoding
+## UVX6: A blend space the host chooses, gamma first
 
-**State:** proposed · **Affects:** `UVK6`, `UVK7`
+**State:** accepted 2026-10-20 (owner) · **Affects:** `UVK6`, `UVK7`
 
 **Question.** Blend in linear light on an `sRGB` target, or in the stored
 encoding on a `UNORM` one?
 
-**Choice.** `UNORM` targets, premultiplied source-over blending in the stored
-(gamma) encoding. An `sRGB` target is drawn correctly for opaque pixels and
-reported, since a host may have no `UNORM` format to choose.
+**Choice.** The blend space is a parameter the host passes when it creates
+the canvas. One value is implemented: premultiplied source-over in the stored
+(gamma) encoding of a `UNORM` target. Linear light is a later milestone's;
+until then, asking for it fails with `unsupported`. An `sRGB` target is drawn
+correctly for opaque pixels and reported, since a host may have no `UNORM`
+format to choose.
 
-**Trade-offs.** It matches the reference canvas and every colour the design
-system specifies; linear blending would change antialiased edges and glyph
-weight against the raylib terminal. Revisit with a linear-light design-system
-decision, not before.
+**Trade-offs.** Gamma blending matches the reference canvas and every colour
+the design system specifies, so A/B comparisons stay tight; linear light
+would change antialiased edges and glyph weight. Making the space a
+parameter from the start keeps adding linear light from changing the
+canvas's interface.
 
 ## UVX7: One pixel geometry
 
-**State:** proposed · **Affects:** `UVK10`
+**State:** accepted 2026-10-20 (owner) · **Affects:** `UVK10`
 
 **Choice.** The pixel geometry of borders, dashes, rules, lines, scrollbar
 rails, shadows, arrows and drawn sizes becomes pure functions of
@@ -158,19 +161,24 @@ The reference canvas's public float helpers in `sparkles:ui-raylib` —
 there with their rounding made explicit; the geometry it computes inline
 (dashes, wavy lines, rule edges) is extracted into named functions.
 
-## UVX8: One sampler
+## UVX8: A sampler per kind of image
 
-**State:** proposed · **Affects:** `UVK21`, `UVK24`
+**State:** accepted 2026-10-20 (owner) · **Affects:** `UVK21`, `UVK24`; [PLAN](./PLAN.md) V2
 
 **Question.** The shaders slice reads every image through one shared sampler
 (`SHR1`, `SHR7`). Glyphs want exact texels; scaled images want filtering.
 
-**Choice.** One linear sampler. Glyphs are placed on whole pixels and sampled
-at texel centres (`UVK21`), where linear filtering returns the texel itself.
+**Alternatives.** One linear sampler, with glyphs placed on whole pixels so
+every sample lands on a texel centre, works with the slice as it is but
+makes glyph crispness depend on that placement never slipping.
+
+**Choice.** Two samplers: nearest for atlas pages, linear for images.
+`sparkles:shaders` is asked to let an entry point bind more than one sampler
+([UVQ4](#open-questions)); the canvas's shaders wait on it.
 
 ## UVX9: This milestone is the window-system plan's M7
 
-**State:** proposed · **Affects:** WSI [PLAN](../window-system-integration/PLAN.md),
+**State:** accepted 2026-10-20 (owner) · **Affects:** WSI [PLAN](../window-system-integration/PLAN.md),
 `INT3`, `INT4`; `sparkles:ui-app` P4
 
 **Choice.** M7 of the window-system plan becomes this renderer and the
@@ -179,18 +187,24 @@ terminal on it. Graphite moves to a later milestone, MG, and `INT4` gains a
 
 ## UVX10: Dynamic rendering where offered, a render pass elsewhere
 
-**State:** proposed · **Affects:** `UVK2`, `UVK4`
+**State:** accepted 2026-10-20 (owner) · **Affects:** `UVK2`, `UVK4`
 
 **Question.** Require Vulkan 1.3 or dynamic rendering, or keep a render-pass
 path?
 
-**Evidence.** The reference phone (Adreno 660, Android 14) offers Vulkan 1.1
-without dynamic rendering; the test pattern draws there through a render
-pass.
+**Evidence.** The reference phone (Xiaomi 2107113SG, Adreno 660, Android 14)
+reports Vulkan 1.1.128 with driver 512.530 through `cmd gpu vkjson`. Of its
+75 device extensions none is `VK_KHR_dynamic_rendering` or
+`VK_KHR_synchronization2`; it has `VK_KHR_create_renderpass2`,
+`VK_KHR_imageless_framebuffer` and `VK_KHR_separate_depth_stencil_layouts`.
+The Vulkan hardware database's report of a Mi 11 on the same driver agrees.
 
-**Choice.** Both paths. The canvas owns its render pass and framebuffers on
-devices without dynamic rendering, so the phone terminal needs no other
-renderer.
+**Choice.** Both paths. Dynamic rendering where the device has it, through
+Vulkan 1.3 or `VK_KHR_dynamic_rendering`; elsewhere a render pass the canvas
+owns per target format, with imageless framebuffers where offered so a new
+swapchain image needs no new framebuffer. `sparkles:vulkan-wsi`'s device
+creation enables `VK_KHR_dynamic_rendering` whenever the device lacks Vulkan
+1.3 and has the extension, whatever version the application requested.
 
 ## Open questions
 
@@ -203,7 +217,13 @@ an effect on the native arm.
 `feat/ui-skia-graphite` work revived or redone? Owner: the window-system plan's
 MG; decided after this milestone.
 
-**UVQ3: A Vulkan 1.1 shader profile.** The shaders revision's only Vulkan
-profile emits SPIR-V 1.6 for Vulkan 1.3; the reference phone runs Vulkan 1.1,
-which needs SPIR-V 1.3. Owner: `sparkles:shaders`; the phone terminal waits
-on it.
+**UVQ3: A Vulkan 1.1 shader profile.** The shaders plan's only Vulkan
+profile emits SPIR-V 1.6 for Vulkan 1.3. The reference phone runs Vulkan 1.1,
+which accepts SPIR-V 1.3, or 1.4 through the `VK_KHR_spirv_1_4` it offers.
+Owner: `sparkles:shaders`; the phone terminal waits on it.
+
+**UVQ4: More than one sampler.** The shaders plan binds every image through
+one shared sampler. The canvas needs an entry point to name its sampler per
+image, nearest for atlas pages and linear for images
+([UVX8](#uvx8-a-sampler-per-kind-of-image)). Owner: `sparkles:shaders`; the
+canvas's shaders wait on it.
