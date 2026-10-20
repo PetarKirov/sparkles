@@ -205,9 +205,10 @@ border and corners from a signed distance, with coverage within the
 [tolerance](./testing.md#tolerances) of the box's exact area coverage at
 every pixel. Arrow edges follow the same tolerance.
 
-**UVK12: Shadows.** A shadow **must** draw the box's rectangle offset by the
-shadow's offset and grown by its blur radius on every side, at the shadow's
-colour and alpha, with the box's radius, and without a blur kernel.
+**UVK12: Shadows.** A shadow **must** draw the rectangle `shadowRect` returns —
+the box's, offset by the shadow's offset, widened by its blur and lengthened
+downward by half of it — at the shadow's colour and alpha, with the box's
+radius, and without a blur kernel.
 
 _Rationale:_ This is the reference canvas's shadow; a real Gaussian is a
 separate, visible change both canvases would make together.

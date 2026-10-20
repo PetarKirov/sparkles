@@ -26,7 +26,7 @@ import sparkles.ui.layout : Frame;
 import sparkles.ui.components.scroll_view : ScrollExtents, ScrollPointer, ScrollView;
 import sparkles.ui.state : CaptureState, scrollbarThumbIntersectsCell;
 import sparkles.ui.widget : Alignment, Builder, Widget, WidgetKind, WidgetTree;
-import sparkles.ui_raylib.raylib_canvas : scrollbarMinExtentPx;
+import sparkles.ui.pixel_geometry : scrollbarMinExtentPx;
 
 @safe:
 
