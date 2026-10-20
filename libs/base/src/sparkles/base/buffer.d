@@ -1019,8 +1019,10 @@ pure nothrow @nogc
         auto ref const Buffer!(T, OtherN, OtherStorage) rhs) const @safe
         => this[] == rhs[];
 
-    /// ditto
-    bool opEquals(scope const(T)[] rhs) const @safe => this[] == rhs;
+    /// ditto — for elements that compare to a `bool`: a vector's `==` is a
+    /// mask, and a buffer of them is still a buffer.
+    static if (is(typeof((const(T)[] a, const(T)[] b) { bool e = a == b; })))
+        bool opEquals(scope const(T)[] rhs) const @safe => this[] == rhs;
 
     /**
      * Ensures the buffer has at least `newCapacity` slots.
@@ -3578,6 +3580,25 @@ unittest
 
     assert(small == big);
     assert(small == "abcdefgh");
+}
+
+@("buffer.opEquals.absentForElementsWithoutBooleanEquality")
+@safe pure nothrow @nogc
+unittest
+{
+    // A SIMD vector's `==` is a mask, so a struct holding one has no `bool`
+    // equality: the buffer still holds it, it just cannot be compared.
+    import core.simd : float4;
+
+    static struct Quad
+    {
+        float4 corner;
+    }
+
+    UniqueBuffer!Quad b;
+    b ~= Quad(float4(1));
+    assert(b.length == 1 && b[][0].corner.array == [1, 1, 1, 1]);
+    static assert(!__traits(compiles, b == b[]));
 }
 
 @("buffer.HeapBuffer.reserveSizesItBeforeUse")
