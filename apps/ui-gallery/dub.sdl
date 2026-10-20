@@ -54,6 +54,13 @@ configuration "application" {
     targetType "executable"
 }
 
+// The gallery on the native arm: `sparkles:wsi` windows drawn by
+// `sparkles:ui-vulkan` (`INT4`'s `gui-vulkan`), beside the terminal.
+configuration "vulkan" {
+    targetType "executable"
+    subConfiguration "sparkles:ui-app" "full-vulkan"
+}
+
 // Last in the file and running to EOF: `nix/packages/build-sparkles-app.nix`
 // derives this package's source closure by truncating the manifest here.
 configuration "unittest" {

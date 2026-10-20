@@ -243,13 +243,17 @@ struct Gallery
         // shows the tabs and scrollback. Only there: every other page's
         // capture used to fork three shells it never showed, which made a
         // demo of an image or an effect depend on the pty layer.
-        static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
+        // Any arm that can capture a frame: the raylib window or the native
+        // one. The native arm draws only when asked to, so the hook asks for
+        // every frame it counts.
+        static if (__traits(hasMember, H, "screenshot"))
         {
             import std.process : environment;
 
             const shot = environment.get("UIG_SHOT");
             if (shot !is null)
             {
+                h.requestFrame();
                 dbgFrame++;
                 // Freeze every effect's animation at one phase, so two
                 // captures of the same page are byte-comparable (`DBG1`).
