@@ -17,7 +17,7 @@ import expected : Expected;
 
 import sparkles.vulkan;
 import sparkles.vulkan_wsi.swapchain : Swapchain;
-import sparkles.vulkan_wsi.triangle : Pipeline, spirvWords;
+import sparkles.vulkan_wsi.triangle : Pipeline;
 
 /// The shader's push-constant block, laid out as `std430` places it.
 struct FrameContext

@@ -400,30 +400,6 @@ struct RenderTarget
 // The pipeline, and the SPIR-V it is built from
 // -----------------------------------------------------------------------------
 
-/**
-SPIR-V as 32-bit words, assembled at compile time.
-
-`VkShaderModuleCreateInfo.pCode` is a `const uint32_t*`, and a string import is
-bytes whose alignment D does not promise — casting the pointer would be
-undefined behaviour that happens to work. Building the words in CTFE puts a
-correctly aligned `uint[]` in `.rodata` instead, at no runtime cost.
-*/
-package immutable(uint)[] spirvWords(string bytes)
-{
-    assert(bytes.length % 4 == 0, "SPIR-V is a stream of 32-bit words");
-
-    auto words = new uint[bytes.length / 4];
-    foreach (i, ref w; words)
-        w = (cast(uint) cast(ubyte) bytes[i * 4])
-            | (cast(uint) cast(ubyte) bytes[i * 4 + 1]) << 8
-            | (cast(uint) cast(ubyte) bytes[i * 4 + 2]) << 16
-            | (cast(uint) cast(ubyte) bytes[i * 4 + 3]) << 24;
-    return words.idup;
-}
-
-/// A corrupt or truncated blob is a compile error rather than a driver crash.
-package enum uint spirvMagic = 0x0723_0203;
-
 /// The bytes of the triangle's push-constant block, `std430`, as the
 /// pipeline's range declares them.
 enum size_t triangleViewBytes = layoutOf!(TriangleView, Rule.std430).size;

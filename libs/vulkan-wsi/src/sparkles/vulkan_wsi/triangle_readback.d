@@ -31,7 +31,7 @@ import sparkles.test_runner.skip : skipTest;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi.commands : CommandPool;
 import sparkles.vulkan_wsi.device : ContextRequest, VulkanDevice;
-import sparkles.vulkan_wsi.triangle : beginRendering, endRendering, Pipeline, spirvWords,
+import sparkles.vulkan_wsi.triangle : beginRendering, endRendering, Pipeline,
     transition, triangleView, triangleViewBytes, triangleViewStages;
 import sparkles.vulkan_wsi.triangle_shader : triangleFragment, triangleVertex, TriangleView;
 
