@@ -117,6 +117,50 @@ import sparkles.shaders.types;
     assert(entry(v2(2, 0), Sampler2D.init, 0.5f).x == 1);
 }
 
+@("shaders.attributes.blockStandInsWrapTheirStruct")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.shaders.attributes : binding, builtin, Builtin, PushConstants, resources,
+        uniform, UniformBlock, vertex;
+
+    // `SHV8`, revised: the resource stand-ins too. A host calls an entry
+    // point with a block by wrapping its struct, reads a block's fields
+    // through it, and passes an interface struct as a struct.
+    static struct Light
+    {
+        float gain;
+        vec3 tint;
+    }
+
+    static struct View
+    {
+        float aspect;
+    }
+
+    @resources static struct Scene
+    {
+        @binding(3) UniformBlock!Light light;
+        @uniform float exposure;
+    }
+
+    static struct Out
+    {
+        @builtin(Builtin.position) vec4 position;
+    }
+
+    @vertex static Out entry(@builtin(Builtin.vertexIndex) int index, PushConstants!View view,
+        Scene scene)
+    {
+        Out o;
+        o.position = v4(scene.light.gain * scene.exposure, view.aspect, scene.light.tint.y, index);
+        return o;
+    }
+
+    const o = entry(2, PushConstants!View(View(1.5f)),
+        Scene(UniformBlock!Light(Light(2.0f, v3(0, 0.25f, 0))), 3.0f));
+    assert(o.position.array == [6.0f, 1.5f, 0.25f, 2.0f]);
+}
+
 @("shaders.types.oneLayoutOnBothSides")
 @safe pure nothrow @nogc unittest
 {
