@@ -29,6 +29,11 @@ vec3 phosphor(in vec2 at, in vec2 extent, in vec3 color) @safe pure nothrow @nog
   or an array of vectors means the same bytes on both sides. For dense host
   arrays, `Vec2Packed`/`Vec3Packed`/`Vec4Packed` hold the components back to
   back; `packed(v)` and `aligned(p)` convert.
+- **Other names and integer vectors** — `float2`, `float3`, `float4` are the
+  same types as `vec2`, `vec3`, `vec4`. `int2`, `int3`, `int4` hold `int`s,
+  with `+ - *` against a vector or an `int`, unary `-` and `.array`, built by
+  `i2`, `i3`, `i4`; integer `/` is not offered. They have the device's size
+  and alignment too.
 - **Constructors** — `v2(x, y)`, `v3(x, y, z)`, `v4(x, y, z, w)`, `v4(rgb, a)`,
   and a broadcast from one scalar. A `__vector` alias cannot be called, and a
   device module may not spell an array literal, so these are functions.
@@ -182,6 +187,64 @@ In each compilation the profile is a compile-time constant, `activeProfile`
 static if (activeProfile.has(Cap.pushConstants))
     // …
 ```
+
+### Uniform blocks, push constants and interface structs
+
+One declaration of a resource serves every profile; the compiler lowers it
+for each:
+
+| Parameter                 | `gl330`, `gles100`         | `vulkan1.3`                                                |
+| ------------------------- | -------------------------- | ---------------------------------------------------------- |
+| `@uniform T name`         | a uniform `name`           | a field of the entry point's default uniform block         |
+| `UniformBlock!T name`     | one uniform per field of T | a uniform block whose type is `T`, laid out by `std140`    |
+| `PushConstants!T name`    | one uniform per field of T | the push-constant block, laid out by `std430`, ≤ 128 bytes |
+| a `@resources` struct `s` | its fields, flattened      | its fields, flattened                                      |
+
+The default uniform block of an entry point `e` is the variable `eUniforms`,
+of type `eUniformsBlock`; `UniformsOf!e` is that struct in D. On Vulkan,
+resources with a binding are in descriptor set 0. Binding 0 is the shared
+sampler's, and the rest follow parameter order from 1. `@binding(b)` on a
+parameter or a field fixes one; Vulkan only. An entry point declares at most
+one push-constant block.
+
+The host writes a block's bytes from the same D struct:
+
+```d
+enum layout = layoutOf!(Light, Rule.std140);   // offsets, sizes, strides
+ubyte[layout.size] bytes;
+writeLayout!(Light, Rule.std140)(light, bytes[]);
+```
+
+D lays `Light` out by its own rules, which differ from `std140` and `std430`
+(a `float` after a `vec3` is at 16 in D, at 12 in both GLSL layouts), so never
+copy the struct's bytes. `PushConstantsOf!e` is the `T` of an entry point's
+push-constant block, or `void`: size the pipeline's range from it, for the
+stages whose entry points declare one. Two stages of one pipeline share that
+range, so `stagesLink` also requires their blocks to have one type.
+
+A module that computes in 64 bits fails the `vulkan1.3` build, which grants
+no `Int64`, and the failure names the D line of each such operation. A
+`size_t` index or remainder is the usual source; compute in `int`.
+
+### A consumer: the Vulkan triangle
+
+`sparkles:vulkan-wsi`'s triangle is a host-and-device module,
+`triangle_shader.d`: a vertex entry point that reads its corners from a table
+by `vertexIndex`, scaled by an aspect-ratio push constant, and a fragment
+entry point that returns the interpolated colour. The renderer names each
+stage by its D function (`__traits(identifier, triangleVertex)`) and takes the
+push-constant range from `PushConstantsOf` and `layoutOf`. The package's
+opt-in `gpu-shaders` configuration generates the SPIR-V into
+`generated/shaders/` and compiles the renderer in; the triangle examples
+select it. Its readback test draws the triangle on lavapipe and compares the
+pixels with the host's evaluation of the same vertex function:
+
+```bash
+SPARKLES_VULKAN_READBACK=1 dub test :vulkan-wsi -- -i triangle_readback
+```
+
+It needs a Vulkan driver (`VK_DRIVER_FILES`) and the validation layer
+(`VK_LAYER_PATH`).
 
 ## Editor support
 
