@@ -26,6 +26,9 @@ $(LI $(MREF sparkles,vulkan,extensions) — extension names read inside their
     once instead of at each consumer.)
 $(LI $(MREF sparkles,vulkan,flags) — which bits of a `Vk*Flags` value are set,
     decided by the bit rather than by the enumerator's spelling.)
+$(LI $(MREF sparkles,vulkan,memory) — device memory: a sub-allocator over a
+    few large allocations, shaped like `std.experimental.allocator`, and a
+    per-frame arena.)
 $(LI $(MREF sparkles,vulkan,names) — an enumerator's own name, kebab-cased and
     stripped of the type-name prefix C forces onto every member.)
 $(LI $(MREF sparkles,vulkan,result) — `VkResult` as
@@ -35,10 +38,9 @@ $(LI $(MREF sparkles,vulkan,result) — `VkResult` as
 Anything not wrapped stays reachable: `sparkles.vulkan.vulkan_c` is the raw surface,
 and every abstraction here is additive over it.
 
-Deliberately absent, for now: memory allocation (VMA is the field's settled
-answer and is orthogonal), and any synchronisation or render-graph layer —
-which the research catalog is emphatic belongs in a separate tier rather than
-in the binding
+Deliberately absent: any synchronisation or render-graph layer, which the
+research catalog is emphatic belongs in a separate tier rather than in the
+binding
 ($(LINK2 ../../../docs/research/vulkan/comparison.md, `comparison.md`)).
 */
 module sparkles.vulkan;
@@ -50,6 +52,7 @@ public import sparkles.vulkan.enumerate;
 public import sparkles.vulkan.extensions;
 public import sparkles.vulkan.flags;
 public import sparkles.vulkan.loader;
+public import sparkles.vulkan.memory;
 public import sparkles.vulkan.names;
 public import sparkles.vulkan.platform;
 public import sparkles.vulkan.result;

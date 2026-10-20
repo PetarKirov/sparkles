@@ -259,7 +259,12 @@ private enum CommandSet[] deviceSets = [
         "FreeMemory",
         "MapMemory",
         "UnmapMemory",
+        "FlushMappedMemoryRanges",
+        "InvalidateMappedMemoryRanges",
         "CmdCopyImageToBuffer",
+        // Buffer uploads, and per-instance vertex data.
+        "CmdCopyBuffer",
+        "CmdBindVertexBuffers",
         // A uniform buffer bound through a descriptor set.
         "CreateDescriptorSetLayout",
         "DestroyDescriptorSetLayout",
@@ -287,6 +292,12 @@ private enum CommandSet[] deviceSets = [
     CommandSet(khrDynamicRendering, [
         "CmdBeginRenderingKHR",
         "CmdEndRenderingKHR",
+    ]),
+    // Core in 1.1: whether a resource wants a dedicated allocation. Optional
+    // so a 1.0 table stays complete.
+    CommandSet(vkVersion11, [
+        "GetImageMemoryRequirements2",
+        "GetBufferMemoryRequirements2",
     ]),
     // Core in 1.3. Optional here so a 1.1 table stays complete.
     CommandSet(vkVersion13, [
@@ -323,6 +334,8 @@ enum string khrDynamicRendering = "VK_KHR_dynamic_rendering";
 enum string extDebugUtils = "VK_EXT_debug_utils";
 /// ditto — not an extension name, a `has` key for the 1.3 core aliases.
 enum string vkVersion13 = "VK_VERSION_1_3";
+/// ditto — the `has` key for the 1.1 core commands.
+enum string vkVersion11 = "VK_VERSION_1_1";
 /// Native instance-surface extension names, available on their target only.
 /// Android is checked first: its target is `linux` too, without Wayland or XCB.
 version (Android)
