@@ -45,13 +45,17 @@ sets it for its own compiler. A test harness's `--threads=N` or a sanitizer's
 **SHP3: The unit.** _(Revised.)_ The [shader unit](../../glossary.md#shader-unit)
 **must** be every module, among the source files of the package and all its
 dependencies, that `SHM5` classifies as a device module. It **must** contain
-at least one device-only module, and the build step **must** compile all of
-it in a single compiler invocation per profile ([`SHC6`](./profiles.md)).
+at least one entry point ([`SHF1`](./entry-points.md)), in a device-only or a
+host-and-device module, and the build step **must** compile all of it in a
+single compiler invocation per profile ([`SHC6`](./profiles.md)).
 
 _Rationale:_ A SPIR-V module is self-contained; there is no linker to find a
 function in another one. A device module in a dependency, such as this
 library's own vocabulary, therefore belongs to the unit as much as the
-package's own.
+package's own. An entry point in a host-and-device module is one the host
+can see: a renderer names its stages after the D functions and sizes its
+push-constant range from their signatures. One that samples is device-only
+(`SHF1`).
 
 **SHP4: Validation.** _(Revised.)_ The SPIR-V compiled for a profile **must**
 pass `spirv-val` under that profile's environment before anything else reads
@@ -83,7 +87,8 @@ to the output directory.
 
 **SHP7: Provenance.** _(Revised.)_ Every generated GLSL file **must** begin with a comment that
 names the package as its recipe names it, every device-only module of the
-unit relative to the package directory, and the entry point, and that states
+unit and, if it is not one of them, the module that declares the entry point,
+relative to the package directory, and the entry point, and that states
 the file is generated; a generated SPIR-V file **must** carry the same text in
 an `OpModuleProcessed` instruction. The generated files' bytes **must not** depend on the
 directory the step runs from (the stamp's paths may).
@@ -121,7 +126,7 @@ applies:
 4. the device configuration cannot be described, describes no build target
    (it has no sources, or a target type that builds nothing), names no
    dcompute target, names anything but exactly one of the Vulkan targets of
-   `SHP1`, or yields no device-only module: 2;
+   `SHP1`, or yields no device module: 2;
 5. the manifest cannot be produced: 1 if the compiler reports the unit's
    error, 3 if it cannot produce a manifest for a minimal `@fragment` shader
    either;

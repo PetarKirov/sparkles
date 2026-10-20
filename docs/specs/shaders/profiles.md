@@ -38,7 +38,10 @@ host-and-device module of the vocabulary (`SHM1`), so it belongs to every unit
 (`SHP3`) and is an input of every stamp (`SHB1`). Adding a profile whose
 output the compiler and the build step already produce — a capability set
 over a SPIR-V version the code generator emits and an existing translation —
-**must not** require a change to either.
+**must not** require a change to either. The capability vocabulary is also the
+compiler's, as `ldc.dcompute.Capability`: the two **must** name the same
+capabilities in the same order, which a device compilation asserts, so adding
+a capability changes both.
 
 _Rationale:_ The table is what a reader consults to learn what a target
 offers; as D data it is tested like any other code, and the vocabulary, the
@@ -77,15 +80,24 @@ name; in a host compilation by the fork it **must** evaluate to `"cpu"`. The
 library **must** provide `activeProfile`, the profile of that name from the
 table, so that `static if`, `static assert` and template constraints can branch
 on it; under a compiler that does not know the trait (DMD, a stock LDC),
-`activeProfile` **must** be `cpu`. A name that is not in the table **must**
+`activeProfile` **must** be `cpu`. The compilation **must** also be given
+what the profile grants, closed under the implications:
+`-capabilities=shader:<capability>,…`, the names of `SHC1`'s vocabulary. The
+compiler **must** fail a name its vocabulary does not hold, naming the valid
+ones, and **must** derive from the grants what it enforces: how resources are
+lowered ([`SHR3`–`SHR5`](./resources.md)), the stages an entry point may have
+([`SHF7`](./entry-points.md)), and the types a vertex input may have
+([`SHF5`](./entry-points.md)). Without a grant, it **must** check none of them
+and lower resources as plain uniforms. A name that is not in the table **must**
 fail: the build step **must** reject it before compiling, naming it, and
 `activeProfile` **must** fail its compilation, naming it, if a compiler is
 given it directly.
 
 _Rationale:_ D's compile-time evaluation runs once per compilation, for host
 and device alike; a profile can only be something code branches on if each
-compilation has one. The compiler knows only the name; what the name means is
-the table's.
+compilation has one. The compiler knows the name and the capabilities it is
+granted, and enforces what each capability means; which profile grants what
+is the table's ([`D26`](./decisions.md#d26-the-compiler-is-granted-capabilities-not-profiles)).
 
 ## Declaring a shader's profiles
 

@@ -23,7 +23,7 @@ evidence ledger live in [`testing.md`](./testing.md).
 | [M4 Multi-pass effects](#m4-multi-pass-effects-in-single-source-d)          | done        |
 | [M5 Further platforms](#m5-further-device-platforms)                        | not started |
 | [Stage 0 (revision)](#stage-0-revision-the-full-language-scope)             | done        |
-| [M6 Profiles and the Vulkan triangle](#m6-profiles-and-the-vulkan-triangle) | in progress |
+| [M6 Profiles and the Vulkan triangle](#m6-profiles-and-the-vulkan-triangle) | done        |
 | [M7 Capability inference](#m7-capability-inference-and-stage-operations)    | not started |
 | [M8 One vector type](#m8-one-vector-type)                                   | not started |
 | [M9 Vocabulary breadth](#m9-vocabulary-breadth)                             | not started |
@@ -356,34 +356,28 @@ include them.
 
 **Entry condition.** The revision's Stage 0 accepted.
 
-**Progress (2026-10-20).** The deliverable is built: the library, the
+**Progress (2026-10-20).** Done. The deliverable is built: the library, the
 compiler (with sixteen more backend fixes, each with its lit test), the
 build step, the triangle as one host-and-device D module, and its readback
-on lavapipe in CI. The [evidence ledger](./testing.md#evidence-ledger)
-records each row.
+on lavapipe in CI. Every M6 row of the
+[evidence ledger](./testing.md#evidence-ledger) is `verified`, so the gate is
+met.
 
 - **The gate's checks hold.** The effects' GLSL is byte-identical before and
   after the slice, so their readback is the slice's too. The triangle agrees
-  with its host evaluation at three aspects, with no validation message,
+  with its host evaluation at three aspects, and a `std140` block written by
+  `writeLayout` reads back field for field, with no validation message,
   teardown included. Each named broken input fails its check, as do a
   device-only change to the triangle, a pipeline missing its push-constant
-  range and a leaked pipeline.
-- **Rows not yet `verified`:**
-  - `SHV8`: no host call through the block stand-ins.
-  - `SHF5`: integer vertex inputs are not checked against `intVertexInputs`.
-  - `SHF6`: no `Sampler2D` flattened out of a `@resources` struct.
-  - `SHR6`: no device readback of a `std140` uniform block.
-  - `SHT3`'s SPIR-V half: first compared by this milestone's CI run.
-- **The specification's `SHP3` disagrees with this plan.** `SHP3` requires a
-  device-only module, and the deliverable puts the triangle's entry points in
-  a host-and-device module. The build step accepts a unit with an entry
-  point in any device module, and its provenance names the device-only
-  modules and the entry point's own. The sentences of `SHP3`, `SHP7` and
-  `SHP10` await the owner.
-- **The build step derives two compiler flags.** It passes the resources'
-  lowering (`-mdcompute-resources`) from what each profile grants, and asks
-  for the 64-bit report (`-mdcompute-report-int64`) when the audit finds
-  `Int64`, since the compiler knows a profile only by its name (`SHC1`).
+  range, a leaked pipeline and a block written as `std430`.
+- **Two amendments came out of the slice.**
+  - `SHP3`, `SHP7` and `SHP10` now let an entry point live in a
+    host-and-device module, as the triangle's do, so a renderer reads their
+    signatures.
+  - The compiler is granted the profile's capabilities rather than told
+    their consequences one flag at a time (`SHC3`,
+    [`D26`](./decisions.md#d26-the-compiler-is-granted-capabilities-not-profiles)),
+    and enforces `SHF5`, `SHF7` and the resources' lowering from them.
 
 ## M7: Capability inference and stage operations
 
