@@ -13,9 +13,9 @@
 /// See $(LINK2 ../../../../docs/specs/nix/SPEC.md, SPEC §6).
 module sparkles.nix.library;
 
-import core.sync.mutex : Mutex;
 import std.string : toStringz;
 
+import sparkles.base.sync.mutex : Mutex;
 import sparkles.nix.c;
 import sparkles.nix.error;
 import sparkles.nix.strings;
@@ -25,19 +25,13 @@ private __gshared bool _initDone;
 private __gshared bool _initOk;
 private __gshared NixError _initError;
 
-shared static this()
-{
-    _libMutex = new Mutex;
-}
-
 /// Initializes the Nix library (util → store → expr, including the GC), once
 /// per process. Idempotent and thread-safe; the first call's result is cached
 /// and returned by every subsequent call. Must run before opening a `Store` or
 /// building an `EvalState`.
 NixResult!void initNix() @trusted
 {
-    _libMutex.lock();
-    scope (exit) _libMutex.unlock();
+    auto held = _libMutex.guard();
 
     if (!_initDone)
     {
@@ -76,8 +70,7 @@ string nixVersion() @trusted nothrow
 /// ---
 NixResult!void setSetting(in char[] key, in char[] value) @trusted
 {
-    _libMutex.lock();
-    scope (exit) _libMutex.unlock();
+    auto held = _libMutex.guard();
 
     auto ctx = NixContext.create();
     const keyZ = key.toStringz;
@@ -89,8 +82,7 @@ NixResult!void setSetting(in char[] key, in char[] value) @trusted
 /// code `NixErrCode.key` if the setting is unknown.
 NixResult!string getSetting(in char[] key) @trusted
 {
-    _libMutex.lock();
-    scope (exit) _libMutex.unlock();
+    auto held = _libMutex.guard();
 
     auto ctx = NixContext.create();
     const keyZ = key.toStringz;
