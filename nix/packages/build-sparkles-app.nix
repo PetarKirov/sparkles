@@ -273,8 +273,8 @@
                 # `views/twoslash.css` and `views/icons/**/*.svg`, pulled in via `import()`)
                 # and `.frag` shaders (sparkles:ui's are generated and come from
                 # `ui-shaders`; this keeps any hand-written one a package
-                # string-imports), and the prebuilt SPIR-V (`.spv`) a package
-                # string-imports (sparkles:vulkan-wsi's triangle).
+                # string-imports), and the committed SPIR-V (`.spv`) a package
+                # string-imports (sparkles:vulkan-wsi's test pattern).
                 file:
                 file.hasExt "d"
                 || file.hasExt "c"
@@ -305,6 +305,16 @@
           install -d "${rootDir}/libs/ui/generated/shaders"
           cp ${config.packages.ui-shaders}/*.frag ${config.packages.ui-shaders}/.stamp \
             "${rootDir}/libs/ui/generated/shaders/"
+        '';
+      # The same for sparkles:vulkan-wsi's `gpu-shaders` configuration, which
+      # the triangle examples select (`vulkan-wsi-shaders`).
+      placeVulkanWsiShaders =
+        rootDir:
+        lib.optionalString (config.packages ? vulkan-wsi-shaders) ''
+          chmod -R u+w "${rootDir}"
+          install -d "${rootDir}/libs/vulkan-wsi/generated/shaders"
+          cp ${config.packages.vulkan-wsi-shaders}/*.spv ${config.packages.vulkan-wsi-shaders}/.stamp \
+            "${rootDir}/libs/vulkan-wsi/generated/shaders/"
         '';
 
       # ELF `.build_info`, Mach-O `__DATA,__build_info`, PE `.bldinfo`.
@@ -519,7 +529,12 @@
         componentNames = shippedComponentNames;
         refsIn = refsOf;
         inherit sourceFor manifestFileset;
-        inherit needsUiShaders uiShaderDirs placeUiShaders;
+        inherit
+          needsUiShaders
+          uiShaderDirs
+          placeUiShaders
+          placeVulkanWsiShaders
+          ;
       };
 
       # The build stamp an application reports as its version and commit

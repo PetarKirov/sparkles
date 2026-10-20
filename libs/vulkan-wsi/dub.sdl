@@ -13,12 +13,12 @@ dflags "-preview=in" "-preview=dip1000"
 // `vulkan.pc` supplies it as well as the loader link used by the smoke tests.
 libs "vulkan"
 
-// The renderer shared by the native and SDL triangle examples embeds the
-// committed SPIR-V at compile time. Keep the shaders with their owning Vulkan
-// example rather than duplicating them in each host package.
+// The test pattern's SPIR-V, committed beside its GLSL, which carries the
+// regeneration command.
 stringImportPaths "src/shaders"
 
 dependency "expected" version="~>0.4.1"
+dependency "sparkles:shaders" path="../.."
 dependency "sparkles:vulkan" path="../.."
 dependency "sparkles:wsi" path="../.."
 
@@ -28,6 +28,22 @@ configuration "library" {
     targetType "sourceLibrary"
 }
 
+// The library plus the triangle renderer (`SparklesVulkanWsiTriangle`), whose
+// shaders are D (`triangle_shader.d`). Opt-in, because generating their
+// SPIR-V takes the dcompute-enabled LDC (`ldc2-vulkan`), and the default
+// build must need no compiler but its own. The triangle examples select it.
+//
+// The pre-generate step compiles the `shaders` configuration below to SPIR-V
+// in `generated/shaders/` (git-ignored) and is a no-op while its stamp is
+// fresh. `--temp-build` keeps concurrent dependents from racing on the tool's
+// build.
+configuration "gpu-shaders" {
+    targetType "sourceLibrary"
+    versions "SparklesVulkanWsiTriangle"
+    stringImportPaths "generated/shaders"
+    preGenerateCommands "$DUB run --temp-build -q --root=$PACKAGE_DIR/../../apps/shader-compile -- --package=$PACKAGE_DIR --out=$PACKAGE_DIR/generated/shaders --if-stale"
+}
+
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
 
@@ -35,6 +51,15 @@ configuration "unittest" {
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// The device build: what LDC's dcompute target compiles for the GPU. Never
+// built by dub — `shader-compile` asks `dub describe` for it and compiles the
+// `@compute` modules among its sources (`triangle_shader.d`, with
+// `sparkles:shaders`'s).
+configuration "shaders" {
+    targetType "library"
+    dflags "-mdcompute-targets=vulkan-130"
 }
 
 buildType "checked" {
