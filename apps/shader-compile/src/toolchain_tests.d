@@ -910,3 +910,37 @@ exit 0
         shaders.buildPath("sparkles", "shaders", "capabilities.d")]);
     assert(r.status == 0, r.output);
 }
+
+@("shaderCompile.resources.samplersOfTheirOwn")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHR7`: a `SamplerState` parameter is a sampler of its own, at the next
+    // binding in parameter order on Vulkan. On OpenGL each image is a
+    // `sampler2D` per sampler it is read through: under its own name when
+    // that is one, as `<image>_<sampler>` when it is several.
+    auto f = Fixture.create("samplers");
+    f.entries(q{
+        @profiles(gl330, vulkan13) @fragment vec4 canvas(@input vec2 uv, Sampler2D atlas,
+            Sampler2D photo, SamplerState nearest, SamplerState linear)
+            => atlas.sample(nearest, uv) * photo.sample(linear, uv) + atlas.sample(uv);
+    });
+    const made = f.run();
+    assert(made.status == 0, made.diagnostics);
+    assert(f.outputs == [".stamp", "canvas.frag", "canvas.frag.spv"], f.outputs.join(" "));
+
+    const glsl = readText(f.out_.buildPath("canvas.frag"));
+    foreach (line; ["uniform sampler2D atlas_nearest;", "uniform sampler2D atlas_sampler;",
+            "uniform sampler2D photo;"])
+        assert(glsl.canFind(line), line ~ "\n" ~ glsl);
+    assert(!glsl.canFind("SPIRV_Cross_Combined"), glsl);
+
+    const dis = execute(["spirv-dis", f.out_.buildPath("canvas.frag.spv")]);
+    assert(dis.status == 0, dis.output);
+    foreach (line; ["OpDecorate %atlas Binding 1", "OpDecorate %photo Binding 2",
+            "OpDecorate %nearest Binding 3", "OpDecorate %linear Binding 4",
+            "OpDecorate %sampler Binding 0"])
+        assert(dis.output.canFind(line), line ~ "\n" ~ dis.output);
+}
