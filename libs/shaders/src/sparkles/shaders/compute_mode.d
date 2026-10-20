@@ -108,6 +108,67 @@ ComputeMode computeModeOf(const(char)[] source) @safe pure nothrow @nogc
     assert(computeModeOf("@precompute module a;") == ComputeMode.none);
 }
 
+/**
+The name a module's declaration gives it (`a.b.c`), or `null` for a file
+without one: the same token-level read of the head as `computeModeOf`.
+*/
+const(char)[] moduleNameOf(const(char)[] source) @safe pure nothrow @nogc
+{
+    auto lex = HeadLexer(source);
+    for (;;)
+    {
+        const tok = lex.next();
+        if (tok == "@")
+        {
+            while (isIdentifier(lex.peek()))
+            {
+                lex.next();
+                if (lex.peek() != ".")
+                    break;
+                lex.next();
+            }
+            if (lex.peek() == "(")
+                lex.skipParenthesized(null);
+        }
+        else if (tok == "deprecated")
+        {
+            if (lex.peek() == "(")
+                lex.skipParenthesized(null);
+        }
+        else if (tok == "module")
+        {
+            const first = lex.peek();
+            if (!isIdentifier(first))
+                return null;
+            // Tokens are slices of `source`, so their offsets are its.
+            const start = offsetIn(source, first);
+            size_t end = start;
+            while (isIdentifier(lex.peek()))
+            {
+                const id = lex.next();
+                end = offsetIn(source, id) + id.length;
+                if (lex.peek() != ".")
+                    break;
+                lex.next();
+            }
+            return source[start .. end];
+        }
+        else
+            return null;
+    }
+}
+
+@("shaders.compute_mode.moduleNameOf")
+@safe pure nothrow @nogc unittest
+{
+    assert(moduleNameOf("module a;") == "a");
+    assert(moduleNameOf("@compute(CompileFor.hostAndDevice) @profiles(vulkan13)\nmodule a.b.c;")
+        == "a.b.c");
+    assert(moduleNameOf("/// The shaders.\n@compute module fx_entries;") == "fx_entries");
+    assert(moduleNameOf("void main() {}") is null);
+    assert(moduleNameOf("") is null);
+}
+
 // A lexer over just enough of D to read the attributes before `module`:
 // identifiers, punctuation, and string/character literals and comments to
 // skip. Anything it does not understand ends the head.
@@ -249,3 +310,8 @@ private bool isIdentPart(char c) @safe pure nothrow @nogc
 
 private bool isIdentifier(scope const(char)[] tok) @safe pure nothrow @nogc
     => tok.length && isIdentStart(tok[0]);
+
+// The offset of `token`, a slice of `source`, within it.
+private size_t offsetIn(scope const(char)[] source, scope const(char)[] token)
+    @safe pure nothrow @nogc
+    => (() @trusted => cast(size_t) (token.ptr - source.ptr))();

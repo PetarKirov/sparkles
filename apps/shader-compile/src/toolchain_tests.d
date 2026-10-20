@@ -194,7 +194,7 @@ dflags "-mdcompute-targets=vulkan-999"`);
         ["--config=library", "names no dcompute target"],
         ["--config=sourceLibrary", "describes no build target"],
         ["--config=twoTargets", "must name exactly one Vulkan target"],
-        ["--config=hostOnly", "has no `@compute(CompileFor.deviceOnly)` module"],
+        ["--config=hostOnly", "declares no `@fragment` or `@vertex` entry point"],
     ])
     {
         const r = f.run(bad[0]);
