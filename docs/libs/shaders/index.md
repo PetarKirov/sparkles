@@ -165,8 +165,9 @@ static assert(stagesLink!(tri, shade));
 
 ### Profiles
 
-A profile is one output: `gl330` (GLSL 3.30), `gles100` (GLSL ES 1.00) or
-`vulkan13` (SPIR-V 1.6 for Vulkan 1.3). Mark an entry point, or a whole module
+A profile is one output: `gl330` (GLSL 3.30), `gles100` (GLSL ES 1.00),
+`vulkan13` (SPIR-V 1.6 for Vulkan 1.3) or `vulkan11` (SPIR-V 1.3 for Vulkan 1.1,
+the Android floor; no `demote`). Mark an entry point, or a whole module
 (`@profiles(...) module m;`), with the profiles it is built for. An entry
 point's own `@profiles` replaces its module's.
 
@@ -177,8 +178,9 @@ the vertex stage.
 `shader-compile` compiles the unit once per profile and writes:
 
 - `<entry>.frag` and `<entry>.es.frag` for the OpenGL profiles;
-- `<entry>.vert.spv` and `<entry>.frag.spv` for Vulkan, one entry point per
-  module.
+- `<entry>.vert.spv` and `<entry>.frag.spv` for Vulkan 1.3, one entry point
+  per module, and `<entry>.vk11.vert.spv` and `<entry>.vk11.frag.spv` for
+  Vulkan 1.1.
 
 In each compilation the profile is a compile-time constant, `activeProfile`
 (`cpu` on the host), so one function can have a body per target:
