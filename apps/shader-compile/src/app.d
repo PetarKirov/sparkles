@@ -43,8 +43,8 @@ import std.algorithm : all, any, canFind, filter, find, map, sort, splitter, sta
 import std.ascii : isDigit;
 import std.array : array, join, replace, split;
 import std.conv : text, to;
-import std.file : dirEntries, exists, isFile, mkdirRecurse, read, readText, remove, rmdirRecurse,
-    SpanMode, tempDir, write;
+import std.file : DirEntry, dirEntries, exists, FileException, isFile, mkdirRecurse, read, readText,
+    remove, rmdirRecurse, SpanMode, tempDir, write;
 import std.format : format;
 import std.json : JSONValue, parseJSON;
 import std.path : absolutePath, baseName, buildNormalizedPath, buildPath, relativePath;
@@ -554,23 +554,44 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
     // A renamed entry point leaves its old output behind; the directory is
     // this tool's, so it goes.
     foreach (pattern; ["*.frag", "*.vert", "*.spv"])
-        foreach (e; dirEntries(outDir, pattern, SpanMode.shallow).filter!(e => e.isFile).array)
+        foreach (e; dirEntries(outDir, pattern, SpanMode.shallow).filter!stillAFile.array)
             if (e.name.baseName !in produced)
-                e.name.remove;
+                removeIfThere(e.name);
     // So does a temporary a killed run left (`<file>.tmp-<pid>`, as
     // `writeAtomically` names them): one whose process is gone. A live
     // process's is a concurrent run's file about to be renamed, and a file
     // only resembling a temporary is not this tool's.
-    foreach (e; dirEntries(outDir, "*.tmp-*", SpanMode.shallow).filter!(e => e.isFile).array)
+    foreach (e; dirEntries(outDir, "*.tmp-*", SpanMode.shallow).filter!stillAFile.array)
     {
         const pid = e.name[e.name.lastIndexOf(".tmp-") + ".tmp-".length .. $];
         if (pid.length && pid.all!isDigit && !isRunning(pid))
-            e.name.remove;
+            removeIfThere(e.name);
     }
     writeAtomically(buildPath(outDir, stampName), stampFor(inputs, produced.keys.sort.array));
     if (keep)
         writefln("shader-compile: scratch kept at %s", scratch);
     return 0;
+}
+
+// Concurrent runs share the directory (`SHB7`): between listing it and
+// looking at an entry, another run may have renamed its temporary into place
+// or removed the same stale file. An entry that is gone needs no cleanup.
+private bool stillAFile(DirEntry e)
+{
+    try
+        return e.isFile;
+    catch (FileException)
+        return false;
+}
+
+/// ditto
+private void removeIfThere(string path)
+{
+    try
+        path.remove;
+    catch (FileException x)
+        if (path.exists)
+            throw x;
 }
 
 /// Whether `pid`, a decimal process id, names a running process in this
