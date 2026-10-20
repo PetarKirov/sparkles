@@ -28,6 +28,9 @@ dependency "sparkles:shaders" path="../.."
 // takes no `in` parameters either.
 dependency "sparkles:wired" path="../.."
 dependency "sparkles:build-primitives" path="../.."
+// `dmdGlobalsLock` is a `sparkles.base.sync` mutex, whose API takes no `in`
+// parameters either.
+dependency "sparkles:base" path="../.."
 
 // (An `lflags "--undefined=_D3dmd8astenums7Edition6__initZ"` workaround for
 // linux-dmd used to live here: astenums.o sat in frontend.a while dmd:lexer
