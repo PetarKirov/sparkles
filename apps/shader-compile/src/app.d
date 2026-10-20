@@ -441,7 +441,7 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
         const prefix = "unit";
         const spv = buildPath(dir, prefix ~ "_" ~ build.target.replace("-", "") ~ "_64.spv");
         const compiled = tryExecute([ldc, "-O2"] ~ compileFlags
-            ~ ["-mdcompute-profile=" ~ pname, "-mdcompute-file-prefix=" ~ prefix, "-od=" ~ dir]
+            ~ profileFlags(profile) ~ ["-mdcompute-file-prefix=" ~ prefix, "-od=" ~ dir]
             ~ unit.sources);
         if (compiled.status != 0)
         {
@@ -477,6 +477,15 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
         {
             stderr.writefln("shader-compile: %s (%s): %s, in the module of %-(`%s`%|, %)",
                 name, pname, why, mine.map!(e => e.name));
+            // Where the module computes in 64 bits, the compiler names the D
+            // lines (`SHM6`): the disassembly has none to give.
+            if (why.canFind("`OpCapability Int64`"))
+            {
+                const lines = tryExecute([ldc] ~ compileFlags ~ profileFlags(profile)
+                    ~ ["-mdcompute-report-int64", "-mdcompute-file-prefix=report",
+                    "-od=" ~ buildPath(dir, "report")] ~ unit.sources);
+                stderr.write(lines.output);
+            }
             return 1;
         }
 
@@ -878,6 +887,29 @@ private string[] glslFlags(in Profile p)
         : ["--es", "--version", p.version_.to!string];
 
 /// spirv-val's environment for a Vulkan profile: `vulkan1.3`.
+/**
+The flags that compile the unit for `p`: the profile's name, and how its
+resources are lowered (`SHR3`–`SHR5`): as blocks where it grants uniform
+blocks and not loose uniforms, else as loose uniforms. The compiler knows a
+profile only by its name (`SHC1`), so what it cannot read from the table is
+passed beside the name.
+*/
+string[] profileFlags(in Profile p)
+{
+    const blocks = p.caps.has(Cap.uniformBlocks) && !p.caps.has(Cap.looseUniforms);
+    return ["-mdcompute-profile=" ~ p.name,
+        "-mdcompute-resources=" ~ (blocks ? "blocks" : "loose")];
+}
+
+///
+@("shaderCompile.profileFlags.lowerResourcesByWhatTheProfileGrants")
+unittest
+{
+    assert(profileFlags(vulkan13) == ["-mdcompute-profile=vulkan1.3", "-mdcompute-resources=blocks"]);
+    assert(profileFlags(gl330) == ["-mdcompute-profile=gl330", "-mdcompute-resources=loose"]);
+    assert(profileFlags(gles100) == ["-mdcompute-profile=gles100", "-mdcompute-resources=loose"]);
+}
+
 private string vulkanEnv(in Profile p) => format("vulkan%s.%s", p.version_ / 10, p.version_ % 10);
 
 /**
