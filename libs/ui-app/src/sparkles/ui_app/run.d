@@ -42,6 +42,8 @@ AvailableArms compiledArms() @safe pure nothrow @nogc
     AvailableArms a;
     version (UiAppGui)
         a.gui = true;
+    version (UiAppGuiVulkan)
+        a.gui = true;
     // Both gates, matching `tui_loop`: the configuration must have brought
     // `sparkles:ui-tui`, AND the platform must have a terminal session.
     version (UiAppTui)
@@ -146,7 +148,24 @@ RunOutcome run(alias present, alias handle, alias draw = noDraw,
     final switch (arm)
     {
         case Backend.gui:
-            version (UiAppGui)
+            version (UiAppGuiVulkan)
+            {
+                import sparkles.ui_app.native_loop : NativeRequest, runNative;
+                import sparkles.ui_app.gui_options : fontRequestOf, windowCellsOf;
+
+                NativeRequest req;
+                req.title = cfg.title;
+                req.font = fontRequestOf(cfg.gui);
+                req.cells = windowCellsOf(cfg.gui);
+                req.fontSizePoints = cfg.gui.fontSize;
+                req.fontSizePxOverride = cfg.fontSizePxOverride;
+                req.extraFontSources = cfg.extraFontSources.dup;
+                if (cfg.hasLaunchBackground)
+                    req.ground = cfg.launchBackground;
+                return runNative!(present, handle, draw, setup, shutdown)(cfg, req)
+                    ? RunOutcome.ok : RunOutcome.openFailed;
+            }
+            else version (UiAppGui)
             {
                 import sparkles.ui_app.gui_loop : runGui;
                 import sparkles.ui_app.gui_setup : GuiRequest;

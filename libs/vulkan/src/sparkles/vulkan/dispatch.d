@@ -281,6 +281,7 @@ private enum CommandSet[] deviceSets = [
         // A sampled image: its pixels uploaded, and the samplers it is read
         // through.
         "CmdCopyBufferToImage",
+        "CmdClearColorImage",
         "CreateSampler",
         "DestroySampler",
     ]),

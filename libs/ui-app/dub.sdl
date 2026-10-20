@@ -45,6 +45,20 @@ configuration "gui" {
     versions "UiAppGui"
 }
 
+// The native arm (`INT4`): `sparkles:wsi` windows drawn by `sparkles:ui-vulkan`,
+// with no raylib on the drawing path. The cell font's file comes from
+// `sparkles:raylib-text`'s resolver for now — an interim source the font
+// library's catalog replaces — and is measured by `sparkles:font`.
+configuration "gui-vulkan" {
+    targetType "sourceLibrary"
+    dependency "sparkles:ui-vulkan" path="../.."
+    dependency "sparkles:vulkan-wsi" path="../.."
+    dependency "sparkles:wsi" path="../.."
+    dependency "sparkles:font" path="../.."
+    dependency "sparkles:raylib-text" path="../.."
+    versions "UiAppGuiVulkan"
+}
+
 configuration "full" {
     targetType "sourceLibrary"
     dependency "sparkles:ui-tui" path="../.."
@@ -53,13 +67,30 @@ configuration "full" {
     versions "UiAppTui" "UiAppGui"
 }
 
+// The terminal and the native arm, for an application that, like the gallery,
+// claims one `view` serves both.
+configuration "full-vulkan" {
+    targetType "sourceLibrary"
+    dependency "sparkles:ui-tui" path="../.."
+    dependency "sparkles:ui-vulkan" path="../.."
+    dependency "sparkles:vulkan-wsi" path="../.."
+    dependency "sparkles:wsi" path="../.."
+    dependency "sparkles:font" path="../.."
+    dependency "sparkles:raylib-text" path="../.."
+    versions "UiAppTui" "UiAppGuiVulkan"
+}
+
 configuration "unittest" {
     // The test build takes the widest closure, so every arm is compiled and
     // the recording target can be checked against both live ones.
     dependency "sparkles:ui-tui" path="../.."
     dependency "sparkles:ui-raylib" path="../.."
     subConfiguration "sparkles:ui" "gpu-effects"
-    versions "UiAppTui" "UiAppGui"
+    versions "UiAppTui" "UiAppGui" "UiAppGuiVulkan"
+    dependency "sparkles:ui-vulkan" path="../.."
+    dependency "sparkles:vulkan-wsi" path="../.."
+    dependency "sparkles:wsi" path="../.."
+    dependency "sparkles:font" path="../.."
 
     dependency "sparkles:test-runner" path="../.."
     dflags "-checkaction=context" "-allinst"
