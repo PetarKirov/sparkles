@@ -70,7 +70,7 @@ struct RaylibEvents
     // (high-resolution wheels/trackpads report sub-step values raylib
     // would otherwise truncate to zero) — M14.
     private float wheelAccumX = 0, wheelAccumY = 0;
-    private double lastWheelAt = -1; // `GetTime` of the last wheel movement
+    private WheelGesture wheelGesture;
 
     /// Emit every wheel movement with its exact distance
     /// (`WheelEvent.fdx`/`fdy`), whole step due or not: for an application
@@ -167,11 +167,9 @@ struct RaylibEvents
         const wheel = GetMouseWheelMoveV();
         const dx = wheelSteps(wheelAccumX, -wheel.x) * linesPerNotch;
         const dy = wheelSteps(wheelAccumY, -wheel.y) * linesPerNotch;
-        // A wheel turned after a pause starts a gesture (`WheelEvent.begins`).
         const moved = wheel.x != 0 || wheel.y != 0;
-        const begins = moved && GetTime() - lastWheelAt > 0.15;
-        if (moved)
-            lastWheelAt = GetTime();
+        const emits = fractionalWheel ? moved : dx != 0 || dy != 0;
+        const begins = wheelGesture.tick(moved, emits, GetTime());
         if (fractionalWheel && moved)
             sink(Event(WheelEvent(dx: dx, dy: dy, pos: pos, mods: mods,
                 fdx: -wheel.x * linesPerNotch, fdy: -wheel.y * linesPerNotch,
@@ -561,6 +559,46 @@ dchar unshiftedCodepoint(int rk) @safe pure nothrow @nogc
             default:                return 0;
         }
     }
+}
+
+/**
+A wheel turned after a pause starts a gesture (`WheelEvent.begins`). In
+whole steps the ticks before the first step emit nothing, so the start
+waits for the event that does: a slow turn still begins its gesture.
+*/
+private struct WheelGesture
+{
+    private double lastAt = -1; // the last movement's time, in seconds
+    private bool started;      // a gesture began and no event carried it yet
+
+    /// A frame's wheel: whether it `moved`, whether an event `emits`, at
+    /// `now`. Returns the event's `begins`.
+    bool tick(bool moved, bool emits, double now) @safe pure nothrow @nogc
+    {
+        if (moved && now - lastAt > 0.15)
+            started = true;
+        if (moved)
+            lastAt = now;
+        if (!emits)
+            return false;
+        const b = started;
+        started = false;
+        return b;
+    }
+}
+
+@("ui_raylib.events.WheelGesture.aSlowTurnBeginsOnItsFirstStep")
+@safe pure nothrow @nogc
+unittest
+{
+    WheelGesture g;
+    // Two sub-step ticks emit nothing; the third completes a step.
+    assert(!g.tick(moved: true, emits: false, now: 1.00));
+    assert(!g.tick(moved: true, emits: false, now: 1.02));
+    assert(g.tick(moved: true, emits: true, now: 1.04), "the first event begins");
+    assert(!g.tick(moved: true, emits: true, now: 1.06), "the rest continue it");
+    assert(g.tick(moved: true, emits: true, now: 1.30), "a pause starts another");
+    assert(!g.tick(moved: false, emits: false, now: 2.00));
 }
 
 @("ui_raylib.events.unshiftedCodepoint")
