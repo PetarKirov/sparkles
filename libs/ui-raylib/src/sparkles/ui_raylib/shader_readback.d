@@ -12,6 +12,13 @@ inputs, and each result must agree within the bound
 for that operation. Both dialects the step writes are read back, GLSL 3.30
 and GLSL ES 1.00.
 
+The fragment stage's built-ins and operations are read back too, from
+triangles drawn in clip space over an 8×8 target: the window position, whose
+origin on both GL profiles is the lower left (`Origin.lowerLeft`), so it
+grows with the row the GL reads back first; facing, true for a triangle whose
+clip-space corners run counter-clockwise under GL's default front face and
+false for the reverse; `discard`; and, in GLSL 3.30, derivatives.
+
 Test-only. It needs a GL context (a display — a virtual one in CI) and the
 device toolchain, and skips without either.
 */
@@ -287,6 +294,116 @@ private string compileProbes(string root)
             }
         }
     }
+    checkFragmentStage(glsl, failures, checked);
     assert(failures.length == 0, format("%s disagreements of %s checked:\n%-(%s\n%)",
         failures.length, checked, failures));
+}
+
+/// The fragment-stage probes' target: `probeFragCoord` divides by it.
+private enum int stageSize = 8;
+
+/// A vertex stage per dialect that passes a clip-space position through, so a
+/// triangle's corners are where the test puts them.
+private immutable string[2] clipVertex = [
+    q{#version 330
+        in vec3 vertexPosition;
+        void main() { gl_Position = vec4(vertexPosition.xy, 0.0, 1.0); }
+    },
+    q{#version 100
+        attribute vec3 vertexPosition;
+        void main() { gl_Position = vec4(vertexPosition.xy, 0.0, 1.0); }
+    },
+];
+
+/// Draws the fragment-stage probes in each dialect and checks every pixel.
+private void checkFragmentStage(string glsl, ref string[] failures, ref size_t checked) @system
+{
+    import core.stdc.stdlib : free;
+
+    enum fmt = PixelFormat.PIXELFORMAT_UNCOMPRESSED_R32G32B32A32;
+    const target = rlLoadTexture(null, stageSize, stageSize, fmt, 1);
+    const fbo = rlLoadFramebuffer();
+    rlFramebufferAttach(fbo, target, rlFramebufferAttachType.RL_ATTACHMENT_COLOR_CHANNEL0,
+        rlFramebufferAttachTextureType.RL_ATTACHMENT_TEXTURE2D, 0);
+    assert(rlFramebufferComplete(fbo), "a float render target is required");
+    scope (exit) { rlUnloadFramebuffer(fbo); rlUnloadTexture(target); }
+    auto rt = RenderTexture2D(fbo, Texture2D(target, stageSize, stageSize, 1, fmt));
+
+    // A triangle over the whole target, its clip-space corners
+    // counter-clockwise with y up; `reversed` draws them clockwise.
+    float[4][] draw(string file, string vertex, bool reversed)
+    {
+        const z = glsl.buildPath(file).readText.toTempStringz;
+        const vz = vertex.toTempStringz;
+        auto shader = LoadShaderFromMemory(vz.ptr, z.ptr);
+        assert(IsShaderValid(shader), file ~ ": the generated shader did not link");
+        scope (exit) UnloadShader(shader);
+
+        BeginTextureMode(rt);
+        ClearBackground(Colors.BLANK);
+        BeginShaderMode(shader);
+        rlDisableColorBlend();
+        rlDisableBackfaceCulling();
+        rlBegin(RL_TRIANGLES);
+        rlVertex2f(-1, -1);
+        if (reversed)
+        {
+            rlVertex2f(-1, 3);
+            rlVertex2f(3, -1);
+        }
+        else
+        {
+            rlVertex2f(3, -1);
+            rlVertex2f(-1, 3);
+        }
+        rlEnd();
+        rlDrawRenderBatchActive();
+        rlEnableBackfaceCulling();
+        rlEnableColorBlend();
+        EndShaderMode();
+        EndTextureMode();
+
+        auto pixels = cast(float*) rlReadTexturePixels(target, stageSize, stageSize, fmt);
+        assert(pixels !is null, "readback failed");
+        scope (exit) free(pixels);
+        auto r = new float[4][](stageSize * stageSize);
+        foreach (i, ref px; r)
+            px = pixels[i * 4 .. i * 4 + 4];
+        return r;
+    }
+
+    void expect(string what, float[4][] pixels, float[] delegate(int x, int row) want)
+    {
+        foreach (row; 0 .. stageSize)
+            foreach (x; 0 .. stageSize)
+            {
+                const got = pixels[row * stageSize + x];
+                const w = want(x, row);
+                ++checked;
+                bool differs;
+                foreach (c; 0 .. 4)
+                    differs |= fabs(got[c] - w[c]) > 1e-6f;
+                if (differs && failures.length < 20)
+                    failures ~= format("%s: pixel (%s, row %s) is %s, not %s", what, x, row, got, w);
+            }
+    }
+
+    foreach (d, suffix; [".frag", ".es.frag"])
+    {
+        const vertex = clipVertex[d];
+        // Row r of what the GL reads back is window y = r: the origin is the
+        // lower left, and y grows upward.
+        foreach (reversed; [false, true])
+            expect("probeFragCoord" ~ suffix ~ (reversed ? " (clockwise)" : ""),
+                draw("probeFragCoord" ~ suffix, vertex, reversed),
+                (int x, int row) => [(x + 0.5f) / stageSize, (row + 0.5f) / stageSize,
+                    reversed ? 0.0f : 1.0f, 1.0f]);
+        expect("probeDiscard" ~ suffix, draw("probeDiscard" ~ suffix, vertex, false),
+            (int x, int row) => x < stageSize / 2 ? [0.0f, 0, 0, 0] : [1.0f, 1, 1, 1]);
+    }
+    // `gles100` denies derivatives, so only GLSL 3.30 has the probe.
+    assert(!glsl.buildPath("probeDerivatives.es.frag").exists,
+        "gles100 denies derivatives, yet probeDerivatives was built for it");
+    expect("probeDerivatives.frag", draw("probeDerivatives.frag", clipVertex[0], false),
+        (int x, int row) => [0.5f, 0.25f, 0.1875f, 1.0f]);
 }

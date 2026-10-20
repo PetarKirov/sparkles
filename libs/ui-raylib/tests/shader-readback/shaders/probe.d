@@ -73,3 +73,25 @@ struct Light
         smoothstep(v2(-1.0f, -2.0f), v2(1.0f, 2.0f), q).y, mix(p, q, v2(0.25f, 0.75f)).y,
         clamp(p, -1.0f, 1.0f).x + min(q, 0.5f).y + mod(p, 1.5f).y + smoothstep(-1.0f, 1.0f, q).x);
 }
+
+// The fragment stage's built-ins and operations (`SHF8`, M7), drawn over an
+// 8×8 target by clip-space triangles rather than from a texture.
+
+/// The fragment's window position over the target's size, and whether its
+/// triangle faces the viewer.
+@fragment vec4 probeFragCoord(@builtin(Builtin.fragCoord) vec4 position,
+    @builtin(Builtin.frontFacing) bool front)
+    => v4(position.x / 8, position.y / 8, front ? 1.0f : 0.0f, 1.0f);
+
+/// The left half discarded, the right half white.
+@fragment vec4 probeDiscard(@builtin(Builtin.fragCoord) vec4 position)
+{
+    if (position.x < 4)
+        discard();
+    return v4(1.0f);
+}
+
+/// Derivatives of the window position: one per pixel in each direction.
+@profiles(gl330) @fragment vec4 probeDerivatives(@builtin(Builtin.fragCoord) vec4 position)
+    => v4(dpdx(position.x) / 2, dpdy(position.y) / 4,
+        fwidth(position.x / 8 + position.y / 16), 1.0f);
