@@ -67,6 +67,38 @@ struct CodepointMap
 /// Maximum number of `--font-codepoint-map` entries.
 enum MAX_CODEPOINT_MAPS = 8;
 
+/**
+The font file `nameOrPath` names: itself when it is an existing path; else
+the system font database's best match for the family or preference list
+(fontconfig, or Core Text on macOS), or the best match among `sources.dirs`
+when the request names its own directories. Empty when nothing resolves.
+
+Raylib-free, so a canvas that draws with another renderer resolves the same
+face the raylib arm loads — the Vulkan arm sizes its cells from it.
+*/
+string resolveFontPath(string nameOrPath, FontSources sources = FontSources.init) @system
+{
+    import std.file : exists;
+
+    string fontPath = nameOrPath;
+    if (!fontPath.exists)
+    {
+        if (sources.useSystemFontDb)
+        {
+            version (OSX)
+                fontPath = resolveFamilyList(nameOrPath);
+            else
+            {
+                auto res = fcRun(["fc-match", "-f", "%{file}", nameOrPath]);
+                fontPath = res.status == 0 ? res.output.strip.idup : null;
+            }
+        }
+        else
+            fontPath = resolveFontInDirs(nameOrPath, sources.dirs);
+    }
+    return fontPath.length && fontPath.exists ? fontPath : null;
+}
+
 /// The multi-face font resource. See the module header.
 struct FontSet
 {
@@ -181,24 +213,8 @@ struct FontSet
         import std.file : exists;
         import std.string : toStringz, splitLines;
 
-        string fontPath = nameOrPath;
-        if (!fontPath.exists)
-        {
-            if (sources.useSystemFontDb)
-            {
-                version (OSX)
-                    fontPath = resolveFamilyList(nameOrPath);
-                else
-                {
-                    auto res = fcRun(["fc-match", "-f", "%{file}", nameOrPath]);
-                    if (res.status == 0 && res.output.strip.length > 0)
-                        fontPath = res.output.strip.idup;
-                }
-            }
-            else
-                fontPath = resolveFontInDirs(nameOrPath, sources.dirs);
-        }
-        if (fontPath.length == 0 || !fontPath.exists)
+        const fontPath = resolveFontPath(nameOrPath, sources);
+        if (fontPath.length == 0)
             return false;
 
         fs.fontSize_ = fontSizePx < 1 ? 1 : fontSizePx;
