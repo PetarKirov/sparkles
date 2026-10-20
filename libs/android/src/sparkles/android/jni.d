@@ -87,23 +87,21 @@ jvalue jv(bool b) @trusted pure nothrow @nogc
 
 // ── the worker ──────────────────────────────────────────────────────────────
 
-import core.sync.condition : Condition;
-import core.sync.mutex : Mutex;
 import core.thread : Thread;
 
-private __gshared Mutex workerLock; // one request in flight
+import sparkles.base.sync.condition : Condition;
+import sparkles.base.sync.interruptible_mutex : InterruptibleMutex;
+import sparkles.base.sync.mutex : Mutex;
+
+// One request in flight. Held while the request waits on `stateCv`, so it is
+// an interruptible mutex: a `Mutex` would pin the caller, and a condition
+// wait under another pinning lock is an error (SYK9).
+private __gshared InterruptibleMutex workerLock;
 private __gshared Mutex stateLock;
 private __gshared Condition stateCv;
 private __gshared Thread worker;
 private __gshared void delegate() nothrow pendingJob;
 private __gshared bool jobDone;
-
-shared static this() @trusted
-{
-    workerLock = new Mutex;
-    stateLock = new Mutex;
-    stateCv = new Condition(stateLock);
-}
 
 private void runOnWorker(scope void delegate() nothrow job) @trusted nothrow
 {
@@ -112,28 +110,27 @@ private void runOnWorker(scope void delegate() nothrow job) @trusted nothrow
         job(); // re-entrant: already on the worker
         return;
     }
-    try
+    auto request = workerLock.lock();
+    // A thread's wait is never cancelled, and this one has no deadline.
+    assert(request, "the worker lock is always acquired");
+    if (worker is null)
     {
-        workerLock.lock_nothrow();
-        scope (exit) workerLock.unlock_nothrow();
-        if (worker is null)
+        try
         {
-            worker = new Thread(&workerLoop);
-            worker.isDaemon = true;
-            worker.start();
+            auto t = new Thread(&workerLoop);
+            t.isDaemon = true;
+            t.start();
+            worker = t;
         }
-        stateLock.lock_nothrow();
-        scope (exit) stateLock.unlock_nothrow();
-        pendingJob = job;
-        jobDone = false;
-        stateCv.notifyAll();
-        while (!jobDone)
-            stateCv.wait();
+        catch (Exception)
+            return; // Thread creation failed: the bridge reports its usual failure.
     }
-    catch (Exception)
-    {
-        // Thread creation failed: the bridge reports its usual failure.
-    }
+    auto held = stateLock.guard();
+    pendingJob = job;
+    jobDone = false;
+    stateCv.notifyAll();
+    while (!jobDone)
+        stateCv.wait(held);
 }
 
 private void workerLoop() nothrow
@@ -141,26 +138,19 @@ private void workerLoop() nothrow
     for (;;)
     {
         void delegate() nothrow job;
-        try
         {
-            stateLock.lock_nothrow();
-            scope (exit) stateLock.unlock_nothrow();
+            auto held = stateLock.guard();
             while (pendingJob is null)
-                stateCv.wait();
+                stateCv.wait(held);
             job = pendingJob;
         }
-        catch (Exception)
-            continue;
         job();
-        try
         {
-            stateLock.lock_nothrow();
-            scope (exit) stateLock.unlock_nothrow();
+            auto held = stateLock.guard();
             pendingJob = null;
             jobDone = true;
             stateCv.notifyAll();
         }
-        catch (Exception) {}
     }
 }
 

@@ -23,9 +23,9 @@ module sparkles.android.main_thread;
 
 version (Android):
 
-import core.sys.posix.pthread;
-
 import jni_c : JNIEnv;
+
+import sparkles.base.sync.mutex : Mutex;
 
 // <android/looper.h>
 private extern (C) nothrow @nogc
@@ -59,7 +59,7 @@ private struct Pending
 private __gshared ALooper* mainLooper;
 private __gshared JNIEnv* mainEnv;
 private __gshared int wakeRead = -1, wakeWrite = -1;
-private __gshared pthread_mutex_t queueLock = PTHREAD_MUTEX_INITIALIZER;
+private __gshared Mutex queueLock;
 private __gshared Pending[32] queue;
 private __gshared size_t queueHead, queueCount;
 
@@ -123,14 +123,14 @@ bool postToMainThread(MainThreadJob job, void* context) @trusted nothrow @nogc
 
     if (mainLooper is null)
         return false;
-    pthread_mutex_lock(&queueLock);
+    queueLock.lock();
     const full = queueCount == queue.length;
     if (!full)
     {
         queue[(queueHead + queueCount) % queue.length] = Pending(job, context);
         ++queueCount;
     }
-    pthread_mutex_unlock(&queueLock);
+    queueLock.unlock();
     if (full)
         return false;
     ubyte one = 1;
@@ -148,14 +148,14 @@ private extern (C) int onWake(int fd, int events, void* data) nothrow @nogc
     for (;;)
     {
         Pending p;
-        pthread_mutex_lock(&queueLock);
+        queueLock.lock();
         if (queueCount > 0)
         {
             p = queue[queueHead];
             queueHead = (queueHead + 1) % queue.length;
             --queueCount;
         }
-        pthread_mutex_unlock(&queueLock);
+        queueLock.unlock();
         if (p.job is null)
             break;
         run(p);
