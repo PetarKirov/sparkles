@@ -13,6 +13,7 @@ dflags "-preview=in" "-preview=dip1000"
 libs "nix-util-c" "nix-store-c" "nix-expr-c" "nix-fetchers-c" "nix-flake-c" "nix-main-c"
 
 dependency "expected" version="~>0.4.1"
+dependency "sparkles:base" path="../.."
 
 configuration "library" {
     // sourceLibrary so dub's pkg-config --cflags reach the ImportC compile of
