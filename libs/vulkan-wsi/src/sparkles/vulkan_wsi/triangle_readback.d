@@ -587,21 +587,44 @@ version (VulkanWsiReadbackProbes)
 @("vulkan_wsi.triangle_readback.theFragmentStageAsVulkanDefinesIt")
 @system unittest
 {
-    import fragment_probe : stageDemote, stageDerivatives, stageDiscard, stageFragCoord,
-        stageSize, stageVertex, stageVertexReversed;
-
     if (environment.get("SPARKLES_VULKAN_READBACK", "") != "1")
         return skipTest("a Vulkan readback is opt-in: SPARKLES_VULKAN_READBACK=1, with a driver "
             ~ "(lavapipe) and the validation layer");
+    checkFragmentStage("", "fragment");
+}
 
-    // `SHF8`, M7, on `vulkan1.3`: the window position's origin is the upper
+// Only in this package's own unittest build, as above.
+version (VulkanWsiReadbackProbes)
+@("vulkan_wsi.triangle_readback.theFragmentStageOnVulkan11")
+@system unittest
+{
+    if (environment.get("SPARKLES_VULKAN_READBACK", "") != "1")
+        return skipTest("a Vulkan readback is opt-in: SPARKLES_VULKAN_READBACK=1, with a driver "
+            ~ "(lavapipe) and the validation layer");
+    // `vulkan1.1`'s SPIR-V 1.3 modules (which the build step validated for
+    // Vulkan 1.1) mean the same, but for `demote`, which the profile denies.
+    // They run on the readback's 1.3 device, which consumes SPIR-V 1.3: the
+    // readback draws with dynamic rendering, which a 1.1 device lacks.
+    checkFragmentStage(".vk11", "fragment-vk11");
+}
+
+/// The fragment-stage probes, read from the modules whose names carry
+/// `suffix` (`.vk11` for `vulkan1.1`), compiled into a directory named after
+/// `test`. `demote` is checked where the profile has it.
+version (VulkanWsiReadbackProbes)
+private void checkFragmentStage(string suffix, string test) @system
+{
+    import fragment_probe : stageDemote, stageDerivatives, stageDiscard, stageFragCoord,
+        stageSize, stageVertex, stageVertexReversed;
+
+    // `SHF8`, M7, on `vulkan1.3` and `vulkan1.1`: the window position's origin is the upper
     // left (`Origin.upperLeft`), so it grows with the row Vulkan copies out first;
     // a triangle whose clip-space corners run counter-clockwise with y up faces
     // the viewer under the pipeline's front face, `VK_FRONT_FACE_CLOCKWISE` (Vulkan's
     // window y points down), and the reverse does not; `discard` writes nothing;
     // derivatives are one per pixel; and a demoted invocation writes nothing
     // but keeps its quad's derivatives defined.
-    const out_ = compileUnit("libs/vulkan-wsi/tests/readback-probes", "fragment");
+    const out_ = compileUnit("libs/vulkan-wsi/tests/readback-probes", test);
     scope (exit) out_.rmdirRecurse;
 
     Session session;
@@ -613,8 +636,8 @@ version (VulkanWsiReadbackProbes)
     {
         Pipeline pipeline;
         auto built = Pipeline.create(pipeline, d, VkFormat.VK_FORMAT_R8G8B8A8_UNORM, null,
-            moduleOf(out_, vertex, "vert"), moduleOf(out_, fragment, "frag"), 0, false, vertex,
-            fragment, 0);
+            moduleOf(out_, vertex ~ suffix, "vert"), moduleOf(out_, fragment ~ suffix, "frag"), 0,
+            false, vertex, fragment, 0);
         assert(!built.hasError, built.error);
         const pixels = draw(d, pipeline, stageSize, stageSize);
         pipeline.destroy(d);
@@ -644,8 +667,9 @@ version (VulkanWsiReadbackProbes)
         (int x, int row) => x < stageSize / 2 ? [0, 0, 0, 255] : [255, 255, 255, 255]);
     check(forward, __traits(identifier, stageDerivatives),
         (int x, int row) => [unorm(0.5), unorm(0.25), unorm(0.1875), 255]);
-    check(forward, __traits(identifier, stageDemote),
-        (int x, int row) => x % 2 ? [0, 0, 0, 255] : [unorm(0.5), 0, 0, 255]);
+    if (!suffix.length)
+        check(forward, __traits(identifier, stageDemote),
+            (int x, int row) => x % 2 ? [0, 0, 0, 255] : [unorm(0.5), 0, 0, 255]);
     session.close();
     assert(failures.length == 0, format("%-(%s\n%)", failures));
 }
