@@ -1,0 +1,38 @@
+name "ui-vulkan"
+description "The toolkit's canvas drawn with Vulkan on sparkles:wsi"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "../../build"
+targetType "sourceLibrary"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// The source-imported Vulkan ABI needs the target header include path, which
+// `vulkan.pc` supplies with the loader the readback tests link.
+libs "vulkan"
+
+dependency "expected" version="~>0.4.1"
+dependency "sparkles:base" path="../.."
+dependency "sparkles:vulkan" path="../.."
+dependency "sparkles:vulkan-wsi" path="../.."
+
+configuration "library" {
+    // ImportC needs `vulkan.pc`'s `-I`; dub skips pkg-config for static
+    // libraries, so follow `sparkles:vulkan` and distribute source here.
+    targetType "sourceLibrary"
+}
+
+configuration "unittest" {
+    dependency "sparkles:test-runner" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}

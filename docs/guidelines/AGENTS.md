@@ -22,7 +22,7 @@ the detailed descriptions and the module map live there.
 | `nix-eval`, `twoslash-extract`                                                      | `sparkles:nix` demo; batch D twoslash extractor                                              |
 | `base`                                                                              | `Buffer`, `@nogc` text, lifetime, logging, `term_caps`, `hw_caps`                            |
 | `core-cli`                                                                          | argument parsing, help, prompts, process utilities                                           |
-| `ui`, `ui-app`, `ui-tui`, `ui-raylib`, `ui-sdl3`, `input`, `tui`                    | the one UI stack: toolkit, host, backends, input vocabulary, cell grid                       |
+| `ui`, `ui-app`, `ui-tui`, `ui-raylib`, `ui-sdl3`, `ui-vulkan`, `input`, `tui`       | the one UI stack: toolkit, host, backends, input vocabulary, cell grid                       |
 | `syntax`, `tree-sitter`, `source-view`, `doc-view`, `diff`, `dsv`                   | highlighting, markdown model, code/markdown views, the document viewer, diff and DSV engines |
 | `twoslash`, `twoslash-d`, `twoslash-protocol`, `dmd-lsp`, `dmd-fmt`                 | type overlays, the DMD-frontend semantic core, the D formatter                               |
 | `event-horizon`, `http`                                                             | completion-first event loop with effects; HTTP/1.1 over it                                   |
