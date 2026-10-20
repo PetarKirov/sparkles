@@ -6,7 +6,7 @@ Two vertex entry points cover the target with one triangle, its clip-space
 corners counter-clockwise with y up, or the reverse; each fragment entry
 point returns what it reads as a colour.
 */
-@compute(CompileFor.hostAndDevice) @profiles(vulkan13)
+@compute(CompileFor.hostAndDevice) @profiles(vulkan13, vulkan11)
 module fragment_probe;
 
 import sparkles.shaders;
@@ -60,10 +60,11 @@ private StageVaryings corner(vec2 at) => StageVaryings(v4(at.x, at.y, 0.0f, 1.0f
     => v4(dpdx(position.x) / 2, dpdyCoarse(position.y) / 4,
         fwidthFine(position.x / 8 + position.y / 16), 1.0f);
 
-/// Every odd column demoted. A demoted invocation keeps running as a helper,
+/// Every odd column demoted (`vulkan1.3` only: `vulkan1.1` denies `demote`).
+/// A demoted invocation keeps running as a helper,
 /// so an even column's fine derivative, taken from its odd neighbour in the
 /// quad, is still one per pixel.
-@fragment vec4 stageDemote(@builtin(Builtin.fragCoord) vec4 position)
+@profiles(vulkan13) @fragment vec4 stageDemote(@builtin(Builtin.fragCoord) vec4 position)
 {
     if ((cast(int) position.x & 1) == 1)
         demote();
