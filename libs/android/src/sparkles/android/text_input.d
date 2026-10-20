@@ -31,10 +31,9 @@ module sparkles.android.text_input;
 
 version (Android):
 
-import core.sys.posix.pthread;
-
 import sparkles.android.activity : AndroidApp, glueApp;
 import sparkles.android.jni;
+import sparkles.base.sync.mutex : Mutex;
 
 /// A backspace from the soft keyboard, in the typed-text queue: a key, where
 /// every other entry is text (above Unicode's range, so never a character).
@@ -63,7 +62,7 @@ private enum int combiningAccent = 0x8000_0000;
 private alias InputCallback = extern (C) int function(AndroidApp*, void*) nothrow;
 
 private __gshared InputCallback chained;
-private __gshared pthread_mutex_t queueLock = PTHREAD_MUTEX_INITIALIZER;
+private __gshared Mutex queueLock;
 private __gshared dchar[256] queue;
 private __gshared size_t head, count;
 private __gshared void function() nothrow @nogc typedListener;
@@ -94,8 +93,7 @@ void installTextInputHook() @trusted nothrow @nogc
 /// or `0` when none is queued.
 dchar popTypedChar() @trusted nothrow @nogc
 {
-    pthread_mutex_lock(&queueLock);
-    scope (exit) pthread_mutex_unlock(&queueLock);
+    auto held = queueLock.guard();
     if (count == 0)
         return 0;
     const c = queue[head];
@@ -111,14 +109,14 @@ void pushTyped(dchar c) @trusted nothrow @nogc
 {
     if (c == 0)
         return;
-    pthread_mutex_lock(&queueLock);
+    queueLock.lock();
     if (count != queue.length)
     {
         queue[(head + count) % queue.length] = c;
         ++count;
     }
     auto listener = typedListener;
-    pthread_mutex_unlock(&queueLock);
+    queueLock.unlock();
     if (listener !is null)
         listener();
 }
@@ -133,7 +131,7 @@ void pushTypedRun(scope const(dchar)[] run) @trusted nothrow @nogc
 {
     if (run.length == 0)
         return;
-    pthread_mutex_lock(&queueLock);
+    queueLock.lock();
     foreach (c; run)
     {
         if (c == 0 || count == queue.length)
@@ -142,7 +140,7 @@ void pushTypedRun(scope const(dchar)[] run) @trusted nothrow @nogc
         ++count;
     }
     auto listener = typedListener;
-    pthread_mutex_unlock(&queueLock);
+    queueLock.unlock();
     if (listener !is null)
         listener();
 }
@@ -154,9 +152,9 @@ It must be quick and must not block. `null` clears it.
 */
 void onTyped(void function() nothrow @nogc listener) @trusted nothrow @nogc
 {
-    pthread_mutex_lock(&queueLock);
+    queueLock.lock();
     typedListener = listener;
-    pthread_mutex_unlock(&queueLock);
+    queueLock.unlock();
 }
 
 /**
