@@ -71,6 +71,13 @@ struct Uploads(B)
     /// The copies staged and not yet recorded.
     size_t pending() const => copies_.length;
 
+    /// Forgets every staged copy unrecorded: the frame it was staged for
+    /// was abandoned.
+    void discard()
+    {
+        copies_.clear();
+    }
+
     /// Records every staged copy into `commands`, then forgets them.
     void record(ref DeviceCommands device, VkCommandBuffer commands) @system
     {

@@ -18,7 +18,7 @@ import sparkles.ui_vulkan.shading;
 private enum samples = 16;
 
 /// The fraction of pixel `(x, y)` inside `inside`, at `samples`² points.
-private double exactCoverage(scope bool delegate(double, double) @safe pure nothrow @nogc inside,
+package double exactCoverage(scope bool delegate(double, double) @safe pure nothrow @nogc inside,
     int x, int y) @safe pure nothrow @nogc
 {
     int hits;
@@ -67,7 +67,7 @@ private Errors compare(scope bool delegate(double, double) @safe pure nothrow @n
 }
 
 /// Inside the box `(bx, by, bw, bh)` with corners of radius `r`.
-private bool inRoundedBox(double px, double py, double bx, double by, double bw, double bh,
+package bool inRoundedBox(double px, double py, double bx, double by, double bw, double bh,
     double r) @safe pure nothrow @nogc
 {
     if (px < bx || px > bx + bw || py < by || py > by + bh)
@@ -132,7 +132,7 @@ unittest
 
 /// Inside the arrow's triangle: apex at the top's middle, base along the
 /// bottom of `(bx, by, bw, bh)`.
-private bool inArrow(double px, double py, double bx, double by, double bw, double bh)
+package bool inArrow(double px, double py, double bx, double by, double bw, double bh)
     @safe pure nothrow @nogc
 {
     if (py > by + bh || py < by)
