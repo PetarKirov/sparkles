@@ -1421,6 +1421,28 @@
         ]
       },
       {
+        "text": "Text Buffer",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/text-buffer/SPEC"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/text-buffer/PLAN"
+          },
+          {
+            "text": "Testing & Evidence",
+            "link": "/specs/text-buffer/testing"
+          },
+          {
+            "text": "Decisions",
+            "link": "/specs/text-buffer/decisions"
+          }
+        ]
+      },
+      {
         "text": "Text Layout",
         "collapsed": true,
         "items": [
