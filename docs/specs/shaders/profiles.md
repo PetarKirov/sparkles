@@ -19,7 +19,7 @@ and [`D17`](./decisions.md#d17-capabilities-are-checked-three-times).
 - **Capability.** One thing a target may or may not offer: a stage, a type
   width, an instruction family, a resource kind (`fragmentStage`,
   `derivatives`, `int64`, `pushConstants`, `subgroupBallot`, …). Capabilities
-  imply others: `subgroupBallot` implies `subgroupBasic`.
+  imply others: `derivativeControl` implies `derivatives`.
 - **Profile.** A named output: its kind (SPIR-V for an environment, or a
   shading language), its version, the file each stage's output is written to,
   and the set of capabilities it grants, closed under implication.
@@ -39,9 +39,10 @@ host-and-device module of the vocabulary (`SHM1`), so it belongs to every unit
 output the compiler and the build step already produce — a capability set
 over a SPIR-V version the code generator emits and an existing translation —
 **must not** require a change to either. The capability vocabulary is also the
-compiler's, as `ldc.dcompute.Capability`: the two **must** name the same
-capabilities in the same order, which a device compilation asserts, so adding
-a capability changes both.
+compiler's, as `ldc.dcompute.Capability`: in a device compilation `Cap`
+**must** be that enum, and elsewhere the library's copy of it, which a host
+compilation by the device compiler **must** assert names the same
+capabilities in the same order. Adding a capability changes both.
 
 _Rationale:_ The table is what a reader consults to learn what a target
 offers; as D data it is tested like any other code, and the vocabulary, the
@@ -64,11 +65,17 @@ A profile's capabilities say what its output can declare, and so how each
 resource kind is lowered for it ([`SHR3`–`SHR5`](./resources.md)): `gl330`
 and `gles100` grant `looseUniforms` and neither `uniformBlocks` nor
 `pushConstants`; `vulkan1.3` grants `uniformBlocks` and `pushConstants` and
-not `looseUniforms`. Every device profile of the slice grants `vertexStage` or
+not `looseUniforms`. The fragment stage's operations (`SHV11`) follow what
+each output can say: `gl330` grants `derivatives` and not
+`derivativeControl`, which needs OpenGL 4.5; `gles100` grants neither, as
+OpenGL ES 2.0 offers derivatives only as an extension; `vulkan1.3` grants
+both, `derivativeControl` implying `derivatives`, and `demote`, which no GL
+profile can express. Each profile also states where its fragments' window
+positions start (`SHF8`). Every device profile of the slice grants `vertexStage` or
 `fragmentStage` as its stages column says, and `sampledImages`; `vulkan1.3`
 also grants `intVertexInputs`. `cpu` grants `looseUniforms`, `uniformBlocks`,
-`pushConstants` and `int64`, and no stage and no `sampledImages` until the
-executor's images (`SHX3`). `vulkan1.3`
+`pushConstants` and `int64`, and no stage, no `sampledImages` and none of the fragment stage's
+operations until the executor brings them (`SHX3`). `vulkan1.3`
 denies `int64`: Vulkan grants 64-bit integers only with a device feature the
 first consumer does not enable. A capability set **must** be a subset of what
 the output can express and its validator accepts.
@@ -86,8 +93,8 @@ what the profile grants, closed under the implications:
 compiler **must** fail a name its vocabulary does not hold, naming the valid
 ones, and **must** derive from the grants what it enforces: how resources are
 lowered ([`SHR3`–`SHR5`](./resources.md)), the stages an entry point may have
-([`SHF7`](./entry-points.md)), and the types a vertex input may have
-([`SHF5`](./entry-points.md)). Without a grant, it **must** check none of them
+([`SHF7`](./entry-points.md)), the types a vertex input may have
+([`SHF5`](./entry-points.md)), and what an entry point may reach (`SHC8`). Without a grant, it **must** check none of them
 and lower resources as plain uniforms. A name that is not in the table **must**
 fail: the build step **must** reject it before compiling, naming it, and
 `activeProfile` **must** fail its compilation, naming it, if a compiler is
@@ -148,12 +155,17 @@ compiles a capability a profile lacks to `unsupported` rather than to an error
 ## Requirements and their checks
 
 **SHC7: Declared requirements.** A function of the vocabulary that needs a
-capability **must** declare it with `@requires(c, …)`. Where the active
-profile lacks the capability, its body **must** compile to a call of
-`unsupported!c`, a function the compiler recognises, rather than fail: the
-body of a function no emitted entry point reaches is analysed in every
-compilation of the unit (`SHC6`), and an error there would reject correct
-code. Code outside the vocabulary **may** declare requirements the same way.
+capability **must** declare it with `@requires(c, …)`, the compiler's
+`ldc.dcompute.requires` in a device compilation. Where the active profile
+lacks the capability, its body **must** compile to a call of `unsupported!c`,
+the compiler's `ldc.dcompute.unsupported`, which returns its first argument,
+rather than fail: the body of a function no emitted entry point reaches is
+analysed in every compilation of the unit (`SHC6`), and an error there would
+reject correct code. A function that needs a stage **must** require that
+stage's capability too (`fragmentStage`). Code outside the vocabulary
+**may** declare requirements the same way. Outside a device compilation
+`@requires` checks nothing, and a call of `unsupported!c` **must** stop the
+program with a message naming `c` and the profile.
 
 _Rationale:_ A `static assert` in the built-in would fire wherever the
 built-in is instantiated, which includes the helpers of an entry point built
@@ -162,12 +174,19 @@ entry point that is actually emitted, which only the compiler sees.
 
 **SHC8: Inferred requirements.** For each entry point it emits, the compiler
 **must** compute the union of the declared requirements of every function the
-entry point can reach, and **must** fail the compilation if the active profile
-lacks one of them, or if the entry point reaches a call of `unsupported`, with
-a diagnostic that names the entry point, the capability and the call chain
-from the entry point to the function that requires it, each step at its D
-source line. A requirement only unemitted entry points reach **must not**
-fail the compilation.
+entry point can reach through the calls in the bodies it reaches, and **must**
+fail the compilation if the entry point is not granted one of them, or if it
+reaches a call of `unsupported!c` for a capability it is not granted. An entry
+point is granted the active profile's capabilities, and of the stages only
+its own: a vertex entry point that reaches a function requiring
+`fragmentStage` fails under `vulkan1.3`, which grants both stages. The
+diagnostic **must** be at the entry point, name it, the capability, the
+function and why it is not granted (the profile lacks it, or it is another
+stage's), followed by the chain of calls from the entry point to that
+function, shortest first, each step at its D source line; each capability is
+reported once per entry point. A requirement only unemitted entry points
+reach **must not** fail the compilation, and without a grant (`SHC3`) none
+is checked.
 
 _Rationale:_ The call graph is the one the compiler already walks to reject
 recursion, and a chain of D source lines is what the author needs to act on
@@ -191,20 +210,18 @@ implementations with `static if` on `activeProfile` (`SHC3`); a branch not
 taken **must not** be compiled for that profile, and so cannot fail it:
 
 ```d
-float4 fwidthFine(float4 p) @requires(Cap.derivativeControl)
+@requires(Cap.fragmentStage, Cap.derivativeControl)
+float4 edgeWidth(float4 p)
 {
     static if (activeProfile.has(Cap.derivativeControl))
-        return abs(ddxFine(p)) + abs(ddyFine(p));
+        return abs(dpdxFine(p)) + abs(dpdyFine(p));
     else
         return unsupported!(Cap.derivativeControl)(p);
 }
 ```
 
 _Rationale:_ This is the D counterpart of a target switch: one function, a
-body per target, chosen at compile time. The example is illustrative; the
-names of the derivative built-ins belong to the vocabulary, and `@requires`
-and `unsupported` arrive with `SHC7` (M7). Until then the branch on
-`activeProfile` is the whole of the selection.
+body per target, chosen at compile time.
 
 ## Not in this slice
 
@@ -213,6 +230,3 @@ MSL by version, WGSL through Tint and through naga, DXIL — are added to the
 table by the milestones that bring their outputs ([`PLAN.md`](./PLAN.md)).
 Each brings its capability set from the translator's behaviour recorded in
 the [research catalog](../../research/shading-languages/comparison.md#the-translation-ceiling).
-`SHC7` and `SHC8` land with the first built-in whose requirement is narrower
-than every profile it is used under; until then the audit (`SHC9`) and the
-manifest's per-profile compilation are the checks.

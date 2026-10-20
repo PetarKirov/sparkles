@@ -11,7 +11,7 @@ component access, arithmetic, and the built-in functions. It is ordinary D on
 the host and becomes SPIR-V types and instructions on the device. The
 requirements `SHV1`–`SHV8` are the accepted contract of 2026-10-16, with the
 type names of [`D20`](./decisions.md#d20-generic-types-hlsl-shaped-aliases-glsl-math-names);
-`SHV9` and `SHV10` are new. This page is part of the
+`SHV9`–`SHV11` are new. This page is part of the
 [specification](./SPEC.md).
 
 ## Types
@@ -85,9 +85,9 @@ including GLSL's forms that widen a `float` argument to every component:
 `min`, `max` and `mod` with a `float` second argument, `clamp` with `float`
 bounds, `step` and `smoothstep` with `float` edges, and `mix` with a vector
 or a `float` weight. It **must** also provide `luma(float3)`, the Rec. 601
-luma `dot(c, v3(0.299, 0.587, 0.114))`. Operations on a resource or a stage
-(sampling, subgroups, derivatives) are methods of their handle types or
-belong to the stage, not free functions ([`D20`](./decisions.md#d20-generic-types-hlsl-shaped-aliases-glsl-math-names)).
+luma `dot(c, v3(0.299, 0.587, 0.114))`. Operations on a resource (sampling)
+are methods of its handle type, not free functions ([`D20`](./decisions.md#d20-generic-types-hlsl-shaped-aliases-glsl-math-names));
+the fragment stage's are free functions (`SHV11`).
 
 **SHV6: Compound definitions.** `mod(a, b)` **must** equal
 `a - b * floor(a / b)`, so its result has the sign of `b`; `fract(v)` **must**
@@ -126,10 +126,40 @@ declarations, so a host-and-device module compiles as ordinary D under any
 compiler. A device-only module is never compiled for the host, and need not
 compile there: it samples textures, which only the device compilation can do.
 
+## The fragment stage's operations
+
+**SHV11: Fragment-stage operations.** The library **must** provide, in
+`sparkles.shaders.fragment`, these free functions, named as WGSL names them
+([`D27`](./decisions.md#d27-the-fragment-stages-operations-are-free-functions)),
+each over `float` and every float vector, and each declaring with
+`@requires` the fragment stage and the capability given (`SHC7`):
+
+| Function                                   | Meaning                                                                                                                    | Requires            | SPIR-V                         |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------ |
+| `dpdx(v)`, `dpdy(v)`                       | the rate of change of `v` in window x or y across the fragment's 2×2 quad                                                  | `derivatives`       | `OpDPdx`, `OpDPdy`             |
+| `fwidth(v)`                                | `abs(dpdx(v)) + abs(dpdy(v))`                                                                                              | `derivatives`       | `OpFwidth`                     |
+| `dpdxCoarse`, `dpdyCoarse`, `fwidthCoarse` | the same, possibly one value for the whole quad                                                                            | `derivativeControl` | `OpDPdxCoarse`, `OpDPdyCoarse` |
+| `dpdxFine`, `dpdyFine`, `fwidthFine`       | the same, computed for this fragment                                                                                       | `derivativeControl` | `OpDPdxFine`, `OpDPdyFine`     |
+| `terminate()`                              | ends the invocation: nothing after it runs and the fragment is not written                                                 | —                   | `OpTerminateInvocation`        |
+| `discard()`                                | `terminate()`, on every profile                                                                                            | —                   | `OpTerminateInvocation`        |
+| `demote()`                                 | the invocation becomes a helper: it keeps running, so its quad's derivatives stay defined, and the fragment is not written | `demote`            | `OpDemoteToHelperInvocation`   |
+
+On every profile that grants what each needs, the readback of a fragment
+entry point that uses it **must** show its meaning: a derivative of the window
+position (`SHF8`) is 1 per pixel in each direction, a discarded or demoted
+fragment leaves the target's clear value, and a fragment whose quad
+neighbour was demoted still reads a fine derivative of 1.
+
+_Rationale:_ `discard` is terminate, as GLSL's is, so one shader means one
+thing in every output; demote cannot be expressed in GLSL 3.30 or ES 1.00
+([Concepts](../../research/shading-languages/concepts.md#discard-demote-and-terminate)),
+so a shader that needs its quad after discarding says `demote` and is built
+where that exists.
+
 ## Not in this slice
 
 Further scalar types (`uint`, `bool` vectors, `half`, `double`), matrices,
 the rest of GLSL's built-in families, texture operations beyond `sample`,
-derivatives, subgroup operations and atomics are added by the milestones of
+subgroup operations and atomics are added by the milestones of
 [`PLAN.md`](./PLAN.md), each with its agreement oracle and the capabilities
 it requires ([`SHC7`](./profiles.md)).

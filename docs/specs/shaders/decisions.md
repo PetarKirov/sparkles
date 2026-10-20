@@ -444,7 +444,9 @@ every shading language rather than GLSL alone?
 (`float4`, `int2`, `float4x4`, `half4`); math functions keep the names GLSL,
 WGSL and MSL share (`mix`, `fract`, `smoothstep`); operations on resources and
 stages are methods of their types (`texture.sample(uv)`), in D's naming.
-GLSL's `vec*` names remain as aliases.
+GLSL's `vec*` names remain as aliases. For the fragment stage's operations,
+[`D27`](#d27-the-fragment-stages-operations-are-free-functions) supersedes
+this: they are free functions.
 
 **Why.** `float4` reads the same in HLSL, Slang, MSL and D, and avoids GLSL's
 column-major `mat3x2` naming; the math names are the ones most languages
@@ -573,6 +575,45 @@ checks nothing. Code that runs above a compilation's floor behind a runtime
 test (a CPU feature, an OS version) needs the compiler to know which test
 grants what to the code it guards: a flow-sensitive check, recorded as
 issue #667 and not part of this design.
+
+### D27: The fragment stage's operations are free functions
+
+**Question.** How are derivatives, ending and demoting an invocation, and the
+fragment's position and facing spelled, what does `discard` mean when the
+outputs disagree, and whose convention does the position follow?
+
+**Alternatives.**
+
+- Free functions, with HLSL's names (`ddx`, `ddxFine`) or WGSL's (`dpdx`,
+  `dpdxFine`); or methods of a stage handle an entry point takes
+  (`frag.dpdx(v)`), so the stage is a type and a vertex entry point cannot
+  reach them.
+- `discard` as terminate on every profile, or as demote where the profile
+  grants it.
+- The position in each output's own convention, stated per profile, or one
+  convention for all, which `gles100` can only have by a hidden uniform holding
+  the framebuffer's height.
+
+**Choice.** Free functions with WGSL's names, each declaring the fragment
+stage and its capability with `@requires`, checked through the call graph
+(`SHC8`); the position and facing as `@builtin` parameters, like the vertex
+stage's (`SHF8`). `discard` is terminate on every profile, and `demote` a
+built-in of its own, which only `vulkan1.3` grants. The position follows each
+output's convention, recorded as `Profile.fragCoordOrigin`. `gles100` grants
+no derivatives, as OpenGL ES 2.0 has them only as an extension.
+
+**Why.** Every source language spells these as free functions, and WGSL's
+family is the most regular and mirrors SPIR-V's `OpDPdx`. The stage is
+already checked where it matters, by the call graph, which a stage handle
+would duplicate in the types and make every helper take. One meaning of
+`discard` keeps a shader's outputs alike; a shader that needs its quad's
+derivatives after discarding says so with `demote`. Each output's own
+origin costs nothing and hides nothing.
+
+**Trade-offs.** Derivatives after a `discard` in the quad are undefined, as in
+GLSL. Code that needs one origin on every profile branches on it. A shader
+that uses derivatives builds for `gl330` and `vulkan1.3` and not `gles100`,
+until an ES 3.00 profile exists (M12).
 
 ## Open questions
 

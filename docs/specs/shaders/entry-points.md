@@ -91,21 +91,44 @@ point's block is a separate variable (`SHR3`).
 
 ## Built-in variables
 
-**SHF8: Built-in variables.** The library **must** provide `Builtin`, naming
-the built-in variables of the first slice with their stage, direction and
+**SHF8: Built-in variables.** _(Revised.)_ The library **must** provide
+`Builtin`, naming the built-in variables with their stage, direction and
 type:
 
-| `Builtin`       | Stage  | Direction | Type     | SPIR-V `BuiltIn` | Vulkan GLSL        |
-| --------------- | ------ | --------- | -------- | ---------------- | ------------------ |
-| `vertexIndex`   | vertex | in        | `int`    | `VertexIndex`    | `gl_VertexIndex`   |
-| `instanceIndex` | vertex | in        | `int`    | `InstanceIndex`  | `gl_InstanceIndex` |
-| `position`      | vertex | out       | `float4` | `Position`       | `gl_Position`      |
+| `Builtin`       | Stage    | Direction | Type     | SPIR-V `BuiltIn` | Vulkan GLSL        |
+| --------------- | -------- | --------- | -------- | ---------------- | ------------------ |
+| `vertexIndex`   | vertex   | in        | `int`    | `VertexIndex`    | `gl_VertexIndex`   |
+| `instanceIndex` | vertex   | in        | `int`    | `InstanceIndex`  | `gl_InstanceIndex` |
+| `position`      | vertex   | out       | `float4` | `Position`       | `gl_Position`      |
+| `fragCoord`     | fragment | in        | `float4` | `FragCoord`      | `gl_FragCoord`     |
+| `frontFacing`   | fragment | in        | `bool`   | `FrontFacing`    | `gl_FrontFacing`   |
 
 A built-in used in the wrong stage, in the wrong direction, or with another
-type **must** fail the compilation with a diagnostic naming it. The fragment
-stage's position and facing (`FragCoord`, `FrontFacing`) are not in this
-slice: their origin and winding differ between Vulkan and the OpenGL outputs,
-and they come with a convention stated for each profile (M7).
+type **must** fail the compilation with a diagnostic naming it.
+
+`fragCoord` is the fragment's window position: x and y at the pixel's centre
+(a half-integer), the depth, and `1/w`. Its origin is the active profile's
+`fragCoordOrigin`, and code that needs one convention normalises it with
+`static if` on the profile (`SHC10`):
+
+| Profile            | Origin      | y grows | Why                                                                  |
+| ------------------ | ----------- | ------- | -------------------------------------------------------------------- |
+| `gl330`, `gles100` | `lowerLeft` | up      | OpenGL's window coordinates; the translation drops `OriginUpperLeft` |
+| `vulkan1.3`        | `upperLeft` | down    | Vulkan requires `OriginUpperLeft`                                    |
+
+`frontFacing` is whether the primitive faces the viewer, as the pipeline's
+front-face state decides. Under OpenGL's default front face
+(`GL_CCW`) and the `VK_FRONT_FACE_CLOCKWISE` that `sparkles:vulkan-wsi`'s
+pipelines set, a triangle whose clip-space corners run counter-clockwise, x
+right and y up, **must** be front-facing on every profile, and its reverse
+not.
+
+_Rationale:_ Each output's own convention costs nothing; one convention for
+all would need the framebuffer's height as a hidden uniform on `gles100`,
+which cannot declare its origin. Vulkan's window y points down, so the
+clip-space triangle that is counter-clockwise for OpenGL is clockwise in
+Vulkan's window coordinates; the front face that agrees is
+`VK_FRONT_FACE_CLOCKWISE`.
 
 ## Results
 
