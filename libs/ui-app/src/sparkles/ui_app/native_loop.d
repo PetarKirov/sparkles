@@ -32,6 +32,7 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_control : PointerShape;
 import sparkles.event_horizon : DefaultLoop, LoopConfig;
 import sparkles.input : Event, InputCapabilities, mousePointer;
+import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.geometry : Size;
 import sparkles.ui.image : ImageRegistry;
@@ -550,18 +551,10 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
                 (in _) {});
             if (resized)
                 remeasure();
-            if (!input_)
-                return;
-            input.translate(wsi, e, unitW(), unitH(), (Event x) {
-                handle(host, withRealSize(x, host.size));
-                dirty = true;
-            });
+            if (input_)
+                deliverInput!handle(host, input, wsi, e, unitW(), unitH(), dirty);
         });
-        input.flush((Event x) {
-            handle(host, withRealSize(x, host.size));
-            dirty = true;
-        });
-        host.noteModifiers(input.modifiers);
+        flushInput!handle(host, input, dirty);
     }
 
     while (!closeRequested && !host.quitRequested)
@@ -601,9 +594,8 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
 
         const started = MonoTime.currTime;
         const cause = dirty ? "event" : "request";
-        host.beginFrameState(mustDraw: freshSurface);
         dirty = false;
-        present(host);
+        buildFrame!present(host, freshSurface);
         wanted = host.frameRequested;
         if (host.frameSkipped)
             continue;
@@ -647,6 +639,90 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         }
     }
     return true;
+}
+
+// The loop's halves an application sees — input in, a frame's operations
+// out — shared with `replayNative`, so the parity oracle runs this arm's own
+// code rather than a copy of it.
+
+// One window-system event, translated, to the application (`INT5`).
+private void deliverInput(alias handle, Wsi)(ref NativeHost host, ref WsiInput input,
+    ref Wsi wsi, in WindowEvent e, int unitW, int unitH, ref bool dirty)
+{
+    input.translate(wsi, e, unitW, unitH, (Event x) {
+        handle(host, withRealSize(x, host.size));
+        dirty = true;
+    });
+}
+
+// The end of a drain: whatever the translation held back, and the modifier
+// level the batch left (`HST17`).
+private void flushInput(alias handle)(ref NativeHost host, ref WsiInput input, ref bool dirty)
+{
+    input.flush((Event x) {
+        handle(host, withRealSize(x, host.size));
+        dirty = true;
+    });
+    host.noteModifiers(input.modifiers);
+}
+
+// A frame's operations: the host's per-frame state reset, then the
+// application's `present`.
+private void buildFrame(alias present)(ref NativeHost host, bool mustDraw)
+{
+    host.beginFrameState(mustDraw: mustDraw);
+    present(host);
+}
+
+/**
+The native arm without a window or a device: each batch of `script` drained
+the way the loop drains one — through this arm's translation into `handle` —
+and a frame built after it, as the recording host builds one per event. The
+live half of the parity oracle (`TST3`): `onFrame` sees every frame's
+operations while they are still valid, before the next frame reuses them.
+
+`session` supplies the surface, the cell font and, for an application that
+draws images, the canvas; delegates it leaves unset accept and drop the
+errand. `texts` answers `withText` for the script's text ids.
+*/
+void replayNative(alias present, alias handle, Texts)(ref NativeSession session,
+    in RunConfig cfg, ref Texts texts, in WindowEvent[][] script,
+    scope void delegate(in DrawOp[] ops, bool skipped) @system onFrame) @system
+{
+    if (session.setCursor is null)
+        session.setCursor = (PointerShape) {};
+    if (session.setClipboard is null)
+        session.setClipboard = (scope const(char)[]) {};
+    if (session.setFontSize is null)
+        session.setFontSize = (int) {};
+
+    NativeHost host;
+    host.session_ = &session;
+    host.capabilities.keyRelease = cfg.keyRelease;
+    WsiInput input;
+    input.capabilities = host.capabilities;
+    input.fractionalScroll = cfg.fractionalScroll;
+    input.scale = session.scale;
+    const unitW = cfg.pointerUnit == PointerUnit.pixels ? 1 : session.font.cellW;
+    const unitH = cfg.pointerUnit == PointerUnit.pixels ? 1 : session.font.cellH;
+
+    void frame(bool first)
+    {
+        buildFrame!present(host, first);
+        onFrame(host.ops()[], host.frameSkipped);
+    }
+
+    frame(true);
+    foreach (batch; script)
+    {
+        if (host.quitRequested)
+            break;
+        bool dirty;
+        foreach (e; batch)
+            deliverInput!handle(host, input, texts, e, unitW, unitH, dirty);
+        flushInput!handle(host, input, dirty);
+        frame(false);
+    }
 }
 
 private enum FrameOutcome
@@ -836,4 +912,126 @@ private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, string path) @syste
     CellFont larger;
     assert(measureCellFont(FontRequest.init, null, 36, larger));
     assert(larger.cellH > font.cellH && larger.cellW > font.cellW);
+}
+
+// The parity oracle (`TST3`, plan slice V4's gate): the same input, scripted
+// as window-system events for this arm and as `sparkles:input` events for the
+// recorder, produces the same operations frame for frame. The component shows
+// every event it sees and the modifier level, so a translation that loses or
+// reshapes one changes the display list.
+@("ui_app.native_loop.sameScriptSameOperationsAsTheRecorder")
+@system unittest
+{
+    import std.conv : text;
+    import sparkles.input : charEvent, Key, KeyAction, KeyEvent, keyEvent, Mods,
+        Point, PointerAction, PointerButton, PointerEvent, WheelEvent;
+    import sparkles.ui.canvas : DrawOp;
+    import sparkles.ui.style : Slot;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
+    import sparkles.ui_app.record : RecordingHost;
+    import sparkles.ui_app.run_app : appThemeOf, FrameSnapshot, presentApp, runAppRecorded;
+    import sparkles.wsi.events : KeyboardEvent, LogicalKey, LogicalKeyKind, PhysicalKey,
+        PointerPhase, ScrollEvent, TextCommittedEvent, TextId, WindowEventPayload;
+    import sparkles.wsi.types : PhysicalPosition, WindowId;
+
+    static struct Echo
+    {
+        string[] seen;
+
+        WidgetTree view(H)(ref H h)
+        {
+            auto b = Builder();
+            uint[] lines;
+            foreach (line; seen ~ text("mods ", h.modifiers, " size ", h.size))
+                lines ~= b.add(Widget(kind: WidgetKind.text, text: line, slot: Slot.code));
+            return b.finish(b.container(WidgetKind.column, lines));
+        }
+
+        void handle(H)(ref H h, in Event e)
+        {
+            seen ~= text(e);
+        }
+    }
+
+    // ── the script, as each arm receives it ──
+    WindowEvent ev(P)(P payload)
+    {
+        WindowEvent e;
+        e.window = WindowId(0, 1);
+        e.payload = WindowEventPayload(payload);
+        return e;
+    }
+    KeyboardEvent key(LogicalKeyKind kind, uint value, Mods mods = Mods.init)
+        => KeyboardEvent(PhysicalKey.init, LogicalKey(kind, value, value),
+            action: KeyAction.press, modifiers: mods);
+    auto pointer(PointerPhase phase, int x, int y, PointerButton button)
+    {
+        sparkles.wsi.events.PointerEvent p;
+        p.phase = phase;
+        p.button = button;
+        p.physicalPosition = PhysicalPosition(x, y);
+        return p;
+    }
+    ScrollEvent notch;
+    notch.physicalPosition = PhysicalPosition(15, 25);
+    notch.discreteY = 1;
+    notch.dx = 0;
+    notch.dy = 15;
+    const ctrl = Mods(ctrl: true);
+
+    static struct Texts
+    {
+        string[] texts;
+        void withText(Fn)(TextId id, scope Fn fn) => fn(texts[id.index], false);
+    }
+    auto texts = Texts(["a", "\x03"]);
+
+    const WindowEvent[][] native = [
+        [ev(key(LogicalKeyKind.named, 0xFF52))],                             // Up
+        [ev(key(LogicalKeyKind.character, 'a')), ev(TextCommittedEvent(TextId(0, 1)))],
+        [ev(pointer(PointerPhase.pressed, 25, 45, PointerButton.left))],
+        [ev(pointer(PointerPhase.released, 39, 61, PointerButton.left))],
+        [ev(notch)],
+        [ev(key(LogicalKeyKind.character, 'c', ctrl)), ev(TextCommittedEvent(TextId(1, 1)))],
+    ];
+    const Event[] recorded = [
+        keyEvent(Key.up),
+        charEvent('a'),
+        Event(PointerEvent(action: PointerAction.press, button: PointerButton.left,
+            pos: Point(2, 2))),
+        Event(PointerEvent(action: PointerAction.release, button: PointerButton.left,
+            pos: Point(3, 3))),
+        Event(WheelEvent(dy: 3, pos: Point(1, 1), begins: true)),
+        Event(KeyEvent(Key.char_, 'c', ctrl, KeyAction.press, 'c')),
+    ];
+
+    // ── the recorder, sized and described as the window is ──
+    NativeSession session;
+    session.pixelW = 800;
+    session.pixelH = 480;
+    session.font = CellFont(null, 18, 10, 20);
+    auto recApp = Echo();
+    auto rec = runAppRecorded(recApp, RunConfig.init, recorded, (ref RecordingHost h) {
+        h.size = Size(80, 24);
+        h.capabilities = mousePointer;
+        h.backend = Backend.gui;
+        h.frameSeconds = 0;
+    });
+    assert(rec.frames.length == recorded.length + 1);
+
+    // ── this arm ──
+    auto app = Echo();
+    const th = appThemeOf(RunConfig.init.gui);
+    FrameSnapshot snap;
+    size_t frame;
+    replayNative!((ref NativeHost h) => presentApp(app, h, th, snap),
+        (ref NativeHost h, in Event e) => app.handle(h, e))(session, RunConfig.init, texts,
+        native, (in DrawOp[] ops, bool skipped) {
+            assert(frame < rec.frames.length, "a frame the recorder did not draw");
+            assert(!skipped && !rec.frames[frame].skipped);
+            assert(ops == rec.frames[frame].ops, text("frame ", frame, " differs"));
+            ++frame;
+        });
+    assert(frame == rec.frames.length);
+    assert(app.seen == recApp.seen && app.seen.length == recorded.length);
 }
