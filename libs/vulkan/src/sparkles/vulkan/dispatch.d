@@ -273,6 +273,7 @@ private enum CommandSet[] deviceSets = [
         "CreateDescriptorSetLayout",
         "DestroyDescriptorSetLayout",
         "CreateDescriptorPool",
+        "ResetDescriptorPool",
         "DestroyDescriptorPool",
         "AllocateDescriptorSets",
         "UpdateDescriptorSets",
