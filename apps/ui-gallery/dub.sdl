@@ -67,6 +67,9 @@ configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"
     dependency "sparkles:test-runner" path="../.."
+    // The pages through the Vulkan canvas on a real driver (`vulkan_pages.d`).
+    dependency "sparkles:ui-vulkan" path="../.."
+    dependency "sparkles:vulkan-wsi" path="../.."
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
