@@ -31,6 +31,8 @@ $(LI $(MREF sparkles,vulkan,memory) — device memory: a sub-allocator over a
     per-frame arena.)
 $(LI $(MREF sparkles,vulkan,names) — an enumerator's own name, kebab-cased and
     stripped of the type-name prefix C forces onto every member.)
+$(LI $(MREF sparkles,vulkan,spirv) — SPIR-V bytes as the aligned words
+    `vkCreateShaderModule` takes, assembled at compile time.)
 $(LI $(MREF sparkles,vulkan,result) — `VkResult` as
     `Expected!(T, VkResult)`, following Vulkan's own rule that negative codes
     are errors and warnings such as `VK_SUBOPTIMAL_KHR` are not.))
@@ -56,4 +58,5 @@ public import sparkles.vulkan.memory;
 public import sparkles.vulkan.names;
 public import sparkles.vulkan.platform;
 public import sparkles.vulkan.result;
+public import sparkles.vulkan.spirv;
 public import sparkles.vulkan.structure_type;
