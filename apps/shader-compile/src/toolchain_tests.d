@@ -756,3 +756,41 @@ exit 0
         made.diagnostics);
     assert(f.outputs.length == 0, f.outputs.join(" "));
 }
+
+@("shaderCompile.resources.aSamplerInAnInterfaceStructIsItsOwnVariable")
+@system unittest
+{
+    if (const tool = missingTool())
+        return skipTest("the device toolchain is not on PATH (" ~ tool ~ ")");
+
+    // `SHF6`: a `Sampler2D` in a `@resources` struct is flattened into a
+    // variable of its own before code is generated, so no module holds an
+    // image in an aggregate: on OpenGL a `sampler2D` uniform named after the
+    // field, on Vulkan an image at its binding beside the shared sampler.
+    auto f = Fixture.create("samplerfield");
+    f.entries(q{
+        @resources struct Material
+        {
+            Sampler2D albedo;
+            @uniform float gain;
+        }
+
+        @profiles(gl330, vulkan13) @fragment vec4 lit(@input vec2 uv, Material material)
+            => material.albedo.sample(uv) * material.gain;
+    });
+    const made = f.run();
+    assert(made.status == 0, made.diagnostics);
+    assert(f.outputs == [".stamp", "lit.frag", "lit.frag.spv"], f.outputs.join(" "));
+
+    const glsl = readText(f.out_.buildPath("lit.frag"));
+    foreach (line; ["uniform sampler2D albedo;", "uniform float gain;"])
+        assert(glsl.canFind(line), line ~ "\n" ~ glsl);
+
+    const dis = execute(["spirv-dis", f.out_.buildPath("lit.frag.spv")]);
+    assert(dis.status == 0, dis.output);
+    foreach (line; [`OpName %albedo "albedo"`, "OpDecorate %albedo Binding 1",
+            "OpDecorate %sampler Binding 0"])
+        assert(dis.output.canFind(line), line ~ "\n" ~ dis.output);
+    // That no aggregate holds the image is spirv-val's to say: the step ran
+    // it for Vulkan 1.3, which rejects an image in a struct.
+}
