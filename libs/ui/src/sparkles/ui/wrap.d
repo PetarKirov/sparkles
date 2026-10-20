@@ -140,9 +140,12 @@ TextSpan[][] wrapSpans(F = typeof(null))(const(TextSpan)[] spans, int width, int
                 inheritedStyle);
             if (auto hit = wrapCache.find(key, spans))
                 return copyRows(hit);
-            auto lines = wrapSpansUncached(spans, width, hangIndent, algorithm, whitespace,
+            // The rows borrow the spans they wrap: wrap the cache's own copy,
+            // or a caller reusing its text buffer rewrites the cached rows.
+            auto owned = WrapCache.ownedCopy(spans);
+            auto lines = wrapSpansUncached(owned, width, hangIndent, algorithm, whitespace,
                 clipToWidth, measure, inheritedStyle, measureMonotone);
-            wrapCache.store(key, spans, lines);
+            wrapCache.store(key, owned, lines);
             return copyRows(lines);
         }
     }
@@ -195,20 +198,27 @@ private struct WrapCache
         return null;
     }
 
-    void store(in WrapCacheKey key, scope const(TextSpan)[] spans, TextSpan[][] lines) @safe nothrow
+    /// `spans` with their texts copied: what an entry keeps and wraps.
+    static TextSpan[] ownedCopy(scope const(TextSpan)[] spans) @safe nothrow
     {
-        if (count >= bound)
-        {
-            entries = null;
-            count = 0;
-        }
         auto copy = new TextSpan[](spans.length);
         foreach (i, ref const s; spans)
         {
             copy[i] = s;
             copy[i].text = s.text.idup;
         }
-        entries[hashOfInput(key, spans)] ~= Entry(key, copy, lines);
+        return copy;
+    }
+
+    /// Keeps `lines`, wrapped from `owned` (an $(LREF ownedCopy)).
+    void store(in WrapCacheKey key, TextSpan[] owned, TextSpan[][] lines) @safe nothrow
+    {
+        if (count >= bound)
+        {
+            entries = null;
+            count = 0;
+        }
+        entries[hashOfInput(key, owned)] ~= Entry(key, owned, lines);
         ++count;
     }
 }
@@ -903,4 +913,19 @@ unittest
     const moved = [TextSpan("a long line that will wrap at ten cells", srcStart: 9)];
     assert(wrapSpans(moved, 10)[0][0].srcStart != first[0][0].srcStart);
     assert(wrapSpans(spans, 12).length != 0, "another width is planned anew");
+}
+
+@("ui.wrap.cachedRowsOutliveTheCallersBuffer")
+@safe unittest
+{
+    // A caller that reuses its text buffer: the first wrap's rows must not
+    // read the buffer's later contents when the same text comes again.
+    char[] buffer = "alpha beta gamma delta".dup;
+    cast(void) wrapSpans([TextSpan(buffer)], 11);
+    buffer[] = "omega omega omega omega"[0 .. buffer.length];
+    auto again = wrapSpans([TextSpan("alpha beta gamma delta")], 11);
+    string row;
+    foreach (ref span; again[0])
+        row ~= span.text;
+    assert(row == "alpha beta", row);
 }
