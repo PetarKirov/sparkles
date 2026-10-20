@@ -18,7 +18,7 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 | Slice                                                             | State       |
 | ----------------------------------------------------------------- | ----------- |
 | [V0 Specification](#v0-specification)                             | done        |
-| [V1 Device memory and resources](#v1-device-memory-and-resources) | not started |
+| [V1 Device memory and resources](#v1-device-memory-and-resources) | done        |
 | [V2 The canvas](#v2-the-canvas)                                   | not started |
 | [V3 Glyphs](#v3-glyphs)                                           | not started |
 | [V4 The native host](#v4-the-native-host)                         | not started |
