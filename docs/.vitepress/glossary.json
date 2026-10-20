@@ -1,5 +1,24 @@
 [
   {
+    "id": "summary-tree",
+    "term": "summary tree",
+    "aliases": ["sum tree"],
+    "summary": "A balanced tree of items in which every node also stores the combined measures of its subtree, so seeking by any measure takes logarithmic time.",
+    "definition": "A balanced tree whose nodes cache an additive summary of their subtrees — for text, counts such as bytes, lines and UTF-16 units — so a position in any of those units is found by descending the tree. Made persistent, copies share unchanged subtrees. Sparkles' text form is `sparkles:text-buffer`'s `Text`; see [its specification](/specs/text-buffer/SPEC).",
+    "authority": [
+      {
+        "text": "Zed: `sum_tree` crate",
+        "link": "https://github.com/zed-industries/zed/blob/fae8a354829e56bf5615fedfa8cdfecb124550c4/crates/sum_tree/src/sum_tree.rs#L206-L213"
+      },
+      {
+        "text": "Sparkles: `sparkles:text-buffer` specification",
+        "link": "/specs/text-buffer/SPEC"
+      }
+    ],
+    "owner": "sparkles:text-buffer",
+    "seeAlso": ["regular-type"]
+  },
+  {
     "id": "terminal-one-off",
     "term": "one-off command",
     "summary": "An explicit command request launched in a pane instead of its configured profile entry command, which remains inactive on workspace restoration.",
