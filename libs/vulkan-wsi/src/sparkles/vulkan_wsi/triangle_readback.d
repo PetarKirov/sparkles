@@ -23,7 +23,7 @@ version (unittest):
 import std.file : exists, read, rmdirRecurse, tempDir;
 import std.format : format;
 import std.math : abs, lround, sqrt;
-import std.path : buildNormalizedPath, buildPath, dirName;
+import std.path : baseName, buildNormalizedPath, buildPath, dirName;
 import std.process : environment, execute, thisProcessID;
 
 import sparkles.shaders : PushConstants;
@@ -117,16 +117,83 @@ private double insideBy(in Corners c, double[2] p)
     return least;
 }
 
-/// Compiles the triangle with `shader-compile`, into a fresh directory.
-private string compileTriangle()
+/// Compiles the unit of the package at `packageDir` (from the repository's
+/// root) with `shader-compile`, into a fresh directory.
+private string compileUnit(string packageDir)
 {
-    const out_ = tempDir.buildPath(format("sparkles-triangle-readback-%s", thisProcessID));
+    const out_ = tempDir.buildPath(format("sparkles-vulkan-readback-%s-%s", thisProcessID,
+        packageDir.baseName));
     const r = execute(["dub", "run", "-q", "--temp-build",
         "--root=" ~ repoRoot.buildPath("apps", "shader-compile"), "--",
-        "--package=" ~ repoRoot.buildPath("libs", "vulkan-wsi"), "--out=" ~ out_, "--quiet"]);
-    assert(r.status == 0, "SPARKLES_VULKAN_READBACK=1, but the triangle did not compile:\n"
+        "--package=" ~ repoRoot.buildPath(packageDir), "--out=" ~ out_, "--quiet"]);
+    assert(r.status == 0, "SPARKLES_VULKAN_READBACK=1, but " ~ packageDir ~ " did not compile:\n"
         ~ r.output);
     return out_;
+}
+
+/// The SPIR-V words of `entry`'s module in `dir`, as `shader-compile` names it.
+private immutable(uint)[] moduleOf(string dir, string entry, string stage)
+    => spirvWords(cast(string) read(dir.buildPath(entry ~ "." ~ stage ~ ".spv")));
+
+/// A headless device with the validation layer, and a messenger counting the
+/// layer's messages. `close` tears the device down while the messenger
+/// listens, so an object left alive is reported too, and fails the test on
+/// any message.
+private struct Session
+{
+    VulkanDevice d;
+    Messages messages;
+    VkDebugUtilsMessengerEXT messenger;
+
+    @disable this(this);
+
+    void open() @system
+    {
+        auto made = VulkanDevice.createHeadless(d, ContextRequest(
+            applicationName: "vulkan-readback", apiVersion: apiVersion13, validation: true));
+        assert(!made.hasError, "SPARKLES_VULKAN_READBACK=1, but no headless Vulkan device: "
+            ~ made.error.diagnostic[].idup);
+        assert(d.validationEnabled && d.debugUtils,
+            "SPARKLES_VULKAN_READBACK=1, but the validation layer did not load (VK_LAYER_PATH?)");
+        assert(d.dynamicRendering, "the device has no dynamic rendering");
+        // Made after createHeadless: the layer's messages about creating the
+        // instance and the device are on the console, not counted.
+        auto info = vkInfo(VkDebugUtilsMessengerCreateInfoEXT(
+            messageSeverity: VkDebugUtilsMessageSeverityFlagBitsEXT.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+                | VkDebugUtilsMessageSeverityFlagBitsEXT.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
+            messageType: VkDebugUtilsMessageTypeFlagBitsEXT.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
+            pfnUserCallback: &onMessage,
+            pUserData: &messages,
+        ));
+        succeeded(d.instance.createDebugUtilsMessengerEXT(d.instance.instance, &info, null,
+            &messenger));
+    }
+
+    void close() @system
+    {
+        d.releaseDevice();
+        d.instance.destroyDebugUtilsMessengerEXT(d.instance.instance, messenger, null);
+        assert(messages.count == 0, format("the validation layer reported %s message(s), the first: %s",
+            messages.count, messages.first[0 .. messages.firstLength]));
+    }
+}
+
+/// A buffer of `size` bytes for `usage`, in host-visible, coherent memory.
+private void hostBuffer(ref VulkanDevice d, size_t size, VkBufferUsageFlags usage,
+    out VkBuffer buffer, out VkDeviceMemory memory) @system
+{
+    auto dev = d.device.device;
+    auto info = vkInfo(VkBufferCreateInfo(size: size, usage: usage,
+        sharingMode: VkSharingMode.VK_SHARING_MODE_EXCLUSIVE));
+    succeeded(d.device.createBuffer(dev, &info, null, &buffer));
+    VkMemoryRequirements needs;
+    d.device.getBufferMemoryRequirements(dev, buffer, &needs);
+    auto alloc = vkInfo(VkMemoryAllocateInfo(allocationSize: needs.size,
+        memoryTypeIndex: memoryType(d, needs.memoryTypeBits,
+            VkMemoryPropertyFlagBits.VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+            | VkMemoryPropertyFlagBits.VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)));
+    succeeded(d.device.allocateMemory(dev, &alloc, null, &memory));
+    succeeded(d.device.bindBufferMemory(dev, buffer, memory, 0));
 }
 
 /// A memory type among `bits` with all of `flags`.
@@ -142,7 +209,8 @@ private uint memoryType(ref VulkanDevice d, uint bits, VkMemoryPropertyFlags fla
 
 /// Draws the triangle into a `width`×`height` RGBA8 image and returns its
 /// pixels, row by row.
-private ubyte[] draw(ref VulkanDevice d, ref Pipeline pipeline, uint width, uint height) @system
+private ubyte[] draw(ref VulkanDevice d, ref Pipeline pipeline, uint width, uint height,
+    VkDescriptorSet set = null) @system
 {
     enum format_ = VkFormat.VK_FORMAT_R8G8B8A8_UNORM;
     auto dev = d.device.device;
@@ -244,9 +312,15 @@ private ubyte[] draw(ref VulkanDevice d, ref Pipeline pipeline, uint width, uint
     auto scissor = VkRect2D(VkOffset2D(0, 0), extent);
     d.device.cmdSetViewport(cmd, 0, 1, &viewport);
     d.device.cmdSetScissor(cmd, 0, 1, &scissor);
-    const push = triangleView(extent);
-    d.device.cmdPushConstants(cmd, pipeline.layout, pipeline.pushConstantStages, 0,
-        cast(uint) push.length, push.ptr);
+    if (pipeline.pushConstantStages)
+    {
+        const push = triangleView(extent);
+        d.device.cmdPushConstants(cmd, pipeline.layout, pipeline.pushConstantStages, 0,
+            cast(uint) push.length, push.ptr);
+    }
+    if (set !is null)
+        d.device.cmdBindDescriptorSets(cmd, VkPipelineBindPoint.VK_PIPELINE_BIND_POINT_GRAPHICS,
+            pipeline.layout, 0, 1, &set, 0, null);
     d.device.cmdDraw(cmd, 3, 1, 0, 0);
     endRendering(d, cmd);
 
@@ -373,37 +447,14 @@ private string compare(const(ubyte)[] pixels, uint width, uint height)
         return skipTest("a Vulkan readback is opt-in: SPARKLES_VULKAN_READBACK=1, with a driver "
             ~ "(lavapipe) and the validation layer");
 
-    const out_ = compileTriangle();
+    const out_ = compileUnit("libs/vulkan-wsi");
     scope (exit) out_.rmdirRecurse;
-    // The messenger is made with the instance's first use, after
-    // createHeadless: the layer's messages about creating the instance and
-    // the device are on the console, not counted.
-    const vert = spirvWords(cast(string) read(out_.buildPath(__traits(identifier, triangleVertex)
-        ~ ".vert.spv")));
-    const frag = spirvWords(cast(string) read(out_.buildPath(__traits(identifier, triangleFragment)
-        ~ ".frag.spv")));
+    const vert = moduleOf(out_, __traits(identifier, triangleVertex), "vert");
+    const frag = moduleOf(out_, __traits(identifier, triangleFragment), "frag");
 
-    VulkanDevice d;
-    auto made = VulkanDevice.createHeadless(d, ContextRequest(applicationName: "triangle-readback",
-        apiVersion: apiVersion13, validation: true));
-    assert(!made.hasError, "SPARKLES_VULKAN_READBACK=1, but no headless Vulkan device: "
-        ~ made.error.diagnostic[].idup);
-    assert(d.validationEnabled && d.debugUtils,
-        "SPARKLES_VULKAN_READBACK=1, but the validation layer did not load (VK_LAYER_PATH?)");
-    assert(d.dynamicRendering, "the device has no dynamic rendering");
-
-    Messages messages;
-    VkDebugUtilsMessengerEXT messenger;
-    auto messengerInfo = vkInfo(VkDebugUtilsMessengerCreateInfoEXT(
-        messageSeverity: VkDebugUtilsMessageSeverityFlagBitsEXT.VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-            | VkDebugUtilsMessageSeverityFlagBitsEXT.VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT,
-        messageType: VkDebugUtilsMessageTypeFlagBitsEXT.VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT,
-        pfnUserCallback: &onMessage,
-        pUserData: &messages,
-    ));
-    succeeded(d.instance.createDebugUtilsMessengerEXT(d.instance.instance, &messengerInfo, null,
-        &messenger));
-    scope (exit) d.instance.destroyDebugUtilsMessengerEXT(d.instance.instance, messenger, null);
+    Session session;
+    session.open();
+    ref VulkanDevice d() @system => session.d;
 
     Pipeline pipeline;
     auto built = Pipeline.create(pipeline, d, VkFormat.VK_FORMAT_R8G8B8A8_UNORM, null, vert, frag,
@@ -418,12 +469,115 @@ private string compare(const(ubyte)[] pixels, uint width, uint height)
             assert(false, why);
     }
 
-    // Tear the device down while the messenger listens, so an object left
-    // alive is reported too; the instance goes after the messenger.
     pipeline.destroy(d);
-    d.releaseDevice();
-    assert(messages.count == 0, format("the validation layer reported %s message(s), the first: %s",
-        messages.count, messages.first[0 .. messages.firstLength]));
+    session.close();
+}
+
+// Only in this package's own unittest build, which compiles the probe module:
+// a dependent's (`sparkles:ui-sdl3`'s) compiles this module without it.
+version (VulkanWsiBlockProbe)
+@("vulkan_wsi.triangle_readback.aStd140BlockReadsAsWritten")
+@system unittest
+{
+    import block_probe : Inner, Probe, probeFirst, probeSecond, probeThird, probeVertex;
+    import sparkles.shaders : descriptorBindingsOf, layoutOf, Rule, v2, v3, writeLayout;
+
+    if (environment.get("SPARKLES_VULKAN_READBACK", "") != "1")
+        return skipTest("a Vulkan readback is opt-in: SPARKLES_VULKAN_READBACK=1, with a driver "
+            ~ "(lavapipe) and the validation layer");
+
+    // `SHR6` on the device: a block the host wrote with `writeLayout`, at the
+    // offsets `layoutOf` gives, reads back field for field. Every value is
+    // distinct and away from 0, so a field read at the wrong offset (padding,
+    // or a neighbour) is caught.
+    const out_ = compileUnit("libs/vulkan-wsi/tests/block-readback");
+    scope (exit) out_.rmdirRecurse;
+    Probe probe;
+    probe.a = v3(0.10f, 0.15f, 0.20f);
+    probe.b = 0.25f;
+    probe.c = [0.30f, 0.35f, 0.40f];
+    probe.inner = Inner(v2(0.45f, 0.50f), 0.55f);
+    probe.d = 0.60f;
+    enum size = layoutOf!(Probe, Rule.std140).size;
+    ubyte[size] bytes;
+    writeLayout!(Probe, Rule.std140)(probe, bytes[]);
+
+    Session session;
+    session.open();
+    ref VulkanDevice d() @system => session.d;
+    auto dev = d.device.device;
+
+    // The block, in a uniform buffer.
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    hostBuffer(d, size, VkBufferUsageFlagBits.VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, buffer, memory);
+    void* mapped;
+    succeeded(d.device.mapMemory(dev, memory, 0, size, 0, &mapped));
+    (cast(ubyte*) mapped)[0 .. size] = bytes[];
+    d.device.unmapMemory(dev, memory);
+
+    // Descriptor set 0 as the entry points number it (`SHR7`).
+    enum bindings = descriptorBindingsOf!probeFirst;
+    static assert(bindings.length == 1 && bindings[0].kind == "uniformBlock");
+    static assert(descriptorBindingsOf!probeSecond == bindings && descriptorBindingsOf!probeThird == bindings);
+    auto layoutBinding = VkDescriptorSetLayoutBinding(
+        binding: bindings[0].binding,
+        descriptorType: VkDescriptorType.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        descriptorCount: 1,
+        stageFlags: VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT,
+    );
+    auto layoutInfo = vkInfo(VkDescriptorSetLayoutCreateInfo(bindingCount: 1,
+        pBindings: &layoutBinding));
+    VkDescriptorSetLayout setLayout;
+    succeeded(d.device.createDescriptorSetLayout(dev, &layoutInfo, null, &setLayout));
+    auto poolSize = VkDescriptorPoolSize(VkDescriptorType.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1);
+    auto poolInfo = vkInfo(VkDescriptorPoolCreateInfo(maxSets: 1, poolSizeCount: 1,
+        pPoolSizes: &poolSize));
+    VkDescriptorPool pool;
+    succeeded(d.device.createDescriptorPool(dev, &poolInfo, null, &pool));
+    auto allocInfo = vkInfo(VkDescriptorSetAllocateInfo(descriptorPool: pool,
+        descriptorSetCount: 1, pSetLayouts: &setLayout));
+    VkDescriptorSet set;
+    succeeded(d.device.allocateDescriptorSets(dev, &allocInfo, &set));
+    auto bufferInfo = VkDescriptorBufferInfo(buffer: buffer, offset: 0, range: size);
+    auto write = vkInfo(VkWriteDescriptorSet(dstSet: set, dstBinding: bindings[0].binding,
+        descriptorCount: 1, descriptorType: VkDescriptorType.VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        pBufferInfo: &bufferInfo));
+    d.device.updateDescriptorSets(dev, 1, &write, 0, null);
+
+    const vert = moduleOf(out_, __traits(identifier, probeVertex), "vert");
+    static struct Expect
+    {
+        string entry;
+        float[4] rgba;
+    }
+    const Expect[3] expects = [
+        Expect(__traits(identifier, probeFirst), [0.10f, 0.15f, 0.20f, 0.25f]),
+        Expect(__traits(identifier, probeSecond), [0.30f, 0.35f, 0.40f, 0.55f]),
+        Expect(__traits(identifier, probeThird), [0.45f, 0.50f, 0.60f, 1.0f]),
+    ];
+    foreach (ref e; expects)
+    {
+        Pipeline pipeline;
+        auto built = Pipeline.create(pipeline, d, VkFormat.VK_FORMAT_R8G8B8A8_UNORM, null, vert,
+            moduleOf(out_, e.entry, "frag"), 0, false, __traits(identifier, probeVertex), e.entry,
+            0, setLayout);
+        assert(!built.hasError, built.error);
+        const pixels = draw(d, pipeline, 2, 2, set);
+        pipeline.destroy(d);
+        foreach (ch; 0 .. 4)
+        {
+            const expected = lround(e.rgba[ch] * 255);
+            assert(abs(pixels[ch] - expected) <= 1, format("%s: channel %s is %s, written %s",
+                e.entry, ch, pixels[ch], expected));
+        }
+    }
+
+    d.device.destroyDescriptorPool(dev, pool, null);
+    d.device.destroyDescriptorSetLayout(dev, setLayout, null);
+    d.device.destroyBuffer(dev, buffer, null);
+    d.device.freeMemory(dev, memory, null);
+    session.close();
 }
 
 /// Fails the test unless `r` is `VK_SUCCESS`; the call stays outside any

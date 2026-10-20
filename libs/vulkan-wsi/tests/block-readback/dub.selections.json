@@ -1,0 +1,8 @@
+{
+	"fileVersion": 1,
+	"versions": {
+		"expected": "0.4.1",
+		"silly": "1.1.1",
+		"sparkles": {"path":"../../../../"}
+	}
+}
