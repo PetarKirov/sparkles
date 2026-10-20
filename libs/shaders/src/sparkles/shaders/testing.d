@@ -134,3 +134,18 @@ import sparkles.shaders.types;
     assert(v3(1, 2, 3).packed.aligned.array == [1, 2, 3]);
     assert(v2(1, 2).packed.array == [1, 2]);
 }
+
+@("shaders.types.intVectorsAddSubtractMultiply")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.shaders.types : allEqual, float3, i2, i3, i4, int2, int3, int4, vec3;
+
+    static assert(is(float3 == vec3));
+    static assert(int2.sizeof == 8 && int4.sizeof == 16 && int4.alignof == 16);
+    static assert(int3.sizeof == 16 && int3.alignof == 16);
+
+    assert(allEqual(i2(1, 2) + i2(3, 4), i2(4, 6)));
+    assert(allEqual(i3(1, 2, 3) * 2, i3(2, 4, 6)));
+    assert(allEqual(10 - i4(1, 2, 3, 4), i4(9, 8, 7, 6)));
+    assert(allEqual(-i3(1, -2, 3), i3(-1, 2, -3)));
+}

@@ -205,7 +205,7 @@ alias rgb = xyz;
 /// `all(equal(a, b))`, and what `==` means on GLSL vectors. The same `bool`
 /// under every compiler, where `==` on a `__vector` is a mask.
 bool allEqual(V)(in V a, in V b) @safe pure nothrow @nogc
-if (isShaderVector!V)
+if (isShaderVector!V || isIntVector!V)
 {
     bool same = true;
     static foreach (i; 0 .. vectorLength!V)
@@ -246,3 +246,110 @@ if (N >= 2 && N <= 4)
     r.array = p.array;
     return r;
 }
+
+// ---- HLSL-shaped names (`SHV1`) and integer vectors (`SHV9`) -----------------
+
+/// The vector types under the names HLSL, Slang, MSL and D share.
+alias float2 = vec2;
+alias float3 = vec3; /// ditto
+alias float4 = vec4; /// ditto
+
+version (LDC)
+{
+    alias int2 = __vector(int[2]); /// Vectors of two to four `int`s.
+    alias int4 = __vector(int[4]); /// ditto
+}
+else
+{
+    alias int2 = IVec!2; ///
+    alias int4 = IVec!4; ///
+}
+
+version (LDC_DCompute)
+    alias int3 = __vector(int[3]); ///
+else
+    alias int3 = IVec!3; ///
+
+/**
+The fallback integer vector for compilers without an `N`-wide `int` vector:
+`+`, `-` and `*` against a vector or a broadcast `int`, unary `-`, and
+`.array`. Not `/`, which on integers is outside the vocabulary. Aligned as
+the device's vector: 8 bytes for two components, 16 for three and four.
+*/
+struct IVec(size_t N)
+{
+    /// the components, as on a `__vector`
+    align(alignedVectorSize!N) int[N] array = 0;
+
+    /// Component-wise arithmetic against another vector.
+    IVec opBinary(string op)(in IVec rhs) const @safe pure nothrow @nogc
+    if (op == "+" || op == "-" || op == "*")
+    {
+        IVec r;
+        static foreach (i; 0 .. N)
+            r.array[i] = mixin("array[i] " ~ op ~ " rhs.array[i]");
+        return r;
+    }
+
+    /// Component-wise arithmetic against a broadcast scalar.
+    IVec opBinary(string op)(int rhs) const @safe pure nothrow @nogc
+    if (op == "+" || op == "-" || op == "*")
+    {
+        IVec r;
+        static foreach (i; 0 .. N)
+            r.array[i] = mixin("array[i] " ~ op ~ " rhs");
+        return r;
+    }
+
+    /// ditto
+    IVec opBinaryRight(string op)(int lhs) const @safe pure nothrow @nogc
+    if (op == "+" || op == "-" || op == "*")
+    {
+        IVec r;
+        static foreach (i; 0 .. N)
+            r.array[i] = mixin("lhs " ~ op ~ " array[i]");
+        return r;
+    }
+
+    /// Negation.
+    IVec opUnary(string op : "-")() const @safe pure nothrow @nogc
+    {
+        IVec r;
+        static foreach (i; 0 .. N)
+            r.array[i] = -array[i];
+        return r;
+    }
+}
+
+/// Constructs an `int2`, an `int3` or an `int4`.
+int2 i2(int x, int y) @safe pure nothrow @nogc
+{
+    int2 v;
+    v.array[0] = x;
+    v.array[1] = y;
+    return v;
+}
+
+/// ditto
+int3 i3(int x, int y, int z) @safe pure nothrow @nogc
+{
+    int3 v;
+    v.array[0] = x;
+    v.array[1] = y;
+    v.array[2] = z;
+    return v;
+}
+
+/// ditto
+int4 i4(int x, int y, int z, int w) @safe pure nothrow @nogc
+{
+    int4 v;
+    v.array[0] = x;
+    v.array[1] = y;
+    v.array[2] = z;
+    v.array[3] = w;
+    return v;
+}
+
+/// Whether `V` is one of the integer vector types.
+enum isIntVector(V) = is(V == int2) || is(V == int3) || is(V == int4);
