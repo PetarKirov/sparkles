@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "native_wayland_triangle"
     dependency "sparkles:vulkan-wsi" path="../../.."
+    subConfiguration "sparkles:vulkan-wsi" "gpu-shaders"
     dependency "sparkles:event-horizon" path="../../.."
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:base" path="../../.."
@@ -342,8 +343,7 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
     if (initial.value != SwapchainResize.rebuilt)
         return err!void("initial Wayland surface is suspended");
 
-    auto built = Pipeline.create(pipeline, vk, swapchain.format,
-        target.renderPass);
+    auto built = createTriangle(pipeline, vk, swapchain.format, target.renderPass);
     if (built.hasError)
         return err!void(built.error);
     auto pooled = CommandPool.create(commands, vk, sync.framesInFlight);
@@ -402,9 +402,10 @@ private Expected!(void, string) drive(in NativeWaylandTriangle options) @system
         auto begun = sync.beginFrame(vk, imageIndex);
         if (begun.hasError)
             return err!void("vkResetFences: " ~ describeResult(begun.error));
+        const extent = drawableExtent(swapchain, metrics.physicalSize);
+        const view = triangleView(extent);
         auto recorded = record(vk, commands, pipeline, target, swapchain,
-            sync.frame, imageIndex,
-            drawableExtent(swapchain, metrics.physicalSize));
+            sync.frame, imageIndex, extent, view[]);
         if (recorded.hasError)
             return recorded;
         auto submitted = sync.submit(vk, commands.buffers[sync.frame], imageIndex);

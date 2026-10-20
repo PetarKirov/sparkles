@@ -2,12 +2,14 @@
 /+ dub.sdl:
     name "vulkan_triangle"
     dependency "sparkles:ui-sdl3" path="../../.."
+    dependency "sparkles:vulkan-wsi" path="../../.."
+    subConfiguration "sparkles:vulkan-wsi" "gpu-shaders"
     dependency "sparkles:vulkan" path="../../.."
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:base" path="../../.."
     dependency "sparkles:wired" path="../../.."
     dependency "expected" version="~>0.4.1"
-    stringImportPaths "../../vulkan-wsi/src/shaders"
+    stringImportPaths "../../vulkan-wsi/src/shaders" "../../vulkan-wsi/generated/shaders"
     targetPath "build"
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
@@ -522,7 +524,7 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
 
     // The pipeline outlives a resize: viewport and scissor are dynamic state,
     // and the render pass is kept (format does not change with the window).
-    auto built = Pipeline.create(pipeline, vk, sc.format, target.renderPass);
+    auto built = createTriangle(pipeline, vk, sc.format, target.renderPass);
     if (built.hasError)
         return err!RunReport(built.error);
 
@@ -602,8 +604,10 @@ Expected!(RunReport, string) draw(ref VulkanContext vk, ref Window window,
         if (begun.hasError)
             return err!void("vkResetFences: " ~ describeResult(begun.error));
 
+        const extent = drawableExtent(sc, px.value);
+        const view = triangleView(extent);
         auto recorded = record(vk, pool, pipeline, target, sc, sync.frame, index,
-            drawableExtent(sc, px.value));
+            extent, view[]);
         if (recorded.hasError)
             return recorded;
 

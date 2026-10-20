@@ -146,7 +146,8 @@
         # included, needs it: the dcompute-enabled LDC compiles a package's
         # `@compute` modules to SPIR-V, spirv-tools validate and optimise it,
         # spirv-cross turns it into GLSL and glslang proves each file. (glslang
-        # also regenerates the committed `.spv` under `libs/vulkan-wsi/src/shaders/`.)
+        # also regenerates the test pattern's committed `.spv` under
+        # `libs/vulkan-wsi/src/shaders/`.)
         pkgs.glslang
         pkgs.spirv-tools
         pkgs.spirv-cross

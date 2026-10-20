@@ -5,14 +5,23 @@ The two hosts deliberately share this module: it owns only image views, the
 render-pass fallback, the graphics pipeline, shader blobs, and command
 recording. Window lifecycle, event draining, swapchain policy and frame
 synchronisation remain in their owning packages.
+
+The triangle's own shaders are D (`sparkles.vulkan_wsi.triangle_shader`),
+compiled to SPIR-V by the `gpu-shaders` configuration, which also compiles
+in $(LREF createTriangle) (`SparklesVulkanWsiTriangle`). Without it the
+pipeline still builds from any SPIR-V a caller passes: the test pattern's.
 */
 module sparkles.vulkan_wsi.triangle;
 
 import expected : Expected, err, ok;
 
+import sparkles.base.text.cstring : toTempStringz;
+import sparkles.shaders.layout : layoutOf, Rule, writeLayout;
+import sparkles.shaders.resources : PushConstantsOf;
 import sparkles.vulkan;
 import sparkles.vulkan_wsi.commands;
 import sparkles.vulkan_wsi.swapchain;
+import sparkles.vulkan_wsi.triangle_shader : triangleFragment, triangleVertex, TriangleView;
 
 version (unittest)
     import sparkles.wsi : PhysicalSize;
@@ -122,12 +131,11 @@ Expected!(void, string) record(Context)(ref Context vk, ref CommandPool pool,
     vk.device.cmdSetViewport(cmd, 0, 1, &viewport);
     vk.device.cmdSetScissor(cmd, 0, 1, &scissor);
     if (pushConstants.length != 0)
-        vk.device.cmdPushConstants(cmd, pipeline.layout,
-            VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+        vk.device.cmdPushConstants(cmd, pipeline.layout, pipeline.pushConstantStages, 0,
             cast(uint) pushConstants.length, pushConstants.ptr);
 
-    // Three vertices, no buffers: the shader indexes constants by
-    // `gl_VertexIndex`. See `shaders/triangle.vert`.
+    // Three vertices, no buffers: the shader indexes constants by its
+    // vertex index. See `triangle_shader.d`.
     vk.device.cmdDraw(cmd, 3, 1, 0, 0);
 
     if (target.dynamicRendering)
@@ -151,7 +159,7 @@ Expected!(void, string) record(Context)(ref Context vk, ref CommandPool pool,
     return ok!string();
 }
 
-private void beginRendering(Context)(ref Context vk, VkCommandBuffer cmd,
+package void beginRendering(Context)(ref Context vk, VkCommandBuffer cmd,
     ref VkRenderingInfo info) @system
 {
     if (vk.device.cmdBeginRendering !is null)
@@ -160,7 +168,7 @@ private void beginRendering(Context)(ref Context vk, VkCommandBuffer cmd,
         vk.device.cmdBeginRenderingKHR(cmd, &info);
 }
 
-private void endRendering(Context)(ref Context vk, VkCommandBuffer cmd) @system
+package void endRendering(Context)(ref Context vk, VkCommandBuffer cmd) @system
 {
     if (vk.device.cmdEndRendering !is null)
         vk.device.cmdEndRendering(cmd);
@@ -170,7 +178,7 @@ private void endRendering(Context)(ref Context vk, VkCommandBuffer cmd) @system
 
 /// One colour-attachment layout transition. Dynamic rendering's substitute
 /// for the render-pass `initialLayout` / `finalLayout` pair.
-private void transition(Context)(ref Context vk, VkCommandBuffer cmd, VkImage image,
+package void transition(Context)(ref Context vk, VkCommandBuffer cmd, VkImage image,
     VkImageLayout from, VkImageLayout to,
     VkAccessFlags srcAccess, VkAccessFlags dstAccess,
     VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage) @system
@@ -402,16 +410,63 @@ package immutable(uint)[] spirvWords(string bytes)
     return words.idup;
 }
 
-/// Committed next to their GLSL, which carries the regeneration command.
-private static immutable uint[] triangleVert = spirvWords(import("triangle.vert.spv"));
-private static immutable uint[] triangleFrag = spirvWords(import("triangle.frag.spv"));
-
 /// A corrupt or truncated blob is a compile error rather than a driver crash.
-private enum uint spirvMagic = 0x0723_0203;
-static assert(triangleVert.length > 4 && triangleVert[0] == spirvMagic,
-    "shaders/triangle.vert.spv is not little-endian SPIR-V — regenerate it");
-static assert(triangleFrag.length > 4 && triangleFrag[0] == spirvMagic,
-    "shaders/triangle.frag.spv is not little-endian SPIR-V — regenerate it");
+package enum uint spirvMagic = 0x0723_0203;
+
+/// The bytes of the triangle's push-constant block, `std430`, as the
+/// pipeline's range declares them.
+enum size_t triangleViewBytes = layoutOf!(TriangleView, Rule.std430).size;
+
+/// The stages whose entry points declare the triangle's push-constant block,
+/// which its range is declared for.
+enum VkShaderStageFlags triangleViewStages =
+    (is(PushConstantsOf!triangleVertex == void) ? 0 : VkShaderStageFlagBits.VK_SHADER_STAGE_VERTEX_BIT)
+    | (is(PushConstantsOf!triangleFragment == void) ? 0
+        : VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT);
+
+/// The push constants of a frame drawn into `extent`: its aspect ratio.
+ubyte[triangleViewBytes] triangleView(VkExtent2D extent) @safe pure nothrow @nogc
+{
+    ubyte[triangleViewBytes] bytes;
+    const view = TriangleView(aspect: extent.height == 0 ? 1.0f
+        : cast(float) extent.width / extent.height);
+    writeLayout!(TriangleView, Rule.std430)(view, bytes[]);
+    return bytes;
+}
+
+@("vulkan_triangle.triangleViewIsTheAspectRatio")
+@safe pure nothrow @nogc unittest
+{
+    const bytes = triangleView(VkExtent2D(800, 400));
+    float aspect;
+    (() @trusted => (cast(ubyte*) &aspect)[0 .. 4] = bytes[0 .. 4])();
+    assert(aspect == 2.0f);
+}
+
+version (SparklesVulkanWsiTriangle)
+{
+    // Generated from `triangle_shader.d` into `generated/shaders/`, one entry
+    // point per module, each file named after it.
+    private static immutable uint[] triangleVert =
+        spirvWords(import(__traits(identifier, triangleVertex) ~ ".vert.spv"));
+    private static immutable uint[] triangleFrag =
+        spirvWords(import(__traits(identifier, triangleFragment) ~ ".frag.spv"));
+    static assert(triangleVert.length > 4 && triangleVert[0] == spirvMagic,
+        "the triangle's vertex SPIR-V is not little-endian SPIR-V — regenerate it");
+    static assert(triangleFrag.length > 4 && triangleFrag[0] == spirvMagic,
+        "the triangle's fragment SPIR-V is not little-endian SPIR-V — regenerate it");
+
+    /**
+    Builds the triangle's pipeline for `colorFormat`: its two stages, each
+    named after its D function, and the push-constant range of
+    `TriangleView`, for the stages whose entry points declare it.
+    */
+    Expected!(void, string) createTriangle(Context)(out Pipeline p, ref Context vk,
+        VkFormat colorFormat, VkRenderPass renderPass = null) @system
+        => Pipeline.create(p, vk, colorFormat, renderPass, triangleVert, triangleFrag,
+            cast(uint) triangleViewBytes, false, __traits(identifier, triangleVertex),
+            __traits(identifier, triangleFragment), triangleViewStages);
+}
 
 /// The graphics pipeline and the objects it owns.
 struct Pipeline
@@ -424,21 +479,26 @@ struct Pipeline
     bool creationFeedback;
     bool fromCache; /// ditto
     ulong creationNanos; /// ditto
+    /// The stages the push-constant range is declared for, and pushed to.
+    VkShaderStageFlags pushConstantStages;
 
     @disable this(this);
 
     /**
-    Builds the pipeline for `colorFormat`, drawing three vertices with no
-    buffers. The triangle's shaders are the default; another pair (the
-    test pattern's) may declare `pushConstantBytes` of fragment push
-    constants and a boolean specialization constant 0, set to `srgbTarget`.
+    Builds the pipeline for `colorFormat` from a pair of SPIR-V modules,
+    drawing three vertices with no buffers. The modules' entry points are
+    `vertEntry` and `fragEntry`; they may declare `pushConstantBytes` of push
+    constants, for `pushStages`, and the fragment stage a boolean
+    specialization constant 0, set to `srgbTarget`.
     */
     static Expected!(void, string) create(Context)(out Pipeline p, ref Context vk,
-        VkFormat colorFormat, VkRenderPass renderPass = null,
-        immutable(uint)[] vertCode = triangleVert,
-        immutable(uint)[] fragCode = triangleFrag,
-        uint pushConstantBytes = 0, bool srgbTarget = false) @system
+        VkFormat colorFormat, VkRenderPass renderPass,
+        immutable(uint)[] vertCode, immutable(uint)[] fragCode,
+        uint pushConstantBytes = 0, bool srgbTarget = false,
+        string vertEntry = "main", string fragEntry = "main",
+        VkShaderStageFlags pushStages = VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT) @system
     {
+        p.pushConstantStages = pushStages;
         VkShaderModule vert, frag;
         auto vertMade = createModule(vk, vertCode, vert);
         if (vertMade.hasError)
@@ -452,16 +512,20 @@ struct Pipeline
         scope (exit)
             vk.device.destroyShaderModule(vk.device.device, frag, null);
 
-        VkPipelineShaderStageCreateInfo[2] stages = [
-            vkInfo(VkPipelineShaderStageCreateInfo(
-                stage: VkShaderStageFlagBits.VK_SHADER_STAGE_VERTEX_BIT,
-                pName: "main",
-            )),
-            vkInfo(VkPipelineShaderStageCreateInfo(
-                stage: VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT,
-                pName: "main",
-            )),
-        ];
+        auto vertName = vertEntry.toTempStringz;
+        auto fragName = fragEntry.toTempStringz;
+        // Element by element: an array literal of runtime pointers needs the
+        // struct's `TypeInfo`, whose `RTInfo` DMD leaves undefined for an
+        // ImportC struct in a unittest build.
+        VkPipelineShaderStageCreateInfo[2] stages;
+        stages[0] = vkInfo(VkPipelineShaderStageCreateInfo(
+            stage: VkShaderStageFlagBits.VK_SHADER_STAGE_VERTEX_BIT,
+            pName: vertName.ptr,
+        ));
+        stages[1] = vkInfo(VkPipelineShaderStageCreateInfo(
+            stage: VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT,
+            pName: fragName.ptr,
+        ));
 
         // The field is spelled `module`, which is a D keyword — ImportC keeps
         // C's name, so it is unreachable by both named-argument syntax and
@@ -529,8 +593,7 @@ struct Pipeline
         ));
 
         auto pushRange = VkPushConstantRange(
-            stageFlags: VkShaderStageFlagBits.VK_SHADER_STAGE_FRAGMENT_BIT,
-            offset: 0, size: pushConstantBytes);
+            stageFlags: pushStages, offset: 0, size: pushConstantBytes);
         auto layoutInfo = vkInfo(VkPipelineLayoutCreateInfo(
             pushConstantRangeCount: pushConstantBytes == 0 ? 0 : 1,
             pPushConstantRanges: &pushRange,

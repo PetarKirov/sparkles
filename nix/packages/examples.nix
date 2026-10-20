@@ -23,7 +23,25 @@
         manifestFileset
         libsClosure
         refsIn
+        placeVulkanWsiShaders
         ;
+
+      # The triangle examples select sparkles:vulkan-wsi's `gpu-shaders`
+      # configuration, whose pre-generate step finds the prebuilt SPIR-V
+      # (`vulkan-wsi-shaders`) fresh, but still builds `shader-compile` to
+      # read its stamp, hence the tool's sources. Placed with the tree's
+      # normalised mtime, so a lib's bundle and its examples see one tree.
+      selectsVulkanWsiShaders =
+        libName:
+        builtins.any (p: lib.hasInfix ''"gpu-shaders"'' (builtins.readFile p)) (exampleFilesIn libName);
+      vulkanWsiShadersFor =
+        libName:
+        lib.optionalString (selectsVulkanWsiShaders libName) (
+          placeVulkanWsiShaders "$dubTreeRoot"
+          + ''
+            find "$dubTreeRoot/libs/vulkan-wsi/generated" -exec touch -h -d "@1" '{}' +
+          ''
+        );
 
       # Enumerate every standalone `.d` example across all libs as a flat list
       # of absolute paths.
@@ -111,8 +129,8 @@
               fs.fileFilter (
                 # `.h`: libs/wsi's ImportC bridges include vendored protocol
                 # headers (`wayland_xdg_shell_client_protocol.h`) from src/.
-                # `.spv`: libs/vulkan-wsi string-imports its triangle shaders
-                # from `src/shaders/`.
+                # `.spv`: libs/vulkan-wsi string-imports its test pattern's
+                # shaders from `src/shaders/`.
                 file:
                 file.hasExt "d"
                 || file.hasExt "c"
@@ -233,19 +251,22 @@
         libName:
         fs.toSource {
           inherit root;
-          fileset = fs.unions [
-            # Dub validates every sub-package declared in the root `dub.sdl`,
-            # so all sibling manifests must be present even when only one
-            # example is being built.
-            manifestFileset
-            # Library sources the examples link against via
-            # `dependency "sparkles:<lib>" path="../../.."`, transitively — see
-            # `libSourcesFor`.
-            (libSourcesFor libName)
-            # The full `examples/` subtree — this brings in the shared
-            # `views/` string-import assets alongside the script itself.
-            (fromRoot "libs/${libName}/examples")
-          ];
+          fileset = fs.unions (
+            [
+              # Dub validates every sub-package declared in the root `dub.sdl`,
+              # so all sibling manifests must be present even when only one
+              # example is being built.
+              manifestFileset
+              # Library sources the examples link against via
+              # `dependency "sparkles:<lib>" path="../../.."`, transitively — see
+              # `libSourcesFor`.
+              (libSourcesFor libName)
+              # The full `examples/` subtree — this brings in the shared
+              # `views/` string-import assets alongside the script itself.
+              (fromRoot "libs/${libName}/examples")
+            ]
+            ++ lib.optional (selectsVulkanWsiShaders libName) (fromRoot "apps/shader-compile/src")
+          );
         };
 
       # Arguments shared by an example and by the deps bundle it inherits.
@@ -325,6 +346,7 @@
           // {
             pname = "${libName}-example-deps";
             src = srcForLib libName;
+            preBuild = vulkanWsiShadersFor libName;
             dubPrimers = map (path: {
               subdir = (exampleInfo path).parentDirRel;
               single = "${(exampleInfo path).fileBase}.d";
@@ -344,6 +366,7 @@
             pname = "${info.libName}-example-${info.fileBase}";
 
             src = srcForLib info.libName;
+            preBuild = vulkanWsiShadersFor info.libName;
             # Where to build inside the normalised source tree (the vendored
             # builder's replacement for `sourceRoot`, which cannot vary: the
             # tree root is pinned so artifacts hash identically).
