@@ -238,7 +238,7 @@ import sparkles.shaders.types;
 @("shaders.capabilities.stageOperationsPerProfile")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.shaders.capabilities : Cap, cpu, gl330, gles100, Origin, vulkan13;
+    import sparkles.shaders.capabilities : Cap, cpu, gl330, gles100, Origin, vulkan11, vulkan13;
 
     // `SHC2`: derivatives on `gl330` and `vulkan1.3`, not on ES 2.0's core;
     // coarse and fine ones (which imply the plain ones) and demotion on
@@ -248,6 +248,10 @@ import sparkles.shaders.types;
     assert(vulkan13.has(Cap.derivatives) && vulkan13.has(Cap.derivativeControl)
         && vulkan13.has(Cap.demote));
     assert(!cpu.has(Cap.derivatives) && !cpu.has(Cap.demote));
+    // `vulkan1.1`: what `vulkan1.3` grants but demotion, which SPIR-V 1.3
+    // has only as an extension.
+    assert(vulkan11.caps.bits == (vulkan13.caps.bits & ~(1UL << Cap.demote)));
+    assert(vulkan11.fragCoordOrigin == Origin.upperLeft);
 
     // `SHF8`: where each profile's fragment positions start.
     assert(gl330.fragCoordOrigin == Origin.lowerLeft && gles100.fragCoordOrigin == Origin.lowerLeft);

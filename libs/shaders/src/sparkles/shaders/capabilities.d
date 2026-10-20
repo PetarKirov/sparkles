@@ -200,6 +200,14 @@ enum Profile vulkan13 = Profile("vulkan13", "vulkan1.3", Output.spirv, 13,
         Cap.sampledImages, Cap.intVertexInputs, Cap.derivativeControl, Cap.demote),
     Origin.upperLeft);
 
+/// Vulkan 1.1: SPIR-V 1.3, which every Vulkan 1.1 device consumes, and so the
+/// floor of Android's `VP_ANDROID_baseline_2022`. What `vulkan13` grants, but
+/// demotion, which SPIR-V 1.3 has only as an extension.
+enum Profile vulkan11 = Profile("vulkan11", "vulkan1.1", Output.spirv, 11,
+    capsOf(Cap.vertexStage, Cap.fragmentStage, Cap.uniformBlocks, Cap.pushConstants,
+        Cap.sampledImages, Cap.intVertexInputs, Cap.derivativeControl),
+    Origin.upperLeft);
+
 /// The host compilation: every resource kind as plain D values, no stage.
 enum Profile cpu = Profile("cpu", "cpu", Output.host, 0,
     capsOf(Cap.looseUniforms, Cap.uniformBlocks, Cap.pushConstants, Cap.int64,
@@ -207,7 +215,7 @@ enum Profile cpu = Profile("cpu", "cpu", Output.host, 0,
 
 /// Every profile, in the table's order: the order the build step compiles
 /// them in.
-enum Profile[] allProfiles = [gl330, gles100, vulkan13, cpu];
+enum Profile[] allProfiles = [gl330, gles100, vulkan13, vulkan11, cpu];
 
 /// The profile named `name`; a name not in the table fails the compilation,
 /// naming it.
