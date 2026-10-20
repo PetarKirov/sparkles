@@ -95,6 +95,9 @@ struct TerminalSettingsStore
         s.resolved = lc.effective;
         s.fileValue = lc.fileValue;
         s.fileOverlay = lc.fileOverlay;
+        // A save outside a page session (a shortcut persisting one setting)
+        // writes over the file as loaded, not over nothing.
+        s.sessionOverlay = lc.fileOverlay;
         s.origins = lc.origins;
         s.filePath = lc.filePath;
         return s;
@@ -283,6 +286,23 @@ version (unittest)
     assert(!store.resolved.appearance.followSystem);
     assert(readBack(file) == Sparse!TerminalConfig.init);
     assert(!p.provenance("appearance.followSystem").note.canFind("overrides"));
+}
+
+@("settings_store.save.withoutAPageKeepsTheRestOfTheFile")
+@system unittest
+{
+    auto fixture = TmpFS.create();
+    const file = fixture.writeFileAt("config.json", `{"paste":{"confirm":"never"}}`);
+    auto lc = loadTerminalConfig(file, buildPath(fixture.dir, ".termux"));
+    auto store = TerminalSettingsStore.from(lc);
+
+    auto draft = lc.effective;
+    draft.appearance.followSystem = !draft.appearance.followSystem;
+    assert(store.save(draft, ["appearance.followSystem"]) is null);
+
+    auto written = readBack(file);
+    assert(!written.appearance.followSystem.isNull, "the change is written");
+    assert(!written.paste.confirm.isNull, "and the setting already there is kept");
 }
 
 @("settings_store.autosave.aFlagIsNeverBakedInAndShadowsItsLeaf")
