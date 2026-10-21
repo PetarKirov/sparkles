@@ -22,7 +22,7 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 | [V2 The canvas](#v2-the-canvas)                                   | done        |
 | [V3 Glyphs](#v3-glyphs)                                           | not started |
 | [V4 The native host](#v4-the-native-host)                         | done        |
-| [V5 The terminal's seams](#v5-the-terminal-s-seams)               | not started |
+| [V5 The terminal's seams](#v5-the-terminal-s-seams)               | done        |
 | [V6 The terminal on Vulkan](#v6-the-terminal-on-vulkan)           | not started |
 | [V7 The phone terminal](#v7-the-phone-terminal)                   | not started |
 
@@ -165,6 +165,24 @@ autoscroll, click counting, link hover, the scrollbar — runs from
 **Gate.** The raylib terminal's screenshots are unchanged; the event-driven
 mouse passes scripted selection and scrollbar scenarios through the
 recording host; `terminal-view`'s tests build without raylib.
+
+**Outcome.** The gate is met. The painter (`isTerminalPainter`) takes solid
+fills, the hollow cursor's outline, a grapheme cluster across a run of
+cells, the exit banner's label, a pane's clip and offset, and kitty images
+as textures it creates, updates, releases and draws; the image cache keeps
+deciding what is resident. The raylib painter makes exactly the calls the
+renderer made before: the standalone terminal (styles, decorations, block
+graphics, two scaled kitty images, the scrollbar), its exit banner and the
+gallery's Terminal page capture byte-identical. The mouse runs from events
+in pane pixels; where a host does not deliver them yet, a bridge reads
+raylib each frame and emits the same events, and an `xdotool`-driven run
+(drag selection, wheel, a bar drag) captures byte-identical too. Six
+scenarios pass through the recording host on a pty the test reads.
+`terminal-view`'s `unittest` configuration builds its `core` sources, with
+no raylib in the closure. On the way, raylib's side buttons stopped
+reporting as the wheel's buttons, and a selection anchored at screen cell
+(0, 0) turned out to read as cleared (`TSE4`) whenever the render state is
+dirty: during output, and always under a host that never paints.
 
 ## V6: The terminal on Vulkan
 
