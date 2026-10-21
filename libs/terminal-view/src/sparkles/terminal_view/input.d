@@ -2,8 +2,6 @@ module sparkles.terminal_view.input;
 
 import core.sys.posix.unistd : write;
 
-import raylib;
-
 import sparkles.ghostty.c;
 import sparkles.base.buffer : SharedBuffer, UniqueBuffer;
 import sparkles.base.text.cstring : writeStringz;
@@ -126,143 +124,6 @@ unittest
     // Unknown values fall back to the default.
     assert(parseExitBehavior("bogus") == ExitBehavior.holdOnFailure);
     assert(parseExitBehavior("") == ExitBehavior.holdOnFailure);
-}
-
-@safe pure nothrow @nogc
-GhosttyKey raylib_key_to_ghostty(int rl_key)
-{
-    if (rl_key >= KeyboardKey.KEY_A && rl_key <= KeyboardKey.KEY_Z)
-        return cast(GhosttyKey)(GHOSTTY_KEY_A + (rl_key - KeyboardKey.KEY_A));
-    if (rl_key >= KeyboardKey.KEY_ZERO && rl_key <= KeyboardKey.KEY_NINE)
-        return cast(GhosttyKey)(GHOSTTY_KEY_DIGIT_0 + (rl_key - KeyboardKey.KEY_ZERO));
-    if (rl_key >= KeyboardKey.KEY_F1 && rl_key <= KeyboardKey.KEY_F12)
-        return cast(GhosttyKey)(GHOSTTY_KEY_F1 + (rl_key - KeyboardKey.KEY_F1));
-
-    switch (cast(KeyboardKey)rl_key) {
-    case KeyboardKey.KEY_SPACE:       return GHOSTTY_KEY_SPACE;
-    case KeyboardKey.KEY_ENTER:       return GHOSTTY_KEY_ENTER;
-    case KeyboardKey.KEY_TAB:         return GHOSTTY_KEY_TAB;
-    case KeyboardKey.KEY_BACKSPACE:   return GHOSTTY_KEY_BACKSPACE;
-    case KeyboardKey.KEY_DELETE:      return GHOSTTY_KEY_DELETE;
-    case KeyboardKey.KEY_ESCAPE:      return GHOSTTY_KEY_ESCAPE;
-    case KeyboardKey.KEY_UP:          return GHOSTTY_KEY_ARROW_UP;
-    case KeyboardKey.KEY_DOWN:        return GHOSTTY_KEY_ARROW_DOWN;
-    case KeyboardKey.KEY_LEFT:        return GHOSTTY_KEY_ARROW_LEFT;
-    case KeyboardKey.KEY_RIGHT:       return GHOSTTY_KEY_ARROW_RIGHT;
-    case KeyboardKey.KEY_HOME:        return GHOSTTY_KEY_HOME;
-    case KeyboardKey.KEY_END:         return GHOSTTY_KEY_END;
-    case KeyboardKey.KEY_PAGE_UP:     return GHOSTTY_KEY_PAGE_UP;
-    case KeyboardKey.KEY_PAGE_DOWN:   return GHOSTTY_KEY_PAGE_DOWN;
-    case KeyboardKey.KEY_INSERT:      return GHOSTTY_KEY_INSERT;
-    case KeyboardKey.KEY_MINUS:       return GHOSTTY_KEY_MINUS;
-    case KeyboardKey.KEY_EQUAL:       return GHOSTTY_KEY_EQUAL;
-    case KeyboardKey.KEY_LEFT_BRACKET:  return GHOSTTY_KEY_BRACKET_LEFT;
-    case KeyboardKey.KEY_RIGHT_BRACKET: return GHOSTTY_KEY_BRACKET_RIGHT;
-    case KeyboardKey.KEY_BACKSLASH:   return GHOSTTY_KEY_BACKSLASH;
-    case KeyboardKey.KEY_SEMICOLON:   return GHOSTTY_KEY_SEMICOLON;
-    case KeyboardKey.KEY_APOSTROPHE:  return GHOSTTY_KEY_QUOTE;
-    case KeyboardKey.KEY_COMMA:       return GHOSTTY_KEY_COMMA;
-    case KeyboardKey.KEY_PERIOD:      return GHOSTTY_KEY_PERIOD;
-    case KeyboardKey.KEY_SLASH:       return GHOSTTY_KEY_SLASH;
-    case KeyboardKey.KEY_GRAVE:       return GHOSTTY_KEY_BACKQUOTE;
-    default:                          return GHOSTTY_KEY_UNIDENTIFIED;
-    }
-}
-
-@("input.raylib_key_to_ghostty")
-@safe pure nothrow @nogc
-unittest
-{
-    // Contiguous ranges are mapped by offset from their first element.
-    assert(raylib_key_to_ghostty(KeyboardKey.KEY_A) == GHOSTTY_KEY_A);
-    assert(raylib_key_to_ghostty(KeyboardKey.KEY_Z) == GHOSTTY_KEY_Z);
-    assert(raylib_key_to_ghostty(KeyboardKey.KEY_ZERO) == GHOSTTY_KEY_DIGIT_0);
-    assert(raylib_key_to_ghostty(KeyboardKey.KEY_F1) == GHOSTTY_KEY_F1);
-    // Named keys come from the switch.
-    assert(raylib_key_to_ghostty(KeyboardKey.KEY_SPACE) == GHOSTTY_KEY_SPACE);
-    assert(raylib_key_to_ghostty(KeyboardKey.KEY_ENTER) == GHOSTTY_KEY_ENTER);
-    // Unmapped keys (e.g. modifiers) fall through to UNIDENTIFIED.
-    assert(raylib_key_to_ghostty(KeyboardKey.KEY_LEFT_SHIFT) == GHOSTTY_KEY_UNIDENTIFIED);
-}
-
-@system nothrow @nogc
-GhosttyMods get_ghostty_mods()
-{
-    GhosttyMods mods = 0;
-    if (IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT))
-        mods |= GHOSTTY_MODS_SHIFT;
-    if (IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL) || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL))
-        mods |= GHOSTTY_MODS_CTRL;
-    if (IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT))
-        mods |= GHOSTTY_MODS_ALT;
-    if (IsKeyDown(KeyboardKey.KEY_LEFT_SUPER) || IsKeyDown(KeyboardKey.KEY_RIGHT_SUPER))
-        mods |= GHOSTTY_MODS_SUPER;
-    return mods;
-}
-
-@safe pure nothrow @nogc
-uint raylib_key_unshifted_codepoint(int rl_key)
-{
-    if (rl_key >= KeyboardKey.KEY_A && rl_key <= KeyboardKey.KEY_Z)
-        return 'a' + cast(uint)(rl_key - KeyboardKey.KEY_A);
-    if (rl_key >= KeyboardKey.KEY_ZERO && rl_key <= KeyboardKey.KEY_NINE)
-        return '0' + cast(uint)(rl_key - KeyboardKey.KEY_ZERO);
-
-    switch (cast(KeyboardKey)rl_key) {
-    case KeyboardKey.KEY_SPACE:          return ' ';
-    case KeyboardKey.KEY_MINUS:          return '-';
-    case KeyboardKey.KEY_EQUAL:          return '=';
-    case KeyboardKey.KEY_LEFT_BRACKET:   return '[';
-    case KeyboardKey.KEY_RIGHT_BRACKET:  return ']';
-    case KeyboardKey.KEY_BACKSLASH:      return '\\';
-    case KeyboardKey.KEY_SEMICOLON:      return ';';
-    case KeyboardKey.KEY_APOSTROPHE:     return '\'';
-    case KeyboardKey.KEY_COMMA:          return ',';
-    case KeyboardKey.KEY_PERIOD:         return '.';
-    case KeyboardKey.KEY_SLASH:          return '/';
-    case KeyboardKey.KEY_GRAVE:          return '`';
-    default:                             return 0;
-    }
-}
-
-@("input.raylib_key_unshifted_codepoint")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(raylib_key_unshifted_codepoint(KeyboardKey.KEY_A) == 'a');
-    assert(raylib_key_unshifted_codepoint(KeyboardKey.KEY_Z) == 'z');
-    assert(raylib_key_unshifted_codepoint(KeyboardKey.KEY_ZERO) == '0');
-    assert(raylib_key_unshifted_codepoint(KeyboardKey.KEY_NINE) == '9');
-    assert(raylib_key_unshifted_codepoint(KeyboardKey.KEY_SPACE) == ' ');
-    assert(raylib_key_unshifted_codepoint(KeyboardKey.KEY_SLASH) == '/');
-    // Keys without an unshifted printable codepoint return 0.
-    assert(raylib_key_unshifted_codepoint(KeyboardKey.KEY_LEFT_SHIFT) == 0);
-}
-
-@safe pure nothrow @nogc
-GhosttyMouseButton raylib_mouse_to_ghostty(int rl_button)
-{
-    switch (cast(MouseButton)rl_button) {
-    case MouseButton.MOUSE_BUTTON_LEFT:    return GHOSTTY_MOUSE_BUTTON_LEFT;
-    case MouseButton.MOUSE_BUTTON_RIGHT:   return GHOSTTY_MOUSE_BUTTON_RIGHT;
-    case MouseButton.MOUSE_BUTTON_MIDDLE:  return GHOSTTY_MOUSE_BUTTON_MIDDLE;
-    case MouseButton.MOUSE_BUTTON_SIDE:    return GHOSTTY_MOUSE_BUTTON_FOUR;
-    case MouseButton.MOUSE_BUTTON_EXTRA:   return GHOSTTY_MOUSE_BUTTON_FIVE;
-    case MouseButton.MOUSE_BUTTON_FORWARD: return GHOSTTY_MOUSE_BUTTON_SIX;
-    case MouseButton.MOUSE_BUTTON_BACK:    return GHOSTTY_MOUSE_BUTTON_SEVEN;
-    default:                               return GHOSTTY_MOUSE_BUTTON_UNKNOWN;
-    }
-}
-
-@("input.raylib_mouse_to_ghostty")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(raylib_mouse_to_ghostty(MouseButton.MOUSE_BUTTON_LEFT) == GHOSTTY_MOUSE_BUTTON_LEFT);
-    assert(raylib_mouse_to_ghostty(MouseButton.MOUSE_BUTTON_RIGHT) == GHOSTTY_MOUSE_BUTTON_RIGHT);
-    assert(raylib_mouse_to_ghostty(MouseButton.MOUSE_BUTTON_MIDDLE) == GHOSTTY_MOUSE_BUTTON_MIDDLE);
-    // Out-of-range button codes map to UNKNOWN.
-    assert(raylib_mouse_to_ghostty(99) == GHOSTTY_MOUSE_BUTTON_UNKNOWN);
 }
 
 /// The selection's tracked ends and shape — the model
@@ -438,38 +299,10 @@ void detectLink(GhosttyTerminal terminal, GhosttyPoint pt, int max_cols,
     }
 }
 
-// Special (non-letter, non-digit) keys polled each frame.
-private static immutable int[] specialKeys = [
-    KeyboardKey.KEY_SPACE, KeyboardKey.KEY_ENTER, KeyboardKey.KEY_TAB, KeyboardKey.KEY_BACKSPACE, KeyboardKey.KEY_DELETE,
-    KeyboardKey.KEY_ESCAPE, KeyboardKey.KEY_UP, KeyboardKey.KEY_DOWN, KeyboardKey.KEY_LEFT, KeyboardKey.KEY_RIGHT,
-    KeyboardKey.KEY_HOME, KeyboardKey.KEY_END, KeyboardKey.KEY_PAGE_UP, KeyboardKey.KEY_PAGE_DOWN, KeyboardKey.KEY_INSERT,
-    KeyboardKey.KEY_MINUS, KeyboardKey.KEY_EQUAL, KeyboardKey.KEY_LEFT_BRACKET, KeyboardKey.KEY_RIGHT_BRACKET,
-    KeyboardKey.KEY_BACKSLASH, KeyboardKey.KEY_SEMICOLON, KeyboardKey.KEY_APOSTROPHE, KeyboardKey.KEY_COMMA,
-    KeyboardKey.KEY_PERIOD, KeyboardKey.KEY_SLASH, KeyboardKey.KEY_GRAVE,
-    KeyboardKey.KEY_F1, KeyboardKey.KEY_F2, KeyboardKey.KEY_F3, KeyboardKey.KEY_F4, KeyboardKey.KEY_F5, KeyboardKey.KEY_F6,
-    KeyboardKey.KEY_F7, KeyboardKey.KEY_F8, KeyboardKey.KEY_F9, KeyboardKey.KEY_F10, KeyboardKey.KEY_F11, KeyboardKey.KEY_F12,
-];
-
-@safe pure nothrow
-private int[] buildKeysToCheck()
-{
-    int[] keys;
-    for (int k = KeyboardKey.KEY_A; k <= KeyboardKey.KEY_Z; k++) keys ~= k;
-    for (int k = KeyboardKey.KEY_ZERO; k <= KeyboardKey.KEY_NINE; k++) keys ~= k;
-    foreach (k; specialKeys) keys ~= k;
-    return keys;
-}
-
-/// All keys polled each frame (A–Z, 0–9, specials), built once at compile time
-/// (CTFE) into static data so the input path allocates nothing per frame — the
-/// old code rebuilt this list with a GC `appender` every frame.
-private static immutable int[] keysToCheck = buildKeysToCheck();
-
-/// One keystroke as plain data — the seam between an input source (raylib
-/// polling today, `sparkles:input` events after the host migration) and the
-/// libghostty key encoder. Everything the encoder is told about a stroke lives
-/// here, so the byte stream a stroke produces is testable without a window or
-/// a pty — the oracle the migration is verified against.
+/// One keystroke as plain data — the seam between `sparkles:input` key
+/// events (`event_map.d`) and the libghostty key encoder. Everything the
+/// encoder is told about a stroke lives here, so the byte stream a stroke
+/// produces is testable without a window or a pty.
 struct KeyStroke {
     GhosttyKey key;
     GhosttyKeyAction action;
@@ -554,9 +387,8 @@ version (unittest)
 }
 
 // The byte oracle: what each stroke writes to the pty, pinned per encoder
-// mode. This is the contract the host migration must preserve — when the
-// input source swaps from raylib polling to `sparkles:input` events, these
-// exact bytes must still come out.
+// mode. The bytes were pinned while raylib was polled; `sparkles:input`
+// events must produce exactly these (`event_map.d`'s fixtures replay them).
 @("input.encodeKeyStroke.legacyDefaults")
 @system nothrow @nogc
 unittest
@@ -673,112 +505,4 @@ unittest
 
     // Plain text still passes through as text under disambiguate-only.
     assert(f.encode(press(GHOSTTY_KEY_A, 0, 'a', "a"), buf) == "a");
-}
-
-@system nothrow @nogc
-void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, GhosttyTerminal terminal, ref SelectionState selState)
-{
-    import sparkles.base.text.utf : encodeScalar, UtfMode;
-    ghostty_key_encoder_setopt_from_terminal(encoder, terminal);
-
-    char[64] char_utf8;
-    int char_utf8_len = 0;
-    int ch;
-    while ((ch = GetCharPressed()) != 0) {
-        char[4] u8;
-        // Substitute U+FFFD for an invalid codepoint instead of throwing — a
-        // bad value from GetCharPressed must not crash input handling.
-        int n = cast(int) encodeScalar(cast(dchar) ch, u8[], UtfMode.replacement).written;
-        if (char_utf8_len + n < char_utf8.length) {
-            char_utf8[char_utf8_len .. char_utf8_len + n] = u8[0 .. n];
-            char_utf8_len += n;
-        }
-    }
-
-    GhosttyMods mods = get_ghostty_mods();
-
-    // Check Ctrl+Shift+C (Copy) and Ctrl+Shift+V (Paste)
-    if (mods == (GHOSTTY_MODS_CTRL | GHOSTTY_MODS_SHIFT)) {
-        if (IsKeyPressed(KeyboardKey.KEY_C) && selState.start && selState.end) {
-            GhosttyGridRef start_snapshot;
-            GhosttyGridRef end_snapshot;
-            if (ghostty_tracked_grid_ref_snapshot(selState.start, &start_snapshot) == GHOSTTY_SUCCESS &&
-                ghostty_tracked_grid_ref_snapshot(selState.end, &end_snapshot) == GHOSTTY_SUCCESS) {
-
-                GhosttySelection sel;
-                sel.start = start_snapshot;
-                sel.end = end_snapshot;
-                sel.rectangle = selState.isRectangular;
-
-                GhosttyFormatterTerminalOptions fmt_opts;
-                fmt_opts.size = GhosttyFormatterTerminalOptions.sizeof;
-                fmt_opts.emit = GHOSTTY_FORMATTER_FORMAT_PLAIN;
-                fmt_opts.unwrap = true;
-                fmt_opts.trim = true;
-                fmt_opts.selection = &sel;
-
-                GhosttyFormatter formatter;
-                if (ghostty_formatter_terminal_new(null, &formatter, terminal, fmt_opts) == GHOSTTY_SUCCESS) {
-                    ubyte* out_ptr;
-                    size_t out_len;
-                    if (ghostty_formatter_format_alloc(formatter, null, &out_ptr, &out_len) == GHOSTTY_SUCCESS) {
-                        // ghostty's buffer may not be NUL-terminated; copy it
-                        // plus a NUL into a @nogc SharedBuffer for SetClipboardText.
-                        UniqueBuffer!(char, 4096) clip;
-                        clip.writeStringz(cast(const(char)[])out_ptr[0 .. out_len]);
-                        SetClipboardText(clip[].ptr);
-
-                        // Free the memory ghostty allocated.
-                        ghostty_free(null, out_ptr, out_len);
-                    }
-                    ghostty_formatter_free(formatter);
-                }
-            }
-            return; // consume event
-        }
-        else if (IsKeyPressed(KeyboardKey.KEY_V)) {
-            const(char)* clipboard = GetClipboardText();
-            if (clipboard) {
-                import core.stdc.string : strlen;
-                pty_write(pty_fd, clipboard, strlen(clipboard));
-            }
-            return; // consume event
-        }
-    }
-
-    foreach (rl_key; keysToCheck) {
-        bool pressed  = IsKeyPressed(cast(KeyboardKey)rl_key);
-        bool repeated = IsKeyPressedRepeat(cast(KeyboardKey)rl_key);
-        bool released = IsKeyReleased(cast(KeyboardKey)rl_key);
-
-        if (!pressed && !repeated && !released)
-            continue;
-
-        GhosttyKey gkey = raylib_key_to_ghostty(rl_key);
-        if (gkey == GHOSTTY_KEY_UNIDENTIFIED)
-            continue;
-
-        KeyStroke stroke = {
-            key: gkey,
-            action: released ? GHOSTTY_KEY_ACTION_RELEASE :
-                pressed  ? GHOSTTY_KEY_ACTION_PRESS :
-                GHOSTTY_KEY_ACTION_REPEAT,
-            mods: mods,
-            unshiftedCodepoint: raylib_key_unshifted_codepoint(rl_key),
-            utf8: (char_utf8_len > 0 && !released) ? char_utf8[0 .. char_utf8_len] : null,
-        };
-        // The typed text attaches to at most one stroke per frame.
-        if (stroke.utf8.length > 0)
-            char_utf8_len = 0;
-
-        char[128] buf;
-        const bytes = encodeKeyStroke(encoder, event, stroke, buf);
-        if (bytes.length > 0) {
-            pty_write(pty_fd, bytes.ptr, bytes.length);
-            char_utf8_len = 0;
-        }
-    }
-
-    if (char_utf8_len > 0)
-        pty_write(pty_fd, char_utf8.ptr, char_utf8_len);
 }

@@ -7,7 +7,6 @@ targetPath "build"
 
 dflags "-preview=in" "-preview=dip1000"
 
-dependency "raylib-d" version="~>6.0.1"
 dependency "expected" version="~>0.4.0"
 
 dependency "sparkles:android" path="../.."
@@ -15,18 +14,29 @@ dependency "sparkles:base" path="../.."
 dependency "sparkles:event-horizon" path="../.."
 dependency "sparkles:ghostty" path="../.."
 dependency "sparkles:input" path="../.."
-dependency "sparkles:raylib-text" path="../.."
 dependency "sparkles:ui" path="../.."
 
-libs "raylib"
-
+// The terminal painted and its mouse polled with raylib: what the desktop
+// terminal and the gallery build today.
 configuration "library" {
     targetType "sourceLibrary"
+    dependency "raylib-d" version="~>6.0.1"
+    dependency "sparkles:raylib-text" path="../.."
+    libs "raylib"
     versions "TerminalViewRaylib"
 }
 
+// No raylib: the renderer through a painter the host supplies
+// (`isTerminalPainter`), the mouse from the host's events.
+configuration "core" {
+    targetType "sourceLibrary"
+    excludedSourceFiles "src/sparkles/terminal_view/raylib_*.d"
+}
+
+// The core configuration's sources, so the tests prove it builds without
+// raylib (plan slice V5 of `docs/specs/ui-vulkan`).
 configuration "unittest" {
-    versions "TerminalViewRaylib"
+    excludedSourceFiles "src/sparkles/terminal_view/raylib_*.d"
     dependency "sparkles:test-runner" path="../.."
     // The recording host the mouse scenarios run through (`pointer_test.d`).
     dependency "sparkles:ui-app" path="../.."
