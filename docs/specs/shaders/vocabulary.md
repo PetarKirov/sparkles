@@ -17,61 +17,62 @@ type names of [`D20`](./decisions.md#d20-generic-types-hlsl-shaped-aliases-glsl-
 ## Types
 
 **SHV1: Vector types.** The library **must** provide `float2`, `float3` and
-`float4`, vectors of two, three and four `float` components, with
-component-wise `+`, `-`, `*` and `/` between two vectors of the same length
-and between a vector and a `float` on either side, unary `-`, and `.array`
-for the components as a static array. `vec2`, `vec3` and `vec4` **must**
-remain the same types under their GLSL names. Equality of two vectors **must**
-be `allEqual(a, b)`, one `bool` that is true when every component is equal,
-GLSL's `all(equal(a, b))`; `==` on two vectors is outside the vocabulary.
+`float4` as `sparkles:math`'s `Vector!(float, N, Layout.device)`, so that they
+have its operations: component-wise arithmetic against a vector of the same
+length or a `float` on either side, unary `-`, and `.array` for the components
+as a static array ([`MV4`](../math/SPEC.md), [`MV6`](../math/SPEC.md)). `vec2`, `vec3` and `vec4`
+**must** remain the same types under their GLSL names. Equality of two
+vectors **must** be one `bool`, true when every component is equal, GLSL's
+`all(equal(a, b))`: `a == b` ([`MV7`](../math/SPEC.md)), and `allEqual(a, b)`, the
+same.
 
-_Rationale:_ D's `==` on a `__vector` is a mask, one lane per component, and
-on a struct a `bool`, so the same expression would mean different things
-under LDC and DMD. GLSL's `==` on vectors is the single `bool`.
+_Rationale:_ One vector type across the project, so that a value crosses
+from a UI's geometry to a shader's uniform without a conversion. `==` is one
+`bool` because a vector is a struct whatever its storage; D's `==` on a bare
+`__vector`, a mask, never reaches shader code.
 
-**SHV2: Representation.** Under LDC, `float2` and `float4` **must** be the
-compiler's `__vector` types. In a device compilation `float3` **must** be
-`__vector(float[3])`. Elsewhere, and on the host under every compiler,
-`float3` **must** be a struct of three `float`s with the same operations;
-`float2` and `float4` **may** be such structs under a compiler without the
-corresponding `__vector`. Whatever the representation, each type **must**
-have the device's size and alignment: 8 bytes for `float2`, 16 for `float3`
-and `float4`. The vocabulary **must** also provide packed variants
-(`Vec2Packed`, `Vec3Packed`, `Vec4Packed`), whose components are back to
-back, and conversions between the two.
+**SHV2: Representation.** The vector types **must** have
+`sparkles:math`'s device layout and storage ([`MV2`](../math/SPEC.md), [`MV3`](../math/SPEC.md)): 8
+bytes for `float2`, 16 for `float3` and `float4`, under every compiler and on
+both sides, and a `__vector` in a device build. The vocabulary **must** also
+provide packed variants (`Vec2Packed`, `Vec3Packed`, `Vec4Packed`), the packed
+`Vector!(float, N)`s, whose components are back to back, and conversions
+between the two (`packed`, `aligned`).
 
-_Rationale:_ The device needs native vectors, because a struct is an
-aggregate the SPIR-V backend would have to keep in memory. A released host
-LDC sizes a three-element `__vector` at 12 bytes while LLVM allocates 16,
-which breaks a struct that contains one, and DMD has no such vector; a
-struct avoids both. Aligning it like the device's vector means a value, a
-struct field or an array element occupies the same bytes on both sides. A
-block a host shares with the device takes its layout from
-[`SHR6`](./resources.md), not from these bytes.
+_Rationale:_ The device needs native vectors, because a struct of an array
+is an aggregate the SPIR-V backend would have to keep in memory; a vector
+type that stores one is its vector at the interface ([`MV12`](../math/SPEC.md)). The same
+bytes on both sides mean a value, a struct field or an array element holding
+a vector occupies the same memory on the host as on the device. A block a
+host shares with the device takes its layout from [`SHR6`](./resources.md),
+not from these bytes.
 
 **SHV9: Integer vectors.** The library **must** provide `int2`, `int3` and
-`int4`, vectors of `int`, with the representation rules of `SHV2` for `int`
+`int4`, the device-layout `Vector!(int, N)`s, with the representation of `SHV2`
 and the operations of `SHV1` except `/`, which on integers is outside the
 vocabulary of this slice.
 
-**SHV10: One vector type (planned).** `float2`–`float4` and `int2`–`int4`
-**must** become aliases of `sparkles.math`'s `Vector!(T, N)`, the project's
-one vector type, once it meets `SHV1`, `SHV2` and `SHV4` on host and device;
-`Matrix!(T, R, C)` and its aliases (`float4x4`, …) come with it. Until then
-they are this library's own types.
+**SHV10: One vector type.** The vector types of `SHV1` and `SHV9` **must** be
+`sparkles.math`'s `Vector`, and the library **must** provide matrices of
+`float` as its `Matrix`: `floatRxC`, with `R` rows and `C` columns for `R` and `C`
+from 2 to 4, as HLSL names them; `mat2`, `mat3` and `mat4`; and GLSL's
+`matCxR`, with `C` columns and `R` rows, the same types (`mat2x3` is
+`float3x2`). Their storage, indexing and products are `sparkles:math`'s
+([`MM2`](../math/SPEC.md)–[`MM5`](../math/SPEC.md)): column-major, so a matrix in a block has the
+bytes of a column-major matrix under `std140` and `std430`, which GLSL sees as
+an array of its columns ([`MD6`](../math/SPEC.md#decisions)).
 
-**SHV3: Constructors.** `v2(x, y)`, `v3(x, y, z)` and `v4(x, y, z, w)`
-**must** construct vectors from components, `v2(s)`, `v3(s)` and `v4(s)`
-**must** broadcast one `float`, and `v4(rgb, a)` **must** extend a `float3`
-with a fourth component.
+**SHV3: Constructors.** The vector types **must** be constructible as structs
+([`MV5`](../math/SPEC.md)): `float3(1, 0, 0)`, `float4(0.5f)` broadcasting one `float`, and
+`float4(rgb, a)` extending a `float3`. `v2(x, y)`, `v3(x, y, z)` and
+`v4(x, y, z, w)`, their one-argument broadcasts, `v4(rgb, a)`, and `i2`, `i3`
+and `i4` for the integer vectors, **must** remain the same constructors as
+functions.
 
-_Rationale:_ A `__vector` type alias cannot be called, and device code may
-not spell the array literal D uses to build one.
-
-**SHV4: Component access.** `x`, `y`, `z` and `w` **must** read one
-component, `xy` the first two, and `xyz` (with the alias `rgb`) the first
-three of a `float4`. They are free functions reached by D's uniform function
-call syntax, so `c.xyz` works on both representations.
+**SHV4: Component access.** A vector's components **must** be read and
+written by name, `x`, `y`, `z` and `w`, and through swizzles ([`MV4`](../math/SPEC.md),
+[`MV8`](../math/SPEC.md)): `c.xyz`, its spelling `c.rgb`, `c.a`, `uv.yx`, and
+`c.xy = uv`.
 
 ## Built-in functions
 

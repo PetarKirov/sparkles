@@ -667,6 +667,40 @@ demote needs an extension at 1.3, so the profile does not grant it.
 **Trade-offs.** A second Vulkan output per entry point, where a unit asks
 for both. A 1.4 profile can follow if something needs what 1.4 adds.
 
+### D30: The vocabulary's vectors are the project's
+
+**Question.** (`SHV10`.) The vocabulary had vector types of its own, a bare
+`__vector` under LDC and a struct elsewhere, beside `sparkles:math`'s `Vector`,
+a union the UI, terminal and window libraries use. What does a shader's
+`float4` become?
+
+**Alternatives.**
+
+- Keep two families, converting between them where a value crosses.
+- A bare `__vector` everywhere it exists, for the shader types only.
+- One struct type for the whole project, whose storage is a `__vector` where
+  that is what the compiler needs.
+
+**Choice.** One type: the vocabulary's vectors and matrices are aliases of
+`sparkles:math`'s, with the device layout, and their contract is that
+library's [specification](../math/SPEC.md). The compiler gained what that
+takes: a `@vectorType` struct crosses a shader's interface as its vector,
+CTFE evaluates vector operations (dlang/dmd#21823), and Vulkan modules copy
+and zero whole typed values. The vocabulary's built-ins apply an intrinsic to
+a vector's native storage, so a vector operation stays one instruction.
+
+**Why.** A value crosses from a UI's geometry to a shader's uniform without a
+conversion, a vector is a compile-time value on every compiler, and `==` is
+one `bool` everywhere. The storage, layout and matrix-order choices are
+`sparkles:math`'s ([`MD2`–`MD4`](../math/SPEC.md#decisions)).
+
+**Trade-offs.** The generated GLSL and SPIR-V are no longer byte-identical to
+the bare-vector build's: a local array of vectors is an array of one-member
+structs, and some control flow is shaped differently. The readbacks establish
+that they compute the same. A diagnostic names a vector type in full,
+`Vector!(float, 2LU, Layout.device, ["x", "y"])`, where a bare `__vector` was
+shorter.
+
 ## Open questions
 
 | ID  | Question                                                                                                                                                  | Affects | Decision point             |
