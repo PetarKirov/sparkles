@@ -1,12 +1,13 @@
 /**
 The math library's tests, kept out of the modules they exercise.
 
-`sparkles.math.vector` also compiles for a GPU, and a module that does may
-hold no string literal, which a test's name is. So it carries no tests of its
-own, and this host-only module carries them.
+`sparkles.math.vector` and `sparkles.math.matrix` also compile for a GPU, and
+a module that does may hold no string literal, which a test's name is. So
+they carry no tests of their own, and this host-only module carries them.
 */
 module sparkles.math.testing;
 
+import sparkles.math.matrix;
 import sparkles.math.vector;
 
 private alias F2 = Vector!(float, 2, Layout.device);
@@ -164,4 +165,93 @@ unittest
 {
     static foreach (i; 0 .. 3)
         static assert(Vec3f.infinity[i] is float.infinity);
+}
+
+private alias M3 = Matrix!(float, 3, 3);
+private alias M23 = Matrix!(float, 2, 3);
+private alias R23 = Matrix!(float, 2, 3, MatrixOrder.rowMajor);
+
+/// A column-major matrix is its columns, each a device vector: the bytes of
+/// a column-major `mat3` under std140 and std430.
+@("Matrix.layout")
+@safe pure nothrow @nogc
+unittest
+{
+    static assert(M3.sizeof == 48);
+    static assert(Matrix!(float, 4, 4).sizeof == 64);
+    static assert(M23.sizeof == 3 * 8);
+    static assert(R23.sizeof == 2 * 16);
+}
+
+/// `m[r, c]` and the element constructor read as mathematics writes a
+/// matrix, row by row, whatever the order.
+@("Matrix.indexing")
+@safe pure nothrow @nogc
+unittest
+{
+    const a = M23(
+        1, 2, 3,
+        4, 5, 6);
+    const b = R23(
+        1, 2, 3,
+        4, 5, 6);
+    assert(a[0, 2] == 3 && a[1, 0] == 4);
+    assert(a == b);
+    assert(a.column(1) == F2(2, 5));
+    assert(a.row(1) == F3(4, 5, 6));
+    assert(M23.fromColumns(F2(1, 4), F2(2, 5), F2(3, 6)) == a);
+    assert(M23.fromRows(F3(1, 2, 3), F3(4, 5, 6)) == a);
+    assert(a.transpose == Matrix!(float, 3, 2)(1, 4, 2, 5, 3, 6));
+}
+
+/// `m * v` takes `v` as a column vector, `v * m` as a row vector, and
+/// `m * n` is the matrix product, in either order; `mul` spells them as
+/// HLSL does.
+@("Matrix.products")
+@safe pure nothrow @nogc
+unittest
+{
+    const a = M23(
+        1, 2, 3,
+        4, 5, 6);
+    const b = R23(
+        1, 2, 3,
+        4, 5, 6);
+    assert(a * F3(1, 0, 1) == F2(4, 10));
+    assert(b * Vec3f(1, 0, 1) == F2(4, 10));
+    assert(F2(1, 1) * a == F3(5, 7, 9));
+    assert(F2(1, 1) * b == F3(5, 7, 9));
+    assert(mul(a, F3(1, 0, 1)) == mul(b, F3(1, 0, 1)));
+
+    const c = Matrix!(float, 3, 2)(
+        1, 0,
+        0, 1,
+        1, 1);
+    assert(a * c == Matrix!(float, 2, 2)(4, 5, 10, 11));
+    assert(b * c == a * c);
+    assert(mul(M3.identity, M3.identity) == M3.identity);
+    assert(M3.identity * F3(1, 2, 3) == F3(1, 2, 3));
+}
+
+/// Sums, differences and scalar products are element-wise.
+@("Matrix.elementWise")
+@safe pure nothrow @nogc
+unittest
+{
+    const a = M23(1, 2, 3, 4, 5, 6);
+    assert(a + a == a * 2);
+    assert(2 * a - a == a);
+    assert(a / 2 == M23(0.5, 1, 1.5, 2, 2.5, 3));
+    enum m = M3.identity * 3;
+    static assert(m[1, 1] == 3 && m[0, 1] == 0);
+}
+
+/// A matrix prints row by row.
+@("Matrix.toString")
+@safe
+unittest
+{
+    import sparkles.base.buffer : checkToString;
+
+    checkToString(Matrix!(int, 2, 2)(1, 2, 3, 4), "[(1, 2), (3, 4)]");
 }
