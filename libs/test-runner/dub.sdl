@@ -34,6 +34,13 @@ configuration "library" {
     targetType "sourceLibrary"
 }
 
+// Forward the optimized consumer's choice to the implementation: DUB's
+// subConfiguration directives only apply to direct dependencies.
+configuration "benchmark" {
+    targetType "sourceLibrary"
+    subConfiguration "sparkles:test-runner-impl" "benchmark"
+}
+
 configuration "unittest" {
     // The shim's own tests (discovery) run through the linked impl library.
     targetType "library"
