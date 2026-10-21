@@ -583,6 +583,10 @@
         ]
       },
       {
+        "text": "math",
+        "link": "/libs/math/"
+      },
+      {
         "text": "metadata",
         "link": "/libs/metadata/",
         "collapsed": true,
@@ -1341,6 +1345,16 @@
           {
             "text": "Decisions",
             "link": "/specs/font/decisions"
+          }
+        ]
+      },
+      {
+        "text": "Math",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/math/SPEC"
           }
         ]
       },
