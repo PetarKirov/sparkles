@@ -71,6 +71,10 @@ changes.
 **Acceptance.** `ci --test` and the example and documentation checks pass; no
 `core.sync.mutex`, `core.sync.condition` or `pthread_mutex_t` remains outside
 the seam and the portable thread parker.
+**Exceptions.** event-horizon's pools move with its fiber parker, in its
+M20. Code that shows another library's idiom (the hunt-net tutorial
+snippets) or measures `core.sync` (the locking survey's benchmarks) keeps
+it.
 
 ## Dependent work in other specifications
 
@@ -97,5 +101,5 @@ acceptance.
 | S0        | delivered   | #648         |
 | S1        | delivered   | #657         |
 | S2        | delivered   | #657         |
-| S3        | implemented | —            |
-| S4        | not started | —            |
+| S3        | delivered   | #677         |
+| S4        | implemented | —            |
