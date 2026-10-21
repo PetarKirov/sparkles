@@ -3,7 +3,9 @@ Per-terminal Kitty textures and placement rendering. The C ABI has no image
 revision, so an owned pixel snapshot is compared at most once per VT mutation
 epoch. Borrowed Ghostty handles never survive a method call. Texture/snapshot
 storage is bounded; placement sorting uses bounded batches without dropping
-placements when a terminal exceeds the batch size.
+placements when a terminal exceeds the batch size. The textures themselves
+are the painter's (`isTextureSink`): this cache decides what is resident and
+what is drawn where, never what a texture is.
 */
 module sparkles.terminal_view.kitty_images;
 
@@ -11,20 +13,18 @@ import core.stdc.string : memcmp, memcpy;
 
 import std.algorithm.sorting : sort;
 
-import raylib : Color, DrawTexturePro, Image, LoadTextureFromImage, PixelFormat,
-    Rectangle, SetTextureFilter, Texture2D, TextureFilter, UnloadTexture,
-    UpdateTextureRec, Vector2;
-import raylib.rlgl : rlDrawRenderBatchActive;
-
 import sparkles.base.buffer : Buffer, UniqueBuffer;
 import sparkles.ghostty.c;
+import sparkles.terminal_view.painter : ImagePixels, ImageRect, isTextureSink, NoTextures,
+    PixelLayout, TextureId;
 
 /**
 Owns all image resources for one terminal. Call `prepare` before the three
 `drawLayer` calls, advancing `mutationEpoch` whenever VT input is consumed.
-Call `release` before the window/GL context is destroyed. No window is needed
-when no textures have been loaded. All calls run on the render thread, with
-no terminal mutations between prepare and the last layer.
+Call `release` before the window/GL context is destroyed, with the painter
+that made the textures. No window is needed when no textures have been
+loaded. All calls run on the render thread, with no terminal mutations
+between prepare and the last layer.
 */
 struct KittyImageRenderer
 {
@@ -62,10 +62,11 @@ struct KittyImageRenderer
 
     @disable this(this);
 
-    @system nothrow @nogc:
+    // ── what draws, through a painter (attributes inferred from it) ──
 
-    void prepare(GhosttyTerminal terminal, ulong mutationEpoch,
+    void prepare(P)(ref P painter, GhosttyTerminal terminal, ulong mutationEpoch,
         int width, int height)
+    if (isTextureSink!P)
     {
         if (captured)
         {
@@ -78,7 +79,7 @@ struct KittyImageRenderer
         ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_ACTIVE_SCREEN, &activeScreen);
         const changedScreen = prepared && screen != activeScreen;
         if (changedScreen)
-            releaseImages();
+            releaseImages(painter);
         screen = activeScreen;
         cellWidth = width;
         cellHeight = height;
@@ -89,17 +90,18 @@ struct KittyImageRenderer
         {
             auto graphics = graphicsFor(terminal);
             foreach (ref image; images)
-                if (image.texture.id != 0 && (graphics is null ||
+                if (image.texture.valid && (graphics is null ||
                     ghostty_kitty_graphics_image(graphics, image.id) is null))
-                    retire(image);
+                    retire(painter, image);
         }
         epoch = mutationEpoch;
         prepared = true;
     }
 
-    void drawLayer(GhosttyTerminal terminal,
+    void drawLayer(P)(ref P painter, GhosttyTerminal terminal,
         GhosttyKittyGraphicsPlacementIterator iterator,
         GhosttyKittyPlacementLayer layer)
+    if (isTextureSink!P)
     {
         auto graphics = graphicsFor(terminal);
         if (graphics is null || iterator is null)
@@ -153,10 +155,9 @@ struct KittyImageRenderer
             sort!placementBefore(placements[]);
             foreach (ref const placement; placements[])
             {
-                const texture = textureFor(graphics, placement.imageId);
-                if (texture.id != 0)
-                    DrawTexturePro(texture, placement.source, placement.destination,
-                        Vector2(0, 0), 0, Color(255, 255, 255, 255));
+                const texture = textureFor(painter, graphics, placement.imageId);
+                if (texture.valid)
+                    painter.drawTexture(texture, placement.source, placement.destination);
             }
             if (!more || placements.empty)
                 break;
@@ -164,6 +165,148 @@ struct KittyImageRenderer
             hasAfter = true;
         }
     }
+
+    /// Paint only owned state, never the terminal that is changing under a hold.
+    void drawCapturedLayer(P)(ref P painter, GhosttyKittyPlacementLayer layer)
+    if (isTextureSink!P)
+    {
+        foreach (ref const placement; capturedPlacements[])
+        {
+            if (placementLayer(placement.z) != layer)
+                continue;
+            ref image = capturedImages[placement.captureIndex];
+            const ref pixels = image.pixels;
+            const view = PixelView(image.width, image.height, image.layout, image.rowBytes,
+                pixels[]);
+            const texture = textureForView(painter, image.id, view, findImage(image.id),
+                &image.pixels);
+            if (texture.valid)
+                painter.drawTexture(texture, placement.source, placement.destination);
+        }
+    }
+
+    /// Flush queued draws before deleting resources; safe to call repeatedly.
+    void release(P)(ref P painter)
+    if (isTextureSink!P)
+    {
+        releaseImages(painter);
+        placements.clear();
+        releaseCapture();
+        prepared = false;
+        useClock = 0;
+        mutations = KittyMutationScanner.init;
+        repaintPending = false;
+    }
+
+    private void releaseImages(P)(ref P painter)
+    {
+        foreach (ref image; images)
+            retire(painter, image);
+    }
+
+    private void retire(P)(ref P painter, ref CachedImage image)
+    {
+        // The painter flushes any queued draw that still reads the texture.
+        if (image.texture.valid)
+            painter.releaseTexture(image.texture);
+        residentBytes -= image.bytes;
+        image.texture = TextureId.init;
+        image.pixels.clear();
+        image.bytes = 0;
+        image.checked = false;
+    }
+
+    private TextureId textureFor(P)(ref P painter, GhosttyKittyGraphics graphics, uint id)
+    {
+        auto cached = findImage(id);
+        if (cached !is null && cached.checked && cached.epoch == epoch)
+        {
+            cached.lastUse = ++useClock;
+            return cached.texture;
+        }
+        PixelView view;
+        if (!readPixels(ghostty_kitty_graphics_image(graphics, id), view))
+        {
+            if (cached !is null)
+                retire(painter, *cached);
+            return TextureId.init;
+        }
+        return textureForView(painter, id, view, cached);
+    }
+
+    private TextureId textureForView(P)(ref P painter, uint id, in PixelView view,
+        CachedImage* cached, Buffer!ubyte* ownedPixels = null)
+    {
+        if (cached !is null && cached.checked && cached.epoch == epoch)
+        {
+            cached.lastUse = ++useClock;
+            return cached.texture;
+        }
+        if (cached !is null && cached.width == view.width &&
+            cached.height == view.height && cached.layout == view.layout)
+        {
+            const ref saved = cached.pixels;
+            const rows = changedRows(saved[], view);
+            if (rows.count != 0)
+            {
+                const start = rows.first * view.rowBytes;
+                const length = rows.count * view.rowBytes;
+                painter.updateTextureRows(cached.texture, view.image, rows.first, rows.count);
+                if (ownedPixels !is null)
+                    cached.pixels = *ownedPixels;
+                else
+                    memcpy(cached.pixels[].ptr + start, view.pixels.ptr + start, length);
+            }
+        }
+        else
+        {
+            if (cached !is null)
+                retire(painter, *cached);
+            // Account for the snapshot's power-of-two allocation and an RGBA
+            // GPU backing even for RGB/gray, which drivers may expand.
+            const bytes = allocationBytes(view);
+            if (bytes > maxBytes)
+                return TextureId.init;
+            while (residentBytes + bytes > maxBytes)
+                retire(painter, *oldestImage());
+            if (cached is null)
+            {
+                foreach (ref image; images)
+                    if (!image.texture.valid)
+                    {
+                        cached = &image;
+                        break;
+                    }
+                if (cached is null)
+                {
+                    cached = oldestImage();
+                    retire(painter, *cached);
+                }
+            }
+
+            cached.texture = painter.createTexture(view.image);
+            if (!cached.texture.valid)
+                return TextureId.init;
+            if (ownedPixels !is null)
+                cached.pixels = *ownedPixels;
+            else
+                cached.pixels ~= view.pixels;
+            cached.id = id;
+            cached.width = view.width;
+            cached.height = view.height;
+            cached.layout = view.layout;
+            cached.bytes = bytes;
+            residentBytes += bytes;
+        }
+        cached.checked = true;
+        cached.epoch = epoch;
+        cached.lastUse = ++useClock;
+        return cached.texture;
+    }
+
+    // ── the CPU side ──
+
+    @system nothrow @nogc:
 
     /**
     Freeze the image state at a synchronized-output boundary. CPU-only: this
@@ -210,7 +353,7 @@ struct KittyImageRenderer
                 frozen.id = placement.imageId;
                 frozen.width = view.width;
                 frozen.height = view.height;
-                frozen.format = view.format;
+                frozen.layout = view.layout;
                 frozen.rowBytes = view.rowBytes;
                 auto cached = findImage(placement.imageId);
                 if (cached !is null && samePixels(*cached, view))
@@ -225,36 +368,6 @@ struct KittyImageRenderer
         sort!placementBefore(capturedPlacements[]);
     }
 
-    /// Paint only owned state, never the terminal that is changing under a hold.
-    void drawCapturedLayer(GhosttyKittyPlacementLayer layer)
-    {
-        foreach (ref const placement; capturedPlacements[])
-        {
-            if (placementLayer(placement.z) != layer)
-                continue;
-            ref image = capturedImages[placement.captureIndex];
-            const ref pixels = image.pixels;
-            const view = PixelView(image.width, image.height, image.format, image.rowBytes,
-                pixels[]);
-            const texture = textureForView(image.id, view, findImage(image.id), &image.pixels);
-            if (texture.id != 0)
-                DrawTexturePro(texture, placement.source, placement.destination,
-                    Vector2(0, 0), 0, Color(255, 255, 255, 255));
-        }
-    }
-
-    /// Flush queued draws before deleting resources; safe to call repeatedly.
-    void release()
-    {
-        releaseImages();
-        placements.clear();
-        releaseCapture();
-        prepared = false;
-        useClock = 0;
-        mutations = KittyMutationScanner.init;
-        repaintPending = false;
-    }
-
 private:
     void releaseCapture()
     {
@@ -265,139 +378,19 @@ private:
         captured = false;
     }
 
-    void releaseImages()
-    {
-        foreach (ref image; images)
-            retire(image);
-    }
-
-    void retire(ref CachedImage image)
-    {
-        if (image.texture.id != 0)
-        {
-            // A different pane or an earlier placement in this very layer can
-            // still reference the texture in raylib's CPU-side render batch.
-            rlDrawRenderBatchActive();
-            UnloadTexture(image.texture);
-        }
-        residentBytes -= image.bytes;
-        image.texture = Texture2D.init;
-        image.pixels.clear();
-        image.bytes = 0;
-        image.checked = false;
-    }
-
     CachedImage* findImage(uint id)
     {
         foreach (ref image; images)
-            if (image.texture.id != 0 && image.id == id)
+            if (image.texture.valid && image.id == id)
                 return &image;
         return null;
-    }
-
-    Texture2D textureFor(GhosttyKittyGraphics graphics, uint id)
-    {
-        auto cached = findImage(id);
-        if (cached !is null && cached.checked && cached.epoch == epoch)
-        {
-            cached.lastUse = ++useClock;
-            return cached.texture;
-        }
-        PixelView view;
-        if (!readPixels(ghostty_kitty_graphics_image(graphics, id), view))
-        {
-            if (cached !is null)
-                retire(*cached);
-            return Texture2D.init;
-        }
-        return textureForView(id, view, cached);
-    }
-
-    Texture2D textureForView(uint id, in PixelView view, CachedImage* cached,
-        Buffer!ubyte* ownedPixels = null)
-    {
-        if (cached !is null && cached.checked && cached.epoch == epoch)
-        {
-            cached.lastUse = ++useClock;
-            return cached.texture;
-        }
-        if (cached !is null && cached.width == view.width &&
-            cached.height == view.height && cached.format == view.format)
-        {
-            const ref saved = cached.pixels;
-            const rows = changedRows(saved[], view);
-            if (rows.count != 0)
-            {
-                rlDrawRenderBatchActive();
-                const start = rows.first * view.rowBytes;
-                const length = rows.count * view.rowBytes;
-                UpdateTextureRec(cached.texture,
-                    Rectangle(0, rows.first, view.width, rows.count), view.pixels.ptr + start);
-                if (ownedPixels !is null)
-                    cached.pixels = *ownedPixels;
-                else
-                    memcpy(cached.pixels[].ptr + start, view.pixels.ptr + start, length);
-            }
-        }
-        else
-        {
-            if (cached !is null)
-                retire(*cached);
-            // Account for the snapshot's power-of-two allocation and an RGBA
-            // GPU backing even for RGB/gray, which drivers may expand.
-            const bytes = allocationBytes(view);
-            if (bytes > maxBytes)
-                return Texture2D.init;
-            while (residentBytes + bytes > maxBytes)
-                retire(*oldestImage());
-            if (cached is null)
-            {
-                foreach (ref image; images)
-                    if (image.texture.id == 0)
-                    {
-                        cached = &image;
-                        break;
-                    }
-                if (cached is null)
-                {
-                    cached = oldestImage();
-                    retire(*cached);
-                }
-            }
-
-            Image source = {
-                data: cast(void*) view.pixels.ptr,
-                width: cast(int) view.width,
-                height: cast(int) view.height,
-                mipmaps: 1,
-                format: view.format,
-            };
-            cached.texture = LoadTextureFromImage(source);
-            if (cached.texture.id == 0)
-                return Texture2D.init;
-            SetTextureFilter(cached.texture, TextureFilter.TEXTURE_FILTER_BILINEAR);
-            if (ownedPixels !is null)
-                cached.pixels = *ownedPixels;
-            else
-                cached.pixels ~= view.pixels;
-            cached.id = id;
-            cached.width = view.width;
-            cached.height = view.height;
-            cached.format = view.format;
-            cached.bytes = bytes;
-            residentBytes += bytes;
-        }
-        cached.checked = true;
-        cached.epoch = epoch;
-        cached.lastUse = ++useClock;
-        return cached.texture;
     }
 
     CachedImage* oldestImage()
     {
         CachedImage* oldest;
         foreach (ref image; images)
-            if (image.texture.id != 0 &&
+            if (image.texture.valid &&
                 (oldest is null || image.lastUse < oldest.lastUse))
                 oldest = &image;
         assert(oldest !is null);
@@ -493,8 +486,8 @@ private struct CachedImage
     uint id;
     uint width;
     uint height;
-    int format;
-    Texture2D texture;
+    PixelLayout layout;
+    TextureId texture;
     Buffer!ubyte pixels;
     ulong bytes;
     ulong epoch;
@@ -507,14 +500,14 @@ private struct CapturedImage
     uint id;
     uint width;
     uint height;
-    int format;
+    PixelLayout layout;
     size_t rowBytes;
     Buffer!ubyte pixels;
 }
 
 private bool samePixels(in CachedImage image, in PixelView view) @system nothrow @nogc
     => image.width == view.width && image.height == view.height &&
-        image.format == view.format && image.pixels.length == view.pixels.length &&
+        image.layout == view.layout && image.pixels.length == view.pixels.length &&
         memcmp(image.pixels[].ptr, view.pixels.ptr, view.pixels.length) == 0;
 
 private struct Placement
@@ -522,8 +515,8 @@ private struct Placement
     uint imageId;
     uint placementId;
     int z;
-    Rectangle source;
-    Rectangle destination;
+    ImageRect source;
+    ImageRect destination;
     size_t captureIndex;
 }
 
@@ -554,15 +547,15 @@ private bool readPlacementGeometry(GhosttyTerminal terminal, GhosttyKittyGraphic
         GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_X_OFFSET, &xOffset);
     ghostty_kitty_graphics_placement_get(iterator,
         GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_Y_OFFSET, &yOffset);
-    placement.source = Rectangle(info.source_x, info.source_y,
+    placement.source = ImageRect(info.source_x, info.source_y,
         info.source_width, info.source_height);
     placement.destination = destinationRect(info, xOffset, yOffset, cellWidth, cellHeight);
     return true;
 }
 
-private Rectangle destinationRect(in GhosttyKittyGraphicsPlacementRenderInfo info,
+private ImageRect destinationRect(in GhosttyKittyGraphicsPlacementRenderInfo info,
     uint xOffset, uint yOffset, int cellWidth, int cellHeight) @safe pure nothrow @nogc
-    => Rectangle(cast(float) info.viewport_col * cellWidth + xOffset,
+    => ImageRect(cast(float) info.viewport_col * cellWidth + xOffset,
         cast(float) info.viewport_row * cellHeight + yOffset,
         info.pixel_width, info.pixel_height);
 
@@ -570,30 +563,33 @@ private struct PixelView
 {
     uint width;
     uint height;
-    int format;
+    PixelLayout layout;
     size_t rowBytes;
     const(ubyte)[] pixels;
+
+    ImagePixels image() const @safe pure nothrow @nogc
+        => ImagePixels(width, height, layout, pixels);
 }
 
-private bool pixelLayout(GhosttyKittyImageFormat format, out int raylibFormat,
+private bool pixelLayout(GhosttyKittyImageFormat format, out PixelLayout layout,
     out uint channels) @safe pure nothrow @nogc
 {
     switch (format)
     {
         case GHOSTTY_KITTY_IMAGE_FORMAT_RGB:
-            raylibFormat = PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8;
+            layout = PixelLayout.rgb;
             channels = 3;
             return true;
         case GHOSTTY_KITTY_IMAGE_FORMAT_RGBA:
-            raylibFormat = PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+            layout = PixelLayout.rgba;
             channels = 4;
             return true;
         case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA:
-            raylibFormat = PixelFormat.PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA;
+            layout = PixelLayout.grayAlpha;
             channels = 2;
             return true;
         case GHOSTTY_KITTY_IMAGE_FORMAT_GRAY:
-            raylibFormat = PixelFormat.PIXELFORMAT_UNCOMPRESSED_GRAYSCALE;
+            layout = PixelLayout.gray;
             channels = 1;
             return true;
         default:
@@ -618,7 +614,7 @@ private bool readPixels(GhosttyKittyGraphicsImage image, out PixelView view)
         values.ptr, null) != GHOSTTY_SUCCESS)
         return false;
     uint channels;
-    if (!pixelLayout(format, view.format, channels) || pixels is null ||
+    if (!pixelLayout(format, view.layout, channels) || pixels is null ||
         view.width == 0 || view.height == 0 ||
         view.width > int.max || view.height > int.max)
         return false;
@@ -678,7 +674,7 @@ unittest
 {
     ubyte[18] original = 10;
     ubyte[18] current = 10;
-    PixelView view = PixelView(2, 3, PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8,
+    PixelView view = PixelView(2, 3, PixelLayout.rgb,
         6, current[]);
     assert(changedRows(original[], view) == ChangedRows(0, 0));
     // Same address/ID/geometry, different contents: never mistake reused image
@@ -703,7 +699,7 @@ unittest
     info.grid_cols = 3;
     info.grid_rows = 2;
     const rect = destinationRect(info, 3, 2, 8, 10);
-    assert(rect == Rectangle(19, -8, 17, 13));
+    assert(rect == ImageRect(19, -8, 17, 13));
 
     Placement a, b;
     a.z = -1;
@@ -734,15 +730,16 @@ unittest
     assert(ghostty_kitty_graphics_placement_iterator_new(null, &iterator) == GHOSTTY_SUCCESS);
     scope (exit) ghostty_kitty_graphics_placement_iterator_free(iterator);
     KittyImageRenderer renderer;
-    scope (exit) renderer.release();
+    NoTextures none;
+    scope (exit) renderer.release(none);
 
     static immutable red = "\x1b_Ga=T,f=24,s=1,v=1,i=7,p=3,z=-1,q=2;/wAA\x1b\\";
     ghostty_terminal_vt_write(terminal, cast(const(ubyte)*) red.ptr, red.length);
     renderer.capture(terminal, iterator, 10, 20);
     assert(renderer.capturedImages.length == 1);
     assert(renderer.capturedImages[0].pixels[] == [255, 0, 0]);
-    assert(renderer.capturedImages[0].format == PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8);
-    assert(renderer.capturedPlacements[0].destination == Rectangle(0, 0, 1, 1));
+    assert(renderer.capturedImages[0].layout == PixelLayout.rgb);
+    assert(renderer.capturedPlacements[0].destination == ImageRect(0, 0, 1, 1));
 
     static immutable remove = "\x1b_Ga=d,d=I,i=7,q=2\x1b\\";
     ghostty_terminal_vt_write(terminal, cast(const(ubyte)*) remove.ptr, remove.length);

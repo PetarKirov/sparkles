@@ -9,17 +9,15 @@ module sparkles.terminal_view.core;
 
 import core.sys.posix.sys.types : pid_t;
 
-import raylib;
-
 import sparkles.base.buffer : HeapBuffer, UniqueBuffer;
 import sparkles.base.term_color : RgbColor;
 import sparkles.ghostty.c;
-import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid;
 import sparkles.terminal_view.input : ExitBehavior, SelectionState,
     OverlayScrollbar, HoverState;
 import sparkles.terminal_view.kitty_images : KittyImageRenderer;
 import sparkles.terminal_view.osc_query : OscScanner;
 import sparkles.terminal_view.osc_scan : maxTitleBytes;
+import sparkles.terminal_view.painter : isTerminalPainter, Rgba;
 import sparkles.terminal_view.protocols : ColorScheme, ProtocolInbox;
 import sparkles.terminal_view.synchronized_output : SynchronizedOutput;
 
@@ -200,43 +198,6 @@ void effect_bell(GhosttyTerminal terminal, void* userdata)
     auto ctx = cast(EffectsContext*) userdata;
     ctx.bellFlashFrames = 4;
 }
-
-// decode_png: decodes raw PNG data into RGBA pixels using raylib's stb_image
-// decoder so the terminal can display images via the Kitty Graphics Protocol.
-// The output buffer is allocated through the provided GhosttyAllocator so the
-// library can free it later. Installed process-globally via ghostty_sys_set.
-extern(C) nothrow @nogc
-bool decode_png(void* userdata, GhosttyAllocator* allocator, const(ubyte)* data, size_t data_len, GhosttySysImage* outImg)
-{
-    Image img = LoadImageFromMemory(".png".ptr, data, cast(int) data_len);
-    if (img.data is null) return false;
-
-    // Convert to uncompressed RGBA so we have a known pixel layout.
-    ImageFormat(&img, PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
-
-    const size_t pixel_len = cast(size_t) img.width * cast(size_t) img.height * 4;
-    ubyte* pixels = ghostty_alloc(allocator, pixel_len);
-    if (pixels is null) {
-        UnloadImage(img);
-        return false;
-    }
-
-    import core.stdc.string : memcpy;
-    memcpy(pixels, img.data, pixel_len);
-    UnloadImage(img);
-
-    outImg.width = cast(uint) img.width;
-    outImg.height = cast(uint) img.height;
-    outImg.data = pixels;
-    outImg.data_len = pixel_len;
-    return true;
-}
-
-// The raylib boundary. `ResolvedCell` carries backend-neutral `RgbColor`;
-// raylib's draw calls want its own `Color`. Every colour the VT resolves is
-// opaque, so alpha is supplied here rather than carried per cell.
-private Color rl(in RgbColor c) @safe pure nothrow @nogc
-    => Color(c.r, c.g, c.b, 255);
 
 // Per-cell render data resolved by `resolveCell` and consumed by both passes of
 // the two-pass renderer (backgrounds first, then glyphs).
@@ -427,23 +388,23 @@ unittest
 
 // Decorations use cell geometry, not the font's glyph bounds; a wide cell
 // carries one continuous line and the phase continues across adjacent cells.
-private void drawCellDecorations(ref LoadedFont white, in ResolvedCell cell,
-    int x, int y, int width, int height) @system nothrow @nogc
+private void drawCellDecorations(P)(ref P painter, in ResolvedCell cell,
+    int x, int y, int width, int height)
 {
     import std.algorithm.comparison : max, min;
 
     const thickness = max(1, height / 16);
     const underlineY = y + height - thickness - 1;
-    const ink = rl(cell.fgCol);
-    const underlineInk = rl(cell.underlineCol);
+    const ink = Rgba.opaque(cell.fgCol);
+    const underlineInk = Rgba.opaque(cell.underlineCol);
     switch (cell.style.underline)
     {
         case GHOSTTY_SGR_UNDERLINE_SINGLE:
-            drawSolid(white, x, underlineY, width, thickness, underlineInk);
+            painter.fill(x, underlineY, width, thickness, underlineInk);
             break;
         case GHOSTTY_SGR_UNDERLINE_DOUBLE:
-            drawSolid(white, x, underlineY, width, thickness, underlineInk);
-            drawSolid(white, x, max(y, underlineY - 2 * thickness),
+            painter.fill(x, underlineY, width, thickness, underlineInk);
+            painter.fill(x, max(y, underlineY - 2 * thickness),
                 width, thickness, underlineInk);
             break;
         case GHOSTTY_SGR_UNDERLINE_CURLY:
@@ -451,7 +412,7 @@ private void drawCellDecorations(ref LoadedFont white, in ResolvedCell cell,
             // font sizes. Absolute x keeps neighbouring cell phases aligned.
             static immutable int[6] wave = [0, 0, 1, 2, 2, 1];
             foreach (dx; 0 .. width)
-                drawSolid(white, x + dx,
+                painter.fill(x + dx,
                     max(y, underlineY - wave[((x + dx) / thickness) % wave.length] * thickness),
                     1, thickness, underlineInk);
             break;
@@ -465,7 +426,7 @@ private void drawCellDecorations(ref LoadedFont white, in ResolvedCell cell,
                 const phase = (x + dx) % period;
                 const length = min(width - dx, phase < dash ? dash - phase : period - phase);
                 if (phase < dash)
-                    drawSolid(white, x + dx, underlineY, length, thickness, underlineInk);
+                    painter.fill(x + dx, underlineY, length, thickness, underlineInk);
                 dx += length;
             }
             break;
@@ -473,13 +434,13 @@ private void drawCellDecorations(ref LoadedFont white, in ResolvedCell cell,
             break;
     }
     if (cell.style.strikethrough)
-        drawSolid(white, x, y + height / 2, width, thickness, ink);
+        painter.fill(x, y + height / 2, width, thickness, ink);
     if (cell.style.overline)
-        drawSolid(white, x, y, width, thickness, ink);
+        painter.fill(x, y, width, thickness, ink);
     if (cell.hasHyperlink || cell.isHoveredLink)
     {
         const weight = cell.isHoveredLink ? 2 * thickness : thickness;
-        drawSolid(white, x, y + height - weight, width, weight, ink);
+        painter.fill(x, y + height - weight, width, weight, ink);
     }
 }
 
@@ -512,13 +473,10 @@ struct CoreState
     ExitBehavior exitBehavior;
     bool debugScreenshotAndExit;
 
-    // The shared multi-face font resource (sparkles:raylib-text): primary + real
-    // bold/italic/bold-italic variants, regular/Nerd fallbacks, --font-codepoint-map
-    // faces, on-demand atlas growth, and per-face O(log n) glyph maps.
-    /// Borrowed: the window session owns the face set (one atlas per window,
-    /// whoever drives the loop). The polling loop points this at its own
-    /// stack instance; the runApp component at the host session's.
-    FontSet* fonts;
+    /// Whether a painter draws this terminal in pixels: the pty reports a
+    /// pixel size and kitty graphics are wired. A cell-grid embedding (the
+    /// terminal arm's pane) draws none.
+    bool drawsPixels;
 
     int fontSize = 20;
     int cellWidth = 1;
@@ -713,15 +671,15 @@ void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
         ++s.imageMutationEpoch;
 }
 
-// The frame's draw calls, bracket-free — callable from a raylib
-// BeginDrawing/EndDrawing pair or from a host's draw
+// The frame's draw calls through `painter` (`isTerminalPainter`), in pixels
+// from the pane's top-left corner, bracket-free — callable from a host's draw
 // phase (`HST13`), which owns its own bracket: background fill, kitty image
 // layers, the two-pass cell render, scrollbar, cursor styles, exit banner,
 // bell flash, and the per-row + global dirty reset. The caller owns the
 // bracket and the deferred-texture flush (textures freed only after the
 // bracket's commands reach the GPU).
-@system nothrow @nogc
-void paintFrame(ref CoreState s, int viewW, int viewH)
+void paintFrame(P)(ref CoreState s, ref P painter, int viewW, int viewH)
+if (isTerminalPainter!P)
 {
         // Resolved default colors (used for the background fill, default cell
         // colors, and the cursor) instead of hardcoded white-on-black.
@@ -732,16 +690,16 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
         // The page: a full-surface fill rather than ClearBackground, because
         // inside a host's bracket the clear already happened (to the host's
         // page) and clearing is not a draw call the hook may make.
-        drawSolid(s.fonts.whiteFace, 0, 0, viewW, viewH,
-            Color(colors.background.r, colors.background.g, colors.background.b, 255));
+        painter.fill(0, 0, viewW, viewH,
+            Rgba(colors.background.r, colors.background.g, colors.background.b, 255));
 
         // Images remain frozen alongside the text during synchronized output.
         if (s.synchronizedOutput.held)
-            s.images.drawCapturedLayer(GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
+            s.images.drawCapturedLayer(painter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
         else
         {
-            s.images.prepare(s.terminal, s.imageMutationEpoch, s.cellWidth, s.cellHeight);
-            s.images.drawLayer(s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
+            s.images.prepare(painter, s.terminal, s.imageMutationEpoch, s.cellWidth, s.cellHeight);
+            s.images.drawLayer(painter, s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
         }
 
         GhosttyPointCoordinate sel_start_pt, sel_end_pt;
@@ -788,7 +746,7 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
                     has_selection, sel_start_pt, sel_end_pt, s.selState, s.hoverState);
                 s.resolvedCells ~= rc;
                 if (rc.hasBg)
-                    drawSolid(s.fonts.whiteFace, bgX, bgY, s.cellWidth, s.cellHeight, rl(rc.bgCol));
+                    painter.fill(bgX, bgY, s.cellWidth, s.cellHeight, Rgba.opaque(rc.bgCol));
                 bgX += s.cellWidth;
             }
 
@@ -797,9 +755,9 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
 
         // This layer covers cell backgrounds, never the glyphs above it.
         if (s.synchronizedOutput.held)
-            s.images.drawCapturedLayer(GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
+            s.images.drawCapturedLayer(painter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
         else
-            s.images.drawLayer(s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
+            s.images.drawLayer(painter, s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
 
         // --- Pass 2: glyphs and per-cell decorations. Re-fetching the row
         //     iterator rewinds it to the first row. ---
@@ -819,29 +777,19 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
                 {
                     import sparkles.terminal_view.cell_graphics : drawCellGraphics;
 
-                    const ink = rl(rc.fgCol);
+                    const ink = Rgba.opaque(rc.fgCol);
                     if (rc.graphemeLen != 1
-                        || !drawCellGraphics(s.fonts.whiteFace, rc.codepoint,
-                            cast(float) x, cast(float) y, s.cellWidth, s.cellHeight, ink))
+                        || !drawCellGraphics(painter, rc.codepoint,
+                            x, y, s.cellWidth, s.cellHeight, ink))
                     {
                         uint[1] single = [rc.codepoint];
                         const(uint)[] cluster = single[];
                         if (rc.graphemeLen > 1)
                             cluster = cellGrapheme(s.cells, s.grapheme);
-                        if (!s.fonts.drawCluster(cluster, rc.style.bold, rc.style.italic,
-                                cast(float) x, cast(float) y,
-                                cast(int) rc.width * s.cellWidth, s.cellHeight, ink))
-                        {
-                            bool fakeBold, fakeItalic;
-                            LoadedFont* face = s.fonts.resolveFace(
-                                rc.codepoint, rc.style.bold, rc.style.italic, fakeBold, fakeItalic);
-                            drawGrapheme(*face, cluster, cast(float) x, cast(float) y, s.fontSize, ink);
-                            if (fakeBold)
-                                drawGrapheme(*face, cluster, cast(float)(x + 1), cast(float) y,
-                                    s.fontSize, ink);
-                        }
+                        painter.cluster(cluster, rc.style.bold, rc.style.italic, x, y,
+                            cast(int) rc.width * s.cellWidth, s.cellHeight, ink);
                     }
-                    drawCellDecorations(s.fonts.whiteFace, rc, x, y,
+                    drawCellDecorations(painter, rc, x, y,
                         cast(int) rc.width * s.cellWidth, s.cellHeight);
                 }
 
@@ -867,10 +815,10 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
             float x = viewW - w;
 
             if (s.sbState.view.v.hovered || s.sbState.view.v.dragging)
-                DrawRectangle(cast(int)x, 0, cast(int)w, viewH,
-                    Color(255, 255, 255, 30));
-            DrawRectangle(cast(int)x, thumb.start, cast(int)w, thumb.extent,
-                Color(255, 255, 255, 120));
+                painter.fill(cast(int)x, 0, cast(int)w, viewH,
+                    Rgba(255, 255, 255, 30));
+            painter.fill(cast(int)x, thumb.start, cast(int)w, thumb.extent,
+                Rgba(255, 255, 255, 120));
         }
 
         // Draw the cursor
@@ -894,23 +842,23 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
 
             int c_x = cx * s.cellWidth;
             int c_y = cy * s.cellHeight;
-            Color c_color = Color(cur_rgb.r, cur_rgb.g, cur_rgb.b, 160);
+            const c_color = Rgba(cur_rgb.r, cur_rgb.g, cur_rgb.b, 160);
 
             if (cursor_style == 0) // Bar
-                drawSolid(s.fonts.whiteFace, c_x, c_y, 2, s.cellHeight, c_color);
+                painter.fill(c_x, c_y, 2, s.cellHeight, c_color);
             else if (cursor_style == 1) // Block
-                drawSolid(s.fonts.whiteFace, c_x, c_y, s.cellWidth, s.cellHeight, c_color);
+                painter.fill(c_x, c_y, s.cellWidth, s.cellHeight, c_color);
             else if (cursor_style == 2) // Underline
-                drawSolid(s.fonts.whiteFace, c_x, c_y + s.cellHeight - 2, s.cellWidth, 2, c_color);
+                painter.fill(c_x, c_y + s.cellHeight - 2, s.cellWidth, 2, c_color);
             else if (cursor_style == 3) // Hollow block
-                DrawRectangleLines(c_x, c_y, s.cellWidth, s.cellHeight, c_color);
+                painter.outline(c_x, c_y, s.cellWidth, s.cellHeight, c_color);
         }
 
         // Images above text (z >= 0): drawn last, over everything else.
         if (s.synchronizedOutput.held)
-            s.images.drawCapturedLayer(GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
+            s.images.drawCapturedLayer(painter, GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
         else
-            s.images.drawLayer(s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
+            s.images.drawLayer(painter, s.terminal, s.placement_iter, GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
 
         // Banner shown once the child has exited, so the user knows the shell
         // is gone (they can still scroll / inspect the final output).
@@ -918,25 +866,25 @@ void paintFrame(ref CoreState s, int viewW, int viewH)
         {
             import core.stdc.stdio : snprintf;
             char[128] msg;
-            if (s.childReaped && s.childStatus >= 0)
-                snprintf(msg.ptr, msg.length, "[process exited with status %d]", s.childStatus);
-            else
-                snprintf(msg.ptr, msg.length, "[process exited]");
+            const n = s.childReaped && s.childStatus >= 0
+                ? snprintf(msg.ptr, msg.length, "[process exited with status %d]", s.childStatus)
+                : snprintf(msg.ptr, msg.length, "[process exited]");
+            const text = msg[0 .. n > 0 ? (n < msg.length ? n : msg.length - 1) : 0];
 
-            Vector2 msgSize = MeasureTextEx(s.fonts.primaryFont(), msg.ptr, s.fontSize, 0);
+            const msgSize = painter.labelSize(text);
             int screenW = viewW;
             int screenH = viewH;
-            int bannerH = cast(int) msgSize.y + 8;
-            DrawRectangle(0, screenH - bannerH, screenW, bannerH, Color(0, 0, 0, 180));
-            DrawTextEx(s.fonts.primaryFont(), msg.ptr,
-                // Centred, or from the left edge when wider than the pane.
-                Vector2(msgSize.x < screenW ? (screenW - msgSize.x) / 2 : 4, screenH - bannerH + 4), s.fontSize, 0, Color(255, 255, 255, 255));
+            int bannerH = cast(int) msgSize[1] + 8;
+            painter.fill(0, screenH - bannerH, screenW, bannerH, Rgba(0, 0, 0, 180));
+            // Centred, or from the left edge when wider than the pane.
+            painter.label(text, msgSize[0] < screenW ? (screenW - msgSize[0]) / 2 : 4,
+                screenH - bannerH + 4, Rgba(255, 255, 255, 255));
         }
 
         // Visual bell: a brief translucent flash over the whole window.
         if (s.effects_ctx.bellFlashFrames > 0)
         {
-            DrawRectangle(0, 0, viewW, viewH, Color(255, 255, 255, 40));
+            painter.fill(0, 0, viewW, viewH, Rgba(255, 255, 255, 40));
             s.effects_ctx.bellFlashFrames--;
         }
 
@@ -976,4 +924,66 @@ unittest
     ghostty_terminal_vt_write(term, cast(const(ubyte)*) longSeq.ptr, cast(uint) longSeq.length);
     assert(ctx.titleLen == ctx.titleBuf.length - 1);
     assert(ctx.titleBuf[0] == 'a' && ctx.titleBuf[ctx.titleLen] == '\0');
+}
+
+// The renderer with no window: a headless terminal painted through the
+// recording painter. Backgrounds come before any glyph, a styled cell
+// carries its decoration, the cursor is drawn last but for the layers above
+// text, and nothing is clipped or offset — the pane's placement is its
+// caller's.
+@("terminal_view.core.paintFrame.throughARecordingPainter")
+@system unittest
+{
+    import sparkles.terminal_view.painter : RecordingPainter;
+
+    alias Op = RecordingPainter.Op;
+    CoreState s;
+    GhosttyTerminalOptions topts = { cols: 8, rows: 2 };
+    assert(ghostty_terminal_new(null, &s.terminal, topts) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_terminal_free(s.terminal);
+    ghostty_terminal_resize(s.terminal, 8, 2, 10, 20);
+    ghostty_render_state_new(null, &s.render_state);
+    scope (exit) ghostty_render_state_free(s.render_state);
+    ghostty_render_state_row_iterator_new(null, &s.row_iter);
+    scope (exit) ghostty_render_state_row_iterator_free(s.row_iter);
+    ghostty_render_state_row_cells_new(null, &s.cells);
+    scope (exit) ghostty_render_state_row_cells_free(s.cells);
+    s.cols = 8;
+    s.rows = 2;
+    s.cellWidth = 10;
+    s.cellHeight = 20;
+
+    static immutable text = "a\x1b[4;41mb\x1b[0m";
+    ghostty_terminal_vt_write(s.terminal, cast(const(ubyte)*) text.ptr, text.length);
+    ghostty_render_state_update(s.render_state, s.terminal);
+
+    RecordingPainter p;
+    paintFrame(s, p, 80, 40);
+
+    // The page, then the red cell's background, before any glyph.
+    assert(p.calls[0].op == Op.fill && p.calls[0].width == 80 && p.calls[0].height == 40);
+    const glyphs = p.only(Op.cluster);
+    assert(glyphs.length == 2 && glyphs[0].codepoints == ['a'] && glyphs[1].codepoints == ['b']);
+    assert(glyphs[1].x == 10 && glyphs[1].y == 0 && glyphs[1].width == 10 && glyphs[1].height == 20);
+    size_t firstGlyph, redFill;
+    foreach (i, c; p.calls)
+    {
+        if (c.op == Op.cluster && firstGlyph == 0)
+            firstGlyph = i;
+        if (c.op == Op.fill && c.x == 10 && c.y == 0 && c.width == 10 && c.height == 20
+            && c.colour.a == 255 && redFill == 0)
+            redFill = i;
+    }
+    assert(redFill > 0 && redFill < firstGlyph, "backgrounds before glyphs");
+    // `b` is underlined: a fill across its cell after its glyph, near the bottom.
+    bool underlined;
+    foreach (c; p.calls[firstGlyph .. $])
+        underlined |= c.op == Op.fill && c.x == 10 && c.width == 10 && c.y > 10 && c.height < 5;
+    assert(underlined);
+    // The cursor, after `b`: a translucent block at the third cell.
+    bool cursor;
+    foreach (c; p.calls)
+        cursor |= c.op == Op.fill && c.x == 20 && c.y == 0 && c.colour.a == 160;
+    assert(cursor);
+    assert(p.only(Op.clip).length == 0 && p.only(Op.pushOffset).length == 0);
 }
