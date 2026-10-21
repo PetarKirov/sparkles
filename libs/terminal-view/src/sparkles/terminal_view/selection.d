@@ -6,7 +6,7 @@ a shape (stream or block), and the operations every input path shares:
 select at a point with a granularity, move either end, select all, clear,
 read the text.
 
-The desktop's polled mouse (`input.handle_mouse`) and the touch embedder
+The desktop's mouse (`pointer.pointerEvent`) and the touch embedder
 (`TerminalView.selectAt` and friends) both drive these functions over one
 `SelectionState`; neither owns the model, so the same two ends give the same
 text whichever path set them.

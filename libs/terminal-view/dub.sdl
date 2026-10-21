@@ -28,6 +28,9 @@ configuration "library" {
 configuration "unittest" {
     versions "TerminalViewRaylib"
     dependency "sparkles:test-runner" path="../.."
+    // The recording host the mouse scenarios run through (`pointer_test.d`).
+    dependency "sparkles:ui-app" path="../.."
+    subConfiguration "sparkles:ui-app" "tui"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

@@ -94,10 +94,12 @@ click-to-focus and hover keep working under a mouse-less shell prompt).
 Verified end to end: an SGR click injected at the outer terminal arrives in
 the embedded `cat -v` as the correctly-translated inner report.
 
-What still waits: the $(B emulator-level) mouse — selection, OSC 8 link
-hover, the ctrl-click opener — which lives in the whole-surface polled
-`handle_mouse` (raylib-absolute), and the clipboard chords behind it (copy
-needs a selection; paste needs a clipboard $(B read), not a host errand yet).
+What still waits: routing the 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B emulator-level) mouse — selection, OSC 8
+link hover, the ctrl-click opener. It runs from events in pane pixels now
+(`TerminalView.pointerInPane`, `wheelInPane`), which the gallery does not
+forward yet; on the raylib arm the pane still reads it through the polled
+bridge (`pollMouse`). The clipboard chords behind it wait too (copy needs a
+selection; paste needs a clipboard 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B read), not a host errand yet).
 
 Scrollback no longer waits on it at all: the wheel over the pane,
 `Shift+PgUp`/`PgDn` in capture, and the bar — the catalog's living

@@ -8,12 +8,12 @@ drains the pty and makes the dirty/skip decision, `handle` maps
 runs the per-cell renderer inside the host's draw phase (`HST13`). `main`
 shrinks to CLI-parse-then-`runApp`.
 
-$(B What stays polled:) the mouse. `handle_mouse` still combines terminal
-selection and hover re-scan and is called from `view` exactly as the polling
-loop called it. Its scrollbar now runs the toolkit `ScrollView` machine over
-the laid-out pane extents (`TVW9`); converting the remaining mouse path to
-events is a later, separately-measured step (`TVW6`'s discipline, applied to
-input).
+100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B The mouse) is events in pane pixels (`pointerInPane`, `wheelInPane`,
+`sparkles.terminal_view.pointer`): the overlay bar on the toolkit's
+`ScrollView` machine (`TVW9`), selection, link hover, mouse reporting. A
+host that reports pixels reaches them through `handle`; where raylib is
+polled instead (`pollMouse`), a bridge reads it each frame and emits the same
+events.
 Clipboard $(B reads) bypass the host (it has no clipboard-read errand yet):
 raylib's `GetClipboardText` on the desktop, the JNI `ClipboardManager` bridge
 on Android, where raylib's is a no-op.
@@ -37,6 +37,7 @@ version (TerminalViewRaylib)
     import raylib : GetClipboardText, GetScreenHeight, GetScreenWidth, IsWindowFocused,
         IsWindowMinimized, SetWindowTitle;
     import sparkles.raylib_text : FontSet;
+    import sparkles.terminal_view.raylib_input : pollPointer;
     import sparkles.terminal_view.raylib_painter : installPngDecoder, RaylibPainter,
         RaylibTextures;
 }
@@ -51,12 +52,13 @@ import sparkles.terminal_view.child_env : sanitizeChildEnv;
 import sparkles.terminal_view.core;
 import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyButtonOf,
     ghosttyKeyOf, ghosttyModsOf, isDetachedText, withKeyIdentity;
-import sparkles.terminal_view.input : ExitBehavior, handle_mouse,
-    mouse_encode_and_write, pty_write;
+import sparkles.terminal_view.input : ExitBehavior, mouse_encode_and_write, pty_write;
 import sparkles.terminal_view.notification_log : NotificationLog,
     NotificationRecord, NotificationRoute, routeNotification;
 import sparkles.terminal_view.osc_scan : maxIconBytes, maxTitleBytes, Notification;
 import sparkles.terminal_view.painter : isTerminalPainter, NoTextures;
+import sparkles.terminal_view.pointer : PaneGeometry, pointerEvent, pointerFrame, PointerTrack,
+    wheelEvent;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer, ClipboardReadPolicy,
     ColorScheme, PasteConfirm, PasteConfirmRequest, ProtocolPolicy, TerminalViewHooks;
 import sparkles.terminal_view.selection : bounds, findBackward, FindResult, Granularity, moveEnd,
@@ -1083,13 +1085,26 @@ struct TerminalView
                 h.quit();
         }
 
-        // The mouse, still polled (see the module header): identical routing,
-        // selection, scrollbar and hover behavior to the pre-component loop.
-        if (!s.childExited && opts.pollMouse)
-            handle_mouse(s.pty_fd, s.mouse_encoder, s.mouse_event, s.terminal,
-                s.cellWidth, s.cellHeight, paneCols * s.cellWidth,
-                paneRows * s.cellHeight, s.selState, s.sbState,
-                s.hoverState, originX, originY, s.internalScrollbar, &wheelRows);
+        // The mouse: events in pane pixels (`pointerInPane`, `wheelInPane`),
+        // from the host through `handle` or, where raylib still polls
+        // (`pollMouse`), from the bridge reading it now; then the frame's
+        // half — the bar's easing, a held selection's edge autoscroll.
+        pane = PaneGeometry(paneCols * s.cellWidth, paneRows * s.cellHeight,
+            s.internalScrollbar);
+        if (!s.childExited)
+        {
+            version (TerminalViewRaylib)
+                if (opts.pollMouse)
+                    pollPointer(originX, originY, (in PointerEvent p) { pointerInPane(p); },
+                        (in WheelEvent w) { wheelInPane(w); });
+            static if (__traits(compiles, { float f = h.frameSeconds; }))
+                const dt = h.frameSeconds;
+            else
+                const dt = 0.0f;
+            if (pointerFrame(s, pointer, pane, dt))
+                static if (__traits(compiles, h.requestFrame()))
+                    h.requestFrame();
+        }
         if (wheelRows != 0)
         {
             scrollSmooth(WheelEvent(fdy: wheelRows));
@@ -1150,6 +1165,8 @@ struct TerminalView
             (in KeyEvent k) { onKey(h, k); },
             (in FocusEvent f) { notifyFocus(f.focused); },
             (in PasteEvent p) { onPaste(p); },
+            (in PointerEvent p) { if (!pollsMouse) pointerInPane(p); },
+            (in WheelEvent w) { if (!pollsMouse) wheelInPane(w); },
             (in EndOfInput _) { h.quit(); },
             (in _) {},
         );
@@ -1159,11 +1176,13 @@ struct TerminalView
     /// paint, byte-identical to the polling loop's, over the whole surface.
     void paint(H)(ref H h, in WidgetTree, in Frame[])
     {
+        // A pane opened without fonts has nothing to draw pixels with.
         version (TerminalViewRaylib)
-        {
-            auto painter = RaylibPainter(fonts, s.fontSize);
-            paintFrame(s, painter, GetScreenWidth(), GetScreenHeight());
-        }
+            if (fonts !is null)
+            {
+                auto painter = RaylibPainter(fonts, s.fontSize);
+                paintFrame(s, painter, GetScreenWidth(), GetScreenHeight());
+            }
     }
 
     /**
@@ -1172,9 +1191,9 @@ struct TerminalView
     application calls from its own `paint`, with the rect `keyedRects`
     reported for the pane it keyed. `rect` is in cells.
 
-    Mouse routing inside an embedded pane is NOT wired yet — `handle_mouse`
-    reads absolute window coordinates; it lands with the mouse-event
-    conversion.
+    The pane's mouse arrives through 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF pointerInPane) in pane pixels;
+    the raylib bridge (`pollMouse`) reads it relative to where this put the
+    pane.
     */
     void paintPane(H)(ref H h, in Rect rect)
     {
@@ -1188,10 +1207,11 @@ struct TerminalView
     void paintPanePx(H)(ref H h, int px, int py, int pw, int ph)
     {
         version (TerminalViewRaylib)
-        {
-            auto painter = RaylibPainter(fonts, s.fontSize);
-            paintAt(painter, px, py, pw, ph);
-        }
+            if (fonts !is null)
+            {
+                auto painter = RaylibPainter(fonts, s.fontSize);
+                paintAt(painter, px, py, pw, ph);
+            }
     }
 
     /**
@@ -1236,7 +1256,9 @@ struct TerminalView
     private MonoTime lastScrollInput;
     private GhosttyRenderState aboveState;
     private MonoTime scrolledAt;  // the last animated frame, while moving
-    private float wheelRows = 0;  // the polled wheel's rows this frame
+    private float wheelRows = 0;  // the wheel's rows since the last frame
+    private PointerTrack pointer;  // the buttons held and where (`pointer.d`)
+    private PaneGeometry pane;     // the pane's pixel extent, as last laid out
     private bool scrollMoving;    // the motion wants the next frame
 
     /// Where the scrollback is, in rows from its top, fraction included —
@@ -1359,6 +1381,53 @@ struct TerminalView
         painter.popOffset();
         s.render_state = keep;
         scrollViewport(1);
+    }
+
+    // ── the mouse, from events ─────────────────────────────────────────────
+
+    /**
+    One pointer event, its position in pixels from the pane's top-left
+    corner: the overlay bar, selection, link hover and the Ctrl+click
+    opener, or a report to a program that tracks the mouse. `handle` routes
+    a host's pointer events here unless raylib is being polled instead
+    (`pollMouse`); a host must report them in pixels (`PointerUnit.pixels`).
+    */
+    void pointerInPane(in PointerEvent p) @system nothrow @nogc
+    {
+        if (beforePointer())
+            pointerEvent(s, pointer, p, pane);
+    }
+
+    /// The wheel, likewise: reports to a tracking program, else the
+    /// scrollback walks between rows on the next frame (`SCV12`).
+    void wheelInPane(in WheelEvent w) @system nothrow @nogc
+    {
+        if (beforePointer())
+            wheelEvent(s, w, wheelRows);
+    }
+
+    // A key's ordering for the mouse too: the pty drained before the first
+    // event of a frame, so a mode the program just set reaches the encoder.
+    private bool beforePointer() @system nothrow @nogc
+    {
+        if (!opened)
+            return false;
+        if (!drainedThisFrame)
+        {
+            drainPty();
+            drainedThisFrame = true;
+        }
+        return !s.childExited;
+    }
+
+    // Whether the bridge reads raylib's mouse each frame, so a host's
+    // pointer events would be a second copy of the same input.
+    private bool pollsMouse() const @safe pure nothrow @nogc
+    {
+        version (TerminalViewRaylib)
+            return opts.pollMouse;
+        else
+            return false;
     }
 
     // ── the embedded surface (TVW7) ─────────────────────────────────────────
