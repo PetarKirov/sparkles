@@ -10,28 +10,25 @@ module sparkles.terminal_view.cell_graphics;
 import std.algorithm : min, max;
 import std.math : ceil, fabs;
 
-import raylib : Color;
-
-import sparkles.raylib_text.draw : drawSolid;
-import sparkles.raylib_text.font : LoadedFont;
+import sparkles.terminal_view.painter : Rgba;
 
 /**
 Draw a supported block, mosaic, braille, octant or legacy-computing graphic.
 Returns false without drawing for other codepoints. Like drawBox, the cell
-origin is snapped to integer pixels. Needs an active GL context and uses the
-same white atlas texel as drawSolid, with no per-cell storage allocation.
+origin is in integer pixels. Every shape is a painter fill, with no per-cell
+storage allocation.
 */
-bool drawCellGraphics(ref LoadedFont white, uint cp, float x, float y,
-    int width, int height, Color tint) @system nothrow @nogc
+bool drawCellGraphics(P)(ref P painter, uint cp, int x, int y,
+    int width, int height, Rgba tint)
 {
     return visitCellGraphics(cp, width, height,
-        (int rx, int ry, int rw, int rh, ubyte coverage) @system nothrow @nogc
+        (int rx, int ry, int rw, int rh, ubyte coverage)
         {
             if (rw <= 0 || rh <= 0)
                 return;
             auto color = tint;
             color.a = cast(ubyte)((cast(uint) tint.a * coverage + 127) / 255);
-            drawSolid(white, cast(int) x + rx, cast(int) y + ry, rw, rh, color);
+            painter.fill(x + rx, y + ry, rw, rh, color);
         });
 }
 

@@ -32,7 +32,14 @@ import core.sys.posix.sys.ioctl : ioctl, TIOCSWINSZ, winsize;
 import core.sys.posix.sys.types : pid_t;
 import core.sys.posix.unistd : chdir, execv, execve, getuid, read, _exit;
 
-import raylib;
+version (TerminalViewRaylib)
+{
+    import raylib : GetClipboardText, GetScreenHeight, GetScreenWidth, IsWindowFocused,
+        IsWindowMinimized, SetWindowTitle;
+    import sparkles.raylib_text : FontSet;
+    import sparkles.terminal_view.raylib_painter : installPngDecoder, RaylibPainter,
+        RaylibTextures;
+}
 
 import sparkles.base.term_color : RgbColor;
 import sparkles.ghostty.c;
@@ -40,7 +47,6 @@ import sparkles.input : EndOfInput, Event, FocusEvent, Key, KeyAction, PasteEven
     KeyEvent, match, Mods, mousePointer, PointerAction, PointerEvent, WheelEvent;
 import sparkles.ui.scroll_motion : ScrollMotion;
 import core.time : MonoTime;
-import sparkles.raylib_text : FontSet;
 import sparkles.terminal_view.child_env : sanitizeChildEnv;
 import sparkles.terminal_view.core;
 import sparkles.terminal_view.event_map : encodeKeyEvent, ghosttyButtonOf,
@@ -50,6 +56,7 @@ import sparkles.terminal_view.input : ExitBehavior, handle_mouse,
 import sparkles.terminal_view.notification_log : NotificationLog,
     NotificationRecord, NotificationRoute, routeNotification;
 import sparkles.terminal_view.osc_scan : maxIconBytes, maxTitleBytes, Notification;
+import sparkles.terminal_view.painter : isTerminalPainter, NoTextures;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer, ClipboardReadPolicy,
     ColorScheme, PasteConfirm, PasteConfirmRequest, ProtocolPolicy, TerminalViewHooks;
 import sparkles.terminal_view.selection : bounds, findBackward, FindResult, Granularity, moveEnd,
@@ -123,13 +130,15 @@ private const(char)[] readClipboard() @system
 
         return getClipboardText();
     }
-    else
+    else version (TerminalViewRaylib)
     {
         import core.stdc.string : strlen;
 
         const(char)* clip = GetClipboardText();
         return clip is null ? null : clip[0 .. strlen(clip)];
     }
+    else
+        return null; // no clipboard to read until the host offers one (`hooks.clipboardText`)
 }
 
 extern (C) private int forkpty(int* amaster, char* name, const void* termp,
@@ -471,14 +480,25 @@ struct TerminalView
     Returns `false` when the pty could not be opened; the terminal is freed
     and the instance reusable.
     */
+    version (TerminalViewRaylib)
     bool open(FontSet* fonts, ushort cols, ushort rows) @system
     {
-        s.fonts = fonts;
+        this.fonts = fonts;
         s.fontSize = fonts.size;
-        if (!openCore(cols, rows, fonts.cellW(), fonts.cellH()))
+        // The PNG decoder for kitty graphics: process-global, before any
+        // terminal exists.
+        installPngDecoder();
+        if (!openCore(cols, rows, fonts.cellW(), fonts.cellH(), drawsPixels: true))
             return false;
         prevFocused = IsWindowFocused();
         return true;
+    }
+
+    version (TerminalViewRaylib)
+    {
+        /// The face set the raylib painter draws with, borrowed from the window
+        /// session (`HST14`); null for a pane opened without fonts.
+        FontSet* fonts;
     }
 
     /**
@@ -487,8 +507,10 @@ struct TerminalView
     terminal arm, `TVW7`) can spawn too. Fontless, the pty reports no pixel
     size (`ws_xpixel`/`ws_ypixel` 0, the standard answer of pixel-less
     terminals) and kitty graphics stay unwired — nothing could paint them.
+    `drawsPixels` says a painter will draw it in pixels after all.
     */
-    bool openCore(ushort cols, ushort rows, int cellWidthPx, int cellHeightPx) @system
+    bool openCore(ushort cols, ushort rows, int cellWidthPx, int cellHeightPx,
+        bool drawsPixels = false) @system
     {
         import core.stdc.stdlib : getenv;
         import core.stdc.string : strrchr;
@@ -500,13 +522,8 @@ struct TerminalView
         s.exitBehavior = opts.exitBehavior;
         s.internalScrollbar = opts.internalScrollbar;
         s.debugScreenshotAndExit = opts.debugScreenshotAndExit;
+        s.drawsPixels = drawsPixels;
         forceRedrawEnv = getenv("SPARKLES_BENCH_FORCE_REDRAW") !is null;
-
-        // The PNG decoder for kitty graphics: process-global, before any
-        // terminal exists. Fontless there is no way to paint an image, so
-        // the raylib-backed decoder stays out of the picture entirely.
-        if (s.fonts !is null)
-            ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, cast(const(void)*) &decode_png);
 
         GhosttyTerminalOptions topts = {
             cols: s.cols, rows: s.rows, max_scrollback: opts.scrollbackLimit,
@@ -528,8 +545,8 @@ struct TerminalView
             winsize ws = {
                 ws_row: s.rows,
                 ws_col: s.cols,
-                ws_xpixel: s.fonts is null ? 0 : cast(ushort)(s.cols * s.cellWidth),
-                ws_ypixel: s.fonts is null ? 0 : cast(ushort)(s.rows * s.cellHeight),
+                ws_xpixel: !s.drawsPixels ? 0 : cast(ushort)(s.cols * s.cellWidth),
+                ws_ypixel: !s.drawsPixels ? 0 : cast(ushort)(s.rows * s.cellHeight),
             };
             cast(void) ioctl(s.pty_fd, TIOCSWINSZ, &ws);
         }
@@ -568,7 +585,7 @@ struct TerminalView
 
         // Kitty graphics: a storage limit is required, plus the file mediums.
         // Fontless (no renderer for them), the protocol stays disabled.
-        if (s.fonts !is null)
+        if (s.drawsPixels)
         {
             ulong kittyStorage = 64 * 1024 * 1024;
             ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &kittyStorage);
@@ -643,8 +660,8 @@ struct TerminalView
         winsize ws = {
             ws_row: s.rows,
             ws_col: s.cols,
-            ws_xpixel: s.fonts is null ? 0 : cast(ushort)(s.cols * s.cellWidth),
-            ws_ypixel: s.fonts is null ? 0 : cast(ushort)(s.rows * s.cellHeight),
+            ws_xpixel: !s.drawsPixels ? 0 : cast(ushort)(s.cols * s.cellWidth),
+            ws_ypixel: !s.drawsPixels ? 0 : cast(ushort)(s.rows * s.cellHeight),
         };
         s.child = forkpty(&s.pty_fd, null, null, &ws);
         if (s.child < 0)
@@ -824,7 +841,18 @@ struct TerminalView
             hangUpAndReap();
             s.childReaped = true;
         }
-        s.images.release();
+        // The images are raylib textures where a raylib painter drew them;
+        // a pane nothing painted in pixels made none.
+        version (TerminalViewRaylib)
+        {
+            RaylibTextures textures;
+            s.images.release(textures);
+        }
+        else
+        {
+            NoTextures none;
+            s.images.release(none);
+        }
         s.synchronizedOutput = typeof(s.synchronizedOutput).init;
         ghostty_kitty_graphics_placement_iterator_free(s.placement_iter);
         ghostty_render_state_row_cells_free(s.cells);
@@ -962,8 +990,18 @@ struct TerminalView
         // against its fonts and the pane's size. A failed open ends the run.
         if (!opened)
         {
-            auto c = h.canvas;
-            if (!open(c.fonts, cast(ushort) paneCols, cast(ushort) paneRows))
+            // Only a window with fonts can open a pane here; any other host
+            // needs it opened beforehand (`openCore`), as an embedder does.
+            bool ok;
+            version (TerminalViewRaylib)
+            {
+                static if (__traits(compiles, { auto c = h.canvas; FontSet* f = c.fonts; }))
+                {
+                    auto c = h.canvas;
+                    ok = open(c.fonts, cast(ushort) paneCols, cast(ushort) paneRows);
+                }
+            }
+            if (!ok)
             {
                 h.quit();
                 h.skipFrame();
@@ -974,8 +1012,9 @@ struct TerminalView
 
         // Last frame's bracket ended after our paint ran (HST13), so pending
         // font atlas growth can replace its GPU textures here.
-        if (s.fonts !is null && s.fonts.flushPending() && forceFirstFrames < 1)
-            forceFirstFrames = 1;
+        version (TerminalViewRaylib)
+            if (fonts !is null && fonts.flushPending() && forceFirstFrames < 1)
+                forceFirstFrames = 1;
 
         // Grid follow: the pane's size (cells) is authoritative — window
         // resizes and font-size changes both arrive as a size change.
@@ -984,8 +1023,12 @@ struct TerminalView
         if (newFontSize > 0 && newFontSize != s.fontSize)
         {
             s.fontSize = newFontSize;
-            s.cellWidth = s.fonts.cellW();
-            s.cellHeight = s.fonts.cellH();
+            version (TerminalViewRaylib)
+                if (fonts !is null)
+                {
+                    s.cellWidth = fonts.cellW();
+                    s.cellHeight = fonts.cellH();
+                }
             gridChanged = true;
         }
         if (paneCols > 0 && paneRows > 0
@@ -1000,7 +1043,10 @@ struct TerminalView
 
         // The whole surface is the window: it can be seen while focused and
         // not minimized (`TPR9`). An embedder says so per pane instead.
-        setSeen(opts.visible && IsWindowFocused() && !IsWindowMinimized());
+        version (TerminalViewRaylib)
+            setSeen(opts.visible && IsWindowFocused() && !IsWindowMinimized());
+        else
+            setSeen(opts.visible && prevFocused);
         deliverEvents(h);
 
         // A captured OSC title becomes the window's — the whole surface IS
@@ -1011,7 +1057,10 @@ struct TerminalView
             const t = title;
             char[maxTitleBytes + 1] z = 0;
             z[0 .. t.length] = t[];
-            SetWindowTitle(z.ptr);
+            version (TerminalViewRaylib)
+                SetWindowTitle(z.ptr);
+            else static if (__traits(compiles, h.title(t)))
+                h.title(t);
         }
 
         // The exit policy's frame-level half (waitForKey closes in `handle`).
@@ -1110,7 +1159,11 @@ struct TerminalView
     /// paint, byte-identical to the polling loop's, over the whole surface.
     void paint(H)(ref H h, in WidgetTree, in Frame[])
     {
-        paintFrame(s, GetScreenWidth(), GetScreenHeight());
+        version (TerminalViewRaylib)
+        {
+            auto painter = RaylibPainter(fonts, s.fontSize);
+            paintFrame(s, painter, GetScreenWidth(), GetScreenHeight());
+        }
     }
 
     /**
@@ -1134,8 +1187,21 @@ struct TerminalView
     /// under a status bar of arbitrary height).
     void paintPanePx(H)(ref H h, int px, int py, int pw, int ph)
     {
-        import raylib.rlgl : rlPopMatrix, rlPushMatrix, rlTranslatef;
+        version (TerminalViewRaylib)
+        {
+            auto painter = RaylibPainter(fonts, s.fontSize);
+            paintAt(painter, px, py, pw, ph);
+        }
+    }
 
+    /**
+    100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF paintPanePx) through any painter (`isTerminalPainter`): what a
+    host whose canvas is not raylib's paints the pane with, and what a
+    test records the renderer through.
+    */
+    void paintAt(P)(ref P painter, int px, int py, int pw, int ph)
+    if (isTerminalPainter!P)
+    {
         if (pw <= 0 || ph <= 0)
             return;
         // The polled mouse is read relative to here from the next frame on
@@ -1146,16 +1212,15 @@ struct TerminalView
         // Scrolled between rows (`SCV12`): the viewport is painted lower by
         // the fraction, and the band it uncovers shows the row above it.
         const shift = shiftPx();
-        BeginScissorMode(px, py, pw, ph);
-        rlPushMatrix();
-        rlTranslatef(px, py - liftRows * s.cellHeight + shift, 0);
-        paintFrame(s, pw, ph);
-        rlPopMatrix();
+        painter.clip(px, py, pw, ph);
+        painter.pushOffset(px, py - liftRows * s.cellHeight + shift);
+        paintFrame(s, painter, pw, ph);
+        painter.popOffset();
         // (Lifted over a sheet, the rows above the viewport's top are the
         // lifted ones, already painted.)
         if (shift > 0 && liftRows == 0)
-            paintRowAbove(px, py, pw, shift);
-        EndScissorMode();
+            paintRowAbove(painter, px, py, pw, shift);
+        painter.unclip();
     }
 
     // ── scrolling between rows (`SCV12`) ────────────────────────────────────
@@ -1280,21 +1345,18 @@ struct TerminalView
     // The row above the viewport, in the `band` pixels a shift uncovers at
     // the top of the pane: rendered from a second state with the viewport
     // one row up, then the viewport put back.
-    private void paintRowAbove(int px, int py, int pw, int band) @system
+    private void paintRowAbove(P)(ref P painter, int px, int py, int pw, int band)
     {
-        import raylib.rlgl : rlPopMatrix, rlPushMatrix, rlTranslatef;
-
         if (aboveState is null)
             ghostty_render_state_new(null, &aboveState);
         scrollViewport(-1);
         ghostty_render_state_update(aboveState, s.terminal);
         auto keep = s.render_state;
         s.render_state = aboveState;
-        BeginScissorMode(px, py, pw, band);
-        rlPushMatrix();
-        rlTranslatef(px, py + band - s.cellHeight, 0);
-        paintFrame(s, pw, s.cellHeight);
-        rlPopMatrix();
+        painter.clip(px, py, pw, band);
+        painter.pushOffset(px, py + band - s.cellHeight);
+        paintFrame(s, painter, pw, s.cellHeight);
+        painter.popOffset();
         s.render_state = keep;
         scrollViewport(1);
     }
@@ -2034,12 +2096,13 @@ struct TerminalView
         if (!opened || cols == 0 || rows == 0)
             return;
         int cw = s.cellWidth, ch = s.cellHeight;
-        if (s.fonts !is null)
-        {
-            s.fontSize = s.fonts.size;
-            cw = s.fonts.cellW();
-            ch = s.fonts.cellH();
-        }
+        version (TerminalViewRaylib)
+            if (fonts !is null)
+            {
+                s.fontSize = fonts.size;
+                cw = fonts.cellW();
+                ch = fonts.cellH();
+            }
         if (cols == s.cols && rows == s.rows
             && cw == s.cellWidth && ch == s.cellHeight)
             return;
@@ -2587,8 +2650,8 @@ struct TerminalView
         winsize ws = {
             ws_row: s.rows,
             ws_col: s.cols,
-            ws_xpixel: s.fonts is null ? 0 : cast(ushort)(s.cols * s.cellWidth),
-            ws_ypixel: s.fonts is null ? 0 : cast(ushort)(s.rows * s.cellHeight),
+            ws_xpixel: !s.drawsPixels ? 0 : cast(ushort)(s.cols * s.cellWidth),
+            ws_ypixel: !s.drawsPixels ? 0 : cast(ushort)(s.rows * s.cellHeight),
         };
         ioctl(s.pty_fd, TIOCSWINSZ, &ws);
     }
