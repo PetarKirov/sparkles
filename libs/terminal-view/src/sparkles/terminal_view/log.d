@@ -127,17 +127,26 @@ const(char)[] tallGlyphSample(scope const(char)[] msg, return scope char[] buf)
     assert(tallGlyphSample(warning, buf[]) == "[0x2573] 50 > 48");
 }
 
+// raylib's `TraceLogLevel` numbering, mirrored: this module routes raylib's
+// log without linking raylib, so a build without it still has the seam.
+private enum TraceLevel : int
+{
+    debug_ = 2,
+    info = 3,
+    warning = 4,
+    error = 5,
+    fatal = 6,
+}
+
 /// raylib's `TraceLogLevel` numbering as a core [LogLevel].
 LogLevel coreLevelOf(int raylibLevel) @safe pure nothrow @nogc
 {
-    import raylib : TraceLogLevel;
-
     switch (raylibLevel)
     {
-        case TraceLogLevel.LOG_INFO:    return LogLevel.info;
-        case TraceLogLevel.LOG_WARNING: return LogLevel.warning;
-        case TraceLogLevel.LOG_ERROR:   return LogLevel.error;
-        case TraceLogLevel.LOG_FATAL:   return LogLevel.critical;
+        case TraceLevel.info:    return LogLevel.info;
+        case TraceLevel.warning: return LogLevel.warning;
+        case TraceLevel.error:   return LogLevel.error;
+        case TraceLevel.fatal:   return LogLevel.critical;
         default:                        return LogLevel.trace;
     }
 }
@@ -146,12 +155,20 @@ LogLevel coreLevelOf(int raylibLevel) @safe pure nothrow @nogc
 @("terminal_view.log.coreLevelOf")
 @safe pure nothrow @nogc unittest
 {
-    import raylib : TraceLogLevel;
+    assert(coreLevelOf(TraceLevel.debug_) == LogLevel.trace);
+    assert(coreLevelOf(TraceLevel.info) == LogLevel.info);
+    assert(coreLevelOf(TraceLevel.warning) == LogLevel.warning);
+    assert(coreLevelOf(TraceLevel.fatal) == LogLevel.critical);
+    version (TerminalViewRaylib)
+    {
+        import raylib : TraceLogLevel;
 
-    assert(coreLevelOf(TraceLogLevel.LOG_DEBUG) == LogLevel.trace);
-    assert(coreLevelOf(TraceLogLevel.LOG_INFO) == LogLevel.info);
-    assert(coreLevelOf(TraceLogLevel.LOG_WARNING) == LogLevel.warning);
-    assert(coreLevelOf(TraceLogLevel.LOG_FATAL) == LogLevel.critical);
+        static assert(int(TraceLevel.debug_) == TraceLogLevel.LOG_DEBUG
+            && int(TraceLevel.info) == TraceLogLevel.LOG_INFO
+            && int(TraceLevel.warning) == TraceLogLevel.LOG_WARNING
+            && int(TraceLevel.error) == TraceLogLevel.LOG_ERROR
+            && int(TraceLevel.fatal) == TraceLogLevel.LOG_FATAL);
+    }
 }
 
 /*
@@ -173,7 +190,8 @@ reaches the ring or the file — while raylib's chatter and the build info do
     import std.path : buildPath;
     import std.process : thisProcessID;
 
-    import raylib : SetTraceLogCallback, TraceLog, TraceLogLevel;
+    version (TerminalViewRaylib)
+        import raylib : SetTraceLogCallback, TraceLog, TraceLogLevel;
 
     import sparkles.base.log_sinks : installFileLog, installRingLog, RingLogRecord;
     import sparkles.base.logger : coreGlobalLogLevel, sharedCoreLog;
@@ -194,7 +212,8 @@ reaches the ring or the file — while raylib's chatter and the build info do
         sharedCoreLog = oldCore;
         sharedLog = oldShared;
         coreGlobalLogLevel = oldLevel;
-        SetTraceLogCallback(null);
+        version (TerminalViewRaylib)
+            SetTraceLogCallback(null);
         if (dir.exists)
             rmdirRecurse(dir);
     }
@@ -203,7 +222,8 @@ reaches the ring or the file — while raylib's chatter and the build info do
     coreGlobalLogLevel = LogLevel.trace;
     auto file = installFileLog(buildPath(dir, "terminal.log"));
     auto ring = installRingLog(capacity: 1024);
-    SetTraceLogCallback(&routeTraceLog);
+    version (TerminalViewRaylib)
+        SetTraceLogCallback(&routeTraceLog);
 
     // A shell reading with builtins only: it outlives the writes on any
     // system (NixOS has no `/bin/cat`, and a failed exec raced them), and
@@ -236,15 +256,18 @@ reaches the ring or the file — while raylib's chatter and the build info do
     assert(screen.canFind(typed) && screen.canFind(pasted), screen);
 
     logBuildInfo();
-    TraceLog(TraceLogLevel.LOG_WARNING, "probe %d", 42);
+    version (TerminalViewRaylib)
+        TraceLog(TraceLogLevel.LOG_WARNING, "probe %d", 42);
     file.close();
 
     string logged;
     ring.each((scope const ref RingLogRecord r) { logged ~= r.message; logged ~= '\n'; });
-    assert(logged.canFind("raylib: probe 42"), logged);
+    version (TerminalViewRaylib)
+        assert(logged.canFind("raylib: probe 42"), logged);
     assert(logged.canFind("ghostty-vt"), logged);
     const onDisk = readText(file.path);
-    assert(onDisk.canFind("raylib: probe 42"), onDisk);
+    version (TerminalViewRaylib)
+        assert(onDisk.canFind("raylib: probe 42"), onDisk);
 
     foreach (marker; [typed, pasted])
     {
