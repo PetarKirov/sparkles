@@ -331,6 +331,11 @@ Format and parse numbers with `sparkles.base.text.writers`/`.readers`; `.text`,
 `UTFException`, so `nothrow @nogc` paths use the `text` package too. Manual
 allocation uses `pureMalloc`/`pureFree`; known sizes use static arrays.
 
+Locks and waits come from `sparkles.base.sync` (`Mutex`, `Condition`,
+`Guarded!T`, `RwLock`, `Semaphore`, …), not `core.sync` or `pthread_mutex_t`:
+each is `@nogc nothrow` and its `.init` is ready, with no constructor or `new`
+([how-to](../libs/base/how-to/synchronize-threads-and-fibers.md)).
+
 ### Strings, and the C boundary
 
 **A D API takes `string` or `in char[]`; NUL-termination happens at the C
