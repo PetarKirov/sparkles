@@ -15,6 +15,9 @@ targetPath "../../build"
 importPaths "src" "../test-runner/src"
 sourcePaths "src"
 
+// The vector and matrix types are `sparkles:math`'s (`SHV10`).
+dependency "sparkles:math" path="../.."
+
 dflags "-preview=in" "-preview=dip1000"
 
 configuration "library" {

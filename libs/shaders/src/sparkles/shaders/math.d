@@ -14,6 +14,8 @@ the GPU computes, up to the usual floating-point ulp.
 module sparkles.shaders.math;
 
 import sparkles.shaders.attributes : compute, CompileFor;
+import sparkles.math.vector : fromNative;
+import std.traits : Unqual;
 import sparkles.shaders.types;
 
 version (LDC)
@@ -25,11 +27,15 @@ else
 // A `float`, or an LDC-native `__vector` of them: what the intrinsics take.
 private enum isNative(T) = __traits(isFloating, T);
 
+// A vector that stores such a `__vector`: an intrinsic of it is one
+// instruction on the whole vector.
+private enum bool storesNative(T) = is(typeof(T.storesNative)) && T.storesNative;
+
 private T perComponent(alias f, T)(in T v) @safe pure nothrow @nogc
 {
     T r;
     static foreach (i; 0 .. vectorLength!T)
-        r.array[i] = f(v.array[i]);
+        r[i] = f(v[i]);
     return r;
 }
 
@@ -37,7 +43,7 @@ private T perComponent2(alias f, T)(in T a, in T b) @safe pure nothrow @nogc
 {
     T r;
     static foreach (i; 0 .. vectorLength!T)
-        r.array[i] = f(a.array[i], b.array[i]);
+        r[i] = f(a[i], b[i]);
     return r;
 }
 
@@ -45,19 +51,13 @@ private T perComponent3(alias f, T)(in T a, in T b, in T c) @safe pure nothrow @
 {
     T r;
     static foreach (i; 0 .. vectorLength!T)
-        r.array[i] = f(a.array[i], b.array[i], c.array[i]);
+        r[i] = f(a[i], b[i], c[i]);
     return r;
 }
 
 // `s` in every component of a `V`: GLSL's implicit widening of a scalar
 // argument, for the forms that take one.
-private V splat(V)(float s) @safe pure nothrow @nogc
-{
-    V r;
-    static foreach (i; 0 .. vectorLength!V)
-        r.array[i] = s;
-    return r;
-}
+private V splat(V)(float s) @safe pure nothrow @nogc => V(s);
 
 /// GLSL `floor`.
 T floor(T)(in T v) @safe pure nothrow @nogc
@@ -67,6 +67,8 @@ T floor(T)(in T v) @safe pure nothrow @nogc
         version (LDC) return llvm_floor(v);
         else return .floor(v);
     }
+    else static if (storesNative!T)
+        return fromNative!(Unqual!T)(floor(v.nativeVector));
     else
         return perComponent!((float s) => floor(s), T)(v);
 }
@@ -79,6 +81,8 @@ T abs(T)(in T v) @safe pure nothrow @nogc
         version (LDC) return llvm_fabs(v);
         else return fabs(v);
     }
+    else static if (storesNative!T)
+        return fromNative!(Unqual!T)(abs(v.nativeVector));
     else
         return perComponent!((float s) => abs(s), T)(v);
 }
@@ -114,6 +118,8 @@ T sqrt(T)(in T v) @safe pure nothrow @nogc
         version (LDC) return llvm_sqrt(v);
         else return .sqrt(v);
     }
+    else static if (storesNative!T)
+        return fromNative!(Unqual!T)(sqrt(v.nativeVector));
     else
         return perComponent!((float s) => sqrt(s), T)(v);
 }
@@ -126,6 +132,8 @@ T sin(T)(in T v) @safe pure nothrow @nogc
         version (LDC) return llvm_sin(v);
         else return .sin(v);
     }
+    else static if (storesNative!T)
+        return fromNative!(Unqual!T)(sin(v.nativeVector));
     else
         return perComponent!((float s) => sin(s), T)(v);
 }
@@ -138,6 +146,8 @@ T cos(T)(in T v) @safe pure nothrow @nogc
         version (LDC) return llvm_cos(v);
         else return .cos(v);
     }
+    else static if (storesNative!T)
+        return fromNative!(Unqual!T)(cos(v.nativeVector));
     else
         return perComponent!((float s) => cos(s), T)(v);
 }
@@ -150,6 +160,8 @@ T exp(T)(in T v) @safe pure nothrow @nogc
         version (LDC) return llvm_exp(v);
         else return cast(T) .exp(cast(float) v);
     }
+    else static if (storesNative!T)
+        return fromNative!(Unqual!T)(exp(v.nativeVector));
     else
         return perComponent!((float s) => exp(s), T)(v);
 }
@@ -162,6 +174,8 @@ T pow(T)(in T a, in T b) @safe pure nothrow @nogc
         version (LDC) return llvm_pow(a, b);
         else return cast(T) .pow(cast(float) a, cast(float) b); // unqualified: std.math.pow is ambiguous on `const(float)`
     }
+    else static if (storesNative!T)
+        return fromNative!(Unqual!T)(pow(a.nativeVector, b.nativeVector));
     else
         return perComponent2!((float p, float q) => pow(p, q), T)(a, b);
 }
@@ -233,7 +247,7 @@ if (isShaderVector!V)
     const p = a * b;
     float s = 0;
     static foreach (i; 0 .. vectorLength!V)
-        s += p.array[i];
+        s += p[i];
     return s;
 }
 

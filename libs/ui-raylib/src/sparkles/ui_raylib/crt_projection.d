@@ -17,7 +17,7 @@ nothing could hold together.
 module sparkles.ui_raylib.crt_projection;
 
 import sparkles.input.gesture : PointF;
-import sparkles.shaders : v2, x, y;
+import sparkles.shaders : v2;
 import sparkles.ui.crt_shaders : crtCurve, crtLens;
 
 /**
