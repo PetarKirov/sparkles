@@ -450,8 +450,7 @@ Constraints that shape it, each a consequence of a checked property of the stack
   targets — a line primitive would not.
 - Held-key bindings are unavailable where a target cannot report key releases, so
   panning is middle-drag, a modifier-drag and the keyboard on both targets.
-- Geometry types are union-backed vectors, so named-field reads are unavailable at
-  compile time; camera tests are runtime tests.
+- Camera tests are runtime tests.
 
 The backend-isolation check stays a **manual grep**, deliberately not automated.
 

@@ -10,6 +10,14 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
 
+// Cycle-safe runner integration (the recipe `sparkles:shaders` documents):
+// `sparkles:shaders` depends on this package and `sparkles:ui` on both, and
+// `sparkles:ui` sits in the test-runner-impl's closure, so a
+// `dependency "sparkles:test-runner"` here would close
+// `math -> test-runner -> impl -> ui -> shaders -> math`. Source-include the
+// shim and the impl instead; only the shim is on the top-level import paths.
+importPaths "src" "../test-runner/src"
+
 configuration "library" {
     targetType "library"
     excludedSourceFiles "src/app.d"
@@ -17,9 +25,8 @@ configuration "library" {
 
 configuration "unittest" {
     excludedSourceFiles "src/app.d"
-
-    dependency "sparkles:test-runner" path="../.."
-    dependency "sparkles:base" path="../.."
+    sourcePaths "src" "../test-runner/src" "../test-runner-impl/src"
+    importPaths "src" "../test-runner/src" "../test-runner-impl/src"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

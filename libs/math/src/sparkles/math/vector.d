@@ -1,275 +1,536 @@
 /**
-Vector primitives for linear algebra in game and graphics code.
+The project's one vector type: `Vector!(T, N, layout, names)`.
 
-Provides a fixed-size numeric vector type with optional named fields,
-component-wise arithmetic, scalar operations, dot product, and aliases
-for common vector sizes.
+$(B Named components, no union.) A vector is one private array of its
+components, and each name (`x`, `y`; or `width`, `height`; or `col`, `row`)
+is a `ref` accessor to one of them. So a vector constructed at compile time
+can be read at compile time, and reflection sees one field, not two views of
+the same bytes.
+
+$(B Two layouts.) `Layout.packed`, the default, is `T[N]`, aligned as one
+`T`: dense storage for geometry, sizes and cells. `Layout.device` is how a
+GPU lays a vector out: two components take twice a component's size and
+alignment, three and four take four times (a `float3` is 16 bytes). The
+shader vocabulary's `float2`–`float4` are device vectors, so a value, a
+struct field or an array element holding one means the same bytes on the
+host as on the device.
+
+$(B Storage follows the compiler.) A device vector of `float`, `int` or
+`uint` stores a `__vector` where that is what the compiler wants and handles
+correctly: always in a dcompute device build, where it is what a shader's
+interface must be, and on the host under an LDC whose CTFE evaluates vector
+operations, for two and four components. Everywhere else, DMD always, it
+stores a `T[N]`. The layout, the operations and their results are the same
+either way; only the code the compiler generates differs.
+
+$(B Operations.) Component-wise `+ - * /` against a vector of the same
+length (whatever its names or layout) or a scalar on either side, their
+assignment forms, unary `-`, `==` meaning every component is equal,
+`v[i]`, `v.array`, construction from every component (by name too), from
+one broadcast value, or from a shorter vector and a last component, and
+swizzles: `v.yx`, `v.xxz`, `v.rgb`, read and written.
 */
+@compute(CompileFor.hostAndDevice)
 module sparkles.math.vector;
 
-import std.traits : CommonType, isNumeric;
+import std.traits : CommonType, isFloatingPoint, isNumeric;
 
-@safe:
+import sparkles.math.device : compute, CompileFor, vectorType;
 
-private enum baseFieldNames = ["x", "y", "z", "w"];
-
-private bool hasDuplicateIndices(scope const size_t[] indices)
-@safe pure nothrow @nogc
+/// How a vector is laid out in memory.
+enum Layout
 {
-    foreach (i; 0 .. indices.length)
-    {
-        foreach (j; i + 1 .. indices.length)
-        {
-            if (indices[i] == indices[j])
-                return true;
-        }
-    }
-
-    return false;
+    /// The components back to back, aligned as one component: `T[N]`.
+    packed,
+    /// As a GPU lays a vector out: two components take twice a component's
+    /// size and alignment, three and four take four times.
+    device,
 }
 
-private enum bool hasSingleCharFieldNames(string[] fieldNames) = (()
-{
-    foreach (name; fieldNames)
-    {
-        if (name.length != 1)
-            return false;
-    }
+/// The size, and alignment, of a device-layout vector of `N` `T`s.
+enum size_t deviceVectorSize(T, size_t N) = (N == 1 ? 1 : N == 2 ? 2 : 4) * T.sizeof;
 
-    return true;
-})();
+/// Whether `V` is a $(LREF Vector).
+enum bool isVector(V) = is(V : Vector!(U, M, L, nm), U, size_t M, Layout L, string[] nm);
 
-private template fieldIndexForSwizzleChar(string[] fieldNames, char c, size_t i = 0)
+// Whether this compiler's CTFE evaluates operations on `__vector`s
+// (dlang/dmd#21823). Where it does not, a vector that stores one could not be
+// a compile-time constant.
+version (LDC)
+    private enum bool vectorCtfe = __traits(compiles, {
+        enum r = () { __vector(float[4]) a = 1; a = a + a; return a[0]; }();
+        static assert(r == 2);
+    });
+else
+    private enum bool vectorCtfe = false;
+
+private enum bool isLane(T) = is(T == float) || is(T == int) || is(T == uint);
+
+// Whether a vector stores a `__vector`: a device vector of 32-bit lanes, on
+// the device always, on the host where CTFE handles it and for the widths a
+// released LDC lays out like LLVM does (a three-wide `__vector` is 12 bytes
+// to it, 16 to LLVM).
+version (LDC_DCompute)
+    private enum bool nativeStorage(T, size_t N, Layout layout) =
+        layout == Layout.device && isLane!T && N >= 2 && N <= 4;
+else
+    private enum bool nativeStorage(T, size_t N, Layout layout) =
+        layout == Layout.device && isLane!T && vectorCtfe && (N == 2 || N == 4);
+
+private template decimal(size_t i)
 {
-    static if (i >= fieldNames.length)
-    {
-        static assert(
-            0,
-            "Invalid swizzle component `" ~ c ~ "` for this vector"
-        );
-    }
-    else static if (fieldNames[i][0] == c)
-    {
-        enum fieldIndexForSwizzleChar = i;
-    }
+    static if (i < 10)
+        enum string decimal = "0123456789"[i .. i + 1];
     else
-    {
-        enum fieldIndexForSwizzleChar = fieldIndexForSwizzleChar!(
-            fieldNames,
-            c,
-            i + 1
-        );
-    }
+        enum string decimal = decimal!(i / 10) ~ decimal!(i % 10);
 }
 
-private template swizzleIndices(string[] fieldNames, string swizzle)
+private template generatedNames(size_t N)
 {
-    static assert(
-        hasSingleCharFieldNames!fieldNames,
-        "Swizzling requires vectors with single-character field names"
-    );
+    static if (N == 0)
+        enum string[] generatedNames = [];
+    else
+        enum string[] generatedNames = generatedNames!(N - 1) ~ ("v" ~ decimal!(N - 1));
+}
 
-    enum size_t[swizzle.length] swizzleIndices = ()
-    {
-        size_t[swizzle.length] result = void;
-        static foreach (i, c; swizzle)
-            result[i] = fieldIndexForSwizzleChar!(fieldNames, c);
-        return result;
+/// The component names a vector of `N` gets by default: `x`, `y`, `z`, `w`,
+/// or `v0`, `v1`, … beyond four.
+template defaultNames(size_t N)
+{
+    static if (N <= 4)
+        enum string[] defaultNames = ["x", "y", "z", "w"][0 .. N];
+    else
+        enum string[] defaultNames = generatedNames!N;
+}
+
+// The component a swizzle letter names: one of the vector's own one-letter
+// names, or, for a vector with the default names, `rgba` for `xyzw`; -1 for
+// none. `set` is which spelling it is, since a swizzle may not mix them.
+private template swizzleComponent(string[] names, char c)
+{
+    enum int own = () {
+        foreach (i, n; names)
+            if (n.length == 1 && n[0] == c)
+                return cast(int) i;
+        return -1;
+    }();
+    enum int colour = () {
+        if (names != defaultNames!(names.length) || names.length > 4)
+            return -1;
+        foreach (i, n; "rgba"[0 .. names.length])
+            if (n == c)
+                return cast(int) i;
+        return -1;
+    }();
+    enum int index = own >= 0 ? own : colour;
+    enum int set = own >= 0 ? 0 : colour >= 0 ? 1 : -1;
+}
+
+private template swizzleIndices(string[] names, string s)
+{
+    enum size_t[s.length] swizzleIndices = () {
+        size_t[s.length] r;
+        static foreach (k; 0 .. s.length)
+            r[k] = swizzleComponent!(names, s[k]).index;
+        return r;
     }();
 }
 
-private string[] makeDefaultFieldNames(size_t N)()
+// Whether `s` is a swizzle of a vector named `names`: one to four letters,
+// each naming a component, all from one spelling.
+private template isSwizzle(string[] names, string s)
 {
-    static if (N <= baseFieldNames.length)
-    {
-        return baseFieldNames[0 .. N];
-    }
-    else
-    {
-        import std.conv : to;
+    enum bool isSwizzle = () {
+        if (s.length < 1 || s.length > 4)
+            return false;
+        int set = -2;
+        static foreach (k; 0 .. s.length)
+        {{
+            alias c = swizzleComponent!(names, s[k]);
+            if (c.index < 0 || (set != -2 && c.set != set))
+                return false;
+            set = c.set;
+        }}
+        return true;
+    }();
+}
 
-        string[] generated;
-        generated.length = N;
-        static foreach (i; 0 .. N)
-            generated[i] = "v" ~ i.to!string;
-        return generated;
+private template hasRepeats(string[] names, string s)
+{
+    enum bool hasRepeats = () {
+        enum idx = swizzleIndices!(names, s);
+        foreach (i; 0 .. idx.length)
+            foreach (j; i + 1 .. idx.length)
+                if (idx[i] == idx[j])
+                    return true;
+        return false;
+    }();
+}
+
+private template join(string[] parts, string sep)
+{
+    static if (parts.length == 0)
+        enum string join = "";
+    else static if (parts.length == 1)
+        enum string join = parts[0];
+    else
+        enum string join = parts[0] ~ sep ~ join!(parts[1 .. $], sep);
+}
+
+private template parameters(string[] names)
+{
+    static if (names.length == 0)
+        enum string[] parameters = [];
+    else
+        enum string[] parameters = parameters!(names[0 .. $ - 1]) ~ ("T " ~ names[$ - 1]);
+}
+
+private template assignments(string[] names)
+{
+    static if (names.length == 0)
+        enum string assignments = "";
+    else
+        enum string assignments = assignments!(names[0 .. $ - 1])
+            ~ "_c[" ~ decimal!(names.length - 1) ~ "] = " ~ names[$ - 1] ~ "; ";
+}
+
+private enum bool isArithmetic(string op) = op == "+" || op == "-" || op == "*" || op == "/";
+
+// The UDA a vector carries: `@vectorType` where it stores a `__vector`.
+private template marker(bool native)
+{
+    import std.meta : AliasSeq;
+
+    static if (native)
+        alias marker = vectorType;
+    else
+        alias marker = AliasSeq!();
+}
+
+/**
+A vector of `N` components of type `T`, laid out as `layout`, with the
+components named `names`.
+*/
+template Vector(T, size_t N, Layout layout = Layout.packed, string[] names = defaultNames!N)
+if (isNumeric!T && N > 0)
+{
+    @(marker!(nativeStorage!(T, N, layout)))
+    struct Vector
+    {
+        static assert(names.length == N, "a vector names each of its components");
+        static assert(layout == Layout.packed || N <= 4, "a device vector has one to four components");
+
+        /// The component type, the count, the layout and the names.
+        alias Component = T;
+        /// ditto
+        enum size_t dimension = N;
+        /// ditto
+        enum Layout memoryLayout = layout;
+        /// ditto
+        enum string[] componentNames = names;
+
+        private enum bool native = nativeStorage!(T, N, layout);
+
+        static if (native)
+            private alias Storage = __vector(T[N]);
+        else
+            private alias Storage = T[N];
+
+        // The components. One field, so reflection sees one, and no union, so
+        // CTFE reads it; the names below are accessors.
+        align(layout == Layout.device ? deviceVectorSize!(T, N) : T.alignof)
+        private Storage _c = 0;
+
+        static foreach (i, name; names)
+            mixin("@property ref inout(T) ", name, "() inout return => _c[", decimal!i, "];");
+
+        /// Constructs a vector from every component, which may be passed by
+        /// name: `Vector!(int, 2, Layout.packed, ["col", "row"])(col: 3, row: 4)`.
+        mixin("this(" ~ join!(parameters!names, ", ") ~ ") { " ~ assignments!names ~ "}");
+
+        static if (N > 1)
+        {
+            /// Constructs a vector with every component `value`.
+            this(T value)
+            {
+                static foreach (i; 0 .. N)
+                    _c[i] = value;
+            }
+
+            /// Constructs a vector from a vector of the first `N - 1`
+            /// components and the last one: GLSL's `vec4(rgb, a)`.
+            this(V)(const V head, T last)
+            if (isVector!V && V.dimension == N - 1)
+            {
+                static foreach (i; 0 .. N - 1)
+                    _c[i] = cast(T) head._c[i];
+                _c[N - 1] = last;
+            }
+        }
+
+        /// Component `i`; out of range, a bounds error on the host. (No
+        /// contract: device code has no assertions.)
+        ref inout(T) opIndex(size_t i) inout return => _c[i];
+
+        /// ditto
+        enum size_t opDollar = N;
+
+        /// Whether this vector stores a `__vector`, and that vector: what an
+        /// LLVM intrinsic over vectors takes, so that a function of a vector
+        /// can be one vector instruction where the storage is one.
+        enum bool storesNative = native;
+
+        static if (native)
+        {
+            /// ditto
+            alias NativeVector = Storage;
+
+            /// ditto
+            ref inout(Storage) nativeVector() inout return => _c;
+        }
+
+        /// The components, as a static array.
+        T[N] array() const
+        {
+            static if (native)
+                return _c.array;
+            else
+                return _c;
+        }
+
+        static if (!native)
+        {
+            /// The components as a slice of this vector's own storage (`v[]`).
+            inout(T)[] opIndex() inout return => _c[];
+
+            /// ditto (`v[1 .. 3]`)
+            inout(T)[] opSlice(size_t i, size_t j) inout return => _c[i .. j];
+        }
+
+        // The operands are `const` values, not `in`: under `-preview=in` an
+        // `in` struct of more than 8 bytes is a reference on Win64, and LDC
+        // 1.42's CTFE crashes evaluating such a call in a function's `enum`.
+
+        /// Component-wise arithmetic against a vector of the same length,
+        /// whatever its names or layout. The result has this vector's names and
+        /// layout and the common component type.
+        auto opBinary(string op, V)(const V rhs) const
+        if (isArithmetic!op && isVector!V && V.dimension == N)
+        {
+            alias R = CommonType!(T, V.Component);
+            .Vector!(R, N, layout, names) r;
+            static if (native && is(R == T) && is(V.Storage == Storage))
+                r._c = mixin("_c " ~ op ~ " rhs._c");
+            else
+                static foreach (i; 0 .. N)
+                    r._c[i] = cast(R) mixin("_c[i] " ~ op ~ " rhs._c[i]");
+            return r;
+        }
+
+        /// Component-wise arithmetic against one value, on either side.
+        auto opBinary(string op, U)(const U rhs) const
+        if (isArithmetic!op && isNumeric!U)
+        {
+            alias R = CommonType!(T, U);
+            .Vector!(R, N, layout, names) r;
+            static if (native && is(R == T))
+            {
+                Storage b = rhs;
+                r._c = mixin("_c " ~ op ~ " b");
+            }
+            else
+                static foreach (i; 0 .. N)
+                    r._c[i] = cast(R) mixin("_c[i] " ~ op ~ " rhs");
+            return r;
+        }
+
+        /// ditto
+        auto opBinaryRight(string op, U)(const U lhs) const
+        if (isArithmetic!op && isNumeric!U)
+        {
+            alias R = CommonType!(T, U);
+            .Vector!(R, N, layout, names) r;
+            static if (native && is(R == T))
+            {
+                Storage b = lhs;
+                r._c = mixin("b " ~ op ~ " _c");
+            }
+            else
+                static foreach (i; 0 .. N)
+                    r._c[i] = cast(R) mixin("lhs " ~ op ~ " _c[i]");
+            return r;
+        }
+
+        /// In-place component-wise arithmetic, against a vector or a value.
+        ref Vector opOpAssign(string op, V)(const V rhs) return
+        if (isArithmetic!op && (isVector!V && V.dimension == N || isNumeric!V))
+        {
+            static if (isVector!V)
+            {
+                static if (native && is(V.Storage == Storage))
+                    mixin("_c " ~ op ~ "= rhs._c;");
+                else
+                    static foreach (i; 0 .. N)
+                        _c[i] = cast(T) mixin("_c[i] " ~ op ~ " rhs._c[i]");
+            }
+            else
+            {
+                static if (native)
+                {
+                    Storage b = cast(T) rhs;
+                    mixin("_c " ~ op ~ "= b;");
+                }
+                else
+                    static foreach (i; 0 .. N)
+                        _c[i] = cast(T) mixin("_c[i] " ~ op ~ " rhs");
+            }
+            return this;
+        }
+
+        /// Negation, and its identity.
+        Vector opUnary(string op)() const
+        if (op == "-" || op == "+")
+        {
+            static if (op == "+")
+                return this;
+            else
+            {
+                Vector r;
+                static if (native)
+                    r._c = -_c;
+                else
+                    static foreach (i; 0 .. N)
+                        r._c[i] = cast(T) -_c[i];
+                return r;
+            }
+        }
+
+        /// Whether every component equals the one of `rhs`: one `bool`, GLSL's
+        /// `==` on vectors (D's `==` on a `__vector` is a mask).
+        bool opEquals(V)(const V rhs) const
+        if (isVector!V && V.dimension == N)
+        {
+            bool same = true;
+            static foreach (i; 0 .. N)
+                same = same & (_c[i] == rhs._c[i]);
+            return same;
+        }
+
+        /// The dot product with a vector of the same length, as the free
+        /// $(LREF dot) computes it: `a.dot(b)`.
+        auto dot(V)(const V rhs) const
+        if (isVector!V && V.dimension == N)
+            => .dot(this, rhs);
+
+        version (LDC_DCompute) {} else
+        {
+            /// The hash of the components, so a vector can key an associative
+            /// array.
+            size_t toHash() const @safe pure nothrow @nogc
+            {
+                const T[N] a = array;
+                return hashOf(a);
+            }
+        }
+
+        /// A swizzle: the components named by the letters of `s`, in order and
+        /// repeating as they like (`v.yx`, `v.xxz`; `v.rgb` where the names are
+        /// the default ones), as a vector. A name that is not a swizzle is not a
+        /// member.
+        auto opDispatch(string s)() const
+        if (isSwizzle!(names, s))
+        {
+            enum idx = swizzleIndices!(names, s);
+            static if (s.length == 1)
+                return _c[idx[0]]; // one letter is the component, as in GLSL
+            else
+            {
+                .Vector!(T, s.length, layout) r;
+                static foreach (k; 0 .. s.length)
+                    r._c[k] = _c[idx[k]];
+                return r;
+            }
+        }
+
+        /// ditto: writes the component one letter names.
+        void opDispatch(string s, U)(const U rhs)
+        if (isSwizzle!(names, s) && s.length == 1 && isNumeric!U)
+        {
+            enum idx = swizzleIndices!(names, s);
+            _c[idx[0]] = cast(T) rhs;
+        }
+
+        /// Writes the components a swizzle names, which must not repeat.
+        void opDispatch(string s, V)(const V rhs)
+        if (isSwizzle!(names, s) && isVector!V && V.dimension == s.length)
+        {
+            static assert(!hasRepeats!(names, s),
+                "a swizzle that is written names each component once");
+            enum idx = swizzleIndices!(names, s);
+            static foreach (k; 0 .. s.length)
+                _c[idx[k]] = cast(T) rhs._c[k];
+        }
+
+        /// The components as an unnamed `std.typecons.Tuple`.
+        auto asTuple() const
+        {
+            import std.meta : Repeat;
+            import std.typecons : Tuple;
+
+            Tuple!(Repeat!(N, T)) t;
+            static foreach (i; 0 .. N)
+                t[i] = _c[i];
+            return t;
+        }
+
+        /// Formats the vector using the Sparkles pretty-printing protocol.
+        void writePretty(Writer, Opts)(ref Writer writer, in Opts opts, ushort depth = 0) const
+        {
+            import sparkles.base.prettyprint : prettyPrintTuple;
+
+            prettyPrintTuple(writer, this.asTuple, opts, depth);
+        }
+
+        /// Writes the vector as `(1, 2, ...)`.
+        void toString(Writer)(ref Writer w) const
+        {
+            import sparkles.base.prettyprint : PrettyPrintOptions;
+
+            this.writePretty(w, PrettyPrintOptions!void.plainText, 0);
+        }
+
+        static if (isFloatingPoint!T)
+        {
+            /// The vector with every component infinity.
+            enum Vector infinity = () {
+                Vector r;
+                static foreach (i; 0 .. N)
+                    r._c[i] = T.infinity;
+                return r;
+            }();
+        }
     }
 }
 
-/// Fixed-size numeric vector with optional named components.
-struct Vector(T, size_t N, string[] fieldNames = makeDefaultFieldNames!N)
-if (isNumeric!T && N > 0)
+/// The vector of type `V` whose storage is `v`, for a `V` that stores a
+/// `__vector`: the inverse of `nativeVector`.
+V fromNative(V)(V.NativeVector v)
+if (isVector!V && V.storesNative)
 {
-    static assert(
-        fieldNames.length == N,
-        "fieldNames must have exactly N entries"
-    );
+    V r;
+    r.nativeVector = v;
+    return r;
+}
 
-    union
-    {
-        // Private on purpose: the named components are the public storage
-        // view, and structural-reflection consumers (the property tree, DQL
-        // schemas) must see exactly one address per component — a public
-        // `data` would put every component at two addresses. Index access
-        // goes through `opIndex`/`opSlice` below.
-        private T[N] data = 0;
-        struct
-        {
-            static foreach (field; fieldNames)
-                mixin("T " ~ field ~ ";");
-        }
-    }
-
-    private alias CommonVector(U) = Vector!(CommonType!(T, U), N, fieldNames);
-
-    static foreach (i; 1 .. N + 1)
-    {
-        /// Initializes the first `i` components from constructor arguments.
-        this(T[i] values...)
-        @safe pure nothrow @nogc
-        {
-            data[0 .. i] = values[0 .. i];
-        }
-    }
-
-    /// Component-wise equality (compares the backing components directly, so it is
-    /// well-defined despite the `union` — the compiler-generated `==` over a union
-    /// is not).
-    bool opEquals(in Vector rhs) const @safe pure nothrow @nogc
-        => data == rhs.data;
-
-    /// Component-wise vector addition/subtraction.
-    CommonVector!U opBinary(string op, U)(in Vector!(U, N) rhs) const
-    if ((op == "+" || op == "-") && isNumeric!U)
-    {
-        CommonVector!U result;
-        foreach (i, ref elem; result.data)
-            elem = mixin("this.data[i] " ~ op ~ " rhs.data[i]");
-        return result;
-    }
-
-    /// In-place component-wise vector addition/subtraction.
-    ref Vector opOpAssign(string op)(in Vector rhs)
-    if (op == "+" || op == "-")
-    {
-        foreach (i, ref elem; data)
-            elem = mixin("elem " ~ op ~ " rhs.data[i]");
-        return this;
-    }
-
-    /// Component-wise scalar multiplication/division.
-    CommonVector!U opBinary(string op, U)(U rhs) const
-    if ((op == "*" || op == "/") && isNumeric!U)
-    {
-        CommonVector!U result;
-        foreach (i, ref elem; result.data)
-            elem = mixin("this.data[i] " ~ op ~ " rhs");
-        return result;
-    }
-
-    /// Scalar multiplication/division where scalar is on the left side.
-    CommonVector!U opBinaryRight(string op, U)(U lhs) const
-    if ((op == "*" || op == "/") && isNumeric!U)
-    {
-        static if (op == "*")
-        {
-            return this * lhs;
-        }
-        else
-        {
-            CommonVector!U result;
-            foreach (i, ref elem; result.data)
-                elem = lhs / data[i];
-            return result;
-        }
-    }
-
-    /// Dot product between two vectors.
-    CommonType!(T, U) dot(U)(in Vector!(U, N) rhs) const
-    if (isNumeric!U)
-    {
-        CommonType!(T, U) result = 0;
-        foreach (i; 0 .. N)
-            result += cast(CommonType!(T, U)) data[i] * rhs.data[i];
-        return result;
-    }
-
-    /// Component access by index (`v[0]`), read and write.
-    ref inout(T) opIndex(size_t i) inout return @safe pure nothrow @nogc
-    in (i < N, "Vector index out of range")
-        => data[i];
-
-    /// The components as a slice of this vector's own storage (`v[]`).
-    inout(T)[] opIndex() inout return @safe pure nothrow @nogc
-        => data[];
-
-    /// ditto (`v[1 .. 3]`)
-    inout(T)[] opSlice(size_t i, size_t j) inout return @safe pure nothrow @nogc
-    in (i <= j && j <= N, "Vector slice out of range")
-        => data[i .. j];
-
-    /// Supports `$` in index and slice expressions.
-    enum size_t opDollar = N;
-
-    /// Swizzle read access (`v.xzy`, `v.xyyzzx`, etc.).
-    @property Vector!(T, swizzle.length) opDispatch(string swizzle)() const
-    {
-        enum indices = swizzleIndices!(fieldNames, swizzle);
-
-        Vector!(T, swizzle.length) result;
-        static foreach (i; 0 .. swizzle.length)
-            result.data[i] = data[indices[i]];
-
-        return result;
-    }
-
-    /// Swizzle write access (`v.xy = ...`) with duplicate-write protection.
-    @property void opDispatch(string swizzle, U, size_t M, string[] rhsFieldNames)(
-        in Vector!(U, M, rhsFieldNames) rhs
-    )
-    if (isNumeric!U && M == swizzle.length)
-    {
-        enum indices = swizzleIndices!(fieldNames, swizzle);
-        static assert(
-            !hasDuplicateIndices(indices),
-            "Swizzle assignment requires unique destination components"
-        );
-
-        static foreach (i; 0 .. M)
-            data[indices[i]] = cast(T) rhs.data[i];
-    }
-
-    /// Converts the vector components to an unnamed `std.typecons.Tuple`.
-    auto asTuple() const
-    {
-        import std.typecons : tuple;
-        return tuple(this.tupleof[1 .. $]);
-    }
-
-    /// Formats the vector using the Sparkles pretty-printing protocol.
-    void writePretty(Writer, Opts)(ref Writer writer, in Opts opts, ushort depth = 0) const
-    {
-        import sparkles.base.prettyprint : prettyPrintTuple;
-        prettyPrintTuple(writer, this.asTuple, opts, depth);
-    }
-
-    /// Writes the vector as `(1, 2, ...)`.
-    void toString(Writer)(ref Writer w) const
-    {
-        import sparkles.base.prettyprint : PrettyPrintOptions;
-        this.writePretty(w, PrettyPrintOptions!void.plainText, 0);
-    }
-
-    static if (__traits(isFloating, T))
-    {
-        /// Vector with all components set to floating-point infinity.
-        enum infinity = ()
-        {
-            typeof(this) result;
-            result.data[] = T.infinity;
-            return result;
-        }();
-    }
+/// The dot product of two vectors of the same length.
+auto dot(V, W)(const V a, const W b)
+if (isVector!V && isVector!W && V.dimension == W.dimension)
+{
+    alias R = CommonType!(V.Component, W.Component);
+    R r = 0;
+    static foreach (i; 0 .. V.dimension)
+        r += cast(R) a[i] * cast(R) b[i];
+    return r;
 }
 
 /// 2D float vector.
@@ -282,163 +543,9 @@ alias Vec3f = Vector!(float, 3);
 alias Vec4f = Vector!(float, 4);
 
 /// Named 2D vector for pixel dimensions.
-alias ScreenSize(T) = Vector!(T, 2, ["width", "height"]);
+alias ScreenSize(T) = Vector!(T, 2, Layout.packed, ["width", "height"]);
 
 /// 2D vector for a position / coordinate (fields `x`, `y`). The companion of
 /// $(LREF ScreenSize) for absolute points (mouse cell, cursor cell) rather than
 /// extents.
 alias ScreenPosition(T) = Vector!(T, 2);
-
-/// Default initialization and partial constructors.
-@("Vector.initialization")
-@safe pure nothrow @nogc
-unittest
-{
-    auto v2 = Vec2f();
-    assert(v2.x == 0);
-    assert(v2.y == 0);
-
-    auto v0 = Vec3f();
-    assert(v0 == Vec3f(0, 0, 0));
-
-    auto v1 = Vec3f(1f);
-    assert(v1 == Vec3f(1, 0, 0));
-
-    auto v3 = Vec3f(1, 2, 3);
-    assert(v3.x == 1);
-    assert(v3.y == 2);
-    assert(v3.z == 3);
-}
-
-/// Component-wise arithmetic and in-place updates.
-@("Vector.indexAccess")
-@safe pure nothrow @nogc
-unittest
-{
-    auto v = Vec3f(1, 2, 3);
-    assert(v[0] == 1 && v[2] == 3);
-    assert(v[$ - 1] == 3);
-    v[1] = 20;
-    assert(v.y == 20);
-    assert(v[] == [1f, 20f, 3f]);
-    assert(v[1 .. $] == [20f, 3f]);
-}
-
-@("Vector.arithmetic")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(Vec3f(1, 2, 3) + Vec3f(4, 5, 6) == Vec3f(5, 7, 9));
-    assert(Vec3f(4, 5, 6) - Vec3f(1, 2, 3) == Vec3f(3, 3, 3));
-
-    Vec3f accum = Vec3f(1, 2, 3);
-    accum += Vec3f(4, 5, 6);
-    assert(accum == Vec3f(5, 7, 9));
-
-    accum -= Vec3f(2, 2, 2);
-    assert(accum == Vec3f(3, 5, 7));
-}
-
-/// Scalar operations with vectors on either side.
-@("Vector.scalarArithmetic")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(Vec3f(1, 2, 3) * 2 == Vec3f(2, 4, 6));
-    assert(Vec3f(1, 2, 3) / 2 == Vec3f(0.5, 1, 1.5));
-    assert(2 * Vec2f(1, 2) == Vec2f(2, 4));
-    assert(2 / Vec2f(1, 2) == Vec2f(2, 1));
-}
-
-/// Dot product works for mixed numeric vector types.
-@("Vector.dot")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(Vec2f(1, 2).dot(Vector!(int, 2)(3, 4)) == 11);
-    static assert(is(typeof(Vec2f(1, 2).dot(Vector!(int, 2)(3, 4))) == float));
-}
-
-/// Custom component names and aliases.
-@("Vector.customFieldNames")
-@safe pure nothrow @nogc
-unittest
-{
-    alias Color = Vector!(ubyte, 3, ["r", "g", "b"]);
-    auto pink = Color(255, 192, 203);
-    assert(pink.r == 255);
-    assert(pink.g == 192);
-    assert(pink.b == 203);
-
-    auto screen = ScreenSize!uint(1920, 1080);
-    assert(screen.width == 1920);
-    assert(screen.height == 1080);
-}
-
-/// String formatting for debugging and logging.
-@("Vector.toString")
-@safe
-unittest
-{
-    import sparkles.base.buffer : checkToString;
-    import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
-
-    checkToString(Vector!(int, 1)(1), "(1)");
-    checkToString(Vector!(int, 2)(1, 2), "(1, 2)");
-    checkToString(Vec2f(1, 2), "(1, 2)");
-    checkToString(Vec3f(1, 2, 3), "(1, 2, 3)");
-    checkToString(Vec4f(1, 2, 3, 4), "(1, 2, 3, 4)");
-
-    checkToString(prettyPrint(Vec2f(1, 2), PrettyPrintOptions!void.plainText), "(1, 2)");
-    checkToString(prettyPrint(Vec3f(1, 2, 3), PrettyPrintOptions!void.plainText), "(1, 2, 3)");
-    // Colored output has blue numbers (\x1b[34m)
-    checkToString(prettyPrint(Vec2f(1, 2)), "(\x1b[34m1\x1b[39m, \x1b[34m2\x1b[39m)");
-}
-
-/// Swizzle read access supports arbitrary ordering and duplication.
-@("Vector.swizzle.read")
-@safe pure nothrow @nogc
-unittest
-{
-    auto v = Vec3f(1, 2, 3);
-
-    assert(v.xyyzzx == Vector!(float, 6)(1, 2, 2, 3, 3, 1));
-    assert(v.zxy == Vec3f(3, 1, 2));
-    assert(v.xyz.yx == Vec2f(2, 1));
-}
-
-/// Swizzle write access updates selected components in order.
-@("Vector.swizzle.write")
-@safe pure nothrow @nogc
-unittest
-{
-    Vec3f v = Vec3f(1, 2, 3);
-
-    v.xy = Vec2f(9, 8);
-    assert(v == Vec3f(9, 8, 3));
-
-    v.yz = Vector!(int, 2)(7, 6);
-    assert(v == Vec3f(9, 7, 6));
-}
-
-/// Duplicate destination indices are rejected for swizzle assignments.
-@("Vector.swizzle.writeDuplicateReject")
-@safe pure nothrow @nogc
-unittest
-{
-    static assert(!__traits(compiles,
-    {
-        Vec3f v = Vec3f(1, 2, 3);
-        v.xx = Vec2f(4, 5);
-    }));
-}
-
-/// Floating-point vectors expose an infinity constant.
-@("Vector.infinity")
-@safe pure nothrow @nogc
-unittest
-{
-    const inf = Vec3f.infinity;
-    static foreach (i; 0 .. 3)
-        static assert(inf.data[i] is float.infinity);
-}
