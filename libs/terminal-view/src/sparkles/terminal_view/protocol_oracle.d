@@ -49,7 +49,7 @@ package(sparkles.terminal_view) int openTestPty(ref char[128] slavePath) @system
 }
 
 /// A pane on a pty whose slave the test holds, raw.
-private struct RecordingPty
+package(sparkles.terminal_view) struct RecordingPty
 {
     int slave = -1;
     TerminalView* tv;
@@ -57,7 +57,8 @@ private struct RecordingPty
 
     @disable this(this);
 
-    static RecordingPty* open(TerminalViewOptions o) @system
+    static RecordingPty* open(TerminalViewOptions o, ushort cols = 80, ushort rows = 24,
+        int cellWidth = 0, int cellHeight = 0) @system
     {
         import core.sys.posix.fcntl : fcntl, F_GETFL, F_SETFL, O_NOCTTY, O_NONBLOCK,
             O_RDWR, open_ = open;
@@ -81,7 +82,7 @@ private struct RecordingPty
         r.tv.opts = o;
         r.tv.opts.adoptMaster = master;
         r.tv.opts.exitBehavior = ExitBehavior.hold;
-        assert(r.tv.openCore(80, 24, 0, 0));
+        assert(r.tv.openCore(cols, rows, cellWidth, cellHeight));
         return r;
     }
 
