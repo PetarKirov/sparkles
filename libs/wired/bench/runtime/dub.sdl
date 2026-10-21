@@ -24,6 +24,10 @@ subConfiguration "sparkles:wired" "library-inline"
 // it here keeps the manifest honest instead of relying on `dub` defaulting a
 // dep-less config to the unittest one.
 dependency "sparkles:test-runner" path="../../../.."
+// The bench build propagates -O3 -allinst to the prebuilt runner. Its
+// single-object configuration avoids duplicate nested reporting symbols
+// emitted by LDC into separate objects under those flags.
+subConfiguration "sparkles:test-runner" "benchmark"
 
 // D engines (pure-D dub packages; pinned in dub.selections.json). Each adapter
 // sits behind its `versions` gate so a frontend incompatibility is one line
