@@ -20,25 +20,25 @@ vec3 phosphor(in vec2 at, in vec2 extent, in vec3 color) @safe pure nothrow @nog
 }
 ```
 
-- **Types** — `vec2`, `vec3`, `vec4`: component-wise `+ - * /` against a vector
-  or a scalar, unary `-`, `.array` for the components, and `allEqual(a, b)`
-  for equality (D's `==` on a `__vector` is a mask, so it is not used). Under LDC the
-  power-of-two sizes are the compiler's own `__vector`s; `vec3`, and every size
-  under DMD, is a struct with the same surface. Every representation has the
-  GPU's size and alignment (`vec3` is 16 bytes, padding included), so a struct
-  or an array of vectors means the same bytes on both sides. For dense host
-  arrays, `Vec2Packed`/`Vec3Packed`/`Vec4Packed` hold the components back to
-  back; `packed(v)` and `aligned(p)` convert.
-- **Other names and integer vectors** — `float2`, `float3`, `float4` are the
-  same types as `vec2`, `vec3`, `vec4`. `int2`, `int3`, `int4` hold `int`s,
-  with `+ - *` against a vector or an `int`, unary `-` and `.array`, built by
-  `i2`, `i3`, `i4`; integer `/` is not offered. They have the device's size
-  and alignment too.
-- **Constructors** — `v2(x, y)`, `v3(x, y, z)`, `v4(x, y, z, w)`, `v4(rgb, a)`,
-  and a broadcast from one scalar. A `__vector` alias cannot be called, and a
-  device module may not spell an array literal, so these are functions.
-- **Components** — `p.x`, `p.y`, `c.z`, `c.w`, `c.xy`, `c.xyz` (alias `rgb`),
-  by UFCS, so they work on both representations.
+- **Types** — `vec2`, `vec3`, `vec4` (also `float2`, `float3`, `float4`) and
+  `int2`, `int3`, `int4` are [`sparkles:math`](../math/index.md)'s `Vector` with
+  the device layout: the project's one vector type, so a UI's geometry and a
+  shader's uniform are the same values. They have component-wise `+ - * /`
+  against a vector or a scalar, unary `-`, `.array`, and `==` as one `bool`
+  (`allEqual(a, b)` says the same). Each has the GPU's size and alignment
+  (`vec3` is 16 bytes, padding included), so a struct or an array of vectors
+  means the same bytes on both sides. For dense host arrays,
+  `Vec2Packed`/`Vec3Packed`/`Vec4Packed` hold the components back to back;
+  `packed(v)` and `aligned(p)` convert. Integer `/` is not offered.
+- **Matrices** — `float2x2` to `float4x4`, `R` rows by `C` columns as HLSL
+  names them, and GLSL's `mat2`–`mat4` and `matCxR` (`mat2x3` is `float3x2`):
+  column-major, indexed `m[row, col]`, constructed row by row, with `m * v`,
+  `v * m`, `m * n` and `mul`.
+- **Constructors** — `vec3(1, 0, 0)`, `vec4(0.5f)` for a broadcast,
+  `vec4(rgb, a)`; `v2`, `v3`, `v4` and `i2`, `i3`, `i4` are the same as
+  functions.
+- **Components** — `p.x`, `c.w`, and swizzles read and written: `c.xyz`,
+  `c.rgb`, `c.a`, `uv.yx`, `c.xy = uv`.
 - **Built-ins** — `floor`, `abs`, `min`, `max`, `sqrt`, `sin`, `cos`, `exp`,
   `pow`, `mod`, `fract`, `clamp`, `mix`, `step`, `smoothstep`, `dot`, `length`,
   and `luma` (Rec. 601), per component on vectors, with GLSL's widening of a
@@ -248,9 +248,9 @@ operation its profile does not grant, it reports the entry point, the
 capability, and the chain of calls, each at its line:
 
 ```text
-fx.d(6): Error: entry point `soft` reaches `sparkles.shaders.fragment.fwidth!(__vector(float[2]))`, which requires `derivatives`; the profile `gles100` does not grant it
+fx.d(6): Error: entry point `soft` reaches `sparkles.shaders.fragment.fwidth!(Vector!(float, 2LU, Layout.device, ["x", "y"]))`, which requires `derivatives`; the profile `gles100` does not grant it
 fx.d(8):        `fx.soft` calls `fx.edge`
-fx.d(4):        `fx.edge` calls `sparkles.shaders.fragment.fwidth!(__vector(float[2]))`
+fx.d(4):        `fx.edge` calls `sparkles.shaders.fragment.fwidth!(Vector!(float, 2LU, Layout.device, ["x", "y"]))`
 ```
 
 Fix it by building the entry point for profiles that grant the capability

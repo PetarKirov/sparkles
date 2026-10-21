@@ -25,7 +25,7 @@ evidence ledger live in [`testing.md`](./testing.md).
 | [Stage 0 (revision)](#stage-0-revision-the-full-language-scope)             | done        |
 | [M6 Profiles and the Vulkan triangle](#m6-profiles-and-the-vulkan-triangle) | done        |
 | [M7 Capability inference](#m7-capability-inference-and-stage-operations)    | done        |
-| [M8 One vector type](#m8-one-vector-type)                                   | not started |
+| [M8 One vector type](#m8-one-vector-type)                                   | done        |
 | [M9 Vocabulary breadth](#m9-vocabulary-breadth)                             | not started |
 | [M10 Compute and storage](#m10-compute-and-storage)                         | not started |
 | [M11 Reference CPU executor](#m11-reference-cpu-executor)                   | not started |
@@ -446,6 +446,14 @@ vocabulary's representation and layout rules on host and device, with
 page of `sparkles:math`'s specification, owned there.
 
 **Entry condition.** M6; a refined contract for `sparkles:math`.
+
+**Done.** The vocabulary's vectors and matrices are `sparkles:math`'s, whose
+[specification](../math/SPEC.md) owns their contract, and the decision is
+[`D30`](./decisions.md#d30-the-vocabularys-vectors-are-the-projects). The
+compiler crosses a `@vectorType` struct at the interface as its vector,
+evaluates vector operations in CTFE, and copies and zeroes whole typed values
+on Vulkan; LLVM forwards a vector element as an `extractelement`. Evidence:
+the `SHV10` row of the [ledger](./testing.md).
 
 ## M9: Vocabulary breadth
 
