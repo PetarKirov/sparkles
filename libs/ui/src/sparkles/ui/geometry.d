@@ -16,7 +16,7 @@ terminal — one vector implementation and one field vocabulary across the stack
 */
 module sparkles.ui.geometry;
 
-import sparkles.math : ScreenPosition, ScreenSize, Vector;
+import sparkles.math : Layout, ScreenPosition, ScreenSize, Vector;
 
 /**
 The UI domain's canonical 2-D types: a position on the cell grid (`.x`/`.y`) and
@@ -30,11 +30,9 @@ may exceed 65535 cells. A size keeps $(REF ScreenSize, sparkles,math,vector)'s
 `width`/`height` names rather than inventing `w`/`h`, so the whole repo spells an
 extent one way.
 
-$(B Note) these are `union`-backed (`Vector` overlays named fields on a
-`T[N] data` array), so a named-field read is $(B not) available in CTFE — geometry
-is a runtime vocabulary. `Point` keeps the default `x`/`y` names, so it also keeps
-`Vector`'s `+`/`-`; `Size`'s custom names mean two `Size`s support `+=`/`-=` but
-not `+`/`-` (no site needs it — every offset here is field-wise `int` math).
+Both are compile-time values as well as runtime ones (`enum Size cell = Size(8, 16);`
+reads `cell.width` in CTFE), and both have `Vector`'s component-wise `+`/`-` and
+scalar `*`/`/`, whatever their names.
 */
 alias Point = ScreenPosition!int;
 /// ditto
@@ -110,14 +108,13 @@ Per-side insets in cells — padding, border widths (CSS order: top, right,
 bottom, left). There is deliberately no `margin` (see
 `docs/specs/ui/layout.md` § out of scope): `gap` + `padding` cover our cases.
 
-A thin wrapper rather than a bare alias: `Vector`'s `opDispatch` swallows unknown
-members, so the helpers below would become confusing swizzle errors on an alias.
-`alias this` forwards the four side fields to the vector.
+A thin wrapper rather than a bare alias, so the helpers below belong to a type
+of their own; `alias this` forwards the four sides to the vector.
 */
 struct Insets
 {
     /// The four sides, in CSS order.
-    Vector!(int, 4, ["top", "right", "bottom", "left"]) sides;
+    Vector!(int, 4, Layout.packed, ["top", "right", "bottom", "left"]) sides;
     alias sides this;
 
 @safe pure nothrow @nogc:
@@ -245,11 +242,13 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    // `Point` keeps `Vector`'s default `x`/`y` names, so it keeps `+`/`-`.
     assert(Point(1, 2) + Point(3, 4) == Point(4, 6));
+    assert(Size(3, 4) + Size(1, 1) == Size(4, 5));
     auto s = Size(3, 4);
-    s += Size(1, 1); // custom-named vectors get `+=`, not `+`
+    s += Size(1, 1);
     assert(s == Size(4, 5));
+    enum Size cell = Size(8, 16);
+    static assert(cell.width == 8);
 }
 
 @("ui.geometry.sizeSpec.clampAndFactories")

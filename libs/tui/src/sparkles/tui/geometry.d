@@ -19,12 +19,12 @@ configuration, the same reason `sparkles:core-cli` takes the import-only route.
 +/
 module sparkles.tui.geometry;
 
-import sparkles.math : Vector;
+import sparkles.math : Layout, Vector;
 
 public import sparkles.base.term_caps : TermSize;
 
 /// A cell position, 1-based in the terminal's own convention.
-alias TermPosition = Vector!(ushort, 2, ["col", "row"]);
+alias TermPosition = Vector!(ushort, 2, Layout.packed, ["col", "row"]);
 
 @("tui.geometry.TermPosition.fieldNames")
 @safe pure nothrow @nogc

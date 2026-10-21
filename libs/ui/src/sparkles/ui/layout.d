@@ -931,8 +931,7 @@ if (isTextMeasure!TM)
 
 private int absInt(int v) nothrow @nogc pure => v < 0 ? -v : v;
 
-/// "No clip yet": a practically-infinite rectangle. Runtime-built — the
-/// union-backed geometry vocabulary is not CTFE-constructible.
+/// "No clip yet": a practically-infinite rectangle.
 Rect unclipped() pure nothrow @nogc
     => Rect(int.min / 2, int.min / 2, int.max, int.max);
 
