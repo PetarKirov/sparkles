@@ -47,6 +47,8 @@ version (LDC_DCompute)
     pragma(LDC_intrinsic, "llvm.spv.discard") void spvDemote();
 
     import ldc.dcompute : __dcompute_reflect, ReflectTarget;
+    import sparkles.math.vector : fromNative;
+    import std.traits : Unqual;
 
     /*
     A device compilation compiles a host-and-device module for the host too,
@@ -56,10 +58,21 @@ version (LDC_DCompute)
     */
     T onDevice(alias intrinsic, T)(T v)
     {
-        if (__dcompute_reflect(ReflectTarget.Vulkan))
-            return intrinsic(v);
-        else
+        static if (is(immutable T == immutable float))
+        {
+            if (__dcompute_reflect(ReflectTarget.Vulkan))
+                return intrinsic(v);
             return v;
+        }
+        else static if (T.storesNative)
+        {
+            // On the device every vector of `float`s stores a `__vector`.
+            if (__dcompute_reflect(ReflectTarget.Vulkan))
+                return fromNative!(Unqual!T)(intrinsic(v.nativeVector));
+            return v;
+        }
+        else
+            return v; // the host's object of a device build, which no one runs
     }
 
     /// ditto

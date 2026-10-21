@@ -614,7 +614,9 @@ exit 0
     assert(unit.deviceOnly.map!rel.array == ["libs/ui/shaders/effects.d"], unit.deviceOnly.to!string);
     auto sources = unit.sources.map!rel.array;
     sources.sort;
-    assert(sources == ["libs/shaders/src/sparkles/shaders/capabilities.d",
+    assert(sources == ["libs/math/src/sparkles/math/matrix.d",
+        "libs/math/src/sparkles/math/vector.d",
+        "libs/shaders/src/sparkles/shaders/capabilities.d",
         "libs/shaders/src/sparkles/shaders/fragment.d",
         "libs/shaders/src/sparkles/shaders/math.d",
         "libs/shaders/src/sparkles/shaders/types.d",
@@ -818,10 +820,11 @@ exit 0
     });
     const denied = f.run();
     assert(denied.status == 1, denied.diagnostics);
-    foreach (line; ["entry point `soft` reaches `sparkles.shaders.fragment.fwidth!(__vector(float[2]))`, "
-            ~ "which requires `derivatives`; the profile `gles100` does not grant it",
+    // The instance's argument is `vec2`'s full name, a `sparkles.math` vector.
+    foreach (line; ["entry point `soft` reaches `sparkles.shaders.fragment.fwidth!(",
+            "which requires `derivatives`; the profile `gles100` does not grant it",
             "`fx_entries.soft` calls `fx_entries.edge`",
-            "`fx_entries.edge` calls `sparkles.shaders.fragment.fwidth!(__vector(float[2]))`"])
+            "`fx_entries.edge` calls `sparkles.shaders.fragment.fwidth!("])
         assert(denied.diagnostics.canFind(line), line ~ "\n" ~ denied.diagnostics);
     assert(f.outputs.length == 0, f.outputs.join(" "));
 

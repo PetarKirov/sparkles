@@ -17,9 +17,11 @@ import sparkles.shaders.capabilities : Profile;
 version (LDC_DCompute)
 {
     public import ldc.dcompute : compute, CompileFor, fragment, vertex, input, uniform,
-        builtin, Builtin, SamplerState, Sampler2D, sample, UniformBlock, PushConstants,
+        builtin, Builtin, SamplerState, Sampler2D, UniformBlock, PushConstants,
         resources, binding;
     import ldc.dcompute : _profiles;
+    // The vocabulary's own: its vectors in and out (`sparkles.shaders.types`).
+    public import sparkles.shaders.types : sample;
 }
 else
 {

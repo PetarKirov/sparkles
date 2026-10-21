@@ -30,7 +30,7 @@ module sparkles.ui.effect;
 import std.algorithm : canFind;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.shaders : clamp, v2, v3, vec3, x, y, z;
+import sparkles.shaders : clamp, v2, v3, vec3;
 import sparkles.ui.geometry : Point, Size;
 static import sparkles.ui.effect_shaders;
 
@@ -748,7 +748,7 @@ version (SparklesUiGpuEffects) {} else
 @("ui.effect.bloom.colourMathsOnTheHost")
 @safe pure nothrow @nogc unittest
 {
-    import sparkles.shaders : v4, vec4, w;
+    import sparkles.shaders : v4, vec4;
     import sparkles.ui.effect_shaders : bloomBright, bloomOver;
 
     static bool near(float a, float b) => a - b < 1e-6f && b - a < 1e-6f;
