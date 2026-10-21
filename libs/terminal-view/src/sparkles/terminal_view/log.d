@@ -205,11 +205,14 @@ reaches the ring or the file — while raylib's chatter and the build info do
     auto ring = installRingLog(capacity: 1024);
     SetTraceLogCallback(&routeTraceLog);
 
-    static immutable(char)*[2] argv = ["cat", null];
+    // A shell reading with builtins only: it outlives the writes on any
+    // system (NixOS has no `/bin/cat`, and a failed exec raced them), and
+    // the pty's own echo shows what was typed.
+    static immutable(char)*[4] argv = ["sh", "-c", "while read -r l; do :; done", null];
     static immutable(char)*[2] env = ["PATH=/usr/bin:/bin", null];
     auto tv = new TerminalView; // far larger than a test thread's stack
     tv.opts = TerminalViewOptions(
-        program: "/bin/cat",
+        program: "/bin/sh",
         argv: cast(const(char)*[]) argv[],
         env: cast(const(char)*[]) env[],
         exitBehavior: ExitBehavior.hold,
