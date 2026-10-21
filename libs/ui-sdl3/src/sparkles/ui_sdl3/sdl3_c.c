@@ -26,6 +26,9 @@
 #define _FORTIFY_SOURCE 0
 #define SDL_HAS_BUILTIN(x) 0
 
+// Keep shared system callback types unannotated across ImportC modules.
+#include <stdint.h>
+
 // `nothrow @nogc` is accurate: these are C entry points that neither allocate
 // through the D GC nor throw D exceptions. `pure` is omitted — SDL calls
 // mutate window-system and event-queue state.

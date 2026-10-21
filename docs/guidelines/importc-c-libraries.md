@@ -343,8 +343,8 @@ with another module c`). Give each shim a **unique stem** —
   Wrapping system headers in `#pragma attribute(push, nogc, nothrow)` in only one
   import makes those types incompatible (Darwin's pthread cleanup callback is
   one example). Ghostty's shim, `tree-sitter/tree_sitter_c.c`,
-  `raylib-text/shaping_c.c`, `shaping_api.h`, and `vulkan/vulkan_c.c` all include
-  `<stdint.h>` outside the attribute scope. On Darwin that header transitively
+  `raylib-text/shaping_c.c`, `shaping_api.h`, `vulkan/vulkan_c.c`, and
+  `ui-sdl3/sdl3_c.c` all include `<stdint.h>` outside the attribute scope. On Darwin that header transitively
   supplies the pthread types, so later attributed includes reuse their original
   unannotated definitions. Validate consumers that combine bindings: terminal
   alone does not exercise hue's tree-sitter and shaping combination, nor the
