@@ -18,7 +18,8 @@ exp="$(find "$HOME/.dub/packages/expected" -name expected.d -path '*source*' | s
 exp_src="$(dirname "$exp")"
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+export WINEPREFIX="$work/wine"
+trap 'wineserver -k 2>/dev/null || true; wineserver -w 2>/dev/null || true; rm -rf "$work"' EXIT
 cd "$work"
 
 echo ">> cross-compiling the full EventLoop!IocpBackend fiber echo ..."
@@ -36,5 +37,5 @@ win32-ldc2 -preview=in -preview=dip1000 -g -i \
   -of=echowin.exe
 
 echo ">> running under Wine ..."
-WINEPREFIX="$(mktemp -d)" WINEDEBUG=-all wine echowin.exe
+WINEDEBUG=-all timeout 60 wine echowin.exe
 echo ">> EventLoop!IocpBackend fiber echo verified under Wine."
