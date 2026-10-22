@@ -12,6 +12,16 @@ timers, child processes, signals — and you want that waiting to read as
 ordinary sequential code, with cancellation, timeouts and cleanup that
 cannot be forgotten.
 
+On Windows, IOCP currently supports socket I/O, timers, cross-thread wakes
+and the scheduler-integrated `BlockingPool`. Cancellation uses `CancelIoEx`;
+the target's storage remains live until its terminal completion, and
+`cancelAndWait` consumes both the target and the cancellation acknowledgment.
+Port waits drain batches with `GetQueuedCompletionStatusEx`. An operation on
+a socket that another completion port owns fails with `EINVAL`, and Win32
+and NTSTATUS failures map to the C runtime's `errno` values. File-handle I/O
+and Windows process supervision remain incomplete; see M19 in the delivery
+plan below. Wine probes are smoke evidence, not native Windows certification.
+
 ```d
 import sparkles.event_horizon;
 import core.time : msecs;
