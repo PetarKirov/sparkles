@@ -455,51 +455,50 @@ version (unittest)
     version (Posix)
     {
         import core.sys.posix.unistd : getuid;
+        import core.sys.posix.sys.stat : chmod;
+
+        import std.conv : octal, to;
+        import std.file : mkdirRecurse, readText, write;
+        import std.string : toStringz;
 
         if (getuid() == 0)
             skipTest("running as root ignores directory permissions");
+
+        auto tmp = TmpFS.create();
+        const lockedDir = buildPath(tmp.dir(), "locked");
+        mkdirRecurse(lockedDir);
+        const path = buildPath(lockedDir, "target.sdl");
+        write(path, "sentinel bytes");
+        chmod(lockedDir.toStringz, cast(int) octal!555);
+        scope (exit)
+            chmod(lockedDir.toStringz, cast(int) octal!755); // let cleanup work
+
+        // Confirm the lock is real before attributing the failure to it.
+        {
+            import std.file : FileException, remove;
+
+            const probe = buildPath(lockedDir, ".probe");
+            try
+            {
+                write(probe, "x");
+                remove(probe);
+                skipTest("directory permissions are not enforced here");
+            }
+            catch (FileException _)
+            {
+            }
+        }
+
+        Doc document;
+        document.config = sampleFixture();
+        const failed = writeSDLFile(document, path);
+        assert(failed.hasError);
+        assert(failed.error.stage == SdlErrorStage.fileWrite);
+        assert(failed.error.code == SdlErrorCode.fileWriteFailed);
+        assert(readText(path) == "sentinel bytes");
     }
     else
         skipTest("directory-permission semantics are POSIX-only");
-
-    import std.conv : octal, to;
-    import std.file : mkdirRecurse, readText, write;
-    import std.string : toStringz;
-    version (Posix)
-        import core.sys.posix.sys.stat : chmod;
-
-    auto tmp = TmpFS.create();
-    const lockedDir = buildPath(tmp.dir(), "locked");
-    mkdirRecurse(lockedDir);
-    const path = buildPath(lockedDir, "target.sdl");
-    write(path, "sentinel bytes");
-    chmod(lockedDir.toStringz, cast(int) octal!555);
-    scope (exit)
-        chmod(lockedDir.toStringz, cast(int) octal!755); // let cleanup work
-
-    // Confirm the lock is real before attributing the failure to it.
-    {
-        import std.file : FileException, remove;
-
-        const probe = buildPath(lockedDir, ".probe");
-        try
-        {
-            write(probe, "x");
-            remove(probe);
-            skipTest("directory permissions are not enforced here");
-        }
-        catch (FileException _)
-        {
-        }
-    }
-
-    Doc document;
-    document.config = sampleFixture();
-    const failed = writeSDLFile(document, path);
-    assert(failed.hasError);
-    assert(failed.error.stage == SdlErrorStage.fileWrite);
-    assert(failed.error.code == SdlErrorCode.fileWriteFailed);
-    assert(readText(path) == "sentinel bytes");
 }
 
 // An empty canonical document writes zero bytes — no trailing LF.
