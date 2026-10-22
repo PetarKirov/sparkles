@@ -754,6 +754,37 @@ unittest
     renderer.capture(terminal, iterator, 10, 20);
     assert(renderer.capturedImages[0].pixels[] == [0, 255, 0]);
 }
+@("terminal_view.kittyImages.aPngTransmissionDecodes")
+@system nothrow @nogc
+unittest
+{
+    import sparkles.terminal_view.png_decoder : installPngDecoder;
+
+    installPngDecoder();
+    GhosttyTerminal terminal;
+    GhosttyTerminalOptions options = { cols: 10, rows: 4 };
+    assert(ghostty_terminal_new(null, &terminal, options) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_terminal_free(terminal);
+    ulong storage = 1024;
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &storage);
+    ghostty_terminal_resize(terminal, 10, 4, 10, 20);
+    GhosttyKittyGraphicsPlacementIterator iterator;
+    assert(ghostty_kitty_graphics_placement_iterator_new(null, &iterator) == GHOSTTY_SUCCESS);
+    scope (exit) ghostty_kitty_graphics_placement_iterator_free(iterator);
+    KittyImageRenderer renderer;
+    NoTextures none;
+    scope (exit) renderer.release(none);
+
+    // A 1×1 red PNG (f=100), decoded by `png_decoder` — no raylib here.
+    static immutable png = "\x1b_Ga=T,f=100,i=11,p=1,z=-1,q=2;"
+        ~ "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        ~ "\x1b\\";
+    ghostty_terminal_vt_write(terminal, cast(const(ubyte)*) png.ptr, png.length);
+    renderer.capture(terminal, iterator, 10, 20);
+    assert(renderer.capturedImages.length == 1);
+    assert(renderer.capturedImages[0].layout == PixelLayout.rgba);
+    assert(renderer.capturedImages[0].pixels[] == [255, 0, 0, 127]);
+}
 
 @("terminal_view.kittyImages.mutationScannerQueriesAndSplitCommands")
 @safe pure nothrow @nogc
