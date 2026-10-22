@@ -28,9 +28,6 @@ configuration "unittest" {
     // D-only milestones; a nix-pinned JSON corpus ($TUI_BENCH_DATA) is added when
     // the cross-language engines need byte-identical input.
     dflags "-checkaction=context" "-allinst"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
-    lflags "--export-dynamic" platform="linux-ldc"
 }
 
 // The VT-oracle correctness gate (`vt_oracle.d`) drives `libghostty-vt` via the
@@ -43,16 +40,63 @@ configuration "oracle" {
     versions "TuiBenchVtOracle"
 
     dflags "-checkaction=context" "-allinst"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
-    lflags "--export-dynamic" platform="linux-ldc"
 }
 
 // Real numbers need release codegen: dub's stock `unittest` build is a debug
 // build (the runner warns under --bench), so benchmarks run via
-// `dub test -b bench -- --bench …`. `unittests` is load-bearing — without it
+// `dub test -b bench-unchecked -- --bench …`. `unittests` is load-bearing — without it
 // `dub test` registers zero tests. Copied from libs/wired/bench/runtime.
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
 buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
     buildOptions "unittests" "releaseMode" "optimize" "inline"
     dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
 }
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" "-L-fuse-ld=gold" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types

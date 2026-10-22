@@ -29,9 +29,6 @@ dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git"
 
 // Optimized with assertions kept — the build to use for anything linking the
 // DMD frontend, which relies on its asserts to catch a fork that has drifted.
-buildType "checked" {
-    buildOptions "optimize" "inline" "debugInfo"
-}
 
 // The optimized unittest/benchmark build — `checked`'s philosophy (asserts
 // alive, never -release) plus the unittest machinery. dub resolves --build
@@ -39,6 +36,10 @@ buildType "checked" {
 //     dub test --build=unittest-checked -- --bench
 buildType "unittest-checked" {
     buildOptions "unittests" "optimize" "inline" "debugInfo"
+    // Assertion-enabled frontend benchmark; preserve its existing link policy.
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
 }
 
 configuration "library" {
@@ -66,7 +67,58 @@ configuration "unittest" {
     // Same link setup as libs/dmd-lsp's unittest configuration (the frontend
     // archive is large; no -checkaction=context for the same reason — it
     // leaks into the dmd:frontend compilation and fails to link).
+}
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" "-L-fuse-ld=gold" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types

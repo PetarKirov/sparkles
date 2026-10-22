@@ -137,7 +137,7 @@ in
 
           REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
           cd "$REPO_ROOT/libs/wired/bench/runtime"
-          dub test -b bench -c unittest-foreign -- --bench --perf --group-by=dataset,operation "$@"
+          dub test -b bench-unchecked -c unittest-foreign -- --bench --perf --group-by=dataset,operation "$@"
         '';
       };
 

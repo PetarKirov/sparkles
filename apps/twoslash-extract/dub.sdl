@@ -22,9 +22,6 @@ dependency "sparkles:twoslash-d" path="../.."
 // `apps/hue/src/live_types.d --dub`: debug 2.00 s, checked 1.09 s, release
 // 1.06 s per analysis — the checks cost ~3%, so there is no reason to trade
 // them for speed. `dub build :twoslash-extract -b checked`.
-buildType "checked" {
-    buildOptions "optimize" "inline" "debugInfo"
-}
 
 configuration "application" {
     targetType "executable"
@@ -40,7 +37,58 @@ configuration "unittest" {
 
     dependency "sparkles:test-runner" path="../.."
 
+}
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" "-L-fuse-ld=gold" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types

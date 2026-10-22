@@ -45,27 +45,27 @@ From the devshell (which provides the corpora as `$WIRED_BENCH_DATA`):
 cd libs/wired/bench/runtime
 
 # Canonical run: release codegen tuned to the host CPU (-mcpu=native).
-dub test -b bench -- --bench --perf --group-by=dataset,operation
+dub test -b bench-unchecked -- --bench --perf --group-by=dataset,operation
 
 # Full competitive field (nix-built foreign shims):
-dub test -b bench -c unittest-foreign -- \
+dub test -b bench-unchecked -c unittest-foreign -- \
     --bench --perf --bench-min-time=2000 --group-by=dataset,operation
 
 # Useful subsets while iterating:
-dub test -b bench -- --bench -i 'wired\.serialize'            # one op
-dub test -b bench -- --bench --datasets=twitter,mesh         # dataset subset via CLI
+dub test -b bench-unchecked -- --bench -i 'wired\.serialize'  # one op
+dub test -b bench-unchecked -- --bench --datasets=twitter,mesh # dataset subset via CLI
 WIRED_BENCH_ENGINES=asdf,std.json \
 WIRED_BENCH_DATASETS=twitter \
-dub test -b bench -- --bench                                  # engine/dataset subset via env
+dub test -b bench-unchecked -- --bench                       # engine/dataset subset via env
 
 # Sustained record stream (external corpus; see Datasets):
 WIRED_BENCH_EXTERNAL_DATA=/data/wired-json \
 WIRED_BENCH_DATASETS=wikidata,cloudtrail \
-dub test -b bench -- --bench -i 'wired\.parse-stream' \
+dub test -b bench-unchecked -- --bench -i 'wired\.parse-stream' \
     --group-by=dataset,operation
 
 # Machine-readable dump (see Recorded results below):
-dub test -b bench -- --bench --perf --bench-min-time=2000 \
+dub test -b bench-unchecked -- --bench --perf --bench-min-time=2000 \
     --bench-json=results/$(date -I)-<host>-$WIRED_BENCH_ISA.json
 ```
 
@@ -77,9 +77,11 @@ list means every compiled engine; an empty dataset list means the six bundled,
 reproducible datasets. The large external corpora must be named explicitly.
 Inspect available datasets with `--list-datasets` (or `--datasets=?`).
 
-Numbers from non-release builds are meaningless; the runner prints a loud
-warning under `--bench` when built with asserts enabled. `dub test` without
-`-b bench` is a debug build — use it for correctness only.
+The recorded release protocol uses `bench-unchecked`; the Nix wrapper selects
+it automatically. `bench` is also optimized, but retains ordinary-function
+assertions and is a different measurement protocol. Plain `dub test` is the
+debug correctness build. Record the build type with timings and validate
+correctness before using the unchecked protocol.
 
 ## Op semantics
 

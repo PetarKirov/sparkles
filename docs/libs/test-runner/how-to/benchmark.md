@@ -20,12 +20,14 @@ several iterations per sample reads `samples×iterations`. `median/iter` folds
 the ±deviation (median-absolute-deviation) into the same cell. The `min`, `max`,
 and metric columns align on the decimal point, so mixed units — `391.00ns` next
 to `1.5µs` — still compare at a glance. An
-assert-enabled build prints a conservative warning. Optimization, not assertion
-removal, is required: use a custom build type with
-`buildOptions "unittests" "optimize" "inline" "debugInfo"` and record its flags.
-Keep assertions live; `releaseMode` deletes their expressions, including calls
-with side effects. An optimized assertion-enabled run can still print this
-warning.)
+assert-enabled build prints a conservative warning. In this repository,
+`dub test :yourpkg -b bench -- --bench` selects optimized measurement with
+assertions retained, including setup and DMD-frontend contracts. Use
+`-b bench-unchecked` for peak throughput after validating correctness. It enables
+`releaseMode`: assertions in ordinary functions, including any side effects in
+their expressions, can disappear. Neither benchmark build replaces normal
+`dub test`. Record the build type with published timings; see the
+[build-settings experiments](../../../guidelines/build-settings.md).)
 
 On an interactive terminal the table **ticks live** while its group measures:
 rows appear as each case completes, beneath a dim spinner row for the one in
@@ -76,13 +78,12 @@ recovers non-unittest codegen exactly (retired-instructions parity to
 (`-linkonce-templates` ICEs were reported on other versions) — verify on
 yours.
 
-For optimized LDC consumers affected by duplicate strong symbols from nested
-reporting functions under `-O3 -allinst`, the implementation library supplies
-an opt-in `benchmark` configuration using `-singleobj`. Select it with
-`subConfiguration "sparkles:test-runner-impl" "benchmark"` (with a direct
-in-tree dependency on the implementation package), or pass
-`--override-config=sparkles:test-runner-impl/benchmark`. The normal library
-configuration is unchanged. The
+The implementation library uses `-singleobj` on LDC to avoid duplicate strong
+symbols from nested reporting functions under `-O3 -allinst`. The public shim's
+`benchmark` configuration forwards to the implementation's compatibility
+configuration; select it with
+`subConfiguration "sparkles:test-runner" "benchmark"`. DUB configuration
+selections apply only to direct dependencies. The
 [UTF matrix](https://github.com/PetarKirov/sparkles/blob/878ee7e3ce1b8586d3dbf08d0132cfe568016ac6/libs/base/bench/utf/README.md) exercises this route.
 
 ## Excluding setup: `benchIter`

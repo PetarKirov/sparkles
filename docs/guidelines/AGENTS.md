@@ -53,6 +53,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 - **[Cutting a Release](./release.md)** — monorepo versioning, changelog tags, code.dlang.org
 - **[Integrating C Libraries (ImportC)](./importc-c-libraries.md)** — ImportC + pkg-config + Nix + dub (`sourceLibrary` gotcha)
 - **[Benchmarking & Profiling](./benchmarking-and-profiling.md)** — the measure→profile→fix loop for the terminal renderer
+- **[Build Settings](./build-settings.md)** — read before changing compiler/linker flags; measurements, test/benchmark policies, and manifest regeneration
 - **[Modern D Language Features](./d-language-features/index.md)** — which 2.060–2.112 features new code should reach for
 - **[Composable Memory Allocators](./allocators/index.md)** — `std.experimental.allocator` building blocks and composition
 - **Idioms** — [Expected Error Handling](./idioms/expected/index.md), [Forcing Named Arguments](./idioms/forced-named-arguments/index.md)
@@ -280,6 +281,22 @@ Each sub-package's `dub.sdl` sets `dflags "-preview=in" "-preview=dip1000"`
 none. Some Phobos functions reject `scope` (`std.regex.replaceAll`, reached via
 `unstyle`): on "scope parameter may not be returned", relax that one parameter
 to `const(char)[]` or pass by value.
+
+### Build-setting policy
+
+`apps/ci/tools/standardize-build-settings.d` owns the managed build types in
+every tracked `dub.sdl`. Regenerate with `dub run --single
+apps/ci/tools/standardize-build-settings.d`; add `-- --check` to audit without
+editing. Preserve package-specific compiler workarounds outside the managed block.
+After adding a `dub.sdl`, stage it before running the generator's tracked-file audit.
+Default `dub test` uses `unittest` (debug mode, assertions live; LDC line tables);
+`-b unittest-debug` retains full debugger information. Shipping stays `checked`.
+Benchmarks use assertion-preserving `-b bench`. Use `bench-unchecked`/`bench-static` for peak
+throughput only after validating setup and correctness with assertions enabled;
+the DMD frontend and assertion-dependent setup must retain `bench`. Benchmark
+builds are measurement artifacts, not shipping or correctness-test builds. See
+the build-settings report before selecting static Phobos, changing linkers, or
+publishing new baselines.
 
 ### Error handling — `Expected` in `@nogc nothrow` code
 
