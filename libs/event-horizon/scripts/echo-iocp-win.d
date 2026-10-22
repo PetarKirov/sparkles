@@ -99,6 +99,34 @@ int main()
     });
     assert(!r.hasError);
 
+    // The synchronous owner-teardown barrier must consume both the target's
+    // terminal packet and the internal cancellation acknowledgment.
+    {
+        import core.stdc.errno : ECANCELED;
+        import core.time : seconds;
+        import sparkles.event_horizon.op : Completion, OpAccept;
+
+        struct Cancelled { uint calls; int res; }
+        static void onCancelled(void* p, ref Completion c) nothrow @nogc
+        {
+            auto state = cast(Cancelled*) p;
+            ++state.calls;
+            state.res = c.res;
+        }
+        Cancelled timerState, acceptState;
+        auto timer = sched.loop.submitAfter(60.seconds, &onCancelled, &timerState);
+        assert(timer.hasValue);
+        assert(!sched.loop.cancelAndWait(timer.value).hasError);
+        assert(timerState.calls == 1 && timerState.res == -ECANCELED);
+        auto pendingAccept = sched.loop.submit(OpAccept(cast(int) listenFd),
+            &onCancelled, &acceptState);
+        assert(pendingAccept.hasValue);
+        assert(!sched.loop.cancelAndWait(pendingAccept.value).hasError);
+        assert(acceptState.calls == 1 && acceptState.res == -ECANCELED);
+        assert(!sched.loop.cancelAndWait(pendingAccept.value).hasError);
+        assert(sched.loop.inFlight == 0);
+    }
+
     // The external waker (SPEC §5.6): a foreign thread posts to the port
     // and the blocked wait returns well before its own deadline.
     bool wokeEarly;
@@ -127,7 +155,7 @@ int main()
     }
 
     if (verified && wokeEarly)
-        writefln("ok: %d-byte payload echoed — accept+connect+recv+send all through the IOCP loop; cross-thread waker verified",
+        writefln("ok: %d-byte payload echoed — accept+connect+recv+send all through the IOCP loop; cancel barriers and cross-thread waker verified",
             payload.length);
     else
         writeln("FAILED");
