@@ -99,6 +99,39 @@ package immutable FrameMetrics[4] metricsUnderTest = [
         }
 }
 
+@("ui_vulkan.canvas.aPixelFillIsNotScaledByTheCell")
+@system unittest
+{
+    // `UVK35`: a 4×3 pixel fill at (10, 20) covers those pixels and no
+    // others, whatever the cell size is.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-pixel-fill", 80, 40);
+    scope (success)
+        rig.close();
+
+    import sparkles.ui_vulkan.painter : rgba;
+
+    const colour = RgbColor(200, 100, 50);
+    const m = metricsUnderTest[0];
+    const box = Rect(m.originX + 10, m.originY + 20, 4, 3);
+    const frame = rig.draw((ref Canvas c) {
+        c.fillPx(10, 20, box.width, box.height, rgba(colour, 255));
+    }, m, ground);
+    const ubyte[4] g = [ground.r, ground.g, ground.b, 255];
+    foreach (y; 0 .. 40)
+        foreach (x; 0 .. 80)
+        {
+            const got = pixel(frame, 80, x, y);
+            if (box.contains(Point(x, y)))
+                assert(got[0] == colour.r && got[1] == colour.g && got[2] == colour.b,
+                    format("(%s, %s) inside: %s", x, y, got));
+            else
+                assert(got == g, format("(%s, %s) outside: %s", x, y, got));
+        }
+}
+
 // ── helpers for the scenarios ──
 
 private enum RgbColor white = RgbColor(255, 255, 255);
