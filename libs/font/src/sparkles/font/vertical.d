@@ -20,6 +20,7 @@ import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fon
 import sparkles.font.face : Face;
 import sparkles.font.instance : Instance;
 import sparkles.font.metrics : Measurement, measured, MvarAt, MvarTag;
+import sparkles.font.outlines : glyphBounds;
 import sparkles.font.tables : locate, shortTable;
 import sparkles.font.units : checkedAdd, DesignValue;
 import sparkles.font.variations : DeltaSetIndexMap, ItemVariationStore, NormalizedCoords;
@@ -414,6 +415,8 @@ enum VerticalOriginSource : ubyte
     vorgRecord,
     /// `VORG.defaultVertOriginY`, as the glyph has no record.
     vorgDefault,
+    /// No `VORG`: the `vmtx` top side bearing plus the glyph's outline `yMax`.
+    vmtxGlyph,
 }
 
 /**
@@ -443,8 +446,8 @@ $(UL
     $(LI `VORG` of another version: `unsupportedVersion`; a truncated one
         `truncated`.)
     $(LI No `VORG`, with `vmtx` and `glyf`: the origin is the top side bearing
-        plus the glyph's `yMax`, which needs M3; until then
-        `unsupportedCapability`.)
+        plus the glyph's outline `yMax` at the instance, reported with
+        source `vmtxGlyph`; a glyph without points is absent.)
     $(LI Otherwise absent: nothing is synthesized.)
 )
 
@@ -463,7 +466,25 @@ FontResult!VerticalOrigin verticalOrigin(in Instance inst, uint gid)
         if (o.error.kind != FontErrorKind.missingTable)
             return fontErr!VerticalOrigin(o.error);
         if (face.has(Tag("vmtx")) && face.has(Tag("glyf")))
-            return fontErr!VerticalOrigin(FontError(FontErrorKind.unsupportedCapability, Tag("VORG")));
+        {
+            // FTM21: the top side bearing plus the glyph's yMax at the
+            // instance (the control box of `glyphBounds`).
+            auto vm = vmtx(face);
+            if (vm.hasError)
+                return fontErr!VerticalOrigin(vm.error);
+            const metric = vm.value.metric(gid);
+            if (metric.hasError)
+                return fontErr!VerticalOrigin(metric.error);
+            const bounds = glyphBounds(inst, gid);
+            if (bounds.hasError)
+                return fontErr!VerticalOrigin(bounds.error);
+            if (!bounds.value.present)
+                return fontOk(r);
+            r.source = VerticalOriginSource.vmtxGlyph;
+            r.y = measured(inst, DesignValue(bounds.value.yMax
+                + (long(metric.value.topSideBearing) << 16), inst.unitsPerEm));
+            return fontOk(r);
+        }
         return fontOk(r);
     }
     const stored = o.value.originY(gid);

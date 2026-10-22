@@ -18,7 +18,8 @@ cannot fail a query. Nothing here allocates.
 module sparkles.font.variations;
 
 import sparkles.font.bytes : be16, be24, be32, bes16, bes32, fits;
-import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag, tableError;
+import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, FontResult, fontErr, fontOk, Tag,
+    tableError;
 import sparkles.font.units : DesignValue, Ppem;
 
 @safe pure nothrow @nogc:
@@ -244,6 +245,73 @@ struct ItemVariationStore
             sum += long(regionScalar(region, coords)) * value;
         }
         return fontOk(DesignValue(sum, unitsPerEm));
+    }
+
+    /**
+    The region index count of item variation data `outer`: the `k` that a
+    `CFF2` `blend` under `vsindex outer` multiplies its operand count by. A
+    broken store is its error; `outer` past the data count, or a data
+    subtable past the table, is `badValue`/`badOffset`/`truncated`.
+    Costs O(1).
+    */
+    package FontResult!ushort regionIndexCount(ushort outer) const scope
+    {
+        const at = dataAt(outer);
+        if (at.hasError)
+            return fontErr!ushort(at.error);
+        return fontOk(be16(table_, cast(size_t) at.value + 4));
+    }
+
+    /**
+    The F16.16 scalar at `coords` of each region item variation data `outer`
+    lists, in its order, written to `scalars`: the per-region weights of a
+    `CFF2` `blend`. Returns how many were written. Errors are those of
+    `regionIndexCount`, a region index past the region count (`badValue`),
+    and `scalars` shorter than the count (`callerStorage`). Costs O(k · a)
+    for `k` regions and `a` axes; never allocates.
+    */
+    package FontResult!size_t dataScalars(ushort outer, scope NormalizedCoords coords,
+        scope int[] scalars) const scope
+    {
+        const at = dataAt(outer);
+        if (at.hasError)
+            return fontErr!size_t(at.error);
+        const t = table_;
+        const count = be16(t, cast(size_t) at.value + 4);
+        const indicesAt = at.value + 6;
+        if (!fits(t.length, indicesAt, 2UL * count))
+            return fontErr!size_t(errorAt(FontErrorKind.truncated, indicesAt));
+        if (count > scalars.length)
+            return fontErr!size_t(callerStorageError(count, tag_, tableStart_ + indicesAt));
+        foreach (j; 0 .. count)
+        {
+            const regionIndexAt = cast(size_t) indicesAt + 2 * j;
+            const region = be16(t, regionIndexAt);
+            if (region >= regionCount_)
+                return fontErr!size_t(errorAt(FontErrorKind.badValue, regionIndexAt));
+            scalars[j] = regionScalar(region, coords);
+        }
+        return fontOk!size_t(count);
+    }
+
+    /// Where item variation data `outer` starts, with its 6-byte header checked.
+    private FontResult!ulong dataAt(ushort outer) const scope
+    {
+        if (!present_)
+            return fontErr!ulong(FontError(FontErrorKind.badValue));
+        if (broken_)
+            return fontErr!ulong(error_);
+        const t = table_;
+        if (outer >= dataCount_)
+            return fontErr!ulong(errorAt(FontErrorKind.badValue, at_ + 6));
+        const offsetAt = at_ + 8 + 4UL * outer;
+        const dataOffset = be32(t, cast(size_t) offsetAt);
+        const at = at_ + dataOffset;
+        if (dataOffset == 0 || at >= t.length)
+            return fontErr!ulong(errorAt(FontErrorKind.badOffset, offsetAt));
+        if (!fits(t.length, at, 6))
+            return fontErr!ulong(errorAt(FontErrorKind.truncated, at));
+        return fontOk!ulong(at);
     }
 
     /// The F16.16 scalar of region `region` at `coords` (FTV12's per-axis rows).

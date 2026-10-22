@@ -469,11 +469,12 @@ unittest
 @safe pure nothrow
 unittest
 {
+    // Without HVAR (and without gvar) the advance at nonzero coordinates
+    // is the stored hmtx advance: the phantom span (FTO5).
     Spec s;
     s.variable = true;
     const bytes = build(s);
-    const e = at(bytes, one).advance(1).error;
-    assert(e.kind == FontErrorKind.unsupportedCapability && e.tag == Tag("HVAR"));
+    assert(at(bytes, one).advance(1).value.design == du(600));
     assert(at(bytes).advance(1).value.design == du(600));
 }
 
@@ -642,10 +643,12 @@ unittest
     s.numberOfHMetrics = 2;
     const e = cell(build(s)).error;
     assert(e.kind == FontErrorKind.truncated && e.tag == Tag("hmtx"));
-    // A variable face without HVAR, at nonzero coordinates.
+    // A variable face without HVAR, at nonzero coordinates: the advance
+    // is the phantom span (the stored advance here), so the cell is
+    // measured, not refused (FTO5).
     Spec v;
     v.variable = true;
-    assert(cell(build(v), 10, one).error.kind == FontErrorKind.unsupportedCapability);
+    assert(cell(build(v), 10, one).value.width == 6);
 }
 
 @("metrics.FTM19.unsupported")
