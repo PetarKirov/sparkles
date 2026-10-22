@@ -361,7 +361,7 @@ Run wired from `libs/wired/bench/runtime`, preserving the same flags on both sid
 
 ```sh
 DC=ldc2 WIRED_BENCH_ENGINES=wired-native \
-  dub test -bbench -f --override-config=sparkles:test-runner-impl/benchmark -- \
+  dub test -bbench-unchecked -f --override-config=sparkles:test-runner-impl/benchmark -- \
   --bench --perf -i 'wired\.(parse|decode|validate)$' \
   --bench-min-time=250 --bench-json=/tmp/wired-utf-after.json \
   --group-by=dataset,operation --no-colors

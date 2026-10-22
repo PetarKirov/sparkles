@@ -11,6 +11,9 @@ targetPath "build"
 // width), so a consumer linking `impl.a` — whose own build may not re-instantiate
 // them — resolves cleanly.
 dflags "-preview=in" "-preview=dip1000" "-allinst"
+// Keep nested reporting helpers in one object even for optimized consumers
+// whose dependency selection uses the ordinary library configuration.
+dflags "-singleobj" platform="ldc"
 
 // The marker UDAs live in the shim. Import-only (not `sourcePaths`): the shim's
 // registration modules are not compiled into this library.
@@ -39,12 +42,10 @@ configuration "library" {
     targetType "library"
 }
 
-// Optimized benchmark consumers compile the implementation as one object.
-// LDC otherwise emits inlined nested reporting functions into multiple
-// objects with strong linkage under -O3 -allinst.
+// Compatibility name for existing optimized consumers. The single-object LDC
+// policy now also protects consumers selecting the ordinary library config.
 configuration "benchmark" {
     targetType "library"
-    dflags "-singleobj" platform="ldc"
 }
 
 configuration "unittest" {
@@ -54,13 +55,58 @@ configuration "unittest" {
     importPaths "src" "../test-runner/src"
 
     dflags "-checkaction=context" "-allinst"
+}
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
-// Optimised, assertions live, `debug {}` blocks out — the build every nix
-// artifact uses. Neither `debug` (which compiles those blocks in) nor
-// `release` (which deletes assert *expressions*, side effects included).
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
 buildType "checked" {
     buildOptions "optimize" "inline" "debugInfo"
 }
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" "-L-fuse-ld=gold" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types

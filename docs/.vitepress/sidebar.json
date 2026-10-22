@@ -182,6 +182,10 @@
         "link": "/guidelines/benchmarking-and-profiling"
       },
       {
+        "text": "Build Settings: Experiments & Policy",
+        "link": "/guidelines/build-settings"
+      },
+      {
         "text": "Cutting a Release",
         "link": "/guidelines/release"
       },

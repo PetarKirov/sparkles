@@ -48,9 +48,6 @@ configuration "unittest" {
     // mir-ion, asdf, jsoniopipe) — pure-D deps that build anywhere, for fast
     // off-nix iteration.
     dflags "-checkaction=context" "-allinst"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
-    lflags "--export-dynamic" platform="linux-ldc"
 }
 
 // The full competitive field: the D engines plus the foreign engines
@@ -59,7 +56,7 @@ configuration "unittest" {
 // resolve via pkg-config (`yyjson.pc`, `wired-bench-cpp-shim.pc`,
 // `wired-bench-rs.pc`) on the devshell's `PKG_CONFIG_PATH`, so this config
 // is nix-only. Run the full field with:
-//   dub test -b bench -c unittest-foreign -- --bench --perf
+//   dub test -b bench-unchecked -c unittest-foreign -- --bench --perf
 configuration "unittest-foreign" {
     // yyjson: ImportC binding; the ISA-preset build's yyjson.pc provides both
     // cflags and -lyyjson.
@@ -72,23 +69,63 @@ configuration "unittest-foreign" {
     versions "BenchCpp" "BenchRust"
 
     dflags "-checkaction=context" "-allinst"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
-    lflags "--export-dynamic" platform="linux-ldc"
 }
 
 // Real numbers need release codegen: dub's stock `unittest` build type is a
 // debug build (the runner prints an assert-build warning under --bench), so
-// benchmarks run via `dub test -b bench -- --bench …`. `unittests` is the
+// unchecked benchmarks run via `dub test -b bench-unchecked -- --bench …`. `unittests` is the
 // load-bearing option — without it `dub test` registers zero tests.
-buildType "bench" {
-    buildOptions "unittests" "releaseMode" "optimize" "inline"
-    // NB vs the old executable harness's flags: `-enable-cross-module-inlining`
-    // is OFF — build types propagate to dependencies, and mir-ion's -unittest +
-    // releaseMode build culls a template-nested function its inlined code still
-    // references (undefined `printElement…quote`; `-linkonce-templates` ICEs).
-    // Costs ~15% on wired's number-heavy hot loops vs the old `-b bench`
-    // executable baselines — compare new numbers only against baselines
-    // regenerated under this build type.
-    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+
+// BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+buildType "unittest" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
 }
+buildType "unittest-debug" {
+    buildOptions "unittests" "debugMode" "debugInfo"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov" {
+    buildOptions "unittests" "coverage" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "unittest-cov-ctfe" {
+    buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
+    dflags "--gline-tables-only" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
+buildType "bench" {
+    buildOptions "unittests" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-unchecked" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+buildType "bench-static" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    dflags "--link-defaultlib-shared=false" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" "-L-fuse-ld=gold" platform="linux-dmd"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// END managed build types
