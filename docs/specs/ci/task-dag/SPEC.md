@@ -356,7 +356,9 @@ alias TaskEvent = SumType!(
 Every event has a run-local monotonic sequence number and monotonic timestamp.
 Task output additionally has task-local stream and chunk sequence numbers. The
 executor is the sole producer of lifecycle events; process and CPU adapters
-send observations back to it through Event Horizon channels. Reporters are
+send observations back to it through bounded Event Horizon channels, including
+between scheduler workers. Cross-worker delivery preserves ownership and
+backpressure; the intra-worker-only `Channel` is not sufficient. Reporters are
 consumers and cannot alter scheduling.
 
 Events contain no borrowed child buffers. Output is line-assembled at the
@@ -523,7 +525,8 @@ inside `apps/ci`.
 - Subprocesses use Event Horizon M19's `supervise` API, piped stdio, async reap,
   and an owned POSIX process group or Windows Job Object.
 - Timers and timeouts use the Event Horizon clock. There is no sleep/poll loop.
-- Executor communication uses bounded Event Horizon channels.
+- Executor communication uses bounded Event Horizon channels with cross-worker
+  delivery; the executor is not restricted to one scheduler worker.
 - Blocking or CPU work that should leave the loop thread uses Event Horizon's
   scheduler-integrated `BlockingPool`; completion wakes the loop through its
   supported seam.

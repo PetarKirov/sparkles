@@ -344,10 +344,12 @@ low-level POSIX API:
    cwd staging, restricted handle inheritance, IOCP-associated overlapped named
    pipes, process-handle wait registration posting to IOCP, and Job Object tree
    ownership/termination/resource accounting.
-6. Port the process execution layer used by `apps/ci` from
-   `sparkles.core_cli.process_utils` to the supervised surface without changing
-   its user-visible line streaming, timeout status, separate capture, or
-   resource-reporting behavior.
+6. Deliver the `apps/ci` process adapter through
+   [task-DAG M5](../ci/task-dag/PLAN.md#m5-event-horizon-subprocess-actions),
+   preserving user-visible line streaming, timeout status, separate capture,
+   and resource reporting. Its M3 supervision probes establish prerequisite
+   parity; M5 supplies the adapter and M7–M12 remove the legacy execution paths.
+   Do not port the legacy layer separately before replacing it.
 
 Gate: one behavioral suite runs the same supervision cases on Linux, native
 macOS, and Windows (Wine for bounded smoke plus `windows-latest` for Job Object,
@@ -356,8 +358,11 @@ unset and PATH lookup; LF/CRLF/split/final-partial/binary lines; stdout/stderr
 ordering and merge; chatty dual streams; natural exit, spawn failure, timeout,
 external cancellation, TERM-exit, grace-expiry KILL, descendants, and every
 exit-vs-EOF race; exactly one exit event/drain/reap; cumulative samples; blocking
-pool saturation/cancel/shutdown. `apps/ci`'s affected commands pass on all three
-hosts. Linux traces contain `io_uring_enter` and no `epoll_*`; Windows traces
+pool saturation/cancel/shutdown. The Windows prerequisite gate covers the
+event-horizon package suite and supervision cases, not an `apps/ci` build:
+the latter needs a separate port of its system-library build dependencies.
+Affected `apps/ci` commands pass on Linux and macOS as their task-DAG cutovers
+land. Linux traces contain `io_uring_enter` and no `epoll_*`; Windows traces
 contain IOCP waits and no pipe/process polling loop.
 
 Status (September 5, 2026): items 2–4 shipped on Linux as SPEC §§13.5–13.8 —
@@ -376,7 +381,8 @@ package-private shielded scope children (`scope_`, SPEC §8.2). The
 nine `io_uring_enter` calls, no `epoll_*`, and no timer loop
 (`strace -f -c`). Remaining: item 1's macOS export and process tests (the
 Darwin sampler is a `sampled == false` stub), item 5 (Windows, §13.9), item 6
-(the `apps/ci` port), and a `clone3(CLONE_INTO_CGROUP)` spawn path so that a
+(folded into task-DAG M5 and its later cutovers), and a
+`clone3(CLONE_INTO_CGROUP)` spawn path so that a
 child forked before the post-spawn migration lands is contained by
 construction rather than by the process group alone (SPEC §13.7).
 
@@ -404,8 +410,9 @@ a separate event-horizon type.
 Gate: the fiber-parker testing table passes on every backend and, on Linux,
 on both paths; benchmarks FB1–FB7 are recorded for both paths in
 [benchmarks.md](./benchmarks.md), and `auto`'s choice follows them; base.sync's
-S4 migration of event-horizon's own users (`blocking_pool`, `raw_pool`,
-`pool`) builds on it.
+S4 migration of event-horizon's `raw_pool` and `pool` builds on it.
+`blocking_pool` migrates independently in M19: its conditions wait on worker
+threads and its loop-side lock sections never suspend.
 
 Status (October 27, 2026): both paths shipped. `Sched` installs the parker
 around every resume; the ring futex operations lower on io_uring; a ring sleep
