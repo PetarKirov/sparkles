@@ -342,34 +342,69 @@ void paintLayer(H)(ref H h, in Layer l, in ChromeTheme t) @system
         return;
     if (l.opaque)
     {
-        import raylib : Color, DrawRectangle;
-
         const r = l.backdrop.width > 0 ? l.backdrop : l.pixelBounds;
-        DrawRectangle(r.x, r.y, r.width, r.height, Color(t.bg.r, t.bg.g, t.bg.b, 255));
+        version (TerminalVulkan)
+        {
+            import sparkles.shaders : v4;
+            h.canvas.fillPx(r.x, r.y, r.width, r.height,
+                v4(t.bg.r / 255.0f, t.bg.g / 255.0f, t.bg.b / 255.0f, 1));
+        }
+        else
+        {
+            import raylib : Color, DrawRectangle;
+            DrawRectangle(r.x, r.y, r.width, r.height, Color(t.bg.r, t.bg.g, t.bg.b, 255));
+        }
     }
     if (l.panel.width > 0)
     {
-        import raylib : Color, DrawRectangle;
-
         const s = t.slotFill(Slot.surface);
-        DrawRectangle(l.panel.x, l.panel.y, l.panel.width, l.panel.height,
-            Color(s.r, s.g, s.b, 255));
+        version (TerminalVulkan)
+        {
+            import sparkles.shaders : v4;
+            h.canvas.fillPx(l.panel.x, l.panel.y, l.panel.width, l.panel.height,
+                v4(s.r / 255.0f, s.g / 255.0f, s.b / 255.0f, 1));
+        }
+        else
+        {
+            import raylib : Color, DrawRectangle;
+            DrawRectangle(l.panel.x, l.panel.y, l.panel.width, l.panel.height,
+                Color(s.r, s.g, s.b, 255));
+        }
     }
     static FrameOps ops;
     ops.reset();
     chromeDisplayList(l.tree, l.frames, t.palette, t.fg, t.bg, ops);
     auto c = h.canvas;
-    c.originX = l.x;
-    c.originY = l.y;
-    paint(c, ops[]);
+    static if (__traits(compiles, c.originX = l.x))
+    {
+        c.originX = l.x;
+        c.originY = l.y;
+        paint(c, ops[]);
+    }
+    else
+    {
+        c.pushOffsetPx(l.x, l.y);
+        paint(c, ops[]);
+        c.popOffsetPx();
+    }
     if (l.panel.width > 0 && l.edgeWidth > 0)
     {
-        import raylib : Color, DrawRectangle;
-
         const e = t.slotInk(Slot.border);
-        DrawRectangle(l.panel.x + l.panel.width - l.edgeWidth, l.panel.y, l.edgeWidth,
-            l.panel.height, Color(e.r, e.g, e.b, 255));
+        version (TerminalVulkan)
+        {
+            import sparkles.shaders : v4;
+            h.canvas.fillPx(l.panel.x + l.panel.width - l.edgeWidth, l.panel.y, l.edgeWidth,
+                l.panel.height, v4(e.r / 255.0f, e.g / 255.0f, e.b / 255.0f, 1));
+        }
+        else
+        {
+            import raylib : Color, DrawRectangle;
+            DrawRectangle(l.panel.x + l.panel.width - l.edgeWidth, l.panel.y, l.edgeWidth,
+                l.panel.height, Color(e.r, e.g, e.b, 255));
+        }
     }
+    version (TerminalVulkan) {}
+    else
     if (debugHitBoxes)
     {
         import raylib : Color, DrawRectangleLines;

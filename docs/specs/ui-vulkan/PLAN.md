@@ -193,9 +193,11 @@ application's own raylib calls replaced by host and canvas calls; a
 **Progress.** The canvas draws in device pixels (`UVK35`). The terminal
 painter maps kitty images onto a pane-owned `ImageRegistry` (`UVX11`);
 glyphs and labels count a miss until V3. A native host opens a pane with
-`openPixels` at its cell metrics and paints through that painter. The
-application's own raylib calls and a `gui-vulkan` build of `apps/terminal`
-have not landed. Text still draws nothing until V3.
+`openPixels` at its cell metrics and paints through that painter.
+`apps/terminal` has a `vulkan` configuration: the native host, pixel
+positions, and no raylib poll. A file open reports that this arm has no
+document viewer. Text still draws nothing until V3. The raylib desktop
+configuration keeps its poll.
 
 **Gate.** The terminal runs on Wayland and X11 through the native host;
 screenshots match the raylib terminal within the tolerances of
