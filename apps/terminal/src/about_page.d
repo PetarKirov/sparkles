@@ -186,7 +186,9 @@ Gathers the probes, and copies identity from `info`. An empty name stays
 */
 AboutFacts gatherAboutFacts(BuildInfo info) @system
 {
-    import raylib.rlgl : rlGetVersion, rlGlVersion;
+    version (TerminalVulkan) {}
+    else
+        import raylib.rlgl : rlGetVersion, rlGlVersion;
     import sparkles.terminal_view.core : ghosttyBuild;
 
     AboutFacts f;
@@ -199,18 +201,23 @@ AboutFacts gatherAboutFacts(BuildInfo info) @system
     f.vtSimd = vt.simd;
     f.vtOptimize = vt.optimize;
 
-    string gl;
-    switch (rlGetVersion())
+    version (TerminalVulkan)
+        f.renderer = "Vulkan";
+    else
     {
-        case rlGlVersion.RL_OPENGL_11: gl = "OpenGL 1.1"; break;
-        case rlGlVersion.RL_OPENGL_21: gl = "OpenGL 2.1"; break;
-        case rlGlVersion.RL_OPENGL_33: gl = "OpenGL 3.3"; break;
-        case rlGlVersion.RL_OPENGL_43: gl = "OpenGL 4.3"; break;
-        case rlGlVersion.RL_OPENGL_ES_20: gl = "OpenGL ES 2.0"; break;
-        case rlGlVersion.RL_OPENGL_ES_30: gl = "OpenGL ES 3.0"; break;
-        default: gl = "software"; break;
+        string gl;
+        switch (rlGetVersion())
+        {
+            case rlGlVersion.RL_OPENGL_11: gl = "OpenGL 1.1"; break;
+            case rlGlVersion.RL_OPENGL_21: gl = "OpenGL 2.1"; break;
+            case rlGlVersion.RL_OPENGL_33: gl = "OpenGL 3.3"; break;
+            case rlGlVersion.RL_OPENGL_43: gl = "OpenGL 4.3"; break;
+            case rlGlVersion.RL_OPENGL_ES_20: gl = "OpenGL ES 2.0"; break;
+            case rlGlVersion.RL_OPENGL_ES_30: gl = "OpenGL ES 3.0"; break;
+            default: gl = "software"; break;
+        }
+        f.renderer = gl;
     }
-    f.renderer = gl;
 
     version (Android)
     {
