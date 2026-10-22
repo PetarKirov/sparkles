@@ -12,6 +12,33 @@ timers, child processes, signals — and you want that waiting to read as
 ordinary sequential code, with cancellation, timeouts and cleanup that
 cannot be forgotten.
 
+On Windows, IOCP currently supports socket I/O, timers, cross-thread wakes
+and the scheduler-integrated `BlockingPool`. Cancellation uses `CancelIoEx`;
+the target's storage remains live until its terminal completion, and
+`cancelAndWait` consumes both the target and the cancellation acknowledgment.
+Port waits drain batches with `GetQueuedCompletionStatusEx`. Socket handles
+must belong to this loop, not to a different completion port. Overlapped native
+pipe reads/writes are supported, including cancellation and EOF. Regular-file
+operations require explicit offsets; the asynchronous VFS open path, file
+flush and Windows process supervision remain incomplete; see M19 in the delivery
+plan below. Wine probes are smoke evidence, not native Windows certification.
+
+`OwnedFd` and `BorrowedFd` carry `NativeHandle`: an `int` on POSIX and a
+full-width `HANDLE` on Windows. A Windows `OwnedFd` closes file, pipe and
+process handles with `CloseHandle`; it must not own a Winsock socket, which
+requires `closesocket`. The legacy socket views remain separate pending the
+owned-socket port. Read/write/flush operation descriptors use the same native
+file-handle type without narrowing.
+
+On macOS, supervised resource samples use libproc (`proc_pid_rusage` V4 and
+child rosters). A bounded tree walk validates identities and rosters before
+committing CPU totals or memory/process peaks. Failed or budget-exhausted
+walks retain the preceding measurements and mark degradation; sampled peaks
+and tree CPU remain lower bounds. CPU counters are converted from Mach ticks
+with the host timebase, including non-unit Apple Silicon clocks. Shared POSIX parity probes exercise line
+framing, real samples, timeout escalation, cancellation and admission-failure
+cleanup. The complete macOS lifecycle edge-case matrix is still open.
+
 ```d
 import sparkles.event_horizon;
 import core.time : msecs;

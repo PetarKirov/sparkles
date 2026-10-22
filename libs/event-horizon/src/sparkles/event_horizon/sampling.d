@@ -619,6 +619,7 @@ version (linux)
                         discoverByChildren(scratch, spent);
                     break;
                 case SampleSource.none:
+                case SampleSource.darwinTree:
                     break;
                 }
             }
@@ -1081,6 +1082,10 @@ version (linux)
                 usage.tasksQuality = MetricQuality.lowerBound;
         }
     }
+}
+else version (OSX)
+{
+    package import sparkles.event_horizon.sampling_darwin : TreeSampler;
 }
 else
 {

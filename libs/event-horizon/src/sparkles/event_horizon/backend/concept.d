@@ -93,7 +93,7 @@ enum bool hasMultishot(B) = __traits(compiles, {
 
 /// The backend guarantees terminal CQEs for both a cancelled target and the
 /// internal cancellation request, so the loop can offer a synchronous owner
-/// teardown barrier. IOCP deliberately omits this until `CancelIoEx` is wired.
+/// teardown barrier.
 template hasTerminalCancel(B)
 {
     static if (__traits(hasMember, B, "terminalCancelCompletions"))

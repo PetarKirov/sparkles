@@ -8,8 +8,11 @@ the milestone can be reviewed without relying on a later commit._
 
 - Add the smallest module split needed by the current milestone. The target
   layout in SPEC section 13 is a destination, not permission for empty files.
-- Full `sparkles.wired.sdl` and Event Horizon M19 are hard prerequisites for the
-  production cutover. `apps/ci` does not carry a second process executor.
+- Full `sparkles.wired.sdl`, Event Horizon M19 items 1–5, and bounded
+  cross-worker Event Horizon channels are hard prerequisites for the production
+  cutover. M19 item 6 is delivered by M5 and the later cutovers below, not by a
+  separate port of the legacy process layer. `apps/ci` does not carry a second
+  process executor.
 - Pure models and tests may land before those prerequisites, but canonical
   commands become executable only when their DAG path is complete.
 - Switch one work family at a time without retaining flat-mode aliases or a
@@ -65,6 +68,9 @@ edges for fixture repositories; production commands still use the old executor.
 - Add integration probes for typed repository discovery, supervised line
   streaming, cancellation, process-tree teardown, resource events, and the
   scheduler-integrated blocking pool.
+- Require bounded cross-worker channels: exercise backpressure, close/drain,
+  cancellation, and exactly-once delivery between scheduler workers. The
+  existing intra-worker `Channel` alone does not satisfy this prerequisite.
 - Do not expose a partial canonical CLI or route production work through the old
   executor in this milestone.
 
@@ -94,6 +100,7 @@ the old path.
 - Implement `task/process.d` as the CI adapter over Event Horizon M19's
   supervised-process API, without reimplementing line assembly or process
   lifecycle policy.
+- This adapter satisfies M19 item 6; later cutovers remove the old paths.
 - Preserve argv boundaries and redact marked environment values in events and
   dry-runs.
 - Implement bounded output memory with sandbox spill files.
