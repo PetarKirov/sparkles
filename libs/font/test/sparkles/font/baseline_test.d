@@ -391,6 +391,46 @@ private void exercise(const(ubyte)[] bytes) @safe pure nothrow
         }
 }
 
+/// `base` over a `glyf` face of `glyphs`.
+private ubyte[] buildWithGlyf(const(ubyte)[] base, const(ubyte[])[] glyphs) @safe pure nothrow
+{
+    uint[2][] metrics;
+    foreach (_; glyphs)
+        metrics ~= [500u, 0u];
+    auto tables = minimalTables(cast(uint) glyphs.length);
+    tables[1] = TableData("head", head(upem));
+    tables ~= TableData("hhea", hhea(cast(uint) glyphs.length));
+    tables ~= TableData("hmtx", hmtx(metrics));
+    tables ~= TableData("loca", locaTable(glyphs));
+    tables ~= TableData("glyf", glyfTable(glyphs));
+    tables ~= TableData("BASE", base);
+    tables ~= TableData("fvar", fvarTable([FvarAxis("TEST", -one, 0, one)]));
+    return sfnt(tables);
+}
+
+/// Format 2 resolves against the reference glyph's point; malformed outline data is an error, not a fallback.
+@("baseline.FTM7.referencePoint")
+@safe pure nothrow
+unittest
+{
+    const axis = BaseAxisSpec(["hang", "ideo", "math", "romn"], [BaseScriptSpec("DFLT", true, 3, [
+        BaseCoordSpec(2, 700, 1, 2),
+        BaseCoordSpec(2, 700, 1, 9),
+        BaseCoordSpec(1, 0),
+        BaseCoordSpec(1, 0),
+    ])]);
+    const base = baseTable(null, [axis]);
+    const triangle = simpleGlyph([[0, 0, 1], [100, 0, 1], [100, 80, 1]]);
+    const inst = at(buildWithGlyf(base, [triangle, triangle]));
+    // The vertical axis takes the point's x.
+    const resolved = inst.baseline(vertical, latn, hang).value.value;
+    assert(resolved.coordinate.design == du(100) && !resolved.unresolvedPoint);
+    assert(inst.baseline(vertical, latn, ideo).error.kind == FontErrorKind.indexOutOfRange);
+    // A glyph whose data stops short of its points.
+    const broken = at(buildWithGlyf(base, [triangle, triangle[0 .. $ - 2]]));
+    assert(broken.baseline(vertical, latn, hang).error.kind == FontErrorKind.truncated);
+}
+
 /// A `BASE` 1.1 with both axes, every coordinate format and a store.
 private ubyte[] hostileBase() @safe pure nothrow
 {
