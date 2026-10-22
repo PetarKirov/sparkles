@@ -180,9 +180,9 @@ raylib each frame and emits the same events, and an `xdotool`-driven run
 scenarios pass through the recording host on a pty the test reads.
 `terminal-view`'s `unittest` configuration builds its `core` sources, with
 no raylib in the closure. On the way, raylib's side buttons stopped
-reporting as the wheel's buttons, and a selection anchored at screen cell
-(0, 0) turned out to read as cleared (`TSE4`) whenever the render state is
-dirty: during output, and always under a host that never paints.
+reporting as the wheel's buttons. A selection the user anchors at screen
+cell (0, 0) is kept: only a move of both ends to (0, 0), which is how
+libghostty reports a cleared scrollback, reads as cleared (`TSE4`).
 
 ## V6: The terminal on Vulkan
 

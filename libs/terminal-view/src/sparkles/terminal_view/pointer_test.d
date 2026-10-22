@@ -69,11 +69,19 @@ private Event release(int x, int y, Mods m = Mods.init)
 {
     auto r = pane("alpha beta gamma\r\nsecond line here\r\n");
     scope (exit) r.close();
-    // (Not from cell (0, 0): a selection with both ends there reads as one
-    // the program cleared away, `TSE4`.)
     run(r, [press(15, 5), drag(60, 25), drag(125, 25), release(125, 25)]);
     assert(r.tv.selectionText == "lpha beta gamma\nsecond line h", r.tv.selectionText);
     assert(!r.tv.s.selState.isSelecting, "the release ends the drag");
+}
+
+@("terminal_view.pointer.aDragFromTheOriginCellKeepsTheSelection")
+@system unittest
+{
+    auto r = pane("alpha beta gamma\r\nsecond line here\r\n");
+    scope (exit) r.close();
+    // Pixel (5, 5) is cell (0, 0). Both ends there must not read as a clear.
+    run(r, [press(5, 5), drag(60, 25), drag(125, 25), release(125, 25)]);
+    assert(r.tv.selectionText == "alpha beta gamma\nsecond line h", r.tv.selectionText);
 }
 
 @("terminal_view.pointer.aDoubleClickSelectsAWordATripleTheLine")

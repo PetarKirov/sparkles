@@ -326,6 +326,7 @@ bool selectCells(GhosttyTerminal t, ref SelectionState sel, int x0, int y0, int 
         return false;
     }
     sel.isRectangular = rectangular;
+    noteScreenEnds(sel);
     return true;
 }
 
@@ -429,8 +430,11 @@ bool moveEnd(GhosttyTerminal t, ref SelectionState sel, SelectionEnd which, int 
     auto r = which == SelectionEnd.start ? sel.start : sel.end;
     if (r is null || y < 0)
         return false;
-    return ghostty_tracked_grid_ref_set(r, t, pointOf(GHOSTTY_POINT_TAG_VIEWPORT, x, y))
-        == GHOSTTY_SUCCESS;
+    if (ghostty_tracked_grid_ref_set(r, t, pointOf(GHOSTTY_POINT_TAG_VIEWPORT, x, y))
+            != GHOSTTY_SUCCESS)
+        return false;
+    noteScreenEnds(sel);
+    return true;
 }
 
 /// Selects everything the terminal holds — scrollback and screen; false when
@@ -716,7 +720,8 @@ FindResult findBackward(GhosttyTerminal t, ref SelectionState sel, scope const(c
 /**
 Whether the program cleared the selection's text away (`TSE4`): an end lost
 its row, its rows were cleared from the scrollback (libghostty then moves
-both ends to the first cell left), or nothing but blanks is left under it
+both ends to the first cell left — a change to screen cell (0, 0), not a
+selection the user anchored there), or nothing but blanks is left under it
 (the screen was erased: the rows stay, blanked). Cheap while
 either end is on text; the text is read only when both ends are blank.
 */
@@ -725,14 +730,46 @@ bool selectionEmptied(GhosttyTerminal t, in SelectionState sel) @system nothrow 
     if (!selectionLive(sel))
         return true;
     // Clearing the scrollback moves the ends of its rows to the top-left of
-    // what is left: both on screen cell (0, 0) is a selection whose rows went.
+    // what is left. Both on screen cell (0, 0) is that move only when the
+    // user did not place them there. Compare the fields: an ImportC
+    // coordinate's `== .init` also compares padding the point query leaves.
     GhosttyPointCoordinate s, e;
     if (ghostty_tracked_grid_ref_point(cast(GhosttyTrackedGridRef) sel.start,
             GHOSTTY_POINT_TAG_SCREEN, &s) == GHOSTTY_SUCCESS
         && ghostty_tracked_grid_ref_point(cast(GhosttyTrackedGridRef) sel.end,
             GHOSTTY_POINT_TAG_SCREEN, &e) == GHOSTTY_SUCCESS
-        && s == GhosttyPointCoordinate.init && e == GhosttyPointCoordinate.init)
-        return true;
+        && screenOrigin(s) && screenOrigin(e))
+    {
+        const sCp = graphemeAt(sel.start);
+        const eCp = graphemeAt(sel.end);
+        const graphemesDiffer = sCp != sel.notedStartGrapheme
+            || eCp != sel.notedEndGrapheme;
+        const notedKnown = sel.notedStartGrapheme >= 0 && sel.notedEndGrapheme >= 0;
+        // Residual ambiguity, by construction: a cell at (0, 0) rewritten
+        // in place with a different grapheme reads as a clear, and a
+        // collapse onto (0, 0) holding the same graphemes as the noted
+        // ends reads as a move. The tracked refs expose no generation to
+        // tell these apart; the grapheme comparison is the best signal.
+        if (sel.screenNoted && screenOrigin(sel.notedStart) && screenOrigin(sel.notedEnd))
+        {
+            // The user anchored there: only content replaced under the
+            // anchor is a clearing away of the selection.
+            if (notedKnown && graphemesDiffer)
+                return true;
+        }
+        else if (sel.screenNoted)
+        {
+            // libghostty's collapse onto (0, 0), or a legit move of the
+            // same cells there: the graphemes tell them apart. Unknown
+            // noted graphemes fall back to treating it as a collapse.
+            if (!notedKnown)
+                return true;
+            if (graphemesDiffer)
+                return true;
+        }
+        // Not noted (or same content at the origin): fall through to the
+        // blank/text check below rather than calling it a clear.
+    }
     if (!blankAt(sel.start) || !blankAt(sel.end))
         return false;
     bool empty = true;
@@ -747,17 +784,47 @@ bool selectionEmptied(GhosttyTerminal t, in SelectionState sel) @system nothrow 
     return empty;
 }
 
-private bool blankAt(in GhosttyTrackedGridRef tracked) @system nothrow @nogc
+// Records the ends' screen points after the user places or moves them.
+private void noteScreenEnds(ref SelectionState sel) @system nothrow @nogc
+{
+    GhosttyPointCoordinate s, e;
+    if (ghostty_tracked_grid_ref_point(cast(GhosttyTrackedGridRef) sel.start,
+            GHOSTTY_POINT_TAG_SCREEN, &s) != GHOSTTY_SUCCESS
+        || ghostty_tracked_grid_ref_point(cast(GhosttyTrackedGridRef) sel.end,
+            GHOSTTY_POINT_TAG_SCREEN, &e) != GHOSTTY_SUCCESS)
+    {
+        sel.screenNoted = false;
+        sel.notedStartGrapheme = -1;
+        sel.notedEndGrapheme = -1;
+        return;
+    }
+    sel.notedStart = s;
+    sel.notedEnd = e;
+    sel.notedStartGrapheme = graphemeAt(sel.start);
+    sel.notedEndGrapheme = graphemeAt(sel.end);
+    sel.screenNoted = true;
+}
+
+private bool screenOrigin(GhosttyPointCoordinate p) @safe pure nothrow @nogc
+    => p.x == 0 && p.y == 0;
+
+/// The first grapheme code point at `tracked`, or `-1` when it cannot be
+/// read or the cell holds no grapheme.
+private int graphemeAt(in GhosttyTrackedGridRef tracked) @system nothrow @nogc
 {
     GhosttyGridRef r;
     r.size = GhosttyGridRef.sizeof;
     if (ghostty_tracked_grid_ref_snapshot(cast(GhosttyTrackedGridRef) tracked, &r) != GHOSTTY_SUCCESS)
-        return true;
+        return -1;
     uint[4] cps;
     size_t len;
     const res = ghostty_grid_ref_graphemes(&r, cps.ptr, cps.length, &len);
-    return (res != GHOSTTY_SUCCESS && res != GHOSTTY_OUT_OF_SPACE) || len == 0 || cps[0] <= ' ';
+    return (res == GHOSTTY_SUCCESS || res == GHOSTTY_OUT_OF_SPACE) && len > 0
+        ? cast(int) cps[0] : -1;
 }
+
+private bool blankAt(in GhosttyTrackedGridRef tracked) @system nothrow @nogc
+    => graphemeAt(tracked) <= ' ';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests: a bare emulator, no pty.
@@ -914,6 +981,46 @@ version (unittest)
     assert(!selectionEmptied(v.t, v.sel), "output only scrolled it away");
     v.write("\x1b[3J");
     assert(selectionEmptied(v.t, v.sel), "`clear`'s first half");
+}
+
+@("selection.selectionEmptied.anAnchorAtTheOriginIsNotAClear")
+@system unittest
+{
+    auto v = Vt.open(20, 3);
+    scope (exit) v.close();
+    v.write("word\r\n");
+    assert(selectCells(v.t, v.sel, 0, 0, 0, 0));
+    assert(v.text == "w");
+    assert(!selectionEmptied(v.t, v.sel), "the user anchored at screen cell (0, 0)");
+}
+
+@("selection.selectionEmptied.originAnchorClearedWithNonBlankOrigin")
+@system unittest
+{
+    auto v = Vt.open(20, 3);
+    scope (exit) v.close();
+    v.write("word");
+    assert(selectCells(v.t, v.sel, 0, 0, 3, 0));
+    assert(v.text == "word");
+    assert(!selectionEmptied(v.t, v.sel), "a multi-cell word anchored at the origin");
+    // Push the word into the scrollback, then clear the scrollback: both
+    // ends collapse onto the new, non-blank (0, 0).
+    v.write("\r\n1\r\n2\r\n3\r\n4");
+    assert(!selectionEmptied(v.t, v.sel), "output only scrolled it away");
+    v.write("\x1b[3J");
+    assert(selectionEmptied(v.t, v.sel),
+        "the scrollback was cleared and (0, 0) now holds different content");
+}
+
+@("selection.findBackward.hitAtTheOriginIsNotEmptied")
+@system unittest
+{
+    auto v = Vt.open(20, 3);
+    scope (exit) v.close();
+    v.write("word\r\nother");
+    const r = findBackward(v.t, v.sel, "word");
+    assert(r == FindResult(1, 1) && v.text == "word");
+    assert(!selectionEmptied(v.t, v.sel), "a find hit at screen cell (0, 0) is not a clear");
 }
 
 @("selection.findBackward.selectsAndScrollsToTheHit")
