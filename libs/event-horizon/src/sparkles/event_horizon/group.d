@@ -46,7 +46,9 @@ struct LoopGroupConfig
     uint workers = 0;                    /// 0 = one per online CPU (non-single)
     uint sqEntries = 256;                /// SQ ring entries per worker
     Flag!"pinToCpu" pinToCpu = Yes.pinToCpu;  /// sched_setaffinity per worker
-    Flag!"futexPark" futexPark = Yes.futexPark; /// in-ring futex idle parking (>= 6.7)
+    /// Idle workers wait on the ring's in-kernel `FUTEX_WAIT` (Linux 6.7;
+    /// below it, or with `No`, on the eventfd wake channel).
+    Flag!"futexPark" futexPark = Yes.futexPark;
     uint maxFibers = 256;                /// fiber-slab size per worker
     /// `WorkStealingPool` only: skip the per-worker io_uring ring + fiber
     /// scheduler entirely — workers are plain threads running `submitBlocking`
@@ -55,6 +57,15 @@ struct LoopGroupConfig
     /// (`benchmarks.md` §2). Async `submit` is unavailable in this mode.
     Flag!"cpuBound" cpuBound = No.cpuBound;
     // OPEN (open-issues O21): a per-worker Allocator knob lands here.
+}
+
+/// The per-worker loop configuration `cfg` asks for.
+package LoopConfig loopConfigOf(in LoopGroupConfig cfg) @safe pure nothrow @nogc
+{
+    LoopConfig loopCfg;
+    loopCfg.backend.sqEntries = cfg.sqEntries;
+    loopCfg.nativeWake = cfg.futexPark == Yes.futexPark;
+    return loopCfg;
 }
 
 /**
@@ -86,8 +97,7 @@ struct LoopGroup
             // its own thread (Sched/ring/fiber are thread-affine).
             SchedOptions opts;
             opts.maxFibers = cfg.maxFibers;
-            LoopConfig loopCfg;
-            loopCfg.backend.sqEntries = cfg.sqEntries;
+            auto loopCfg = loopConfigOf(cfg);
             auto r = Sched.create(group._sched, opts, loopCfg);
             if (r.hasError)
                 return r;
@@ -225,8 +235,7 @@ struct LoopGroup
         {
             SchedOptions opts;
             opts.maxFibers = cfg.maxFibers;
-            LoopConfig loopCfg;
-            loopCfg.backend.sqEntries = cfg.sqEntries;
+            auto loopCfg = loopConfigOf(cfg);
             Sched sched;
             if (Sched.create(sched, opts, loopCfg).hasError)
                 return; // a worker whose ring won't open is silently skipped
@@ -287,6 +296,15 @@ private:
     LoopGroupConfig _cfg;
     uint _workers;
     bool _started;
+}
+
+@("group.config.futexParkChoosesTheWorkersWaker")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(loopConfigOf(LoopGroupConfig(sqEntries: 64)).backend.sqEntries == 64);
+    assert(loopConfigOf(LoopGroupConfig()).nativeWake);
+    assert(!loopConfigOf(LoopGroupConfig(futexPark: No.futexPark)).nativeWake);
 }
 
 @("group.single.runsRootWithEnv")

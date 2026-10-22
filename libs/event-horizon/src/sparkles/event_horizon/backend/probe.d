@@ -133,7 +133,8 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
     operating mode they encode.
     */
     package BackendCaps buildUringCaps(Uring)(ref Uring io, LoopMode mode,
-        bool singleIssuer, bool deferTaskrun, bool coopTaskrun) nothrow @nogc
+        bool singleIssuer, bool deferTaskrun, bool coopTaskrun, ulong hiddenOps = 0)
+        nothrow @nogc
     {
         import during : Operation, SetupFeatures;
 
@@ -192,6 +193,7 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
                 if (kind != 0 && probe.isSupported(lowered))
                     caps.opBits |= 1UL << kind;
         }
+        caps.opBits &= ~hiddenOps;
 
         // Version-keyed features with no opcode of their own.
         caps.multishotAccept = caps.kernel.atLeast(5, 19) && caps.supports(OpKind.accept);

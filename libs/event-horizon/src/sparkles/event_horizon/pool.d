@@ -35,8 +35,7 @@ import core.time : Duration, usecs;
 import sparkles.base.hw_caps : hwParallelism, nthAllowedCpu;
 import sparkles.event_horizon.backend.concept : Waker;
 import sparkles.event_horizon.errors : IoResult, ioOk;
-import sparkles.event_horizon.group : LoopGroupConfig, Topology;
-import sparkles.event_horizon.loop : LoopConfig;
+import sparkles.event_horizon.group : LoopGroupConfig, loopConfigOf, Topology;
 import sparkles.event_horizon.sched : Sched, SchedOptions;
 
 /// Idle backoff cap for the CPU-bound arm (no loop waker): sleep up to
@@ -138,8 +137,7 @@ struct WorkStealingPool
 
             SchedOptions opts;
             opts.maxFibers = cfg.maxFibers;
-            LoopConfig loopCfg;
-            loopCfg.backend.sqEntries = cfg.sqEntries;
+            auto loopCfg = loopConfigOf(cfg);
             Sched sched;
             if (Sched.create(sched, opts, loopCfg).hasError)
                 return; // a worker whose ring won't open is silently skipped
