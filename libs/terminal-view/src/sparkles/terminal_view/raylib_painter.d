@@ -4,8 +4,6 @@ decorations through `sparkles:raylib-text`'s face set and its white atlas
 texel, kitty images as raylib textures, a pane's placement as a scissor and
 a pushed translation. Exactly the calls the renderer made before it went
 through a painter, so the raylib terminal draws the same pixels.
-
-Also the PNG decoder kitty graphics needs, which uses raylib's stb_image.
 */
 module sparkles.terminal_view.raylib_painter;
 
@@ -169,43 +167,3 @@ private int formatOf(PixelLayout layout) @safe pure nothrow @nogc
 
 private Texture2D textureOf(TextureId t) @safe pure nothrow @nogc
     => Texture2D(t.value, cast(int) t.width, cast(int) t.height, 1, formatOf(t.layout));
-
-/**
-Decodes PNG data into RGBA pixels with raylib's stb_image, for the Kitty
-Graphics Protocol. The output buffer is allocated through the provided
-`GhosttyAllocator` so the library can free it later. Installed
-process-globally by $(LREF installPngDecoder).
-*/
-extern(C) nothrow @nogc
-bool decode_png(void* userdata, GhosttyAllocator* allocator, const(ubyte)* data, size_t data_len, GhosttySysImage* outImg)
-{
-    Image img = LoadImageFromMemory(".png".ptr, data, cast(int) data_len);
-    if (img.data is null) return false;
-
-    // Convert to uncompressed RGBA so we have a known pixel layout.
-    ImageFormat(&img, PixelFormat.PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
-
-    const size_t pixel_len = cast(size_t) img.width * cast(size_t) img.height * 4;
-    ubyte* pixels = ghostty_alloc(allocator, pixel_len);
-    if (pixels is null) {
-        UnloadImage(img);
-        return false;
-    }
-
-    import core.stdc.string : memcpy;
-    memcpy(pixels, img.data, pixel_len);
-    UnloadImage(img);
-
-    outImg.width = cast(uint) img.width;
-    outImg.height = cast(uint) img.height;
-    outImg.data = pixels;
-    outImg.data_len = pixel_len;
-    return true;
-}
-
-/// Installs $(LREF decode_png) as libghostty's PNG decoder: process-global,
-/// before any terminal exists, idempotent.
-void installPngDecoder() @system nothrow @nogc
-{
-    ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, cast(const(void)*) &decode_png);
-}

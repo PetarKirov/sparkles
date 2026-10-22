@@ -38,8 +38,7 @@ version (TerminalViewRaylib)
         IsWindowMinimized, SetWindowTitle;
     import sparkles.raylib_text : FontSet;
     import sparkles.terminal_view.raylib_input : pollPointer;
-    import sparkles.terminal_view.raylib_painter : installPngDecoder, RaylibPainter,
-        RaylibTextures;
+    import sparkles.terminal_view.raylib_painter : RaylibPainter, RaylibTextures;
 }
 
 import sparkles.base.term_color : RgbColor;
@@ -57,6 +56,7 @@ import sparkles.terminal_view.notification_log : NotificationLog,
     NotificationRecord, NotificationRoute, routeNotification;
 import sparkles.terminal_view.osc_scan : maxIconBytes, maxTitleBytes, Notification;
 import sparkles.terminal_view.painter : isTerminalPainter, NoTextures;
+import sparkles.terminal_view.png_decoder : installPngDecoder;
 import sparkles.terminal_view.pointer : PaneGeometry, pointerEvent, pointerFrame, PointerTrack,
     wheelEvent;
 import sparkles.terminal_view.protocols : ClipboardReadAnswer, ClipboardReadPolicy,
@@ -487,9 +487,7 @@ struct TerminalView
     {
         this.fonts = fonts;
         s.fontSize = fonts.size;
-        // The PNG decoder for kitty graphics: process-global, before any
-        // terminal exists.
-        installPngDecoder();
+        // The PNG decoder is installed by `openCore` (it draws pixels).
         if (!openCore(cols, rows, fonts.cellW(), fonts.cellH(), drawsPixels: true))
             return false;
         prevFocused = IsWindowFocused();
@@ -611,6 +609,7 @@ struct TerminalView
         // Fontless (no renderer for them), the protocol stays disabled.
         if (s.drawsPixels)
         {
+            installPngDecoder();
             ulong kittyStorage = 64 * 1024 * 1024;
             ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &kittyStorage);
             bool kittyMedium = true;
