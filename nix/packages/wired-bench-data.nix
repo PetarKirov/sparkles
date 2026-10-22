@@ -93,6 +93,7 @@ in
           pkgs.zstd
           pkgs.dub
           pkgs.ldc
+          (import ../wrapped-lld.nix { inherit pkgs; })
           pkgs.pkg-config
         ];
         text = ''

@@ -1,5 +1,74 @@
 # Build settings: experiments and policy
 
+## Current linker policy: lld with Nix runtime-path integration
+
+Linux builds now default to **lld** for LDC and DMD. The earlier measurements
+and gold selection below are historical evidence, not the current default.
+Shared Phobos/druntime remains the test and ordinary benchmark policy; shipping
+and `bench-static` keep their existing runtime-linkage choices.
+
+Raw `pkgs.lld` bypasses Nix's bintools wrapper. It links successfully but omits
+runtime search paths for store libraries passed with `-L`, so six of the ten app
+test executables fail dynamic-library resolution. For example, `ci --help`
+exits 127 because `libtree-sitter.so.0.26` cannot be found.
+
+`nix/wrapped-lld.nix` preserves the lld tool suite (including `wasm-ld` and
+`lld-link`) and replaces only `ld.lld` with the pinned LLVM bintools wrapper.
+Development/CI shells, the CI runtime compiler environment, Nix DUB builders,
+and the wired benchmark wrapper use this package. The wrapper discovers runtime
+paths from linker inputs; no machine-specific store paths enter DUB manifests,
+and `LD_LIBRARY_PATH` is not the fix. Re-enter the development shell after
+updating: an already-open shell still has the old raw linker on `PATH`.
+
+The fixed integration was replayed against all ten app test link commands,
+five times each. Every resulting executable resolves its libraries and starts
+with `--help`. A smaller regression probe exercises both LDC and DMD with shared
+Phobos/druntime and pkg-config's tree-sitter, removing `LD_LIBRARY_PATH` for
+library-resolution and execution checks:
+
+```bash
+dmd apps/ci/tools/build-settings-bench.d -of=/tmp/opencode/linker-probe
+/tmp/opencode/linker-probe --check-runtime-linker /tmp/opencode/linker-probe-output
+```
+
+The probe fails with raw lld and passes with wrapped lld. Wrapper overhead is
+included in real build latency: the earlier raw-lld times are not promises for
+the corrected configuration. The default change is an explicit policy choice,
+not a claim that wrapped lld beats gold on this toolchain. Calibration build
+types outside the managed block may still explicitly select gold.
+
+All-app follow-up, shared Phobos/druntime, five links per condition; median
+whole-link milliseconds (compiler driver and wrapper included):
+
+| App                | gold |                 Raw lld | Wrapped lld |
+| ------------------ | ---: | ----------------------: | ----------: |
+| ci                 |  437 | 168 (missing libraries) |         725 |
+| diagram            |  381 | 132 (missing libraries) |         712 |
+| hue                |  772 | 224 (missing libraries) |         802 |
+| nix-eval           |  114 |  75 (missing libraries) |         647 |
+| release            |  248 |                     100 |         658 |
+| shader-compile     |  200 |                      88 |         644 |
+| terminal           |  510 | 166 (missing libraries) |         750 |
+| terminal-benchmark |  185 |                      85 |         639 |
+| twoslash-extract   |  396 |                     139 |         699 |
+| ui-gallery         |  385 | 138 (missing libraries) |         728 |
+
+These reuse the same selected-policy root objects and dependency archives.
+Conditions rotate order within each app; the wrapped-lld follow-up is a separate
+batch. The corrected linker is slower than gold in every row of this sample.
+This cost is accepted for the requested lld default, not hidden behind raw-linker
+numbers. No application-runtime improvement is established by these link tests.
+
+The shipping-mode hue build also links successfully with the new default.
+Its UI-event safety-inference diagnostic also appears in the pre-lld build;
+both builds finish successfully. The optimized standalone wired benchmark
+build passes its 16 ordinary tests with lld as well.
+The repository-wide no-coverage suite passes **58/58 packages** with wrapped lld.
+The sandboxed `nix build .#ci --no-link` also succeeds, and the packaged CI
+executable starts with `--help`.
+
+## Original build-setting experiments
+
 **Measured:** October 21–22, 2026. Baseline: `f71a5bffe`.
 
 Forced compilation of `versions` and its 13 dependency archives falls from

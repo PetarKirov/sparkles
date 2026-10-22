@@ -105,6 +105,7 @@
               compiler
               dub
               removeReferencesTo
+              (import ../../wrapped-lld.nix { inherit pkgs; })
             ];
 
             # Read by the hooks and by the default build phase.

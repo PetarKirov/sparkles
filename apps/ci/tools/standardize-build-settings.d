@@ -25,35 +25,38 @@ import std.string : lineSplitter, strip;
 
 import sparkles.build_primitives.git_env : runGit;
 
-// Measured defaults; the companion report records the experiment and exceptions.
+// Linux uses lld; Nix must supply wrapped-lld.nix, not the raw ELF linker.
 // Template linkage stays package-scoped: forcing it onto mir-ion crashes LDC.
 enum managed = q"SDL
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
+dflags "--linker=lld" platform="linux-ldc"
+dflags "-L-fuse-ld=lld" platform="linux-dmd"
+
 buildType "unittest" {
     buildOptions "unittests" "debugMode" "debugInfo"
     dflags "--gline-tables-only" platform="ldc"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
 buildType "unittest-debug" {
     buildOptions "unittests" "debugMode" "debugInfo"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
 buildType "unittest-cov" {
     buildOptions "unittests" "coverage" "debugMode" "debugInfo"
     dflags "--gline-tables-only" platform="ldc"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
 buildType "unittest-cov-ctfe" {
     buildOptions "unittests" "coverageCTFE" "debugMode" "debugInfo"
     dflags "--gline-tables-only" platform="ldc"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
 buildType "checked" {
@@ -62,22 +65,22 @@ buildType "checked" {
 buildType "bench" {
     buildOptions "unittests" "optimize" "inline"
     dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
 buildType "bench-unchecked" {
     buildOptions "unittests" "releaseMode" "optimize" "inline"
     dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.so" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
 buildType "bench-static" {
     buildOptions "unittests" "releaseMode" "optimize" "inline"
     dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
-    dflags "--link-defaultlib-shared=false" "--linker=gold" platform="linux-ldc"
-    dflags "-defaultlib=libphobos2.a" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared=false" platform="linux-ldc"
+    dflags "-defaultlib=libphobos2.a" platform="linux-dmd"
     lflags "--export-dynamic" platform="linux-ldc"
 }
 // END managed build types
@@ -135,6 +138,8 @@ string normalize(string source) @safe
     assert(!normalized[0 .. $ - managed.length].canFind("--linker=gold"));
     assert(normalized.canFind("configuration \"unittest\" {\n}"));
     assert(normalized.canFind(`buildOptions "unittests" "debugMode" "debugInfo"`));
+    assert(normalized.canFind(`dflags "--linker=lld" platform="linux-ldc"`));
+    assert(normalized.canFind(`dflags "-L-fuse-ld=lld" platform="linux-dmd"`));
 }
 
 /// Package-specific calibration types are outside the managed policy.

@@ -296,6 +296,7 @@ in
                       lib.makeBinPath [
                         pkgs.dub
                         pkgs.ldc
+                        (import ../wrapped-lld.nix { inherit pkgs; })
                         pkgs.gitMinimal
                       ]
                     }:$PATH

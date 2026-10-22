@@ -695,6 +695,7 @@
                   ++ [
                     pkgs.makeWrapper
                     pkgs.llvmPackages.llvm
+                    (import ../wrapped-lld.nix { inherit pkgs; })
                   ]
                   ++ lib.optional (shapingInputs != [ ]) pkgs.pkg-config;
                 inherit buildInputs;
