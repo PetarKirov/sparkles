@@ -167,8 +167,13 @@ Prerequisite progress (2026-10-22): the IOCP backend now drains with
 probe covers pending/completed/racing receives, timer cancellation,
 backpressure, reentrant batch drains and synchronous rejection; the loop probe
 checks timer and `AcceptEx` teardown barriers and the native-host wake bridge.
-File-handle operations and Windows supervision are still open M19 work, and
-native Windows validation is still required.
+Overlapped native pipe read/write, cancellation and EOF now pass both raw
+and direct-style Wine probes. The package suite cross-builds and passes under
+Wine (112 passed; readiness explicitly skipped because IOCP does not lower
+`OpPollAdd`). Native Windows validation, async-capable VFS file opens, file
+flush and Windows supervision are still open M19 work. The existing ticker
+test caught early IOCP timers; deadlines now share `MonoTime` with the
+scheduler and port waits round up to milliseconds rather than firing early.
 
 ## M12 — Monadic veneer (tier C)
 

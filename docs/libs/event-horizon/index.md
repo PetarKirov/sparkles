@@ -17,8 +17,10 @@ and the scheduler-integrated `BlockingPool`. Cancellation uses `CancelIoEx`;
 the target's storage remains live until its terminal completion, and
 `cancelAndWait` consumes both the target and the cancellation acknowledgment.
 Port waits drain batches with `GetQueuedCompletionStatusEx`. Socket handles
-must belong to this loop, not to a different completion port. File-handle I/O
-and Windows process supervision remain incomplete; see M19 in the delivery
+must belong to this loop, not to a different completion port. Overlapped native
+pipe reads/writes are supported, including cancellation and EOF. Regular-file
+operations require explicit offsets; the asynchronous VFS open path, file
+flush and Windows process supervision remain incomplete; see M19 in the delivery
 plan below. Wine probes are smoke evidence, not native Windows certification.
 
 `OwnedFd` and `BorrowedFd` carry `NativeHandle`: an `int` on POSIX and a
