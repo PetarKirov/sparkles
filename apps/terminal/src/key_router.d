@@ -225,21 +225,42 @@ void paintGuide(H)(ref H h, ref KeyRouter router, in TermContext ctx, int cols,
     // `pxW` × `pxH` given, the panel sits on the area's bottom pixel, and its
     // background runs on to the right edge: the part of a cell left over
     // there is the panel's, not a gap.
-    const cellH = c.cellH, cellW = c.cellW;
+    static if (__traits(compiles, { int w = c.cellW; }))
+        const cellH = c.cellH, cellW = c.cellW;
+    else
+        const cellH = h.cellHeight, cellW = h.cellWidth;
     const panelRows = frames[tree.root].rect.height;
     const top = pxH > 0 ? y + pxH - panelRows * cellH : y + (dy > 0 ? dy : 0) * cellH;
     if (pxW > cols * cellW || pxH > 0)
     {
-        import raylib : Color, DrawRectangle;
         import chrome : ChromeTheme;
 
         const fill = ChromeTheme.of(fg, bg).slotFill(tree.nodes[tree.root].slot);
-        DrawRectangle(x, top, pxW > cols * cellW ? pxW : cols * cellW, y + pxH - top,
-            Color(fill.r, fill.g, fill.b, 255));
+        const fw = pxW > cols * cellW ? pxW : cols * cellW;
+        version (TerminalVulkan)
+        {
+            import sparkles.shaders : v4;
+            h.canvas.fillPx(x, top, fw, y + pxH - top,
+                v4(fill.r / 255.0f, fill.g / 255.0f, fill.b / 255.0f, 1));
+        }
+        else
+        {
+            import raylib : Color, DrawRectangle;
+            DrawRectangle(x, top, fw, y + pxH - top, Color(fill.r, fill.g, fill.b, 255));
+        }
     }
-    c.originX = x;
-    c.originY = top;
-    paint(c, ops[]);
+    static if (__traits(compiles, c.originX = x))
+    {
+        c.originX = x;
+        c.originY = top;
+        paint(c, ops[]);
+    }
+    else
+    {
+        c.pushOffsetPx(x, top);
+        paint(c, ops[]);
+        c.popOffsetPx();
+    }
 }
 
 import sparkles.base.term_color : RgbColor;

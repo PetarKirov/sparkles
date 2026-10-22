@@ -17,7 +17,7 @@ WorkspaceHost.paneOptions)), and the keys; it keeps the binding table.
 module workspace_host;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.doc_view.pane : chromeTheme, DocViewEnv, DocViewPane, PaneKey;
+import viewer_link : chromeTheme, DocViewEnv, DocViewPane, PaneKey;
 import sparkles.terminal_view.component : Scrollback, TerminalView, TerminalViewOptions;
 import sparkles.terminal_view.input : ExitBehavior;
 import sparkles.terminal_view.pool : TerminalPool;
@@ -135,6 +135,12 @@ struct WorkspaceHost
     /// Poll the mouse for the pane under it (the desktop). A touch embedder
     /// turns it off and routes its gestures itself (`tapPane`, the wheel).
     bool pollPointer = true;
+    bool pointerLeft;    /// left button held (left press sets, left release/leave clears)
+    // Left-press edges not yet consumed by a frame, with their positions:
+    // two presses between frames are two taps at their own positions, not
+    // one replayed at wherever the pointer ended up.
+    private int[2][8] pressQueue;
+    private uint pressQueueCount;
     /// `ui.tabsOpener` and `ui.paneChrome` (`TCF12`, `TCF13`).
     TabsOpener tabsOpener;
     /// ditto
@@ -216,6 +222,7 @@ struct WorkspaceHost
     private int[PaneId] bannerScroll; // how far each expanded command is scrolled
     private bool[PaneId] restoredCommand; // explicit commands not yet re-run
     private PaneId pointerOwner; // the pane a drag started in
+    private PaneId pointerCapture; // pane a left press started in; drag/release go there until release
     private string shownTitle;
     private bool dirty; // a structural change not yet saved
     private bool repaint = true; // the arrangement changed: every pane redraws
@@ -423,27 +430,36 @@ struct WorkspaceHost
     // makes the pane — restore shows where the file went, as a located error.
     private bool createViewer(PaneId id, string path) @system
     {
-        if (docEnv is null)
+        version (Have_sparkles_ui_raylib)
         {
-            import sparkles.syntax : GrammarRegistry;
+            if (docEnv is null)
+            {
+                import sparkles.syntax : GrammarRegistry;
 
-            docEnv = makeDocEnv !is null ? makeDocEnv()
-                : DocViewEnv.create(GrammarRegistry.fromEnvironment());
+                docEnv = makeDocEnv !is null ? makeDocEnv()
+                    : DocViewEnv.create(GrammarRegistry.fromEnvironment());
+            }
+            auto p = new DocViewPane;
+            // Set before `open`, which builds the first view: no line numbers by
+            // default (`TDV13`). The prose stays in the cell font, beside the
+            // tables and code blocks that need it, until the design system sets
+            // the viewer's proportional type (`TDV13`).
+            p.vm.lineNumbers = viewerLineNumbers;
+            p.vm.codeLineNumbers = viewerCodeLineNumbers;
+            // Read on the pane's second paint: never before the window's first
+            // frame, and a hidden tab's document only once its tab is shown.
+            p.deferLoad = true;
+            cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
+            viewers[id] = p;
+            dirty = true;
+            return true;
         }
-        auto p = new DocViewPane;
-        // Set before `open`, which builds the first view: no line numbers by
-        // default (`TDV13`). The prose stays in the cell font, beside the
-        // tables and code blocks that need it, until the design system sets
-        // the viewer's proportional type (`TDV13`).
-        p.vm.lineNumbers = viewerLineNumbers;
-        p.vm.codeLineNumbers = viewerCodeLineNumbers;
-        // Read on the pane's second paint: never before the window's first
-        // frame, and a hidden tab's document only once its tab is shown.
-        p.deferLoad = true;
-        cast(void) p.open(docEnv, path, chromeTheme(viewerFg, viewerBg));
-        viewers[id] = p;
-        dirty = true;
-        return true;
+        else
+        {
+            notice = "no document viewer on this arm";
+            ws.close(id);
+            return false;
+        }
     }
 
     /**
@@ -600,8 +616,10 @@ struct WorkspaceHost
     */
     void frame(H)(ref H h, in Rect area) @system
     {
-        import raylib : GetMousePosition, IsMouseButtonDown, IsMouseButtonPressed,
-            MouseButton;
+        version (TerminalVulkan) {}
+        else
+            import raylib : GetMousePosition, IsMouseButtonDown, IsMouseButtonPressed,
+                MouseButton;
         import core.time : msecs;
 
         // Files programs asked to open (`TDV1`) become panes before the layout
@@ -610,11 +628,18 @@ struct WorkspaceHost
         takeOpenRequests();
         static if (__traits(compiles, h.wakeIn(250.msecs)))
             h.wakeIn(250.msecs);
-
-        auto c = h.canvas;
-        minThumbPx = c.minThumbPx; // what the bars paint with, for their hits
-        cellW = c.fonts.cellW() > 0 ? c.fonts.cellW() : 1;
-        cellH = c.fonts.cellH() > 0 ? c.fonts.cellH() : 1;
+        version (TerminalVulkan)
+        {
+            cellW = h.cellWidth > 0 ? h.cellWidth : 1;
+            cellH = h.cellHeight > 0 ? h.cellHeight : 1;
+        }
+        else
+        {
+            auto c = h.canvas;
+            minThumbPx = c.minThumbPx; // what the bars paint with, for their hits
+            cellW = c.fonts.cellW() > 0 ? c.fonts.cellW() : 1;
+            cellH = c.fonts.cellH() > 0 ? c.fonts.cellH() : 1;
+        }
         // A new area (a rotation, a resized window) is a new frame, whatever
         // the panes say: a viewer pane has nothing dirty, and the old frame,
         // stretched to the new surface, stayed up until a tap.
@@ -627,9 +652,24 @@ struct WorkspaceHost
 
         // The pointer belongs to the pane under it — or, during a drag, to the
         // pane the drag began in (`TSS9`). A press there also focuses it.
-        static if (__traits(compiles, GetMousePosition()))
-        if (pollPointer)
+        version (TerminalVulkan)
         {
+            if (pressQueueCount > 0)
+            {
+                const px = pressQueue[0][0], py = pressQueue[0][1];
+                foreach (i; 1 .. pressQueueCount)
+                    pressQueue[i - 1] = pressQueue[i];
+                pressQueueCount--;
+                applyPointer(h, px, py, pointerLeft, true);
+            }
+            else
+                applyPointer(h, hoverX, hoverY, pointerLeft, false);
+        }
+        else
+        {
+            static if (__traits(compiles, GetMousePosition()))
+            if (pollPointer)
+            {
             const m = GetMousePosition();
             const mx = cast(int) m.x, my = cast(int) m.y;
             hoverX = mx;
@@ -707,6 +747,7 @@ struct WorkspaceHost
                 if (under != ws.focused)
                     cast(void) ws.focusPane(under);
             }
+        }
         }
 
         bool any = repaint || dirty || ws.focused != lastFocused;
@@ -787,6 +828,146 @@ struct WorkspaceHost
             static if (__traits(compiles, h.title(t)))
                 h.title(t.length ? t : "sparkles:terminal");
         }
+    }
+
+    /// The poll loop's job, from a position the host already delivered.
+    /// Raylib still polls; this runs only where it does not.
+    private void applyPointer(H)(ref H h, int mx, int my, bool leftDown, bool pressed)
+    {
+        hoverX = mx;
+        hoverY = my;
+        PaneId under;
+        foreach (ref b; boxes)
+            if (contains(b.content, mx, my))
+                under = b.id;
+        const onBar = barPointer(mx, my, leftDown, pressed, cellW, touch: false);
+        if (!onBar)
+            dragDivider(mx, my, leftDown, pressed);
+        if (dragging >= 0)
+            under = pointerOwner = 0;
+        if (!leftDown)
+            pointerOwner = under;
+        if (!onBar && dragging < 0 && pressed && tap(h, mx, my))
+            under = pointerOwner = 0;
+        if (pressed && under)
+        {
+            pointerOwner = under;
+            if (under != ws.focused)
+                cast(void) ws.focusPane(under);
+        }
+    }
+
+    void notePointer(in PointerEvent p)
+    {
+        import sparkles.input.events : PointerAction, PointerButton, Point;
+
+        hoverX = p.pos.x;
+        hoverY = p.pos.y;
+        const leftPress = p.action == PointerAction.press && p.button == PointerButton.left;
+        const leftRelease = p.action == PointerAction.release && p.button == PointerButton.left;
+        if (leftPress)
+            pointerLeft = true;
+        else if (leftRelease || p.action == PointerAction.leave)
+            pointerLeft = false;
+        // A drag carries no reliable button here: it must not set
+        // `pointerLeft` by itself, only preserve the press's state.
+
+        // A modal surface owns the pointer: record state (above) only,
+        // and drop any capture so it cannot leak past the modal. Note
+        // `pollPointer` is deliberately NOT a gate here: on the Vulkan
+        // desktop it is false precisely because events arrive through
+        // this function instead of a raylib poll (`app.d`).
+        if (surfaces.modal)
+        {
+            if (leftRelease || p.action == PointerAction.leave)
+                pointerCapture = 0;
+            return;
+        }
+        if (leftPress && pressQueueCount < pressQueue.length)
+            pressQueue[pressQueueCount++] = [p.pos.x, p.pos.y];
+
+        // An exit banner overlays its pane: chrome (the frame's `tap`)
+        // owns presses there, so the pane beneath must not also see them.
+        if (leftPress)
+            foreach (ref l; banners)
+            {
+                const r = l.backdrop.width > 0 ? l.backdrop : l.pixelBounds;
+                if (contains(r, p.pos.x, p.pos.y) || contains(l.panel, p.pos.x, p.pos.y))
+                    return;
+            }
+
+        // Target: the captured pane for a drag/release (position may stray
+        // outside it, even negative relative to it — `pointerInPane` must
+        // still see the release so a selection ends), else the pane whose
+        // *content* (not the padded outer box) is under the pointer.
+        PaneId target;
+        int left, top;
+        const captured = pointerCapture != 0 && (p.action == PointerAction.drag
+            || leftRelease || p.action == PointerAction.leave);
+        if (captured)
+        {
+            target = pointerCapture;
+            foreach (ref b; boxes)
+                if (b.id == target)
+                {
+                    left = b.content.x;
+                    top = b.content.y;
+                    break;
+                }
+        }
+        else
+            foreach (ref b; boxes)
+                if (contains(b.content, p.pos.x, p.pos.y))
+                {
+                    target = b.id;
+                    left = b.content.x;
+                    top = b.content.y;
+                    break;
+                }
+        if (target == 0)
+        {
+            if (leftRelease || p.action == PointerAction.leave)
+                pointerCapture = 0;
+            return;
+        }
+        if (auto tv = pool.byId(target))
+        {
+            PointerEvent rel = p;
+            rel.pos = Point(p.pos.x - left, p.pos.y - top);
+            tv.pointerInPane(rel);
+            if (leftPress)
+                pointerCapture = target;
+        }
+        // Forward first, then drop the capture, so the pane sees its release.
+        if (leftRelease || p.action == PointerAction.leave)
+            pointerCapture = 0;
+    }
+
+    void applyWheel(in WheelEvent w)
+    {
+        // A modal surface owns the wheel too; nothing beneath scrolls.
+        if (surfaces.modal)
+            return;
+        // Viewer-first, as before: the pane the pointer belongs to.
+        if (auto v = viewer(pointerOwner))
+        {
+            cast(void) v.wheel(w.pos.x, w.pos.y, w);
+            return;
+        }
+        import sparkles.input.events : Point;
+
+        // The pane whose *content* is under the wheel, as in `notePointer`.
+        foreach (ref b; boxes)
+            if (contains(b.content, w.pos.x, w.pos.y))
+            {
+                if (auto tv = pool.byId(b.id))
+                {
+                    WheelEvent rel = w;
+                    rel.pos = Point(w.pos.x - b.content.x, w.pos.y - b.content.y);
+                    tv.wheelInPane(rel);
+                }
+                return;
+            }
     }
 
     /// The pill band or the rail, the panes' area, and where the tree opens
@@ -1198,7 +1379,7 @@ struct WorkspaceHost
         auto bar = &paneBars.require(b.id, OverlayBar.init);
         const pos = tv.scrollPos();
         const whole = cast(long) pos;
-        c.scrollbarPx(barBand(b), Scrollbar(
+        const drawn = Scrollbar(
             content: cast(int) sb.total,
             viewport: cast(int) sb.len,
             offset: cast(int) whole,
@@ -1208,7 +1389,17 @@ struct WorkspaceHost
             edge: RuleEdge.right,
             expandPercent: bar.expandPercent(touch && wideBars),
             fadePercent: touch ? bar.anim.fadePercent : 100,
-        ));
+        );
+        static if (__traits(compiles, c.scrollbarPx(barBand(b), drawn)))
+            c.scrollbarPx(barBand(b), drawn);
+        else
+        {
+            const band = barBand(b);
+            Scrollbar cellBar = drawn;
+            cellBar.rect = Rect(band.x / cellW, band.y / cellH, 1,
+                band.height / cellH);
+            c.scrollbar(cellBar);
+        }
     }
 
     private static bool contains(in Rect r, int x, int y) @safe pure nothrow @nogc
@@ -1441,22 +1632,37 @@ struct WorkspaceHost
     void paint(H)(ref H h, in Rect, RgbColor divider, RgbColor accent,
         bool withSurfaces = true) @system
     {
-        import raylib : Color, DrawRectangle;
+        version (TerminalVulkan)
+        {
+            import sparkles.shaders : v4;
 
-        static Color rgb(RgbColor x) => Color(x.r, x.g, x.b, 255);
+            void fill(int x, int y, int w, int ht, RgbColor c)
+            {
+                h.canvas.fillPx(x, y, w, ht, v4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, 1));
+            }
+        }
+        else
+        {
+            import raylib : Color, DrawRectangle;
+
+            void fill(int x, int y, int w, int ht, RgbColor c)
+            {
+                DrawRectangle(x, y, w, ht, Color(c.r, c.g, c.b, 255));
+            }
+        }
 
         // The opener's band to the window's edges, and its rule — the extra
         // keys' thickness — along the side that faces the panes.
         const pill = usesPill(tabsOpener, phonePortrait);
-        DrawRectangle(openerRect.x, openerRect.y, openerRect.width, openerRect.height,
-            rgb(theme.slotFill(pill ? Slot.surfaceSunken : Slot.chrome)));
+        fill(openerRect.x, openerRect.y, openerRect.width, openerRect.height,
+            theme.slotFill(pill ? Slot.surfaceSunken : Slot.chrome));
         paintLayer(h, openerLayer, theme);
-        const rule = rgb(theme.slotInk(Slot.border));
+        const rule = theme.slotInk(Slot.border);
         if (pill)
-            DrawRectangle(openerRect.x, openerRect.y + openerRect.height - ruleWidth,
+            fill(openerRect.x, openerRect.y + openerRect.height - ruleWidth,
                 openerRect.width, ruleWidth, rule);
         else
-            DrawRectangle(openerRect.x + openerRect.width - ruleWidth, openerRect.y, ruleWidth,
+            fill(openerRect.x + openerRect.width - ruleWidth, openerRect.y, ruleWidth,
                 openerRect.height, rule);
         auto canvas = h.canvas;
         // Each pane's background fills its whole box, so its padding reads as
@@ -1464,15 +1670,13 @@ struct WorkspaceHost
         foreach (ref b; boxes)
             if (auto tv = pool.byId(b.id))
             {
-                DrawRectangle(b.outer.x, b.outer.y, b.outer.width, b.outer.height,
-                    rgb(tv.background));
+                fill(b.outer.x, b.outer.y, b.outer.width, b.outer.height, tv.background);
                 tv.paintPanePx(h, b.content.x, b.content.y, b.content.width, b.content.height);
                 paintPaneBar(canvas, b, tv);
             }
             else if (auto v = viewer(b.id))
             {
-                DrawRectangle(b.outer.x, b.outer.y, b.outer.width, b.outer.height,
-                    rgb(viewerBg));
+                fill(b.outer.x, b.outer.y, b.outer.width, b.outer.height, viewerBg);
                 // The overlay bar in the pane's right padding (`SCV13`).
                 v.touch = touch;
                 v.wide = touch && wideBars;
@@ -1486,7 +1690,7 @@ struct WorkspaceHost
         foreach (i, ref d; dividerRects)
         {
             const r = ruleRect(d, dividers[i].axis, ruleWidth);
-            DrawRectangle(r.x, r.y, r.width, r.height, rgb(divider));
+            fill(r.x, r.y, r.width, r.height, divider);
         }
         // Where a dragged divider would land.
         void preview(ptrdiff_t i, int pos)
@@ -1497,11 +1701,9 @@ struct WorkspaceHost
             const r = dividerRects[i];
             const thick = ruleWidth * 2 + 1;
             if (d.axis == DockAxis.horizontal)
-                DrawRectangle(panesArea.x + pos * cellW - thick / 2, r.y, thick, r.height,
-                    rgb(accent));
+                fill(panesArea.x + pos * cellW - thick / 2, r.y, thick, r.height, accent);
             else
-                DrawRectangle(r.x, panesArea.y + pos * cellH - thick / 2, r.width, thick,
-                    rgb(accent));
+                fill(r.x, panesArea.y + pos * cellH - thick / 2, r.width, thick, accent);
         }
         if (dragging >= 0)
         {
@@ -1517,8 +1719,8 @@ struct WorkspaceHost
                 {
                     const len = cornerPx > cellH ? cornerPx : cellH > 6 ? cellH : 6;
                     const w = cornerThickPx > 3 ? cornerThickPx : 3;
-                    DrawRectangle(b.outer.x, b.outer.y, len, w, rgb(accent));
-                    DrawRectangle(b.outer.x, b.outer.y, w, len, rgb(accent));
+                    fill(b.outer.x, b.outer.y, len, w, accent);
+                    fill(b.outer.x, b.outer.y, w, len, accent);
                 }
         foreach (ref l; banners)
             paintLayer(h, l, theme);
@@ -2127,7 +2329,7 @@ struct WorkspaceHost
     }
 }
 
-import sparkles.input : KeyEvent, WheelEvent;
+import sparkles.input : KeyEvent, PointerEvent, WheelEvent;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests.
@@ -2215,4 +2417,31 @@ import sparkles.input : KeyEvent, WheelEvent;
         "a sibling sharing the prefix is not home");
     assert(WorkspaceHost.shortenHome("/home/annabel", "/home/ann") == "/home/annabel");
     assert(WorkspaceHost.shortenHome("/tmp", "") == "/tmp");
+}
+
+@("workspace_host.notePointer.eventsRouteWhenNotPolling")
+@system unittest
+{
+    import sparkles.input.events : Point, PointerAction, PointerButton;
+
+    // The production Vulkan configuration: `pollPointer` is false because
+    // events arrive through `notePointer`. It must still record the
+    // button and queue the press edge for the frame's chrome arbitration.
+    auto h = new WorkspaceHost;
+    h.pollPointer = false;
+    h.notePointer(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(5, 6)));
+    assert(h.pointerLeft, "a left press is recorded without polling");
+    assert(h.pressQueueCount == 1 && h.pressQueue[0] == [5, 6],
+        "the press edge is queued at its own position");
+    h.notePointer(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(7, 8)));
+    assert(h.pressQueueCount == 2 && h.pressQueue[1] == [7, 8],
+        "a second press before the frame is not coalesced away");
+    h.notePointer(PointerEvent(action: PointerAction.release,
+        button: PointerButton.left, pos: Point(7, 8)));
+    assert(!h.pointerLeft, "a left release clears the button");
+    h.notePointer(PointerEvent(action: PointerAction.drag,
+        button: PointerButton.right, pos: Point(9, 9)));
+    assert(!h.pointerLeft, "a drag alone never sets the left button");
 }

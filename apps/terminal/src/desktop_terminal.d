@@ -71,7 +71,20 @@ struct DesktopTerminal
     /// Advances the guide's clock, then every pane's frame.
     WidgetTree view(H)(ref H h)
     {
-        import raylib : GetScreenHeight, GetScreenWidth;
+        version (TerminalVulkan) {}
+        else
+            import raylib : GetScreenHeight, GetScreenWidth;
+        int screenW, screenH;
+        version (TerminalVulkan)
+        {
+            screenW = h.size.width * h.cellWidth;
+            screenH = h.size.height * h.cellHeight;
+        }
+        else
+        {
+            screenW = GetScreenWidth();
+            screenH = GetScreenHeight();
+        }
 
         if (defaultFontPx == 0)
         {
@@ -97,13 +110,17 @@ struct DesktopTerminal
             host.setViewerColors(chromeFg, chromeBg); // `TDV7`
         }
         host.theme = ChromeTheme.of(chromeFg, chromeBg);
-        selection.pollDesktop(h, host, Rect(0, 0, GetScreenWidth(), GetScreenHeight()));
-        host.frame(h, Rect(0, 0, GetScreenWidth(), GetScreenHeight()));
+        version (TerminalVulkan) {}
+        else
+            selection.pollDesktop(h, host, Rect(0, 0, screenW, screenH));
+        host.frame(h, Rect(0, 0, screenW, screenH));
         if (host.takeDirty())
             save();
         // Leaving the foreground saves too (`TSS14`): a phone may kill the app
         // there without a shutdown, and the directories the shells moved to
         // (`refreshCwds`) mark nothing dirty.
+        version (TerminalVulkan) {}
+        else
         {
             import raylib : IsWindowFocused;
 
@@ -121,7 +138,7 @@ struct DesktopTerminal
     /// Keys through the table; a paste to the focused pane.
     void handle(H)(ref H h, in Event e)
     {
-        import sparkles.input : EndOfInput, PasteEvent, WheelEvent;
+        import sparkles.input : EndOfInput, FocusEvent, PasteEvent, PointerEvent, WheelEvent;
 
         e.match!(
             (in KeyEvent k) { onKey(h, k); },
@@ -129,11 +146,26 @@ struct DesktopTerminal
                 if (auto tv = host.focusedView())
                     tv.onPaste(p);
             },
-            // The wheel: a page under it (`TKM4`), else an expanded exit
-            // prompt (`TSS2`); the panes poll their own.
             (in WheelEvent w) {
-                if (!host.scrollSurface(w) && w.dy != 0)
-                    cast(void) host.scrollBanner(w.pos.x, w.pos.y, w.dy);
+                const surfaced = host.scrollSurface(w);
+                const bannered = !surfaced && w.dy != 0
+                    && host.scrollBanner(w.pos.x, w.pos.y, w.dy);
+                // Only a wheel nothing above consumed reaches the pane.
+                version (TerminalVulkan)
+                    if (!surfaced && !bannered)
+                        host.applyWheel(w);
+            },
+            (in PointerEvent p) {
+                version (TerminalVulkan)
+                    host.notePointer(p);
+            },
+            (in FocusEvent f) {
+                version (TerminalVulkan)
+                {
+                    if (windowFocused && !f.focused)
+                        save();
+                    windowFocused = f.focused;
+                }
             },
             (in EndOfInput _) { h.quit(); },
             (in _) {},
@@ -156,11 +188,24 @@ struct DesktopTerminal
             gm = h.textMeasure();
             useChromeMeasure(ChromeMeasure(toDelegate(&width), toDelegate(&rows)));
         }
-        import raylib : GetScreenHeight, GetScreenWidth;
+        version (TerminalVulkan) {}
+        else
+            import raylib : GetScreenHeight, GetScreenWidth;
+        int sw, sh;
+        version (TerminalVulkan)
+        {
+            sw = h.size.width * h.cellWidth;
+            sh = h.size.height * h.cellHeight;
+        }
+        else
+        {
+            sw = GetScreenWidth();
+            sh = GetScreenHeight();
+        }
 
-        host.paint(h, Rect(0, 0, GetScreenWidth(), GetScreenHeight()), divider, accent);
+        host.paint(h, Rect(0, 0, sw, sh), divider, accent);
         paintGuide(h, keys, context, h.size.width, h.size.height, 0, 0, chromeFg, chromeBg,
-            GetScreenWidth(), GetScreenHeight());
+            sw, sh);
     }
 
     /// The chrome takes the scheme's foreground and background (D17).
