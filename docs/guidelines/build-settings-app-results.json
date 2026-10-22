@@ -1,0 +1,8539 @@
+{
+  "baselineCommit": "f71a5bffe",
+  "protocol": "Three alternating forced test-build graph replays per app and configuration; warm filesystem; excludes DUB setup and suite execution. Predates the wrapped-lld default.",
+  "samples": [
+    {
+      "app": "ci",
+      "compileExit": 0,
+      "compileMs": 65682,
+      "linkExit": 0,
+      "linkMs": 2185,
+      "rootCompileMs": 20968,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 32,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 93,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9316,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 60,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 4155,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 4292,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 4000,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 957,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 919,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 119,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 192,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 9740,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 5043,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 829,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 2636,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 362,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 1880,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 20968,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 2185,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "ci",
+      "compileExit": 0,
+      "compileMs": 58984,
+      "linkExit": 0,
+      "linkMs": 538,
+      "rootCompileMs": 18174,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 46,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 92,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8401,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 59,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 3891,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 4034,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 3831,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 911,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 802,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 113,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 179,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 8574,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 4603,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 715,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 2525,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 316,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 1633,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 18174,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 538,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "ci",
+      "compileExit": 0,
+      "compileMs": 59508,
+      "linkExit": 0,
+      "linkMs": 539,
+      "rootCompileMs": 18394,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 92,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8374,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 61,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 56,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 3897,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 4056,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 3781,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 935,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 794,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 121,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 188,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 8709,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 4709,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 726,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 2599,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 317,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 1629,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 18394,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 539,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "ci",
+      "compileExit": 0,
+      "compileMs": 65654,
+      "linkExit": 0,
+      "linkMs": 2206,
+      "rootCompileMs": 20905,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 42,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 101,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9452,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 59,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 4118,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 4311,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 3942,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 962,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 929,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 120,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 200,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 9720,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 4976,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 815,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 2664,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 363,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 1886,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 20905,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 2206,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "ci",
+      "compileExit": 0,
+      "compileMs": 65830,
+      "linkExit": 0,
+      "linkMs": 2168,
+      "rootCompileMs": 21038,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 45,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 98,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9489,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 59,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 51,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 4136,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 4298,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 3944,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 922,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 940,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 124,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 196,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 9733,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 5013,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 828,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 2637,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 359,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 1885,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 21038,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 2168,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "ci",
+      "compileExit": 0,
+      "compileMs": 58817,
+      "linkExit": 0,
+      "linkMs": 532,
+      "rootCompileMs": 18291,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 90,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8212,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 58,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 3818,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 3962,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 3682,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 941,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 773,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 111,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 179,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 8640,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 4705,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 702,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 2573,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 329,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 1626,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 18291,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 532,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "diagram",
+      "compileExit": 0,
+      "compileMs": 57992,
+      "linkExit": 0,
+      "linkMs": 703,
+      "rootCompileMs": 7851,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 45,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 98,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9414,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 969,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 901,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 117,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 191,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4219,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9604,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4994,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10489,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 360,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1906,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 141,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 2146,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 101,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 3135,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 1170,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 7851,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 703,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "diagram",
+      "compileExit": 0,
+      "compileMs": 48557,
+      "linkExit": 0,
+      "linkMs": 462,
+      "rootCompileMs": 7205,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 87,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8348,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 934,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 787,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 116,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 178,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3933,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8770,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4655,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5259,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 316,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1660,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 124,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 1819,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 102,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 2947,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 1141,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 7205,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 462,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "diagram",
+      "compileExit": 0,
+      "compileMs": 48153,
+      "linkExit": 0,
+      "linkMs": 459,
+      "rootCompileMs": 7238,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 38,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 85,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8241,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 890,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 772,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 116,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 184,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3922,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8544,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4636,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5223,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 328,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1660,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 126,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 1777,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 100,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 2970,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 1158,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 7238,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 459,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "diagram",
+      "compileExit": 0,
+      "compileMs": 57870,
+      "linkExit": 0,
+      "linkMs": 737,
+      "rootCompileMs": 7777,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 76,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 41,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 97,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9387,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 942,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 912,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 123,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 193,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4121,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9574,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5118,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10525,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 373,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1863,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 138,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 2168,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 104,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 3047,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 1185,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 7777,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 737,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "diagram",
+      "compileExit": 0,
+      "compileMs": 58072,
+      "linkExit": 0,
+      "linkMs": 757,
+      "rootCompileMs": 7866,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 43,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 91,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9465,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 967,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 908,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 118,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 200,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4089,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9682,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5157,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10428,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 369,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1856,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 139,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 2166,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 107,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 3098,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 1184,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 7866,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 757,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "diagram",
+      "compileExit": 0,
+      "compileMs": 48368,
+      "linkExit": 0,
+      "linkMs": 474,
+      "rootCompileMs": 7266,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 92,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8249,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 898,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 775,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 116,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 182,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 56,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3933,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8728,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4566,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5226,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 327,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1660,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 121,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 1766,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 96,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 3008,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 1178,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 7266,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 474,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "hue",
+      "compileExit": 0,
+      "compileMs": 107736,
+      "linkExit": 0,
+      "linkMs": 1448,
+      "rootCompileMs": 27719,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 39,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 92,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9499,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 363,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 1864,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 4196,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 4575,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3961,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 960,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 942,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 122,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 199,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 9744,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 5099,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 818,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 311,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 514,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 215,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 8145,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4681,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1953,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 2659,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 140,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 2097,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 10383,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 3065,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 29,
+          "ms": 1174,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 30,
+          "ms": 2066,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 31,
+          "ms": 27719,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 32,
+          "ms": 1448,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "hue",
+      "compileExit": 0,
+      "compileMs": 93323,
+      "linkExit": 0,
+      "linkMs": 1014,
+      "rootCompileMs": 25291,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 91,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8368,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 321,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 1645,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 51,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 3877,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 4358,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3803,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 927,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 788,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 112,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 180,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 8617,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 4548,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 696,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 277,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 457,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 209,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 6713,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4148,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 2010,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 2553,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 120,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 1809,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 5251,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 2961,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 29,
+          "ms": 1137,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 30,
+          "ms": 1878,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 31,
+          "ms": 25291,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 32,
+          "ms": 1014,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "hue",
+      "compileExit": 0,
+      "compileMs": 92925,
+      "linkExit": 0,
+      "linkMs": 1021,
+      "rootCompileMs": 25186,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 91,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8268,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 322,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 1652,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 3795,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 4268,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3698,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 1004,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 795,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 112,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 176,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 8622,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 4668,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 718,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 273,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 448,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 204,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 6622,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4110,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1971,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 2557,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 133,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 1783,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 5249,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 2998,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 29,
+          "ms": 1156,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 30,
+          "ms": 1870,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 31,
+          "ms": 25186,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 32,
+          "ms": 1021,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "hue",
+      "compileExit": 0,
+      "compileMs": 107415,
+      "linkExit": 0,
+      "linkMs": 1443,
+      "rootCompileMs": 27564,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 94,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9409,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 363,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 1869,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 4139,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 4565,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3957,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 939,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 888,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 123,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 196,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 9736,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 5123,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 832,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 306,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 523,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 213,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 8125,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4746,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1999,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 2626,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 140,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 2165,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 10261,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 3089,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 29,
+          "ms": 1209,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 30,
+          "ms": 2039,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 31,
+          "ms": 27564,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 32,
+          "ms": 1443,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "hue",
+      "compileExit": 0,
+      "compileMs": 107798,
+      "linkExit": 0,
+      "linkMs": 1418,
+      "rootCompileMs": 27734,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 92,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9455,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 363,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 1879,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 4202,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 4608,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3970,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 927,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 912,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 125,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 198,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 9717,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 5091,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 838,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 301,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 517,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 216,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 8158,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4603,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1990,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 2632,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 143,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 2115,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 10480,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 3078,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 29,
+          "ms": 1214,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 30,
+          "ms": 2062,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 31,
+          "ms": 27734,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 32,
+          "ms": 1418,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "hue",
+      "compileExit": 0,
+      "compileMs": 93158,
+      "linkExit": 0,
+      "linkMs": 1005,
+      "rootCompileMs": 25315,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 87,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8285,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 334,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 1661,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 3903,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 4255,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3711,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 912,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 781,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 117,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 182,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 8629,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 4724,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 723,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 297,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 481,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 222,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 6766,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4116,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1941,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 2549,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 121,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 1773,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 5142,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 2950,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 29,
+          "ms": 1148,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 30,
+          "ms": 1858,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 31,
+          "ms": 25315,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 32,
+          "ms": 1005,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "nix-eval",
+      "compileExit": 0,
+      "compileMs": 30881,
+      "linkExit": 0,
+      "linkMs": 486,
+      "rootCompileMs": 1041,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 85,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9108,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 944,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 887,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 143,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 206,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3927,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9418,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4945,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 1041,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 486,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "nix-eval",
+      "compileExit": 0,
+      "compileMs": 27796,
+      "linkExit": 0,
+      "linkMs": 123,
+      "rootCompileMs": 897,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 41,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 31,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 81,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8192,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 922,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 741,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 109,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 174,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3735,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8263,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4504,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 897,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 123,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "nix-eval",
+      "compileExit": 0,
+      "compileMs": 28029,
+      "linkExit": 0,
+      "linkMs": 117,
+      "rootCompileMs": 905,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 83,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8055,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 917,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 766,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 109,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 188,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3743,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8450,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4635,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 905,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 117,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "nix-eval",
+      "compileExit": 0,
+      "compileMs": 30987,
+      "linkExit": 0,
+      "linkMs": 477,
+      "rootCompileMs": 1037,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 32,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 82,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9228,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 955,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 874,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 123,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 198,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3988,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9378,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4949,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 1037,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 477,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "nix-eval",
+      "compileExit": 0,
+      "compileMs": 30931,
+      "linkExit": 0,
+      "linkMs": 471,
+      "rootCompileMs": 1039,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 84,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9150,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 975,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 896,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 121,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 203,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4029,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9376,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4880,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 1039,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 471,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "nix-eval",
+      "compileExit": 0,
+      "compileMs": 28020,
+      "linkExit": 0,
+      "linkMs": 118,
+      "rootCompileMs": 913,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 79,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8126,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 920,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 764,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 114,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 187,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3784,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8397,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4559,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 913,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 118,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "release",
+      "compileExit": 0,
+      "compileMs": 52808,
+      "linkExit": 0,
+      "linkMs": 1219,
+      "rootCompileMs": 5423,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 97,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9604,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 951,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 912,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 125,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 206,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4187,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9485,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5100,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10511,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 361,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1876,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 3793,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 5423,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 1219,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "release",
+      "compileExit": 0,
+      "compileMs": 43493,
+      "linkExit": 0,
+      "linkMs": 279,
+      "rootCompileMs": 4860,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 41,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 32,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 90,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8433,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 930,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 802,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 120,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 187,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4068,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8613,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4626,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5259,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 316,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1625,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 3383,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 4860,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 279,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "release",
+      "compileExit": 0,
+      "compileMs": 43457,
+      "linkExit": 0,
+      "linkMs": 299,
+      "rootCompileMs": 4921,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 40,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 47,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 93,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8458,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 921,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 806,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 117,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 184,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3938,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8651,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4564,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5237,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 322,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1660,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 3394,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 4921,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 299,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "release",
+      "compileExit": 0,
+      "compileMs": 52942,
+      "linkExit": 0,
+      "linkMs": 1205,
+      "rootCompileMs": 5435,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 40,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 94,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9562,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 958,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 932,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 126,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 204,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4144,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9858,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5026,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10393,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 366,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1847,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 3811,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 5435,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 1205,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "release",
+      "compileExit": 0,
+      "compileMs": 52926,
+      "linkExit": 0,
+      "linkMs": 1218,
+      "rootCompileMs": 5509,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 43,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 93,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9581,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 955,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 929,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 128,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 194,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 59,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4152,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9765,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5040,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10381,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 363,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1887,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 3760,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 5509,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 1218,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "release",
+      "compileExit": 0,
+      "compileMs": 43762,
+      "linkExit": 0,
+      "linkMs": 305,
+      "rootCompileMs": 4949,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 41,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 89,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8487,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 931,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 811,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 118,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 179,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 59,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3912,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8635,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4741,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5343,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 325,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 1685,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 3368,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 4949,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 305,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "shader-compile",
+      "compileExit": 0,
+      "compileMs": 39712,
+      "linkExit": 0,
+      "linkMs": 1062,
+      "rootCompileMs": 2945,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 94,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9561,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 127,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 203,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 945,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 904,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4200,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9814,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 10738,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 2945,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 1062,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "shader-compile",
+      "compileExit": 0,
+      "compileMs": 31444,
+      "linkExit": 0,
+      "linkMs": 236,
+      "rootCompileMs": 2685,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 42,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 92,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8443,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 117,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 189,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 950,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 808,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3937,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8735,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5302,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 2685,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 236,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "shader-compile",
+      "compileExit": 0,
+      "compileMs": 31519,
+      "linkExit": 0,
+      "linkMs": 240,
+      "rootCompileMs": 2703,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 89,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8365,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 114,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 184,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 944,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 794,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3940,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8792,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5417,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 2703,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 240,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "shader-compile",
+      "compileExit": 0,
+      "compileMs": 39821,
+      "linkExit": 0,
+      "linkMs": 1044,
+      "rootCompileMs": 2931,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 93,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9709,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 124,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 195,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 948,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 930,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4251,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9934,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 10525,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 2931,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 1044,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "shader-compile",
+      "compileExit": 0,
+      "compileMs": 39644,
+      "linkExit": 0,
+      "linkMs": 1055,
+      "rootCompileMs": 2911,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 43,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 95,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9672,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 125,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 201,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 952,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 932,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 56,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4244,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9713,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 10612,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 2911,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 1055,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "shader-compile",
+      "compileExit": 0,
+      "compileMs": 31407,
+      "linkExit": 0,
+      "linkMs": 239,
+      "rootCompileMs": 2661,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 43,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 87,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8449,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 118,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 182,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 938,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 794,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3903,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8788,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5301,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 2661,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 239,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "terminal",
+      "compileExit": 0,
+      "compileMs": 91143,
+      "linkExit": 0,
+      "linkMs": 958,
+      "rootCompileMs": 23975,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 601,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 110,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 96,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 9561,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 948,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 911,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 119,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 200,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 4161,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 9656,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5132,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 4250,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 3937,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 806,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 2080,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 2701,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 140,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 369,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 2202,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 10726,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1873,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 3140,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 1237,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 2072,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 23975,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 958,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "terminal",
+      "compileExit": 0,
+      "compileMs": 76874,
+      "linkExit": 0,
+      "linkMs": 654,
+      "rootCompileMs": 20235,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 97,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 91,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 8426,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 939,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 803,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 117,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 176,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 60,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 3930,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 8794,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 4665,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 4117,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 3727,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 720,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 1987,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 2544,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 124,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 328,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 1783,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 5278,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1668,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 3028,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 1166,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 1947,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 20235,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 654,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "terminal",
+      "compileExit": 0,
+      "compileMs": 76920,
+      "linkExit": 0,
+      "linkMs": 673,
+      "rootCompileMs": 20251,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 45,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 96,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 91,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 8466,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 933,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 796,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 113,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 180,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 3945,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 8758,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 4710,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 4054,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 3752,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 695,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 1946,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 2574,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 123,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 321,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 1806,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 5280,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1721,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 3025,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 1185,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 1912,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 20251,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 673,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "terminal",
+      "compileExit": 0,
+      "compileMs": 91192,
+      "linkExit": 0,
+      "linkMs": 984,
+      "rootCompileMs": 24302,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 38,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 106,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 92,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 9682,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 946,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 919,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 131,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 209,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 4242,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 9890,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5157,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 4279,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 3951,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 798,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 2009,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 2704,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 143,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 362,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 2140,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 10677,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1910,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 3098,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 1203,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 2062,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 24302,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 984,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "terminal",
+      "compileExit": 0,
+      "compileMs": 90997,
+      "linkExit": 0,
+      "linkMs": 978,
+      "rootCompileMs": 24111,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 38,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 110,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 96,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 9647,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 964,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 915,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 125,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 202,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 4116,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 9897,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5169,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 4307,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 3962,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 807,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 2001,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 2707,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 141,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 376,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 2217,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 10613,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1907,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 3108,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 1240,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 2076,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 24111,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 978,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "terminal",
+      "compileExit": 0,
+      "compileMs": 76918,
+      "linkExit": 0,
+      "linkMs": 639,
+      "rootCompileMs": 20258,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 97,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 90,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 8493,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 943,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 796,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 120,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 187,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 56,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 3913,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 8723,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 4690,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 4012,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 3768,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 695,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 1925,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 2595,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 130,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 325,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 1813,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 5282,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 1682,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 24,
+          "ms": 3078,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 25,
+          "ms": 1191,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 26,
+          "ms": 1931,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 27,
+          "ms": 20258,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 28,
+          "ms": 639,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "terminal-benchmark",
+      "compileExit": 0,
+      "compileMs": 42224,
+      "linkExit": 0,
+      "linkMs": 323,
+      "rootCompileMs": 511,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 40,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 97,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9603,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 949,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 918,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 120,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 204,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4221,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9764,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5107,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10545,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 511,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 323,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "terminal-benchmark",
+      "compileExit": 0,
+      "compileMs": 33850,
+      "linkExit": 0,
+      "linkMs": 216,
+      "rootCompileMs": 452,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 38,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 40,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 93,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8457,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 930,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 802,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 116,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 187,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3880,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8680,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4675,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5391,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 452,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 216,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "terminal-benchmark",
+      "compileExit": 0,
+      "compileMs": 34094,
+      "linkExit": 0,
+      "linkMs": 212,
+      "rootCompileMs": 475,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 38,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 93,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8442,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 936,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 799,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 119,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 186,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3870,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8694,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4798,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5502,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 475,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 212,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "terminal-benchmark",
+      "compileExit": 0,
+      "compileMs": 42485,
+      "linkExit": 0,
+      "linkMs": 318,
+      "rootCompileMs": 488,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 44,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 98,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9572,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 945,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 935,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 126,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 205,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4245,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9935,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5165,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10585,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 488,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 318,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "terminal-benchmark",
+      "compileExit": 0,
+      "compileMs": 42114,
+      "linkExit": 0,
+      "linkMs": 319,
+      "rootCompileMs": 489,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 45,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 94,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9791,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 937,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 906,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 128,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 200,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4184,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9719,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5046,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10437,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 489,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 319,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "terminal-benchmark",
+      "compileExit": 0,
+      "compileMs": 34075,
+      "linkExit": 0,
+      "linkMs": 222,
+      "rootCompileMs": 454,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 40,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 96,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8566,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 935,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 802,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 120,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 193,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3984,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8818,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4662,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5259,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 454,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 222,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "twoslash-extract",
+      "compileExit": 0,
+      "compileMs": 71442,
+      "linkExit": 0,
+      "linkMs": 779,
+      "rootCompileMs": 4735,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 43,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 86,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9397,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 959,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 926,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 123,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 211,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 56,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4072,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9571,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5020,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10422,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 278,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 486,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 209,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 7767,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 4256,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 6624,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 2731,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 3383,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4735,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 779,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "twoslash-extract",
+      "compileExit": 0,
+      "compileMs": 59752,
+      "linkExit": 0,
+      "linkMs": 500,
+      "rootCompileMs": 4486,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 38,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 85,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8055,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 925,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 760,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 117,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 182,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 59,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3780,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8568,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4653,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5353,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 252,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 434,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 202,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 6378,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 3982,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 5628,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 2550,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 3180,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4486,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 500,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "twoslash-extract",
+      "compileExit": 0,
+      "compileMs": 60354,
+      "linkExit": 0,
+      "linkMs": 489,
+      "rootCompileMs": 4565,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 41,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 84,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8274,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 943,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 772,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 118,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 186,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 52,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3863,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8665,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4660,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5348,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 257,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 434,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 208,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 6317,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 4015,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 5625,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 2636,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 3202,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4565,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 489,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "twoslash-extract",
+      "compileExit": 0,
+      "compileMs": 71366,
+      "linkExit": 0,
+      "linkMs": 787,
+      "rootCompileMs": 4912,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 39,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 85,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9469,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 936,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 919,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 119,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 201,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 56,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4052,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9636,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4985,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10323,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 279,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 482,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 212,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 7677,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 4215,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 6562,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 2676,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 3443,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4912,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 787,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "twoslash-extract",
+      "compileExit": 0,
+      "compileMs": 71389,
+      "linkExit": 0,
+      "linkMs": 798,
+      "rootCompileMs": 4722,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 44,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 84,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9457,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 963,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 887,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 124,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 196,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4039,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9605,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5068,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 10417,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 285,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 492,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 208,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 7729,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 4289,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 6565,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 2696,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 3376,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4722,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 798,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "twoslash-extract",
+      "compileExit": 0,
+      "compileMs": 60060,
+      "linkExit": 0,
+      "linkMs": 503,
+      "rootCompileMs": 4391,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 40,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 84,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8321,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 942,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 784,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 119,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 189,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 51,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3815,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8570,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4672,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 5335,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 258,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 424,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 208,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 6323,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 3992,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 5654,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 2576,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 3222,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 22,
+          "ms": 4391,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 23,
+          "ms": 503,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "ui-gallery",
+      "compileExit": 0,
+      "compileMs": 59683,
+      "linkExit": 0,
+      "linkMs": 754,
+      "rootCompileMs": 10569,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 36,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 39,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 95,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9582,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 979,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 913,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 133,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 198,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 59,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4264,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9827,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5166,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 106,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 143,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 367,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 2245,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 10497,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 3180,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 1232,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 10569,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 754,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "ui-gallery",
+      "compileExit": 0,
+      "compileMs": 49749,
+      "linkExit": 0,
+      "linkMs": 499,
+      "rootCompileMs": 9700,
+      "round": 0,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 43,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 95,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8577,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 929,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 803,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 108,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 183,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 49,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3836,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8699,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4688,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 102,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 127,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 327,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 1831,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 5332,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 3052,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 1180,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 9700,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 499,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "ui-gallery",
+      "compileExit": 0,
+      "compileMs": 50293,
+      "linkExit": 0,
+      "linkMs": 496,
+      "rootCompileMs": 9855,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 43,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 33,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 91,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8582,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 938,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 816,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 113,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 181,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 60,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 55,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4006,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8817,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4711,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 100,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 129,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 321,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 1815,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 5342,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 3097,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 1188,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 9855,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 496,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    },
+    {
+      "app": "ui-gallery",
+      "compileExit": 0,
+      "compileMs": 59450,
+      "linkExit": 0,
+      "linkMs": 732,
+      "rootCompileMs": 10563,
+      "round": 1,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 43,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 35,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 96,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9623,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 942,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 903,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 119,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 206,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 57,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4205,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9768,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5126,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 102,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 139,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 373,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 2204,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 10585,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 3101,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 1207,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 10563,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 732,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "ui-gallery",
+      "compileExit": 0,
+      "compileMs": 59683,
+      "linkExit": 0,
+      "linkMs": 759,
+      "rootCompileMs": 10534,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 37,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 34,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 96,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 9593,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 969,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 926,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 127,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 207,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 53,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 4231,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 9764,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 5191,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 103,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 142,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 375,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 2241,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 10698,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 3114,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 1194,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 10534,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 759,
+          "phase": "link"
+        }
+      ],
+      "variant": "baseline"
+    },
+    {
+      "app": "ui-gallery",
+      "compileExit": 0,
+      "compileMs": 50078,
+      "linkExit": 0,
+      "linkMs": 488,
+      "rootCompileMs": 9709,
+      "round": 2,
+      "steps": [
+        {
+          "exit": 0,
+          "index": 0,
+          "ms": 38,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 1,
+          "ms": 40,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 2,
+          "ms": 94,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 3,
+          "ms": 8523,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 4,
+          "ms": 932,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 5,
+          "ms": 804,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 6,
+          "ms": 116,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 7,
+          "ms": 189,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 8,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 9,
+          "ms": 54,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 10,
+          "ms": 3929,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 11,
+          "ms": 8762,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 12,
+          "ms": 4779,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 13,
+          "ms": 103,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 14,
+          "ms": 127,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 15,
+          "ms": 326,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 16,
+          "ms": 1800,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 17,
+          "ms": 5444,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 18,
+          "ms": 3057,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 19,
+          "ms": 1198,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 20,
+          "ms": 9709,
+          "phase": "compile"
+        },
+        {
+          "exit": 0,
+          "index": 21,
+          "ms": 488,
+          "phase": "link"
+        }
+      ],
+      "variant": "selected"
+    }
+  ],
+  "selectedCommit": "2f6d74c26"
+}

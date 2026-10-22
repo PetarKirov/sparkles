@@ -69,6 +69,49 @@ executable starts with `--help`.
 
 ## Original build-setting experiments
 
+### All-app extension of the original comparison
+
+All **ten** `apps/` packages listed by the root manifest completed three paired
+forced graph replays, comparing `f71a5bffe` with `2f6d74c26`. This compares the
+original settings migration, **before** the subsequent wrapped-lld default.
+The selected side here uses gold, not the current lld policy. Every capture and
+replay succeeded. These are app **test builds**, not shipping GUI builds.
+
+Seconds, medians of three invocations per configuration:
+
+| App                | Root compile, before → after | Dependencies, before → after | Link, before → after | Total, before → after | Reduction |
+| ------------------ | ---------------------------: | ---------------------------: | -------------------: | --------------------: | --------: |
+| ci                 |              20.968 → 18.291 |              44.749 → 40.810 |        2.185 → 0.538 |       67.867 → 59.522 |     12.3% |
+| diagram            |                7.851 → 7.238 |              50.141 → 41.102 |        0.737 → 0.462 |       58.695 → 48.842 |     16.8% |
+| hue                |              27.719 → 25.291 |              80.017 → 67.843 |        1.443 → 1.014 |      109.184 → 94.163 |     13.8% |
+| nix-eval           |                1.039 → 0.905 |              29.892 → 27.107 |        0.477 → 0.118 |       31.402 → 28.138 |     10.4% |
+| release            |                5.435 → 4.921 |              47.417 → 38.633 |        1.218 → 0.299 |       54.144 → 43.772 |     19.2% |
+| shader-compile     |                2.931 → 2.685 |              36.767 → 28.759 |        1.055 → 0.239 |       40.774 → 31.680 |     22.3% |
+| terminal           |              24.111 → 20.251 |              66.890 → 56.660 |        0.978 → 0.654 |       92.101 → 77.557 |     15.8% |
+| terminal-benchmark |                0.489 → 0.454 |              41.713 → 33.619 |        0.319 → 0.216 |       42.547 → 34.297 |     19.4% |
+| twoslash-extract   |                4.735 → 4.486 |              66.667 → 55.669 |        0.787 → 0.500 |       72.187 → 60.563 |     16.1% |
+| ui-gallery         |               10.563 → 9.709 |              49.114 → 40.369 |        0.754 → 0.496 |       60.437 → 50.566 |     16.3% |
+
+Totals are medians of each invocation's compile-plus-link sum, not sums of the
+independent column medians. Dependency compilation excludes root compilation
+but includes compiler-driven archive production. Warm filesystem caches, DUB
+setup exclusion, and suite-runtime exclusion match the original protocol.
+Apps run serially; no aggregate whole-monorepo speedup is inferred by summing
+their repeated dependency work. Runtime performance is not measured by this run.
+
+The complete 60 samples, including per-command durations, are retained in
+[the app results](./build-settings-app-results.json). The checkpointed driver is
+`apps/ci/tools/compare-app-builds.d`; it discovers apps from the root manifest,
+captures each worktree separately, and passes each capture's working directory
+to the replay harness. Build it and reproduce the summary with:
+
+```bash
+dmd apps/ci/tools/compare-app-builds.d -of=/tmp/opencode/compare-app-builds
+/tmp/opencode/compare-app-builds BASELINE_WORKTREE SELECTED_WORKTREE \
+  /tmp/opencode/build-settings-bench /tmp/opencode/app-study 3
+/tmp/opencode/compare-app-builds --summarize /tmp/opencode/app-study
+```
+
 **Measured:** October 21–22, 2026. Baseline: `f71a5bffe`.
 
 Forced compilation of `versions` and its 13 dependency archives falls from
