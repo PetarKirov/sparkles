@@ -62,7 +62,7 @@ module sparkles.event_horizon.supervise;
 version (Posix)  :
 
 import core.lifetime : move;
-import core.stdc.errno : EAGAIN, ECANCELED, ECHILD, EINTR, EINVAL, ENOBUFS,
+import core.stdc.errno : EAGAIN, ECANCELED, ECHILD, EINTR, EINVAL, EIO, ENOBUFS,
     EOPNOTSUPP, ESRCH;
 import core.sys.posix.signal : SIGCONT, SIGKILL, SIGTERM;
 import core.time : Duration, MonoTime, msecs, seconds;
@@ -2069,9 +2069,15 @@ private void probeCall(void* p) nothrow
     import core.sys.posix.signal : siginfo_t;
     import core.sys.posix.sys.wait : WEXITED, WNOHANG, WNOWAIT, idtype_t, waitid;
 
+    version (OSX)
+        import sparkles.event_horizon.live : SigInfo;
+    else
+        alias SigInfo = siginfo_t;
+
     auto job = cast(ProbeJob*) p;
-    siginfo_t info;
-    const rc = waitid(idtype_t.P_PID, job.pid, &info, WEXITED | WNOWAIT | WNOHANG);
+    SigInfo info;
+    const rc = waitid(idtype_t.P_PID, job.pid, cast(siginfo_t*) &info,
+        WEXITED | WNOWAIT | WNOHANG);
     if (rc != 0)
     {
         job.errnoValue = errno;
@@ -2191,11 +2197,13 @@ unittest
         assert(got.value.end == ProcessEnd.exited);
         assert(got.value.status.ok);
 
-        // Final accounting is always present; Linux observes the tree via
-        // /proc, Darwin stubs to sampled == false until §13.8 lands there.
+        // Final accounting is always present; supported hosts read real
+        // process counters before consuming the root's exit status.
         assert(got.value.usage.wallTime > Duration.zero);
         assert(got.value.usage.sampleCount >= 1);
-        version (linux)
+        version (OSX)
+            assert(got.value.usage.sampled);
+        else version (linux)
             assert(got.value.usage.sampled);
         else
             assert(!got.value.usage.sampled);
@@ -2215,7 +2223,9 @@ unittest
         cfg.sampleInterval = Duration.zero;
         auto got = supervise(s, ["true"], cfg);
         assert(got.hasValue, got.hasError ? got.error.context : "");
-        version (linux)
+        version (OSX)
+            assert(got.value.usage.sampled);
+        else version (linux)
             assert(got.value.usage.sampleCount >= 2,
                 "initial and final pre-reap samples both see the root");
         else
@@ -2838,7 +2848,7 @@ unittest
         const before = MonoTime.currTime;
         auto got = supervise(s, ["sh", "-c", "sleep 30 & exit 0"], cfg);
         bounded = MonoTime.currTime - before < 2.seconds;
-        preservedEchild = got.hasError && got.error.code == 10;
+        preservedEchild = got.hasError && got.error.code == ECHILD;
     });
     const restored = sigaction(SIGCHLD, &previous, null);
 
@@ -3019,9 +3029,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    const transient = ioError(5, OpKind.waitid, IoErrorStage.completion);
-    const interrupted = ioError(4, OpKind.waitid, IoErrorStage.completion);
-    const noChild = ioError(10, OpKind.waitid, IoErrorStage.completion);
+    const transient = ioError(EIO, OpKind.waitid, IoErrorStage.completion);
+    const interrupted = ioError(EINTR, OpKind.waitid, IoErrorStage.completion);
+    const noChild = ioError(ECHILD, OpKind.waitid, IoErrorStage.completion);
     assert(!waitLostReapRight(transient),
         "transient errors retain the reap right and must retry");
     assert(waitLostReapRight(noChild), "ECHILD is terminal but not success");
@@ -3043,8 +3053,8 @@ unittest
     assert(canPublishExited(ReapOutcome.lostToExternalReaper, true, true),
         "a lost reap right still publishes the terminal-child event");
 
-    const interrupted = ioError(4, OpKind.read, IoErrorStage.completion);
-    const again = ioError(11, OpKind.read, IoErrorStage.submit);
+    const interrupted = ioError(EINTR, OpKind.read, IoErrorStage.completion);
+    const again = ioError(EAGAIN, OpKind.read, IoErrorStage.submit);
     const badFd = ioError(9, OpKind.read, IoErrorStage.completion);
     assert(transientProcessError(interrupted));
     assert(transientProcessError(again));
@@ -3676,6 +3686,7 @@ unittest
                 assert(got.value.usage.cgroupCpuSource == MetricSource.none);
                 break;
             case SampleSource.none:
+            case SampleSource.darwinTree:
                 assert(0, "Linux always has a source");
             }
         }
@@ -3954,6 +3965,14 @@ unittest
 @("supervise.cancel.fromTheFinalFragmentCallbackStillKillsTheCgroup")
 @system
 unittest
+{
+    version (linux)
+        finalFragmentCgroupProbe();
+    else
+        skipTest("requires Linux cgroup containment and procfs identity checks");
+}
+
+private void finalFragmentCgroupProbe()()
 {
     import core.stdc.errno : ENOENT;
     import core.sys.posix.fcntl : O_CLOEXEC, O_NONBLOCK, O_RDWR, open;
