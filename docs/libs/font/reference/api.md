@@ -138,7 +138,7 @@ ppem.
 | `inst.verticalSets`                            | the `hhea`, typographic and Windows sets as stored plus `MVAR` deltas, and `useTypoMetrics`; a missing table's sets absent (`hasHhea`, `hasOs2`) |
 | `inst.lineMetrics`                             | ascender, descender, line gap and the `source` set, chosen on stored values in FTM2's order; `present` is false when no set remains              |
 | `inst.decorations`                             | x-height and cap height (`OS/2` v2+), underline (`post`), strikeout (`OS/2`), each with a `has…` flag; a stored zero is a value                  |
-| `inst.advance(gid)`                            | the `hmtx` advance plus the `HVAR` delta; `unsupportedCapability` at nonzero coordinates without `HVAR`; negative results kept                   |
+| `inst.advance(gid)`                            | the `hmtx` advance plus the `HVAR` delta, or the `gvar` phantom-point span in a face without `HVAR`; negative results kept                       |
 | `inst.measureRun(gids)`                        | the checked design-value sum of the run's advances, converted once by the caller; the first error, `arithmeticExhausted` on overflow             |
 | `inst.cellMetrics(cmap, ppem)`                 | `CellMetrics` in whole pixels: width (and `widthSource`), ascent, descent, line gap, height, baseline, underline                                 |
 | `face.hvar(axes)`, `hvar.advanceDelta(gid, …)` | the `HVAR` view (major 1; a null advance map is the identity on the glyph ID) and one advance delta                                              |
@@ -165,23 +165,24 @@ Vertical queries take an `Instance` and return `Measurement`s, like the
 horizontal ones. Without the tables a result is absent (`present` false), not
 an error and never a synthesized value; a stored zero is a value.
 
-| Operation                                        | Result                                                                                                                                                                    |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `face.vhea`                                      | `Vhea`, version 1.0 or 1.1 (fields as stored), at least 36 bytes; another version `unsupportedVersion`                                                                    |
-| `face.vmtx`, `vmtx.metric(gid)`                  | `VerticalMetric` (advance height, top side bearing) with `hmtx`'s leniency: `numOfLongVerMetrics` capped at `numGlyphs`, the last advance repeated, `truncated` per glyph |
-| `face.vorg`, `vorg.originY(gid)`                 | `VORG` 1.0; a glyph's record by binary search, else `defaultVertOriginY`, with `fromRecord`                                                                               |
-| `face.vvar(axes)`, `advanceDelta`, `originDelta` | the `VVAR` view (major 1): advance-height map (null is the identity) and vertical-origin map; side-bearing maps are not read                                              |
-| `inst.verticalLineMetrics`                       | `vhea` ascender, descender and line gap plus the `vasc`, `vdsc`, `vlgp` deltas; absent without `vhea`                                                                     |
-| `inst.verticalAdvance(gid)`                      | the `vmtx` advance plus the `VVAR` delta; absent without `vhea` or `vmtx`; `unsupportedCapability` at nonzero coordinates without `VVAR`                                  |
-| `inst.verticalOrigin(gid)`                       | `VerticalOrigin`: `y`, its `source` (`vorgRecord`, `vorgDefault`, or `none` when absent) and whether a `VVAR` origin delta was added (`varied`)                           |
+| Operation                                        | Result                                                                                                                                                                                  |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `face.vhea`                                      | `Vhea`, version 1.0 or 1.1 (fields as stored), at least 36 bytes; another version `unsupportedVersion`                                                                                  |
+| `face.vmtx`, `vmtx.metric(gid)`                  | `VerticalMetric` (advance height, top side bearing) with `hmtx`'s leniency: `numOfLongVerMetrics` capped at `numGlyphs`, the last advance repeated, `truncated` per glyph               |
+| `face.vorg`, `vorg.originY(gid)`                 | `VORG` 1.0; a glyph's record by binary search, else `defaultVertOriginY`, with `fromRecord`                                                                                             |
+| `face.vvar(axes)`, `advanceDelta`, `originDelta` | the `VVAR` view (major 1): advance-height map (null is the identity) and vertical-origin map; side-bearing maps are not read                                                            |
+| `inst.verticalLineMetrics`                       | `vhea` ascender, descender and line gap plus the `vasc`, `vdsc`, `vlgp` deltas; absent without `vhea`                                                                                   |
+| `inst.verticalAdvance(gid)`                      | the `vmtx` advance plus the `VVAR` delta; absent without `vhea` or `vmtx`; `unsupportedCapability` at nonzero coordinates without `VVAR`                                                |
+| `inst.verticalOrigin(gid)`                       | `VerticalOrigin`: `y`, its `source` (`vorgRecord`, `vorgDefault`, `vmtxGlyph` for the no-`VORG` fallback, or `none` when absent) and whether a `VVAR` origin delta was added (`varied`) |
 
 `verticalOrigin` follows the specification's table: `VORG` 1.0 answers, plus
 the `VVAR` origin delta when `VVAR` has an origin map; another `VORG` version
-is `unsupportedVersion`; a face without `VORG` but with `vmtx` and `glyf` is
-`unsupportedCapability` until outlines give each glyph's `yMax`; any other
-face has no origin, and a layout that needs one chooses its own fallback. A
-caller's glyph ID past `numGlyphs` is `indexOutOfRange` for both glyph
-queries. At all-zero coordinates neither `VVAR` nor `MVAR` is read.
+is `unsupportedVersion`; a face without `VORG` but with `vmtx` and `glyf`
+takes the top side bearing plus the glyph's outline `yMax` at the instance
+(absent for a glyph without points); any other face has no origin, and a
+layout that needs one chooses its own fallback. A caller's glyph ID past
+`numGlyphs` is `indexOutOfRange` for both glyph queries. At all-zero
+coordinates neither `VVAR` nor `MVAR` is read.
 
 ## Baselines — `sparkles.font.baseline`
 
@@ -189,9 +190,11 @@ queries. At all-zero coordinates neither `VVAR` nor `MVAR` is read.
 variation store from 1.1. Each axis (`BaselineAxis.horizontal`, `vertical`) is
 optional. A coordinate is a `BaseCoord`: its `format`, its `coordinate` as a
 `Measurement` (VariationIndex delta included), a format-2 `referenceGlyph` and
-`pointIndex` with `unresolvedPoint` set until outlines resolve the point, and a
-format-3 `device` adjustment whose whole-pixel delta only `BaseCoord.pixels`
-adds, at an instance sized in pixels at an integer ppem inside the table's range.
+`pointIndex` whose outline point the coordinate resolves against at the
+instance (`unresolvedPoint` set, with the stored coordinate kept, only when
+the glyph has no resolvable outline), and a format-3 `device` adjustment whose
+whole-pixel delta only `BaseCoord.pixels` adds, at an instance sized in pixels
+at an integer ppem inside the table's range.
 
 | Operation                                       | Result                                                                                                                                                        |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -340,3 +343,99 @@ A `COLR` version above 1 is `unsupportedVersion` for both `COLR` entries,
 where HarfBuzz reads it as version 1; a `CBDT` without `CBLC` is
 `missingTable` naming `CBLC`, where HarfBuzz counts it. A truncated header,
 or an offset outside its table, is that entry's error.
+
+## Outlines — `sparkles.font.outlines`
+
+Coordinates are font units, y-up, unscaled, in counts of 1/65,536 unit,
+translated so the glyph's left phantom point sits at the origin — the
+space `hb_font_draw_glyph` and FreeType draw in. Decoding writes into an
+`OutlineWorkspace` the caller owns and never allocates; composite depth
+is at most 8 with 512 components, `CFF` subroutine depth 10 with 65,536
+operations (FTB3), and a composite or subroutine that refers back to itself
+is a `cycle` error (FTB5). `CFF2` blends are weighed by the `vstore` item
+variation store, and a `seac`-style `endchar` draws its base and accent
+glyphs.
+
+| Operation                              | Result                                                                                                                                |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `inst.glyphOutline(gid, segments, ws)` | the glyph as `OutlineSegment`s (move/line/quad/cubic/close) in the caller's array; its count, points, phantom points and overlap flag |
+| `inst.drawGlyph(gid, ws, sink)`        | the same outline into any sink with `moveTo`, `lineTo`, `quadTo`, `close` (and `cubicTo`, else quadratics within 1/16 unit)           |
+| `inst.glyphPoint(gid, i)`              | decoded outline point `i` in glyph order (stack-bounded; larger glyphs need the workspace form)                                       |
+| `inst.glyphBounds(gid)`                | the control-point bounds, or `present` false for a point-less glyph                                                                   |
+| `inst.phantomAdvance(gid)`             | the horizontal advance from the varied phantom points (the no-`HVAR` advance of FTO5)                                                 |
+| `face.glyphOverlaps(gid)`              | whether the outline data flags `OVERLAP_SIMPLE`/`OVERLAP_COMPOUND` (FTI6)                                                             |
+
+A segment array that is too small fails with `limitExceeded` naming
+`callerStorage` and the needed count. At nonzero coordinates `gvar`
+deltas apply to the points and the four phantom points. The segment kinds
+never depend on coordinates (FTO4): every contour closes with a line back to
+its start, even a zero-length one where `hb_font_draw_glyph` emits none,
+unless its last segment is a `glyf` curve that ends there by construction;
+a subpath that draws nothing emits nothing.
+
+Sparse tuples infer untouched points contour by contour from the stored
+coordinates, independently for each tuple. Composite tuples adjust component
+placements; each child's own variation is evaluated before scaling and placement.
+`USE_MY_METRICS` inherits the child's varied phantom points before that placement.
+
+## Raster — `sparkles.font.raster`
+
+| Operation                                                     | Result                                                                                                      |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `inst.rasterMeasure(gid, ppem, ws, overlap)`                  | the glyph's pixel size and bearings, and the accumulation and supersample storage the workspace needs       |
+| `inst.rasterizeGlyph(gid, ppem, region, ws, policy, overlap)` | linear 8-bit coverage written into the caller's `RasterRegion` (its own stride); the same size and bearings |
+| `applyTransfer(coverage, gammaTimes256)`                      | the consumer's display gamma on linear coverage (identity at 256)                                           |
+
+Coverage follows the nonzero winding rule; glyphs flagged for overlap —
+or every glyph under `OverlapMode.forceUnion` — render as the union of
+their contours at 4×4 supersampling. `FlattenPolicy.standard` subdivides
+curves to 0.02 px, `freeType` reproduces FreeType's `ftgrays.c`
+subdivision, and `fine` is the 0.001 px reference of FTR8. Equal glyph
+keys produce byte-identical output.
+
+The region stride must cover the glyph's row width, and the byte slice must hold
+every row. Invalid or overflowing row layouts return a caller-storage error before
+writing coverage; padding between rows is left untouched.
+
+## Carets — `sparkles.font.carets`
+
+`inst.ligatureCarets(gid, cluster, horizontal, out)` returns the `GDEF`
+ligature carets of a glyph in record order: each with its coordinate in
+design units and its `CaretProvenance` (`coordinate`, `contourPoint`
+resolved through the outline, or `deviceTable` with its Device or
+VariationIndex delta kept in `device`). No records is `present` false; an
+unknown caret format is `unsupportedVersion`; nothing is synthesized.
+
+## Justification tables — `sparkles.font.jstf`
+
+`JSTF` is enumerated, never executed: `face.jstfScripts(out)`,
+`face.jstfExtenderGlyphs(script, out)` through the script's `ExtenderGlyph` table,
+and `face.jstfPriority(script, language)` returning the default (or a
+named) language system's first priority record — its shrink/extend
+GSUB/GPOS lookup-index lists (32 per list, `overflow` when longer) and
+which maximum records it has. Absence is `present` false.
+
+## Shaping — `sparkles.font.shaping` (the `engine` configuration)
+
+The `engine` configuration links HarfBuzz (hand-declared in
+`sparkles.font.harfbuzz`, layout-checked in `sparkles:font-oracle`) and
+adds shaping; the `library` configuration never sees it. A `Shaper`
+owns one instance's HarfBuzz objects and is released with them; it
+receives the instance's normalized coordinates unchanged.
+
+| Operation                                                         | Result                                                                                                                                                                               |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `shaper(inst)`                                                    | a `Shaper`; `unsupportedEngine` or `unsupportedUnicodeVersion` when the running engine profile is not the pinned one (HarfBuzz 13.2.1, Unicode 18.0.0, checked by `engineProfile()`) |
+| `shaper.shape(request, glyphs, spans, boundaries, languageOut)`   | glyph IDs, font-unit advances and offsets; `SourceSpan`s partitioning the run in both directions; `BoundarySafety` per span start                                                    |
+| `shapeText(inst, source, glyphs, spans, boundaries, languageOut)` | the standalone form: direction, script and language guessed and reported in the `ShapeInfo`                                                                                          |
+| `measureJustificationCandidate(shaper, request, mode, …)`         | the exact re-shaped candidate for `featureSettings`; `unsupportedCapability` for the insertion modes font never performs                                                             |
+
+A `ShapeRequest` carries the whole source as context with a run range
+at scalar boundaries, explicit `SegmentProperties` (or guessing for the
+standalone form), ranged `ShapingFeature`s, and beginning/end-of-text
+flags. Invalid UTF-8 is `invalidEncoding`, a split scalar
+`splitScalar`, a bad range `invalidRange`, a bad feature range
+`invalidFeatureRange` — all before any output is written; short output
+arrays are `limitExceeded` with outputs uncommitted. Every Unicode
+callback HarfBuzz accepts is supplied from `sparkles:base`'s pinned
+tables.
