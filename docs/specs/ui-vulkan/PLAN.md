@@ -190,6 +190,12 @@ libghostty reports a cleared scrollback, reads as cleared (`TSE4`).
 application's own raylib calls replaced by host and canvas calls; a
 `gui-vulkan` build of the terminal.
 
+**Progress.** The canvas draws in device pixels (`UVK35`): a fill, a
+one-pixel outline, a clip, an offset, and an image quad from a source
+sub-rectangle, through the instance batcher. The terminal painter, the
+host, and the application's own raylib calls have not landed. Text still
+draws nothing until V3.
+
 **Gate.** The terminal runs on Wayland and X11 through the native host;
 screenshots match the raylib terminal within the tolerances of
 [testing.md](./testing.md#tolerances), apart from clusters counted as

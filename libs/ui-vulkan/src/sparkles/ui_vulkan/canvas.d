@@ -469,7 +469,8 @@ struct VulkanCanvas(B)
 
     static foreach (name; ["fillRect", "textRun", "textRunIn", "glyph", "line", "rule",
             "scrollbar", "image", "pushClip", "popClip", "pushShift", "popShift", "pushEffect",
-            "popEffect"])
+            "popEffect", "fillPx", "outlinePx", "clipPx", "unclipPx", "pushOffsetPx",
+            "popOffsetPx", "imageQuadPx"])
         mixin("/// Through `Painter." ~ name ~ "`; only between `beginFrame` and `endFrame`.\n"
             ~ "void " ~ name ~ "(Args...)(auto ref Args args) @system\n"
             ~ "in (inFrame_, \"drawing outside a frame\")\n"
