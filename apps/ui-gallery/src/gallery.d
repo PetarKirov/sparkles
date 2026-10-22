@@ -533,8 +533,12 @@ struct Gallery
                 s.terms.paneRows = cast(ushort) inner.height;
                 s.terms.paneX = cast(ushort) inner.x;
                 s.terms.paneY = cast(ushort) inner.y;
+                import sparkles.shaders : v4;
+
                 static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
                     paintTermChrome(h, tv, inner); // padding fill + pane + rail
+                else static if (__traits(compiles, h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0))))
+                    paintTermPixels(h, tv, inner);
                 else static if (__traits(compiles, paintCells(tv.s, h.canvas, inner)))
                     // An lvalue canvas (the recorder). The paint is C FFI over
                     // this instance's own live handles, hence the trust.
@@ -902,6 +906,41 @@ struct Gallery
         ));
     }
 
+    /// The native arm's terminal chrome: the same padding fill and rail as
+    /// $(LREF paintTermChrome), through the canvas's pixel fills. Text stays
+    /// blank until the font atlas (plan slice V3).
+    private void paintTermPixels(H, TV)(ref H h, TV tv, in Rect pane)
+    {
+        import sparkles.shaders : v4;
+        import sparkles.ui.canvas : RuleEdge, Scrollbar;
+
+        const cw = h.cellWidth;
+        const ch = h.cellHeight;
+        const bg = tv.background();
+        enum strokePx = 2;
+        h.canvas.fillPx(
+            (pane.x - 1) * cw + strokePx,
+            (pane.y - 1) * ch + strokePx,
+            (pane.width + gutterCells + 2) * cw - 2 * strokePx,
+            (pane.height + 2) * ch - 2 * strokePx,
+            v4(bg.r / 255.0f, bg.g / 255.0f, bg.b / 255.0f, 1));
+        tv.paintPane(h, pane);
+        if (s.terms.sbTotal <= s.terms.sbLen || s.terms.sbLen <= 0)
+            return;
+        const thumbFg = mixRgb(bg, theme().pageFg, 0.55f);
+        h.canvas.scrollbar(Scrollbar(
+            rect: Rect(pane.x + pane.width, pane.y, gutterCells, pane.height),
+            content: cast(int) s.terms.sbTotal,
+            viewport: cast(int) s.terms.sbLen,
+            offset: cast(int) s.termView.v.offset,
+            fg: thumbFg,
+            trackColor: mixRgb(bg, theme().pageFg, 0.25f),
+            expandPercent: cast(ubyte) s.termView.vAnim.percent,
+            edge: RuleEdge.right,
+        ));
+    }
+
+
     // ── the Terminal page's frame glue ──────────────────────────────────────
 
     /**
@@ -1069,6 +1108,11 @@ struct Gallery
                 auto c = h.canvas;
                 return tv.open(c.fonts, cols, rows);
             }();
+        else static if (__traits(compiles, { int w = h.cellWidth; int ht = h.cellHeight; }))
+            // Native arm: pixels, and `PointerUnit.pixels` is already the
+            // gallery's `RunConfig`, so `handle` feeds `pointerInPane` in
+            // the same unit. `pollMouse` is off because `backend` is gui.
+            ok = (() @trusted => tv.openPixels(cols, rows, h.cellWidth, h.cellHeight))();
         else
             ok = (() @trusted => tv.openCore(cols, rows, 1, 1))();
         if (!ok)
