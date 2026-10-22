@@ -4,7 +4,7 @@ module sparkles.event_horizon.sampling_darwin;
 version (OSX):
 
 import core.stdc.errno : ESRCH, errno;
-import core.time : MonoTime, nsecs;
+import core.time : Duration, MonoTime, nsecs;
 
 import sparkles.event_horizon.proc : MetricQuality, MetricSource,
     ProcessResourceUsage, SampleSource;
@@ -25,6 +25,27 @@ private extern (C) nothrow @nogc
 {
     int proc_pid_rusage(int pid, int flavor, void* buffer);
     int proc_listchildpids(int pid, void* buffer, int bytes);
+    int mach_timebase_info(Timebase* info);
+}
+
+private struct Timebase
+{
+    uint numer;
+    uint denom;
+}
+
+// libproc CPU counters are Mach absolute ticks. Divide first so a long-lived
+// process cannot overflow the multiply before the saturating Duration bound.
+private Duration cpuDuration(ulong ticks, in Timebase timebase) @safe pure nothrow @nogc
+in (timebase.numer != 0 && timebase.denom != 0)
+{
+    const whole = ticks / timebase.denom;
+    if (whole > cast(ulong) long.max / timebase.numer)
+        return long.max.nsecs;
+    const remainder = (ticks % timebase.denom) * timebase.numer / timebase.denom;
+    const base = whole * timebase.numer;
+    return (base > cast(ulong) long.max - remainder
+        ? long.max : cast(long)(base + remainder)).nsecs;
 }
 
 package struct TreeSampler
@@ -38,6 +59,7 @@ package struct TreeSampler
 
     private ProcessIdentity root;
     private bool bound;
+    private Timebase timebase;
 
     version (unittest)
         package void delegate() @safe nothrow testBetweenValidations;
@@ -48,7 +70,9 @@ package struct TreeSampler
     {
         usage.source = source;
         RusageV4 info;
-        bound = readUsage(pid, info);
+        const clockReady = (() @trusted => mach_timebase_info(&timebase) == 0)()
+            && timebase.numer != 0 && timebase.denom != 0;
+        bound = clockReady && readUsage(pid, info);
         if (bound)
             root = ProcessIdentity(pid, info.startTime);
         else
@@ -195,8 +219,8 @@ package struct TreeSampler
                 ? ulong.max : resident + record.usage.residentSize;
         }
         const cpu = ledger.total();
-        usage.userTime = (cpu.userTicks > long.max ? long.max : cast(long) cpu.userTicks).nsecs;
-        usage.systemTime = (cpu.systemTicks > long.max ? long.max : cast(long) cpu.systemTicks).nsecs;
+        usage.userTime = cpuDuration(cpu.userTicks, timebase);
+        usage.systemTime = cpuDuration(cpu.systemTicks, timebase);
         if (resident > usage.peakRssBytes)
             usage.peakRssBytes = resident > size_t.max ? size_t.max : cast(size_t) resident;
         if (scratch.length > usage.peakProcesses)
@@ -305,4 +329,45 @@ private bool readUsage(int pid, out RusageV4 info) @safe nothrow @nogc
         assert(id.pid != pid, "reaped children are retired, never silently re-admitted");
         return true;
     });
+}
+
+/// Counter units are checked against getrusage on the native host, including
+/// Apple Silicon where the Mach timebase is not one tick per nanosecond.
+@("sampling.darwin.cpuCounterUnitsMatchRusage")
+@system unittest
+{
+    import core.sys.posix.sys.resource : RUSAGE_SELF, getrusage, rusage;
+    import core.sys.posix.unistd : getpid;
+    import core.time : msecs;
+
+    RusageV4 before, after;
+    rusage referenceBefore, referenceAfter;
+    assert(readUsage(getpid(), before));
+    assert(getrusage(RUSAGE_SELF, &referenceBefore) == 0);
+    const until = MonoTime.currTime + 100.msecs;
+    while (MonoTime.currTime < until) {}
+    assert(getrusage(RUSAGE_SELF, &referenceAfter) == 0);
+    assert(readUsage(getpid(), after));
+    static long cpuNs(in rusage value) @safe pure nothrow @nogc
+        => (value.ru_utime.tv_sec + value.ru_stime.tv_sec) * 1_000_000_000L
+            + (value.ru_utime.tv_usec + value.ru_stime.tv_usec) * 1000L;
+    const expected = cpuNs(referenceAfter) - cpuNs(referenceBefore);
+    Timebase timebase;
+    assert(mach_timebase_info(&timebase) == 0);
+    const actual = cpuDuration(after.userTime + after.systemTime
+        - before.userTime - before.systemTime, timebase).total!"nsecs";
+    assert(expected > 0);
+    assert(actual > expected / 2 && actual < expected * 2,
+        "libproc CPU units must be converted to the getrusage time scale");
+}
+
+/// Non-unit Mach timebases and long-lived counter saturation are deterministic.
+@("sampling.darwin.cpuDuration.nonUnitAndSaturation")
+@safe pure nothrow @nogc unittest
+{
+    assert(cpuDuration(24_000_000, Timebase(125, 3)) == 1_000_000_000L.nsecs);
+    assert(cpuDuration(1, Timebase(125, 3)) == 41.nsecs);
+    assert(cpuDuration(ulong.max, Timebase(125, 3)) == long.max.nsecs);
+    assert(cpuDuration(ulong.max, Timebase(1, uint.max))
+        == (cast(long)(ulong.max / uint.max)).nsecs);
 }
