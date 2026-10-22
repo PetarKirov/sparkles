@@ -101,6 +101,7 @@ struct VulkanCanvas(B)
     {
         uint handle;     // 0: a free entry
         uint generation;
+        const(ImageRegistry)* registry;
         GpuImage image;
     }
 
@@ -433,14 +434,14 @@ struct VulkanCanvas(B)
 
     /**
     Binds the image registry handles resolve against (`IMG3`), which must
-    outlive the canvas. The images cached from the previous one are released:
-    a handle names an image only within its registry.
+    outlive the canvas. Cached entries are keyed by (registry, handle,
+    generation): switching registry does not evict them, and foreign
+    entries are evicted lazily on slot reuse or by `releaseCaches`.
     */
     void images(const(ImageRegistry)* registry) @system
     {
         if (registry is registry_)
             return;
-        releaseCaches();
         registry_ = registry;
     }
 
@@ -470,7 +471,7 @@ struct VulkanCanvas(B)
     static foreach (name; ["fillRect", "textRun", "textRunIn", "glyph", "line", "rule",
             "scrollbar", "image", "pushClip", "popClip", "pushShift", "popShift", "pushEffect",
             "popEffect", "fillPx", "outlinePx", "clipPx", "unclipPx", "pushOffsetPx",
-            "popOffsetPx", "imageQuadPx"])
+            "popOffsetPx", "imageQuadPx", "imageSourcePx"])
         mixin("/// Through `Painter." ~ name ~ "`; only between `beginFrame` and `endFrame`.\n"
             ~ "void " ~ name ~ "(Args...)(auto ref Args args) @system\n"
             ~ "in (inFrame_, \"drawing outside a frame\")\n"
@@ -495,7 +496,8 @@ struct VulkanCanvas(B)
         size_t free = size_t.max;
         foreach (i, ref e; images_[])
         {
-            if (e.handle == handle.value && e.generation == data.generation)
+            if (e.registry is registry_ && e.handle == handle.value
+                && e.generation == data.generation)
             {
                 slot = cast(uint) i + 1;
                 return ImageOutcome.drawn;
@@ -533,19 +535,29 @@ struct VulkanCanvas(B)
 
         // A replaced generation keeps its entry; the old image is retired.
         foreach (i, ref e; images_[])
-            if (e.handle == handle.value)
+            if (e.registry is registry_ && e.handle == handle.value)
             {
                 retire(e.image);
-                e = CachedImage(handle.value, data.generation, image);
+                e = CachedImage(handle.value, data.generation, registry_, image);
                 slot = cast(uint) i + 1;
                 return ImageOutcome.drawn;
             }
         if (free == size_t.max)
         {
+            // No free slot: reuse a foreign registry's slot that this
+            // frame is not drawing from, retiring its image first.
+            foreach (i, ref e; images_[])
+                if (e.registry !is registry_ && !boundThisFrame(cast(uint) i + 1))
+                {
+                    retire(e.image);
+                    e = CachedImage(handle.value, data.generation, registry_, image);
+                    slot = cast(uint) i + 1;
+                    return ImageOutcome.drawn;
+                }
             free = images_.length;
             images_.put(CachedImage.init);
         }
-        images_[][free] = CachedImage(handle.value, data.generation, image);
+        images_[][free] = CachedImage(handle.value, data.generation, registry_, image);
         slot = cast(uint) free + 1;
         return ImageOutcome.drawn;
     }

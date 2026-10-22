@@ -176,6 +176,14 @@ struct NativeHost
     /// The cell font's pixel size, and the errand changing it (`HST14`):
     /// the cells are measured again, so `size` changes on its next read.
     int fontSizePx() const @safe pure nothrow @nogc => session_.font.px;
+
+    /// One cell, in device pixels. A terminal pane opens with these
+    /// (`openPixels`) and needs `PointerUnit.pixels` so pointer events
+    /// arrive in the same unit.
+    int cellWidth() const scope @safe pure nothrow @nogc => session_.font.cellW;
+    /// ditto
+    int cellHeight() const scope @safe pure nothrow @nogc => session_.font.cellH;
+
     /// ditto
     void fontSize(int px) @system => session_.setFontSize(px);
 
@@ -912,6 +920,16 @@ private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, string path) @syste
     CellFont larger;
     assert(measureCellFont(FontRequest.init, null, 36, larger));
     assert(larger.cellH > font.cellH && larger.cellW > font.cellW);
+}
+
+@("ui_app.native_loop.cellMetricsAreTheMeasuredFont")
+@safe pure nothrow @nogc unittest
+{
+    NativeSession session;
+    session.font = CellFont(null, 18, 9, 18);
+    NativeHost host;
+    host.session_ = &session;
+    assert(host.cellWidth == 9 && host.cellHeight == 18);
 }
 
 // The parity oracle (`TST3`, plan slice V4's gate): the same input, scripted
