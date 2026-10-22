@@ -15,6 +15,12 @@ features, feature variations and substitutions of `GSUB` and `GPOS`; and which
 colour formats a face holds. A value the font does not supply is reported as
 absent, never invented.
 
+Milestone M3: glyph outlines (FTO1–FTO5). Milestone M4: shaping lives in
+the `engine` configuration only — `sparkles.font.shaping` is public
+there (its HarfBuzz declarations in `sparkles.font.harfbuzz` are
+imported explicitly) and both are absent from the pure-D `library`
+configuration (FTA7).
+
 $(UL
     $(LI `sparkles.font.face` — `openFace`, `openCollection`, `Face`, table lookup and inspection.)
     $(LI `sparkles.font.tables` — `head`, `hhea`, `maxp`, `OS/2`, `post`, `hmtx`, `fvar`, `avar`, `STAT`, spacing.)
@@ -39,6 +45,7 @@ module sparkles.font;
 
 public import sparkles.font.baseline;
 public import sparkles.font.cmap;
+public import sparkles.font.carets;
 public import sparkles.font.colour;
 public import sparkles.font.coverage;
 public import sparkles.font.errors;
@@ -46,6 +53,7 @@ public import sparkles.font.face;
 public import sparkles.font.gdef;
 public import sparkles.font.glyph_names;
 public import sparkles.font.instance;
+public import sparkles.font.jstf;
 public import sparkles.font.layout;
 public import sparkles.font.math_table;
 public import sparkles.font.metrics;
@@ -54,4 +62,9 @@ public import sparkles.font.outlines;
 public import sparkles.font.tables;
 public import sparkles.font.units;
 public import sparkles.font.variations;
+
+version (SparklesFontEngine)
+{
+    public import sparkles.font.shaping;
+}
 public import sparkles.font.vertical;

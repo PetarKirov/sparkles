@@ -21,6 +21,7 @@ import sparkles.base.text.layout_units : LayoutUnit;
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle;
 import sparkles.font_oracle;
+import sparkles.font_oracle.harfbuzz_c : hb_direction_t;
 import sparkles.test_runner.skip : skipTest;
 
 /// Every instance here is 12 points; the comparisons are in design units.
