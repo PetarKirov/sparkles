@@ -63,7 +63,7 @@ oracle 10 for the semaphore and reader–writer protocols.
 
 **Obligations.** None new; consumers move to the library.
 **Prerequisites.** S2 for mutexes and conditions; S3 for anything else; for
-event-horizon's own users, its fiber parker (below).
+event-horizon's `raw_pool` and `pool`, its fiber parker (below).
 **Deliverable.** Every in-repository user of `core.sync.mutex`,
 `core.sync.condition` and `pthread_mutex_t` switched to `sparkles.base.sync`,
 one package per commit, with before-and-after measurements where a hot path
@@ -71,8 +71,10 @@ changes.
 **Acceptance.** `ci --test` and the example and documentation checks pass; no
 `core.sync.mutex`, `core.sync.condition` or `pthread_mutex_t` remains outside
 the seam and the portable thread parker.
-**Exceptions.** event-horizon's pools move with its fiber parker, in its
-M20. Code that shows another library's idiom (the hunt-net tutorial
+**Exceptions.** event-horizon's `raw_pool` and `pool` move with its fiber
+parker, in its M20. `blocking_pool` moves independently for M19: its worker
+condition waits are thread-level and its scheduler-side sections never suspend.
+Code that shows another library's idiom (the hunt-net tutorial
 snippets) or measures `core.sync` (the locking survey's benchmarks) keeps
 it.
 
@@ -80,7 +82,7 @@ it.
 
 `sparkles:event-horizon` specifies the fiber parker (SYK2, SYK5, SYK8, SYK9,
 SPEC §4a) in its [fiber-parker.md](../../event-horizon/fiber-parker.md), with
-latched cancellation, and delivers it, the blocking pool on these primitives
+latched cancellation, and delivers it, `raw_pool` and `pool` on these primitives
 and its use of the address wait in its milestone M20, which owns their
 acceptance.
 

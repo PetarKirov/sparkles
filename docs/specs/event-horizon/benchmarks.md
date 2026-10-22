@@ -10,6 +10,28 @@ Run environment for the numbers here: Linux 6.18, LDC release build
 (`-O3 -release`), single run-of-3 best. Reproduce with the commands in each
 section.
 
+## Blocking-pool synchronization migration
+
+Measured on 2026-10-22 with LDC 1.42.0 on Linux, `checked` (assertions live):
+five samples of 10,000 sequential no-op worker calls, one ordinary worker and
+the reserved worker, with scheduler/pool creation outside the timed region.
+The metric includes submission, worker dispatch, the inbox wake and fiber
+resumption; it is not isolated mutex latency or a throughput benchmark.
+
+```bash
+dub run --single libs/event-horizon/bench/blocking-pool.d -b checked --force
+```
+
+| Locks                         | Nanoseconds per call, five samples | Median |
+| ----------------------------- | ---------------------------------- | ------ |
+| `core.sync`, before migration | 6060, 5906, 7047, 6001, 6447       | 6060   |
+| `sparkles.base.sync`          | 5979, 6492, 5990, 6262, 6896       | 6262   |
+
+The median difference is +3.3%, within the overlapping short-run ranges;
+these samples do not establish a significant performance change. A Windows
+cross-build also completed 50,000 calls under Wine, exercising the IOCP
+`PostQueuedCompletionStatus` wake; Wine timings are not a native baseline.
+
 ## 1. Loop & tier microbenchmarks
 
 `libs/event-horizon/bench/suite/` (`dub test -b bench -- --bench`):
