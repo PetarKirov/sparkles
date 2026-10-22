@@ -56,6 +56,7 @@ configuration "application" {
 configuration "vulkan" {
     targetType "executable"
     subConfiguration "sparkles:ui-app" "full-vulkan"
+    subConfiguration "sparkles:terminal-view" "vulkan"
 }
 
 // Last in the file and running to EOF: `nix/packages/build-sparkles-app.nix`

@@ -23,7 +23,7 @@ Requirement identifiers refer to [SPEC.md](./SPEC.md) (`UVK`) and
 | [V3 Glyphs](#v3-glyphs)                                           | not started |
 | [V4 The native host](#v4-the-native-host)                         | done        |
 | [V5 The terminal's seams](#v5-the-terminal-s-seams)               | done        |
-| [V6 The terminal on Vulkan](#v6-the-terminal-on-vulkan)           | not started |
+| [V6 The terminal on Vulkan](#v6-the-terminal-on-vulkan)           | in progress |
 | [V7 The phone terminal](#v7-the-phone-terminal)                   | not started |
 
 ## Dependencies
@@ -190,11 +190,12 @@ libghostty reports a cleared scrollback, reads as cleared (`TSE4`).
 application's own raylib calls replaced by host and canvas calls; a
 `gui-vulkan` build of the terminal.
 
-**Progress.** The canvas draws in device pixels (`UVK35`): a fill, a
-one-pixel outline, a clip, an offset, and an image quad from a source
-sub-rectangle, through the instance batcher. The terminal painter, the
-host, and the application's own raylib calls have not landed. Text still
-draws nothing until V3.
+**Progress.** The canvas draws in device pixels (`UVK35`). The terminal
+painter maps kitty images onto a pane-owned `ImageRegistry` (`UVX11`);
+glyphs and labels count a miss until V3. A native host opens a pane with
+`openPixels` at its cell metrics and paints through that painter. The
+application's own raylib calls and a `gui-vulkan` build of `apps/terminal`
+have not landed. Text still draws nothing until V3.
 
 **Gate.** The terminal runs on Wayland and X11 through the native host;
 screenshots match the raylib terminal within the tolerances of
