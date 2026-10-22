@@ -344,10 +344,10 @@ and `SINGLE_ISSUER` (6.0) and `DEFER_TASKRUN` (6.1). Consequently there are
 **no per-op degradation paths on Linux for baseline features** — the probe
 verifies the floor once. Features newer than the floor remain probe-gated:
 
-| Feature                         | Kernel | On absence                               |
-| ------------------------------- | ------ | ---------------------------------------- |
-| futex ops (`FUTEX_WAIT`/`WAKE`) | 6.7    | idle parking degrades to ring-wait (§11) |
-| `RECV_ZC` (zero-copy receive)   | 6.15   | not in v1 (post-v1 series)               |
+| Feature                         | Kernel | On absence                                                                                                   |
+| ------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------ |
+| futex ops (`FUTEX_WAIT`/`WAKE`) | 6.7    | the waker uses the eventfd (§5.6); fibers park on the inbox path ([fiber-parker.md](./fiber-parker.md) EFP6) |
+| `RECV_ZC` (zero-copy receive)   | 6.15   | not in v1 (post-v1 series)                                                                                   |
 
 (`SEND_ZC`, kernel 6.0, is floor-guaranteed but deliberately outside v1 for
 lifetime-complexity reasons — [open-issues](./open-issues.md) O6.)
@@ -703,8 +703,12 @@ that `wake()` triggers with `NOTE_TRIGGER`; uring parks an in-ring
 `FUTEX_WAIT` that `wake()` releases with a process-private `FUTEX_WAKE`
 (and a word increment so a re-arm cannot lose the wake); IOCP needs no
 armed op at all — `wake()` posts a zero-byte `PostQueuedCompletionStatus`
-packet. The portable fallback (a backend with no `nativeWaker`) is an
-`eventfd` / pipe and a persistently armed internal read.
+packet. The portable fallback is an `eventfd` / pipe and a persistently
+armed internal read. It serves a backend with no `nativeWaker`, one whose
+native wake cannot arm on this host — uring without the futex operations
+(Linux below 6.7), where the in-ring `FUTEX_WAIT` would complete at once
+and its wakes would reach nobody — and a loop created with
+`LoopConfig.nativeWake = false` (`LoopGroupConfig.futexPark = No`).
 
 **The futex hash is pinned first.** From Linux 6.16 a process hashes its
 private futexes globally until its first `CLONE_VM` clone (a thread, the
@@ -1504,7 +1508,7 @@ struct LoopGroupConfig
     uint workers = 0;                        // 0 = one per online CPU
     uint sqEntries = 256;
     Flag!"pinToCpu" pinToCpu = Yes.pinToCpu;
-    Flag!"futexPark" futexPark = Yes.futexPark;  // degrades below kernel 6.7
+    Flag!"futexPark" futexPark = Yes.futexPark;  // idle waits on the in-ring FUTEX_WAIT (§5.6)
     FiberPark fiberPark = FiberPark.auto;        // ring | inbox (fiber-parker.md)
     uint fiberStackPages = 16;
     uint recvBufRingEntries = 0;             // per-worker provided ring (0 = off)

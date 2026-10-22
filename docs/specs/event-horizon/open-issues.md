@@ -684,7 +684,9 @@ fd path. kqueue: `EVFILT_USER` + `NOTE_TRIGGER` (Darwin delivers these
 with a null `udata` — ingest matches on ident). uring: in-ring
 `FUTEX_WAIT`, `Waker.wake` does `FUTEX_WAKE` plus a word increment.
 Pool idle parking now uses this seam (see O2). Targeted `MSG_RING`
-stealing remains open.
+stealing remains open. The uring arm needs the futex operations (Linux 6.7):
+below that the loop arms the eventfd path instead, chosen at run time from
+`caps.futexOps`, and `futexPark = No` forces it (SPEC §5.6).
 
 **Where:** `pool.d` (idle backoff), `backend/{kqueue,uring}.d`,
 `backend/concept.d`. Refines O2 and O15.

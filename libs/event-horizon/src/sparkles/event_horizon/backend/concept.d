@@ -33,6 +33,10 @@ struct BackendConfig
     uint cqEntries = 0;   /// completion-queue entries; 0 = backend default (uring: 2× sq)
     ubyte mode;           /// requested `LoopMode` (kept `ubyte` to stay leaf-friendly)
     ubyte modePolicy;     /// `ModePolicy` for mode negotiation
+    /// `OpKind` bits the backend treats as unsupported whatever its probe says:
+    /// a test runs an older kernel's paths on this one (bit `k` hides
+    /// `cast(OpKind) k`).
+    ulong hiddenOps;
 }
 
 /**
@@ -234,6 +238,17 @@ struct Waker
 enum bool hasNativeWake(B) = __traits(compiles, {
     Waker w = lvalueOf!B.nativeWaker(OpToken.init);
 });
+
+/// Whether `b`'s native wake can arm now: a backend whose wake rests on a
+/// kernel feature answers through `nativeWakeUsable` (uring: the futex
+/// operations); one that does not define it always can.
+bool canArmNativeWake(B)(ref const B b)
+{
+    static if (__traits(hasMember, B, "nativeWakeUsable"))
+        return b.nativeWakeUsable;
+    else
+        return true;
+}
 
 /**
 Optional native-host wait bridge.

@@ -110,7 +110,7 @@ struct UringBackend
         }
 
         const exclusive = negotiated == LoopMode.exclusive;
-        _caps = buildUringCaps(_io, negotiated, exclusive, exclusive, true);
+        _caps = buildUringCaps(_io, negotiated, exclusive, exclusive, true, cfg.hiddenOps);
         return ioOk();
     }
 
@@ -135,12 +135,20 @@ struct UringBackend
     // into `slot.operands` — the SQE points only at slot-stable memory.
 
     /**
+    Whether $(LREF nativeWaker) can arm: the in-ring `FUTEX_WAIT` exists from
+    Linux 6.7 (`caps.futexOps`). Below that the loop uses the eventfd waker;
+    an unsupported `FUTEX_WAIT` would complete at once and re-arm forever.
+    */
+    bool nativeWakeUsable() const @safe pure nothrow @nogc => _caps.futexOps;
+
+    /**
     Persistent in-ring `FUTEX_WAIT` bound to `token` (O29, SPEC §5.6).
     `Waker.wake` increments the word and issues a process-private
     `FUTEX_WAKE` — thread-safe, coalescing, no payload. The wait is
     re-armed from `reap` so the loop's native dispatch has nothing to do.
     */
     Waker nativeWaker(OpToken token) @trusted nothrow @nogc
+    in (nativeWakeUsable, "the in-ring FUTEX_WAIT needs the futex operations (Linux 6.7)")
     {
         if (_wakeTokenRaw != 0)
         {

@@ -83,6 +83,9 @@ struct LoopConfig
     BackendConfig backend; /// sqEntries / cqEntries / mode / modePolicy
     uint opSlots = 0;      /// op-slot slab capacity; 0 = 2 × cqEntries
     FatalHook fatalHook = &defaultFatalHook; /// hard backend failure (SPEC §5.2)
+    /// Wake through the backend's native source where it can arm; `false`
+    /// always uses the wake channel (`LoopGroupConfig.futexPark`).
+    bool nativeWake = true;
 }
 
 /// What ended a `runOnce` iteration.
@@ -148,6 +151,7 @@ if (isCompletionBackend!Backend)
             => cast(FatalHook) cast(void*) hookBits(cfg.fatalHook))();
         if (loop._fatalHook is null)
             loop._fatalHook = &defaultFatalHook;
+        loop._nativeWakeAllowed = cfg.nativeWake;
         loop._open = true;
         return ioOk();
     }
@@ -621,27 +625,56 @@ if (isCompletionBackend!Backend)
 
     // ── the external waker (SPEC §5.6) ──────────────────────────────────
     // Native path first (O29): EVFILT_USER / FUTEX_WAIT / IOCP post, no
-    // armed pipe or eventfd. Portable fd path only when the backend has
-    // no nativeWaker. A backend with neither has no waker().
+    // armed pipe or eventfd. The portable fd path serves a backend with no
+    // nativeWaker, and one whose native wake cannot arm on this kernel
+    // (uring below 6.7: no futex operations). A backend with neither has no
+    // waker().
 
     version (Posix)
-        private enum bool fdWaker = !hasNativeWake!Backend
-            && canSubmitOp!(Backend, OpRead);
+        private enum bool fdWaker = canSubmitOp!(Backend, OpRead);
     else
         private enum bool fdWaker = false;
 
-    static if (hasNativeWake!Backend)
+    static if (hasNativeWake!Backend || fdWaker)
     {
-        /// Returns the thread-safe wake handle, arming the backend-native
-        /// wake source on first call. The routing slot is `OpClass.wake`
-        /// infrastructure: excluded from `inFlight`, invisible to `run()`'s
-        /// drained decision — but `runOnce(timeout)` on an otherwise-empty
-        /// loop DOES wait, which is the "park until something external
-        /// happens" entry point.
+        /**
+        Returns the thread-safe wake handle, arming the wake source on first
+        call: the backend's native wake where it can arm, else the wake
+        channel. The routing slot is `OpClass.wake` infrastructure: excluded
+        from `inFlight`, invisible to `run()`'s drained decision — but
+        `runOnce(timeout)` on an otherwise-empty loop DOES wait, which is the
+        "park until something external happens" entry point.
+        */
         IoResult!Waker waker()
         {
             if (_wakeArmed)
-                return ioOk(_nativeWaker);
+                return ioOk(armedWaker());
+            static if (hasNativeWake!Backend)
+                if (_nativeWakeAllowed && canArmNativeWake(_backend))
+                    return armNativeWaker();
+            static if (fdWaker)
+                return armFdWaker();
+            else
+                return ioErr!Waker(38 /* ENOSYS */, OpKind.nop, IoErrorStage.setup,
+                    "the backend's wake cannot arm on this host");
+        }
+
+        private Waker armedWaker()
+        {
+            static if (hasNativeWake!Backend)
+                if (_wakeNative)
+                    return _nativeWaker;
+            static if (fdWaker)
+                return Waker(_wakeWriteFd);
+            else
+                assert(0, "an armed waker that is not native");
+        }
+    }
+
+    static if (hasNativeWake!Backend)
+    {
+        private IoResult!Waker armNativeWaker()
+        {
             const token = _slab.acquire(OpKind.nop, OpClass.wake, null, null);
             if (!token)
                 return ioErr!Waker(ENOBUFS, OpKind.nop, IoErrorStage.submit,
@@ -655,24 +688,16 @@ if (isCompletionBackend!Backend)
             }
             _wakeToken = token;
             _nativeWaker = w;
+            _wakeNative = true;
             _wakeArmed = true;
             return ioOk(w);
         }
     }
-    else static if (fdWaker)
-    {
-        /**
-        Returns the thread-safe wake handle, arming the wake channel on
-        first call. The armed read is `OpClass.wake` infrastructure:
-        excluded from `inFlight`, invisible to `run()`'s drained decision —
-        but `runOnce(timeout)` on an otherwise-empty loop DOES wait, which
-        is the "park until something external happens" entry point.
-        */
-        IoResult!Waker waker()
-        {
-            if (_wakeArmed)
-                return ioOk(Waker(_wakeWriteFd));
 
+    static if (fdWaker)
+    {
+        private IoResult!Waker armFdWaker()
+        {
             if (_wakeReadFd < 0)
             {
                 auto opened = openWakeFds();
@@ -750,6 +775,7 @@ private:
         if (slot.cls == OpClass.wake)
         {
             static if (fdWaker)
+            if (!wakeIsNative)
             {
                 if (_wakeShutdown || raw.res < 0)
                 {
@@ -765,7 +791,7 @@ private:
                     _wakeArmed = false;
                 }
             }
-            // Native-wake backends keep no armed op; nothing to re-arm.
+            // A native wake keeps no armed op; nothing to re-arm.
             return;
         }
 
@@ -886,7 +912,7 @@ private:
         /// Unwinds the armed wake read by self-waking (the read completes
         /// normally; the dispatch branch releases instead of re-arming) —
         /// no cancel machinery, identical on every fd backend.
-        void disarmWaker() @trusted
+        void disarmFdWaker() @trusted
         {
             if (_wakeArmed)
             {
@@ -917,24 +943,38 @@ private:
             _wakeWriteFd = -1;
         }
     }
-    else static if (hasNativeWake!Backend)
+
+    static if (hasNativeWake!Backend)
     {
         /// The native wake keeps no armed op — just release the routing slot.
-        void disarmWaker() @safe nothrow @nogc
+        void disarmNativeWaker() @safe nothrow @nogc
         {
             if (!_wakeArmed)
                 return;
             _slab.release(_wakeToken);
             _wakeToken = OpToken.init;
             _nativeWaker = Waker.init;
+            _wakeNative = false;
             _wakeArmed = false;
         }
     }
-    else
+
+    /// Whether the armed waker is the backend's native wake.
+    bool wakeIsNative() const @safe pure nothrow @nogc
     {
-        void disarmWaker() @safe pure nothrow @nogc
-        {
-        }
+        static if (hasNativeWake!Backend)
+            return _wakeNative;
+        else
+            return false;
+    }
+
+    void disarmWaker()
+    {
+        static if (hasNativeWake!Backend)
+            if (_wakeNative)
+                disarmNativeWaker();
+        static if (fdWaker)
+            disarmFdWaker();
     }
 
     Backend _backend;
@@ -944,6 +984,7 @@ private:
     bool _dispatching;
     bool _stopRequested;
     bool _wakeArmed;
+    bool _nativeWakeAllowed = true;
     bool _wakeShutdown;
     uint _cancelInFlight;
     /// The pending-cancel set: a doubly linked list threaded through the
@@ -961,10 +1002,11 @@ private:
         int _wakeReadFd = -1;
         int _wakeWriteFd = -1;
     }
-    else static if (hasNativeWake!Backend)
+    static if (hasNativeWake!Backend)
     {
         OpToken _wakeToken;
         Waker _nativeWaker;
+        bool _wakeNative; /// the armed waker is the native one
     }
 }
 
@@ -1366,23 +1408,14 @@ unittest
         "READ_FIXED delivered the bytes through the registered buffer");
 }
 
-@("loop.waker.crossThreadWakesBlockedWait")
-@system
-unittest
+version (unittest)
+private void wakeFromAnotherThread(ref DefaultLoop loop, Waker waker) @system
 {
     import core.thread : Thread;
     import core.time : msecs, seconds;
 
-    DefaultLoop loop;
-    createOrSkip(loop);
-
-    auto w = loop.waker();
-    assert(w.hasValue);
-    assert(loop.inFlight == 0, "an armed waker is not user work");
-
     // A foreign thread wakes the loop after a delay; the blocked wait must
     // return well before its own deadline.
-    auto waker = w.value;
     auto t = new Thread({
         Thread.sleep(20.msecs);
         waker.wake();
@@ -1408,6 +1441,68 @@ unittest
         "the wake surfaced as a dispatched iteration");
     assert(elapsed >= 15.msecs && elapsed < 2.seconds,
         "the wait ended on the wake, not the deadline");
+}
+
+@("loop.waker.crossThreadWakesBlockedWait")
+@system
+unittest
+{
+    DefaultLoop loop;
+    createOrSkip(loop);
+
+    auto w = loop.waker();
+    assert(w.hasValue);
+    assert(loop.inFlight == 0, "an armed waker is not user work");
+    assert(loop.wakeIsNative == loop.caps().futexOps,
+        "the in-ring FUTEX_WAIT wherever the futex operations exist");
+    wakeFromAnotherThread(loop, w.value);
+}
+
+@("loop.waker.nativeWakeOffUsesTheWakeChannel")
+@system
+unittest
+{
+    LoopConfig cfg;
+    cfg.nativeWake = false;
+    DefaultLoop loop;
+    createOrSkip(loop, cfg);
+
+    auto w = loop.waker();
+    assert(w.hasValue);
+    assert(!loop.wakeIsNative, "nativeWake = false keeps the eventfd");
+    wakeFromAnotherThread(loop, w.value);
+}
+
+@("loop.waker.withoutFutexOpsUsesTheWakeChannel")
+@system
+unittest
+{
+    // A kernel below 6.7 has no futex operations: an in-ring FUTEX_WAIT
+    // would complete at once and re-arm forever, and its wakes would reach
+    // nobody. The loop wakes through the eventfd instead.
+    import core.time : msecs, seconds;
+
+    LoopConfig cfg;
+    cfg.backend.hiddenOps = 1UL << OpKind.futexWait;
+    DefaultLoop loop;
+    createOrSkip(loop, cfg);
+    assert(!loop.caps().futexOps);
+
+    auto w = loop.waker();
+    assert(w.hasValue);
+    assert(!loop.wakeIsNative);
+    wakeFromAnotherThread(loop, w.value);
+
+    // Wakes before a wait coalesce, and an idle loop does not spin: with
+    // nothing pending the next wait runs to its deadline.
+    w.value.wake();
+    w.value.wake();
+    auto first = loop.runOnce(1.seconds);
+    assert(first.hasValue && first.value == RunStatus.dispatched);
+    auto idle = loop.runOnce(30.msecs);
+    assert(idle.hasValue && idle.value == RunStatus.timedOut,
+        "no wake op completes on its own");
+    assert(!loop.run().hasError);
 }
 
 @("loop.waker.wakeBeforeWaitCoalesces")
