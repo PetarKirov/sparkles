@@ -31,13 +31,14 @@ import core.sys.windows.winbase : CreateIoCompletionPort,
 import core.sys.windows.windef : DWORD, FALSE, TRUE;
 import core.sys.windows.winnt : HANDLE;
 import core.sys.windows.basetsd : ULONG_PTR;
-import core.stdc.errno : ECANCELED, ECONNREFUSED, EIO, ENOENT;
+import core.stdc.errno : ECANCELED, ECONNREFUSED, EINVAL, EIO, ENOENT;
+import core.time : MonoTime, Duration, msecs, nsecs, seconds;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
-    OpRecv, OpSend, OpSlot, OpTimeout, OpToken;
+    OpRead, OpRecv, OpSend, OpSlot, OpTimeout, OpToken, OpWrite, NativeHandle;
 
 // ── minimal winsock2 / IOCP bindings (only what the data path needs) ────────
 
@@ -61,6 +62,9 @@ extern (Windows) nothrow @nogc
         uint count, uint* removed, uint timeout, int alertable);
     int CancelIoEx(HANDLE handle, OVERLAPPED* ov);
     uint GetLastError();
+    uint GetFileType(HANDLE handle);
+    int ReadFile(HANDLE, void*, uint, uint*, OVERLAPPED*);
+    int WriteFile(HANDLE, const(void)*, uint, uint*, OVERLAPPED*);
     struct WSADATA
     {
         ushort wVersion;
@@ -164,6 +168,7 @@ enum int SOCKET_ERROR = -1;
 enum IoKind : ubyte
 {
     data,     // recv/send: res is the byte count
+    read,     // ReadFile: a broken pipe / end-of-file status is EOF
     accept,   // AcceptEx: res is the new socket fd
     connect,  // ConnectEx: res is 0 / -errno
     wake,     // external waker post (SPEC §5.6): persistent, res is 0
@@ -246,7 +251,8 @@ struct IocpBackend
 
         _caps.backend = BackendId.iocp;
         _caps.mode = LoopMode.cooperative;
-        foreach (kind; [OpKind.nop, OpKind.recv, OpKind.send, OpKind.timeout])
+        foreach (kind; [OpKind.nop, OpKind.recv, OpKind.send, OpKind.timeout,
+            OpKind.read, OpKind.write])
             _caps.opBits |= 1UL << kind;
         if (_acceptEx !is null)
             _caps.opBits |= 1UL << OpKind.accept;
@@ -312,7 +318,10 @@ struct IocpBackend
     /// the existing association is ours. Do not cache numeric handle values:
     /// a closed socket's value can be reused by a new socket.
     private bool ensureRegistered(SOCKET s) @trusted nothrow @nogc
-        => CreateIoCompletionPort(cast(HANDLE) s, _port, 0, 0) !is null
+        => ensureAssociated(cast(HANDLE) s);
+
+    private bool ensureAssociated(scope HANDLE handle) @trusted nothrow @nogc
+        => CreateIoCompletionPort(handle, _port, 0, 0) !is null
             || GetLastError() == 87;
 
     // ── lowering: issue the winsock async call immediately ──────────────────
@@ -398,6 +407,70 @@ struct IocpBackend
         return true;
     }
 
+    /// Reads an overlapped native pipe or a file at an explicit offset.
+    bool trySubmit(in OpRead o, OpToken token, ref OpSlot slot) @safe nothrow @nogc
+        => fileIo!true((() @trusted => cast(NativeHandle) o.fd)(), o.offset, token, slot);
+
+    /// Writes an overlapped native pipe or a file at an explicit offset.
+    bool trySubmit(in OpWrite o, OpToken token, ref OpSlot slot) @safe nothrow @nogc
+        => fileIo!false((() @trusted => cast(NativeHandle) o.fd)(), o.offset, token, slot);
+
+    private bool fileIo(bool reading)(scope NativeHandle handle, ulong offset,
+        OpToken token, ref OpSlot slot) @safe nothrow @nogc
+    {
+        if (_readyCount == _ready.length)
+            return false;
+        auto op = acquire();
+        if (op is null)
+            return false;
+        op.token = token.raw;
+        // HANDLE is an opaque integer token in pointer-shaped ABI storage;
+        // retaining that token does not retain a pointer into the descriptor.
+        op.handle = (() @trusted => cast(HANDLE) cast(size_t) handle)();
+        static if (reading)
+            op.kind = IoKind.read;
+        // Async regular files have no implicit shared file position. Never
+        // reinterpret ulong.max as WriteFile's append-to-EOF sentinel.
+        if (offset == ulong.max && (() @trusted => GetFileType(handle))() != 3)
+            return reject(op, -EINVAL);
+        if (!ensureAssociated(handle))
+            return reject(op, -EIO);
+        if (offset != ulong.max)
+            (() @trusted {
+                op.ov.Offset = cast(uint) offset;
+                op.ov.OffsetHigh = cast(uint)(offset >> 32);
+            })();
+        uint transferred;
+        int issued;
+        static if (reading)
+        {
+            auto space = slot.pinned.space();
+            // The loop's pinned buffer and this backend's OVERLAPPED remain
+            // live through the terminal packet, even after CancelIoEx.
+            issued = (() @trusted => ReadFile(handle, space.ptr,
+                cast(uint) space.length, &transferred, &op.ov))();
+        }
+        else
+        {
+            auto bytes = slot.pinned[];
+            issued = (() @trusted => WriteFile(handle, bytes.ptr,
+                cast(uint) bytes.length, &transferred, &op.ov))();
+        }
+        if (!issued)
+        {
+            const code = (() @trusted => GetLastError())();
+            if (code != 997) // ERROR_IO_PENDING: the port owns completion
+            {
+                static if (reading)
+                    if (code == 109 || code == 38) // BROKEN_PIPE / HANDLE_EOF
+                        return reject(op, 0);
+                return reject(op, -EIO);
+            }
+        }
+        repairHostSignalAfterIssue();
+        return true;
+    }
+
     /// A relative timer, driven off the completion-port wait timeout (no
     /// threadpool): the deadline is tracked and its completion synthesized
     /// when it expires. `res` is 0 on expiry.
@@ -405,8 +478,17 @@ struct IocpBackend
     {
         if (_timerCount >= _timers.length)
             return false;
-        const ms = o.rel.tv_sec * 1000 + o.rel.tv_nsec / 1_000_000;
-        _timers[_timerCount++] = Timer(token.raw, GetTickCount64() + (ms < 0 ? 0 : ms));
+        const now = MonoTime.currTime;
+        const room = MonoTime.max - now;
+        // Compare before converting seconds to clock ticks, so huge finite
+        // deadlines saturate rather than wrapping into an immediate timeout.
+        Duration rel = o.rel.tv_sec >= room.total!"seconds" ? room
+            : o.rel.tv_sec.seconds + o.rel.tv_nsec.nsecs;
+        if (rel < Duration.zero)
+            rel = Duration.zero;
+        if (rel > room)
+            rel = room;
+        _timers[_timerCount++] = Timer(token.raw, now + rel);
         return true;
     }
 
@@ -502,11 +584,10 @@ struct IocpBackend
     uint nativeHostWaitTimeout(uint requestedMs) @trusted nothrow @nogc
     {
         ulong waitMs = requestedMs;
-        const now = GetTickCount64();
+        const now = MonoTime.currTime;
         foreach (i; 0 .. _timerCount)
         {
-            const rem = _timers[i].deadlineMs > now
-                ? _timers[i].deadlineMs - now : 0;
+            const rem = waitMilliseconds(_timers[i].deadline - now);
             if (rem < waitMs)
                 waitMs = rem;
         }
@@ -546,13 +627,13 @@ struct IocpBackend
 
         // The wait timeout is the min of the caller's deadline and the
         // earliest pending timer, so the port wakes when a timer is due.
-        ulong waitMs = deadline is null
-            ? ulong.max
-            : cast(ulong)(deadline.tv_sec * 1000 + deadline.tv_nsec / 1_000_000);
-        const now = GetTickCount64();
+        ulong waitMs = deadline is null ? ulong.max
+            : deadline.tv_sec >= uint.max / 1000 ? uint.max - 1
+            : waitMilliseconds(deadline.tv_sec.seconds + deadline.tv_nsec.nsecs);
+        const now = MonoTime.currTime;
         foreach (i; 0 .. _timerCount)
         {
-            const rem = _timers[i].deadlineMs > now ? _timers[i].deadlineMs - now : 0;
+            const rem = waitMilliseconds(_timers[i].deadline - now);
             if (rem < waitMs)
                 waitMs = rem;
         }
@@ -686,11 +767,11 @@ private:
     /// Moves any now-due timers into the synthesized-completion buffer.
     void expireTimers() @trusted nothrow @nogc
     {
-        const now = GetTickCount64();
+        const now = MonoTime.currTime;
         uint w;
         foreach (i; 0 .. _timerCount)
         {
-            if (_timers[i].deadlineMs <= now && _readyCount < _ready.length)
+            if (_timers[i].deadline <= now && _readyCount < _ready.length)
                 enqueue(RawCompletion(_timers[i].token, 0, 0));
             else
                 _timers[w++] = _timers[i]; // keep the still-pending ones
@@ -708,6 +789,7 @@ private:
         final switch (op.kind)
         {
             case IoKind.data:
+            case IoKind.read:
                 res = ok ? cast(int) bytes : -EIO;
                 break;
             case IoKind.accept:
@@ -740,7 +822,10 @@ private:
                 // target for every future wake — never released here.
                 return RawCompletion(token, 0, 0);
         }
-        if (!ok && status == 0xc000_0120) // STATUS_CANCELLED
+        if (op.kind == IoKind.read
+            && (status == 0xc000_014b || status == 0xc000_0011)) // PIPE_BROKEN / END_OF_FILE
+            res = 0;
+        else if (!ok && status == 0xc000_0120) // STATUS_CANCELLED
             res = -ECANCELED;
         release(op);
         return RawCompletion(token, res, 0);
@@ -771,7 +856,19 @@ private:
     static struct Timer
     {
         ulong token;
-        ulong deadlineMs; // absolute GetTickCount64
+        MonoTime deadline;
+    }
+
+    // Round up, never down: sub-millisecond truncation fires timers early
+    // against the scheduler's monotonic clock and can cause zero-time spins.
+    private static uint waitMilliseconds(Duration duration) @safe pure nothrow @nogc
+    {
+        if (duration <= Duration.zero)
+            return 0;
+        const ms = duration.total!"msecs";
+        if (ms >= uint.max - 1)
+            return uint.max - 1; // uint.max means infinite, not a finite wait
+        return cast(uint) ms + (duration > ms.msecs ? 1 : 0);
     }
 
     HANDLE _port;
@@ -801,8 +898,9 @@ private:
         assert(b.caps.supports(kind));
     assert(b.caps.supports(OpKind.accept) == (b._acceptEx !is null));
     assert(b.caps.supports(OpKind.connect) == (b._connectEx !is null));
-    assert(!b.caps.supports(OpKind.read));
-    assert(!b.caps.supports(OpKind.write));
+    assert(b.caps.supports(OpKind.read));
+    assert(b.caps.supports(OpKind.write));
+    assert(!b.caps.supports(OpKind.fsync));
 }
 
 /// A full dequeue batch, an overflow batch, and callback-side submission all
@@ -1037,6 +1135,68 @@ version (unittest)
     import sparkles.event_horizon.buffer : Buf;
     import sparkles.event_horizon.op : OpSlot;
     import sparkles.test_runner.skip : skipTest;
+}
+
+/// Native pipe reads/writes use OVERLAPPED handles, cancellation waits for the
+/// target packet, and the writer's close becomes a successful zero-byte EOF.
+@("iocp.pipe.readWriteCancelAndEof")
+@system unittest
+{
+    import sparkles.event_horizon.op : OpClass;
+    import sparkles.event_horizon.sys.pipe : NativePipe;
+
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    NativePipe pipe;
+    assert(!NativePipe.create(pipe).hasError);
+    ubyte[16] rx;
+    ubyte[5] tx = cast(ubyte[5]) "hello";
+    OpSlot readSlot, writeSlot;
+    readSlot.pinned = Buf.fromForeign(rx[], null);
+    writeSlot.pinned = Buf.fromForeign(tx[], null);
+    writeSlot.pinned.length = tx.length;
+    const readToken = OpToken.pack(1, 1, OpClass.user);
+    const writeToken = OpToken.pack(2, 1, OpClass.user);
+    assert(b.trySubmit(OpRead(pipe.reader.borrowFd.fd, Buf.init, ulong.max), readToken, readSlot));
+    assert(b.trySubmit(OpWrite(pipe.writer.borrowFd.fd, Buf.init, ulong.max), writeToken, writeSlot));
+    uint reads, writes;
+    while (reads + writes < 2)
+    {
+        KernelTimespec deadline = KernelTimespec(2, 0);
+        assert(b.submitAndWait(1, &deadline).value != 0);
+        b.reap((ref const RawCompletion c) {
+            assert(c.res == 5);
+            if (c.userData == readToken.raw)
+                assert(++reads == 1);
+            else
+                assert(c.userData == writeToken.raw && ++writes == 1);
+        });
+    }
+    assert(rx[0 .. 5] == tx[]);
+
+    const cancelToken = OpToken.pack(3, 1, OpClass.internal);
+    assert(b.trySubmit(OpRead(pipe.reader.borrowFd.fd, Buf.init, ulong.max), readToken, readSlot));
+    assert(b.trySubmitCancel(cancelToken, readToken));
+    uint cancelled, acknowledged;
+    while (cancelled + acknowledged < 2)
+    {
+        KernelTimespec deadline = KernelTimespec(2, 0);
+        assert(b.submitAndWait(1, &deadline).value != 0);
+        b.reap((ref const RawCompletion c) {
+            if (c.userData == readToken.raw)
+                assert(c.res == -ECANCELED && ++cancelled == 1);
+            else
+                assert(c.userData == cancelToken.raw && c.res == 0 && ++acknowledged == 1);
+        });
+    }
+    pipe.writer.close();
+    assert(b.trySubmit(OpRead(pipe.reader.borrowFd.fd, Buf.init, ulong.max), readToken, readSlot));
+    KernelTimespec deadline = KernelTimespec(2, 0);
+    assert(b.submitAndWait(1, &deadline).value != 0);
+    assert(b.reap((ref const RawCompletion c) {
+        assert(c.userData == readToken.raw && c.res == 0);
+    }) == 1);
 }
 
 /// The M11 data-path gate (runs under Wine): drive a real WSASend through the

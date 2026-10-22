@@ -50,6 +50,7 @@ echo "module deps; import sparkles.event_horizon.backend.iocp;" > deps.d
 win32-ldc2 -lib -i -i=-sparkles.event_horizon.backend.iocp \
   -preview=in -preview=dip1000 "${includes[@]}" \
   deps.d "$repo/libs/test-runner-impl/src/sparkles/test_runner/skip.d" \
+  "$repo/libs/event-horizon-sys/src/sparkles/event_horizon/sys/pipe.d" \
   -of=deps.lib
 
 echo ">> linking the IOCP data-path test ..."
