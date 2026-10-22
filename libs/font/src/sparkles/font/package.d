@@ -59,6 +59,7 @@ public import sparkles.font.math_table;
 public import sparkles.font.metrics;
 public import sparkles.font.names;
 public import sparkles.font.outlines;
+public import sparkles.font.raster;
 public import sparkles.font.tables;
 public import sparkles.font.units;
 public import sparkles.font.variations;
