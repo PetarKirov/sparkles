@@ -17,10 +17,30 @@ module sparkles.wired_bench.twitter;
 
 import std.json : JSONValue, parseJSON;
 
-import iopipe.json.serialize : ignoreExtras;
-import mir.serde : serdeIgnoreUnexpectedKeys;
+// Each engine's "ignore unknown keys" UDA is gated on that engine's own
+// `versions` flag, so dropping an engine is one line in `dub.sdl` — an
+// ungated import here would keep its package a hard build dependency. The
+// stand-in structs make the attribute inert rather than absent, so the shared
+// declarations below stay engine-agnostic.
+version (BenchMirIon)
+{
+    import mir.serde : serdeIgnoreUnexpectedKeys;
 
-@serdeIgnoreUnexpectedKeys @ignoreExtras
+    alias MirIgnore = serdeIgnoreUnexpectedKeys;
+}
+else
+    struct MirIgnore {}
+
+version (BenchJsoniopipe)
+{
+    import iopipe.json.serialize : ignoreExtras;
+
+    alias IopipeIgnore = ignoreExtras;
+}
+else
+    struct IopipeIgnore {}
+
+@MirIgnore @IopipeIgnore
 struct TwitterUser
 {
     long id;
@@ -28,7 +48,7 @@ struct TwitterUser
     long followers_count;
 }
 
-@serdeIgnoreUnexpectedKeys @ignoreExtras
+@MirIgnore @IopipeIgnore
 struct TwitterStatus
 {
     string created_at;
@@ -39,7 +59,7 @@ struct TwitterStatus
     long favorite_count;
 }
 
-@serdeIgnoreUnexpectedKeys @ignoreExtras
+@MirIgnore @IopipeIgnore
 struct Twitter
 {
     TwitterStatus[] statuses;
