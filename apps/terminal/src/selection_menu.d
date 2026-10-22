@@ -1371,12 +1371,18 @@ struct SelectionUi
     void useDesktop(in TerminalConfig c, scope const Binding[] table) @system
     {
         platform.touch = false;
-        platform.clipboardHasText = () {
-            import raylib : GetClipboardText;
+        version (TerminalVulkan)
+        {
+            // No clipboard-read errand on this arm yet. Leaving the probe
+            // unset keeps the documented meaning: Paste is offered.
+        }
+        else
+            platform.clipboardHasText = () {
+                import raylib : GetClipboardText;
 
-            const t = GetClipboardText();
-            return t !is null && *t != 0;
-        };
+                const t = GetClipboardText();
+                return t !is null && *t != 0;
+            };
         style = c.ui.selectionMenu;
         shortcuts = shortcutsFrom(table);
     }

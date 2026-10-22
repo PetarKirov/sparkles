@@ -110,7 +110,8 @@ struct DesktopTerminal
             host.setViewerColors(chromeFg, chromeBg); // `TDV7`
         }
         host.theme = ChromeTheme.of(chromeFg, chromeBg);
-        version (TerminalVulkan) {}
+        version (TerminalVulkan)
+            selection.frame(h, host);
         else
             selection.pollDesktop(h, host, Rect(0, 0, screenW, screenH));
         host.frame(h, Rect(0, 0, screenW, screenH));
@@ -138,7 +139,8 @@ struct DesktopTerminal
     /// Keys through the table; a paste to the focused pane.
     void handle(H)(ref H h, in Event e)
     {
-        import sparkles.input : EndOfInput, FocusEvent, PasteEvent, PointerEvent, WheelEvent;
+        import sparkles.input : EndOfInput, FocusEvent, PasteEvent, PointerAction,
+            PointerButton, PointerEvent, WheelEvent;
 
         e.match!(
             (in KeyEvent k) { onKey(h, k); },
@@ -157,7 +159,17 @@ struct DesktopTerminal
             },
             (in PointerEvent p) {
                 version (TerminalVulkan)
+                {
                     host.notePointer(p);
+                    if (p.action == PointerAction.press && p.button == PointerButton.right)
+                    {
+                        selection.frame(h, host);
+                        cast(void) selection.rightClick(host,
+                            Rect(0, 0, h.size.width * h.cellWidth,
+                                h.size.height * h.cellHeight),
+                            h.cellWidth, h.cellHeight, p.pos, p.mods.shift);
+                    }
+                }
             },
             (in FocusEvent f) {
                 version (TerminalVulkan)
