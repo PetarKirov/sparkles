@@ -25,6 +25,7 @@ import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fon
 import sparkles.font.face : Face;
 import sparkles.font.instance : Instance, InstanceSize;
 import sparkles.font.tables : hhea, Hhea, hmtx, Hmtx, os2, Os2, post;
+import sparkles.font.outlines : phantomAdvance;
 import sparkles.font.units : checkedAdd, DesignValue, Ppem, toLayoutUnit, toPixels;
 import sparkles.font.variations : DeltaSetIndex, DeltaSetIndexMap, ItemVariationStore, NormalizedCoords;
 
@@ -618,7 +619,8 @@ FontResult!Hvar hvar(return scope const Face face, ushort fvarAxisCount)
 
 /**
 What advances at an instance read, prepared once: `hmtx`, and at nonzero
-coordinates `HVAR` or the error every varied advance gives.
+coordinates `HVAR`, or — in a face without `HVAR` — the `gvar` phantom
+points (FTV14, FTO5).
 */
 private struct AdvanceSource
 {
@@ -626,7 +628,7 @@ private struct AdvanceSource
 
     private Hmtx hmtx_;
     private Hvar hvar_;
-    private bool varied_, broken_;
+    private bool varied_, broken_, phantom_;
     private FontError error_;
 
     static FontResult!AdvanceSource of(return scope const Face face, scope const ref Instance inst)
@@ -638,10 +640,12 @@ private struct AdvanceSource
             return fontOk(AdvanceSource(m.value));
         auto h = hvar(face, inst.axisCount);
         if (h.hasError)
-            // No HVAR: phantom points are M3's (FTV14).
-            return fontOk(AdvanceSource(m.value, Hvar.init, true, true,
-                h.error.kind == FontErrorKind.missingTable
-                    ? FontError(FontErrorKind.unsupportedCapability, Tag("HVAR")) : h.error));
+        {
+            // No HVAR: the advance comes from the gvar phantom points.
+            if (h.error.kind == FontErrorKind.missingTable)
+                return fontOk(AdvanceSource(m.value, Hvar.init, true, false, true));
+            return fontOk(AdvanceSource(m.value, Hvar.init, true, true, false, h.error));
+        }
         return fontOk(AdvanceSource(m.value, h.value, true));
     }
 
@@ -653,6 +657,9 @@ private struct AdvanceSource
         const stored = DesignValue.fromUnits(a.value, inst.unitsPerEm);
         if (!varied_)
             return fontOk!DesignValue(stored);
+        if (phantom_)
+            return inst.face.has(Tag("gvar")) ? phantomAdvance(inst, gid)
+                : fontOk!DesignValue(stored);
         if (broken_)
             return fontErr!DesignValue(error_);
         const d = hvar_.advanceDelta(gid, inst.coords, inst.unitsPerEm);
@@ -664,10 +671,11 @@ private struct AdvanceSource
 
 /**
 The advance of glyph `gid` at `inst` (FTM18): the `hmtx` advance (FTP24)
-plus, at nonzero coordinates, the `HVAR` delta (FTV14). A face without
-`HVAR` at nonzero coordinates is `unsupportedCapability`; an unreadable
-`HVAR` is its error, with no fallback. A negative varied advance is returned
-as computed. Costs O(r · a).
+plus, at nonzero coordinates, the `HVAR` delta (FTV14); in a face without
+`HVAR`, the `gvar` phantom-point span instead (FTO5), which is the stored
+advance when the face has no `gvar`. An unreadable `HVAR` is its error,
+with no fallback. A negative varied advance is returned as computed.
+Costs O(r · a).
 */
 FontResult!Measurement advance(in Instance inst, uint gid)
 {

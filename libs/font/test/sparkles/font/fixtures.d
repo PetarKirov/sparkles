@@ -1429,3 +1429,228 @@ ubyte[] svgTable(uint entries, uint version_ = 0)
     foreach (i; 0 .. entries) t ~= u16(i) ~ u16(i) ~ u32(docAt) ~ u32(5);
     return t ~ cast(const(ubyte)[]) "<svg/";
 }
+
+/// One point of a `simpleGlyph` contour: x, y, on-curve (1/0).
+alias GlyphPoint = int[3];
+
+/**
+A simple one-contour `glyf` glyph over `points`, coordinates as signed
+16-bit deltas; `overlap` sets `OVERLAP_SIMPLE` on the first flag.
+*/
+ubyte[] simpleGlyph(const(GlyphPoint)[] points, bool overlap = false)
+{
+    if (points.length == 0)
+        return null;
+    int xMin = int.max, yMin = int.max, xMax = int.min, yMax = int.min;
+    foreach (p; points)
+    {
+        import std.algorithm : max, min;
+        xMin = min(xMin, p[0]);
+        yMin = min(yMin, p[1]);
+        xMax = max(xMax, p[0]);
+        yMax = max(yMax, p[1]);
+    }
+    ubyte[] t = u16(1) ~ u16(cast(uint) xMin) ~ u16(cast(uint) yMin)
+        ~ u16(cast(uint) xMax) ~ u16(cast(uint) yMax)
+        ~ u16(cast(uint)(points.length - 1)) ~ u16(0); // one contour, no instructions
+    foreach (i, p; points)
+        t ~= cast(ubyte)((p[2] ? 1 : 0) | (overlap && i == 0 ? 0x40 : 0));
+    foreach (axis; 0 .. 2)
+    {
+        int previous;
+        foreach (p; points)
+        {
+            t ~= u16(cast(uint)(p[axis] - previous));
+            previous = p[axis];
+        }
+    }
+    return t;
+}
+
+/// A simple `glyf` glyph over several contours; `simpleGlyph` per contour.
+ubyte[] contourGlyph(const(GlyphPoint[][]) contours, bool overlap = false)
+{
+    if (contours.length == 0)
+        return null;
+    ubyte[] t;
+    int xMin = int.max, yMin = int.max, xMax = int.min, yMax = int.min;
+    foreach (c; contours)
+        foreach (p; c)
+        {
+            import std.algorithm : max, min;
+            xMin = min(xMin, p[0]);
+            yMin = min(yMin, p[1]);
+            xMax = max(xMax, p[0]);
+            yMax = max(yMax, p[1]);
+        }
+    t = u16(cast(uint) contours.length) ~ u16(cast(uint) xMin) ~ u16(cast(uint) yMin)
+        ~ u16(cast(uint) xMax) ~ u16(cast(uint) yMax);
+    size_t count;
+    foreach (c; contours)
+    {
+        count += c.length;
+        t ~= u16(cast(uint)(count - 1));
+    }
+    t ~= u16(0);
+    foreach (ci, c; contours)
+        foreach (i, p; c)
+            t ~= cast(ubyte)((p[2] ? 1 : 0) | (overlap && ci == 0 && i == 0 ? 0x40 : 0));
+    foreach (axis; 0 .. 2)
+    {
+        int previous;
+        foreach (c; contours)
+            foreach (p; c)
+            {
+                t ~= u16(cast(uint)(p[axis] - previous));
+                previous = p[axis];
+            }
+    }
+    return t;
+}
+
+/// One component of a composite glyph: glyph index, raw flags, two arguments.
+struct CompositePart
+{
+    uint glyph;
+    uint flags = 0x0003; // word arguments, XY values
+    int arg1, arg2;
+    /// F2Dot14 scale values, in operator order (1, 2 or 4 of them).
+    const(short)[] scales;
+}
+
+/// A composite `glyf` glyph (header contour count −1) over `parts`.
+ubyte[] compositeGlyph(const(CompositePart)[] parts)
+{
+    ubyte[] t = u16(0xFFFF) ~ u16(0) ~ u16(0) ~ u16(0) ~ u16(0);
+    foreach (i, part; parts)
+    {
+        uint flags = part.flags;
+        if (i + 1 < parts.length)
+            flags |= 0x0020; // MORE_COMPONENTS
+        t ~= u16(flags) ~ u16(part.glyph);
+        if (flags & 0x0001)
+            t ~= u16(cast(uint) part.arg1) ~ u16(cast(uint) part.arg2);
+        else
+            t ~= [cast(ubyte) part.arg1, cast(ubyte) part.arg2];
+        foreach (s; part.scales)
+            t ~= u16(cast(uint) s);
+    }
+    return t;
+}
+
+/// The concatenated `glyf` table of `glyphs`, each padded to even length.
+ubyte[] glyfTable(const(ubyte[])[] glyphs)
+{
+    ubyte[] t;
+    foreach (g; glyphs)
+    {
+        t ~= g;
+        if (t.length % 2)
+            t ~= 0;
+    }
+    return t;
+}
+
+/// The `loca` table for `glyphs` as laid out by `glyfTable`.
+ubyte[] locaTable(const(ubyte[])[] glyphs, bool longFormat = false)
+{
+    ubyte[] t;
+    size_t offset;
+    foreach (g; glyphs)
+    {
+        t ~= longFormat ? u32(cast(uint) offset) : u16(cast(uint)(offset / 2));
+        offset += g.length + (g.length % 2);
+    }
+    t ~= longFormat ? u32(cast(uint) offset) : u16(cast(uint)(offset / 2));
+    return t;
+}
+
+/// One packed `gvar` delta series (16-bit word runs) for `deltas`.
+ubyte[] gvarDeltaSeries(const(int)[] deltas)
+{
+    ubyte[] t;
+    size_t i;
+    while (i < deltas.length)
+    {
+        const run = deltas.length - i < 64 ? deltas.length - i : 64;
+        t ~= cast(ubyte)(0x40 | (run - 1));
+        foreach (d; deltas[i .. i + run])
+            t ~= u16(cast(uint) d);
+        i += run;
+    }
+    return t;
+}
+
+/**
+One glyph's `gvar` data: a single embedded-peak tuple over every point
+(contour points plus the four phantom points, hence `dx.length`), with
+16-bit delta series for x then y.
+*/
+ubyte[] glyphVarData(const(short)[] peak, const(int)[] dx, const(int)[] dy)
+{
+    const headerSize = 4 + 2 * peak.length;
+    const series = gvarDeltaSeries(dx) ~ gvarDeltaSeries(dy);
+    ubyte[] t = u16(1) ~ u16(cast(uint)(4 + headerSize)) ~ u16(cast(uint) series.length) ~ u16(0x8000);
+    foreach (p; peak)
+        t ~= u16(cast(uint) p);
+    return t ~ series;
+}
+
+/**
+A `gvar` table of `axisCount` axes whose glyph 0 varies as `glyph0` (built
+by `glyphVarData`) and whose other `glyphCount - 1` glyphs do not vary. Short
+offsets count 2-byte units, so `glyph0` is padded to an even length.
+*/
+ubyte[] gvarTable(uint glyphCount, const(ubyte)[] glyph0, uint axisCount = 1)
+{
+    if (glyph0.length % 2)
+        glyph0 ~= u8(0);
+    const offsetsAt = 20;
+    const dataAt = offsetsAt + 2 * (glyphCount + 1);
+    ubyte[] t = u16(1) ~ u16(0) ~ u16(axisCount) ~ u16(0) ~ u32(offsetsAt + 2)
+        ~ u16(glyphCount) ~ u16(0) ~ u32(dataAt);
+    size_t offset;
+    foreach (_; 0 .. glyphCount)
+    {
+        t ~= u16(cast(uint)(offset / 2));
+        offset = glyph0.length;
+    }
+    return t ~ u16(cast(uint)(offset / 2)) ~ glyph0;
+}
+
+/// A CFF DICT integer (28-form, signed 16-bit).
+ubyte[] dictInt(int v) => [cast(ubyte) 28, cast(ubyte)(v >> 8), cast(ubyte) v];
+
+/**
+A minimal `CFF ` table: one font dict whose CharStrings INDEX holds
+`charstrings`, with `privateDict` as its Private DICT (which may carry a
+Subrs offset relative to itself, served from `localSubrs` placed right
+after it when non-empty). The Private DICT bytes are used verbatim, so a
+caller wanting Subrs appends `dictInt(offset) ~ [19]` with the offset
+`privateDict.length` rounded as laid out here: Subrs INDEX follows the
+Private DICT immediately.
+*/
+ubyte[] cffOutlineTable(const(ubyte)[][] charstrings, const(ubyte)[] privateDict = null,
+    const(ubyte)[][] localSubrs = null)
+{
+    const nameIndex = cffIndex([cast(const(ubyte)[]) "Test"]);
+    const stringsIndex = cffIndex(null);
+    const globalSubrs = cffIndex(null);
+    const charStrings = cffIndex(charstrings);
+    const subrs = localSubrs.length ? cffIndex(localSubrs) : null;
+    // Top DICT with placeholder offsets, then with real ones; the 28-form
+    // operands keep its size unchanged.
+    ubyte[] topDict(size_t charStringsAt, size_t privateAt)
+        => dictInt(cast(int) charStringsAt) ~ [cast(ubyte) 17]
+            ~ dictInt(cast(int) privateDict.length) ~ dictInt(cast(int) privateAt)
+            ~ [cast(ubyte) 18];
+    const header = 4;
+    const topAt = header + nameIndex.length;
+    const topSize = cffIndex([topDict(0, 0)]).length;
+    const charStringsAt = topAt + topSize + stringsIndex.length + globalSubrs.length;
+    const privateAt = charStringsAt + charStrings.length;
+    ubyte[] t = [cast(ubyte) 1, 0, 4, 4];
+    t ~= nameIndex ~ cffIndex([topDict(charStringsAt, privateAt)]) ~ stringsIndex
+        ~ globalSubrs ~ charStrings ~ privateDict ~ subrs;
+    return t;
+}

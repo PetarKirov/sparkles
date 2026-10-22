@@ -66,7 +66,14 @@ private ubyte[] build(Spec s) @safe pure nothrow
     if (s.variable)
         tables ~= TableData("fvar", fvarTable([FvarAxis("TEST", -one, 0, one)]));
     if (s.glyf)
-        tables ~= TableData("glyf", [0, 0, 0, 0]);
+    {
+        // Glyph 1 has yMax 100; the others are single points at y 0.
+        const glyphs = [simpleGlyph([[0, 0, 1]]),
+            simpleGlyph([[0, 0, 1], [10, 100, 1]]),
+            simpleGlyph([[0, 0, 1]]), simpleGlyph([[0, 0, 1]])];
+        tables ~= TableData("loca", locaTable(glyphs));
+        tables ~= TableData("glyf", glyfTable(glyphs));
+    }
     return sfnt(tables);
 }
 
@@ -303,9 +310,11 @@ unittest
 unittest
 {
     auto s = standard();
-    // vmtx and glyf: the M3 rule, unsupported until then.
+    // vmtx and glyf: the M3 rule — top side bearing (20) plus yMax (100).
     s.glyf = true;
-    assert(at(build(s)).verticalOrigin(1).error.kind == FontErrorKind.unsupportedCapability);
+    const fallback = at(build(s)).verticalOrigin(1);
+    assert(fallback.hasValue && fallback.value.source == VerticalOriginSource.vmtxGlyph
+        && fallback.value.y.design == du(120));
     // vmtx without glyf (a CFF face), or glyf without vmtx: absent, never synthesized.
     s.glyf = false;
     const cff = at(build(s)).verticalOrigin(1);
@@ -433,7 +442,10 @@ unittest
             if (face.has(Tag("VORG")))
                 assert(o.hasValue && o.value.present, entry.name);
             else if (face.has(Tag("vmtx")) && face.has(Tag("glyf")))
-                assert(o.error.kind == FontErrorKind.unsupportedCapability, entry.name);
+                // The M3 fallback: an origin from the outline, present
+                // exactly when the glyph has points.
+                assert(o.hasValue && (o.value.present
+                    ? o.value.source == VerticalOriginSource.vmtxGlyph : true), entry.name);
             else
                 assert(o.hasValue && !o.value.present, entry.name);
         }
