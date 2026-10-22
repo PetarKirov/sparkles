@@ -3,14 +3,14 @@ The Windows peer backend: I/O Completion Ports (SPEC §3.5, PLAN M11). IOCP
 is natively completion-based — the exact shape the `isCompletionBackend`
 concept was designed around — so the mapping is direct: each async winsock
 call (`WSARecv`/`WSASend`/`AcceptEx`/`ConnectEx`) carries an
-`OVERLAPPED` embedded in a backend-owned op context; `GetQueuedCompletionStatus`
+`OVERLAPPED` embedded in a backend-owned op context; `GetQueuedCompletionStatusEx`
 returns that `OVERLAPPED*`, from which the op's `user_data` token and the
 transferred byte count are recovered into a `RawCompletion`.
 
 Unlike io_uring there is no submission queue to fill and flush — a winsock
 call is issued immediately in `trySubmit` and either completes inline or
 posts to the port later. `submitAndWait` therefore only waits (`flush` is a
-no-op), and the deadline maps to the `GetQueuedCompletionStatus` timeout.
+no-op), and the deadline maps to the `GetQueuedCompletionStatusEx` timeout.
 
 Status: verified under Wine two ways — the raw backend's data path
 (`scripts/verify-iocp-wine.sh`) and the full `EventLoop!IocpBackend` fiber echo
@@ -26,12 +26,12 @@ module sparkles.event_horizon.backend.iocp;
 
 version (Windows)  :  // IOCP is Windows-only.
 
-import core.sys.windows.winbase : CreateIoCompletionPort, GetQueuedCompletionStatus,
+import core.sys.windows.winbase : CreateIoCompletionPort,
     INFINITE, OVERLAPPED;
 import core.sys.windows.windef : DWORD, FALSE, TRUE;
 import core.sys.windows.winnt : HANDLE;
 import core.sys.windows.basetsd : ULONG_PTR;
-import core.stdc.errno : ECONNREFUSED, EIO;
+import core.stdc.errno : ECANCELED, ECONNREFUSED, EIO, ENOENT;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
@@ -57,6 +57,10 @@ alias ULONG = uint;
 
 extern (Windows) nothrow @nogc
 {
+    int GetQueuedCompletionStatusEx(HANDLE port, OverlappedEntry* entries,
+        uint count, uint* removed, uint timeout, int alertable);
+    int CancelIoEx(HANDLE handle, OVERLAPPED* ov);
+    uint GetLastError();
     struct WSADATA
     {
         ushort wVersion;
@@ -111,6 +115,16 @@ extern (Windows) nothrow @nogc
         OVERLAPPED* ov) nothrow @nogc;
 }
 
+// The batched API reports the operation's NTSTATUS in each entry, not in
+// GetLastError (which belongs to the dequeue call).
+struct OverlappedEntry
+{
+    ULONG_PTR key;
+    OVERLAPPED* ov;
+    ULONG_PTR status;
+    DWORD bytes;
+}
+
 struct GUID
 {
     uint data1;
@@ -155,85 +169,6 @@ enum IoKind : ubyte
     wake,     // external waker post (SPEC §5.6): persistent, res is 0
 }
 
-/// An open-addressing hash set of registered sockets (`INVALID_SOCKET` is the
-/// empty sentinel — never a real socket). Grows at 75% load; `pureMalloc`-
-/// backed so the backend stays GC-free.
-struct RegSet
-{
-    import core.memory : pureFree, pureMalloc;
-
-    private SOCKET* _slots;
-    private size_t _cap;
-    private size_t _count;
-
-    void initialize(size_t cap) @trusted nothrow @nogc
-    {
-        _cap = cap; // power of two
-        _slots = cast(SOCKET*) pureMalloc(cap * SOCKET.sizeof);
-        if (_slots !is null)
-            foreach (i; 0 .. _cap)
-                _slots[i] = INVALID_SOCKET;
-        _count = 0;
-    }
-
-    void terminate() @trusted nothrow @nogc
-    {
-        if (_slots !is null)
-            pureFree(_slots);
-        _slots = null;
-        _cap = 0;
-        _count = 0;
-    }
-
-    bool contains(SOCKET s) const @trusted nothrow @nogc
-    {
-        if (_slots is null)
-            return false;
-        auto i = cast(size_t) s & (_cap - 1);
-        while (_slots[i] != INVALID_SOCKET)
-        {
-            if (_slots[i] == s)
-                return true;
-            i = (i + 1) & (_cap - 1);
-        }
-        return false;
-    }
-
-    void add(SOCKET s) @trusted nothrow @nogc
-    {
-        if (_slots is null)
-            return;
-        if ((_count + 1) * 4 >= _cap * 3) // 75% load → grow
-            grow();
-        auto i = cast(size_t) s & (_cap - 1);
-        while (_slots[i] != INVALID_SOCKET)
-        {
-            if (_slots[i] == s)
-                return;
-            i = (i + 1) & (_cap - 1);
-        }
-        _slots[i] = s;
-        ++_count;
-    }
-
-    private void grow() @trusted nothrow @nogc
-    {
-        auto old = _slots;
-        const oldCap = _cap;
-        initialize(_cap * 2);
-        if (_slots is null)
-        {
-            _slots = old; // OOM: keep the old table (correctness > growth)
-            _cap = oldCap;
-            return;
-        }
-        foreach (i; 0 .. oldCap)
-            if (old[i] != INVALID_SOCKET)
-                add(old[i]);
-        pureFree(old);
-    }
-}
-
 /// A backend-owned op context. `ov` is first so `OVERLAPPED*` casts back to it.
 struct IocpOp
 {
@@ -246,6 +181,7 @@ struct IocpOp
     ubyte[64] addrBuf;  // AcceptEx local+remote address output
     uint nextFree;      // freelist link (uint.max = none)
     bool inUse;
+    HANDLE handle;      // the exact handle CancelIoEx must target
 }
 
 public:
@@ -254,6 +190,7 @@ public:
 struct IocpBackend
 {
     @disable this(this);
+    enum terminalCancelCompletions = true;
 
     /// Creates the completion port and starts winsock.
     IoResult!void open(in BackendConfig cfg) @trusted nothrow
@@ -307,10 +244,14 @@ struct IocpBackend
             closesocket(boot);
         }
 
-        _regSet.initialize(64);
-
         _caps.backend = BackendId.iocp;
         _caps.mode = LoopMode.cooperative;
+        foreach (kind; [OpKind.nop, OpKind.recv, OpKind.send, OpKind.timeout])
+            _caps.opBits |= 1UL << kind;
+        if (_acceptEx !is null)
+            _caps.opBits |= 1UL << OpKind.accept;
+        if (_connectEx !is null)
+            _caps.opBits |= 1UL << OpKind.connect;
         return ioOk();
     }
 
@@ -339,7 +280,6 @@ struct IocpBackend
             CloseHandle(_hostEvent);
             _hostEvent = null;
         }
-        _regSet.terminate();
         WSACleanup();
     }
 
@@ -366,28 +306,28 @@ struct IocpBackend
         return ioOk();
     }
 
-    /// Lazily associates a socket the first time an op targets it — so the
-    /// generic loop's verbs (which never call `register`) still work. Tracked
-    /// in an open-addressing hash set (grows unbounded; O(1) amortized), so a
-    /// server with thousands of connections registers each exactly once.
-    private void ensureRegistered(SOCKET s) @trusted nothrow @nogc
-    {
-        if (_regSet.contains(s))
-            return;
-        CreateIoCompletionPort(cast(HANDLE) s, _port, 0, 0);
-        _regSet.add(s);
-    }
+    /// Sockets belong to this loop and must not already belong to another
+    /// completion port. Windows/Wine reject a repeated association with
+    /// ERROR_INVALID_PARAMETER; under that ownership precondition this means
+    /// the existing association is ours. Do not cache numeric handle values:
+    /// a closed socket's value can be reused by a new socket.
+    private bool ensureRegistered(SOCKET s) @trusted nothrow @nogc
+        => CreateIoCompletionPort(cast(HANDLE) s, _port, 0, 0) !is null
+            || GetLastError() == 87;
 
     // ── lowering: issue the winsock async call immediately ──────────────────
 
     /// A NOP: post a synthetic completion to the port.
     bool trySubmit(in OpNop, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
+        if (_readyCount == _ready.length)
+            return false;
         auto op = acquire();
         if (op is null)
             return false;
         op.token = token.raw;
-        PostQueuedCompletionStatus(_port, 0, 0, &op.ov);
+        if (!PostQueuedCompletionStatus(_port, 0, 0, &op.ov))
+            return reject(op, -EIO);
         SetEvent(_hostEvent);
         return true;
     }
@@ -413,19 +353,22 @@ struct IocpBackend
     /// A socket receive into the pinned buffer's capacity (`WSARecv`).
     bool trySubmit(in OpRecv o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
-        ensureRegistered(cast(SOCKET) o.fd);
+        if (_readyCount == _ready.length)
+            return false;
         auto op = acquire();
         if (op is null)
             return false;
         op.token = token.raw;
         auto space = slot.pinned.space();
+        op.handle = cast(HANDLE) cast(SOCKET) o.fd;
+        if (!ensureRegistered(cast(SOCKET) o.fd))
+            return reject(op, -EIO);
         op.buf = WSABUF(cast(ULONG) space.length, cast(char*) space.ptr);
         DWORD flags, recvd;
         const rc = WSARecv(cast(SOCKET) o.fd, &op.buf, 1, &recvd, &flags, &op.ov, null);
         if (rc == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING)
         {
-            release(op);
-            return false;
+            return reject(op, -EIO);
         }
         repairHostSignalAfterIssue();
         return true;
@@ -434,19 +377,22 @@ struct IocpBackend
     /// A socket send of the pinned buffer's valid bytes (`WSASend`).
     bool trySubmit(in OpSend o, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
     {
-        ensureRegistered(cast(SOCKET) o.fd);
+        if (_readyCount == _ready.length)
+            return false;
         auto op = acquire();
         if (op is null)
             return false;
         op.token = token.raw;
         auto bytes = slot.pinned[];
+        op.handle = cast(HANDLE) cast(SOCKET) o.fd;
+        if (!ensureRegistered(cast(SOCKET) o.fd))
+            return reject(op, -EIO);
         op.buf = WSABUF(cast(ULONG) bytes.length, cast(char*) bytes.ptr);
         DWORD sent;
         const rc = WSASend(cast(SOCKET) o.fd, &op.buf, 1, &sent, 0, &op.ov, null);
         if (rc == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING)
         {
-            release(op);
-            return false;
+            return reject(op, -EIO);
         }
         repairHostSignalAfterIssue();
         return true;
@@ -468,25 +414,30 @@ struct IocpBackend
     /// with the port, and issue AcceptEx. On completion `res` is the new fd.
     bool trySubmit(in OpAccept o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
-        if (_acceptEx is null)
+        if (_readyCount == _ready.length)
             return false;
+        auto op = acquire();
+        if (op is null)
+            return false;
+        op.token = token.raw;
+        if (_acceptEx is null)
+            return reject(op, -EIO);
         const listenSock = cast(SOCKET) o.listenFd;
-        ensureRegistered(listenSock);
+        if (!ensureRegistered(listenSock))
+            return reject(op, -EIO);
         const acceptSock = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, null, 0,
             WSA_FLAG_OVERLAPPED);
         if (acceptSock == INVALID_SOCKET)
-            return false;
-        ensureRegistered(acceptSock);
-        auto op = acquire();
-        if (op is null)
+            return reject(op, -EIO);
+        if (!ensureRegistered(acceptSock))
         {
             closesocket(acceptSock);
-            return false;
+            return reject(op, -EIO);
         }
-        op.token = token.raw;
         op.kind = IoKind.accept;
         op.sock = acceptSock;
         op.listenSock = listenSock;
+        op.handle = cast(HANDLE) listenSock;
         DWORD received;
         // localAddrLength/remoteAddrLength = sizeof(sockaddr_in)+16 = 32.
         const rc = _acceptEx(listenSock, acceptSock, op.addrBuf.ptr, 0, 32, 32,
@@ -494,8 +445,7 @@ struct IocpBackend
         if (rc == 0 && WSAGetLastError() != WSA_IO_PENDING)
         {
             closesocket(acceptSock);
-            release(op);
-            return false;
+            return reject(op, -EIO);
         }
         repairHostSignalAfterIssue();
         return true;
@@ -505,34 +455,40 @@ struct IocpBackend
     /// completion `res` is 0 / -errno.
     bool trySubmit(in OpConnect o, OpToken token, ref OpSlot) @trusted nothrow @nogc
     {
-        if (_connectEx is null)
+        if (_readyCount == _ready.length)
             return false;
+        auto op = acquire();
+        if (op is null)
+            return false;
+        op.token = token.raw;
+        if (_connectEx is null)
+            return reject(op, -EIO);
         const s = cast(SOCKET) o.fd;
         // ConnectEx requires a bound socket; bind to the wildcard address.
         sockaddr_in local;
         local.sin_family = AF_INET;
         local.sin_addr = htonl(INADDR_ANY);
         cast(void) bind(s, &local, sockaddr_in.sizeof);
-        ensureRegistered(s);
-        auto op = acquire();
-        if (op is null)
-            return false;
-        op.token = token.raw;
+        if (!ensureRegistered(s))
+            return reject(op, -EIO);
         op.kind = IoKind.connect;
         op.sock = s;
+        op.handle = cast(HANDLE) s;
         DWORD sent;
         const rc = _connectEx(s, o.addr.storage.ptr, o.addr.len, null, 0, &sent, &op.ov);
         if (rc == 0 && WSAGetLastError() != WSA_IO_PENDING)
         {
-            release(op);
-            return false;
+            return reject(op, -ECONNREFUSED);
         }
         repairHostSignalAfterIssue();
         return true;
     }
 
-    /// No submission queue on IOCP — calls issue inline. `flush` is a no-op.
-    IoResult!uint flush() @safe nothrow @nogc => ioOk(0u);
+    /// No submission queue on IOCP; surface any latched non-blocking-drain fault.
+    IoResult!uint flush() @safe nothrow @nogc
+        => _dequeueError == 0 ? ioOk(0u)
+            : ioErr!uint(EIO, OpKind.none, IoErrorStage.submit,
+                "GetQueuedCompletionStatusEx failed");
 
     /** Event that mirrors IOCP completions for a foreign native host wait. */
     void* nativeHostWaitHandle() @trusted pure nothrow @nogc
@@ -568,9 +524,8 @@ struct IocpBackend
     }
 
     /**
-    Waits for at least one completion (or until `deadline`), draining it and
-    any others already queued via the caller's subsequent `reap`. Here we
-    block on one `GetQueuedCompletionStatus` and stash it; `reap` returns it.
+    Waits for at least one completion (or until `deadline`), stashing a batch
+    for `reap`. Already-stashed results are never overwritten by a wait.
     */
     IoResult!uint submitAndWait(uint want, scope const KernelTimespec* deadline)
         @trusted nothrow
@@ -586,11 +541,11 @@ struct IocpBackend
         // packet before the probe runs, so this is the common case under Wine
         // and a race on Windows.
         expireTimers();
-        if (_hasPending || _synthCount != 0)
-            return ioOk((_hasPending ? 1u : 0u) + _synthCount);
+        if (_readyCount != 0)
+            return ioOk(_readyCount);
 
         // The wait timeout is the min of the caller's deadline and the
-        // earliest pending timer, so GQCS wakes when a timer is due.
+        // earliest pending timer, so the port wakes when a timer is due.
         ulong waitMs = deadline is null
             ? ulong.max
             : cast(ulong)(deadline.tv_sec * 1000 + deadline.tv_nsec / 1_000_000);
@@ -604,17 +559,12 @@ struct IocpBackend
         const timeout = waitMs == ulong.max ? INFINITE
             : (waitMs > uint.max ? uint.max : cast(DWORD) waitMs);
 
-        DWORD bytes;
-        ULONG_PTR key;
-        OVERLAPPED* ov;
-        const ok = GetQueuedCompletionStatus(_port, &bytes, &key, &ov, timeout);
-        if (ov !is null)
-        {
-            _pending = ovToCompletion(ov, bytes, ok != FALSE);
-            _hasPending = true;
-        }
+        dequeue(timeout);
+        if (_dequeueError != 0)
+            return ioErr!uint(EIO, OpKind.none, IoErrorStage.completion,
+                "GetQueuedCompletionStatusEx failed");
         expireTimers(); // synthesize any timers now due
-        return ioOk((_hasPending ? 1u : 0u) + _synthCount);
+        return ioOk(_readyCount);
     }
 
     /// Non-blocking drain: the stashed completion, expired timers, plus any
@@ -623,66 +573,114 @@ struct IocpBackend
     {
         uint n;
         expireTimers();
-        foreach (i; 0 .. _synthCount)
-        {
-            const c = _synth[i];
-            sink(c);
-            ++n;
-        }
-        _synthCount = 0;
-        if (_hasPending)
-        {
-            sink(_pending);
-            _hasPending = false;
-            ++n;
-        }
-        // Drain anything else already completed (zero timeout).
         for (;;)
         {
-            DWORD bytes;
-            ULONG_PTR key;
-            OVERLAPPED* ov;
-            const ok = GetQueuedCompletionStatus(_port, &bytes, &key, &ov, 0);
-            if (ov is null)
+            while (_readyCount != 0)
+            {
+                const c = _ready[_readyHead];
+                _readyHead = (_readyHead + 1) % _ready.length;
+                --_readyCount;
+                // Pop before dispatch: a callback may submit another op and
+                // its host-signal repair may enqueue a new batch here.
+                sink(c);
+                ++n;
+            }
+            expireTimers();
+            if (_readyCount == 0 && dequeue(0) == 0)
                 break;
-            const c = ovToCompletion(ov, bytes, ok != FALSE); // named: binds ref const
-            sink(c);
-            ++n;
         }
         return n;
     }
 
-    /// Cancel is best-effort on IOCP (`CancelIoEx` per handle); unimplemented
-    /// for the data-path verification (the loop's detach discipline covers
-    /// the slot lifetime).
-    bool trySubmitCancel(OpToken, OpToken) @safe nothrow @nogc => true;
+    /// Acknowledges cancellation separately from the target's terminal packet.
+    /// Neither its OVERLAPPED nor its pinned storage is released by CancelIoEx.
+    bool trySubmitCancel(OpToken cancelSlot, OpToken target) @trusted nothrow @nogc
+    {
+        if (_readyCount + 2 > _ready.length)
+            return false;
+        foreach (i; 0 .. _timerCount)
+        {
+            if (_timers[i].token != target.raw)
+                continue;
+            _timers[i] = _timers[--_timerCount];
+            enqueue(RawCompletion(target.raw, -ECANCELED, 0));
+            enqueue(RawCompletion(cancelSlot.raw, 0, 0));
+            return true;
+        }
+        int res = -ENOENT;
+        foreach (ref op; _ops)
+        {
+            if (!op.inUse || op.token != target.raw || op.kind == IoKind.wake)
+                continue;
+            if (op.handle !is null)
+            {
+                if (CancelIoEx(op.handle, &op.ov))
+                    res = 0;
+                else
+                    res = GetLastError() == 1168 ? -ENOENT : -EIO;
+            }
+            break;
+        }
+        // A packet may already have been dequeued into _ready, or may be
+        // queued on the port: completion won, and must still be delivered.
+        enqueue(RawCompletion(cancelSlot.raw, res, 0));
+        return true;
+    }
 
 private:
     /**
     Starting an overlapped operation resets its `hEvent`. If an older
     completion had already signalled the shared event, that reset would hide
-    it from the host. Repair by remembering one already-queued completion and
+    it from the host. Repair by remembering already-queued completions and
     restoring the level signal. A completion racing after this zero-time
     probe signals the event itself.
     */
     void repairHostSignalAfterIssue() @trusted nothrow @nogc
     {
-        if (_hasPending)
+        if (_readyCount != 0)
         {
             SetEvent(_hostEvent);
             return;
         }
 
-        DWORD bytes;
-        ULONG_PTR key;
-        OVERLAPPED* ov;
-        const ok = GetQueuedCompletionStatus(_port, &bytes, &key, &ov, 0);
-        if (ov !is null)
-        {
-            _pending = ovToCompletion(ov, bytes, ok != FALSE);
-            _hasPending = true;
+        if (dequeue(0) != 0)
             SetEvent(_hostEvent);
+    }
+
+    /// A bounded ring also used for software timers and cancel acknowledgments.
+    private void enqueue(RawCompletion completion) @trusted nothrow @nogc
+    {
+        assert(_readyCount < _ready.length);
+        _ready[(_readyHead + _readyCount) % _ready.length] = completion;
+        ++_readyCount;
+    }
+
+    /// Kernel rejection is a terminal result, never submission backpressure.
+    private bool reject(IocpOp* op, int res) @trusted nothrow @nogc
+    {
+        enqueue(RawCompletion(op.token, res, 0));
+        release(op);
+        SetEvent(_hostEvent);
+        return true;
+    }
+
+    private uint dequeue(DWORD timeout) @trusted nothrow @nogc
+    {
+        OverlappedEntry[64] entries;
+        const room = cast(uint)(_ready.length - _readyCount);
+        if (room == 0)
+            return 0;
+        uint removed;
+        if (!GetQueuedCompletionStatusEx(_port, entries.ptr, room, &removed, timeout, FALSE))
+        {
+            const error = GetLastError();
+            if (error != 258) // WAIT_TIMEOUT is an ordinary empty dequeue
+                _dequeueError = error;
+            return 0;
         }
+        foreach (ref entry; entries[0 .. removed])
+            enqueue(ovToCompletion(entry.ov, entry.bytes, cast(uint) entry.status));
+        return removed;
     }
 
     /// Moves any now-due timers into the synthesized-completion buffer.
@@ -692,19 +690,20 @@ private:
         uint w;
         foreach (i; 0 .. _timerCount)
         {
-            if (_timers[i].deadlineMs <= now && _synthCount < _synth.length)
-                _synth[_synthCount++] = RawCompletion(_timers[i].token, 0, 0);
+            if (_timers[i].deadlineMs <= now && _readyCount < _ready.length)
+                enqueue(RawCompletion(_timers[i].token, 0, 0));
             else
                 _timers[w++] = _timers[i]; // keep the still-pending ones
         }
         _timerCount = w;
     }
 
-    RawCompletion ovToCompletion(OVERLAPPED* ov, DWORD bytes, bool ok)
+    RawCompletion ovToCompletion(OVERLAPPED* ov, DWORD bytes, uint status)
         @trusted nothrow @nogc
     {
         auto op = cast(IocpOp*) ov; // ov is the first field of IocpOp
         const token = op.token;
+        const ok = cast(int) status >= 0;
         int res;
         final switch (op.kind)
         {
@@ -741,6 +740,8 @@ private:
                 // target for every future wake — never released here.
                 return RawCompletion(token, 0, 0);
         }
+        if (!ok && status == 0xc000_0120) // STATUS_CANCELLED
+            res = -ECANCELED;
         release(op);
         return RawCompletion(token, res, 0);
     }
@@ -777,17 +778,248 @@ private:
     HANDLE _hostEvent;
     LPFN_ACCEPTEX _acceptEx;
     LPFN_CONNECTEX _connectEx;
-    RegSet _regSet; // lazily-associated sockets (open-addressing hash set)
     Timer[64] _timers;
     uint _timerCount;
-    RawCompletion[64] _synth; // synthesized (timer) completions awaiting reap
-    uint _synthCount;
+    RawCompletion[64] _ready;
+    uint _readyHead;
+    uint _readyCount;
+    uint _dequeueError;
     IocpOp[] _ops;
     uint _cap;
     uint _freeHead = uint.max;
-    RawCompletion _pending;
-    bool _hasPending;
     BackendCaps _caps;
+}
+
+/// The capability mask names the lowered ops, not the complete vocabulary.
+@("iocp.caps.exactLoweringMask")
+@system unittest
+{
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    foreach (kind; [OpKind.nop, OpKind.recv, OpKind.send, OpKind.timeout])
+        assert(b.caps.supports(kind));
+    assert(b.caps.supports(OpKind.accept) == (b._acceptEx !is null));
+    assert(b.caps.supports(OpKind.connect) == (b._connectEx !is null));
+    assert(!b.caps.supports(OpKind.read));
+    assert(!b.caps.supports(OpKind.write));
+}
+
+/// A full dequeue batch, an overflow batch, and callback-side submission all
+/// survive without overwriting stashed packets or duplicating tokens.
+@("iocp.batch.multipleDrainsAndReentrantSubmission")
+@system unittest
+{
+    import sparkles.event_horizon.op : OpClass;
+
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    OpSlot slot;
+    foreach (i; 0 .. 192)
+        assert(b.trySubmit(OpNop(), OpToken.pack(i, 1, OpClass.user), slot));
+    assert(b.submitAndWait(1, null).value == 64);
+    uint[194] seen;
+    b.reap((ref const RawCompletion c) {
+        const index = OpToken(c.userData).index;
+        assert(index < seen.length);
+        assert((index == 193 ? c.res < 0 : c.res == 0) && seen[index]++ == 0);
+        if (index == 0)
+        {
+            assert(b.trySubmit(OpNop(), OpToken.pack(192, 1, OpClass.user), slot));
+            assert(b.trySubmit(OpRecv(-1), OpToken.pack(193, 1, OpClass.user), slot));
+        }
+    });
+    foreach (count; seen)
+        assert(count == 1);
+}
+
+/// Software timers and a completion that already won still acknowledge the
+/// internal cancel slot; only a pending timer changes to ECANCELED.
+@("iocp.cancel.timerAndCompletedTarget")
+@system unittest
+{
+    import sparkles.event_horizon.op : OpClass;
+
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    OpSlot slot;
+    const target = OpToken.pack(1, 1, OpClass.user);
+    const cancel = OpToken.pack(2, 1, OpClass.internal);
+    assert(b.trySubmit(OpTimeout(KernelTimespec(60, 0)), target, slot));
+    assert(b.trySubmitCancel(cancel, target));
+    uint targets, cancels;
+    b.reap((ref const RawCompletion c) {
+        if (c.userData == target.raw)
+        {
+            ++targets;
+            assert(c.res == -ECANCELED);
+        }
+        else
+        {
+            ++cancels;
+            assert(c.userData == cancel.raw && c.res == 0);
+        }
+    });
+    assert(targets == 1 && cancels == 1);
+    assert(b.trySubmitCancel(cancel, target));
+    assert(b.reap((ref const RawCompletion c) {
+        assert(c.userData == cancel.raw && c.res == -ENOENT);
+    }) == 1);
+}
+
+version (unittest)
+private void connectedSockets(out SOCKET client, out SOCKET server) @system nothrow
+{
+    const listener = socket(AF_INET, SOCK_STREAM, 0);
+    assert(listener != INVALID_SOCKET);
+    scope (exit) closesocket(listener);
+    sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr = htonl(INADDR_LOOPBACK);
+    assert(bind(listener, &addr, addr.sizeof) == 0);
+    assert(listen(listener, 1) == 0);
+    int length = addr.sizeof;
+    assert(getsockname(listener, &addr, &length) == 0);
+    client = socket(AF_INET, SOCK_STREAM, 0);
+    assert(client != INVALID_SOCKET);
+    assert(connect(client, &addr, addr.sizeof) == 0);
+    server = accept(listener, null, null);
+    assert(server != INVALID_SOCKET);
+}
+
+/// CancelIoEx races the receive, but never releases its OVERLAPPED before the
+/// terminal packet. Both the target and cancel complete exactly once.
+@("iocp.cancel.pendingReceiveAndCompletionRaces")
+@system unittest
+{
+    import sparkles.event_horizon.op : OpClass;
+
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    foreach (mode; 0 .. 3)
+    {
+        SOCKET client, server;
+        connectedSockets(client, server);
+        scope (exit) closesocket(client);
+        scope (exit) closesocket(server);
+        ubyte[32] storage;
+        OpSlot slot;
+        slot.pinned = Buf.fromForeign(storage[], null);
+        const target = OpToken.pack(1, 1, OpClass.user);
+        const cancel = OpToken.pack(2, 1, OpClass.internal);
+        assert(b.trySubmit(OpRecv(cast(int) server), target, slot));
+        Thread sender;
+        if (mode == 1)
+            sender = new Thread({
+                char[1] payload = 'x';
+                WSABUF buf = WSABUF(1, payload.ptr);
+                DWORD sent;
+                assert(WSASend(client, &buf, 1, &sent, 0, null, null) == 0);
+            }).start();
+        else if (mode == 2)
+        {
+            char[1] payload = 'x';
+            WSABUF buf = WSABUF(1, payload.ptr);
+            DWORD sent;
+            assert(WSASend(client, &buf, 1, &sent, 0, null, null) == 0);
+            KernelTimespec deadline = KernelTimespec(2, 0);
+            assert(b.submitAndWait(1, &deadline).value != 0);
+        }
+        assert(b.trySubmitCancel(cancel, target));
+        uint targets, cancels;
+        while (targets + cancels < 2)
+        {
+            KernelTimespec deadline = KernelTimespec(2, 0);
+            assert(b.submitAndWait(1, &deadline).value != 0);
+            b.reap((ref const RawCompletion c) {
+                if (c.userData == target.raw)
+                {
+                    assert(++targets == 1);
+                    assert(c.res == (mode == 0 ? -ECANCELED : 1)
+                        || (mode == 1 && c.res == -ECANCELED));
+                }
+                else
+                {
+                    assert(c.userData == cancel.raw && ++cancels == 1);
+                    assert(c.res == 0 || c.res == -ENOENT);
+                }
+            });
+        }
+        if (sender !is null)
+            sender.join();
+        assert(b.reap((ref const RawCompletion c) {}) == 0);
+    }
+}
+
+/// Hard port faults do not masquerade as an ordinary timeout or empty reap.
+@("iocp.wait.closedPortSurfacesAHardError")
+@system unittest
+{
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    CloseHandle(b._port);
+    b._port = null;
+    KernelTimespec zero;
+    assert(b.submitAndWait(1, &zero).hasError);
+    assert(b.flush().hasError);
+}
+
+/// A synchronous kernel rejection is delivered once instead of making the
+/// loop retry an invalid operation as though submission resources were full.
+@("iocp.rejection.invalidSocketIsATerminalCompletion")
+@system unittest
+{
+    import sparkles.event_horizon.op : OpClass;
+
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    OpSlot slot;
+    const token = OpToken.pack(1, 1, OpClass.user);
+    assert(b.trySubmit(OpRecv(-1), token, slot));
+    assert(b.reap((ref const RawCompletion c) {
+        assert(c.userData == token.raw && c.res < 0);
+    }) == 1);
+}
+
+/// Refusing a cancel under completion backpressure leaves its timer intact,
+/// so draining and retrying produces exactly the two required completions.
+@("iocp.cancel.backpressureLeavesTargetLive")
+@system unittest
+{
+    import sparkles.event_horizon.op : OpClass;
+
+    IocpBackend b;
+    assert(!b.open(BackendConfig()).hasError);
+    scope (exit) b.close();
+    OpSlot slot;
+    foreach (i; 0 .. 63)
+        assert(b.trySubmit(OpNop(), OpToken.pack(i, 1, OpClass.user), slot));
+    assert(b.submitAndWait(1, null).value == 63);
+    const target = OpToken.pack(64, 1, OpClass.user);
+    const cancel = OpToken.pack(65, 1, OpClass.internal);
+    assert(b.trySubmit(OpTimeout(KernelTimespec(60, 0)), target, slot));
+    assert(!b.trySubmitCancel(cancel, target));
+    assert(b.reap((ref const RawCompletion c) { assert(c.res == 0); }) == 63);
+    assert(b.trySubmitCancel(cancel, target));
+    uint targets, cancels;
+    assert(b.reap((ref const RawCompletion c) {
+        if (c.userData == target.raw)
+        {
+            ++targets;
+            assert(c.res == -ECANCELED);
+        }
+        else
+        {
+            ++cancels;
+            assert(c.userData == cancel.raw && c.res == 0);
+        }
+    }) == 2);
+    assert(targets == 1 && cancels == 1);
 }
 
 version (unittest)

@@ -161,6 +161,15 @@ This milestone shipped socket/timer/waker parity only. It did not ship process
 spawn, process-handle waits, overlapped process pipes, or Job Objects; those are
 M19, and the distinction is normative in SPEC §13.
 
+Prerequisite progress (2026-10-22): the IOCP backend now drains with
+`GetQueuedCompletionStatusEx`, advertises its lowered op mask, and implements
+`CancelIoEx` with separate target/cancel terminal completions. The raw Wine
+probe covers pending/completed/racing receives, timer cancellation,
+backpressure, reentrant batch drains and synchronous rejection; the loop probe
+checks timer and `AcceptEx` teardown barriers and the native-host wake bridge.
+File-handle operations and Windows supervision are still open M19 work, and
+native Windows validation is still required.
+
 ## M12 — Monadic veneer (tier C)
 
 `effect.d`: the `Effect!T` pipeline layer monomorphized onto the direct core

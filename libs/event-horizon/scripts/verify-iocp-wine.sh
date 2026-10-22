@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-compile the IOCP backend's data-path unittest to a Windows .exe and
+# Cross-compile the IOCP backend's data-path, batch and cancellation tests and
 # run it under headless Wine — the M11 gate (SPEC §3.5, backend/iocp.d).
 #
 # Must run inside a win32 dev shell (which provides win32-ldc2 + wine) whose
@@ -24,7 +24,8 @@ exp="$(find "$HOME/.dub/packages/expected" -name expected.d -path '*source*' | s
 exp_src="$(dirname "$exp")"
 
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+export WINEPREFIX="$work/wine"
+trap 'wineserver -k 2>/dev/null || true; wineserver -w 2>/dev/null || true; rm -rf "$work"' EXIT
 cd "$work"
 
 includes=(
@@ -56,5 +57,5 @@ win32-ldc2 -unittest -main -g -preview=in -preview=dip1000 "${includes[@]}" \
   "$ehm/backend/iocp.d" deps.lib -of=iocptest.exe
 
 echo ">> running under Wine ..."
-WINEPREFIX="$(mktemp -d)" WINEDEBUG=-all wine iocptest.exe
+WINEDEBUG=-all timeout 60 wine iocptest.exe
 echo ">> IOCP backend verified under Wine."
