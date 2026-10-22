@@ -84,22 +84,25 @@ than by hit target — the terminal pane (via the mirrored pane rect) and the
 inspector panel (the surface's rightmost columns). What remains open is the
 page-level routing: a page's _own_ viewport still cannot ask for the wheel.
 
-## `UGL-O7` — mouse inside a terminal pane · open (narrowed twice)
+## `UGL-O7` — mouse inside a terminal pane · open (narrowed)
 
-The pane's $(B applications) now receive the mouse: `sendPointer`/`sendWheel`
-on the embedded surface route the gallery's own `PointerEvent`s — already in
-cells, made pane-relative — through the mode-aware pty encoder, which writes
-nothing unless the application asked for reporting (so the shell's
-click-to-focus and hover keep working under a mouse-less shell prompt).
-Verified end to end: an SGR click injected at the outer terminal arrives in
-the embedded `cat -v` as the correctly-translated inner report.
+The pane's applications receive the mouse. On the terminal arm,
+`sendPointer`/`sendWheel` route the gallery's own events — already in cells,
+made pane-relative — through the mode-aware pty encoder, which writes nothing
+unless the application asked for reporting (so click-to-focus and hover keep
+working under a mouse-less shell prompt). Verified end to end: an SGR click
+injected at the outer terminal arrives in the embedded `cat -v` as the
+correctly-translated inner report.
 
-What still waits: routing the 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B emulator-level) mouse — selection, OSC 8
-link hover, the ctrl-click opener. It runs from events in pane pixels now
-(`TerminalView.pointerInPane`, `wheelInPane`), which the gallery does not
-forward yet; on the raylib arm the pane still reads it through the polled
-bridge (`pollMouse`). The clipboard chords behind it wait too (copy needs a
-selection; paste needs a clipboard 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B read), not a host errand yet).
+On the GUI arm (`PointerUnit.pixels`) the same events go to `pointerInPane` /
+`wheelInPane` in pane pixels — the device position minus `paneOrigin`, where
+`paintPanePx` put the pane — with `pollMouse` off. Selection, OSC 8 link
+hover, the ctrl-click opener and a tracking program share that one path;
+raylib is not polled beside it. A press in the pane still focuses it. The
+terminal arm stays on `sendPointer` / `sendWheel`, in cells.
+
+What still waits: the clipboard chords (copy needs a selection; paste needs a
+clipboard read, not a host errand yet).
 
 Scrollback no longer waits on it at all: the wheel over the pane,
 `Shift+PgUp`/`PgDn` in capture, and the bar — the catalog's living
