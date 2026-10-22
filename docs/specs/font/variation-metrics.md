@@ -395,18 +395,18 @@ script by binary search, then the `DFLT` script, and say which supplied it;
 the language does not select baselines, as in OpenType. It costs
 O(log s + log t + r · a) for `s` scripts and `t` tags:
 
-| Situation                                               | Result                                                                                                                             |
-| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| no `BASE`                                               | `missingTable`                                                                                                                     |
-| no such axis                                            | absent                                                                                                                             |
-| neither the script nor `DFLT` has a record              | absent                                                                                                                             |
-| the script record has no BaseValues                     | absent                                                                                                                             |
-| `tag` not in the axis's tag list                        | absent                                                                                                                             |
-| the tag's index is past the BaseValues coordinate count | `badValue`                                                                                                                         |
-| a coordinate of format 1                                | its coordinate                                                                                                                     |
-| format 2                                                | its coordinate, reference glyph and point index; resolving the point is M3's, until then the coordinate with `unresolvedPoint` set |
-| format 3                                                | its coordinate plus its Device or VariationIndex delta (`FTM11`)                                                                   |
-| another format                                          | `unsupportedVersion`                                                                                                               |
+| Situation                                               | Result                                                                                                                                                                                               |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| no `BASE`                                               | `missingTable`                                                                                                                                                                                       |
+| no such axis                                            | absent                                                                                                                                                                                               |
+| neither the script nor `DFLT` has a record              | absent                                                                                                                                                                                               |
+| the script record has no BaseValues                     | absent                                                                                                                                                                                               |
+| `tag` not in the axis's tag list                        | absent                                                                                                                                                                                               |
+| the tag's index is past the BaseValues coordinate count | `badValue`                                                                                                                                                                                           |
+| a coordinate of format 1                                | its coordinate                                                                                                                                                                                       |
+| format 2                                                | its coordinate, reference glyph and point index; since M3 the point is resolved at the instance (`unresolvedPoint` set only when the reference glyph has no resolvable outline, as for a `CFF` face) |
+| format 3                                                | its coordinate plus its Device or VariationIndex delta (`FTM11`)                                                                                                                                     |
+| another format                                          | `unsupportedVersion`                                                                                                                                                                                 |
 
 `BaseValues.defaultIndex` **must** be reported, and **must not** be used to
 answer a request for another tag. A coordinate of zero is a value.

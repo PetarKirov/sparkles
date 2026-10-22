@@ -18,9 +18,9 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | [M1 Parse](#m1-parse)                                                     | done        |
 | [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | in progress |
 | [MS Startup slice](#ms-startup-slice)                                     | planned     |
-| [M3 Outlines](#m3-outlines)                                               | not started |
-| [M4 Shaping](#m4-shaping)                                                 | not started |
-| [M5 Grayscale raster](#m5-grayscale-raster)                               | not started |
+| [M3 Outlines](#m3-outlines)                                               | done        |
+| [M4 Shaping](#m4-shaping)                                                 | done\*      |
+| [M5 Grayscale raster](#m5-grayscale-raster)                               | done        |
 | [M6 Colour glyphs](#m6-colour-glyphs)                                     | not started |
 | [M7 Discovery and fallback](#m7-discovery-and-fallback)                   | not started |
 | [M8 Consumer migration](#m8-consumer-migration)                           | not started |
@@ -319,9 +319,17 @@ normalization, variation deltas, design, physical and pixel measurements, line,
 decoration, cell and vertical metrics, `BASE`, `MATH`, layout inspection and
 colour capability, checked against HarfBuzz over the bundle and run on an
 arm64-v8a phone. Its gate stays open until these, recorded in the evidence
-ledger, are met: fontations' exact delta oracle; a verified `BASE` face and a
-math face with kerns, under the pinned corpus manifest; and the reference-point
-and `glyf` vertical-origin resolution, which need M3's outline points. Next
-action: the startup slice, MS ([`FTX14`](./decisions.md#ftx14-a-startup-slice-before-m3)),
-beginning with S0's measurement harness; then M3, whose outline points also close
-M2's `FTM7` gate.
+ledger, are met: fontations' exact delta oracle; and a verified `BASE` face and a
+math face with kerns, under the pinned corpus manifest. The reference-point
+and `glyf` vertical-origin resolution closed with M3.
+
+M3 (outlines), M5 (grayscale raster) are done; M4 (shaping) is done\*
+against the evidence in [`testing.md`](./testing.md): the `engine`
+configuration shapes with HarfBuzz over the bundled faces and fixture
+caret/JSTF faces, with `FTS8`'s profile enforced as a pinned engine
+version plus base-supplied Unicode callbacks. The asterisk is the
+ledger's remaining M4 gates: the pinned corpus manifest (real caret
+and JSTF faces, recorded `hb-shape` goldens) and the internal-table
+equivalence demonstration for `FTS8`. Next action: MS (the startup
+slice, [`FTX14`](./decisions.md#ftx14-a-startup-slice-before-m3)) or
+M6/M7, at the owner's direction.
