@@ -500,6 +500,35 @@ private ubyte[] solidImage(uint width, uint height, RgbColor c, ubyte alpha = 25
     assert(rig.canvas.imageUploads == 3 && rig.canvas.cachedImages == 1);
 }
 
+@("ui_vulkan.canvas.registrySwitchKeepsDrawnImagesDistinct")
+@system unittest
+{
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-registries", 64, 64);
+    scope (success)
+        rig.close();
+
+    ImageRegistry other;
+    const red = rig.images.register(solidImage(4, 4, RgbColor(255, 0, 0)), Size(4, 4));
+    const green = other.register(solidImage(4, 4, RgbColor(0, 255, 0)), Size(4, 4));
+    assert(red.value == green.value, "handles are local to their registries");
+    foreach (_; 0 .. 2)
+    {
+        const frame = rig.draw((ref Canvas c) {
+            c.images(&rig.images);
+            c.image(Rect(0, 0, 2, 1), red, ImageFit.fill, null, Visual.init);
+            c.images(&other);
+            c.image(Rect(2, 0, 2, 1), green, ImageFit.fill, null, Visual.init);
+            c.images(&rig.images);
+        }, FrameMetrics(cellW: 10, cellH: 20), black);
+        assert(pixel(frame, 64, 5, 5)[0 .. 3] == [255, 0, 0]);
+        assert(pixel(frame, 64, 25, 5)[0 .. 3] == [0, 255, 0]);
+    }
+    assert(rig.canvas.imageUploads == 2, "switching registries preserves residency");
+}
+
 @("ui_vulkan.canvas.imagesOverTheLimitsDegrade")
 @system unittest
 {
