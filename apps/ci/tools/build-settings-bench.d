@@ -25,7 +25,7 @@ import std.conv : to;
 import std.datetime.stopwatch : StopWatch;
 import std.file : exists, getSize, mkdirRecurse, readText, write;
 import std.json : JSONValue, parseJSON;
-import std.process : environment, execute, executeShell;
+import std.process : Config, environment, execute, executeShell;
 import std.stdio : File, writeln;
 import std.string : lineSplitter;
 
@@ -72,8 +72,10 @@ private Commands commandsFrom(string capture) @safe
 // stay outside the sum; compiler-invoked archiving is part of compilation.
 private int compareGraph(string[] args) @system
 {
-    assert(args.length == 6, "--compare-graph baseline-capture selected-capture output-dir rounds");
-    auto graphs = [commandsFrom(args[2].readText).graph, commandsFrom(args[3].readText).graph];
+    assert(args.length == 6 || args.length == 8,
+        "--compare-graph baseline-capture selected-capture output-dir rounds [baseline-cwd selected-cwd]");
+    auto captures = [commandsFrom(args[2].readText), commandsFrom(args[3].readText)];
+    auto graphs = [captures[0].graph, captures[1].graph];
     const outputDir = args[4];
     outputDir.mkdirRecurse;
     auto samples = File(outputDir ~ "/samples.jsonl", "a");
@@ -82,7 +84,7 @@ private int compareGraph(string[] args) @system
     {
         const selected = (round + offset) % 2;
         const variant = selected ? "selected" : "baseline";
-        long compileMs, linkMs;
+        long compileMs, rootCompileMs, linkMs;
         JSONValue[] steps;
         foreach (index, command; graphs[selected])
         {
@@ -90,11 +92,13 @@ private int compareGraph(string[] args) @system
             (stem ~ ".command").write(command.join(" ") ~ "\n");
             auto timer = StopWatch();
             timer.start;
-            auto r = execute(command);
+            auto r = execute(command, null, Config.none, size_t.max,
+                args.length == 8 ? args[6 + selected] : null);
             timer.stop;
             const ms = timer.peek.total!"msecs";
             const isLink = command[1].startsWith("-of");
             if (isLink) linkMs += ms; else compileMs += ms;
+            if (command == captures[selected].compile) rootCompileMs += ms;
             (stem ~ ".log").write(r.output);
             JSONValue step;
             step["index"] = index;
@@ -108,6 +112,7 @@ private int compareGraph(string[] args) @system
         sample["variant"] = variant;
         sample["round"] = round;
         sample["compileMs"] = compileMs;
+        sample["rootCompileMs"] = rootCompileMs;
         sample["compileExit"] = 0;
         sample["linkMs"] = linkMs;
         sample["linkExit"] = 0;
@@ -196,6 +201,7 @@ private int checkDebugInfo(string outputDir) @system
 version (unittest) {} else
 int main(string[] args) @system
 {
+    if (args.length == 3 && args[1] == "--check-runtime-linker") return checkRuntimeLinker(args[2]);
     if (args.length > 1 && args[1] == "--compare") return compare(args);
     if (args.length > 1 && args[1] == "--compare-graph") return compareGraph(args);
     if (args.length == 3 && args[1] == "--check-debug-info") return checkDebugInfo(args[2]);
@@ -306,6 +312,41 @@ int main(string[] args) @system
         results.writeln(record.toString);
         results.flush;
         writeln(record.toString);
+    }
+    return 0;
+}
+
+// Exercise the real pkg-config -> compiler -> ELF-loader seam. Merely linking
+// successfully misses the Nix RPATH regression; execute without LD_LIBRARY_PATH.
+private int checkRuntimeLinker(string outputDir) @system
+{
+    outputDir.mkdirRecurse;
+    const source = outputDir ~ "/runtime_linker_probe.d";
+    source.write("module runtime_linker_probe;\n"
+        ~ "extern(C) void* ts_parser_new();\n"
+        ~ "extern(C) void ts_parser_delete(void*);\n"
+        ~ "void main() @system { auto p = ts_parser_new(); assert(p); ts_parser_delete(p); }\n");
+    auto libraries = execute(["pkg-config", "--libs", "tree-sitter"]);
+    assert(!libraries.status, libraries.output);
+    string[] flags;
+    foreach (flag; libraries.output.split) flags ~= "-L" ~ flag;
+    foreach (compiler; ["ldc2", "dmd"])
+    {
+        const binary = outputDir ~ "/probe-" ~ compiler;
+        const options = compiler == "ldc2"
+            ? ["--linker=lld", "--link-defaultlib-shared"]
+            : ["-L-fuse-ld=lld", "-defaultlib=libphobos2.so"];
+        auto build = execute([compiler, source, "-of=" ~ binary] ~ options ~ flags);
+        (outputDir ~ "/" ~ compiler ~ ".build.log").write(build.output);
+        assert(!build.status, build.output);
+        auto env = environment.toAA;
+        env.remove("LD_LIBRARY_PATH");
+        auto deps = execute(["ldd", binary], env);
+        (outputDir ~ "/" ~ compiler ~ ".ldd.log").write(deps.output);
+        assert(!deps.status && !deps.output.canFind("not found"), deps.output);
+        auto run = execute([binary], env);
+        assert(!run.status, run.output);
+        writeln(compiler, ": shared runtime and tree-sitter resolved without LD_LIBRARY_PATH");
     }
     return 0;
 }

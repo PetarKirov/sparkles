@@ -57,7 +57,7 @@
         buildInputs = [
           ciCompiler
           pkgs.ldc
-          pkgs.lld
+          (import ../wrapped-lld.nix { inherit pkgs; })
           pkgs.nodejs
           pkgs.coreutils
           pkgs.curl.out
@@ -72,7 +72,7 @@
             path = lib.makeBinPath [
               ciCompiler
               pkgs.ldc
-              pkgs.lld
+              (import ../wrapped-lld.nix { inherit pkgs; })
               pkgs.nodejs
               pkgs.dub
               pkgs.coreutils
