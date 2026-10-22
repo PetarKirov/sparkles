@@ -134,6 +134,18 @@ struct SelectionState {
     bool isRectangular = false;
     GhosttyTrackedGridRef start = null;
     GhosttyTrackedGridRef end = null;
+    /// Where the user last placed the ends, as screen points. libghostty
+    /// moves both to screen cell (0, 0) when it clears their rows (`TSE4`);
+    /// a selection the user anchored there already had those points.
+    bool screenNoted;
+    /// ditto
+    GhosttyPointCoordinate notedStart, notedEnd;
+    /// The first code point at each end when it was placed (`-1`: unknown, a
+    /// blank cell or a failed query): content replaced at the origin is a
+    /// clear, a selection the user anchored there is not (`TSE4`).
+    int notedStartGrapheme = -1;
+    /// ditto
+    int notedEndGrapheme = -1;
     // The last left press, for double- and triple-click (`TSE7`).
     double lastPressTime = -1;
     int lastPressX = -1, lastPressY = -1;
@@ -145,6 +157,9 @@ struct SelectionState {
         if (end) { ghostty_tracked_grid_ref_free(end); end = null; }
         isSelecting = false;
         isRectangular = false;
+        screenNoted = false;
+        notedStartGrapheme = -1;
+        notedEndGrapheme = -1;
     }
 }
 
