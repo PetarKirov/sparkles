@@ -1394,16 +1394,50 @@ struct TerminalView
     */
     void pointerInPane(in PointerEvent p) @system nothrow @nogc
     {
-        if (beforePointer())
-            pointerEvent(s, pointer, p, pane);
+        if (!beforePointer())
+            return;
+        ensurePane();
+        pointerEvent(s, pointer, p, pane);
     }
 
     /// The wheel, likewise: reports to a tracking program, else the
     /// scrollback walks between rows on the next frame (`SCV12`).
     void wheelInPane(in WheelEvent w) @system nothrow @nogc
     {
-        if (beforePointer())
-            wheelEvent(s, w, wheelRows);
+        if (!beforePointer())
+            return;
+        ensurePane();
+        wheelEvent(s, w, wheelRows);
+    }
+
+    /**
+    The per-frame half of event-driven mouse, for an embedder that does not
+    call `frame`: a held selection's edge autoscroll, and a wheel's pending
+    rows (`SCV12`). No-op while raylib is polled — `frame` already did it.
+    True while a held selection wants another frame.
+    */
+    bool servicePointer(float dt) @system nothrow @nogc
+    {
+        if (!opened || pollsMouse())
+            return false;
+        ensurePane();
+        bool again;
+        if (!s.childExited)
+            again = pointerFrame(s, pointer, pane, dt);
+        if (wheelRows != 0)
+        {
+            scrollSmooth(WheelEvent(fdy: wheelRows));
+            wheelRows = 0;
+        }
+        return again;
+    }
+
+    // The grid's pixel size, so an embedder's events map to cells before
+    // `frame` has run (the gallery never calls it).
+    private void ensurePane() @safe pure nothrow @nogc
+    {
+        pane = PaneGeometry(s.cols * s.cellWidth, s.rows * s.cellHeight,
+            s.internalScrollbar);
     }
 
     // A key's ordering for the mouse too: the pty drained before the first
