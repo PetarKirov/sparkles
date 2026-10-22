@@ -506,9 +506,12 @@ struct TerminalView
     version (TerminalViewVulkan)
     {
         import sparkles.terminal_view.vulkan_images : VulkanImages;
+        import sparkles.ui.image : ImageRegistry;
 
         /// Kitty images this pane registered; the canvas uploads them.
         VulkanImages vulkanImages;
+        /// Registry every Vulkan pane registers its images in.
+        private static ImageRegistry sharedImageRegistry;
     }
     /**
     A pixel pane on a host that draws its own canvas (`UVX11`). `cellW` and
@@ -516,7 +519,11 @@ struct TerminalView
     pty reports a pixel size. No font set — glyphs wait on the atlas.
     */
     bool openPixels(ushort cols, ushort rows, int cellW, int cellH) @system
-        => openCore(cols, rows, cellW, cellH, drawsPixels: true);
+    {
+        version (TerminalViewVulkan)
+            vulkanImages.sharedRegistry = &sharedImageRegistry;
+        return openCore(cols, rows, cellW, cellH, drawsPixels: true);
+    }
 
     /**
     The pty/VT half of `open`, with the cell metrics as plain values — no
@@ -1012,7 +1019,13 @@ struct TerminalView
             // Only a window with fonts can open a pane here; any other host
             // needs it opened beforehand (`openCore`), as an embedder does.
             bool ok;
-            version (TerminalViewRaylib)
+            version (TerminalViewVulkan)
+            {
+                static if (__traits(compiles, { int w = h.cellWidth; int ht = h.cellHeight; }))
+                    ok = openPixels(cast(ushort) paneCols, cast(ushort) paneRows,
+                        h.cellWidth, h.cellHeight);
+            }
+            else version (TerminalViewRaylib)
             {
                 static if (__traits(compiles, { auto c = h.canvas; FontSet* f = c.fonts; }))
                 {
@@ -1043,11 +1056,21 @@ struct TerminalView
         {
             s.fontSize = newFontSize;
             version (TerminalViewRaylib)
+            {
                 if (fonts !is null)
                 {
                     s.cellWidth = fonts.cellW();
                     s.cellHeight = fonts.cellH();
                 }
+            }
+            else version (TerminalViewVulkan)
+            {
+                static if (__traits(compiles, { int w = h.cellWidth; int ht = h.cellHeight; }))
+                {
+                    s.cellWidth = h.cellWidth;
+                    s.cellHeight = h.cellHeight;
+                }
+            }
             gridChanged = true;
         }
         if (paneCols > 0 && paneRows > 0
