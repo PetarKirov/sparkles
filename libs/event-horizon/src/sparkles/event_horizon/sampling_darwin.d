@@ -260,3 +260,49 @@ private bool readUsage(int pid, out RusageV4 info) @safe nothrow @nogc
     sampler.finish();
     assert(!sampler.sample());
 }
+
+/// A live child is discovered through libproc rather than just counting the
+/// root. Reaping it retires its identity without losing cumulative CPU.
+@("sampling.darwin.discoversAndRetiresChild")
+@system unittest
+{
+    import core.sys.posix.signal : SIGKILL, kill;
+    import core.sys.posix.sys.wait : waitpid;
+    import core.sys.posix.unistd : getpid;
+    import std.process : spawnProcess;
+
+    auto child = spawnProcess(["/bin/sleep", "30"]);
+    const pid = child.processID;
+    bool consumed;
+    scope (exit)
+    {
+        if (!consumed)
+        {
+            kill(pid, SIGKILL);
+            int status;
+            waitpid(pid, &status, 0);
+        }
+    }
+    TreeSampler sampler;
+    sampler.anchor(getpid(), null);
+    assert(sampler.sample());
+    assert(sampler.usage.peakProcesses >= 2, "the child roster contains the live child");
+    bool found;
+    sampler.ledger.eachLiveFromCursor((ProcessIdentity id) {
+        found |= id.pid == pid;
+        return true;
+    });
+    assert(found);
+    const before = sampler.ledger.total();
+    assert(kill(pid, SIGKILL) == 0);
+    int status;
+    assert(waitpid(pid, &status, 0) == pid);
+    consumed = true;
+    assert(sampler.sample());
+    const after = sampler.ledger.total();
+    assert(after.userTicks >= before.userTicks && after.systemTicks >= before.systemTicks);
+    sampler.ledger.eachLiveFromCursor((ProcessIdentity id) {
+        assert(id.pid != pid, "reaped children are retired, never silently re-admitted");
+        return true;
+    });
+}
