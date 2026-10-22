@@ -22,6 +22,13 @@ and NTSTATUS failures map to the C runtime's `errno` values. File-handle I/O
 and Windows process supervision remain incomplete; see M19 in the delivery
 plan below. Wine probes are smoke evidence, not native Windows certification.
 
+`OwnedFd` and `BorrowedFd` carry `NativeHandle`: an `int` on POSIX and a
+full-width `HANDLE` on Windows. A Windows `OwnedFd` closes file, pipe and
+process handles with `CloseHandle`; it must not own a Winsock socket, which
+requires `closesocket`. The legacy socket views remain separate pending the
+owned-socket port. Read/write/flush operation descriptors use the same native
+file-handle type without narrowing.
+
 ```d
 import sparkles.event_horizon;
 import core.time : msecs;

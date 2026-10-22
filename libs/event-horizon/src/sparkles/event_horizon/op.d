@@ -14,6 +14,7 @@ import std.experimental.allocator.mallocator : Mallocator;
 
 import sparkles.event_horizon.buffer : Buf, BufGroupId;
 import sparkles.event_horizon.errors : IoResult, OpKind, fromRes;
+public import sparkles.event_horizon.sys.descriptor : NativeHandle;
 
 /// What kind of slot a completion routes to (packed into the token's top
 /// byte). Internal classes let the loop consume its own completions (timers,
@@ -99,7 +100,7 @@ struct OpNop
 struct OpRead
 {
     enum kind = OpKind.read;
-    int fd;       /// file descriptor
+    NativeHandle fd; /// file/pipe handle (a descriptor on POSIX)
     Buf buf;      /// destination; comes back via `Completion.buf`
     ulong offset; /// file offset (`ulong.max` = current position)
 }
@@ -108,7 +109,7 @@ struct OpRead
 struct OpWrite
 {
     enum kind = OpKind.write;
-    int fd;
+    NativeHandle fd;
     Buf buf;
     ulong offset;
 }
@@ -218,7 +219,7 @@ struct OpClose
 struct OpFsync
 {
     enum kind = OpKind.fsync;
-    int fd;
+    NativeHandle fd;
 }
 
 /// Stats a path; the kernel writes into caller-owned `statxBuf` (a
