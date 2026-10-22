@@ -38,18 +38,13 @@ still requires their schedulers to tick — which a scheduler with a parked
 */
 module sparkles.event_horizon.blocking_pool;
 
-// The shared pool's bootstrap guard is a statically initialized OS mutex;
-// only the POSIX form exists today — a Windows port needs SRWLOCK_INIT.
-version (Posix)  :
-
 import core.atomic : atomicLoad;
 import core.stdc.errno : EAGAIN, ECANCELED, EINVAL, EPIPE;
-import core.sync.condition : Condition;
-import core.sync.mutex : Mutex;
 import core.thread.osthread : Thread;
 import core.thread.types : ThreadID;
 
 import sparkles.base.hw_caps : hwParallelism;
+import sparkles.base.sync : Condition, Mutex;
 import sparkles.event_horizon.cause : interruptRequested;
 import sparkles.event_horizon.errors : IoError, IoErrorStage, IoResult, OpKind,
     ioErr, ioOk;
@@ -81,9 +76,6 @@ struct BlockingPool
             const hw = hwParallelism() / 8;
             workers = hw < 2 ? 2 : (hw > 4 ? 4 : hw);
         }
-        pool._mutex = new Mutex;
-        pool._publicCond = new Condition(pool._mutex);
-        pool._mandatoryCond = new Condition(pool._mutex);
         pool._public = new BlockingJob*[](queueCapacity);
 
         // Worker 0 is the reserved lane-only worker.
@@ -161,8 +153,7 @@ private:
         job.waker = s.blockingWaker;
 
         {
-            _mutex.lock_nothrow();
-            scope (exit) _mutex.unlock_nothrow();
+            auto guard = _mutex.guard();
             if (_closing)
                 return ioErr!void(EPIPE, OpKind.none, IoErrorStage.submit,
                     "blocking pool shut down");
@@ -177,9 +168,9 @@ private:
                 ++_mandatoryCount;
                 // The reserved worker first; an idle ordinary worker helps
                 // only while the public queue is empty (checked on wake).
-                _mandatoryCond.notify();
+                _mandatoryCond.notifyOne();
                 if (_idleOrdinary > 0)
-                    _publicCond.notify();
+                    _publicCond.notifyOne();
             }
             else
             {
@@ -189,7 +180,7 @@ private:
                 _public[(_publicHead + _publicCount) % _public.length] = &job;
                 ++_publicCount;
                 if (_idleOrdinary > 0)
-                    _publicCond.notify();
+                    _publicCond.notifyOne();
             }
         }
 
@@ -243,8 +234,7 @@ private:
         {
             BlockingJob* job;
             {
-                _mutex.lock_nothrow();
-                scope (exit) _mutex.unlock_nothrow();
+                auto guard = _mutex.guard();
                 for (;;)
                 {
                     job = popPublic();
@@ -255,7 +245,7 @@ private:
                     if (_closing)
                         return;
                     ++_idleOrdinary;
-                    _publicCond.wait();
+                    _publicCond.wait(guard);
                     --_idleOrdinary;
                 }
             }
@@ -271,8 +261,7 @@ private:
         {
             BlockingJob* job;
             {
-                _mutex.lock_nothrow();
-                scope (exit) _mutex.unlock_nothrow();
+                auto guard = _mutex.guard();
                 for (;;)
                 {
                     job = popMandatory();
@@ -280,7 +269,7 @@ private:
                         break;
                     if (_closing)
                         return;
-                    _mandatoryCond.wait();
+                    _mandatoryCond.wait(guard);
                 }
             }
             execute(job);
@@ -290,8 +279,7 @@ private:
     void stopAndJoin() @trusted
     {
         {
-            _mutex.lock_nothrow();
-            scope (exit) _mutex.unlock_nothrow();
+            auto guard = _mutex.guard();
             _closing = true;
             _publicCond.notifyAll();
             _mandatoryCond.notifyAll();
@@ -322,13 +310,10 @@ private:
 
 // ── the process-wide shared pool ────────────────────────────────────────────
 
-import core.sys.posix.pthread : PTHREAD_MUTEX_INITIALIZER, pthread_mutex_lock,
-    pthread_mutex_t, pthread_mutex_unlock;
-
-/// The bootstrap guard: a statically initialized OS mutex has no
+/// The bootstrap guard: a ready `.init` mutex has no
 /// construction race and no runtime destructor — the one thing a lazily
 /// created singleton's guard must be. Every access takes it (no fast path).
-private __gshared pthread_mutex_t gSharedGuard = PTHREAD_MUTEX_INITIALIZER;
+private __gshared Mutex gSharedGuard;
 private __gshared BlockingPool* gShared;
 
 /**
@@ -340,8 +325,7 @@ is ever published.
 */
 package IoResult!(BlockingPool*) sharedBlockingPool() @trusted
 {
-    pthread_mutex_lock(&gSharedGuard);
-    scope (exit) pthread_mutex_unlock(&gSharedGuard);
+    auto guard = gSharedGuard.guard();
     if (gShared !is null)
         return ioOk(gShared);
     auto holder = new BlockingPool;
