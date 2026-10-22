@@ -45,6 +45,14 @@ configuration "unittest" {
     dflags "-checkaction=context" "-allinst"
 }
 
+// The core sources plus the Vulkan painter. A native host selects this so
+// `paintPanePx` draws through `VulkanTerminalPainter` (`UVX11`).
+configuration "vulkan" {
+    targetType "sourceLibrary"
+    excludedSourceFiles "src/sparkles/terminal_view/raylib_*.d"
+    versions "TerminalViewVulkan"
+}
+
 // BEGIN managed build types — apps/ci/tools/standardize-build-settings.d
 dflags "--linker=lld" platform="linux-ldc"
 dflags "-L-fuse-ld=lld" platform="linux-dmd"

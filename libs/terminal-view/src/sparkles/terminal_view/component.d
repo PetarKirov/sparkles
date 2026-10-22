@@ -503,6 +503,21 @@ struct TerminalView
         FontSet* fonts;
     }
 
+    version (TerminalViewVulkan)
+    {
+        import sparkles.terminal_view.vulkan_images : VulkanImages;
+
+        /// Kitty images this pane registered; the canvas uploads them.
+        VulkanImages vulkanImages;
+    }
+    /**
+    A pixel pane on a host that draws its own canvas (`UVX11`). `cellW` and
+    `cellH` are the host's cell metrics; kitty storage is enabled and the
+    pty reports a pixel size. No font set — glyphs wait on the atlas.
+    */
+    bool openPixels(ushort cols, ushort rows, int cellW, int cellH) @system
+        => openCore(cols, rows, cellW, cellH, drawsPixels: true);
+
     /**
     The pty/VT half of `open`, with the cell metrics as plain values — no
     fonts and no window, so a fontless embedder (a cell-grid pane on the
@@ -845,7 +860,9 @@ struct TerminalView
         }
         // The images are raylib textures where a raylib painter drew them;
         // a pane nothing painted in pixels made none.
-        version (TerminalViewRaylib)
+        version (TerminalViewVulkan)
+            s.images.release(vulkanImages);
+        else version (TerminalViewRaylib)
         {
             RaylibTextures textures;
             s.images.release(textures);
@@ -1183,6 +1200,19 @@ struct TerminalView
                 auto painter = RaylibPainter(fonts, s.fontSize);
                 paintFrame(s, painter, GetScreenWidth(), GetScreenHeight());
             }
+        version (TerminalViewVulkan)
+        {
+            import sparkles.shaders : v4;
+            import sparkles.terminal_view.vulkan_painter : VulkanTerminalPainter;
+
+            static if (__traits(compiles, h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0))))
+            {
+                auto painter = VulkanTerminalPainter!(typeof(*h.canvas))(h.canvas,
+                    &vulkanImages, s.fontSize);
+                painter.bind();
+                paintFrame(s, painter, h.size.width * s.cellWidth, h.size.height * s.cellHeight);
+            }
+        }
     }
 
     /**
@@ -1212,6 +1242,18 @@ struct TerminalView
                 auto painter = RaylibPainter(fonts, s.fontSize);
                 paintAt(painter, px, py, pw, ph);
             }
+        version (TerminalViewVulkan)
+        {
+            import sparkles.terminal_view.vulkan_painter : VulkanTerminalPainter;
+            import sparkles.shaders : v4;
+
+            static if (__traits(compiles, h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0))))
+            {
+                auto painter = VulkanTerminalPainter!(typeof(*h.canvas))(h.canvas, &vulkanImages, s.fontSize);
+                painter.bind();
+                paintAt(painter, px, py, pw, ph);
+            }
+        }
     }
 
     /**
@@ -3107,6 +3149,19 @@ bool pasteNeedsConfirm(PasteConfirm policy, in char[] text) @safe pure nothrow @
     }
     assert(tv.s.childExited, "the last slave holder closing ends the session");
     assert(tv.s.childReaped, "and there is no child to reap");
+}
+
+@("terminal_view.openPixels.reportsTheHostCell")
+@system unittest
+{
+    TerminalView tv;
+    tv.opts = TerminalViewOptions(program: "/bin/sh",
+        argv: [cast(const(char)*) "sh", "-c", "exit 0", null],
+        exitBehavior: ExitBehavior.hold);
+    assert(tv.openPixels(20, 2, 8, 16));
+    scope (exit) tv.close();
+    assert(tv.s.drawsPixels);
+    assert(tv.s.cellWidth == 8 && tv.s.cellHeight == 16);
 }
 
 @("terminal_view.component.colorOverridesBecomeTheDefaults")

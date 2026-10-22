@@ -479,6 +479,34 @@ if (isImageSource!Images)
             BoundImages(image: slot));
     }
 
+    /**
+    An image the source resolves, drawn in device pixels from a source
+    sub-rectangle. A handle that is not resident counts the same way
+    `image` does and draws nothing.
+    */
+    void imageSourcePx(ImageHandle handle, int x, int y, int w, int h,
+        int sx, int sy, int sw, int sh)
+    {
+        uint slot;
+        Size size;
+        static if (is(Images == U*, U))
+            const outcome = images is null ? ImageOutcome.missing : images.resolve(handle, slot, size);
+        else
+            const outcome = images.resolve(handle, slot, size);
+        if (outcome != ImageOutcome.drawn)
+        {
+            if (outcome == ImageOutcome.tooLarge)
+                report.count(Degradation.imageTooLarge);
+            else if (outcome == ImageOutcome.deferred)
+            {
+                report.count(Degradation.imageDeferred);
+                report.anotherFrame = true;
+            }
+            return;
+        }
+        imageQuadPx(slot, x, y, w, h, sx, sy, sw, sh, size.width, size.height, v4(1, 1, 1, 1));
+    }
+
     /// An effect bracket draws its contents unaffected and counts once
     /// (`UVK15`).
     void pushEffect(in Rect r, EffectId id)
