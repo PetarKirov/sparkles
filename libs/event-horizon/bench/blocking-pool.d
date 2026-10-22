@@ -1,6 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
 name "blocking-pool-bench"
+targetPath "build"
 dependency "sparkles:event-horizon" path="../../.."
 buildType "checked" {
     buildOptions "optimize" "inline" "debugInfo"
