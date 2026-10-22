@@ -393,12 +393,32 @@ the scheduler-owned blocking inbox and wake-only `Alarm` (`sched`), and
 package-private shielded scope children (`scope_`, SPEC §8.2). The
 "no polling loop" gate holds: an idle three-second supervised `sleep` makes
 nine `io_uring_enter` calls, no `epoll_*`, and no timer loop
-(`strace -f -c`). Remaining: item 1's macOS export and process tests (the
-Darwin sampler is a `sampled == false` stub), item 5 (Windows, §13.9), item 6
+(`strace -f -c`). Remaining: item 1's complete macOS process-test matrix
+(portable exports exist; Darwin sampling progress is recorded below), item 5
+(Windows, §13.9), item 6
 (folded into task-DAG M5 and its later cutovers), and a
 `clone3(CLONE_INTO_CGROUP)` spawn path so that a
 child forked before the post-spawn migration lands is contained by
 construction rather than by the process group alone (SPEC §13.7).
+
+Prerequisite progress (2026-10-22): `blocking_pool` now uses portable
+`sparkles.base.sync` guards and conditions; all nine pool probes pass on
+Linux, native macOS and Wine. Darwin sampling uses bounded libproc V4
+rusage/child-roster transactions, with root/member identity revalidation,
+CPU-ledger retirement and all-or-nothing commits. Shared POSIX parity probes
+pass on Linux and native macOS for framing/raw capture, real samples,
+timeout/KILL/drain, cancellation and admission-failure reap. The latter
+exposed a short Darwin `siginfo_t` in the blocking-lane probe; it now uses
+the full native layout already used by `live`.
+
+Item 1 is **not complete**: lifting the entire legacy Linux supervision
+test gate exposed a macOS auto-reaped-root hang and residual-tree edge cases.
+The shared probes do not replace that remaining matrix. Windows spawning,
+Job Objects and wait packets, async file opens/flush, native Windows
+certification and bounded cross-worker channels remain open prerequisites.
+The installed Wine lacks both wait-packet exports; it may explicitly skip
+those cases, but native Windows must run them, without a polling or
+threadpool-callback fallback.
 
 ## M20 — The fiber parker for `sparkles.base.sync`
 

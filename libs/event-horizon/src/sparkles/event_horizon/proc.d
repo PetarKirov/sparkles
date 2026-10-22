@@ -261,6 +261,7 @@ enum SampleSource : ubyte
     cgroupFull,    /// owned cgroup with controller-backed peaks
     cgroupMembers, /// owned cgroup: roster + `cpu.stat`, peaks from procfs
     procScan,      /// `/proc` scan over the descendants and the process group
+    darwinTree,    /// libproc rusage and child rosters, identity-validated
 }
 
 /// Which subsystem produced a metric.
