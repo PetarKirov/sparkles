@@ -14,7 +14,7 @@ dependency "expected" version="~>0.4.1"
 
 libs "harfbuzz"
 
-excludedSourceFiles "src/sparkles/font_oracle/harfbuzz_c.c"
+excludedSourceFiles "src/sparkles/font_oracle/harfbuzz_c.c" "src/sparkles/font_oracle/freetype_c.c"
 
 configuration "library" {
     targetType "sourceLibrary"
@@ -26,6 +26,7 @@ configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:font" path="../.."
     subConfiguration "sparkles:font" "engine"
+    libs "freetype"
     dependency "sparkles:base" path="../.."
 
     // The differential suite exists only for tests.
