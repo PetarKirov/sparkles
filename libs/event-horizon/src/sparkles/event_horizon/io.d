@@ -48,7 +48,13 @@ struct Stream
     int fd = -1;
 
     /// Lends the descriptor to the verbs.
-    BorrowedFd borrowFd() const @safe pure nothrow @nogc => BorrowedFd(fd);
+    BorrowedFd borrowFd() const @safe pure nothrow @nogc
+    {
+        version (Windows)
+            return BorrowedFd((() @trusted => cast(NativeHandle) cast(size_t) fd)());
+        else
+            return BorrowedFd(fd);
+    }
 
     /// Explicit close (handles are copyable views; exactly one owner
     /// should close). Winsock sockets close via `closesocket`.
@@ -322,7 +328,7 @@ frame is parked until the terminal completion (SPEC §6.5). `sized` selects
 between the valid-bytes view (send/write) and the capacity view (recv/read).
 */
 private BufResult!B rw(Op, Flag!"sized" sized, B, Args...)(
-    int fd, B buf, Args args)
+    typeof(Op.init.fd) fd, B buf, Args args)
 {
     auto sched = currentSched();
 
