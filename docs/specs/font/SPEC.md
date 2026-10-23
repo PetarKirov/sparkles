@@ -139,7 +139,7 @@ worst-case cost in terms of input sizes and these fixed limits: composite
 glyph depth 8 and 512 components per glyph; `CFF` subroutine depth 10 and
 65,536 charstring operations per glyph; 1,024 `COLR` layers per glyph; 4,096
 table records per face; 64 `cmap` subtables per face; 64 variation axes per
-instance. Exceeding a limit
+instance; 512 feature settings per shaping call. Exceeding a limit
 **must** produce an error that names it, never a silent truncation.
 
 **FTB4: Declared allocation.** Parsing, metrics and outline decoding **must

@@ -6,12 +6,12 @@ a face are free functions callable as methods (`face.charMap`).
 
 ## Errors — `sparkles.font.errors`
 
-| Symbol          | Meaning                                                                                                                                                                                                |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `FontError`     | `kind`, `tag` (or none), `offset` (absolute), `tableOffset` (inside `tag`, when readable), `limit`, `limitValue` and `needed`                                                                          |
-| `FontErrorKind` | `notAFont`, `truncated`, `badOffset`, `badValue`, `unsupportedVersion`, `missingTable`, `limitExceeded`, `indexOutOfRange`, `invalidEncoding`, `unsupportedCapability`, and kinds later milestones use |
-| `FontLimit`     | the limits of `FTB3`: `tableRecords` (4,096), `cmapSubtables` (64), `variationAxes` (64), and the outline and colour limits; `callerStorage` with `needed`                                             |
-| `Tag`           | a four-byte table tag: `Tag("head")`, `.chars`                                                                                                                                                         |
+| Symbol          | Meaning                                                                                                                                                                                                                                            |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FontError`     | `kind`, `tag` (or none), `offset` (absolute), `tableOffset` (inside `tag`, when readable), `limit`, `limitValue` and `needed`                                                                                                                      |
+| `FontErrorKind` | `notAFont`, `truncated`, `badOffset`, `badValue`, `unsupportedVersion`, `missingTable`, `limitExceeded`, `indexOutOfRange`, `invalidEncoding`, `unsupportedCapability`, and kinds later milestones use                                             |
+| `FontLimit`     | the limits of `FTB3`: `tableRecords` (4,096), `cmapSubtables` (64), `variationAxes` (64), `shapingFeatures` (512), and the outline and colour limits; `callerStorage` with `needed`; `engineBuffer` when the shaping engine cannot grow its buffer |
+| `Tag`           | a four-byte table tag: `Tag("head")`, `.chars`                                                                                                                                                                                                     |
 
 ## Faces — `sparkles.font.face`
 
@@ -409,44 +409,64 @@ ligature carets of a glyph in record order: each with its coordinate in
 design units and its `CaretProvenance` (`coordinate`, `contourPoint`
 resolved through the outline, or `deviceTable` with its Device or
 VariationIndex delta kept in `device`). No records is `present` false; an
-unknown caret format is `unsupportedVersion`; nothing is synthesized.
+unknown caret format is `unsupportedVersion`; nothing is synthesized. On
+any error, including a short `out`, nothing is written.
 
 ## Justification tables — `sparkles.font.jstf`
 
-`JSTF` is enumerated, never executed: `face.jstfScripts(out)`,
-`face.jstfExtenderGlyphs(script, out)` through the script's `ExtenderGlyph` table,
-and `face.jstfPriority(script, language)` returning the default (or a
-named) language system's first priority record — its shrink/extend
-GSUB/GPOS lookup-index lists (32 per list, `overflow` when longer) and
-which maximum records it has. Absence is `present` false.
+`JSTF` is enumerated, never executed: `face.hasJstf` (an unreadable table
+is its error), `face.jstfScripts(out)`, `face.jstfExtenderGlyphs(script, out)`
+through the script's `ExtenderGlyph` table, and, for the default (or a named)
+language system, `face.jstfPriorityCount(script, language)` priority
+records. `face.jstfPriority(script, language, index)` reports a record's
+eight `JstfList` lengths and whether shrinkage or extension maximum records
+are attached; `face.jstfPriorityLookups(script, language, index, list, out)`
+copies one list whole into caller storage. Absence is `present` false or a
+count of zero; a list or record that does not fit is `truncated`. A maximum
+record's lookups are `JSTF`'s own, which the engine cannot apply.
 
 ## Shaping — `sparkles.font.shaping` (the `engine` configuration)
 
 The `engine` configuration links HarfBuzz (hand-declared in
 `sparkles.font.harfbuzz`, layout-checked in `sparkles:font-oracle`) and
 adds shaping; the `library` configuration never sees it. A `Shaper`
-owns one instance's HarfBuzz objects and releases them when destroyed;
-it borrows the face's bytes without holding their lifetime, so it must
-not outlive them. It receives the instance's normalized coordinates
-unchanged.
+owns one instance's HarfBuzz objects and releases them when destroyed.
+It borrows the instance's face bytes: dip1000 keeps it from outliving
+them in `@safe` code. It receives the instance's normalized coordinates
+unchanged, and its horizontal advances are the library's own (`advance`,
+FTM18), so variation deltas are not rounded to whole units.
 
-| Operation                                                         | Result                                                                                                                                                                               |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `shaper(inst)`                                                    | a `Shaper`; `unsupportedEngine` or `unsupportedUnicodeVersion` when the running engine profile is not the pinned one (HarfBuzz 13.2.1, Unicode 18.0.0, checked by `engineProfile()`) |
-| `shaper.shape(request, glyphs, spans, boundaries, languageOut)`   | glyph IDs, font-unit advances and offsets; `SourceSpan`s partitioning the run in both directions; `BoundarySafety` per span start                                                    |
-| `shapeText(inst, source, glyphs, spans, boundaries, languageOut)` | the standalone form: direction, script and language guessed and reported in the `ShapeInfo`                                                                                          |
-| `measureJustificationCandidate(shaper, request, mode, …)`         | the exact re-shaped candidate for `featureSettings`; `unsupportedCapability` for the insertion modes font never performs                                                             |
+| Operation                                                         | Result                                                                                                                                                                                         |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Shaper(inst)`                                                    | a shaper; its `status` is `unsupportedEngine` or `unsupportedUnicodeVersion` when the running engine is not `pinnedEngine` (checked by `engineProfile()`), and `shape` then returns that error |
+| `shaper.shape(request, glyphs, spans, boundaries, languageOut)`   | glyph IDs and `DesignValue` advances and offsets; `SourceSpan`s partitioning the run in both directions; `BoundarySafety` per span start                                                       |
+| `shapeText(inst, source, glyphs, spans, boundaries, languageOut)` | the standalone form: direction, script and language guessed and reported in the `ShapeInfo`                                                                                                    |
+| `measureJustificationCandidate(shaper, request, mode, …)`         | the exact re-shaped candidate for `featureSettings`; `unsupportedCapability` for the insertion modes font never performs and for `JSTF` maximum lookups                                        |
+| `checkEngineProfile(manifest, version, unicode)`                  | the FTS8 check itself, for any engine version and base release                                                                                                                                 |
+
+`pinnedEngine` is the FTS8 manifest: HarfBuzz 14.6.0, its source revision,
+and the Unicode release of its internal tables (18.0.0, base's). Advances
+and offsets are multiples of 1/1,024 font unit; `ShapeInfo.measured(value)`
+gives their pixel and physical forms (FTM4, FTM6).
 
 A `ShapeRequest` carries the whole source as context with a run range
-at scalar boundaries, explicit `SegmentProperties` (or guessing for the
-standalone form), ranged `ShapingFeature`s, and beginning/end-of-text
-flags. Invalid UTF-8 is `invalidEncoding`, a split scalar
-`splitScalar`, a bad range `invalidRange`, a bad feature range
-`invalidFeatureRange` — all before any output is written; short glyph,
-span and boundary arrays are `limitExceeded` with outputs uncommitted
-(`languageOut` is truncated). Every Unicode callback HarfBuzz accepts
-is supplied from `sparkles:base`'s pinned tables; decomposition returns
-the first two scalars of the full decomposition, not HarfBuzz's single
-step. The engine profile pins HarfBuzz's version only: its internal
-Unicode tables are older than base's release, and the mismatch is not
-yet rejected (FTS8).
+at scalar boundaries, explicit `SegmentProperties` (a script is required)
+or guessing for the standalone form, ranged `ShapingFeature`s, and
+beginning/end-of-text flags. Base validates and decodes the source;
+HarfBuzz receives scalars with their absolute byte offsets and five
+scalars of context either side. Invalid UTF-8 is `invalidEncoding`, a
+split scalar `splitScalar` at the offending edge, a bad range
+`invalidRange`, a bad feature range `invalidFeatureRange`, explicit
+properties without a script `badValue`, more than 512 features
+`limitExceeded` naming `shapingFeatures`, and an engine allocation or
+buffer-length failure `limitExceeded` naming `engineBuffer`. Short glyph,
+span, boundary and language arrays are `callerStorage` errors. Every
+error leaves the outputs as they were.
+
+Every Unicode callback HarfBuzz accepts is supplied from
+`sparkles:base`'s tables: decomposition is one step (`canonicalMapping`).
+Default ignorables are hidden, as HarfBuzz hides them. Unsafe-to-break
+and unsafe-to-concat are the union of a span's glyph flags; the tatweel
+hint is known only when its glyphs agree; run edges and glyphless spans
+are unknown. HarfBuzz stops applying lookups silently after
+max(65,536, 4,096 × scalars) operations; no API reports it.
