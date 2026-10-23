@@ -993,6 +993,10 @@ jobs:
       - name: Every shipped component is credited
         run: nix run .#ci-minimal -- --check-credits
 
+      # The APK builders compile without dub, from hand-kept version lists.
+      - name: Every APK lists the versions its code tests
+        run: nix run .#ci-minimal -- --check-android-versions
+
   ci:
     name: CI
     needs:

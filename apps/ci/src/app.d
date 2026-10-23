@@ -30,6 +30,7 @@ nix run .#ci -- --check-vcs-urls [--include-files GLOB|FILE...] [--exclude-files
 nix run .#ci -- --check-docs-sidebar
 nix run .#ci -- --check-glossary
 nix run .#ci -- --check-credits
+nix run .#ci -- --check-android-versions
 nix run .#ci -- --check-blob-paths [--clone-root DIR] [--include-files GLOB|FILE...] [--exclude-files GLOB|FILE...]
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
@@ -330,6 +331,10 @@ struct CliParams
         ~ "every component an application links or ships has a part, every part names "
         ~ "something shipped, and each application page includes exactly its parts."))
     bool checkCredits;
+    @(Option(`check-android-versions`,
+        description: "Verify each APK builder's hand-kept D version list (nix/packages/android/) "
+        ~ "names every version and Have_sparkles_* identifier dub sets for its application."))
+    bool checkAndroidVersions;
 
     @(Option(`check-blob-paths`,
         description: "Verify that every SHA-pinned GitHub blob citation names a path that "
@@ -476,6 +481,7 @@ enum ProgramMode
     checkSpecEvidence,
     checkGlossary,
     checkCredits,
+    checkAndroidVersions,
     checkBlobPaths,
     ciStats,
     mirrorChecks,
@@ -630,6 +636,8 @@ int ciMain(string[] args)
         return runCheckGlossary();
     if (mode == ProgramMode.checkCredits)
         return runCheckCredits();
+    if (mode == ProgramMode.checkAndroidVersions)
+        return runCheckAndroidVersions();
 
     // The audit resolves its own corpus (docs/**/*.md + README.md, or --files),
     // so it must not fall through to the shared "no input files" usage error.
@@ -930,6 +938,8 @@ private ProgramMode resolveProgramMode(in CliParams cli)
         return ProgramMode.checkGlossary;
     if (cli.checkCredits)
         return ProgramMode.checkCredits;
+    if (cli.checkAndroidVersions)
+        return ProgramMode.checkAndroidVersions;
 
     if (cli.checkBlobPaths)
         return ProgramMode.checkBlobPaths;
@@ -959,6 +969,7 @@ private string programModeName(ProgramMode mode) @safe pure nothrow @nogc
         case ProgramMode.checkSpecEvidence:  return "--check-spec-evidence";
         case ProgramMode.checkGlossary:      return "--check-glossary";
         case ProgramMode.checkCredits:       return "--check-credits";
+        case ProgramMode.checkAndroidVersions: return "--check-android-versions";
         case ProgramMode.checkBlobPaths:     return "--check-blob-paths";
         case ProgramMode.ciStats:            return "--ci-stats";
         case ProgramMode.mirrorChecks:       return "--mirror-checks";
@@ -1540,6 +1551,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkSpecEvidence:
             case ProgramMode.checkGlossary:
             case ProgramMode.checkCredits:
+            case ProgramMode.checkAndroidVersions:
             case ProgramMode.checkBlobPaths:
                 rc = 1;
                 break;
@@ -2311,6 +2323,48 @@ private int runCheckGlossary()
 }
 
 /// `--check-credits`: the credits document against the build inputs (`credits`).
+/++
+`--check-android-versions`: each APK builder's hand-kept version list covers
+what dub sets for its application (`android_versions`).
++/
+private int runCheckAndroidVersions()
+{
+    import android_versions : androidBuilds, missingVersions, testedVersions;
+
+    const repoRoot = detectRepoRoot();
+    string readOrNull(string rel) @safe
+    {
+        const path = buildPath(repoRoot, rel);
+        return path.exists ? readText(path) : null;
+    }
+
+    // Every identifier any tracked D source tests.
+    bool[string] tested;
+    const listed = execute(["git", "-C", repoRoot, "ls-files", "--", "*.d"]);
+    if (listed.status != 0)
+    {
+        error(i"Failed to enumerate D sources with git ls-files");
+        return 1;
+    }
+    foreach (path; listed.output.lineSplitter)
+        if (const text = readOrNull(path))
+            foreach (v; testedVersions(text))
+                tested[v] = true;
+
+    int failures;
+    foreach (b; androidBuilds)
+    {
+        const missing = missingVersions(&readOrNull, b, tested);
+        foreach (v; missing)
+            error(i"✗ $(b.builder) does not list `$(v)`, which dub sets for $(b.appDir) ($(b.configuration))");
+        failures += missing.length > 0;
+    }
+    if (failures)
+        return 1;
+    info(i"✓ Every APK builder lists the versions dub sets for its application ($(androidBuilds.length) builds).");
+    return 0;
+}
+
 private int runCheckCredits()
 {
     import credits : checkCredits, creditsDir, partsDir;
