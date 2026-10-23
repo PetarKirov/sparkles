@@ -418,6 +418,22 @@ in
                 require_serial = true;
               };
 
+              # The APK builders' hand-kept D version lists against the
+              # versions dub sets and some source tests (apps/ci
+              # --check-android-versions). A configuration that gains a
+              # version, and a list that does not follow, builds an APK
+              # without that code — silently.
+              check-android-versions = {
+                enable = true;
+                name = "check-android-versions";
+                files = "(\\.d$|dub\\.sdl$|^nix/packages/android/)";
+                entry = lib.getExe config.packages.ci;
+                args = [ "--check-android-versions" ];
+                language = "system";
+                pass_filenames = false;
+                require_serial = true;
+              };
+
               # Every symbol a spec's evidence column cites must exist in the
               # tree (apps/ci --check-spec-evidence), against the committed
               # backlog of ones that did not when the gate went on. Whole-tree,
