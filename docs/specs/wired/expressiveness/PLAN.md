@@ -123,3 +123,17 @@ Exit criterion: a SPEC revision, not code.
 JSON Schema and help-text emitters as folds over `WireSchema`, landing
 alongside the `Cli` format so the first derivation has a consumer
 (`--help`). Tracked in the S2b plan, not here.
+
+## Delivery status
+
+The SDL backend's audit (see the [SDL plan](../sdl/PLAN.md)) delivered the
+following subsets, shared by both codecs unless noted. No milestone above is
+closed by them: each gate still lists work outside these subsets.
+
+| Milestone | Delivered                                                                                                                          | Still open                                                                   |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| E3        | `@WireAlias` (decode-only, per format)                                                                                             | `@WireName(encode:, decode:)`; alias participation in the digest gate        |
+| E4        | `@WireDefault` (value and callable), `whenDefault` comparison against it, `Decoded!T` + `WireFieldSet`                             | `@WireExtra` for JSON; the property-tested omission invariant                |
+| E6        | `@WireCheck` (four protocols, type and field sites), `isBetween`, `isOneOf`, `@WireAs` with `Same`/`Stringly`/`Elements`/`Entries` | converter chaining, the `WirePresent` forms, check descriptors in the schema |
+| E7        | SDL error-sink overloads, `FixedWireErrors` with its overflow marker                                                               | JSON error-sink overloads; `ref Ctx` threading                               |
+| E8        | a conservative `isWireRoundTrippable`: rejects converted and union nodes; a format narrows it with `roundTripSchema`               | `@WireHook`, metadata UDAs, `@WireIsomorphic`, the five research schemas     |
