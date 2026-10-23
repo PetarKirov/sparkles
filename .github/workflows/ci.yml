@@ -193,6 +193,12 @@ jobs:
           # are on PATH via the `ci` dev shell.
           DC: ${{ matrix.DC }}
 
+      # The terminal's native-arm code (`version (TerminalVulkan)`): its own
+      # test configuration, which `ci --test` (the default one) never builds.
+      - name: The terminal on the native arm
+        if: runner.os == 'Linux'
+        run: dub test :terminal --compiler=${{ matrix.DC }} -c unittest-vulkan
+
       # `ci --test` without the `ci` helper: `dub test` per allowlisted
       # sub-package, `-t 1` then `-t 0`, under Git Bash so the script shares
       # ci/lib/common.sh with CircleCI's bash.exe.
