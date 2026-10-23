@@ -190,16 +190,25 @@ libghostty reports a cleared scrollback, reads as cleared (`TSE4`).
 application's own raylib calls replaced by host and canvas calls; a
 `gui-vulkan` build of the terminal.
 
+**Obligations.** `UVK35`; the `UVX11` decision.
+
 **Progress.** The canvas draws in device pixels (`UVK35`). The terminal
 painter maps kitty images onto a pane-owned `ImageRegistry` (`UVX11`);
 glyphs and labels count a miss until V3. A native host opens a pane with
 `openPixels` at its cell metrics and paints through that painter.
 `apps/terminal` has a `vulkan` configuration: the native host, pixel
-positions, and no raylib poll. It presented the test scene under Weston
-on lavapipe; text was blank, as expected until V3, while the pane,
-scrollbar and kitty image drew. A file open reports that this arm has no
-document viewer. The raylib desktop configuration keeps its poll and
-its screenshot is byte-identical to `origin/main`.
+positions, and no raylib poll; it still links raylib, through the cell-font
+resolver ui-app borrows from `sparkles:raylib-text` until the font
+library's catalog replaces it. Both arms share the chrome's pointer
+routine and fills. CI builds the native gallery and terminal
+(`ui-gallery-vulkan`, `terminal-vulkan`) and runs the terminal's
+`unittest-vulkan` tests. The terminal painter's `labelSize` is a
+placeholder (a byte count times the font size) until V3 measures text.
+It presented the test scene under Weston on lavapipe; text was blank, as
+expected until V3, while the pane, scrollbar and kitty image drew. A file
+open reports that this arm has no document viewer. The raylib desktop
+configuration keeps its poll and its screenshot is byte-identical to
+`origin/main`.
 
 **Gate.** The terminal runs on Wayland and X11 through the native host;
 screenshots match the raylib terminal within the tolerances of
