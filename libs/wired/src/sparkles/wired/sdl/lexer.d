@@ -615,7 +615,9 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
         while (_at < _source.length)
         {
             size_t newlineWidth;
-            if (isLogicalNewline(_source, _at, newlineWidth))
+            if (isLogicalNewline(_source, _at, newlineWidth)
+                && (config.compatibility != SdlSyntaxCompatibility.sparkles
+                    || newlineWidth < 3))
             {
                 fail(SdlErrorCode.unterminatedString, start,
                     "newline before closing quote");
@@ -1104,6 +1106,15 @@ struct SdlLexer(SdlParserConfig config = sdlFull)
     }
 }
 
+/// Whether the entire spelling is one non-keyword SDL identifier.
+package bool isSdlIdentifier(scope const(char)[] name) @safe pure nothrow @nogc
+{
+    auto lexer = lexSDL(name);
+    const item = lexer.front;
+    return item.hasValue && item.valueOf.kind == SdlTokenKind.identifier
+        && item.valueOf.raw == name;
+}
+
 /// Constructs a borrowed lexer specialized for `config`.
 SdlLexer!config lexSDL(SdlParserConfig config = sdlFull)(
     return scope const(char)[] source,
@@ -1497,7 +1508,9 @@ package SdlExpected!SdlScalar decodeSdlScalarInto(
                     if (token.raw[at] != '\\')
                     {
                         size_t newlineWidth;
-                        if (isLogicalNewline(token.raw, at, newlineWidth))
+                        if (isLogicalNewline(token.raw, at, newlineWidth)
+                            && (config.compatibility != SdlSyntaxCompatibility.sparkles
+                                || newlineWidth < 3))
                             return sdlErr!SdlScalar(decodeError(
                                 SdlErrorCode.unterminatedString, token,
                                 "unescaped newline in string token"));

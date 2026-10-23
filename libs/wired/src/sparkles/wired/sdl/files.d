@@ -121,7 +121,13 @@ if (is(T == struct))
             SdlErrorCode.fileWriteFailed, path,
             "cannot create the parent directories", causeOf(e)));
 
-    const temp = tempSibling(path);
+    string temp;
+    try
+        temp = tempSibling(path);
+    catch (Exception e)
+        return sdlErr!void(fileFailure(SdlErrorStage.fileWrite,
+            SdlErrorCode.fileWriteFailed, path,
+            "cannot choose a temporary file name", causeOf(e)));
 
     try
     {
@@ -135,13 +141,19 @@ if (is(T == struct))
         sink.close();
     }
     catch (StdioException e)
+    {
+        removeTempBestEffort(temp);
         return sdlErr!void(fileFailure(SdlErrorStage.fileWrite,
             SdlErrorCode.fileWriteFailed, temp,
             "cannot write the temporary file", cast(int) e.errno));
+    }
     catch (Exception e)
+    {
+        removeTempBestEffort(temp);
         return sdlErr!void(fileFailure(SdlErrorStage.fileWrite,
             SdlErrorCode.fileWriteFailed, temp,
             "cannot write the temporary file", causeOf(e)));
+    }
 
     try
         rename(temp, path);
@@ -176,12 +188,10 @@ private string dirOf(scope const(char)[] path) @safe pure
     return dirName(path.idup);
 }
 
-/// Process-unique suffix so successive calls never collide on one temporary.
-private __gshared uint tempCounter;
-
 /** A unique sibling-path candidate for `path`'s replacement: same directory,
 dot-prefixed so directory listings group it away from real targets, derived
-from the target's name plus a process counter and a random UUID. */
+from the target's name plus a random UUID. No mutable process-global counter
+is needed, so concurrent writers have no counter data race. */
 private string tempSibling(scope const(char)[] path) @safe
 {
     import std.format : format;
@@ -189,16 +199,7 @@ private string tempSibling(scope const(char)[] path) @safe
     import std.uuid : randomUUID;
 
     const base = baseName(path.idup);
-    return buildPath(dirOf(path), format(".%s.tmp-%s-%s", base,
-        bumpCounter(), randomUUID.toString));
-}
-
-/// Narrow trust: process-global data is `@system` by default. The random-UUID
-/// component already rules out practical name collisions, so a racy increment
-/// could at worst pick a different throwaway name.
-private uint bumpCounter() @safe
-{
-    return () @trusted { return ++tempCounter; }();
+    return buildPath(dirOf(path), format(".%s.tmp-%s", base, randomUUID.toString));
 }
 
 /** Best-effort OS error code from an I/O exception; `0` when the failure did
@@ -458,9 +459,6 @@ version (unittest)
 
         if (getuid() == 0)
             skipTest("running as root ignores directory permissions");
-    }
-    else
-        skipTest("directory-permission semantics are POSIX-only");
 
     import std.conv : octal, to;
     import std.file : mkdirRecurse, readText, write;
@@ -500,6 +498,34 @@ version (unittest)
     assert(failed.error.stage == SdlErrorStage.fileWrite);
     assert(failed.error.code == SdlErrorCode.fileWriteFailed);
     assert(readText(path) == "sentinel bytes");
+    }
+    else
+        skipTest("directory-permission semantics are POSIX-only");
+}
+
+/// Existing targets are replaced atomically on the verified POSIX path.
+@("wired.sdl.files.write.replacesExistingTarget")
+@system unittest
+{
+    version (Posix)
+    {
+        import std.file : readText, write;
+
+        auto tmp = TmpFS.create();
+        const path = buildPath(tmp.dir(), "existing.sdl");
+        write(path, "sentinel bytes");
+        Doc document;
+        document.config = sampleFixture();
+        assert(!writeSDLFile(document, path).hasError);
+        assert(readText(path) == fixtureCanonical);
+        assert(listDir(tmp.dir()) == [path]);
+    }
+    else
+    {
+        import sparkles.test_runner.skip : skipTest;
+
+        skipTest("atomic replacement of an existing target is verified on POSIX only");
+    }
 }
 
 // An empty canonical document writes zero bytes — no trailing LF.

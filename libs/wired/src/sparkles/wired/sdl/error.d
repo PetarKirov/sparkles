@@ -48,11 +48,22 @@ enum SdlErrorCode : ubyte
     allocationFailed,
     fileReadFailed,
     fileWriteFailed,
+    errorSinkOverflow,
 }
 
 /// One SDL operation failure, carried by value through `Expected`.
 struct SdlError
 {
+    /// Final marker a bounded sink appends once it has dropped an error.
+    static SdlError sinkOverflow() @safe pure nothrow @nogc
+    {
+        SdlError result;
+        result.stage = SdlErrorStage.decode;
+        result.code = SdlErrorCode.errorSinkOverflow;
+        result.reason ~= "additional SDL errors exceeded the error sink capacity";
+        return result;
+    }
+
     SdlErrorStage stage;
     SdlErrorCode code;
     SharedBuffer!(char, 40) sourceName;
@@ -68,6 +79,8 @@ struct SdlError
     SharedBuffer!(char, 96) reason;
     SharedBuffer!(char, 40) filePath;
     int cause;
+    /// Trial-decode failures in union declaration order, with their type/span.
+    const(SdlError)[] variants;
 
     /// Human-readable rendering over any character output range.
     void toString(Writer)(ref Writer w) const
