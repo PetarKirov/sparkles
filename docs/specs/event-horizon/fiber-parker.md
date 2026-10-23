@@ -84,19 +84,31 @@ its record (base.sync SYP15) and reaped the terminal completion of every
 operation that names its park word before it is reused.
 
 **EFP3: Park generations.** `prepare` **must** increment the generation in
-the park word and mark it sleeping. Every resumption — a delivered wake, a
-deadline, a cancellation — **must** move the word from sleeping in its
-generation to resumed, by one atomic compare-and-swap; only the resumption
-whose swap succeeds **may** make the fiber runnable or report its reason,
-and the others **must** have no effect. A delivery delayed across a
-wrap-around of the generation can at worst resume a later park spuriously,
-which the parking lot absorbs (base.sync SYP4). A park that sleeps again
-begins a new generation: base.sync calls `prepare` under the bucket lock
-before each such sleep (SYK2, SYP4).
+the park word and mark it sleeping; `commitWake` **must not** change the
+word. Every resumption — a delivered wake, a deadline, a cancellation —
+**must** move the word out of sleeping in its generation, to woken, timed
+out or cancelled, by one atomic compare-and-swap. Only the resumption whose
+swap succeeds **may** make the fiber runnable and report its reason. A
+delivery that finds its generation timed out or cancelled **must** still
+move the word to woken, and **must not** make the fiber runnable; any other
+losing resumption **must** have no effect. A sleep that begins in a generation
+already woken **must** return woken at once; one that begins timed out or
+cancelled **must** move the word back to sleeping and wait. A delivery
+delayed across a wrap-around of the generation can at worst resume a later
+park spuriously, which the parking lot absorbs (base.sync SYP4).
+
+A park sleeps again in one of two ways. While its record is still enqueued,
+base.sync calls `prepare` under the bucket lock first, which begins a new
+generation (SYK2, SYP4). Once an unparker has dequeued the record, the park
+sleeps again, without a deadline or cancellation, in the same generation,
+waiting for that unparker's delivery (SYP5).
 
 _Rationale:_ This is the late-delivery rule of base.sync SYP10 and SYK8 made
 concrete: a delivery that names an old generation cannot match, so it cannot
-resume a later park.
+resume a later park. A delivery that loses to its own generation's deadline
+is not stale: the parking lot has dequeued the record and waits for exactly
+that delivery, so it is recorded, and the second sleep consumes it, rather
+than lost, which would leave the park asleep forever.
 
 **EFP4: Wake handles.** `commitWake` **must** return a handle naming the
 owner scheduler, the task's slab index and the park generation, and
@@ -109,7 +121,9 @@ completion of its `IORING_OP_FUTEX_WAKE` has been reaped on the deliverer's ring
 
 **EFP5: Sleep.** `sleep(deadline, interruptible)` **must** suspend only the
 calling fiber and return the reason its winning resumption carried: woken,
-timed out, or cancelled. The reason is tentative; the parking lot decides the
+timed out, or cancelled — or woken, if a delivery for its generation arrived
+before it returned, since that delivery means an unparker has dequeued the
+record (EFP3). The reason is tentative; the parking lot decides the
 park's outcome under the bucket lock (base.sync SYI3), and the parker's
 `settle` has nothing to consume, since cancellation stays latched (EFP16). Its deadline and its cancellation **must** be
 resumptions of the sleep's generation, and neither **may** take effect after
@@ -199,11 +213,13 @@ checkpoint.
 
 ## 4. The inbox path
 
-**EFP12: Delivery.** `deliverWake` **must** perform EFP3's swap. On the
-owner's thread a winning swap **must** enqueue the fiber at the tail of the
-ready queue. On any other thread it **must** push the task onto the owner's
-wake inbox and then call the owner's `Waker.wake()` (SPEC §5.6), and
-**must not** touch other scheduler state.
+**EFP12: Delivery.** `deliverWake` **must** perform EFP3's swap. From a fiber
+of the owner, a winning swap **must** enqueue the fiber at the tail of the
+ready queue. From anywhere else — another thread, or the owner's thread
+outside its fibers, as in a loop callback — it **must** push the task onto
+the owner's wake inbox and then, if the push found the inbox empty, call the owner's
+`Waker.wake()` (SPEC §5.6); a push onto a non-empty inbox follows one whose
+wake has not yet been drained. It **must not** touch other scheduler state.
 
 **EFP13: Inbox drain.** The owner **must** drain its wake inbox at every
 point where it drains the blocking-completion inbox, enqueueing the drained
@@ -270,7 +286,11 @@ If `LoopGroup.shutdown`'s grace period (§11) expires with any of them — a fib
 parked non-interruptibly on an event nobody sets, say — shutdown **must**
 return its timeout error and leak the scheduler, its task slab, its inbox and
 its loop, wake routing included, rather than free them, so that a later wake
-from any thread touches live memory.
+from any thread touches live memory. A run a defect ends early, with fibers
+still live, **must** likewise leak its loop and its tasks rather than free
+them; if a fiber is then parked on a base.sync primitive, its record and
+every later wake name the scheduler the defect unwound, so the scheduler
+**must** report the defect and end the process through the loop's fatal hook.
 
 **EFP22: Reserved resources.** The scheduler **must** reserve, for each task
 in its slab, the op slot a park needs on its path. A timed park on the ring
@@ -340,7 +360,10 @@ bucket wait of EFP11), and recorded here with the numbers.
 
 ## Evidence ledger
 
-| Requirements | State   | Evidence | Gap                                                                                   |
-| ------------ | ------- | -------- | ------------------------------------------------------------------------------------- |
-| EFP1–EFP23   | planned | —        | depends on base.sync S1 and the ring futex operations; delivered in event-horizon M20 |
-| FB1–FB7      | planned | —        | no implementation to measure; `auto`'s choice is unmade until they run                |
+| Requirements                                           | State                                        | Evidence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Gap                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| EFP1, EFP3–EFP5, EFP12–EFP14, EFP16–EFP20 (inbox path) | verified on Linux x86-64, `io_uring` backend | the white-box tests of `libs/event-horizon/src/sparkles/event_horizon/fiber_park.d`: a delivery that loses to its own deadline enqueues nothing; a sleep begun after it returns woken, and one begun before it waits for it; a stale or aliased generation neither owns nor loses a wake; a delivery outlives its fiber and holds off `destroy`; `relax` pauses, then yields. The scenarios of `libs/event-horizon/src/sparkles/event_horizon/fiber_park_test.d`: wakes from the same worker, another worker, a blocking-pool thread and an unregistered thread; one event set waking more fibers than a commit round; inbox order; deadlines; sticky scope cancellation; direct interruption; `protect`; shields; the pin assertion; each context's parker. Both pass under AddressSanitizer. Undoing the delivery protocol, the inbox reversal, the parker installation, the pin contract or sticky cancellation each fails a test | the kqueue and IOCP backends build, but their unit-test builds do not compile (`loop.d`'s `io_uring`-only tests), so "every backend" is unmet; no stress run; EFP3's 2-bit-generation build is replaced by a forced aliased generation                                    |
+| EFP2, EFP21, EFP22 (inbox path)                        | partly verified                              | a fiber that ends holding a parking-lot registration fails its assertion; `destroy` waits out committed deliveries; the waker is armed when the scheduler is created; a defect that ends a run while a fiber sleeps on a timer leaks the run and keeps its message, and one that strands a fiber parked on a `Semaphore` ends the process after reporting the defect                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | EFP21's timed-out shutdown has no path: `run` returns only once every fiber has finished, so a fiber parked on an event nobody sets is reachable only through a shutdown requested during the run; EFP22's slab and submission-entry reservations belong to the ring path |
+| EFP15                                                  | open                                         | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | the bucket wait yields, but no test holds a bucket lock through a test hook                                                                                                                                                                                               |
+| EFP6–EFP11, EFP23; the ring path of every row          | planned                                      | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | needs the ring futex operations: event-horizon M20's ring-path slice                                                                                                                                                                                                      |
+| FB1–FB7                                                | planned                                      | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | no ring path to compare against yet; `auto`'s choice is unmade until they run                                                                                                                                                                                             |

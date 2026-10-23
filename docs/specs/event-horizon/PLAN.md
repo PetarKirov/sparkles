@@ -406,3 +406,10 @@ on both paths; benchmarks FB1–FB7 are recorded for both paths in
 [benchmarks.md](./benchmarks.md), and `auto`'s choice follows them; base.sync's
 S4 migration of event-horizon's own users (`blocking_pool`, `raw_pool`,
 `pool`) builds on it.
+
+Status (October 23, 2026): the inbox path shipped and is the only path —
+`Sched` installs the parker around every resume, wakes deliver through the
+park word and the wake inbox, and the
+[ledger](./fiber-parker.md#evidence-ledger) records what is verified. The ring
+futex operations, the ring path with `fiberPark`, EFP21's timed-out shutdown
+and FB1–FB7 remain.
