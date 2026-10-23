@@ -3,45 +3,469 @@ Shaping with HarfBuzz, in the `engine` configuration
 (`docs/specs/font/SPEC.md` § 12, FTA4, FTA8, FTS1–FTS11).
 
 A `Shaper` owns the HarfBuzz objects of one instance: a blob borrowing
-the face's bytes, a face, and a font set to the face's units per em and
-to the instance's normalized coordinates exactly as stored (FTS3; no
-renormalization). Every supported Unicode callback is supplied from
-`sparkles:base`'s pinned tables (FTS8), and creation checks the engine
-version: a HarfBuzz whose version differs from the pinned one is
-`unsupportedEngine`. The Unicode-release half of the check compares
-constants and so never fails, and no manifest yet shows that
-HarfBuzz's internal tables match base's Unicode 18.0.0; FTS8 is not yet
-met.
+the face's bytes, a face, a font at the instance's normalized
+coordinates exactly as stored (FTS3; no renormalization), and a sub-font
+whose horizontal advances are the library's own (FTS1). It borrows the
+instance's bytes: it cannot outlive them in `@safe` code (FTS5).
+
+The engine profile (FTS8) is the `pinnedEngine` manifest: the HarfBuzz
+release and source revision, and the Unicode release of HarfBuzz's
+internal tables. Creating a shaper compares the running HarfBuzz with
+the manifest (`unsupportedEngine`) and base's Unicode release with the
+engine's (`unsupportedUnicodeVersion`), so neither a system upgrade nor
+a base upgrade silently changes the accepted profile. Every Unicode
+callback HarfBuzz takes is supplied from base's tables; `sparkles:font-
+oracle` checks them against HarfBuzz's own and the manifest's internal
+tables against the pinned source.
 
 `shape` shapes a run range of a borrowed source with the surrounding
-source as context (FTS7). Inputs are validated with base's strict UTF-8
-rules before any output is written, but HarfBuzz decodes them;
-capacity exhaustion returns `limitExceeded` with caller outputs
-uncommitted. Results are glyph IDs and font-unit advances/offsets
-(FTS1), source spans that partition the run (FTS4), and per-boundary
-safety flags (FTS9). Glyph, outline and shaping caches do not exist
-here (FTA5): each call shapes afresh, and HarfBuzz objects are released
-with their owner (FTS5); the owner does not yet hold the face bytes'
-lifetime, so it must not outlive them.
+source as context (FTS7). The source is validated and decoded by base:
+HarfBuzz receives scalars with their absolute byte offsets as clusters,
+and up to five scalars of context either side. Results are glyph IDs,
+advances and offsets as `DesignValue`s (FTS1), source spans that
+partition the run (FTS4) and per-span safety flags (FTS9). Errors
+publish no output. Glyph, outline and shaping caches do not exist here
+(FTA5): each call shapes afresh.
 */
 module sparkles.font.shaping;
 
-import sparkles.base.text.unicode_tables : canonicalCombiningClass, canonicalComposition,
-    canonicalDecomposition, canonicalDecompositionValue, bidiMirror, generalCategory,
-    GeneralCategory, script, Script, unicodeVersion;
+import sparkles.base.text.unicode_tables : bidiMirror, canonicalCombiningClass, canonicalComposition,
+    canonicalMapping, canonicalMappingValue, generalCategory, GeneralCategory, script, Script,
+    unicodeVersion;
+import sparkles.base.text.utf : decodeToken, UtfMode, UtfStatus;
 import sparkles.base.text.utf8 : indexOfInvalidUtf8;
 
-import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, FontResult,
-    fontErr, fontOk, Tag;
+import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, FontLimit, FontResult,
+    fontErr, fontLimitValue, fontOk, limitError, Tag;
 import sparkles.font.harfbuzz;
-import sparkles.font.instance : Instance;
+import sparkles.font.instance : Instance, InstanceSize;
+import sparkles.font.metrics : advance, Measurement;
+import sparkles.font.units : DesignValue, designSubunits;
+
+/**
+The accepted shaping-engine profile (FTS8): the HarfBuzz release and
+source revision, and the Unicode release its internal tables were
+generated from.
+*/
+struct EngineManifest
+{
+    /// `hb_version_string()` of the accepted engine.
+    string harfBuzzVersion;
+    /// The source revision the release was built from.
+    string harfBuzzRevision;
+    /**
+    The Unicode release of HarfBuzz's internal tables that the callbacks do
+    not replace: Arabic joining, Indic and USE categories, emoji, the UCD
+    fallback, and the hand-coded default ignorables (checked by shaping).
+    */
+    string unicodeVersion;
+}
+
+/// The engine profile `sparkles:font` accepts (FTS8): HarfBuzz 14.6.0, Unicode 18.0.0.
+enum EngineManifest pinnedEngine = EngineManifest("14.6.0",
+    "c7a7457b7385f33178e8cf87615ca077a810bbe7", "18.0.0");
+
+/**
+Whether an engine reporting `runningVersion`, with base at
+`baseUnicodeVersion`, is the accepted profile `manifest` (FTS8):
+`unsupportedEngine` for any other HarfBuzz, `unsupportedUnicodeVersion`
+when base's Unicode release is not the engine's; `FontError.init`
+otherwise. The engine check comes first: a different engine's tables
+are unknown.
+*/
+FontError checkEngineProfile(in EngineManifest manifest, scope const(char)[] runningVersion,
+    scope const(char)[] baseUnicodeVersion) @safe pure nothrow @nogc
+{
+    if (runningVersion != manifest.harfBuzzVersion)
+        return FontError(FontErrorKind.unsupportedEngine);
+    if (baseUnicodeVersion != manifest.unicodeVersion)
+        return FontError(FontErrorKind.unsupportedUnicodeVersion);
+    return FontError.init;
+}
+
+///
+@("shaping.checkEngineProfile.rejects")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(checkEngineProfile(pinnedEngine, "14.6.0", "18.0.0") == FontError.init);
+    assert(checkEngineProfile(pinnedEngine, "13.2.1", "18.0.0").kind == FontErrorKind.unsupportedEngine);
+    assert(checkEngineProfile(pinnedEngine, "15.0.0", "17.0.0").kind == FontErrorKind.unsupportedEngine);
+    assert(checkEngineProfile(pinnedEngine, "14.6.0", "17.0.0").kind
+        == FontErrorKind.unsupportedUnicodeVersion);
+    assert(checkEngineProfile(pinnedEngine, "14.6.0", "19.0.0").kind
+        == FontErrorKind.unsupportedUnicodeVersion);
+}
+
+/// The running engine against the pinned profile (FTS8).
+struct EngineProfile
+{
+    /// The running HarfBuzz version string.
+    const(char)[] harfBuzzVersion;
+    /// Base's Unicode release.
+    const(char)[] unicodeRelease;
+    /// `FontError.init` when the running engine is the pinned profile.
+    FontError status;
+
+    /// Whether the running engine is the pinned profile.
+    bool compatible() const @safe pure nothrow @nogc => status == FontError.init;
+}
+
+/// The running engine profile (FTS8), checked against `pinnedEngine`.
+EngineProfile engineProfile() @safe nothrow @nogc
+{
+    const running = runningHarfBuzzVersion();
+    return EngineProfile(running, unicodeVersion, checkEngineProfile(pinnedEngine, running, unicodeVersion));
+}
+
+private const(char)[] runningHarfBuzzVersion() @trusted nothrow @nogc
+{
+    import core.stdc.string : strlen;
+
+    // A static string HarfBuzz owns.
+    const v = hb_version_string();
+    return v[0 .. strlen(v)];
+}
+
+// ---------------------------------------------------------------------------
+// Shaper (FTS3, FTS5)
+// ---------------------------------------------------------------------------
+
+/**
+The HarfBuzz objects of one instance (FTS5): created from the instance,
+released when the shaper is destroyed. It borrows the instance's face
+bytes and cannot outlive them in `@safe` code; it cannot be copied.
+
+`Shaper(inst)` checks the engine profile first (FTS8): `status` is then
+`unsupportedEngine` or `unsupportedUnicodeVersion` when the running
+engine is not `pinnedEngine`, or `limitExceeded` naming `engineBuffer`
+when an allocation failed, and `shape` returns that error. A
+default-initialized `Shaper` shapes nothing: `unsupportedEngine`.
+*/
+struct Shaper
+{
+    @safe nothrow @nogc:
+
+    @disable this(this);
+
+    private hb_blob_t* blob_;
+    private hb_face_t* hbFace_;
+    private hb_font_t* parent_;
+    private hb_font_t* font_;
+    private hb_font_funcs_t* fontFuncs_;
+    private hb_unicode_funcs_t* unicodeFuncs_;
+    // Malloc'ed so that its address survives moves of the shaper.
+    private AdvanceState* advances_;
+    private Instance instance_;
+    private FontError status_ = FontError(FontErrorKind.unsupportedEngine);
+
+    /// The HarfBuzz objects of `inst`, borrowing its bytes.
+    this(return scope const Instance inst)
+    {
+        instance_ = inst;
+        const profile = engineProfile();
+        if (!profile.compatible)
+        {
+            status_ = profile.status;
+            return;
+        }
+        const face = inst.face;
+        const bytes = face.bytes;
+        if (bytes.length > uint.max)
+            return;
+        blob_ = () @trusted {
+            // Read-only: HarfBuzz borrows the bytes, which outlive the shaper.
+            return hb_blob_create(cast(const(char)*) bytes.ptr, cast(uint) bytes.length,
+                HB_MEMORY_MODE_READONLY, null, null);
+        }();
+        hbFace_ = () @trusted { return hb_face_create(blob_, face.index); }();
+        parent_ = () @trusted { return hb_font_create(hbFace_); }();
+        const scale = face.unitsPerEm * positionsPerUnit;
+        int[64] coords;
+        foreach (i, c; inst.coords)
+            coords[i] = c;
+        () @trusted {
+            hb_font_set_scale(parent_, scale, scale);
+            hb_font_set_var_coords_normalized(parent_, coords.ptr, cast(uint) inst.coords.length);
+        }();
+
+        advances_ = () @trusted {
+            import core.stdc.stdlib : calloc;
+
+            return cast(AdvanceState*) calloc(1, AdvanceState.sizeof);
+        }();
+        if (advances_ is null)
+        {
+            status_ = limitError(FontLimit.engineBuffer, Tag.init, 0);
+            return;
+        }
+        // The state lives as long as the shaper, which cannot outlive `inst`.
+        () @trusted { advances_.instance = inst; }();
+        fontFuncs_ = () @trusted { return hb_font_funcs_create(); }();
+        () @trusted {
+            hb_font_funcs_set_glyph_h_advance_func(fontFuncs_, &advanceThunk, null, null);
+            hb_font_funcs_make_immutable(fontFuncs_);
+        }();
+        // The sub-font inherits the scale and coordinates and defers every
+        // function but the horizontal advance to HarfBuzz's own.
+        font_ = () @trusted { return hb_font_create_sub_font(parent_); }();
+        () @trusted { hb_font_set_funcs(font_, fontFuncs_, advances_, null); }();
+
+        unicodeFuncs_ = () @trusted { return hb_unicode_funcs_create(null); }();
+        () @trusted {
+            hb_unicode_funcs_set_general_category_func(unicodeFuncs_, &categoryThunk, null, null);
+            hb_unicode_funcs_set_combining_class_func(unicodeFuncs_, &combiningClassThunk, null, null);
+            hb_unicode_funcs_set_mirroring_func(unicodeFuncs_, &mirroringThunk, null, null);
+            hb_unicode_funcs_set_script_func(unicodeFuncs_, &scriptThunk, null, null);
+            hb_unicode_funcs_set_compose_func(unicodeFuncs_, &composeThunk, null, null);
+            hb_unicode_funcs_set_decompose_func(unicodeFuncs_, &decomposeThunk, null, null);
+            hb_unicode_funcs_make_immutable(unicodeFuncs_);
+        }();
+        status_ = FontError.init;
+    }
+
+    ~this() scope @trusted
+    {
+        import core.stdc.stdlib : free;
+
+        // Each handle was created by this shaper and is destroyed once.
+        if (font_) hb_font_destroy(font_);
+        if (parent_) hb_font_destroy(parent_);
+        if (fontFuncs_) hb_font_funcs_destroy(fontFuncs_);
+        if (unicodeFuncs_) hb_unicode_funcs_destroy(unicodeFuncs_);
+        if (hbFace_) hb_face_destroy(hbFace_);
+        if (blob_) hb_blob_destroy(blob_);
+        free(advances_);
+    }
+
+    /// The instance this shaper shapes with.
+    Instance instance() const return scope => instance_;
+
+    /// `FontError.init` when the shaper is ready; otherwise why it is not.
+    FontError status() const scope => status_;
+
+    /**
+    Shapes `request` (FTS7), writing glyphs to `glyphs`, source spans to
+    `spans`, boundary safety to `boundaries` (empty, or at least as long
+    as the spans), and the used language to `languageOut` (empty when
+    not wanted). Nothing is written when the result is an error.
+
+    Errors, before any output: `invalidEncoding` at the first invalid
+    byte; `invalidRange` for an inverted or out-of-source run;
+    `splitScalar` for a run edge inside a scalar; `invalidFeatureRange`
+    for a feature range outside the run or splitting a scalar; `badValue`
+    for explicit properties without a script; `limitExceeded` naming
+    `shapingFeatures` past 512 features, `engineBuffer` when HarfBuzz
+    cannot grow its buffer, or `callerStorage` with the length a short
+    output needs; an advance's own error.
+
+    Cost: O(c) to validate and decode a source of `c` bytes; HarfBuzz's
+    shaping, which allocates its buffer (at most max(65,536, 256 × n)
+    glyphs for `n` scalars) and stops applying lookups silently after
+    max(65,536, 4,096 × n) operations; O(g) to publish `g` glyphs.
+    */
+    FontResult!ShapeInfo shape(in ShapeRequest request, scope ShapedGlyph[] glyphs,
+        scope SourceSpan[] spans, scope BoundarySafety[] boundaries, scope char[] languageOut) scope
+    {
+        if (status_ != FontError.init)
+            return fontErr!ShapeInfo(status_);
+        const invalid = validateRequest(request);
+        if (invalid != FontError.init)
+            return fontErr!ShapeInfo(invalid);
+        if (request.features.length > fontLimitValue[FontLimit.shapingFeatures])
+            return fontErr!ShapeInfo(limitError(FontLimit.shapingFeatures, Tag.init, 0));
+        return runShape(this, request, glyphs, spans, boundaries, languageOut);
+    }
+}
+
+/**
+Shapes `source` with `inst` as a standalone convenience call (FTS1,
+FTS2): direction, script and language are guessed and reported in the
+result. Coordinated callers use a `Shaper` with explicit properties
+instead (FTS8).
+*/
+FontResult!ShapeInfo shapeText(in Instance inst, scope const(char)[] source,
+    scope ShapedGlyph[] glyphs, scope SourceSpan[] spans, scope BoundarySafety[] boundaries,
+    scope char[] languageOut) @safe nothrow @nogc
+{
+    auto owned = Shaper(inst);
+    auto request = ShapeRequest(source, 0, source.length, SegmentProperties.init, false);
+    return owned.shape(request, glyphs, spans, boundaries, languageOut);
+}
+
+// ---------------------------------------------------------------------------
+// The engine call
+// ---------------------------------------------------------------------------
+
+private FontResult!ShapeInfo runShape(scope ref Shaper shaper, in ShapeRequest request,
+    scope ShapedGlyph[] glyphs, scope SourceSpan[] spans, scope BoundarySafety[] boundaries,
+    scope char[] languageOut) @safe nothrow @nogc
+{
+    auto buffer = () @trusted { return hb_buffer_create(); }();
+    scope (exit) () @trusted { hb_buffer_destroy(buffer); }();
+    uint flags = HB_BUFFER_FLAG_PRODUCE_UNSAFE_TO_CONCAT | HB_BUFFER_FLAG_PRODUCE_SAFE_TO_INSERT_TATWEEL;
+    if (request.beginningOfText)
+        flags |= HB_BUFFER_FLAG_BOT;
+    if (request.endOfText)
+        flags |= HB_BUFFER_FLAG_EOT;
+    () @trusted {
+        hb_buffer_set_unicode_funcs(buffer, shaper.unicodeFuncs_);
+        hb_buffer_set_cluster_level(buffer, hb_buffer_cluster_level_t.monotoneCharacters);
+        hb_buffer_set_flags(buffer, flags);
+    }();
+
+    // Base decodes; HarfBuzz receives scalars and their byte offsets.
+    const source = request.source;
+    hb_codepoint_t[contextLength] before, after;
+    const nBefore = contextScalars(source, 0, request.runStart, true, before[]);
+    const nAfter = contextScalars(source, request.runEnd, source.length, false, after[]);
+    // An empty buffer takes the scalars before `itemOffset` as pre-context.
+    () @trusted { hb_buffer_add_codepoints(buffer, before.ptr, cast(int) nBefore, cast(uint) nBefore, 0); }();
+    for (size_t at = request.runStart; at < request.runEnd;)
+    {
+        const d = decodeToken(source[at .. request.runEnd], UtfMode.strict, true, at);
+        () @trusted { hb_buffer_add(buffer, d.token.scalar, cast(uint) at); }();
+        at = d.token.end;
+    }
+    // A zero-length item after the text installs its post-context.
+    () @trusted { hb_buffer_add_codepoints(buffer, after.ptr, cast(int) nAfter, 0, 0); }();
+    if (!() @trusted { return hb_buffer_allocation_successful(buffer); }())
+        return fontErr!ShapeInfo(limitError(FontLimit.engineBuffer, Tag.init, request.runStart));
+
+    if (request.propertiesExplicit)
+    {
+        const language = request.properties.language;
+        () @trusted {
+            hb_buffer_set_direction(buffer, toHbDirection(request.properties.direction));
+            hb_buffer_set_script(buffer, request.properties.script.value);
+            if (language.length)
+                hb_buffer_set_language(buffer, hb_language_from_string(language.ptr,
+                    cast(int)(language.length < int.max ? language.length : int.max)));
+        }();
+    }
+    else
+        () @trusted { hb_buffer_guess_segment_properties(buffer); }();
+
+    enum maxFeatures = fontLimitValue[FontLimit.shapingFeatures];
+    hb_feature_t[maxFeatures] features;
+    foreach (i, feature; request.features)
+        features[i] = hb_feature_t(feature.tag.value, feature.value,
+            feature.hasRange ? cast(uint) feature.start : 0,
+            feature.hasRange ? cast(uint) feature.end : uint.max);
+    const featureCount = cast(uint) request.features.length;
+    shaper.advances_.error = FontError.init;
+    const shaped = () @trusted {
+        return hb_shape_full(shaper.font_, buffer, featureCount ? features.ptr : null, featureCount, null);
+    }();
+    if (!shaped || !() @trusted { return hb_buffer_allocation_successful(buffer); }())
+        return fontErr!ShapeInfo(limitError(FontLimit.engineBuffer, Tag.init, request.runStart));
+    if (shaper.advances_.error != FontError.init)
+        return fontErr!ShapeInfo(shaper.advances_.error);
+
+    const infos = () @trusted {
+        uint n;
+        const p = hb_buffer_get_glyph_infos(buffer, &n);
+        return p is null ? null : p[0 .. n];
+    }();
+    const positions = () @trusted {
+        uint n;
+        const p = hb_buffer_get_glyph_positions(buffer, &n);
+        return p is null ? null : p[0 .. n];
+    }();
+    if (positions.length != infos.length)
+        return fontErr!ShapeInfo(limitError(FontLimit.engineBuffer, Tag.init, request.runStart));
+    const direction = fromHbDirection(() @trusted { return hb_buffer_get_direction(buffer); }());
+    const script = Tag(() @trusted { return hb_buffer_get_script(buffer); }());
+    const language = () @trusted {
+        import core.stdc.string : strlen;
+
+        // HarfBuzz interns languages for the process's lifetime.
+        const l = hb_language_to_string(hb_buffer_get_language(buffer));
+        return l is null ? null : l[0 .. strlen(l)];
+    }();
+
+    // Every check precedes the first write (FTS7).
+    const layout = spanLayout(request, infos, isBackward(direction));
+    if (layout.hasError)
+        return fontErr!ShapeInfo(layout.error);
+    const spanCount = layout.value;
+    if (infos.length > glyphs.length)
+        return fontErr!ShapeInfo(callerStorageError(infos.length));
+    if (spanCount > spans.length)
+        return fontErr!ShapeInfo(callerStorageError(spanCount));
+    if (boundaries.length && spanCount > boundaries.length)
+        return fontErr!ShapeInfo(callerStorageError(spanCount));
+    if (languageOut.length && language.length > languageOut.length)
+        return fontErr!ShapeInfo(callerStorageError(language.length));
+
+    const upem = shaper.instance_.unitsPerEm;
+    DesignValue design(int position) => DesignValue(position * rawPerPosition, upem);
+    foreach (i, info; infos)
+        glyphs[i] = ShapedGlyph(info.codepoint, info.cluster, design(positions[i].x_advance),
+            design(positions[i].y_advance), design(positions[i].x_offset),
+            design(positions[i].y_offset), info.mask & HB_GLYPH_FLAG_DEFINED);
+    buildSpans(request, glyphs[0 .. infos.length], isBackward(direction), spans[0 .. spanCount]);
+    if (boundaries.length)
+        foreach (i; 0 .. spanCount)
+            boundaries[i] = boundaryAt(request, glyphs[0 .. infos.length], spans[i]);
+
+    ShapeInfo info;
+    info.glyphCount = infos.length;
+    info.spanCount = spanCount;
+    info.direction = direction;
+    info.script = script;
+    info.beginningOfText = request.beginningOfText;
+    info.endOfText = request.endOfText;
+    info.directionGuessed = info.scriptGuessed = !request.propertiesExplicit;
+    info.languageGuessed = !request.propertiesExplicit || request.properties.language.length == 0;
+    info.size = shaper.instance_.size;
+    if (languageOut.length)
+    {
+        languageOut[0 .. language.length] = language[];
+        info.languageLength = language.length;
+    }
+    return fontOk(info);
+}
+
+// ---------------------------------------------------------------------------
+// Justification candidates (FTS11)
+// ---------------------------------------------------------------------------
+
+/// A justification mode a candidate measurement may request (FTS11).
+enum JustificationMode : ubyte
+{
+    /// Shape with explicit feature settings: a real measurement.
+    featureSettings,
+    /// Insert extender glyphs: font does not choose or insert them.
+    extenderInsertion,
+    /// Insert kashidas: font does not choose or insert them.
+    kashidaInsertion,
+    /// Apply a `JSTF` maximum record's own lookups: the engine cannot.
+    maximumLookups,
+}
+
+/**
+Measures one justification candidate (FTS11): for `featureSettings`,
+the exact contextual shaped run of `request` under its feature
+settings. The other modes are capabilities the pinned engine does not
+have: `unsupportedCapability`, never a manufactured advance.
+*/
+FontResult!ShapeInfo measureJustificationCandidate(scope ref Shaper shaper,
+    in ShapeRequest request, JustificationMode mode, scope ShapedGlyph[] glyphs,
+    scope SourceSpan[] spans, scope BoundarySafety[] boundaries, scope char[] languageOut)
+    @safe nothrow @nogc
+{
+    if (mode != JustificationMode.featureSettings)
+        return fontErr!ShapeInfo(FontError(FontErrorKind.unsupportedCapability));
+    return shaper.shape(request, glyphs, spans, boundaries, languageOut);
+}
+
+// ---------------------------------------------------------------------------
+// Values (pure from here on)
+// ---------------------------------------------------------------------------
 
 @safe pure nothrow @nogc:
 
-/// The pinned HarfBuzz version of the accepted engine profile (FTS8).
-enum pinnedHarfBuzzVersion = "14.6.0";
-/// The pinned base Unicode release of the accepted profile (FTS8).
-enum pinnedUnicodeVersion = "18.0.0";
 /// A text direction for shaping (FTS2).
 enum ShapingDirection : ubyte
 {
@@ -51,13 +475,17 @@ enum ShapingDirection : ubyte
     bottomToTop,
 }
 
+/// Whether `direction` lays glyphs out against source order.
+bool isBackward(ShapingDirection direction)
+    => direction == ShapingDirection.rightToLeft || direction == ShapingDirection.bottomToTop;
+
 /// Segment properties resolved by the caller (FTS2, FTS8).
 struct SegmentProperties
 {
     @safe pure nothrow @nogc:
 
     ShapingDirection direction;
-    /// The script as an OpenType tag (`Latn`, `Arab`, …).
+    /// The script as an OpenType tag (`Latn`, `Arab`, …); required when explicit.
     Tag script;
     /// The language as a BCP 47 string; empty is the engine default.
     const(char)[] language;
@@ -80,7 +508,12 @@ struct ShapingFeature
     static ShapingFeature global(Tag tag, uint value) => ShapingFeature(tag, value, 0, 0, false);
 }
 
-/// One shaped glyph (FTS1), in font units at the instance's coordinates.
+/**
+One shaped glyph (FTS1). Advances and offsets are design values at the
+instance's coordinates, multiples of 1/1,024 font unit;
+`ShapeInfo.measured` gives their pixel and physical forms (FTM4, FTM6).
+Offsets are from the glyph's pen position.
+*/
 struct ShapedGlyph
 {
     @safe pure nothrow @nogc:
@@ -88,7 +521,7 @@ struct ShapedGlyph
     uint glyphId;
     /// The source cluster: an absolute UTF-8 byte offset into the source.
     uint cluster;
-    int xAdvance, yAdvance, xOffset, yOffset;
+    DesignValue xAdvance, yAdvance, xOffset, yOffset;
     /// The engine's glyph flags (FTS9): unsafe-to-break and friends.
     uint flags;
 }
@@ -103,7 +536,8 @@ enum uint glyphFlagSafeToInsertTatweel = 4;
 /**
 A source span of the shaped run (FTS4): a half-open byte range and the
 range of glyphs, in pen order, that belong to it. Spans are in source
-order and partition the run; a span may hold no glyphs.
+order and partition the run; a span with no glyphs has
+`glyphStart == glyphEnd`.
 */
 struct SourceSpan
 {
@@ -113,18 +547,25 @@ struct SourceSpan
     size_t glyphStart, glyphEnd;
 }
 
-/// Break/concat safety at one source boundary (FTS9).
+/**
+Break/concat safety at the start of one source span (FTS9). `known` is
+false at a run edge and for a span with no glyphs: nothing there is
+reusable. The tatweel hint is known only when the span's glyphs agree.
+*/
 struct BoundarySafety
 {
     @safe pure nothrow @nogc:
 
     /// The span start this boundary sits at.
     size_t offset;
-    /// Whether the engine's flags determine the other fields at all.
+    /// Whether the engine's flags determine the break/concat fields at all.
     bool known;
-    bool unsafeToBreak;
-    bool unsafeToConcat;
+    /// The union of the span's glyphs' flags.
+    bool unsafeToBreak, unsafeToConcat;
+    /// Whether every glyph of the span allows a tatweel; meaningful when `tatweelKnown`.
     bool safeToInsertTatweel;
+    /// Whether the span's glyphs agree on the tatweel hint.
+    bool tatweelKnown;
 }
 
 /// A shaping request (FTS7): source, run range, properties, features.
@@ -156,52 +597,64 @@ struct ShapeInfo
     size_t languageLength;
     bool directionGuessed, scriptGuessed, languageGuessed;
     bool beginningOfText, endOfText;
-}
+    /// The size of the instance shaped with.
+    InstanceSize size;
 
-/// The accepted engine profile and whether this build matches it (FTS8).
-struct EngineProfile
-{
-    @safe pure nothrow @nogc:
-
-    /// The running HarfBuzz version string.
-    const(char)[] harfBuzzVersion;
-    /// Base's Unicode release.
-    const(char)[] unicodeRelease = unicodeVersion;
-    /// Whether both match the pinned profile.
-    bool compatible;
-}
-
-/**
-The running engine profile (FTS8): `compatible` when the HarfBuzz
-version is the pinned one and base's Unicode release is the pinned one.
-A system upgrade changes the version string and so changes
-`compatible`. Pinning the version does not show that HarfBuzz's
-internal tables match base's release, and no manifest yet checks it.
-*/
-EngineProfile engineProfile() @trusted
-{
-    import core.stdc.string : strlen;
-
-    const v = hb_version_string();
-    const text = v[0 .. strlen(v)];
-    return EngineProfile(text, unicodeVersion,
-        text == pinnedHarfBuzzVersion && unicodeVersion == pinnedUnicodeVersion);
-}
-
-private FontError profileError() @trusted
-{
-    const v = hb_version_string();
-    import core.stdc.string : strlen;
-
-    return FontError(v[0 .. strlen(v)] == pinnedHarfBuzzVersion
-        ? FontErrorKind.unsupportedUnicodeVersion : FontErrorKind.unsupportedEngine);
+    /// `value` with its pixel and physical conversions at the instance (FTM4, FTM6).
+    Measurement measured(DesignValue value) const => Measurement(value, size);
 }
 
 // ---------------------------------------------------------------------------
 // Unicode callbacks from base (FTS8)
 // ---------------------------------------------------------------------------
 
-private hb_tag_t hbScriptOf(dchar cp) @safe pure nothrow @nogc
+/// The general category HarfBuzz receives for `cp`, from base.
+hb_unicode_general_category_t engineGeneralCategory(dchar cp)
+{
+    alias C = hb_unicode_general_category_t;
+    switch (generalCategory(cp))
+    {
+        case GeneralCategory.Cc: return C.control;
+        case GeneralCategory.Cf: return C.format;
+        case GeneralCategory.Co: return C.privateUse;
+        case GeneralCategory.Cs: return C.surrogate;
+        case GeneralCategory.Ll, GeneralCategory.LC: return C.lowercaseLetter;
+        case GeneralCategory.Lm: return C.modifierLetter;
+        case GeneralCategory.Lo, GeneralCategory.L: return C.otherLetter;
+        case GeneralCategory.Lt: return C.titlecaseLetter;
+        case GeneralCategory.Lu: return C.uppercaseLetter;
+        case GeneralCategory.Mc: return C.spacingMark;
+        case GeneralCategory.Me: return C.enclosingMark;
+        case GeneralCategory.Mn, GeneralCategory.M: return C.nonSpacingMark;
+        case GeneralCategory.Nd: return C.decimalNumber;
+        case GeneralCategory.Nl: return C.letterNumber;
+        case GeneralCategory.No, GeneralCategory.N: return C.otherNumber;
+        case GeneralCategory.Pc: return C.connectPunctuation;
+        case GeneralCategory.Pd: return C.dashPunctuation;
+        case GeneralCategory.Pe: return C.closePunctuation;
+        case GeneralCategory.Pf: return C.finalPunctuation;
+        case GeneralCategory.Pi: return C.initialPunctuation;
+        case GeneralCategory.Ps: return C.openPunctuation;
+        case GeneralCategory.Po, GeneralCategory.P: return C.otherPunctuation;
+        case GeneralCategory.Sc: return C.currencySymbol;
+        case GeneralCategory.Sk: return C.modifierSymbol;
+        case GeneralCategory.Sm: return C.mathSymbol;
+        case GeneralCategory.So, GeneralCategory.S: return C.otherSymbol;
+        case GeneralCategory.Zl: return C.lineSeparator;
+        case GeneralCategory.Zp: return C.paragraphSeparator;
+        case GeneralCategory.Zs, GeneralCategory.Z: return C.spaceSeparator;
+        default: return C.unassigned;
+    }
+}
+
+/// The canonical combining class HarfBuzz receives for `cp`, from base.
+uint engineCombiningClass(dchar cp) => canonicalCombiningClass(cp);
+
+/// The Bidi_Mirroring_Glyph HarfBuzz receives for `cp` (itself when none), from base.
+dchar engineMirroring(dchar cp) => bidiMirror(cp);
+
+/// The script HarfBuzz receives for `cp`, as its ISO 15924 tag, from base.
+hb_tag_t engineScript(dchar cp)
 {
     static immutable hb_tag_t[Script.max + 1] tags = () {
         hb_tag_t[Script.max + 1] t;
@@ -212,185 +665,122 @@ private hb_tag_t hbScriptOf(dchar cp) @safe pure nothrow @nogc
     return tags[script(cp)];
 }
 
-private extern (C) nothrow @nogc
+/**
+The primary composite of `a` + `b`, or 0 when they do not compose, from
+base (whose `canonicalComposition` says "none" with `dchar.init`).
+*/
+dchar engineCompose(dchar a, dchar b)
 {
-    hb_unicode_general_category_t shapingCategory(hb_unicode_funcs_t*, hb_codepoint_t cp, void*)
-    {
-        switch (generalCategory(cast(dchar) cp))
-        {
-            case GeneralCategory.Cc: return hb_unicode_general_category_t.control;
-            case GeneralCategory.Cf: return hb_unicode_general_category_t.format;
-            case GeneralCategory.Co: return hb_unicode_general_category_t.privateUse;
-            case GeneralCategory.Cs: return hb_unicode_general_category_t.surrogate;
-            case GeneralCategory.Ll, GeneralCategory.LC:
-                return hb_unicode_general_category_t.lowercaseLetter;
-            case GeneralCategory.Lm: return hb_unicode_general_category_t.modifierLetter;
-            case GeneralCategory.Lo, GeneralCategory.L:
-                return hb_unicode_general_category_t.otherLetter;
-            case GeneralCategory.Lt: return hb_unicode_general_category_t.titlecaseLetter;
-            case GeneralCategory.Lu: return hb_unicode_general_category_t.uppercaseLetter;
-            case GeneralCategory.Mc: return hb_unicode_general_category_t.spacingMark;
-            case GeneralCategory.Me: return hb_unicode_general_category_t.enclosingMark;
-            case GeneralCategory.Mn, GeneralCategory.M:
-                return hb_unicode_general_category_t.nonSpacingMark;
-            case GeneralCategory.Nd: return hb_unicode_general_category_t.decimalNumber;
-            case GeneralCategory.Nl: return hb_unicode_general_category_t.letterNumber;
-            case GeneralCategory.No, GeneralCategory.N:
-                return hb_unicode_general_category_t.otherNumber;
-            case GeneralCategory.Pc: return hb_unicode_general_category_t.connectPunctuation;
-            case GeneralCategory.Pd: return hb_unicode_general_category_t.dashPunctuation;
-            case GeneralCategory.Pe: return hb_unicode_general_category_t.closePunctuation;
-            case GeneralCategory.Pf: return hb_unicode_general_category_t.finalPunctuation;
-            case GeneralCategory.Pi: return hb_unicode_general_category_t.initialPunctuation;
-            case GeneralCategory.Ps: return hb_unicode_general_category_t.openPunctuation;
-            case GeneralCategory.Po, GeneralCategory.P:
-                return hb_unicode_general_category_t.otherPunctuation;
-            case GeneralCategory.Sc: return hb_unicode_general_category_t.currencySymbol;
-            case GeneralCategory.Sk: return hb_unicode_general_category_t.modifierSymbol;
-            case GeneralCategory.Sm: return hb_unicode_general_category_t.mathSymbol;
-            case GeneralCategory.So, GeneralCategory.S:
-                return hb_unicode_general_category_t.otherSymbol;
-            case GeneralCategory.Zl: return hb_unicode_general_category_t.lineSeparator;
-            case GeneralCategory.Zp: return hb_unicode_general_category_t.paragraphSeparator;
-            case GeneralCategory.Zs, GeneralCategory.Z:
-                return hb_unicode_general_category_t.spaceSeparator;
-            default: return hb_unicode_general_category_t.unassigned;
-        }
-    }
+    const c = canonicalComposition(a, b);
+    return c == dchar.init ? 0 : c;
+}
 
-    uint shapingCombiningClass(hb_unicode_funcs_t*, hb_codepoint_t cp, void*)
-        => canonicalCombiningClass(cast(dchar) cp);
+/**
+One step of `cp`'s canonical decomposition, from base's
+`canonicalMapping`: `[a, b]`, `[a, 0]` for a singleton, or `[0, 0]`
+when `cp` does not decompose. This is the step HarfBuzz's decompose
+callback expects, not the full decomposition.
+*/
+dchar[2] engineDecompose(dchar cp)
+{
+    const m = canonicalMapping(cp);
+    dchar[2] parts = 0;
+    foreach (i; 0 .. m.length)
+        parts[i] = canonicalMappingValue(m.offset + i);
+    return parts;
+}
 
-    hb_codepoint_t shapingMirroring(hb_unicode_funcs_t*, hb_codepoint_t cp, void*)
-        => cast(hb_codepoint_t) bidiMirror(cast(dchar) cp);
+///
+@("shaping.engineDecompose.singleStep")
+unittest
+{
+    assert(engineDecompose(0x1E09) == [dchar(0xE7), 0x301]);
+    assert(engineDecompose(0x212B) == [dchar(0xC5), 0]);
+    assert(engineDecompose(0xAC01) == [dchar(0xAC00), 0x11A8]);
+    assert(engineDecompose('a') == [dchar(0), 0]);
+    assert(engineCompose(0xE7, 0x301) == 0x1E09);
+    // U+0344 decomposes to these, but is excluded from composition.
+    assert(engineCompose(0x308, 0x301) == 0 && engineCompose('a', 'b') == 0);
+}
 
-    hb_tag_t shapingScript(hb_unicode_funcs_t*, hb_codepoint_t cp, void*)
-        => hbScriptOf(cast(dchar) cp);
+private extern (C) @system nothrow @nogc
+{
+    hb_unicode_general_category_t categoryThunk(hb_unicode_funcs_t*, hb_codepoint_t cp, void*)
+        => engineGeneralCategory(cast(dchar) cp);
 
-    hb_bool_t shapingCompose(hb_unicode_funcs_t*, hb_codepoint_t a, hb_codepoint_t b,
+    uint combiningClassThunk(hb_unicode_funcs_t*, hb_codepoint_t cp, void*)
+        => engineCombiningClass(cast(dchar) cp);
+
+    hb_codepoint_t mirroringThunk(hb_unicode_funcs_t*, hb_codepoint_t cp, void*)
+        => engineMirroring(cast(dchar) cp);
+
+    hb_tag_t scriptThunk(hb_unicode_funcs_t*, hb_codepoint_t cp, void*)
+        => engineScript(cast(dchar) cp);
+
+    hb_bool_t composeThunk(hb_unicode_funcs_t*, hb_codepoint_t a, hb_codepoint_t b,
         hb_codepoint_t* ab, void*)
     {
-        const c = canonicalComposition(cast(dchar) a, cast(dchar) b);
+        const c = engineCompose(cast(dchar) a, cast(dchar) b);
         if (c == 0)
             return 0;
-        *ab = cast(hb_codepoint_t) c;
+        *ab = c;
         return 1;
     }
 
-    hb_bool_t shapingDecompose(hb_unicode_funcs_t*, hb_codepoint_t cp, hb_codepoint_t* a,
+    hb_bool_t decomposeThunk(hb_unicode_funcs_t*, hb_codepoint_t ab, hb_codepoint_t* a,
         hb_codepoint_t* b, void*)
     {
-        const span = canonicalDecomposition(cast(dchar) cp);
-        if (span.length == 0)
+        const parts = engineDecompose(cast(dchar) ab);
+        if (parts[0] == 0)
             return 0;
-        *a = cast(hb_codepoint_t) canonicalDecompositionValue(span.offset);
-        *b = span.length > 1
-            ? cast(hb_codepoint_t) canonicalDecompositionValue(span.offset + 1) : 0;
+        *a = parts[0];
+        *b = parts[1];
         return 1;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Shaper (FTS3, FTS5)
+// Advances (FTS1)
 // ---------------------------------------------------------------------------
 
+/// HarfBuzz positions per font unit: the font's scale is `unitsPerEm` times this.
+private enum int positionsPerUnit = 1_024;
+/// `DesignValue.raw` steps per HarfBuzz position.
+private enum long rawPerPosition = designSubunits / positionsPerUnit;
+
 /**
-The HarfBuzz objects of one instance (FTS5): created from the instance,
-released when the shaper is destroyed. The blob borrows the face's
-bytes, which must outlive the shaper. A shaper cannot be copied.
+What the advance callback reads: the instance, and the first error an
+advance gave, which `shape` returns in place of the run.
 */
-struct Shaper
+private struct AdvanceState
 {
-    @safe pure nothrow @nogc:
-
-    @disable this(this);
-
-    private hb_blob_t* blob_;
-    private hb_face_t* hbFace_;
-    private hb_font_t* font_;
-    private hb_unicode_funcs_t* unicodeFuncs_;
-    private Instance instance_;
-
-    ~this() @trusted
-    {
-        if (font_) hb_font_destroy(font_);
-        if (unicodeFuncs_) hb_unicode_funcs_destroy(unicodeFuncs_);
-        if (hbFace_) hb_face_destroy(hbFace_);
-        if (blob_) hb_blob_destroy(blob_);
-    }
-
-    /// The instance this shaper shapes with.
-    Instance instance() const return scope @safe pure nothrow @nogc => instance_;
-
-    /**
-    Shapes `request` (FTS7), writing glyphs to `glyphs`, source spans to
-    `spans`, boundary safety to `boundaries` (same length as `spans`),
-    and the used language to `languageOut`. Nothing is written when the
-    result is an error.
-    */
-    FontResult!ShapeInfo shape(in ShapeRequest request, scope ShapedGlyph[] glyphs,
-        scope SourceSpan[] spans, scope BoundarySafety[] boundaries, scope char[] languageOut)
-        @safe nothrow @nogc
-    {
-        const invalid = validateRequest(request);
-        if (invalid != FontError.init)
-            return fontErr!ShapeInfo(invalid);
-        return runShape(this, request, glyphs, spans, boundaries, languageOut);
-    }
+    Instance instance;
+    FontError error;
 }
 
-/**
-A shaper for `inst` (FTS3, FTS5, FTS8): `unsupportedEngine` or
-`unsupportedUnicodeVersion` when the running engine profile is not the
-pinned one.
-*/
-FontResult!Shaper shaper(in Instance inst) @trusted
-{
-    if (!engineProfile().compatible)
-        return fontErr!Shaper(profileError());
-    Shaper s;
-    s.instance_ = inst;
-    const face = inst.face;
-    const bytes = face.bytes;
-    s.blob_ = hb_blob_create(cast(const(char)*) bytes.ptr, cast(uint) bytes.length,
-        HB_MEMORY_MODE_READONLY, null, null);
-    if (s.blob_ is null)
-        return fontErr!Shaper(FontError(FontErrorKind.unsupportedEngine));
-    s.hbFace_ = hb_face_create(s.blob_, face.index);
-    s.font_ = hb_font_create(s.hbFace_);
-    if (s.hbFace_ is null || s.font_ is null)
-        return fontErr!Shaper(FontError(FontErrorKind.unsupportedEngine));
-    hb_font_set_scale(s.font_, face.unitsPerEm, face.unitsPerEm);
-    int[64] coords;
-    foreach (i, c; inst.coords)
-        coords[i] = c;
-    hb_font_set_var_coords_normalized(s.font_, coords.ptr, cast(uint) inst.coords.length);
-    s.unicodeFuncs_ = hb_unicode_funcs_create(null);
-    hb_unicode_funcs_set_general_category_func(s.unicodeFuncs_, &shapingCategory, null, null);
-    hb_unicode_funcs_set_combining_class_func(s.unicodeFuncs_, &shapingCombiningClass, null, null);
-    hb_unicode_funcs_set_mirroring_func(s.unicodeFuncs_, &shapingMirroring, null, null);
-    hb_unicode_funcs_set_script_func(s.unicodeFuncs_, &shapingScript, null, null);
-    hb_unicode_funcs_set_compose_func(s.unicodeFuncs_, &shapingCompose, null, null);
-    hb_unicode_funcs_set_decompose_func(s.unicodeFuncs_, &shapingDecompose, null, null);
-    import std.algorithm.mutation : move;
-    return fontOk(move(s));
-}
+/// `raw` design steps rounded to the nearest HarfBuzz position, ties away from zero.
+private long toPositions(long raw)
+    => raw >= 0 ? (raw + rawPerPosition / 2) / rawPerPosition : -((-raw + rawPerPosition / 2) / rawPerPosition);
 
-/**
-Shapes `source` with `inst` as a standalone convenience call (FTS1,
-FTS2): direction, script and language are guessed and reported in the
-result. Coordinated callers use a `Shaper` with explicit properties
-instead (FTS8).
-*/
-FontResult!ShapeInfo shapeText(in Instance inst, scope const(char)[] source,
-    scope ShapedGlyph[] glyphs, scope SourceSpan[] spans, scope BoundarySafety[] boundaries,
-    scope char[] languageOut)
+private extern (C) hb_position_t advanceThunk(hb_font_t*, void* fontData, hb_codepoint_t glyph, void*)
+    @system nothrow @nogc
 {
-    auto owned = shaper(inst);
-    if (owned.hasError)
-        return fontErr!ShapeInfo(owned.error);
-    auto request = ShapeRequest(source, 0, source.length, SegmentProperties.init, false);
-    return owned.value.shape(request, glyphs, spans, boundaries, languageOut);
+    auto state = cast(AdvanceState*) fontData;
+    const a = advance(state.instance, glyph);
+    if (a.hasError)
+    {
+        if (state.error == FontError.init)
+            state.error = a.error;
+        return 0;
+    }
+    const p = toPositions(a.value.design.raw);
+    if (p < int.min || p > int.max)
+    {
+        if (state.error == FontError.init)
+            state.error = FontError(FontErrorKind.arithmeticExhausted);
+        return 0;
+    }
+    return cast(hb_position_t) p;
 }
 
 // ---------------------------------------------------------------------------
@@ -403,208 +793,152 @@ private bool isBoundary(scope const(char)[] source, size_t at)
 private FontError validateRequest(in ShapeRequest request)
 {
     const source = request.source;
-    if (indexOfInvalidUtf8(source) != source.length)
-        return FontError(FontErrorKind.invalidEncoding, Tag.init,
-            indexOfInvalidUtf8(source));
-    if (request.runStart > request.runEnd || request.runEnd > source.length)
+    const invalidAt = indexOfInvalidUtf8(source);
+    if (invalidAt != source.length)
+        return FontError(FontErrorKind.invalidEncoding, Tag.init, invalidAt);
+    if (request.runStart > request.runEnd)
         return FontError(FontErrorKind.invalidRange, Tag.init, request.runStart);
-    if (!isBoundary(source, request.runStart) || !isBoundary(source, request.runEnd))
+    if (request.runEnd > source.length)
+        return FontError(FontErrorKind.invalidRange, Tag.init, request.runEnd);
+    if (request.runEnd > uint.max)
+        return limitError(FontLimit.engineBuffer, Tag.init, request.runEnd);
+    if (!isBoundary(source, request.runStart))
         return FontError(FontErrorKind.splitScalar, Tag.init, request.runStart);
+    if (!isBoundary(source, request.runEnd))
+        return FontError(FontErrorKind.splitScalar, Tag.init, request.runEnd);
     foreach (feature; request.features)
     {
         if (!feature.hasRange)
             continue;
         if (feature.start > feature.end || feature.start < request.runStart
-            || feature.end > request.runEnd
-            || !isBoundary(source, feature.start) || !isBoundary(source, feature.end))
+            || feature.end > request.runEnd || !isBoundary(source, feature.start))
             return FontError(FontErrorKind.invalidFeatureRange, feature.tag, feature.start);
+        if (!isBoundary(source, feature.end))
+            return FontError(FontErrorKind.invalidFeatureRange, feature.tag, feature.end);
     }
+    if (request.propertiesExplicit && request.properties.script.isNone)
+        return FontError(FontErrorKind.badValue);
     return FontError.init;
 }
 
 // ---------------------------------------------------------------------------
-// The engine call (trusted: HarfBuzz object handling only)
+// Decoding (FTS7)
 // ---------------------------------------------------------------------------
 
-private FontResult!ShapeInfo runShape(ref Shaper shaper, in ShapeRequest request,
-    scope ShapedGlyph[] glyphs, scope SourceSpan[] spans, scope BoundarySafety[] boundaries,
-    scope char[] languageOut) @trusted
+/// The scalars of `source[from .. to]` in source order: at most `out_.length`, from the end when `last`.
+private size_t contextScalars(scope const(char)[] source, size_t from, size_t to, bool last,
+    scope hb_codepoint_t[] out_)
 {
-    auto buffer = hb_buffer_create();
-    if (buffer is null)
-        return fontErr!ShapeInfo(FontError(FontErrorKind.unsupportedEngine));
-    scope (exit) hb_buffer_destroy(buffer);
-    hb_buffer_set_unicode_funcs(buffer, shaper.unicodeFuncs_);
-    hb_buffer_set_cluster_level(buffer, hb_buffer_cluster_level_t.monotoneCharacters);
-    uint flags = HB_BUFFER_FLAG_PRESERVE_DEFAULT_IGNORABLES
-        | HB_BUFFER_FLAG_PRODUCE_UNSAFE_TO_CONCAT | HB_BUFFER_FLAG_PRODUCE_SAFE_TO_INSERT_TATWEEL;
-    if (request.beginningOfText)
-        flags |= HB_BUFFER_FLAG_BOT;
-    if (request.endOfText)
-        flags |= HB_BUFFER_FLAG_EOT;
-    hb_buffer_set_flags(buffer, flags);
-    const source = request.source;
-    hb_buffer_add_utf8(buffer, source.ptr, cast(int) source.length,
-        cast(uint) request.runStart, cast(int)(request.runEnd - request.runStart));
-    if (request.propertiesExplicit)
+    // Scalar starts, walking back from `to` when the last ones are wanted.
+    size_t start = from;
+    if (last)
     {
-        hb_buffer_set_direction(buffer, toHbDirection(request.properties.direction));
-        if (!request.properties.script.isNone)
-            hb_buffer_set_script(buffer, request.properties.script.value);
-        if (request.properties.language.length)
+        size_t at = to, count;
+        while (at > from && count < out_.length)
         {
-            char[128] language;
-            const n = request.properties.language.length < 127
-                ? request.properties.language.length : 127;
-            language[0 .. n] = request.properties.language[0 .. n];
-            language[n] = 0;
-            hb_buffer_set_language(buffer, hb_language_from_string(language.ptr, cast(int) n));
+            --at;
+            while (at > from && !isBoundary(source, at))
+                --at;
+            ++count;
         }
+        start = at;
     }
-    else
-        hb_buffer_guess_segment_properties(buffer);
-
-    hb_feature_t[512] features;
-    if (request.features.length > features.length)
-        return fontErr!ShapeInfo(callerStorageError(request.features.length));
-    foreach (i, feature; request.features)
-        features[i] = hb_feature_t(feature.tag.value, feature.value,
-            feature.hasRange ? cast(uint) feature.start : 0,
-            feature.hasRange ? cast(uint) feature.end : uint.max);
-    hb_shape(shaper.font_, buffer,
-        request.features.length ? features.ptr : null, cast(uint) request.features.length);
-
-    uint length;
-    const infos = hb_buffer_get_glyph_infos(buffer, &length);
-    const positions = hb_buffer_get_glyph_positions(buffer, &length);
-    if (length > glyphs.length)
-        return fontErr!ShapeInfo(callerStorageError(length));
-
-    // Distinct cluster starts, in pen order (monotone by direction).
-    size_t distinct;
-    foreach (i; 0 .. length)
-        if (i == 0 || infos[i].cluster != infos[i - 1].cluster)
-            ++distinct;
-    size_t spanCount = distinct;
-    if (length == 0)
-        spanCount = request.runStart < request.runEnd ? 1 : 0;
-    else if (!hasCluster(infos, length, cast(uint) request.runStart))
-        spanCount = distinct + 1;
-    if (spanCount > spans.length)
-        return fontErr!ShapeInfo(callerStorageError(spanCount, Tag.init, 0));
-    if (boundaries.length && spanCount > boundaries.length)
-        return fontErr!ShapeInfo(callerStorageError(spanCount, Tag.init, 0));
-
-    foreach (i; 0 .. length)
-        glyphs[i] = ShapedGlyph(infos[i].codepoint, infos[i].cluster,
-            positions[i].x_advance, positions[i].y_advance,
-            positions[i].x_offset, positions[i].y_offset, infos[i].mask & 0x07);
-
-    buildSpans(request, glyphs[0 .. length], spans[0 .. spanCount]);
-    foreach (i; 0 .. spanCount)
-        if (i < boundaries.length)
-            boundaries[i] = boundaryAt(request, glyphs[0 .. length], spans[i]);
-
-    ShapeInfo info;
-    info.glyphCount = length;
-    info.spanCount = spanCount;
-    info.direction = fromHbDirection(hb_buffer_get_direction(buffer));
-    info.script = Tag(hb_buffer_get_script(buffer));
-    info.beginningOfText = request.beginningOfText;
-    info.endOfText = request.endOfText;
-    info.directionGuessed = info.scriptGuessed = info.languageGuessed
-        = !request.propertiesExplicit;
-    if (languageOut.length)
+    size_t n;
+    size_t at = start;
+    while (at < to && n < out_.length)
     {
-        const language = hb_language_to_string(hb_buffer_get_language(buffer));
-        if (language !is null)
-        {
-            import core.stdc.string : strlen;
-
-            const text = language[0 .. strlen(language)];
-            const n = text.length < languageOut.length ? text.length : languageOut.length;
-            languageOut[0 .. n] = text[0 .. n];
-            info.languageLength = n;
-        }
+        const d = decodeToken(source[at .. to], UtfMode.strict, true, at);
+        // The source was validated: every token decodes.
+        out_[n++] = d.token.scalar;
+        at = d.token.end;
     }
-    return fontOk(info);
+    return n;
 }
 
-private bool hasCluster(const(hb_glyph_info_t)* infos, uint length, uint cluster) @trusted
+private enum size_t contextLength = 5;
+
+/**
+The number of source spans the shaped `infos` give (FTS4), checking the
+monotone-character contract: cluster starts in pen order ascend for a
+forward run and descend for a backward one, within the run.
+*/
+private FontResult!size_t spanLayout(in ShapeRequest request, scope const(hb_glyph_info_t)[] infos,
+    bool backward)
 {
-    foreach (i; 0 .. length)
-        if (infos[i].cluster == cluster)
-            return true;
-    return false;
+    if (infos.length == 0)
+        return fontOk!size_t(request.runStart < request.runEnd ? 1 : 0);
+    size_t distinct = 1;
+    foreach (i, info; infos)
+    {
+        if (info.cluster < request.runStart || info.cluster >= request.runEnd)
+            return fontErr!size_t(FontError(FontErrorKind.unsupportedEngine));
+        if (i == 0)
+            continue;
+        const previous = infos[i - 1].cluster;
+        if (backward ? info.cluster > previous : info.cluster < previous)
+            return fontErr!size_t(FontError(FontErrorKind.unsupportedEngine));
+        distinct += info.cluster != previous;
+    }
+    const first = backward ? infos[$ - 1].cluster : infos[0].cluster;
+    return fontOk!size_t(distinct + (first > request.runStart));
 }
 
-/// Fills `spans` from the shaped glyphs' clusters (FTS4).
-private void buildSpans(in ShapeRequest request, scope const ShapedGlyph[] glyphs,
-    scope SourceSpan[] spans) @safe pure nothrow @nogc
+/**
+Fills `spans` from `glyphs`' monotone clusters (FTS4), in source order:
+a leading glyphless span when the first cluster starts after the run,
+then one span per distinct cluster start, each holding its contiguous
+pen-order glyphs. Linear in the glyph count.
+*/
+private void buildSpans(in ShapeRequest request, scope const ShapedGlyph[] glyphs, bool backward,
+    scope SourceSpan[] spans)
 {
-    if (spans.length == 0)
-        return;
     if (glyphs.length == 0)
     {
-        if (request.runStart < request.runEnd)
+        if (spans.length)
             spans[0] = SourceSpan(request.runStart, request.runEnd, 0, 0);
         return;
     }
-    // Span starts: the run start plus every distinct cluster start.
     size_t written;
-    void addStart(size_t at)
+    // Source order visits pen order forwards, or backwards for RTL/BTT.
+    size_t penAt(size_t k) => backward ? glyphs.length - 1 - k : k;
+    const firstCluster = glyphs[penAt(0)].cluster;
+    if (firstCluster > request.runStart)
+        spans[written++] = SourceSpan(request.runStart, firstCluster, glyphs.length, glyphs.length);
+    size_t k;
+    while (k < glyphs.length)
     {
-        foreach (i; 0 .. written)
-            if (spans[i].start == at)
-                return;
-        // Insert in ascending order.
-        size_t i = written;
-        while (i > 0 && spans[i - 1].start > at)
-        {
-            spans[i].start = spans[i - 1].start;
-            --i;
-        }
-        spans[i].start = at;
-        ++written;
-    }
-
-    addStart(request.runStart);
-    foreach (g; glyphs)
-        addStart(g.cluster);
-    foreach (i; 0 .. written)
-    {
-        spans[i].end = i + 1 < written ? spans[i + 1].start : request.runEnd;
-        // The glyphs of this span: those whose cluster is its start.
-        size_t first = glyphs.length, last = glyphs.length;
-        foreach (j, g; glyphs)
-            if (g.cluster == spans[i].start)
-            {
-                if (first == glyphs.length)
-                    first = j;
-                last = j + 1;
-            }
-        spans[i].glyphStart = first;
-        spans[i].glyphEnd = last;
+        const cluster = glyphs[penAt(k)].cluster;
+        size_t j = k + 1;
+        while (j < glyphs.length && glyphs[penAt(j)].cluster == cluster)
+            ++j;
+        // Pen-order indices of source positions k .. j.
+        const a = penAt(k), b = penAt(j - 1);
+        const lo = a < b ? a : b, hi = a < b ? b : a;
+        const end = j < glyphs.length ? glyphs[penAt(j)].cluster : request.runEnd;
+        spans[written++] = SourceSpan(cluster, end, lo, hi + 1);
+        k = j;
     }
 }
 
 /// The safety view at `span`'s start (FTS9).
 private BoundarySafety boundaryAt(in ShapeRequest request, scope const ShapedGlyph[] glyphs,
-    in SourceSpan span) @safe pure nothrow @nogc
+    in SourceSpan span)
 {
     BoundarySafety b;
     b.offset = span.start;
-    if (span.glyphStart == span.glyphEnd)
-        return b;
-    if (span.start == request.runStart || span.start == request.runEnd)
+    if (span.glyphStart == span.glyphEnd || span.start == request.runStart)
         return b;
     b.known = true;
+    size_t tatweel;
     foreach (g; glyphs[span.glyphStart .. span.glyphEnd])
     {
         b.unsafeToBreak |= (g.flags & glyphFlagUnsafeToBreak) != 0;
         b.unsafeToConcat |= (g.flags & glyphFlagUnsafeToConcat) != 0;
-        b.safeToInsertTatweel |= (g.flags & glyphFlagSafeToInsertTatweel) != 0;
+        tatweel += (g.flags & glyphFlagSafeToInsertTatweel) != 0;
     }
+    const count = span.glyphEnd - span.glyphStart;
+    b.tatweelKnown = tatweel == 0 || tatweel == count;
+    b.safeToInsertTatweel = tatweel == count;
     return b;
 }
 
@@ -628,34 +962,4 @@ private ShapingDirection fromHbDirection(hb_direction_t direction)
         case hb_direction_t.btt: return ShapingDirection.bottomToTop;
         default: return ShapingDirection.leftToRight;
     }
-}
-
-// ---------------------------------------------------------------------------
-// Justification candidates (FTS11)
-// ---------------------------------------------------------------------------
-
-/// A justification mode a candidate measurement may request (FTS11).
-enum JustificationMode : ubyte
-{
-    /// Shape with explicit feature settings: a real measurement.
-    featureSettings,
-    /// Insert extender glyphs: font does not choose or insert them.
-    extenderInsertion,
-    /// Insert kashidas: font does not choose or insert them.
-    kashidaInsertion,
-}
-
-/**
-Measures one justification candidate (FTS11): for `featureSettings`,
-the exact contextual shaped run of `request` under its feature
-settings. The insertion modes are the engine capabilities font does
-not have: `unsupportedCapability`, never a manufactured advance.
-*/
-FontResult!ShapeInfo measureJustificationCandidate(ref Shaper shaper,
-    in ShapeRequest request, JustificationMode mode, scope ShapedGlyph[] glyphs,
-    scope SourceSpan[] spans, scope BoundarySafety[] boundaries, scope char[] languageOut)
-{
-    if (mode != JustificationMode.featureSettings)
-        return fontErr!ShapeInfo(FontError(FontErrorKind.unsupportedCapability));
-    return shaper.shape(request, glyphs, spans, boundaries, languageOut);
 }

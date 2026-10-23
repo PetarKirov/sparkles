@@ -87,10 +87,18 @@ enum FontLimit : ubyte
     fixed value: the error's `needed` says how long the array must be.
     */
     callerStorage,
+    /// More feature settings than one shaping call passes to the engine (FTS7).
+    shapingFeatures,
+    /**
+    The shaping engine's own buffer (FTS7): HarfBuzz refused to grow it past
+    its length limit, or an allocation failed. It has no fixed value.
+    */
+    engineBuffer,
 }
 
-/// The value of each limit, indexed by `FontLimit`; 0 for `none` and `callerStorage`.
-immutable ulong[FontLimit.max + 1] fontLimitValue = [0, 8, 512, 10, 65_536, 1_024, 4_096, 64, 64, 0];
+/// The value of each limit, indexed by `FontLimit`; 0 for `none`, `callerStorage` and `engineBuffer`.
+immutable ulong[FontLimit.max + 1] fontLimitValue = [0, 8, 512, 10, 65_536, 1_024, 4_096, 64, 64, 0,
+    512, 0];
 
 /// A problem in font data, with its location (FTP14).
 struct FontError
