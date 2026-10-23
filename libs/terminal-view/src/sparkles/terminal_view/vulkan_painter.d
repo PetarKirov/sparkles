@@ -67,6 +67,8 @@ struct VulkanTerminalPainter(C)
             canvas.textRun(Point.init, text, Visual.init);
     }
 
+    /// A placeholder until the font atlas (V3) measures text: a byte count
+    /// times the font size, wide enough to lay a label out without overlap.
     float[2] labelSize(scope const(char)[] text) const @safe pure nothrow @nogc
         => [fontSize * text.length, fontSize];
 
