@@ -827,10 +827,34 @@ unittest
     assert(moved.valid && !parsed.document.valid);
     static assert(!__traits(compiles, { auto copy = moved; }));
 
+    static assert(!__traits(compiles, () @safe {
+        auto local = parseSdlDocument("tag 42\n");
+        return local.document.root;
+    }));
+    static assert(!__traits(compiles, () @safe {
+        auto local = parseSdlDocument("tag 42\n");
+        return local.document.root.byChild.front;
+    }));
+    static assert(!__traits(compiles, () @safe {
+        auto local = parseSdlDocument("tag 42\n");
+        return local.document.root.byChild;
+    }));
+    static assert(!__traits(compiles, () @safe {
+        auto local = parseSdlDocument("tag \"value\" attr=\"attribute\"\n");
+        return local.document.root.byChild.front.byValue.front;
+    }));
+    static assert(!__traits(compiles, () @safe {
+        auto local = parseSdlDocument("tag attr=\"attribute\"\n");
+        return local.document.root.byChild.front.byAttribute.front;
+    }));
+    static assert(!__traits(compiles, () @safe {
+        auto local = parseSdlDocument("tag attr=\"attribute\"\n");
+        return local.document.root.byChild.front.byAttribute;
+    }));
 
-    // Positive: every view/range/payload may be borrowed inside the scope'd
-    // parameter's lifetime (views store arena slices, so dip1000 tracks the
-    // full chain from the document down).
+
+    // Positive: metadata-only access accepts a scope parameter. Lending
+    // views additionally borrows the owner itself and takes an ordinary ref.
     static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
         auto valid = document.valid;
     }));
@@ -840,7 +864,7 @@ unittest
     static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
         return document.root.childCount;
     }));
-    static void borrowEverything(scope ref SdlDocument!() d) @safe
+    static void borrowEverything(ref SdlDocument!() d) @safe
     {
         auto root = d.root;
         auto values = root.byValue;
@@ -858,60 +882,56 @@ unittest
         auto owned = parseSdlDocument!sdlFull("a 1\n");
         borrowEverything(owned.document);
         static assert(__traits(compiles,
-            (scope ref SdlDocument!() document) @safe {
+            (ref SdlDocument!() document) @safe {
                 borrowEverything(document);
             }));
     }
-    static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
+    static assert(__traits(compiles, (ref SdlDocument!() document) @safe {
         auto values = document.root.byValue;
         size_t total;
         foreach (value; values)
             total += value.kind == SdlScalarKind.none;
     }));
-    static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
+    static assert(__traits(compiles, (ref SdlDocument!() document) @safe {
         auto children = document.root.byChild;
         size_t total;
         foreach (child; children)
             total += child.valueCount;
     }));
-    static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
+    static assert(__traits(compiles, (ref SdlDocument!() document) @safe {
         auto filteredAttributes =
             document.root.byAttribute(SdlQualifiedName(null, "x"));
     }));
-    static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
+    static assert(__traits(compiles, (ref SdlDocument!() document) @safe {
         auto filteredChildren =
             document.root.byChild(SdlNameQuery.anyNamespace("x"));
     }));
-    static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
+    static assert(__traits(compiles, (ref SdlDocument!() document) @safe {
         auto values = document.root.byValue;
         size_t total;
         foreach (value; values)
             total += value.kind == SdlScalarKind.none;
     }));
-    static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
+    static assert(__traits(compiles, (ref SdlDocument!() document) @safe {
         auto children = document.root.byChild;
         size_t total;
         foreach (child; children)
             total += child.valueCount;
     }));
-    static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
+    static assert(__traits(compiles, (ref SdlDocument!() document) @safe {
         auto attributes = document.root.byAttribute;
     }));
-    static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
+    static assert(__traits(compiles, (ref SdlDocument!() document) @safe {
         auto filteredAttributes =
             document.root.byAttribute(SdlQualifiedName(null, "x"));
     }));
-    static assert(__traits(compiles, (scope ref SdlDocument!() document) @safe {
+    static assert(__traits(compiles, (ref SdlDocument!() document) @safe {
         auto filteredChildren =
             document.root.byChild(SdlNameQuery.anyNamespace("x"));
     }));
 
     // Negative: nothing borrowed from the scope'd document may outlive it.
-    // Aggregate views are copyable cursors whose handles themselves are not
-    // re-tracked across a function return boundary by either backend, so each
-    // probe binds the borrowed view to a local (which dip1000 marks scope)
-    // and returns its slice-bearing payload — the bytes that must not
-    // outlive the parameter.
+    // Payload slices as well as whole cursors must remain within the owner.
     static assert(!__traits(compiles, { auto copy = moved; }));
     static assert(!__traits(compiles, {
         const(char)[] escape(scope ref SdlDocument!() document) @safe
@@ -1170,7 +1190,7 @@ unittest
 }
 
 @("sdl.reader.pinnedDubRecipeSemanticSnapshot")
-@safe unittest
+@system unittest
 {
     // Adapted fixture: shaped after dlang/dub source/dub/recipe/sdl.d at
     // 5efed360e1c9342453bc5dd19339c75981526d83 (MIT; see
@@ -1204,10 +1224,11 @@ unittest
     assert(parsed.hasValue);
     auto root = parsed.document.root;
 
-    SdlNode[] nodes;
+    SdlNode[5] nodes;
+    size_t nodeCount;
     foreach (child; root.byChild)
-        nodes ~= child;
-    assert(nodes.length == 5);
+        nodes[nodeCount++] = child;
+    assert(nodeCount == nodes.length);
 
     assert(nodes[0].qualifiedName == SdlQualifiedName(null, "authors"));
     assert(nodes[1].qualifiedName.localName == "authors");
@@ -1224,10 +1245,11 @@ unittest
     auto config1 = nodes[2];
     assert(config1.valueCount == 1
         && config1.byValue.front.stringValue == "library");
-    SdlNode[] inner;
+    SdlNode[2] inner;
+    size_t innerCount;
     foreach (child; config1.byChild)
-        inner ~= child;
-    assert(inner.length == 2);
+        inner[innerCount++] = child;
+    assert(innerCount == inner.length);
 
     auto dependency = inner[0];
     assert(dependency.qualifiedName.localName == "dependency");

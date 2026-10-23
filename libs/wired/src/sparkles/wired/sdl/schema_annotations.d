@@ -26,16 +26,86 @@ import std.typecons : Nullable;
 import optional : Optional;
 
 import sparkles.wired.policy : AnyFormat, Repr, WireStrict, hasExplicitWireName,
-    hasWireStrict, resolvedFieldPolicies;
+    hasWireStrict, hasConvert, convertOf;
+import sparkles.wired.adapters : Same;
 import sparkles.wired.schema : NodeKind, ScalarKind, WireSchema,
     isWirePassthrough, wireSchemaOf;
-import sparkles.wired.sdl.document : OwnedSdlExtras, SdlExtras;
+import sparkles.wired.sdl.document : OwnedSdlExtras, SdlExtras, SdlQualifiedName;
+import sparkles.wired.sdl.lexer : isSdlIdentifier;
+import sparkles.wired.walk : WireWalk;
 
 // ── Format marker ────────────────────────────────────────────────────────────
 
 /// The SDL format tag: `wireSchemaOf!(Sdl, T)`, `@WireName!Sdl("ns:name")`, …
 struct Sdl
 {
+    /// SDL text APIs require an owned aggregate root and representable scalars.
+    template roundTripSchema(T, alias schema)
+    {
+        enum bool roundTripSchema = () {
+            static if (!is(T == struct))
+                return false;
+            else static if (hasBorrowedSdlExtras!(Unqual!T)
+                || !__traits(compiles, sdlAggregateRoles!(Unqual!T, true)))
+                return false;
+            else
+            {
+                foreach (role; sdlAggregateRoles!(Unqual!T, true).sdlFieldRoles.roles)
+                    if (role.role != SdlRoleKind.child && role.role != SdlRoleKind.extra)
+                        return false;
+                foreach (node; schema.nodes)
+                    if (node.scalarKind == ScalarKind.sysTime
+                        || (node.scalarKind == ScalarKind.unsignedInteger
+                            && node.scalarBits >= 64))
+                        return false;
+                return true;
+            }
+        }();
+    }
+
+    /// Format hook invoked by the shared schema boundary, before publication.
+    template validateWireSchema(T, alias schema)
+    {
+        enum bool validateWireSchema = validateSdlNode!(T, schema, 0);
+    }
+}
+
+// Traverse the shared arena, including aggregates behind containers. A
+// reference points to an ancestor already checked; no second reflection
+// graph or recursion-specific schema is built here.
+private template validateSdlFieldMetadata(T, size_t i)
+{
+    static if (hasConvert!(Sdl, T.tupleof[i], typeof(T.tupleof[i])))
+    {
+        alias Converter = convertOf!(Sdl, T.tupleof[i], typeof(T.tupleof[i]));
+        static if (__traits(hasMember, Converter, "KeyAdapter"))
+            static assert(is(Converter.KeyAdapter == Same),
+                "wired.sdl: " ~ T.stringof ~ "." ~ __traits(identifier, T.tupleof[i])
+                ~ " map role requires the Same key adapter");
+    }
+    enum bool validateSdlFieldMetadata = true;
+}
+
+private template validateSdlNode(T, alias schema, size_t index)
+{
+    private enum node = schema.nodes[index];
+    static if (node.kind == NodeKind.aggregate)
+    {
+        private enum roles = sdlAggregateRoles!(Unqual!T, false, schema, index)
+            .sdlFieldRoles;
+        static assert(roles.roles.length == node.edgeCount);
+        static foreach (i; 0 .. node.edgeCount)
+            static assert(validateSdlFieldMetadata!(T, i)
+                && validateSdlNode!(typeof(T.tupleof[i]), schema,
+                schema.edges[node.firstEdge + i]));
+    }
+    else static if (node.kind == NodeKind.sequence || node.kind == NodeKind.staticArray)
+        static assert(validateSdlNode!(ForeachType!T, schema, schema.edges[node.firstEdge]));
+    else static if (node.kind == NodeKind.map)
+        static assert(validateSdlNode!(ValueType!T, schema, schema.edges[node.firstEdge + 1]));
+    else static if (is(T == Nullable!N, N) || is(T == Optional!N, N))
+        static assert(validateSdlNode!(N, schema, schema.edges[node.firstEdge]));
+    enum bool validateSdlNode = true;
 }
 
 // ── Role UDAs ────────────────────────────────────────────────────────────────
@@ -127,6 +197,7 @@ struct SdlFieldRole
     SdlRoleKind role;
     string namespace_;   /// resolved namespace; empty = ordinary SDL name
     string localName;    /// resolved local name (case policy or explicit split)
+    const(SdlQualifiedName)[] aliases; /// decode-only qualified identities
     size_t positionalIndex = size_t.max; /// `tagValue`: the declared slot
     bool dynamicValueSuffix;             /// `tagValue`: dynamic-array suffix
     bool dynamicName;                    /// `tagName` data field
@@ -156,6 +227,21 @@ private enum Shape : ubyte
     other,
 }
 
+private size_t payloadIndex(const WireSchema schema, size_t index)
+{
+    while (true)
+    {
+        const node = schema.nodes[index];
+        if (node.kind == NodeKind.reference)
+            index = node.referenceIndex;
+        else if (node.kind == NodeKind.converted
+            || (node.kind == NodeKind.nullAware && node.edgeCount))
+            index = schema.edges[node.firstEdge];
+        else
+            return index;
+    }
+}
+
 private Shape shapeAt(const WireSchema s, size_t ni)
 {
     final switch (s.nodes[ni].kind)
@@ -168,8 +254,10 @@ private Shape shapeAt(const WireSchema s, size_t ni)
     case NodeKind.reference:
         return shapeAt(s, s.nodes[ni].referenceIndex);
     case NodeKind.converted:
-    case NodeKind.nullAware:
         return shapeAt(s, s.edges[s.nodes[ni].firstEdge]);
+    case NodeKind.nullAware:
+        return s.nodes[ni].edgeCount == 0 ? Shape.scalarSingle
+            : shapeAt(s, s.edges[s.nodes[ni].firstEdge]);
     case NodeKind.sequence:
         return shapeElement(s, s.edges[s.nodes[ni].firstEdge], false);
     case NodeKind.staticArray:
@@ -235,6 +323,14 @@ private string roleName(SdlRoleKind role)
 }
 
 // ── Qualified-name resolution ────────────────────────────────────────────────
+
+private SdlQualifiedName aliasName(string name) @safe pure nothrow @nogc
+{
+    foreach (i, c; name)
+        if (c == ':')
+            return SdlQualifiedName(name[0 .. i], name[i + 1 .. $]);
+    return SdlQualifiedName(null, name);
+}
 
 /** Splits one explicit `@WireName!Sdl` spelling into namespace and local name.
 
@@ -332,17 +428,19 @@ The projection also resolves the aggregate's unknown-member policy:
 $(LREF SdlAggregateRoles.strictUnknown) reports whether `@WireStrict!Sdl`
 (or the format-less spelling) applies.
 */
-template sdlAggregateRoles(T, bool isDocumentRoot = false)
+template sdlAggregateRoles(T, bool isDocumentRoot = false,
+    alias schema = wireSchemaOf!(Sdl, T), size_t aggregateIndex = 0)
 if (is(T == struct))
 {
     import std.meta : AliasSeq;
 
-    private enum schema = wireSchemaOf!(Sdl, T);
-    static assert(schema.nodes[0].kind == NodeKind.aggregate,
+    private alias walk = WireWalk!(Sdl, T, schema);
+    private enum rootNode = schema.nodes[aggregateIndex];
+    static assert(rootNode.kind == NodeKind.aggregate,
         "wired.sdl: " ~ T.stringof
         ~ ": SDL document root must be an unconverted aggregate");
 
-    private alias policies = resolvedFieldPolicies!(Sdl, T);
+    private alias policies = walk.childPolicies!aggregateIndex;
     private enum fieldCount = policies.length;
 
     // SPEC §8 forbid policy: an exact-`Sdl` @WireStrict wins over AnyFormat.
@@ -354,7 +452,7 @@ if (is(T == struct))
     template FieldFacts(alias symbol, size_t i)
     {
         enum ident = __traits(identifier, symbol);
-        enum ni = schema.edges[schema.nodes[0].firstEdge + i];
+        enum ni = schema.edges[rootNode.firstEdge + i];
 
         enum tagValueCount = getUDAs!(symbol, SdlTagValueAttr).length;
         enum attributeCount = getUDAs!(symbol, SdlAttributeAttr).length;
@@ -393,17 +491,12 @@ if (is(T == struct))
         else
             enum Shape shape = Shape.other;
 
-        private enum size_t staticLength = schema.nodes[ni].kind
-            == NodeKind.reference
-            ? schema.nodes[schema.nodes[ni].referenceIndex].staticLength
-            : schema.nodes[ni].staticLength;
+        private enum size_t staticLength = schema.nodes[payloadIndex(schema, ni)].staticLength;
 
         /// Whether the wrapper itself is a runtime-length array (the marker
         /// distinguishing a dynamic value-suffix sequence from a static one).
-        enum bool dynamicArrayWrapper = (schema.nodes[ni].kind
-                == NodeKind.reference
-            ? schema.nodes[schema.nodes[ni].referenceIndex].kind
-            : schema.nodes[ni].kind) == NodeKind.sequence;
+        enum bool dynamicArrayWrapper = schema.nodes[payloadIndex(schema, ni)].kind
+            == NodeKind.sequence;
     }
 
     // ── §5.2 validation ──────────────────────────────────────────────────
@@ -445,6 +538,26 @@ if (is(T == struct))
                 err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
                     ~ ": a field declares at most one SDL role UDA";
 
+            static if (F.role == SdlRoleKind.child || F.role == SdlRoleKind.attribute)
+            {
+                alias Name = splitSdlQualifiedName!(T.stringof, F.ident, policies[i].key);
+                if (!isSdlIdentifier(Name.localName)
+                    || ((cast(string) Name.namespace_).length
+                        && !isSdlIdentifier(Name.namespace_)))
+                    err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
+                        ~ ": @" ~ roleName(F.role)
+                        ~ " requires a valid qualified SDL identifier";
+                foreach (rawAlias; policies[i].aliases)
+                {
+                    const name = aliasName(rawAlias);
+                    if (!isSdlIdentifier(name.localName)
+                        || (name.namespace_.length && !isSdlIdentifier(name.namespace_)))
+                        err ~= "wired.sdl: " ~ T.stringof ~ "." ~ F.ident
+                            ~ ": @" ~ roleName(F.role)
+                            ~ " alias requires a valid qualified SDL identifier";
+                }
+            }
+
             final switch (F.role)
             {
             case SdlRoleKind.child:
@@ -465,9 +578,7 @@ if (is(T == struct))
                 }
                 static if (F.shape == Shape.map)
                 {{
-                    const mapTarget = schema.nodes[F.ni].kind
-                        == NodeKind.reference
-                        ? schema.nodes[F.ni].referenceIndex : F.ni;
+                    const mapTarget = payloadIndex(schema, F.ni);
                     const keyNode = schema.edges[
                         schema.nodes[mapTarget].firstEdge];
                     if (!nameBearing(schema, keyNode))
@@ -608,6 +719,8 @@ if (is(T == struct))
             role.fieldIndex = i;
             role.nodeIndex = F.ni;
             role.role = F.role;
+            foreach (name; policies[i].aliases)
+                role.aliases ~= aliasName(name);
 
             static if (hasExplicitWireName!(Sdl, T.tupleof[i]))
             {
@@ -814,7 +927,7 @@ version (unittest)
         @SdlAttribute() bool optionalFlag;
         @SdlChild() Dep dep;
         @SdlTagName() string tag;
-        @SdlExtra() int extras;
+        @SdlExtra() SdlExtras extras;
     }
 
     enum jsonSchema = wireSchemaOf!(Json, Shape);
@@ -961,6 +1074,15 @@ version (unittest)
         @SdlAttribute() Dep dep;
     }
     static assert(!__traits(compiles, sdlAggregateRoles!AggregateAttribute));
+    static assert(!__traits(compiles, wireSchemaOf!(Sdl, AggregateAttribute)));
+    static struct NestedInvalid { AggregateAttribute[] children; }
+    static assert(!__traits(compiles, wireSchemaOf!(Sdl, NestedInvalid)));
+
+    static struct InvalidIdentifier
+    {
+        @WireName!Sdl("bad name") int field;
+    }
+    static assert(!__traits(compiles, wireSchemaOf!(Sdl, InvalidIdentifier)));
 
     static struct MapAttribute
     {
@@ -1023,6 +1145,9 @@ version (unittest)
         int payload;
     }
     static assert(!__traits(compiles, sdlAggregateRoles!(RootViolation, true)));
+    import sparkles.wired.sdl.codec : fromSDL, toSDL;
+    static assert(!__traits(compiles, fromSDL!RootViolation("")));
+    static assert(!__traits(compiles, toSDL(RootViolation.init)));
 
     static struct MultipleRolesOneField
     {

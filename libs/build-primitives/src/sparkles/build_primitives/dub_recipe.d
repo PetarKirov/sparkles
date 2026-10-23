@@ -192,7 +192,7 @@ DubRecipe parseSdlRecipe(const(char)[] text, size_t firstLine = 1) @safe
 {
     import sparkles.wired.sdl : parseSdlDocument, SdlNode, SdlQualifiedName, SdlScalarKind;
 
-    static string firstString(const SdlNode node) @safe
+    static string firstString(scope const SdlNode node) @safe
     {
         if (!node.valueCount)
             return null;
@@ -200,7 +200,7 @@ DubRecipe parseSdlRecipe(const(char)[] text, size_t firstLine = 1) @safe
         return value.kind == SdlScalarKind.string_ ? value.stringValue.idup : null;
     }
 
-    static string[] strings(const SdlNode node) @safe
+    static string[] strings(scope const SdlNode node) @safe
     {
         string[] items;
         foreach (value; node.byValue)

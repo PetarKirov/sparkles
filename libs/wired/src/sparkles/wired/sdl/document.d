@@ -437,10 +437,16 @@ struct SdlDocument(Allocator = Mallocator)
     /// Whether this document contains its synthetic root.
     bool valid() const @safe pure nothrow @nogc => nodes.length != 0;
 
-    /// Borrowed synthetic root view.
-    SdlNode root() return scope const @safe pure nothrow @nogc
+    /** Borrowed synthetic root view, valid only while this document is.
+
+    `scope return` binds the view to the document object rather than to its
+    arenas, so no view outlives the owner that frees them. Narrow trust: the
+    arena slices are fields of a `scope` `this`, which dip1000 would only
+    let escape under `return scope`, the weaker arena-lifetime binding. */
+    SdlNode root() scope return const @safe pure nothrow @nogc
     in (valid, "empty document has no root")
-        => SdlNode(nodes[], values[], attributes[], childIndexes[], 0);
+        => (() @trusted => SdlNode(nodes[], values[], attributes[],
+            childIndexes[], 0))();
 
     /// Owned source label supplied to the parser.
     const(char)[] sourceName() const return scope @safe pure nothrow @nogc
