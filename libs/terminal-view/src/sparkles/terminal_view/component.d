@@ -8,7 +8,7 @@ drains the pty and makes the dirty/skip decision, `handle` maps
 runs the per-cell renderer inside the host's draw phase (`HST13`). `main`
 shrinks to CLI-parse-then-`runApp`.
 
-100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998B The mouse) is events in pane pixels (`pointerInPane`, `wheelInPane`,
+$(B The mouse) is events in pane pixels (`pointerInPane`, `wheelInPane`,
 `sparkles.terminal_view.pointer`): the overlay bar on the toolkit's
 `ScrollView` machine (`TVW9`), selection, link hover, mouse reporting. A
 host that reports pixels reaches them through `handle`; where raylib is
@@ -1243,7 +1243,7 @@ struct TerminalView
     application calls from its own `paint`, with the rect `keyedRects`
     reported for the pane it keyed. `rect` is in cells.
 
-    The pane's mouse arrives through 100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF pointerInPane) in pane pixels;
+    The pane's mouse arrives through $(LREF pointerInPane) in pane pixels;
     the raylib bridge (`pollMouse`) reads it relative to where this put the
     pane.
     */
@@ -1279,7 +1279,7 @@ struct TerminalView
     }
 
     /**
-    100 1 17 62 67 100 131 974 979 986 987 989 990 994 995 997 998LREF paintPanePx) through any painter (`isTerminalPainter`): what a
+    $(LREF paintPanePx) through any painter (`isTerminalPainter`): what a
     host whose canvas is not raylib's paints the pane with, and what a
     test records the renderer through.
     */
