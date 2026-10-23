@@ -49,7 +49,17 @@ import sparkles.ui.effect : applyThemeEffects, Builtin, EffectBinding,
     EffectParam, EffectRegistry, ThemeEffects;
 import sparkles.ui.image : ImageRegistry;
 import state;
-import sparkles.terminal_view.component : TerminalViewOptions;
+import sparkles.terminal_view.component : hasPixelCanvas, reportsCellPixels, TerminalViewOptions;
+
+// The native host keeps what the Terminal page paints a pane through: a
+// drift fails this build, not the page at run time (`UVX11`).
+version (UiAppGuiVulkan)
+{
+    import sparkles.ui_app.native_loop : NativeHost;
+
+    static assert(hasPixelCanvas!NativeHost && reportsCellPixels!NativeHost,
+        "the native host no longer offers what a terminal pane paints through");
+}
 import sparkles.terminal_view.input : ExitBehavior;
 import sparkles.terminal_view.pool : TerminalPool;
 
@@ -533,11 +543,9 @@ struct Gallery
                 s.terms.paneRows = cast(ushort) inner.height;
                 s.terms.paneX = cast(ushort) inner.x;
                 s.terms.paneY = cast(ushort) inner.y;
-                import sparkles.shaders : v4;
-
                 static if (__traits(compiles, { auto c_ = h.canvas; auto f_ = c_.fonts; }))
                     paintTermChrome(h, tv, inner); // padding fill + pane + rail
-                else static if (__traits(compiles, h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0))))
+                else static if (hasPixelCanvas!(typeof(h)))
                     paintTermPixels(h, tv, inner);
                 else static if (__traits(compiles, paintCells(tv.s, h.canvas, inner)))
                     // An lvalue canvas (the recorder). The paint is C FFI over
@@ -1108,7 +1116,7 @@ struct Gallery
                 auto c = h.canvas;
                 return tv.open(c.fonts, cols, rows);
             }();
-        else static if (__traits(compiles, { int w = h.cellWidth; int ht = h.cellHeight; }))
+        else static if (reportsCellPixels!(typeof(h)))
             // Native arm: pixels, and `PointerUnit.pixels` is already the
             // gallery's `RunConfig`, so `handle` feeds `pointerInPane` in
             // the same unit. `pollMouse` is off because `backend` is gui.

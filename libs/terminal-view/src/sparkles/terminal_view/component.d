@@ -70,6 +70,26 @@ import sparkles.ui.layout : Frame;
 import sparkles.ui.widget : WidgetTree;
 
 /**
+What a host must offer for a pane to paint on it in pixels without raylib
+(`UVX11`): a canvas with pixel fills (the Vulkan painter's target), and its
+cell in pixels (a pane opens at it). Named, so an application can assert
+them against its host (`static assert(hasPixelCanvas!NativeHost)`) and a
+signature drift fails the build instead of leaving a pane that paints
+nothing.
+*/
+enum bool hasPixelCanvas(H) = __traits(compiles, (ref H h) {
+    import sparkles.shaders : v4;
+
+    h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0));
+});
+
+/// ditto
+enum bool reportsCellPixels(H) = __traits(compiles, (ref H h) {
+    int w = h.cellWidth;
+    int ht = h.cellHeight;
+});
+
+/**
 Default colours to install over the emulator's: any of the foreground,
 background and cursor, and any subset of the 16 ANSI palette entries
 (`paletteMask` bit `i` set ⇒ `palette[i]` applies). `ColorOverrides.init`
@@ -1020,7 +1040,7 @@ struct TerminalView
             bool ok;
             version (TerminalViewVulkan)
             {
-                static if (__traits(compiles, { int w = h.cellWidth; int ht = h.cellHeight; }))
+                static if (reportsCellPixels!H)
                     ok = openPixels(cast(ushort) paneCols, cast(ushort) paneRows,
                         h.cellWidth, h.cellHeight);
             }
@@ -1064,7 +1084,7 @@ struct TerminalView
             }
             else version (TerminalViewVulkan)
             {
-                static if (__traits(compiles, { int w = h.cellWidth; int ht = h.cellHeight; }))
+                static if (reportsCellPixels!H)
                 {
                     s.cellWidth = h.cellWidth;
                     s.cellHeight = h.cellHeight;
@@ -1224,10 +1244,9 @@ struct TerminalView
             }
         version (TerminalViewVulkan)
         {
-            import sparkles.shaders : v4;
             import sparkles.terminal_view.vulkan_painter : VulkanTerminalPainter;
 
-            static if (__traits(compiles, h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0))))
+            static if (hasPixelCanvas!H)
             {
                 auto painter = VulkanTerminalPainter!(typeof(*h.canvas))(h.canvas,
                     &vulkanImages, s.fontSize);
@@ -1267,9 +1286,8 @@ struct TerminalView
         version (TerminalViewVulkan)
         {
             import sparkles.terminal_view.vulkan_painter : VulkanTerminalPainter;
-            import sparkles.shaders : v4;
 
-            static if (__traits(compiles, h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0))))
+            static if (hasPixelCanvas!H)
             {
                 auto painter = VulkanTerminalPainter!(typeof(*h.canvas))(h.canvas, &vulkanImages, s.fontSize);
                 scope (exit) painter.unbind(); // binds on its first image (`UVX11`)

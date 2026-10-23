@@ -339,8 +339,9 @@ arms paint the same rectangles.
 void fillPixels(H)(ref H h, int x, int y, int w, int ht, RgbColor c) @system
 {
     import sparkles.shaders : v4;
+    import sparkles.terminal_view.component : hasPixelCanvas;
 
-    static if (__traits(compiles, h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0))))
+    static if (hasPixelCanvas!H)
         h.canvas.fillPx(x, y, w, ht, v4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, 1));
     else
     {
