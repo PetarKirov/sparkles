@@ -131,6 +131,12 @@
       url = "github:nst/JSONTestSuite";
       flake = false;
     };
+    # PngSuite and libpng's own test images (contrib/pngsuite,
+    # contrib/testpngs): the PNG decoder's differential corpus.
+    libpng-src = {
+      url = "github:pnggroup/libpng/v1.6.44";
+      flake = false;
+    };
     nativejson-benchmark = {
       url = "github:miloyip/nativejson-benchmark";
       flake = false;
