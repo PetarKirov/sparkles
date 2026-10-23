@@ -26,7 +26,7 @@ configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:font" path="../.."
     subConfiguration "sparkles:font" "engine"
-    libs "freetype"
+    libs "freetype2"
     dependency "sparkles:base" path="../.."
 
     // The differential suite exists only for tests.
