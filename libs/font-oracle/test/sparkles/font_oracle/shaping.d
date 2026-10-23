@@ -334,3 +334,72 @@ unittest
     bytes[head.offset + 18] ^= 0xFF; // unitsPerEm
     assert(shapingFingerprint(bytes) != before);
 }
+
+/**
+FTS10: every glyph's ligature carets, in record order, equal HarfBuzz's
+own `GDEF` reading (`hb_ot_layout_get_ligature_carets`), over every
+bundled face with carets, at the default and, for variable faces, at
+nondefault weights. HarfBuzz resolves at its font scale, here 1,024
+positions per unit, and rounds variation deltas there.
+*/
+@("oracle.carets.agreeWithHarfBuzz")
+@system
+unittest
+{
+    import sparkles.font_oracle.corpus : corpus, Oracle;
+    import std.path : baseName;
+
+    if (fontsDir is null)
+        return skipTest("SPARKLES_FONTS_PATH is unset");
+    size_t faces, glyphsWithCarets, caretsCompared;
+    foreach (path; corpus)
+    {
+        const bytes = cast(const(ubyte)[]) read(path);
+        const opened = openFace(bytes);
+        if (opened.hasError || !opened.value.has(Tag("GDEF")))
+            continue;
+        const face = opened.value;
+        UserCoordinate[][] settings = [null];
+        foreach (a; axes(face))
+            if (a.value.axisTag == Tag("wght"))
+                settings ~= [[UserCoordinate(Tag("wght"), a.value.minValue)],
+                    [UserCoordinate(Tag("wght"), a.value.maxValue)]];
+        bool any;
+        foreach (setting; settings)
+        {
+            auto inst = face.instance(InstanceSize.pixels(Ppem.fromInteger(16).value), setting).value;
+            auto hb = Oracle(bytes, 0);
+            hb_font_set_scale(hb.font, face.unitsPerEm * 1024, face.unitsPerEm * 1024);
+            int[64] coords;
+            foreach (i, c; inst.coords)
+                coords[i] = c;
+            hb_font_set_var_coords_normalized(hb.font, coords.ptr, inst.axisCount);
+            LigatureCaret[64] ours;
+            int[64] theirs;
+            foreach (gid; 0 .. face.numGlyphs)
+            {
+                uint count = theirs.length;
+                const total = hb_ot_layout_get_ligature_carets(hb.font, HB_DIRECTION_LTR, gid, 0, &count,
+                    theirs.ptr);
+                const r = ligatureCarets(inst, gid, 0, true, ours[]);
+                const label = text(path.baseName, " ", setting, " gid ", gid);
+                assert(r.hasValue, label);
+                assert(r.value.present == (total != 0) && (!r.value.present || r.value.count == total), label);
+                foreach (k; 0 .. count)
+                {
+                    // HarfBuzz positions are 1/1,024 units here; ours are 1/65,536.
+                    const diff = ours[k].coordinate.raw - theirs[k] * 64L;
+                    assert(diff >= -64 && diff <= 64, text(label, " caret ", k, ": ",
+                        ours[k].coordinate.raw / 65_536.0, " vs ", theirs[k] / 1_024.0));
+                    assert(ours[k].glyphId == gid && ours[k].recordIndex == k, label);
+                    ++caretsCompared;
+                }
+                glyphsWithCarets += total != 0;
+                any |= total != 0;
+            }
+        }
+        faces += any;
+    }
+    assert(faces >= 5 && caretsCompared > 600, text(faces, " faces, ", glyphsWithCarets, " glyphs, ",
+        caretsCompared, " carets"));
+}
