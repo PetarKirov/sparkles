@@ -12,7 +12,7 @@ change, light or dark, with nothing else to configure.
 module chrome;
 
 import sparkles.base.term_color : RgbColor;
-import sparkles.ui.geometry : Constraints, Insets, Rect, SizeSpec;
+import sparkles.ui.geometry : Constraints, Insets, Rect, Size, SizeSpec;
 import sparkles.ui.layout : DelegateMeasure, Frame, layout;
 import sparkles.ui.state : HoverTarget, hoverTargets;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle,
@@ -331,6 +331,40 @@ files directory on Android.
 */
 bool debugHitBoxes;
 
+/**
+A solid rectangle in window pixels on whichever canvas the host draws with:
+the native canvas's pixel fill, or raylib's. The chrome's one fill, so both
+arms paint the same rectangles.
+*/
+void fillPixels(H)(ref H h, int x, int y, int w, int ht, RgbColor c) @system
+{
+    import sparkles.shaders : v4;
+
+    static if (__traits(compiles, h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0))))
+        h.canvas.fillPx(x, y, w, ht, v4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, 1));
+    else
+    {
+        import raylib : Color, DrawRectangle;
+
+        DrawRectangle(x, y, w, ht, Color(c.r, c.g, c.b, 255));
+    }
+}
+
+/// ditto, the rectangle's one-pixel border
+void outlinePixels(H)(ref H h, int x, int y, int w, int ht, RgbColor c) @system
+{
+    import sparkles.shaders : v4;
+
+    static if (__traits(compiles, h.canvas.outlinePx(0, 0, 0, 0, v4(0, 0, 0, 0))))
+        h.canvas.outlinePx(x, y, w, ht, v4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, 1));
+    else
+    {
+        import raylib : Color, DrawRectangleLines;
+
+        DrawRectangleLines(x, y, w, ht, Color(c.r, c.g, c.b, 255));
+    }
+}
+
 /// Paints a placed surface through the host's canvas.
 void paintLayer(H)(ref H h, in Layer l, in ChromeTheme t) @system
 {
@@ -343,38 +377,16 @@ void paintLayer(H)(ref H h, in Layer l, in ChromeTheme t) @system
     if (l.opaque)
     {
         const r = l.backdrop.width > 0 ? l.backdrop : l.pixelBounds;
-        version (TerminalVulkan)
-        {
-            import sparkles.shaders : v4;
-            h.canvas.fillPx(r.x, r.y, r.width, r.height,
-                v4(t.bg.r / 255.0f, t.bg.g / 255.0f, t.bg.b / 255.0f, 1));
-        }
-        else
-        {
-            import raylib : Color, DrawRectangle;
-            DrawRectangle(r.x, r.y, r.width, r.height, Color(t.bg.r, t.bg.g, t.bg.b, 255));
-        }
+        fillPixels(h, r.x, r.y, r.width, r.height, t.bg);
     }
     if (l.panel.width > 0)
-    {
-        const s = t.slotFill(Slot.surface);
-        version (TerminalVulkan)
-        {
-            import sparkles.shaders : v4;
-            h.canvas.fillPx(l.panel.x, l.panel.y, l.panel.width, l.panel.height,
-                v4(s.r / 255.0f, s.g / 255.0f, s.b / 255.0f, 1));
-        }
-        else
-        {
-            import raylib : Color, DrawRectangle;
-            DrawRectangle(l.panel.x, l.panel.y, l.panel.width, l.panel.height,
-                Color(s.r, s.g, s.b, 255));
-        }
-    }
+        fillPixels(h, l.panel.x, l.panel.y, l.panel.width, l.panel.height,
+            t.slotFill(Slot.surface));
     static FrameOps ops;
     ops.reset();
     chromeDisplayList(l.tree, l.frames, t.palette, t.fg, t.bg, ops);
     auto c = h.canvas;
+    // The raylib canvas places by its origin; the native one by a pixel offset.
     static if (__traits(compiles, c.originX = l.x))
     {
         c.originX = l.x;
@@ -388,31 +400,12 @@ void paintLayer(H)(ref H h, in Layer l, in ChromeTheme t) @system
         c.popOffsetPx();
     }
     if (l.panel.width > 0 && l.edgeWidth > 0)
-    {
-        const e = t.slotInk(Slot.border);
-        version (TerminalVulkan)
-        {
-            import sparkles.shaders : v4;
-            h.canvas.fillPx(l.panel.x + l.panel.width - l.edgeWidth, l.panel.y, l.edgeWidth,
-                l.panel.height, v4(e.r / 255.0f, e.g / 255.0f, e.b / 255.0f, 1));
-        }
-        else
-        {
-            import raylib : Color, DrawRectangle;
-            DrawRectangle(l.panel.x + l.panel.width - l.edgeWidth, l.panel.y, l.edgeWidth,
-                l.panel.height, Color(e.r, e.g, e.b, 255));
-        }
-    }
-    version (TerminalVulkan) {}
-    else
+        fillPixels(h, l.panel.x + l.panel.width - l.edgeWidth, l.panel.y, l.edgeWidth,
+            l.panel.height, t.slotInk(Slot.border));
     if (debugHitBoxes)
-    {
-        import raylib : Color, DrawRectangleLines;
-
         foreach (ref hit; l.hits)
-            DrawRectangleLines(l.x + hit.rect.x * l.cellW, l.y + hit.rect.y * l.cellH,
-                hit.rect.width * l.cellW, hit.rect.height * l.cellH, Color(255, 40, 40, 255));
-    }
+            outlinePixels(h, l.x + hit.rect.x * l.cellW, l.y + hit.rect.y * l.cellH,
+                hit.rect.width * l.cellW, hit.rect.height * l.cellH, RgbColor(255, 40, 40));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -567,4 +560,18 @@ uint band(ref Builder b, uint[] children, bool fullWidth = true) @safe
     assert(squareCols(3, 25, 47) == 6);
     assert(squareCols(1, 1, 1) == 1, "a cell target: one column a row");
     assert(squareCols(2, 0, 10) == 2, "no cell size: fall back to the rows");
+}
+
+/// The window's size in pixels, on either arm: the native host's surface,
+/// or raylib's screen.
+Size windowPixels(H)(ref H h) @system
+{
+    static if (__traits(compiles, { Size s = h.pixels; }))
+        return h.pixels;
+    else
+    {
+        import raylib : GetScreenHeight, GetScreenWidth;
+
+        return Size(GetScreenWidth(), GetScreenHeight());
+    }
 }

@@ -196,6 +196,11 @@ struct WorkspaceHost
     private PaneId revealed; // the pane whose toolbar shows (`reveal`)
     private int cellW = 1, cellH = 1;
 
+    /// The cell the panes were last laid out with, in pixels.
+    int cellWidth() const @safe pure nothrow @nogc => cellW;
+    /// ditto
+    int cellHeight() const @safe pure nothrow @nogc => cellH;
+
     /// What every viewer pane shares (`TDV5`): grammars and the loader.
     /// Made on the first viewer, by `makeDocEnv` when the embedder supplies
     /// one (Android's asset reader), else from the environment.
@@ -651,7 +656,9 @@ struct WorkspaceHost
         layout(area);
 
         // The pointer belongs to the pane under it — or, during a drag, to the
-        // pane the drag began in (`TSS9`). A press there also focuses it.
+        // pane the drag began in (`TSS9`). A press there also focuses it. One
+        // routine for both arms: raylib's polled state, or the events the
+        // host delivered (`notePointer`).
         version (TerminalVulkan)
         {
             if (pressQueueCount > 0)
@@ -660,94 +667,48 @@ struct WorkspaceHost
                 foreach (i; 1 .. pressQueueCount)
                     pressQueue[i - 1] = pressQueue[i];
                 pressQueueCount--;
-                applyPointer(h, px, py, pointerLeft, true);
+                cast(void) applyPointer(h, px, py, pointerLeft, true);
+                // A second press queued between frames is the next frame's.
+                static if (__traits(compiles, h.requestFrame()))
+                    if (pressQueueCount > 0)
+                        h.requestFrame();
             }
             else
-                applyPointer(h, hoverX, hoverY, pointerLeft, false);
+                cast(void) applyPointer(h, hoverX, hoverY, pointerLeft, false);
         }
         else
         {
             static if (__traits(compiles, GetMousePosition()))
             if (pollPointer)
             {
-            const m = GetMousePosition();
-            const mx = cast(int) m.x, my = cast(int) m.y;
-            hoverX = mx;
-            hoverY = my;
-            const leftDown = IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT);
-            PaneId under;
-            foreach (ref b; boxes)
-                if (contains(b.content, mx, my))
-                    under = b.id;
-            // `reveal`: a pane's toolbar shows while the pointer is at its top
-            // or on the toolbar itself (`TSS11`).
-            if (paneChrome == PaneChrome.reveal && !leftDown)
-            {
-                PaneId top;
-                foreach (ref b; boxes)
-                    if (contains(Rect(b.outer.x, b.outer.y, b.outer.width, 2 * cellH), mx, my))
-                        top = b.id;
-                if (top != revealed && !(revealed && toolbarLayer.contains(mx, my)))
+                const m = GetMousePosition();
+                const mx = cast(int) m.x, my = cast(int) m.y;
+                const under = applyPointer(h, mx, my,
+                    IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT),
+                    IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT));
+                // A viewer pane scrolls with the wheel over it; a terminal pane
+                // polls its own (`pollMouse`). The native arm's wheel arrives as
+                // an event (`applyWheel`).
+                if (auto v = surfaces.modal ? null : viewer(under))
                 {
-                    revealed = top;
-                    repaint = true;
+                    import raylib : GetMouseWheelMoveV;
+                    import sparkles.input.events : linesPerNotch;
+
+                    // A notch eases, between rows (`SCV12`); shift scrolls sideways.
+                    const wm = GetMouseWheelMoveV();
+                    if (wm.x != 0 || wm.y != 0)
+                    {
+                        import sparkles.input.events : Mods;
+                        import raylib : IsKeyDown, KeyboardKey;
+
+                        const shift = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
+                            || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
+                        if (v.wheel(mx, my, WheelEvent(fdx: -wm.x * linesPerNotch,
+                                fdy: -wm.y * linesPerNotch, mods: Mods(shift: shift))))
+                            repaint = true;
+                    }
                 }
             }
-            // The overlay bar under the pointer takes it first (`SCV13`).
-            const onBar = barPointer(mx, my, leftDown,
-                IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT), cellW, touch: false);
-            if (!onBar)
-                dragDivider(mx, my, leftDown, IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT));
-            // Over a divider the pointer says which way it resizes: across,
-            // down, or — at a junction — either way.
-            const hover = dividerHover(mx, my);
-            if (hover != shownHover)
-            {
-                import sparkles.base.term_control : PointerShape;
-
-                shownHover = hover;
-                static immutable PointerShape[DividerHover.max + 1] shapes = [
-                    PointerShape.default_, PointerShape.ewResize, PointerShape.nsResize,
-                    PointerShape.grab];
-                static if (__traits(compiles, h.pointerShape(PointerShape.default_)))
-                    h.pointerShape(shapes[hover]);
-            }
-            if (dragging >= 0)
-                under = pointerOwner = 0;
-            if (!leftDown)
-                pointerOwner = under;
-            // A click on the chrome is the chrome's, not the pane's.
-            if (!onBar && dragging < 0 && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
-                && tap(h, mx, my))
-                under = pointerOwner = 0;
-            // A viewer pane scrolls with the wheel over it; a terminal pane
-            // polls its own (`pollMouse`).
-            if (auto v = surfaces.modal ? null : viewer(under))
-            {
-                import raylib : GetMouseWheelMoveV;
-                import sparkles.input.events : linesPerNotch;
-
-                // A notch eases, between rows (`SCV12`); shift scrolls sideways.
-                const wm = GetMouseWheelMoveV();
-                if (wm.x != 0 || wm.y != 0)
-                {
-                    import sparkles.input.events : Mods;
-                    import raylib : IsKeyDown, KeyboardKey;
-
-                    const shift = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
-                        || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
-                    if (v.wheel(mx, my, WheelEvent(fdx: -wm.x * linesPerNotch,
-                            fdy: -wm.y * linesPerNotch, mods: Mods(shift: shift))))
-                        repaint = true;
-                }
-            }
-            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && under)
-            {
-                pointerOwner = under;
-                if (under != ws.focused)
-                    cast(void) ws.focusPane(under);
-            }
-        }
         }
 
         bool any = repaint || dirty || ws.focused != lastFocused;
@@ -830,9 +791,13 @@ struct WorkspaceHost
         }
     }
 
-    /// The poll loop's job, from a position the host already delivered.
-    /// Raylib still polls; this runs only where it does not.
-    private void applyPointer(H)(ref H h, int mx, int my, bool leftDown, bool pressed)
+    /**
+    The pointer's frame, from wherever its state came: the pane under
+    (`mx`, `my`), the pane toolbar's reveal (`TSS11`), the overlay bars
+    (`SCV13`), the dividers and their cursor, a press on the chrome, and
+    the focus a press gives. Returns the pane the pointer belongs to now.
+    */
+    private PaneId applyPointer(H)(ref H h, int mx, int my, bool leftDown, bool pressed)
     {
         hoverX = mx;
         hoverY = my;
@@ -840,13 +805,43 @@ struct WorkspaceHost
         foreach (ref b; boxes)
             if (contains(b.content, mx, my))
                 under = b.id;
+        // `reveal`: a pane's toolbar shows while the pointer is at its top
+        // or on the toolbar itself (`TSS11`).
+        if (paneChrome == PaneChrome.reveal && !leftDown)
+        {
+            PaneId top;
+            foreach (ref b; boxes)
+                if (contains(Rect(b.outer.x, b.outer.y, b.outer.width, 2 * cellH), mx, my))
+                    top = b.id;
+            if (top != revealed && !(revealed && toolbarLayer.contains(mx, my)))
+            {
+                revealed = top;
+                repaint = true;
+            }
+        }
+        // The overlay bar under the pointer takes it first (`SCV13`).
         const onBar = barPointer(mx, my, leftDown, pressed, cellW, touch: false);
         if (!onBar)
             dragDivider(mx, my, leftDown, pressed);
+        // Over a divider the pointer says which way it resizes: across,
+        // down, or — at a junction — either way.
+        const hover = dividerHover(mx, my);
+        if (hover != shownHover)
+        {
+            import sparkles.base.term_control : PointerShape;
+
+            shownHover = hover;
+            static immutable PointerShape[DividerHover.max + 1] shapes = [
+                PointerShape.default_, PointerShape.ewResize, PointerShape.nsResize,
+                PointerShape.grab];
+            static if (__traits(compiles, h.pointerShape(PointerShape.default_)))
+                h.pointerShape(shapes[hover]);
+        }
         if (dragging >= 0)
             under = pointerOwner = 0;
         if (!leftDown)
             pointerOwner = under;
+        // A click on the chrome is the chrome's, not the pane's.
         if (!onBar && dragging < 0 && pressed && tap(h, mx, my))
             under = pointerOwner = 0;
         if (pressed && under)
@@ -855,6 +850,23 @@ struct WorkspaceHost
             if (under != ws.focused)
                 cast(void) ws.focusPane(under);
         }
+        return under;
+    }
+
+    // Whether a press at (`x`, `y`) lands on chrome drawn over the panes —
+    // the opener, a revealed toolbar, an exit banner — which `tap` takes in
+    // the frame, so the pane beneath must not see it too.
+    private bool chromeAt(int x, int y) const @safe
+    {
+        if (openerLayer.contains(x, y) || (revealed && toolbarLayer.contains(x, y)))
+            return true;
+        foreach (ref l; banners)
+        {
+            const r = l.backdrop.width > 0 ? l.backdrop : l.pixelBounds;
+            if (contains(r, x, y) || contains(l.panel, x, y))
+                return true;
+        }
+        return false;
     }
 
     void notePointer(in PointerEvent p)
@@ -886,15 +898,10 @@ struct WorkspaceHost
         if (leftPress && pressQueueCount < pressQueue.length)
             pressQueue[pressQueueCount++] = [p.pos.x, p.pos.y];
 
-        // An exit banner overlays its pane: chrome (the frame's `tap`)
-        // owns presses there, so the pane beneath must not also see them.
-        if (leftPress)
-            foreach (ref l; banners)
-            {
-                const r = l.backdrop.width > 0 ? l.backdrop : l.pixelBounds;
-                if (contains(r, p.pos.x, p.pos.y) || contains(l.panel, p.pos.x, p.pos.y))
-                    return;
-            }
+        // Chrome over the panes (the frame's `tap`) owns presses there, so
+        // the pane beneath must not also see them.
+        if (leftPress && chromeAt(p.pos.x, p.pos.y))
+            return;
 
         // Target: the captured pane for a drag/release (position may stray
         // outside it, even negative relative to it — `pointerInPane` must
@@ -1632,24 +1639,9 @@ struct WorkspaceHost
     void paint(H)(ref H h, in Rect, RgbColor divider, RgbColor accent,
         bool withSurfaces = true) @system
     {
-        version (TerminalVulkan)
-        {
-            import sparkles.shaders : v4;
+        import chrome : fillPixels;
 
-            void fill(int x, int y, int w, int ht, RgbColor c)
-            {
-                h.canvas.fillPx(x, y, w, ht, v4(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, 1));
-            }
-        }
-        else
-        {
-            import raylib : Color, DrawRectangle;
-
-            void fill(int x, int y, int w, int ht, RgbColor c)
-            {
-                DrawRectangle(x, y, w, ht, Color(c.r, c.g, c.b, 255));
-            }
-        }
+        void fill(int x, int y, int w, int ht, RgbColor c) { fillPixels(h, x, y, w, ht, c); }
 
         // The opener's band to the window's edges, and its rule — the extra
         // keys' thickness — along the side that faces the panes.
@@ -2444,4 +2436,24 @@ import sparkles.input : KeyEvent, PointerEvent, WheelEvent;
     h.notePointer(PointerEvent(action: PointerAction.drag,
         button: PointerButton.right, pos: Point(9, 9)));
     assert(!h.pointerLeft, "a drag alone never sets the left button");
+}
+
+@("workspace_host.notePointer.aPressOnTheRevealedToolbarIsNotThePanes")
+@system unittest
+{
+    import chrome : Place, place;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    // A press on the revealed toolbar is the frame's `tap`; forwarding it
+    // to the pane under it as well would start a selection (`TSS11`).
+    auto h = new WorkspaceHost;
+    auto b = Builder();
+    const label = b.add(Widget(kind: WidgetKind.text, text: "split"));
+    h.toolbarLayer = place(b.finish(b.container(WidgetKind.row, [label])), 10, 1, 0, 0, 8, 16,
+        Place.top);
+    h.revealed = 1;
+    assert(h.chromeAt(4, 4), "on the toolbar");
+    assert(!h.chromeAt(4, 40), "below it");
+    h.revealed = 0;
+    assert(!h.chromeAt(4, 4), "a toolbar that is not shown takes nothing");
 }
