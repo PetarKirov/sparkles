@@ -298,6 +298,9 @@ private bool scalarCandidateStart(scope const(char)[] source, size_t at)
         return false;
     if (cast(uint)(source[at] - '0') <= 9)
         return true;
+    // `-.5` omits the leading zero of a negative float, as `.5` does.
+    if (source[at] == '-' && at + 1 < source.length && source[at + 1] == '.')
+        at++;
     return (source[at] == '-' || source[at] == '.')
         && at + 1 < source.length && cast(uint)(source[at + 1] - '0') <= 9;
 }
@@ -1535,6 +1538,15 @@ package SdlExpected!SdlScalar decodeSdlScalarInto(
                             return sdlErr!SdlScalar(decodeError(
                                 SdlErrorCode.invalidEscape, token,
                                 "invalid string escape"));
+                        // DUB also drops the next line's indentation and any
+                        // blank lines, as the scanner already accepted.
+                        static if (config.compatibility == SdlSyntaxCompatibility.dub5efed360)
+                            while (at + 1 < token.raw.length)
+                            {
+                                if (isAsciiSpace(token.raw[at])) at++;
+                                else if (isLogicalNewline(token.raw, at, width)) at += width;
+                                else break;
+                            }
                         break;
                     }
                 }
@@ -2418,6 +2430,37 @@ version (unittest)
     dub.popFront();
     assert(dub.front.value.kind == SdlTokenKind.identifier);
     assert(dub.front.value.raw == "value");
+}
+
+/// Reused storage holds only the latest payload of either kind.
+@("sdl.lexer.scalarStorageReuse")
+@system unittest
+{
+    SdlScalarStorage storage;
+    const first = decodeSdlScalar!sdlFull(oneToken!sdlFull("[YWJj]"), storage);
+    assert(first.hasValue && first.value.binary == cast(const(ubyte)[]) "abc");
+    const second = decodeSdlScalar!sdlFull(oneToken!sdlFull("[ZGVm]"), storage);
+    assert(second.hasValue && second.value.binary == cast(const(ubyte)[]) "def");
+}
+
+/// A negative float may omit its leading zero, and a DUB string continuation
+/// also drops the following indentation and blank lines.
+@("sdl.lexer.pinnedDubCorpusRegressions")
+@system unittest
+{
+    // Adapted case selection: source/dub/internal/sdlang/lexer.d at
+    // dlang/dub 5efed360e1c9342453bc5dd19339c75981526d83.
+    SdlScalarStorage storage;
+    static foreach (config; [sdlFull, sdlDubCompat])
+    {{
+        auto negative = decodeSdlScalar!config(oneToken!config("-.2F"), storage);
+        assert(negative.hasValue && negative.value.floatValue == -0.2f);
+    }}
+    assert(decodeSdlScalar!sdlDubCompat(oneToken!sdlDubCompat("\"a \\  \n\n  b\""),
+        storage).value.stringValue == "a b");
+    // `sdlFull` keeps the continued line's indentation and allows one newline.
+    assert(decodeSdlScalar!sdlFull(oneToken!sdlFull("\"a \\\n  b\""),
+        storage).value.stringValue == "a   b");
 }
 
 @("sdl.lexer.pinnedDubTemporalCompatibility")
