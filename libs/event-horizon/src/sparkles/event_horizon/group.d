@@ -12,6 +12,7 @@ module sparkles.event_horizon.group;
 version (Posix)  :  // rides Sched; CPU pinning is linux-guarded internally
 
 import core.lifetime : move;
+import core.stdc.errno : EINVAL;
 import core.time : Duration, seconds;
 
 import std.experimental.allocator.mallocator : Mallocator;
@@ -22,7 +23,7 @@ import sparkles.event_horizon.cause : Cause, Interrupt, InterruptKind, Outcome,
     outcomeErr, outcomeOk;
 import sparkles.event_horizon.errors : ioError, IoError, IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 import sparkles.event_horizon.live : Env, liveEnv;
-import sparkles.event_horizon.sched : Sched, SchedOptions;
+import sparkles.event_horizon.sched : FiberPark, Sched, SchedOptions;
 import sparkles.event_horizon.scope_ : Scope, ScopeOptions, withScope;
 import sparkles.event_horizon.loop : LoopConfig;
 
@@ -49,6 +50,9 @@ struct LoopGroupConfig
     /// Idle workers wait on the ring's in-kernel `FUTEX_WAIT` (Linux 6.7;
     /// below it, or with `No`, on the eventfd wake channel).
     Flag!"futexPark" futexPark = Yes.futexPark;
+    /// How a fiber waiting on a `sparkles.base.sync` primitive parks
+    /// (fiber-parker.md EFP6).
+    FiberPark fiberPark = FiberPark.auto_;
     uint maxFibers = 256;                /// fiber-slab size per worker
     /// `WorkStealingPool` only: skip the per-worker io_uring ring + fiber
     /// scheduler entirely — workers are plain threads running `submitBlocking`
@@ -82,6 +86,11 @@ struct LoopGroup
         // workStealing lands in M9c; single and threadPerCore are wired.
         assert(cfg.topology != Topology.workStealing,
             "workStealing lands in M9c");
+        // Checked here as well as by each worker's `Sched.create`: a
+        // thread-per-core worker whose scheduler fails to open is skipped.
+        if (cfg.fiberPark == FiberPark.ring && cfg.sqEntries < 2)
+            return ioErr!void(EINVAL, OpKind.none, IoErrorStage.setup,
+                "the ring path needs two submission entries (fiber-parker.md EFP22)");
 
         group._cfg = cfg;
         // Resolved once here rather than per call: `hwParallelism` is a live
@@ -97,6 +106,7 @@ struct LoopGroup
             // its own thread (Sched/ring/fiber are thread-affine).
             SchedOptions opts;
             opts.maxFibers = cfg.maxFibers;
+            opts.fiberPark = cfg.fiberPark;
             auto loopCfg = loopConfigOf(cfg);
             auto r = Sched.create(group._sched, opts, loopCfg);
             if (r.hasError)
@@ -235,11 +245,12 @@ struct LoopGroup
         {
             SchedOptions opts;
             opts.maxFibers = cfg.maxFibers;
+            opts.fiberPark = cfg.fiberPark;
             auto loopCfg = loopConfigOf(cfg);
             Sched sched;
             if (Sched.create(sched, opts, loopCfg).hasError)
                 return; // a worker whose ring won't open is silently skipped
-            scope (exit) sched.destroy();
+            scope (success) sched.destroy(); // a defect abandons the run instead (EFP21)
 
             if (cfg.pinToCpu)
                 pinToCpu(id);

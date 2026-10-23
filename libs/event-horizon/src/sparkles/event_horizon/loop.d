@@ -86,6 +86,9 @@ struct LoopConfig
     /// Wake through the backend's native source where it can arm; `false`
     /// always uses the wake channel (`LoopGroupConfig.futexPark`).
     bool nativeWake = true;
+    /// Op slots added to the slab and held for `submitHeld`, beyond
+    /// `opSlots`: the fiber parker's parks (fiber-parker.md EFP22).
+    uint heldSlots = 0;
 }
 
 /// What ended a `runOnce` iteration.
@@ -135,12 +138,13 @@ if (isCompletionBackend!Backend)
             ? cfg.backend.cqEntries
             : 2 * cfg.backend.sqEntries;
         const slots = cfg.opSlots != 0 ? cfg.opSlots : 2 * cq;
-        auto slabbed = loop._slab.initialize(slots);
+        auto slabbed = loop._slab.initialize(slots + cfg.heldSlots);
         if (slabbed.hasError)
         {
             loop._backend.close();
             return slabbed;
         }
+        loop._slab.hold(cfg.heldSlots);
         // @trusted: a function pointer to a module-level function has no
         // scoped lifetime for dip1000 to protect, but the checker still
         // tracks provenance through a pointer-returning helper (`return`
@@ -266,6 +270,36 @@ if (isCompletionBackend!Backend)
         return ioOk(OpHandle(token));
     }
 
+    /**
+    Submits `op` on one of the slots `LoopConfig.heldSlots` set aside. It
+    never fails for a slot or a submission entry: it flushes until the
+    backend takes the whole op — every entry of a linked pair — and, outside
+    a dispatch, reaps between flushes that freed nothing (fiber-parker.md
+    EFP22). The caller must hold a slot no other live op of its own holds.
+    */
+    OpHandle submitHeld(Op)(Op op, OpCallback cb, void* ctx)
+    if (isOpDesc!Op && canSubmitOp!(Backend, Op))
+    in (_slab.heldLive < _slab.held, "no held op slot is free")
+    {
+        const token = _slab.acquire(Op.kind, OpClass.user, cb, ctx, held: true);
+        auto slot = _slab.resolve(token);
+        version (unittest)
+            ++heldSubmitted;
+        while (!_backend.trySubmit(op, token, *slot))
+        {
+            auto flushed = _backend.flush();
+            if (flushed.hasError && !isBackpressure(flushed.error.code))
+                fatal(flushed.error);
+            if (!_dispatching && (flushed.hasError || flushed.value == 0))
+            {
+                _dispatching = true;
+                scope (exit) _dispatching = false;
+                cast(void) _backend.reap((ref const RawCompletion c) { dispatch(c); });
+            }
+        }
+        return OpHandle(token);
+    }
+
     /// Typed-context form of `submit`. The caller must keep `state` pinned and
     /// alive until terminal completion or detach. Deliberately not @safe:
     /// retaining its address cannot be checked by DIP1000.
@@ -326,7 +360,7 @@ if (isCompletionBackend!Backend)
 
     /// The user op-slot budget (the reserved internal cancel slot and an
     /// armed waker's slot are not part of it).
-    uint capacity() const @safe pure nothrow @nogc => _slab.capacity;
+    uint capacity() const @safe pure nothrow @nogc => _slab.capacity - _slab.held;
 
     /// Ends the process through the configured $(LREF FatalHook) — the one
     /// seam for supervision-level ownership failures too (SPEC §13.7).
@@ -1018,6 +1052,11 @@ private:
     OpSlab!Allocator _slab;
     FatalHook _fatalHook;
     bool _open;
+    /// Ops `submitHeld` has written: the fiber parker's ring parks. Counted
+    /// in unittest builds only, but declared in all of them, like the test
+    /// seams below: a consumer that instantiates this template with
+    /// `-unittest` must agree with the library on its layout.
+    package uint heldSubmitted;
     bool _abandoned;
     bool _dispatching;
     bool _stopRequested;

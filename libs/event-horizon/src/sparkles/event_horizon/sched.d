@@ -17,7 +17,7 @@ version (Windows) version = EhSchedStack;
 version (EhSchedStack)  :  // rides DefaultLoop; peer backends via backend.select
 
 import core.lifetime : move;
-import core.stdc.errno : EAGAIN, ENOBUFS;
+import core.stdc.errno : EAGAIN, EINVAL, ENOBUFS;
 // druntime declares ENOTRECOVERABLE only where its C runtime does; macOS's
 // and FreeBSD's <sys/errno.h> have it too.
 version (OSX) private enum ENOTRECOVERABLE = 104;
@@ -30,13 +30,14 @@ import core.time : Duration, MonoTime;
 import sparkles.base.sync.parker : installParker, pins;
 import sparkles.base.sync.parking_lot : callerRegistered;
 
-import sparkles.event_horizon.backend.concept : Waker;
+import sparkles.event_horizon.backend.concept : canSubmitOp, Waker;
+import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.buffer : Buf;
 import sparkles.event_horizon.capability : SpawnOptions;
 import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
     InterruptKind, cancelTree, interruptRequested;
 import sparkles.event_horizon.errors;
-import sparkles.event_horizon.fiber_park : FiberParkState, fiberParker;
+import sparkles.event_horizon.fiber_park : FiberParkState, fiberParker, writeRingSleep;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
 import sparkles.event_horizon.op;
 
@@ -132,7 +133,28 @@ struct SchedOptions
     size_t guardPageSize = 4096;   /// guard page below each stack
     uint maxFibers = 256;          /// task-slab size; `spawn` fails past it
     uint resumeBudget = 64;        /// fibers run per tick before re-draining
+    /// How a fiber waiting on a `sparkles.base.sync` primitive parks
+    /// (fiber-parker.md EFP6).
+    FiberPark fiberPark = FiberPark.auto_;
 }
+
+/**
+How a fiber parks on a `sparkles.base.sync` primitive (fiber-parker.md EFP6):
+in the kernel through io_uring's futex operations, or in its scheduler with
+wakes through an inbox.
+*/
+enum FiberPark : ubyte
+{
+    /// The ring path where the backend has the futex operations and §7's
+    /// recorded decision chooses it; until FB1–FB7 are recorded, wherever
+    /// it is supported.
+    auto_,
+    ring,  /// the ring path wherever the backend has the futex operations
+    inbox, /// the inbox path on every backend
+}
+
+/// Whether the default backend can lower the ring path's operations at all.
+private enum bool ringParkLowerable = canSubmitOp!(DefaultBackend, OpFutexWait);
 
 /// What an awaited op's terminal completion delivered (the mailbox,
 /// flattened). `res` is the raw `>= 0` payload or `-errno`; submit-time
@@ -163,9 +185,20 @@ struct Sched
         // @trusted: `&s` is stored as the fibers' owner pointer — the Sched
         // must stay at this address for its lifetime (non-copyable; do not
         // move it after create).
-        auto looped = DefaultLoop.create(s._loop, loopCfg);
+        // The ring path holds one op slot per task for its park, beyond the
+        // caller's budget, and needs room for a wait and its linked timeout
+        // (fiber-parker.md EFP22).
+        const mayRing = ringParkLowerable && opts.fiberPark != FiberPark.inbox;
+        if (opts.fiberPark == FiberPark.ring && loopCfg.backend.sqEntries < 2)
+            return ioErr!void(EINVAL, OpKind.none, IoErrorStage.setup,
+                "the ring path needs two submission entries");
+        LoopConfig cfg = loopCfg;
+        if (mayRing)
+            cfg.heldSlots += opts.maxFibers;
+        auto looped = DefaultLoop.create(s._loop, cfg);
         if (looped.hasError)
             return looped;
+        s._ringPark = mayRing && s._loop.caps().futexOps;
 
         s._opts = opts;
         s._tasks = new FiberTask[opts.maxFibers];
@@ -546,7 +579,7 @@ struct Sched
             cast(void) sweepDeadlines();
             cast(void) sweepAlarms();
         }
-        if (ran > 0 || _readyHead !is null)
+        if (ringSubmissionPoint(ran))
             return ioOk(RunStatus.dispatched);
         if (_liveFibers == 0 && _loop.inFlight == 0)
             return ioOk(RunStatus.drained);
@@ -635,7 +668,7 @@ struct Sched
                 cast(void) sweepDeadlines();
                 cast(void) sweepAlarms();
             }
-            if (ran > 0 || _readyHead !is null)
+            if (ringSubmissionPoint(ran))
                 return ioOk(RunStatus.dispatched);
             if (_liveFibers == 0 && _loop.inFlight == 0)
                 return ioOk(RunStatus.drained);
@@ -779,6 +812,44 @@ struct Sched
 
     /// Fibers asleep on the fiber parker right now.
     package uint lotSleepers() const @safe pure nothrow @nogc => _lotSleepers;
+
+    /// Whether this scheduler's fibers park on the ring path (EFP6).
+    package bool ringPark() const @safe pure nothrow @nogc => _ringPark;
+
+    /// Queues a ring sleep for the submission point (EFP8).
+    package void queueRingSleep(FiberTask t) @safe nothrow @nogc
+    in (!t.park.ringPending, "a ring sleep queued twice")
+    {
+        t.park.ringPending = true;
+        t.park.ringPrev = null;
+        t.park.ringNext = _ringSleeps;
+        if (_ringSleeps !is null)
+            _ringSleeps.park.ringPrev = t;
+        _ringSleeps = t;
+    }
+
+    /// Takes a ring sleep off the submission point's queue, if it is on it.
+    package void unqueueRingSleep(FiberTask t) @safe nothrow @nogc
+    {
+        if (!t.park.ringPending)
+            return;
+        if (t.park.ringPrev !is null)
+            t.park.ringPrev.park.ringNext = t.park.ringNext;
+        else
+            _ringSleeps = t.park.ringNext;
+        if (t.park.ringNext !is null)
+            t.park.ringNext.park.ringPrev = t.park.ringPrev;
+        t.park.ringPrev = t.park.ringNext = null;
+        t.park.ringPending = false;
+    }
+
+    /// Makes `t` runnable unless it already is (the submission point's
+    /// resumption, which a winner on this thread may have done first).
+    package void resumeParkedOnce(FiberTask t) @safe nothrow @nogc
+    {
+        if (!t.enqueued)
+            resumeParked(t);
+    }
 
     /// The running task, or `null` off-fiber.
     package static FiberTask tryCurrent() @trusted nothrow @nogc
@@ -948,6 +1019,51 @@ private:
         return true;
     }
 
+    /**
+    The end of a tick's resumes: the ring path's submission point (EFP8),
+    then whether the tick is done without waiting — fibers ran, or are
+    ready. A tick whose fibers ran does not wait for completions, so while
+    ring waits are written it still flushes and reaps without blocking: a
+    worker that always has a fiber to run must not starve its parked fibers'
+    wakes and deadlines.
+    */
+    bool ringSubmissionPoint(uint ran) @trusted nothrow @nogc
+    {
+        const resolved = _ringPark && writeRingSleeps();
+        if (ran == 0 && _readyHead is null && !resolved)
+            return false;
+        static if (ringParkLowerable)
+            if (_ringWaits > 0)
+                cast(void) _loop.runOnce(Duration.zero);
+        return true;
+    }
+
+    /// Counts a ring wait in or out of the kernel (fiber-parker.md EFP7,
+    /// EFP11): while any is, a busy tick still reaps.
+    package void noteRingWait(bool entering) @safe pure nothrow @nogc
+    {
+        if (entering)
+            ++_ringWaits;
+        else
+            --_ringWaits;
+    }
+
+    /// The submission point of the ring path (EFP8): writes every queued
+    /// ring sleep's wait, or resumes a sleep resolved since it queued without
+    /// an operation. Whether any fiber became runnable, so that the tick runs
+    /// it rather than waiting.
+    bool writeRingSleeps() @safe nothrow @nogc
+    {
+        bool resumed;
+        while (_ringSleeps !is null)
+        {
+            auto t = _ringSleeps;
+            unqueueRingSleep(t);
+            resumed |= writeRingSleep(t);
+        }
+        return resumed;
+    }
+
     /// Waits until no committed wake can still touch this scheduler: a
     /// delivery is bounded and never blocks, so the wait is short (EFP4).
     void awaitDeliveries() @trusted nothrow @nogc
@@ -1044,6 +1160,12 @@ private:
     package shared uint _pendingDeliveries;
     /// The `Throwable` that ended `run` early, if one did.
     Throwable _abortedBy;
+    /// Fibers park on the ring path (EFP6).
+    bool _ringPark;
+    /// Ring sleeps queued for the submission point (EFP8).
+    FiberTask _ringSleeps;
+    /// Ring waits written and not yet completed.
+    uint _ringWaits;
 }
 
 /**

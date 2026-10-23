@@ -532,6 +532,8 @@ struct OpSlot
     /// A linked timeout follows the op (`FutexDeadline`): an `-ECANCELED`
     /// no explicit cancellation explains is its expiry.
     bool linkedTimeout;
+    /// Drawn on the slots the slab holds back (`OpSlab.hold`).
+    bool held;
     uint generation = 1;      /// bumped on release; token must match to resolve
     Buf pinned;               /// keep-alive across the in-flight window
     OperandStore operands;    /// kernel-stable operands
@@ -606,17 +608,32 @@ struct OpSlab(Allocator = Mallocator)
             terminate();
     }
 
+    /// Holds `n` of the slots back for `acquire(…, held: true)`: other
+    /// acquisitions leave them free, so a holder's acquisition never finds
+    /// the slab exhausted (the fiber parker's parks, fiber-parker.md EFP22).
+    void hold(uint n) @safe pure nothrow @nogc
+    in (n <= _capacity && _heldLive == 0)
+    {
+        _held = n;
+    }
+
     /// Pops a free slot and arms it; the invalid token (`raw == 0`) when
-    /// exhausted (the loop maps that to `ENOBUFS`).
-    OpToken acquire(OpKind kind, OpClass cls, OpCallback cb, void* ctx)
+    /// exhausted (the loop maps that to `ENOBUFS`). A `held` acquisition
+    /// draws on the slots `hold` set aside, and the others leave those free.
+    OpToken acquire(OpKind kind, OpClass cls, OpCallback cb, void* ctx, bool held = false)
         @trusted nothrow @nogc
     {
         if (_freeHead == uint.max)
+            return OpToken.init;
+        if (held ? _heldLive >= _held : _liveCount - _heldLive >= _capacity - _held)
             return OpToken.init;
         const idx = _freeHead;
         auto slot = &_slots[idx];
         _freeHead = slot.nextFree;
         ++_liveCount;
+        if (held)
+            ++_heldLive;
+        slot.held = held;
 
         slot.callback = cb;
         slot.ctx = ctx;
@@ -665,6 +682,9 @@ struct OpSlab(Allocator = Mallocator)
         slot.ctx = null;
         slot.state = OpState.free;
         slot.detached = false;
+        if (slot.held)
+            --_heldLive;
+        slot.held = false;
         ++slot.generation;
         if ((slot.generation & 0xFF_FFFF) == 0)
             slot.generation = 1;
@@ -729,10 +749,17 @@ struct OpSlab(Allocator = Mallocator)
     /// advertised.
     uint capacity() const @safe pure nothrow @nogc => _capacity;
 
+    /// Slots `hold` set aside, and how many of them are live.
+    uint held() const @safe pure nothrow @nogc => _held;
+    /// ditto
+    uint heldLive() const @safe pure nothrow @nogc => _heldLive;
+
 private:
     OpSlot* _slots;
     uint _capacity;
     uint _liveCount;
+    uint _held;
+    uint _heldLive;
     uint _freeHead = uint.max;
     bool _reservedActive;
 }
