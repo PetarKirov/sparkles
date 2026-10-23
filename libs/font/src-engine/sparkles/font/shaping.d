@@ -7,18 +7,21 @@ the face's bytes, a face, and a font set to the face's units per em and
 to the instance's normalized coordinates exactly as stored (FTS3; no
 renormalization). Every supported Unicode callback is supplied from
 `sparkles:base`'s pinned tables (FTS8), and creation checks the engine
-profile: a HarfBuzz whose version differs from the pinned one is
-`unsupportedEngine`, a base Unicode release that differs is
-`unsupportedUnicodeVersion`.
+version: a HarfBuzz whose version differs from the pinned one is
+`unsupportedEngine`. The Unicode-release half of the check compares
+constants and so never fails, although HarfBuzz 13.2.1's internal
+tables predate base's Unicode 18.0.0; FTS8 is not yet met.
 
 `shape` shapes a run range of a borrowed source with the surrounding
 source as context (FTS7). Inputs are validated with base's strict UTF-8
-rules before any output is written; capacity exhaustion returns
-`limitExceeded` with caller outputs uncommitted. Results are glyph IDs
-and font-unit advances/offsets (FTS1), source spans that partition the
-run (FTS4), and per-boundary safety flags (FTS9). Glyph, outline and
-shaping caches do not exist here (FTA5): each call shapes afresh, and
-HarfBuzz objects are released with their owner (FTS5).
+rules before any output is written, but HarfBuzz decodes them;
+capacity exhaustion returns `limitExceeded` with caller outputs
+uncommitted. Results are glyph IDs and font-unit advances/offsets
+(FTS1), source spans that partition the run (FTS4), and per-boundary
+safety flags (FTS9). Glyph, outline and shaping caches do not exist
+here (FTA5): each call shapes afresh, and HarfBuzz objects are released
+with their owner (FTS5); the owner does not yet hold the face bytes'
+lifetime, so it must not outlive them.
 */
 module sparkles.font.shaping;
 
@@ -170,9 +173,10 @@ struct EngineProfile
 /**
 The running engine profile (FTS8): `compatible` when the HarfBuzz
 version is the pinned one and base's Unicode release is the pinned one.
-Internal engine tables that callbacks cannot replace are pinned by the
-HarfBuzz version; a system upgrade changes the version string and so
-changes `compatible` rather than silently altering the profile.
+A system upgrade changes the version string and so changes
+`compatible`. Pinning the version does not show that HarfBuzz's
+internal tables match base's release; they do not (HarfBuzz 13.2.1
+lacks Unicode 18 scripts), and no manifest yet rejects the mismatch.
 */
 EngineProfile engineProfile() @trusted
 {

@@ -18,9 +18,9 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | [M1 Parse](#m1-parse)                                                     | done        |
 | [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | in progress |
 | [MS Startup slice](#ms-startup-slice)                                     | planned     |
-| [M3 Outlines](#m3-outlines)                                               | done        |
-| [M4 Shaping](#m4-shaping)                                                 | done\*      |
-| [M5 Grayscale raster](#m5-grayscale-raster)                               | done        |
+| [M3 Outlines](#m3-outlines)                                               | in progress |
+| [M4 Shaping](#m4-shaping)                                                 | in progress |
+| [M5 Grayscale raster](#m5-grayscale-raster)                               | in progress |
 | [M6 Colour glyphs](#m6-colour-glyphs)                                     | not started |
 | [M7 Discovery and fallback](#m7-discovery-and-fallback)                   | not started |
 | [M8 Consumer migration](#m8-consumer-migration)                           | not started |
@@ -323,13 +323,15 @@ ledger, are met: fontations' exact delta oracle; and a verified `BASE` face and 
 math face with kerns, under the pinned corpus manifest. The reference-point
 and `glyf` vertical-origin resolution closed with M3.
 
-M3 (outlines), M5 (grayscale raster) are done; M4 (shaping) is done\*
-against the evidence in [`testing.md`](./testing.md): the `engine`
-configuration shapes with HarfBuzz over the bundled faces and fixture
-caret/JSTF faces, with `FTS8`'s profile enforced as a pinned engine
-version plus base-supplied Unicode callbacks. The asterisk is the
-ledger's remaining M4 gates: the pinned corpus manifest (real caret
-and JSTF faces, recorded `hb-shape` goldens) and the internal-table
-equivalence demonstration for `FTS8`. Next action: MS (the startup
-slice, [`FTX14`](./decisions.md#ftx14-a-startup-slice-before-m3)) or
-M6/M7, at the owner's direction.
+M3 (outlines), M4 (shaping) and M5 (grayscale raster) are implemented
+in part and in progress; a review on 2026-10-23 reopened all three. M3's
+`glyf`/`gvar` path agrees with HarfBuzz over the bundle, but its gate
+needs the `FTO4` property over every variable face, `CFF2` variation,
+the `CFF` hint and flex operators, and the limit and cycle fixtures. M5
+needs the full four-face oracle and its overlap fixtures. M4 needs a
+memory-safe `Shaper`, base-decoded input, a single-step decomposition
+callback, the `FTS1` units, an `FTS8` manifest that rejects base's
+Unicode 18.0.0 against HarfBuzz 13.2.1's older tables, and the
+acceptance scenarios of [`testing.md`](./testing.md).
+The ledger lists each gap. Next action: close these gates in the order
+M3, M5, M4.
