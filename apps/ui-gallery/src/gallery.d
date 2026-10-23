@@ -948,7 +948,6 @@ struct Gallery
         ));
     }
 
-
     // ── the Terminal page's frame glue ──────────────────────────────────────
 
     /**
@@ -1040,8 +1039,12 @@ struct Gallery
                     // The scrollback bar drives a ScrollView machine, but
                     // ghostty owns the real offset — apply the machine's
                     // intent as a viewport delta, then mirror the truth back
-                    // (`UGL-O7`). A move ghostty made itself, including a
-                    // wheel just drained above, is not a drag.
+                    // into the machine and the page's numbers. Intent is
+                    // measured against LAST frame's mirror, so a move ghostty
+                    // made itself (a wheel just drained above, new output
+                    // re-pinning the bottom) never reads as a drag. Applied
+                    // BEFORE the render-state snapshot below, so the jump
+                    // paints this frame.
                     if (s.termView.v.offset != s.terms.sbOffset)
                         tv.scrollViewport(cast(int)
                             (s.termView.v.offset - s.terms.sbOffset));
@@ -1269,7 +1272,9 @@ struct Gallery
                     pos: Point(device.pos.x - origin.x, device.pos.y - origin.y));
                 (() @trusted => tv.pointerInPane(rel))();
             }
-            if (p.action != PointerAction.drag)
+            // Only the release ends it: a `leave` forgets the position, and the
+            // release that follows still belongs to the pane's selection.
+            if (p.action == PointerAction.release)
             {
                 termDragActive = false;
                 termDragPaneId = 0;
@@ -1312,12 +1317,11 @@ struct Gallery
         if (s.page == terminalPageIndex && s.terms.any)
         {
             const paneRect = rectOf(tree, frames, hitPane);
-            if (paneRect.width > 0 && (paneRect.contains(p.pos) || termDragActive))
+            if (paneRect.width > 0 && paneRect.contains(p.pos))
                 if (auto tv = store.byId(s.terms.tabs[s.terms.active].id))
                 {
                     if (s.backend == Backend.gui && !tv.s.childExited)
                     {
-                        const inside = paneRect.contains(p.pos);
                         const origin = (() @trusted => tv.paneOrigin)();
                         auto rel = PointerEvent(action: device.action,
                             button: device.button, mods: device.mods,
@@ -1327,7 +1331,7 @@ struct Gallery
                         if (device.action == PointerAction.press)
                         {
                             s.terms.focused = true;
-                            if (inside && device.button == PointerButton.left)
+                            if (device.button == PointerButton.left)
                             {
                                 termDragActive = true;
                                 termDragPaneId = s.terms.tabs[s.terms.active].id;
