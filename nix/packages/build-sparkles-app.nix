@@ -604,8 +604,8 @@
                 shapingInputs = lib.optionals (builtins.elem "libs/raylib-text/src" srcDirs) [
                   pkgs.freetype
                   pkgs.freetype.dev
-                  pkgs.harfbuzz
-                  pkgs.harfbuzz.dev
+                  config.packages.harfbuzz
+                  config.packages.harfbuzz.dev
                 ];
                 buildInputs = (args.buildInputs or [ ]) ++ shapingInputs;
                 dubBuildType = args.dubBuildType or "checked";

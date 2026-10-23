@@ -4,7 +4,7 @@ Hand-declared HarfBuzz C ABI for the `engine` configuration (FTA8, FTS6).
 Only opaque handles cross the boundary; the few structs whose fields the
 library reads are declared here and checked against the installed
 `hb.h` by `sparkles:font-oracle`'s layout test. No C source is compiled.
-Declarations follow HarfBuzz 13.2.1 headers.
+Declarations follow HarfBuzz 14.6.0 headers.
 */
 module sparkles.font.harfbuzz;
 

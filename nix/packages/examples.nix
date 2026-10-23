@@ -303,8 +303,8 @@
           pkgs.raylib
           pkgs.freetype
           pkgs.freetype.dev
-          pkgs.harfbuzz
-          pkgs.harfbuzz.dev
+          config.packages.harfbuzz
+          config.packages.harfbuzz.dev
 
           # `libs "vulkan"` in libs/vulkan. `vulkan.pc` lives in the loader's
           # `.dev` output and points `includedir` at vulkan-headers, so one

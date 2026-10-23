@@ -209,8 +209,9 @@
         # raylib-text's ImportC shaping bridge and native runtime.
         pkgs.freetype
         pkgs.freetype.dev
-        pkgs.harfbuzz
-        pkgs.harfbuzz.dev
+        # The HarfBuzz sparkles:font pins (FTS8), not nixpkgs' (nix/packages/harfbuzz.nix).
+        config.packages.harfbuzz
+        config.packages.harfbuzz.dev
 
         # `libs "vulkan"` in libs/vulkan. The `.dev` output carries
         # `vulkan.pc`, whose `includedir` points at vulkan-headers — so one
