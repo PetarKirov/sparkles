@@ -551,8 +551,9 @@ struct SdlNode
         _cell = cell;
     }
 
-    private SdlNodeCell cell() const scope @trusted pure nothrow @nogc
-        => _nodes[_cell];
+    // Narrow trust: the cell copy outlives `scope this` only as a value.
+    private SdlNodeCell cell() const scope @safe pure nothrow @nogc
+        => (() @trusted => _nodes[_cell])();
 
     /// Full stored name. The synthetic root returns the empty/default name.
     SdlQualifiedName qualifiedName() const return scope @safe pure nothrow @nogc
@@ -636,8 +637,9 @@ struct SdlAttributeView
         _cell = cell;
     }
 
-    private SdlAttributeCell cell() const scope @trusted pure nothrow @nogc
-        => _cells[_cell];
+    // Narrow trust: as for `SdlNode.cell`.
+    private SdlAttributeCell cell() const scope @safe pure nothrow @nogc
+        => (() @trusted => _cells[_cell])();
 
     /// Full stored attribute name.
     SdlQualifiedName qualifiedName() const return scope @safe pure nothrow @nogc
@@ -1076,18 +1078,11 @@ unittest
 
     // Narrow trust: untracks one scalar copy for heap stashing in this
     // pooling test only (the pool owns the bytes afterwards).
-    static SdlScalar borrowAny(scope const ref SdlScalar s) @trusted
-    {
-        const ps = &s;
-        return *ps;
-    }
+    static SdlScalar borrowAny(scope const ref SdlScalar s) @safe
+        => (() @trusted { const ps = &s; return *ps; })();
 
-    static SdlQualifiedName borrowName(scope const ref SdlQualifiedName n)
-        @trusted
-    {
-        const pn = &n;
-        return *pn;
-    }
+    static SdlQualifiedName borrowName(scope const ref SdlQualifiedName n) @safe
+        => (() @trusted { const pn = &n; return *pn; })();
 
     OwnedSdlExtras owned;
     char[][] strings;

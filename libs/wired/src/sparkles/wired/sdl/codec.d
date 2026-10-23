@@ -575,10 +575,6 @@ private DRes!Field decodeLeaf(Field, alias Conv = void,
 }
 
 /// Trial-decodes SumType variants against one scalar under `strat`.
-/// `@trusted` because SumType's storage declares an `@system opAssign`, which
-/// otherwise taints every by-value move of the result; this kernel only ever
-/// moves freshly decoded variant values into a default-initialized SumType.
-@trusted
 private DRes!ST decodeSumTypeScalar(ST, MatchStrategy strat)(
     scope const ref SdlScalar s, ref WalkPath path, ref SdlError failure)
 if (isSumType!ST)
@@ -617,7 +613,9 @@ if (isSumType!ST)
             error.variants = reasons;
             return dFail!ST(failure, error);
         }
-        return dOk(chosen);
+        // Narrow trust: SumType declares a `@system opAssign`, so moving the
+        // freshly decoded `chosen` into the result is `@system` by type only.
+        return (() @trusted => dOk(chosen))();
     }
     else
     {
@@ -632,7 +630,8 @@ if (isSumType!ST)
             return dFail!ST(failure, attachPath(path, baseError(
                 SdlErrorCode.duplicateRole, s.span,
                 "multiple SumType variants decode this value")));
-        return dOk(chosen);
+        // Narrow trust: as for the `first` strategy above.
+        return (() @trusted => dOk(chosen))();
     }
 }
 
@@ -808,37 +807,23 @@ private bool roleMatches(scope const SdlFieldRole role,
 /// Narrow trust: copies one borrowed scalar (its payload slices stay owned
 /// by the document pool; callers treat the copy as equally short-lived).
 private SdlScalar copyBorrowedScalar(scope const ref SdlScalar s)
-    @trusted pure nothrow @nogc
-{
-    const ps = &s;
-    return *ps;
-}
+    @safe pure nothrow @nogc
+    => (() @trusted { const ps = &s; return *ps; })();
 
 /// ditto — an attribute occurrence's qualified name.
 private SdlQualifiedName copyQualifiedName(
-    scope const SdlAttributeView a) @trusted pure nothrow @nogc
-{
-    const view = a;
-    const pa = &view;
-    return (*pa).qualifiedName();
-}
+    scope const SdlAttributeView a) @safe pure nothrow @nogc
+    => (() @trusted { const pa = &a; return (*pa).qualifiedName(); })();
 
 /// ditto — a child view's qualified name.
 private SdlQualifiedName copyQualifiedName(scope const SdlNode n)
-    @trusted pure nothrow @nogc
-{
-    const view = n;
-    const pn = &view;
-    return (*pn).qualifiedName;
-}
+    @safe pure nothrow @nogc
+    => (() @trusted { const pn = &n; return (*pn).qualifiedName; })();
 
 /// ditto — a child view itself.
 private SdlNode copyBorrowedNode(scope const SdlNode n)
-    @trusted pure nothrow @nogc
-{
-    const pn = &n;
-    return *pn;
-}
+    @safe pure nothrow @nogc
+    => (() @trusted { const pn = &n; return *pn; })();
 
 private SdlScalar firstValueOf(scope const ref SdlNode n) @safe
 {
@@ -848,14 +833,14 @@ private SdlScalar firstValueOf(scope const ref SdlNode n) @safe
 }
 
 
-private void assignField(T)(ref T slot, T value) @trusted
+private void assignField(T)(ref T slot, T value)
 {
-    static if (__traits(compiles, { import core.lifetime : move; slot = move(value); }))
-    {
-        import core.lifetime : move;
+    import core.lifetime : move;
 
-        slot = move(value);
-    }
+    // Moving into the slot blits instead of calling `opAssign`, which SumType
+    // (and any aggregate holding one) declares `@system`.
+    static if (__traits(compiles, move(value, slot)))
+        move(value, slot);
     else
         slot = value;
 }
