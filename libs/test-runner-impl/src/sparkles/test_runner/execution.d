@@ -76,8 +76,11 @@ unittest
 }
 
 /// Converts a caught `Throwable` chain into `Thrown[]` (its full chain, each with
-/// stack trace). `OutOfMemoryError` signals a genuinely broken process and is
-/// re-thrown rather than recorded. Shared by `executeTest` and the benchmark
+/// stack trace). The chain ends at the first link already recorded: druntime
+/// throws every failed `assert` as one thread-local `AssertError`, so an
+/// assertion that fails while another unwinds chains that object to itself.
+/// `OutOfMemoryError` signals a genuinely broken process and is re-thrown
+/// rather than recorded. Shared by `executeTest` and the benchmark
 /// driver, whose measurement of a registered case runs outside `executeTest`.
 package immutable(Thrown)[] toThrown(Throwable t)
 {
@@ -87,8 +90,13 @@ package immutable(Thrown)[] toThrown(Throwable t)
         throw t;
 
     immutable(Thrown)[] result;
-    foreach (thrown; t)
+    Throwable[] seen;
+    for (Throwable thrown = t; thrown !is null; thrown = thrown.next)
     {
+        foreach (s; seen)
+            if (s is thrown)
+                return result;
+        seen ~= thrown;
         immutable(string)[] trace;
         try
         {
@@ -155,6 +163,25 @@ unittest
     assert(result.thrown.length == 2);
     assert(result.thrown[0].message == "effect");
     assert(result.thrown[1].message == "cause");
+}
+
+@("executeTest.assertionFailingWhileAnotherUnwinds")
+@system
+unittest
+{
+    // Both failures are the same thread-local `AssertError`, which druntime
+    // then chains to itself: the result must still end.
+    static void failTwice()
+    {
+        scope (exit)
+            assert(false, "second");
+        assert(false, "first");
+    }
+
+    auto result = executeTest(Test(fullName: "m.twice", name: "twice", ptr: &failTwice));
+    assert(!result.succeeded);
+    assert(result.thrown.length >= 1);
+    assert(result.thrown[0].type == "core.exception.AssertError");
 }
 
 @("executeTest.recordsRangeError")
