@@ -63,6 +63,9 @@ in
           "Have_sparkles_shader"
           "Have_sparkles_terminal"
           "Have_sparkles_terminal_view"
+          # terminal-view's `library` configuration: its raylib painter,
+          # pane opening and mouse bridge compile only under it.
+          "TerminalViewRaylib"
           "Have_sparkles_ui"
           "Have_sparkles_ui_app"
           "Have_sparkles_ui_raylib"
