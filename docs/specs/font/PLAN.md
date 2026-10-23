@@ -20,7 +20,7 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | [MS Startup slice](#ms-startup-slice)                                     | planned     |
 | [M3 Outlines](#m3-outlines)                                               | done        |
 | [M4 Shaping](#m4-shaping)                                                 | in progress |
-| [M5 Grayscale raster](#m5-grayscale-raster)                               | in progress |
+| [M5 Grayscale raster](#m5-grayscale-raster)                               | done        |
 | [M6 Colour glyphs](#m6-colour-glyphs)                                     | not started |
 | [M7 Discovery and fallback](#m7-discovery-and-fallback)                   | not started |
 | [M8 Consumer migration](#m8-consumer-migration)                           | not started |
@@ -327,10 +327,12 @@ A review on 2026-10-23 reopened M3 (outlines), M4 (shaping) and M5
 (grayscale raster). M3 meets its acceptance again: the HarfBuzz
 differential for every `CFF` face of the bundle, the `glyf` reference faces
 and the variable `CFF2` test faces, `FTO4` over every variable face, and the
-limit and cycle fixtures. M4 and M5 are implemented in part and in
-progress. M5 needs the full four-face oracle and its overlap fixtures. M4 needs a
+limit and cycle fixtures. M5 meets its acceptance again: the
+`FTR3` and `FTR8` differentials over all four raster faces, the overlap
+fixtures and determinism through a reused workspace. M4 is implemented in
+part and in progress. It needs a
 memory-safe `Shaper`, base-decoded input, a single-step decomposition
 callback, the `FTS1` units, an `FTS8` manifest that rejects base's
 Unicode 18.0.0 against HarfBuzz 13.2.1's older tables, and the
 acceptance scenarios of [`testing.md`](./testing.md).
-The ledger lists each gap. Next action: close M5's gate, then M4's.
+The ledger lists each gap. Next action: close M4's gate.
