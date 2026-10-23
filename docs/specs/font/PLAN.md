@@ -18,7 +18,7 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | [M1 Parse](#m1-parse)                                                     | done        |
 | [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | in progress |
 | [MS Startup slice](#ms-startup-slice)                                     | planned     |
-| [M3 Outlines](#m3-outlines)                                               | in progress |
+| [M3 Outlines](#m3-outlines)                                               | done        |
 | [M4 Shaping](#m4-shaping)                                                 | in progress |
 | [M5 Grayscale raster](#m5-grayscale-raster)                               | in progress |
 | [M6 Colour glyphs](#m6-colour-glyphs)                                     | not started |
@@ -323,16 +323,14 @@ ledger, are met: fontations' exact delta oracle; and a verified `BASE` face and 
 math face with kerns, under the pinned corpus manifest. The reference-point
 and `glyf` vertical-origin resolution closed with M3.
 
-M3 (outlines), M4 (shaping) and M5 (grayscale raster) are implemented
-in part and in progress; a review on 2026-10-23 reopened all three. M3
-now meets its acceptance over the bundle — the HarfBuzz differential for
-every `CFF` face and the `glyf` reference faces, `FTO4` over every
-variable face, and the limit and cycle fixtures — except that no bundled
-face has a `CFF2` table, so `CFF2` is checked by fixtures alone until one
-joins the corpus. M5 needs the full four-face oracle and its overlap fixtures. M4 needs a
+A review on 2026-10-23 reopened M3 (outlines), M4 (shaping) and M5
+(grayscale raster). M3 meets its acceptance again: the HarfBuzz
+differential for every `CFF` face of the bundle, the `glyf` reference faces
+and the variable `CFF2` test faces, `FTO4` over every variable face, and the
+limit and cycle fixtures. M4 and M5 are implemented in part and in
+progress. M5 needs the full four-face oracle and its overlap fixtures. M4 needs a
 memory-safe `Shaper`, base-decoded input, a single-step decomposition
 callback, the `FTS1` units, an `FTS8` manifest that rejects base's
 Unicode 18.0.0 against HarfBuzz 13.2.1's older tables, and the
 acceptance scenarios of [`testing.md`](./testing.md).
-The ledger lists each gap. Next action: a `CFF2` face for M3's last
-differential, then close M5's gate and M4's.
+The ledger lists each gap. Next action: close M5's gate, then M4's.
