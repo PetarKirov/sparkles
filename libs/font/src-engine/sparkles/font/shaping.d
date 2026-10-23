@@ -9,8 +9,9 @@ renormalization). Every supported Unicode callback is supplied from
 `sparkles:base`'s pinned tables (FTS8), and creation checks the engine
 version: a HarfBuzz whose version differs from the pinned one is
 `unsupportedEngine`. The Unicode-release half of the check compares
-constants and so never fails, although HarfBuzz 13.2.1's internal
-tables predate base's Unicode 18.0.0; FTS8 is not yet met.
+constants and so never fails, and no manifest yet shows that
+HarfBuzz's internal tables match base's Unicode 18.0.0; FTS8 is not yet
+met.
 
 `shape` shapes a run range of a borrowed source with the surrounding
 source as context (FTS7). Inputs are validated with base's strict UTF-8
@@ -38,7 +39,7 @@ import sparkles.font.instance : Instance;
 @safe pure nothrow @nogc:
 
 /// The pinned HarfBuzz version of the accepted engine profile (FTS8).
-enum pinnedHarfBuzzVersion = "13.2.1";
+enum pinnedHarfBuzzVersion = "14.6.0";
 /// The pinned base Unicode release of the accepted profile (FTS8).
 enum pinnedUnicodeVersion = "18.0.0";
 /// A text direction for shaping (FTS2).
@@ -175,8 +176,7 @@ The running engine profile (FTS8): `compatible` when the HarfBuzz
 version is the pinned one and base's Unicode release is the pinned one.
 A system upgrade changes the version string and so changes
 `compatible`. Pinning the version does not show that HarfBuzz's
-internal tables match base's release; they do not (HarfBuzz 13.2.1
-lacks Unicode 18 scripts), and no manifest yet rejects the mismatch.
+internal tables match base's release, and no manifest yet checks it.
 */
 EngineProfile engineProfile() @trusted
 {
