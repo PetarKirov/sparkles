@@ -162,7 +162,7 @@ if (isCompletionBackend!Backend)
     /// in-flight cancellation is work: its target is live, so the first
     /// precondition already covers the pending set and the reserved slot.
     void destroy()
-    in (_slab.liveCount == (_wakeArmed ? 1 : 0), "destroy with ops in flight")
+    in (quiescent, "destroy with ops in flight")
     in (_pendHead == uint.max, "destroy with queued cancellations")
     in (!_slab.reservedActive, "destroy with an internal cancel in flight")
     {
@@ -174,10 +174,19 @@ if (isCompletionBackend!Backend)
         _open = false;
     }
 
+    /**
+    A loop still open with work in flight — one a defect abandoned — is left
+    to leak (SPEC §11): its ring may still write into the slab, so neither is
+    freed, and its explicit `destroy` has already reported the misuse.
+    */
     ~this()
     {
-        destroy();
+        if (!_open || (quiescent && _pendHead == uint.max && !_slab.reservedActive))
+            destroy();
     }
+
+    /// No op is live but the armed waker.
+    private bool quiescent() const => _slab.liveCount == (_wakeArmed ? 1 : 0);
 
     /// The negotiated capability surface (SPEC §3.3).
     ref const(BackendCaps) caps() const return => _backend.caps();

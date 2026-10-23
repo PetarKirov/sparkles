@@ -168,11 +168,17 @@ struct Sched
     in (_armedAlarms is null, "destroy with armed alarms")
     {
         _loop.destroy();
+        _destroyed = true;
     }
 
     ~this() @safe nothrow @nogc
     {
-        destroy();
+        // A run a defect ended early leaves fibers live, and an explicit
+        // `destroy` has already failed its contract for them. Failing it again
+        // here, while that error unwinds, would rethrow the one thread-local
+        // `AssertError` druntime keeps, overwriting the defect that ended the run.
+        if (!_destroyed && _liveFibers == 0)
+            destroy();
     }
 
     /// Tier-A access (buffer pools, capability probing, raw submits).
@@ -837,6 +843,7 @@ private:
     shared(BlockingJob*) _blockingInbox;
     Waker _blockingWaker;
     bool _blockingWakerArmed;
+    bool _destroyed;
 }
 
 /**
@@ -1371,4 +1378,31 @@ unittest
             s.park();
     });
     assert(!r.hasError);
+}
+
+@("sched.defect.survivesTheDestructorOfAnAbortedRun")
+@system
+unittest
+{
+    import core.exception : AssertError;
+    import core.time : msecs;
+    import sparkles.event_horizon.io : sleep;
+
+    // The defect ends the run while a sibling sleeps, so the scheduler goes
+    // out of scope with a live fiber; its destructor must not overwrite the
+    // defect with a failed teardown of its own.
+    string caught;
+    try
+    {
+        Sched s;
+        schedOrSkip(s);
+        cast(void) s.run(() {
+            assert(!s.spawn(() { cast(void) sleep(s, 20.msecs); }).hasError);
+            s.yieldNow();
+            assert(false, "the defect");
+        });
+    }
+    catch (AssertError e)
+        caught = e.msg.idup;
+    assert(caught == "the defect", caught);
 }
