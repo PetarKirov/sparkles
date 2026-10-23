@@ -81,6 +81,8 @@ configuration "full-vulkan" {
 }
 
 configuration "unittest" {
+    // The resilience catalog the suite checks itself against.
+    stringImportPaths "../../docs/specs/ui-app"
     // The test build takes the widest closure, so every arm is compiled and
     // the recording target can be checked against both live ones.
     dependency "sparkles:ui-tui" path="../.."

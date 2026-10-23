@@ -87,9 +87,11 @@ the tree. [Feature requirements](./feature-requirements.md) holds the
 requirements by area: architecture, backend selection, the options, the host
 contract and testability. [Terminal view](./terminal-view.md) specifies
 `sparkles:terminal-view`, the terminal emulator's core as a component any
-application can embed. [Open issues](./open-issues.md) records deferred
-decisions, and the [delivery plan](./PLAN.md) holds delivery order and
-progress. [Relationship to existing specs](#relationship-to-existing-specs)
+application can embed. [Resilience](./resilience.md) states what the host
+guarantees when the window, the display, the GPU or the settings change
+under a running application, with an executable scenario catalog.
+[Open issues](./open-issues.md) records deferred decisions, and the
+[delivery plan](./PLAN.md) holds delivery order and progress. [Relationship to existing specs](#relationship-to-existing-specs)
 places the host among the specifications it depends on and serves.
 
 ## What it owns
@@ -103,6 +105,7 @@ places the host among the specifications it depends on and serves.
 | Component entry      | `run_app.d`                | [`HST`](./feature-requirements.md#the-host-contract-hst)   |
 | Backend arms         | `tui_loop.d`, `gui_loop.d` | [`APP`](./feature-requirements.md#architecture-app)        |
 | Headless test target | `record.d`                 | [`TST`](./feature-requirements.md#testability-tst)         |
+| Lifecycle decisions  | `lifecycle.d`              | [`RES`](./resilience.md)                                   |
 
 ## Render targets
 

@@ -2078,6 +2078,10 @@
             "link": "/specs/ui-app/terminal-view"
           },
           {
+            "text": "Resilience",
+            "link": "/specs/ui-app/resilience"
+          },
+          {
             "text": "Open issues",
             "link": "/specs/ui-app/open-issues"
           }
