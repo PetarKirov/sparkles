@@ -18,9 +18,17 @@ version (EhSchedStack)  :  // rides DefaultLoop; peer backends via backend.selec
 
 import core.lifetime : move;
 import core.stdc.errno : EAGAIN, ENOBUFS;
+// druntime declares ENOTRECOVERABLE only where its C runtime does; macOS's
+// and FreeBSD's <sys/errno.h> have it too.
+version (OSX) private enum ENOTRECOVERABLE = 104;
+else version (FreeBSD) private enum ENOTRECOVERABLE = 95;
+else import core.stdc.errno : ENOTRECOVERABLE;
 import core.thread.fiber : Fiber;
 import core.thread.osthread : Thread;
 import core.time : Duration, MonoTime;
+
+import sparkles.base.sync.parker : installParker, pins;
+import sparkles.base.sync.parking_lot : callerRegistered;
 
 import sparkles.event_horizon.backend.concept : Waker;
 import sparkles.event_horizon.buffer : Buf;
@@ -28,6 +36,7 @@ import sparkles.event_horizon.capability : SpawnOptions;
 import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
     InterruptKind, cancelTree, interruptRequested;
 import sparkles.event_horizon.errors;
+import sparkles.event_horizon.fiber_park : FiberParkState, fiberParker;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
 import sparkles.event_horizon.op;
 
@@ -54,6 +63,10 @@ package:
     bool enqueued;       /// ready-queue membership (dedupes multiple wakes)
     OpToken awaitToken;  /// the op this fiber is parked on (cancel target)
     Throwable pendingDefect; /// escaped Throwable with no scope to route to
+    uint slabIndex;      /// this task's index in its scheduler's slab
+    /// The fiber parker's per-task state: the park word, the record and
+    /// the wake-inbox link (fiber-parker.md EFP2).
+    FiberParkState park;
 
     // The park/wake mailbox: written by the completion trampoline, read
     // after `park()` returns.
@@ -95,6 +108,10 @@ private:
         }
         catch (Throwable t)
             defect = t;
+        // After the body returns its frame is dead — this call reuses that
+        // stack. A context a worker still holds must not live there (EFP2).
+        assert(defect !is null || !callerRegistered(),
+            "a fiber ended holding a parking-lot registration (EFP2)");
 
         const fn = ectx.onExitFn;
         if (fn !is null)
@@ -151,34 +168,91 @@ struct Sched
             return looped;
 
         s._opts = opts;
-        foreach (_; 0 .. opts.maxFibers)
+        s._tasks = new FiberTask[opts.maxFibers];
+        foreach_reverse (i; 0 .. opts.maxFibers)
         {
             auto t = new FiberTask(opts.stackSize, opts.guardPageSize);
             t.owner = &s;
+            t.slabIndex = i;
+            s._tasks[i] = t;
             t.nextFree = s._freeHead;
             s._freeHead = t;
         }
+        // A fiber parked on a `sparkles.base.sync` primitive may be woken
+        // from any thread, so the wake routing is armed before any fiber
+        // can park (fiber-parker.md EFP22).
+        auto w = s._loop.waker();
+        if (w.hasError)
+        {
+            s._loop.destroy();
+            return ioErr!void(w.error);
+        }
+        s._waker = w.value;
         return ioOk();
     }
 
     /// Tears down the loop; every fiber must have finished.
     void destroy() @safe nothrow @nogc
     in (_liveFibers == 0, "destroy with live fibers")
+    in (_wakeInbox is null, "destroy with tasks in the wake inbox")
     in (_armedDeadlines is null, "destroy with armed deadlines")
     in (_armedAlarms is null, "destroy with armed alarms")
     {
+        awaitDeliveries();
         _loop.destroy();
         _destroyed = true;
     }
 
     ~this() @safe nothrow @nogc
     {
-        // A run a defect ended early leaves fibers live, and an explicit
-        // `destroy` has already failed its contract for them. Failing it again
-        // here, while that error unwinds, would rethrow the one thread-local
-        // `AssertError` druntime keeps, overwriting the defect that ended the run.
-        if (!_destroyed && _liveFibers == 0)
+        if (_destroyed)
+            return;
+        if (_liveFibers == 0)
             destroy();
+        else
+            abandon();
+    }
+
+    /**
+    Gives up a run a defect ended early, with fibers still live (SPEC §11,
+    fiber-parker.md EFP21). An op of theirs may still name the slab or a
+    fiber's frame, so the loop and every task are leaked, not freed. Failing
+    `destroy`'s contract instead, while the defect unwinds, would rethrow the
+    one thread-local `AssertError` druntime keeps and overwrite that defect.
+
+    A fiber parked on a `sparkles.base.sync` primitive is beyond a leak: its
+    parking-lot record, and every later wake of it, name this scheduler,
+    whose own storage ends here. The process then ends through the loop's
+    fatal hook, after reporting the defect.
+    */
+    private void abandon() @trusted nothrow @nogc
+    {
+        import core.memory : GC;
+
+        awaitDeliveries();
+        if (_lotSleepers > 0)
+        {
+            reportAbandonment();
+            _loop.fatal(ioError(ENOTRECOVERABLE, OpKind.none, IoErrorStage.completion,
+                "a defect ended the run with fibers parked on sparkles.base.sync primitives"));
+        }
+        GC.addRoot(cast(void*) _tasks.ptr);
+        _loop.abandon();
+    }
+
+    /// Writes the defect that ended the run, and what it stranded, to
+    /// standard error.
+    private void reportAbandonment() @trusted nothrow @nogc
+    {
+        import core.stdc.stdio : fprintf, stderr;
+
+        fprintf(stderr, "event-horizon: a defect ended Sched.run with %u fiber(s) "
+            ~ "parked on sparkles.base.sync primitives, whose records and wakes "
+            ~ "would outlive the scheduler (fiber-parker.md EFP21)\n", _lotSleepers);
+        if (_abortedBy !is null)
+            fprintf(stderr, "event-horizon: the defect: %.*s at %.*s:%zu\n",
+                cast(int) _abortedBy.msg.length, _abortedBy.msg.ptr,
+                cast(int) _abortedBy.file.length, _abortedBy.file.ptr, _abortedBy.line);
     }
 
     /// Tier-A access (buffer pools, capability probing, raw submits).
@@ -231,6 +305,7 @@ struct Sched
     /// Suspends the current fiber until exactly one `wake`.
     void park() @trusted nothrow @nogc
     in (_running !is null, "park outside a scheduler fiber")
+    in (pins() == 0, "a fiber suspended while holding a non-interruptible lock (SYK9)")
     {
         Fiber.yield();
     }
@@ -364,12 +439,7 @@ struct Sched
     */
     package IoResult!void ensureBlockingInboxWaker() @trusted
     {
-        if (_blockingWakerArmed)
-            return ioOk();
-        auto w = _loop.waker();
-        if (w.hasError)
-            return ioErr!void(w.error);
-        _blockingWaker = w.value;
+        _externalWakeUsed = true;
         _blockingWakerArmed = true;
         return ioOk();
     }
@@ -381,7 +451,7 @@ struct Sched
     /// The armed waker, copied into a job at submission so a worker thread
     /// never touches scheduler state beyond the shared inbox head.
     package Waker blockingWaker() @safe pure nothrow @nogc
-        => _blockingWaker;
+        => _waker;
 
     /// The one no-return seam for supervision-level ownership failures
     /// (SPEC §13.7): a reap that can neither succeed nor prove external
@@ -411,14 +481,27 @@ struct Sched
         while (_liveFibers > 0 || _loop.inFlight > 0)
         {
             if (_readyHead is null && _liveFibers > 0 && _loop.inFlight == 0
-                && !_loop.wakerArmed && _armedDeadlines is null
-                && _armedAlarms is null)
+                && !_externalWakeUsed && _lotSleepers == 0
+                && _armedDeadlines is null && _armedAlarms is null)
                 assert(0, "deadlock: parked fibers with nothing in flight");
-            auto r = tick(Duration.max);
+            auto r = tickRecordingDefect();
             if (r.hasError)
                 return ioErr!void(r.error);
         }
         return ioOk();
+    }
+
+    /// `tick` for `run`, keeping the `Throwable` that ends the run early so
+    /// that a teardown unable to leak the run can report it (`abandon`).
+    private IoResult!RunStatus tickRecordingDefect() @system
+    {
+        try
+            return tick(Duration.max);
+        catch (Throwable t)
+        {
+            _abortedBy = t;
+            throw t;
+        }
     }
 
     /**
@@ -450,6 +533,7 @@ struct Sched
         cast(void) sweepDeadlines();
         cast(void) sweepAlarms();
         cast(void) drainBlockingInbox();
+        cast(void) drainWakeInbox();
 
         uint ran;
         while (ran < _opts.resumeBudget)
@@ -502,6 +586,7 @@ struct Sched
         bool swept = sweepDeadlines();
         swept |= sweepAlarms();
         swept |= drainBlockingInbox();
+        swept |= drainWakeInbox();
         // A wake completion is infrastructure — dispatch swallows it and
         // no fiber is enqueued. Resume the idle waiter so it can re-check
         // (pool steal, shutdown). Any other dispatched completion is also
@@ -537,6 +622,7 @@ struct Sched
             cast(void) sweepDeadlines(); // see tick()
             cast(void) sweepAlarms();
             cast(void) drainBlockingInbox();
+            cast(void) drainWakeInbox();
 
             uint ran;
             while (ran < _opts.resumeBudget)
@@ -567,6 +653,7 @@ struct Sched
             bool swept = sweepDeadlines();
             swept |= sweepAlarms();
             swept |= drainBlockingInbox();
+            swept |= drainWakeInbox();
             if (_idleWaiter !is null && r.value == RunStatus.dispatched)
             {
                 auto t = _idleWaiter;
@@ -592,6 +679,7 @@ struct Sched
         auto task = _running;
         assert(task !is null, "parkUntilWake outside a scheduler fiber");
         task.wakeKind = WakeKind.manual;
+        _externalWakeUsed = true;
         _idleWaiter = task;
         park();
         if (_idleWaiter is task)
@@ -634,7 +722,7 @@ struct Sched
     }
 
     /// Cooperative reschedule: requeue the current fiber and yield the CPU.
-    void yieldNow() @trusted nothrow
+    void yieldNow() @trusted nothrow @nogc
     {
         auto task = _running;
         assert(task !is null, "yieldNow outside a scheduler fiber");
@@ -642,6 +730,55 @@ struct Sched
         enqueue(task);
         park();
     }
+
+    // ── the fiber parker's scheduler side (fiber-parker.md) ────────────
+
+    /// The task at slab index `i`, which a wake handle names.
+    package FiberTask taskAt(size_t i) @safe pure nothrow @nogc => _tasks[i];
+
+    /// Makes a parked fiber runnable on its owner's thread: the winning
+    /// resumption's enqueue at the tail of the ready queue (EFP9, EFP12).
+    package void resumeParked(FiberTask t) @safe nothrow @nogc
+    {
+        t.wakeKind = WakeKind.manual;
+        enqueue(t);
+    }
+
+    /// Counts a fiber into or out of a fiber-parker sleep: one any thread
+    /// may end, so `run` does not call it deadlock.
+    package void noteLotSleep(bool entering) @safe pure nothrow @nogc
+    {
+        if (entering)
+            ++_lotSleepers;
+        else
+            --_lotSleepers;
+    }
+
+    /// Arms `alarm` to run `onFire(ctx)` at `at` on this thread, between
+    /// dispatches: the fiber parker's deadline (EFP14).
+    package void armCallbackAlarm(ref Alarm alarm, MonoTime at,
+        void function(void*) nothrow @nogc onFire, void* ctx) @trusted nothrow @nogc
+    in (!alarm._armed, "alarm already armed")
+    {
+        alarm._at = at;
+        alarm._waiter = null;
+        alarm._onFire = onFire;
+        alarm._onFireCtx = ctx;
+        alarm._owner = &this;
+        alarm._fired = false;
+        alarm._prev = null;
+        alarm._next = _armedAlarms;
+        if (_armedAlarms !is null)
+            _armedAlarms._prev = &alarm;
+        _armedAlarms = &alarm;
+        alarm._armed = true;
+    }
+
+    /// The armed waker, through which another thread reaches this one.
+    package Waker waker() @safe pure nothrow @nogc => _waker;
+
+    /// Fibers asleep on the fiber parker right now.
+    package uint lotSleepers() const @safe pure nothrow @nogc => _lotSleepers;
 
     /// The running task, or `null` off-fiber.
     package static FiberTask tryCurrent() @trusted nothrow @nogc
@@ -749,7 +886,10 @@ private:
             {
                 disarmAlarm(*a);
                 a._fired = true;
-                wake(a._waiter);
+                if (a._onFire !is null)
+                    a._onFire(a._onFireCtx);
+                else
+                    wake(a._waiter);
                 swept = true;
             }
             a = next;
@@ -777,6 +917,45 @@ private:
             job = next;
         }
         return true;
+    }
+
+    /// Owner-thread drain of the wake inbox: each task a winning resumption
+    /// pushed from another thread goes to the tail of the ready queue, in
+    /// the order the pushes landed (EFP13).
+    bool drainWakeInbox() @trusted nothrow @nogc
+    {
+        import core.atomic : atomicExchange;
+
+        auto head = cast(FiberTask) atomicExchange(&_wakeInbox, cast(shared(FiberTask)) null);
+        if (head is null)
+            return false;
+        // The stack is newest-first; reverse it into push order.
+        FiberTask ordered;
+        while (head !is null)
+        {
+            auto next = cast(FiberTask) head.park.nextWake;
+            head.park.nextWake = cast(shared(FiberTask)) ordered;
+            ordered = head;
+            head = next;
+        }
+        while (ordered !is null)
+        {
+            auto next = cast(FiberTask) ordered.park.nextWake;
+            ordered.park.nextWake = null;
+            resumeParked(ordered);
+            ordered = next;
+        }
+        return true;
+    }
+
+    /// Waits until no committed wake can still touch this scheduler: a
+    /// delivery is bounded and never blocks, so the wait is short (EFP4).
+    void awaitDeliveries() @trusted nothrow @nogc
+    {
+        import core.atomic : atomicLoad;
+
+        while (atomicLoad(_pendingDeliveries) != 0)
+            Thread.yield();
     }
 
     void enqueue(FiberTask t) @safe nothrow @nogc
@@ -810,7 +989,11 @@ private:
     void resume(FiberTask t) @system
     {
         _running = t;
+        // The fiber parker is current while the fiber runs, the thread
+        // parker everywhere else (EFP1).
+        auto outer = installParker(fiberParker(t));
         auto thrown = t.call(Fiber.Rethrow.no);
+        cast(void) installParker(outer);
         _running = null;
         assert(thrown is null, "the fiber shell catches all Throwables");
         if (t.state == Fiber.State.TERM)
@@ -841,9 +1024,26 @@ private:
     /// The blocking-completion inbox: an intrusive lock-free stack pushed by
     /// pool workers, drained by this thread at its tick points.
     shared(BlockingJob*) _blockingInbox;
-    Waker _blockingWaker;
     bool _blockingWakerArmed;
     bool _destroyed;
+    /// The loop's waker, armed at creation: the blocking inbox and the
+    /// fiber parker's wake inbox are reached through it (EFP22).
+    Waker _waker;
+    /// Something outside the scheduler may wake it — a blocking job or
+    /// an idle waiter — so `run` cannot call a parked state deadlock. The
+    /// flag is one-way: once set, the check stays off for this scheduler.
+    bool _externalWakeUsed;
+    /// Fibers asleep on the fiber parker, which any thread may wake.
+    uint _lotSleepers;
+    /// Every task, by slab index: a wake handle names its task this way.
+    FiberTask[] _tasks;
+    /// The fiber parker's wake inbox: tasks resumed by another thread,
+    /// an intrusive lock-free stack drained at the tick points (EFP12).
+    package shared(FiberTask) _wakeInbox;
+    /// Wakes committed and not yet delivered (EFP4).
+    package shared uint _pendingDeliveries;
+    /// The `Throwable` that ended `run` early, if one did.
+    Throwable _abortedBy;
 }
 
 /**
@@ -878,6 +1078,11 @@ struct Alarm
     {
         _fired = false;
     }
+
+package:
+    /// Run at expiry instead of waking `_waiter` (the fiber parker's deadline).
+    void function(void* ctx) nothrow @nogc _onFire;
+    void* _onFireCtx;
 
 private:
     MonoTime _at;
