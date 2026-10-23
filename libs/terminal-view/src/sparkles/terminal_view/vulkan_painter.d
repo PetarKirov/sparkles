@@ -21,10 +21,28 @@ struct VulkanTerminalPainter(C)
     VulkanImages* images;
     int fontSize = 16;
 
+    private const(ImageRegistry)* found_;
+    private bool bound_;
+
+    /// Binds the pane's image registry on the canvas, keeping the one it
+    /// found for $(LREF unbind). Idempotent until then.
     void bind()
     {
-        if (canvas !is null && images !is null)
-            canvas.images(images.registryRef);
+        if (bound_ || canvas is null || images is null)
+            return;
+        found_ = canvas.boundImages;
+        canvas.images(images.registryRef);
+        bound_ = true;
+    }
+
+    /// Puts back the registry `bind` found, so what the embedder draws
+    /// after the pane resolves against its own (`UVX11`).
+    void unbind()
+    {
+        if (!bound_)
+            return;
+        canvas.images(found_);
+        bound_ = false;
     }
 
     void fill(int x, int y, int w, int h, Rgba c)
@@ -113,6 +131,7 @@ private struct RecCanvas
     void pushOffsetPx(int, int) @safe pure nothrow @nogc {}
     void popOffsetPx() @safe pure nothrow @nogc {}
     void images(const(ImageRegistry)* r) @safe pure nothrow @nogc { bound = r; }
+    const(ImageRegistry)* boundImages() const @safe pure nothrow @nogc => bound;
     void glyph(in Point, dchar, in Visual) @safe pure nothrow @nogc { ++glyphs; }
     void textRun(in Point, scope const(char)[], in Visual) @safe pure nothrow @nogc { ++texts; }
     void imageSourcePx(ImageHandle, int, int, int, int, int, int, int, int) @safe pure nothrow @nogc
@@ -139,4 +158,24 @@ unittest
     painter.drawTexture(t, ImageRect(0, 0, 1, 1), ImageRect(4, 8, 1, 1));
     assert(canvas.quads == 1);
     assert(canvas.bound == images.registryRef);
+}
+
+@("terminal_view.vulkan_painter.unbindRestoresTheEmbeddersRegistry")
+@system pure nothrow
+unittest
+{
+    // `UVX11`: the pane binds its registry to draw a kitty image; what the
+    // embedder draws afterwards resolves against the registry it bound.
+    ImageRegistry embedders;
+    RecCanvas canvas;
+    canvas.bound = &embedders;
+    VulkanImages images;
+    auto painter = VulkanTerminalPainter!RecCanvas(&canvas, &images, 16);
+    immutable ubyte[4] px = [1, 2, 3, 4];
+    const t = painter.createTexture(ImagePixels(1, 1, PixelLayout.rgba, px));
+    painter.drawTexture(t, ImageRect(0, 0, 1, 1), ImageRect(0, 0, 1, 1));
+    painter.drawTexture(t, ImageRect(0, 0, 1, 1), ImageRect(1, 0, 1, 1));
+    assert(canvas.bound == images.registryRef);
+    painter.unbind();
+    assert(canvas.bound is &embedders);
 }

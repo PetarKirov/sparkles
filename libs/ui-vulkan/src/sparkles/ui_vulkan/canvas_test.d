@@ -500,6 +500,36 @@ private ubyte[] solidImage(uint width, uint height, RgbColor c, ubyte alpha = 25
     assert(rig.canvas.imageUploads == 3 && rig.canvas.cachedImages == 1);
 }
 
+@("ui_vulkan.canvas.aRemovedImageLeavesTheDevice")
+@system unittest
+{
+    // `UVK23`: an image its registry removed is evicted as the next frame
+    // begins, so a stream of images (a terminal's kitty graphics) keeps a
+    // bounded cache however long it runs.
+    if (!readbackEnabled)
+        return skipTest(readbackSkipReason);
+    auto rig = new Rig;
+    rig.open("ui-vulkan-evict", 32, 32);
+    scope (success)
+        rig.close();
+
+    const kept = rig.images.register(solidImage(2, 2, RgbColor(0, 0, 255)), Size(2, 2));
+    foreach (i; 0 .. 200)
+    {
+        const shown = rig.images.register(solidImage(2, 2, RgbColor(cast(ubyte) i, 0, 0)),
+            Size(2, 2));
+        cast(void) rig.draw((ref Canvas c) {
+            c.image(Rect(0, 0, 1, 1), kept, ImageFit.fill, null, Visual.init);
+            c.image(Rect(1, 0, 1, 1), shown, ImageFit.fill, null, Visual.init);
+        }, FrameMetrics(cellW: 10, cellH: 20), black);
+        rig.images.remove(shown);
+    }
+    cast(void) rig.draw((ref Canvas c) {}, FrameMetrics(cellW: 10, cellH: 20), black);
+    assert(rig.canvas.cachedImages == 1,
+        format("only the image still registered stays: %s cached", rig.canvas.cachedImages));
+    assert(rig.canvas.imageUploads == 201, "and the kept one was never uploaded again");
+}
+
 @("ui_vulkan.canvas.registrySwitchKeepsDrawnImagesDistinct")
 @system unittest
 {
