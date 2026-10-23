@@ -1231,7 +1231,7 @@ struct TerminalView
             {
                 auto painter = VulkanTerminalPainter!(typeof(*h.canvas))(h.canvas,
                     &vulkanImages, s.fontSize);
-                painter.bind();
+                scope (exit) painter.unbind(); // binds on its first image (`UVX11`)
                 paintFrame(s, painter, h.size.width * s.cellWidth, h.size.height * s.cellHeight);
             }
         }
@@ -1272,7 +1272,7 @@ struct TerminalView
             static if (__traits(compiles, h.canvas.fillPx(0, 0, 0, 0, v4(0, 0, 0, 0))))
             {
                 auto painter = VulkanTerminalPainter!(typeof(*h.canvas))(h.canvas, &vulkanImages, s.fontSize);
-                painter.bind();
+                scope (exit) painter.unbind(); // binds on its first image (`UVX11`)
                 paintAt(painter, px, py, pw, ph);
             }
         }

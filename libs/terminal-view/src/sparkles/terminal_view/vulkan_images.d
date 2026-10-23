@@ -22,7 +22,7 @@ struct VulkanImages
     ImageRegistry ownRegistry;
     /// Registry shared by all panes (a `TerminalView` static), or null.
     ImageRegistry* sharedRegistry;
-    private ubyte[][] owned;
+    private ubyte[][uint] owned; // by handle, live images only (`UVK23`)
 
     @safe pure nothrow:
 
@@ -38,9 +38,7 @@ struct VulkanImages
         if (rgba.length == 0)
             return TextureId.init;
         const handle = registryRef.register(rgba, Size(image.width, image.height));
-        if (handle.value > owned.length)
-            owned.length = handle.value;
-        owned[handle.value - 1] = rgba;
+        owned[handle.value] = rgba;
         return TextureId(handle.value, image.width, image.height, image.layout);
     }
 
@@ -76,7 +74,7 @@ struct VulkanImages
         if (buf is null || (*buf).length == 0)
             return;
         registryRef.remove(ImageHandle(t.value));
-        *buf = null;
+        owned.remove(t.value);
     }
 
     void drawTexture(TextureId, in ImageRect, in ImageRect) const @safe pure nothrow @nogc
@@ -84,7 +82,7 @@ struct VulkanImages
     }
 
     private ubyte[]* bytesOf(TextureId t) @safe pure nothrow return
-        => t.valid && t.value <= owned.length ? &owned[t.value - 1] : null;
+        => t.valid ? t.value in owned : null;
 }
 
 private ubyte[] toRgba(in ImagePixels image) @safe pure nothrow

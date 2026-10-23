@@ -264,8 +264,11 @@ frame **must** ask for another.
 ## 5. Images
 
 **UVK23: Residency.** An image **must** be uploaded once per residency of
-its `(handle, generation)`: once when first drawn, and again only after its
-upload was released (`UVK32`) or the device was rebuilt.
+its `(registry, handle, generation)`: once when first drawn, and again only
+after its upload was released (`UVK32`) or the device was rebuilt. An image
+its registry no longer holds at that generation, removed or replaced,
+**must** be released as the next frame begins, so the cache holds only
+images that can still be drawn, however many a run shows.
 
 **UVK24: Placement.** An image **must** be placed by `fitRect`, clipped to
 its rectangle for `cover`, sampled through a linear-filtering sampler, and

@@ -220,10 +220,12 @@ schedule.
 **Choice.** All panes of one terminal share one `ImageRegistry`.
 `TextureId.value` is the registry handle; the pane owns the RGBA bytes the
 registry borrows. The canvas uploads and retires those entries with every
-other image, and its cache is keyed by (registry, handle, generation):
-a handle names an image only within its registry, so a terminal pane and
-the embedding application may each bind their own registry to one canvas
-without aliasing each other's first image. Glyphs and labels draw nothing
+other image (`UVK23`): one the pane removed leaves the device as the next
+frame begins. Its cache is keyed by (registry, handle, generation): a
+handle names an image only within its registry, so a terminal pane and the
+embedding application may each bind their own registry to one canvas
+without aliasing each other's first image. The pane binds its registry
+for its own images only and puts back the one it found. Glyphs and labels draw nothing
 and count a miss until the font atlas exists. PNG images decode in
 `sparkles.terminal_view.png_decoder` — no window, no raylib — installed
 wherever a pane draws pixels. Adam7 interlacing is refused. The decoder
