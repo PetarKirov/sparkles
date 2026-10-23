@@ -71,8 +71,11 @@ struct LigatureCarets
 The ligature carets of glyph `gid`, shaped from source cluster
 `cluster`, at `inst` (FTS10), written to `out` in record order.
 `horizontal` selects the pen axis a contour point resolves along.
-Capacity exhaustion is `limitExceeded` naming `callerStorage` with
-nothing written. Costs O(log n + c) for `c` carets.
+Capacity exhaustion is `limitExceeded` naming `callerStorage`; on any
+error nothing is written (FTS7's uncommitted-output rule), so every
+caret is resolved once to check it and again to write it. Costs
+O(log n + c) for `c` carets, each a contour point's outline decode at
+most (`glyphPoint`).
 */
 FontResult!LigatureCarets ligatureCarets(in Instance inst, uint gid, uint cluster,
     bool horizontal, scope LigatureCaret[] out_)
@@ -123,6 +126,7 @@ FontResult!LigatureCarets ligatureCarets(in Instance inst, uint gid, uint cluste
 
     const store = gdefVariationStore(face, inst.axisCount);
     const ppem = inst.size.unit == InstanceSize.Unit.pixels ? inst.size.ppem : Ppem.init;
+    foreach (pass; 0 .. 2)
     foreach (i; 0 .. caretCount)
     {
         const caretAt = glyphAt + be16(d, glyphAt + 2 + 2 * i);
@@ -178,7 +182,9 @@ FontResult!LigatureCarets ligatureCarets(in Instance inst, uint gid, uint cluste
                 return fontErr!LigatureCarets(tableError(FontErrorKind.unsupportedVersion,
                     gdefTag, start, caretAt));
         }
-        out_[i] = caret;
+        // The first pass only checks: an error must leave `out_` as it was.
+        if (pass == 1)
+            out_[i] = caret;
     }
     return fontOk(LigatureCarets(true, caretCount));
 }

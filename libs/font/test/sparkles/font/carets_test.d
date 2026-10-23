@@ -77,3 +77,58 @@ unittest
     const exhausted = ligatureCarets(inst, 1, 0, true, small[]);
     assert(exhausted.hasError && exhausted.error.kind == FontErrorKind.limitExceeded);
 }
+
+/// `caretFont` with the GDEF bytes at `offset` replaced, located from the end of the table.
+private const(ubyte)[] corruptedCaretFont(size_t fromEnd, const(ubyte)[] bytes_) @safe pure nothrow
+{
+    auto gdef = gdefTable();
+    gdef[$ - fromEnd .. $ - fromEnd + bytes_.length] = bytes_;
+    const glyphs = [simpleGlyph([[0, 0, 1]]),
+        simpleGlyph([[10, 20, 1], [110, 20, 1], [110, 120, 1]])];
+    auto tables = minimalTables(2);
+    tables ~= TableData("hhea", hhea(2));
+    tables ~= TableData("hmtx", hmtx([[500, 0], [500, 0]]));
+    tables ~= TableData("loca", locaTable(glyphs));
+    tables ~= TableData("glyf", glyfTable(glyphs));
+    tables ~= TableData("GDEF", gdef);
+    return sfnt(tables);
+}
+
+/// FTS10: malformed caret data is its error, distinct from absence, and publishes nothing.
+@("carets.gdef.malformedPublishesNothing")
+@safe pure
+unittest
+{
+    // The GDEF tail is: caret2 (4) caret3 (6) device (24) coverage (6).
+    enum caret2FromEnd = 6 + 24 + 6 + 4, caret3FromEnd = 6 + 24 + 6, deviceFromEnd = 6 + 24;
+    static struct Case
+    {
+        size_t fromEnd;
+        immutable(ubyte)[] bytes;
+        FontErrorKind kind;
+    }
+
+    const cases = [
+        // Format 2 naming point 9 of a three-point glyph.
+        Case(caret2FromEnd, [0, 2, 0, 9], FontErrorKind.indexOutOfRange),
+        // Format 3 whose Device table offset points past the table.
+        Case(caret3FromEnd, [0, 3, 0, 50, 0xFF, 0xF0], FontErrorKind.badOffset),
+        // A Device table whose size range (8–255) needs more delta words than remain.
+        Case(deviceFromEnd, [0, 8, 0, 0xFF], FontErrorKind.truncated),
+        // An unknown caret format.
+        Case(caret2FromEnd, [0, 7, 0, 1], FontErrorKind.unsupportedVersion),
+    ];
+    foreach (c; cases)
+    {
+        const bytes = corruptedCaretFont(c.fromEnd, c.bytes);
+        const face = openFace(bytes).value;
+        auto inst = face.instance(InstanceSize.pixels(Ppem.fromInteger(16).value), null).value;
+        LigatureCaret[4] carets;
+        foreach (ref caret; carets)
+            caret.recordIndex = 77;
+        const r = ligatureCarets(inst, 1, 0, true, carets[]);
+        assert(r.hasError && r.error.kind == c.kind, () { import std.conv : text; return text(c.kind, " got ", r.hasError ? r.error.kind : c.kind, r.hasError ? "" : " (no error)"); }());
+        foreach (caret; carets)
+            assert(caret.recordIndex == 77, "an error publishes no caret");
+    }
+}
