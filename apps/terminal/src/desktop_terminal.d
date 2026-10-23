@@ -27,6 +27,19 @@ import keymap : KeyCommand, TermCommand, TermContext;
 import selection_menu : SelectionUi;
 import workspace_host : WorkspaceHost;
 
+// The native host keeps what the panes and the chrome paint through: a drift
+// fails this build, not the window at run time (`UVX11`).
+version (TerminalVulkan)
+{
+    import sparkles.terminal_view.component : hasPixelCanvas, reportsCellPixels;
+    import sparkles.ui_app.native_loop : NativeHost;
+    import sparkles.ui.geometry : Size;
+
+    static assert(hasPixelCanvas!NativeHost && reportsCellPixels!NativeHost
+        && __traits(compiles, (ref NativeHost h) { Size s = h.pixels; }),
+        "the native host no longer offers what the terminal paints through");
+}
+
 /// The whole-window desktop component.
 struct DesktopTerminal
 {
