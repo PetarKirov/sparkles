@@ -226,11 +226,13 @@ handle names an image only within its registry, so a terminal pane and the
 embedding application may each bind their own registry to one canvas
 without aliasing each other's first image. The pane binds its registry
 for its own images only and puts back the one it found. Glyphs and labels draw nothing
-and count a miss until the font atlas exists. PNG images decode in
-`sparkles.terminal_view.png_decoder` — no window, no raylib — installed
-wherever a pane draws pixels. Adam7 interlacing is refused. The decoder
-inflates into a buffer sized by the IHDR geometry, so a hostile PNG
-cannot expand beyond the image it declares.
+and count a miss until the font atlas exists. PNG images decode with
+the toolkit's codec, `sparkles.ui.png` — no window, no raylib — installed
+wherever a pane draws pixels, on both arms. It decodes as stb_image does
+(a differential test over PngSuite holds them to the same bytes), so the
+raylib arm's images did not change when it stopped using stb_image, and
+it inflates into a buffer sized by the header, so a hostile PNG cannot
+expand beyond the image it declares.
 
 ## Open questions
 
