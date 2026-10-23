@@ -145,6 +145,7 @@ struct SdlParseResult(Allocator = Mallocator)
     SdlDocument!Allocator document; /// valid iff `hasValue`
     SdlError error; /// meaningful iff `hasError`
 
+    /// Whether the parse succeeded, as on `Expected`.
     bool hasValue() const @safe pure nothrow @nogc => document.valid;
     /// ditto
     bool hasError() const @safe pure nothrow @nogc => !document.valid;

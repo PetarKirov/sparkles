@@ -194,7 +194,7 @@ package struct SdlFieldRole
 {
     size_t fieldIndex;   /// position in `T.tupleof`
     size_t nodeIndex;    /// schema arena index of the field's payload node
-    SdlRoleKind role;
+    SdlRoleKind role;    /// which SDL channel the field occupies
     string namespace_;   /// resolved namespace; empty = ordinary SDL name
     string localName;    /// resolved local name (case policy or explicit split)
     const(SdlQualifiedName)[] aliases; /// decode-only qualified identities
@@ -211,6 +211,7 @@ package struct SdlAggregateRoles
 {
     /// Schema node indices of the fields, parallel to $(LREF roles).
     size_t[] fieldNodeIndices;
+    /// Resolved roles in declaration order, one per field.
     SdlFieldRole[] roles;
     /// Whether `@WireStrict` (exact `Sdl` or `AnyFormat`) applies — unknown
     /// members are decode errors instead of being ignored (SPEC §8 forbid).
