@@ -599,6 +599,23 @@ private uint[] hangulDecomposition(uint cp)
     if (s % 28) values ~= 0x11A7 + s % 28;
     return values;
 }
+// One step of the Hangul syllable decomposition: LVT to LV + T, LV to L + V,
+// as the canonical Decomposition_Mapping would state it (UAX #15 § 16).
+private uint[] hangulMapping(uint cp)
+{
+    const s = cp - 0xAC00;
+    if (s % 28) return [cp - s % 28, 0x11A7 + s % 28];
+    return [0x1100 + s / 588, 0x1161 + (s % 588) / 28];
+}
+// The single-step canonical Decomposition_Mapping: a pair or a singleton,
+// whose first element may decompose further; null when there is none.
+private uint[] canonicalMappingOf(uint cp)
+{
+    if (cp >= 0xAC00 && cp <= 0xD7A3) return hangulMapping(cp);
+    if (auto r = cp in records)
+        if (!r.compatibility) return r.decomposition;
+    return null;
+}
 private uint[] expand(uint cp, bool compatibility, ref uint[][uint] memo, ref bool[uint] active)
 {
     if (auto found = cp in memo) return *found;
@@ -663,6 +680,7 @@ private void readNormalization(Tables t, string text, string exclusions)
         auto b = expand(cp, true, compatibilityMemo, active);
         if (a.length != 1 || a[0] != cp) t.sequences["canonicalDecomposition"] ~= SequenceMapping(cp, a);
         if (b.length != 1 || b[0] != cp) t.sequences["compatibilityDecomposition"] ~= SequenceMapping(cp, b);
+        if (auto m = canonicalMappingOf(cp)) t.sequences["canonicalMapping"] ~= SequenceMapping(cp, m);
     }
     foreach (cp, r; records)
         if (!r.compatibility && r.decomposition.length == 2 && !t.properties[fullExcluded].data[cp])
@@ -1313,6 +1331,12 @@ unittest
     assert(expand(0xFB00, false, memo, active) == [0xFB00]);
     memo = null;
     assert(expand(0xFB00, true, memo, active) == [0x66, 0x66]);
+    // The single step keeps singletons and Hangul LV + T; compatibility has none.
+    assert(canonicalMappingOf(0x212B) == [0xC5]);
+    assert(canonicalMappingOf(0xC5) == [0x41, 0x30A]);
+    assert(canonicalMappingOf(0xAC01) == [0xAC00, 0x11A8]);
+    assert(canonicalMappingOf(0xAC00) == [0x1100, 0x1161]);
+    assert(canonicalMappingOf(0xFB00) is null && canonicalMappingOf(0x41) is null);
     records[0x41] = UcdRecord(false, [0x42]);
     records[0x42] = UcdRecord(false, [0x41]);
     memo = null;

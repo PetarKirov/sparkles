@@ -110,6 +110,10 @@ absent identity mapping. Existing canonical/compatibility decomposition,
 canonical composition, combining class, and simple/full fold seams remain.
 Additional mappings include full lower/title/uppercase, Turkic folding,
 NFKC casefold/simple-casefold, FC_NFKC closure, and script extensions.
+`canonicalMapping` is the single-step canonical `Decomposition_Mapping` that
+`canonicalDecomposition` applies recursively: a pair or a singleton whose first
+element may decompose further, with Hangul LVT split into LV + T and LV into
+L + V. It is the decomposition a shaping engine's one-step callback expects.
 An absent script-extension span means the singleton `script(cp)` value.
 `contextualCaseRules` retains language/context predicates and lower/title/upper
 mapping spans; `contextualCaseValue` reads their scalar data.
