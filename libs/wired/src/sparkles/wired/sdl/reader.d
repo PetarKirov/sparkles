@@ -65,8 +65,9 @@ private struct ExactTextBuffer
     {
         target[length++] = cast(ubyte) value;
     }
-    const(char)[] opSlice() const return scope @trusted pure nothrow @nogc
-        => (cast(const(char)*) target.ptr)[0 .. length];
+    // Narrow trust: reinterprets the filled prefix of `target` as text.
+    const(char)[] opSlice() const return scope @safe pure nothrow @nogc
+        => (() @trusted => (cast(const(char)*) target.ptr)[0 .. length])();
 }
 
 private struct ExactByteBuffer
@@ -1074,23 +1075,23 @@ unittest
 
         enum uint alignment = Mallocator.alignment;
 
-        void[] allocate(size_t amount) @trusted nothrow @nogc
+        void[] allocate(size_t amount) @safe nothrow @nogc
         {
             const attempt = (*attempts)++;
             if (attempt == failAt)
                 return null;
-            auto block = Mallocator.instance.allocate(amount);
+            auto block = (() @trusted => Mallocator.instance.allocate(amount))();
             if (block !is null)
                 (*liveBlocks)++;
             return block;
         }
 
-        bool deallocate(void[] block) @trusted nothrow @nogc
+        bool deallocate(void[] block) @safe nothrow @nogc
         {
             if (block is null)
                 return true;
             (*liveBlocks)--;
-            return Mallocator.instance.deallocate(block);
+            return (() @trusted => Mallocator.instance.deallocate(block))();
         }
     }
 
