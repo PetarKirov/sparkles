@@ -133,10 +133,11 @@ private DRes!T dFail(T)(ref SdlError failure, SdlError e)
     return DRes!T(true);
 }
 
-/// Composed SDL role path shared across one decode walk (SPEC §7).
+/// The SDL role path and the D value path shared across one walk (SPEC §7).
 private struct WalkPath
 {
     SharedBuffer!(char, 96) text;
+    SharedBuffer!(char, 96) value;
 }
 
 private void popSegment(ref WalkPath p, size_t mark) @safe
@@ -144,10 +145,26 @@ private void popSegment(ref WalkPath p, size_t mark) @safe
     () @trusted { p.text.length = mark; }();
 }
 
-/// Attaches the composed role path to a freshly built error.
+/// Appends a D value-path segment; returns the mark that `popValue` restores.
+private size_t pushValue(ref WalkPath p, scope const(char)[] segment) @safe
+{
+    const mark = p.value.length;
+    p.value ~= segment;
+    return mark;
+}
+
+private void popValue(ref WalkPath p, size_t mark) @safe
+{
+    () @trusted { p.value.length = mark; }();
+}
+
+/// Attaches both composed paths to a freshly built error.
 private SdlError attachPath(ref WalkPath path, SdlError e) @safe
 {
-    () @trusted { e.rolePath ~= path.text[]; }();
+    () @trusted {
+        e.rolePath ~= path.text[];
+        e.valuePath ~= path.value[];
+    }();
     return e;
 }
 
@@ -549,7 +566,10 @@ private DRes!Field decodeLeaf(Field, alias Conv = void,
     {
         auto r = decodeScalar!(Field, enumStyle, enumRepr)(s, failure);
         if (r.failed)
-            () @trusted { failure.rolePath ~= path.text[]; }();
+            () @trusted {
+                failure.rolePath ~= path.text[];
+                failure.valuePath ~= path.value[];
+            }();
         return r;
     }
 }
@@ -1264,6 +1284,8 @@ if (is(T == struct))
     {{
         const beforeField = errors.count;
         const fieldPathMark = path.text.length;
+        const fieldValueMark = pushValue(path, "." ~ __traits(identifier, symbol));
+        scope (exit) popValue(path, fieldValueMark);
         const fieldFailed = () {
         enum R = roles.roles[i];
         alias V = typeof(symbol);
@@ -1380,6 +1402,7 @@ if (is(T == struct))
             {
                 alias E = ForeachType!V;
                 E[] items;
+                size_t element;
                 foreach (occurrence; 0 .. count)
                 {
                     const m = matches[occurrence];
@@ -1389,6 +1412,9 @@ if (is(T == struct))
                     scope (exit) popSegment(path, mark);
                     foreach (value; m.byValue)
                     {
+                        const elementMark = pushValue(path,
+                            "[" ~ (element++).to!string ~ "]");
+                        scope (exit) popValue(path, elementMark);
                         auto r = decodeElement!(U, i, E, FieldConv)(value,
                             path, failure);
                         if (r.failed)
@@ -1426,8 +1452,10 @@ if (is(T == struct))
                     const mark = path.text.length;
                     path.text ~= "." ~ qualifiedKey(R.namespace_, R.localName) ~ "["
                         ~ occurrence.to!string ~ "]";
+                    const elementMark = pushValue(path, "[" ~ occurrence.to!string ~ "]");
                     auto r = decodeAggregate!(E, Sink)(matches[occurrence], path,
                         failure, errors);
+                    popValue(path, elementMark);
                     popSegment(path, mark);
                     if (r.failed)
                     {
@@ -1490,9 +1518,11 @@ if (is(T == struct))
                     {
                         const mark = path.text.length;
                         path.text ~= "." ~ qualifiedKey(R.namespace_, R.localName) ~ "[" ~ rawKey ~ "]";
+                        const entryMark = pushValue(path, "[" ~ rawKey ~ "]");
                         failure = attachPath(path, baseError(
                             SdlErrorCode.duplicateRole, m.nameSpan(),
                             "duplicate map key \"" ~ rawKey.idup ~ "\""));
+                        popValue(path, entryMark);
                         popSegment(path, mark);
                         return true;
                     }
@@ -1500,6 +1530,8 @@ if (is(T == struct))
                     const mark = path.text.length;
                     path.text ~= "." ~ qualifiedKey(R.namespace_, R.localName) ~ "[" ~ rawKey ~ "]";
                     scope (exit) popSegment(path, mark);
+                    const entryMark = pushValue(path, "[" ~ rawKey ~ "]");
+                    scope (exit) popValue(path, entryMark);
                     static if (is(M == struct) && !isSomeChar!M
                         && !is(M == enum))
                     {
@@ -1615,6 +1647,8 @@ if (is(T == struct))
                     path.text ~= "<value["
                         ~ (R.positionalIndex + offset).to!string ~ "]>";
                     scope (exit) popSegment(path, mark);
+                    const elementMark = pushValue(path, "[" ~ offset.to!string ~ "]");
+                    scope (exit) popValue(path, elementMark);
                     auto r = decodeElement!(U, i, E, FieldConv)(s, path,
                         failure);
                     if (r.failed || !found)
@@ -1653,6 +1687,8 @@ if (is(T == struct))
                     path.text ~= "<value["
                         ~ (R.positionalIndex + offset).to!string ~ "]>";
                     scope (exit) popSegment(path, mark);
+                    const elementMark = pushValue(path, "[" ~ offset.to!string ~ "]");
+                    scope (exit) popValue(path, elementMark);
                     auto r = decodeElement!(U, i, E, FieldConv)(s, path,
                         failure);
                     popSegment(path, mark);
@@ -2339,6 +2375,47 @@ if (is(T == struct))
         @WireAs!(Entries!(Stringly, Same)) int[int] values;
     }
     static assert(!__traits(compiles, WireWalk!(Sdl, UnsupportedKeys).schema));
+}
+
+/// Every error carries the D value path beside the SDL role path (SPEC §7).
+@("wired.sdl.codec.valuePaths")
+@system unittest
+{
+    static struct Item { @SdlAttribute() int port; }
+    static struct Server
+    {
+        @SdlChild() Item[] items;
+        @SdlChild() ushort[] ports;
+        @SdlChild() int[string] limits;
+        @SdlTagValue(0) int[2] pair;
+    }
+    static struct Doc { Server server; }
+
+    static void expectPaths(string source, string valuePath, string rolePath)
+    {
+        const result = fromSDL!Doc(source);
+        assert(result.hasError, source);
+        const error = result.error;
+        assert(error.valuePath[] == valuePath, error.valuePath[].idup);
+        assert(error.rolePath[] == rolePath, error.rolePath[].idup);
+    }
+    expectPaths("server 1 2 {\nitems port=1\nitems port=\"x\"\n}\n",
+        ".server.items[1].port", ".server[0].items[1]@port");
+    expectPaths("server 1 2 {\nports 1 2\nports 99999\n}\n",
+        ".server.ports[2]", ".server[0].ports[1]");
+    // Map entries are the remaining sibling tags, named by their keys.
+    expectPaths("server 1 2 {\nnorth \"x\"\n}\n",
+        ".server.limits[north]", ".server[0].limits[north]");
+    expectPaths("server 1 \"x\"\n", ".server.pair[1]", ".server[0]<value[1]>");
+    const rendered = fromSDL!Doc("server 1 \"x\"\n").error.toString;
+    assert(rendered.canFind(" at $.server[0]<value[1]> (value $.server.pair[1]):"),
+        rendered);
+
+    static struct Wide { @SdlChild() ulong[] big; }
+    const encoded = toSDL(Wide([1, ulong.max]));
+    assert(encoded.hasError);
+    const encodeError = encoded.error;
+    assert(encodeError.valuePath[] == ".big[1]", encodeError.valuePath[].idup);
 }
 
 /// `Stringly` spells an enum with its SDL-specific member names.
@@ -3461,6 +3538,8 @@ if (is(T == struct))
     }
     static foreach (i, symbol; T.tupleof)
     {{
+        const fieldValueMark = pushValue(b.path, "." ~ __traits(identifier, symbol));
+        scope (exit) popValue(b.path, fieldValueMark);
         foreach (check; wireCheckFailures!(Sdl, symbol)(value.tupleof[i]))
         {
             const mark = b.path.text.length;
@@ -3479,6 +3558,8 @@ if (is(T == struct))
 
     static foreach (i, symbol; T.tupleof)
     {{
+        const fieldValueMark = pushValue(b.path, "." ~ __traits(identifier, symbol));
+        scope (exit) popValue(b.path, fieldValueMark);
         enum R = roles.roles[i];
         alias V = typeof(symbol);
         static if (hasConvert!(Sdl, symbol, V))
@@ -3492,8 +3573,10 @@ if (is(T == struct))
             {
                 suffixStart = R.positionalIndex;
                 haveSuffix = true;
-                foreach (elem; value.tupleof[i])
+                foreach (element, elem; value.tupleof[i])
                 {
+                    const elementMark = pushValue(b.path, "[" ~ element.to!string ~ "]");
+                    scope (exit) popValue(b.path, elementMark);
                     auto wire = encConverted!(FC, typeof(elem))(elem, b,
                         "<value[" ~ R.positionalIndex.to!string ~ "]>");
                     if (wire.failed)
@@ -3513,6 +3596,8 @@ if (is(T == struct))
                 {{
                     enum slotLabel = "<value["
                         ~ (R.positionalIndex + k).to!string ~ "]>";
+                    const elementMark = pushValue(b.path, "[" ~ k.to!string ~ "]");
+                    scope (exit) popValue(b.path, elementMark);
                     auto wire_k = encConverted!(FC, typeof(
                         value.tupleof[i][k]))(value.tupleof[i][k], b,
                         slotLabel);
@@ -3640,6 +3725,8 @@ if (is(T == struct))
     SdlAttributeCell[] attrCells;
     static foreach (i, symbol; T.tupleof)
     {{
+        const fieldValueMark = pushValue(b.path, "." ~ __traits(identifier, symbol));
+        scope (exit) popValue(b.path, fieldValueMark);
         enum R = roles.roles[i];
         alias V = typeof(symbol);
         static if (hasConvert!(Sdl, symbol, V))
@@ -3782,6 +3869,8 @@ if (is(T == struct))
     size_t[] kidOrder;
     static foreach (i, symbol; T.tupleof)
     {{
+        const fieldValueMark = pushValue(b.path, "." ~ __traits(identifier, symbol));
+        scope (exit) popValue(b.path, fieldValueMark);
         enum R = roles.roles[i];
         alias V = typeof(symbol);
         static if (hasConvert!(Sdl, symbol, V))
@@ -3882,12 +3971,14 @@ if (is(T == struct))
                 static if (is(E == struct) && !isSomeChar!E && !is(E == enum))
                 {
                     // Aggregate sequence: one sibling per element.
-                    foreach (elem; value.tupleof[i])
+                    foreach (element, elem; value.tupleof[i])
                     {
                         string ns = R.namespace_;
                         string local = R.localName;
                         static if (HasIdentity!E)
                             encChildName(elem, b, ns, local);
+                        const elementMark = pushValue(b.path, "[" ~ element.to!string ~ "]");
+                        scope (exit) popValue(b.path, elementMark);
 
                         const mark = b.path.text.length;
                         b.path.text ~= "." ~ local ~ "["
@@ -3914,8 +4005,11 @@ if (is(T == struct))
                             R.localName, childDepth);
                         scope (exit) popSegment(b.path, mark);
 
-                        foreach (elem; value.tupleof[i])
+                        foreach (element, elem; value.tupleof[i])
                         {
+                            const elementMark = pushValue(b.path,
+                                "[" ~ element.to!string ~ "]");
+                            scope (exit) popValue(b.path, elementMark);
                             auto wire = encConverted!(FC3, E)(elem, b,
                                 "." ~ qualifiedKey(R.namespace_, R.localName) ~ "[0]");
                             if (wire.failed)
@@ -3958,6 +4052,8 @@ if (is(T == struct))
 
                 foreach (entry; entries)
                 {
+                    const entryMark = pushValue(b.path, "[" ~ entry.key ~ "]");
+                    scope (exit) popValue(b.path, entryMark);
                     const mark = b.path.text.length;
                     b.path.text ~= "." ~ qualifiedKey(R.namespace_, R.localName) ~ "[" ~ entry.key ~ "]";
                     const cIdx = encAppendNode(b, R.namespace_, entry.key,

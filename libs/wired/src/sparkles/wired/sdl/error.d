@@ -124,11 +124,17 @@ struct SdlError
             break;
         }
 
-        if (valuePath.length || rolePath.length)
+        if (rolePath.length)
         {
             put(w, " at $");
-            put(w, valuePath[]);
             put(w, rolePath[]);
+        }
+        if (valuePath.length)
+        {
+            put(w, rolePath.length ? " (value $" : " at $");
+            put(w, valuePath[]);
+            if (rolePath.length)
+                put(w, ")");
         }
         if (reason.length)
         {
