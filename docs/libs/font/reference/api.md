@@ -380,22 +380,27 @@ placements; each child's own variation is evaluated before scaling and placement
 
 ## Raster — `sparkles.font.raster`
 
-| Operation                                                     | Result                                                                                                      |
-| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `inst.rasterMeasure(gid, ppem, ws, overlap)`                  | the glyph's pixel size and bearings, and the accumulation and supersample storage the workspace needs       |
-| `inst.rasterizeGlyph(gid, ppem, region, ws, policy, overlap)` | linear 8-bit coverage written into the caller's `RasterRegion` (its own stride); the same size and bearings |
-| `applyTransfer(coverage, gammaTimes256)`                      | the consumer's display gamma on linear coverage (identity at 256)                                           |
+| Operation                                                     | Result                                                                                                                 |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `inst.rasterMeasure(gid, ppem, ws, overlap)`                  | the glyph's pixel size and bearings, and the accumulation and supersample storage the workspace needs                  |
+| `inst.rasterizeGlyph(gid, ppem, region, ws, policy, overlap)` | linear 8-bit coverage written into the caller's `RasterRegion` (its own stride); the same size and bearings            |
+| `applyTransfer(coverage, gammaTimes256)`                      | linear coverage encoded for a display of gamma `gammaTimes256 / 256`: the power `256 / gammaTimes256`, identity at 256 |
 
 Coverage follows the nonzero winding rule; glyphs flagged for overlap —
 or every glyph under `OverlapMode.forceUnion` — approximate the union
-of their contours by 4×4 supersampling (FTX9). `FlattenPolicy.standard` subdivides
+of their contours by 4×4 supersampling (FTX9), where only a subpixel two
+contours both partly cover still doubles. `FlattenPolicy.standard` subdivides
 curves to 0.02 px, `freeType` reproduces FreeType's `ftgrays.c`
 subdivision, and `fine` is the 0.001 px reference of FTR8. Equal glyph
 keys produce byte-identical output.
 
 The region stride must cover the glyph's row width, and the byte slice must hold
 every row. Invalid or overflowing row layouts return a caller-storage error before
-writing coverage; padding between rows is left untouched.
+writing coverage, whose `needed` is the stride-aware byte count; padding between
+rows is left untouched. A box reaching more than `maxRasterCoordinate` (2^27)
+pixels from the pen — an extreme ppem or outline — is `arithmeticExhausted`.
+`rasterizeGlyph` decodes the outline once and documents its worst-case cost
+(FTB3) in terms of the box, which the caller's storage bounds.
 
 ## Carets — `sparkles.font.carets`
 
