@@ -450,10 +450,13 @@ unittest
 
     int thirdErrno = -1;
     bool mandatoryDone;
+    // These outlive the root fiber. It returns once the mandatory reap
+    // completes, while `busy` is still in its sleep and `queued` has not
+    // started; the shell then reuses that frame (EFP2's exit check).
+    SleepJob busy = {ms: 80};
+    SleepJob queued = {ms: 1};
+    SleepJob third = {ms: 1};
     auto r = s.run(() {
-        SleepJob busy = {ms: 80};
-        SleepJob queued = {ms: 1};
-        SleepJob third = {ms: 1};
         spawnPublicRunner(s, &pool, &busy);
         waitUntil(s, () => atomicLoad(busy.started));
         spawnPublicRunner(s, &pool, &queued);
