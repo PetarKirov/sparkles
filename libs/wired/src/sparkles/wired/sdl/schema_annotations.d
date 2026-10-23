@@ -168,7 +168,7 @@ SdlExtraAttr SdlExtra() @safe pure nothrow @nogc => SdlExtraAttr();
 // ── Projected sidecar ────────────────────────────────────────────────────────
 
 /// The SDL channel an aggregate field occupies (SPEC §5).
-enum SdlRoleKind : ubyte
+package enum SdlRoleKind : ubyte
 {
     child,         /// named child tag (the unannotated default)
     tagValue,      /// positional value of the containing tag
@@ -179,9 +179,9 @@ enum SdlRoleKind : ubyte
 }
 
 /// How a `child`-role field maps onto child tags (SPEC §5.2).
-enum SdlChildShape : ubyte
+package enum SdlChildShape : ubyte
 {
-    none,
+    none,               /// not a `child` role
     scalarSingle,       /// one child whose positional value 0 is the scalar
     aggregateSingle,    /// one named child whose body is the aggregate
     scalarSequence,     /// values appended from every matching occurrence
@@ -190,7 +190,7 @@ enum SdlChildShape : ubyte
 }
 
 /** One aggregate field's resolved SDL role — plain schema data (SPEC §5). */
-struct SdlFieldRole
+package struct SdlFieldRole
 {
     size_t fieldIndex;   /// position in `T.tupleof`
     size_t nodeIndex;    /// schema arena index of the field's payload node
@@ -207,7 +207,7 @@ struct SdlFieldRole
 }
 
 /** One aggregate's projected SDL roles, keyed by field node index. */
-struct SdlAggregateRoles
+package struct SdlAggregateRoles
 {
     /// Schema node indices of the fields, parallel to $(LREF roles).
     size_t[] fieldNodeIndices;
@@ -337,7 +337,7 @@ private SdlQualifiedName aliasName(string name) @safe pure nothrow @nogc
 A colon splits exactly once; empty halves and additional colons are
 compile-time errors naming the aggregate and field (SPEC §5.1).
 */
-template splitSdlQualifiedName(string aggregate, string field, string raw)
+package template splitSdlQualifiedName(string aggregate, string field, string raw)
 {
     static if (raw.length == 0)
     {
@@ -428,7 +428,7 @@ The projection also resolves the aggregate's unknown-member policy:
 $(LREF SdlAggregateRoles.strictUnknown) reports whether `@WireStrict!Sdl`
 (or the format-less spelling) applies.
 */
-template sdlAggregateRoles(T, bool isDocumentRoot = false,
+package template sdlAggregateRoles(T, bool isDocumentRoot = false,
     alias schema = wireSchemaOf!(Sdl, T), size_t aggregateIndex = 0)
 if (is(T == struct))
 {

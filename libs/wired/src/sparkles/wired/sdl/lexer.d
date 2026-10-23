@@ -104,7 +104,7 @@ private bool featureFor(SdlParserConfig config, SdlTokenKind kind)
 }
 
 /// Whether specialization `config` contains the semantic kernel for `kind`.
-enum bool sdlScalarKernelAvailable(SdlParserConfig config, SdlTokenKind kind) =
+package enum bool sdlScalarKernelAvailable(SdlParserConfig config, SdlTokenKind kind) =
     featureFor(config, kind);
 
 private SdlError lexicalError(SdlErrorCode code, SdlSpan span,
