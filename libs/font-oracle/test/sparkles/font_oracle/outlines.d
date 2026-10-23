@@ -1,6 +1,6 @@
 /**
-The M3 outline differential: for every glyph of one `glyf` face and of
-every `CFF` face of the bundle, the segment sequence and coordinates of
+The M3 outline differential: for every glyph of one `glyf` face, of
+every `CFF` face of the bundle and of the variable `CFF2` test faces, the segment sequence and coordinates of
 `sparkles.font.outlines` equal `hb_font_draw_glyph`'s within 1/64 font
 unit (testing.md § Outlines). HarfBuzz shares no code with the decoder.
 */
@@ -13,7 +13,7 @@ import std.math : fabs;
 import std.path : baseName;
 
 import sparkles.font;
-import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle;
+import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle, testCorpus, testFontsDir;
 import sparkles.font_oracle;
 import sparkles.test_runner.skip : skipTest;
 
@@ -264,7 +264,7 @@ unittest
     auto varied = new OutlineSegment[65_536];
     const size = InstanceSize.pixels(Ppem.fromInteger(16).value);
     size_t faces, glyphs;
-    foreach (path; corpus)
+    foreach (path; corpus ~ testCorpus)
     {
         const bytes = cast(const(ubyte)[]) read(path);
         const opened = openFace(bytes);
@@ -309,4 +309,66 @@ unittest
         }
     }
     assert(faces >= 50 && glyphs > 25_000, text(faces, " variable faces, ", glyphs, " glyphs"));
+}
+
+/// CFF2 blending (`vsindex`, `blend`) against HarfBuzz at the default and at each axis extreme.
+@("oracle.outlines.cff2Variable")
+@system
+unittest
+{
+    if (testFontsDir is null)
+        return skipTest("SPARKLES_FONT_TEST_CORPUS is unset");
+    assert(testCorpus.length >= 4, "the variable CFF2 faces are in the test corpus");
+    auto funcs = hb_draw_funcs_create();
+    scope (exit) hb_draw_funcs_destroy(funcs);
+    hb_draw_funcs_set_move_to_func(funcs, &collectMove, null, null);
+    hb_draw_funcs_set_line_to_func(funcs, &collectLine, null, null);
+    hb_draw_funcs_set_quadratic_to_func(funcs, &collectQuad, null, null);
+    hb_draw_funcs_set_cubic_to_func(funcs, &collectCubic, null, null);
+    hb_draw_funcs_set_close_path_func(funcs, &collectClose, null, null);
+    hb_draw_funcs_make_immutable(funcs);
+    auto collector = new Collector;
+    auto points = new OutlinePoint[8192];
+    auto on = new bool[8192];
+    auto ends = new ushort[1024];
+    auto segments = new OutlineSegment[16_384];
+    const size = InstanceSize.pixels(Ppem.fromInteger(16).value);
+    size_t glyphsChecked;
+    foreach (path; testCorpus)
+    {
+        const bytes = cast(const(ubyte)[]) read(path);
+        const face = openFace(bytes).value;
+        assert(face.has(Tag("CFF2")), path.baseName ~ " has a CFF2 table");
+        auto hb = Oracle(bytes, 0);
+        hb_font_set_scale(hb.font, face.unitsPerEm, face.unitsPerEm);
+        UserCoordinate[][] settings = [null];
+        foreach (a; axes(face))
+        {
+            const axis = a.value;
+            settings ~= [UserCoordinate(axis.axisTag, axis.minValue)];
+            settings ~= [UserCoordinate(axis.axisTag, axis.maxValue)];
+        }
+        foreach (k, setting; settings)
+        {
+            const inst = face.instance(size, setting).value;
+            int[64] coords;
+            foreach (i, c; inst.coords)
+                coords[i] = c;
+            hb_font_set_var_coords_normalized(hb.font, coords.ptr, inst.axisCount);
+            foreach (gid; 0 .. face.numGlyphs)
+            {
+                const label = text(path.baseName, " instance=", k, " gid=", gid);
+                collector.count = 0;
+                collector.overflow = false;
+                hb_font_draw_glyph(hb.font, gid, funcs, collector);
+                assert(!collector.overflow, label);
+                const ours = glyphOutline(inst, gid, segments[], OutlineWorkspace(points, on, ends));
+                assert(ours.hasValue, text(label, " ", ours.hasError ? ours.error : FontError.init));
+                assertMatches(segments[0 .. ours.value.segmentCount],
+                    collector.segments[0 .. collector.count], label);
+                ++glyphsChecked;
+            }
+        }
+    }
+    assert(glyphsChecked > 10_000, text(glyphsChecked, " CFF2 glyph instances"));
 }

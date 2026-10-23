@@ -230,6 +230,7 @@
         ./nix/packages/ldc-import-paths.nix
         ./nix/packages/dub-builder
         ./nix/packages/fonts.nix
+        ./nix/packages/font-test-corpus.nix
         ./nix/packages/freebsd-vm.nix
         ./nix/packages/hue.nix
         ./nix/packages/libghostty-vt.nix
