@@ -22,7 +22,7 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.ui.effect : EffectRegistry;
 import sparkles.ui.image : ImageRegistry;
 import sparkles.base.term_control : PointerShape;
-import sparkles.input : Event, InputCapabilities, cellPointer;
+import sparkles.input : Event, InputCapabilities, cellPointer, match, ResizeEvent;
 import sparkles.ui.arena : GcArena;
 import sparkles.ui.canvas : DrawOp, RecordingCanvas;
 import sparkles.ui.geometry : Size;
@@ -232,6 +232,12 @@ RecordingHost runRecorded(Present, Handle, Shutdown = typeof(null))(
             break;
         // `HST17`: the script is the only evidence a recorder has.
         h.noteModifiers(modsOf(e, h.modifiers));
+        // A resize with a size is the surface's new size, as on a live host
+        // (`RES40`); a zero one is normalized to the size it has (`HST7`).
+        e.match!((in ResizeEvent r) {
+            if (r.size.width > 0 && r.size.height > 0)
+                h.size = r.size;
+        }, (in _) {});
         handle(h, withRealSize(e, h.size));
         frame();
     }
