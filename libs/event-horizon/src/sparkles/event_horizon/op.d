@@ -525,9 +525,13 @@ struct OpSlab(Allocator = Mallocator)
         _freeHead = uint.max;
     }
 
+    /// A slab with slots still live is leaked: the loop that owned it
+    /// was abandoned by a defect, and the kernel may still write into
+    /// a slot (SPEC §11).
     ~this() @safe nothrow @nogc
     {
-        terminate();
+        if (_liveCount == 0 && !_reservedActive)
+            terminate();
     }
 
     /// Pops a free slot and arms it; the invalid token (`raw == 0`) when
