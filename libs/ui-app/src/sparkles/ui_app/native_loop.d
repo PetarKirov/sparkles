@@ -181,6 +181,10 @@ struct NativeHost
     /// the cells are measured again, so `size` changes on its next read.
     int fontSizePx() const @safe pure nothrow @nogc => session_.font.px;
 
+    /// The surface, in device pixels: what an application sizes chrome it
+    /// paints in pixels by, remainder of a cell included.
+    Size pixels() const @safe pure nothrow @nogc => Size(session_.pixelW, session_.pixelH);
+
     /// One cell, in device pixels. A terminal pane opens with these
     /// (`openPixels`) and needs `PointerUnit.pixels` so pointer events
     /// arrive in the same unit.
