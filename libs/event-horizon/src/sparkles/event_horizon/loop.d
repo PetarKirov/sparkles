@@ -181,8 +181,18 @@ if (isCompletionBackend!Backend)
     */
     ~this()
     {
+        if (_abandoned)
+            return;
         if (!_open || (quiescent && _pendHead == uint.max && !_slab.reservedActive))
             destroy();
+    }
+
+    /// Leaks this loop at its destructor, quiescent or not: its owner was
+    /// abandoned by a defect, and what the owner's work names — an op's
+    /// operands, the waker's word or descriptor — must outlive it (SPEC §11).
+    void abandon() @safe pure nothrow @nogc
+    {
+        _abandoned = true;
     }
 
     /// No op is live but the armed waker.
@@ -990,6 +1000,7 @@ private:
     OpSlab!Allocator _slab;
     FatalHook _fatalHook;
     bool _open;
+    bool _abandoned;
     bool _dispatching;
     bool _stopRequested;
     bool _wakeArmed;
