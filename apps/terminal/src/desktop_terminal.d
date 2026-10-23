@@ -71,20 +71,10 @@ struct DesktopTerminal
     /// Advances the guide's clock, then every pane's frame.
     WidgetTree view(H)(ref H h)
     {
-        version (TerminalVulkan) {}
-        else
-            import raylib : GetScreenHeight, GetScreenWidth;
-        int screenW, screenH;
-        version (TerminalVulkan)
-        {
-            screenW = h.size.width * h.cellWidth;
-            screenH = h.size.height * h.cellHeight;
-        }
-        else
-        {
-            screenW = GetScreenWidth();
-            screenH = GetScreenHeight();
-        }
+        import chrome : windowPixels;
+
+        const screen = windowPixels(h);
+        const screenW = screen.width, screenH = screen.height;
 
         if (defaultFontPx == 0)
         {
@@ -152,22 +142,25 @@ struct DesktopTerminal
                 const surfaced = host.scrollSurface(w);
                 const bannered = !surfaced && w.dy != 0
                     && host.scrollBanner(w.pos.x, w.pos.y, w.dy);
-                // Only a wheel nothing above consumed reaches the pane.
-                version (TerminalVulkan)
-                    if (!surfaced && !bannered)
-                        host.applyWheel(w);
+                // Only a wheel nothing above consumed reaches the pane, and
+                // only where nothing polls the mouse instead (the native arm).
+                if (!host.pollPointer && !surfaced && !bannered)
+                    host.applyWheel(w);
             },
             (in PointerEvent p) {
-                version (TerminalVulkan)
+                // Where raylib is not polled, the host's events are the mouse.
+                if (!host.pollPointer)
                 {
                     host.notePointer(p);
                     if (p.action == PointerAction.press && p.button == PointerButton.right)
                     {
                         selection.frame(h, host);
+                        import chrome : windowPixels;
+
+                        const screen = windowPixels(h);
                         cast(void) selection.rightClick(host,
-                            Rect(0, 0, h.size.width * h.cellWidth,
-                                h.size.height * h.cellHeight),
-                            h.cellWidth, h.cellHeight, p.pos, p.mods.shift);
+                            Rect(0, 0, screen.width, screen.height),
+                            host.cellWidth, host.cellHeight, p.pos, p.mods.shift);
                     }
                 }
             },
@@ -200,20 +193,10 @@ struct DesktopTerminal
             gm = h.textMeasure();
             useChromeMeasure(ChromeMeasure(toDelegate(&width), toDelegate(&rows)));
         }
-        version (TerminalVulkan) {}
-        else
-            import raylib : GetScreenHeight, GetScreenWidth;
-        int sw, sh;
-        version (TerminalVulkan)
-        {
-            sw = h.size.width * h.cellWidth;
-            sh = h.size.height * h.cellHeight;
-        }
-        else
-        {
-            sw = GetScreenWidth();
-            sh = GetScreenHeight();
-        }
+        import chrome : windowPixels;
+
+        const screen = windowPixels(h);
+        const sw = screen.width, sh = screen.height;
 
         host.paint(h, Rect(0, 0, sw, sh), divider, accent);
         paintGuide(h, keys, context, h.size.width, h.size.height, 0, 0, chromeFg, chromeBg,

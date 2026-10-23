@@ -233,21 +233,10 @@ void paintGuide(H)(ref H h, ref KeyRouter router, in TermContext ctx, int cols,
     const top = pxH > 0 ? y + pxH - panelRows * cellH : y + (dy > 0 ? dy : 0) * cellH;
     if (pxW > cols * cellW || pxH > 0)
     {
-        import chrome : ChromeTheme;
+        import chrome : ChromeTheme, fillPixels;
 
-        const fill = ChromeTheme.of(fg, bg).slotFill(tree.nodes[tree.root].slot);
-        const fw = pxW > cols * cellW ? pxW : cols * cellW;
-        version (TerminalVulkan)
-        {
-            import sparkles.shaders : v4;
-            h.canvas.fillPx(x, top, fw, y + pxH - top,
-                v4(fill.r / 255.0f, fill.g / 255.0f, fill.b / 255.0f, 1));
-        }
-        else
-        {
-            import raylib : Color, DrawRectangle;
-            DrawRectangle(x, top, fw, y + pxH - top, Color(fill.r, fill.g, fill.b, 255));
-        }
+        fillPixels(h, x, top, pxW > cols * cellW ? pxW : cols * cellW, y + pxH - top,
+            ChromeTheme.of(fg, bg).slotFill(tree.nodes[tree.root].slot));
     }
     static if (__traits(compiles, c.originX = x))
     {
