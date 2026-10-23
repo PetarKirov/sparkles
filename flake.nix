@@ -131,6 +131,11 @@
       url = "github:nst/JSONTestSuite";
       flake = false;
     };
+    # The compatibility oracle for sparkles.wired.sdl, not a production dependency.
+    dub-sdl-src = {
+      url = "github:dlang/dub/5efed360e1c9342453bc5dd19339c75981526d83";
+      flake = false;
+    };
     nativejson-benchmark = {
       url = "github:miloyip/nativejson-benchmark";
       flake = false;
