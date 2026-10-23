@@ -43,6 +43,7 @@ in
         # (`dub describe :terminal --data=versions`), plus sparkles:android.
         versions = [
           "UiAppGui"
+          "TerminalViewRaylib"
           # sparkles:ui's `gpu-effects` configuration, which dub would select
           # through ui-raylib; its GLSL comes prebuilt from `ui-shaders`.
           "SparklesUiGpuEffects"
