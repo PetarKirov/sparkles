@@ -50,8 +50,211 @@ private FontResult!Jstf jstfHeader(return scope const Face face)
     return fontOk(j);
 }
 
-/// Whether the face has a readable `JSTF` table at all.
-bool hasJstf(return scope const Face face) => !jstfHeader(face).hasError;
+/// Whether the face has a `JSTF` table (FTS11): `false` without one, the table's error when it is unreadable.
+FontResult!bool hasJstf(return scope const Face face)
+{
+    if (!face.has(jstfTag))
+        return fontOk(false);
+    const j = jstfHeader(face);
+    if (j.hasError)
+        return fontErr!bool(j.error);
+    return fontOk(true);
+}
+
+/// The eight lookup-index lists of a `JstfPriority` record, in record order (FTS11).
+enum JstfList : ubyte
+{
+    shrinkEnableGsub,
+    shrinkDisableGsub,
+    shrinkEnableGpos,
+    shrinkDisableGpos,
+    extendEnableGsub,
+    extendDisableGsub,
+    extendEnableGpos,
+    extendDisableGpos,
+}
+
+/// Each list's offset field in a `JstfPriority` record; the maxima sit at 8 and 18.
+private immutable ubyte[JstfList.max + 1] listField = [0, 2, 4, 6, 10, 12, 14, 16];
+
+/**
+One priority record of a language system (FTS11): the length of each
+lookup-index list, and whether a `JstfMax` record is attached. A maximum
+record holds `JSTF`'s own lookups, which the shaping engine cannot apply:
+measuring one is `unsupportedCapability`
+(`JustificationMode.maximumLookups`), never a manufactured result.
+*/
+struct JstfPriorityInfo
+{
+    @safe pure nothrow @nogc:
+
+    /// Whether the record exists: its table, script, language system and index.
+    bool present;
+    /// Whether a `JstfMax` record is attached for shrinkage / extension.
+    bool hasShrinkageMaximum, hasExtensionMaximum;
+    /// The number of lookup indices in each list, by `JstfList`; 0 for an absent list.
+    ushort[JstfList.max + 1] listLengths;
+
+    /// The number of lookup indices in `list`.
+    size_t listLength(JstfList list) const => listLengths[list];
+}
+
+/// Where priority record `index` of a language system sits, when present.
+private struct PriorityAt
+{
+    bool present;
+    const(ubyte)[] data;
+    ulong start;
+    size_t at;
+}
+
+/**
+The language system `language` of `script` (the default one for
+`Tag.init`): its offset, or `size_t.max` when the table, the script or
+the language system is absent.
+*/
+private FontResult!PriorityAt languageSystem(return scope const Face face, Tag script, Tag language,
+    out size_t langSysAt)
+{
+    langSysAt = size_t.max;
+    if (!face.has(jstfTag))
+        return fontOk(PriorityAt.init);
+    const j = jstfHeader(face);
+    if (j.hasError)
+        return fontErr!PriorityAt(j.error);
+    PriorityAt p;
+    p.data = j.value.data;
+    p.start = j.value.start;
+    if (scriptOffset(j.value, script) == size_t.max)
+        return fontOk(p);
+    const view = scriptView(j.value, script);
+    if (view.hasError)
+        return fontErr!PriorityAt(view.error);
+    if (language.isNone)
+    {
+        if (view.value.defaultLangSysAt != 0)
+            langSysAt = view.value.at + view.value.defaultLangSysAt;
+    }
+    else
+        foreach (i; 0 .. view.value.langSysCount)
+        {
+            const recordAt = view.value.at + 6 + 6 * i;
+            if (Tag(be32(p.data, recordAt)) == language)
+            {
+                langSysAt = view.value.at + be16(p.data, recordAt + 4);
+                break;
+            }
+        }
+    if (langSysAt != size_t.max && !fits(p.data.length, langSysAt, 2))
+        return fontErr!PriorityAt(tableError(FontErrorKind.truncated, jstfTag, p.start, langSysAt));
+    return fontOk(p);
+}
+
+/**
+The number of priority records of `script`'s language system `language`
+(FTS11), the default one for `Tag.init`; 0 when the table, script or
+language system is absent.
+*/
+FontResult!size_t jstfPriorityCount(return scope const Face face, Tag script, Tag language)
+{
+    size_t langSysAt;
+    const p = languageSystem(face, script, language, langSysAt);
+    if (p.hasError)
+        return fontErr!size_t(p.error);
+    if (langSysAt == size_t.max)
+        return fontOk!size_t(0);
+    const count = be16(p.value.data, langSysAt);
+    if (!fits(p.value.data.length, langSysAt + 2, 2UL * count))
+        return fontErr!size_t(tableError(FontErrorKind.truncated, jstfTag, p.value.start, langSysAt + 2));
+    return fontOk!size_t(count);
+}
+
+/// Priority record `index`, with every list header checked.
+private FontResult!PriorityAt priorityRecord(return scope const Face face, Tag script, Tag language,
+    size_t index)
+{
+    const count = jstfPriorityCount(face, script, language);
+    if (count.hasError)
+        return fontErr!PriorityAt(count.error);
+    size_t langSysAt;
+    auto p = languageSystem(face, script, language, langSysAt).value;
+    if (index >= count.value)
+        return fontOk(PriorityAt.init);
+    const d = p.data;
+    const offset = be16(d, langSysAt + 2 + 2 * index);
+    if (offset == 0)
+        return fontErr!PriorityAt(tableError(FontErrorKind.badOffset, jstfTag, p.start, langSysAt + 2 + 2 * index));
+    const at = langSysAt + offset;
+    if (!fits(d.length, at, 20))
+        return fontErr!PriorityAt(tableError(FontErrorKind.truncated, jstfTag, p.start, at));
+    foreach (field; listField)
+    {
+        const listOffset = be16(d, at + field);
+        if (listOffset == 0)
+            continue;
+        const listAt = at + listOffset;
+        if (!fits(d.length, listAt, 2) || !fits(d.length, listAt + 2, 2UL * be16(d, listAt)))
+            return fontErr!PriorityAt(tableError(FontErrorKind.truncated, jstfTag, p.start, listAt));
+    }
+    p.present = true;
+    p.at = at;
+    return fontOk(p);
+}
+
+/**
+Priority record `index` of `script`'s language system `language` (FTS11),
+the default one for `Tag.init`. Absence of the table, script, language
+system or index is `present == false`; a list or record that does not
+fit the table is `truncated`, and a null record offset `badOffset`.
+Costs O(s + l) for `s` scripts and `l` language systems.
+*/
+FontResult!JstfPriorityInfo jstfPriority(return scope const Face face, Tag script, Tag language,
+    size_t index = 0)
+{
+    const p = priorityRecord(face, script, language, index);
+    if (p.hasError)
+        return fontErr!JstfPriorityInfo(p.error);
+    JstfPriorityInfo info;
+    if (!p.value.present)
+        return fontOk(info);
+    const d = p.value.data, at = p.value.at;
+    info.present = true;
+    info.hasShrinkageMaximum = be16(d, at + 8) != 0;
+    info.hasExtensionMaximum = be16(d, at + 18) != 0;
+    foreach (list, field; listField)
+    {
+        const listOffset = be16(d, at + field);
+        info.listLengths[list] = listOffset ? be16(d, at + listOffset) : 0;
+    }
+    return fontOk(info);
+}
+
+/**
+The lookup indices of `list` in priority record `index` (FTS11), written
+to `out_`: the count. An absent record or list is a count of zero;
+`callerStorage` names the count in `needed` when `out_` is shorter.
+*/
+FontResult!size_t jstfPriorityLookups(return scope const Face face, Tag script, Tag language, size_t index,
+    JstfList list, scope ushort[] out_)
+{
+    const p = priorityRecord(face, script, language, index);
+    if (p.hasError)
+        return fontErr!size_t(p.error);
+    if (!p.value.present)
+        return fontOk!size_t(0);
+    const d = p.value.data;
+    const listOffset = be16(d, p.value.at + listField[list]);
+    if (listOffset == 0)
+        return fontOk!size_t(0);
+    const listAt = p.value.at + listOffset;
+    const count = be16(d, listAt);
+    if (count > out_.length)
+        return fontErr!size_t(callerStorageError(count, jstfTag, p.value.start + listAt, listAt));
+    foreach (i; 0 .. count)
+        out_[i] = be16(d, listAt + 2 + 2 * i);
+    return fontOk!size_t(count);
+}
+
 
 /**
 The `JSTF` script tags, in table order, written to `out` (FTS11): the
@@ -140,131 +343,4 @@ FontResult!size_t jstfExtenderGlyphs(return scope const Face face, Tag script,
     foreach (i; 0 .. count)
         out_[i] = be16(d, at + 2 + 2 * i);
     return fontOk!size_t(count);
-}
-
-/// One priority record's lookup-index lists (FTS11); at most 32 each.
-struct JstfPriorityInfo
-{
-    @safe pure nothrow @nogc:
-
-    /// Whether the language system (and so its priority) exists.
-    bool present;
-    /// Whether a maximum record is attached for shrinkage / extension.
-    bool hasShrinkageMaximum, hasExtensionMaximum;
-
-    ushort[32] shrinkEnableGsub, shrinkDisableGsub, shrinkEnableGpos, shrinkDisableGpos;
-    ushort[32] extendEnableGsub, extendDisableGsub, extendEnableGpos, extendDisableGpos;
-    size_t shrinkEnableGsubCount, shrinkDisableGsubCount, shrinkEnableGposCount,
-        shrinkDisableGposCount, extendEnableGsubCount, extendDisableGsubCount,
-        extendEnableGposCount, extendDisableGposCount;
-    /// A list longer than 32, truncated into its array above.
-    bool overflow;
-
-    private void takeList(const(ubyte)[] d, ulong start, size_t priorityAt, size_t field,
-        ushort[] target, ref size_t count)
-    {
-        const offset = be16(d, priorityAt + field);
-        if (offset == 0)
-            return;
-        const at = priorityAt + offset;
-        if (!fits(d.length, at, 2))
-        {
-            overflow = true;
-            return;
-        }
-        const n = be16(d, at);
-        if (!fits(d.length, at + 2, 2UL * n))
-        {
-            overflow = true;
-            return;
-        }
-        const take = n < 32 ? n : 32;
-        foreach (i; 0 .. take)
-            target[i] = be16(d, at + 2 + 2 * i);
-        count = take;
-        if (n > take)
-            overflow = true;
-    }
-}
-
-/**
-The first priority record of `script`'s language system `language` (FTS11):
-the default language system when `language` is `Tag.init`. Absence of
-the table, script, language or priority is `present == false`.
-*/
-FontResult!JstfPriorityInfo jstfPriority(return scope const Face face, Tag script,
-    Tag language)
-{
-    JstfPriorityInfo info;
-    if (!face.has(jstfTag))
-        return fontOk(info);
-    const j = jstfHeader(face);
-    if (j.hasError)
-        return fontErr!JstfPriorityInfo(j.error);
-    if (scriptOffset(j.value, script) == size_t.max)
-        return fontOk(info);
-    const view = scriptView(j.value, script);
-    if (view.hasError)
-        return fontErr!JstfPriorityInfo(view.error);
-    const d = j.value.data;
-    // Find the language system: default, or by tag.
-    size_t langSysAt;
-    if (language.isNone)
-    {
-        if (view.value.defaultLangSysAt == 0)
-            return fontOk(info);
-        langSysAt = view.value.at + view.value.defaultLangSysAt;
-    }
-    else
-    {
-        bool found;
-        foreach (i; 0 .. view.value.langSysCount)
-        {
-            const recordAt = view.value.at + 6 + 6 * i;
-            if (Tag(be32(d, recordAt)) == language)
-            {
-                langSysAt = view.value.at + be16(d, recordAt + 4);
-                found = true;
-                break;
-            }
-        }
-        if (!found)
-            return fontOk(info);
-    }
-    if (!fits(d.length, langSysAt, 2))
-        return fontErr!JstfPriorityInfo(tableError(FontErrorKind.truncated, jstfTag,
-            j.value.start, langSysAt));
-    const priorityCount = be16(d, langSysAt);
-    if (priorityCount == 0)
-        return fontOk(info);
-    if (!fits(d.length, langSysAt + 2, 2UL * priorityCount))
-        return fontErr!JstfPriorityInfo(tableError(FontErrorKind.truncated, jstfTag,
-            j.value.start, langSysAt + 2));
-    const priorityOffset = be16(d, langSysAt + 2);
-    if (priorityOffset == 0)
-        return fontOk(info);
-    const priorityAt = langSysAt + priorityOffset;
-    if (!fits(d.length, priorityAt, 20))
-        return fontErr!JstfPriorityInfo(tableError(FontErrorKind.truncated, jstfTag,
-            j.value.start, priorityAt));
-    info.present = true;
-    info.hasShrinkageMaximum = be16(d, priorityAt + 8) != 0;
-    info.hasExtensionMaximum = be16(d, priorityAt + 18) != 0;
-    info.takeList(d, j.value.start, priorityAt, 0, info.shrinkEnableGsub[],
-        info.shrinkEnableGsubCount);
-    info.takeList(d, j.value.start, priorityAt, 2, info.shrinkDisableGsub[],
-        info.shrinkDisableGsubCount);
-    info.takeList(d, j.value.start, priorityAt, 4, info.shrinkEnableGpos[],
-        info.shrinkEnableGposCount);
-    info.takeList(d, j.value.start, priorityAt, 6, info.shrinkDisableGpos[],
-        info.shrinkDisableGposCount);
-    info.takeList(d, j.value.start, priorityAt, 10, info.extendEnableGsub[],
-        info.extendEnableGsubCount);
-    info.takeList(d, j.value.start, priorityAt, 12, info.extendDisableGsub[],
-        info.extendDisableGsubCount);
-    info.takeList(d, j.value.start, priorityAt, 14, info.extendEnableGpos[],
-        info.extendEnableGposCount);
-    info.takeList(d, j.value.start, priorityAt, 16, info.extendDisableGpos[],
-        info.extendDisableGposCount);
-    return fontOk(info);
 }
