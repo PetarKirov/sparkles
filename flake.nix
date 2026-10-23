@@ -128,6 +128,12 @@
       url = "github:dlang/dub/5efed360e1c9342453bc5dd19339c75981526d83";
       flake = false;
     };
+    # PngSuite and libpng's own test images (contrib/pngsuite,
+    # contrib/testpngs): the PNG decoder's differential corpus.
+    libpng-src = {
+      url = "github:pnggroup/libpng/v1.6.44";
+      flake = false;
+    };
     nativejson-benchmark = {
       url = "github:miloyip/nativejson-benchmark";
       flake = false;
