@@ -789,6 +789,17 @@ private:
         if (slot is null)
             return; // stale generation: a recycled slot's late completion
 
+        // A futex wait's linked timeout (`FutexDeadline`) names its wait's
+        // slot. An expiry records why the wait was cancelled; nothing else
+        // is owed. One that arrives after the wait's completion released the
+        // slot carries the old generation and never resolves.
+        if (token.cls == OpClass.linkTimeout)
+        {
+            if (raw.res == -ETIME && slot.provenance == CancelProvenance.none)
+                slot.provenance = CancelProvenance.deadline;
+            return;
+        }
+
         // The persistent wake op (SPEC §5.6): drain consumed; re-arm unless
         // tearing down. Wakes carry no payload by design.
         if (slot.cls == OpClass.wake)
@@ -853,6 +864,13 @@ private:
         // A timer's expiry is its success, not an error.
         if (slot.kind == OpKind.timeout && raw.res == -ETIME)
             done.res = 0;
+
+        // A wait its linked timeout cancelled has timed out; only an explicit
+        // cancellation reports `-ECANCELED`. The timeout's own completion may
+        // not have arrived yet, so the provenance alone cannot say.
+        if (slot.linkedTimeout && raw.res == -ECANCELED
+            && slot.provenance != CancelProvenance.explicit_)
+            done.res = -ETIME;
 
         // A buffer-selecting recv: recover the kernel-chosen buffer id from
         // the raw flags (SPEC §6.4); the caller leases it from the ring.
