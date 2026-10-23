@@ -19,7 +19,7 @@ the gate each milestone must pass, and progress. Scenarios and oracles live in
 | [M2 Variation, metrics, inspection](#m2-variation-metrics-and-inspection) | in progress |
 | [MS Startup slice](#ms-startup-slice)                                     | planned     |
 | [M3 Outlines](#m3-outlines)                                               | done        |
-| [M4 Shaping](#m4-shaping)                                                 | in progress |
+| [M4 Shaping](#m4-shaping)                                                 | done        |
 | [M5 Grayscale raster](#m5-grayscale-raster)                               | done        |
 | [M6 Colour glyphs](#m6-colour-glyphs)                                     | not started |
 | [M7 Discovery and fallback](#m7-discovery-and-fallback)                   | not started |
@@ -324,15 +324,15 @@ math face with kerns, under the pinned corpus manifest. The reference-point
 and `glyf` vertical-origin resolution closed with M3.
 
 A review on 2026-10-23 reopened M3 (outlines), M4 (shaping) and M5
-(grayscale raster). M3 meets its acceptance again: the HarfBuzz
-differential for every `CFF` face of the bundle, the `glyf` reference faces
-and the variable `CFF2` test faces, `FTO4` over every variable face, and the
-limit and cycle fixtures. M5 meets its acceptance again: the
-`FTR3` and `FTR8` differentials over all four raster faces, the overlap
-fixtures and determinism through a reused workspace. M4 is implemented in
-part and in progress. It needs a
-memory-safe `Shaper`, base-decoded input, a single-step decomposition
-callback, the `FTS1` units, an `FTS8` manifest that rejects base's
-Unicode 18.0.0 against HarfBuzz 13.2.1's older tables, and the
-acceptance scenarios of [`testing.md`](./testing.md).
-The ledger lists each gap. Next action: close M4's gate.
+(grayscale raster); all three meet their acceptance again. M3: the
+HarfBuzz differential for every `CFF` face of the bundle, the `glyf`
+reference faces and the variable `CFF2` test faces, `FTO4` over every
+variable face, and the limit and cycle fixtures. M5: the `FTR3` and
+`FTR8` differentials over all four raster faces, the overlap fixtures and
+determinism through a reused workspace. M4: an `FTS8` manifest that pins
+HarfBuzz 14.6.0, whose tables match base's Unicode 18.0.0 (shown against
+the pinned source and HarfBuzz's own callbacks), a memory-safe `Shaper`,
+base-decoded input, recorded `hb-shape` goldens and the scenarios of
+[`testing.md`](./testing.md); no free face with a `JSTF` table exists,
+so `FTS11`'s real-record comparison waits for one.
+The ledger lists each gap. Next action: M2's open gates.
