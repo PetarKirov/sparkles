@@ -1707,9 +1707,15 @@ WrapPlan cellWrapPlan(const(char)[] text, WrapOptions options = WrapOptions.init
     // A measurer may wrap text of its own; a nested call plans in fresh
     // arenas. So does a paragraph past 4 KiB: its arenas (some 600 bytes
     // per source byte) are not worth keeping for the thread's lifetime.
+    // Under Bionic (Android), shared-library dynamic TLS is not scanned by
+    // druntime's GC, so planning reuses the stack-allocated transient pool
+    // instead of caching heap slices in an unscanned thread-local pool.
     enum retainedRecords = 4 * 1024;
     CellWrapPool transient;
-    CellWrapPool* pool = cellWrapPool.busy || records > retainedRecords ? &transient : &cellWrapPool;
+    version (CRuntime_Bionic)
+        CellWrapPool* pool = &transient;
+    else
+        CellWrapPool* pool = cellWrapPool.busy || records > retainedRecords ? &transient : &cellWrapPool;
     pool.busy = true;
     scope (exit) pool.busy = false;
     for (;;)
