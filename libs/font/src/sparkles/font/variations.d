@@ -491,8 +491,10 @@ valid integer ppem inside `[startSize, endSize]`; design and physical queries
 pass no ppem (`Ppem.init`) and never apply one. A VariationIndex table (format
 `0x8000`) contributes `store`'s delta (FTV12) at `coords`: zero at all-zero
 coordinates (FTM14), `badValue` when `store` is not `present`. Another delta
-format is `unsupportedVersion`. Costs O(1) for a Device table and O(r · a) for
-a VariationIndex.
+format is `unsupportedVersion`. A Device table whose delta words for its whole
+`[startSize, endSize]` range do not fit is `truncated` at every size, whether
+or not the query's size needs them. Costs O(1) for a Device table and
+O(r · a) for a VariationIndex.
 */
 FontResult!DeviceDelta deviceDelta(scope const(ubyte)[] table, Tag tag, ulong tableStart, ulong offset,
     scope const ref ItemVariationStore store, scope NormalizedCoords coords, ushort unitsPerEm,
@@ -521,13 +523,16 @@ in (unitsPerEm != 0)
     if (format < 1 || format > 3)
         return fontErr!DeviceDelta(tableError(FontErrorKind.unsupportedVersion, tag, tableStart, offset + 4));
     const startSize = be16(table, p), endSize = be16(table, p + 2);
+    // Every declared size's value must fit, not only the one this query reads.
+    const sizes = endSize >= startSize ? endSize - startSize + 1UL : 0;
+    const perWord = 1UL << (4 - format);
+    if (!fits(table.length, offset + 6, 2 * ((sizes + perWord - 1) / perWord)))
+        return fontErr!DeviceDelta(tableError(FontErrorKind.truncated, tag, tableStart, offset));
     if (!ppem.valid || !ppem.isInteger || ppem.numerator < startSize || ppem.numerator > endSize)
         return fontOk(result);
     // Format f packs 2^f-bit signed values, 2^(4-f) to a big-endian word.
     const s = cast(uint)(ppem.numerator - startSize);
     const wordAt = offset + 6 + 2UL * (s >> (4 - format));
-    if (!fits(table.length, wordAt, 2))
-        return fontErr!DeviceDelta(tableError(FontErrorKind.truncated, tag, tableStart, wordAt));
     const word = be16(table, cast(size_t) wordAt);
     const bits = 1u << format;
     const slot = s & ((1u << (4 - format)) - 1);
@@ -552,4 +557,10 @@ unittest
     assert(at13.value.deviceApplied && at13.value.devicePixels == -2);
     const design = deviceDelta(device, Tag("GPOS"), 0, 0, none, null, 1_000);
     assert(!design.value.deviceApplied && design.value.devicePixels == 0);
+    // Sizes 12–20 need three words; one is truncated at every size, even 12.
+    static immutable ubyte[] short_ = [0, 12, 0, 20, 0, 2, 0x1E, 0x00];
+    foreach (size; [12, 13, 30])
+        assert(deviceDelta(short_, Tag("GPOS"), 0, 0, none, null, 1_000, Ppem.fromInteger(size).value)
+            .error.kind == FontErrorKind.truncated);
+    assert(deviceDelta(short_, Tag("GPOS"), 0, 0, none, null, 1_000).error.kind == FontErrorKind.truncated);
 }
