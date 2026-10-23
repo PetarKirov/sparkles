@@ -558,3 +558,34 @@ unittest
         return Shaper(inst);
     }));
 }
+
+/// FTS10: the carets of a shaped ligature name its glyph and source cluster, in record order.
+@("shaping.FTS10.ligatureCarets")
+@system
+unittest
+{
+    if (fontsPath() is null)
+        return skipTest("SPARKLES_FONTS_PATH is unset");
+    foreach (weight; [400, 900])
+    {
+        auto inst = instanceOf(bundled("NotoSans.ttf"), [UserCoordinate(Tag("wght"), weight << 16)]);
+        auto s = Shaper(inst);
+        Outputs o;
+        const info = o.shape(s, ShapeRequest("xfi", 0, 3, latin, true, null, true, true));
+        assert(info.hasValue && info.value.glyphCount == 2);
+        const ligature = o.glyphs[1];
+        assert(ligature.cluster == 1);
+        LigatureCaret[4] carets;
+        const r = ligatureCarets(inst, ligature.glyphId, ligature.cluster, true, carets[]);
+        assert(r.hasValue && r.value.present && r.value.count >= 1);
+        foreach (k, c; carets[0 .. r.value.count])
+        {
+            assert(c.glyphId == ligature.glyphId && c.cluster == 1 && c.recordIndex == k);
+            // Inside the ligature's advance.
+            assert(c.coordinate.raw > 0 && c.coordinate.raw < ligature.xAdvance.raw);
+        }
+        // The plain letter has none: absence, not synthesized spacing.
+        const plain = ligatureCarets(inst, o.glyphs[0].glyphId, 0, true, carets[]);
+        assert(plain.hasValue && !plain.value.present);
+    }
+}
