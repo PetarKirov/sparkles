@@ -61,6 +61,7 @@ configuration "unittest-vulkan" {
     dependency "sparkles:test-utils" path="../.."
     dependency "sparkles:ui-vulkan" path="../.."
     subConfiguration "sparkles:ui" "gpu-effects"
+    subConfiguration "sparkles:ui-app" "gui-vulkan"
     subConfiguration "sparkles:terminal-view" "vulkan"
     versions "TerminalVulkan"
 
