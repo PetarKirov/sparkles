@@ -464,6 +464,21 @@ struct OpRecvSelect { enum kind = OpKind.recvSelect; int fd; BufGroupId group; u
 /// multishot keeps one submission armed (flags.more per readiness edge).
 struct OpPollAdd { enum kind = OpKind.pollAdd; int fd; PollEvents events; bool multishot; }
 
+/// In-ring futex operations (Linux 6.7, `caps.futexOps`) on 32-bit
+/// process-private words, which must stay valid until the terminal
+/// completion. A wait completes 0 once woken, `-EAGAIN` if the word already
+/// differed; `waitv`'s result is the woken entry's index; a wake's is the
+/// number woken. A deadline adds an `IORING_OP_LINK_TIMEOUT` linked to the
+/// wait, so the two need two free submission entries and reach the kernel in
+/// one submission; its expiry completes the wait with `-ETIME`, and only an
+/// explicit cancellation with `-ECANCELED`. The timeout's own completion
+/// carries the wait's token tagged `OpClass.linkTimeout` and is consumed by
+/// the loop.
+struct FutexDeadline { KernelTimespec at; bool absolute; bool armed; }  // absolute: CLOCK_MONOTONIC
+struct OpFutexWait  { enum kind = OpKind.futexWait;  shared(uint)* word; uint expected; uint mask = uint.max; FutexDeadline deadline; }
+struct OpFutexWake  { enum kind = OpKind.futexWake;  shared(uint)* word; uint count = 1; uint mask = uint.max; }
+struct OpFutexWaitv { enum kind = OpKind.futexWaitv; const(FutexWaitvEntry)* entries; uint count; FutexDeadline deadline; }
+
 enum bool isOpDesc(Op) = __traits(compiles, { enum OpKind k = Op.kind; });
 ```
 
@@ -487,7 +502,7 @@ struct OpToken
     ulong raw;   // raw == 0 is reserved invalid
     uint index() const;
     uint generation() const;
-    OpClass cls() const;    // user | timer | wake | internal
+    OpClass cls() const;    // user | timer | wake | internal | linkTimeout
 }
 
 /// Public, copyable reference to an in-flight op (cancel/detach target).

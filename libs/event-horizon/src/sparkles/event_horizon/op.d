@@ -24,6 +24,9 @@ enum OpClass : ubyte
     timer,    /// a user-visible timer (dispatches the slot's callback)
     wake,     /// loop-internal waker op (consumed silently)
     internal, /// loop-internal bookkeeping, e.g. cancel CQEs (consumed silently)
+    /// The linked timeout of a futex wait (`FutexDeadline`): it names the
+    /// wait's slot, and its completion is consumed silently.
+    linkTimeout,
 }
 
 /**
@@ -323,6 +326,72 @@ struct OpPollAdd
     bool multishot;
 }
 
+/**
+How a futex wait ends early: a deadline the kernel enforces with an
+`IORING_OP_LINK_TIMEOUT` linked to the wait, so both reach the kernel in one
+submission and need two submission entries (SPEC §5.6, fiber-parker.md EFP7).
+An expiry completes the wait with `-ETIME`.
+*/
+struct FutexDeadline
+{
+    KernelTimespec at; /// the expiry, relative or on `CLOCK_MONOTONIC`
+    bool absolute;     /// `at` is a `CLOCK_MONOTONIC` instant, not a delay
+    bool armed;        /// a deadline applies at all
+}
+
+/**
+Waits in the kernel while the 32-bit process-private futex word at `word`
+holds `expected`. The completion `res` is `0` once woken, `-EAGAIN` if the
+word already differed, and `-ETIME` if `deadline` passed first. `word` must
+stay valid until the terminal completion (SPEC §4.1).
+*/
+struct OpFutexWait
+{
+    enum kind = OpKind.futexWait;
+    shared(uint)* word;
+    uint expected;
+    uint mask = uint.max; /// `FUTEX_BITSET_MATCH_ANY`; a wake must share a bit
+    FutexDeadline deadline;
+}
+
+/**
+Wakes up to `count` waiters on the futex word at `word`, in-ring or blocked
+in `futex(2)` alike. The completion `res` is the number woken.
+*/
+struct OpFutexWake
+{
+    enum kind = OpKind.futexWake;
+    shared(uint)* word;
+    uint count = 1;
+    uint mask = uint.max; /// wakes only waiters whose mask shares a bit
+}
+
+/// One word of an `OpFutexWaitv`; the layout of `struct futex_waitv`.
+struct FutexWaitvEntry
+{
+    ulong expected; /// the value the word must hold for the wait to sleep
+    ulong word;     /// the word's address
+    uint flags;     /// `FUTEX2_SIZE_U32 | FUTEX2_PRIVATE`; `futexWaitvFlags`
+    uint reserved;  /// must be zero
+}
+
+/// The flags of a 32-bit process-private `FutexWaitvEntry`.
+enum uint futexWaitvFlags = 0x02 /* FUTEX2_SIZE_U32 */ | 0x80 /* FUTEX2_PRIVATE */;
+
+/**
+Waits in the kernel until any of the futex words `entries` names is woken.
+The completion `res` is the index of the woken entry, `-EAGAIN` if a word
+already differed, and `-ETIME` if `deadline` passed first. The array and the
+words must stay valid until the terminal completion (SPEC §4.1).
+*/
+struct OpFutexWaitv
+{
+    enum kind = OpKind.futexWaitv;
+    const(FutexWaitvEntry)* entries;
+    uint count;
+    FutexDeadline deadline;
+}
+
 /// DbI trait: exactly what submission accepts — any struct naming its
 /// portable `OpKind`.
 enum bool isOpDesc(Op) = __traits(compiles, { enum OpKind k = Op.kind; });
@@ -460,6 +529,9 @@ struct OpSlot
     /// Owner gone: the callback never runs and resources recycle silently;
     /// orthogonal to cancellation progress.
     bool detached;
+    /// A linked timeout follows the op (`FutexDeadline`): an `-ECANCELED`
+    /// no explicit cancellation explains is its expiry.
+    bool linkedTimeout;
     uint generation = 1;      /// bumped on release; token must match to resolve
     Buf pinned;               /// keep-alive across the in-flight window
     OperandStore operands;    /// kernel-stable operands
@@ -553,6 +625,7 @@ struct OpSlab(Allocator = Mallocator)
         slot.cls = cls;
         slot.provenance = CancelProvenance.none;
         slot.pendingCqes = 1;
+        slot.linkedTimeout = false;
         slot.detached = false;
         slot.pendPrev = slot.pendNext = uint.max;
         return OpToken.pack(idx, slot.generation, cls);
@@ -621,6 +694,7 @@ struct OpSlab(Allocator = Mallocator)
         slot.cls = OpClass.internal;
         slot.provenance = CancelProvenance.none;
         slot.pendingCqes = 1;
+        slot.linkedTimeout = false;
         slot.detached = false;
         slot.pendPrev = slot.pendNext = uint.max;
         _reservedActive = true;

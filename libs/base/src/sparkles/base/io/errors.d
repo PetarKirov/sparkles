@@ -89,6 +89,7 @@ enum OpKind : ubyte
     cancel,          /// cancellation of another op
     futexWait,       /// in-ring futex wait
     futexWake,       /// in-ring futex wake
+    futexWaitv,      /// in-ring wait on any of several futex words
     msgRing,         /// cross-ring message
     waitid,          /// child-process reap
     pollAdd,         /// foreign-descriptor readiness

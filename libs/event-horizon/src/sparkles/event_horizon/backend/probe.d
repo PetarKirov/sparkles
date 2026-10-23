@@ -185,6 +185,7 @@ version (EventHorizonLibkqueue) {} else version (Android) {} else version (linux
                 OpKind.cancel: Operation.ASYNC_CANCEL,
                 OpKind.futexWait: Operation.FUTEX_WAIT,
                 OpKind.futexWake: Operation.FUTEX_WAKE,
+                OpKind.futexWaitv: Operation.FUTEX_WAITV,
                 OpKind.msgRing: Operation.MSG_RING,
                 OpKind.waitid: Operation.WAITID,
                 OpKind.pollAdd: Operation.POLL_ADD,

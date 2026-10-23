@@ -31,8 +31,10 @@ else version (linux)  :
 import during : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags,
     FUTEX2_PRIVATE, FUTEX2_SIZE_U32, FUTEX_BITSET_MATCH_ANY,
     MsgFlags, Operation,
-    SetupFlags, SubmissionEntry, TimeoutFlags, Uring, io_uring_getevents_arg,
-    prepAccept, prepClose, prepConnect, prepFsync, prepFutexWait, prepMultishotAccept, prepNop,
+    SetupFlags, SubmissionEntry, SubmissionEntryFlags, TimeoutFlags, Uring, futex_waitv,
+    io_uring_getevents_arg,
+    prepAccept, prepClose, prepConnect, prepFsync, prepFutexWait, prepFutexWaitv, prepFutexWake,
+    prepLinkTimeout, prepMultishotAccept, prepNop,
     prepMkdirat, prepOpenat, prepPollAdd, prepPollMultishot, prepRW, prepRead, prepReadFixed,
     prepRecv, prepRecvMsg, prepRenameat, prepSend,
     prepSendMsg, prepStatx, prepSymlinkat, prepTimeout, prepUnlinkat, prepWaitid, prepWrite,
@@ -43,8 +45,9 @@ import during : DuringTimespec = KernelTimespec, DuringPollEvents = PollEvents;
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion, Waker;
 import sparkles.event_horizon.backend.probe;
 import sparkles.event_horizon.errors;
-import sparkles.event_horizon.op : CompletionFlags, KernelTimespec, OpAccept,
-    OpAcceptMultishot, OpClose, OpConnect, OpFsync, OpMkdirAt, OpNop, OpOpenAt, OpOpenAt2, OpPollAdd,
+import sparkles.event_horizon.op : CompletionFlags, FutexDeadline, FutexWaitvEntry,
+    KernelTimespec, OpAccept, OpAcceptMultishot, OpClass, OpClose, OpConnect, OpFsync,
+    OpFutexWait, OpFutexWaitv, OpFutexWake, OpMkdirAt, OpNop, OpOpenAt, OpOpenAt2, OpPollAdd,
     OpRead,
     OpRecv, OpRecvFrom, OpRecvSelect, OpRenameAt, OpSend, OpSendTo, OpSlot, OpStatx,
     OpSymlinkAt, OpUnlinkAt,
@@ -510,6 +513,72 @@ struct UringBackend
             e.user_data = ud;
         })(op, token.raw);
         return true;
+    }
+
+    /// Lowers an in-ring futex wait, with its linked timeout when it has a
+    /// deadline (both SQEs, or neither: a deadline needs two free entries).
+    bool trySubmit(in OpFutexWait op, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
+    {
+        if (_io.capacity < (op.deadline.armed ? 2 : 1))
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpFutexWait o, ulong ud) {
+            e.prepFutexWait(cast(const(uint)*) o.word, o.expected, o.mask,
+                FUTEX2_SIZE_U32 | FUTEX2_PRIVATE, 0);
+            e.user_data = ud;
+            if (o.deadline.armed)
+                e.flags = cast(SubmissionEntryFlags) (e.flags | SubmissionEntryFlags.IO_LINK);
+        })(op, token.raw);
+        if (op.deadline.armed)
+            linkDeadline(op.deadline, token, slot);
+        return true;
+    }
+
+    /// Lowers an in-ring futex wake.
+    bool trySubmit(in OpFutexWake op, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpFutexWake o, ulong ud) {
+            e.prepFutexWake(cast(const(uint)*) o.word, o.count, o.mask,
+                FUTEX2_SIZE_U32 | FUTEX2_PRIVATE, 0);
+            e.user_data = ud;
+        })(op, token.raw);
+        return true;
+    }
+
+    /// Lowers an in-ring vectored futex wait (the entry array must be
+    /// kernel-stable), with its linked timeout as `OpFutexWait` does.
+    bool trySubmit(in OpFutexWaitv op, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
+    {
+        static assert(FutexWaitvEntry.sizeof == futex_waitv.sizeof);
+        if (_io.capacity < (op.deadline.armed ? 2 : 1))
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpFutexWaitv o, ulong ud) {
+            e.prepFutexWaitv(cast(const(futex_waitv)*) o.entries, o.count, 0);
+            e.user_data = ud;
+            if (o.deadline.armed)
+                e.flags = cast(SubmissionEntryFlags) (e.flags | SubmissionEntryFlags.IO_LINK);
+        })(op, token.raw);
+        if (op.deadline.armed)
+            linkDeadline(op.deadline, token, slot);
+        return true;
+    }
+
+    /// Queues the `LINK_TIMEOUT` for the wait just queued with `IO_LINK`:
+    /// the deadline lives in the slot (kernel-stable until the flush, when
+    /// the kernel copies it), and its completion carries the wait's token
+    /// re-tagged `OpClass.linkTimeout`.
+    private void linkDeadline(in FutexDeadline d, OpToken token, ref OpSlot slot)
+        @trusted nothrow @nogc
+    {
+        slot.operands.ts = d.at;
+        slot.linkedTimeout = true;
+        const link = OpToken.pack(token.index, token.generation, OpClass.linkTimeout);
+        _io.putWith!((ref SubmissionEntry e, ref OpSlot s, ulong ud, bool absolute) {
+            e.prepLinkTimeout(*cast(DuringTimespec*) &s.operands.ts,
+                absolute ? TimeoutFlags.ABS : TimeoutFlags.REL);
+            e.user_data = ud;
+        })(slot, link.raw, d.absolute);
     }
 
     /// Submits an `ASYNC_CANCEL` keyed on `target.raw`, tagged with the
