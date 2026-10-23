@@ -40,6 +40,7 @@ import sparkles.ui_app.backend : Backend;
 import sparkles.ui_app.gui_options : FontRequest, WindowCells;
 import sparkles.ui_app.host : HostState, isHost, noDraw, noSetup, noShutdown, PointerUnit,
     RunConfig, withRealSize;
+import sparkles.ui_app.lifecycle : Failure, FrameResult, Lifecycle, Rebuild, Surface;
 import sparkles.ui_app.wsi_input : WsiInput;
 import sparkles.ui_vulkan;
 import sparkles.vulkan;
@@ -403,17 +404,42 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         return false;
     }
 
-    void remeasure()
+    // Every lifecycle decision is the machine's (`sparkles.ui_app.lifecycle`,
+    // resilience §1); this loop executes its plans. Cell font sizes are in
+    // points, as `pxAt` reads them, unless the request fixed the pixels.
+    Lifecycle lc;
+    lc.paced = paced;
+    if (request.fontSizePxOverride > 0)
+    {
+        lc.base = request.fontSizePxOverride;
+        lc.sizeAt = (double base, double) => cast(int) base;
+        lc.baseOf = (int px, double) => double(px);
+    }
+    else
+    {
+        lc.base = request.fontSizePoints;
+        lc.sizeAt = (double points, double scale)
+            => pixelsForPoints(points, DisplayMetrics(scale: cast(float) scale));
+        lc.baseOf = (int px, double scale) => pointsForPixels(px, scale);
+    }
+
+    void measure(int px)
     {
         CellFont font;
-        if (measureCellFont(request.font, request.extraFontSources, pxAt(metrics.scale.value),
-                font))
+        if (measureCellFont(request.font, request.extraFontSources, px, font))
             session.font = font;
+    }
+    void takeMetrics()
+    {
         session.scale = metrics.scale.value;
         session.pixelW = metrics.physicalSize.width;
         session.pixelH = metrics.physicalSize.height;
     }
-    remeasure();
+    Surface surfaceOf(in SurfaceMetrics m)
+        => Surface(m.physicalSize.width, m.physicalSize.height, m.scale.value);
+    takeMetrics();
+    if (const px = lc.metrics(surfaceOf(metrics)))
+        measure(px);
 
     // ── the device ──
     auto gpu = new Gpu;
@@ -432,10 +458,53 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         return work();
     }
 
+    // The surface scope ends: what the targets need, then the native
+    // surface itself (`RES12`, `RES22`). The device stays.
+    void releaseSurface()
+    {
+        if (!gpu.up)
+            return;
+        if (gpu.sync.imageCount)
+            cast(void) gpu.sync.waitAll(gpu.vk);
+        gpu.canvas.releaseTargets();
+        gpu.views.destroy(gpu.vk);
+        gpu.swapchain.destroy(gpu.vk);
+        if (gpu.vk.surface !is null)
+            gpu.vk.base.instance.destroySurfaceKHR(gpu.vk.base.instance.instance,
+                gpu.vk.surface, null);
+        gpu.vk.surface = null;
+    }
+
+    // A surface on the same device from the window's current handles.
+    // `hasHandles` false: the window has none now, which is suspension.
+    bool createSurface(out bool hasHandles)
+    {
+        releaseSurface();
+        auto handles = wsi.nativeHandles(window);
+        hasHandles = !handles.hasError;
+        if (!hasHandles)
+            return false;
+        bool ok;
+        cast(void) nativeIo(() {
+            auto made = createNativeSurface(gpu.vk.base.instance, handles.value);
+            if (made.hasError)
+                return false;
+            VkBool32 presentable;
+            ok = gpu.vk.base.instance.getPhysicalDeviceSurfaceSupportKHR(
+                gpu.vk.physicalDevice, gpu.vk.queueFamily, made.value, &presentable) >= 0
+                && presentable;
+            if (ok)
+                gpu.vk.surface = made.value;
+            else
+                gpu.vk.base.instance.destroySurfaceKHR(gpu.vk.base.instance.instance,
+                    made.value, null);
+            return ok;
+        });
+        return ok;
+    }
+
     bool rebuildSwapchain(bool force)
     {
-        if (metrics.suspended)
-            return true;
         if (gpu.sync.imageCount)
             cast(void) gpu.sync.waitAll(gpu.vk);
         gpu.canvas.releaseTargets();
@@ -496,6 +565,7 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         whyNot(i"the native arm could not bring up Vulkan on the window");
         return false;
     }
+    lc.started(surfaceOf(metrics));
     trace(i"native arm: $(gpu.vk.deviceName) $(gpu.swapchain.extent.width)x$(gpu.swapchain.extent.height), cells $(session.font.cellW)x$(session.font.cellH)");
 
     // ── the host ──
@@ -507,20 +577,14 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     input.fractionalScroll = cfg.fractionalScroll;
     input.scale = metrics.scale.value;
 
-    bool dirty = true;
     session.setCursor = (PointerShape s) { cast(void) wsi.setCursor(window, s); };
     session.setClipboard = (scope const(char)[] text) {
         cast(void) wsi.offerClipboard(window, "text/plain;charset=utf-8",
             cast(const(ubyte)[]) text);
     };
-    session.setFontSize = (int px) {
-        CellFont font;
-        if (measureCellFont(request.font, request.extraFontSources, px, font))
-        {
-            session.font = font;
-            dirty = true;
-        }
-    };
+    // The user's size: kept by the machine across later scale changes
+    // (`RES55`).
+    session.setFontSize = (int px) { measure(lc.fontSize(px)); };
 
     scope (exit)
         shutdown(host);
@@ -529,13 +593,13 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
     const unitW = () => cfg.pointerUnit == PointerUnit.pixels ? 1 : session.font.cellW;
     const unitH = () => cfg.pointerUnit == PointerUnit.pixels ? 1 : session.font.cellH;
 
-    bool frameReady = true, resized, freshSurface = true, wanted;
     // `SPARKLES_NATIVE_TRACE_FRAMES`: a line on standard error per frame
     // presented — its time and whether an event or the application asked
     // for it — so a run can show an idle window drawing nothing.
     import core.stdc.stdlib : getenv;
     const traceFrames = getenv("SPARKLES_NATIVE_TRACE_FRAMES") !is null;
     const opened = MonoTime.currTime;
+    Duration now() => MonoTime.currTime - opened;
     uint presented;
     // `SPARKLES_NATIVE_LOSE_DEVICE_AT=<n>`: treat frame `n` as a lost
     // device, which no software driver produces on demand, so the rebuild
@@ -547,9 +611,12 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
         loseDeviceAt = (() @trusted => at.fromStringz.to!uint)();
 
     // One drain: everything the window system queued, translated and handed
-    // to the application.
+    // to the application. Metrics apply at once, so the application's
+    // resize and every later event in the batch see the new scale and cell
+    // size (`HST7`, `RES42`).
     void drainEvents()
     {
+        bool delivered;
         cast(void) wsi.drain((WindowEvent e) @trusted {
             // `@trusted` for the one call it exists for: the WSI asks for a
             // `@safe` sink, and the event goes to the application, whose
@@ -557,104 +624,144 @@ private bool drive(alias present, alias handle, alias draw, alias setup, alias s
             if (e.window != window && e.window != WindowId.init)
                 return;
             bool input_ = true;
+            void onMetrics(in SurfaceMetrics m)
+            {
+                metrics = m;
+                takeMetrics();
+                input.scale = m.scale.value;
+                if (const px = lc.metrics(surfaceOf(m)))
+                    measure(px);
+            }
             e.payload.match!(
-                (in ReadyEvent r) { metrics = r.metrics; resized = true; },
-                (in SurfaceMetricsChangedEvent m) { metrics = m.metrics; resized = true; },
-                (in FrameReadyEvent _) { frameReady = true; input_ = false; },
-                (in ExposedEvent _) { dirty = true; input_ = false; },
-                (in CloseRequestedEvent _) { closeRequested = true; input_ = false; },
-                (in MemoryPressureEvent _) { gpu.canvas.releaseCaches(); input_ = false; },
+                (in ReadyEvent r) { onMetrics(r.metrics); },
+                (in SurfaceMetricsChangedEvent m) { onMetrics(m.metrics); },
+                (in FrameReadyEvent _) { lc.frameReady(); input_ = false; },
+                (in ExposedEvent _) { lc.exposed(); input_ = false; },
+                (in OccludedEvent o) { lc.occluded(o.occluded); input_ = false; },
+                (in CloseRequestedEvent _) { lc.close(); input_ = false; },
+                (in MemoryPressureEvent m) { lc.memoryPressure(m.critical); input_ = false; },
                 (in _) {});
-            if (resized)
-                remeasure();
             if (input_)
-                deliverInput!handle(host, input, wsi, e, unitW(), unitH(), dirty);
+                deliverInput!handle(host, input, wsi, e, unitW(), unitH(), delivered);
         });
-        flushInput!handle(host, input, dirty);
+        flushInput!handle(host, input, delivered);
+        if (delivered)
+            lc.input();
     }
 
-    while (!closeRequested && !host.quitRequested)
+    bool ok = true;
+    for (;;)
     {
+        if (host.quitRequested)
+            lc.close();
+        const plan = lc.step(now(), host.wakeAsk);
+        if (plan.stop)
+        {
+            if (plan.failure != Failure.none)
+            {
+                whyNot(i"the native arm stopped: $(plan.failure)");
+                ok = false;
+            }
+            break;
+        }
+        if (plan.releaseDevice)
+            gpu.destroy();
+        if (plan.releaseSurface)
+            releaseSurface();
+        if (plan.releaseCaches && gpu.up)
+            gpu.canvas.releaseCaches();
+        if (plan.createDevice)
+        {
+            trace(i"native arm: rebuilding the device");
+            gpu.destroy();
+            if (!bringUp())
+            {
+                lc.rebuildFailed(Rebuild.device);
+                continue;
+            }
+            lc.rebuilt(Rebuild.device);
+        }
+        if (plan.createSurface)
+        {
+            bool hasHandles;
+            if (!createSurface(hasHandles))
+            {
+                lc.rebuildFailed(Rebuild.surface, hasHandles);
+                continue;
+            }
+            lc.rebuilt(Rebuild.surface);
+        }
+        if (plan.rebuildTargets && !plan.createDevice)
+        {
+            if (!rebuildSwapchain(plan.createSurface))
+            {
+                lc.rebuildFailed(Rebuild.targets);
+                continue;
+            }
+            lc.rebuilt(Rebuild.targets);
+        }
+
+        if (plan.draw)
+        {
+            const started = MonoTime.currTime;
+            buildFrame!present(host, plan.mustDraw);
+            lc.requested(host.frameRequested);
+            if (host.frameSkipped)
+                continue;
+            auto outcome = drawFrame!draw(*gpu, host, session, request.ground);
+            if (presented + 1 == loseDeviceAt)
+            {
+                loseDeviceAt = 0;
+                outcome = FrameOutcome.deviceLost;
+            }
+            final switch (outcome)
+            {
+                case FrameOutcome.presented:
+                    lc.frameDone(FrameResult.presented, now());
+                    ++presented;
+                    if (traceFrames)
+                        whyNot(i"native frame $(presented) at $((started - opened).total!"msecs") ms");
+                    session.frameSeconds = lc.frameSeconds;
+                    if (gpu.sync.hasRetired || gpu.swapchain.hasRetired)
+                    {
+                        gpu.sync.reap(gpu.vk, 8);
+                        gpu.swapchain.reap(gpu.vk, 1);
+                    }
+                    break;
+                case FrameOutcome.again:
+                    lc.frameDone(FrameResult.again, now());
+                    break;
+                case FrameOutcome.rebuild:
+                    lc.frameDone(FrameResult.outOfDate, now());
+                    break;
+                case FrameOutcome.deviceLost:
+                    trace(i"native arm: the device was lost");
+                    lc.frameDone(FrameResult.deviceLost, now());
+                    break;
+                case FrameOutcome.failed:
+                    lc.frameDone(FrameResult.failed, now());
+                    break;
+            }
+            continue;
+        }
+
         // Park until the window system has something, or the application's
-        // next deadline. A frame that is wanted and may be drawn now waits
-        // for nothing.
-        const want = dirty || wanted;
-        Duration timeout = want && (frameReady || !paced) ? Duration.zero : 1.seconds;
-        if (!want && host.wakeAsk < timeout)
-            timeout = host.wakeAsk;
+        // next deadline.
+        Duration timeout = plan.park < 1.seconds ? plan.park : 1.seconds;
         if (cfg.idleTimeoutMs >= 0 && cfg.idleTimeoutMs.msecs < timeout)
             timeout = cfg.idleTimeoutMs.msecs;
+        const parkedAt = MonoTime.currTime;
         if (wsi.runIntegratedOnce(loop, timeout).hasError)
             break;
         drainEvents();
-        if (closeRequested || host.quitRequested)
-            break;
-        if (resized)
-        {
-            resized = false;
-            input.scale = metrics.scale.value;
-            if (!rebuildSwapchain(false))
-                break;
-            dirty = true;
-        }
-        if (timeout != Duration.zero && !dirty && !wanted)
-        {
-            // A wake with nothing to draw is still a frame pass for an
-            // application that asked to be woken (`HST16`).
-            if (host.wakeAsk == Duration.max && cfg.idleTimeoutMs < 0)
-                continue;
-            dirty = true;
-        }
-        if (!(dirty || wanted) || (paced && !frameReady) || metrics.suspended)
-            continue;
-
-        const started = MonoTime.currTime;
-        const cause = dirty ? "event" : "request";
-        dirty = false;
-        buildFrame!present(host, freshSurface);
-        wanted = host.frameRequested;
-        if (host.frameSkipped)
-            continue;
-
-        auto outcome = drawFrame!draw(*gpu, host, session, request.ground);
-        if (presented + 1 == loseDeviceAt)
-        {
-            loseDeviceAt = 0;
-            outcome = FrameOutcome.deviceLost;
-        }
-        if (outcome == FrameOutcome.deviceLost)
-        {
-            trace(i"native arm: the device was lost; rebuilding it");
-            gpu.destroy();
-            if (!bringUp())
-                break;
-            dirty = true;
-            continue;
-        }
-        if (outcome == FrameOutcome.failed)
-            break;
-        if (outcome == FrameOutcome.rebuild)
-        {
-            if (!rebuildSwapchain(true))
-                break;
-            dirty = true;
-            continue;
-        }
-        if (outcome == FrameOutcome.again)
-            dirty = true;
-        freshSurface = false;
-        frameReady = false;
-        ++presented;
-        if (traceFrames)
-            whyNot(i"native frame $(presented) at $((started - opened).total!"msecs") ms ($(cause))");
-        session.frameSeconds = (MonoTime.currTime - started).total!"usecs" / 1e6f;
-        if (gpu.sync.hasRetired || gpu.swapchain.hasRetired)
-        {
-            gpu.sync.reap(gpu.vk, 8);
-            gpu.swapchain.reap(gpu.vk, 1);
-        }
+        // A wake with nothing to draw is still a frame pass for an
+        // application that asked to be woken (`HST16`), or for an idle
+        // timeout.
+        if ((host.wakeAsk != Duration.max && MonoTime.currTime - parkedAt >= host.wakeAsk)
+            || (cfg.idleTimeoutMs >= 0 && MonoTime.currTime - parkedAt >= cfg.idleTimeoutMs.msecs))
+            lc.input();
     }
-    return true;
+    return ok;
 }
 
 // The loop's halves an application sees — input in, a frame's operations
@@ -1060,4 +1167,27 @@ private void writeCapture(ref Gpu gpu, ref GpuBuffer buffer, string path) @syste
         });
     assert(frame == rec.frames.length);
     assert(app.seen == recApp.seen && app.seen.length == recorded.length);
+}
+
+// The points a size of `px` pixels is at `scale`: `pixelsForPoints`
+// inverted, before its rounding, so a size the user chose survives a
+// scale change and back (`RES55`).
+private double pointsForPixels(int px, double scale) @safe pure nothrow @nogc
+{
+    import sparkles.raylib_text.metrics_dpi : DisplayMetrics;
+
+    const m = DisplayMetrics(scale: cast(float) scale);
+    const s = m.scale < 1.0f ? 1.0f : (m.scale > m.maxScale ? m.maxScale : m.scale);
+    return px * 72.0 / (m.dpi * s);
+}
+
+@("ui_app.native_loop.aChosenSizeSurvivesAScaleRoundTrip")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.raylib_text.metrics_dpi : DisplayMetrics, pixelsForPoints;
+
+    foreach (px; 6 .. 97)
+        foreach (scale; [1.0, 1.25, 1.5, 2.0, 2.625])
+            assert(pixelsForPoints(pointsForPixels(px, scale),
+                DisplayMetrics(scale: cast(float) scale)) == px);
 }
