@@ -27,6 +27,7 @@ import optional : Optional, some;
 import sparkles.wired.policy;
 import sparkles.wired.schema : NodeKind;
 import sparkles.wired.walk : WireWalk;
+public import sparkles.wired.presence : Decoded, WireFieldSet;
 import sparkles.base.text.case_style : CaseStyle;
 import sparkles.base.text.enums : enumFromValue;
 
@@ -329,6 +330,25 @@ Expected!(T, JsonError) fromJSON(T)(scope JsonValue view)
     return ok!JsonError(r.value);
 }
 
+/// Shared aliases/defaults/checks and opt-in presence use one policy vocabulary.
+@("wired.json.sharedMetadataAndPresence")
+@system unittest
+{
+    static struct Settings
+    {
+        @WireAlias!Json("old") @WireDefault!Json(7)
+        @WireOptional(WireSkip.whenDefault) @WireCheck!(isBetween!(1, 9)) int count;
+    }
+    const absent = fromJSON!(Decoded!Settings)("{}");
+    assert(absent.hasValue && absent.value.value.count == 7);
+    assert(!absent.value.present.has!"count");
+    const explicitDefault = fromJSON!(Decoded!Settings)(`{"old":7}`);
+    assert(explicitDefault.hasValue && explicitDefault.value.present.has!"count");
+    const text = toJSON(explicitDefault.value);
+    assert(text.hasValue && text.value[] == "{}");
+    assert(fromJSON!Settings(`{"count":0}`).hasError);
+}
+
 /// Streams `value` as JSON into any output range — the primary encode
 /// API (SPEC §11.6): no intermediate document, no GC on the success path
 /// beyond what `T`'s own iteration requires. `opts` selects minified
@@ -428,7 +448,26 @@ private NRes!T decodeNative(T, Root = T, size_t nodeIndex = 0)(
     alias walk = WireWalk!(Json, Root);
     enum node = walk.node!nodeIndex;
 
-    static if (node.kind == NodeKind.passthrough)
+    static if (is(U == Decoded!Value, Value))
+    {
+        auto decoded = decodeNative!Value(v, failure);
+        if (decoded.failed)
+            return nFailed!T();
+        T result;
+        result.value = decoded.value;
+        alias policies = WireWalk!(Json, Value).childPolicies!0;
+        foreach (member; v.byKeyValue)
+            static foreach (i; 0 .. policies.length)
+            {
+                if (fieldKeyEquals!(policies[i].key)(member.key))
+                    result.present.include(i);
+                static foreach (alias_; policies[i].aliases)
+                    if (fieldKeyEquals!alias_(member.key))
+                        result.present.include(i);
+            }
+        return nOk(result);
+    }
+    else static if (node.kind == NodeKind.passthrough)
         return nOk(toStdJson(v)); // §4.2 passthrough: materialize the subtree
 
     else static if (node.kind == NodeKind.converted)
@@ -809,7 +848,12 @@ if (is(T == struct))
 
     foreach (m; v.byKeyValue)
     {
-        fieldDispatch: switch (m.key.length)
+        scope const(char)[] dispatchKey = m.key;
+        static foreach (i; 0 .. policies.length)
+            static foreach (alias_; policies[i].aliases)
+                if (fieldKeyEquals!alias_(m.key))
+                    dispatchKey = policies[i].key;
+        fieldDispatch: switch (dispatchKey.length)
         {
             static foreach (i; 0 .. policies.length)
             {
@@ -819,7 +863,7 @@ if (is(T == struct))
                 {
                     static if (policies[j].key.length == policies[i].key.length)
                     {
-                        if (fieldKeyEquals!(policies[j].key)(m.key))
+                        if (fieldKeyEquals!(policies[j].key)(dispatchKey))
                         {
                             alias V = typeof(T.tupleof[j]);
 
@@ -845,6 +889,8 @@ if (is(T == struct))
                                     failure.prependKey(policies[j].key);
                                     return nFailed!T();
                                 }
+                                else
+                                    result.tupleof[j] = wireDefault!(Json, T, j)();
                             }
                             else
                                 result.tupleof[j] = r.value;
@@ -863,6 +909,9 @@ if (is(T == struct))
     static foreach (i; 0 .. policies.length)
     {{
         alias V = typeof(T.tupleof[i]);
+        static if (policies[i].hasDefault)
+            if (!seen[i])
+                result.tupleof[i] = wireDefault!(Json, T, i)();
         static if (!(isNullAware!V || policies[i].optional))
         {
             if (!seen[i])
@@ -875,7 +924,22 @@ if (is(T == struct))
                 return nFail!T(failure, e);
             }
         }
+        static if (hasWireChecks!(Json, T.tupleof[i]))
+            foreach (check; wireCheckFailures!(Json, T.tupleof[i])(result.tupleof[i]))
+            {
+                auto error = decodeError!V(v, check.reason);
+                error.path ~= check.path;
+                error.prependKey(policies[i].key);
+                return nFail!T(failure, error);
+            }
     }}
+    static if (hasWireChecks!(Json, T))
+        foreach (check; wireCheckFailures!(Json, T)(result))
+        {
+            auto error = decodeError!T(v, check.reason);
+            error.path ~= check.path;
+            return nFail!T(failure, error);
+        }
     return nOk(result);
 }
 
@@ -941,7 +1005,7 @@ private NRes!V decodeViaNative(alias Conv, V, Root, size_t nodeIndex)(
     static if (isExpectedLike!(typeof(back)))
     {
         if (back.hasError)
-            return nFail!V(failure, decodeError!V(v, back.error.msg));
+            return nFail!V(failure, decodeError!V(v, wireFailureMessage(back.error)));
         return nOk(back.value);
     }
     else
@@ -1001,7 +1065,7 @@ package(sparkles.wired) NRes!K aaKeyParseNative(K, Root, size_t nodeIndex)(
                 JsonError e;
                 e.stage = JsonStage.decode;
                 e.targetType = K.stringof;
-                e.reason = back.error.msg;
+                e.reason = wireFailureMessage(back.error);
                 e.prependKey(keyStr);
                 return nFail!K(failure, e);
             }
@@ -1140,7 +1204,9 @@ private EncRes encodeNative(JsonWriteOptions opts, alias keyLess, T, Writer,
     alias walk = WireWalk!(Json, Root);
     enum node = walk.node!nodeIndex;
 
-    static if (node.kind == NodeKind.passthrough)
+    static if (is(U == Decoded!Value, Value))
+        return encodeNative!(opts, keyLess)(value.value, w, depth);
+    else static if (node.kind == NodeKind.passthrough)
         return writeStdJson!(opts, keyLess)(value, w, depth);
 
     else static if (node.kind == NodeKind.converted)
@@ -1375,6 +1441,14 @@ if (is(T == struct))
     alias policies = walk.childPolicies!nodeIndex;
     alias order = fieldOrder!(opts, keyLess, Root, nodeIndex);
 
+    static if (hasWireChecks!(Json, T))
+        foreach (check; wireCheckFailures!(Json, T)(value))
+        {
+            auto error = encodeError!T(check.reason);
+            error.path ~= check.path;
+            return EncRes(true, error);
+        }
+
     put(w, '{');
     bool first = true;
     static foreach (j; 0 .. policies.length)
@@ -1382,10 +1456,19 @@ if (is(T == struct))
         enum i = order[j];
         alias V = typeof(T.tupleof[i]);
 
+        static if (hasWireChecks!(Json, T.tupleof[i]))
+            foreach (check; wireCheckFailures!(Json, T.tupleof[i])(value.tupleof[i]))
+            {
+                auto error = encodeError!V(check.reason);
+                error.path ~= check.path;
+                error.prependKey(policies[i].key);
+                return EncRes(true, error);
+            }
+
         static if (policies[i].skip == WireSkip.never)
             enum bool omitted = false;
         else static if (policies[i].skip == WireSkip.whenDefault)
-            const bool omitted = value.tupleof[i] == T.init.tupleof[i];
+            const bool omitted = value.tupleof[i] == wireDefault!(Json, T, i)();
         else
             const bool omitted = isEmptyValue(value.tupleof[i]);
 
@@ -1436,7 +1519,7 @@ private EncRes encodeViaNative(alias Conv, V, JsonWriteOptions opts,
     static if (isExpectedLike!(typeof(wire)))
     {
         if (wire.hasError)
-            return EncRes(true, encodeError!V(wire.error.msg));
+            return EncRes(true, encodeError!V(wireFailureMessage(wire.error)));
         return encodeWire!(opts, keyLess, Root, nodeIndex)(wire.value, w, depth);
     }
     else
