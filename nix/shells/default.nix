@@ -419,6 +419,8 @@
         # The bundled fonts, the corpus for sparkles:font and its HarfBuzz
         # oracle (dub test :font / :font-oracle skip those tests when unset).
         export SPARKLES_FONTS_PATH=${config.packages.sparkles-fonts}/fonts
+        # Test-only faces (variable CFF2) the bundle does not ship.
+        export SPARKLES_FONT_TEST_CORPUS=${config.packages.sparkles-font-test-corpus}
 
         # druntime/phobos sources matching the pinned dmd:frontend, for
         # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
