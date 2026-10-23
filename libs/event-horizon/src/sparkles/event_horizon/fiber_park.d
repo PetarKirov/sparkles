@@ -36,13 +36,19 @@ version (Windows) version = EhFiberPark;
 version (EhFiberPark)  :
 
 import core.atomic : atomicLoad, atomicOp, atomicStore, cas, MemoryOrder;
+import core.stdc.errno : EAGAIN, ETIME;
 import core.time : convClockFreq, MonoTime, nsecs;
 
 import sparkles.base.sync.parker : Parker, ParkerVtbl, SleepResult, WaitRecord, WakeHandle;
 import sparkles.base.sync.platform : NativePlatform;
-import sparkles.base.sync.seam : Deadline;
+import sparkles.base.sync.seam : Deadline, WakeCount;
 
+import sparkles.event_horizon.backend.concept : canSubmitOp;
+import sparkles.event_horizon.backend.select : DefaultBackend;
 import sparkles.event_horizon.cause : Interrupt, interruptRequested;
+import sparkles.event_horizon.errors : IoErrorStage, ioError, OpKind;
+import sparkles.event_horizon.op : Completion, FutexDeadline, KernelTimespec, OpFutexWait,
+    OpFutexWake;
 import sparkles.event_horizon.sched : Alarm, FiberTask, Sched;
 
 private alias P = NativePlatform;
@@ -84,6 +90,22 @@ package struct FiberParkState
     Alarm deadline;
     /// The generation the armed deadline names.
     uint deadlineGeneration;
+
+    /// The ring path's sleep (EFP7, EFP8): queued for the submission point
+    /// while `ringPending`, linked through `ringPrev` and `ringNext`.
+    FiberTask ringPrev, ringNext;
+    /// ditto
+    bool ringPending;
+    /// The sleep's wait is written: only its terminal completion resumes
+    /// the fiber, and a winning resumption wakes the park word instead (EFP9).
+    shared bool waitWritten;
+    /// The queued or written sleep's deadline, interruptibility and
+    /// generation.
+    Deadline ringDeadline;
+    /// ditto
+    bool ringInterruptible;
+    /// ditto
+    uint ringGeneration;
 }
 
 /// The parker to install while `t` runs (EFP1).
@@ -151,7 +173,12 @@ private SleepResult fpSleep(void* ctx, WaitRecord!P* rec, Deadline d, bool inter
         if (d.passed(P.now()) && resolve(t, generation, ParkState.timedOut))
             return SleepResult.timedOut;
 
-        if (!d.isNever)
+        if (s.ringPark)
+        {
+            t.park.ringDeadline = d;
+            t.park.ringInterruptible = interruptible;
+        }
+        else if (!d.isNever)
         {
             t.park.deadlineGeneration = generation;
             s.armCallbackAlarm(t.park.deadline, monoTimeOf(d), &onDeadline, ctx);
@@ -162,11 +189,22 @@ private SleepResult fpSleep(void* ctx, WaitRecord!P* rec, Deadline d, bool inter
             t.ectx.cancelCtx = ctx;
         }
     }
+    // On the ring path every sleep goes through the submission point, even
+    // one another thread has already resolved: that thread saw no written
+    // wait, so the submission point is what resumes the fiber (EFP8).
+    if (s.ringPark)
+    {
+        t.park.ringGeneration = generation;
+        s.queueRingSleep(t);
+    }
     // Asleep, or already resumed by another thread whose push the drain
     // will deliver: either way exactly one enqueue resumes this fiber.
     s.noteLotSleep(true);
     s.park();
     s.noteLotSleep(false);
+    // A winner on this thread resumes a sleep the submission point has not
+    // written yet.
+    s.unqueueRingSleep(t);
 
     // Neither the deadline nor the cancellation may act after the sleep
     // returns (EFP5).
@@ -215,8 +253,14 @@ private void onCancel(void* ctx, Interrupt) nothrow @nogc
 {
     auto t = taskOf(ctx);
     const word = atomicLoad!(MemoryOrder.acq)(t.park.word);
-    if (resolve(t, generationOf(word), ParkState.cancelled))
-        t.owner.resumeParked(t);
+    if (!resolve(t, generationOf(word), ParkState.cancelled))
+        return;
+    // A written ring wait ends only through its completion (EFP10's direct
+    // interruption); otherwise this thread resumes the fiber.
+    if (t.owner.ringPark && atomicLoad(t.park.waitWritten))
+        cast(void) wakeParkWord(t.owner, t, counted: false);
+    else
+        t.owner.resumeParkedOnce(t);
 }
 
 private WakeHandle fpCommitWake(void* ctx, WaitRecord!P* rec) @trusted nothrow @nogc
@@ -247,7 +291,20 @@ private void deliver(size_t a, size_t b) @trusted nothrow @nogc
     if (recordWake(t, cast(uint) b))
     {
         auto current = Sched.tryCurrent();
-        if (current !is null && current.owner is s)
+        if (s.ringPark)
+        {
+            // The ring path (EFP9): a written wait is woken in the kernel; an
+            // unwritten one is resumed here on the owner, and anywhere else
+            // by the owner's submission point.
+            if (atomicLoad(t.park.waitWritten))
+            {
+                if (wakeParkWord(s, t, counted: true))
+                    return; // its completion finishes the delivery
+            }
+            else if (current !is null && current.owner is s)
+                s.resumeParkedOnce(t);
+        }
+        else if (current !is null && current.owner is s)
             s.resumeParked(t);
         else if (wakeInboxPush(s, t))
             s.waker.wake();
@@ -300,7 +357,11 @@ package bool wakeInboxPush(Sched* s, FiberTask t) @trusted nothrow @nogc
 /// edits, so the yields last only while it is preempted.
 private void fpBucketWait(void* ctx, ref P.Atomic!uint word, uint expected) @trusted nothrow @nogc
 {
-    taskOf(ctx).owner.yieldNow();
+    auto t = taskOf(ctx);
+    static if (ringOps)
+        if (t.owner.ringPark)
+            return ringBucketWait(t, word, expected);
+    t.owner.yieldNow();
 }
 
 /// One step of a spin (EFP19): pauses for the first steps, then a yield.
@@ -324,6 +385,159 @@ private void fpSettle(void* ctx, WaitRecord!P* rec) @safe nothrow @nogc
 /// Whether the fiber runs inside `protect` (EFP18); a shield does not mask.
 private bool fpProtected(void* ctx) @trusted nothrow @nogc => taskOf(ctx).ectx.protectDepth > 0;
 
+// ── the ring path (EFP7–EFP9, EFP11) ────────────────────────────────────────
+
+/// Whether the default backend lowers the ring futex operations.
+private enum bool ringOps = canSubmitOp!(DefaultBackend, OpFutexWait);
+
+/**
+The submission point's half of a ring sleep (EFP8): writes its wait, or,
+when the sleep was resolved since it queued — or its fiber's interrupt is
+latched, or its deadline has passed — resumes it without an operation.
+Whether the fiber became runnable.
+
+Writing first marks the wait written and then reads the word, both
+sequentially consistent, against a delivery's swap and its read of the
+mark: either the delivery sees the mark and wakes the word, which a wait the
+kernel has not yet queued then finds changed, or this read sees the swap.
+*/
+package bool writeRingSleep(FiberTask t) @trusted nothrow @nogc
+{
+    static if (!ringOps)
+        assert(0, "a ring sleep where the backend has no ring futex operations");
+    else
+    {
+        auto s = t.owner;
+        const g = t.park.ringGeneration;
+        atomicStore(t.park.waitWritten, true);
+        bool resumed = atomicLoad(t.park.word) != wordOf(g, ParkState.sleeping);
+        if (!resumed && t.park.ringInterruptible && interruptRequested(t.ectx))
+        {
+            cast(void) resolve(t, g, ParkState.cancelled);
+            resumed = true;
+        }
+        if (!resumed && t.park.ringDeadline.passed(P.now()))
+        {
+            cast(void) resolve(t, g, ParkState.timedOut);
+            resumed = true;
+        }
+        if (resumed)
+        {
+            // Whichever resumption won, the word has left sleeping; a winner
+            // on this thread may have enqueued the fiber already.
+            atomicStore(t.park.waitWritten, false);
+            s.resumeParkedOnce(t);
+            return true;
+        }
+        submitRingWait(t);
+        return false;
+    }
+}
+
+static if (ringOps)
+{
+    /// Writes `t`'s wait on its park word, on its held op slot (EFP7, EFP22).
+    private void submitRingWait(FiberTask t) @trusted nothrow @nogc
+    {
+        t.owner.noteRingWait(true);
+        cast(void) t.owner.loop.submitHeld(OpFutexWait(cast(shared(uint)*) &t.park.word,
+            wordOf(t.park.ringGeneration, ParkState.sleeping),
+            deadline: futexDeadlineOf(t.park.ringDeadline)), &onRingWait, cast(void*) t);
+    }
+
+    /// A base.sync deadline as the linked timeout's: an instant on
+    /// `CLOCK_MONOTONIC`, the clock `MonoTime` reads.
+    private FutexDeadline futexDeadlineOf(Deadline d) @safe pure nothrow @nogc
+    {
+        if (d.isNever)
+            return FutexDeadline.init;
+        const ns = convClockFreq(d.ticks, MonoTime.ticksPerSecond, 1_000_000_000L);
+        return FutexDeadline(KernelTimespec(ns / 1_000_000_000L, ns % 1_000_000_000L),
+            absolute: true, armed: true);
+    }
+
+    /**
+    A ring sleep's wait reached its terminal completion (EFP7). If a
+    resumption has won, it resumes the fiber with that reason; otherwise the
+    linked timeout's expiry is a timeout resumption, and anything else a
+    stray wake — the kernel matches wakes by address, so a wake meant for an
+    earlier generation can end this wait — after which the wait is written
+    again.
+    */
+    private void onRingWait(void* ctx, ref Completion done) nothrow @nogc
+    {
+        auto t = taskOf(ctx);
+        const g = t.park.ringGeneration;
+        t.owner.noteRingWait(false);
+        if (atomicLoad(t.park.word) == wordOf(g, ParkState.sleeping))
+        {
+            if (done.res == -ETIME)
+                cast(void) resolve(t, g, ParkState.timedOut);
+            else if (done.res >= 0 || done.res == -EAGAIN)
+            {
+                submitRingWait(t);
+                return;
+            }
+            else
+                t.owner.loop.fatal(ioError(-done.res, OpKind.futexWait,
+                    IoErrorStage.completion, "a fiber parker's ring wait failed"));
+        }
+        atomicStore(t.park.waitWritten, false);
+        t.owner.resumeParked(t);
+    }
+
+    /// A ring wake of another worker's park word completed: that delivery
+    /// no longer touches its owner (EFP4).
+    private void onRingWake(void* ctx, ref Completion) nothrow @nogc
+    {
+        atomicOp!"-="((cast(Sched*) ctx)._pendingDeliveries, 1);
+    }
+
+    /// A contended bucket on the ring path (EFP11): waits in the kernel on
+    /// the bucket word, which base.sync's unlock wakes; not a cancellation
+    /// checkpoint.
+    private void ringBucketWait(FiberTask t, ref shared uint word, uint expected) @trusted nothrow @nogc
+    {
+        auto s = t.owner;
+        s.noteRingWait(true);
+        cast(void) s.loop.submitHeld(OpFutexWait(&word, expected), &onBucketWait, cast(void*) t);
+        s.park();
+    }
+
+    private void onBucketWait(void* ctx, ref Completion) nothrow @nogc
+    {
+        auto t = taskOf(ctx);
+        t.owner.noteRingWait(false);
+        t.owner.resumeParked(t);
+    }
+}
+
+/**
+Wakes `t`'s written wait after a winning resumption (EFP9): from a fiber
+whose scheduler has a ring, with an `IORING_OP_FUTEX_WAKE` on that ring;
+otherwise, or when that ring has no slot, with one `futex` call. Whether
+the wake went to a ring, whose completion then finishes the delivery (see
+`onRingWake`); `counted` says the wake is a delivery's.
+*/
+private bool wakeParkWord(Sched* owner, FiberTask t, bool counted) @trusted nothrow @nogc
+{
+    static if (!ringOps)
+        assert(0, "a ring wake where the backend has no ring futex operations");
+    else
+    {
+        auto current = Sched.tryCurrent();
+        if (counted && current !is null && current.owner.ringPark)
+        {
+            auto h = current.owner.loop.submit(OpFutexWake(cast(shared(uint)*) &t.park.word, 1),
+                &onRingWake, cast(void*) owner);
+            if (h.hasValue)
+                return true;
+        }
+        P.seamWake(t.park.word, WakeCount.one);
+        return false;
+    }
+}
+
 // ── white-box tests of the park word's protocol ─────────────────────────────
 
 version (unittest)
@@ -331,13 +545,17 @@ version (unittest)
     /// Runs `body` on a fiber of a fresh scheduler, handing it the task.
     private void onTask(scope void delegate(ref Sched s, FiberTask t) @system body) @system
     {
-        import sparkles.event_horizon.sched : schedOrSkip;
+        import sparkles.event_horizon.sched : FiberPark, SchedOptions, schedOrSkip;
 
-        Sched s;
-        schedOrSkip(s);
-        auto r = s.run(() { body(s, Sched.tryCurrent()); });
-        assert(!r.hasError);
-        s.destroy();
+        // The protocol is the same on both paths; each runs every scenario.
+        foreach (path; [FiberPark.ring, FiberPark.inbox])
+        {
+            Sched s;
+            schedOrSkip(s, SchedOptions(fiberPark: path));
+            auto r = s.run(() { body(s, Sched.tryCurrent()); });
+            assert(!r.hasError);
+            s.destroy();
+        }
     }
 
     /// Delivers `h` from a thread the scheduler does not know.
@@ -425,7 +643,9 @@ unittest
             h.deliver(h.a, h.b);
         });
         th.start();
-        const r = fpSleep(cast(void*) t, &t.park.record, Deadline.never, false);
+        // Bounded beyond the thread's wait: a lost delivery times out instead of hanging.
+        const r = fpSleep(cast(void*) t, &t.park.record,
+            Deadline.at(MonoTime.currTime + 5.seconds), false);
         th.join();
         assert(r == SleepResult.woken);
         assert(atomicLoad(t.park.word) == wordOf(g, ParkState.woken));

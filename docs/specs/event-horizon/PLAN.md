@@ -407,9 +407,10 @@ on both paths; benchmarks FB1–FB7 are recorded for both paths in
 S4 migration of event-horizon's own users (`blocking_pool`, `raw_pool`,
 `pool`) builds on it.
 
-Status (October 23, 2026): the inbox path shipped and is the only path —
-`Sched` installs the parker around every resume, wakes deliver through the
-park word and the wake inbox, and the
-[ledger](./fiber-parker.md#evidence-ledger) records what is verified. The ring
-futex operations, the ring path with `fiberPark`, EFP21's timed-out shutdown
-and FB1–FB7 remain.
+Status (October 23, 2026): both paths shipped. `Sched` installs the parker
+around every resume; the ring futex operations lower on io_uring; a ring sleep
+waits in the kernel on its park word, written at the tick's submission point,
+and `fiberPark` chooses the path. The
+[ledger](./fiber-parker.md#evidence-ledger) records what is verified. EFP10's
+node-cancellation route through `FUTEX_WAITV` with EFP23, EFP21's timed-out
+shutdown, and FB1–FB7 remain.
