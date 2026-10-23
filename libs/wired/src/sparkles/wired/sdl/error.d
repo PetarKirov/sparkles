@@ -10,45 +10,45 @@ import sparkles.wired.sdl.document : SdlSpan;
 /// Processing stage that produced an SDL error.
 enum SdlErrorStage : ubyte
 {
-    lex,
-    parse,
-    decode,
-    encode,
-    fileRead,
-    fileWrite,
+    lex, /// Tokenizing source text.
+    parse, /// Building the document from tokens.
+    decode, /// Reading a typed value from a document.
+    encode, /// Writing a value or document.
+    fileRead, /// Reading a file.
+    fileWrite, /// Writing a file.
 }
 
 /// Stable machine-readable SDL failure vocabulary.
 enum SdlErrorCode : ubyte
 {
-    invalidUtf8,
-    unsupportedBom,
-    unexpectedCharacter,
-    unexpectedToken,
-    unexpectedEof,
-    unterminatedString,
-    unterminatedComment,
-    invalidEscape,
-    invalidIdentifier,
-    invalidNumber,
-    numberOutOfRange,
-    invalidBase64,
-    invalidDate,
-    invalidDateTime,
-    invalidDuration,
-    depthExceeded,
-    missingRole,
-    duplicateRole,
-    unexpectedKind,
-    valueOutOfRange,
-    unknownMember,
-    conversionFailed,
-    checkFailed,
-    unsupportedFeature,
-    allocationFailed,
-    fileReadFailed,
-    fileWriteFailed,
-    errorSinkOverflow,
+    invalidUtf8, /// Source bytes are not valid UTF-8.
+    unsupportedBom, /// A UTF-16 or UTF-32 byte-order mark.
+    unexpectedCharacter, /// A character that cannot start or continue a token.
+    unexpectedToken, /// A token the grammar does not allow here.
+    unexpectedEof, /// Input ended inside a construct.
+    unterminatedString, /// A string or character literal without its closing quote.
+    unterminatedComment, /// A block comment without its closing `*/`.
+    invalidEscape, /// An escape or continuation the literal does not support.
+    invalidIdentifier, /// A malformed tag, namespace, or attribute name.
+    invalidNumber, /// A malformed numeric literal or suffix.
+    numberOutOfRange, /// A number outside its literal kind or the target type.
+    invalidBase64, /// Malformed Base64 in a binary literal.
+    invalidDate, /// A malformed or impossible date.
+    invalidDateTime, /// A malformed date-time clock, fraction, or zone.
+    invalidDuration, /// A malformed duration.
+    depthExceeded, /// Child blocks nest deeper than `maxDepth`.
+    missingRole, /// A required field's SDL role is absent.
+    duplicateRole, /// A singular field's role occurs more than once.
+    unexpectedKind, /// A scalar or node of the wrong kind for the field.
+    valueOutOfRange, /// A temporal component, or an encoded value, outside its range.
+    unknownMember, /// An unmatched occurrence under `@WireStrict`, or an unknown enum name.
+    conversionFailed, /// A converter or adapter rejected the value.
+    checkFailed, /// A `@WireCheck` rejected the value.
+    unsupportedFeature, /// Syntax or a scalar family the profile disables.
+    allocationFailed, /// The allocator could not supply arena memory.
+    fileReadFailed, /// The file could not be read.
+    fileWriteFailed, /// The file could not be written or renamed into place.
+    errorSinkOverflow, /// A bounded error sink dropped further errors.
 }
 
 /// One SDL operation failure, carried by value through `Expected`.
@@ -64,21 +64,21 @@ struct SdlError
         return result;
     }
 
-    SdlErrorStage stage;
-    SdlErrorCode code;
-    SharedBuffer!(char, 40) sourceName;
-    SdlSpan span;
-    SdlSpan relatedSpan;
-    bool hasRelatedSpan;
-    SharedBuffer!(char, 48) valuePath;
-    SharedBuffer!(char, 48) rolePath;
-    string sourceType;
-    string targetType;
-    string expectedKind;
-    string actualKind;
-    SharedBuffer!(char, 96) reason;
-    SharedBuffer!(char, 40) filePath;
-    int cause;
+    SdlErrorStage stage; /// Where the failure happened.
+    SdlErrorCode code; /// What failed, as a stable code.
+    SharedBuffer!(char, 40) sourceName; /// Source label, such as the file path.
+    SdlSpan span; /// Offending source range, when input caused the failure.
+    SdlSpan relatedSpan; /// Secondary context, such as an unclosed opener.
+    bool hasRelatedSpan; /// Whether `relatedSpan` is set.
+    SharedBuffer!(char, 48) valuePath; /// D value path, such as `$.deps[1].name`.
+    SharedBuffer!(char, 48) rolePath; /// SDL role path, such as `$.dependency[1]@version` (SPEC §7).
+    string sourceType; /// Type converted from, where applicable.
+    string targetType; /// Type converted to, where applicable.
+    string expectedKind; /// Kind the field required, where applicable.
+    string actualKind; /// Kind the input supplied, where applicable.
+    SharedBuffer!(char, 96) reason; /// Bounded human-readable explanation.
+    SharedBuffer!(char, 40) filePath; /// Path of a failed file operation.
+    int cause; /// OS error number of a failed file operation; `0` otherwise.
     /// Trial-decode failures in union declaration order, with their type/span.
     const(SdlError)[] variants;
 

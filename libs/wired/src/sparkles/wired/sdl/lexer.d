@@ -17,28 +17,28 @@ version (unittest) import core.exception : AssertError;
 /// Stable token vocabulary shared by every SDL profile.
 enum SdlTokenKind : ubyte
 {
-    eof,
-    newline,
-    semicolon,
-    colon,
-    equals,
-    openBrace,
-    closeBrace,
-    identifier,
-    null_,
-    boolean,
-    string_,
-    character,
-    integer,
-    longInteger,
-    float_,
-    double_,
-    decimal,
-    binary,
-    date,
-    dateTime,
-    zonedDateTime,
-    duration,
+    eof, /// End of input; always the final token.
+    newline, /// A logical newline, which terminates a tag.
+    semicolon, /// `;`, which terminates a tag.
+    colon, /// `:` between a namespace and a name.
+    equals, /// `=` between an attribute name and its value.
+    openBrace, /// `{` opening a child block.
+    closeBrace, /// `}` closing a child block.
+    identifier, /// A tag, namespace, or attribute name.
+    null_, /// `null`.
+    boolean, /// `true`, `false`, `on`, or `off`.
+    string_, /// A regular or raw string.
+    character, /// A character literal.
+    integer, /// An unsuffixed integer.
+    longInteger, /// An `L`-suffixed integer.
+    float_, /// An `F`-suffixed float.
+    double_, /// An unsuffixed or `D`-suffixed float.
+    decimal, /// A `BD`-suffixed decimal.
+    binary, /// A bracketed Base64 literal.
+    date, /// A date.
+    dateTime, /// A date with a clock.
+    zonedDateTime, /// A date with a clock and a zone.
+    duration, /// A duration.
 }
 
 /** One borrowed SDL token with an exact original-source slice.
@@ -49,9 +49,9 @@ $(LREF decodeSdlScalar) before using a scalar payload.
 */
 struct SdlToken
 {
-    SdlTokenKind kind;
-    const(char)[] raw;
-    SdlSpan span;
+    SdlTokenKind kind; /// Token class; scalars still need `decodeSdlScalar`.
+    const(char)[] raw; /// Exact source slice, borrowed from the lexed text.
+    SdlSpan span; /// Source range of `raw`.
 }
 
 /** Scratch ownership for deferred string and binary scalar decoding.
@@ -61,8 +61,8 @@ destruction. Scalar kinds without byte payloads do not use it.
 */
 struct SdlScalarStorage
 {
-    SharedBuffer!(char, 256) text;
-    SharedBuffer!(ubyte, 256) bytes;
+    SharedBuffer!(char, 256) text; /// Decoded string payload.
+    SharedBuffer!(ubyte, 256) bytes; /// Decoded binary payload.
 
     /// Discards the previous decoded payload while retaining capacity.
     void clear() @safe pure nothrow @nogc

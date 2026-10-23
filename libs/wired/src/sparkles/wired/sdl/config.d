@@ -4,53 +4,53 @@ module sparkles.wired.sdl.config;
 /// Syntax and scalar interpretation compatibility mode.
 enum SdlSyntaxCompatibility : ubyte
 {
-    sparkles,
-    dub5efed360,
+    sparkles, /// The sparkles SDL grammar (SPEC §3).
+    dub5efed360, /// DUB's bundled SDLang lexer at `5efed360`, quirks included.
 }
 
 /// Independently selectable SDL scalar families.
 struct SdlScalarFeatures
 {
-    bool nulls;
-    bool booleans;
-    bool strings;
-    bool characters;
-    bool integers;
-    bool longIntegers;
-    bool floats;
-    bool doubles;
-    bool decimals;
-    bool binary;
-    bool dates;
-    bool dateTimes;
-    bool zonedDateTimes;
-    bool durations;
+    bool nulls; /// `null`.
+    bool booleans; /// `true`/`false` and `on`/`off`.
+    bool strings; /// Regular and raw strings.
+    bool characters; /// Single-quoted character literals.
+    bool integers; /// Unsuffixed 32-bit integers.
+    bool longIntegers; /// `L`-suffixed 64-bit integers.
+    bool floats; /// `F`-suffixed 32-bit floats.
+    bool doubles; /// Unsuffixed or `D`-suffixed 64-bit floats.
+    bool decimals; /// `BD`-suffixed extended decimals.
+    bool binary; /// Bracketed Base64 binary literals.
+    bool dates; /// `year/month/day` dates.
+    bool dateTimes; /// Dates with a clock and no zone.
+    bool zonedDateTimes; /// Dates with a clock and a zone.
+    bool durations; /// Durations.
 }
 
 /// Independently selectable SDL lexical syntax.
 struct SdlSyntaxFeatures
 {
-    bool rawStrings;
-    bool unicodeIdentifiers;
-    bool unicodeWhitespace;
-    bool unicodeNewlines;
-    bool hashComments;
-    bool slashComments;
-    bool dashComments;
-    bool blockComments;
-    bool continuations;
-    bool semicolonTerminators;
-    bool anonymousTags;
+    bool rawStrings; /// Backtick raw strings.
+    bool unicodeIdentifiers; /// Non-ASCII identifier characters.
+    bool unicodeWhitespace; /// Non-ASCII horizontal whitespace.
+    bool unicodeNewlines; /// U+2028 and U+2029 as newlines.
+    bool hashComments; /// `#` line comments.
+    bool slashComments; /// `//` line comments.
+    bool dashComments; /// `--` line comments.
+    bool blockComments; /// `/* */` block comments.
+    bool continuations; /// Backslash line continuations.
+    bool semicolonTerminators; /// `;` as a tag terminator.
+    bool anonymousTags; /// Tags that start with a value and have no name.
 }
 
 /// Compile-time parser configuration. Boolean features opt in explicitly.
 struct SdlParserConfig
 {
-    SdlScalarFeatures scalars;
-    SdlSyntaxFeatures syntax;
-    SdlSyntaxCompatibility compatibility = SdlSyntaxCompatibility.sparkles;
-    bool validateUtf8 = true;
-    uint maxDepth = 1024;
+    SdlScalarFeatures scalars; /// Scalar families the parser accepts.
+    SdlSyntaxFeatures syntax; /// Lexical forms the parser accepts.
+    SdlSyntaxCompatibility compatibility = SdlSyntaxCompatibility.sparkles; /// Whose grammar resolves the remaining choices.
+    bool validateUtf8 = true; /// Validate the whole input before lexing (SPEC §11).
+    uint maxDepth = 1024; /// Deepest child-block nesting; `0` permits root tags only.
 }
 
 private enum allScalars = SdlScalarFeatures(

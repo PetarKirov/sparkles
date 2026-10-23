@@ -27,8 +27,8 @@ top-level tags emits a single LF or nothing at all.
 */
 struct SdlWriteOptions
 {
-    string indent = "    ";
-    bool newlineForEmptyDocument;
+    string indent = "    "; /// One nesting level; must not be empty.
+    bool newlineForEmptyDocument; /// Emit one LF for a document with no tags.
 }
 
 private SdlError encodeError(SdlErrorCode code, string type, string reason)
