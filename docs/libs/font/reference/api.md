@@ -387,8 +387,8 @@ placements; each child's own variation is evaluated before scaling and placement
 | `applyTransfer(coverage, gammaTimes256)`                      | the consumer's display gamma on linear coverage (identity at 256)                                           |
 
 Coverage follows the nonzero winding rule; glyphs flagged for overlap —
-or every glyph under `OverlapMode.forceUnion` — render as the union of
-their contours at 4×4 supersampling. `FlattenPolicy.standard` subdivides
+or every glyph under `OverlapMode.forceUnion` — approximate the union
+of their contours by 4×4 supersampling (FTX9). `FlattenPolicy.standard` subdivides
 curves to 0.02 px, `freeType` reproduces FreeType's `ftgrays.c`
 subdivision, and `fine` is the 0.001 px reference of FTR8. Equal glyph
 keys produce byte-identical output.
@@ -420,8 +420,10 @@ which maximum records it has. Absence is `present` false.
 The `engine` configuration links HarfBuzz (hand-declared in
 `sparkles.font.harfbuzz`, layout-checked in `sparkles:font-oracle`) and
 adds shaping; the `library` configuration never sees it. A `Shaper`
-owns one instance's HarfBuzz objects and is released with them; it
-receives the instance's normalized coordinates unchanged.
+owns one instance's HarfBuzz objects and releases them when destroyed;
+it borrows the face's bytes without holding their lifetime, so it must
+not outlive them. It receives the instance's normalized coordinates
+unchanged.
 
 | Operation                                                         | Result                                                                                                                                                                               |
 | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -435,7 +437,11 @@ at scalar boundaries, explicit `SegmentProperties` (or guessing for the
 standalone form), ranged `ShapingFeature`s, and beginning/end-of-text
 flags. Invalid UTF-8 is `invalidEncoding`, a split scalar
 `splitScalar`, a bad range `invalidRange`, a bad feature range
-`invalidFeatureRange` — all before any output is written; short output
-arrays are `limitExceeded` with outputs uncommitted. Every Unicode
-callback HarfBuzz accepts is supplied from `sparkles:base`'s pinned
-tables.
+`invalidFeatureRange` — all before any output is written; short glyph,
+span and boundary arrays are `limitExceeded` with outputs uncommitted
+(`languageOut` is truncated). Every Unicode callback HarfBuzz accepts
+is supplied from `sparkles:base`'s pinned tables; decomposition returns
+the first two scalars of the full decomposition, not HarfBuzz's single
+step. The engine profile pins HarfBuzz's version only: its internal
+Unicode tables are older than base's release, and the mismatch is not
+yet rejected (FTS8).
