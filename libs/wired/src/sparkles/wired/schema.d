@@ -23,6 +23,7 @@ import std.typecons : Nullable, Ternary;
 import optional : Optional;
 
 import sparkles.wired.policy;
+import sparkles.wired.presence : Decoded, WireValue;
 
 /// Structural node vocabulary shared by format walkers and derivations.
 enum NodeKind : ubyte
@@ -420,6 +421,8 @@ private WireSchema buildWireSchema(F, T)()
             }
             else static if (is(V == struct))
             {
+                static assert(!is(V == Decoded!Value, Value),
+                    "wired: Decoded is supported only as a root decode request");
                 schema.nodes[index].kind = NodeKind.aggregate;
                 schema.nodes[index].policy.caseStyle = site.caseFor(
                     slot, resolveCaseStyle!(F, V));
@@ -517,7 +520,38 @@ private WireSchema buildWireSchema(F, T)()
 /// Complete CTFE schema of `T` under format `F`.
 template wireSchemaOf(F, T)
 {
-    enum WireSchema wireSchemaOf = buildWireSchema!(F, T)();
+    private alias Value = WireValue!T;
+    private enum WireSchema rawSchema = buildWireSchema!(F, Value)();
+    static if (__traits(hasMember, F, "validateWireSchema"))
+        static assert(F.validateWireSchema!(Value, rawSchema));
+    enum WireSchema wireSchemaOf = rawSchema;
+}
+
+/** Conservative value-round-trip predicate over the shared schema.
+
+Unproven converter inverses and first-match unions are asymmetric. Formats
+may additionally reject unsupported root shapes and scalar domains through
+`roundTripSchema`. Invalid schemas yield `false`, not a compilation failure.
+*/
+template isWireRoundTrippable(F, T)
+{
+    static if (is(T == Decoded!Value, Value)
+        || !__traits(compiles, wireSchemaOf!(F, T)))
+        enum bool isWireRoundTrippable = false;
+    else
+    {
+        private enum schema = wireSchemaOf!(F, T);
+        private enum symmetric = () {
+            foreach (node; schema.nodes)
+                if (node.kind == NodeKind.converted || node.kind == NodeKind.unionType)
+                    return false;
+            return true;
+        }();
+        static if (__traits(hasMember, F, "roundTripSchema"))
+            enum bool isWireRoundTrippable = symmetric && F.roundTripSchema!(T, schema);
+        else
+            enum bool isWireRoundTrippable = symmetric;
+    }
 }
 
 /** Projects an aggregate root's schema children back to the current flat API.

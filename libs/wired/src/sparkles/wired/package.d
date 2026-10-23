@@ -10,6 +10,7 @@ See `docs/specs/wired/SPEC.md` for the normative specification.
 module sparkles.wired;
 
 public import sparkles.wired.policy;
+public import sparkles.wired.presence;
 public import sparkles.wired.schema;
 public import sparkles.wired.overlay;
 public import sparkles.wired.walk;

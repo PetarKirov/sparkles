@@ -79,6 +79,169 @@ struct WireStrict(Format_ = AnyFormat)
     alias Format = Format_; /// the format this policy applies under
 }
 
+/// A repeatable, decode-only spelling; encoding retains the canonical name.
+struct WireAliasAttr(Format_ = AnyFormat)
+{
+    string key;
+    alias Format = Format_;
+}
+
+/// Creates a decode-only field alias under one format or every format.
+WireAliasAttr!Format WireAlias(Format = AnyFormat)(string key)
+    @safe pure nothrow @nogc => WireAliasAttr!Format(key);
+
+/// A decoding default, either a value or a pure nullary callable.
+struct WireDefaultAttr(Format_, Value)
+{
+    Value value;
+    alias Format = Format_;
+}
+
+/// Missing input restores this value without requiring `@WireOptional`.
+auto WireDefault(Format = AnyFormat, Value)(Value value)
+    => WireDefaultAttr!(Format, Value)(value);
+
+private template defaultAt(F, Parent, size_t i)
+{
+    enum ptrdiff_t defaultAt = () {
+        ptrdiff_t fallback = -1;
+        static foreach (j, uda; __traits(getAttributes, Parent.tupleof[i]))
+        {
+            static if (__traits(compiles, uda.Format, uda.value)
+                && __traits(isSame, TemplateOf!(typeof(uda)), WireDefaultAttr))
+            {
+                static if (is(uda.Format == F))
+                    return cast(ptrdiff_t) j;
+                else static if (is(uda.Format == AnyFormat))
+                    if (fallback < 0)
+                        fallback = j;
+            }
+        }
+        return fallback;
+    }();
+}
+
+/// Whether this exact field declares a decoding default under `F`.
+template hasWireDefault(F, Parent, size_t i)
+{
+    enum bool hasWireDefault = defaultAt!(F, Parent, i) >= 0;
+}
+
+/// The value restored by absence and compared by `WireSkip.whenDefault`.
+auto wireDefault(F, Parent, size_t i)()
+{
+    static if (hasWireDefault!(F, Parent, i))
+    {
+        alias udas = __traits(getAttributes, Parent.tupleof[i]);
+        enum selected = udas[defaultAt!(F, Parent, i)];
+        static if (__traits(compiles, selected.value()))
+        {
+            static assert(__traits(compiles, () pure { return selected.value(); }),
+                "wired: a decoding default callable must be pure");
+            static assert(resolvedFieldPolicies!(F, Parent)[i].skip != WireSkip.whenDefault,
+                "wired: a callable decoding default cannot use whenDefault omission");
+            return selected.value();
+        }
+        else
+            return selected.value;
+    }
+    else
+        return Parent.init.tupleof[i];
+}
+
+/// One validation failure; `path` is an optional suffix relative to its site.
+struct WireCheckFailure
+{
+    string reason;
+    string path;
+}
+
+/// A field/type refinement, applied after decode conversion and before encode conversion.
+struct WireCheck(alias predicate_, string message_ = "", Format_ = AnyFormat)
+{
+    alias predicate = predicate_;
+    enum string message = message_;
+    alias Format = Format_;
+}
+
+/// Declarative inclusive-bound check usable as a `WireCheck` predicate.
+template isBetween(alias lower, alias upper)
+{
+    bool isBetween(T)(in T value) => value >= lower && value <= upper;
+}
+
+/// Declarative membership check usable as a `WireCheck` predicate.
+template isOneOf(values...)
+{
+    bool isOneOf(T)(in T value)
+    {
+        static foreach (candidate; values)
+            if (value == candidate)
+                return true;
+        return false;
+    }
+}
+
+/// Whether a type or field site declares a `WireCheck` that applies under `F`.
+template hasWireChecks(F, alias symbol)
+{
+    enum bool hasWireChecks = () {
+        static foreach (uda; __traits(getAttributes, symbol))
+            static if (is(uda) && __traits(isSame, TemplateOf!uda, WireCheck))
+                static if (is(uda.Format == F) || is(uda.Format == AnyFormat))
+                    return true;
+        return false;
+    }();
+}
+
+/// Runs the shared four-protocol check vocabulary at a type or field site.
+/// `static` because `symbol` may alias a field: without it the instantiation
+/// would need an instance of the field's aggregate as its context.
+static WireCheckFailure[] wireCheckFailures(F, alias symbol, T)(in T value)
+{
+    WireCheckFailure[] failures;
+    static foreach (uda; __traits(getAttributes, symbol))
+    {
+        static if (is(uda) && __traits(isSame, TemplateOf!uda, WireCheck))
+        {
+            static if (is(uda.Format == F) || is(uda.Format == AnyFormat))
+            {
+                const checked = uda.predicate(value);
+                alias R = typeof(checked);
+                static if (is(R : bool))
+                {
+                    if (!checked)
+                        failures ~= WireCheckFailure(uda.message.length
+                            ? uda.message : "wire check failed");
+                }
+                else static if (is(R : string))
+                {
+                    if (checked.length)
+                        failures ~= WireCheckFailure(checked);
+                }
+                else static if (is(R : const(WireCheckFailure)[]))
+                {
+                    foreach (failure; checked)
+                        failures ~= failure;
+                }
+                else static if (__traits(hasMember, R, "hasError"))
+                {
+                    if (checked.hasError)
+                    {
+                        import std.conv : text;
+
+                        failures ~= WireCheckFailure(text(checked.error));
+                    }
+                }
+                else
+                    static assert(false, "wired: WireCheck must return bool, string, "
+                        ~ "Expected!(void, E), or WireCheckFailure[]");
+            }
+        }
+    }
+    return failures;
+}
+
 /// Whether aggregate `T` carries a `@WireStrict` whose format is exactly `Fmt`
 /// or $(LREF AnyFormat) (§5.3). The bare `@WireStrict` spelling attaches the
 /// uninstantiated template and counts as the AnyFormat form.
@@ -110,6 +273,69 @@ struct WireConvert(alias toWire, alias fromWire = void, Format = AnyFormat)
     alias to = toWire;     /// the encode transform (source → wire)
     alias from = fromWire; /// the decode transform (wire → source), or `void`
     alias format = Format; /// the format this converter applies under
+}
+
+/// A type-shaped adapter; codecs see the same `converted` schema boundary.
+struct WireAs(Adapter_, Format_ = AnyFormat)
+{
+    alias Adapter = Adapter_;
+    alias Format = Format_;
+}
+
+/// Lowers `WireAs!Adapter` to a converter; `Format` is the active codec's
+/// format, so name-bearing adapters spell enum members as that format does.
+package struct WireAsConverter(Adapter, Domain, Format)
+{
+    static auto to(Value)(Value value) => Adapter.toWire!Format(value);
+    static auto from(Wire)(Wire value) => Adapter.fromWire!(Format, Domain)(value);
+    static if (__traits(hasMember, Adapter, "KeyAdapter"))
+        alias KeyAdapter = Adapter.KeyAdapter;
+    static if (__traits(hasMember, Adapter, "ElementAdapter"))
+    {
+        import std.traits : isAssociativeArray, ForeachType, ValueType;
+
+        static if (isAssociativeArray!Domain)
+            alias Element = ValueType!Domain;
+        else
+            alias Element = ForeachType!Domain;
+        alias ElementConverter = WireAsConverter!(Adapter.ElementAdapter, Element, Format);
+    }
+}
+
+private template firstAdapter(alias symbol, F)
+{
+    enum ptrdiff_t firstAdapter = () {
+        static foreach (i, uda; getUDAs!(symbol, WireAs))
+            static if (is(uda.Format == F))
+                return cast(ptrdiff_t) i;
+        return cast(ptrdiff_t) -1;
+    }();
+}
+
+private template adapterConverter(alias symbol, alias attribute, F)
+{
+    static if (is(symbol))
+        alias Domain = symbol;
+    else
+        alias Domain = typeof(symbol);
+    alias adapterConverter = WireAsConverter!(attribute.Adapter, Domain, F);
+}
+
+/// Message extraction shared by throwing and Expected-returning converters.
+string wireFailureMessage(E)(in E error)
+{
+    static if (is(E : string))
+        return error;
+    else static if (__traits(hasMember, E, "msg"))
+        return error.msg;
+    else static if (__traits(compiles, error.reason[]))
+        return error.reason[].idup;
+    else
+    {
+        import std.conv : text;
+
+        return text(error);
+    }
 }
 
 /// The resolved `SumType` match policy carried by a `@(WireMatch.strategy!F)`
@@ -371,6 +597,8 @@ template hasConvert(F, syms...)
     else
         enum hasConvert = firstConvert!(syms[0], F) >= 0
             || firstConvert!(syms[0], AnyFormat) >= 0
+            || firstAdapter!(syms[0], F) >= 0
+            || firstAdapter!(syms[0], AnyFormat) >= 0
             || hasConvert!(F, syms[1 .. $]);
 }
 
@@ -383,8 +611,12 @@ if (hasConvert!(F, syms))
     alias sym = syms[0];
     static if (firstConvert!(sym, F) >= 0)
         alias convertOf = getUDAs!(sym, WireConvert)[firstConvert!(sym, F)];
+    else static if (firstAdapter!(sym, F) >= 0)
+        alias convertOf = adapterConverter!(sym, getUDAs!(sym, WireAs)[firstAdapter!(sym, F)], F);
     else static if (firstConvert!(sym, AnyFormat) >= 0)
         alias convertOf = getUDAs!(sym, WireConvert)[firstConvert!(sym, AnyFormat)];
+    else static if (firstAdapter!(sym, AnyFormat) >= 0)
+        alias convertOf = adapterConverter!(sym, getUDAs!(sym, WireAs)[firstAdapter!(sym, AnyFormat)], F);
     else
         alias convertOf = convertOf!(F, syms[1 .. $]);
 }
@@ -628,6 +860,8 @@ package string convertCaseOf(CaseStyle style, string ident) @safe pure
 struct FieldPolicy
 {
     string key;                 /// the resolved wire key (§5.1, §6)
+    const(string)[] aliases;    /// additional decode-only keys
+    bool hasDefault;            /// a shared decoding default was declared
     bool hasConvert;            /// carries a `@WireConvert` for the format (§8)
     bool optional;              /// carries `@WireOptional` (§5.4)
     WireSkip skip = WireSkip.never;                 /// encode omission policy
@@ -702,12 +936,18 @@ if (is(T == struct))
         static foreach (i; 0 .. T.tupleof.length - __traits(isNested, T))
         {{
             FieldPolicy p;
+            p.hasDefault = hasWireDefault!(F, T, i);
+            p.optional = p.hasDefault;
+            p.hasConvert = hasConvert!(F, T.tupleof[i], typeof(T.tupleof[i]));
             string explicitName;
             int nameTier, optTier, matchTier;
             int[3] caseTier, reprTier;
 
             static foreach (uda; __traits(getAttributes, T.tupleof[i]))
             {{
+                static if (is(typeof(uda) == WireAliasAttr!F)
+                    || is(typeof(uda) == WireAliasAttr!AnyFormat))
+                    p.aliases ~= uda.key;
                 static if (is(typeof(uda) == WireNameAttr!F))
                     enum tier = 2;
                 else static if (is(typeof(uda) == WireNameAttr!AnyFormat))
@@ -798,7 +1038,11 @@ if (is(T == struct))
     private enum dupKey = () {
         string[] keys;
         foreach (p; resolvedFieldPolicies)
+        {
             keys ~= p.key;
+            foreach (key; p.aliases)
+                keys ~= key;
+        }
         return firstDuplicate(keys);
     }();
     static assert(dupKey is null,
