@@ -171,7 +171,7 @@ if (isUniqueTarget!(T, Allocator))
     @disable this(ref inout typeof(this));
 
     /// Destroys and frees the owned value, if any.
-    ~this()
+    ~this() scope
     {
         reset();
     }
@@ -279,7 +279,7 @@ if (isUniqueTarget!(T, Allocator))
     is still reading, and dropping it after the free would leave the collector
     scanning memory the allocator has taken back.
     */
-    void reset()
+    void reset() scope
     {
         if (handle is null)
             return;
