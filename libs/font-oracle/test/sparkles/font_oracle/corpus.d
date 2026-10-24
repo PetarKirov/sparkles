@@ -48,9 +48,9 @@ mixin StaticBlock!q{
     package immutable string fontsDir = environment.get("SPARKLES_FONTS_PATH");
     /// The bundled outline fonts in name order; empty when the corpus is unset.
     package immutable string[] corpus = listCorpus(fontsDir).idup;
-    /// `$SPARKLES_FONT_TEST_CORPUS`: faces tested against but not shipped (the variable CFF2 faces).
+    /// `$SPARKLES_FONT_TEST_CORPUS`: faces tested against but not shipped (the variable CFF2 and the `JSTF` faces).
     package immutable string testFontsDir = environment.get("SPARKLES_FONT_TEST_CORPUS");
-    /// The test-only outline fonts in name order; empty when unset.
+    /// The test-only faces in name order; empty when unset.
     package immutable string[] testCorpus = listCorpus(testFontsDir).idup;
 };
 

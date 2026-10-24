@@ -1,6 +1,7 @@
-# Unfree faces sparkles:font is checked against, opt-in: no free face holds a
-# `JSTF` table, and Microsoft's core fonts' Arial and Times New Roman do
-# (docs/specs/font/testing.md § Shaping, FTS11). Their licence allows
+# Unfree faces sparkles:font is checked against, opt-in: Microsoft's core
+# fonts' Arial and Times New Roman hold `JSTF` tables, a second family beside
+# the free test corpus's (./font-test-corpus.nix; docs/specs/font/testing.md
+# § Shaping, FTS11). Their licence allows
 # redistributing only the original installers, so this package is never
 # pushed to a binary cache: it is listed in `excludedCiPackages`
 # (nix/flake-exclusions.nix), and the dev shell does not reference it. Point
