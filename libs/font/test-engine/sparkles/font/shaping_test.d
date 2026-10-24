@@ -11,6 +11,7 @@ module sparkles.font.shaping_test;
 import std.conv : text;
 
 import sparkles.base.text.grapheme : byGraphemeCluster;
+import sparkles.base.unique : makeUnique;
 
 import sparkles.font;
 import sparkles.font.corpus : bundled, fontsPath;
@@ -55,6 +56,7 @@ private void assertPartition(in Outputs o, in ShapeInfo info, size_t start, size
 @system
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     if (fontsPath() is null)
         return skipTest("SPARKLES_FONTS_PATH is unset");
     const bytes = bundled("DejaVuSansMono.ttf");
@@ -69,7 +71,7 @@ unittest
     {
         assert(o.glyphs[i].glyphId == map.glyph(c));
         assert(o.glyphs[i].cluster == i);
-        assert(o.glyphs[i].xAdvance == advance(inst, o.glyphs[i].glyphId).value.design);
+        assert(o.glyphs[i].xAdvance == advance(inst, o.glyphs[i].glyphId, *ws).value.design);
         assert(o.spans[i] == SourceSpan(i, i + 1, i, i + 1));
     }
     // The standalone call guesses and says so (FTS2).
@@ -77,7 +79,7 @@ unittest
         && info.value.scriptGuessed && info.value.script == Tag("Latn"));
     // FTM4: the pixel form of an advance at the instance's 16 ppem.
     const px = info.value.measured(o.glyphs[0].xAdvance).pixels.value;
-    assert(px == advance(inst, o.glyphs[0].glyphId).value.pixels.value);
+    assert(px == advance(inst, o.glyphs[0].glyphId, *ws).value.pixels.value);
 }
 
 /// FTS1, FTS3: at nondefault coordinates the shaped advance is the library's FTM18 advance.
@@ -85,6 +87,7 @@ unittest
 @system
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     if (fontsPath() is null)
         return skipTest("SPARKLES_FONTS_PATH is unset");
     const bytes = bundled("NotoSans.ttf");
@@ -100,7 +103,7 @@ unittest
         bool fractional;
         foreach (g; o.glyphs[0 .. info.value.glyphCount])
         {
-            const expected = advance(inst, g.glyphId).value.design;
+            const expected = advance(inst, g.glyphId, *ws).value.design;
             // Shaped values are multiples of 1/1,024 unit, rounded once.
             const diff = g.xAdvance.raw - expected.raw;
             assert(diff >= -32 && diff <= 32, text("wght ", weight, " gid ", g.glyphId, ": ", g.xAdvance,
@@ -564,6 +567,7 @@ unittest
 @system
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     if (fontsPath() is null)
         return skipTest("SPARKLES_FONTS_PATH is unset");
     foreach (weight; [400, 900])
@@ -576,7 +580,7 @@ unittest
         const ligature = o.glyphs[1];
         assert(ligature.cluster == 1);
         LigatureCaret[4] carets;
-        const r = ligatureCarets(inst, ligature.glyphId, ligature.cluster, true, carets[]);
+        const r = ligatureCarets(inst, ligature.glyphId, ligature.cluster, true, carets[], *ws);
         assert(r.hasValue && r.value.present && r.value.count >= 1);
         foreach (k, c; carets[0 .. r.value.count])
         {
@@ -585,7 +589,7 @@ unittest
             assert(c.coordinate.raw > 0 && c.coordinate.raw < ligature.xAdvance.raw);
         }
         // The plain letter has none: absence, not synthesized spacing.
-        const plain = ligatureCarets(inst, o.glyphs[0].glyphId, 0, true, carets[]);
+        const plain = ligatureCarets(inst, o.glyphs[0].glyphId, 0, true, carets[], *ws);
         assert(plain.hasValue && !plain.value.present);
     }
 }

@@ -4,6 +4,7 @@ fixture face whose glyph 1 has an outline and caret records.
 */
 module sparkles.font.carets_test;
 
+import sparkles.base.unique : makeUnique;
 import sparkles.font;
 import sparkles.font.fixtures;
 
@@ -52,11 +53,12 @@ private const(ubyte)[] caretFont() @safe pure nothrow
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     const bytes = caretFont();
     const face = openFace(bytes).value;
     auto inst = face.instance(InstanceSize.pixels(Ppem.fromInteger(16).value), null).value;
     LigatureCaret[4] carets;
-    const r = ligatureCarets(inst, 1, 0, true, carets[]);
+    const r = ligatureCarets(inst, 1, 0, true, carets[], *ws);
     assert(r.hasValue && r.value.present && r.value.count == 3);
     assert(carets[0].provenance == CaretProvenance.coordinate
         && carets[0].coordinate.raw == 100L << 16);
@@ -72,9 +74,9 @@ unittest
         assert(carets[i].glyphId == 1 && carets[i].recordIndex == i);
     // A glyph without records, and capacity exhaustion.
     LigatureCaret[2] small;
-    const absent = ligatureCarets(inst, 0, 0, true, small[]);
+    const absent = ligatureCarets(inst, 0, 0, true, small[], *ws);
     assert(absent.hasValue && !absent.value.present);
-    const exhausted = ligatureCarets(inst, 1, 0, true, small[]);
+    const exhausted = ligatureCarets(inst, 1, 0, true, small[], *ws);
     assert(exhausted.hasError && exhausted.error.kind == FontErrorKind.limitExceeded);
 }
 
@@ -99,6 +101,7 @@ private const(ubyte)[] corruptedCaretFont(size_t fromEnd, const(ubyte)[] bytes_)
 @safe pure
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     // The GDEF tail is: caret2 (4) caret3 (6) device (24) coverage (6).
     enum caret2FromEnd = 6 + 24 + 6 + 4, caret3FromEnd = 6 + 24 + 6, deviceFromEnd = 6 + 24;
     static struct Case
@@ -126,7 +129,7 @@ unittest
         LigatureCaret[4] carets;
         foreach (ref caret; carets)
             caret.recordIndex = 77;
-        const r = ligatureCarets(inst, 1, 0, true, carets[]);
+        const r = ligatureCarets(inst, 1, 0, true, carets[], *ws);
         assert(r.hasError && r.error.kind == c.kind, () { import std.conv : text; return text(c.kind, " got ", r.hasError ? r.error.kind : c.kind, r.hasError ? "" : " (no error)"); }());
         foreach (caret; carets)
             assert(caret.recordIndex == 77, "an error publishes no caret");

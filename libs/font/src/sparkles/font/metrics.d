@@ -25,7 +25,7 @@ import sparkles.font.errors : FontError, FontErrorKind, FontResult, fontErr, fon
 import sparkles.font.face : Face;
 import sparkles.font.instance : Instance, InstanceSize;
 import sparkles.font.tables : hhea, Hhea, hmtx, Hmtx, os2, Os2, post;
-import sparkles.font.outlines : phantomAdvance;
+import sparkles.font.outlines : phantomAdvance, PointWorkspace;
 import sparkles.font.units : checkedAdd, DesignValue, Ppem, toLayoutUnit, toPixels;
 import sparkles.font.variations : DeltaSetIndex, DeltaSetIndexMap, ItemVariationStore, NormalizedCoords;
 
@@ -649,7 +649,8 @@ private struct AdvanceSource
         return fontOk(AdvanceSource(m.value, h.value, true));
     }
 
-    FontResult!DesignValue advance(uint gid, scope const ref Instance inst) const scope
+    FontResult!DesignValue advance(uint gid, scope const ref Instance inst,
+        scope ref PointWorkspace ws) const scope
     {
         const a = hmtx_.advance(gid);
         if (a.hasError)
@@ -658,7 +659,7 @@ private struct AdvanceSource
         if (!varied_)
             return fontOk!DesignValue(stored);
         if (phantom_)
-            return inst.face.has(Tag("gvar")) ? phantomAdvance(inst, gid)
+            return inst.face.has(Tag("gvar")) ? phantomAdvance(inst, gid, ws)
                 : fontOk!DesignValue(stored);
         if (broken_)
             return fontErr!DesignValue(error_);
@@ -674,15 +675,16 @@ The advance of glyph `gid` at `inst` (FTM18): the `hmtx` advance (FTP24)
 plus, at nonzero coordinates, the `HVAR` delta (FTV14); in a face without
 `HVAR`, the `gvar` phantom-point span instead (FTO5), which is the stored
 advance when the face has no `gvar`. An unreadable `HVAR` is its error,
-with no fallback. A negative varied advance is returned as computed.
-Costs O(r · a).
+with no fallback. A negative varied advance is returned as computed. The
+phantom points decode into `ws`, which nothing else touches. Costs
+O(r · a), or `phantomAdvance`'s on the phantom path.
 */
-FontResult!Measurement advance(in Instance inst, uint gid)
+FontResult!Measurement advance(in Instance inst, uint gid, scope ref PointWorkspace ws)
 {
     const source = AdvanceSource.of(inst.face, inst);
     if (source.hasError)
         return fontErr!Measurement(source.error);
-    const a = source.value.advance(gid, inst);
+    const a = source.value.advance(gid, inst, ws);
     if (a.hasError)
         return fontErr!Measurement(a.error);
     return fontOk(measured(inst, a.value));
@@ -692,9 +694,11 @@ FontResult!Measurement advance(in Instance inst, uint gid)
 The summed advances of the run `gids` at `inst` (FTM18), added as design
 values and checked (`arithmeticExhausted` on overflow), so a conversion of
 the result rounds once (FTM6). Kerning is not included. The first error any
-glyph gives is returned and nothing else. Costs O(n · r · a) for `n` glyphs.
+glyph gives is returned and nothing else. `ws` is as for `advance`. Costs
+O(n · r · a) for `n` glyphs.
 */
-FontResult!Measurement measureRun(in Instance inst, scope const(uint)[] gids)
+FontResult!Measurement measureRun(in Instance inst, scope const(uint)[] gids,
+    scope ref PointWorkspace ws)
 {
     const source = AdvanceSource.of(inst.face, inst);
     if (source.hasError)
@@ -702,7 +706,7 @@ FontResult!Measurement measureRun(in Instance inst, scope const(uint)[] gids)
     auto total = DesignValue(0, inst.unitsPerEm);
     foreach (gid; gids)
     {
-        const a = source.value.advance(gid, inst);
+        const a = source.value.advance(gid, inst, ws);
         if (a.hasError)
             return fontErr!Measurement(a.error);
         const sum = checkedAdd(total, a.value);
@@ -797,7 +801,8 @@ or whose line metrics are absent, is `unsupportedCapability`; a pixel value
 of 2^53 or more is `arithmeticExhausted`. Costs one `cmap` lookup, one
 advance, one line-metrics query and two `MVAR` lookups for the underline.
 */
-FontResult!CellMetrics cellMetrics(in Instance inst, scope const ref CharMap cmap, uint ppem)
+FontResult!CellMetrics cellMetrics(in Instance inst, scope const ref CharMap cmap, uint ppem,
+    scope ref PointWorkspace ws)
 {
     if (ppem == 0)
         return fontErr!CellMetrics(FontError(FontErrorKind.badValue));
@@ -809,7 +814,7 @@ FontResult!CellMetrics cellMetrics(in Instance inst, scope const ref CharMap cma
     const zero = cmap.glyph('0');
     if (zero != 0)
     {
-        const a = advance(inst, zero);
+        const a = advance(inst, zero, ws);
         if (a.hasError)
             return fontErr!CellMetrics(a.error);
         widthPixels = a.value.pixelsAt(scale);

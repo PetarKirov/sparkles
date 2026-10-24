@@ -18,7 +18,7 @@ import sparkles.font.errors : callerStorageError, FontError, FontErrorKind, Font
 import sparkles.font.face : Face;
 import sparkles.font.gdef : gdefVariationStore;
 import sparkles.font.instance : Instance, InstanceSize;
-import sparkles.font.outlines : glyphPoint;
+import sparkles.font.outlines : glyphPoint, PointWorkspace;
 import sparkles.font.tables : locate;
 import sparkles.font.units : DesignValue, Ppem;
 import sparkles.font.variations : deviceDelta, DeviceDelta;
@@ -74,11 +74,11 @@ The ligature carets of glyph `gid`, shaped from source cluster
 Capacity exhaustion is `limitExceeded` naming `callerStorage`; on any
 error nothing is written (FTS7's uncommitted-output rule), so every
 caret is resolved once to check it and again to write it. Costs
-O(log n + c) for `c` carets, each a contour point's outline decode at
-most (`glyphPoint`).
+O(log n + c) for `c` carets, each a contour point's outline decode into
+`ws` at most (`glyphPoint`).
 */
 FontResult!LigatureCarets ligatureCarets(in Instance inst, uint gid, uint cluster,
-    bool horizontal, scope LigatureCaret[] out_)
+    bool horizontal, scope LigatureCaret[] out_, scope ref PointWorkspace ws)
 {
     const face = inst.face;
     auto at = locate(face, gdefTag);
@@ -148,7 +148,7 @@ FontResult!LigatureCarets ligatureCarets(in Instance inst, uint gid, uint cluste
             case 2:
             {
                 const pointIndex = be16(d, caretAt + 2);
-                const point = glyphPoint(inst, gid, pointIndex);
+                const point = glyphPoint(inst, gid, pointIndex, ws);
                 if (point.hasError)
                     return fontErr!LigatureCarets(point.error);
                 caret.coordinate = DesignValue(horizontal ? point.value.x : point.value.y,

@@ -18,6 +18,7 @@ import std.path : baseName;
 import std.stdio : stderr;
 
 import sparkles.base.text.layout_units : LayoutUnit;
+import sparkles.base.unique : makeUnique;
 import sparkles.font;
 import sparkles.font_oracle.corpus : corpus, fontsDir, Oracle;
 import sparkles.font_oracle;
@@ -191,6 +192,7 @@ unittest
 @system
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     size_t faces, variableFaces, instances, exact, near, varied, clamped, unsupported, otherErrors;
     eachFace((file, face, ref hb) {
         ++faces;
@@ -209,7 +211,7 @@ unittest
             setCoords(hb, inst);
             foreach (gid; 0 .. face.numGlyphs)
             {
-                const ours = inst.advance(gid);
+                const ours = inst.advance(gid, *ws);
                 const theirs = hb_font_get_glyph_h_advance(hb.font, gid);
                 if (inst.allZero)
                 {
@@ -395,6 +397,7 @@ not report.
 @system
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     size_t vmtxFaces, vorgFaces, advances, origins, clamped, unsupported, otherErrors;
     eachFace((file, face, ref hb) {
         const hasVmtx = face.has(Tag("vhea")) && face.has(Tag("vmtx"));
@@ -413,7 +416,7 @@ unittest
             {
                 if (hasVmtx)
                 {
-                    const ours = inst.verticalAdvance(gid);
+                    const ours = inst.verticalAdvance(gid, *ws);
                     const theirs = -long(hb_font_get_glyph_v_advance(hb.font, gid)) * unit;
                     if (inst.allZero)
                     {
@@ -438,7 +441,7 @@ unittest
                 }
                 if (hasVorg)
                 {
-                    const ours = inst.verticalOrigin(gid);
+                    const ours = inst.verticalOrigin(gid, *ws);
                     assert(ours.hasValue && ours.value.present, file);
                     hb_position_t x, y;
                     assert(hb_font_get_glyph_v_origin(hb.font, gid, &x, &y), file);
@@ -656,6 +659,7 @@ unittest
 @system
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     size_t faces, baseFaces, queries;
     eachFace((file, face, ref hb) {
         ++faces;
@@ -671,7 +675,7 @@ unittest
         foreach (c; cases)
             foreach (axis; [BaselineAxis.horizontal, BaselineAxis.vertical])
             {
-                const b = inst.baseline(axis, Tag(c[1]), Tag(c[0]));
+                const b = inst.baseline(axis, Tag(c[1]), Tag(c[0]), *ws);
                 assert(b.hasError && b.error.kind == FontErrorKind.missingTable, file);
                 const direction = axis == BaselineAxis.horizontal
                     ? hb_direction_t.HB_DIRECTION_LTR : hb_direction_t.HB_DIRECTION_TTB;
