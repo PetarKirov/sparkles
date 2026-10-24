@@ -82,6 +82,122 @@ unittest
     assert(px == advance(inst, o.glyphs[0].glyphId, *ws).value.pixels.value);
 }
 
+/// The vertical run of `text` in `script`, `vkrn` off so advances stay nominal.
+private FontResult!ShapeInfo shapeVertical(scope ref Shaper s, ref Outputs o, const(char)[] text,
+    Tag script) @safe
+{
+    static immutable ShapingFeature[1] noKern = [ShapingFeature.global(Tag("vkrn"), 0)];
+    return o.shape(s, ShapeRequest(text, 0, text.length,
+        SegmentProperties(ShapingDirection.topToBottom, script), true, noKern[], true, true));
+}
+
+/// HarfBuzz positions are 1/1,024 unit: 64 `DesignValue` steps.
+private long toPositionSteps(long raw) @safe => (raw >= 0 ? raw + 32 : raw - 32) / 64;
+
+/**
+FTS1, FTM20, FTM21: vertical advances and origins are the library's, with
+x at half the horizontal advance. (This face's `vmtx` advances are all 0;
+`shaping.FTS1.verticalUnrounded` varies a real one.)
+*/
+@("shaping.FTS1.verticalVariable")
+@system
+unittest
+{
+    auto ws = makeUnique!PointWorkspace();
+    if (fontsPath() is null)
+        return skipTest("SPARKLES_FONTS_PATH is unset");
+    const bytes = bundled("NotoSansEthiopic.ttf");
+    foreach (weight; [100, 437, 900])
+    {
+        auto inst = instanceOf(bytes, [UserCoordinate(Tag("wght"), weight << 16)]);
+        auto s = Shaper(inst);
+        Outputs o;
+        const info = shapeVertical(s, o, "ሰላም ኢትዮጵያ", Tag("Ethi"));
+        assert(info.hasValue, text(info.error));
+        assert(info.value.direction == ShapingDirection.topToBottom);
+        foreach (g; o.glyphs[0 .. info.value.glyphCount])
+        {
+            const v = verticalAdvance(inst, g.glyphId, *ws).value;
+            assert(v.present);
+            const diff = g.yAdvance.raw + v.advance.design.raw;
+            assert(diff >= -32 && diff <= 32, text("wght ", weight, " gid ", g.glyphId));
+            assert(g.xAdvance.raw == 0);
+            const h = advance(inst, g.glyphId, *ws).value.design.raw;
+            assert(g.xOffset.raw == -(toPositionSteps(h) / 2) * 64, text("gid ", g.glyphId));
+            const origin = verticalOrigin(inst, g.glyphId, *ws).value;
+            assert(origin.source == VerticalOriginSource.vmtxGlyph);
+            const dy = g.yOffset.raw + origin.y.design.raw;
+            assert(dy >= -32 && dy <= 32, text("wght ", weight, " gid ", g.glyphId));
+        }
+    }
+}
+
+/**
+FTS1, FTM20: a `VVAR` delta of half a unit reaches the shaped advance, where
+HarfBuzz's own vertical advance rounds it to a whole unit.
+*/
+@("shaping.FTS1.verticalUnrounded")
+@system
+unittest
+{
+    import sparkles.font.fixtures : FvarAxis, fvarTable, hhea, hmtx, itemVariationStore, minimalTables,
+        sfnt, TableData, VarData, vheaTable, vmtxTable, vvarTable;
+
+    auto ws = makeUnique!PointWorkspace();
+    enum short f2one = 16_384;
+    // Glyph 1 ('A') stands 1,000 units tall; its VVAR delta is 1 unit at TEST = 1.
+    auto tables = minimalTables(2);
+    tables ~= TableData("hhea", hhea(2));
+    tables ~= TableData("hmtx", hmtx([[500, 0], [600, 0]]));
+    tables ~= TableData("vhea", vheaTable(2));
+    tables ~= TableData("vmtx", vmtxTable([[1_000, 0], [1_000, 0]]));
+    tables ~= TableData("VVAR", vvarTable(itemVariationStore(1, [[[0, f2one, f2one]]],
+        [VarData([0], 1, false, [[0], [1]])])));
+    tables ~= TableData("fvar", fvarTable([FvarAxis("TEST", -65_536, 0, 65_536)]));
+    const bytes = sfnt(tables);
+    auto inst = instanceOf(bytes, [UserCoordinate(Tag("TEST"), 32_768)]);
+    assert(verticalAdvance(inst, 1, *ws).value.advance.design.raw == 1_000L * 65_536 + 32_768);
+    auto s = Shaper(inst);
+    Outputs o;
+    const info = shapeVertical(s, o, "A", Tag("Latn"));
+    assert(info.hasValue && info.value.glyphCount == 1 && o.glyphs[0].glyphId == 1);
+    assert(o.glyphs[0].yAdvance.raw == -(1_000L * 65_536 + 32_768));
+}
+
+/// FTM21: a `CFF` face's `VORG` origin, and a face without vertical metrics taking the engine's.
+@("shaping.FTS1.verticalOrigins")
+@system
+unittest
+{
+    auto ws = makeUnique!PointWorkspace();
+    if (fontsPath() is null)
+        return skipTest("SPARKLES_FONTS_PATH is unset");
+    {
+        auto inst = instanceOf(bundled("NotoSansSymbols2-Regular.otf"));
+        auto s = Shaper(inst);
+        Outputs o;
+        const info = shapeVertical(s, o, "★☆♠", Tag("Zyyy"));
+        assert(info.hasValue && info.value.glyphCount == 3);
+        foreach (g; o.glyphs[0 .. 3])
+        {
+            const origin = verticalOrigin(inst, g.glyphId, *ws).value;
+            assert(origin.source != VerticalOriginSource.none);
+            assert(g.yOffset.raw == -origin.y.design.raw);
+            assert(g.yAdvance.raw == -verticalAdvance(inst, g.glyphId, *ws).value.advance.design.raw);
+        }
+    }
+    {
+        // No vhea, vmtx or VORG: HarfBuzz's line height and centred origin stand in.
+        auto inst = instanceOf(bundled("DejaVuSansMono.ttf"));
+        assert(!verticalAdvance(inst, 1, *ws).value.present);
+        auto s = Shaper(inst);
+        Outputs o;
+        const info = shapeVertical(s, o, "ab", Tag("Latn"));
+        assert(info.hasValue && info.value.glyphCount == 2);
+        assert(o.glyphs[0].yAdvance.raw < 0 && o.glyphs[0].yAdvance == o.glyphs[1].yAdvance);
+    }
+}
+
 /// FTS1, FTS3: at nondefault coordinates the shaped advance is the library's FTM18 advance.
 @("shaping.FTS3.variableAdvances")
 @system
