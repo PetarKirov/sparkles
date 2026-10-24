@@ -738,8 +738,10 @@ successful parse owns all decoded strings/binary data and does not borrow
 `SdlString` is `SharedBuffer!(char, 256)`. Writer templates infer safety and
 allocation attributes from the supplied writer. The default allocator path for
 the document engine is `@safe pure nothrow @nogc` after allocation is expressed
-through the allocator protocol; file helpers necessarily perform I/O and are
-not `pure`.
+through the allocator protocol. Typed serde is `@safe pure` too: every
+`fromSDL` overload, sink overloads included, and `toSDL`, `writeSDL`, and
+`writeSdlDocument` over a `@safe pure` writer such as `SdlString`. Only the
+file helpers perform I/O and are not `pure`.
 
 `readSDLFile` reads bytes without path expansion, uses the path as source name,
 parses, then decodes. `writeSDLFile` canonicalizes first, recursively creates
