@@ -20,6 +20,7 @@ in
     ./build-apk.nix
     ./build-d-android-lib.nix
     ./build-d-android-tests.nix
+    ./base-tests.nix
     ./font-tests.nix
     ./hello.nix
     ./hue.nix
@@ -78,6 +79,9 @@ in
         hue-apk-unsigned = config.packages.hue-apk-unsigned;
         hue-aab-unsigned = config.packages.hue-aab-unsigned;
         hello-apk = config.packages.hello-apk;
+        # sparkles:base's unit tests per ABI: its Bionic code paths (the sync
+        # parker, the text stack) compiled against the real C library.
+        base-android-tests = config.packages.base-android-tests;
         # sparkles:font's unit tests per ABI (FTA7), run by sparkles:test-runner;
         # building them keeps the library and the runner cross-compiling.
         font-android-tests = config.packages.font-android-tests;
@@ -98,6 +102,7 @@ in
       # contain it either.
       legacyPackages.androidPackageNames = [
         "all-android"
+        "base-android-tests"
         "font-android-tests"
         "freetype-android"
         "harfbuzz-android"
