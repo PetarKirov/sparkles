@@ -1562,7 +1562,7 @@ private void attachPhantom(in OutlinePoint[4] phantom, scope OutlineWorkspace ws
             point.x -= phantom[0].x;
 }
 private FontResult!GlyphOutline expandGlyf(in Instance inst, uint gid,
-    ref SegmentWriter writer, return scope OutlineWorkspace ws)
+    ref SegmentWriter writer, return scope OutlineWorkspace ws, bool requireMetrics = true)
 {
     const face = inst.face;
     auto tables = glyfTables(face);
@@ -1573,6 +1573,7 @@ private FontResult!GlyphOutline expandGlyf(in Instance inst, uint gid,
     Expander e;
     e.face = face;
     e.inst = inst;
+    e.requireMetrics = requireMetrics;
     e.tables = tables.value;
     e.ws = ws;
     const expanded = expandGlyph(e, gid, Transform.init, 0, null);
@@ -1685,11 +1686,40 @@ FontResult!DesignValue phantomAdvance(in Instance inst, uint gid, scope ref Poin
     return fontOk(DesignValue(phantom.value[1].x - phantom.value[0].x, inst.unitsPerEm));
 }
 
-private FontResult!(OutlinePoint[4]) variedPhantom(in Instance inst, uint gid,
+/**
+The vertical advance of glyph `gid` at `inst` from its phantom points
+(FTO5): the span between phantom points 2 and 3 after `gvar`, which is
+the advance a face without `VVAR` uses. Without a usable `vmtx` entry the
+stored span is `unitsPerEm`, as HarfBuzz places it. Costs as `glyphPoint`.
+*/
+FontResult!DesignValue phantomVerticalAdvance(in Instance inst, uint gid,
     scope ref PointWorkspace ws)
 {
+    const phantom = variedPhantom(inst, gid, ws, false);
+    if (phantom.hasError)
+        return fontErr!DesignValue(phantom.error);
+    return fontOk(DesignValue(phantom.value[2].y - phantom.value[3].y, inst.unitsPerEm));
+}
+
+/**
+The top phantom point's y of glyph `gid` at `inst` (FTO5): the stored
+outline `yMax` plus the `vmtx` top side bearing, moved by `gvar`. This is
+the vertical origin of a `glyf` face without `VORG`. Costs as `glyphPoint`.
+*/
+FontResult!DesignValue phantomTop(in Instance inst, uint gid, scope ref PointWorkspace ws)
+{
+    const phantom = variedPhantom(inst, gid, ws, false);
+    if (phantom.hasError)
+        return fontErr!DesignValue(phantom.error);
+    return fontOk(DesignValue(phantom.value[2].y, inst.unitsPerEm));
+}
+
+/// The varied phantom points; the vertical pair alone needs no `hmtx`.
+private FontResult!(OutlinePoint[4]) variedPhantom(in Instance inst, uint gid,
+    scope ref PointWorkspace ws, bool requireMetrics = true)
+{
     SegmentWriter writer;
-    const result = expandGlyf(inst, gid, writer, ws.outline);
+    const result = expandGlyf(inst, gid, writer, ws.outline, requireMetrics);
     if (result.hasError)
         return fontErr!(OutlinePoint[4])(result.error);
     if (!result.value.hasPhantom)

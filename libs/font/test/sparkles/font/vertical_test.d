@@ -259,9 +259,9 @@ unittest
 {
     auto ws = makeUnique!PointWorkspace();
     auto s = standard();
-    // No VVAR at nonzero coordinates: phantom points are M3's.
-    const none = at(build(s), one).verticalAdvance(1, *ws).error;
-    assert(none.kind == FontErrorKind.unsupportedCapability && none.tag == Tag("VVAR"));
+    // No VVAR and no gvar at nonzero coordinates: the stored advance, as HarfBuzz.
+    const none = at(build(s), one).verticalAdvance(1, *ws).value;
+    assert(none.present && none.advance.design == du(900));
     s.vvar = vvarTable(store([1]), null, null, 2);
     assert(at(build(s), one).verticalAdvance(1, *ws).error.kind == FontErrorKind.unsupportedVersion);
     s.vvar = vvarTable(null);
@@ -319,7 +319,7 @@ unittest
 {
     auto ws = makeUnique!PointWorkspace();
     auto s = standard();
-    // vmtx and glyf: the M3 rule — top side bearing (20) plus yMax (100).
+    // vmtx and glyf: the top phantom point — yMax (100) plus top side bearing (20).
     s.glyf = true;
     const fallback = at(build(s)).verticalOrigin(1, *ws);
     assert(fallback.hasValue && fallback.value.source == VerticalOriginSource.vmtxGlyph

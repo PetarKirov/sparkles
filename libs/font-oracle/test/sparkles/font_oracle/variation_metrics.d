@@ -389,19 +389,22 @@ FTM20, FTM21. HarfBuzz's vertical advance is the pen movement in its y-up
 space, so it is the negated `vmtx` advance (`hb_font_get_glyph_v_advance`
 returns `em_scale_y(-advance)`). Its vertical origin is the offset from the
 horizontal origin to the vertical one in the same y-up space: `y` is
-`VORG`'s `vertOriginY` as stored (plus the `VVAR` origin delta), the same
-sign as ours, and `x` is half the horizontal advance, which this page does
-not report.
+`VORG`'s `vertOriginY` as stored (plus the `VVAR` origin delta), or in a
+`glyf` face without `VORG` its top phantom point, the same sign as ours, and
+`x` is half the horizontal advance, which this page does not report. A face
+without `VVAR` varies its advances by the `gvar` phantom points on both
+sides; HarfBuzz rounds every varied advance to a whole unit.
 */
 @("oracle.vertical.advancesAndOrigins")
 @system
 unittest
 {
     auto ws = makeUnique!PointWorkspace();
-    size_t vmtxFaces, vorgFaces, advances, origins, clamped, unsupported, otherErrors;
+    size_t vmtxFaces, vorgFaces, advances, origins, phantomOrigins, clamped, otherErrors;
     eachFace((file, face, ref hb) {
         const hasVmtx = face.has(Tag("vhea")) && face.has(Tag("vmtx"));
         const hasVorg = face.has(Tag("VORG"));
+        const hasPhantomOrigin = !hasVorg && hasVmtx && face.has(Tag("glyf"));
         if (!hasVmtx && !hasVorg)
             return;
         Instance[] insts = [at(face, null, file)];
@@ -425,12 +428,7 @@ unittest
                         ++advances;
                     }
                     else if (ours.hasError)
-                    {
-                        if (ours.error.kind == FontErrorKind.unsupportedCapability)
-                            ++unsupported;
-                        else
-                            ++otherErrors;
-                    }
+                        ++otherErrors;
                     else if (theirs == 0 && ours.value.advance.design.raw < -unit / 2)
                         ++clamped;
                     else
@@ -439,22 +437,26 @@ unittest
                         ++advances;
                     }
                 }
-                if (hasVorg)
+                if (hasVorg || hasPhantomOrigin)
                 {
                     const ours = inst.verticalOrigin(gid, *ws);
                     assert(ours.hasValue && ours.value.present, file);
                     hb_position_t x, y;
                     assert(hb_font_get_glyph_v_origin(hb.font, gid, &x, &y), file);
                     assert(agrees(ours.value.y.design.raw, long(y) * unit, inst.allZero), file);
-                    ++origins;
+                    if (hasVorg)
+                        ++origins;
+                    else
+                        ++phantomOrigins;
                 }
             }
         }
     });
     stderr.writefln("oracle.vertical.advancesAndOrigins: %s faces with vhea+vmtx, %s with VORG; "
-        ~ "%s advances, %s origins agree; excluded: %s clamped at zero, %s without VVAR, "
+        ~ "%s advances, %s VORG and %s phantom-point origins agree; excluded: %s clamped at zero, "
         ~ "%s other VVAR errors",
-        vmtxFaces, vorgFaces, advances, origins, clamped, unsupported, otherErrors);
+        vmtxFaces, vorgFaces, advances, origins, phantomOrigins, clamped, otherErrors);
+    assert(otherErrors == 0);
     if (vmtxFaces == 0)
         skipTest("no bundled face has vhea and vmtx");
 }

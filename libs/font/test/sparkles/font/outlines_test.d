@@ -317,6 +317,39 @@ unittest
     assert(without[2].y == 100L << 16 && without[3].y == -1948L << 16);
 }
 
+/// FTO5, FTM20, FTM21: without `VVAR` or `VORG`, the vertical phantom points carry the varied metrics.
+@("outlines.gvar.verticalPhantom")
+@safe pure nothrow
+unittest
+{
+    auto pws = makeUnique!PointWorkspace();
+    const glyph = simpleGlyph([[0, 0, 1], [100, 100, 1]]);
+    // The top phantom point (index 4) moves up 30, the bottom one (index 5) down 20.
+    const data = glyphVarData([16_384], [0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 30, -20]);
+    auto tables = minimalTables(1);
+    tables ~= TableData("hhea", hhea(1));
+    tables ~= TableData("hmtx", hmtx([[500, 0]]));
+    tables ~= TableData("vhea", vheaTable(1));
+    tables ~= TableData("vmtx", vmtxTable([[1200, 50]]));
+    tables ~= TableData("loca", locaTable([glyph]));
+    tables ~= TableData("glyf", glyfTable([glyph]));
+    tables ~= TableData("fvar", fvarTable([FvarAxis("wght", -65_536, 0, 65_536)]));
+    tables ~= TableData("gvar", gvarTable(1, data));
+    const bytes = sfnt(tables);
+    const varied = instanceOf(bytes, 1);
+    // Stored: top 100 + 50 = 150, bottom 150 − 1200; varied: 180 and −1070.
+    assert(phantomTop(varied, 0, *pws).value.raw == 180L << 16);
+    assert(phantomVerticalAdvance(varied, 0, *pws).value.raw == 1_250L << 16);
+    const advance = verticalAdvance(varied, 0, *pws).value;
+    assert(advance.present && advance.advance.design.raw == 1_250L << 16);
+    const origin = verticalOrigin(varied, 0, *pws).value;
+    assert(origin.source == VerticalOriginSource.vmtxGlyph && origin.y.design.raw == 180L << 16);
+    // At the default nothing varies, and no gvar byte is read (FTM14).
+    const flat = instanceOf(bytes, 0);
+    assert(verticalAdvance(flat, 0, *pws).value.advance.design.raw == 1_200L << 16);
+    assert(verticalOrigin(flat, 0, *pws).value.y.design.raw == 150L << 16);
+}
+
 @("outlines.gvar.pointsAndPhantom")
 @safe pure nothrow
 unittest
