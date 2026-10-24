@@ -787,8 +787,19 @@ unittest
 
     import std.logger : sharedLog;
 
+    import core.stdc.stdio : fclose, fopen;
+
     if (!"/dev/full".exists)
         skipTest("no /dev/full to fail writes on");
+    // Android's SELinux policy denies the open itself, mode 666 or not.
+    const writable = () @trusted {
+        auto f = fopen("/dev/full", "a");
+        if (f !is null)
+            fclose(f);
+        return f !is null;
+    }();
+    if (!writable)
+        skipTest("/dev/full cannot be opened for writing");
 
     lockLoggerGlobalTests();
     auto oldLog = sharedCoreLog;

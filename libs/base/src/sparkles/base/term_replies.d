@@ -540,10 +540,16 @@ unittest
 {
     import std.array : replace;
     import std.conv : to;
-    import std.file : readText;
+    import std.file : exists, readText;
     import std.path : buildNormalizedPath, dirName;
     import std.string : lineSplitter, startsWith;
     import sparkles.base.term_color : classifyColorDepth;
+    import sparkles.test_runner.skip : skipTest;
+
+    // The corpus is found beside the source this was built from, which a
+    // cross-built test binary (an Android device) does not carry.
+    if (!__FILE_FULL_PATH__.dirName.buildNormalizedPath("../../../test/data/term_replies").exists)
+        skipTest("the transcript corpus is not beside the source this was built from");
 
     // `O5`: the battery's replies as real terminals sent them — captured
     // with `queryBattery` itself by `examples/term-replies-capture.d`
