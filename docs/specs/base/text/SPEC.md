@@ -474,17 +474,21 @@ be described as Unicode character, word, or paragraph maxima.
 An editor asks for one boundary at a time, near the caret, in either
 direction, over text it does not hold as one contiguous slice. These
 operations answer that question without segmenting the whole source. A
-_chunked source_ is any source that yields its contiguous slices in order,
-forward or backward from the slice containing a given offset, each with its
-absolute start offset; a single slice is the trivial chunked source.
+_chunked source_ (`isChunkedSource`) reports its length and returns the
+contiguous slice holding any offset together with that slice's absolute start
+offset, so a query can move forward or backward one slice at a time; a single
+slice is the trivial chunked source. The operations live in
+`sparkles.base.text.seek`.
 
-**TXT-SEG7: Boundary queries agree with whole-source segmentation.** Proposed
+**TXT-SEG7: Boundary queries agree with whole-source segmentation.**
 `nextGraphemeBoundary(src, at)` and `previousGraphemeBoundary(src, at)`
 **must** return the nearest default extended grapheme boundary strictly after,
 respectively strictly before, offset `at`, or the source end, respectively
-0, when none exists. Proposed `isGraphemeBoundary(src, at)` **must** answer
-whether `at` is one. For every source and every offset, each answer **must**
-equal the one implied by `graphemeBoundaries` over the whole source. The
+0, when none exists. `isGraphemeBoundary(src, at)` **must** answer
+whether `at` is one. Malformed bytes are read as `UtfMode.replacement`
+reads them, one U+FFFD per maximal subpart. For every source and every
+offset, each answer **must** equal the one implied by scanning the whole
+source with `scanGraphemeStream` in that mode. The
 backward query **must** find its answer by resynchronising at an offset
 where segmentation state is known, such as a preceding boundary that no
 rule can join across, and **must not** scan from the source start unless
@@ -492,7 +496,8 @@ no such offset exists; regional-indicator parity and Indic conjunct context
 **must** be resolved exactly, however far back they reach, and the work
 **must** be linear in the distance from `at` back to the resynchronisation
 offset. An `at` beyond the source length is a programmer error; an `at`
-inside a UTF-8 sequence is answered as for the start of that sequence.
+inside a UTF-8 sequence is answered as for the start of that sequence,
+except that it is never itself a boundary.
 
 **TXT-SEG8: Chunked sources.** Every operation in this section **must**
 accept a chunked source and **must** return the same results for every
@@ -501,16 +506,20 @@ UTF-8 sequence or a grapheme cluster. A query **must** be `@safe pure
 nothrow @nogc` whenever the source's chunk access is, and **must not** copy
 the source.
 
-**TXT-SEG9: Word segments for motion.** Proposed `nextWordSegment(src, at)`
-and `previousWordSegment(src, at)` **must** return the default UAX #29 word
-segment adjacent to `at` in that direction, with its kind: `word` when the
-segment contains a scalar whose General_Category is a letter (`L*`), a
-number (`N*`) or connector punctuation (`Pc`), `space` when it consists
-only of `White_Space` scalars, and `other` otherwise. Proposed `nextBlankDelimited(src, at)` and
-`previousBlankDelimited(src, at)` **must** return the run of
-non-`White_Space` graphemes adjacent to `at`. Both families **must** return
-spans whose ends are grapheme boundaries, and **must** agree with
-whole-source segmentation as TXT-SEG7 requires.
+**TXT-SEG9: Word segments for motion.** A _word segment_ runs between
+consecutive offsets that are both default UAX #29 word boundaries and
+grapheme boundaries, so no segment splits a cluster. `nextWordSegment(src,
+at)` **must** return the segment with `start <= at < end`, and
+`previousWordSegment(src, at)` the one with `start < at <= end`, each empty
+at the source end it faces, with its kind: `word` when the segment contains
+a scalar whose General*Category is a letter (`L*`), a number (`N*`) or
+connector punctuation (`Pc`), `space`when it consists only of`White_Space`scalars, and`other` otherwise. A grapheme is \_blank* when
+its first scalar is `White_Space`. `nextBlankDelimited(src, at)` **must**
+return the nearest maximal run of non-blank graphemes that ends after `at`,
+and `previousBlankDelimited(src, at)` the nearest one that starts before
+`at`, each empty at the source end it faces when there is none. Both
+families **must** agree with whole-source segmentation as TXT-SEG7
+requires.
 
 _Rationale:_ Readline kills a word with `Ctrl-W` back to whitespace but
 moves with `Alt-B`/`Alt-F` over alphanumeric words; an editor binding both

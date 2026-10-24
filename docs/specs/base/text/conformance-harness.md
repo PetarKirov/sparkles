@@ -68,7 +68,7 @@ independent-review gates remain open as recorded in
 
 | Layer  | Checks                                                               | Oracle                                                                              |
 | ------ | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| **0**  | segmentation: `byGraphemeCluster` boundaries                         | the official `GraphemeBreakTest.txt` (`÷`/`×` ground truth)                         |
+| **0**  | `byGraphemeCluster` boundaries; `seek` queries from every offset     | the official `GraphemeBreakTest.txt` (`÷`/`×` ground truth)                         |
 | **1**  | per-code-point width over **all** of `0..0x10FFFF`                   | a clean-room oracle re-derived from raw UCD (`oracle.d`)                            |
 | **2**  | cluster width + single-cluster segmentation of every RGI emoji       | `emoji-test.txt` + the clean-room oracle                                            |
 | **3**  | `visibleWidth` over an emoji + segmentation corpus                   | **kitty** `wcswidth` (CLI binary, `+runpy`)                                         |
@@ -79,7 +79,7 @@ independent-review gates remain open as recorded in
 | **8**  | `visibleWidth` over the corpus                                       | **notcurses** `ncstrwidth` (library)                                                |
 | **9**  | `codepointWidth` (assigned) + `visibleWidth` (corpus)                | **Rust** `unicode-width` crate (helper binary)                                      |
 | **10** | `codepointWidth` (assigned) + `visibleWidth` (corpus)                | **Python** jquast `wcwidth`, **embedded in-process via PyD**                        |
-| **11** | default word boundaries in UTF-32 and UTF-8                          | official `WordBreakTest.txt`                                                        |
+| **11** | word boundaries in UTF-32 and UTF-8; `seek` segments from any offset | official `WordBreakTest.txt`                                                        |
 | **12** | default sentence boundaries in UTF-32 and UTF-8                      | official `SentenceBreakTest.txt`                                                    |
 | **13** | default line opportunities and mandatory breaks                      | official `LineBreakTest.txt`                                                        |
 | **14** | bidi levels, order, maps, paragraph and line behavior                | official `BidiTest.txt` and `BidiCharacterTest.txt`                                 |

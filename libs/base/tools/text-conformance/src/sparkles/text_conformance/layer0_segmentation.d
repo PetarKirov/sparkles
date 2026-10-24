@@ -23,7 +23,11 @@ import std.range : walkLength;
 import std.string : strip, lineSplitter;
 import std.utf : byDchar;
 
+import std.format : format;
 import sparkles.base.text.grapheme : byGraphemeCluster;
+
+import sparkles.text_conformance.boundary_corpus : encodeBoundaryRecord, parseBoundaryRecord;
+import sparkles.text_conformance.seek_corpus : graphemeSeekMismatches;
 
 import sparkles.text_conformance.config : Config;
 import sparkles.text_conformance.report : Divergence, LayerResult;
@@ -110,6 +114,29 @@ LayerResult runLayer0(in Config cfg)
             "cluster-length mismatch",
         );
     }
+
+    // TXT-SEG7/8: the same boundaries queried from every offset, chunked.
+    size_t seekRecords, seekAgreed;
+    foreach (raw; text.lineSplitter)
+    {
+        auto record = parseBoundaryRecord(raw);
+        if (!record.allowed.length)
+            continue;
+        size_t[] offsets;
+        const bytes = encodeBoundaryRecord(record, offsets);
+        const mismatches = graphemeSeekMismatches(bytes, offsets, record.allowed);
+        foreach (m; mismatches)
+            r.divergences ~= Divergence(0, raw.findSplit("#")[0].strip, m,
+                "the fixture's boundaries", "boundary query from an offset");
+        if (!mismatches.length)
+        {
+            r.passed++;
+            ++seekAgreed;
+        }
+        ++seekRecords;
+    }
+    r.notes ~= format("GraphemeBreakTest: %s of %s records agree when queried from every offset",
+        seekAgreed, seekRecords);
 
     return r;
 }
