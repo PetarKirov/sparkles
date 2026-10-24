@@ -17,6 +17,7 @@ import std.experimental.allocator : makeArray, expandArray, dispose;
 import std.traits : hasElaborateAssign, hasElaborateDestructor,
     hasIndirections;
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
+import std.experimental.allocator.common : platformAlignment;
 
 import sparkles.test_runner.attributes : benchmark, betterC;
 
@@ -79,7 +80,22 @@ extern (C) private pure nothrow @nogc @system
     pragma(mangle, "gc_removeRange") void pureGcRemoveRange(const void* p);
 }
 
-private struct ControlBlock { size_t refCount; }
+/*
+What `malloc` aligns every block to: two words, as C's `max_align_t` asks of
+every 64-bit target sparkles builds for. Phobos' `platformAlignment` is less
+on Windows, where LDC's `real` is a `double`, though the CRT's `malloc`
+aligns x64 blocks to 16 bytes as glibc's does.
+*/
+private enum uint mallocAlignment = max(platformAlignment, 2 * size_t.sizeof);
+
+/*
+The reference count in front of every heap block. `AffixAllocator` aligns the
+elements after it to the prefix's size, so a bare `size_t` left each block only
+8-byte aligned, and an `align(16)` element (a `float4`) misaligned: code loading
+it with an aligned SSE move faulted. Padded to `malloc`'s alignment, the
+elements get what `malloc` gives.
+*/
+private struct ControlBlock { align(mallocAlignment) size_t refCount; }
 
 /*
 `Mallocator`, restated over druntime's `pureMalloc` family.
@@ -101,9 +117,7 @@ sanctioned manual-allocation primitives.
 */
 private struct PureMallocator
 {
-    import std.experimental.allocator.common : platformAlignment;
-
-    enum uint alignment = platformAlignment;
+    enum uint alignment = mallocAlignment;
 
     @trusted @nogc nothrow pure
     void[] allocate(size_t bytes) shared const
@@ -147,6 +161,7 @@ private struct PureMallocator
 }
 
 private alias BlockAllocator = AffixAllocator!(PureMallocator, ControlBlock);
+static assert(BlockAllocator.alignment == mallocAlignment);
 
 /*
 Copies `src` onto `dst`, which must be the same length, without druntime.
@@ -1544,6 +1559,22 @@ unittest
     Buffer!(char, 16) buf;
     buf ~= "unchanged";
     assert(buf[] == "unchanged");
+}
+
+@("Buffer.heap.keepsTheElementsAlignment")
+@safe pure nothrow @nogc
+unittest
+{
+    // An `align(16)` element (a `float4`) sat 8 bytes past a 16-byte boundary
+    // while the reference count in front of the heap block was a bare
+    // `size_t`; an aligned SSE load of it faulted.
+    static struct Wide { align(16) float[4] v; }
+    UniqueBuffer!Wide buf;
+    buf.reserve(100);
+    foreach (i; 0 .. 3)
+        buf ~= Wide.init;
+    assert(buf.onHeap);
+    assert(cast(size_t) &buf[0] % Wide.alignof == 0);
 }
 
 @("Buffer.tour")
