@@ -1,6 +1,8 @@
 /** Observable owned wrapping regressions and a tiny independent exhaustive oracle. */
 module sparkles.base.text.wrap_solver_test;
 
+import sparkles.test_runner.attributes : benchmark;
+
 version (unittest)
 {
     import sparkles.base.text.wrap;
@@ -861,6 +863,37 @@ version (unittest)
         assert(mine == "aaa\nbb\ncc");
         const after = cellWrapPlan("zz yy", options);
         assert(render(after) == "zz\nyy");
+    }
+
+    @("text.wrap.bench.cellWrapPlan")
+    @benchmark @safe
+    unittest
+    {
+        import sparkles.test_runner.bench : benchIter, blackBox;
+        import std.array : replicate;
+
+        const options = WrapOptions(width: CellWidth.bounded(80),
+            whitespace: WhitespaceMode.collapse);
+        // One block per case: the runner measures the delegates after this
+        // body returns, so each must capture its own source variable.
+        {
+            const source = replicate("word ", 7)[0 .. 32];
+            benchIter({
+                blackBox(cellWrapPlan(blackBox(source), options).lines.length);
+            }, ["op": "cellWrapPlan", "size": "32"]);
+        }
+        {
+            const source = replicate("word ", 205)[0 .. 1024];
+            benchIter({
+                blackBox(cellWrapPlan(blackBox(source), options).lines.length);
+            }, ["op": "cellWrapPlan", "size": "1024"]);
+        }
+        {
+            const source = replicate("word ", 820)[0 .. 4096];
+            benchIter({
+                blackBox(cellWrapPlan(blackBox(source), options).lines.length);
+            }, ["op": "cellWrapPlan", "size": "4096"]);
+        }
     }
 }
 version (OwnedWrapSmoke)
