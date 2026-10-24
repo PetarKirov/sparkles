@@ -3,6 +3,7 @@
     name "gen-dsv-corpus"
     dependency "sparkles:dsv" path="../../.."
     dependency "sparkles:base" path="../../.."
+    dependency "sparkles:build-primitives" path="../../.."
     buildType "checked" {
         buildOptions "optimize" "inline" "debugInfo"
     }
@@ -57,6 +58,7 @@ import std.string : indexOf, lineSplitter, strip;
 import sparkles.dsv : ColumnType, decodeCell, detectHeader, Dialect, DsvDoc,
     inferColumnTypes, parseDsv, seedForExtension, sniff;
 import sparkles.base.buffer : SharedBuffer;
+import sparkles.build_primitives.dub_manifest : DubBuildSettings, readDubManifest;
 
 int main(string[] args)
 {
@@ -321,17 +323,19 @@ string genDeps()
             const sdl = buildPath(e.name, "dub.sdl");
             if (!sdl.exists)
                 continue;
-            foreach (line; readText(sdl).lineSplitter)
-            {
-                const t = line.strip;
-                if (!t.startsWith("dependency \""))
-                    continue;
-                const rest = t["dependency \"".length .. $];
-                const q = rest.indexOf('"');
-                if (q < 0)
-                    continue;
-                data ~= [baseName(e.name), rest[0 .. q], sdl];
-            }
+            const manifest = readDubManifest(sdl);
+            enforce(manifest.hasValue, manifest.error.text);
+            // Every declaration counts, whichever configuration or build
+            // type holds it.
+            const m = manifest.value;
+            const(DubBuildSettings)[] scopes = [m.buildSettings];
+            foreach (ref c; m.configurations)
+                scopes ~= c.buildSettings;
+            foreach (ref t; m.buildTypes)
+                scopes ~= t.buildSettings;
+            foreach (ref s; scopes)
+                foreach (dependency; s.dependencies)
+                    data ~= [baseName(e.name), dependency.name, sdl];
         }
     data.sort!((a, b) => a[0] < b[0] || (a[0] == b[0] && a[1] < b[1]));
     return serialize(rows ~ data, Dialect('|'));
