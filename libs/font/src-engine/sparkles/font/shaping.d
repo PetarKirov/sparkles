@@ -146,6 +146,11 @@ bytes and cannot outlive them in `@safe` code; it cannot be copied.
 engine is not `pinnedEngine`, or `limitExceeded` naming `engineBuffer`
 when an allocation failed, and `shape` returns that error. A
 default-initialized `Shaper` shapes nothing: `unsupportedEngine`.
+
+Building one allocates (FTB4): HarfBuzz's objects, and the callback state
+the library's advances and origins read — a `PointWorkspace` of about
+2.6 MiB among it — once, in a `Unique`. Shaping allocates only inside
+HarfBuzz, whose buffer the run's length bounds.
 */
 struct Shaper
 {
