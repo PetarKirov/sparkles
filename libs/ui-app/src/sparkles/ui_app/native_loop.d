@@ -79,8 +79,9 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
     out CellFont cell) @system
 {
     import std.file : read;
+    import sparkles.base.unique : makeUnique;
     import sparkles.font : cellMetrics, CellMetrics, charMap, fontErr, instance, InstanceSize,
-        openFace, Ppem;
+        openFace, PointWorkspace, Ppem;
     import sparkles.raylib_text.font_discovery : FontSources;
     import sparkles.raylib_text.font_set : resolveFontPath;
 
@@ -97,6 +98,9 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
     auto cmap = charMap(face.value);
     if (cmap.hasError)
         return false;
+    auto points = makeUnique!PointWorkspace();
+    if (points.empty)
+        return false;
     // The size names the line's ascent plus descent in pixels, as the raylib
     // arm's fonts do, so both arms lay out the same grid: measured once at
     // that many pixels per em, then at the em that gives that line.
@@ -105,7 +109,7 @@ bool measureCellFont(in FontRequest request, in string[] extraSources, int px,
         const size = Ppem.fromInteger(ppem < 1 ? 1 : ppem);
         auto inst = instance(face.value, InstanceSize.pixels(size.value), null);
         return inst.hasError ? fontErr!CellMetrics(inst.error)
-            : inst.value.cellMetrics(cmap.value, ppem < 1 ? 1 : ppem);
+            : inst.value.cellMetrics(cmap.value, ppem < 1 ? 1 : ppem, *points);
     }
     px = px < 1 ? 1 : px;
     const probe = at(px);

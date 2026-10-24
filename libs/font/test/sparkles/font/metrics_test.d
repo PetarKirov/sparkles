@@ -15,6 +15,7 @@ import std.file : dirEntries, SpanMode;
 import std.path : baseName;
 
 import sparkles.base.text.layout_units : LayoutUnit;
+import sparkles.base.unique : makeUnique;
 import sparkles.test_runner.skip : skipTest;
 
 import sparkles.font.cmap : charMap, CharMap;
@@ -25,6 +26,7 @@ import sparkles.font.fixtures;
 import sparkles.font.instance : axes, Instance, instance, InstanceSize, UserCoordinate;
 import sparkles.font.tables : fvar;
 import sparkles.font.metrics;
+import sparkles.font.outlines : PointWorkspace;
 import sparkles.font.units : DesignValue, Ppem;
 
 private enum one = 65_536; // 1.0 in F16.16
@@ -393,32 +395,35 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     Spec s;
     const bytes = build(s);
-    assert(raw(at(bytes).advance(1)) == du(600).raw);
-    assert(at(bytes).advance(9).error.kind == FontErrorKind.indexOutOfRange);
+    assert(raw(at(bytes).advance(1, *ws)) == du(600).raw);
+    assert(at(bytes).advance(9, *ws).error.kind == FontErrorKind.indexOutOfRange);
     // No fvar: the instance is the default, so HVAR is never needed.
-    assert(at(bytes, one).advance(1).value.design == du(600));
+    assert(at(bytes, one).advance(1, *ws).value.design == du(600));
 }
 
 @("metrics.FTV14.hvarIdentityMap")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     Spec s;
     s.variable = true;
     s.hvar = hvarTable(store([0, 10, 20, -30]));
     const bytes = build(s);
-    assert(at(bytes, one).advance(2).value.design == du(520));
-    assert(at(bytes, one).advance(3).value.design == du(620));
-    assert(at(bytes, one / 2).advance(1).value.design == du(605));
-    assert(at(bytes).advance(2).value.design == du(500));
+    assert(at(bytes, one).advance(2, *ws).value.design == du(520));
+    assert(at(bytes, one).advance(3, *ws).value.design == du(620));
+    assert(at(bytes, one / 2).advance(1, *ws).value.design == du(605));
+    assert(at(bytes).advance(2, *ws).value.design == du(500));
 }
 
 @("metrics.FTV14.hvarExplicitMap")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     // Glyphs 0–3 map to items 3, 2, 1, 0; a glyph past the map uses its last entry.
     foreach (format; [0, 1])
     {
@@ -427,9 +432,9 @@ unittest
         s.advances = [0, 600, 500, 650, 700];
         s.hvar = hvarTable(store([1, 2, 3, 4]), deltaSetIndexMap([[0, 3], [0, 2], [0, 1], [0, 0]], 4, 1, format));
         const bytes = build(s);
-        assert(at(bytes, one).advance(1).value.design == du(603));
-        assert(at(bytes, one).advance(3).value.design == du(651));
-        assert(at(bytes, one).advance(4).value.design == du(701));
+        assert(at(bytes, one).advance(1, *ws).value.design == du(603));
+        assert(at(bytes, one).advance(3, *ws).value.design == du(651));
+        assert(at(bytes, one).advance(4, *ws).value.design == du(701));
     }
 }
 
@@ -437,55 +442,59 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     Spec s;
     s.variable = true;
     s.hvar = hvarTable(store([0, 10]), null, 2);
     const bytes = build(s);
-    assert(at(bytes, one).advance(1).error.kind == FontErrorKind.unsupportedVersion);
-    assert(at(bytes).advance(1).value.design == du(600));
+    assert(at(bytes, one).advance(1, *ws).error.kind == FontErrorKind.unsupportedVersion);
+    assert(at(bytes).advance(1, *ws).value.design == du(600));
 }
 
 @("metrics.FTV14.hvarUnreadable")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     // A store of the wrong format: every varied advance is its error, with no fallback.
     Spec s;
     s.variable = true;
     s.hvar = hvarTable(itemVariationStore(1, [[[0, f2one, f2one]]], [VarData([0], 1, false, [[1], [2]])], 2));
     const bytes = build(s);
-    const e = at(bytes, one).advance(1).error;
+    const e = at(bytes, one).advance(1, *ws).error;
     assert(e.kind == FontErrorKind.unsupportedVersion && e.tag == Tag("HVAR") && e.tableOffset == 20);
-    assert(at(bytes).advance(1).value.design == du(600));
+    assert(at(bytes).advance(1, *ws).value.design == du(600));
     // A truncated header.
     s.hvar = hvarTable(store([0]))[0 .. 12];
-    assert(at(build(s), one).advance(1).error.kind == FontErrorKind.truncated);
+    assert(at(build(s), one).advance(1, *ws).error.kind == FontErrorKind.truncated);
     // A null store offset.
     s.hvar = hvarTable(null);
-    assert(at(build(s), one).advance(1).error.kind == FontErrorKind.badValue);
+    assert(at(build(s), one).advance(1, *ws).error.kind == FontErrorKind.badValue);
 }
 
 @("metrics.FTV14.noHvar")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     // Without HVAR (and without gvar) the advance at nonzero coordinates
     // is the stored hmtx advance: the phantom span (FTO5).
     Spec s;
     s.variable = true;
     const bytes = build(s);
-    assert(at(bytes, one).advance(1).value.design == du(600));
-    assert(at(bytes).advance(1).value.design == du(600));
+    assert(at(bytes, one).advance(1, *ws).value.design == du(600));
+    assert(at(bytes).advance(1, *ws).value.design == du(600));
 }
 
 @("metrics.FTV14.negativeAdvanceNotClamped")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     Spec s;
     s.variable = true;
     s.hvar = hvarTable(store([0, -700]));
-    const a = at(build(s), one).advance(1).value;
+    const a = at(build(s), one).advance(1, *ws).value;
     assert(a.design == du(-100));
     assert(a.physical.value.raw < 0);
 }
@@ -494,16 +503,17 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     Spec s;
     const bytes = build(s);
     // 600 units at 12 pt and upem 1000: 7.2 pt.
-    const physical = at(bytes).advance(1).value;
+    const physical = at(bytes).advance(1, *ws).value;
     assert(physical.physical.value == LayoutUnit(cast(long)(7.2 * 65_536 + 0.5)));
     assert(physical.pixels.error.kind == FontErrorKind.unsupportedCapability);
     // The device scale changes pixels, never the physical value.
     assert(physical.pixels(96).value == 9.6 && physical.pixels(192).value == 19.2);
     assert(physical.pixels(0).error.kind == FontErrorKind.badValue);
-    const pixel = at(bytes, 0, InstanceSize.pixels(Ppem.fromInteger(20).value)).advance(1).value;
+    const pixel = at(bytes, 0, InstanceSize.pixels(Ppem.fromInteger(20).value)).advance(1, *ws).value;
     assert(pixel.pixels.value == 12.0);
     assert(pixel.physical.error.kind == FontErrorKind.unsupportedCapability);
     assert(pixel.pixels(96).error.kind == FontErrorKind.unsupportedCapability);
@@ -514,33 +524,36 @@ unittest
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     Spec s;
     // At a 1-tick em, a 500-unit advance is half a tick: alone it rounds to 0 (ties to even).
     const inst = at(build(s), 0, InstanceSize.physical(LayoutUnit(1)));
-    assert(inst.advance(2).value.physical.value == LayoutUnit(0));
-    const run = inst.measureRun([2, 2]).value;
+    assert(inst.advance(2, *ws).value.physical.value == LayoutUnit(0));
+    const run = inst.measureRun([2, 2], *ws).value;
     assert(run.design == du(1_000) && run.physical.value == LayoutUnit(1));
-    assert(inst.measureRun(null).value.design == du(0));
+    assert(inst.measureRun(null, *ws).value.design == du(0));
 }
 
 @("metrics.FTM18.measureRunFirstErrorWins")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     // Glyph 3 maps to an inner index past the data's items: badValue.
     Spec s;
     s.variable = true;
     s.hvar = hvarTable(store([0, 1, 2]), deltaSetIndexMap([[0, 0], [0, 1], [0, 2], [0, 9]], 4, 1));
     const inst = at(build(s), one);
-    assert(inst.measureRun([1, 3, 99]).error.kind == FontErrorKind.badValue);
-    assert(inst.measureRun([1, 99, 3]).error.kind == FontErrorKind.indexOutOfRange);
-    assert(inst.measureRun([1, 2]).value.design == du(1_103));
+    assert(inst.measureRun([1, 3, 99], *ws).error.kind == FontErrorKind.badValue);
+    assert(inst.measureRun([1, 99, 3], *ws).error.kind == FontErrorKind.indexOutOfRange);
+    assert(inst.measureRun([1, 2], *ws).value.design == du(1_103));
 }
 
 @("metrics.FTM18.measureRunOverflow")
 @safe pure nothrow
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     // 2^31 − 1 units a glyph is about 2^47 raw; 2^16 + 1 of them pass 2^63.
     Spec s;
     s.variable = true;
@@ -548,8 +561,8 @@ unittest
     const inst = at(build(s), one);
     auto gids = new uint[](65_537);
     gids[] = 1;
-    assert(inst.measureRun(gids[0 .. 4]).hasValue);
-    assert(inst.measureRun(gids).error.kind == FontErrorKind.arithmeticExhausted);
+    assert(inst.measureRun(gids[0 .. 4], *ws).hasValue);
+    assert(inst.measureRun(gids, *ws).error.kind == FontErrorKind.arithmeticExhausted);
 }
 
 // ---------------------------------------------------------------------------
@@ -559,9 +572,10 @@ unittest
 /// The cell metrics of `bytes` at `ppem`, at `TEST` = `coord`.
 private auto cell(const(ubyte)[] bytes, uint ppem = 10, int coord = 0) @safe pure nothrow
 {
+    auto ws = makeUnique!PointWorkspace();
     const inst = at(bytes, coord);
     const cm = inst.face.charMap.value;
-    return inst.cellMetrics(cm, ppem);
+    return inst.cellMetrics(cm, ppem, *ws);
 }
 
 @("metrics.FTM19.roundingTable")
@@ -699,6 +713,7 @@ unittest
 @system
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     if (fontsPath is null)
         return skipTest("SPARKLES_FONTS_PATH is unset");
     size_t faces, varied;
@@ -719,7 +734,7 @@ unittest
         const cm = face.charMap;
         if (cm.hasValue)
             foreach (ppem; [14, 16, 18])
-                assert(inst.cellMetrics(cm.value, ppem).hasValue, entry.name);
+                assert(inst.cellMetrics(cm.value, ppem, *ws).hasValue, entry.name);
         if (!face.fvar.hasValue || !face.has(Tag("HVAR")))
             continue;
         // At every axis maximum, varied metrics and advances read without error.
@@ -735,7 +750,7 @@ unittest
         uint[] gids;
         foreach (gid; 0 .. face.numGlyphs < 200 ? face.numGlyphs : 200)
             gids ~= gid;
-        assert(bold.measureRun(gids).hasValue, entry.name);
+        assert(bold.measureRun(gids, *ws).hasValue, entry.name);
     }
     assert(faces > 50 && varied > 0);
 }
@@ -772,6 +787,7 @@ Heights 20, 22, 25; baseline = ascent.
 @system
 unittest
 {
+    auto ws = makeUnique!PointWorkspace();
     if (fontsPath is null)
         return skipTest("SPARKLES_FONTS_PATH is unset");
     static struct Expected
@@ -787,7 +803,7 @@ unittest
         const cm = face.charMap.value;
         foreach (row; rows)
         {
-            const c = inst.cellMetrics(cm, row.ppem).value;
+            const c = inst.cellMetrics(cm, row.ppem, *ws).value;
             assert(c.lineSource == source && c.widthSource == CellMetrics.WidthSource.digitZero, name);
             assert(c.width == row.width && c.ascent == row.ascent && c.descent == row.descent, name);
             assert(c.lineGap == 0 && c.height == row.height && c.baseline == row.ascent, name);
