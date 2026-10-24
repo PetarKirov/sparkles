@@ -14,7 +14,7 @@ import sparkles.base.text.grapheme : byGraphemeCluster;
 import sparkles.base.unique : makeUnique;
 
 import sparkles.font;
-import sparkles.font.corpus : bundled, fontsPath;
+import sparkles.font.corpus : bundled, fontsPath, testFace, testFontsPath;
 import sparkles.test_runner.skip : skipTest;
 
 private Instance instanceOf(const(ubyte)[] bytes, const(UserCoordinate)[] coords = null) @safe
@@ -97,7 +97,8 @@ private long toPositionSteps(long raw) @safe => (raw >= 0 ? raw + 32 : raw - 32)
 /**
 FTS1, FTM20, FTM21: vertical advances and origins are the library's, with
 x at half the horizontal advance. (This face's `vmtx` advances are all 0;
-`shaping.FTS1.verticalUnrounded` varies a real one.)
+`shaping.FTS1.verticalUnrounded` and `shaping.FTS1.verticalVariableFaces`
+vary real ones.)
 */
 @("shaping.FTS1.verticalVariable")
 @system
@@ -162,6 +163,50 @@ unittest
     const info = shapeVertical(s, o, "A", Tag("Latn"));
     assert(info.hasValue && info.value.glyphCount == 1 && o.glyphs[0].glyphId == 1);
     assert(o.glyphs[0].yAdvance.raw == -(1_000L * 65_536 + 32_768));
+}
+
+/**
+FTS1, FTM20: a real face's varied vertical advances reach the shaped run.
+Adobe Blank VF's `HGHT` axis takes every advance from 0 to 1,000 units, in
+its `CFF2` face through `VVAR` and in its `glyf` face too; a third of the
+way up the advance is fractional, which HarfBuzz alone would round to a
+whole unit, and the run keeps it to a position step.
+*/
+@("shaping.FTS1.verticalVariableFaces")
+@system
+unittest
+{
+    auto ws = makeUnique!PointWorkspace();
+    if (testFontsPath() is null)
+        return skipTest("SPARKLES_FONT_TEST_CORPUS is unset");
+    enum long unit = 65_536;
+    foreach (name; ["AdobeBlankVF.otf", "AdobeBlankVF.ttf"])
+    {
+        const bytes = testFace(name);
+        foreach (height; [0, (1_000 << 16) / 3, 1_000 << 16])
+        {
+            auto inst = instanceOf(bytes, [UserCoordinate(Tag("HGHT"), height)]);
+            auto s = Shaper(inst);
+            Outputs o;
+            const info = shapeVertical(s, o, "abc", Tag("Latn"));
+            assert(info.hasValue && info.value.glyphCount == 3, name);
+            foreach (g; o.glyphs[0 .. 3])
+            {
+                const v = verticalAdvance(inst, g.glyphId, *ws).value;
+                assert(v.present, name);
+                const raw = v.advance.design.raw;
+                const diff = g.yAdvance.raw + raw;
+                assert(diff >= -32 && diff <= 32, text(name, " HGHT ", height, " gid ", g.glyphId));
+                if (height == 0)
+                    assert(raw == 0, name);
+                else if (height == 1_000 << 16)
+                    assert(raw == 1_000 * unit && g.yAdvance.raw == -raw, name);
+                else
+                    assert(raw % unit != 0 && g.yAdvance.raw % unit != 0,
+                        text(name, " gid ", g.glyphId, " advance ", raw));
+            }
+        }
+    }
 }
 
 /// FTM21: a `CFF` face's `VORG` origin, and a face without vertical metrics taking the engine's.

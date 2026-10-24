@@ -77,8 +77,11 @@ private extern (C) nothrow @nogc
 
 /**
 Asserts that `ours` equals HarfBuzz's `hb` within 1/64 font unit. A
-zero-length closing line, which the decoder keeps so the segment kinds
-never depend on coordinates (FTO4) and HarfBuzz omits, is skipped.
+closing line of zero length within that tolerance, which the decoder keeps
+so the segment kinds never depend on coordinates (FTO4) and HarfBuzz omits,
+is skipped: blended `CFF2` deltas accumulate their rounding differently on
+each side (Source Han Sans VF's gid 2227 at `wght` 900 closes 1/65,536 unit
+from its start).
 */
 private void assertMatches(scope const(OutlineSegment)[] ours, scope const(HbSegment)[] hb, string label)
 {
@@ -88,7 +91,8 @@ private void assertMatches(scope const(OutlineSegment)[] ours, scope const(HbSeg
     foreach (i, expected; hb)
     {
         if (expected.kind == SegmentKind.close && j + 1 < ours.length && ours[j].kind == SegmentKind.lineTo
-            && ours[j].end == current && ours[j + 1].kind == SegmentKind.close)
+            && near(ours[j].end.xUnits, current.xUnits) && near(ours[j].end.yUnits, current.yUnits)
+            && ours[j + 1].kind == SegmentKind.close)
             ++j;
         assert(j < ours.length, text(label, ": ", ours.length, " segments, HarfBuzz more"));
         const actual = ours[j++];
@@ -373,6 +377,6 @@ unittest
             }
         }
     }
-    assert(faces == 4, text(faces, " variable CFF2 faces in the test corpus"));
+    assert(faces == 6, text(faces, " CFF2 faces in the test corpus"));
     assert(glyphsChecked > 10_000, text(glyphsChecked, " CFF2 glyph instances"));
 }
