@@ -87,6 +87,22 @@ reading code:
   terminal. LDC's static druntime uses native ELF TLS, which references
   `__tls_get_addr`, exported by Bionic from API 29, so hue's declared
   `minSdk 26` is not a floor any device below 29 can load.
+- **The Android druntime must scan a loaded library's TLS.** On
+  x86/x86_64, stock druntime's `getTLSRange` computes a non-shared build's
+  TLS range as a static offset from `%fs:0` instead of asking
+  `__tls_get_addr`. That is right for an executable and wrong for a
+  `dlopen`'d `.so`, whose TLS block is dynamic, so the collector sweeps GC
+  memory referenced only from thread-local variables
+  ([ldc#5311](https://github.com/ldc-developers/ldc/issues/5311)). The
+  symptom was a startup SIGSEGV on the x86_64 emulator: the text wrap
+  pool's arenas were reused under it mid-plan. aarch64 already takes the
+  `__tls_get_addr` path. The fix belongs in druntime, not in each
+  thread-local variable: PetarKirov/ldc `sparkles/main` (`edc4ad31de`)
+  sends Bionic down that path on every architecture, and the Android
+  runtime carries it once it builds from that source.
+  `base.tlsGcScan.coversModuleThreadLocals`, run from
+  `packages.base-android-tests` (a `.so` loaded by a launcher), is the
+  test: it fails on the stock x86_64 runtime and passes on the fixed one.
 - `sparkles:ui-app`'s GPU loop froze every NativeActivity after one frame: a
   first frame that overran the tick asked the kqueue backend for a
   zero-length timer, which libkqueue arms as a _disarmed_ timerfd.
