@@ -1,11 +1,14 @@
 /**
 FTS11's real-record check (testing.md § Shaping): the library's reading of
-each `JSTF` table in the unfree corpus equals fontTools'. No free face
-holds a `JSTF` table; Microsoft's core Arial and Times New Roman do, and
-their licence keeps them out of every binary cache, so the corpus is
-opt-in (`nix/packages/font-unfree-corpus.nix`) and this check skips
-without it. fontTools' reading is recorded in `test/goldens/jstf.txt` by
-`tools/gen_jstf_goldens.d`, with each face's SHA-256.
+each `JSTF` table in a font corpus equals fontTools'. The bundle holds no
+`JSTF` table. SIL's Scheherazade New and Lateef do, under the OFL, so they
+sit in the test corpus (`nix/packages/font-test-corpus.nix`) and are checked
+by default. Microsoft's core Arial and Times New Roman do too, but their
+licence keeps them out of every binary cache, so that corpus is opt-in
+(`nix/packages/font-unfree-corpus.nix`) and its check skips without it.
+fontTools' readings are recorded in `test/goldens/jstf.txt` and
+`test/goldens/jstf-unfree.txt` by `tools/gen_jstf_goldens.d`, with each
+face's SHA-256.
 */
 module sparkles.font_oracle.jstf;
 
@@ -21,25 +24,47 @@ import sparkles.font;
 import sparkles.test_runner.skip : skipTest;
 
 /**
-Every script fontTools reads — its tag, its extender glyphs, whether it has
-a default language system and how many tagged ones — is the library's, and
-the library lists no script fontTools does not. The corpus's records hold
-no priority records, which the default language system's absence shows.
+SIL's Scheherazade New (4 weights) and Lateef (7 weights): every script
+fontTools reads is the library's. Their extender glyphs include
+`absAutoKashida`, which no character maps to.
 */
 @("oracle.jstf.agreesWithFontTools")
+@system
+unittest
+{
+    const corpus = environment.get("SPARKLES_FONT_TEST_CORPUS");
+    if (corpus is null)
+        return skipTest("SPARKLES_FONT_TEST_CORPUS is unset");
+    checkGoldens(corpus, "jstf.txt", faces: 11);
+}
+
+/// Microsoft's core Arial and Times New Roman, regular and bold, when the opt-in corpus is built.
+@("oracle.jstf.unfreeAgreesWithFontTools")
 @system
 unittest
 {
     const corpus = environment.get("SPARKLES_FONT_UNFREE_CORPUS");
     if (corpus is null)
         return skipTest("SPARKLES_FONT_UNFREE_CORPUS is unset: build .#sparkles-font-unfree-corpus");
+    checkGoldens(corpus, "jstf-unfree.txt", faces: 4);
+}
+
+/**
+Every script fontTools reads in the faces `golden` lists — its tag, its
+extender glyphs, whether it has a default language system and how many
+tagged ones — is the library's, and the library lists no script fontTools
+does not. No corpus's records hold priority records, which the default
+language system's absence shows.
+*/
+private void checkGoldens(string corpus, string goldenName, size_t faces) @system
+{
     assert(corpus.exists, corpus);
-    const golden = readText(buildPath(__FILE_FULL_PATH__.dirName.dirName.dirName, "goldens", "jstf.txt"));
+    const golden = readText(buildPath(__FILE_FULL_PATH__.dirName.dirName.dirName, "goldens", goldenName));
 
     const(ubyte)[] bytes;
     string name;
     Face face;
-    size_t faces, scriptsChecked;
+    size_t facesSeen, scriptsChecked;
     Tag[16] scripts;
     size_t scriptCount, scriptsSeen;
     void finishFace()
@@ -69,7 +94,7 @@ unittest
             assert(n.hasValue, name);
             scriptCount = n.value;
             scriptsSeen = 0;
-            ++faces;
+            ++facesSeen;
             continue;
         }
         // script TAG extenders G… default present|absent languages N
@@ -95,5 +120,5 @@ unittest
         ++scriptsChecked;
     }
     finishFace();
-    assert(faces == 4 && scriptsChecked == 4, text(faces, " faces, ", scriptsChecked, " scripts"));
+    assert(facesSeen == faces && scriptsChecked == faces, text(facesSeen, " faces, ", scriptsChecked, " scripts"));
 }
