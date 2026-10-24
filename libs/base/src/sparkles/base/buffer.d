@@ -1234,6 +1234,9 @@ pure nothrow @nogc
     //
     private static T[] allocateBlock(size_t blockCapacity) @trusted
     {
+        // `makeArray` checks this product; the raw path below would wrap it
+        // and hand back a block smaller than the capacity it records.
+        assert(blockCapacity <= size_t.max / T.sizeof, "Buffer: capacity overflow");
         static if (!blockNeedsInit)
         {
             auto raw = Allocator.instance.allocate(blockCapacity * T.sizeof);
@@ -1259,10 +1262,17 @@ pure nothrow @nogc
         // turn that window into a collection — the strings a buffer holds vanish
         // under it. So that case allocates (and registers) the new block first,
         // copies, and only then drops the old root and frees the old block. A
-        // pointer-free `T` has no root to keep and reallocates in place.
+        // pointer-free `T` has no root to keep and reallocates in place —
+        // unless the block holds no elements, as after `clear(releaseStorage:
+        // false)`: `realloc` would copy the whole dead block, so it is
+        // replaced instead.
         private void reallocateBlock(size_t capacity) scope @safe
         {
-            static if (hasIndirections!T)
+            static if (!hasIndirections!T)
+                const replace = _length == 0;
+            else
+                enum replace = true;
+            if (replace)
             {
                 T[] nb = allocateBlock(capacity);
                 () @trusted {
@@ -2177,6 +2187,24 @@ unittest
     assert(u.onHeap && u.capacity >= 32 && u.empty);
     u.clear();
     assert(!u.onHeap && u.empty);
+}
+
+/// Growing a kept block that holds nothing — a scratch arena's
+/// clear-then-resize — replaces it rather than copying its dead contents,
+/// and the new length reads as `T.init`, as a fresh array would.
+@("Buffer.clear.growingAnEmptyKeptBlockStartsFresh")
+@safe pure nothrow @nogc
+unittest
+{
+    HeapBuffer!(int, Storage.unique) arena;
+    arena.length = 16;
+    arena[][] = 7;
+    arena.clear();
+    assert(arena.empty && arena.onHeap, "a heap-only policy keeps its block");
+    arena.length = 4096;
+    assert(arena.capacity >= 4096 && arena.length == 4096);
+    foreach (x; arena[])
+        assert(x == 0, "no stale record survives the growth");
 }
 
 /// A buffer that `reserve` moved to the heap while it still holds few enough
