@@ -50,10 +50,17 @@ in
           # dub-registry dependencies: `{ name; src; }` with `src` the
           # registry zip (a flake input). Their own unittests are not built.
           dubDeps ? [ ],
+          # Link the tests as `lib<exeName>.so` beside a launcher named
+          # `exeName` that `dlopen`s it, as a NativeActivity loads an app's
+          # library. Code whose behaviour depends on living in a loaded
+          # module (druntime's TLS ranges) is only exercised this way.
+          sharedLibrary ? false,
           description ? "D unittests as Android executables, per ABI",
         }:
         let
           importDirs = lib.unique (testedDirs ++ srcDirs ++ runnerDirs);
+          linkFlags = if sharedLibrary then "-shared -L${ndk.pageAlignFlags}" else "-L-pie";
+          output = t: if sharedLibrary then "lib${exeName}-${t.abi}.so" else "${exeName}-${t.abi}";
         in
         pkgs.stdenv.mkDerivation {
           inherit pname;
@@ -86,6 +93,14 @@ in
             } > dub_test_root.d
 
             ${lib.concatMapStrings (t: ''
+              # A dependency's code is compiled once, without its unittests, and
+              # linked: excluded from `-i`, its non-template symbols would stay
+              # unresolved, which a `.so` cannot be loaded with.
+              ${lib.concatMapStrings (d: ''
+                ldc2 -mtriple=${t.triple} -relocation-model=pic -O1 -preview=in \
+                  -lib -of=dub-imports/${d.name}-${t.abi}.a \
+                  $(find dub-imports/${d.name}/*/source -name '*.d')
+              '') dubDeps}
               ldc2 -mtriple=${t.triple} -gcc=${t.cc} -relocation-model=pic -O1 \
                 -preview=in -preview=dip1000 -unittest -checkaction=context -allinst \
                 ${toString (map (v: "-d-version=${v}") versions)} \
@@ -94,9 +109,13 @@ in
                 -i dub_test_root.d \
                 libs/test-runner/src/sparkles/test_runner/register.d \
                 libs/test-runner-impl/src/sparkles/test_runner/runner_impl.d \
-                -link-defaultlib-shared=false -L-pie -L-llog -L-lm -L-ldl \
+                ${toString (map (d: "dub-imports/${d.name}-${t.abi}.a") dubDeps)} \
+                -link-defaultlib-shared=false ${linkFlags} -L-llog -L-lm -L-ldl \
                 -L-Wl,--warn-unresolved-symbols \
-                -of=${exeName}-${t.abi}
+                -of=${output t}
+              ${lib.optionalString sharedLibrary ''
+                ${t.cc} -O2 -o ${exeName}-${t.abi} ${./dlopen-launcher.c} -ldl
+              ''}
             '') (lib.attrValues ndk.targets)}
 
             runHook postBuild
@@ -106,6 +125,9 @@ in
             runHook preInstall
             ${lib.concatMapStrings (t: ''
               install -Dm755 ${exeName}-${t.abi} $out/bin/${t.abi}/${exeName}
+              ${lib.optionalString sharedLibrary ''
+                install -Dm755 ${output t} $out/bin/${t.abi}/lib${exeName}.so
+              ''}
             '') (lib.attrValues ndk.targets)}
             runHook postInstall
           '';
