@@ -29,7 +29,7 @@ unit imports without being one of its own. Output that ships is built by Nix
 with a `prebuilt` stamp.
 
 $(B The compiler) is `ldc2-vulkan` on `PATH` — dlang.nix's `ldc-vulkan` (LDC's
-`sparkles/vulkan-shaders` branch: stock LDC has no Vulkan target and no
+`sparkles/main` branch: stock LDC has no Vulkan target and no
 `@fragment`), which the dev shell and `nix run .#shader-compile` both provide
 under that name — or whatever `--ldc` names.
 
@@ -281,7 +281,7 @@ int main(string[] args)
     {
         stderr.writefln("shader-compile: no dcompute-enabled LDC (`%s`). Enter the dev shell " ~
             "(`nix develop`), use `nix run .#shader-compile`, or pass --ldc a " ~
-            "`sparkles/vulkan-shaders` build.", ldc);
+            "`sparkles/main` build.", ldc);
         return 3;
     }
     foreach (tool; ["dub", "spirv-val", "spirv-opt", "spirv-dis", "spirv-as", "spirv-cross",
@@ -294,7 +294,7 @@ int main(string[] args)
         }
 
     // Without `$DFLAGS`: dub folds it into the dflags it reports, and it
-    // tunes the host build that runs this step (`ci` adds `--threads=N`, the
+    // tunes the host build that runs this step (`ci` adds `-linkonce-templates`, the
     // sanitizer job `-fsanitize=address`), which the device compiler must not see.
     const described = tryExecute(["dub", "describe", "--root=" ~ packageDir,
         "--config=" ~ configuration, "--compiler=" ~ ldc], captureStderr: false,
@@ -385,7 +385,7 @@ int run(in DeviceBuild build, in Unit unit, in string[2][] inputs, string outDir
         {
             stderr.writefln("shader-compile: `%s` cannot compile a `@fragment` shader for `%s` " ~
                 "by profile: it is not a dcompute-enabled LDC with the shader stages and " ~
-                "profiles (`sparkles/vulkan-shaders`)", ldc, build.target);
+                "profiles (`sparkles/main`)", ldc, build.target);
             return 3;
         }
         stderr.writefln("shader-compile: %s: %s", build.packageName, what);
