@@ -12,12 +12,12 @@ planned in [the editor specification](../ui/editor.md#milestones), and the
 segmentation it relies on in
 [the base text plan](../base/text/PLAN.md).
 
-| Milestone | Scope                                                                                        | Status      | Requirements                        |
-| --------- | -------------------------------------------------------------------------------------------- | ----------- | ----------------------------------- |
-| TB0       | Package skeleton; node allocator and atomic counts; chunker; `Text` with summaries and lines | not started | TXB-TEXT1–7, TXB-POS2–3, TXB-OWN1–4 |
-| TB1       | Bidirectional chunk iteration feeding the base steppers                                      | not started | TXB-POS1                            |
-| TB2       | Change sets                                                                                  | not started | TXB-CHG1–7                          |
-| TB3       | History tree                                                                                 | not started | TXB-HIS1–6                          |
+| Milestone | Scope                                                                                        | Status    | Requirements                        |
+| --------- | -------------------------------------------------------------------------------------------- | --------- | ----------------------------------- |
+| TB0       | Package skeleton; node allocator and atomic counts; chunker; `Text` with summaries and lines | delivered | TXB-TEXT1–7, TXB-POS2–3, TXB-OWN1–4 |
+| TB1       | Bidirectional chunk iteration feeding the base steppers                                      | delivered | TXB-POS1                            |
+| TB2       | Change sets                                                                                  | delivered | TXB-CHG1–7                          |
+| TB3       | History tree                                                                                 | delivered | TXB-HIS1–6                          |
 
 **Stage 0.** Owner acceptance of this specification and the editor's is the
 gate for TB0. TB0 to TB3 ship together as the first pull request of the
@@ -29,6 +29,9 @@ requirements; the evidence table gains one row per requirement.
 
 ## Next executable action
 
-Accept or revise the specification. Then create `libs/text-buffer` with
-the `sparkles:test-runner` integration and begin TB0 with the reference
-model and the chunker's boundary tests.
+TB0 to TB3 are delivered; [testing](./testing.md#evidence) records the run.
+TXB-OWN2 stays partial until a consumer needs an explicit transfer
+operation: the counts are atomic and tested across threads, but a value is
+handed to another thread only by the caller's own `shared` cast. The next
+work is the editor model of [E1](../ui/editor.md#milestones), the first
+consumer of this package.
