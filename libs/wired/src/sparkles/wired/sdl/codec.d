@@ -140,26 +140,26 @@ private struct WalkPath
     SharedBuffer!(char, 96) value;
 }
 
-private void popSegment(ref WalkPath p, size_t mark) @safe
+private void popSegment(ref WalkPath p, size_t mark) @safe pure
 {
     () @trusted { p.text.length = mark; }();
 }
 
 /// Appends a D value-path segment; returns the mark that `popValue` restores.
-private size_t pushValue(ref WalkPath p, scope const(char)[] segment) @safe
+private size_t pushValue(ref WalkPath p, scope const(char)[] segment) @safe pure
 {
     const mark = p.value.length;
     p.value ~= segment;
     return mark;
 }
 
-private void popValue(ref WalkPath p, size_t mark) @safe
+private void popValue(ref WalkPath p, size_t mark) @safe pure
 {
     () @trusted { p.value.length = mark; }();
 }
 
 /// Attaches both composed paths to a freshly built error.
-private SdlError attachPath(ref WalkPath path, SdlError e) @safe
+private SdlError attachPath(ref WalkPath path, SdlError e) @safe pure
 {
     () @trusted {
         e.rolePath ~= path.text[];
@@ -169,7 +169,7 @@ private SdlError attachPath(ref WalkPath path, SdlError e) @safe
 }
 
 private SdlError baseError(SdlErrorCode code, SdlSpan span,
-    scope const(char)[] reason) @safe
+    scope const(char)[] reason) @safe pure
 {
     SdlError e;
     e.stage = SdlErrorStage.decode;
@@ -188,7 +188,7 @@ private SdlError typedError(T)(SdlErrorCode code, SdlSpan span,
 }
 
 /// Zero-width span at a tag's terminator — the SPEC §6 missing-member site.
-private SdlSpan endSpan(scope const ref SdlNode node) @safe
+private SdlSpan endSpan(scope const ref SdlNode node) @safe pure
 {
     const end = node.span.end;
     return SdlSpan(end, end);
@@ -213,7 +213,7 @@ private string roleSegment(scope const SdlFieldRole role) @safe pure
 }
 
 private SdlSpan roleSpan(scope const ref SdlNode node,
-    scope const SdlFieldRole role) @safe
+    scope const SdlFieldRole role) @safe pure
 {
     if (role.role == SdlRoleKind.child)
         foreach (child; node.byChild)
@@ -233,7 +233,7 @@ private SdlSpan roleSpan(scope const ref SdlNode node,
     return endSpan(node);
 }
 
-private bool isNullScalar(scope const ref SdlScalar s) @safe
+private bool isNullScalar(scope const ref SdlScalar s) @safe pure
 {
     return s.kind == SdlScalarKind.null_;
 }
@@ -781,7 +781,7 @@ private bool decodeSingular(alias Parent, size_t i, V, alias Conv = void)(
 /// Matching direct children in source order, by full qualified identity.
 private size_t collectChildren(scope const ref SdlNode node,
     scope const SdlFieldRole role,
-    ref SharedBuffer!(SdlNode, 4) matches) @safe
+    ref SharedBuffer!(SdlNode, 4) matches) @safe pure
 {
     matches.clear();
     foreach (child; node.byChild)
@@ -825,7 +825,7 @@ private SdlNode copyBorrowedNode(scope const SdlNode n)
     @safe pure nothrow @nogc
     => (() @trusted { const pn = &n; return *pn; })();
 
-private SdlScalar firstValueOf(scope const ref SdlNode n) @safe
+private SdlScalar firstValueOf(scope const ref SdlNode n) @safe pure
 {
     foreach (v; n.byValue)
         return copyBorrowedScalar(v);
@@ -849,7 +849,7 @@ private void assignField(T)(ref T slot, T value)
 
 private size_t collectAttributes(scope const ref SdlNode node,
     scope const SdlFieldRole role,
-    ref SharedBuffer!(SdlAttributeView, 4) matches) @safe
+    ref SharedBuffer!(SdlAttributeView, 4) matches) @safe pure
 {
     matches.clear();
     foreach (attribute; node.byAttribute)
@@ -862,7 +862,7 @@ private size_t collectAttributes(scope const ref SdlNode node,
 }
 
 private SdlScalar valueAt(scope const ref SdlNode node, size_t index,
-    ref bool found) @safe
+    ref bool found) @safe pure
 {
     size_t seen;
     found = false;
@@ -1139,7 +1139,7 @@ in (position < node.childCount)
 in canonical grammar order: values by position, then attributes, then children
 in occurrence order. */
 private void captureUnknowns(scope const ref UnknownMatcher m,
-    scope const ref SdlNode node, ref SdlExtraMember[] captured) @safe
+    scope const ref SdlNode node, ref SdlExtraMember[] captured) @safe pure
 {
     size_t index;
     foreach (v; node.byValue)
@@ -1781,7 +1781,7 @@ if (is(T == struct))
     return DRes!(U)(false, result);
 }
 
-private void pushDup(ref WalkPath p, scope const(char)[] local) @safe
+private void pushDup(ref WalkPath p, scope const(char)[] local) @safe pure
 {
     p.text ~= "." ~ local ~ "[1]";
 }
@@ -1831,30 +1831,46 @@ private K keyFromString(K)(scope const(char)[] raw, SdlSpan span,
         static assert(false, "wired.sdl: unreachable AA key type");
 }
 
-/// Applies a child value's dynamic tag-name/namespace fields as overrides.
-/// Empty string identities do not override: the declared name is emitted so a
-/// zero-init aggregate keeps its schema identity (canonical stability).
-private void encChildName(T)(scope const ref T v, ref EncBuilder b,
-    ref string ns, ref string local)
+/// A child's emitted qualified name: the declared one, or a dynamic identity
+/// borrowed from the value being written.
+private struct EncName
 {
-    alias roles = sdlAggregateRoles!(T).sdlFieldRoles;
-    static foreach (j; 0 .. roles.roles.length)
-    {{
-        enum RJ = roles.roles[j];
-        static if (RJ.role == SdlRoleKind.tagName)
-        {
-            const candidate = encodeIdentity(v.tupleof[j]);
-            if (candidate.length)
-                local = candidate;
-        }
-        else static if (RJ.role == SdlRoleKind.tagNamespace)
-        {
-            const candidate = encodeIdentity(v.tupleof[j]);
-            if (candidate.length)
-                ns = candidate;
-        }
-    }}
+    const(char)[] namespace_; ///
+    const(char)[] localName;  ///
 }
+
+/// The name a child value is emitted under: its dynamic tag-name/namespace
+/// fields override the declared `ns`/`local`. Empty string identities do not
+/// override: the declared name is emitted so a zero-init aggregate keeps its
+/// schema identity (canonical stability). The result borrows from `v`, which
+/// outlives the synchronous build, so nothing is copied.
+private EncName encChildName(T)(return scope const ref T v,
+    return scope const(char)[] ns, return scope const(char)[] local)
+    => EncName(nonEmptyOr(identityOf!(SdlRoleKind.tagNamespace)(v), ns),
+        nonEmptyOr(identityOf!(SdlRoleKind.tagName)(v), local));
+
+/// The `T.tupleof` index of `T`'s field with role `kind`, or -1.
+private enum ptrdiff_t identityField(T, SdlRoleKind kind) = ()
+{
+    foreach (role; sdlAggregateRoles!(T).sdlFieldRoles.roles)
+        if (role.role == kind)
+            return cast(ptrdiff_t) role.fieldIndex;
+    return -1;
+}();
+
+/// The spelled dynamic identity of `v` in role `kind`; null when `T` has none.
+private const(char)[] identityOf(SdlRoleKind kind, T)(return scope const ref T v)
+{
+    enum index = identityField!(T, kind);
+    static if (index < 0)
+        return null;
+    else
+        return encodeIdentity(v.tupleof[index]);
+}
+
+private const(char)[] nonEmptyOr(return scope const(char)[] candidate,
+    return scope const(char)[] fallback) @safe pure nothrow @nogc
+    => candidate.length ? candidate : fallback;
 
 /** Reads a tag's own name or namespace into a dynamic identity field.
 
@@ -1970,13 +1986,13 @@ private WireFieldSet!T suppliedSdlFields(T)(scope SdlNode node) @safe
 private struct SdlSourceSink(Sink)
 {
     Sink* target;
-    string sourceName;
+    SharedBuffer!(char, 40) sourceName;
 
     void put(SdlError error)
     {
         import std.range.primitives : put;
 
-        error.sourceName ~= sourceName;
+        error.sourceName ~= sourceName[];
         put(*target, error);
     }
 }
@@ -2045,7 +2061,9 @@ SdlExpected!T fromSDL(T, Sink)(return scope SdlNode node, ref Sink sink)
 if (is(T == struct) && hasBorrowedSdlExtras!(Unqual!T))
 {
     WireErrors!(Sink, SdlError) errors;
-    errors.sink = &sink;
+    // Narrow trust: `errors` is local to this call, so the pointer to the
+    // caller's sink cannot outlive it.
+    errors.sink = (() @trusted => &sink)();
     return decodeRootNode!(T, Sink)(node, errors);
 }
 
@@ -2054,7 +2072,9 @@ SdlExpected!T fromSDL(T, Sink)(scope SdlNode node, ref Sink sink)
 if (is(T == struct) && !hasBorrowedSdlExtras!(Unqual!T))
 {
     WireErrors!(Sink, SdlError) errors;
-    errors.sink = &sink;
+    // Narrow trust: `errors` is local to this call, so the pointer to the
+    // caller's sink cannot outlive it.
+    errors.sink = (() @trusted => &sink)();
     auto result = decodeRootNode!(T, Sink)(node, errors);
     // Narrow trust: as for the fail-fast owned overload.
     return (() @trusted => result)();
@@ -2075,7 +2095,9 @@ if (is(T == struct))
         put(sink, parsed.error);
         return sdlErr!T(parsed.error);
     }
-    auto named = SdlSourceSink!Sink(&sink, sourceName.idup);
+    // Narrow trust: as for the node overloads, `named` is local to this call.
+    auto named = SdlSourceSink!Sink((() @trusted => &sink)());
+    named.sourceName ~= sourceName;
     auto result = fromSDL!T(parsed.document.root, named);
     if (result.hasError)
     {
@@ -2523,6 +2545,64 @@ private enum fullSource =
         && w.aliases == v.aliases && w.dep == v.dep
         && w.authors == v.authors && w.node == v.node
         && !w.tagNs.length && w.tagName_ == v.tagName_);
+}
+
+// Typed decode and encode are `@safe pure`; only the file helpers do I/O.
+// Every role, a map, unions, owned extras, presence tracking, an error sink,
+// and each scalar family's writer take part, so an impure helper anywhere on
+// those paths fails to compile here.
+@("wired.sdl.codec.safePure")
+@safe pure unittest
+{
+    import std.conv : text;
+    import std.sumtype : SumType;
+    import sparkles.wired.presence : Decoded;
+    import sparkles.wired.sdl.writer : SdlString, writeSdlDocument;
+
+    static struct Mixed
+    {
+        @SdlTagValue(0) string name;
+        @SdlAttribute() int choice;
+        @SdlExtra() OwnedSdlExtras rest;
+    }
+    static struct Doc
+    {
+        @SdlChild() Full config;
+        @SdlChild() Scalars scalars;
+        @SdlChild() Mixed mixed;
+        @WireOptional() Nullable!string note;
+    }
+    // SDL union encoding is unspecified (SPEC §6), so a union is decode-only.
+    static struct Unioned
+    {
+        @SdlAttribute() SumType!(int, string) choice;
+    }
+    static struct UnionedDoc
+    {
+        @SdlChild() Unioned u;
+    }
+    enum source = fullSource
+        ~ "scalars true 'c' 'w' 1 2L 1.5f 2.5 3.5BD \"s\"\n"
+        ~ "mixed \"m\" choice=3 kept=true {\n    other 1\n}\n";
+
+    const decoded = fromSDL!Doc(source, "pure.sdl");
+    assert(decoded.hasValue, decoded.error.text);
+    assert(decoded.value.config.authors == ["a1", "a2", "a3"]);
+    assert(decoded.value.mixed.rest.length == 2);
+    assert(fromSDL!(Decoded!Doc)(source).hasValue);
+    assert(fromSDL!UnionedDoc(`u choice="txt"`).hasValue);
+
+    auto parsed = parseSdlDocument(source);
+    assert(fromSDL!Doc(parsed.document.root).hasValue);
+
+    SharedBuffer!(SdlError, 4) errors;
+    assert(fromSDL!Doc("scalars 1\n", errors).hasError && errors.length > 0);
+
+    const written = toSDL(decoded.value);
+    assert(written.hasValue, written.error.text);
+    SdlString canonical;
+    assert(!writeSdlDocument(parsed.document, canonical).hasError);
+    assert(fromSDL!Doc(written.value[]).hasValue);
 }
 
 @("wired.sdl.codec.repetitionAndDuplicateRules")
@@ -3030,7 +3110,7 @@ private struct EncBuilder
 }
 
 private size_t encAppendNode(ref EncBuilder b, scope const(char)[] ns,
-    scope const(char)[] local, uint depth) @safe
+    scope const(char)[] local, uint depth) @safe pure
 {
     import sparkles.wired.sdl.document : SdlNodeCell;
 
@@ -3046,13 +3126,15 @@ private size_t encAppendNode(ref EncBuilder b, scope const(char)[] ns,
     return b.doc.nodes.length - 1;
 }
 
-private void encAddValue(ref EncBuilder b, size_t node, SdlScalar s) @safe
+private void encAddValue(ref EncBuilder b, size_t node, scope SdlScalar s) @safe pure
 {
     import sparkles.wired.sdl.document : SdlValueCell;
 
     // Per-node only: `encFinish` flattens these into the arena in node order.
     // Appending here as well leaves the arena twice its needed size, with the
-    // tail past every node's recorded extent.
+    // tail past every node's recorded extent. Narrow trust: as in
+    // `encAppendNode`, the cell aliases caller-owned bytes that stay alive for
+    // the whole synchronous build-and-write.
     () @trusted {
         auto cell = SdlValueCell.init;
         cell.value = s;
@@ -3061,11 +3143,11 @@ private void encAddValue(ref EncBuilder b, size_t node, SdlScalar s) @safe
 }
 
 private void encAddAttribute(ref EncBuilder b, size_t node,
-    SdlQualifiedName name, SdlScalar s) @safe
+    scope SdlQualifiedName name, scope SdlScalar s) @safe pure
 {
     import sparkles.wired.sdl.document : SdlAttributeCell;
 
-    /// ditto
+    // Narrow trust: as in `encAddValue`.
     () @trusted {
         SdlAttributeCell cell;
         cell.qualifiedName = name;
@@ -3074,7 +3156,7 @@ private void encAddAttribute(ref EncBuilder b, size_t node,
     }();
 }
 
-private string encOwn(ref EncBuilder b, scope const(char)[] s) @safe
+private string encOwn(ref EncBuilder b, scope const(char)[] s) @safe pure
 {
     string owned = s.idup;
     () @trusted { b.strings ~= owned.dup; }();
@@ -3082,7 +3164,7 @@ private string encOwn(ref EncBuilder b, scope const(char)[] s) @safe
 }
 
 /** Flattens per-node extents into the arena and links child indices. */
-private void encFinish(ref EncBuilder b)
+private void encFinish(ref EncBuilder b) @safe pure
 {
     size_t valueCursor;
     foreach (i, ref node; b.doc.nodes)
@@ -3290,7 +3372,7 @@ private size_t[] mergeOrdinalOrder(size_t declaredCount,
 }
 
 /** Spelled SDL identity of a qualified name: `ns:local` or plain `local`. */
-private string extraSpelling(scope const SdlQualifiedName name) @safe
+private string extraSpelling(scope const SdlQualifiedName name) @safe pure
 => qualifiedKey(name.namespace_, name.localName);
 
 /// Uniform field accessors over the two $(LREF SdlExtraMember) flavors.
@@ -3364,7 +3446,7 @@ names, scalar kinds, duplicate attributes, nested repetitions, and the
 source's `{ }` presence. Payload slices stay owned by the source document,
 which outlives the synchronous write. */
 private size_t copyExtraSubtree(ref EncBuilder b, return scope const SdlNode n,
-    uint depth) @safe
+    uint depth) @safe pure
 {
     const name = n.qualifiedName;
     const idx = encAppendNode(b, name.namespace_, name.localName, depth);
@@ -3392,7 +3474,7 @@ private size_t copyExtraSubtree(ref EncBuilder b, return scope const SdlNode n,
 /// ditto — materializes an owned $(LREF SdlOwnedExtraNode) capture into the
 /// encoder arena.
 private size_t appendOwnedSubtree(ref EncBuilder b,
-    scope const ref SdlOwnedExtraNode tree, uint depth) @safe
+    scope const ref SdlOwnedExtraNode tree, uint depth) @safe pure
 {
     const idx = encAppendNode(b, tree.name.namespace_, tree.name.localName,
         depth);
@@ -3416,7 +3498,7 @@ private size_t appendOwnedSubtree(ref EncBuilder b,
 // ── Aggregate emission ───────────────────────────────────────────────────────
 
 private SdlError encBaseError(SdlErrorCode code,
-    scope const(char)[] reason)
+    scope const(char)[] reason) @safe pure
 {
     import sparkles.wired.sdl.error : SdlErrorStage;
 
@@ -3914,15 +3996,15 @@ if (is(T == struct))
                 && !isAssociativeArray!(Unqual!V))
             {
                 // Scalar or aggregate single child.
-                string ns = R.namespace_;
-                string local = R.localName;
                 static if (__traits(hasMember, typeof(value.tupleof[i]),
                         "init") && HasIdentity!(typeof(value.tupleof[i])))
-                    encChildName(value.tupleof[i], b, ns, local);
+                    const name = encChildName(value.tupleof[i], R.namespace_, R.localName);
+                else
+                    const name = EncName(R.namespace_, R.localName);
 
                 const mark = b.path.text.length;
-                b.path.text ~= "." ~ qualifiedKey(ns, local) ~ "[0]";
-                const cIdx = encAppendNode(b, ns, local, childDepth);
+                b.path.text ~= "." ~ qualifiedKey(name.namespace_, name.localName) ~ "[0]";
+                const cIdx = encAppendNode(b, name.namespace_, name.localName, childDepth);
                 scope (exit) popSegment(b.path, mark);
 
                 static if (is(Unqual!(EncPayload!V) == struct)
@@ -3930,7 +4012,7 @@ if (is(T == struct))
                     && !is(EncPayload!V == string))
                 {
                     alias P = EncPayload!(V);
-                    P payload = cast(P) encPayload(value.tupleof[i]);
+                    const P payload = encPayload(value.tupleof[i]);
                     encodeAggregate!(P)(b, payload, cIdx);
                 }
                 else
@@ -3939,7 +4021,7 @@ if (is(T == struct))
                     // and a plain scalar's payload is the scalar itself.
                     auto payload = encPayload(value.tupleof[i]);
                     auto wire = encConverted!(FC3, EncPayload!(V))(payload, b,
-                        "." ~ qualifiedKey(ns, local) ~ "[0]");
+                        "." ~ qualifiedKey(name.namespace_, name.localName) ~ "[0]");
                     if (wire.failed)
                         return;
                     auto singleScalar = encScalar(wire.value, b);
@@ -3958,17 +4040,17 @@ if (is(T == struct))
                     // Aggregate sequence: one sibling per element.
                     foreach (element, elem; value.tupleof[i])
                     {
-                        string ns = R.namespace_;
-                        string local = R.localName;
                         static if (HasIdentity!E)
-                            encChildName(elem, b, ns, local);
+                            const name = encChildName(elem, R.namespace_, R.localName);
+                        else
+                            const name = EncName(R.namespace_, R.localName);
                         const elementMark = pushValue(b.path, "[" ~ element.to!string ~ "]");
                         scope (exit) popValue(b.path, elementMark);
 
                         const mark = b.path.text.length;
-                        b.path.text ~= "." ~ local ~ "["
+                        b.path.text ~= "." ~ name.localName ~ "["
                             ~ kidOrder.length.to!string ~ "]";
-                        const cIdx = encAppendNode(b, ns, local, childDepth);
+                        const cIdx = encAppendNode(b, name.namespace_, name.localName, childDepth);
                         scope (exit) popSegment(b.path, mark);
 
                         encodeAggregate!(E)(b, elem, cIdx);
