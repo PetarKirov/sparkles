@@ -55,6 +55,9 @@ in
           # library. Code whose behaviour depends on living in a loaded
           # module (druntime's TLS ranges) is only exercised this way.
           sharedLibrary ? false,
+          # Further link arguments for one ABI's target (`t`, an entry of
+          # `androidNdk.targets`): the static C libraries a configuration links.
+          extraLinkFlags ? (_t: [ ]),
           description ? "D unittests as Android executables, per ABI",
         }:
         let
@@ -110,6 +113,7 @@ in
                 libs/test-runner/src/sparkles/test_runner/register.d \
                 libs/test-runner-impl/src/sparkles/test_runner/runner_impl.d \
                 ${toString (map (d: "dub-imports/${d.name}-${t.abi}.a") dubDeps)} \
+                ${toString (extraLinkFlags t)} \
                 -link-defaultlib-shared=false ${linkFlags} -L-llog -L-lm -L-ldl \
                 -L-Wl,--warn-unresolved-symbols \
                 -of=${output t}
