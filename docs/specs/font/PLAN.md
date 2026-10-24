@@ -334,8 +334,9 @@ HarfBuzz 14.6.0, whose tables match base's Unicode 18.0.0 (shown against
 the pinned source and HarfBuzz's own callbacks), a memory-safe `Shaper`,
 base-decoded input, recorded `hb-shape` goldens and the scenarios of
 [`testing.md`](./testing.md). A follow-up the same day closed M4's
-remaining gaps: real `JSTF` records compared with fontTools (Microsoft's
-core fonts, the only `JSTF` faces found, in an opt-in unfree corpus), an
+remaining gaps: real `JSTF` records compared with fontTools (SIL's
+Scheherazade New and Lateef by default, Microsoft's core fonts in an opt-in
+unfree corpus), an
 operation budget that can no longer end a run silently, vertical advances
 and origins from the library, and the engine's tests passing on an Android
 phone; the point lookups decode into a caller's heap workspace instead of

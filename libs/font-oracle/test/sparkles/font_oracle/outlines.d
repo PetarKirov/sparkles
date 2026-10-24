@@ -319,7 +319,6 @@ unittest
 {
     if (testFontsDir is null)
         return skipTest("SPARKLES_FONT_TEST_CORPUS is unset");
-    assert(testCorpus.length >= 4, "the variable CFF2 faces are in the test corpus");
     auto funcs = hb_draw_funcs_create();
     scope (exit) hb_draw_funcs_destroy(funcs);
     hb_draw_funcs_set_move_to_func(funcs, &collectMove, null, null);
@@ -335,12 +334,14 @@ unittest
     auto ends = new ushort[1024];
     auto segments = new OutlineSegment[16_384];
     const size = InstanceSize.pixels(Ppem.fromInteger(16).value);
-    size_t glyphsChecked;
+    size_t faces, glyphsChecked;
     foreach (path; testCorpus)
     {
         const bytes = cast(const(ubyte)[]) read(path);
         const face = openFace(bytes).value;
-        assert(face.has(Tag("CFF2")), path.baseName ~ " has a CFF2 table");
+        if (!face.has(Tag("CFF2")))
+            continue;
+        ++faces;
         auto hb = Oracle(bytes, 0);
         hb_font_set_scale(hb.font, face.unitsPerEm, face.unitsPerEm);
         UserCoordinate[][] settings = [null];
@@ -372,5 +373,6 @@ unittest
             }
         }
     }
+    assert(faces == 4, text(faces, " variable CFF2 faces in the test corpus"));
     assert(glyphsChecked > 10_000, text(glyphsChecked, " CFF2 glyph instances"));
 }
