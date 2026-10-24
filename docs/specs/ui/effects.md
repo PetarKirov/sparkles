@@ -177,7 +177,7 @@ calls the transform. `shader-compile` compiles it, together with
 SPIR-V, validates that, optimises it, and cross-compiles each entry point with
 spirv-cross to desktop GLSL 330 and GLSL ES 100 — the two dialects `ui-raylib`
 speaks — proving each with glslang. `effect.d` string-imports the result, in the `gpu-effects` configuration only: the build generates it (a pre-generate step, no-op while fresh), so nothing generated is committed. The compiler ships as dlang.nix's `ldc-vulkan`, on the dev shell's `PATH` as `ldc2-vulkan`. The
-compiler is LDC's `sparkles/vulkan-shaders` branch: upstream's Vulkan compute
+compiler is LDC's `sparkles/main` branch: upstream's Vulkan compute
 target ([ldc#5132](https://github.com/ldc-developers/ldc/pull/5132) over
 [llvm#216919](https://github.com/llvm/llvm-project/pull/216919)) plus
 `@fragment`, `@input`/`@uniform` parameter markers, and `Sampler2D` — the

@@ -55,11 +55,11 @@ same package.
 
 ## Wasm backend (`WSM`) — client-side / edge, future
 
-| ID   | Requirement                                                                                                                                                                                                  | Status      | Traces to                                                              |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | ---------------------------------------------------------------------- |
-| WSM1 | A future backend must compile `sparkles:syntax` to **wasm** (the LDC WASI fork, already demonstrated by the docs cell-explorer widget) and highlight **client-side** in the browser (SPA) with no shell-out. | not started | `sparkles:syntax` wasm (LDC WASI); memory `ldc-wasm-stduni-infeasible` |
-| WSM2 | The wasm backend must expose the **same `PKG` API** so it drops in behind the same package; it may also serve **SSR** in a JS/edge runtime (no native binary).                                               | not started | `PKG4`                                                                 |
-| WSM3 | It must ship the grammar/theme data the wasm engine needs (tree-sitter grammars as wasm or data); document the **payload-size trade-off** vs the shell-out backend.                                          | not started | bundling concern                                                       |
+| ID   | Requirement                                                                                                                                                                                                                          | Status      | Traces to                                                              |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | ---------------------------------------------------------------------- |
+| WSM1 | A future backend must compile `sparkles:syntax` to **wasm** (the project LDC's `wasm32-wasip1` runtime, already demonstrated by the docs cell-explorer widget) and highlight **client-side** in the browser (SPA) with no shell-out. | not started | `sparkles:syntax` wasm (LDC WASI); memory `ldc-wasm-stduni-infeasible` |
+| WSM2 | The wasm backend must expose the **same `PKG` API** so it drops in behind the same package; it may also serve **SSR** in a JS/edge runtime (no native binary).                                                                       | not started | `PKG4`                                                                 |
+| WSM3 | It must ship the grammar/theme data the wasm engine needs (tree-sitter grammars as wasm or data); document the **payload-size trade-off** vs the shell-out backend.                                                                  | not started | bundling concern                                                       |
 
 ## Framework integrations (`FWK`)
 

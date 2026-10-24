@@ -6,7 +6,7 @@
 #
 #   * `ldc2-vulkan`: dlang.nix's `ldc-vulkan` — LDC with dcompute's Vulkan
 #     target and the `@fragment` graphics stage (PetarKirov/ldc
-#     `sparkles/vulkan-shaders`), built against LLVM main with the SPIR-V
+#     `sparkles/main`), built against LLVM main with the SPIR-V
 #     backend — under the name the tool looks for. Stock LDC has neither.
 #   * spirv-tools (spirv-val, spirv-opt, spirv-dis), spirv-cross, glslang.
 #     Their versions shape the output (an spirv-opt upgrade rewrites a branch),

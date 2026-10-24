@@ -4,7 +4,7 @@
 #
 # A device module imports `ldc.dcompute` and `ldc.intrinsics`, which exist
 # only in LDC's druntime — and only the dcompute LDC's (`ldc-vulkan` from
-# dlang.nix, PetarKirov/ldc `sparkles/vulkan-shaders`) has the `@fragment`
+# dlang.nix, PetarKirov/ldc `sparkles/main`) has the `@fragment`
 # stage and `Sampler2D.sample`. This is that compiler's *source* tree, not the
 # compiler: evaluating `.src` fetches a checkout and builds nothing, so the
 # analysis never pulls in the LLVM the compiler is built against. The devshell
