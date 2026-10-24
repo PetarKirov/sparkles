@@ -2764,7 +2764,7 @@ private MonitoredResult executeLogged(
         writeBytes(rss, u.peakRssBytes);
         writeDuration(cpu, u.cpuTime);
         trace(i"{dim   $(label)} rss=$(rss[]) cpu=$(cpu[])");
-    }, ChildStdin.empty, timeout, withLdcThreadEnv(env));
+    }, ChildStdin.empty, timeout, withLdcDflags(env));
 
     if (tracing)
     {
@@ -3000,7 +3000,7 @@ private:
                 inner = executeMonitoredLines(
                     withTestArgs(baseCmd, testBuildType(false), runnerArgs),
                     interval, onSample, ChildStdin.empty, Duration.zero,
-                    withLdcThreadEnv(extraEnv));
+                    withLdcDflags(extraEnv));
                 return false;
             }
             finishWith(attempt);
@@ -3032,12 +3032,12 @@ private:
                 inner = executeMonitoredLines(
                     withTestArgs(baseCmd, testBuildType(true), cov.runtimeArgs ~ runnerArgs),
                     interval, onSample, ChildStdin.empty, Duration.zero,
-                    withLdcThreadEnv(mergeEnv(extraEnv, cov.env)));
+                    withLdcDflags(mergeEnv(extraEnv, cov.env)));
             else
                 inner = executeMonitoredLines(
                     withTestArgs(baseCmd, testBuildType(false), runnerArgs),
                     interval, onSample, ChildStdin.empty, Duration.zero,
-                    withLdcThreadEnv(extraEnv));
+                    withLdcDflags(extraEnv));
         }
 
         /// The verdict is the last attempt's: the first one, or — after a
@@ -3266,8 +3266,6 @@ private int runDubBuildMode(bool failFast)
         return 1;
     }
     info(i"$(subPackages.length) sub-package(s) to build");
-    if (compilerIsLdc(environment.get("DC", "")))
-        info(i"ldc codegen threads capped at $(hwParallelism())");
 
     i"Building $(subPackages.length) sub-package(s)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
@@ -3294,7 +3292,7 @@ private int runDubBuildMode(bool failFast)
         auto buildCmd = dubBuildCommand(repoRoot, pkg, pkgName);
         auto lines = executeMonitoredLines(
             buildCmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
-            withLdcThreadEnv(null));
+            withLdcDflags(null));
         streamResultBox(header, lines,
             () => resultVerdict(lines.result.status == 0),
             (LogDelta d) => resultFooterRight(lines.result.usage, d));
@@ -3423,7 +3421,7 @@ private int runBuildEachCommitMode(string base, string[] requested, bool failFas
             mkdirRecurse(buildPath(wt, pkg, "build"));
             auto lines = executeMonitoredLines(
                 dubBuildCommand(wt, pkg, pkgName), 250.msecs, &onSample,
-                ChildStdin.empty, Duration.zero, withLdcThreadEnv(null));
+                ChildStdin.empty, Duration.zero, withLdcDflags(null));
             streamResultBox(header, lines,
                 () => resultVerdict(lines.result.status == 0),
                 (LogDelta d) => resultFooterRight(lines.result.usage, d));
@@ -3485,8 +3483,6 @@ private int runDubTestsMode(bool failFast, bool coverage, bool sanitize = false)
         return 1;
     }
     info(i"$(subPackages.length) sub-package(s) to test");
-    if (compilerIsLdc(environment.get("DC", "")))
-        info(i"ldc codegen threads capped at $(hwParallelism())");
     if (sanitize)
         info(i"sanitize: ASan + LDC stackovf; one -t $(parallelTestThreads(hwParallelism())) leg on 4 MiB workers");
 
@@ -3836,7 +3832,7 @@ private int runExtractedTestsMode(bool failFast)
 
         auto lines = executeMonitoredLines(
             cmd, 250.msecs, &onSample, ChildStdin.empty, Duration.zero,
-            withLdcThreadEnv(null));
+            withLdcDflags(null));
         streamResultBox(header, lines,
             () => resultVerdict(lines.result.status == 0),
             (LogDelta d) => resultFooterRight(lines.result.usage, d));
@@ -4652,8 +4648,8 @@ bool declaresSourceLibrary(in DubManifest manifest) @safe pure nothrow @nogc
 
 /// `dub build :pkg` argv, honouring `$DC` and stating dub's default `debug`
 /// build type — implicit, `$DFLAGS` would replace it (see
-/// $(LREF testBuildType)). LDC codegen threads are bounded separately via
-/// $(LREF withLdcThreadEnv).
+/// $(LREF testBuildType)). LDC flags are added separately via
+/// $(LREF withLdcDflags).
 private string[] dubBuildCommand(string repoRoot, string packagePath, string pkgName, string[] extra = null)
 {
     auto cmd = ["dub", "--root", repoRoot, "build", ":" ~ pkgName, "-b", "debug"];
@@ -4682,8 +4678,8 @@ unittest
 }
 
 /// `dub test :pkg` argv, honouring `$DC`: `dubArgs` are dub's, `runnerArgs`
-/// the test binary's (see $(LREF withTestArgs)). LDC codegen threads are
-/// bounded separately via $(LREF withLdcThreadEnv).
+/// the test binary's (see $(LREF withTestArgs)). LDC flags are added
+/// separately via $(LREF withLdcDflags).
 private string[] dubTestCommand(string repoRoot, string pkgName,
     const(string)[] dubArgs = null, const(string)[] runnerArgs = null)
 {
@@ -4699,7 +4695,7 @@ private string[] dubTestCommand(string repoRoot, string pkgName,
 ///
 /// Stating it is the point. dub documents that "setting the DFLAGS
 /// environment variable will override the build type", and `$DFLAGS` is
-/// always set under LDC here (see $(LREF withLdcThreadEnv)) — so a `dub test`
+/// always set under LDC here (see $(LREF withLdcDflags)) — so a `dub test`
 /// without `-b` performs a `$DFLAGS` build that carries no `-unittest`. The
 /// binary then holds zero tests, prints "All unit tests have been run
 /// successfully." and exits 0: a package whose tests fail reports green.
@@ -5037,14 +5033,16 @@ unittest
     assert(validateCliMode(params, null) == "--host-ci-rev needs --host-system");
 }
 
-/// Merge LDC `--threads=N` into a child environment's `DFLAGS`.
+/// Merge LDC's `-linkonce-templates` into a child environment's `DFLAGS`.
 ///
-/// Bound to $(REF hwParallelism, sparkles,base,hw_caps) so an overcommitted
-/// macOS runner does not spawn one LLVM thread per advertised vCPU. DMD
-/// does not understand `--threads`, so this is a no-op unless `$DC` is LDC.
-/// An existing `--threads`/`-j` in `DFLAGS` is left alone. A `DFLAGS` in
-/// `env` is stacked on the ambient `$DFLAGS` first ($(LREF withAmbientDflags)).
-private string[string] withLdcThreadEnv(const string[string] env)
+/// A no-op unless `$DC` is LDC, and when `DFLAGS` already has the flag. A
+/// `DFLAGS` in `env` is stacked on the ambient `$DFLAGS` first
+/// ($(LREF withAmbientDflags)).
+///
+/// No `--threads`: it is not an LDC option but LLVM's legacy ThinLTO code
+/// generator's, which LDC never uses (it compiles on one thread), and it
+/// parses only where LDC links LLVM as one shared library.
+private string[string] withLdcDflags(const string[string] env)
 {
     const dc = environment.get("DC", "");
     auto out_ = withAmbientDflags(env, environment.get("DFLAGS", ""));
@@ -5054,14 +5052,10 @@ private string[string] withLdcThreadEnv(const string[string] env)
     const existing = "DFLAGS" in out_
         ? out_["DFLAGS"]
         : environment.get("DFLAGS", "");
-    string extra;
-    if (!existing.canFind("--threads") && !existing.canFind("-j"))
-        extra ~= "--threads=" ~ hwParallelism().to!string;
     if (!existing.canFind("-linkonce-templates"))
-        extra ~= (extra.length ? " " : "") ~ "-linkonce-templates";
-
-    if (extra.length)
-        out_["DFLAGS"] = existing.length ? existing ~ " " ~ extra : extra;
+        out_["DFLAGS"] = existing.length
+            ? existing ~ " -linkonce-templates"
+            : "-linkonce-templates";
     return out_;
 }
 
